@@ -163,6 +163,7 @@ async function mountSecondary(path, direction = 'vertical') {
     if (st.kind === 'notebook') secondaryNotebook(host, st);
     else if (st.kind === 'pdf') mountPdf($('.lee-split-body', host), st);
     else mountImage($('.lee-split-body', host), st);
+    recordDiskVersion(st.path || path, st.disk_version || '');
     lee.secondaryPath = path; lee.activeEditor = 'primary';
     localStorage.setItem('lee-editor-split', JSON.stringify({path, direction}));
     return;
@@ -172,6 +173,7 @@ async function mountSecondary(path, direction = 'vertical') {
   host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
   const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',lineNums:true,lintPath:st.path||'',completeUrl:'/complete',
     onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
+  recordDiskVersion(st.path || path, st.disk_version || '');
   lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
 }
 function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}

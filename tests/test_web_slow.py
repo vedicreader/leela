@@ -352,6 +352,44 @@ def test_changing_a_routed_job_model_saves_it_and_a_refusal_says_so():
     assert out['picked']['other'].split(' ')[0] in out['picked']['label'], 'and the picker says so'
     assert 'no-such-model-anywhere' in out['refused'], f"a refusal is reported: {out['refused']!r}"
 
+def test_saving_the_file_in_a_split_pane_does_not_read_as_a_disk_conflict(tmp_path):
+    """Every edit in a split pane raised "changed on disk after this browser draft began".
+
+    `lee.diskVersion` is one value for the tab on screen. The split pane holds a second file, and
+    its draft was based on -- and saved against -- the first file's version, so the two never
+    matched and the save was refused as somebody else's write. Twice, because a pane that saved
+    also recorded nothing, so the next edit began from the same stale base.
+    """
+    a, b = tmp_path/'primary.py', tmp_path/'secondary.py'
+    a.write_text('a = 1\n'); b.write_text('b = 1\n')
+
+    async def go(pg):
+        out = {}
+        await pg.evaluate(f"leeOpenFile({str(b)!r})")     # both are tabs; `a` is the one on screen
+        await pg.evaluate(f"leeOpenFile({str(a)!r})")
+        await pg.wait_for_function("() => lee.editors.get('file') && lee.path")
+        await pg.evaluate(f"mountSecondary({str(b)!r}, 'vertical')")   # what the split picker calls
+        await pg.wait_for_function("() => lee.editors.get('secondary')")
+        out['base'] = await pg.evaluate(f"draftBaseFor({str(b)!r})")
+        out['primary_version'] = await pg.evaluate("lee.diskVersion")
+        # Type into the split pane and save it the way its own autosave would.
+        await pg.evaluate("""(path) => {
+            lee.activeEditor = 'secondary';
+            LeeCM.setDoc(lee.editors.get('secondary'), 'b = 2\\n');
+            rememberBuffer(path, {path, kind: 'text', text: 'b = 2\\n'});
+        }""", str(b))
+        out['saved'] = await pg.evaluate("saveTab(true)")
+        out['conflict'] = await pg.evaluate("!!document.querySelector('.lee-save-conflict')")
+        return out
+
+    out = _run(go, roots=[tmp_path])
+    assert out['base'] != out['primary_version'] or not out['primary_version'], \
+        "the split pane's draft was based on the tab's version, which is a different file"
+    assert not out['conflict'], 'saving the split pane raised the disk-conflict modal'
+    assert out['saved'] is True, 'and the save itself was refused'
+    assert b.read_text() == 'b = 2\n', 'the split pane never reached disk'
+
+
 def test_the_modals_the_editor_opens_own_their_focus_and_their_controls():
     """One page for every overlay a person reaches from the editing surface: the kernel picker traps
     focus and answers the arrows, the platform preferences chord opens settings from a focused cell,

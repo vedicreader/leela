@@ -21,6 +21,10 @@ const lee = {
   cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
+  // `diskVersion` is the tab on screen. A split pane holds a second file, whose version is its
+  // own: basing that pane's draft on the tab's version made every save look like somebody
+  // else's write. Keyed by path, and `diskVersion` stays the one the rest of the editor reads.
+  diskVersions: new Map(),
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
@@ -243,16 +247,27 @@ async function clearDrafts(documentKey) {
   });
   for (const key of [...lee.draftBases.keys()]) if (key === documentKey || key.startsWith(documentKey + ':')) lee.draftBases.delete(key);
 }
+function recordDiskVersion(path, version) {
+  "The version `path` is now at on disk. The tab on screen also moves the globals the editor reads."
+  if (!path || !version) return version || '';
+  lee.diskVersions.set(path, version);
+  if (path === (lee.path || lee.tabKey)) { lee.diskVersion = version; lee.seenDiskVersion = version; }
+  return version;
+}
+function diskVersionFor(documentKey) {
+  "What `documentKey` was last seen at, falling back to the tab's own version for the tab itself."
+  return lee.diskVersions.get(documentKey) || (documentKey === (lee.path || lee.tabKey) ? lee.diskVersion : '') || '';
+}
 function draftBaseFor(documentKey) {
   const values = [...lee.draftBases].filter(([key]) => key === documentKey || key.startsWith(documentKey + ':'))
     .map(([, value]) => value).filter(Boolean);
-  return values[0] || lee.diskVersion || '';
+  return values[0] || diskVersionFor(documentKey) || '';
 }
 function writeDraftNow(key, payload) {
   const documentKey = payload.path || payload.title || lee.tabKey || key;
   if (!documentKey) return;
   const draftKey = payload.kind === 'notebook' ? `${documentKey}:${payload.id || payload.i}` : documentKey;
-  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, lee.diskVersion || '');
+  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, diskVersionFor(documentKey) || '');
   draftPut({key: draftKey, document: documentKey, payload, baseDiskVersion: lee.draftBases.get(draftKey),
             updatedAt: Date.now()}).catch(() => {});
 }
@@ -260,7 +275,7 @@ function persistDraft(key, payload) {
   const documentKey = payload.path || payload.title || lee.tabKey || key;
   if (!documentKey) return;
   const draftKey = payload.kind === 'notebook' ? `${documentKey}:${payload.id || payload.i}` : documentKey;
-  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, lee.diskVersion || '');
+  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, diskVersionFor(documentKey) || '');
   clearTimeout(lee.draftTimers.get(draftKey));
   lee.draftTimers.set(draftKey, setTimeout(() => {
     lee.draftTimers.delete(draftKey);
@@ -1519,7 +1534,7 @@ function takeSavedVersions(d) {
   refreshKernelPill();
   const versions = (d && d.versions) || {};
   for (const [key, version] of Object.entries(versions)) {
-    if (key === (lee.path || lee.tabKey)) { lee.diskVersion = version; lee.seenDiskVersion = version; }
+    recordDiskVersion(key, version);
     rebaseDrafts(key, version);
   }
 }
@@ -1600,6 +1615,7 @@ async function mountTab(expectedPath = '') {
   updateToolbarForKind(st.kind);
   rememberRecentTab(st);
   lee.diskVersion = st.disk_version || ''; lee.seenDiskVersion = lee.diskVersion;
+  recordDiskVersion(st.path || lee.path, lee.diskVersion);
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
@@ -1873,6 +1889,7 @@ async function mountSecondary(path, direction = 'vertical') {
     if (st.kind === 'notebook') secondaryNotebook(host, st);
     else if (st.kind === 'pdf') mountPdf($('.lee-split-body', host), st);
     else mountImage($('.lee-split-body', host), st);
+    recordDiskVersion(st.path || path, st.disk_version || '');
     lee.secondaryPath = path; lee.activeEditor = 'primary';
     localStorage.setItem('lee-editor-split', JSON.stringify({path, direction}));
     return;
@@ -1882,6 +1899,7 @@ async function mountSecondary(path, direction = 'vertical') {
   host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
   const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',lineNums:true,lintPath:st.path||'',completeUrl:'/complete',
     onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
+  recordDiskVersion(st.path || path, st.disk_version || '');
   lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
 }
 function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
@@ -3845,6 +3863,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
       const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
       noteSelfWrite(path);
+      // Without this the pane saved and learned nothing, so the next edit began from the same
+      // stale base and was refused all over again.
+      await rebaseDrafts(path, recordDiskVersion(path, d.disk_version || diskVersionFor(path)));
       lee.buffers.delete(path);lee.dirtyBuffers.delete(path);await clearDrafts(path);
       saveTabEl = $$('.lee-tab').find(x=>x.title===path); saveTabEl?.classList.remove('dirty');
       setTabSaveState(saveTabEl, 'saved');
@@ -3877,6 +3898,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       return false;
     }
     lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
+    recordDiskVersion(documentKey, lee.diskVersion);
     const key = documentKey;
     if (lee.kind === 'notebook') {
       for (const k of [...lee.buffers.keys()]) if (k.startsWith((lee.path || 'scratch') + ':')) {

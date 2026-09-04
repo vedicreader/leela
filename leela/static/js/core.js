@@ -21,6 +21,10 @@ const lee = {
   cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
+  // `diskVersion` is the tab on screen. A split pane holds a second file, whose version is its
+  // own: basing that pane's draft on the tab's version made every save look like somebody
+  // else's write. Keyed by path, and `diskVersion` stays the one the rest of the editor reads.
+  diskVersions: new Map(),
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
   shownProblems: new Set(),   // agent failures already written into the pane, so they show once
   agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
@@ -243,16 +247,27 @@ async function clearDrafts(documentKey) {
   });
   for (const key of [...lee.draftBases.keys()]) if (key === documentKey || key.startsWith(documentKey + ':')) lee.draftBases.delete(key);
 }
+function recordDiskVersion(path, version) {
+  "The version `path` is now at on disk. The tab on screen also moves the globals the editor reads."
+  if (!path || !version) return version || '';
+  lee.diskVersions.set(path, version);
+  if (path === (lee.path || lee.tabKey)) { lee.diskVersion = version; lee.seenDiskVersion = version; }
+  return version;
+}
+function diskVersionFor(documentKey) {
+  "What `documentKey` was last seen at, falling back to the tab's own version for the tab itself."
+  return lee.diskVersions.get(documentKey) || (documentKey === (lee.path || lee.tabKey) ? lee.diskVersion : '') || '';
+}
 function draftBaseFor(documentKey) {
   const values = [...lee.draftBases].filter(([key]) => key === documentKey || key.startsWith(documentKey + ':'))
     .map(([, value]) => value).filter(Boolean);
-  return values[0] || lee.diskVersion || '';
+  return values[0] || diskVersionFor(documentKey) || '';
 }
 function writeDraftNow(key, payload) {
   const documentKey = payload.path || payload.title || lee.tabKey || key;
   if (!documentKey) return;
   const draftKey = payload.kind === 'notebook' ? `${documentKey}:${payload.id || payload.i}` : documentKey;
-  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, lee.diskVersion || '');
+  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, diskVersionFor(documentKey) || '');
   draftPut({key: draftKey, document: documentKey, payload, baseDiskVersion: lee.draftBases.get(draftKey),
             updatedAt: Date.now()}).catch(() => {});
 }
@@ -260,7 +275,7 @@ function persistDraft(key, payload) {
   const documentKey = payload.path || payload.title || lee.tabKey || key;
   if (!documentKey) return;
   const draftKey = payload.kind === 'notebook' ? `${documentKey}:${payload.id || payload.i}` : documentKey;
-  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, lee.diskVersion || '');
+  if (!lee.draftBases.has(draftKey)) lee.draftBases.set(draftKey, diskVersionFor(documentKey) || '');
   clearTimeout(lee.draftTimers.get(draftKey));
   lee.draftTimers.set(draftKey, setTimeout(() => {
     lee.draftTimers.delete(draftKey);

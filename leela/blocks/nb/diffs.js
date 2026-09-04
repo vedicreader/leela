@@ -154,6 +154,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
       const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
       noteSelfWrite(path);
+      // Without this the pane saved and learned nothing, so the next edit began from the same
+      // stale base and was refused all over again.
+      await rebaseDrafts(path, recordDiskVersion(path, d.disk_version || diskVersionFor(path)));
       lee.buffers.delete(path);lee.dirtyBuffers.delete(path);await clearDrafts(path);
       saveTabEl = $$('.lee-tab').find(x=>x.title===path); saveTabEl?.classList.remove('dirty');
       setTabSaveState(saveTabEl, 'saved');
@@ -186,6 +189,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       return false;
     }
     lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
+    recordDiskVersion(documentKey, lee.diskVersion);
     const key = documentKey;
     if (lee.kind === 'notebook') {
       for (const k of [...lee.buffers.keys()]) if (k.startsWith((lee.path || 'scratch') + ':')) {

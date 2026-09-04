@@ -18,7 +18,7 @@ function takeSavedVersions(d) {
   refreshKernelPill();
   const versions = (d && d.versions) || {};
   for (const [key, version] of Object.entries(versions)) {
-    if (key === (lee.path || lee.tabKey)) { lee.diskVersion = version; lee.seenDiskVersion = version; }
+    recordDiskVersion(key, version);
     rebaseDrafts(key, version);
   }
 }
@@ -99,6 +99,7 @@ async function mountTab(expectedPath = '') {
   updateToolbarForKind(st.kind);
   rememberRecentTab(st);
   lee.diskVersion = st.disk_version || ''; lee.seenDiskVersion = lee.diskVersion;
+  recordDiskVersion(st.path || lee.path, lee.diskVersion);
   // Tab navigation always returns Run and Variables to that tab's private kernel.
   paintEnv('');
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
