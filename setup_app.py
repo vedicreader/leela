@@ -14,7 +14,7 @@ from fastcore.all import Path, first
 ROOT = Path(__file__).resolve().parent
 VENV = ROOT/'packaging'/'.app-venv'
 #: What the frozen app installs. The bundle is built from the lock over these.
-APP_EXTRAS = ('desktop', 'gateway', 'macapp')
+APP_EXTRAS = ('desktop', 'macapp')   # the gateway is a dependency now, not an extra
 #: Written into the bundle at build; read back to tell a stale install from a current one.
 STAMP = 'leela-build.json'
 # Framework builds on macOS, best first. Not newest first: the version here is the version the
@@ -121,8 +121,8 @@ def build_venv(python, force=False):
     run(exe, '-m', 'pip', 'install', '--upgrade', '--quiet', 'pip', 'setuptools', 'wheel')
     if (req := lock_requirements()) is not None:
         run(exe, '-m', 'pip', 'install', '--quiet', '--upgrade', '-r', req)
-        run(exe, '-m', 'pip', 'install', '--quiet', '--no-deps', '-e', f'{ROOT}[desktop,gateway,macapp]')
-    else: run(exe, '-m', 'pip', 'install', '--quiet', '-e', f'{ROOT}[desktop,gateway,macapp]')
+        run(exe, '-m', 'pip', 'install', '--quiet', '--no-deps', '-e', f'{ROOT}[desktop,macapp]')
+    else: run(exe, '-m', 'pip', 'install', '--quiet', '-e', f'{ROOT}[desktop,macapp]')
     return exe
 
 def lock_requirements(extras=APP_EXTRAS):

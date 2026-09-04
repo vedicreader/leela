@@ -78,8 +78,12 @@ def test_the_seam_prefers_the_public_name_wherever_gheasy_has_opened_one(monkeyp
     from leela.blocks.git.seam import _opened
     monkeypatch.setattr(repo, 'invalidate', lambda *a: 'public', raising=False)
     assert _opened(repo, 'invalidate')() == 'public'
-    monkeypatch.delattr(repo, 'invalidate', raising=False)
-    assert _opened(repo, 'invalidate') is repo._invalidate, 'and falls back where it has not'
+    # gheasy 0.0.10 opened every helper the seam reaches for, so there is no private name left on
+    # the installed one to fall back to. The fallback is what an older gheasy looks like.
+    from types import ModuleType
+    older = ModuleType('gheasy.repo')
+    older._invalidate = lambda *a: 'private'
+    assert _opened(older, 'invalidate')() == 'private', 'and falls back where it has not'
     with pytest.raises(ImportError): _opened(repo, 'no_such_helper')
 
 
