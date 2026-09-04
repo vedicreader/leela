@@ -676,10 +676,11 @@ def test_a_build_refuses_to_overwrite_the_app_that_is_running(tmp_path):
         # testing has nothing to answer. Asking the interpreter where it thinks it is covers both
         # that and a symlink it refuses to start through at all.
         if not pids:
-            seen = subprocess.run([str(inside), '-c', 'import sys; print(sys.executable)'],
-                                  capture_output=True, text=True).stdout.strip()
-            if seen != str(inside):
-                pytest.skip(f'this interpreter runs as {seen or "(it did not start)"}, so ps never names the bundle')
+            named = subprocess.run(['ps', '-o', 'command=', '-p', str(live.pid)],
+                                   capture_output=True, text=True).stdout.strip()
+            if not named.startswith(str(inside)):
+                pytest.skip(f'ps names this process {named or "(gone)"!r} rather than the bundle, '
+                            'so the fixture cannot hold on this interpreter')
         assert pids == [live.pid], f'the process running out of the bundle, and only it: {pids}'
     finally:
         for p in (mentions, live): p.terminate(); p.wait(5)
