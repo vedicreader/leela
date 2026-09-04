@@ -60,7 +60,7 @@ def find_pythons(roots=(), current=None):
 
 def bootstrap_src(name=None, port=8000, agent='restricted', token=True, kernel='ipykernel'):
     "The bootstrap cell source for a kernel that should host an inspector."
-    return _bootstrap_src(name, port, agent, token, kernel, SESSIONS, AGENT_SESSIONS)
+    return _bootstrap_src(name, port, agent, token, SESSIONS, AGENT_SESSIONS)
 
 def kernelspec_for(lang):
     "The installed kernelspec name that runs `lang`, or None. Leela's registry wins."

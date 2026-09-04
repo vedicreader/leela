@@ -99,17 +99,17 @@ def test_the_server_does_not_drag_the_kernels_scientific_stack_into_itself(tmp_p
     # for `pico=False`; that one is upstream's to fix and is not what this test is guarding.
     assert loaded <= {'IPython'}, f'the server imported {sorted(loaded)}'
 
-def test_finding_dhrishti_for_the_kernel_bootstrap_does_not_import_it(tmp_path):
-    "`bootstrap_src` needs dhrishti's path, and a path is not a reason to load 45MB."
+def test_finding_dhrishti_for_the_kernel_bootstrap_stays_light(tmp_path):
     src = textwrap.dedent('''
         import sys
         from leela.blocks.runtime.kernels import bootstrap_src
         s = bootstrap_src(name='probe', port=8000)
         assert 'dhrishti' in s, s[:200]
-        print('dhrishti' in sys.modules)
+        heavy = ('dhrishti.serving', 'dhrishti.core', 'IPython', 'numpy', 'pandas', 'fasthtml')
+        print(','.join(name for name in heavy if name in sys.modules))
     ''')
     env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path), 'PYTHONPATH': os.getcwd()}
     out = subprocess.run([sys.executable, '-c', src], capture_output=True, text=True,
                          timeout=300, env=env)
     assert out.returncode == 0, out.stderr[-2000:]
-    assert out.stdout.strip() == 'False', 'bootstrap_src imported dhrishti to find it'
+    assert out.stdout.strip() == ''

@@ -14,11 +14,10 @@ def test_the_kernel_spec_and_bootstrap_follow_the_chosen_launcher():
     assert s.metadata['supported_encryption'] == 'curve'
     s = _spec(kernel='ipymini')
     assert s.argv == [sys.executable, '-Xfrozen_modules=off', '-m', 'ipymini', '-f', '{connection_file}']
-    assert '_kernel_backend' in bootstrap_src(kernel='ipymini')
-    assert "'True'" in bootstrap_src(kernel='ipymini') or 'True' in bootstrap_src(kernel='ipymini')
-    src = bootstrap_src(kernel='ipykernel')
-    assert 'False' in src
+    assert bootstrap_src(kernel='ipymini') == bootstrap_src(kernel='ipykernel')
     src = bootstrap_src()
+    assert 'set_kernel_backend' not in src
+    assert 'get_ipython' not in src
     assert str(__import__('pathlib').Path(dhrishti.__file__).resolve()) in src
     assert "spec_from_file_location('dhrishti'" in src
     assert "del sys.modules[_n]" in src

@@ -1,6 +1,6 @@
-"What the server needs from dhrishti, without importing it. kunda's registry. See `docs/desktop.md`."
+"Registry discovery and inspector import errors."
 
-from kunda.registry import (IMPORT_FAULTS, PROFILES, SORTS, active, alive,  # noqa: F401
-                            import_failure, reg_dir)
+from dhrishti.registry import PROFILES, SORTS, active, alive, reg_dir  # noqa: F401
+from kunda.support import import_failure  # noqa: F401
 
 __all__ = ['PROFILES', 'SORTS', 'reg_dir', 'active', 'alive', 'import_failure']

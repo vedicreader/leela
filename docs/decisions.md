@@ -584,8 +584,8 @@ Chosen until a person chooses otherwise. The vault is out because a restore of i
 ## `leela/core/envs.py` `shell_env`
 `clean_env`, or the shell inherits the bundle's `PYTHONHOME` and hands it to whatever Python its startup files run. A `python` that dies on a path configuration takes the whole profile with it: fish exited 1 with nothing exported, so every key was missing in the app and present everywhere else.
 
-## `leela/core/inspectors.py` `IMPORT_FAULTS`
-What a kernel says when it cannot import the inspector, as opposed to when the inspector ran and something else went wrong. The second form is numpy's, whose ABI failure never names itself an ImportError until its eighteen lines of advice are over.
+## `kunda.support.import_failure`
+Leela uses Kunda's classifier for inspector import errors. It searches the whole error because NumPy may place `ImportError` after its ABI advice.
 
 ## `leela/core/keys.py` `the editor chords`
 CodeMirror's own keymap already answers these inside an editor. Naming them here is what puts them in the palette and the keys help, and it is the same command either way, so the chord a hand already knows keeps working. `indent_selection` re-indents to the syntax; the only chord it had was `mod+alt+backslash`, which nobody finds.
