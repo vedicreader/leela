@@ -8,7 +8,7 @@ from kunda.pythons import BUNDLE_ONLY, clean_env, strip_bundle
 from pullup.env import EnvError, EnvStore as _EnvStore, use_extra
 
 # Every pullup message about the cloud half names Leela's own extra, not pullup's.
-use_extra('leela[github]')
+use_extra('dockeasy')
 
 __all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env',
            'BUNDLE_ONLY', 'clean_env', 'strip_bundle',

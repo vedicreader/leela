@@ -67,33 +67,31 @@ dependencies = [
     "dhrishti>=0.1.3",
     "watchfiles>=1.0",
     "vishalakshi>=0.1.14",   # 0.1.14 is the retrieval PII gate, and `mark_pii` beside `mark_not_pii`
-]
-
-[project.optional-dependencies]
-ipymini = [] # compatibility extra; ipymini now ships with Leela
-lsp = ["pyright>=1.1.400"]
-github = [
-    "gheasy>=0.0.9",
+    # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
+    # hover paths, the pull request a branch belongs to, the workflow editor, and the kernels the
+    # gateway serves -- so they are dependencies. The guards below them stay: they still have a
+    # partial install and a capped version to report.
+    "pyright>=1.1.400",
     "dockeasy>=0.0.5",
     "vpseasy>=0.0.18",
     "cfeasy>=0.0.4",
     "python-dotenv>=1.0.0",
     "keyring>=25.0.0",
-]
-gateway = [
     "jupygate>=0.0.1",
     # 0.2.8 made something the gateway does `async for` over a coroutine, so a kernel there
     # executes nothing: "'async for' requires an object with __aiter__". Capped until fixed.
     "jupyasyncclient>=0.2.1,!=0.2.8",
     "jupywire>=0.1.1",
 ]
+
+[project.optional-dependencies]
+ipymini = [] # compatibility extra; ipymini now ships with Leela
 # On-device inference. Kept out of the default install and out of the desktop bundle because it is
 # the heaviest thing Leela can depend on; `RUNTIME_EXTRAS` installs one of these from the settings
 # pane, pinned to the rishi the bundle was frozen with.
 # `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
 # dependency, so naming it here would install nothing and warn.
 local = ["rishi[mlx,llama]==0.1.36"]
-all = ["leela[github,gateway,lsp,local]"]
 # The native window and the two freezers, through kavacha, which installs each platform's own
 # bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
 desktop = ["kavacha[window]>=0.0.1"]
@@ -120,11 +118,8 @@ path = "leela/__init__.py"
 dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
-    "leela[all]",
+    "leela[local]",
     "rishi[all]==0.1.36",
-    {include-group = "test"},
-]
-test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "nbformat>=5.10.0",

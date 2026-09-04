@@ -11,9 +11,8 @@ This repository is the shell around that engine: workspace, notebook, agent, fro
 ## Install
 
 ```sh
-pip install leela                # base
-pip install "leela[github]"      # workflows, releases, deploys (gheasy, dockeasy)
-pip install "leela[gateway]"     # jupygate kernel transport
+pip install leela                # everything Leela imports, the gateway and the GitHub half included
+pip install "leela[local]"       # + on-device inference (mlx, llama). Large, and installable later
 ```
 
 ## Use

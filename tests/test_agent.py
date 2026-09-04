@@ -41,6 +41,7 @@ from leela.blocks.agent.threads import Feed, TurnError
 
 class MemHost_agent(NullHost, CodeHost):
     "A host whose folders live in a dict, so file tools can be driven without touching disk."
+    writes = True    # unlike the `NullHost` it inherits from, `write` really writes
     def __init__(self, files=None, root='/proj'):
         super().__init__([root])
         self.files, self.root = dict(files or {}), root

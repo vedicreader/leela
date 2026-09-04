@@ -16,6 +16,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
       - name: install
-        run: uv pip install --system -e . --group test
+        run: uv pip install --system -e . --group dev
       - name: test
         run: pytest tests -q

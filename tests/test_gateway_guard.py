@@ -1,4 +1,4 @@
-"The `[gateway]` extra's guard. No `importorskip`: a partial install is what these cover."
+"The gateway guard. No `importorskip`: a partial install is what these cover."
 import asyncio, sys
 
 import pytest
@@ -11,10 +11,10 @@ def _installed(monkeypatch):
     import importlib
     monkeypatch.setattr(importlib, 'import_module', lambda name: None)
 
-def test_a_missing_jupyasyncclient_names_the_extra_instead_of_raising_importerror(monkeypatch):
+def test_a_missing_jupyasyncclient_names_itself_instead_of_raising_importerror(monkeypatch):
     _missing(monkeypatch, 'jupyasyncclient')
     with pytest.raises(RuntimeError) as e: check_gateway_deps()
-    assert 'leela[gateway]' in str(e.value) and 'jupyasyncclient' in str(e.value)
+    assert 'jupyasyncclient' in str(e.value)
 
 def test_the_service_refuses_at_startup_so_serve_ide_can_fall_back_to_the_direct_transport(monkeypatch):
     "`serve_ide` catches `(ImportError, RuntimeError)` around this call and only around this call."
@@ -26,7 +26,7 @@ def test_a_kernel_start_reports_the_same_way_as_the_service(monkeypatch):
     _missing(monkeypatch, 'jupyasyncclient')
     k = GatewayKernel.__new__(GatewayKernel)
     with pytest.raises(RuntimeError) as e: asyncio.run(k.start())
-    assert 'leela[gateway]' in str(e.value)
+    assert 'jupyasyncclient' in str(e.value)
 
 def test_a_capped_out_version_is_named_rather_than_left_to_execute_nothing(monkeypatch):
     "jupyasyncclient 0.2.8 makes the gateway `async for` over a coroutine, so a kernel there runs nothing."

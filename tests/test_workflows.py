@@ -103,7 +103,7 @@ def test_status_says_which_piece_is_missing(tmp_path):
     if st['gheasy']:
         assert st['repo'] == '' and 'no GitHub remote' in st['why']
     else:
-        assert 'leela[github]' in st['why'], 'the message has to say what to install'
+        assert 'gheasy' in st['why'], 'the message has to say what to install'
 
 def test_generating_without_a_gheasy_config_is_refused_clearly(tmp_path):
     with pytest.raises(WorkflowError, match='no .gheasy/config.json|leela\\[github\\]'):

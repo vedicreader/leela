@@ -9,7 +9,7 @@ from gheasy.repo import GitError
 
 __all__ = ['pr_context', 'hub_available']
 
-MISSING = ('Install leela[github] to see the pull request a branch belongs to, whether its '
+MISSING = ('Install gheasy to see the pull request a branch belongs to, whether its '
            'base has moved, and whether its checks are green.')
 
 def hub_available():
