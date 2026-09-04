@@ -1361,6 +1361,9 @@ kbd {
 .lee-agent-state-onboard .lee-input { margin: 0; }.lee-agent-state-onboard.configured { background: var(--lee-bg1); }
 .lee-agent-state-controls { display: flex; align-items: end; gap: 6px; padding: 9px 12px 0; }
 .lee-agent-state-controls label { display: grid; flex: 1; gap: 4px; color: var(--lee-fg4); font-size: 9px; text-transform: uppercase; }
+/* the layer toggle is a checkbox beside its word, not a stacked field like the two next to it */
+.lee-agent-state-controls label.lee-state-enabled { display: flex; flex: none; align-items: center; gap: 5px; padding-bottom: 5px; cursor: pointer; }
+.lee-agent-state-controls label.lee-state-enabled input { margin: 0; }
 .lee-agent-state-suggestion { padding: 3px 7px; border: 1px solid var(--lee-aqua); border-radius: 3px; background: transparent; color: var(--lee-aqua); cursor: pointer; font: 9px/1.3 var(--lee-mono); }
 .lee-response-revision { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 3px 4px 12px; padding-top: 7px; border-top: 1px solid var(--lee-border); }
 /* three controls in a narrow column used to squeeze the label to one character per line */

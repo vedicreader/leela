@@ -1213,6 +1213,23 @@ def test_the_log_helper_refuses_a_path_outside_the_suites_config_dir(tmp_path, c
         history_file(elsewhere)
 
 
+def test_a_disabled_state_layer_keeps_its_text_and_stays_out_of_the_briefing(tmp_path):
+    """The toggle silences a layer for one piece of work without writing it again, so what changes
+    has to be the briefing and not the text. Clearing is the other one: empty text, and gone.
+    """
+    from leela.app import _state_text
+    ws = Workspace(roots=[tmp_path])
+    try:
+        ws.ai.set_state('never delete anything', layer='project')
+        assert 'never delete anything' in _state_text(ws)
+        ws.ai.set_state('never delete anything', layer='project', enabled=False)
+        assert ws.agent_state_layers['project']['text'] == 'never delete anything', 'the text is kept'
+        assert 'never delete anything' not in _state_text(ws), 'and none of it reaches the briefing'
+        ws.ai.set_state('', layer='project')
+        assert ws.agent_state_layers['project']['text'] == '', 'and clearing empties it outright'
+    finally: ws.threads.shutdown()
+
+
 def test_attention_names_the_active_conversations_state_even_where_the_list_omits_it(tmp_path):
     """The pane clears `agentBusy` on the stream's `done`, and a stream that drops as the turn ends
     never sends one, so it needs the server's own view to correct itself against. `dicts` leaves out

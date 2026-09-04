@@ -945,6 +945,8 @@ async function leeAgentState() {
       `<button class="lee-btn go" data-bootstrap>Generate my charter</button><button class="lee-btn" data-template>Use blank template</button></section>` +
       `<div class="lee-agent-state-grid"><section><div class="lee-agent-state-controls"><label>Where this applies<select class="lee-select" id="agentstatelayer">` +
       `${['organization','project','task','preferences','branch','ephemeral'].map(x => `<option value="${x}"${x === 'task' ? ' selected' : ''}>${x}</option>`).join('')}</select></label>` +
+      `<label class="lee-state-enabled" title="Silence this layer without deleting what it holds">` +
+      `<input type="checkbox" id="agentstateenabled"><span>Enabled</span></label>` +
       `<button class="lee-btn" data-update>Refresh from code</button><button class="lee-btn" data-diagnose>Check state</button></div>` +
       `<label class="lee-fieldlabel">Title<input class="lee-input" id="agentstatetitle" value="Working state"></label>` +
       `<div class="lee-state-editor-head"><span>Markdown charter</span><button class="lee-btn" data-add-rule>Add rule</button>` +
@@ -962,6 +964,7 @@ async function leeAgentState() {
       `<div class="lee-agent-state-list">${rows || '<div class="lee-dim">No saved states yet.</div>'}</div></div></section></div>` +
       `<div class="lee-mfoot"><button class="lee-btn go" data-save>Save to memory + activate</button>` +
       `<button class="lee-btn" data-activate>Activate without saving</button>` +
+      `<button class="lee-btn warn" data-clear>Clear this layer</button>` +
       `<span class="lee-dim">Drag the lower-right edge to resize · double-click the title to expand.</span></div>`,
       null, null, {className: 'lee-agent-state-modal', storageKey: 'agent-state'});
     const text = $('#agentstatetext', box), layer = $('#agentstatelayer', box);
@@ -986,8 +989,31 @@ async function leeAgentState() {
       const tool = template.tools.find(t => t.name === b.dataset.toolName);
       insertStateMarkdown(`\n- ${tool.name} → ${tool.description}`); showReference('preview');
     });
-    const loadLayer = () => { text.value = saved.layers?.[layer.value]?.text || (layer.value === 'task' ? draft.state : ''); };
+    const layers = {...(saved.layers || {})};
+    const layerRow = () => layers[layer.value] || {text: '', enabled: true};
+    const enabledBox = $('#agentstateenabled', box);
+    // The badge names the state in force. Nothing in force is nothing to name.
+    const anyActive = () => Object.values(layers).some(l => String(l.text || '').trim() && l.enabled !== false);
+    const paintBadge = () => {
+      const badge = $('#agentnames');
+      if (badge && !anyActive()) { badge.textContent = ''; badge.title = ''; }
+    };
+    const loadLayer = () => {
+      text.value = layerRow().text || (layer.value === 'task' ? draft.state : '');
+      enabledBox.checked = layerRow().enabled !== false;
+    };
     loadLayer(); layer.onchange = loadLayer;
+    /* Off rather than gone, so a layer can be silenced for one piece of work and put back without
+       being written again. It sends the layer's stored text and not the editor's: a draft nobody
+       activated must not reach the briefing because a checkbox moved. */
+    enabledBox.onchange = async () => {
+      const row = layerRow(), on = enabledBox.checked;
+      try {
+        await post('/agent/state/activate', {text: row.text || '', layer: layer.value, enabled: on});
+        layers[layer.value] = {...row, text: row.text || '', enabled: on};
+        paintBadge(); status(`${layer.value} layer ${on ? 'enabled' : 'disabled'}`, 'ok');
+      } catch (e) { enabledBox.checked = !on; status(e.message || String(e), 'err'); }
+    };
     $('[data-template]', box).onclick = async () => {
       const d = await api('/agent/state/template'); text.value = d.template + '\n\n' + d.catalog;
       $('[data-state-help]', box).textContent = 'Template loaded. Replace bracketed prompts, then activate or save it.';
@@ -1046,6 +1072,24 @@ async function leeAgentState() {
       await post('/agent/state/activate', {text: text.value, layer: layer.value});
       markActive(); status('starting state activated without saving', 'ok');
     });
+    /* Not through `attempt`, which closes the box on success: emptying a layer is a thing to watch
+       happen, and the editor showing what it now holds is the whole of the confirmation. */
+    $('[data-clear]', box).onclick = async () => {
+      const el = $('[data-clear]', box), label = el.textContent;
+      el.disabled = true; el.textContent = 'Working…';
+      try {
+        await post('/agent/state/activate', {text: '', layer: layer.value, enabled: true});
+        layers[layer.value] = {text: '', enabled: true, source: 'user'};
+        if (layer.value === 'task') draft.state = '';   // or leaving and returning refills it
+        text.value = ''; enabledBox.checked = true; paintBadge();
+        $('[data-state-help]', box).textContent = `The ${layer.value} layer is empty; nothing from it reaches the briefing.`;
+        status(`${layer.value} layer cleared`, 'ok');
+      } catch (e) {
+        const why = e.message || String(e);
+        $('[data-state-help]', box).textContent = why; status(why, 'err');
+      }
+      finally { el.disabled = false; el.textContent = label; }
+    };
     const bindStateRows = () => $$('.lee-agent-state-row', box).forEach(row => row.onclick = async () => {
       const compared = await post('/agent/state/compare', {id: row.dataset.id, current: text.value});
       const review = modal(`<div class="lee-mhead">Compare state revision<span class="sub">choose how this revision enters ${esc(layer.value)}</span></div>` +
