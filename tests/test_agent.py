@@ -2928,9 +2928,16 @@ def _wait_kernel(ws, want=True, secs=10):
 def test_a_turn_starts_a_kernel_when_the_window_has_none(ws):
     """The agent's own tools run Python in an overlay over the tab's kernel. Asked for a turn in a
     window where nothing had been run yet, there was no kernel to overlay, and the tool reported that
-    it could not reach the inspector rather than starting one."""
+    it could not reach the inspector rather than starting one.
+
+    Scripted, because what is under test is the kernel. The `ws` fixture fakes kernels and not the
+    model, so the turn reached whatever this machine resolves to -- on-device LiteRT here, which
+    asked for a 4GB KV cache and took the whole pytest process down with it in native code.
+    """
     from starlette.testclient import TestClient
     from leela.app import ide_app
+    from tests.fakemodel import Step, install
+    install(ws, [Step(text='hello')], token_delay=0)
     assert ws.runtime_peek() is None, 'precondition: nothing has been run in this window'
     with TestClient(ide_app(ws)) as client:
         client.post('/agent/turn', json={'prompt': 'hello'})
@@ -2940,6 +2947,8 @@ def test_a_turn_leaves_a_running_kernel_alone(ws):
     "A kernel that is already up is the one the overlay belongs to, so nothing else is started."
     from starlette.testclient import TestClient
     from leela.app import ide_app
+    from tests.fakemodel import Step, install
+    install(ws, [Step(text='ok')], token_delay=0)   # the kernel is under test, not the model
     with TestClient(ide_app(ws)) as client:
         client.post('/agent/turn', json={'prompt': 'first'})
         first = _wait_kernel(ws)

@@ -32,8 +32,8 @@ dependencies = [
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.0.6",   # 0.0.6 is `read_page` and `tool_groups`
-    "gheasy>=0.0.9",   # `blocks/git/seam.py` takes either spelling of the six helpers
+    "shalya>=0.0.7",   # 0.0.7 is `Host.writes`, and `tool_groups` with no host to ask
+    "gheasy>=0.0.10",  # 0.0.10 opened the six helpers; `blocks/git/seam.py` still takes either
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
     # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
@@ -41,7 +41,7 @@ dependencies = [
     # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
     "kavacha>=0.0.2",
     "kunda>=0.0.2",
-    "pullup>=0.0.4",
+    "pullup>=0.0.6",
     "exhash>=0.4.10",
     "fossick>=0.1.17",   # caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
     "ipykernel>=7.3.0",        # launched, not imported: leela's own venv is a kernel target
@@ -64,7 +64,7 @@ dependencies = [
     # module imports rich, which ramabana declares nowhere. Ours to name while that is true.
     "rich>=13.0",
     "pyyaml>=6.0",
-    "dhrishti>=0.1.3",
+    "dhrishti>=0.1.4",
     "watchfiles>=1.0",
     "vishalakshi>=0.1.14",   # 0.1.14 is the retrieval PII gate, and `mark_pii` beside `mark_not_pii`
     # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
@@ -144,9 +144,7 @@ constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
-# The checkouts beside this one; drop a line to take the published package.
-ramabana = { path = "../ramabana", editable = true }
-shalya = { path = "../shalya", editable = true }
-kavacha = { path = "../kavacha", editable = true }
-kunda = { path = "../kunda", editable = true }
-pullup = { path = "../pullup", editable = true }
+# The six packages Leela's own code was lifted into are taken from PyPI, not from the checkouts
+# beside this one. `setup_app.lock_requirements` exports this lock as the app's requirements, and
+# an editable path there builds a bundle that depends on directories only this machine has.
+# Add `name = { path = "../name", editable = true }` back while working across two of them.

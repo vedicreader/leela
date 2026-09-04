@@ -14,6 +14,18 @@ resolution-markers = [
 constraints = [{ name = "mcp", specifier = "<2" }]
 
 [[package]]
+name = "agent-client-protocol"
+version = "0.12.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/95/2c28ca34e545ce0282e88272aa3a8abdf8f3f926a0492f567ea11acd071b/agent_client_protocol-0.12.1.tar.gz", hash = "sha256:9963ccb590ed96d7dc542c9c023e90676fc76b1c6562e21a9ee112f4fbcb0095", size = 130605, upload-time = "2026-08-16T14:08:22.545Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/21/61/0a2186c8ca53cf464767d4c4fb7fd9e23f48ce4547c2fa0d1c83a4d52410/agent_client_protocol-0.12.1-py3-none-any.whl", hash = "sha256:aaf3cc301ed87d9e2c4ccb91adfe1cd58784355f6ce7e513f50e7ca2391862ef", size = 85929, upload-time = "2026-08-16T14:08:21.307Z" },
+]
+
+[[package]]
 name = "aidialog"
 version = "0.0.22"
 source = { registry = "https://pypi.org/simple" }
@@ -746,7 +758,7 @@ name = "clr-loader"
 version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform == 'win32'" },
+    { name = "cffi" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e4/46/7eea92b6aa2d68af78e049cbecec5f757f1aad44ecdecdc16bbad7eead51/clr_loader-0.3.1.tar.gz", hash = "sha256:2e073e9aaf49d1ae2f56ecba27987ad5fb68be4bcd9dd34a5bed8f0e4e128366", size = 86805, upload-time = "2026-04-18T17:49:44.287Z" }
 wheels = [
@@ -1012,7 +1024,7 @@ wheels = [
 
 [[package]]
 name = "dhrishti"
-version = "0.1.3"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -1022,9 +1034,9 @@ dependencies = [
     { name = "python-fasthtml" },
     { name = "safepyrun" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/08/e736d49633ee70fd950d7b8f78044d3e8a1c1fdf81027c21f9ce6881f0db/dhrishti-0.1.3.tar.gz", hash = "sha256:471c617e97f35e3d535f028e73dce3fb6cc20f9cc74a33a7fcb3abdd504f90ad", size = 32131, upload-time = "2026-08-17T03:34:27.134Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/73/f2467fce65e9a25b67eb6e6823ecf32ed6a69504f47eed257859ae5f1e0f/dhrishti-0.1.5.tar.gz", hash = "sha256:c2cc9ce2d88fa9a517a10027e6e6876a9f4c0d29b481d5076e5a7d38f2c109f9", size = 31663, upload-time = "2026-09-04T02:45:11.028Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/0a/2919605561f8a13a33b789911cac261f852472ca9b63ae8a18408a86e485/dhrishti-0.1.3-py3-none-any.whl", hash = "sha256:d338ca94c4125dca9b278410c223476c274a67b9f13a8e332335c5622ff36652", size = 35416, upload-time = "2026-08-17T03:34:25.837Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/ef/d378868b72226c0a2b3c884e2ca55c79f28208416fa81614b6b2d2f2e484/dhrishti-0.1.5-py3-none-any.whl", hash = "sha256:7a4b8fc847e210f37833ecee02451e1c6995518ad5d3295a967daae03bfb4bbc", size = 35082, upload-time = "2026-09-04T02:45:09.795Z" },
 ]
 
 [[package]]
@@ -1145,11 +1157,11 @@ name = "fastapi"
 version = "0.141.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "annotated-doc", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pydantic", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "starlette", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "typing-extensions", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "typing-inspection", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8a/02/91e3416a8fdd715abb903a952a6bec7cdd8d14eed55d415fc8595524c319/fastapi-0.141.1.tar.gz", hash = "sha256:e8822fc40db1e1858054d7a949a888695bc9bdce70139178e33bd2871a453ca1", size = 425799, upload-time = "2026-07-29T17:18:05.568Z" }
 wheels = [
@@ -1419,7 +1431,7 @@ wheels = [
 
 [[package]]
 name = "gheasy"
-version = "0.0.9"
+version = "0.0.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cyclopts" },
@@ -1428,9 +1440,9 @@ dependencies = [
     { name = "ruamel-yaml" },
     { name = "tomlkit" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/d4/a47bda353869dbd5c13fcd55049a444e9a1b68438c927d4d3aec792952d0/gheasy-0.0.9.tar.gz", hash = "sha256:28927a798cdd2547aa637ad2fed8d610d2d5fac9e556bdedddf287842cfe404f", size = 53393, upload-time = "2026-08-27T09:17:07.245Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/4d/a47031eda26dcda6a07b2260e1e9641c21363532e9e6f5741db1b2b10c69/gheasy-0.0.10.tar.gz", hash = "sha256:657dc5fc40c5ea962ad2d6d4b07b1b7eace2cd383d1723ee4de954b09f36361f", size = 59059, upload-time = "2026-09-04T00:15:43.04Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/25/0903913e1bdd75e373194c1a54a15dee6badc75345d97f2d59c14e225d81/gheasy-0.0.9-py3-none-any.whl", hash = "sha256:e426a658601fc9f6ab320bdbb1325995cb246e32394df627288bb33951a21d50", size = 54773, upload-time = "2026-08-27T09:17:06.114Z" },
+    { url = "https://files.pythonhosted.org/packages/48/36/66cf858718dad5ade90bb1df76d900f77aef25027b6c869c5c9fee490f49/gheasy-0.0.10-py3-none-any.whl", hash = "sha256:6bf88f60435f2f25ca48c856e2d4d4d5e74b6133b3a7fcfd6a5a5088a830cf30", size = 61307, upload-time = "2026-09-04T00:15:41.896Z" },
 ]
 
 [[package]]
@@ -1585,8 +1597,8 @@ name = "httpcore2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "h11", marker = "sys_platform != 'emscripten'" },
-    { name = "truststore", marker = "sys_platform != 'emscripten'" },
+    { name = "h11" },
+    { name = "truststore" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/be/ad/f4f0e57345f1870f3e8cb624e058d7eca6e5a27d33bcc3311d9b618734cd/httpcore2-2.12.0.tar.gz", hash = "sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648", size = 67548, upload-time = "2026-08-18T13:22:08.211Z" }
 wheels = [
@@ -2205,9 +2217,14 @@ wheels = [
 
 [[package]]
 name = "kavacha"
-source = { editable = "../kavacha" }
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f5/ee/32a426d996ab639adf6edecc7b0c964db2d1e0750dd85b78b24772bb87fc/kavacha-0.0.2.tar.gz", hash = "sha256:daff924bc411b860d907dd6d89304afdce5f4ecf38906907895c6985ec0f04e5", size = 24062, upload-time = "2026-09-04T05:35:27.501Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/a7/b3dc01dbab9bba343bc124faca94e5e24383beb6298163ac60244b966c57/kavacha-0.0.2-py3-none-any.whl", hash = "sha256:c2734ad895bc5cd278078773195b9a9280a8ad5f836b4da7c230641377b6d01e", size = 27822, upload-time = "2026-09-04T05:35:26.052Z" },
 ]
 
 [package.optional-dependencies]
@@ -2233,24 +2250,6 @@ windows = [
     { name = "pythonnet", marker = "sys_platform == 'win32'" },
     { name = "pywebview" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastcore", specifier = ">=1.8.17" },
-    { name = "kavacha", extras = ["icons", "window"], marker = "extra == 'macapp'" },
-    { name = "kavacha", extras = ["icons", "window"], marker = "extra == 'windows'" },
-    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=2.4.6" },
-    { name = "pillow", marker = "extra == 'dev'", specifier = ">=10.0" },
-    { name = "pillow", marker = "extra == 'icons'", specifier = ">=10.0" },
-    { name = "py2app", marker = "sys_platform == 'darwin' and extra == 'macapp'", specifier = ">=0.28.8" },
-    { name = "py2exe", marker = "sys_platform == 'win32' and extra == 'windows'", specifier = ">=0.14.2" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin' and extra == 'window'", specifier = ">=10.1" },
-    { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin' and extra == 'window'", specifier = ">=10.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pythonnet", marker = "sys_platform == 'win32' and extra == 'window'", specifier = ">=3.0.3" },
-    { name = "pywebview", marker = "extra == 'window'", specifier = ">=5.3" },
-]
-provides-extras = ["window", "icons", "macapp", "windows", "dev"]
 
 [[package]]
 name = "kernmini"
@@ -2390,28 +2389,22 @@ wheels = [
 
 [[package]]
 name = "kunda"
-source = { editable = "../kunda" }
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "dhrishti" },
     { name = "fastcore" },
+    { name = "ipykernel" },
+    { name = "ipymini" },
+    { name = "jupyasyncclient" },
+    { name = "jupygate" },
     { name = "jupyter-client" },
+    { name = "jupywire" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "dhrishti", marker = "extra == 'inspect'", specifier = ">=0.1.3" },
-    { name = "fastcore", specifier = ">=1.8.17" },
-    { name = "ipykernel", marker = "extra == 'kernels'", specifier = ">=6.29" },
-    { name = "ipymini", marker = "extra == 'kernels'", specifier = ">=0.1.17" },
-    { name = "jupyasyncclient", marker = "extra == 'gateway'", specifier = ">=0.2.1,!=0.2.8" },
-    { name = "jupygate", marker = "extra == 'gateway'", specifier = ">=0.0.1" },
-    { name = "jupyter-client", specifier = ">=8.6" },
-    { name = "jupywire", marker = "extra == 'gateway'", specifier = ">=0.1.1" },
-    { name = "kunda", extras = ["kernels"], marker = "extra == 'dev'" },
-    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=2.4.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/a9/8d/e8525ed6711da3c1155686071a7c9788cf36bba1b5ef5744551c3154a319/kunda-0.0.2.tar.gz", hash = "sha256:e7c5bc2f185e7bd32ee7198536814c1c96320225f5d25e7b3245b82006de3439", size = 34046, upload-time = "2026-09-04T03:30:08.296Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/fe/20110d3c299852c734fc8f33e6565f992722f1a87e2e0ab368e3ff4d48f2/kunda-0.0.2-py3-none-any.whl", hash = "sha256:6b9520676cbb82da8a9c523edb111cf82c88478e8a0c93a40b2f8c81c7ed0d2e", size = 29325, upload-time = "2026-09-04T03:30:07.022Z" },
 ]
-provides-extras = ["kernels", "inspect", "gateway", "dev"]
 
 [[package]]
 name = "lark"
@@ -2426,7 +2419,9 @@ wheels = [
 name = "leela"
 source = { editable = "." }
 dependencies = [
+    { name = "cfeasy" },
     { name = "dhrishti" },
+    { name = "dockeasy" },
     { name = "exhash" },
     { name = "fastcore" },
     { name = "fossick" },
@@ -2434,8 +2429,12 @@ dependencies = [
     { name = "httpx2" },
     { name = "ipykernel" },
     { name = "ipymini" },
+    { name = "jupyasyncclient" },
+    { name = "jupygate" },
     { name = "jupyter-client" },
+    { name = "jupywire" },
     { name = "kavacha" },
+    { name = "keyring" },
     { name = "koshas" },
     { name = "kunda" },
     { name = "litesearch" },
@@ -2444,6 +2443,8 @@ dependencies = [
     { name = "packaging" },
     { name = "ptymini" },
     { name = "pullup" },
+    { name = "pyright" },
+    { name = "python-dotenv" },
     { name = "python-fasthtml" },
     { name = "pyyaml" },
     { name = "ramabana", extra = ["cli"] },
@@ -2453,44 +2454,16 @@ dependencies = [
     { name = "starlette" },
     { name = "uvicorn" },
     { name = "vishalakshi" },
+    { name = "vpseasy" },
     { name = "watchfiles" },
 ]
 
 [package.optional-dependencies]
-all = [
-    { name = "cfeasy" },
-    { name = "dockeasy" },
-    { name = "gheasy" },
-    { name = "jupyasyncclient" },
-    { name = "jupygate" },
-    { name = "jupywire" },
-    { name = "keyring" },
-    { name = "pyright" },
-    { name = "python-dotenv" },
-    { name = "rishi", extra = ["llama", "mlx"] },
-    { name = "vpseasy" },
-]
 desktop = [
     { name = "kavacha", extra = ["window"] },
 ]
-gateway = [
-    { name = "jupyasyncclient" },
-    { name = "jupygate" },
-    { name = "jupywire" },
-]
-github = [
-    { name = "cfeasy" },
-    { name = "dockeasy" },
-    { name = "gheasy" },
-    { name = "keyring" },
-    { name = "python-dotenv" },
-    { name = "vpseasy" },
-]
 local = [
     { name = "rishi", extra = ["llama", "mlx"] },
-]
-lsp = [
-    { name = "pyright" },
 ]
 macapp = [
     { name = "kavacha", extra = ["macapp", "window"] },
@@ -2503,7 +2476,7 @@ windows = [
 dev = [
     { name = "fastaistyle" },
     { name = "fastship" },
-    { name = "leela", extra = ["all"] },
+    { name = "leela", extra = ["local"] },
     { name = "nbformat" },
     { name = "pandas" },
     { name = "pillow" },
@@ -2514,83 +2487,60 @@ dev = [
     { name = "rishi", extra = ["all"] },
     { name = "setuptools" },
 ]
-test = [
-    { name = "nbformat" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "playwright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pywebview" },
-    { name = "rishi" },
-    { name = "setuptools" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "cfeasy", marker = "extra == 'all'", specifier = ">=0.0.4" },
-    { name = "cfeasy", marker = "extra == 'github'", specifier = ">=0.0.4" },
-    { name = "dhrishti", specifier = ">=0.1.3" },
-    { name = "dockeasy", marker = "extra == 'all'", specifier = ">=0.0.5" },
-    { name = "dockeasy", marker = "extra == 'github'", specifier = ">=0.0.5" },
+    { name = "cfeasy", specifier = ">=0.0.4" },
+    { name = "dhrishti", specifier = ">=0.1.4" },
+    { name = "dockeasy", specifier = ">=0.0.5" },
     { name = "exhash", specifier = ">=0.4.10" },
     { name = "fastcore", specifier = ">=1.7.0" },
     { name = "fossick", specifier = ">=0.1.17" },
-    { name = "gheasy", specifier = ">=0.0.9" },
-    { name = "gheasy", marker = "extra == 'all'", specifier = ">=0.0.9" },
-    { name = "gheasy", marker = "extra == 'github'", specifier = ">=0.0.9" },
+    { name = "gheasy", specifier = ">=0.0.10" },
     { name = "httpx2", specifier = ">=2.10.0" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "ipymini", specifier = ">=0.0.1" },
-    { name = "jupyasyncclient", marker = "extra == 'all'", specifier = ">=0.2.1,!=0.2.8" },
-    { name = "jupyasyncclient", marker = "extra == 'gateway'", specifier = ">=0.2.1,!=0.2.8" },
-    { name = "jupygate", marker = "extra == 'all'", specifier = ">=0.0.1" },
-    { name = "jupygate", marker = "extra == 'gateway'", specifier = ">=0.0.1" },
+    { name = "jupyasyncclient", specifier = ">=0.2.1,!=0.2.8" },
+    { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
-    { name = "jupywire", marker = "extra == 'all'", specifier = ">=0.1.1" },
-    { name = "jupywire", marker = "extra == 'gateway'", specifier = ">=0.1.1" },
-    { name = "kavacha", editable = "../kavacha" },
-    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", editable = "../kavacha" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", editable = "../kavacha" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", editable = "../kavacha" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", editable = "../kavacha" },
-    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", editable = "../kavacha" },
-    { name = "keyring", marker = "extra == 'all'", specifier = ">=25.0.0" },
-    { name = "keyring", marker = "extra == 'github'", specifier = ">=25.0.0" },
+    { name = "jupywire", specifier = ">=0.1.1" },
+    { name = "kavacha", specifier = ">=0.0.2" },
+    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.1" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.1" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.1" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.1" },
+    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.1" },
+    { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.7" },
-    { name = "kunda", editable = "../kunda" },
+    { name = "kunda", specifier = ">=0.0.2" },
     { name = "litesearch", specifier = ">=0.1.34" },
     { name = "mdhtml", specifier = ">=0.1.21" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "packaging", specifier = ">=24.0" },
     { name = "ptymini", specifier = ">=0.0.5" },
-    { name = "pullup", editable = "../pullup" },
-    { name = "pyright", marker = "extra == 'all'", specifier = ">=1.1.400" },
-    { name = "pyright", marker = "extra == 'lsp'", specifier = ">=1.1.400" },
-    { name = "python-dotenv", marker = "extra == 'all'", specifier = ">=1.0.0" },
-    { name = "python-dotenv", marker = "extra == 'github'", specifier = ">=1.0.0" },
+    { name = "pullup", specifier = ">=0.0.6" },
+    { name = "pyright", specifier = ">=1.1.400" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], editable = "../ramabana" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.1.33" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'all'", specifier = "==0.1.36" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.36" },
-    { name = "shalya", editable = "../shalya" },
+    { name = "shalya", specifier = ">=0.0.7" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "vishalakshi", specifier = ">=0.1.14" },
-    { name = "vpseasy", marker = "extra == 'all'", specifier = ">=0.0.18" },
-    { name = "vpseasy", marker = "extra == 'github'", specifier = ">=0.0.18" },
+    { name = "vpseasy", specifier = ">=0.0.18" },
     { name = "watchfiles", specifier = ">=1.0" },
 ]
-provides-extras = ["all", "desktop", "gateway", "github", "ipymini", "local", "lsp", "macapp", "windows"]
+provides-extras = ["desktop", "ipymini", "local", "macapp", "windows"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "fastaistyle", specifier = ">=0.0.17" },
     { name = "fastship", specifier = ">=0.1.2" },
-    { name = "leela", extras = ["all"], editable = "." },
+    { name = "leela", extras = ["local"], editable = "." },
     { name = "nbformat", specifier = ">=5.10.0" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pillow", specifier = ">=10.0" },
@@ -2600,17 +2550,6 @@ dev = [
     { name = "pywebview", specifier = ">=5.3" },
     { name = "rishi", specifier = "==0.1.36" },
     { name = "rishi", extras = ["all"], specifier = "==0.1.36" },
-    { name = "setuptools", specifier = ">=68.0" },
-]
-test = [
-    { name = "nbformat", specifier = ">=5.10.0" },
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "pillow", specifier = ">=10.0" },
-    { name = "playwright", specifier = ">=1.40" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", specifier = ">=1.4.0" },
-    { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.36" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -2848,7 +2787,7 @@ name = "macholib"
 version = "1.16.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "altgraph", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "altgraph" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/10/2f/97589876ea967487978071c9042518d28b958d87b17dceb7cdc1d881f963/macholib-1.16.4.tar.gz", hash = "sha256:f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362", size = 59427, upload-time = "2025-11-22T08:28:38.373Z" }
 wheels = [
@@ -3062,7 +3001,7 @@ name = "miniaudio"
 version = "1.71"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cffi" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d8/d5/e5439dc08561f73656bfeb3340fc64ab63163e101426593d8fb9a025ff1e/miniaudio-1.71.tar.gz", hash = "sha256:ff51e2887bb673e2e757752b586b3dc924d59aa5fbcae9bbc45f4a111bd3262b", size = 1116480, upload-time = "2026-04-29T21:20:38.182Z" }
 wheels = [
@@ -3085,7 +3024,7 @@ name = "mlx"
 version = "0.32.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mlx-metal", marker = "sys_platform == 'darwin'" },
+    { name = "mlx-metal" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/f7/5664e13821491559c953494e6705c818203d6880d713a0c22e12bead9564/mlx-0.32.2-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:77217798a2b036bae9f213b851d4cde4581893787c9964458b7d471f86036bd6", size = 619370, upload-time = "2026-08-25T10:31:44.235Z" },
@@ -3110,14 +3049,14 @@ name = "mlx-audio"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "miniaudio", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "mlx", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "scipy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "sounddevice", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "tqdm", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "transformers", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "huggingface-hub" },
+    { name = "miniaudio" },
+    { name = "mlx" },
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "sounddevice" },
+    { name = "tqdm" },
+    { name = "transformers" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ae/d0/6e2e6c548dbc9d4d996e959e3a0e34faf64ca357462733ee94a42046664b/mlx_audio-0.5.0.tar.gz", hash = "sha256:d5aba4b99c006acd735408189d127eaf6ed53be0cad789e2eb51aa57f4f6bf13", size = 1584608, upload-time = "2026-08-17T17:47:57.542Z" }
 wheels = [
@@ -3129,13 +3068,13 @@ name = "mlx-lm"
 version = "0.31.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jinja2", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "protobuf", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyyaml", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "sentencepiece", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "transformers", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "jinja2" },
+    { name = "mlx" },
+    { name = "numpy" },
+    { name = "protobuf" },
+    { name = "pyyaml" },
+    { name = "sentencepiece" },
+    { name = "transformers" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/84/94/9a38d6b0c6fcca995b9136c94eb7da1e9c5165652edf228b96b29960fa7a/mlx_lm-0.31.3.tar.gz", hash = "sha256:61eb0e3ba09444f77f874aff295401d7ccd20b39495cbbce0c782a15474ce733", size = 304318, upload-time = "2026-04-22T07:37:27.922Z" }
 wheels = [
@@ -3157,22 +3096,22 @@ name = "mlx-vlm"
 version = "0.6.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastapi", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "llguidance", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "miniaudio", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "mlx", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "mlx-audio", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "opencv-python", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pillow", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "python-multipart", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "requests", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "sentencepiece", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "starlette", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "tqdm", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "transformers", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "websockets", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "fastapi" },
+    { name = "llguidance" },
+    { name = "miniaudio" },
+    { name = "mlx" },
+    { name = "mlx-audio" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "python-multipart" },
+    { name = "requests" },
+    { name = "sentencepiece" },
+    { name = "starlette" },
+    { name = "tqdm" },
+    { name = "transformers" },
+    { name = "uvicorn" },
+    { name = "websockets" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c5/a1/4b21ea85918e5223144bbe80cb649f5953c105ea440f0eba45dd00a5b863/mlx_vlm-0.6.17.tar.gz", hash = "sha256:5e4ff5426af093b3cf41b4e5e33c272db82fa33000cb3c36a1aab9e218ad7ee7", size = 2043597, upload-time = "2026-08-26T17:08:38.01Z" }
 wheels = [
@@ -3201,8 +3140,8 @@ name = "modulegraph"
 version = "0.19.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "altgraph", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "setuptools", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "altgraph" },
+    { name = "setuptools" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/20/fa/c471f46fa1696309b806d6c663d599525925a5c13cf1371a02587a265109/modulegraph-0.19.7.tar.gz", hash = "sha256:9ad8a81148ba1d90ade66617a153786f7d7cf6a88de83ee28e251183122c2a57", size = 88618, upload-time = "2025-11-22T08:22:43.858Z" }
 wheels = [
@@ -3589,7 +3528,7 @@ name = "opencv-python"
 version = "5.0.0.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/79/4c/a438d23e09ce2033c09f7b784ad2fbdb0adf529e434101ed28f142226f98/opencv_python-5.0.0.93.tar.gz", hash = "sha256:66aac3e5b5faa48d4025816592f3af19e4bfc2c68dec067bae2dbb4ca10aa9e2", size = 81802749, upload-time = "2026-07-02T06:59:53.815Z" }
 wheels = [
@@ -3783,7 +3722,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -4049,30 +3988,23 @@ wheels = [
 
 [[package]]
 name = "pullup"
-source = { editable = "../pullup" }
+version = "0.0.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "cfeasy" },
+    { name = "dockeasy" },
     { name = "fastcore" },
+    { name = "gheasy" },
+    { name = "keyring" },
     { name = "ptymini" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "vpseasy" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "cfeasy", marker = "extra == 'cloud'", specifier = ">=0.0.4" },
-    { name = "dockeasy", marker = "extra == 'cloud'", specifier = ">=0.0.5" },
-    { name = "fastcore", specifier = ">=1.8.17" },
-    { name = "gheasy", marker = "extra == 'cloud'", specifier = ">=0.0.10" },
-    { name = "keyring", marker = "extra == 'cloud'", specifier = ">=25.0.0" },
-    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.11" },
-    { name = "ptymini", specifier = ">=0.0.5" },
-    { name = "pullup", extras = ["cloud"], marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "python-dotenv", marker = "extra == 'cloud'", specifier = ">=1.0.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "vpseasy", marker = "extra == 'cloud'", specifier = ">=0.0.18" },
+sdist = { url = "https://files.pythonhosted.org/packages/f3/87/fb26cb9403d205764675fb2475cd4787bdea5166e2e60786e7423b132449/pullup-0.0.6.tar.gz", hash = "sha256:c8686d71ba91b76e4baf73633d93d496e1dbdacd462539e4a395085cafd19918", size = 38661, upload-time = "2026-09-04T05:19:14.527Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/59/6ffeb5805f4a83f3c717ff81e6ef957f3b2776dc2aec248e5140ba8bb885/pullup-0.0.6-py3-none-any.whl", hash = "sha256:fb65aac25852830e2edc1f65c75d4ed43b71238faf7451361d1038186acce6cc", size = 44359, upload-time = "2026-09-04T05:19:12.441Z" },
 ]
-provides-extras = ["cloud", "dev"]
 
 [[package]]
 name = "pure-eval"
@@ -4088,10 +4020,10 @@ name = "py2app"
 version = "0.28.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "altgraph", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "macholib", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "modulegraph", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "packaging", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "altgraph" },
+    { name = "macholib" },
+    { name = "modulegraph" },
+    { name = "packaging" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/93/82/79a2aaaf86c44c6018edce1a028cf821acec4c3ca63e2b5781f16822c99f/py2app-0.28.10.tar.gz", hash = "sha256:fd38f4a0083d4d1e91ea336eaef678b99d9e1b95ac6302315cad22fa5e859cb1", size = 1143601, upload-time = "2026-02-13T20:50:02.289Z" }
 wheels = [
@@ -4103,9 +4035,9 @@ name = "py2exe"
 version = "0.14.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cachetools", marker = "sys_platform == 'win32'" },
-    { name = "packaging", marker = "sys_platform == 'win32'" },
-    { name = "pefile", marker = "sys_platform == 'win32'" },
+    { name = "cachetools" },
+    { name = "packaging" },
+    { name = "pefile" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/70/9ccabe50f03d57786252f0873e2599781a80dd8daded99367f015d44c7aa/py2exe-0.14.2.0-cp312-cp312-win32.whl", hash = "sha256:7e7d80661886ea6f43a2f108f1c6242c821f88533da9eb8038f6e36a085016e3", size = 114424, upload-time = "2026-06-21T21:24:41.081Z" },
@@ -4298,7 +4230,7 @@ name = "pyobjc-framework-cocoa"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/75/76/49c6da2c6a831020b4854ba20079d5a1030474bffc776b7b73c2eeff8c15/pyobjc_framework_cocoa-12.2.2.tar.gz", hash = "sha256:c96c0ef69a71afbbb0e6a7d594b455c5fe47d62e0db376ee7a2b4b828c16ace9", size = 3132831, upload-time = "2026-08-11T19:44:02.288Z" }
 wheels = [
@@ -4316,8 +4248,8 @@ name = "pyobjc-framework-quartz"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/35/b1/426a37c7ae37280b3ffca2571fb48f211946aee2f4ca31a603ed1943c4a7/pyobjc_framework_quartz-12.2.2.tar.gz", hash = "sha256:810f97b210cfd93704d240860286dfd6df09f9f1c52525fc5c2166723aea3f9e", size = 3218295, upload-time = "2026-08-11T19:45:15.189Z" }
 wheels = [
@@ -4335,8 +4267,8 @@ name = "pyobjc-framework-security"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c2/92/c304b7fc3a0fe7484a2a3cf25711e70c8fa2b6969d82f4010e35b9af2164/pyobjc_framework_security-12.2.2.tar.gz", hash = "sha256:33efab1ff7d18570148f8f3ddd44eca305f733aee00b9115d5263bef81018f65", size = 181827, upload-time = "2026-08-11T19:45:24.042Z" }
 wheels = [
@@ -4354,8 +4286,8 @@ name = "pyobjc-framework-uniformtypeidentifiers"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/70/c6/31ac40c4d918baa36ca06d196bfec0f47f804a74684988cf424060469d98/pyobjc_framework_uniformtypeidentifiers-12.2.2.tar.gz", hash = "sha256:12f8ba77dcc949ffb9f0f48743cae326aebec8e69cb1ac55a1d1e04dca7bd59a", size = 20848, upload-time = "2026-08-11T19:45:37.634Z" }
 wheels = [
@@ -4367,8 +4299,8 @@ name = "pyobjc-framework-webkit"
 version = "12.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pyobjc-core", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyobjc-framework-cocoa", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6f/1f/766e338197f7051c25f23cb0d350caa88234b31c3a759127f2cbb67f3376/pyobjc_framework_webkit-12.2.2.tar.gz", hash = "sha256:e5588df2a73b377b59a994cc2a78b467e4341f4e4d28b52e8671e21a2811d3c1", size = 333834, upload-time = "2026-08-11T19:45:42.708Z" }
 wheels = [
@@ -4533,7 +4465,7 @@ name = "pythonnet"
 version = "3.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "clr-loader", marker = "sys_platform == 'win32'" },
+    { name = "clr-loader" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/05/57/da1992e44663b71365c6e842c8d7fa453d4ec45fb99a68cfee5b7e944d3c/pythonnet-3.1.0.tar.gz", hash = "sha256:7b34c382905d10a371509ffafd64cae0416305c28817738a9cd138336f4e9991", size = 250599, upload-time = "2026-05-23T20:30:21.578Z" }
 wheels = [
@@ -4708,7 +4640,7 @@ name = "qtpy"
 version = "2.4.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "packaging" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/70/01/392eba83c8e47b946b929d7c46e0f04b35e9671f8bb6fc36b6f7945b4de8/qtpy-2.4.3.tar.gz", hash = "sha256:db744f7832e6d3da90568ba6ccbca3ee2b3b4a890c3d6fbbc63142f6e4cdf5bb", size = 66982, upload-time = "2025-02-11T15:09:25.759Z" }
 wheels = [
@@ -4729,16 +4661,22 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-source = { editable = "../ramabana" }
+version = "0.1.33"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "agent-client-protocol" },
+    { name = "dhrishti" },
     { name = "exhash" },
     { name = "fastcore" },
     { name = "fastspec" },
     { name = "fossick" },
     { name = "gheasy" },
+    { name = "jupyter-client" },
     { name = "koshas" },
     { name = "liteparse" },
     { name = "litesearch" },
+    { name = "mcp" },
+    { name = "pobblebonk" },
     { name = "pyyaml" },
     { name = "rgapi" },
     { name = "rishi" },
@@ -4746,64 +4684,16 @@ dependencies = [
     { name = "uraiyadal" },
     { name = "vishalakshi" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/19/3738060036ca0df4319119b0bd7152da8840e6bee1294a73fd4db9d1a53b/ramabana-0.1.33.tar.gz", hash = "sha256:26171c19f61d72db1bfb96030b11940cca30476d02c72b9b54e7077f5f9f72de", size = 190199, upload-time = "2026-09-04T05:41:21.225Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/53/02c63318f7cb42ab7db51ba3437f0bc6fc58dede28b13f46d0329d1a936c/ramabana-0.1.33-py3-none-any.whl", hash = "sha256:969b41a4498b1169061a00dda80e0c6386a84b55bde6b24a06cb452ac01b5afe", size = 201972, upload-time = "2026-09-04T05:41:19.961Z" },
+]
 
 [package.optional-dependencies]
 cli = [
     { name = "pyghostty" },
     { name = "teleprint" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.12.1" },
-    { name = "agent-client-protocol", marker = "extra == 'all'", specifier = ">=0.12.1" },
-    { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = ">=0.12.1" },
-    { name = "dhrishti", marker = "extra == 'all'", specifier = ">=0.1.2" },
-    { name = "dhrishti", marker = "extra == 'dev'", specifier = ">=0.1.2" },
-    { name = "dhrishti", marker = "extra == 'pyrepl'", specifier = ">=0.1.2" },
-    { name = "exhash", specifier = ">=0.4.9" },
-    { name = "fastcore", specifier = ">=2.1.16" },
-    { name = "fastspec", specifier = ">=0.2.1" },
-    { name = "fossick", specifier = ">=0.1.17" },
-    { name = "gheasy", specifier = ">=0.0.9" },
-    { name = "jupyter-client", marker = "extra == 'all'", specifier = ">=8.9.1" },
-    { name = "jupyter-client", marker = "extra == 'dev'", specifier = ">=8.9.1" },
-    { name = "jupyter-client", marker = "extra == 'pyrepl'", specifier = ">=8.9.1" },
-    { name = "koshas", specifier = ">=0.1.7" },
-    { name = "liteparse", specifier = ">=2.12,<2.13" },
-    { name = "litesearch", specifier = ">=0.1.1" },
-    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.2" },
-    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.2" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
-    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.11" },
-    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.6.1" },
-    { name = "pobblebonk", marker = "extra == 'all'", specifier = ">=0.0.3" },
-    { name = "pobblebonk", marker = "extra == 'cron'", specifier = ">=0.0.3" },
-    { name = "pobblebonk", marker = "extra == 'dev'", specifier = ">=0.0.3" },
-    { name = "pyghostty", marker = "extra == 'all'", specifier = ">=0.1.0" },
-    { name = "pyghostty", marker = "extra == 'cli'", specifier = ">=0.1.0" },
-    { name = "pyghostty", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "pyghostty", marker = "extra == 'pyrepl'", specifier = ">=0.1.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rgapi", specifier = ">=0.1.19" },
-    { name = "rishi", specifier = ">=0.1.32" },
-    { name = "rishi", marker = "extra == 'copilot'", specifier = ">=0.1.32" },
-    { name = "rishi", extras = ["all"], marker = "extra == 'all'" },
-    { name = "rishi", extras = ["all"], marker = "extra == 'dev'" },
-    { name = "rishi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.1.32" },
-    { name = "shalya", editable = "../shalya" },
-    { name = "teleprint", marker = "extra == 'all'", specifier = ">=0.1.1" },
-    { name = "teleprint", marker = "extra == 'cli'", specifier = ">=0.1.1" },
-    { name = "teleprint", marker = "extra == 'dev'", specifier = ">=0.1.1" },
-    { name = "teleprint", marker = "extra == 'pyrepl'", specifier = ">=0.1.1" },
-    { name = "uraiyadal", specifier = ">=0.0.6" },
-    { name = "vishalakshi", specifier = ">=0.1.14" },
-]
-provides-extras = ["acp", "all", "cli", "copilot", "cron", "dev", "mcp", "pyrepl"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "ramabana", extras = ["dev"] }]
 
 [[package]]
 name = "readability-lxml"
@@ -5238,7 +5128,7 @@ name = "scipy"
 version = "1.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7e/74/66de6258867beb2ef08f35f9f2ac017a52cacd5081714d239ff1a442d458/scipy-1.18.1.tar.gz", hash = "sha256:52c4b7422442aba924d03ad4019852b08a92e64ea187b933135687bfe2747307", size = 30781235, upload-time = "2026-08-21T23:28:50.599Z" }
 wheels = [
@@ -5291,8 +5181,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -5349,38 +5239,23 @@ wheels = [
 
 [[package]]
 name = "shalya"
-source = { editable = "../shalya" }
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
     { name = "exhash" },
     { name = "fastcore" },
     { name = "fastspec" },
+    { name = "fossick" },
     { name = "gheasy" },
     { name = "jupyter-client" },
+    { name = "litesearch" },
     { name = "vishalakshi" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "dhrishti" },
-    { name = "exhash", specifier = ">=0.4.9" },
-    { name = "fastcore", specifier = ">=2.1.16" },
-    { name = "fastspec" },
-    { name = "fossick", marker = "extra == 'dev'", specifier = ">=0.1.17" },
-    { name = "fossick", marker = "extra == 'web'", specifier = ">=0.1.17" },
-    { name = "gheasy" },
-    { name = "jupyter-client" },
-    { name = "litesearch", marker = "extra == 'dev'", specifier = ">=0.1.34" },
-    { name = "litesearch", marker = "extra == 'search'", specifier = ">=0.1.34" },
-    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.11" },
-    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.6.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "vishalakshi" },
+sdist = { url = "https://files.pythonhosted.org/packages/6d/85/586855b45c2bde05e1add87c061527f6f589e230fdc44bbc7f3354e67195/shalya-0.0.7.tar.gz", hash = "sha256:a394828cbfbb2f3de3e7d739dd77bd37476928eddefd6f67f8ae4bd60a5e5b7e", size = 47439, upload-time = "2026-09-04T01:06:45.007Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/f7/50e82139e8193e11be96d7899327df7ac7ede225f1330bc27dfe63dffc34/shalya-0.0.7-py3-none-any.whl", hash = "sha256:f7c58ad718ba85d8220db571a71474d59f1c3963b88f23b5582e64e2fa815e1a", size = 51352, upload-time = "2026-09-04T01:06:43.816Z" },
 ]
-provides-extras = ["dev", "search", "web"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "shalya", extras = ["dev"] }]
 
 [[package]]
 name = "shellingham"
@@ -5414,7 +5289,7 @@ name = "sounddevice"
 version = "0.5.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cffi" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ec/db/0c890e2d9aab9ba284021efc02e1d3aebfecab1b611762d7434602209bcf/sounddevice-0.5.6.tar.gz", hash = "sha256:8ec9fbfde2e32f020b167e348f3ab3bac6625a5f15af524d790108ac7147a410", size = 1120094, upload-time = "2026-08-17T07:55:05.048Z" }
 wheels = [
@@ -5660,15 +5535,15 @@ name = "transformers"
 version = "5.16.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "numpy", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "packaging", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "pyyaml", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "regex", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "safetensors", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "tokenizers", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "tqdm", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "typer", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "regex" },
+    { name = "safetensors" },
+    { name = "tokenizers" },
+    { name = "tqdm" },
+    { name = "typer" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ad/2e/ba418680ab901dae269360bb8642485eae04f1af91ee2ebb8bd6f3607305/transformers-5.16.1.tar.gz", hash = "sha256:17b0eac726ddc55e84ac58946063e0c6d37fd000c456b581f050ea0f4e822869", size = 9650542, upload-time = "2026-08-26T14:48:58.789Z" }
 wheels = [
@@ -5709,9 +5584,9 @@ name = "typer"
 version = "0.27.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "annotated-doc", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "rich", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "shellingham", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "annotated-doc" },
+    { name = "rich" },
+    { name = "shellingham" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ae/40/4a3db7990d1f62a53182aa96eaef57aeb2886a27f90a195bc66713565d31/typer-0.27.1.tar.gz", hash = "sha256:a79bef8469a79c45498e7b814ecf8d603cc7644e9acbd9e19cac0334240b18df", size = 203994, upload-time = "2026-08-03T14:41:03.438Z" }
 wheels = [
