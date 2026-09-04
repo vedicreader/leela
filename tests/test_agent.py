@@ -2956,3 +2956,31 @@ def test_a_turn_leaves_a_running_kernel_alone(ws):
         client.post('/agent/turn', json={'prompt': 'second'})
         time.sleep(.4)
         assert ws.runtime_peek() is first, 'the same kernel, not a second one'
+
+
+def test_the_update_check_survives_being_asked_twice(monkeypatch):
+    """`_latest` was assigned without `global`, so the name was local and the read on the first
+    line raised `UnboundLocalError` on every call inside the hour. The first short-circuited on
+    `_latest_at` being zero, so the check worked once per process and threw from then on, and the
+    pane that asks it on every open showed `could not check`."""
+    from leela.blocks.agent import models as m
+    monkeypatch.setattr(m, '_latest', {}); monkeypatch.setattr(m, '_latest_at', 0.0)
+    monkeypatch.setattr(m, 'urljson', lambda url, **kw: {'info': {'version': '9.9.9'},
+                                                         'tag_name': 'v9.9.9', 'html_url': 'https://x/y'})
+    first = m._latest_versions(['exhash'])
+    assert first['exhash'] == '9.9.9' and first['leela'] == '9.9.9'
+    assert m._latest_versions(['exhash']) == first, 'the second ask is the cached first, not a crash'
+
+
+def test_the_release_check_authenticates_because_the_repository_is_private(monkeypatch):
+    "An unauthenticated releases request answers 404 on a private repo, which reads as no releases."
+    from leela.blocks.agent import models as m
+    seen = {}
+    monkeypatch.setattr(m, '_latest', {}); monkeypatch.setattr(m, '_latest_at', 0.0)
+    monkeypatch.setattr(m, '_release_headers', lambda: {'Authorization': 'Bearer t'})
+    def fake(url, **kw):
+        if 'releases' in url: seen.update(kw.get('headers') or {})
+        return {'info': {'version': '1.0'}, 'tag_name': 'v1.0', 'html_url': 'https://x/y'}
+    monkeypatch.setattr(m, 'urljson', fake)
+    m._latest_versions([])
+    assert seen.get('Authorization') == 'Bearer t', 'the token never reached the releases request'
