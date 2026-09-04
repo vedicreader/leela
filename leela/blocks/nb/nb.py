@@ -411,7 +411,32 @@ class Notebook:
     def source_text(self):
         "The whole notebook as one diffable document: every cell's source under a jupytext `# %%` marker."
         return '\n'.join(f'# %% {c.cell_type} {c.id}\n{c.source.rstrip()}' for c in self.cells)
+    def take_source_text(self, text):
+        """Read `source_text` back in, keeping the outputs it never carried.
 
+        Lossy in one direction only: the marker holds a cell's type and id and nothing else, so a
+        cell still named here keeps the outputs, counts and metadata it already had, and only its
+        source moves. Writing the document out as a file instead loses all of that and the JSON
+        with it.
+        """
+        by_id, out = {c.id: c for c in self.cells}, []
+        for kind, cid, src in _source_blocks(text):
+            c = by_id.get(cid)
+            if c is None or c.cell_type != kind: c = Cell(cell_type=kind, **({'id': cid} if cid else {}))
+            c.source = src
+            out.append(c)
+        self.cells = out
+        return self
+
+
+_BLOCK = re.compile(r'^# %% (\w+)(?: ([\w-]+))?$', re.M)
+
+def _source_blocks(text):
+    "`(cell_type, id, source)` for each `# %%` marker in a `source_text` document."
+    marks = list(_BLOCK.finditer(text or ''))
+    for i, m in enumerate(marks):
+        end = marks[i+1].start() if i+1 < len(marks) else len(text)
+        yield m.group(1), m.group(2) or '', text[m.end():end].strip('\n')
 
 def read_cells(text):
     "The cells of a notebook's JSON text, or `None` when this is not a notebook we can read."

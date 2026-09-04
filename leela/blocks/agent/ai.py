@@ -311,7 +311,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
                 f'Writable: {", ".join(self.writable_roots)}. Enable workspace repository writes in '
                 'agent settings to write to the other open folders')
         return target
-    def write(self, path, text): return self.ws.fs.write(self.check_write(path), text).path
+    def write(self, path, text): return self.ws.write_text_at(self.check_write(path), text)
     def text_at(self, path): return self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):

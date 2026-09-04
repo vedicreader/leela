@@ -670,11 +670,16 @@ def test_a_build_refuses_to_overwrite_the_app_that_is_running(tmp_path):
         for _ in range(50):
             if (pids := setup_app.running_from(bundle)): break
             time.sleep(0.1)
-        # A framework interpreter cannot always start through a symlink outside its own layout:
-        # it fails to find its prefix and exits, and then there is no process to match and nothing
-        # about `running_from` under test. The release runner's Python is one of those.
-        if not pids and live.poll() is not None:
-            pytest.skip(f'the interpreter did not run through the symlink (exit {live.returncode})')
+        # `running_from` reads `ps`, so it can only see an interpreter that stays where it was
+        # started from. A framework build re-execs itself out of `Python.app` and `ps` then names
+        # that, never the bundle: the fixture cannot hold on such a Python, and the guard it is
+        # testing has nothing to answer. Asking the interpreter where it thinks it is covers both
+        # that and a symlink it refuses to start through at all.
+        if not pids:
+            seen = subprocess.run([str(inside), '-c', 'import sys; print(sys.executable)'],
+                                  capture_output=True, text=True).stdout.strip()
+            if seen != str(inside):
+                pytest.skip(f'this interpreter runs as {seen or "(it did not start)"}, so ps never names the bundle')
         assert pids == [live.pid], f'the process running out of the bundle, and only it: {pids}'
     finally:
         for p in (mentions, live): p.terminate(); p.wait(5)

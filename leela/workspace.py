@@ -13,7 +13,7 @@ from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
 from .blocks.memory.memory import pii_gate
 from .blocks.runtime.kernels import KernelPool
-from .blocks.nb.nb import Notebook, media_outputs
+from .blocks.nb.nb import Notebook, media_outputs, read_cells
 from .blocks.research.research import Research
 from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
@@ -594,6 +594,18 @@ class Workspace:
         if not p.exists(): return ''
         try: return Notebook.load(p).source_text() if p.suffix == '.ipynb' else self.fs.read(p)
         except Exception: return None
+    def write_text_at(self, ref, text):
+        """The inverse of `text_at`: a notebook takes the `# %%` document back into its cells.
+
+        `text_at` hands out a notebook as that document, so anything writing back what it read --
+        `rollback_turn` restoring a turn's `before`, above all -- was putting jupytext markers into
+        a `.ipynb` and leaving a file that is no longer JSON.
+        """
+        p = self.fs._check(ref)
+        if p.suffix != '.ipynb' or read_cells(text) is not None: return self.fs.write(p, text).path
+        nb = Notebook.load(p) if p.exists() else Notebook([])
+        nb.take_source_text(text).save(p, sandbox=self.fs)
+        return str(p)
     def disk_text(self, tab=None):
         "A tab's file as it is on disk, in the shape its buffer is compared against; None when unsaved."
         t = tab or self.tab

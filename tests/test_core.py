@@ -1539,3 +1539,34 @@ def test_the_first_paint_uses_the_saved_theme_not_only_this_origin_s_cache(tmp_p
     assert re.search(r'const saved = (.*?);', html).group(1) == '"nord:dark:relaxed"', html[:0]
     # The cache still wins when it has something, so a theme changed in this tab is not undone.
     assert "localStorage.getItem('lee-theme') || saved" in html
+
+
+def test_writing_a_notebook_back_through_the_host_keeps_it_a_notebook(tmp_path):
+    """`text_at` hands out a notebook as its `# %%` document, and `write` put that back verbatim.
+
+    `rollback_turn` restores a turn's `before`, which is exactly what `text_at` gave it, so undoing
+    a turn that touched an `.ipynb` left a file that is no longer JSON and a notebook nothing could
+    open. The marker carries a cell's type and id and nothing else, so the outputs have to come
+    from the notebook already on disk rather than from the document.
+    """
+    import json
+    nb = tmp_path/'demo.ipynb'
+    nb.write_text(json.dumps({'cells': [
+        {'cell_type': 'code', 'source': ['x = 1'], 'metadata': {}, 'id': 'aaa',
+         'outputs': [{'output_type': 'stream', 'name': 'stdout', 'text': ['1']}], 'execution_count': 3},
+        {'cell_type': 'markdown', 'source': ['# hi'], 'metadata': {}, 'id': 'bbb'}],
+        'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    ws = Workspace(roots=[tmp_path])
+    try:
+        host = ws.ai.host
+        before = host.text_at(str(nb))
+        assert before.startswith('# %% code'), 'the read side is the document, which is the whole problem'
+        host.write(str(nb), before)                      # what `rollback_turn` does
+        d = json.loads(nb.read_text())
+        assert len(d['cells']) == 2
+        assert d['cells'][0]['outputs'], 'a cell still named keeps the outputs the document dropped'
+        assert d['cells'][0]['execution_count'] == 3
+        assert host.text_at(str(nb)) == before, 'and the document round-trips'
+        host.write(str(nb), nb.read_text())              # real notebook JSON is still written as-is
+        assert json.loads(nb.read_text())['cells'][0]['outputs']
+    finally: ws.threads.shutdown()
