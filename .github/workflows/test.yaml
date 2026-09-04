@@ -15,7 +15,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
+      # Into uv's own environment, not `--system`: the runner's `/usr` is externally managed and
+      # refuses the install outright (PEP 668), which is where every run since 2 September died.
       - name: install
-        run: uv pip install --system -e . --group dev
+        run: uv sync --group dev --python 3.12
       - name: test
-        run: pytest tests -q
+        run: uv run pytest tests -q

@@ -200,17 +200,30 @@ RELEASES = 'https://api.github.com/repos/vedicreader/leela/releases/latest'
 _latest, _latest_at = {}, 0.0
 LATEST_TTL = 3600          #: a courtesy check, not a heartbeat
 
+def _release_headers():
+    """A GitHub token where there is one. Leela's own repository is private, and an unauthenticated
+    releases request answers 404 there, which the caller cannot tell from having no releases."""
+    head = {'Accept': 'application/vnd.github+json'}
+    try:
+        from ..git.seam import gh_token
+        if (tok := gh_token()): head['Authorization'] = f'Bearer {tok}'
+    except Exception: pass       # no gheasy, no token, no keyring: ask anonymously and take the 404
+    return head
+
 def _latest_versions(dists):
     "Newest published version of each distribution and of Leela. No network means no offer."
     import time
-    global _latest_at
+    # Both, or `_latest` is a local that line one reads before line last writes it: the first call
+    # short-circuited on `_latest_at` being 0 and every call inside the hour after it raised
+    # `UnboundLocalError`, so the check worked once per process and then threw.
+    global _latest, _latest_at
     if time.time() - _latest_at < LATEST_TTL and _latest: return dict(_latest)
     out = {}
     for d in dists:
         try: out[d] = urljson(f'https://pypi.org/pypi/{d}/json', timeout=4)['info']['version']
         except Exception: pass
     try:
-        rel = urljson(RELEASES, timeout=4)
+        rel = urljson(RELEASES, headers=_release_headers(), timeout=4)
         out['leela'] = str(rel.get('tag_name') or '').lstrip('v')
         out['leela_url'] = rel.get('html_url') or ''
     except Exception: pass

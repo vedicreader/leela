@@ -123,29 +123,32 @@ def build_venv(python, force=False):
         run(exe, '-m', 'pip', 'install', '--quiet', '--upgrade', '-r', req)
         run(exe, '-m', 'pip', 'install', '--quiet', '--no-deps', '-e', f'{ROOT}[desktop,macapp]')
     else: run(exe, '-m', 'pip', 'install', '--quiet', '-e', f'{ROOT}[desktop,macapp]')
-    mark_namespaces(exe)
     return exe
 
 #: PEP 420 namespaces py2app has to copy whole. `ruamel` arrives with `ruamel.yaml`, which gheasy
 #: reads and writes workflows through.
 NAMESPACE_PKGS = ('ruamel',)
 
-def mark_namespaces(exe):
+def mark_namespaces():
     """Give each PEP 420 namespace an `__init__.py`, because py2app cannot find one without it.
 
     py2app's `detect_dunder_file` recipe puts every package that reads `__file__` in the copy-whole
     list, and `collect_packagedirs` then resolves each through modulegraph's `imp.find_module`,
     which predates PEP 420 and raises `No module named 'ruamel'` on a directory with no
-    `__init__.py`. The build died there with nothing else said. The marker is written inside the
-    build venv, which is generated, and only where the namespace has exactly one distribution in it.
+    `__init__.py`. The build died there with nothing else said.
+
+    Marks the interpreter that is about to run py2app, whichever it is. Doing this in `build_venv`
+    covered a local build and missed the runner entirely: `actions/setup-python` is a framework
+    build, so `main` never rebuilds a venv there and goes straight to py2app.
     """
-    site = next(iter((VENV/'lib').glob('python*/site-packages')), None)
-    if site is None: return
-    for name in NAMESPACE_PKGS:
-        d = site/name
-        if not d.is_dir() or (d/'__init__.py').exists(): continue
-        (d/'__init__.py').write_text('')
-        print(f'· marked {name}/ as a package for py2app')
+    import site as _site
+    for root in map(Path, _site.getsitepackages()):
+        for name in NAMESPACE_PKGS:
+            d = root/name
+            if not d.is_dir() or (d/'__init__.py').exists(): continue
+            try: (d/'__init__.py').write_text('')
+            except OSError: continue      # a read-only prefix is not ours to mark
+            print(f'· marked {d} as a package for py2app')
 
 def lock_requirements(extras=APP_EXTRAS):
     """`uv.lock` as a pinned requirements file, or None where uv cannot answer.
@@ -244,6 +247,7 @@ def main(argv=None):
         return
 
     run(sys.executable, ROOT/'tools'/'build_icons.py')
+    mark_namespaces()
     args = [sys.executable, setup, *extra]
     if a.alias and sys.platform == 'darwin': args.append('--alias')
     run(*args, cwd=ROOT)
