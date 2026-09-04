@@ -29,7 +29,7 @@ jobs:
       - name: install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[gateway,macapp]" pytest
+          python -m pip install -e ".[macapp]" pytest
       # Signing and notarising are opt-in on the secrets being set: with none of them the build
       # still produces a launchable, linker-signed app, which is what a fork gets.
       - name: import the signing certificate
@@ -76,7 +76,7 @@ jobs:
       - name: install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[gateway,windows]" pytest
+          python -m pip install -e ".[windows]" pytest
       - name: build
         run: python tools/build_release.py
       - name: smoke

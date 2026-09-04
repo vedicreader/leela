@@ -1,6 +1,6 @@
 """Build the distributable: a signed-local macOS app + DMG, or a zipped Windows folder."""
 from __future__ import annotations
-import os, re, shutil, subprocess, sys
+import os, re, shutil, subprocess, sys, tempfile
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,16 +24,21 @@ def mac_release():
     # Distribution signing is opt-in: it needs the developer's identity and notarization
     # credentials, and a local py2app build is already linker-signed and launchable.
     if (identity := os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip()): sign(app, identity)
-    stage = ROOT/'build'/'dmg'
-    shutil.rmtree(stage, ignore_errors=True); stage.mkdir(parents=True)
-    shutil.copytree(app, stage/'Leela.app', symlinks=True)
-    (stage/'Applications').symlink_to('/Applications')
-    shutil.copy2(ROOT/'packaging'/'assets'/'Leela.icns', stage/'.VolumeIcon.icns')
-    try: run('SetFile', '-a', 'C', stage)
-    except Exception: pass
-    out.unlink(missing_ok=True)
-    run('hdiutil', 'create', '-volname', 'Leela', '-srcfolder', stage,
-        '-ov', '-format', 'UDZO', '-imagekey', 'zlib-level=9', out)
+    # Staged outside the repository, and gone when the image is written. The drag-to-install
+    # shortcut a DMG wants is a symlink to `/Applications`, and one of those left behind under
+    # `build/` is a path from this checkout into the real folder: a tool resolving `leela` by name
+    # from the wrong directory walks straight down it. It belongs to the image, not to the tree.
+    with tempfile.TemporaryDirectory(prefix='leela-dmg-') as tmp:
+        stage = Path(tmp)/'Leela'
+        stage.mkdir(parents=True)
+        shutil.copytree(app, stage/'Leela.app', symlinks=True)
+        (stage/'Applications').symlink_to('/Applications')
+        shutil.copy2(ROOT/'packaging'/'assets'/'Leela.icns', stage/'.VolumeIcon.icns')
+        try: run('SetFile', '-a', 'C', stage)
+        except Exception: pass
+        out.unlink(missing_ok=True)
+        run('hdiutil', 'create', '-volname', 'Leela', '-srcfolder', stage,
+            '-ov', '-format', 'UDZO', '-imagekey', 'zlib-level=9', out)
     if notary_args(): notarize(out)
     print(f'Created {app}')
     print(f'Created {out}')

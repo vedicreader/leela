@@ -24,6 +24,12 @@ PACKAGES = [
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
     'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
     'kavacha', 'kunda', 'pullup',   # the casing, the kernels and the release half
+    # Copied whole for their source, not only their bytecode. `fastcore.funccall` schemas every
+    # tool with `docments`, which calls `inspect.getsource` on the function: a package reached from
+    # the zip has `.pyc` and no `.py`, so the model resolved to
+    # `OSError: could not get source code` and the app fell back off every model it was asked for.
+    # This worked while the toolset lived in `ramabana`, which is copied whole; it is `shalya` now.
+    'shalya', 'fastspec', 'urai',
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',

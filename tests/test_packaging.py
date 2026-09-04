@@ -663,14 +663,40 @@ def test_a_build_refuses_to_overwrite_the_app_that_is_running(tmp_path):
     finally:
         for p in (mentions, live): p.terminate(); p.wait(5)
 
+#: Packages whose functions are handed to `fastcore.funccall`, which schemas them with `docments`
+#: and so reads their source. `ramabana` and `fastcore` are already copied whole for other reasons.
+NEEDS_SOURCE = ('shalya', 'fastspec', 'urai', 'ramabana', 'fastcore')
+
+def test_every_package_a_tool_schema_is_read_from_ships_its_source():
+    """`docments` calls `inspect.getsource`, and a package reached from the zip has only `.pyc`.
+
+    Every model resolved to `OSError: could not get source code`, the routing fell back off each
+    one in turn, and the app was left unable to answer. It worked while the toolset lived in
+    `ramabana`, which is copied whole; it moved to `shalya`, which was not on the list.
+    """
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('no local build; the release is built on a runner')
+    lib = app/'Contents'/'Resources'/'lib'/'python3.13'
+    missing = [name for name in NEEDS_SOURCE
+               if not any((lib/name).glob('**/*.py'))]
+    assert not missing, (f'{", ".join(missing)} ship without source: add them to PACKAGES in '
+                         'packaging/macos/setup.py, or every tool schema raises OSError')
+
+
 def test_the_built_app_matches_the_tree_it_was_built_from():
     """The bundle is derived from the tree and nothing compared them.
 
     Three times in one session a build was tested that predated the fix it was being tested for,
     because an installed app carries no record of where it came from.
+
+    Skipped where there is no bundle: the release is built on a runner, so a checkout that has
+    never packaged locally has nothing to be stale. It is a bundle that disagrees with the tree
+    that is worth failing over.
     """
     import setup_app
-    st = setup_app.read_stamp(ROOT/'dist'/'Leela.app')
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('no local build; the release is built on a runner')
+    st = setup_app.read_stamp(app)
     assert st is not None, 'dist/Leela.app has no build stamp; rebuild it'
     here = setup_app.git_stamp()
     if here is None: pytest.skip('not a git checkout')
