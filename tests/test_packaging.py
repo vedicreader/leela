@@ -261,23 +261,57 @@ def test_the_app_artefacts_attach_to_the_release_the_tag_names(tmp_path, monkeyp
     (tmp_path/'dist'/'Leela-macOS.dmg').write_text('x')
     calls = []
     monkeypatch.setattr(rel, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
+    monkeypatch.setattr(rel, 'has_release', lambda t: t == 'v9.9.9')
     rel.upload()
     assert calls[-1][:4] == ['gh', 'release', 'upload', 'v9.9.9']
     assert calls[-1][-1] == '--clobber'
     rel.upload('v1.2.3')
     assert calls[-1][3] == 'v1.2.3', 'CI passes the tag it was pushed for'
 
+def test_the_release_is_found_under_whichever_tag_spelling_it_carries(tmp_path, monkeypatch):
+    """`ship-gh` tags a Python project `9.9.9`; fastship's other flows push `v9.9.9`.
+
+    Defaulting to one spelling made `gh release upload` fail with `release not found` on every
+    release made the other way, after the DMG had already been built."""
+    import tools.build_release as rel
+    monkeypatch.setattr(rel, 'ROOT', Path(tmp_path))
+    (tmp_path/'leela').mkdir()
+    (tmp_path/'leela'/'__init__.py').write_text('"doc"\n__version__ = "9.9.9"\n')
+    monkeypatch.setattr(rel, 'has_release', lambda t: t == '9.9.9')
+    assert rel.release_tag() == '9.9.9'
+    monkeypatch.setattr(rel, 'has_release', lambda t: t == 'v9.9.9')
+    assert rel.release_tag() == 'v9.9.9'
+    assert rel.release_tag('other') == 'other', 'an explicit tag is never second-guessed'
+    monkeypatch.setattr(rel, 'has_release', lambda t: False)
+    with pytest.raises(SystemExit) as e: rel.release_tag()
+    assert 'ship-gh' in str(e.value), 'say what to run, not `release not found`'
+
 def test_the_desktop_workflow_puts_the_artefacts_on_the_release():
     "A tag push builds both bundles; without `contents: write` neither can attach."
     import yaml
     doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
     assert doc['permissions']['contents'] == 'write'
-    assert doc[True]['push']['tags'] == ['v*'], 'the tags `ship-release` pushes'
+    assert doc[True]['push']['tags'] == ['v*', '[0-9]*'], 'both spellings fastship tags with'
     for job in doc['jobs'].values():
         step = first(job['steps'], lambda s: s.get('name') == 'attach to the release')
         assert step, 'both platforms attach what they built'
         assert 'build_release.py upload' in step['run']
         assert step['if'] == "startsWith(github.ref, 'refs/tags/')"
+
+def test_both_desktop_jobs_freeze_the_dependency_set_the_lock_names():
+    """py2app and py2exe freeze whatever the install step put there.
+
+    The Windows job resolved from `pyproject.toml` while macOS exported the lock, so the zip
+    shipped a set nobody had tested. An unpinned resolve is what put a jupyasyncclient in the
+    bundle whose kernel answered 500 to every cell."""
+    import yaml
+    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
+    for name, job in doc['jobs'].items():
+        step = first(job['steps'], lambda s: s.get('name') == 'install')
+        assert 'uv export --frozen' in step['run'], f'{name} resolves fresh instead of from the lock'
+        assert '--no-deps' in step['run'], f'{name} lets pip re-resolve over the exported set'
+        assert first(job['steps'], lambda s: str(s.get('uses', '')).startswith('astral-sh/setup-uv')), \
+            f'{name} has no uv, and `uv export` answers nothing without it'
 
 def test_a_missing_window_icon_is_reported_rather_than_shrugged_off(monkeypatch, capsys):
     """`_icon` answers with `first`, which is None when nothing matches.

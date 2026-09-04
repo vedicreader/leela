@@ -20,6 +20,8 @@ Leela's house style is fastai/fastcore taken to the extreme, and `CLAUDE.md` in 
 
 The toolset is `shalya` and the git plumbing is `gheasy`, and Leela imports both by name. `ramabana.tools` re-exports the toolset for one release; do not reach through it, and `ramabana.git` is gone. A tool primitive belongs in shalya, git behaviour in gheasy, and agent behaviour in Ramabana.
 
+Three more packages hold code that was Leela's. `kunda` runs the kernels and finds the interpreters; `kavacha` is the native window, the menu vocabulary and both freezer definitions; `pullup` is the project, the release pipeline, the deploys and the workflows. `blocks/runtime/kernels.py` and `blocks/runtime/support.py` are re-export seams over kunda under Leela's names, and `leela/core/inspectors.py` takes the registry from `dhrishti.registry` and the import classifier from `kunda.support`. A behaviour belonging to any of the three belongs there.
+
 Read the `write_docs` skill before writing docstrings, comments, READMEs, commit messages or PR descriptions. Read `write_prose` for narrative writing. Read `theory` for the design a codebase grew from. All three arrive with `ramabana` as pyskills, so `read_skill` finds them and no copy lives here.
 
 For every behavior-changing change, add or update a focused regression test that reproduces the prior fault and verifies the repaired contract. Run it and the project's relevant checks before reporting completion.

@@ -24,7 +24,9 @@ fastai/fastcore house style, taken to the extreme:
 - Never hand-roll what a dependency does. Reach for: `fastcore`, `ramabana` (the agent core),
   `shalya` (the toolset and the host), `gheasy` (git plumbing), `vishalakshi` (vault/memory),
   `koshas` (code index), `litesearch` (ANN/peers/clusters), `fossick` (web search, CDP),
-  `rgapi` (ripgrep), `dhrishti` (inspection), `exhash`, `mdhtml`.
+  `rgapi` (ripgrep), `kunda` (kernels, interpreter discovery, kernel support), `dhrishti`
+  (in-kernel inspection), `kavacha` (native window, menu vocabulary, both freezer definitions),
+  `pullup` (project, release, deploys, workflows, stack survey), `exhash`, `mdhtml`.
 - `leela.agent` is an alias for `ramabana`, not a copy. Same for the other libs: thin seams only.
 - Tools and hosts come from `shalya`, git from `gheasy.repo`, imported by name. Not through
   `ramabana.tools` or `ramabana.git`, which re-export them for one release. `tools_for` is the

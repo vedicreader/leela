@@ -66,4 +66,4 @@ picker's catalogue, `ai.py` the assistant, `app.py` the 56 routes. `blocks/nb` o
 document and the routes that run and save it. `blocks/debug` owns both debuggers, the direct
 debugpy session and the notebook one, over the single `DebugState`.
 
-`ramabana.git` owns the gateway, the safepoint journal behind `undo`, the porcelain, and the git tools an agent gets inside a checkout. `blocks/git` is the browser surface over it, plus `blame_notebook` and `RepoSet`. The block sets `gateway().env_for` at import: a checkout's own virtualenv is leela's knowledge, not the harness's.
+`gheasy` owns the gateway, the safepoint journal behind `undo`, the porcelain, and the git tools an agent gets inside a checkout. `blocks/git` is the browser surface over it, plus `blame_notebook` and `RepoSet`. The block sets `gateway().env_for` at import: a checkout's own virtualenv is leela's knowledge, not the harness's.
