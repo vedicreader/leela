@@ -341,7 +341,12 @@ def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
         req = urllib.request.Request(f'http://127.0.0.1:{port}/exec',
                                      data=json.dumps({'code': 'import IPython; print(6*7)'}).encode(),
                                      headers={'Content-Type': 'application/json'})
-        ran = urllib.request.urlopen(req, timeout=240).read().decode()
+        # Wrapped for the same reason as the page above: a 500 here is the kernel failing to
+        # import, and the assert that would have printed the log is never reached.
+        try: ran = urllib.request.urlopen(req, timeout=240).read().decode()
+        except urllib.error.HTTPError as e:
+            pytest.fail(f'the bundled kernel answered {e.code}:\n{e.read().decode()[-1500:]}\n'
+                        f'--- app log ---\n{log.read_text()[-4000:]}')
         assert '42' in ran, f'the bundled kernel could not run a cell:\n{ran[:600]}\n{log.read_text()[-2000:]}'
     finally:
         proc.terminate()
