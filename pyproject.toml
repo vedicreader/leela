@@ -78,9 +78,10 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "keyring>=25.0.0",
     "jupygate>=0.0.1",
-    # 0.2.8 made something the gateway does `async for` over a coroutine, so a kernel there
-    # executes nothing: "'async for' requires an object with __aiter__". Capped until fixed.
-    "jupyasyncclient>=0.2.1,!=0.2.8",
+    # Capped, not excluded: 0.2.8 made something the gateway `async for`s a coroutine, and by
+    # 0.2.14 `run` is a bare async generator where `GatewayKernel` wants the `Run` it reads
+    # `.reply` off. An unpinned resolve took the latter and every cell came back 500.
+    "jupyasyncclient>=0.2.1,<0.2.8",
     "jupywire>=0.1.1",
 ]
 

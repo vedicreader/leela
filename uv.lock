@@ -2500,7 +2500,7 @@ requires-dist = [
     { name = "httpx2", specifier = ">=2.10.0" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "ipymini", specifier = ">=0.0.1" },
-    { name = "jupyasyncclient", specifier = ">=0.2.1,!=0.2.8" },
+    { name = "jupyasyncclient", specifier = ">=0.2.1,<0.2.8" },
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },

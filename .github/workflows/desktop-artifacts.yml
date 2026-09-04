@@ -30,10 +30,19 @@ jobs:
       # nothing without uv, so the runner was resolving fresh from PyPI and shipping a set that had
       # never been tested. That is the drift the export exists to stop.
       - uses: astral-sh/setup-uv@v5
+      # From the lock, the way `build_venv` does locally. `setup_app` only applies the lock when it
+      # has to rebuild a venv, and the runner's Python is already a framework build, so it went
+      # straight to py2app over whatever this step had installed. An unpinned resolve took
+      # jupyasyncclient 0.2.14, whose `run` is a bare async generator, and the bundled kernel
+      # answered 500 to every cell.
       - name: install
         run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project --format requirements-txt \
+            --extra desktop --extra macapp > "$RUNNER_TEMP/app-req.txt"
           python -m pip install --upgrade pip
-          python -m pip install -e ".[macapp]" pytest
+          python -m pip install -r "$RUNNER_TEMP/app-req.txt"
+          python -m pip install --no-deps -e ".[macapp]"
+          python -m pip install pytest
       # Signing and notarising are opt-in on the secrets being set: with none of them the build
       # still produces a launchable, linker-signed app, which is what a fork gets.
       - name: import the signing certificate
