@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-import importlib.util, json, subprocess, sys
+import importlib.util, json, shutil, subprocess, sys
 from pathlib import Path
 
 import pytest
@@ -328,7 +328,12 @@ def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
             try: port = json.loads(serving.read_text())['port']; break
             except Exception: time.sleep(.5)
         else: pytest.fail(f'the app never began serving:\n{log.read_text()[-3000:]}')
-        body = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=30).read().decode()
+        try: body = urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=30).read().decode()
+        # Every other exit from this test prints the app log and this one did not, so a 500 from
+        # the bundle arrived as a bare HTTPError with nothing to say which import had failed.
+        except urllib.error.HTTPError as e:
+            pytest.fail(f'the app served {e.code} for its own page:\n{e.read().decode()[-1500:]}\n'
+                        f'--- app log ---\n{log.read_text()[-3000:]}')
         assert 'lee-ide' in body, f'served a page without the IDE bundle:\n{body[:500]}'
         # A page proves the server imports. It does not prove the *kernel* does, and it did not:
         # pygments loads a style by importing its name, none were bundled, `import IPython` died in
@@ -586,6 +591,7 @@ def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatc
     carrying the rishi and ramabana it was first built with while the repository moved. A build
     shipped the exact on-device corruption the tree had already fixed."""
     import setup_app
+    if shutil.which('uv') is None: pytest.skip('no uv here; the lock is what uv exports')
     req = setup_app.lock_requirements()
     assert req is not None and req.exists(), 'uv export answered nothing'
     # Three spellings, all exact: a registry pin is `name==version`, a package taken from a branch
@@ -676,9 +682,9 @@ def test_every_package_a_tool_schema_is_read_from_ships_its_source():
     """
     app = ROOT/'dist'/'Leela.app'
     if not app.is_dir(): pytest.skip('no local build; the release is built on a runner')
-    lib = app/'Contents'/'Resources'/'lib'/'python3.13'
-    missing = [name for name in NEEDS_SOURCE
-               if not any((lib/name).glob('**/*.py'))]
+    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*')))
+    assert lib is not None, 'the bundle has no lib/python3.x at all'
+    missing = [name for name in NEEDS_SOURCE if not any((lib/name).glob('**/*.py'))]
     assert not missing, (f'{", ".join(missing)} ship without source: add them to PACKAGES in '
                          'packaging/macos/setup.py, or every tool schema raises OSError')
 
