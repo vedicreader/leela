@@ -70,7 +70,10 @@ server-sent events, none returns HTML, so the wire is already a wire.
 
 Seven steps. Leela works after every one. Nothing moves out of the repo yet.
 
-### Step 1. Move the panel markup into the block
+Steps 1, 2, 2b, 3, 4, 5 and 7 are done. Step 6 is the one left, and the note under it
+says what has to change before it can start.
+
+### Step 1. Move the panel markup into the block  ·  *done*
 
 - Create `leela/blocks/agent/ui.py`.
 - Cut `_agent_panel`, `_state_text`, `_state_label`, `_state_title` from `leela/app.py:597-759`.
@@ -80,7 +83,7 @@ Seven steps. Leela works after every one. Nothing moves out of the repo yet.
 
 Check: `uv run pytest tests/test_serve_ide.py`. Open the IDE, the pane looks identical.
 
-### Step 2. Split the agent CSS
+### Step 2. Split the agent CSS  ·  *done*
 
 - Grep `static/lee-ide.css` for `lee-agent`, `lee-thread`, `lee-approval`, `lee-composer`. 290 lines.
 - Move them to `leela/blocks/agent/agent.css`.
@@ -90,7 +93,7 @@ Check: `uv run pytest tests/test_serve_ide.py`. Open the IDE, the pane looks ide
 
 Check: add a test asserting `agent.css` contains no `--lee-` definition. Compare screenshots.
 
-### Step 3. Move `reload.js` out of the agent block
+### Step 3. Move `reload.js` out of the agent block  ·  *done*
 
 - `git mv leela/blocks/agent/reload.js leela/blocks/editor/agentreload.js`.
 - Update its entry in `LAYERS` in `tools/build_ide_js.py` (it is in the `lee-agent.js` list; move it
@@ -100,7 +103,7 @@ Check: add a test asserting `agent.css` contains no `--lee-` definition. Compare
 Check: `uv run pytest tests/blocks/test_ide_bundle.py tests/blocks/test_block_affinity.py`.
 Edit a file with the agent, confirm the open tab still reloads.
 
-### Step 4. Replace the 13 IDE globals with a host object
+### Step 4. Replace the 13 IDE globals with a host object  ·  *done*
 
 - Create `leela/blocks/agent/host.js` declaring one object:
 
@@ -122,7 +125,7 @@ const agentHost = {
 
 Check: `grep -l 'dropCodeSurfaces\|leePane\|diffHtml\|createEditor\|mountCodeSurface\|mountTab\|codeLang\|attachVaultRef\|curEditor\|diffModal\|leeExpandPane\|leeOpenFile\|clearDrafts' leela/blocks/agent/*.js` returns only `host.js`.
 
-### Step 5. Give the agent its own state object
+### Step 5. Give the agent its own state object  ·  *done*
 
 - In `panel.js` (first agent module in load order) declare `const ag = {}`.
 - Move the 30 `lee.agent*` and `lee.memory*` fields onto `ag`.
@@ -131,27 +134,49 @@ Check: `grep -l 'dropCodeSurfaces\|leePane\|diffHtml\|createEditor\|mountCodeSur
 
 Check: `grep -c 'lee\.' leela/blocks/agent/*.js` returns 0 for every file.
 
-### Step 6. Turn the agent JS into ES modules
+### Step 6. Turn the agent JS into ES modules  ·  *not started*
 
-- Add `import`/`export` to the 8 files. The kit functions (`api`, `post`, `esc`, `status`, `modal`,
-  `confirmDialog`, `textDialog`, `renderMarkdown`, `flushMarkdown`, `compactPath`) get imported from
-  a new `leela/static/js/kit.js` that re-exports them from `core.js` and `overlays.js`.
-- Replace inline `onclick="leeAgentNew()"` with `data-agent-action="new"`. There are 11 in the
-  panel markup and 4 more written into HTML strings by the JS. One delegated listener in a new
-  `boot.js` entry point binds them all. The other 113 handlers are already assigned in JS
-  (71 `.onclick =`, 42 `addEventListener`) and need no change.
-- Add the entry point:
+**Blocked as written, and the fix is one line elsewhere.** The kit this step wants to import is not
+importable. `esc`, `post`, `$` and `$$` are `const` in `core.js`, which makes them global *lexical*
+bindings and not properties of `globalThis`. A classic script sees them by name; an ES module
+cannot see them at all, so a `kit.js` that re-exports `globalThis.esc` exports `undefined`. Only
+`api`, `status`, `modal`, `confirmDialog`, `textDialog`, `renderMarkdown`, `flushMarkdown`,
+`compactPath`, `prefGet` and `prefSet` are `function` declarations and therefore reachable.
 
-```js
-export function bootAgent(root, host, opts) { /* wires listeners, starts the stream */ }
-```
+Three ways out, and the middle one is the one to take:
 
-- `build_ide_js.py` keeps producing `lee-agent.js`, now emitted with `type="module"`.
+- Make `core.js` a module too. That is every one of the 59 modules and all three bundles, not the
+  agent's eight. It is the eventual answer and it is not this step.
+- Have `core.js` publish the kit in one statement -- `window.leeKit = {$, $$, esc, api, post,
+  status, modal, confirmDialog, textDialog, renderMarkdown, flushMarkdown, compactPath, prefGet,
+  prefSet}` -- and let `kit.js` re-export from that. Fourteen names, one line, no change to any
+  caller, and it is the seam the package needs regardless: valmiki supplies its own `leeKit` and
+  imports the same module.
+- Copy the kit's source into `kit.js`. Two definitions of `esc` is how they drift apart.
 
-Check: `uv run pytest tests/blocks/test_ide_bundle.py`. Load the page, console is clean, every
-button in the pane still works.
+What the step still has to do after that:
 
-### Step 7. Shrink the server port from 34 members to 6
+- Add `import`/`export` to the eight files, importing the kit from `static/js/kit.js`.
+- Publish what the rest of the client calls. The block already assigns 47 names to `window`, and
+  29 of its functions are called from other blocks, so the gap is about 16 names: `agentLog`,
+  `agentTools`, `agentTurnCards`, `currentAgentTurn`, `foldAgentTurn`, `foldAgentTurns`,
+  `initAgentComposer`, `leeAgentBranches`, `leeAgentShape`, `loadAgentModels`,
+  `paintAgentAttachments`, `renderAgentStep`, `sendAgent`, `setMemoryView`, `showApproval`,
+  `showProblems`, `stopAgent`, `usageMeta`. Every one of those is a caller in another block that
+  the package will have to answer for, so the list is worth reading as a coupling report and not
+  only as an export list.
+- The inline handlers are less of a problem than the plan assumed. All but one of the 21 names
+  `ui.py` writes into `onclick`/`onchange` are already on `window`; `setKernelAutoManage` belongs
+  to another block. `data-agent-action` and a delegated listener are still the better shape, and
+  the test the plan asks for -- every `data-agent-action` value has a handler -- is what makes the
+  swap safe.
+- `build_ide_js.py` emits `lee-agent.js` with `type="module"`.
+
+Check: `uv run pytest tests/blocks/test_ide_bundle.py`, then the agent's browser tests under a real
+Chromium (`LEELA_CHROMIUM=... uv run pytest tests/test_web_slow.py -m "" -k agent`), which is what
+catches a dead button.
+
+### Step 7. Shrink the server port from 34 members to 6  ·  *done*
 
 Create `leela/blocks/agent/port.py`:
 
@@ -188,7 +213,7 @@ Check: `uv run pytest tests/blocks/test_agent_block.py tests/blocks/test_agent_t
 
 # Phase 1. Create the package
 
-### Step 8. New repo `vedicreader/sabha`
+### Step 8. The package  ·  *superseded: it is `valmiki/agent/`, see valmiki `docs/agent-ui.md`*
 
 Layout:
 
