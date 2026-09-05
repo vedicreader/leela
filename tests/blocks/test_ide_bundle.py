@@ -622,3 +622,18 @@ def test_the_panes_inline_handlers_all_resolve():
     named = set(re.findall(r"on(?:click|change)='([A-Za-z_$][\w$]*)\(", ui))
     named |= set(re.findall(r'on(?:click|change)="([A-Za-z_$][\w$]*)\(', block))
     assert not (named & mine) - published, sorted((named & mine) - published)
+
+def test_no_agent_module_assigns_to_a_binding_it_imported():
+    """An `import` is a read-only binding. In one shared scope a `let` in another file could be
+    assigned; as a module it throws `Assignment to constant variable` at the moment of the write,
+    which is how the memory panel stopped rendering. Mutable state the pane shares between its own
+    modules belongs on `ag`."""
+    src = {p.name: p.read_text() for p in sorted((ROOT/'leela/blocks/agent').glob('*.js'))}
+    bad = []
+    for name, text in src.items():
+        imported = {x.strip() for m in re.finditer(r"^import \{([^}]*)\} from '", text, re.M)
+                    for x in m.group(1).split(',')}
+        for n in sorted(imported):
+            for m in re.finditer(r'(?<![\w.$])' + re.escape(n) + r'\s*(?:=[^=]|\+\+|--|\+=|-=|\|\|=|\?\?=)', text):
+                bad.append(f'{name}:{text[:m.start()].count(chr(10)) + 1} assigns imported {n}')
+    assert bad == [], 'put it on `ag` instead:\n  ' + '\n  '.join(bad)

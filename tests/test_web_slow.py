@@ -2707,7 +2707,10 @@ def test_a_stripe_and_the_pane_scroll_bar_are_never_drawn_at_once(tmp_path):
     import json
     (tmp_path/'long.py').write_text(''.join(
         f'x{i} = {i}  # a comment long enough to be worth reading\n' for i in range(400)))
-    src = json.loads((PARENT/'fixtures'/'leela_agent_sessions'/'agent_20260825-073912.ipynb').read_text())
+    fixture = PARENT/'fixtures'/'leela_agent_sessions'/'agent_20260825-073912.ipynb'
+    if not fixture.is_file():
+        pytest.skip(f'{fixture.relative_to(PARENT.parent)} is missing: save an agent session there')
+    src = json.loads(fixture.read_text())
     src['cells'] = [dict(c, id=f'r{r}k{k}') for r in range(3) for k, c in enumerate(src['cells'])]
     (tmp_path/'nb.ipynb').write_text(json.dumps(src))
     async def go(pg):

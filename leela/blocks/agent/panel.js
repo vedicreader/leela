@@ -14,7 +14,7 @@ export const ag = {
   live: null, timeline: null, view: 'live', runs: [], reshape: null, memory: null,
   busyAt: 0, busyWatch: null, hydrating: false, notified: null, documentTitle: '',
   historyHidden: false, queuedSteer: '',
-  memoryDocs: null, memoryHits: null, memoryTopics: null,
+  memoryDocs: null, memoryHits: null, memoryTopics: null, memoryViewSeq: 0,
 };
 
 /* ------------------------------------------------------------------ agent */

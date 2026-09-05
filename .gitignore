@@ -156,6 +156,10 @@ frontend/package-lock.json
 snapshot_report.html
 leela_sessions/
 leela_agent_sessions/
+# the app writes those two anywhere it is opened, and the pattern matches at any depth, so it
+# swallowed a committed test fixture of the same name. `agent_20260825-073912.ipynb` was added
+# in 384e21a and never reached the repository, and the test reading it fails on a clean checkout.
+!tests/fixtures/leela_agent_sessions/
 
 # standalone desktop build products and their framework-Python build environment
 /build/

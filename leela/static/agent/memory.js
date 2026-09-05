@@ -1,10 +1,10 @@
 import {$, $$, esc, api, post, status, renderMarkdown, modal, confirmDialog} from '../js/kit.js';
-import {leeRight, memoryViewSeq} from './budgets.js';
+import {leeRight} from './budgets.js';
 import {agentHost} from './host.js';
 import {ag} from './panel.js';
 
 export function setMemoryView(view) {
-  memoryViewSeq += 1;
+  ag.memoryViewSeq += 1;
   const panel = $('.lee-memory');
   if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics', 'memory-view-vault'); panel.classList.add('memory-view-' + view); }
   $$('[data-memory-view]').forEach(button => button.classList.toggle('active', button.dataset.memoryView === view));
@@ -12,12 +12,12 @@ export function setMemoryView(view) {
 export async function leeMemoryNotes() {
   const body = $('#memorybody'); if (!body) return;
   agentHost.memoryLoaded = 'loading'; agentHost.revealPane('right', true); leeRight('memory'); setMemoryView('notes');
-  const seq = memoryViewSeq;
+  const seq = ag.memoryViewSeq;
   body.innerHTML = '<div class="lee-memory-empty">Loading agent memory…</div>';
   try {
     const data = await api('/agent/memory'), selected = Object.fromEntries(
       Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
-    if (seq !== memoryViewSeq) return;      // the vault (or another view) is on screen now
+    if (seq !== ag.memoryViewSeq) return;      // the vault (or another view) is on screen now
     ag.memory = data; agentHost.memoryLoaded = 'notes';
     $('#memorystatus').textContent = `· ${data.notes.length} note${data.notes.length === 1 ? '' : 's'}`;
     if (!data.notes.length) {
@@ -44,7 +44,7 @@ export async function leeMemoryNotes() {
         } catch (e) { input.checked = !input.checked; status(e.message || String(e), 'err'); }
       });
     });
-  } catch (e) { if (seq !== memoryViewSeq) return; agentHost.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  } catch (e) { if (seq !== ag.memoryViewSeq) return; agentHost.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 function leeNewMemoryNote(draft = {}) { leeAgentMemory('__new__', draft); }
 window.leeMemoryNotes = leeMemoryNotes; window.leeNewMemoryNote = leeNewMemoryNote;

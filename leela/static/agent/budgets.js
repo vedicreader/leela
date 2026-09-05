@@ -157,4 +157,3 @@ window.leeRight = leeRight;
 // Every memory view is fetched asynchronously into one `#memorybody`, so a slow answer must not
 // paint over the view you switched to. Each switch takes the next token, and a fetch that finds the
 // token moved drops its result.
-export let memoryViewSeq = 0;
