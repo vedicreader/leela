@@ -39,14 +39,18 @@ SHARED = {
 }
 
 #: a panel one block owns over another block's data, the way `git/panel.js` is a view over git
-CROSS_BLOCK_VIEWS = {'blocks/agent/memory.js': 'the agent panel\'s workbench over the vault'}
+CROSS_BLOCK_VIEWS = {'blocks/agent/memory.js': 'the agent panel\'s workbench over the vault',
+                     # the seam itself: the agent edits a file, the open tabs reload. It asks the
+                     # agent what changed, the filesystem for the new bytes, and tabs to remount,
+                     # so no one block can be a majority of its calls
+                     'blocks/tabs/agentreload.js': 'the IDE reacting to the agent'}
 
 #: modules that render or manipulate the DOM and are not expected to call their own routes
 PURE_DOM = {'cells.js', 'gutter.js', 'conflictpanes.js', 'conflictfiles.js', 'terminal.js',
             'keymap.js', 'boot.js', 'core.js', 'focus.js', 'overlays.js', 'actions.js',
             'views.js', 'state.js', 'palette.js', 'split.js', 'tabs.js', 'mount.js',
             'markdown.js', 'media.js', 'panel.js', 'blame.js', 'builder.js', 'projects.js', 'find.js',
-            'diffs.js', 'motion.js', 'prompt.js', 'exec.js', 'runfile.js', 'reload.js'}
+            'diffs.js', 'motion.js', 'prompt.js', 'exec.js', 'runfile.js'}
 
 def owners(text):
     "block -> how many route calls this text makes to that block."

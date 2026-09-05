@@ -1,0 +1,28 @@
+/* Leela's bridge: the pane's tokens, in terms of Leela's.
+
+   This is the only file that knows both vocabularies. It is loaded ahead of agent.css, and it
+   declares every `--val-*` that sheet reads and nothing else. `--lee-*` is declared per theme
+   family and mode in lee-ide.css, so a theme switch moves these with it and the pane needs no
+   JavaScript to follow. */
+
+:root {
+  --val-accent: var(--lee-accent);
+  --val-active-line: var(--lee-active-line);
+  --val-aqua: var(--lee-aqua);
+  --val-bg: var(--lee-bg);
+  --val-bg1: var(--lee-bg1);
+  --val-bg2: var(--lee-bg2);
+  --val-blue: var(--lee-blue);
+  --val-border: var(--lee-border);
+  --val-fg: var(--lee-fg);
+  --val-fg2: var(--lee-fg2);
+  --val-fg3: var(--lee-fg3);
+  --val-fg4: var(--lee-fg4);
+  --val-green: var(--lee-green);
+  --val-mono: var(--lee-mono);
+  --val-ok: var(--lee-ok);
+  --val-orange: var(--lee-orange);
+  --val-red: var(--lee-red);
+  --val-sel: var(--lee-sel);
+  --val-warning: var(--lee-warning);
+}

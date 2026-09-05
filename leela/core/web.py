@@ -13,11 +13,12 @@ from starlette.staticfiles import StaticFiles
 from .. import errstr
 
 __all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop',
-           'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES']
+           'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES', 'IDE_SHEETS']
 
 #: The client's bundles, in the order the browser must execute them. They share one lexical
 #: scope, so `lee-core.js` declares the vocabulary and the rest read it.
 IDE_BUNDLES = ('lee-core.js', 'lee-agent.js', 'lee-ide.js')
+IDE_SHEETS = ('lee-agent.css',)
 
 def asset_dir(name):
     "One of leela's asset dirs, in a normal install, py2app Resources, or a py2exe distribution."

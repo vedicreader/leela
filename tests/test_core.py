@@ -1217,7 +1217,7 @@ def test_a_disabled_state_layer_keeps_its_text_and_stays_out_of_the_briefing(tmp
     """The toggle silences a layer for one piece of work without writing it again, so what changes
     has to be the briefing and not the text. Clearing is the other one: empty text, and gone.
     """
-    from leela.app import _state_text
+    from leela.blocks.agent.ui import state_text as _state_text
     ws = Workspace(roots=[tmp_path])
     try:
         ws.ai.set_state('never delete anything', layer='project')

@@ -173,7 +173,7 @@ def test_every_routed_job_says_where_its_model_is_spent():
     """
     from leela.agent.core import JOBS
     from leela.blocks.agent.models import JOB_HELP
-    from leela.app import help_mark
+    from leela.blocks.agent.ui import help_mark
     assert set(JOBS) <= set(JOB_HELP), f'no help for {set(JOBS) - set(JOB_HELP)}'
     assert 'falls back to oneshot' in JOB_HELP['classify']
     # nothing calls the oneshot job directly: it is only what the unset cheap jobs fall back to

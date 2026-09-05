@@ -400,7 +400,7 @@ def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
     assert 'leeEditorMenu(this)' in html and 'more editor actions' in html
 
 def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     html = to_xml(_agent_panel(Workspace(roots=[])))
     assert 'id="agentcontrol"' in html
     assert 'id="agenttoolbudget"' in html and 'id="agentbudgetstatus"' in html
@@ -408,7 +408,7 @@ def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
 
 
 def test_the_agent_panel_streams_steps_approvals_and_usage():
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     html=str(_agent_panel(Workspace(roots=[])))
     ws = Workspace(roots=[])
     assert ws.inline_model == 'gpt-mini'
@@ -578,7 +578,7 @@ def test_a_render_does_not_report_a_missing_package_as_a_problem_with_the_markdo
 
 
 def test_model_discovery_does_not_block_shell_render_or_editor_mount():
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     html = str(_agent_panel(Workspace(roots=[])))
     assert html.count('loading…') == 3
 
@@ -644,7 +644,7 @@ def test_the_vault_privacy_control_offers_every_policy_and_can_recover_from_a_re
     """A three-valued control cannot recover by flipping a box, so it carries the value it had. Read
     it out of the markup: a `data-was` the server never wrote would reset a refusal to `off`, which
     is the least private answer and the one nobody chose."""
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     from leela.blocks.memory.memory import PII_GATES
     ws = Workspace(roots=[]); ws.vault_pii = 'redact'
     html = str(_agent_panel(ws))
@@ -655,12 +655,12 @@ def test_the_vault_privacy_control_offers_every_policy_and_can_recover_from_a_re
     assert "'/agent/vault-pii'" in body and 'sel.value = was' in body
 
 def test_routing_popover_closes_on_outside_click_and_escape():
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'lee-dismissable' in html
 
 def test_agent_pane_has_model_history_and_expand_controls():
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     html = str(_agent_panel(Workspace(roots=[])))
     assert 'agentmodel' in html and 'leeAgentModel' in html
     assert 'localmultimodal' in html and 'leeLocalMultimodal' in html
@@ -680,7 +680,8 @@ def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
 
 def test_model_picker_shows_older_models_by_default(monkeypatch):
     from leela.agent import core as models
-    from leela.app import _agent_panel, ide_app
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
+    from leela.app import ide_app
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     models.forget_probes()
     monkeypatch.setattr(models, '_openai_ids', lambda: ['gpt-4.1', 'gpt-5.6-luna'])
@@ -727,7 +728,7 @@ def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
 
 
 def test_configured_agent_does_not_offer_setup_again():
-    from leela.app import _agent_panel
+    from leela.blocks.agent.ui import agent_panel as _agent_panel
     ws = Workspace(roots=[])
     ws.agent_state_layers['project']['text'] = '# Goal\n\nMaintain this project.'
     html = str(_agent_panel(ws))

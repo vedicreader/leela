@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Concatenate the client's modules into the bundles `leela/app.py` serves.
+"""Concatenate the client's modules and block stylesheets into what `leela/app.py` serves.
 
 The modules live with the feature they belong to: `leela/blocks/<block>/*.js` beside that block's
 Python, and the shared vocabulary in `leela/static/js/`. `LAYERS` is their load order, and the only
@@ -11,7 +11,7 @@ import sys
 from fastcore.all import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from leela.core.web import IDE_BUNDLES
+from leela.core.web import IDE_BUNDLES, IDE_SHEETS
 
 ROOT = Path(__file__).resolve().parent.parent
 PKG = ROOT/'leela'
@@ -33,10 +33,10 @@ LAYERS = {
     'lee-agent.js': [
         'blocks/agent/panel.js', 'blocks/agent/budgets.js', 'blocks/agent/memory.js',
         'blocks/agent/live.js', 'blocks/agent/approvals.js', 'blocks/agent/steer.js',
-        'blocks/agent/media.js', 'blocks/agent/reload.js'
+        'blocks/agent/media.js'
     ],
     'lee-ide.js': [
-        'blocks/term/terminal.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js',
+        'blocks/tabs/agentreload.js', 'blocks/term/terminal.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js',
         'blocks/git/cwd.js', 'blocks/editor/gutter.js', 'blocks/git/state.js',
         'blocks/git/views.js', 'blocks/workflows/workflows.js', 'blocks/workflows/builder.js',
         'blocks/pipelines/releases.js', 'blocks/pipelines/deploys.js', 'blocks/drive/drive.js',
@@ -51,7 +51,13 @@ LAYERS = {
     ],
 }
 
+#: served stylesheet -> the block-authored sheets it is built from, in order. A block's CSS lives
+#: with the block, the way its JS does; `leela/static` is where the built copy is served from. The
+#: agent's bridge comes first: it declares the `--val-*` tokens the rules after it read.
+SHEETS = {'lee-agent.css': ['blocks/agent/tokens.lee.css', 'blocks/agent/agent.css']}
+
 assert tuple(LAYERS) == IDE_BUNDLES, f'{tuple(LAYERS)} is not what `core.web` serves: {IDE_BUNDLES}'
+assert tuple(SHEETS) == IDE_SHEETS, f'{tuple(SHEETS)} is not what `core.web` serves: {IDE_SHEETS}'
 
 def modules(bundle=None):
     "Every module path, or one bundle's, in load order."
@@ -67,28 +73,36 @@ def bundle(name):
     "One bundle's concatenated text."
     return ''.join(_text(p) for p in modules(name))
 
+def sheets(name=None):
+    "Every block-authored stylesheet path, or one served sheet's, in order."
+    names = SHEETS[name] if name else [s for ss in SHEETS.values() for s in ss]
+    return [PKG/s for s in names]
+
 def missing():
-    "Modules the order names but the tree does not have."
-    return [p for p in modules() if not p.is_file()]
+    "Modules and sheets the order names but the tree does not have."
+    return [p for p in modules() + sheets() if not p.is_file()]
 
 def orphans():
     "Modules the tree has but the order does not name, which would silently never load."
     named = {p.resolve() for p in modules()}
-    found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))}
+    named |= {p.resolve() for p in sheets()}
+    found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'),
+                                   *PKG.glob('blocks/*/*.css'))}
     return sorted(found - named)
 
 def build(check=False):
     if gone := missing(): raise SystemExit(f'named but absent: {[p.name for p in gone]}')
     if extra := orphans(): raise SystemExit(f'present but unnamed: {[str(p.relative_to(PKG)) for p in extra]}')
-    for name in LAYERS:
-        text, out = bundle(name), OUTDIR/name
+    for name in tuple(LAYERS) + tuple(SHEETS):
+        text = bundle(name) if name in LAYERS else ''.join(_text(p) for p in sheets(name))
+        out = OUTDIR/name
         if check:
             if not out.is_file(): raise SystemExit(f'{name} has never been built')
             if out.read_text() != text: raise SystemExit(f'{name} is stale; run python tools/build_ide_js.py')
         else: out.write_text(text)
-    n = len(modules())
-    verb = 'match' if check else 'built from'
+    n, verb = len(modules()), 'match' if check else 'built from'
     print(f'{len(LAYERS)} bundle(s) {verb} {n} modules: ' +
-          ', '.join(f'{k} ({len(v)})' for k, v in LAYERS.items()))
+          ', '.join(f'{k} ({len(v)})' for k, v in LAYERS.items()) +
+          f'; {len(SHEETS)} sheet(s) from {len(sheets())}')
 
 if __name__ == '__main__': build(check='--check' in sys.argv)

@@ -15,7 +15,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'tools'))
 import build_ide_js as builder                                              # noqa: E402
 
-CSS = (ROOT/'leela/static/lee-ide.css').read_text()
+# both sheets: the agent's rules live in its own block now, and every check here that names a
+# selector or a token has to keep seeing them
+IDE_CSS = (ROOT/'leela/static/lee-ide.css').read_text()
+AGENT_CSS = (ROOT/'leela/blocks/agent/agent.css').read_text()
+BRIDGE_CSS = (ROOT/'leela/blocks/agent/tokens.lee.css').read_text()
+CSS = IDE_CSS + '\n' + AGENT_CSS
 JS = ''.join((builder.OUTDIR/n).read_text() for n in builder.LAYERS)
 DECL = re.compile(r'^(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)', re.M)
 
@@ -155,7 +160,7 @@ def test_the_pill_neutralises_the_button_defaults():
 def test_no_class_is_both_an_inline_badge_and_a_container():
     """`lee-help` was the `?` badge and the keyboard panel at once. The panel's rule is later in the
     file, so it won, and every badge rendered as a padded two-column grid with a 50% radius."""
-    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    css = CSS
     import re
     decls = {}
     for m in re.finditer(r'^\.(lee-[\w-]+)\s*\{([^}]*)\}', css, re.M):
@@ -169,12 +174,13 @@ def test_no_class_is_both_an_inline_badge_and_a_container():
 
 def test_the_hint_badge_and_the_help_panel_are_different_classes():
     "The badge is `lee-hint`, the keyboard panel is `lee-help`. Neither may take the other's name."
-    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    css = CSS
+    ui = (ROOT/'leela'/'blocks'/'agent'/'ui.py').read_text()
     app = (ROOT/'leela'/'app.py').read_text()
     panel = (ROOT/'leela'/'blocks'/'agent'/'panel.js').read_text()
     assert '.lee-hint {' in css and 'display: inline-flex' in css.split('.lee-hint {')[1][:200]
-    assert "cls='lee-hint'" in app and 'class="lee-hint"' in panel
-    assert "cls='lee-help'" not in app and 'class="lee-help"' not in panel
+    assert "cls='lee-hint'" in ui and 'class="lee-hint"' in panel
+    assert "cls='lee-help'" not in app + ui and 'class="lee-help"' not in panel
 
 
 def test_the_overview_stripe_redraws_when_a_panel_resizes():
@@ -253,9 +259,9 @@ def test_a_routing_row_keeps_its_help_mark_out_of_the_control_column():
     into the 82px name column, where every model name was clipped. The name and its mark are one
     item, in both the server-rendered rows and the ones `paintJobModels` draws."""
     assert '.lee-routing-popover label > .lee-routing-name' in CSS
-    app = (ROOT/'leela/app.py').read_text()
+    ui = (ROOT/'leela/blocks/agent/ui.py').read_text()
     panel = (ROOT/'leela/blocks/agent/panel.js').read_text()
-    popover = app[app.index("Details(Summary('settings')"):app.index("cls='lee-routing-popover'")]
+    popover = ui[ui.index("Details(Summary('settings')"):ui.index("cls='lee-routing-popover'")]
     for mark in re.finditer(r'help_mark\(', popover):
         head = popover[:mark.start()].rindex('Label(')
         assert 'lee-routing-name' in popover[head:popover.index(')', mark.end()) + 60], \
@@ -471,3 +477,70 @@ def test_a_finished_run_stops_its_clock_and_loses_its_stop_button():
     assert set(re.findall(r"'(\w+)'", src[src.index('const TERMINAL'):src.index('function updateAgentRunstrip')])) \
         == {'completed', 'cancelled', 'detached', 'terminated', 'failed'}
     assert 'TERMINAL' in JS, 'and the built bundle carries it'
+
+
+def test_the_agent_sheet_names_no_palette_but_its_own():
+    """The pane reads `--val-*` and nothing else. A `--lee-*` here would pin it to Leela and
+    follow it out of the repository; a declaration here would make it a theme rather than a pane."""
+    assert not re.search(r'--lee-[\w-]+', AGENT_CSS), 'the pane should not know Leela\'s token names'
+    assert not re.findall(r'^\s*--val-[\w-]+\s*:', AGENT_CSS, re.M), 'the host declares them'
+    assert re.findall(r'var\(--val-[\w-]+', AGENT_CSS), 'it should be reading them'
+
+def test_the_bridge_declares_exactly_what_the_pane_reads():
+    """One file knows both vocabularies. Every token the rules read is declared in it, and it
+    declares nothing spare -- a name that drifts out of use is a name a second host has to map
+    for no reason."""
+    read = set(re.findall(r'var\(--val-([\w-]+)', AGENT_CSS))
+    declared = set(re.findall(r'^\s*--val-([\w-]+)\s*:', BRIDGE_CSS, re.M))
+    assert read == declared, f'missing {sorted(read - declared)}, spare {sorted(declared - read)}'
+    assert all(f'var(--lee-{t})' in BRIDGE_CSS for t in declared), 'the bridge maps onto Leela'
+
+def test_the_bridge_is_built_ahead_of_the_rules():
+    "A `--val-*` read before it is declared is an unresolved colour on first paint."
+    order = builder.SHEETS['lee-agent.css']
+    assert order.index('blocks/agent/tokens.lee.css') < order.index('blocks/agent/agent.css')
+
+def _agent_classes():
+    """The classes only the pane's own files name. This is the boundary the CSS split used: a
+    class the notebook or the shared client also renders is not the pane's to take."""
+    cls = lambda t: set(re.findall(r'lee-[a-z][\w-]*', t))
+    pkg = ROOT/'leela'
+    mine = [*(pkg/'blocks/agent').glob('*.js'), pkg/'blocks/agent/ui.py']
+    others = ([p for p in pkg.glob('blocks/*/*.js') if p.parent.name != 'agent']
+              + list((pkg/'static/js').glob('*.js'))
+              + [p for p in pkg.glob('blocks/*/*.py') if p.name != 'ui.py' or p.parent.name != 'agent']
+              + [pkg/'app.py', pkg/'workspace.py', ROOT/'frontend/editor.js'])
+    A = set().union(*[cls(p.read_text()) for p in mine])
+    O = set().union(*[cls(p.read_text()) for p in others if p.exists()])
+    return A - O
+
+def _selectors(css):
+    css = re.sub(r'/\*.*?\*/', '', css, flags=re.S)      # a comment can hold commas and braces
+    for m in re.finditer(r'^\s*([^@{}][^{}]*?)\{', css, re.M):
+        sels = [x.strip() for x in m.group(1).split(',') if x.strip()]
+        if sels: yield sels
+
+def _only_the_panes(sels, owned):
+    for s in sels:
+        names = set(re.findall(r'\.(lee-[\w-]+)', s))
+        if not names or not names <= owned: return False
+    return True
+
+def test_no_rule_that_is_only_the_panes_was_left_in_the_ide_sheet():
+    """A rule every one of whose selectors names only the pane's classes belongs in agent.css.
+    One left behind is a rule that will not travel when the pane moves out of this repository."""
+    owned = _agent_classes()
+    for sels in _selectors(IDE_CSS):
+        assert not _only_the_panes(sels, owned), f'agent-only rule still in lee-ide.css: {sels}'
+
+def test_the_agent_sheet_took_no_rule_that_is_not_only_the_panes():
+    "The other direction: a shared class styled from agent.css would restyle the notebook too."
+    owned = _agent_classes()
+    for sels in _selectors(AGENT_CSS):
+        assert _only_the_panes(sels, owned), f'not the pane\'s alone: {sels}'
+
+def test_the_two_sheets_never_style_the_same_selector():
+    """agent.css is linked after lee-ide.css, so a selector in both would resolve by file order
+    rather than by the order it was authored in. The split has to leave them disjoint."""
+    def keys(css): return {' '.join(sorted(s)) for s in _selectors(css)}
+    assert not (keys(IDE_CSS) & keys(AGENT_CSS))
