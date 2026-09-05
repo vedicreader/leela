@@ -70,8 +70,8 @@ server-sent events, none returns HTML, so the wire is already a wire.
 
 Seven steps. Leela works after every one. Nothing moves out of the repo yet.
 
-Steps 1, 2, 2b, 3, 4, 5 and 7 are done. Step 6 is the one left, and the note under it
-says what has to change before it can start.
+All of them are done. What each turned out to be, where it differed from the plan, and what
+the measurement said, is under each step.
 
 ### Step 1. Move the panel markup into the block  ·  *done*
 
@@ -134,9 +134,9 @@ Check: `grep -l 'dropCodeSurfaces\|leePane\|diffHtml\|createEditor\|mountCodeSur
 
 Check: `grep -c 'lee\.' leela/blocks/agent/*.js` returns 0 for every file.
 
-### Step 6. Turn the agent JS into ES modules  ·  *not started*
+### Step 6. Turn the agent JS into ES modules  ·  *done*
 
-**Blocked as written, and the fix is one line elsewhere.** The kit this step wants to import is not
+**It was blocked as written, and the fix was one statement elsewhere.** The kit this step wants to import is not
 importable. `esc`, `post`, `$` and `$$` are `const` in `core.js`, which makes them global *lexical*
 bindings and not properties of `globalThis`. A classic script sees them by name; an ES module
 cannot see them at all, so a `kit.js` that re-exports `globalThis.esc` exports `undefined`. Only
