@@ -26,6 +26,17 @@ def fake_kernels():
     KernelPool.peek = lambda self, key: self.kernels.get(key)
     KernelPool.close_all = lambda self: asyncio.sleep(0)
 
+def fake_summary():
+    """`/complete/selection` reaches the routed summary model, and where a local one is cached on
+    disk that is a multi-gigabyte load on a worker thread the test does not wait for.
+
+    The chord test asserts the panel is raised, not what it says, and returns; the load carries on
+    in a process that runs every later test in the file. One selection took the run from 200MB to
+    12GB, after which the machine thrashed and the suite was killed rather than finishing.
+    """
+    from leela.blocks.agent.ai import Assistant
+    Assistant.summarise = lambda self, text, sp='': 'a summary of the selection'
+
 def _free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -66,7 +77,7 @@ async def _started(srv, secs=20):
 
 async def _on_page(fn, roots=(), dpr=None):
     "Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."
-    fake_kernels()
+    fake_kernels(); fake_summary()
     ws = Workspace(roots=list(roots), approvals='auto')
     port = _free_port()
     srv = _serve(ws, port)
@@ -1746,6 +1757,7 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
             {prompt: 'an old one', reply: 'from before a restart', turn_id: 't3', capabilities: {known: false}}], '');
           const bars = $$('.lee-response-revision', host);
           const read = b => ({turn: b.dataset.turn,
+                              all: [...b.querySelectorAll('button')].map(x => x.textContent),
                               off: [...b.querySelectorAll('button')].filter(x => x.disabled).map(x => x.textContent),
                               why: $('[data-unsay]', b).title});
           const out = {n: bars.length, rows: bars.map(read)};
@@ -1823,7 +1835,8 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
     assert [r['turn'] for r in bars['rows']] == ['t1', 't2', 't3']
     assert bars['rows'][0]['off'] == [], 'everything this turn can still do is offered'
     assert bars['rows'][1]['off'] == ['Edit what agent remembers'], 'no answer to edit, but files to restore'
-    assert len(bars['rows'][2]['off']) == 3, 'a turn this process holds no boundary for offers nothing'
+    # counted rather than named, and a fourth control was added without the count moving
+    assert bars['rows'][2]['off'] == bars['rows'][2]['all'], 'a turn this process holds no boundary for offers nothing'
     assert 'not run in this session' in bars['rows'][2]['why'], 'and says which of the two reasons it is'
 
     assert [b['turn'] for b in got['pair']] == ['t1', 't2']
@@ -1835,10 +1848,10 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
     assert [c['folded'] for c in got['blocked']] == [False, True, False], got['blocked']
 
     look = got['look']
-    assert [b['off'] for b in look['live']['buttons']] == [False] * 3
+    assert look['live']['buttons'] and not any(b['off'] for b in look['live']['buttons'])
     assert not any(b['faded'] for b in look['live']['buttons']), 'a control that works is drawn full strength'
     assert not look['live']['note'], 'and the row says nothing about availability'
-    assert [b['off'] for b in look['dead']['buttons']] == [True] * 3
+    assert look['dead']['buttons'] and all(b['off'] for b in look['dead']['buttons'])
     assert all(b['faded'] for b in look['dead']['buttons']), 'an unavailable control is muted, not just inert'
     assert look['dead']['noteShown'] and 'not run in this session' in look['dead']['note'], \
         'and the reason is on the row, not in a tooltip'

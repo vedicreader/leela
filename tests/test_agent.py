@@ -2049,15 +2049,28 @@ def test_a_hung_command_is_killed_and_says_so(project):
     code, out = project.run_cmd('sleep 30', timeout=1)
     assert code == 124 and 'killed after 1s' in out
 
+def dead(pid):
+    """Whether a pid is no longer a running process.
+
+    `kill(pid, 0)` alone is not the question. A killed orphan is reparented to init, and a
+    container whose init never calls `wait` leaves it in the table as a zombie, which still takes
+    the signal. The state is what says it has gone.
+    """
+    import os, subprocess
+    try: os.kill(pid, 0)
+    except OSError: return True
+    state = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
+    return state.stdout.strip().startswith('Z')
+
 def test_a_timeout_takes_the_children_with_it(project):
     "`pytest -n 4` behind a pipe leaves children that outlive the shell, and a leaked"
-    import os, time
+    import time
     marker = project.roots[0] + '/child.pid'
     project.run_cmd(f'(sleep 30 & echo $! > {marker}); sleep 30', timeout=2)
     pid = int(open(marker).read().strip())
-    time.sleep(0.2)
-    with pytest.raises(OSError):
-        os.kill(pid, 0)
+    end = time.time() + 5
+    while not dead(pid) and time.time() < end: time.sleep(.05)
+    assert dead(pid), 'the backgrounded child outlived the shell the timeout killed'
 
 def test_the_probe_command_never_spawns_anything(project):
     assert project.run_cmd('') == (0, '')

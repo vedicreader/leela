@@ -28,6 +28,13 @@ def files(mod):
     "Every source file the definition would copy, as paths relative to the repository."
     return {str(Path(f).relative_to(ROOT)) for _, fs in mod.DATA_FILES for f in fs}
 
+def svg_ink(svg):
+    "The pixels an icon SVG carries, not the PNG bytes they were encoded to."
+    import base64, io
+    from PIL import Image
+    href = re.search(r'base64,([^"]+)"', svg).group(1)
+    return Image.open(io.BytesIO(base64.b64decode(href))).convert('RGBA').tobytes()
+
 def dests(mod):
     return {d for d, _ in mod.DATA_FILES}
 
@@ -237,13 +244,19 @@ def test_the_favicon_is_the_mark_it_is_generated_from():
 
     Two of them: the mark is line work with no plate, so a tab strip shows its own colour through
     it and the ink has to follow `prefers-color-scheme`.
+
+    Drift is a difference in the artwork, so the ink is what is compared. A `zlib` or Pillow
+    release changes the bytes `Image.save` writes for pixels it did not change, and comparing the
+    encoded PNG called every such upgrade a stale favicon.
     """
     pytest.importorskip('PIL')
     import tools.build_icons as icons
     for variant, path in icons.FAVICONS.items():
-        assert path.read_text() == icons.favicon(variant), \
+        have, made = path.read_text(), icons.favicon(variant)
+        assert have.split('base64,')[0] == made.split('base64,')[0], \
             f'{path.name} is stale; run python tools/build_icons.py'
-    assert icons.FAVICONS['light'].read_text() != icons.FAVICONS['dark'].read_text(), \
+        assert svg_ink(have) == svg_ink(made), f'{path.name} is stale; run python tools/build_icons.py'
+    assert svg_ink(icons.FAVICONS['light'].read_text()) != svg_ink(icons.FAVICONS['dark'].read_text()), \
         'one artwork under two names is not a light and a dark variant'
     app = (ROOT/'leela'/'app.py').read_text()
     for name in ('favicon.svg', 'favicon-dark.svg'):
@@ -323,13 +336,24 @@ def test_a_missing_window_icon_is_reported_rather_than_shrugged_off(monkeypatch,
     assert leela_app._icon() is None
     assert 'build_icons' in capsys.readouterr().out
 
-def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
-    "The generated PNG must be what the generator makes, or a stale one is shipped."
+def test_the_icon_generator_is_reproducible(tmp_path):
+    """Nothing is committed for a build to disagree with, so what a build ships is whatever this
+    draws, and it has to draw the same thing twice and survive the round trip through a PNG.
+
+    It read `packaging/assets/Leela.png` as the committed artefact, which the test above forbids
+    committing, so a checkout that had not run the generator failed here rather than skipping.
+    """
     pytest.importorskip('PIL')
+    from PIL import Image
     import tools.build_icons as icons
     made = icons.image(1024)
-    committed = __import__('PIL.Image', fromlist=['Image']).open(ROOT/'packaging'/'assets'/'Leela.png')
-    assert made.tobytes() == committed.convert('RGBA').tobytes()
+    assert made.tobytes() == icons.image(1024).tobytes(), 'two draws of one size disagree'
+    png = tmp_path/'Leela.png'; made.save(png)
+    assert Image.open(png).convert('RGBA').tobytes() == made.tobytes(), 'the saved PNG is not the drawing'
+    built = icons.ASSETS/'Leela.png'
+    if built.is_file():
+        assert Image.open(built).convert('RGBA').tobytes() == made.tobytes(), \
+            'the built icon is stale; run python tools/build_icons.py'
 
 APP = ROOT/'dist'/('Leela.app/Contents/MacOS/Leela' if sys.platform == 'darwin' else 'Leela/Leela.exe')
 

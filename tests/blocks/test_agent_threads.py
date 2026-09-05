@@ -230,6 +230,19 @@ def test_a_second_turn_is_rejected_while_the_first_is_pending_registration():
     assert not worker.is_alive() and result['accepted']['run'] == 'run-1'
 
 
+def test_a_reap_leaves_a_registration_whose_worker_has_not_started_yet():
+    """The window is between registering a turn and starting its worker. `is_alive()` is False for a
+    thread that has not started, so a competing start reaped the turn it was meant to be refused by,
+    and both turns ran until `start_timeout` cleared them."""
+    runner = TurnRunner(_Workspace())
+    ready = {'id': 'first', 'event': threading.Event(), 'gate': threading.Event(), 'accepted': False,
+             'run': '', 'error': None, 'at': time.time(), 'worker': threading.Thread(target=lambda: None)}
+    runner._pending['first'] = ready
+    assert runner._reap() == [] and runner.held(), 'a turn about to start still holds the conversation'
+    ready['worker'].start(); ready['worker'].join(1)
+    assert runner._reap() == ['first'] and not runner._pending, 'a worker that has run and gone is reaped'
+
+
 class _Latched(_AI):
     "An assistant that registers its run before the engine reports it, as Ramabana's `stream` does."
     registered = False

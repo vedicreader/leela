@@ -416,7 +416,8 @@ class TurnRunner:
         with self._lock:
             for ident, r in list(self._pending.items()):
                 worker = r.get('worker')
-                gone = worker is not None and not worker.is_alive()
+                # a thread not started yet is not alive either, and a competing start reaps here
+                gone = worker is not None and worker.ident is not None and not worker.is_alive()
                 quiet = (r['accepted'] and r['gate'].is_set() and not running
                          and now - r['at'] >= self.stale_after)
                 if not (gone or quiet): continue
