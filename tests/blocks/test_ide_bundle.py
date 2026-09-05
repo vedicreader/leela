@@ -544,3 +544,46 @@ def test_the_two_sheets_never_style_the_same_selector():
     rather than by the order it was authored in. The split has to leave them disjoint."""
     def keys(css): return {' '.join(sorted(s)) for s in _selectors(css)}
     assert not (keys(IDE_CSS) & keys(AGENT_CSS))
+
+def test_only_the_host_file_names_the_application_around_the_pane():
+    """The pane runs in Leela, in Ramabana and on a phone. `host.js` is the one module allowed to
+    know which -- every other agent module reaches the IDE through `agentHost`, so a second host
+    supplies one object rather than fourteen globals."""
+    pkg, decl = ROOT/'leela', re.compile(r'^(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)', re.M)
+    elsewhere = {}
+    for p in [*pkg.glob('blocks/*/*.js'), *(pkg/'static/js').glob('*.js')]:
+        if p.parent.name == 'agent': continue
+        for n in decl.findall(p.read_text()): elsewhere[n] = str(p.relative_to(pkg))
+    # generic browser vocabulary, not the IDE: these become the kit the package imports
+    kit = {'$', '$$', 'api', 'post', 'esc', 'status', 'modal', 'confirmDialog', 'textDialog',
+           'renderMarkdown', 'flushMarkdown', 'compactPath', 'prefGet', 'prefSet'}
+    bad = []
+    for p in sorted((pkg/'blocks/agent').glob('*.js')):
+        if p.name == 'host.js': continue
+        src = p.read_text()
+        for n in sorted(set(re.findall(r'(?<![\w.$])([A-Za-z_$][\w$]*)\s*\(', src))):
+            if n in elsewhere and n not in kit: bad.append(f'{p.name} calls {n}() from {elsewhere[n]}')
+        if re.search(r'(?<![\w.$])LeeCM\b', src): bad.append(f'{p.name} names LeeCM directly')
+    assert bad == [], 'reach the IDE through agentHost:\n  ' + '\n  '.join(bad)
+
+def test_every_host_hook_has_a_fallback():
+    "Outside an IDE the global is absent, and a hook that then throws is a dead pane."
+    src = (ROOT/'leela/blocks/agent/host.js').read_text()
+    body = src[src.index('const agentHost = {'):]
+    hooks = re.findall(r'^  (?:get )?(\w+)[:(]', body, re.M)
+    assert len(hooks) >= 14, hooks
+    for h in hooks:
+        assert re.search(r'_call\(|_ide\(|_shared\(|typeof|TEXTAREA_CM', body[body.index(h):body.index(h) + 400]), \
+            f'{h} has no path for a host that does not provide it'
+
+def test_the_pane_keeps_its_state_off_the_shared_global():
+    """`lee` is the editor's, the terminal's, git's and the debugger's. Twenty-nine of its fields
+    were the pane's alone, which is why nothing could tell whose they were. The pane has `ag` now,
+    and reaches the six genuinely shared ones through `agentHost`."""
+    for p in sorted((ROOT/'leela/blocks/agent').glob('*.js')):
+        if p.name == 'host.js': continue
+        assert not re.findall(r'\blee\.\w+', p.read_text()), f'{p.name} still writes to the shared global'
+    core = (ROOT/'leela/static/js/core.js').read_text()
+    lit = core[core.index('const lee = {'):core.index('\n};', core.index('const lee = {'))]
+    for f in ('agentThread', 'agentStream', 'agentSelections', 'shownProblems', 'stateSuggestions'):
+        assert f not in lit, f'{f} is still declared on the shared global'

@@ -31,7 +31,7 @@ LAYERS = {
         'blocks/vars/vars.js'
     ],
     'lee-agent.js': [
-        'blocks/agent/panel.js', 'blocks/agent/budgets.js', 'blocks/agent/memory.js',
+        'blocks/agent/host.js', 'blocks/agent/panel.js', 'blocks/agent/budgets.js', 'blocks/agent/memory.js',
         'blocks/agent/live.js', 'blocks/agent/approvals.js', 'blocks/agent/steer.js',
         'blocks/agent/media.js'
     ],

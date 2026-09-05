@@ -14,6 +14,7 @@ from ...agent.runtime import estimate_tokens
 from ...core.web import diff_payload, fail, off_loop, sse
 from ...blocks.memory.memory import pii_gate
 from ...workspace import STEP_RANGE, TOOL_RANGE
+from .port import NO_EXECUTION, WorkspacePort
 from .threads import TurnError
 from .turns import (edit_diffs, history_sessions, latest_started_here, project_state_context,
                     surfaces, tool_preview, tool_schemas, with_capabilities)
@@ -24,20 +25,22 @@ CAPS = ('fs', 'memory', 'ai', 'inline_ai', 'docs')
 
 def connect(app, ctx):
     rt = app.route
-    ws = ctx.session
+    port = WorkspacePort(ctx.session)
+    #: a host with no kernels supplies no `execution`; the null one keeps the routes answering
+    ex = port.execution or NO_EXECUTION
     def _doc(): return ctx.docs.current()
     async def api(path, params=None, timeout=15):
-        client = await ws.runtime()
+        client = await ex.runtime()
         return await client.api(path, params, timeout) if client else None
     async def api_peek(path, params=None, timeout=15):
         "The runtime's inspector, but only where one is already running."
-        client = ws.kernel_peek()
+        client = ex.kernel_peek()
         return await client.api(path, params, timeout) if client else None
 
     def live_assistants():
         "Only the assistants already built -- reaching for `ctx.ai` here would construct one."
-        rows = ws.threads.rows() if ws._threads is not None else []
-        return L(*[t.ai for t in rows], ws._ai, ws._inline_ai).filter(lambda a: a is not None).unique()
+        rows = port.threads.rows() if port.built_threads is not None else []
+        return L(*[t.ai for t in rows], port.assistants.built_agent, port.assistants.built_inline).filter(lambda a: a is not None).unique()
     def refresh_assistants():
         for a in live_assistants(): a.refresh()
     def _set_agent_state(text, layer='task', enabled=True, source='user'):
@@ -51,7 +54,7 @@ def connect(app, ctx):
     def _thread(target=''):
         "The conversation a request names, resolved once. Omitted means the one on screen now."
         target = str(target or '').strip()
-        return ws.threads.require(target) if target else ws.threads.active
+        return port.threads.require(target) if target else port.threads.active
     def _thread_error(e):
         "Only a refusal is a conflict. Anything else is a bad request, or a bug wearing its own name."
         from .threads import TurnError
@@ -60,9 +63,9 @@ def connect(app, ctx):
     def _grouped_history(ai, execution):
         "Sessions with their turns, computed once per state of the log."
         here = surfaces(getattr(ai, 'cfg', None))
-        key = (ws.history_stamp(ai), repr(sorted(r.get('id', '') for r in execution)), len(here))
+        key = (port.history.stamp(ai), repr(sorted(r.get('id', '') for r in execution)), len(here))
         if _history_cache.get('key') != key:
-            turns = ws.with_timelines([r for r in ai.history if r.get('model') != 'scripted'])
+            turns = port.history.with_timelines([r for r in ai.history if r.get('model') != 'scripted'])
             # the sidecar is where a conversation's name lives, and grouping cannot see it
             named = {row['id']: row for row in ai.sessions()}
             _history_cache.update(key=key, groups=[
@@ -109,7 +112,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
         if len(data) > 9_000_000: return fail('image attachment is larger than 9 MB', 413)
         ext = '.png' if url.startswith('data:image/png') else '.jpg'
-        folder = ws.cwd_for() / '.leela-attachments'
+        folder = ex.cwd_for() / '.leela-attachments'
         folder.mkdir(parents=True, exist_ok=True)
         p = folder / f'paste-{os.urandom(6).hex()}{ext}'
         p.write_bytes(data)
@@ -131,63 +134,63 @@ def connect(app, ctx):
         d = await req.json()
         session = str(d.get('session') or 'latest')
         if session == 'latest' and not d.get('everything'):
-            await off_loop(ws.fresh_history, ws.ai)
-            session = latest_started_here(ws.ai) or 'latest'
-        try: thread = await off_loop(ws.threads.resume, session)
+            await off_loop(port.history.fresh, port.assistants.agent)
+            session = latest_started_here(port.assistants.agent) or 'latest'
+        try: thread = await off_loop(port.threads.resume, session)
         except Exception as e:
             from .threads import TurnError
             return _thread_error(e) if isinstance(e, TurnError) else fail(e)
         turns = [t for t in thread.ai.history if t.get('session') == thread.id]
-        return {'ok': True, 'session': thread.id, 'note': thread.ai.note, 'turns': ws.with_timelines(turns)}
+        return {'ok': True, 'session': thread.id, 'note': thread.ai.note, 'turns': port.history.with_timelines(turns)}
     @rt('/agent/threads')
     def agent_threads():
-        active = ws.threads.active
-        return {'active': active.id, 'threads': ws.threads.dicts(),
-                'attention': ws.threads.attention()}
+        active = port.threads.active
+        return {'active': active.id, 'threads': port.threads.dicts(),
+                'attention': port.threads.attention()}
     @rt('/agent/thread/new')
     async def agent_thread_new():
-        try: thread = await off_loop(ws.threads.new)
+        try: thread = await off_loop(port.threads.new)
         except Exception as e: return _thread_error(e)
         return {'ok': True, 'active': thread.id, 'thread': thread.dict()}
     @rt('/agent/thread/switch')
     async def agent_thread_switch(req):
         d = await req.json()
-        try: thread = ws.threads.switch(str(d.get('thread') or ''))
+        try: thread = port.threads.switch(str(d.get('thread') or ''))
         except Exception as e: return _thread_error(e)
         return {'ok': True, 'active': thread.id, 'thread': thread.dict()}
     @rt('/agent/thread/close')
     async def agent_thread_close(req):
         d = await req.json()
-        try: closed = await off_loop(ws.threads.close, str(d.get('thread') or ''))
+        try: closed = await off_loop(port.threads.close, str(d.get('thread') or ''))
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'closed': closed, 'active': ws.threads.active_id, 'threads': ws.threads.dicts()}
+        return {'ok': True, 'closed': closed, 'active': port.threads.active_id, 'threads': port.threads.dicts()}
     @rt('/agent/thread/mute')
     async def agent_thread_mute(req):
         "Silence one conversation's notifications without hiding that it is waiting."
         d = await req.json()
-        try: thread = ws.threads.mute(str(d.get('thread') or ''), bool(d.get('muted', True)))
+        try: thread = port.threads.mute(str(d.get('thread') or ''), bool(d.get('muted', True)))
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'thread': thread.dict(), 'attention': ws.threads.attention()}
+        return {'ok': True, 'thread': thread.dict(), 'attention': port.threads.attention()}
     @rt('/agent/thread/turns')
     async def agent_thread_turns(thread: str = ''):
         "One conversation's durable turns, and the point in its feed a live turn replays from."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
-        await off_loop(ws.fresh_history, t.ai)
+        await off_loop(port.history.fresh, t.ai)
         turns = [r for r in t.ai.history if r.get('session') == t.id]
         # `dict` is where a summarised name lives; `title` alone is only what a person typed
         row = t.dict()
         return {'ok': True, 'thread': t.id, 'state': row['state'], 'seq': t.feed.settled_seq,
-                'title': row['title'], 'turns': with_capabilities(t.ai, ws.with_timelines(turns))}
+                'title': row['title'], 'turns': with_capabilities(t.ai, port.history.with_timelines(turns))}
     @rt('/agent/thread/title')
     async def agent_thread_title(req):
         d = await req.json()
-        try: thread = await off_loop(ws.threads.title, str(d.get('thread') or ''), d.get('title') or '')
+        try: thread = await off_loop(port.threads.title, str(d.get('thread') or ''), d.get('title') or '')
         except Exception as e: return _thread_error(e)
         return {'ok': True, 'thread': thread.dict()}
     @rt('/agent/new')
     async def agent_new():
-        try: thread = await off_loop(ws.threads.new)
+        try: thread = await off_loop(port.threads.new)
         except Exception as e: return _thread_error(e)
         return {'ok': True, 'session': thread.id}
     @rt('/agent/history')
@@ -197,7 +200,7 @@ def connect(app, ctx):
         except Exception as e: return _thread_error(e)
         ai = t.ai
         execution = await api_peek('/agent/api/sessions') or {'sessions': []}
-        await off_loop(ws.fresh_history, ai)
+        await off_loop(port.history.fresh, ai)
         groups = _grouped_history(ai, execution.get('sessions', []))
         theirs = len([g for g in groups if g.get('app') != 'leela'])
         if not everything: groups = [g for g in groups if g.get('app') == 'leela']
@@ -209,7 +212,7 @@ def connect(app, ctx):
         "One stored conversation's turns, fetched when it is opened rather than with the list."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
-        await off_loop(ws.fresh_history, t.ai)
+        await off_loop(port.history.fresh, t.ai)
         execution = await api('/agent/api/sessions') or {'sessions': []}
         group = first(g for g in _grouped_history(t.ai, execution.get('sessions', []))
                       if g['id'] == str(id))
@@ -242,14 +245,14 @@ def connect(app, ctx):
         rows = [dict(r) for r in rows]      # decorated below with this workspace's own choices
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
                   'source':f"saved · {x['model_id']}",'custom':True} for x in saved]
-        agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL
-        agent = _name('agent model', lambda: ctx.ai.model.name, agent_dflt) if ws._ai is not None else agent_dflt
-        inline_dflt = ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or 'gpt-mini'
+        agent_dflt = port.settings.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL
+        agent = _name('agent model', lambda: ctx.ai.model.name, agent_dflt) if port.assistants.built_agent is not None else agent_dflt
+        inline_dflt = port.settings.inline_model or os.environ.get('LEELA_MODEL_INLINE') or 'gpt-mini'
         inline = (_name('inline model', lambda: ctx.inline_ai.model.name, inline_dflt)
-                  if ws._inline_ai is not None else inline_dflt)
-        completion_dflt = ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'
+                  if port.assistants.built_inline is not None else inline_dflt)
+        completion_dflt = port.settings.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'
         completion = (_name('completion model', lambda: ctx.ai.routing.name_for('completion'), completion_dflt)
-                      if ws._ai is not None else completion_dflt)
+                      if port.assistants.built_agent is not None else completion_dflt)
         for current in (agent, inline, completion):
             spec = _spec(current)
             if spec is None:
@@ -268,8 +271,8 @@ def connect(app, ctx):
             return current if spec is None else by_id.get(spec.model_id, current)
         # The routed jobs with no field of their own, reported chosen or not.
         from ...agent.core import JOBS, Routing
-        routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
-        if ws._ai is None: routing.policy.update(ws.job_models)
+        routing = ctx.ai.routing if port.assistants.built_agent is not None else Routing(turn=agent)
+        if port.assistants.built_agent is None: routing.policy.update(port.settings.job_models)
         # `**jobs` is spread last, and `inline` has a field of its own.
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
                 for j in JOBS if j not in ('turn', 'completion', 'inline')}
@@ -337,8 +340,8 @@ def connect(app, ctx):
                 live = live_assistants()
                 for a in live: a.set_litert_backend(which)
                 if not live: os.environ['LEELA_LITERT_BACKEND'] = which
-                ws.litert_backend = which
-                ws.save()
+                port.settings.litert_backend = which
+                port.history.save()
                 return {'ok': True, 'litert_backend': which,
                         'note': f'LiteRT runs on the {which.upper()}; engines reload on the next request'}
             except Exception as e: return fail(e)
@@ -348,8 +351,8 @@ def connect(app, ctx):
             live = live_assistants()
             if any(a.busy for a in live): raise RuntimeError('cannot change local multimodal while an assistant is working')
             for a in live: a.set_local_multimodal(enabled)
-            ws.local_multimodal = enabled
-            ws.save()
+            port.settings.local_multimodal = enabled
+            port.history.save()
             return {'ok': True, 'local_multimodal': enabled,
                     'note': f'local image/audio encoders {"enabled" if enabled else "disabled"}'}
         except Exception as e: return fail(e)
@@ -357,7 +360,7 @@ def connect(app, ctx):
     async def agent_workspace_repo_writes(req):
         d = await req.json(); enabled = d.get('enabled')
         if not isinstance(enabled, bool): return fail('enabled must be true or false')
-        ws.allow_workspace_repo_writes = enabled; ws.save()
+        port.settings.allow_workspace_repo_writes = enabled; port.history.save()
         return {'ok': True, 'enabled': enabled,
                 'note': f'workspace repository writes {"enabled" if enabled else "disabled"}; approval rules still apply'}
     @rt('/agent/subagent-writes')
@@ -370,7 +373,7 @@ def connect(app, ctx):
             if any(a.busy for a in live): raise RuntimeError('cannot change sub-agent writes while an assistant is working')
             for a in live: a.set_subagent_writes(enabled)
         except Exception as e: return fail(e)
-        ws.subagent_writes = enabled; ws.save()
+        port.settings.subagent_writes = enabled; port.history.save()
         return {'ok': True, 'enabled': enabled,
                 'note': ('sub-agents may write, run commands and run Python. Every call is recorded and approved'
                          if enabled else 'sub-agents read only again')}
@@ -379,7 +382,7 @@ def connect(app, ctx):
         "Reads outside the open folders. Writes are unaffected, and credentials stay refused."
         d = await req.json(); enabled = d.get('enabled')
         if not isinstance(enabled, bool): return fail('enabled must be true or false')
-        ws.agent_read_outside = enabled; ws.save()
+        port.settings.agent_read_outside = enabled; port.history.save()
         return {'ok': True, 'enabled': enabled,
                 'note': f'reads outside the open folders {"allowed" if enabled else "refused"}; writes are unchanged'}
     @rt('/agent/vault-pii')
@@ -388,7 +391,7 @@ def connect(app, ctx):
         d = await req.json()
         try: policy = pii_gate(d.get('pii'))
         except ValueError as e: return fail(e)
-        ws.vault_pii = policy; ws.save()
+        port.settings.vault_pii = policy; port.history.save()
         said = {'off': 'the model reads the vault as it is',
                 'redact': 'identifiers are masked before the model sees them',
                 'refuse': 'sections holding personal information are withheld from the model'}
@@ -396,14 +399,14 @@ def connect(app, ctx):
     @rt('/agent/compaction')
     async def agent_compaction(req):
         "Configure visible automatic compaction without restarting the model conversation."
-        d = await req.json(); strategy = d.get('strategy', ws.compact_strategy)
+        d = await req.json(); strategy = d.get('strategy', port.settings.compact_strategy)
         if strategy not in {'surgical', 'summary'}: return fail('strategy must be surgical or summary')
-        auto = d.get('auto', ws.compact_auto)
+        auto = d.get('auto', port.settings.compact_auto)
         if not isinstance(auto, bool): return fail('auto must be true or false')
-        ws.compact_auto, ws.compact_strategy = auto, strategy
+        port.settings.compact_auto, port.settings.compact_strategy = auto, strategy
         for agent in live_assistants():
             agent.compactor.auto, agent.compactor.strategy = auto, strategy
-        ws.save()
+        port.history.save()
         return {'ok': True, 'auto': auto, 'strategy': strategy,
                 'note': f'auto compaction {"on" if auto else "off"} · {strategy}'}
     @rt('/agent/budget')
@@ -417,15 +420,15 @@ def connect(app, ctx):
             value = budget_value(given, lo, hi)
             if value == 'auto' and str(given).strip().lower() != 'auto':
                 return fail(f'{key}: use auto, or a number from {lo} to {hi}')
-            setattr(ws, key, value)
-        for agent in live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
-        ws.save()
-        return {'ok': True, 'tools': ws.tool_budget, 'steps': ws.step_budget,
-                'note': f'tool budget {ws.tool_budget} · steps {ws.step_budget}'}
+            setattr(port.settings, key, value)
+        for agent in live_assistants(): agent.tool_budget, agent.step_budget = port.settings.tool_budget, port.settings.step_budget
+        port.history.save()
+        return {'ok': True, 'tools': port.settings.tool_budget, 'steps': port.settings.step_budget,
+                'note': f'tool budget {port.settings.tool_budget} · steps {port.settings.step_budget}'}
     @rt('/agent/budget/state')
     def agent_budget_state():
         "What is actually in force, so a refused edit can put the box back rather than blank it."
-        return {'ok': True, 'tools': ws.tool_budget, 'steps': ws.step_budget,
+        return {'ok': True, 'tools': port.settings.tool_budget, 'steps': port.settings.step_budget,
                 'tool_range': list(TOOL_RANGE), 'step_range': list(STEP_RANGE)}
     @rt('/agent/model')
     async def agent_model(req):
@@ -441,11 +444,11 @@ def connect(app, ctx):
             assistant = ctx.inline_ai if target == 'inline' else ctx.ai
             job = 'turn' if target in ('agent', 'inline') else target
             spec = assistant.set_model((d.get('model') or '').strip(), job=job)
-            if target == 'inline': ws.inline_model = spec.name
-            elif target == 'completion': ws.completion_model = spec.name
-            elif target == 'agent': ws.model = spec.name
-            else: ws.job_models[job] = spec.name
-            ws.save()
+            if target == 'inline': port.settings.inline_model = spec.name
+            elif target == 'completion': port.settings.completion_model = spec.name
+            elif target == 'agent': port.settings.model = spec.name
+            else: port.settings.job_models[job] = spec.name
+            port.history.save()
             return {'ok': True, 'target': target, 'model': spec.name, 'note': model_note(spec)}
         except Exception as e: return fail(e)
     @rt('/agent/memory')
@@ -453,7 +456,7 @@ def connect(app, ctx):
         "Editable notes and their explicit per-model session routing."
         notes = await off_loop(ctx.memory.agent_notes)
         rows = [{**note, 'text': await off_loop(ctx.memory.exact_text, str(note['id']))} for note in notes]
-        return {'notes': rows, 'selected': ws.agent_memory_selection,
+        return {'notes': rows, 'selected': port.settings.agent_memory_selection,
                 'targets': {'agent': 'Agent conversation', 'inline': 'Prompt cells and inline AI',
                             'completion': 'Code completion'}}
     @rt('/agent/memory/save')
@@ -465,26 +468,26 @@ def connect(app, ctx):
         if not saved: return fail(ctx.memory.note)
         new_id = str(saved.get('doc_id') or '')
         if previous and new_id:
-            for target, ids in ws.agent_memory_selection.items():
-                ws.agent_memory_selection[target] = [new_id if value == previous else value for value in ids]
+            for target, ids in port.settings.agent_memory_selection.items():
+                port.settings.agent_memory_selection[target] = [new_id if value == previous else value for value in ids]
         requested = d.get('targets', [])
         if not isinstance(requested, list): return fail('targets must be a list')
         for target in requested:
-            if target not in ws.agent_memory_selection: return fail('targets must contain only agent, inline, or completion')
-            if new_id and new_id not in ws.agent_memory_selection[target]: ws.agent_memory_selection[target].append(new_id)
-        ws.save()
+            if target not in port.settings.agent_memory_selection: return fail('targets must contain only agent, inline, or completion')
+            if new_id and new_id not in port.settings.agent_memory_selection[target]: port.settings.agent_memory_selection[target].append(new_id)
+        port.history.save()
         refresh_assistants()
         return {'ok': True, 'id': new_id, 'note': ctx.memory.note}
     @rt('/agent/memory/select')
     async def agent_memory_select(req):
         d = await req.json(); target = str(d.get('target') or '')
-        if target not in ws.agent_memory_selection: return fail('target must be agent, inline, or completion')
+        if target not in port.settings.agent_memory_selection: return fail('target must be agent, inline, or completion')
         ids = d.get('ids')
         if not isinstance(ids, list): return fail('ids must be a list')
         known = {str(note['id']) for note in await off_loop(ctx.memory.agent_notes)}
         selected = list(dict.fromkeys(str(value) for value in ids if str(value) in known))
-        ws.agent_memory_selection[target] = selected; ws.save()
-        assistant = ws._ai if target in {'agent', 'completion'} else ws._inline_ai
+        port.settings.agent_memory_selection[target] = selected; port.history.save()
+        assistant = port.assistants.built_agent if target in {'agent', 'completion'} else port.assistants.built_inline
         if assistant is not None: assistant.refresh()
         tokens = sum([estimate_tokens(await off_loop(ctx.memory.exact_text, v)) for v in selected])
         return {'ok': True, 'target': target, 'ids': selected, 'tokens': tokens}
@@ -493,9 +496,9 @@ def connect(app, ctx):
         doc_id = str((await req.json()).get('id') or '')
         known = {str(note['id']) for note in await off_loop(ctx.memory.agent_notes)}
         if doc_id not in known: return fail('unknown agent memory note')
-        for target, ids in ws.agent_memory_selection.items():
-            ws.agent_memory_selection[target] = [value for value in ids if value != doc_id]
-        ok = await off_loop(ctx.memory.forget, doc_id); ws.save()
+        for target, ids in port.settings.agent_memory_selection.items():
+            port.settings.agent_memory_selection[target] = [value for value in ids if value != doc_id]
+        ok = await off_loop(ctx.memory.forget, doc_id); port.history.save()
         refresh_assistants()
         return {'ok': ok, 'note': ctx.memory.note}
     def _state_origin(state):
@@ -516,11 +519,11 @@ def connect(app, ctx):
     def agent_states(scope: str = 'everywhere'):
         "Saved states, each saying where it came from, and the state now in the briefing."
         active = any(str(layer.get('text') or '').strip() and layer.get('enabled', True)
-                     for layer in ws.agent_state_layers.values())
+                     for layer in port.state.layers.values())
         states = [_state_origin(s) for s in ctx.memory.agent_states()]
         if scope == 'project': states = [s for s in states if s['mine']]
-        return {'active': active, 'active_text': ws.agent_state, 'scope': scope,
-                'layers': ws.agent_state_layers, 'states': states,
+        return {'active': active, 'active_text': port.state.text, 'scope': scope,
+                'layers': port.state.layers, 'states': states,
                 'layers_seen': sorted({s['layer'] for s in states if s['layer']})}
     @rt('/agent/state/template')
     def agent_state_template():
@@ -551,12 +554,12 @@ def connect(app, ctx):
     @rt('/agent/state/draft')
     def agent_state_draft():
         "A structured, editable state distilled deterministically from the visible conversation."
-        turns = list(ctx.ai.history[-12:]) if ws._ai is not None else []
+        turns = list(ctx.ai.history[-12:]) if port.assistants.built_agent is not None else []
         conversation = '\n\n'.join(f"### User\n{t.get('prompt','')}\n\n### Agent\n{t.get('reply','')}"
                                    for t in turns)
         from .ai import STATE_TEMPLATE
-        state = ws.agent_state or STATE_TEMPLATE
-        return {'state': state, 'layers': ws.agent_state_layers,
+        state = port.state.text or STATE_TEMPLATE
+        return {'state': state, 'layers': port.state.layers,
                 'conversation': conversation, 'turns': len(turns)}
     @rt('/agent/state/save')
     async def agent_state_save(req):
@@ -568,13 +571,13 @@ def connect(app, ctx):
         # The layer is saved with the state: which of organization, project or task a charter was
         # written for is most of what makes somebody else's reusable.
         saved = await off_loop(ctx.memory.remember_agent_state, title, text,
-                                 {'session': ctx.ai.session_id if ws._ai is not None else '',
-                                  'turns': len(ctx.ai.history) if ws._ai is not None else 0,
+                                 {'session': ctx.ai.session_id if port.assistants.built_agent is not None else '',
+                                  'turns': len(ctx.ai.history) if port.assistants.built_agent is not None else 0,
                                   'layer': layer,
                                   'roots': [str(root) for root in ctx.fs.roots]})
         if not saved: return fail(ctx.memory.note)
         if d.get('activate', True): _set_agent_state(text, layer=layer, source='memory')
-        return {'ok': True, 'saved': saved, 'active': ws.agent_state}
+        return {'ok': True, 'saved': saved, 'active': port.state.text}
     @rt('/agent/state/suggest')
     def agent_state_suggest(q: str = ''):
         "Relevant saved states remain advisory; the browser decides whether to attach one."
@@ -586,7 +589,7 @@ def connect(app, ctx):
     async def agent_state_diagnostics(req):
         "Token budget, stale paths, and duplicate/conflicting headings for edited state."
         d = await req.json(); text = str(d.get('text') or '')
-        tokens = estimate_tokens(text, ctx.ai.backend.count_tokens if ws._ai is not None else None)
+        tokens = estimate_tokens(text, ctx.ai.backend.count_tokens if port.assistants.built_agent is not None else None)
         paths = set(re.findall(r'(?<![\w.-])(?:[\w.-]+/)+[\w.-]+', text))
         def absent(path):
             try: return not ctx.fs._check(path).exists()
@@ -594,13 +597,13 @@ def connect(app, ctx):
         missing = [p for p in paths if absent(p)]
         headings = [h.strip().lower() for h in re.findall(r'^#{1,3}\s+(.+)$', text, re.M)]
         duplicate = sorted({h for h in headings if headings.count(h) > 1})
-        return {'tokens': tokens, 'context': ctx.ai.model.ctx if ws._ai is not None else None,
+        return {'tokens': tokens, 'context': ctx.ai.model.ctx if port.assistants.built_agent is not None else None,
                 'missing_paths': sorted(missing), 'duplicate_headings': duplicate}
     @rt('/agent/state/update')
     async def agent_state_update(req):
         "Use the summary model to propose a reviewed state replacement; never activate automatically."
         d = await req.json(); current = str(d.get('current') or ''); conversation = str(d.get('conversation') or '')
-        project = project_state_context(ws)
+        project = project_state_context(ctx.session)
         prompt = (f'<current-state>\n{current}\n</current-state>\n\n<conversation>\n{conversation[-20000:]}\n</conversation>\n\n'
                   f'<current-project>\n{project}\n</current-project>\n\n'
                   'Return the complete updated state using Goal, Constraints, Progress (Done/In progress/Blocked), '
@@ -729,7 +732,7 @@ def connect(app, ctx):
                 'runs': live, 'records_sub_calls': any(r.get('parent_action_id') for r in rows)}
     async def _warm_runtime():
         "Start a kernel for the turn about to run, and let a failure be the tool's to report."
-        try: await ws.runtime()
+        try: await ex.runtime()
         except Exception: pass
 
     @rt('/agent/turn')
@@ -755,10 +758,10 @@ def connect(app, ctx):
         # and a switch in another tab must not move this turn
         try: runner = _thread(d.get('thread')).runner
         except Exception as e: return _thread_error(e)
-        try: grounding = await off_loop(ws.prepare_turn, attachments, context)
+        try: grounding = await off_loop(port.history.prepare_turn, attachments, context)
         except Exception as e: return fail(e)
         # Started here, on the loop that owns the kernels, so the first tool call meets a live one.
-        if ws.runtime_peek() is None: asyncio.ensure_future(_warm_runtime())
+        if ex.peek() is None: asyncio.ensure_future(_warm_runtime())
         try: return await off_loop(runner.start, q, attachments, reasoning,
                                     context, context_path, grounding)
         except Exception as e:
@@ -800,11 +803,11 @@ def connect(app, ctx):
         # A prompt cell runs on the inline assistant, which the pane cannot otherwise see. Its
         # approval is still a person's to answer, and this is where a person is looking.
         holder, a = t.approvals, t.approvals.pending
-        if a is None and (nb_pending := ws._notebook_approvals.pending) is not None:
-            holder, a = ws._notebook_approvals, nb_pending
-        source = t.ai if holder is t.approvals else ws.inline_ai
+        if a is None and (nb_pending := port.assistants.notebook_approvals.pending) is not None:
+            holder, a = port.assistants.notebook_approvals, nb_pending
+        source = t.ai if holder is t.approvals else port.assistants.inline
         pending = ({**a.dict(), 'schemas': tool_schemas(source)} if a is not None else None)
-        return {'thread': t.id, 'pending': pending, 'waiting': ws.threads.waiting(),
+        return {'thread': t.id, 'pending': pending, 'waiting': port.threads.waiting(),
                 'surface': 'notebook' if holder is not t.approvals else 'agent',
                 'control': getattr(holder, 'control', 'guided')}
     @rt('/agent/control')
@@ -962,7 +965,7 @@ def connect(app, ctx):
             cells.append(cell)
         nb = Notebook(cells)
         name = f'reshape-{session.replace(":", "-")}.ipynb'
-        path = str(Path(ws.cwd_for())/name)
+        path = str(Path(ex.cwd_for())/name)
         try: nb.save(path)
         except Exception as e: return fail(e)
         return {'ok': True, 'thread': th.id, 'session': session, 'path': path,
@@ -1116,10 +1119,10 @@ def connect(app, ctx):
         try: t = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
         # answered wherever it was raised: a prompt cell's approval is held by the notebook's
-        holder = (ws._notebook_approvals
-                  if t.approvals.pending is None and ws._notebook_approvals.pending is not None
+        holder = (port.assistants.notebook_approvals
+                  if t.approvals.pending is None and port.assistants.notebook_approvals.pending is not None
                   else t.approvals)
-        choices = {c.__name__: c for c in (t.ai if holder is t.approvals else ws.inline_ai).tools}
+        choices = {c.__name__: c for c in (t.ai if holder is t.approvals else port.assistants.inline).tools}
         if tool and tool not in choices: return fail(f'unknown tool {tool}')
         if bool(d.get('ok')) and tool and args is not None:
             import inspect
@@ -1140,9 +1143,9 @@ def connect(app, ctx):
         out = await off_loop(ai.command, line)
         if out is None: return fail(f'unknown command {line.split()[0]}')
         if line.lstrip('/').split(' ')[0] in ('tool-budget', 'steps'):
-            ws.tool_budget, ws.step_budget = ai.tool_budget, ai.step_budget
-            for agent in live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
-            ws.save()
+            port.settings.tool_budget, port.settings.step_budget = ai.tool_budget, ai.step_budget
+            for agent in live_assistants(): agent.tool_budget, agent.step_budget = port.settings.tool_budget, port.settings.step_budget
+            port.history.save()
         return {'ok': True, 'text': out}
     @rt('/agent/ask')
     async def agent_ask(req):
@@ -1151,7 +1154,7 @@ def connect(app, ctx):
         q = (d.get('prompt') or '').strip()
         if not q: return fail('nothing to ask')
         a = ctx.ai
-        text = await off_loop(ws.ask, q)
+        text = await off_loop(port.history.ask, q)
         return {'ok': a.ready, 'text': text, 'note': a.note,
                 'activity': a.activity.rows(mark=a.activity._mark),
                 'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),

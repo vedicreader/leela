@@ -120,34 +120,6 @@ async function reloadAfterEdits(edits) {
   };
   bar.querySelector('#dkeep').onclick = () => { m.remove(); status('kept your buffer — ctrl+s overwrites', 'ok'); };
 }
-
-async function stopAgent() {
-  const d = await post('/agent/stop', {});
-  updateAgentRunstrip({runs: (await api('/agent/runs')).runs});
-  status(d.ok ? d.state : d.error, d.ok ? 'ok' : 'err');
-}
-
-/* Failures with nowhere else to go: a compaction the engine refused, a completion that came back
- * empty, anything the native model layer printed instead of raising. They appear in the agent pane
- * because that is where the turn they belong to is. */
-function showProblems(ps, host = null) {
-  for (const p of (ps || [])) {
-    if (lee.shownProblems.has(p)) continue;
-    lee.shownProblems.add(p);
-    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`, host);
-  }
-}
-
-async function agentTools() {
-  const d = await api('/agent/status');
-  const rows = (d.calls || []).map(c => `${c.tool}(${c.args})`).join('\n');
-  agentLog(`<div class="lee-runline"><span class="sub">${esc(d.note)} · ${d.ntools} tools` +
-           `${d.busy ? ' · thinking now' : ''} · context ${Math.round(100 * (d.pct_full || 0))}% full` +
-           `${d.compactions ? ' · ' + d.compactions + ' compaction(s)' : ''}</span></div>` +
-           (rows ? `<div class="lee-runline"><span class="code">${esc(rows)}</span></div>` : ''));
-  showProblems(d.problems);
-}
-
 let termBundle = null;
 function loadTermBundle() {
   if (window.LeeTerm) return Promise.resolve();

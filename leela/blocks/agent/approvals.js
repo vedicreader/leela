@@ -23,7 +23,7 @@ function proposalArgs(card) {
     if (!input) continue;
     if (field.kind === 'boolean') args[field.name] = input.checked;
     else {
-      const raw = input._leeView ? LeeCM.getDoc(input._leeView) : input.value;
+      const raw = input._leeView ? agentHost.cm.getDoc(input._leeView) : input.value;
       if (!field.required && raw === '') continue;
       if (field.kind === 'integer') args[field.name] = Number.parseInt(raw, 10);
       else if (field.kind === 'number') args[field.name] = Number.parseFloat(raw);
@@ -51,8 +51,8 @@ function mountProposalEditors(card) {
     if (host._leeView) return;
     const field = host.dataset.field || '', tool = $('[data-tool]', card)?.value || '';
     const lang = field === 'commands' ? 'json' : field === 'text' || field === 'source'
-      ? codeLang('', proposalArgsSafe(card).path || '') : tool.includes('python') ? 'python' : 'text';
-    host._leeView = createEditor(host, {doc: host.dataset.value || '', lang, lineNums: true});
+      ? agentHost.langOf('', proposalArgsSafe(card).path || '') : tool.includes('python') ? 'python' : 'text';
+    host._leeView = agentHost.createEditor(host, {doc: host.dataset.value || '', lang, lineNums: true});
   });
 }
 function proposalArgsSafe(card) { try { return proposalArgs(card); } catch (_) { return {}; } }
@@ -67,7 +67,7 @@ function groupedToolOptions(schemas, selected) {
 }
 function previewContent(preview) {
   if (!preview) return '<div class="lee-proposal-empty">No preview available.</div>';
-  if (preview.kind === 'diff') return `<div class="lee-diff">${diffHtml(preview.rows || [])}</div>`;
+  if (preview.kind === 'diff') return `<div class="lee-diff">${agentHost.diffHtml(preview.rows || [])}</div>`;
   return `<pre class="lee-proposal-code">${esc(preview.text || '')}</pre>`;
 }
 async function refreshProposalPreview(card) {
@@ -77,7 +77,7 @@ async function refreshProposalPreview(card) {
     const args = card._previewArgs || proposalArgs(card), tool = $('[data-tool]', card).value;
     card._previewArgs = null;
     host.innerHTML = '<div class="lee-proposal-loading"><i></i><i></i><i></i><span>Building dry-run preview</span></div>';
-    const d = await post('/agent/tool-preview', {tool, args, thread: lee.agentThread || ''});
+    const d = await post('/agent/tool-preview', {tool, args, thread: ag.thread || ''});
     host.innerHTML = previewContent(d.preview); error.textContent = '';
   } catch (e) { host.innerHTML = ''; error.textContent = e.message || String(e); }
 }
@@ -105,12 +105,12 @@ function checkpointResult(detail, ok, secs) {
 }
 function showApproval(a, destination = null) {
   if (!a?.id || approvalCards.has(a.id)) return;
-  leePane('right', true); leeRight('agent');
-  if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
+  agentHost.revealPane('right', true); leeRight('agent');
+  if (ag.view && ag.view !== 'live') restoreAgentLive();
   const log = $('#agentlog'); if (!log) return;
   /* `pollApproval` and a notebook prompt cell both call this with no destination, and a checkpoint
      that lands beside the turns instead of in the one it belongs to is a checkpoint nobody finds. */
-  const host = destination || (lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : null)
+  const host = destination || (ag.timeline?.root?.isConnected ? ag.timeline.root : null)
     || turnBody(latestAgentTurn()) || log;
   const schemas = a.schemas || [], byName = new Map(schemas.map(s => [s.name, s]));
   const card = document.createElement('section');
@@ -190,7 +190,7 @@ function showApproval(a, destination = null) {
           await post('/agent/run-policy', {policy, count: Number(count || 1)});
       }
       const session = ok && $('[data-run-policy]', card).value === 'approve_session';
-      await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''});
+      await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: ag.thread || ''});
       card.classList.remove('proposed'); card.classList.add(ok ? 'running' : 'refused'); if (changed) card.classList.add('edited');
       const checkpointState = $('.lee-checkpoint-title small', card);
       if (checkpointState) checkpointState.textContent = ok
@@ -353,15 +353,15 @@ async function unsayTurn(bar) {
         `Branch this conversation to just before turn ${short}. The turn stays in history.`,
         'undo conversation');
   if (!also) return;
-  try { await post('/agent/undo-turn', {thread: lee.agentThread, turn_id: turnId}); }
+  try { await post('/agent/undo-turn', {thread: ag.thread, turn_id: turnId}); }
   catch (e) { return status(e.message || String(e), 'err'); }
   let restored = null;
   if (also === true) {
-    try { restored = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''}); }
+    try { restored = await post('/agent/rollback-turn', {turn_id: turnId, thread: ag.thread || ''}); }
     catch (e) { status(`undone from the conversation; these files were not restored: ${e.message || e}`, 'err'); }
   }
   markTurnUndone(out, bar, (restored?.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-  noteHeldRestores(await reloadRestored(restored?.paths || []));
+  noteHeldRestores(await agentHost.reloadRestored(restored?.paths || []));
   await refreshAgentThreads();
   status(restored ? `undone from the conversation · ${(restored.paths || []).length} file(s) restored`
                   : 'undone from the conversation; files left as they are', 'ok');
@@ -378,14 +378,14 @@ async function restoreTurnFiles(bar) {
   {
     try {
       const tx = await api('/agent/turn-transaction?turn_id=' + encodeURIComponent(turnId) +
-        (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : ''));
+        (ag.thread ? '&thread=' + encodeURIComponent(ag.thread) : ''));
       const files = tx.transaction.files || [], warning = (tx.transaction.irreversible || []).length
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
       if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
-      const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
+      const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: ag.thread || ''});
       // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);
-      noteHeldRestores(await reloadRestored(d.paths || []));
+      noteHeldRestores(await agentHost.reloadRestored(d.paths || []));
       status('turn changes rolled back', 'ok');
     } catch (e) { status(e.message || String(e), 'err'); }
   }
@@ -434,14 +434,14 @@ function bindResponseRevisions(log) {
     if (button.hasAttribute('data-unsay')) unsayTurn(bar);
     else if (button.hasAttribute('data-undo')) restoreTurnFiles(bar);
     else if (button.hasAttribute('data-revise')) reviseTurn(bar);
-    else if (button.hasAttribute('data-fork')) leeAgentForkTurn(bar.dataset.turn, lee.agentThread);
+    else if (button.hasAttribute('data-fork')) leeAgentForkTurn(bar.dataset.turn, ag.thread);
   });
 }
 
 async function retryProposal(card, tool, args) {
   const copy = structuredClone(args), number = card.querySelectorAll('.lee-proposal-branch').length + 1;
   try {
-    const d = await post('/agent/retry-tool', {tool, args: copy, thread: lee.agentThread || ''});
+    const d = await post('/agent/retry-tool', {tool, args: copy, thread: ag.thread || ''});
     const row = document.createElement('section'); row.className = 'lee-proposal-branch';
     row.innerHTML = `<header><strong>Rerun ${number}</strong><span>${esc(tool)} completed with the inputs shown below</span>` +
       `<button class="lee-btn" data-edit-retry>Edit inputs and run</button></header>` +
@@ -464,10 +464,10 @@ async function retryProposal(card, tool, args) {
 }
 async function rollbackProposal(card, id) {
   try {
-    const d = await post('/agent/rollback-tool', {id, thread: lee.agentThread || ''});
+    const d = await post('/agent/rollback-tool', {id, thread: ag.thread || ''});
     card.classList.add('rolled-back'); $('[data-rollback]', card).disabled = true;
     status(`${d.path.split('/').pop()} rolled back`, 'ok');
-    if (d.path === lee.path && !$('.lee-tab.active')?.classList.contains('dirty')) await takeDiskVersion(d.path);
+    if (d.path === agentHost.currentPath && !$('.lee-tab.active')?.classList.contains('dirty')) await agentHost.takeDiskVersion(d.path);
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 function runPolicyLabel(policy) {

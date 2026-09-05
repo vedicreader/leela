@@ -7,18 +7,18 @@ const TERMINAL = new Set(['completed', 'cancelled', 'detached', 'terminated', 'f
 function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
-  if ('runs' in state) lee.agentRuns = state.runs || [];
-  const runs = lee.agentRuns || [];
+  if ('runs' in state) ag.runs = state.runs || [];
+  const runs = ag.runs || [];
   const flattenRuns = rows => rows.flatMap(r => [r, ...flattenRuns(r.children || [])]);
   const flat = flattenRuns(runs);
   // A row that has ended is history. Counting them as work kept the strip up over a finished
   // delegation and left the composer in steer mode, so the next thing typed was offered to a run
   // that was already over instead of being sent as a turn.
   const active = flat.some(r => !TERMINAL.has(r.state));
-  strip.hidden = !active && !lee.agentBusy && !state.waiting;
-  updateAgentSendMode(active || lee.agentBusy ? 'steer' : 'send');
+  strip.hidden = !active && !agentHost.busy && !state.waiting;
+  updateAgentSendMode(active || agentHost.busy ? 'steer' : 'send');
   const rootLabel = state.waiting ? `Waiting · ${state.waiting}`
-    : lee.queuedSteer ? 'Steering queued · applies after the current tool call'
+    : ag.queuedSteer ? 'Steering queued · applies after the current tool call'
     : state.run_policy ? `Running automatically · ${runPolicyLabel(state.run_policy)}`
     : `${($('#agentcontrol')?.value || 'guided').toUpperCase()} · agent working`;
   // A fan-out's rows tell each other apart only by what each subagent was asked, and the buttons'
@@ -61,13 +61,13 @@ function updateAgentSendMode(mode = 'send') {
 }
 /* A steer belongs inside the turn's timeline rather than after it, among the chunks and tool rows
    it came between. */
-const steerHost = log => lee.agentTimeline?.root?.isConnected ? lee.agentTimeline.root : log;
+const steerHost = log => ag.timeline?.root?.isConnected ? ag.timeline.root : log;
 /* The local reply and the feed event carry the same steer, so the same text twice with nothing
    between it is one. Two identical steers a person really sent have a turn's work in between. */
 const steerDrawn = (log, text) => steerHost(log).lastElementChild?.dataset?.steer === text;
 function placeSteer(log, card, text) {
   card.dataset.steer = text;
-  const live = lee.agentTimeline;
+  const live = ag.timeline;
   // no live timeline: the turn's own body, so a steer is never a stray sibling between two turns
   if (live?.root?.isConnected) live.append(card);
   else (turnBody(currentAgentTurn()) || log).appendChild(card);
@@ -75,9 +75,9 @@ function placeSteer(log, card, text) {
   return card;
 }
 function setQueuedSteer(text, shown = '', cancel = false) {
-  lee.queuedSteer = text || '';
+  ag.queuedSteer = text || '';
   const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
-  if (!lee.queuedSteer) {
+  if (!ag.queuedSteer) {
     if (cancel) { old?.remove(); return; }
     /* A steer that has been taken is no longer the queued one, and the id has to go with the state.
        It used to stay on the card, so the next steer found it here and returned without drawing,
@@ -91,9 +91,9 @@ function setQueuedSteer(text, shown = '', cancel = false) {
     if (shown && !steerDrawn(log, shown)) placeSteer(log, userMessage(shown), shown);
     return;
   }
-  const card = old || userMessage(shown || lee.queuedSteer);
+  const card = old || userMessage(shown || ag.queuedSteer);
   card.id = 'agentqueuedsteer'; card.classList.add('queued');
-  if (!old) placeSteer(log, card, shown || lee.queuedSteer);
+  if (!old) placeSteer(log, card, shown || ag.queuedSteer);
   let button = $('[data-cancel-steer]', card);
   if (!button) { button = document.createElement('button'); button.type = 'button'; button.dataset.cancelSteer = '1'; button.textContent = 'Cancel'; card.appendChild(button); }
   button.onclick = async () => {
@@ -113,12 +113,12 @@ async function leeQueueSteer() {
 }
 async function leeForceSteer() {
   const input = $('#agentprompt'), text = input?.value.trim();
-  if (!lee.agentBusy) return status('nothing is running to stop; send it as a turn instead', 'err');
+  if (!agentHost.busy) return status('nothing is running to stop; send it as a turn instead', 'err');
   if (!text) return status('write what to send next first', 'err');
   updateAgentSendMode('force');
   try {
     const d = await post('/agent/steer', {text, force: true});
-    lee.agentBusy = false; lee.agentRuns = []; input.value = text; setQueuedSteer('', '', true); updateAgentRunstrip({runs: []});
+    agentHost.busy = false; ag.runs = []; input.value = text; setQueuedSteer('', '', true); updateAgentRunstrip({runs: []});
     status(d.run?.state === 'detached' ? 'provider detached; sending the saved draft' : 'run cancelled; sending the saved draft', 'ok');
     return sendAgent();
   } catch (e) { input.value = text; updateAgentSendMode('steer'); status(e.message || String(e), 'err'); }
@@ -143,7 +143,7 @@ async function approvalLoop() {
   // attention is about the conversations a person is *not* looking at, so it is polled even hidden
   try { await refreshAgentThreads(); } catch (_) {}
   setTimeout(approvalLoop, document.hidden ? APPROVAL_GAP.hidden
-                         : lee.agentBusy ? APPROVAL_GAP.busy : APPROVAL_GAP.idle);
+                         : agentHost.busy ? APPROVAL_GAP.busy : APPROVAL_GAP.idle);
 }
 
 function readableDetail(value) {
@@ -162,7 +162,7 @@ function steerSaid(args) {
 }
 function renderAgentStep(row, a) {
   const wasOpen = row.open;
-  for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
+  for (const v of (row._leeViews || [])) try { agentHost.cm.destroy(v); } catch {}
   row._leeViews = []; row.innerHTML = '';
   const deferredEditors = [];
   const steered = (a.tool || '') === STEER_TOOL;
@@ -200,7 +200,7 @@ function renderAgentStep(row, a) {
     }
     if (code) {
       const block = document.createElement('div'); panel.appendChild(block);
-      deferredEditors.push(() => row._leeViews.push(mountCodeSurface(block, code, 'python', true)));
+      deferredEditors.push(() => row._leeViews.push(agentHost.mountEditor(block, code, 'python', true)));
     }
     if (a.detail) {
       const result = document.createElement('section'); result.className = 'lee-tool-result';
@@ -209,8 +209,8 @@ function renderAgentStep(row, a) {
       if (a.kind === 'view' || a.kind === 'skill') {
         const block = document.createElement('div'); result.appendChild(block);
         const path = args.path || (a.kind === 'skill' ? 'note.md' : '');
-        deferredEditors.push(() => row._leeViews.push(mountCodeSurface(
-          block, detail, codeLang('', path), /\.py$/i.test(path))));
+        deferredEditors.push(() => row._leeViews.push(agentHost.mountEditor(
+          block, detail, agentHost.langOf('', path), /\.py$/i.test(path))));
       } else {
         const pre = document.createElement('pre'); pre.textContent = detail; result.appendChild(pre);
       }
@@ -248,7 +248,7 @@ function subagentRunRow(r) {
 function paintSubagents(box, d) {
   const list = $('.lee-subagent-list', box);
   for (const row of $$('.lee-subagent-calls > details', list))
-    for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
+    for (const v of (row._leeViews || [])) try { agentHost.cm.destroy(v); } catch {}
   const cards = (d.delegations || []).map(x => {
     const calls = x.calls || [];
     // an empty list is not the same answer as "it did nothing", and the server says which
@@ -282,13 +282,13 @@ function paintSubagents(box, d) {
   $$('[data-steer-run]', list).forEach(b => b.onclick = async () => {
     const id = b.closest('.lee-subagent-run').dataset.run;
     const text = await textDialog('Steer this sub-agent', 'It reads this on its next tool result', ''); if (!text) return;
-    try { await post(`/agent/runs/${encodeURIComponent(id)}/steer`, {text, thread: lee.agentThread || ''}); status('steer queued for that sub-agent', 'ok'); }
+    try { await post(`/agent/runs/${encodeURIComponent(id)}/steer`, {text, thread: ag.thread || ''}); status('steer queued for that sub-agent', 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
 }
 async function leeSubagents(actionId = '') {
   const url = () => '/agent/subagents?action_id=' + encodeURIComponent(actionId) +
-    (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : '');
+    (ag.thread ? '&thread=' + encodeURIComponent(ag.thread) : '');
   let first;
   try { first = await api(url()); } catch (e) { return status(e.message || String(e), 'err'); }
   let timer = 0;
@@ -350,33 +350,33 @@ function agentProgress(log) {
 // model. Selected files stay visible as removable chips until the turn starts.
 function paintAgentAttachments() {
   const host = $('#agentattachments'); if (!host) return;
-  const active = lee.path ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
-    `<span>active · ${esc(compactPath(lee.path))}</span></span>` : '';
-  const states = lee.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
+  const active = agentHost.currentPath ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
+    `<span>active · ${esc(compactPath(agentHost.currentPath))}</span></span>` : '';
+  const states = ag.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
     `title="Preview and attach this remembered starting state">state · ${esc(s.title)}</button>`).join('');
-  const sels = lee.agentSelections.map((s, i) =>
+  const sels = ag.selections.map((s, i) =>
     `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
     `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
-  const vaulted = [...lee.vaultRefs.entries()].map(([key, r]) =>
+  const vaulted = [...agentHost.vaultRefs.entries()].map(([key, r]) =>
     `<span class="lee-agent-attachment vault" title="${esc(r.vault || 'vault')} · ${esc(r.shelf || 'main')}">` +
     `<span>${esc(r.title)}</span>` +
     `<button type="button" data-vault-ref="${esc(key)}" aria-label="remove ${esc(r.title)}">remove</button></span>`).join('');
-  host.innerHTML = active + sels + vaulted + [...lee.agentAttachments.entries()].map(([path, name]) =>
+  host.innerHTML = active + sels + vaulted + [...ag.attachments.entries()].map(([path, name]) =>
     `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
     await post('/agent/state/load', {id: b.dataset.stateId, layer: 'task'});
-    lee.stateSuggestions = []; paintAgentAttachments(); status('relevant state attached to this workspace', 'ok');
+    ag.stateSuggestions = []; paintAgentAttachments(); status('relevant state attached to this workspace', 'ok');
   });
   $$('[data-sel]', host).forEach(b => b.onclick = () => {
-    lee.agentSelections.splice(+b.dataset.sel, 1); paintAgentAttachments();
+    ag.selections.splice(+b.dataset.sel, 1); paintAgentAttachments();
   });
   $$('[data-vault-ref]', host).forEach(b => b.onclick = () => {
-    lee.vaultRefs.delete(b.dataset.vaultRef); paintAgentAttachments();
+    agentHost.vaultRefs.delete(b.dataset.vaultRef); paintAgentAttachments();
   });
   $$('[data-path]', host).forEach(b => b.onclick = () => {
-    const name = lee.agentAttachments.get(b.dataset.path);
-    lee.agentAttachments.delete(b.dataset.path);
+    const name = ag.attachments.get(b.dataset.path);
+    ag.attachments.delete(b.dataset.path);
     // The token goes with the chip, or the prompt keeps naming something no longer attached.
     const input = $('#agentprompt');
     if (input && name) input.value = input.value.replace(new RegExp(`(^|\\s)@${name.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')}\\s?`), '$1');
@@ -385,19 +385,19 @@ function paintAgentAttachments() {
 }
 function closeAgentSuggest() {
   const menu = $('#agentsuggest'); if (!menu) return;
-  menu.hidden = true; menu.innerHTML = ''; lee.agentSuggest = []; lee.agentSuggestAt = 0;
+  menu.hidden = true; menu.innerHTML = ''; ag.suggest = []; ag.suggestAt = 0;
 }
 function paintAgentSuggest() {
   const menu = $('#agentsuggest'); if (!menu) return;
-  menu.hidden = !lee.agentSuggest.length;
-  menu.innerHTML = lee.agentSuggest.map((x, i) =>
-    `<button type="button" role="option" aria-selected="${i === lee.agentSuggestAt}" ` +
-    `class="lee-agent-suggest-row${i === lee.agentSuggestAt ? ' active' : ''}" data-i="${i}">` +
+  menu.hidden = !ag.suggest.length;
+  menu.innerHTML = ag.suggest.map((x, i) =>
+    `<button type="button" role="option" aria-selected="${i === ag.suggestAt}" ` +
+    `class="lee-agent-suggest-row${i === ag.suggestAt ? ' active' : ''}" data-i="${i}">` +
     `<strong>${esc(x.label)}</strong><span>${esc(x.detail || '')}</span></button>`).join('');
   $$('button', menu).forEach(b => b.onclick = () => chooseAgentSuggest(+b.dataset.i));
 }
-function chooseAgentSuggest(i = lee.agentSuggestAt) {
-  const item = lee.agentSuggest[i], input = $('#agentprompt'); if (!item || !input) return;
+function chooseAgentSuggest(i = ag.suggestAt) {
+  const item = ag.suggest[i], input = $('#agentprompt'); if (!item || !input) return;
   // The caret is set on every branch: assigning `value` on a box that is not focused leaves it
   // at 0, so completing a command read as Home.
   if (item.kind === 'command') { input.value = `/${item.name} `; input.selectionStart = input.selectionEnd = input.value.length; }
@@ -406,14 +406,14 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
     const left = before.replace(/(^|\s)\/(?:[A-Za-z_][\w-]*)?$/, `$1/${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
   } else if (item.kind === 'vault') {
-    attachVaultRef(item);
+    agentHost.attachVaultRef(item);
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
     paintAgentAttachments();
   } else {
     // The token stays. What you typed is the reference, and the chip is that reference resolved.
-    lee.agentAttachments.set(item.path, item.name);
+    ag.attachments.set(item.path, item.name);
     const at = input.selectionStart, before = input.value.slice(0, at);
     const left = before.replace(/(^|\s)@[^\s@]*$/, `$1@${item.name} `);
     input.value = left + input.value.slice(at); input.selectionStart = input.selectionEnd = left.length;
@@ -423,10 +423,10 @@ function chooseAgentSuggest(i = lee.agentSuggestAt) {
 }
 let agentSuggestSeq = 0, stateSuggestTimer = null, agentSuggestTimer = null;
 async function suggestAgentState(text) {
-  if (text.trim().length < 18 || text.trim().startsWith('/')) { lee.stateSuggestions = []; return paintAgentAttachments(); }
+  if (text.trim().length < 18 || text.trim().startsWith('/')) { ag.stateSuggestions = []; return paintAgentAttachments(); }
   try {
     const d = await api('/agent/state/suggest?q=' + encodeURIComponent(text.trim()));
-    lee.stateSuggestions = (d.states || []).slice(0, 2); paintAgentAttachments();
+    ag.stateSuggestions = (d.states || []).slice(0, 2); paintAgentAttachments();
   } catch (_) {}
 }
 async function updateAgentSuggest() {
@@ -435,13 +435,13 @@ async function updateAgentSuggest() {
   const slash = before.match(/(?:^|\s)\/([A-Za-z_][\w-]*)?$/), commandSlash = before.match(/^\s*\/([\w-]*)$/);
   const mention = before.match(/(?:^|\s)@([^\s@]*)$/); const seq = ++agentSuggestSeq;
   if (slash) {
-    lee.agentVocabulary ||= await api('/agent/commands');
+    ag.vocabulary ||= await api('/agent/commands');
     if (seq !== agentSuggestSeq) return;
-    const query = (slash[1] || '').toLowerCase(), vocab = lee.agentVocabulary;
+    const query = (slash[1] || '').toLowerCase(), vocab = ag.vocabulary;
     const commands = commandSlash ? (vocab.commands || []).map(c => ({kind: 'command', ...c})) : [];
     const tools = (vocab.tools || []).map(t => ({kind: 'tool', ...t}));
     const skills = (vocab.skills || []).map(s => ({kind: 'skill', ...s}));
-    lee.agentSuggest = [...commands, ...tools, ...skills]
+    ag.suggest = [...commands, ...tools, ...skills]
       .filter(x => x.name.toLowerCase().startsWith(query)).slice(0, 14)
       .map(x => ({...x, label: '/' + x.name, detail: `${x.kind} · ${x.help || ''}`}));
   } else if (mention) {
@@ -458,9 +458,9 @@ async function updateAgentSuggest() {
       detail: (x.kind === 'folder' ? 'folder · ' : '') + compactPath(x.path)}));
     const vaulted = (v.mentions || []).map(x => ({kind: 'vault', vault: x.vault, shelf: x.shelf,
       doc: x.doc, name: x.title, title: x.title, label: '@' + x.title, detail: 'vault · ' + x.detail}));
-    lee.agentSuggest = [...files, ...vaulted];
+    ag.suggest = [...files, ...vaulted];
   } else return closeAgentSuggest();
-  lee.agentSuggestAt = 0; paintAgentSuggest();
+  ag.suggestAt = 0; paintAgentSuggest();
 }
 async function leeAgentControl(control) {
   try {
@@ -480,7 +480,7 @@ async function leeAgentAttach(path = '') {
   }
   try {
     const d = await post('/agent/attachment', {path: value});
-    lee.agentAttachments.set(d.path, d.name || d.path.split('/').pop());
+    ag.attachments.set(d.path, d.name || d.path.split('/').pop());
     paintAgentAttachments();
     status('image attached', 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
@@ -492,7 +492,7 @@ async function attachPastedImage(blob) {
   reader.onload = async () => {
     try {
       const d = await post('/agent/attachment', {data_url: reader.result});
-      lee.agentAttachments.set(d.path, d.name || d.path.split('/').pop());
+      ag.attachments.set(d.path, d.name || d.path.split('/').pop());
       paintAgentAttachments();
       status('pasted image attached', 'ok');
     } catch (e) { status(String(e.message || e), 'err'); }
@@ -544,7 +544,7 @@ function initAgentComposer() {
     if ($('#agentsuggest')?.hidden) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault(); const d = e.key === 'ArrowDown' ? 1 : -1;
-      lee.agentSuggestAt = (lee.agentSuggestAt + d + lee.agentSuggest.length) % lee.agentSuggest.length;
+      ag.suggestAt = (ag.suggestAt + d + ag.suggest.length) % ag.suggest.length;
       paintAgentSuggest();
     } else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); chooseAgentSuggest(); }
     else if (e.key === 'Escape') { e.preventDefault(); closeAgentSuggest(); }
@@ -556,11 +556,39 @@ async function sendAgentCommand(line) {
   const card = agentTurnCard({prompt: line, route: 'command'}), body = turnBody(card);
   body.appendChild(userMessage(line)); log.appendChild(card);
   try {
-    const d = await post('/agent/command', {line, thread: lee.agentThread || ''});
-    if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
+    const d = await post('/agent/command', {line, thread: ag.thread || ''});
+    if (/^\/reload(?:\s|$)/.test(line)) ag.vocabulary = null;
     const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; body.appendChild(out);
     renderMarkdown(out, d.text || ''); log.scrollTop = log.scrollHeight;
     status('command finished', 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 
+/* Three functions that travelled with the tab-reload module by accident. They call the
+ * agent's own routes and write into the agent's log, so they are the pane's. */
+async function stopAgent() {
+  const d = await post('/agent/stop', {});
+  updateAgentRunstrip({runs: (await api('/agent/runs')).runs});
+  status(d.ok ? d.state : d.error, d.ok ? 'ok' : 'err');
+}
+
+/* Failures with nowhere else to go: a compaction the engine refused, a completion that came back
+ * empty, anything the native model layer printed instead of raising. They appear in the agent pane
+ * because that is where the turn they belong to is. */
+function showProblems(ps, host = null) {
+  for (const p of (ps || [])) {
+    if (ag.shownProblems.has(p)) continue;
+    ag.shownProblems.add(p);
+    agentLog(`<div class="lee-runline err"><span class="res">⚠ ${esc(p)}</span></div>`, host);
+  }
+}
+
+async function agentTools() {
+  const d = await api('/agent/status');
+  const rows = (d.calls || []).map(c => `${c.tool}(${c.args})`).join('\n');
+  agentLog(`<div class="lee-runline"><span class="sub">${esc(d.note)} · ${d.ntools} tools` +
+           `${d.busy ? ' · thinking now' : ''} · context ${Math.round(100 * (d.pct_full || 0))}% full` +
+           `${d.compactions ? ' · ' + d.compactions + ' compaction(s)' : ''}</span></div>` +
+           (rows ? `<div class="lee-runline"><span class="code">${esc(rows)}</span></div>` : ''));
+  showProblems(d.problems);
+}

@@ -26,14 +26,7 @@ const lee = {
   // else's write. Keyed by path, and `diskVersion` stays the one the rest of the editor reads.
   diskVersions: new Map(),
   breakpoints: new Map(), debugThread: null, debugCell: null, debugState: null, directDebug: false, debugWatches: [],
-  shownProblems: new Set(),   // agent failures already written into the pane, so they show once
-  agentAttachments: new Map(), agentSuggest: [], agentSuggestAt: 0, agentVocabulary: null, stateSuggestions: [],
-  agentStream: null, agentStreamGen: 0, agentTitle: '', agentThread: '',
-  agentThreadDrafts: new Map(),
   find: null,                  // the find pane's query, its matches and where it is
-  // Highlighted ranges queued for the next turn. Kept apart from `agentAttachments`, a path->name
-  // map, because two selections in one file are two contexts rather than one key overwritten.
-  agentSelections: [],
   // Vault documents and sections queued for the next turn. A vault ref is not a path, so `ref` ->
   // {vault, shelf, doc, title} is keyed separately.
   vaultRefs: new Map(),

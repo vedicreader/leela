@@ -130,24 +130,24 @@ function setAgentStatus(state, title) {
 // answer chunks and final diffs stream independently, and each tool row is updated in place so
 // pending work never stays on screen after that step has finished.
 async function sendAgent(force = false) {
-  if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer();
-  if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
+  if (agentHost.busy) return force ? leeForceSteer() : leeQueueSteer();
+  if (ag.view && ag.view !== 'live') restoreAgentLive();
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
   const q = el.value.trim(); closeAgentSuggest();
   if (q.startsWith('/')) {
-    try { lee.agentVocabulary ||= await api('/agent/commands'); } catch (_) {}
+    try { ag.vocabulary ||= await api('/agent/commands'); } catch (_) {}
     const head = q.slice(1).split(/\s/, 1)[0];
-    if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
+    if ((ag.vocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
-                       ...lee.vaultRefs.values()];
+  const attachments = [...ag.attachments.keys(), ...ag.selections.map(s => s.ref),
+                       ...agentHost.vaultRefs.values()];
   const reasoning = $('#agentreasoning')?.value || 'auto';
   let accepted;
-  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread: lee.agentThread || ''}); }
+  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread: ag.thread || ''}); }
   catch (e) { el.value = q; return status(e.message || String(e), 'err'); }
   el.value = ''; el.style.height = '64px';
-  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
-  lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
+  ag.attachments.clear(); ag.selections = []; agentHost.vaultRefs.clear(); paintAgentAttachments();
+  agentHost.busy = true; ag.busyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
   const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
   const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
   turnBody(card).appendChild(userMessage(q));
@@ -156,7 +156,7 @@ async function sendAgent(force = false) {
   trimAgentLog(log);
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
   status('model is working…');
-  agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
+  agentListen(accepted.thread || ag.thread, accepted.seq, card);
 }
 
 /* One conversation's feed, painted into the live pane. `sendAgent` calls this for the turn it
@@ -175,15 +175,15 @@ function agentListen(thread, since, card = null) {
   let timeline = agentTimeline(timelineRoot), seen = timeline.actions;
   // A steer is drawn by the steer block, which is not in this scope. It belongs in the turn,
   // between the prose before it and the call after, so it needs the same painter.
-  lee.agentTimeline = timeline;
+  ag.timeline = timeline;
   let raw = '', runDone = false, lastSeq = since, body = null;
   const checkpoints = new Set();
-  if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); }
-  const generation = ++lee.agentStreamGen; let es, reconnecting = false;
-  const reconnect = ms => { if (reconnecting || generation !== lee.agentStreamGen) return; reconnecting = true; setTimeout(() => { reconnecting = false; if (generation === lee.agentStreamGen) connect(); }, ms); };
+  if (ag.stream) { ag.stream._leeStopped = true; ag.stream.close(); }
+  const generation = ++ag.streamGen; let es, reconnecting = false;
+  const reconnect = ms => { if (reconnecting || generation !== ag.streamGen) return; reconnecting = true; setTimeout(() => { reconnecting = false; if (generation === ag.streamGen) connect(); }, ms); };
   const connect = () => {
     es = new EventSource('/agent/stream?since=' + lastSeq + '&follow=1' +
-      (thread ? '&thread=' + encodeURIComponent(thread) : '')); lee.agentStream = es;
+      (thread ? '&thread=' + encodeURIComponent(thread) : '')); ag.stream = es;
     /* EventSource fires `error` for a dropped socket as well as for a frame the server named
        `error`, and the dropped one carries no data. Parsing it would throw. */
     /* One wake of the feed hands over every row that has arrived since the last, so a burst of
@@ -232,7 +232,7 @@ function agentListen(thread, since, card = null) {
         : '<strong>Failed</strong><small>The output above explains what the tool returned.</small>';
       updateAgentRunstrip();
     }
-    if (a.done && a.ok && a.kind === 'edit' && a.args?.path) scheduleAgentFileReload(a.args.path);
+    if (a.done && a.ok && a.kind === 'edit' && a.args?.path) agentHost.reloadFile(a.args.path);
     progress.phase(a.done ? 'Reviewing tool results' : (a.summary || `Running ${a.tool}`));
     stickAgentLog(log);
   }));
@@ -262,12 +262,12 @@ function agentListen(thread, since, card = null) {
   es.addEventListener('steer', dedupe(d => {
     timeline.seal(); if ('queued_steer' in d) setQueuedSteer(d.queued_steer || '', d.text || '');
   }));
-  es.addEventListener('title', dedupe(d => { if (d.title) lee.agentTitle = titleText(d.title); }));
+  es.addEventListener('title', dedupe(d => { if (d.title) ag.title = titleText(d.title); }));
   /* Only a stopped run is announced here. `done` still follows and owns the end of the turn, so
      this says what happened to the run and touches nothing `done` will set. */
   es.addEventListener('run', dedupe(run => {
-    timeline.seal(); lee.agentRuns = (lee.agentRuns || []).filter(r => r.id !== run.id);
-    updateAgentRunstrip({runs: lee.agentRuns});
+    timeline.seal(); ag.runs = (ag.runs || []).filter(r => r.id !== run.id);
+    updateAgentRunstrip({runs: ag.runs});
     status(run.state === 'detached' ? 'provider detached; no further output will be used' : run.state, 'ok');
   }));
   es.addEventListener('compaction', dedupe(d => {
@@ -290,7 +290,7 @@ function agentListen(thread, since, card = null) {
       const group = sessions.find(s => s.id === thread) || sessions.find(s => s.id === history.current);
       const turns = await sessionTurns(group?.id);
       if (!turns.length) throw new Error('no recorded turns for this conversation');
-      dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
+      agentHost.dropEditors(log); log.innerHTML = ''; approvalCards.clear(); log.dataset.foldScope = '';
       progress.finish(false);   // its 250ms clock is cleared by `finish` alone, and it is replaced below
       renderTurns(log, turns, 'Recovered conversation');
       /* `renderTurns` paints durable turns only, so a turn still in flight was painted nowhere and
@@ -302,7 +302,7 @@ function agentListen(thread, since, card = null) {
         progress = agentProgress(host);
         timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
         host.appendChild(timelineRoot);
-        timeline = agentTimeline(timelineRoot); seen = timeline.actions; lee.agentTimeline = timeline;
+        timeline = agentTimeline(timelineRoot); seen = timeline.actions; ag.timeline = timeline;
         body = null; raw = '';
         refoldAfter(log);   // the last durable turn is no longer the newest, so it may fold again
       }
@@ -315,7 +315,7 @@ function agentListen(thread, since, card = null) {
   }));
 
   es.addEventListener('done', dedupe(async d => {
-    timeline.seal(); retireCheckpoints(checkpoints); runDone = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
+    timeline.seal(); retireCheckpoints(checkpoints); runDone = true; agentHost.busy = false; ag.runs = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
     // a turn that ended on a call has no prose block, and its pictures are still its own
     const closing = body || timelineRoot;
     addResponseRevision(closing, d.turn_id, raw, d.capabilities || {}); drawTurnMedia(closing, d.media);
@@ -324,18 +324,18 @@ function agentListen(thread, since, card = null) {
       // into the turn's body, not `agentLog`: what this turn wrote is part of this turn
       host.insertAdjacentHTML('beforeend',
         `<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
-        `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
+        `<div class="lee-diff inline">${agentHost.diffHtml(e.rows)}</div>`);
     if (d.turn_id) card.dataset.turn = d.turn_id;
     stickAgentLog(log);
     const tail = d.usage_label ? `${d.note || 'done'} · ${d.usage_label}` : (d.note || 'done');
     showProblems(d.problems, host);   // a turn's problems belong to that turn
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
-    await reloadAfterEdits(d.edits || []);
+    await agentHost.reloadAfterEdits(d.edits || []);
   }));
 
   es.onerror = () => {
-    if (es._leeStopped || generation !== lee.agentStreamGen) return;
+    if (es._leeStopped || generation !== ag.streamGen) return;
     es.close(); status(runDone ? 'connection lost; restoring conversation updates…' : 'connection lost; replaying the running turn…', 'busy'); reconnect(500);
   };
   };

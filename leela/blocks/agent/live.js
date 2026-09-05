@@ -37,15 +37,15 @@ document.addEventListener('lee-markdown-rendered', e => {
    `null` means "the live pane is whatever is on screen", which is the case until History takes it. */
 function rememberAgentLive() {
   const log = $('#agentlog');
-  if (!log || (lee.agentView && lee.agentView !== 'live')) return;
+  if (!log || (ag.view && ag.view !== 'live')) return;
   const held = document.createDocumentFragment();
   held.append(...log.childNodes);
-  lee.agentLive = held;
+  ag.live = held;
 }
 function restoreAgentLive() {
   const log = $('#agentlog'); if (!log) return;
-  log.replaceChildren(lee.agentLive || document.createDocumentFragment());
-  lee.agentLive = null; lee.agentView = 'live';
+  log.replaceChildren(ag.live || document.createDocumentFragment());
+  ag.live = null; ag.view = 'live';
   $('#agenthistory')?.classList.remove('active');
   stickAgentLog(log, true);
 }
@@ -90,8 +90,8 @@ function usageMeta(usage, label = '', model = '') {
    closing diffs as flat siblings of the log, which is why `markTurnUndone` had to guess a turn's
    extent by walking to the next `.lee-user-message`. */
 /* Scoped to whatever session was painted, which is not always the live thread: history view paints
-   another conversation's turns while `lee.agentThread` still names the live one. */
-const foldScope = () => $('#agentlog')?.dataset.foldScope || lee.agentThread || 'default';
+   another conversation's turns while `ag.thread` still names the live one. */
+const foldScope = () => $('#agentlog')?.dataset.foldScope || ag.thread || 'default';
 const foldKey = () => `lee-agent-folded:${foldScope()}`;
 const foldedTurns = () => { try { return new Set(JSON.parse(localStorage.getItem(foldKey()) || '[]')); } catch { return new Set(); } };
 const saveFolded = set => { try { localStorage.setItem(foldKey(), JSON.stringify([...set].slice(-400))); } catch {} };
@@ -141,12 +141,12 @@ function foldOlderTurns(log, keep = 1) {
 const LIVE_TURNS = 30;
 function trimAgentLog(log, keep = LIVE_TURNS) {
   log = log || $('#agentlog');
-  if (!log || (lee.agentView && lee.agentView !== 'live')) return 0;
+  if (!log || (ag.view && ag.view !== 'live')) return 0;
   const cards = $$('.lee-agent-turn', log);
   let dropped = 0;
   for (const card of cards.slice(0, Math.max(0, cards.length - keep))) {
     if (turnAwaitingApproval(card)) continue;
-    dropCodeSurfaces(card); card.remove(); dropped += 1;
+    agentHost.dropEditors(card); card.remove(); dropped += 1;
   }
   if (!dropped) return 0;
   for (const [id, node] of approvalCards) if (!node.isConnected) approvalCards.delete(id);
@@ -244,7 +244,7 @@ const sessionTurns = async id => {
 /* The three preferences this pane keeps, each of which used to live only in `localStorage` and so
    came back at its default whenever the app was launched on a different port.
 
-   settings.json answers with a default for every key, so `lee.prefs` cannot say whether a value was
+   settings.json answers with a default for every key, so `agentHost.prefs` cannot say whether a value was
    chosen, and `prefAdopt` reads that default as a choice and migrates nothing. `origins` names the
    layer each key came from, and only `default` means nobody has saved one. The control's own
    default is saved where it differs from settings', which is how the history filter stays on for
@@ -254,15 +254,15 @@ const AGENT_PREFS = {notify: ['lee-agent-notify', v => v === 'on', false],
                      historyLeelaOnly: ['leeHistoryLeelaOnly', v => v !== '0', true]};
 async function adoptAgentPrefs() {
   for (const [key, [legacy, parse, dflt]] of Object.entries(AGENT_PREFS)) {
-    if ((lee.settingsMeta?.origins?.agent?.[key] || 'default') !== 'default') continue;
+    if ((agentHost.settingsMeta?.origins?.agent?.[key] || 'default') !== 'default') continue;
     const old = localStorage.getItem(legacy), value = old === null ? dflt : parse(old);
-    if (value !== lee.prefs?.agent?.[key]) await prefSet('agent', key, value);
+    if (value !== agentHost.prefs?.agent?.[key]) await prefSet('agent', key, value);
   }
 }
 let agentPrefsAdopted;
 // Once per session, and not before `loadSettings` has said what is already saved.
 const agentPrefsReady = () =>
-  lee.settingsMeta ? (agentPrefsAdopted ||= adoptAgentPrefs()) : Promise.resolve();
+  agentHost.settingsMeta ? (agentPrefsAdopted ||= adoptAgentPrefs()) : Promise.resolve();
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
    anything unmarked reads as the CLI's, including Leela's history from before the mark. */
 /* Checked unless it has been turned off: one log holds both, most of it is the CLI's, and the
@@ -273,7 +273,7 @@ const shownSessions = groups => leelaOnly() ? groups.filter(s => s.app === 'leel
 async function historyGroups() {
   await agentPrefsReady();
   const d = await api('/agent/history' + (leelaOnly() ? '' : '?everything=1'));
-  lee.agentHistoryHidden = d.hidden || 0;
+  ag.historyHidden = d.hidden || 0;
   return d.sessions || [];
 }
 /* The inline panel's telemetry, in a surface of its own. It used to be appended to the bottom of a
@@ -382,14 +382,14 @@ async function paintCompletions(m) {
 window.showCompletions = showCompletions;
 
 async function showHistorySession(group, groups) {
-  const log = $('#agentlog'); if (!log) return; dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear();
+  const log = $('#agentlog'); if (!log) return; agentHost.dropEditors(log); log.innerHTML = ''; approvalCards.clear();
   log.dataset.foldScope = group?.id || '';   // these turns are that session's, whatever thread is live
   const index = document.createElement('nav'); index.className = 'lee-history-index';
   /* A conversation is known by what it was about, so its name is the whole option. The time
      identifies one that has no name yet, which is every conversation before its first turn
      finished. */
   const all = groups || [], shown = shownSessions(all);
-  const hidden = (all.length - shown.length) || lee.agentHistoryHidden || 0;
+  const hidden = (all.length - shown.length) || ag.historyHidden || 0;
   const options = shown.map(s =>
     `<option value="${esc(s.id)}"${s.id === group?.id ? ' selected' : ''}>` +
     `${esc(titleText(s.title) || sessionTime(s))}</option>`).join('');
@@ -440,13 +440,13 @@ async function paintAgentThread(id) {
   const welcome = $('.lee-agent-welcome', log);
   approvalCards.clear();
   log.dataset.foldScope = '';
-  dropCodeSurfaces(log);
+  agentHost.dropEditors(log);
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
-  lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
+  ag.view = 'live'; $('#agenthistory')?.classList.remove('active');
   trimAgentLog(log);   // a conversation of any length arrives here whole
   // Nothing to set aside: the live pane is what was just painted into the log.
-  lee.agentLive = null; stickAgentLog(log, true);
+  ag.live = null; stickAgentLog(log, true);
   return d;
 }
 /* Conversations live in the agent's log, not in this process, so a fresh one holds none: opening
@@ -454,23 +454,23 @@ async function paintAgentThread(id) {
    picks the newest conversation back up, which is what "where was I" means. */
 async function rehydrateAgentLive() {
   const log = $('#agentlog');
-  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
-  lee.agentHydrating = true;
+  if (!log || ag.view === 'history' || agentHost.busy || ag.hydrating) return;
+  ag.hydrating = true;
   try {
-    const d = await paintAgentThread(lee.agentThread || '');
+    const d = await paintAgentThread(ag.thread || '');
     if (!(d?.turns || []).length) await resumeLatestAgent();
   }
   catch (e) { /* an empty pane beats a boot that dies on a cold agent */ }
-  finally { lee.agentHydrating = false; }
+  finally { ag.hydrating = false; }
 }
 function paintResumed(d) {
   const log = $('#agentlog');
   if (log) {
-    log.dataset.foldScope = ''; dropCodeSurfaces(log); log.innerHTML = '';
+    log.dataset.foldScope = ''; agentHost.dropEditors(log); log.innerHTML = '';
     renderTurns(log, d.turns || [], 'resumed conversation');
     stickAgentLog(log, true);
   }
-  lee.agentView = 'live'; lee.agentLive = null;
+  ag.view = 'live'; ag.live = null;
   $('#agenthistory')?.classList.remove('active');
 }
 async function resumeLatestAgent() {
@@ -490,10 +490,10 @@ function warmAgentHistory() {
   historyGroups().catch(() => {});
 }
 async function leeAgentHistory() {
-  if (lee.agentView === 'history') return restoreAgentLive();
-  rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
+  if (ag.view === 'history') return restoreAgentLive();
+  rememberAgentLive(); ag.view = 'history'; $('#agenthistory')?.classList.add('active');
   /* `rememberAgentLive` moves the nodes out rather than copying them, so from here until the
-     history is painted the only copy of the conversation is in `lee.agentLive`. A history read
+     history is painted the only copy of the conversation is in `ag.live`. A history read
      that fails must put it back, or the pane is left blank with the work in a variable. */
   try {
     const all = await historyGroups();
@@ -506,7 +506,7 @@ async function leeAgentHistory() {
 }
 async function leeAgentResume(group) {
   if (!group) return;
-  if (lee.agentBusy) return status('the model is already working', 'err');
+  if (agentHost.busy) return status('the model is already working', 'err');
   try {
     const d = await post('/agent/resume', {session: group.id});
     paintResumed(d);
@@ -515,8 +515,8 @@ async function leeAgentResume(group) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 function rememberAgentThread() {
-  if (!lee.agentThread) return;
-  lee.agentThreadDrafts.set(lee.agentThread, $('#agentprompt')?.value || '');
+  if (!ag.thread) return;
+  ag.threadDrafts.set(ag.thread, $('#agentprompt')?.value || '');
 }
 /* A conversation with nothing said in it has no name, and its id is a bare timestamp. Say what it
    is and when it started instead. */
@@ -532,7 +532,7 @@ function threadLabel(t) {
    all acted on whichever one happened to be showing. */
 function paintAgentThreads(d) {
   const rows = d.threads || [];
-  lee.agentThreadRows = rows; lee.agentThread = d.active || lee.agentThread;
+  ag.threadRows = rows; ag.thread = d.active || ag.thread;
   const count = $('#agentthreadcount'); if (count) count.textContent = String(rows.length);
   const waiting = (d.attention?.waiting || []).length, unread = d.attention?.unread || 0;
   const toggle = $('#agentthreads');
@@ -596,40 +596,40 @@ function leeAgentThreadsToggle(show) {
 }
 /* The conversation as a notebook, edited with the editor a person already knows, then read back.
    Nothing is applied until they ask: saving the notebook changes no conversation by itself. */
-async function leeAgentReshape(id = lee.agentThread) {
+async function leeAgentReshape(id = ag.thread) {
   if (!id) return status('open a conversation first', 'err');
   let made;
   try { made = await post('/agent/conversation/notebook', {thread: id, session: id}); }
   catch (e) { return status(e.message || String(e), 'err'); }
-  lee.agentReshape = {thread: id, session: made.session, path: made.path, revision: made.revision};
-  await leeOpenFile(made.path);
+  ag.reshape = {thread: id, session: made.session, path: made.path, revision: made.revision};
+  await agentHost.openFile(made.path);
   status(`${made.parts} parts opened as a notebook · edit, save, then apply from the agent pane`, 'ok');
   paintAgentReshapeBar();
 }
 function paintAgentReshapeBar() {
-  const bar = $('#agentattention'); const held = lee.agentReshape; if (!bar || !held) return;
+  const bar = $('#agentattention'); const held = ag.reshape; if (!bar || !held) return;
   bar.hidden = false;
   bar.innerHTML = `<span>editing ${esc(held.session.replace(/^agent_/, 'conversation '))} as a notebook</span>` +
     `<button type="button" data-reshape-apply>apply edits</button>` +
     `<button type="button" data-reshape-cancel>discard edits</button>`;
   $('[data-reshape-apply]', bar).onclick = leeAgentReshapeApply;
-  $('[data-reshape-cancel]', bar).onclick = () => { lee.agentReshape = null; bar.hidden = true; refreshAgentThreads(); };
+  $('[data-reshape-cancel]', bar).onclick = () => { ag.reshape = null; bar.hidden = true; refreshAgentThreads(); };
 }
 async function leeAgentReshapeApply() {
-  const held = lee.agentReshape; if (!held) return;
+  const held = ag.reshape; if (!held) return;
   // read the edits from disk, so an unsaved buffer cannot look like a deleted part
   try { await post('/tabs/save-all'); } catch (_) {}
   let out;
   try { out = await post('/agent/conversation/reshape', held); }
   catch (e) { return status(e.message || String(e), 'err'); }
-  lee.agentReshape = null; $('#agentattention').hidden = true;
+  ag.reshape = null; $('#agentattention').hidden = true;
   await refreshAgentThreads();
   status(`reshaped · ${out.discarded.length} dropped, ${out.rewritten.length} rewritten · ${out.branch_id}`, 'ok');
 }
 /* Branches belong to a conversation, so the way in is that conversation's own card. Two lists in
    one dialog: where this conversation has already been cut, and where it can still be. A branch is
    a parent point and a manifest, recompiled on switch, so nothing here replays a turn. */
-async function leeAgentBranches(id = lee.agentThread) {
+async function leeAgentBranches(id = ag.thread) {
   if (!id) return status('open a conversation first', 'err');
   let d;
   try { d = await api('/agent/branches?thread=' + encodeURIComponent(id)); }
@@ -662,7 +662,7 @@ async function leeAgentBranches(id = lee.agentThread) {
 const turnShort = id => String(id || '').split(':').at(-1);
 /* Switching moves what the model remembers, never what is on screen: the transcript is the record
    of what was said, and saying otherwise would hide a turn that really happened. */
-async function leeAgentBranchSwitch(branchId, id = lee.agentThread) {
+async function leeAgentBranchSwitch(branchId, id = ag.thread) {
   try {
     const d = await post('/agent/branch/switch', {thread: id, branch_id: branchId});
     await refreshAgentThreads();
@@ -672,7 +672,7 @@ async function leeAgentBranchSwitch(branchId, id = lee.agentThread) {
 }
 /* A fork point is a part, not a message: a call and the results it produced move together, so
    picking one inside a tool exchange takes the whole exchange. */
-async function leeAgentForkTurn(turnId, id = lee.agentThread) {
+async function leeAgentForkTurn(turnId, id = ag.thread) {
   if (!turnId) return status('no turn to branch from', 'err');
   let d;
   try { d = await api(`/agent/branch/parts?turn_id=${encodeURIComponent(turnId)}&stage=after` +
@@ -700,7 +700,7 @@ async function leeAgentForkTurn(turnId, id = lee.agentThread) {
 /* What the model still carries, decided in one place rather than in a notebook. Nothing is
    written until apply, and apply is refused unless the branch is still at the revision the preview
    was taken at: a conversation that moved while a person was deciding is a different question. */
-async function leeAgentShape(id = lee.agentThread) {
+async function leeAgentShape(id = ag.thread) {
   if (!id) return status('open a conversation first', 'err');
   let d;
   try { d = await api('/agent/conversation/parts?thread=' + encodeURIComponent(id)); }
@@ -779,10 +779,10 @@ async function leeAgentThreadOpen(id) {
 const BUSY_SETTLE_MS = 6000;
 function reconcileAgentBusy(attention) {
   const state = attention.active_state;
-  if (!state || !lee.agentBusy) return;
+  if (!state || !agentHost.busy) return;
   if (state === 'working' || state === 'waiting') return;
-  if (Date.now() - (lee.agentBusyAt || 0) < BUSY_SETTLE_MS) return;
-  lee.agentBusy = false; lee.agentRuns = [];
+  if (Date.now() - (ag.busyAt || 0) < BUSY_SETTLE_MS) return;
+  agentHost.busy = false; ag.runs = [];
   setAgentStatus(state === 'failed' ? 'idle' : 'ready');
   updateAgentRunstrip({runs: []});
 }
@@ -790,9 +790,9 @@ function reconcileAgentBusy(attention) {
    say `done` is the thing missing when this goes wrong. So the check has to run on its own clock,
    and only while a turn is outstanding -- it stops itself as soon as one is not. */
 function startAgentBusyWatch() {
-  if (lee.agentBusyWatch) return;
-  lee.agentBusyWatch = setInterval(async () => {
-    if (!lee.agentBusy) { clearInterval(lee.agentBusyWatch); lee.agentBusyWatch = null; return; }
+  if (ag.busyWatch) return;
+  ag.busyWatch = setInterval(async () => {
+    if (!agentHost.busy) { clearInterval(ag.busyWatch); ag.busyWatch = null; return; }
     try { reconcileAgentBusy((await api('/agent/threads')).attention || {}); } catch (_) {}
   }, 5000);
 }
@@ -813,7 +813,7 @@ function paintAgentAttention(attention, rows) {
   return working;
 }
 function agentDocumentTitle(attention) {
-  const base = lee.agentDocumentTitle ||= document.title.replace(/^[^·]*· /, '');
+  const base = ag.documentTitle ||= document.title.replace(/^[^·]*· /, '');
   const bits = [];
   if (attention.working) bits.push(`${attention.working}⚙`);
   if ((attention.waiting || []).length) bits.push('(!)');
@@ -827,9 +827,9 @@ async function leeAgentAttend(id) {
   if (card) { card.scrollIntoView({block: 'center'}); (card.querySelector('button') || card).focus(); }
   else await pollApproval();
 }
-async function leeAgentThreadMute(id = lee.agentThread) {
+async function leeAgentThreadMute(id = ag.thread) {
   if (!id) return;
-  const row = (lee.agentThreadRows || []).find(t => t.id === id);
+  const row = (ag.threadRows || []).find(t => t.id === id);
   try {
     const d = await post('/agent/thread/mute', {thread: id, muted: !row?.muted});
     if (d.thread?.problem) status(`mute was not saved: ${d.thread.problem}`, 'err');
@@ -856,7 +856,7 @@ async function leeAgentNotifyToggle(on) {
 /* One notification per thing that happened, keyed by what happened: replay, a reconnect and a
    second tab all deliver the same terminal event. */
 function notifyAgentAttention(d) {
-  const seen = lee.agentNotified ||= new Set();
+  const seen = ag.notified ||= new Set();
   if (!agentNotifyEnabled() || !('Notification' in window) || Notification.permission !== 'granted') return;
   for (const row of (d.threads || [])) {
     if (row.id === d.active || row.muted) continue;
@@ -873,9 +873,9 @@ window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = 
 async function leeAgentNew() {
   rememberAgentThread();
   try {
-    const d = await post('/agent/thread/new', {}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    const d = await post('/agent/thread/new', {}); ag.thread = d.active; agentHost.busy = false; ag.title = '';
     approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
-    if (log) { dropCodeSurfaces(log); log.innerHTML = ''; lee.agentLive = null; lee.agentView = 'live'; } if (input) input.value = '';
+    if (log) { agentHost.dropEditors(log); log.innerHTML = ''; ag.live = null; ag.view = 'live'; } if (input) input.value = '';
     await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
@@ -883,13 +883,13 @@ async function leeAgentNew() {
    paints its finished turns from the server first, then attaches to its feed from the last point
    it settled, so the running turn arrives once and nothing drawn is drawn twice. */
 async function leeAgentThreadSwitch(id) {
-  if (!id || id === lee.agentThread) return; rememberAgentThread();
+  if (!id || id === ag.thread) return; rememberAgentThread();
   try {
     const d = await post('/agent/thread/switch', {thread:id});
-    if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; ++lee.agentStreamGen; }
+    if (ag.stream) { ag.stream._leeStopped = true; ag.stream.close(); ag.stream = null; ++ag.streamGen; }
     const running = d.thread.state === 'working' || d.thread.state === 'waiting';
-    lee.agentThread = d.active; lee.agentBusy = running; lee.agentTitle = titleText(d.thread.title);
-    const input = $('#agentprompt'); if (input) input.value = lee.agentThreadDrafts.get(id) || '';
+    ag.thread = d.active; agentHost.busy = running; ag.title = titleText(d.thread.title);
+    const input = $('#agentprompt'); if (input) input.value = ag.threadDrafts.get(id) || '';
     const live = await paintAgentThread(d.active);
     await refreshAgentThreads(); updateAgentRunstrip();
     if (running) { setAgentStatus('working'); agentListen(d.active, live?.seq || 0); }
@@ -897,21 +897,21 @@ async function leeAgentThreadSwitch(id) {
     input?.focus();
   } catch (e) { status(String(e.message || e), 'err'); await refreshAgentThreads(); }
 }
-async function leeAgentThreadRename(id = lee.agentThread) {
+async function leeAgentThreadRename(id = ag.thread) {
   if (!id) return;
-  const row = (lee.agentThreadRows || []).find(t => t.id === id);
+  const row = (ag.threadRows || []).find(t => t.id === id);
   const title = await textDialog('Rename conversation', 'Conversation title', row ? titleText(row.title) : '');
   if (title == null) return;
   try { const d = await post('/agent/thread/title', {thread: id, title});
-        if (id === lee.agentThread) lee.agentTitle = titleText(d.thread.title);
+        if (id === ag.thread) ag.title = titleText(d.thread.title);
         await refreshAgentThreads(); }
   catch (e) { status(String(e.message || e), 'err'); }
 }
-async function leeAgentThreadClose(id = lee.agentThread) {
+async function leeAgentThreadClose(id = ag.thread) {
   if (!id) return; const closing = id;
   try {
-    const d = await post('/agent/thread/close', {thread:closing}); lee.agentThreadDrafts.delete(closing);
-    paintAgentThreads(d); const log = $('#agentlog'); if (log) { dropCodeSurfaces(log); log.innerHTML = ''; } if (d.active) { const active = d.active; lee.agentThread = ''; await leeAgentThreadSwitch(active); }
+    const d = await post('/agent/thread/close', {thread:closing}); ag.threadDrafts.delete(closing);
+    paintAgentThreads(d); const log = $('#agentlog'); if (log) { agentHost.dropEditors(log); log.innerHTML = ''; } if (d.active) { const active = d.active; ag.thread = ''; await leeAgentThreadSwitch(active); }
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 // The rehydrated banner survives `restoreAgentLive`, which round-trips the pane through innerHTML:
@@ -968,12 +968,12 @@ async function leeAgentState() {
       `<span class="lee-dim">Drag the lower-right edge to resize · double-click the title to expand.</span></div>`,
       null, null, {className: 'lee-agent-state-modal', storageKey: 'agent-state'});
     const text = $('#agentstatetext', box), layer = $('#agentstatelayer', box);
-    const stateView = createEditor(text, {doc: '', lang: 'markdown', lineNums: true, lintPath: '<agent-state>',
+    const stateView = agentHost.createEditor(text, {doc: '', lang: 'markdown', lineNums: true, lintPath: '<agent-state>',
       placeholder: '# Agent charter\n\nDescribe how this agent should work…'});
-    Object.defineProperty(text, 'value', {get: () => LeeCM.getDoc(stateView), set: value => LeeCM.setDoc(stateView, String(value || ''))});
+    Object.defineProperty(text, 'value', {get: () => agentHost.cm.getDoc(stateView), set: value => agentHost.cm.setDoc(stateView, String(value || ''))});
     const insertStateMarkdown = value => {
-      const at = LeeCM.cursor(stateView), prefix = at && !text.value.slice(0, at).endsWith('\n') ? '\n' : '';
-      LeeCM.replaceRange(stateView, at, at, prefix + value); LeeCM.focus(stateView);
+      const at = agentHost.cm.cursor(stateView), prefix = at && !text.value.slice(0, at).endsWith('\n') ? '\n' : '';
+      agentHost.cm.replaceRange(stateView, at, at, prefix + value); agentHost.cm.focus(stateView);
     };
     const showReference = name => {
       $$('.lee-state-ref-tabs button', box).forEach(b => b.classList.toggle('active', b.dataset.ref === name));
@@ -1030,7 +1030,7 @@ async function leeAgentState() {
     $('[data-update]', box).onclick = async () => {
       const d = await post('/agent/state/update', {current: text.value, conversation: draft.conversation});
       const review = modal(`<div class="lee-mhead">Review proposed state update<span class="sub">nothing changes until you apply it</span></div>` +
-        `<div class="lee-diff lee-state-update-diff">${diffHtml(d.diff.rows || [])}</div>` +
+        `<div class="lee-diff lee-state-update-diff">${agentHost.diffHtml(d.diff.rows || [])}</div>` +
         `<div class="lee-mfoot"><button class="lee-btn go" data-accept>Apply to editor</button>` +
         `<button class="lee-btn" data-reject>Keep current state</button></div>`);
       $('[data-accept]', review).onclick = () => { text.value = d.text; review.remove(); $('[data-state-help]', box).textContent = 'Proposed update applied to the editor. Review before saving or activating.'; };
@@ -1093,7 +1093,7 @@ async function leeAgentState() {
     const bindStateRows = () => $$('.lee-agent-state-row', box).forEach(row => row.onclick = async () => {
       const compared = await post('/agent/state/compare', {id: row.dataset.id, current: text.value});
       const review = modal(`<div class="lee-mhead">Compare state revision<span class="sub">choose how this revision enters ${esc(layer.value)}</span></div>` +
-        `<div class="lee-diff lee-state-update-diff">${diffHtml(compared.diff.rows || [])}</div>` +
+        `<div class="lee-diff lee-state-update-diff">${agentHost.diffHtml(compared.diff.rows || [])}</div>` +
         `<div class="lee-mfoot"><button class="lee-btn go" data-replace>Replace + activate</button>` +
         `<button class="lee-btn" data-merge>Merge below current</button><button class="lee-btn" data-cancel>Cancel</button></div>`);
       $('[data-replace]', review).onclick = async () => {
@@ -1129,7 +1129,7 @@ function renderSessionCells(log, d) {
     let mounted = false;
     details.ontoggle = () => {
       if (!details.open || mounted) return; mounted = true;
-      requestAnimationFrame(() => mountCodeSurface($('.lee-session-code-body', details), cell.source, 'python', true));
+      requestAnimationFrame(() => agentHost.mountEditor($('.lee-session-code-body', details), cell.source, 'python', true));
     };
     log.appendChild(details);
   }

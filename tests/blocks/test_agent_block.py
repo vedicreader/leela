@@ -734,3 +734,37 @@ def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
     users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')
              if 'monitor' in p.read_text(encoding='utf-8') and p.name != 'monitor.py']
     assert users == ['leela/blocks/vault/jobs.py'], f'monitor is wired now, so say so again: {users}'
+
+
+def test_the_port_collects_every_workspace_member_the_routes_used_to_read():
+    """Thirty-four reads off `Workspace`, six port members. The count is the check: a member added
+    to the routes without a home on the port is a member a second host will not know to supply."""
+    import re
+    from leela.blocks.agent.port import SETTINGS
+    src = (ROOT/'leela/blocks/agent/app.py').read_text()
+    assert not re.findall(r'\bws\.\w+', src), 'the routes should reach the workspace through the port'
+    used = set(re.findall(r'\bport\.(\w+)', src)) | {'threads'}
+    assert used <= {'threads', 'built_threads', 'assistants', 'settings', 'state', 'history', 'execution'}
+    assert len(SETTINGS) == 15
+
+def test_a_host_with_no_kernels_answers_instead_of_raising(tmp_path, monkeypatch):
+    """Leela always has an execution half. Ramabana has none, and these are the four calls that
+    would have gone looking for one: the null port is what makes the pane's routes portable."""
+    import asyncio
+    from leela.blocks.agent.port import NO_EXECUTION, WorkspacePort
+    assert asyncio.run(NO_EXECUTION.runtime()) is None
+    assert NO_EXECUTION.peek() is None and NO_EXECUTION.kernel_peek() is None
+    assert NO_EXECUTION.cwd_for().is_dir(), 'somewhere to write an attachment'
+    port = WorkspacePort(Workspace(roots=[tmp_path]))
+    port.execution = None
+    assert (port.execution or NO_EXECUTION) is NO_EXECUTION
+
+def test_a_setting_the_port_does_not_name_is_refused(tmp_path):
+    "The fifteen are the contract. A typo silently writing a new attribute is what this stops."
+    from leela.blocks.agent.port import WorkspacePort
+    port = WorkspacePort(Workspace(roots=[tmp_path]))
+    port.settings.tool_budget = 'auto'
+    assert port.settings.tool_budget == 'auto'
+    try: port.settings.no_such_setting = 1
+    except AttributeError: pass
+    else: raise AssertionError('an unknown setting was accepted')

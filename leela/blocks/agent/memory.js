@@ -6,14 +6,14 @@ function setMemoryView(view) {
 }
 async function leeMemoryNotes() {
   const body = $('#memorybody'); if (!body) return;
-  lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('notes');
+  agentHost.memoryLoaded = 'loading'; agentHost.revealPane('right', true); leeRight('memory'); setMemoryView('notes');
   const seq = memoryViewSeq;
   body.innerHTML = '<div class="lee-memory-empty">Loading agent memory…</div>';
   try {
     const data = await api('/agent/memory'), selected = Object.fromEntries(
       Object.entries(data.selected || {}).map(([target, ids]) => [target, new Set(ids || [])]));
     if (seq !== memoryViewSeq) return;      // the vault (or another view) is on screen now
-    lee.agentMemory = data; lee.memoryLoaded = 'notes';
+    ag.memory = data; agentHost.memoryLoaded = 'notes';
     $('#memorystatus').textContent = `· ${data.notes.length} note${data.notes.length === 1 ? '' : 's'}`;
     if (!data.notes.length) {
       body.innerHTML = `<section class="lee-memory-notes-empty"><strong>Give the models durable context</strong>` +
@@ -39,7 +39,7 @@ async function leeMemoryNotes() {
         } catch (e) { input.checked = !input.checked; status(e.message || String(e), 'err'); }
       });
     });
-  } catch (e) { if (seq !== memoryViewSeq) return; lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  } catch (e) { if (seq !== memoryViewSeq) return; agentHost.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 function leeNewMemoryNote(draft = {}) { leeAgentMemory('__new__', draft); }
 window.leeMemoryNotes = leeMemoryNotes; window.leeNewMemoryNote = leeNewMemoryNote;
@@ -74,9 +74,9 @@ async function leeAgentMemory(focusId = '', draft = {}) {
       }, null, {className: 'lee-agent-memory-modal', storageKey: 'agent-memory-v2'});
     const list = $('[data-note-list]', box), form = $('[data-note-form]', box), empty = $('[data-note-empty]', box);
     const title = $('[data-note-title]', box), textHost = $('[data-note-text]', box), targets = $('[data-memory-targets]', box);
-    const stateView = createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true, settings: {wordWrap: 'viewport'},
+    const stateView = agentHost.createEditor(textHost, {doc: '', lang: 'markdown', lineNums: true, settings: {wordWrap: 'viewport'},
       placeholder: '# Context\n\nWrite only information that should influence a model…'});
-    const noteText = {get value() { return LeeCM.getDoc(stateView); }, set value(value) { LeeCM.setDoc(stateView, String(value || '')); }};
+    const noteText = {get value() { return agentHost.cm.getDoc(stateView); }, set value(value) { agentHost.cm.setDoc(stateView, String(value || '')); }};
     const labels = data.targets || {agent: 'Agent conversation', inline: 'Prompt cells', completion: 'Code completion'};
     let saveTimer = null, saving = null;
     const hasUnsavedChanges = () => !!active && (title.value !== (active.title || '') || noteText.value !== (active.text || ''));
@@ -144,7 +144,7 @@ async function leeAgentMemory(focusId = '', draft = {}) {
         if (at >= 0) data.notes[at] = active; else data.notes.push(active);
         for (const target of Object.keys(selected)) { selected[target].delete(oldId); if (requestedTargets.includes(target)) selected[target].add(id); }
         noteStatus.textContent = 'Saved'; button.textContent = 'Save note'; paintList($('[data-note-filter]', box).value); paintTargets(); paintBudget();
-        lee.memoryLoaded = false; status(oldId ? 'memory note updated' : 'memory note created', 'ok'); return true;
+        agentHost.memoryLoaded = false; status(oldId ? 'memory note updated' : 'memory note created', 'ok'); return true;
       }).catch(e => {
         noteStatus.textContent = `Save failed · ${e.message || e}`; button.textContent = 'Retry save'; status(e.message || String(e), 'err'); return false;
       }).finally(() => { saving = null; button.disabled = !active; });
@@ -160,7 +160,7 @@ async function leeAgentMemory(focusId = '', draft = {}) {
     box.beforeClose = async () => { clearTimeout(saveTimer); if (saving) await saving; return !hasUnsavedChanges() || await saveNote(); };
     $('[data-delete-note]', box).onclick = async () => {
       if (!active?.id || !await confirmDialog('delete memory note', `Delete “${active.title || 'Untitled note'}” from memory and every model route?`, 'delete')) return;
-      await post('/agent/memory/delete', {id: active.id}); box.remove(); lee.memoryLoaded = false; status('memory note deleted', 'ok'); leeMemoryNotes();
+      await post('/agent/memory/delete', {id: active.id}); box.remove(); agentHost.memoryLoaded = false; status('memory note deleted', 'ok'); leeMemoryNotes();
     };
     paint();
   } catch (e) { status(e.message || String(e), 'err'); }
@@ -180,18 +180,18 @@ function memoryRows(rows, kind = 'doc') {
 }
 async function leeMemoryHome() {
   const body = $('#memorybody'); if (!body) return;
-  lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('sources');
+  agentHost.memoryLoaded = 'loading'; agentHost.revealPane('right', true); leeRight('memory'); setMemoryView('sources');
   body.innerHTML = '<div class="lee-memory-empty">Opening durable memory…</div>';
   try {
-    const d = await api('/memory/info'); lee.memoryLoaded = true; lee.memoryDocs = d.items || [];
+    const d = await api('/memory/info'); agentHost.memoryLoaded = true; ag.memoryDocs = d.items || [];
     $('#memorystatus').textContent = `· ${d.documents} docs · ${d.nodes} sections`;
-    body.innerHTML = lee.memoryDocs.length ? memoryRows(lee.memoryDocs) :
+    body.innerHTML = ag.memoryDocs.length ? memoryRows(ag.memoryDocs) :
       '<div class="lee-memory-empty">Pages you read and research will be indexed here automatically.</div>';
-    $$('.lee-memory-doc', body).forEach((row, i) => row.onclick = () => leeMemoryTree(lee.memoryDocs[i].id));
-  } catch (e) { lee.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+    $$('.lee-memory-doc', body).forEach((row, i) => row.onclick = () => leeMemoryTree(ag.memoryDocs[i].id));
+  } catch (e) { agentHost.memoryLoaded = false; body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 async function leeMemoryPurge() {
-  let docs = lee.memoryDocs;
+  let docs = ag.memoryDocs;
   if (!docs) docs = (await api('/memory/info')).items || [];
   if (!docs.length) return status('memory is already empty', 'info');
   const m = modal(`<div class="lee-mhead">Purge memory<span class="sub">remove bad or irrelevant sources</span></div>` +
@@ -203,21 +203,21 @@ async function leeMemoryPurge() {
     const ids = $$('input:checked', m).map(x => x.value);
     if (!ids.length) return status('select at least one source to purge', 'err');
     if (!await confirmDialog('purge selected memory', `Remove ${ids.length} document${ids.length === 1 ? '' : 's'} and all indexed sections?`, 'purge')) return;
-    await post('/memory/purge', {ids}); m.remove(); lee.memoryLoaded = false; lee.memoryDocs = null; leeMemoryHome();
+    await post('/memory/purge', {ids}); m.remove(); agentHost.memoryLoaded = false; ag.memoryDocs = null; leeMemoryHome();
   };
   $('[data-all]', m).onclick = async () => {
     if (!await confirmDialog('purge all research memory', `Remove all ${docs.length} documents, trees, chunks and vectors?`, 'purge')) return;
-    await post('/memory/purge', {ids: null}); m.remove(); lee.memoryLoaded = false; lee.memoryDocs = null; leeMemoryHome();
+    await post('/memory/purge', {ids: null}); m.remove(); agentHost.memoryLoaded = false; ag.memoryDocs = null; leeMemoryHome();
   };
 }
 async function leeMemorySearch() {
   const input = $('#memoryquery'), body = $('#memorybody'), q = input?.value.trim(); if (!q || !body) return;
   body.innerHTML = '<div class="lee-memory-empty">Searching remembered sections…</div>';
   try {
-    const d = await api('/memory/search?q=' + encodeURIComponent(q)); lee.memoryHits = d.results || [];
+    const d = await api('/memory/search?q=' + encodeURIComponent(q)); ag.memoryHits = d.results || [];
     $('#memorystatus').textContent = `· ${d.note || ''}`;
-    body.innerHTML = lee.memoryHits.length ? memoryRows(lee.memoryHits, 'hit') : '<div class="lee-memory-empty">Nothing remembered matches this query.</div>';
-    $$('.lee-memory-hit', body).forEach((row, i) => row.onclick = () => leeMemoryRead(lee.memoryHits[i].node_id));
+    body.innerHTML = ag.memoryHits.length ? memoryRows(ag.memoryHits, 'hit') : '<div class="lee-memory-empty">Nothing remembered matches this query.</div>';
+    $$('.lee-memory-hit', body).forEach((row, i) => row.onclick = () => leeMemoryRead(ag.memoryHits[i].node_id));
   } catch (e) { body.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 async function leeMemoryTree(doc) {
@@ -240,7 +240,7 @@ async function leeMemoryTree(doc) {
   const forget = $('[data-forget]', body);
   if (forget) forget.onclick = async () => {
     if (!await confirmDialog('forget research document', `Remove ${document.title} and all of its remembered sections?`, 'forget')) return;
-    await post('/memory/forget', {id: document.doc_id}); lee.memoryLoaded = false; leeMemoryHome();
+    await post('/memory/forget', {id: document.doc_id}); agentHost.memoryLoaded = false; leeMemoryHome();
   };
 }
 async function leeMemoryRead(node) {
@@ -253,12 +253,12 @@ async function leeMemoryRead(node) {
 }
 async function leeMemoryTopics() {
   const body = $('#memorybody'); if (!body) return;
-  lee.memoryLoaded = 'loading'; leePane('right', true); leeRight('memory'); setMemoryView('topics'); body.innerHTML = '<div class="lee-memory-empty">Clustering remembered research…</div>';
-  const d = await api('/memory/clusters'); lee.memoryTopics = d.clusters || [];
+  agentHost.memoryLoaded = 'loading'; agentHost.revealPane('right', true); leeRight('memory'); setMemoryView('topics'); body.innerHTML = '<div class="lee-memory-empty">Clustering remembered research…</div>';
+  const d = await api('/memory/clusters'); ag.memoryTopics = d.clusters || [];
   $('#memorystatus').textContent = `· ${d.note || 'topics'}`;
-  body.innerHTML = lee.memoryTopics.length ? memoryRows(lee.memoryTopics, 'topic') : `<div class="lee-memory-empty">${esc(d.note || 'Not enough remembered material to form topics.')}</div>`;
+  body.innerHTML = ag.memoryTopics.length ? memoryRows(ag.memoryTopics, 'topic') : `<div class="lee-memory-empty">${esc(d.note || 'Not enough remembered material to form topics.')}</div>`;
   $$('.lee-memory-topic', body).forEach((row, i) => row.onclick = () => {
-    const topic = lee.memoryTopics[i], members = topic.members || [];
+    const topic = ag.memoryTopics[i], members = topic.members || [];
     body.innerHTML = `<button class="lee-btn lee-memory-back" onclick="leeMemoryTopics()">Back to topics</button>` +
       `<div class="lee-memory-breadcrumb">${esc(topic.label || 'Topic')} · ${topic.size || members.length} sections</div>` +
       (members.length ? memoryRows(members, 'hit') : '<div class="lee-memory-empty">No representative sections.</div>');

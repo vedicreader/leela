@@ -1,3 +1,20 @@
+/* The pane's own state. It used to be twenty-nine fields on `lee`, the object the editor, the
+   terminal, git and the debugger also write to, which is why nothing could tell whose they were.
+   Six fields really are shared -- the open path, the preferences, the settings metadata, the vault
+   refs, and the two the terminal and research read back -- and those go through `agentHost`. */
+const ag = {
+  attachments: new Map(), suggest: [], suggestAt: 0, vocabulary: null, stateSuggestions: [],
+  stream: null, streamGen: 0, title: '', thread: '', threadDrafts: new Map(), threadRows: null,
+  // Highlighted ranges queued for the next turn. Kept apart from `attachments`, a path->name map,
+  // because two selections in one file are two contexts rather than one key overwritten.
+  selections: [],
+  shownProblems: new Set(),   // agent failures already written into the pane, so they show once
+  live: null, timeline: null, view: 'live', runs: [], reshape: null, memory: null,
+  busyAt: 0, busyWatch: null, hydrating: false, notified: null, documentTitle: '',
+  historyHidden: false, queuedSteer: '',
+  memoryDocs: null, memoryHits: null, memoryTopics: null,
+};
+
 /* ------------------------------------------------------------------ agent */
 function closeDismissableDisclosures(except = null) {
   $$('details.lee-dismissable[open]').forEach(details => { if (details !== except) details.open = false; });

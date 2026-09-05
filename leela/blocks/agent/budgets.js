@@ -5,18 +5,18 @@
    `path:from-to` for the agent to read, because the buffer may be unsaved and what you highlighted
    is what you meant. */
 function leeAgentSelection() {
-  const v = curEditor();
+  const v = agentHost.currentEditor();
   if (!v) return status('put the cursor in some code first', 'err');
   const sel = v.state.selection.main;
   if (sel.empty) return status('select the code you want the agent to see', 'err');
   const doc = v.state.doc, from = doc.lineAt(sel.from).number, to = doc.lineAt(sel.to).number;
-  const path = lee.path || 'untitled', name = path.split('/').pop() || 'untitled';
-  lee.agentSelections.push({
+  const path = agentHost.currentPath || 'untitled', name = path.split('/').pop() || 'untitled';
+  ag.selections.push({
     label: `${name}:${from}${to > from ? '–' + to : ''}`,
     path,
     ref: {kind: 'selection', path, from, to, text: doc.sliceString(sel.from, sel.to)},
   });
-  leePane('right', true); leeRight('agent'); paintAgentAttachments();
+  agentHost.revealPane('right', true); leeRight('agent'); paintAgentAttachments();
   $('#agentprompt')?.focus();
   status(`selection queued for the agent · ${from}${to > from ? '–' + to : ''}`, 'ok');
 }
@@ -129,7 +129,7 @@ async function leeSubagentWrites(enabled) {
 }
 window.leeSubagentWrites = leeSubagentWrites;
 
-function leeAgentExpand() { leeRight('agent'); leeExpandPane('right'); }
+function leeAgentExpand() { leeRight('agent'); agentHost.expandPane('right'); }
 window.leeAgentExpand = leeAgentExpand;
 
 function leeRight(which) {
@@ -143,7 +143,7 @@ function leeRight(which) {
     b.classList.toggle('active', active); b.setAttribute('aria-selected', String(active));
   });
   if (which === 'agent') requestAnimationFrame(() => stickAgentLog());
-  if (which === 'memory' && !lee.memoryLoaded) leeMemoryNotes();
+  if (which === 'memory' && !agentHost.memoryLoaded) leeMemoryNotes();
 }
 window.leeRight = leeRight;
 

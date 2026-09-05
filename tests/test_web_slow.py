@@ -1147,7 +1147,7 @@ def test_every_steer_is_drawn_and_not_just_the_first_one():
     async def go(pg):
         return await pg.evaluate("""() => {
           const log = document.getElementById('agentlog');
-          log.innerHTML = ''; lee.agentTimeline = null; lee.queuedSteer = '';
+          log.innerHTML = ''; ag.timeline = null; ag.queuedSteer = '';
           const said = () => [...log.querySelectorAll('[data-steer]')].map(n => n.dataset.steer);
           setQueuedSteer('stop and read the file', 'stop and read the file');   // queued
           setQueuedSteer('', 'stop and read the file');                          // the run took it
@@ -1299,7 +1299,7 @@ def test_a_long_reply_is_not_re_rendered_from_the_top_ten_times_a_second():
     async def go(pg):
         return await pg.evaluate("""async () => {
           const log = document.querySelector('#agentlog');
-          dropCodeSurfaces(log); log.innerHTML = ''; lee.agentView = 'live';
+          agentHost.dropEditors(log); log.innerHTML = ''; ag.view = 'live';
           const card = agentTurnCard({prompt: 'probe', model: ''}); log.appendChild(card);
           const root = document.createElement('div'); root.className = 'lee-agent-timeline';
           turnBody(card).appendChild(root);
@@ -1345,7 +1345,7 @@ def test_the_live_agent_pane_keeps_a_bounded_number_of_turns():
     async def go(pg):
         return await pg.evaluate("""async () => {
           const log = document.querySelector('#agentlog');
-          dropCodeSurfaces(log); log.innerHTML = ''; approvalCards.clear(); lee.agentView = 'live';
+          agentHost.dropEditors(log); log.innerHTML = ''; approvalCards.clear(); ag.view = 'live';
           let torn = 0;
           const real = window.dropCodeSurfaces;
           window.dropCodeSurfaces = n => { if (n?.classList?.contains('lee-agent-turn')) torn++; return real(n); };
@@ -1382,7 +1382,7 @@ def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_th
     async def go(pg):
         return await pg.evaluate("""async () => {
           const log = document.querySelector('#agentlog');
-          dropCodeSurfaces(log); log.innerHTML = '';
+          agentHost.dropEditors(log); log.innerHTML = '';
           const card = agentTurnCard({prompt: 'probe', model: ''}); log.appendChild(card);
           const root = document.createElement('div'); root.className = 'lee-agent-timeline';
           turnBody(card).appendChild(root);
@@ -1505,27 +1505,27 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
           };
           const root = {id: 'r0', kind: 'root', model: 'openai/gpt-5.6-luna', started: now,
                         state: 'working', children: []};
-          lee.agentRuns = [root];
-          updateAgentRunstrip({runs: lee.agentRuns});
+          ag.runs = [root];
+          updateAgentRunstrip({runs: ag.runs});
           const one = measure();
           root.children = [
             {id: 'c1', kind: 'child', model: 'openai/gpt-5.6-luna', started: now, state: 'working',
              question: 'review the refactor for missing cases', children: []},
             {id: 'c2', kind: 'child', model: 'openai/gpt-5.6-luna', started: now, state: 'working',
              question: 'check the recovery path', children: []}];
-          updateAgentRunstrip({runs: lee.agentRuns});
+          updateAgentRunstrip({runs: ag.runs});
           const many = measure();
           // a delegate that answered, and a root that has not
           root.children[0].state = 'completed'; root.children[0].ended = now + 12;
           root.children[1].question = '';
-          updateAgentRunstrip({runs: lee.agentRuns});
+          updateAgentRunstrip({runs: ag.runs});
           const mixed = {rows: measure().rows, send: $('#agentsend').textContent.trim(),
                          hidden: $('#agentrunstrip').hidden};
           // everything over: nothing is running, so nothing says it is
           for (const r of [root, ...root.children]) { r.state = 'completed'; r.ended = now + 20; }
-          updateAgentRunstrip({runs: lee.agentRuns});
+          updateAgentRunstrip({runs: ag.runs});
           const over = {hidden: $('#agentrunstrip').hidden, send: $('#agentsend').textContent.trim()};
-          lee.agentRuns = []; updateAgentRunstrip({runs: []});
+          ag.runs = []; updateAgentRunstrip({runs: []});
           return {one, many, mixed, over};
         }""")
         out['steps'] = await pg.evaluate("""() => {
@@ -1548,20 +1548,20 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
           };
         }""")
         out['inside'] = await pg.evaluate("""() => {
-          const log = $('#agentlog'); log.innerHTML = ''; lee.agentTimeline = null;
+          const log = $('#agentlog'); log.innerHTML = ''; ag.timeline = null;
           const root = document.createElement('div'); root.className = 'lee-agent-timeline';
           log.appendChild(root);
-          const timeline = agentTimeline(root); lee.agentTimeline = timeline;
+          const timeline = agentTimeline(root); ag.timeline = timeline;
           timeline.chunk('reading the file');
           setQueuedSteer('', 'use the other file');      // taken straight to a waiting approval
           timeline.chunk('using the other one');
           const inTurn = [...root.children].map(c => c.dataset?.steer || c.className.split(' ').pop());
           // once the turn is over the timeline is gone, and a steer has nowhere but the log
-          lee.agentTimeline = null;
+          ag.timeline = null;
           setQueuedSteer('', 'and afterwards');
           const out = {inTurn, afterwards: log.lastElementChild?.dataset?.steer || '',
                        stranded: root.nextElementSibling?.dataset?.steer === 'use the other file'};
-          log.innerHTML = ''; lee.agentTimeline = null;
+          log.innerHTML = ''; ag.timeline = null;
           return out;
         }""")
         out['message'] = await pg.evaluate("""() => {
@@ -1710,7 +1710,7 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
     async def go(pg):
         out = {}
         out['fold'] = await pg.evaluate("""() => {
-          const log = $('#agentlog'); log.innerHTML = ''; lee.agentThread = 'fold-test';
+          const log = $('#agentlog'); log.innerHTML = ''; ag.thread = 'fold-test';
           localStorage.removeItem('lee-agent-folded:fold-test');
           renderTurns(log, [{prompt: 'rename the widget', reply: 'renamed it', turn_id: 't1',
                              capabilities: {revisable: true, known: true}},
@@ -1733,7 +1733,7 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
           unfoldForApproval(ask);
           out.unfolded = !cards[1].classList.contains('folded');
 
-          log.innerHTML = ''; localStorage.removeItem('lee-agent-folded:fold-test'); lee.agentThread = '';
+          log.innerHTML = ''; localStorage.removeItem('lee-agent-folded:fold-test'); ag.thread = '';
           return out;
         }""")
         out['bars'] = await pg.evaluate("""() => {
