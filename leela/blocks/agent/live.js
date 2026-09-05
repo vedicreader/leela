@@ -6,10 +6,17 @@
    Stickiness is sampled from the reader's own scrolling: once they leave the bottom nothing the
    stream paints moves them, and scrolling back down opts in again. `force` is for the moves that
    are the reader's, not the stream's: taking the live pane back from History, and sending a turn. */
+import {$, $$, esc, api, post, status, renderMarkdown, prefGet, prefSet, modal, textDialog, confirmDialog} from '../js/kit.js';
+import {addResponseRevision, approvalCards} from './approvals.js';
+import {agentHost} from './host.js';
+import {agentListen, agentTimeline, reduceAgentTimeline, setAgentStatus} from './media.js';
+import {ag} from './panel.js';
+import {pollApproval, renderAgentStep, updateAgentRunstrip} from './steer.js';
+
 const BOTTOM_SLACK = 60;
 const nearAgentBottom = log =>
   !log.clientHeight || log.scrollHeight - log.scrollTop - log.clientHeight <= BOTTOM_SLACK;
-function stickAgentLog(log, force = false) {
+export function stickAgentLog(log, force = false) {
   log = log || $('#agentlog'); if (!log) return;
   if (!log._leeStickBound) {
     log._leeStickBound = true; log._leeStick = true;
@@ -42,14 +49,14 @@ function rememberAgentLive() {
   held.append(...log.childNodes);
   ag.live = held;
 }
-function restoreAgentLive() {
+export function restoreAgentLive() {
   const log = $('#agentlog'); if (!log) return;
   log.replaceChildren(ag.live || document.createDocumentFragment());
   ag.live = null; ag.view = 'live';
   $('#agenthistory')?.classList.remove('active');
   stickAgentLog(log, true);
 }
-function userMessage(text) {
+export function userMessage(text) {
   const raw = String(text || '').trim(), long = raw.length > 900 || raw.split('\n').length > 14;
   const card = document.createElement('section'); card.className = 'lee-user-message';
   const head = document.createElement('header');
@@ -68,7 +75,7 @@ function userMessage(text) {
   more.querySelector('pre').textContent = raw; card.appendChild(more);
   return card;
 }
-function usageMeta(usage, label = '', model = '') {
+export function usageMeta(usage, label = '', model = '') {
   if (!usage && !label) return null;
   const u = usage || {}, parts = [];
   if (Number(u.total)) parts.push(`${Number(u.total).toLocaleString()} tokens`);
@@ -96,7 +103,7 @@ const foldKey = () => `lee-agent-folded:${foldScope()}`;
 const foldedTurns = () => { try { return new Set(JSON.parse(localStorage.getItem(foldKey()) || '[]')); } catch { return new Set(); } };
 const saveFolded = set => { try { localStorage.setItem(foldKey(), JSON.stringify([...set].slice(-400))); } catch {} };
 
-function agentTurnCard({prompt = '', model = '', route = '', turnId = ''} = {}) {
+export function agentTurnCard({prompt = '', model = '', route = '', turnId = ''} = {}) {
   const card = document.createElement('article'); card.className = 'lee-agent-turn';
   if (turnId) card.dataset.turn = turnId;
   const meta = [model, route].filter(Boolean).join(' · ');
@@ -109,13 +116,13 @@ function agentTurnCard({prompt = '', model = '', route = '', turnId = ''} = {}) 
   $('.lee-agent-turn-title', card).textContent = String(prompt).replace(/\s+/g, ' ').trim() || '(no prompt)';
   return card;
 }
-const turnBody = card => card && $('.lee-agent-turn-body', card);
+export const turnBody = card => card && $('.lee-agent-turn-body', card);
 /* A checkpoint the agent is blocked on must never sit behind a fold: its buttons and its ↵ / E / S
    keys are the only way the run continues, and a folded body cannot be focused or clicked. */
-const turnAwaitingApproval = card => !!$('.lee-approval.proposed', card);
-const unfoldForApproval = node => foldAgentTurn(node?.closest?.('.lee-agent-turn'), false);
+export const turnAwaitingApproval = card => !!$('.lee-approval.proposed', card);
+export const unfoldForApproval = node => foldAgentTurn(node?.closest?.('.lee-agent-turn'), false);
 
-function foldAgentTurn(card, folded) {
+export function foldAgentTurn(card, folded) {
   if (!card || (folded && turnAwaitingApproval(card))) return;
   card.classList.toggle('folded', folded);
   $('.lee-agent-turn-fold', card)?.setAttribute('aria-expanded', String(!folded));
@@ -123,12 +130,12 @@ function foldAgentTurn(card, folded) {
   const id = card.dataset.turn; if (!id) return;
   const set = foldedTurns(); folded ? set.add(id) : set.delete(id); saveFolded(set);
 }
-const agentTurnCards = () => $$('.lee-agent-turn', $('#agentlog') || document);
-function foldAgentTurns(folded) { for (const card of agentTurnCards()) foldAgentTurn(card, folded); }
+export const agentTurnCards = () => $$('.lee-agent-turn', $('#agentlog') || document);
+export function foldAgentTurns(folded) { for (const card of agentTurnCards()) foldAgentTurn(card, folded); }
 /* What has been answered is not what is being read. A conversation of any length is mostly turns
    already dealt with, so every one before the newest is folded away: on a paint, and again when the
    next turn begins. A turn holding a checkpoint is never folded, because `foldAgentTurn` refuses. */
-function foldOlderTurns(log, keep = 1) {
+export function foldOlderTurns(log, keep = 1) {
   const cards = $$('.lee-agent-turn', log || $('#agentlog') || document);
   cards.slice(0, Math.max(0, cards.length - keep)).forEach(card => foldAgentTurn(card, true));
 }
@@ -138,8 +145,8 @@ function foldOlderTurns(log, keep = 1) {
    last `LIVE_TURNS` and History holds the rest, which is where a conversation already lives.
 
    A turn holding a checkpoint is never dropped: its buttons are the only way that run continues. */
-const LIVE_TURNS = 30;
-function trimAgentLog(log, keep = LIVE_TURNS) {
+export const LIVE_TURNS = 30;
+export function trimAgentLog(log, keep = LIVE_TURNS) {
   log = log || $('#agentlog');
   if (!log || (ag.view && ag.view !== 'live')) return 0;
   const cards = $$('.lee-agent-turn', log);
@@ -165,10 +172,10 @@ function applyStoredFolds(log) {
 }
 /* `renderTurns` paints durable turns only, so on a resync the turn in flight is appended after it
    has already decided which card is newest. Re-applied once that card exists. */
-const refoldAfter = log => applyStoredFolds(log);
+export const refoldAfter = log => applyStoredFolds(log);
 /* One listener on the log, bound from `initAgentComposer` rather than from a paint: a conversation
    with no turns paints nothing, and the log element itself outlives every repaint. */
-function bindAgentTurnFolds(log) {
+export function bindAgentTurnFolds(log) {
   if (!log || log._leeFoldsBound) return;
   log._leeFoldsBound = true;
   log.addEventListener('click', e => {
@@ -177,13 +184,13 @@ function bindAgentTurnFolds(log) {
     if (e.altKey) foldAgentTurns(folded); else foldAgentTurn(card, folded);
   });
 }
-const latestAgentTurn = () => agentTurnCards().at(-1);
+export const latestAgentTurn = () => agentTurnCards().at(-1);
 /* the turn being read: whichever card holds focus, or the newest, which is where focus is when it
    is in the composer. Only for what a person aimed at; anything the server sends goes to the
    newest, or a checkpoint would land in whichever old turn happened to hold focus */
-const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn') || latestAgentTurn();
+export const currentAgentTurn = () => document.activeElement?.closest?.('.lee-agent-turn') || latestAgentTurn();
 
-function renderTurns(log, turns, heading, fold = true) {
+export function renderTurns(log, turns, heading, fold = true) {
   if (heading) log.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(heading)}</div>`);
   for (const turn of (turns || [])) {
     const card = agentTurnCard({prompt: turn.prompt, model: turn.model, route: turn.plan?.route || 'direct',
@@ -230,13 +237,13 @@ function renderTurns(log, turns, heading, fold = true) {
 }
 /* A summarised title arrives as `Title: Ramabana CLI ASCII`, quotes and all, and stored ones keep
    the prefix after the storage point is fixed, so every display cleans it. */
-const titleText = t => String(t || '').replace(/\s+/g, ' ').trim()
+export const titleText = t => String(t || '').replace(/\s+/g, ' ').trim()
   .replace(/^title\s*:\s*/i, '').replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
 const sessionTime = s => s.started ? new Date(s.started * 1000).toLocaleString() : s.id.replace(/^agent_/, '');
 /* `/agent/history` lists conversations without their turns, since Leela and the CLI share one log.
    The turns of the one being opened come from here, and `count` is what the list knows about the
    rest. */
-const sessionTurns = async id => {
+export const sessionTurns = async id => {
   if (!id) return [];
   try { return (await api('/agent/history/session?id=' + encodeURIComponent(id))).turns || []; }
   catch (e) { status(String(e.message || e), 'err'); return []; }
@@ -261,7 +268,7 @@ async function adoptAgentPrefs() {
 }
 let agentPrefsAdopted;
 // Once per session, and not before `loadSettings` has said what is already saved.
-const agentPrefsReady = () =>
+export const agentPrefsReady = () =>
   agentHost.settingsMeta ? (agentPrefsAdopted ||= adoptAgentPrefs()) : Promise.resolve();
 /* Leela and the ramabana CLI append to one log, and only Leela marks the sessions it started, so
    anything unmarked reads as the CLI's, including Leela's history from before the mark. */
@@ -485,7 +492,7 @@ async function resumeLatestAgent() {
     status(`picked up ${titleText(d.title) || d.session}`, 'ok');
   } catch (_) {}
 }
-function warmAgentHistory() {
+export function warmAgentHistory() {
   // Nothing is painted from it: this is the read that makes the next one cheap.
   historyGroups().catch(() => {});
 }
@@ -629,7 +636,7 @@ async function leeAgentReshapeApply() {
 /* Branches belong to a conversation, so the way in is that conversation's own card. Two lists in
    one dialog: where this conversation has already been cut, and where it can still be. A branch is
    a parent point and a manifest, recompiled on switch, so nothing here replays a turn. */
-async function leeAgentBranches(id = ag.thread) {
+export async function leeAgentBranches(id = ag.thread) {
   if (!id) return status('open a conversation first', 'err');
   let d;
   try { d = await api('/agent/branches?thread=' + encodeURIComponent(id)); }
@@ -672,7 +679,7 @@ async function leeAgentBranchSwitch(branchId, id = ag.thread) {
 }
 /* A fork point is a part, not a message: a call and the results it produced move together, so
    picking one inside a tool exchange takes the whole exchange. */
-async function leeAgentForkTurn(turnId, id = ag.thread) {
+export async function leeAgentForkTurn(turnId, id = ag.thread) {
   if (!turnId) return status('no turn to branch from', 'err');
   let d;
   try { d = await api(`/agent/branch/parts?turn_id=${encodeURIComponent(turnId)}&stage=after` +
@@ -700,7 +707,7 @@ async function leeAgentForkTurn(turnId, id = ag.thread) {
 /* What the model still carries, decided in one place rather than in a notebook. Nothing is
    written until apply, and apply is refused unless the branch is still at the revision the preview
    was taken at: a conversation that moved while a person was deciding is a different question. */
-async function leeAgentShape(id = ag.thread) {
+export async function leeAgentShape(id = ag.thread) {
   if (!id) return status('open a conversation first', 'err');
   let d;
   try { d = await api('/agent/conversation/parts?thread=' + encodeURIComponent(id)); }
@@ -789,7 +796,7 @@ function reconcileAgentBusy(attention) {
 /* Nothing else polls: `refreshAgentThreads` runs on what a person does, and the stream that would
    say `done` is the thing missing when this goes wrong. So the check has to run on its own clock,
    and only while a turn is outstanding -- it stops itself as soon as one is not. */
-function startAgentBusyWatch() {
+export function startAgentBusyWatch() {
   if (ag.busyWatch) return;
   ag.busyWatch = setInterval(async () => {
     if (!agentHost.busy) { clearInterval(ag.busyWatch); ag.busyWatch = null; return; }
@@ -836,14 +843,14 @@ async function leeAgentThreadMute(id = ag.thread) {
     await refreshAgentThreads();
   } catch (e) { status(String(e.message || e), 'err'); }
 }
-async function refreshAgentThreads() {
+export async function refreshAgentThreads() {
   await agentPrefsReady();   // the list paints the notify box, which is one of them
   const d = await api('/agent/threads'); paintAgentThreads(d); notifyAgentAttention(d); return d;
 }
 /* Off by default, and permission is asked for only when a person turns it on, because a prompt
    nobody invited is why browsers stopped honouring them. Every state is terminal: unsupported and
    denied disable delivery and say so once. */
-function agentNotifyEnabled() { return prefGet('agent', 'notify', false) === true; }
+export function agentNotifyEnabled() { return prefGet('agent', 'notify', false) === true; }
 async function leeAgentNotifyToggle(on) {
   const off = async (said, tone) => { await prefSet('agent', 'notify', false); return status(said, tone); };
   if (!on) return off('notifications off', 'ok');
@@ -1135,7 +1142,7 @@ function renderSessionCells(log, d) {
   }
 }
 
-function agentLog(html, host = null) {
+export function agentLog(html, host = null) {
   const log = $('#agentlog');
   if (host) { host.insertAdjacentHTML('beforeend', html); stickAgentLog(log); return; }
   // Never use `innerHTML +=`: it reparses every existing child and silently detaches every

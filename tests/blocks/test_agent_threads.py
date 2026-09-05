@@ -1494,7 +1494,9 @@ def test_every_branch_route_has_a_way_in_from_the_pane():
     """The four branch routes shipped with tests and no caller: forking and switching were reachable
     with curl and from nowhere in the app. A route nobody can reach is a route nobody has."""
     root = Path(__file__).resolve().parents[2]
-    js = (root/'leela'/'static'/'lee-agent.js').read_text() + (root/'leela'/'static'/'lee-ide.js').read_text()
+    # the pane's client is a module graph served file by file, not a bundle any more
+    js = ''.join(p.read_text() for p in sorted((root/'leela'/'static'/'agent').glob('*.js')))
+    js += (root/'leela'/'static'/'lee-ide.js').read_text()
     for route in ('/agent/branches', '/agent/branch/parts', '/agent/branch/switch', '/agent/fork',
                   '/agent/conversation/parts', '/agent/history/preview', '/agent/history/apply'):
         assert route in js, f'{route} is served but never called'

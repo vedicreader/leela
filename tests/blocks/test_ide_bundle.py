@@ -21,7 +21,9 @@ IDE_CSS = (ROOT/'leela/static/lee-ide.css').read_text()
 AGENT_CSS = (ROOT/'leela/blocks/agent/agent.css').read_text()
 BRIDGE_CSS = (ROOT/'leela/blocks/agent/tokens.lee.css').read_text()
 CSS = IDE_CSS + '\n' + AGENT_CSS
-JS = ''.join((builder.OUTDIR/n).read_text() for n in builder.LAYERS)
+# the two concatenated bundles plus the agent's module graph, which is served file by file
+JS = (''.join((builder.OUTDIR/n).read_text() for n in builder.LAYERS)
+      + ''.join(p.read_text() for p in builder.module_files()))
 DECL = re.compile(r'^(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)', re.M)
 
 def test_every_bundle_is_its_modules_concatenated():
@@ -587,3 +589,36 @@ def test_the_pane_keeps_its_state_off_the_shared_global():
     lit = core[core.index('const lee = {'):core.index('\n};', core.index('const lee = {'))]
     for f in ('agentThread', 'agentStream', 'agentSelections', 'shownProblems', 'stateSuggestions'):
         assert f not in lit, f'{f} is still declared on the shared global'
+
+def test_every_name_the_rest_of_the_client_reaches_for_is_published():
+    """The pane's client is a module graph now, so its declarations are no longer globals. A
+    classic script naming one gets a ReferenceError at the moment a person clicks something. This
+    counts references rather than calls: `bootStep('approvals', approvalLoop)` passes the function
+    as a value and never writes a bracket, and that is how the palette stopped opening."""
+    pkg, decl = ROOT/'leela', re.compile(r'^(?:export\s+)?(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)', re.M)
+    mine = {p.name: set(decl.findall(p.read_text())) for p in sorted((pkg/'blocks/agent').glob('*.js'))}
+    owner = {n: f for f, ns in mine.items() for n in ns}
+    block = ''.join(p.read_text() for p in (pkg/'blocks/agent').glob('*.js'))
+    published = set(re.findall(r'window\.(\w+)\s*=', block))
+    published |= {n.strip() for grp in re.findall(r'Object\.assign\(window, \{([^}]*)\}', block) for n in grp.split(',')}
+    outside = [p for p in [*pkg.glob('blocks/*/*.js'), *(pkg/'static/js').glob('*.js'), ROOT/'frontend/editor.js']
+               if p.exists() and p.parent.name != 'agent']
+    missing = {}
+    for p in outside:
+        body = re.sub(r'/\*.*?\*/|//[^\n]*', '', p.read_text(), flags=re.S)
+        for n in set(re.findall(r'(?<![\w.$])([A-Za-z_$][\w$]*)', body)) & set(owner) - published:
+            missing.setdefault(n, set()).add(p.name)
+    assert missing == {}, 'reached for but not on window: ' + str({k: sorted(v) for k, v in missing.items()})
+
+def test_the_panes_inline_handlers_all_resolve():
+    "An `onclick` names a global. Every one the markup writes has to be published or it is dead."
+    pkg = ROOT/'leela'
+    block = ''.join(p.read_text() for p in (pkg/'blocks/agent').glob('*.js'))
+    published = set(re.findall(r'window\.(\w+)\s*=', block))
+    published |= {n.strip() for grp in re.findall(r'Object\.assign\(window, \{([^}]*)\}', block) for n in grp.split(',')}
+    decl = re.compile(r'^(?:export\s+)?(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)', re.M)
+    mine = set(decl.findall(block))
+    ui = (pkg/'blocks/agent/ui.py').read_text()
+    named = set(re.findall(r"on(?:click|change)='([A-Za-z_$][\w$]*)\(", ui))
+    named |= set(re.findall(r'on(?:click|change)="([A-Za-z_$][\w$]*)\(', block))
+    assert not (named & mine) - published, sorted((named & mine) - published)

@@ -7,7 +7,7 @@ import importlib.util, os, shutil, subprocess, sys, threading, time
 import pytest
 
 import leela_app
-from tests.assets import read
+from tests.assets import agent_modules, read
 from leela import desktop
 
 def test_the_pipeline_terminal_is_keyed_by_the_package_it_watches():
@@ -381,7 +381,7 @@ def test_the_menu_bar_names_only_actions_the_client_can_dispatch():
     from leela.blocks.keys.menus import BAR, MenuItem
     # Two ways in: the table in `actions.js`, and `ACTIONS.name =` from a block that owns the action.
     js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + \
-        read('leela/static/lee-agent.js')
+        agent_modules()
     named = lambda a: f'  {a}:' in js or f'ACTIONS.{a} =' in js or f'ACTIONS.{a}=' in js
     missing = sorted({r.action for _, rows in BAR for r in rows
                       if isinstance(r, MenuItem) and r.action and not named(r.action)})
@@ -392,13 +392,14 @@ def test_the_debug_menu_calls_functions_that_are_really_on_the_page():
     from leela.blocks.keys.menus import BAR, Js
     from leela.core.web import IDE_BUNDLES
     # every bundle the page loads, not two of the three: all of them run in the same global scope,
-    # so a menu row naming something in `lee-agent.js` was failing a check about reachability
-    bundle = ''.join(read(f'leela/static/{b}') for b in IDE_BUNDLES)
+    # so a menu row naming something in the agent's modules was failing a check about reachability
+    # the bundles plus the agent's modules: they are served separately now but share one global
+    served = ''.join(read(f'leela/static/{b}') for b in IDE_BUNDLES) + agent_modules()
     for _, rows in BAR:
         for r in rows:
             if not isinstance(r, Js): continue
             name = r.expr.split('(')[0]
-            assert f'window.{name} =' in bundle or f'window.{name}=' in bundle, r.expr
+            assert f'window.{name} =' in served or f'window.{name}=' in served, r.expr
 
 @pytest.mark.parametrize('chord,want', [
     ('mod+shift+p', ('p', desktop.CMD | desktop.SHIFT)),
@@ -472,7 +473,7 @@ def test_nothing_opens_a_window_the_app_cannot_open():
     link activation, so in the packaged app it opens nothing and returns null. Four git and workspace
     buttons took the bare form and failed silently. `openExternal` is the one place that checks the
     return value and asks the server for a real browser instead."""
-    js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + read('leela/static/lee-agent.js')
+    js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + agent_modules()
     calls = [l.strip() for l in js.splitlines() if 'window.open(' in l]
     assert calls, 'the guarded form went missing rather than the guard'
     for line in calls:

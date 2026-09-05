@@ -1,12 +1,19 @@
 /* A write pauses Rishi's tool loop until it is answered. The question stays in the agent pane
  * rather than a modal, so the rest of the IDE is usable while the model waits. The same event
  * serves agent-chat and notebook prompt-cell streams. */
+import {$, $$, esc, api, post, status, renderMarkdown, compactPath, modal, textDialog, confirmDialog} from '../js/kit.js';
+import {leeRight} from './budgets.js';
+import {agentHost} from './host.js';
+import {latestAgentTurn, leeAgentForkTurn, refreshAgentThreads, restoreAgentLive, turnBody, unfoldForApproval} from './live.js';
+import {ag} from './panel.js';
+import {readableDetail, updateAgentRunstrip} from './steer.js';
+
 // These are the log's own nodes. A detached one is held forever.
-const approvalCards = new Map();
+export const approvalCards = new Map();
 /* A checkpoint the run never answered keeps `proposed`, and a card holding one is never folded and
    never trimmed, so the turn it sits in cannot be collapsed for the rest of the session. `done`
    retires the ones its own stream raised: the run that asked is over, so nothing can answer them. */
-function retireCheckpoints(ids) {
+export function retireCheckpoints(ids) {
   for (const id of ids || []) {
     const card = approvalCards.get(id);
     if (!card?.classList.contains('proposed')) continue;
@@ -96,14 +103,14 @@ function checkpointExplanation(tool, args = {}, schema = {}) {
   return {title: 'Tool approval', lead: `The agent wants to use ${tool}. Nothing runs until you approve.`,
     detail: 'This is a read-only call. You can review its inputs now and run it again later with different inputs.'};
 }
-function checkpointResult(detail, ok, secs) {
+export function checkpointResult(detail, ok, secs) {
   const result = document.createElement('details'); result.className = 'lee-checkpoint-result';
   const summary = document.createElement('summary');
   summary.innerHTML = `<strong>${ok ? 'Completed' : 'Failed'}</strong><span>${Number(secs || 0).toFixed(1)}s · View output</span>`;
   const pre = document.createElement('pre'); pre.textContent = readableDetail(detail);
   result.append(summary, pre); return result;
 }
-function showApproval(a, destination = null) {
+export function showApproval(a, destination = null) {
   if (!a?.id || approvalCards.has(a.id)) return;
   agentHost.revealPane('right', true); leeRight('agent');
   if (ag.view && ag.view !== 'live') restoreAgentLive();
@@ -278,7 +285,7 @@ function markTurnUndone(out, bar, files, revise) {
    `lee-ide.css` so the bar explains itself wherever it is painted. */
 const REVISION_MUTED = 'opacity:.4;cursor:default';
 const REVISION_NOTE = 'flex:1 0 100%;order:9;margin-top:5px;color:var(--lee-fg4);font:9px/1.45 var(--lee-mono);white-space:normal';
-function addResponseRevision(out, turnId, raw, capabilities = {}) {
+export function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
   const files = capabilities.files || [], gone = capabilities.known === false;
@@ -329,7 +336,7 @@ const turnAnswer = bar => {
   return (id && $(`.lee-turn-answer[data-answer-for="${CSS.escape(id)}"]`, card))
     || $('.lee-turn-answer', card) || bar.previousElementSibling;
 };
-function turnReplyText(bar) {
+export function turnReplyText(bar) {
   const reply = turnAnswer(bar);
   return reply?.dataset?.markdown ?? reply?.textContent ?? '';
 }
@@ -470,7 +477,7 @@ async function rollbackProposal(card, id) {
     if (d.path === agentHost.currentPath && !$('.lee-tab.active')?.classList.contains('dirty')) await agentHost.takeDiskVersion(d.path);
   } catch (e) { status(e.message || String(e), 'err'); }
 }
-function runPolicyLabel(policy) {
+export function runPolicyLabel(policy) {
   if (!policy) return '';
   const names = {once: 'next call', count: `next ${policy.remaining}`, until_write: 'until next write',
     reads: 'read-only calls', until_failure: 'until failure', completion: 'to completion'};

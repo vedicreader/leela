@@ -1,10 +1,17 @@
 /* Most callers pass no state, and a steer is not theirs to forget. Only a payload carrying
    `queued_steer` may change it, so the acknowledgement survives until the server says the steer
    was taken. */
+import {$, $$, esc, api, post, status, renderMarkdown, compactPath, prefGet, prefSet, modal, textDialog} from '../js/kit.js';
+import {runPolicyLabel, showApproval} from './approvals.js';
+import {agentHost} from './host.js';
+import {agentLog, agentNotifyEnabled, agentPrefsReady, agentTurnCard, bindAgentTurnFolds, currentAgentTurn, refreshAgentThreads, turnBody, userMessage} from './live.js';
+import {sendAgent} from './media.js';
+import {ag} from './panel.js';
+
 //: The run states `Run.terminal` covers. A row in one of them is history, not work in progress.
 const TERMINAL = new Set(['completed', 'cancelled', 'detached', 'terminated', 'failed']);
 
-function updateAgentRunstrip(state = {}) {
+export function updateAgentRunstrip(state = {}) {
   const strip = $('#agentrunstrip'); if (!strip) return;
   if ('queued_steer' in state) setQueuedSteer(state.queued_steer || '');
   if ('runs' in state) ag.runs = state.runs || [];
@@ -48,7 +55,7 @@ function updateAgentRunstrip(state = {}) {
     catch (err) { status(err.message || String(err), 'err'); }
   });
 }
-async function pauseAgentAfterCurrent() {
+export async function pauseAgentAfterCurrent() {
   const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
   status('agent will pause before the next call', 'ok');
 }
@@ -74,7 +81,7 @@ function placeSteer(log, card, text) {
   log.scrollTop = log.scrollHeight;
   return card;
 }
-function setQueuedSteer(text, shown = '', cancel = false) {
+export function setQueuedSteer(text, shown = '', cancel = false) {
   ag.queuedSteer = text || '';
   const log = $('#agentlog'), old = $('#agentqueuedsteer'); if (!log) return;
   if (!ag.queuedSteer) {
@@ -102,7 +109,7 @@ function setQueuedSteer(text, shown = '', cancel = false) {
   };
   log.scrollTop = log.scrollHeight;
 }
-async function leeQueueSteer() {
+export async function leeQueueSteer() {
   const input = $('#agentprompt'), text = input?.value.trim();
   if (!text) return status('write what to steer towards first', 'err');
   try {
@@ -111,7 +118,7 @@ async function leeQueueSteer() {
     status(d.queued_steer ? 'steering queued after the current tool call' : 'steering sent to the agent', 'ok');
   } catch (e) { input.value = text; status(e.message || String(e), 'err'); }
 }
-async function leeForceSteer() {
+export async function leeForceSteer() {
   const input = $('#agentprompt'), text = input?.value.trim();
   if (!agentHost.busy) return status('nothing is running to stop; send it as a turn instead', 'err');
   if (!text) return status('write what to send next first', 'err');
@@ -124,7 +131,7 @@ async function leeForceSteer() {
   } catch (e) { input.value = text; updateAgentSendMode('steer'); status(e.message || String(e), 'err'); }
 }
 
-async function pollApproval() {
+export async function pollApproval() {
   try {
     const r = await api('/agent/approval');
     if (r.pending) showApproval(r.pending);
@@ -138,7 +145,7 @@ async function pollApproval() {
    for a run whose stream this tab is not attached to. At 750ms it was four requests a second of the
    process the window is drawing in, for something the stream had already said. */
 const APPROVAL_GAP = {hidden: 5000, busy: 2000, idle: 5000};
-async function approvalLoop() {
+export async function approvalLoop() {
   if (!document.hidden) await pollApproval();
   // attention is about the conversations a person is *not* looking at, so it is polled even hidden
   try { await refreshAgentThreads(); } catch (_) {}
@@ -146,7 +153,7 @@ async function approvalLoop() {
                          : agentHost.busy ? APPROVAL_GAP.busy : APPROVAL_GAP.idle);
 }
 
-function readableDetail(value) {
+export function readableDetail(value) {
   const text = String(value || '');
   try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
 }
@@ -160,7 +167,7 @@ function steerSaid(args) {
   return (said || '').trim() ||
     (/stopped this turn/i.test(raw) ? 'stopped the turn' : 'rejected that call');
 }
-function renderAgentStep(row, a) {
+export function renderAgentStep(row, a) {
   const wasOpen = row.open;
   for (const v of (row._leeViews || [])) try { agentHost.cm.destroy(v); } catch {}
   row._leeViews = []; row.innerHTML = '';
@@ -317,7 +324,7 @@ window.leeSubagents = leeSubagents;
 
 // A turn gets an immediate, persistent status surface, in the agent log rather than only in the
 // footer: long local inference must still look alive when the footer is out of sight.
-function agentProgress(log) {
+export function agentProgress(log) {
   const el = document.createElement('section');
   el.className = 'lee-agent-progress'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite');
   el.innerHTML = `<div class="lee-agent-motion" aria-hidden="true"><i></i><i></i><i></i></div>` +
@@ -348,7 +355,7 @@ function agentProgress(log) {
 
 // Slash commands and @ files are resolved inline, without sending a half-written token to the
 // model. Selected files stay visible as removable chips until the turn starts.
-function paintAgentAttachments() {
+export function paintAgentAttachments() {
   const host = $('#agentattachments'); if (!host) return;
   const active = agentHost.currentPath ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
     `<span>active · ${esc(compactPath(agentHost.currentPath))}</span></span>` : '';
@@ -383,7 +390,7 @@ function paintAgentAttachments() {
     paintAgentAttachments();
   });
 }
-function closeAgentSuggest() {
+export function closeAgentSuggest() {
   const menu = $('#agentsuggest'); if (!menu) return;
   menu.hidden = true; menu.innerHTML = ''; ag.suggest = []; ag.suggestAt = 0;
 }
@@ -500,7 +507,7 @@ async function attachPastedImage(blob) {
   reader.readAsDataURL(blob);
 }
 
-function initAgentComposer() {
+export function initAgentComposer() {
   // before the guard: a conversation with no turns paints nothing, so a paint is too late to bind
   bindAgentTurnFolds($('#agentlog'));
   const input = $('#agentprompt'); if (!input || input.dataset.composerReady) return;
@@ -550,7 +557,7 @@ function initAgentComposer() {
     else if (e.key === 'Escape') { e.preventDefault(); closeAgentSuggest(); }
   });
 }
-async function sendAgentCommand(line) {
+export async function sendAgentCommand(line) {
   // a command is a person's input and a reply, so it folds like every other exchange
   const log = $('#agentlog'); if (!log) return;
   const card = agentTurnCard({prompt: line, route: 'command'}), body = turnBody(card);
@@ -566,7 +573,7 @@ async function sendAgentCommand(line) {
 
 /* Three functions that travelled with the tab-reload module by accident. They call the
  * agent's own routes and write into the agent's log, so they are the pane's. */
-async function stopAgent() {
+export async function stopAgent() {
   const d = await post('/agent/stop', {});
   updateAgentRunstrip({runs: (await api('/agent/runs')).runs});
   status(d.ok ? d.state : d.error, d.ok ? 'ok' : 'err');
@@ -575,7 +582,7 @@ async function stopAgent() {
 /* Failures with nowhere else to go: a compaction the engine refused, a completion that came back
  * empty, anything the native model layer printed instead of raising. They appear in the agent pane
  * because that is where the turn they belong to is. */
-function showProblems(ps, host = null) {
+export function showProblems(ps, host = null) {
   for (const p of (ps || [])) {
     if (ag.shownProblems.has(p)) continue;
     ag.shownProblems.add(p);
@@ -583,7 +590,7 @@ function showProblems(ps, host = null) {
   }
 }
 
-async function agentTools() {
+export async function agentTools() {
   const d = await api('/agent/status');
   const rows = (d.calls || []).map(c => `${c.tool}(${c.args})`).join('\n');
   agentLog(`<div class="lee-runline"><span class="sub">${esc(d.note)} · ${d.ntools} tools` +

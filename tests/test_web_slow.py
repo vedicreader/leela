@@ -64,6 +64,15 @@ async def _started(srv, secs=20):
         await asyncio.sleep(.02)
     raise RuntimeError('the app never started')
 
+async def _expose_agent_modules(pg):
+    """The pane's client is a module graph, so its names are not globals any more. Import the same
+    URLs `boot.js` imported -- modules are singletons per URL, so these are the instances the page
+    is running -- and put their exports where these tests can reach them."""
+    await pg.evaluate("""async () => {
+      for (const m of ['host', 'panel', 'budgets', 'memory', 'live', 'approvals', 'steer', 'media'])
+        Object.assign(window, await import(`/leestatic/agent/${m}.js`));
+    }""")
+
 async def _on_page(fn, roots=(), dpr=None):
     "Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."
     fake_kernels()
@@ -77,6 +86,7 @@ async def _on_page(fn, roots=(), dpr=None):
             pg = await b.new_page(**({'device_scale_factor': dpr} if dpr else {}))
             await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
             await pg.wait_for_function('window.lee && lee.keys.length')
+            await _expose_agent_modules(pg)
             try: return await fn(pg)
             finally: await b.close()
     finally:
@@ -2476,6 +2486,7 @@ def test_the_shell_boots_from_three_tags_in_order_and_paints_without_a_page_erro
             pg.on('response', note)
             await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
             await pg.wait_for_function('window.lee && lee.keys.length')
+            await _expose_agent_modules(pg)
             tags.extend(await pg.evaluate("""(names) => [...document.scripts]
                 .map(s => s.src.split('?')[0].split('/').pop())
                 .filter(n => names.includes(n))""", list(IDE_BUNDLES)))

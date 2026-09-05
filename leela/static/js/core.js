@@ -709,3 +709,10 @@ function status(msg, kind) {
   }, ttl);
 }
 
+/* The browser vocabulary, published under one name. An ES module cannot see `esc`, `post`, `$` or
+   `$$`: they are `const`, so they are global lexical bindings rather than properties of
+   `globalThis`, and a module has no lexical view of a classic script. `static/js/kit.js` re-exports
+   this object, so the agent's modules import the same functions the rest of the client calls.
+   `overlays.js` adds its three, which is why it is in this bundle. */
+window.leeKit = {$, $$, esc, api, post, status, renderMarkdown, flushMarkdown, compactPath,
+                 prefGet, prefSet};

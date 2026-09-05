@@ -1,10 +1,15 @@
-function setMemoryView(view) {
+import {$, $$, esc, api, post, status, renderMarkdown, modal, confirmDialog} from '../js/kit.js';
+import {leeRight, memoryViewSeq} from './budgets.js';
+import {agentHost} from './host.js';
+import {ag} from './panel.js';
+
+export function setMemoryView(view) {
   memoryViewSeq += 1;
   const panel = $('.lee-memory');
   if (panel) { panel.classList.remove('memory-view-notes', 'memory-view-sources', 'memory-view-topics', 'memory-view-vault'); panel.classList.add('memory-view-' + view); }
   $$('[data-memory-view]').forEach(button => button.classList.toggle('active', button.dataset.memoryView === view));
 }
-async function leeMemoryNotes() {
+export async function leeMemoryNotes() {
   const body = $('#memorybody'); if (!body) return;
   agentHost.memoryLoaded = 'loading'; agentHost.revealPane('right', true); leeRight('memory'); setMemoryView('notes');
   const seq = memoryViewSeq;

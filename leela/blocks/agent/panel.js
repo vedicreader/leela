@@ -2,7 +2,9 @@
    terminal, git and the debugger also write to, which is why nothing could tell whose they were.
    Six fields really are shared -- the open path, the preferences, the settings metadata, the vault
    refs, and the two the terminal and research read back -- and those go through `agentHost`. */
-const ag = {
+import {$, $$, esc, api, post, status, modal} from '../js/kit.js';
+
+export const ag = {
   attachments: new Map(), suggest: [], suggestAt: 0, vocabulary: null, stateSuggestions: [],
   stream: null, streamGen: 0, title: '', thread: '', threadDrafts: new Map(), threadRows: null,
   // Highlighted ranges queued for the next turn. Kept apart from `attachments`, a path->name map,
@@ -55,7 +57,7 @@ function modelLabel(select) {
   const o = select.options[select.selectedIndex];
   return o ? o.textContent : (select.value || 'choose a model');
 }
-function paintModelPickers(root = document) {
+export function paintModelPickers(root = document) {
   for (const b of $$('[data-model-pick]', root)) {
     // The routed jobs have no id of their own -- they are `[data-job]` rows this file draws -- and
     // `'#' + ''` is not a selector but a SyntaxError, thrown before the sibling fallback below it
@@ -182,7 +184,7 @@ window.addEventListener('scroll', e => {
 }, true);
 window.leeModelPickers = paintModelPickers;
 
-async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
+export async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
   const previous = Object.fromEntries(Object.entries(selects).map(([k, s]) => [k, s.value]));

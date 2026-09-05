@@ -8,6 +8,8 @@
    In Leela each entry finds the global the IDE already defines. Lazily, inside the call: the
    bundles share one scope but load in order, and `lee-cm6.js` arrives separately. */
 
+import {$, esc} from '../js/kit.js';
+
 const _ide = (name) => (typeof globalThis[name] === 'function' ? globalThis[name] : null);
 const _call = (name, args, dflt = null) => { const f = _ide(name); return f ? f(...args) : dflt; };
 
@@ -37,7 +39,7 @@ const TEXTAREA_CM = {
 const _elsewhere = {};
 const _shared = () => (typeof lee === 'object' && lee) || _elsewhere;
 
-const agentHost = {
+export const agentHost = {
   // panes and tabs
   openFile:   (...a) => _call('leeOpenFile', a),
   revealPane: (...a) => _call('leePane', a),

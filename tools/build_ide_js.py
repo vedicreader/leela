@@ -28,20 +28,16 @@ LAYERS = {
         'blocks/nb/cells.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js',
         'blocks/runs/runfile.js', 'blocks/runtime/kernel.js', 'blocks/keys/bind.js',
         'static/js/focus.js', 'blocks/nb/diffs.js', 'blocks/runtime/exec.js',
-        'blocks/vars/vars.js'
+        'blocks/vars/vars.js', 'static/js/overlays.js'
     ],
-    'lee-agent.js': [
-        'blocks/agent/host.js', 'blocks/agent/panel.js', 'blocks/agent/budgets.js', 'blocks/agent/memory.js',
-        'blocks/agent/live.js', 'blocks/agent/approvals.js', 'blocks/agent/steer.js',
-        'blocks/agent/media.js'
-    ],
+
     'lee-ide.js': [
         'blocks/tabs/agentreload.js', 'blocks/term/terminal.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js',
         'blocks/git/cwd.js', 'blocks/editor/gutter.js', 'blocks/git/state.js',
         'blocks/git/views.js', 'blocks/workflows/workflows.js', 'blocks/workflows/builder.js',
         'blocks/pipelines/releases.js', 'blocks/pipelines/deploys.js', 'blocks/drive/drive.js',
         'blocks/git/panel.js', 'blocks/git/branchmenu.js', 'blocks/git/conflictpanes.js',
-        'blocks/git/blame.js', 'blocks/research/research.js', 'static/js/overlays.js',
+        'blocks/git/blame.js', 'blocks/research/research.js',
         'blocks/search/search.js', 'blocks/search/find.js', 'blocks/search/similar.js', 'blocks/runs/config.js',
         'blocks/keys/palette.js', 'blocks/fs/files.js', 'blocks/editor/split.js',
         'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/refactor/move.js',
@@ -73,6 +69,11 @@ def bundle(name):
     "One bundle's concatenated text."
     return ''.join(_text(p) for p in modules(name))
 
+def module_files(block=None):
+    "Every block-served module, or one block's."
+    blocks = [block] if block else list(MODULES)
+    return [p for b in blocks for p in sorted((PKG/MODULES[b]).glob('*.js'))]
+
 def sheets(name=None):
     "Every block-authored stylesheet path, or one served sheet's, in order."
     names = SHEETS[name] if name else [s for ss in SHEETS.values() for s in ss]
@@ -82,10 +83,19 @@ def missing():
     "Modules and sheets the order names but the tree does not have."
     return [p for p in modules() + sheets() if not p.is_file()]
 
+#: served on their own rather than concatenated. A bundle is one lexical scope and cannot hold
+#: `import`, so anything with module syntax is named here instead of in `LAYERS`.
+STANDALONE = ('static/js/kit.js',)
+
+#: block -> where its modules are copied for serving. The agent's client is a module graph behind
+#: one entry point, so it is copied rather than concatenated: rewriting `import` between files is
+#: what a bundler is for, and this needs none.
+MODULES = {'agent': 'blocks/agent'}
+
 def orphans():
     "Modules the tree has but the order does not name, which would silently never load."
-    named = {p.resolve() for p in modules()}
-    named |= {p.resolve() for p in sheets()}
+    named = {(PKG/m).resolve() for m in STANDALONE} | {p.resolve() for p in modules()}
+    named |= {p.resolve() for p in sheets()} | {p.resolve() for p in module_files()}
     found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'),
                                    *PKG.glob('blocks/*/*.css'))}
     return sorted(found - named)
@@ -100,9 +110,22 @@ def build(check=False):
             if not out.is_file(): raise SystemExit(f'{name} has never been built')
             if out.read_text() != text: raise SystemExit(f'{name} is stale; run python tools/build_ide_js.py')
         else: out.write_text(text)
+    for b, rel in MODULES.items():
+        out = OUTDIR/b
+        if not check: out.mkdir(parents=True, exist_ok=True)
+        want = {p.name: _text(p) for p in module_files(b)}
+        have = {p.name for p in out.glob('*.js')} if out.is_dir() else set()
+        if check:
+            if have != set(want): raise SystemExit(f'{b} modules are stale; run python tools/build_ide_js.py')
+            for nm, text in want.items():
+                if (out/nm).read_text() != text: raise SystemExit(f'{b}/{nm} is stale; run python tools/build_ide_js.py')
+        else:
+            for nm in have - set(want): (out/nm).unlink()
+            for nm, text in want.items(): (out/nm).write_text(text)
     n, verb = len(modules()), 'match' if check else 'built from'
     print(f'{len(LAYERS)} bundle(s) {verb} {n} modules: ' +
           ', '.join(f'{k} ({len(v)})' for k, v in LAYERS.items()) +
-          f'; {len(SHEETS)} sheet(s) from {len(sheets())}')
+          f'; {len(SHEETS)} sheet(s) from {len(sheets())}'
+          f'; {len(module_files())} module(s) served from {len(MODULES)} block(s)')
 
 if __name__ == '__main__': build(check='--check' in sys.argv)

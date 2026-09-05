@@ -1,5 +1,13 @@
 /* A generated picture arrives as a data URL on the `done` event. The tool result the model
  * sees is a path, and a browser cannot draw a filename, so the bytes come separately. */
+import {$, esc, api, post, status, renderMarkdown, flushMarkdown} from '../js/kit.js';
+import {addResponseRevision, approvalCards, checkpointResult, retireCheckpoints, showApproval} from './approvals.js';
+import {refreshAgentBudget} from './budgets.js';
+import {agentHost} from './host.js';
+import {agentTurnCard, foldOlderTurns, refoldAfter, renderTurns, restoreAgentLive, sessionTurns, startAgentBusyWatch, stickAgentLog, titleText, trimAgentLog, turnBody, usageMeta, userMessage} from './live.js';
+import {ag} from './panel.js';
+import {agentProgress, closeAgentSuggest, leeForceSteer, leeQueueSteer, paintAgentAttachments, renderAgentStep, sendAgentCommand, setQueuedSteer, showProblems, updateAgentRunstrip} from './steer.js';
+
 function drawTurnMedia(out, media) {
   for (const m of (media || [])) {
     const fig = document.createElement('figure');
@@ -11,7 +19,7 @@ function drawTurnMedia(out, media) {
   }
 }
 
-function reduceAgentTimeline(events) {
+export function reduceAgentTimeline(events) {
   const parts = [], actions = new Map(); let prose = null;
   const seal = () => { prose = null; };
   for (const event of events || []) {
@@ -64,7 +72,7 @@ const AGENT_RENDER_GAP = 100;
 const AGENT_RENDER_CEILING = 1200;
 const agentRenderGap = n => Math.min(AGENT_RENDER_CEILING, AGENT_RENDER_GAP + Math.round(n / 20));
 
-function agentTimeline(root) {
+export function agentTimeline(root) {
   const actions = new Map(); let prose = null, tail = null, rendered = 0;
   const dropTail = () => { if (tail) { tail.remove(); tail = null; } };
   const seal = () => {
@@ -117,7 +125,7 @@ function agentTimeline(root) {
   }, append(node) { seal(); if (node) root.appendChild(node); return node; }};
 }
 
-function setAgentStatus(state, title) {
+export function setAgentStatus(state, title) {
   const el = $('#agentstatus'); if (!el) return;
   el.classList.remove('working', 'ready', 'idle'); el.classList.add(state);
   el.title = title || (state === 'working' ? 'agent is working' : state === 'ready' ? 'agent ready' : 'agent idle');
@@ -129,7 +137,7 @@ function setAgentStatus(state, title) {
 // The assistant's tools edit files on disk, so a turn can change what is on screen. Activity,
 // answer chunks and final diffs stream independently, and each tool row is updated in place so
 // pending work never stays on screen after that step has finished.
-async function sendAgent(force = false) {
+export async function sendAgent(force = false) {
   if (agentHost.busy) return force ? leeForceSteer() : leeQueueSteer();
   if (ag.view && ag.view !== 'live') restoreAgentLive();
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
@@ -162,7 +170,7 @@ async function sendAgent(force = false) {
 /* One conversation's feed, painted into the live pane. `sendAgent` calls this for the turn it
    just started; a thread switch calls it for a turn already running, replaying from the feed's
    last settled point so only the turn in flight is drawn again. */
-function agentListen(thread, since, card = null) {
+export function agentListen(thread, since, card = null) {
   const log = $('#agentlog'); if (!log) return;
   $('.lee-agent-welcome', log)?.remove();
   /* A turn already in flight when this pane attached has no card yet: its prompt is in the feed,

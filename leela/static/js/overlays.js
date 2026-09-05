@@ -402,3 +402,4 @@ function showHelp() {
   m.querySelector('#gokeys').onclick = () => { m.remove(); editKeys(); };
 }
 
+Object.assign(window.leeKit, {modal, inputDialog, textDialog, confirmDialog});

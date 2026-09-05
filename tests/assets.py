@@ -4,7 +4,7 @@ from functools import cache
 from pathlib import Path
 
 __all__ = ['ROOT', 'JS', 'CSS', 'EDITOR', 'TERM', 'SERVER', 'AGENT', 'read', 'tree_text',
-           'cm_exports']
+           'cm_exports', 'agent_modules']
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,6 +19,11 @@ def read(rel):
     "One file's text, cached. Empty string when it does not exist."
     p = ROOT/rel
     return p.read_text() if p.is_file() else ''
+
+@cache
+def agent_modules():
+    "The pane's client, a module graph served file by file rather than concatenated into a bundle."
+    return tree_text('leela/static/agent', '*.js')
 
 @cache
 def _static(glob): return tree_text('leela/static', glob) + '\n' + tree_text('leela/vendor', glob)

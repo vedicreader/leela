@@ -13,11 +13,13 @@ from starlette.staticfiles import StaticFiles
 from .. import errstr
 
 __all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop',
-           'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES', 'IDE_SHEETS']
+           'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES', 'IDE_SHEETS', 'IDE_MODULES']
 
 #: The client's bundles, in the order the browser must execute them. They share one lexical
 #: scope, so `lee-core.js` declares the vocabulary and the rest read it.
-IDE_BUNDLES = ('lee-core.js', 'lee-agent.js', 'lee-ide.js')
+IDE_BUNDLES = ('lee-core.js', 'lee-ide.js')
+#: block entry points served as ES modules, after the bundles and before nothing
+IDE_MODULES = ('agent/boot.js',)
 IDE_SHEETS = ('lee-agent.css',)
 
 def asset_dir(name):

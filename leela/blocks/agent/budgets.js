@@ -1,6 +1,13 @@
 /* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
    The fields are written back from the answer, so a refusal leaves the box showing what is
    actually in force rather than the rejected text. */
+import {$, $$, api, post, status} from '../js/kit.js';
+import {agentHost} from './host.js';
+import {stickAgentLog} from './live.js';
+import {leeMemoryNotes} from './memory.js';
+import {ag} from './panel.js';
+import {paintAgentAttachments} from './steer.js';
+
 /* The highlighted range, queued as context for the next turn. Sent as text rather than as
    `path:from-to` for the agent to read, because the buffer may be unsaved and what you highlighted
    is what you meant. */
@@ -60,7 +67,7 @@ async function paintAgentBudget() {
    the first call of a turn still paints at once; trailing, so the number on screen is the last one. */
 const BUDGET_GAP = 1000;
 let budgetTimer = 0, budgetAt = -Infinity;
-function refreshAgentBudget() {
+export function refreshAgentBudget() {
   const wait = BUDGET_GAP - (performance.now() - budgetAt);
   if (wait <= 0) { budgetAt = performance.now(); return paintAgentBudget(); }
   clearTimeout(budgetTimer);
@@ -132,7 +139,7 @@ window.leeSubagentWrites = leeSubagentWrites;
 function leeAgentExpand() { leeRight('agent'); agentHost.expandPane('right'); }
 window.leeAgentExpand = leeAgentExpand;
 
-function leeRight(which) {
+export function leeRight(which) {
   const right = $('#right'); if (!right) return;
   try { localStorage.setItem('lee-right-view', which); } catch (_) {}
   right.classList.toggle('right-agent', which === 'agent');
@@ -150,4 +157,4 @@ window.leeRight = leeRight;
 // Every memory view is fetched asynchronously into one `#memorybody`, so a slow answer must not
 // paint over the view you switched to. Each switch takes the next token, and a fetch that finds the
 // token moved drops its result.
-let memoryViewSeq = 0;
+export let memoryViewSeq = 0;
