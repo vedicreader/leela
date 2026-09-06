@@ -73,7 +73,11 @@ jobs:
       # check that a py2app bundle actually starts rather than merely building.
       - name: smoke
         run: python -m pytest tests/test_packaging.py -q -m ""
+      # Convenience, not the delivery: the release asset below is what a person downloads, and it
+      # goes to different storage. Artifact storage is an account-wide quota, so a full one used to
+      # fail this step and take the release attach down with it.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Leela-macOS
           path: dist/Leela-macOS.dmg
@@ -106,7 +110,11 @@ jobs:
         run: python tools/build_release.py
       - name: smoke
         run: python -m pytest tests/test_packaging.py -q -m ""
+      # Convenience, not the delivery: the release asset below is what a person downloads, and it
+      # goes to different storage. Artifact storage is an account-wide quota, so a full one used to
+      # fail this step and take the release attach down with it.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Leela-Windows
           path: dist/Leela-Windows.zip
