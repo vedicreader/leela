@@ -1,0 +1,474 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Procurement productivity +10% - leela</title><style>:root{--bg:#0d1117;--bg1:#161b22;--bg2:#21262d;--bg3:#30363d;--fg:#c9d1d9;--fg2:#b1bac4;
+--fg4:#6e7681;--border:#30363d;--accent:#58a6ff;--red:#ff7b72;--green:#7ee787;--yellow:#e3b341;
+--orange:#ffa657;--purple:#d2a8ff;--aqua:#79c0ff;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+button,select,input{font:inherit;color:inherit;background:var(--bg2);border:1px solid var(--border);
+border-radius:6px;padding:3px 8px}
+button{cursor:pointer}button:hover{border-color:var(--accent)}
+button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#08111f;font-weight:600}
+#app{display:grid;grid-template-rows:auto 1fr;height:100%}
+header{display:flex;gap:12px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);
+background:var(--bg1)}
+header .mark{font-family:var(--mono);color:var(--accent);font-weight:700;letter-spacing:.04em}
+header .title{font-weight:600}
+header .spacer{flex:1}
+header .goal{font-size:12px;color:var(--fg4);max-width:38ch;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap;border-left:2px solid var(--yellow);padding-left:8px}
+main{display:grid;grid-template-columns:210px 1fr 340px;min-height:0}
+main.nobasket{grid-template-columns:210px 1fr 0}
+aside,#basket{overflow:auto;border-right:1px solid var(--border);background:var(--bg1)}
+#basket{border-right:0;border-left:1px solid var(--border)}
+aside h4,#basket h4{margin:12px 12px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+color:var(--fg4);font-weight:600}
+aside .row{padding:3px 12px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+font-size:12px;color:var(--fg2);border-left:2px solid transparent}
+aside .row:hover{background:var(--bg2)}
+aside .row.frame{color:var(--fg);font-weight:600;margin-top:8px}
+aside .row.kid{padding-left:24px}
+aside .row.sel{border-left-color:var(--accent);background:var(--bg2);color:var(--fg)}
+aside .row.inctx{border-left-color:var(--purple)}
+#view{position:relative;overflow:auto;min-width:0}
+#page{padding:20px 28px 200px;max-width:900px;margin:0 auto}
+#page .fr{margin:26px 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+color:var(--fg4);border-bottom:1px solid var(--border);padding-bottom:5px}
+#canvas{position:relative;transform-origin:0 0}
+#canvas svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
+.blk{background:var(--bg1);border:1px solid var(--border);border-radius:8px;margin:10px 0;
+position:relative}
+#canvas .blk{position:absolute;margin:0;overflow:hidden;cursor:grab}
+#canvas .blk.drag{cursor:grabbing;z-index:40;box-shadow:0 10px 30px rgba(0,0,0,.55)}
+.blk>.hd{display:flex;gap:7px;align-items:center;padding:5px 9px;border-bottom:1px solid var(--border);
+font-size:11px;color:var(--fg4);font-family:var(--mono)}
+.blk>.hd .k{color:var(--fg2);font-weight:600}
+.blk>.hd .sp{flex:1}
+.blk>.bd{padding:9px 11px;font-size:13px}
+.blk>.bd p{margin:0 0 7px}.blk>.bd p:last-child{margin:0}
+.blk pre{margin:0;font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre-wrap;
+word-break:break-word}
+.blk .out{margin-top:7px;padding:6px 8px;background:var(--bg);border-radius:5px;border:1px solid var(--border);
+font-family:var(--mono);font-size:12px;color:var(--fg2);white-space:pre-wrap}
+.blk .out.err{color:var(--red);border-color:rgba(255,123,114,.35)}
+.blk .reply{margin-top:8px;padding:8px 10px;border-left:2px solid var(--purple);background:rgba(210,168,255,.06);
+border-radius:0 5px 5px 0}
+.blk[data-k=goal]{border-color:rgba(227,179,65,.5)}
+.blk[data-k=goal]>.hd{color:var(--yellow)}
+.blk[data-k=goal] .stmt{font-size:15px;font-weight:600;line-height:1.35}
+.blk[data-k=prompt]{border-color:rgba(210,168,255,.45)}
+.blk[data-k=prompt]>.hd{color:var(--purple)}
+.blk[data-k=prompt] .ask{font-weight:600}
+.blk[data-k=code]>.hd{color:var(--green)}
+.blk[data-k=source]>.hd{color:var(--orange)}
+.blk[data-k=source] a{color:var(--orange);text-decoration:none}
+.blk[data-k=task]>.hd,.blk[data-k=data]>.hd{color:var(--aqua)}
+.blk.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.blk.inctx{box-shadow:0 0 0 1px var(--purple),0 0 14px rgba(210,168,255,.16)}
+.blk.sel.inctx{box-shadow:0 0 0 1px var(--accent),0 0 14px rgba(210,168,255,.16)}
+.blk.cut{opacity:.32}
+.blk.cut .bd{text-decoration:line-through;text-decoration-color:var(--fg4)}
+.chip{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:9px;border:1px solid var(--border);
+color:var(--fg4)}
+.chip.keep{color:var(--purple);border-color:var(--purple)}
+.chip.discard{color:var(--fg4)}
+.chip.stale{color:var(--orange);border-color:var(--orange)}
+.chip.done{color:var(--green);border-color:var(--green)}
+.chip.blocked{color:var(--red);border-color:var(--red)}
+.chip.doing{color:var(--yellow);border-color:var(--yellow)}
+.fr{position:absolute;border:1px dashed var(--bg3);border-radius:12px;pointer-events:none}
+.fr>span{position:absolute;top:-9px;left:14px;background:var(--bg);padding:0 7px;font-size:11px;
+text-transform:uppercase;letter-spacing:.08em;color:var(--fg4)}
+#basket .pad{padding:0 12px 16px}
+#basket .ctl{display:flex;gap:6px;align-items:center;margin:6px 0}
+#basket .ctl label{font-size:11px;color:var(--fg4);width:52px}
+#basket select,#basket input{flex:1;min-width:0}
+.meter{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin:8px 0 4px}
+.meter i{display:block;height:100%;background:var(--purple)}
+.meter.over i{background:var(--red)}
+.tot{font-family:var(--mono);font-size:11px;color:var(--fg4)}
+.item{display:flex;gap:7px;align-items:baseline;padding:5px 6px;border-radius:6px;cursor:pointer;
+border:1px solid transparent}
+.item:hover{background:var(--bg2)}
+.item.on{border-color:rgba(210,168,255,.35)}
+.item.off{opacity:.4}
+.item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .why{font-family:var(--mono);font-size:10px;color:var(--fg4)}
+.item .n{font-family:var(--mono);font-size:10px;color:var(--fg4);min-width:4ch;text-align:right}
+.item .pin{font-family:var(--mono);font-size:11px;width:1.2em;color:var(--purple)}
+#raw{margin:8px 12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;
+font-family:var(--mono);font-size:11px;white-space:pre-wrap;color:var(--fg2);max-height:40vh;overflow:auto}
+.empty{padding:24px 14px;color:var(--fg4);font-size:12px}
+.hint{padding:0 12px 10px;color:var(--fg4);font-size:11px}
+</style><style>body{overflow:hidden}
+#app{grid-template-rows:auto auto 1fr auto}
+#chrome1,#chrome2,#statusbar{display:flex;align-items:center;gap:14px;padding:5px 10px;
+background:var(--bg1);border-bottom:1px solid var(--border);font-size:12px;color:var(--fg2)}
+#chrome1 .brand{font-weight:700;color:var(--fg)}
+#chrome1 .ws{color:var(--fg4)}
+#chrome1 .branch{font-family:var(--mono);color:var(--fg4);max-width:26ch;overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}
+#chrome1 .menu{color:var(--fg2)}
+#chrome1 .tabs{display:flex;gap:2px;margin-left:8px}
+#chrome1 .tab{padding:4px 12px;border:1px solid transparent;border-radius:6px 6px 0 0;color:var(--fg4);
+font-family:var(--mono);font-size:12px;cursor:default}
+#chrome1 .tab.on{background:var(--bg);border-color:var(--border);border-bottom-color:var(--bg);color:var(--fg)}
+#chrome1 .tab .dot{color:var(--green)}
+#chrome2{padding:4px 10px}
+#chrome2 .run{background:var(--fg);color:var(--bg);font-weight:700;border-radius:5px;padding:2px 10px}
+#statusbar{border-bottom:0;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;
+color:var(--fg4);gap:18px}
+#statusbar kbd{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:0 5px;
+margin-right:5px;font-size:10px}
+main{grid-template-columns:36px 220px 1fr 400px}
+#rail{background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column;
+align-items:center;padding-top:8px;gap:4px}
+#rail button{width:26px;height:26px;padding:0;background:transparent;border-color:transparent;
+color:var(--fg4);font-size:14px}
+#rail button.on{background:var(--bg2);border-color:var(--border);color:var(--accent)}
+#right{display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--border);background:var(--bg1)}
+#panes{display:flex;gap:0;border-bottom:1px solid var(--border)}
+#panes button{flex:1;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;
+color:var(--fg4);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:8px 0}
+#panes button[aria-pressed=true]{background:transparent;color:var(--accent);border-bottom-color:var(--accent);
+font-weight:600}
+#basket{flex:1;border-left:0}
+#agentpane,#varspane{flex:1;overflow:auto;display:none}
+#right.agent #basket,#right.vars #basket{display:none}
+#right.agent #agentpane,#right.vars #varspane{display:block}
+.turn{margin:10px 12px;padding:9px 11px;border-radius:7px;background:var(--bg2);border:1px solid var(--border)}
+.turn.you{border-left:2px solid var(--accent)}
+.turn .who{font-family:var(--mono);font-size:10px;color:var(--fg4);margin-bottom:5px}
+.step{margin:6px 12px;padding:5px 9px;border-left:2px solid var(--bg3);color:var(--fg4);
+font-family:var(--mono);font-size:11px}
+.vrow{display:flex;gap:8px;padding:4px 12px;font-family:var(--mono);font-size:11px;border-bottom:1px solid var(--bg2)}
+.vrow .vn{color:var(--aqua);min-width:9ch}
+.vrow .vt{color:var(--fg4);flex:1}
+#dock{border-top:1px solid var(--border);background:var(--bg1);padding:6px 12px;font-family:var(--mono);
+font-size:11px;color:var(--fg4);display:flex;gap:14px;align-items:center}
+</style></head><body>
+<div id="app">
+<div id="chrome1">
+  <span class="brand">leela</span><span class="ws">leela</span>
+  <span class="branch">claude/leela-dynamic-documents</span>
+  <span class="menu">File</span><span class="menu">Tools</span><span class="menu">Debug</span>
+  <span class="tabs">
+    <span class="tab">analysis.ipynb</span>
+    <span class="tab on"><span class="dot">&#9679;</span> procurement.pata</span>
+    <span class="tab">procure/core.py</span>
+  </span>
+  <span class="spacer" style="flex:1"></span>
+  <span id="toggle"><button data-view="page">page</button><button data-view="canvas">canvas</button></span>
+</div>
+<div id="chrome2">
+  <button class="run">&#9654; run</button><span>&#9654; next</span><span>stop</span>
+  <span style="flex:1"></span>
+  <span class="goal">Increase procurement productivity by 10% in FY26</span>
+</div>
+<main>
+  <div id="rail"><button class="on" title="files">&#9707;</button><button title="contents">&#9776;</button><button title="git">&#9906;</button></div>
+  <aside id="outline"></aside>
+  <div id="view"></div>
+  <div id="right" class="ctx">
+    <div id="panes">
+      <button data-pane="ctx" aria-pressed="true">context</button>
+      <button data-pane="agent">agent</button>
+      <button data-pane="vars">variables</button>
+    </div>
+    <div id="basket"></div>
+    <div id="agentpane">
+      <div class="turn you"><div class="who">you &#183; block p-fix</div>Fix the cell above. Leave the result as <code>cycle</code>.</div>
+      <div class="step">&#8226; inspect_python  pos.columns  0.1s</div>
+      <div class="step">&#8226; run_python  cycle = ...  0.4s</div>
+      <div class="turn"><div class="who">assistant</div><code>cycle_days</code> is not a column. <code>raised_at</code> and <code>approved_at</code> are, so I derived it and bound the regional means as <code>cycle</code>.</div>
+      <div class="step">6 blocks &#183; 1,057 chars sent &#183; scope upstream &#183; 2 pinned</div>
+    </div>
+    <div id="varspane">
+      <div class="vrow"><span class="vn">pos</span><span class="vt">DataFrame 84,213 x 11</span></div>
+      <div class="vrow"><span class="vn">tail</span><span class="vt">DataFrame 28,716 x 11</span></div>
+      <div class="vrow"><span class="vn">rest</span><span class="vt">DataFrame 55,497 x 11</span></div>
+      <div class="vrow"><span class="vn">cycle</span><span class="vt">Series 4 - region</span></div>
+      <div class="vrow"><span class="vn">preferred</span><span class="vt">frozenset 212 suppliers</span></div>
+      <div class="vrow"><span class="vn">triage</span><span class="vt">function (po, cut, trusted)</span></div>
+    </div>
+  </div>
+</main>
+<div id="dock"><span>exec</span><span>terminal</span><span style="flex:1"></span>
+  <span>python 3.12 &#183; kernel ready &#183; 200k ctx &#183; 33 tools</span></div>
+<div id="statusbar">
+  <span><kbd>alt+shift+1</kbd>files</span><span><kbd>alt+shift+4</kbd>variables</span>
+  <span><kbd>ctrl+shift+p</kbd>command palette</span><span><kbd>ctrl+enter</kbd>run block</span>
+  <span><kbd>mod+k</kbd>pin to context</span><span><kbd>mod+shift+k</kbd>mute</span>
+  <span style="flex:1"></span><span>procurement.pata</span>
+</div>
+</div>
+<script>window.PATA={"title": "Procurement productivity +10%", "blocks": [{"id": "f-frame", "kind": "frame", "frame": "", "mode": "auto", "x": 30.0, "y": 30.0, "w": 846.0, "h": 438.0, "stale": false, "label": "Frame the goal", "chars": 14, "text": "Frame the goal", "props": {"title": "Frame the goal"}}, {"id": "goal", "kind": "goal", "frame": "f-frame", "mode": "auto", "x": 60.0, "y": 87.0, "w": 380.0, "h": 154.0, "stale": false, "label": "Increase procurement productivity by 10% in FY26", "chars": 200, "text": "Increase procurement productivity by 10% in FY26\nmeasure: purchase orders handled per buyer FTE per month | baseline: 41 POs / FTE / month (FY25 actual) | target: 45 POs / FTE / month | by: 2026-09-30", "props": {"source": "Increase procurement productivity by 10% in FY26", "measure": "purchase orders handled per buyer FTE per month", "baseline": "41 POs / FTE / month (FY25 actual)", "target": "45 POs / FTE / month", "by": "2026-09-30"}}, {"id": "t-scope", "kind": "text", "frame": "f-frame", "mode": "auto", "x": 60.0, "y": 267.0, "w": 380.0, "h": 112.0, "stale": false, "label": "Indirect spend only. 62 buyers across 4 regions. Direct mate", "chars": 133, "text": "Indirect spend only. 62 buyers across 4 regions. Direct materials sit with the category teams and are out of scope for this document.", "props": {"source": "Indirect spend only. 62 buyers across 4 regions. Direct materials sit with the category teams and are out of scope for this document."}}, {"id": "k-1", "kind": "task", "frame": "f-frame", "mode": "auto", "x": 466.0, "y": 87.0, "w": 380.0, "h": 91.0, "stale": false, "label": "Agree the measure with Finance", "chars": 51, "text": "[doing] Agree the measure with Finance\nowner: Priya", "props": {"status": "doing", "owner": "Priya", "source": "Agree the measure with Finance"}}, {"id": "k-2", "kind": "task", "frame": "f-frame", "mode": "auto", "x": 466.0, "y": 204.0, "w": 380.0, "h": 91.0, "stale": false, "label": "Baseline the current cycle time", "chars": 48, "text": "[todo] Baseline the current cycle time\nowner: me", "props": {"status": "todo", "owner": "me", "source": "Baseline the current cycle time"}}, {"id": "k-3", "kind": "task", "frame": "f-frame", "mode": "auto", "x": 466.0, "y": 321.0, "w": 380.0, "h": 91.0, "stale": false, "label": "Ship the triage rule to one region", "chars": 51, "text": "[todo] Ship the triage rule to one region\nowner: me", "props": {"status": "todo", "owner": "me", "source": "Ship the triage rule to one region"}}, {"id": "f-know", "kind": "frame", "frame": "", "mode": "auto", "x": 902.0, "y": 30.0, "w": 846.0, "h": 585.0, "stale": false, "label": "What we already know", "chars": 20, "text": "What we already know", "props": {"title": "What we already know"}}, {"id": "s-hackett", "kind": "source", "frame": "f-know", "mode": "auto", "x": 932.0, "y": 87.0, "w": 380.0, "h": 154.0, "stale": false, "label": "Hackett Group: procurement benchmark 2025", "chars": 224, "text": "Hackett Group: procurement benchmark 2025 <https://example.org/hackett-2025>\nTop-quartile organisations process 2.3x the POs per buyer of the median. The gap is almost entirely low-value tail spend that never needed a buyer.", "props": {"title": "Hackett Group: procurement benchmark 2025", "url": "https://example.org/hackett-2025", "text": "Top-quartile organisations process 2.3x the POs per buyer of the median. The gap is almost entirely low-value tail spend that never needed a buyer."}}, {"id": "s-audit", "kind": "source", "frame": "f-know", "mode": "auto", "x": 932.0, "y": 267.0, "w": 380.0, "h": 133.0, "stale": false, "label": "Internal audit, Q3 FY25", "chars": 161, "text": "Internal audit, Q3 FY25 <drive/audit-q3.pdf>\n34% of purchase orders raised in Q3 were under EUR 2,000. Median approval chain for those was 3 people and 6.2 days.", "props": {"title": "Internal audit, Q3 FY25", "path": "drive/audit-q3.pdf", "text": "34% of purchase orders raised in Q3 were under EUR 2,000. Median approval chain for those was 3 people and 6.2 days."}}, {"id": "s-interview", "kind": "source", "frame": "f-know", "mode": "keep", "x": 932.0, "y": 426.0, "w": 380.0, "h": 133.0, "stale": false, "label": "Buyer interviews (7)", "chars": 135, "text": "Buyer interviews (7) <>\nEvery buyer named the same two: re-keying supplier data from email, and chasing approvals that nobody disputes.", "props": {"title": "Buyer interviews (7)", "text": "Every buyer named the same two: re-keying supplier data from email, and chasing approvals that nobody disputes."}}, {"id": "p-synth", "kind": "prompt", "frame": "f-know", "mode": "auto", "x": 1338.0, "y": 87.0, "w": 380.0, "h": 301.0, "stale": false, "label": "Where does the 10% most plausibly come from? Use only the th", "chars": 496, "text": "Where does the 10% most plausibly come from? Use only the three sources here.\n<answer>\nTail spend is the only pool big enough. 34% of POs are under EUR 2,000 and carry a three-person approval chain that the audit found nobody ever rejects. Auto-approving that band would take roughly a third of PO volume off the buyers without touching the categories where negotiation earns money. That is worth about 12% of buyer time on the interview evidence, which clears the 10% target with room.\n</answer>", "props": {"source": "Where does the 10% most plausibly come from? Use only the three sources here.", "context": {"scope": "frame", "pins": ["goal"], "budget": 12000}, "reply": "Tail spend is the only pool big enough. 34% of POs are under EUR 2,000 and carry a three-person approval chain that the audit found nobody ever rejects. Auto-approving that band would take roughly a third of PO volume off the buyers without touching the categories where negotiation earns money. That is worth about 12% of buyer time on the interview evidence, which clears the 10% target with room."}}, {"id": "k-4", "kind": "task", "frame": "f-know", "mode": "auto", "x": 1338.0, "y": 414.0, "w": 380.0, "h": 91.0, "stale": false, "label": "Pull the Q3 PO extract", "chars": 39, "text": "[done] Pull the Q3 PO extract\nowner: me", "props": {"status": "done", "owner": "me", "source": "Pull the Q3 PO extract"}}, {"id": "f-base", "kind": "frame", "frame": "", "mode": "auto", "x": 30.0, "y": 667.0, "w": 846.0, "h": 606.0, "stale": false, "label": "Baseline the tail", "chars": 17, "text": "Baseline the tail", "props": {"title": "Baseline the tail"}}, {"id": "d-pos", "kind": "data", "frame": "f-base", "mode": "auto", "x": 60.0, "y": 724.0, "w": 380.0, "h": 112.0, "stale": false, "label": "pos", "chars": 94, "text": "pos\nDataFrame 84,213 x 11 - po_id, value_eur, buyer, region, raised_at, approved_at, approvers", "props": {"name": "pos", "source": "pos", "preview": "DataFrame 84,213 x 11 - po_id, value_eur, buyer, region, raised_at, approved_at, approvers"}}, {"id": "c-band", "kind": "code", "frame": "f-base", "mode": "keep", "x": 60.0, "y": 862.0, "w": 380.0, "h": 175.0, "stale": false, "label": "#|export", "chars": 173, "text": "#|export\ndef bands(pos, cut=2000):\n    \"Split a PO extract into the tail below `cut` and the rest.\"\n    tail = pos[pos.value_eur < cut]\n    return tail, pos.drop(tail.index)", "props": {"source": "#|export\ndef bands(pos, cut=2000):\n    \"Split a PO extract into the tail below `cut` and the rest.\"\n    tail = pos[pos.value_eur < cut]\n    return tail, pos.drop(tail.index)", "lang": "python", "execution_count": 3, "execution_ms": 41.2, "outputs": [{"output_type": "stream", "text": ""}]}}, {"id": "c-share", "kind": "code", "frame": "f-base", "mode": "auto", "x": 60.0, "y": 1063.0, "w": 380.0, "h": 154.0, "stale": false, "label": "tail, rest = bands(pos)", "chars": 142, "text": "tail, rest = bands(pos)\nlen(tail) / len(pos), tail.approvers.median()\n<output execution_count=\"4\" execution_ms=\"118.0\">\n(0.341, 3.0)\n</output>", "props": {"source": "tail, rest = bands(pos)\nlen(tail) / len(pos), tail.approvers.median()", "lang": "python", "execution_count": 4, "execution_ms": 118.0, "outputs": [{"output_type": "execute_result", "data": {"text/plain": "(0.341, 3.0)"}}]}}, {"id": "c-cycle", "kind": "code", "frame": "f-base", "mode": "auto", "x": 466.0, "y": 724.0, "w": 380.0, "h": 133.0, "stale": false, "label": "tail.groupby('region').cycle_days.mean()", "chars": 148, "text": "tail.groupby('region').cycle_days.mean()\n<output execution_count=\"5\" execution_ms=\"96.5\">\n'DataFrame' object has no attribute 'cycle_days'\n</output>", "props": {"source": "tail.groupby('region').cycle_days.mean()", "lang": "python", "execution_count": 5, "execution_ms": 96.5, "outputs": [{"output_type": "error", "ename": "AttributeError", "evalue": "'DataFrame' object has no attribute 'cycle_days'"}]}}, {"id": "p-fix", "kind": "prompt", "frame": "f-base", "mode": "auto", "x": 466.0, "y": 883.0, "w": 380.0, "h": 175.0, "stale": false, "label": "Fix the cell above. Leave the result as `cycle`.", "chars": 189, "text": "Fix the cell above. Leave the result as `cycle`.\n<answer>\n`cycle_days` is not a column. `raised_at` and `approved_at` are, so I derived it and bound the regional means as `cycle`.\n</answer>", "props": {"source": "Fix the cell above. Leave the result as `cycle`.", "context": {"scope": "upstream", "pins": ["d-pos"], "budget": 8000}, "reply": "`cycle_days` is not a column. `raised_at` and `approved_at` are, so I derived it and bound the regional means as `cycle`."}}, {"id": "f-proto", "kind": "frame", "frame": "", "mode": "auto", "x": 902.0, "y": 667.0, "w": 846.0, "h": 468.0, "stale": false, "label": "Prototype the triage rule", "chars": 25, "text": "Prototype the triage rule", "props": {"title": "Prototype the triage rule"}}, {"id": "c-rule", "kind": "code", "frame": "f-proto", "mode": "auto", "x": 932.0, "y": 724.0, "w": 380.0, "h": 154.0, "stale": false, "label": "#|export", "chars": 191, "text": "#|export\ndef triage(po, cut=2000, trusted=frozenset()):\n    \"Whether a PO can skip the approval chain.\"\n    return po.value_eur < cut and po.supplier in trusted and po.contract_id is not None", "props": {"source": "#|export\ndef triage(po, cut=2000, trusted=frozenset()):\n    \"Whether a PO can skip the approval chain.\"\n    return po.value_eur < cut and po.supplier in trusted and po.contract_id is not None", "lang": "python", "execution_count": 7, "execution_ms": 12.0, "outputs": []}}, {"id": "c-backtest", "kind": "code", "frame": "f-proto", "mode": "auto", "x": 932.0, "y": 904.0, "w": 380.0, "h": 175.0, "stale": false, "label": "auto = tail.apply(triage, axis=1, trusted=preferred)", "chars": 129, "text": "auto = tail.apply(triage, axis=1, trusted=preferred)\nauto.mean()\n<output execution_count=\"8\" execution_ms=\"402.0\">\n0.79\n</output>", "props": {"source": "auto = tail.apply(triage, axis=1, trusted=preferred)\nauto.mean()", "lang": "python", "execution_count": 8, "execution_ms": 402.0, "outputs": [{"output_type": "execute_result", "data": {"text/plain": "0.79"}}]}}, {"id": "p-risk", "kind": "prompt", "frame": "f-proto", "mode": "auto", "x": 1338.0, "y": 724.0, "w": 380.0, "h": 238.0, "stale": false, "label": "What would have gone wrong if this rule had run in Q3? Check", "chars": 326, "text": "What would have gone wrong if this rule had run in Q3? Check it against the audit.\n<answer>\n79% of the tail clears the rule, which is 27% of all POs. Against the Q3 extract that is 14 POs the audit flagged for split ordering, all from one supplier. Cap the rule per supplier per month and those 14 stay in the chain.\n</answer>", "props": {"source": "What would have gone wrong if this rule had run in Q3? Check it against the audit.", "context": {"scope": "upstream", "pins": ["s-audit", "goal"], "budget": 10000}, "reply": "79% of the tail clears the rule, which is 27% of all POs. Against the Q3 extract that is 14 POs the audit flagged for split ordering, all from one supplier. Cap the rule per supplier per month and those 14 stay in the chain."}}, {"id": "t-note", "kind": "text", "frame": "f-proto", "mode": "auto", "x": 1338.0, "y": 988.0, "w": 380.0, "h": 91.0, "stale": false, "label": "Cap is not implemented yet. It is the only thing between thi", "chars": 74, "text": "Cap is not implemented yet. It is the only thing between this and a pilot.", "props": {"source": "Cap is not implemented yet. It is the only thing between this and a pilot."}}, {"id": "f-ship", "kind": "frame", "frame": "", "mode": "auto", "x": 1774.0, "y": 667.0, "w": 440.0, "h": 627.0, "stale": false, "label": "Decide", "chars": 6, "text": "Decide", "props": {"title": "Decide"}}, {"id": "p-rec", "kind": "prompt", "frame": "f-ship", "mode": "auto", "x": 1804.0, "y": 724.0, "w": 380.0, "h": 259.0, "stale": false, "label": "Draft the recommendation for the steering committee. One pag", "chars": 380, "text": "Draft the recommendation for the steering committee. One page, no hedging.\n<answer>\nAuto-approve indirect POs under EUR 2,000 from contracted suppliers, capped per supplier per month. It removes 27% of PO volume from the approval chain, which the interview evidence puts at about 12% of buyer time. Pilot one region for a quarter against the same measure Finance agreed.\n</answer>", "props": {"source": "Draft the recommendation for the steering committee. One page, no hedging.", "context": {"scope": "doc", "pins": ["goal", "p-synth", "p-risk"], "mutes": ["t-note"], "budget": 30000}, "reply": "Auto-approve indirect POs under EUR 2,000 from contracted suppliers, capped per supplier per month. It removes 27% of PO volume from the approval chain, which the interview evidence puts at about 12% of buyer time. Pilot one region for a quarter against the same measure Finance agreed."}}, {"id": "k-5", "kind": "task", "frame": "f-ship", "mode": "auto", "x": 1804.0, "y": 1009.0, "w": 380.0, "h": 112.0, "stale": false, "label": "Steering committee slot - waiting on the Finance sign-off in", "chars": 90, "text": "[blocked] Steering committee slot - waiting on the Finance sign-off in task 1\nowner: Priya", "props": {"status": "blocked", "owner": "Priya", "source": "Steering committee slot - waiting on the Finance sign-off in task 1"}}, {"id": "t-open", "kind": "text", "frame": "f-ship", "mode": "auto", "x": 1804.0, "y": 1147.0, "w": 380.0, "h": 91.0, "stale": false, "label": "Open: does the cap belong in the rule or in the ERP workflow", "chars": 61, "text": "Open: does the cap belong in the rule or in the ERP workflow?", "props": {"source": "Open: does the cap belong in the rule or in the ERP workflow?"}}], "frames": [{"id": "f-frame", "title": "Frame the goal", "x": 30.0, "y": 30.0, "w": 846.0, "h": 438.0}, {"id": "f-know", "title": "What we already know", "x": 902.0, "y": 30.0, "w": 846.0, "h": 585.0}, {"id": "f-base", "title": "Baseline the tail", "x": 30.0, "y": 667.0, "w": 846.0, "h": 606.0}, {"id": "f-proto", "title": "Prototype the triage rule", "x": 902.0, "y": 667.0, "w": 846.0, "h": 468.0}, {"id": "f-ship", "title": "Decide", "x": 1774.0, "y": 667.0, "w": 440.0, "h": 627.0}], "scopes": ["none", "page", "frame", "upstream", "doc"], "wrap": 60, "edges": [{"src": "s-hackett", "dst": "p-synth", "rel": "feeds"}, {"src": "s-audit", "dst": "p-synth", "rel": "feeds"}, {"src": "s-interview", "dst": "p-synth", "rel": "feeds"}, {"src": "goal", "dst": "p-synth", "rel": "feeds"}, {"src": "d-pos", "dst": "c-band", "rel": "feeds"}, {"src": "c-band", "dst": "c-share", "rel": "feeds"}, {"src": "c-share", "dst": "c-cycle", "rel": "feeds"}, {"src": "c-cycle", "dst": "p-fix", "rel": "feeds"}, {"src": "p-synth", "dst": "c-rule", "rel": "feeds"}, {"src": "c-band", "dst": "c-rule", "rel": "feeds"}, {"src": "c-rule", "dst": "c-backtest", "rel": "feeds"}, {"src": "c-backtest", "dst": "p-risk", "rel": "feeds"}, {"src": "s-audit", "dst": "p-risk", "rel": "supports"}, {"src": "p-risk", "dst": "p-rec", "rel": "feeds"}, {"src": "p-synth", "dst": "p-rec", "rel": "feeds"}, {"src": "t-note", "dst": "k-5", "rel": "blocks"}], "goal": "goal", "firstPrompt": "p-synth", "prompts": {"p-synth": {"spec": {"scope": "frame", "pins": ["goal"], "budget": 12000}, "members": {"none": [], "page": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview"], "frame": ["f-know", "s-hackett", "s-audit", "s-interview", "k-4"], "upstream": ["goal", "s-hackett", "s-audit", "s-interview"], "doc": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle", "p-fix", "f-proto", "c-rule", "c-backtest", "p-risk", "t-note", "f-ship", "p-rec", "k-5", "t-open"]}}, "p-fix": {"spec": {"scope": "upstream", "pins": ["d-pos"], "budget": 8000}, "members": {"none": [], "page": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "p-synth", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle"], "frame": ["f-base", "d-pos", "c-band", "c-share", "c-cycle"], "upstream": ["d-pos", "c-band", "c-share", "c-cycle"], "doc": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "p-synth", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle", "f-proto", "c-rule", "c-backtest", "p-risk", "t-note", "f-ship", "p-rec", "k-5", "t-open"]}}, "p-risk": {"spec": {"scope": "upstream", "pins": ["s-audit", "goal"], "budget": 10000}, "members": {"none": [], "page": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "p-synth", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle", "p-fix", "f-proto", "c-rule", "c-backtest"], "frame": ["f-proto", "c-rule", "c-backtest", "t-note"], "upstream": ["goal", "s-hackett", "s-audit", "s-interview", "p-synth", "d-pos", "c-band", "c-rule", "c-backtest"], "doc": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "p-synth", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle", "p-fix", "f-proto", "c-rule", "c-backtest", "t-note", "f-ship", "p-rec", "k-5", "t-open"]}}, "p-rec": {"spec": {"scope": "doc", "pins": ["goal", "p-synth", "p-risk"], "mutes": ["t-note"], "budget": 30000}, "members": {"none": [], "page": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "p-synth", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle", "p-fix", "f-proto", "c-rule", "c-backtest", "p-risk", "t-note", "f-ship"], "frame": ["f-ship", "k-5", "t-open"], "upstream": ["goal", "s-hackett", "s-audit", "s-interview", "p-synth", "d-pos", "c-band", "c-rule", "c-backtest", "p-risk"], "doc": ["f-frame", "goal", "t-scope", "k-1", "k-2", "k-3", "f-know", "s-hackett", "s-audit", "s-interview", "p-synth", "k-4", "f-base", "d-pos", "c-band", "c-share", "c-cycle", "p-fix", "f-proto", "c-rule", "c-backtest", "p-risk", "t-note", "f-ship", "k-5", "t-open"]}}}};</script>
+<script>const D = window.PATA, B = new Map(D.blocks.map(b => [b.id, b]));
+const $ = s => document.querySelector(s), el = (t, c) => { const n = document.createElement(t); if (c) n.className = c; return n; };
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const S = { view: 'canvas', sel: null, basket: [], spec: null };
+
+/* The context rules, mirroring `pata.context.resolve`. Scope membership is computed in Python and
+ * shipped in `D.prompts[id].members`, so only pins, mutes and the budget are decided here. */
+const WRAP = 60;
+function basket(pid, spec) {
+  const P = D.prompts[pid], mute = new Set(spec.mutes), seen = new Set([pid]), out = [];
+  const take = (id, why, pin) => {
+    const b = B.get(id);
+    if (!b || seen.has(id) || mute.has(id) || b.kind === 'edge' || !b.chars) return;
+    seen.add(id);
+    out.push({ ref: id, kind: b.kind, label: b.label, chars: b.chars, why, pinned: !!pin || b.mode === 'keep' });
+  };
+  if (spec.goal !== false && D.goal) take(D.goal, 'goal', true);
+  for (const r of spec.pins) if (!mute.has(r)) take(r, 'pin', true);
+  for (const id of (P.members[spec.scope] || [])) take(id, spec.scope, false);
+  return fit(out, spec.budget);
+}
+function fit(items, budget) {
+  if (!budget) return items;
+  let total = items.reduce((n, i) => n + i.chars + WRAP, 0);
+  if (total <= budget) return items;
+  const order = items.map((it, i) => i).filter(i => !items[i].pinned)
+    .sort((a, b) => (items[a].why === 'discard' ? 0 : 1) - (items[b].why === 'discard' ? 0 : 1) || a - b);
+  const drop = new Set();
+  for (const i of order) { if (total <= budget) break; total -= items[i].chars + WRAP; drop.add(i); }
+  return items.map((it, i) => drop.has(i) ? { ...it, dropped: true } : it);
+}
+
+const specOf = pid => JSON.parse(JSON.stringify({ scope: 'page', pins: [], mutes: [], budget: null, ...D.prompts[pid].spec }));
+
+function select(id) {
+  S.sel = id;
+  const b = B.get(id);
+  S.spec = (b && b.kind === 'prompt') ? specOf(id) : null;
+  recompute();
+}
+function recompute() {
+  S.basket = S.spec ? basket(S.sel, S.spec) : [];
+  paintBasket(); mark(); outline();
+}
+const inCtx = () => new Set(S.basket.filter(i => !i.dropped).map(i => i.ref));
+const cutSet = () => new Set(S.basket.filter(i => i.dropped).map(i => i.ref));
+
+function mark() {
+  const on = inCtx(), cut = cutSet();
+  document.querySelectorAll('.blk').forEach(n => {
+    const id = n.dataset.id;
+    n.classList.toggle('sel', id === S.sel);
+    n.classList.toggle('inctx', on.has(id));
+    n.classList.toggle('cut', cut.has(id));
+  });
+  $('#app').querySelectorAll('#wires line').forEach(l => {
+    l.setAttribute('stroke-opacity', (on.has(l.dataset.src) && on.has(l.dataset.dst)) ? '.85' : '.22');
+    l.setAttribute('stroke', (on.has(l.dataset.src) && on.has(l.dataset.dst)) ? '#d2a8ff' : '#30363d');
+  });
+}
+
+function body(b) {
+  const p = b.props, n = el('div', 'bd');
+  const add = h => { const d = el('div'); d.innerHTML = h; n.appendChild(d); };
+  if (b.kind === 'goal') {
+    add(`<div class="stmt">${esc(p.source)}</div>`);
+    const bits = ['measure', 'baseline', 'target', 'by'].filter(k => p[k]).map(k => `<b>${k}</b> ${esc(p[k])}`);
+    if (bits.length) add(`<div style="margin-top:7px;color:var(--fg2);font-size:12px">${bits.join(' &nbsp;·&nbsp; ')}</div>`);
+  } else if (b.kind === 'code') {
+    add(`<pre>${esc(p.source)}</pre>`);
+    for (const o of (p.outputs || [])) {
+      const t = o.output_type === 'error' ? `${o.ename}: ${o.evalue}` : (o.text || (o.data || {})['text/plain'] || '');
+      if (t) add(`<div class="out${o.output_type === 'error' ? ' err' : ''}">${esc(t)}</div>`);
+    }
+  } else if (b.kind === 'prompt') {
+    add(`<div class="ask">${esc(p.source)}</div>`);
+    if (p.reply) add(`<div class="reply">${esc(p.reply)}</div>`);
+  } else if (b.kind === 'source') {
+    const w = p.url || p.path || '';
+    add(`<div><a href="${esc(w)}">${esc(p.title || w)}</a></div>`);
+    if (p.text) add(`<div style="margin-top:6px;color:var(--fg2)">${esc(p.text)}</div>`);
+  } else if (b.kind === 'task') {
+    add(`<div>${esc(p.source)}</div>`);
+  } else if (b.kind === 'data') {
+    add(`<pre>${esc(p.name || p.path || '')}</pre>`);
+    if (p.preview) add(`<div class="out">${esc(p.preview)}</div>`);
+  } else add(`<div>${esc(p.source || p.title || '')}</div>`);
+  return n;
+}
+
+function card(b) {
+  const n = el('div', 'blk');
+  n.dataset.id = b.id; n.dataset.k = b.kind;
+  const hd = el('div', 'hd');
+  hd.innerHTML = `<span class="k">${b.kind}</span><span>${b.id}</span><span class="sp"></span>` +
+    (b.props.status ? `<span class="chip ${b.props.status}">${b.props.status}</span>` : '') +
+    (b.props.owner ? `<span class="chip">${esc(b.props.owner)}</span>` : '') +
+    (b.mode !== 'auto' ? `<span class="chip ${b.mode}">${b.mode}</span>` : '') +
+    (b.stale ? '<span class="chip stale">stale</span>' : '') +
+    (b.props.execution_count ? `<span class="chip">[${b.props.execution_count}]</span>` : '') +
+    `<span class="chip">${b.chars}c</span>`;
+  n.append(hd, body(b));
+  n.addEventListener('mousedown', e => { if (!e.target.closest('a')) select(b.id); });
+  return n;
+}
+
+function paintPage() {
+  const v = $('#view'); v.innerHTML = '<div id="page"></div>';
+  const p = $('#page');
+  let frame = null;
+  for (const b of D.blocks) {
+    if (b.kind === 'edge') continue;
+    if (b.kind === 'frame') { const h = el('div', 'fr'); h.textContent = b.props.title; h.style.position = 'static'; p.appendChild(h); frame = b.id; continue; }
+    p.appendChild(card(b));
+  }
+}
+
+function paintCanvas() {
+  const v = $('#view');
+  v.innerHTML = '<div id="canvas"><svg id="wires"></svg></div>';
+  const c = $('#canvas'), svg = $('#wires');
+  let mx = 0, my = 0;
+  for (const f of D.frames) {
+    const n = el('div', 'fr');
+    Object.assign(n.style, { left: f.x + 'px', top: f.y + 'px', width: f.w + 'px', height: f.h + 'px' });
+    n.dataset.frame = f.id;
+    n.innerHTML = `<span>${esc(f.title)}</span>`;
+    c.appendChild(n);
+    mx = Math.max(mx, f.x + f.w); my = Math.max(my, f.y + f.h);
+  }
+  for (const b of D.blocks) {
+    if (b.kind === 'edge' || b.kind === 'frame' || b.x == null) continue;
+    const n = card(b);
+    Object.assign(n.style, { left: b.x + 'px', top: b.y + 'px', width: (b.w || 280) + 'px' });
+    c.appendChild(n);
+    drag(n, b);
+    mx = Math.max(mx, b.x + (b.w || 280)); my = Math.max(my, b.y + 300);
+  }
+  fitFrames(); 
+  c.style.width = (mx + 80) + 'px'; c.style.height = (my + 80) + 'px';
+  for (const e of D.edges) {
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.dataset.src = e.src; l.dataset.dst = e.dst;
+    l.setAttribute('stroke', '#30363d'); l.setAttribute('stroke-width', '1.5');
+    if (e.rel === 'blocks') l.setAttribute('stroke-dasharray', '4 3');
+    svg.appendChild(l);
+  }
+  wires();
+}
+
+/* Heights are content-driven, so the frame rectangles Python estimated are advisory. Refit them
+ * to what the page actually laid out, or a block spills into the frame below it. */
+function fitFrames() {
+  const c = $('#canvas'); if (!c) return;
+  const box = {};
+  for (const b of D.blocks) {
+    if (!b.frame || b.x == null) continue;
+    const n = c.querySelector(`.blk[data-id="${b.id}"]`); if (!n) continue;
+    const r = box[b.frame] || (box[b.frame] = { x1: 1e9, y1: 1e9, x2: -1e9, y2: -1e9 });
+    r.x1 = Math.min(r.x1, n.offsetLeft); r.y1 = Math.min(r.y1, n.offsetTop);
+    r.x2 = Math.max(r.x2, n.offsetLeft + n.offsetWidth); r.y2 = Math.max(r.y2, n.offsetTop + n.offsetHeight);
+  }
+  c.querySelectorAll('.fr[data-frame]').forEach(n => {
+    const r = box[n.dataset.frame]; if (!r) return;
+    Object.assign(n.style, { left: (r.x1 - 22) + 'px', top: (r.y1 - 34) + 'px',
+      width: (r.x2 - r.x1 + 44) + 'px', height: (r.y2 - r.y1 + 56) + 'px' });
+  });
+}
+
+function wires() {
+  const c = $('#canvas'); if (!c) return;
+  const box = id => { const n = c.querySelector(`.blk[data-id="${id}"]`); return n && { x: n.offsetLeft, y: n.offsetTop, w: n.offsetWidth, h: n.offsetHeight }; };
+  for (const l of $('#wires').children) {
+    const a = box(l.dataset.src), b = box(l.dataset.dst);
+    if (!a || !b) { l.setAttribute('stroke-opacity', '0'); continue; }
+    l.setAttribute('x1', a.x + a.w / 2); l.setAttribute('y1', a.y + a.h / 2);
+    l.setAttribute('x2', b.x + b.w / 2); l.setAttribute('y2', b.y + b.h / 2);
+  }
+}
+
+function drag(n, b) {
+  n.addEventListener('mousedown', e => {
+    if (e.target.closest('a')) return;
+    const sx = e.clientX, sy = e.clientY, ox = b.x, oy = b.y;
+    n.classList.add('drag');
+    const move = ev => { b.x = ox + ev.clientX - sx; b.y = oy + ev.clientY - sy; n.style.left = b.x + 'px'; n.style.top = b.y + 'px'; wires(); };
+    const up = () => { n.classList.remove('drag'); fitFrames(); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  });
+}
+
+function outline() {
+  const a = $('#outline'); a.innerHTML = '';
+  const on = inCtx();
+  for (const b of D.blocks) {
+    if (b.kind === 'edge') continue;
+    const r = el('div', 'row' + (b.kind === 'frame' ? ' frame' : ' kid') + (b.id === S.sel ? ' sel' : '') + (on.has(b.id) ? ' inctx' : ''));
+    r.textContent = b.kind === 'frame' ? b.props.title : (b.label || b.kind);
+    r.onclick = () => { select(b.id); const n = document.querySelector(`.blk[data-id="${b.id}"]`); if (n) n.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+    a.appendChild(r);
+  }
+}
+
+function paintBasket() {
+  const p = $('#basket');
+  if (!S.spec) {
+    p.innerHTML = '<h4>context</h4><div class="empty">Select a prompt block to see exactly what the model will be given.</div>';
+    $('#app main').classList.add('nobasket');
+    return;
+  }
+  $('#app main').classList.remove('nobasket');
+  const kept = S.basket.filter(i => !i.dropped);
+  const total = kept.reduce((n, i) => n + i.chars + WRAP, 0);
+  const budget = S.spec.budget || 0;
+  const pct = budget ? Math.min(100, total / budget * 100) : 0;
+  p.innerHTML = `<h4>context for ${S.sel}</h4><div class="pad">
+    <div class="ctl"><label>scope</label><select id="scope">${D.scopes.map(s => `<option ${s === S.spec.scope ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
+    <div class="ctl"><label>budget</label><input id="budget" type="number" step="500" value="${budget}"></div>
+    <div class="meter ${budget && total > budget ? 'over' : ''}"><i style="width:${pct}%"></i></div>
+    <div class="tot">${kept.length} blocks &nbsp; ${total.toLocaleString()} chars${budget ? ' / ' + budget.toLocaleString() : ''} &nbsp; ${S.basket.length - kept.length} cut</div>
+    </div><h4>in the basket</h4><div class="pad" id="items"></div>
+    <h4>what the model reads</h4><pre id="raw"></pre>
+    <div class="hint">Click a row to mute it. Click the pin to keep it whatever the budget says.</div>`;
+  const box = $('#items');
+  for (const it of S.basket) {
+    const r = el('div', 'item ' + (it.dropped ? 'off' : 'on'));
+    r.innerHTML = `<span class="pin">${it.pinned ? '*' : ''}</span><span class="nm">${esc(it.label)}</span>` +
+      `<span class="why">${it.why}</span><span class="n">${it.chars}</span>`;
+    r.querySelector('.pin').onclick = e => { e.stopPropagation(); togglePin(it.ref); };
+    r.onclick = () => { S.spec.mutes.push(it.ref); recompute(); };
+    box.appendChild(r);
+  }
+  for (const m of S.spec.mutes) {
+    const b = B.get(m); if (!b) continue;
+    const r = el('div', 'item off');
+    r.innerHTML = `<span class="pin"></span><span class="nm" style="text-decoration:line-through">${esc(b.label)}</span><span class="why">muted</span><span class="n">${b.chars}</span>`;
+    r.onclick = () => { S.spec.mutes = S.spec.mutes.filter(x => x !== m); recompute(); };
+    box.appendChild(r);
+  }
+  $('#raw').textContent = kept.map(i => `<cell id="${i.ref}" type="${i.kind}" compact="${i.pinned ? 'keep' : 'auto'}" why="${i.why}">\n${(B.get(i.ref).text || '').slice(0, 240)}\n</cell>`).join('\n');
+  $('#scope').onchange = e => { S.spec.scope = e.target.value; recompute(); };
+  $('#budget').onchange = e => { S.spec.budget = Number(e.target.value) || null; recompute(); };
+}
+function togglePin(ref) {
+  const i = S.spec.pins.indexOf(ref);
+  if (i >= 0) S.spec.pins.splice(i, 1); else S.spec.pins.push(ref);
+  recompute();
+}
+
+function setView(v) {
+  S.view = v;
+  document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === v));
+  (v === 'page' ? paintPage : paintCanvas)();
+  mark();
+}
+$('#toggle').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
+setView('canvas');
+select(D.firstPrompt);
+</script>
+<script>
+document.querySelector('#panes').addEventListener('click', e => {
+  const b = e.target.closest('[data-pane]'); if (!b) return;
+  document.querySelectorAll('#panes button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  document.querySelector('#right').className = b.dataset.pane;
+});
+</script>
+</body></html>

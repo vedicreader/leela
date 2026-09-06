@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pata"
+version = "0.0.1"
+description = "Dynamic documents: one space for a goal, its plan, its research, its code and its prompts"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["fastcore>=1.7"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pata"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
