@@ -144,6 +144,7 @@ def connect(app, ctx=None):
         turn = d.get('turn') or 'turn'
         ask = Ask(question=d.get('question', ''), canvas=o.canvas, runtime=o.runtime,
                   brick_id=d.get('id', ''), selection=d.get('selection', ''), nth=int(d.get('nth') or 0),
+                  palette=_palette().get('bricks', []),
                   trail=list(o.trail), mode=o.canvas.meta.get('mode', 'make'))
         o.remember(ask.question, ask.brick_id, ask.selection)
         helper = helper_for(ctx.ai if ctx is not None and d.get('model') else None)

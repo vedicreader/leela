@@ -117,8 +117,13 @@ A canvas is a document that runs. Prose, code cells, components embedded from a 
 written in the file, PDFs and video sit in one markdown file, and each thing recomputes when what it
 reads changes. Cells run in dependency order rather than document order. Clicking inside an embedded
 component writes a name into the namespace, so a component is an input as much as an output. The
-helper is reachable from the margin, from an `ask` brick, and from `mod+k` anywhere, and it edits
-the document through eight tools and no others.
+helper is reachable from the margin, from an `ask` brick, and from `mod+k` on any selection, and it
+edits the document through eight tools and no others. What it knows about a canvas is a skill Leela
+owns and pushes onto the agent while a canvas is open.
+
+The editor is the one every document of this shape has: a gutter that appears on hover with a drag
+grip and an insert button, `/` for a filtered block menu, a format bar on a selection with Ask AI in
+it, `Enter` splitting a block at the caret, and both themes.
 
 Six canvases ship in `examples/canvas/`, over sales, astrology, quantum tunnelling, cell biology and
 two on building software. `uv run python tools/canvas_spike.py` runs the block with no kernels,

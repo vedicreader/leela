@@ -36,17 +36,30 @@ function cvVideo(b) {
 /* === the slash menu === */
 
 const SLASH = [
-  {key: 'code', label: 'Code cell', hint: 'python, shares the document namespace', make: () => ({kind: 'code', body: ''})},
-  {key: 'ask', label: 'Ask', hint: 'a question that stays in the document', make: () => ({kind: 'ask', body: ''})},
-  {key: 'note', label: 'Note', hint: 'an aside, in markdown', make: () => ({kind: 'note', body: 'Note.'})},
-  {key: 'brick', label: 'Component…', hint: 'a brick from a package', palette: true},
-  {key: 'sketch', label: 'Sketch', hint: 'a component written here, in the document',
+  {name: 'Text', icon: '¶', hint: 'a plain paragraph', group: '1_Basic', alias: ['paragraph', 'p'],
+   make: () => ({kind: 'text', body: ''})},
+  {name: 'Heading', icon: 'H', hint: 'a section title', group: '1_Basic', alias: ['h2', 'title'],
+   make: () => ({kind: 'text', body: '## '})},
+  {name: 'Bulleted list', icon: '•', hint: 'one point per line', group: '1_Basic', alias: ['ul', 'list'],
+   make: () => ({kind: 'text', body: '- '})},
+  {name: 'Note', icon: '❞', hint: 'an aside, in markdown', group: '1_Basic', alias: ['callout', 'aside'],
+   make: () => ({kind: 'note', body: 'Note.'})},
+  {name: 'Code', icon: '{}', hint: 'python, sharing the document namespace', group: '2_Live', alias: ['py', 'cell'],
+   make: () => ({kind: 'code', body: ''})},
+  {name: 'Live sentence', icon: '≈', hint: 'prose bound to an expression', group: '2_Live', alias: ['data', 'bind'],
+   make: () => ({kind: 'data', binds: {text: 'f"..."'}, body: ''})},
+  {name: 'Ask', icon: '✦', hint: 'a question that stays in the document', group: '2_Live', alias: ['ai', 'question'],
+   make: () => ({kind: 'ask', body: ''})},
+  {name: 'Component', icon: '▦', hint: 'a brick from a package', group: '3_Embed', alias: ['brick', 'widget'],
+   palette: true},
+  {name: 'Sketch', icon: '✧', hint: 'a component written here, in the document', group: '3_Embed', alias: ['sim', 'js'],
    make: () => ({kind: 'sim', props: {height: '160'}, body: SKETCH_STARTER})},
-  {key: 'video', label: 'YouTube', hint: 'paste a link', ask: 'video URL or id',
+  {name: 'YouTube', icon: '▷', hint: 'paste a link', group: '3_Embed', alias: ['video'], ask: 'video URL or id',
    make: v => ({kind: 'video', attrs: {src: v}, body: ''})},
-  {key: 'pdf', label: 'PDF', hint: 'a path or a URL', ask: 'pdf path or URL',
-   make: v => ({kind: 'pdf', attrs: {src: v}, body: ''})},
-  {key: 'quiz', label: 'Check yourself', hint: 'questions from this document', make: () => ({kind: 'quiz', body: '1. ?'})}];
+  {name: 'PDF', icon: '⤓', hint: 'a file beside this one, or a URL', group: '3_Embed', alias: ['file'],
+   ask: 'pdf path or URL', make: v => ({kind: 'pdf', attrs: {src: v}, body: ''})},
+  {name: 'Check yourself', icon: '✓', hint: 'questions from this document', group: '4_Learn', alias: ['quiz', 'test'],
+   make: () => ({kind: 'quiz', body: '1. ?'})}];
 
 const SKETCH_STARTER = `const draw = () => {
   root.innerHTML = '<div class="row"><label>n</label><input type=range min=0 max=100 id=n></div><b id=out></b>';
@@ -56,49 +69,66 @@ const SKETCH_STARTER = `const draw = () => {
   n.oninput = show; show();
 };`;
 
-function cvMenu(items, x, y, pick) {
-  const m = $$('#cv-menu');
-  m.innerHTML = items.map((it, i) =>
-    `<button data-i="${i}"><b>${cvEsc(it.label)}</b><span>${cvEsc(it.hint || '')}</span></button>`).join('');
-  m.style.left = Math.min(x, innerWidth - 300) + 'px'; m.style.top = y + 'px'; m.hidden = false;
-  m.onclick = ev => {
-    const btn = ev.target.closest('button'); if (!btn) return;
-    m.hidden = true; pick(items[+btn.dataset.i]);
-  };
-  setTimeout(() => document.addEventListener('click', () => { m.hidden = true; }, {once: true}), 0);
-}
-
+//: The `/` stays in the paragraph while the menu is up and the query is what follows it, so the
+//: person sees what they are searching for. Both go when something is chosen or the menu closes.
 function cvSlash(id, el) {
   const r = el.getBoundingClientRect();
+  cvSlashAt(id, r.left, r.bottom + 6, el);
+}
+
+function cvSlashAt(id, x, y, el) {
   const was = cvBrick(id)?.body ?? '';
-  const undo = async () => { el.textContent = was; await cvOp({op: 'replace', id, body: was}, true); };
-  cvMenu(SLASH, r.left, r.bottom + 6, async it => {
-    el.textContent = ''; el.blur();
-    await cvOp({op: 'replace', id, body: ''}, false);        // the `/` that opened this menu is not prose
-    try {
-      if (it.palette) return await cvPalette(id, undo);
-      let v = null;
-      if (it.ask) { v = prompt(it.ask); if (!v) return await undo(); }
-      await cvOp({op: 'insert', after: id, ...it.make(v)});
-      await cvOp({op: 'remove', id});
-    } catch (e) { cvStatus(String(e), 'bad'); await undo(); }
-  });
+  const undo = async () => { if (el) el.textContent = was; await cvOp({op: 'replace', id, body: was}, true); };
+  cvOpenMenu(SLASH, x, y, it => cvSlashPick(it, id, el, undo), {width: 300, empty: 'no block by that name'});
+  if (el) cvPop.onQuery = q => { el.textContent = q === null ? '' : '/' + q; cvCaretEnd(el); };
+}
+
+async function cvSlashPick(it, id, el, undo) {
+  if (el) el.textContent = '';
+  await cvOp({op: 'replace', id, body: ''}, false);
+  try {
+    if (it.palette) return await cvPalette(id, undo);
+    let v = null;
+    if (it.ask) { v = prompt(it.ask); if (!v) return await undo(); }
+    const spec = it.make(v);
+    const fresh = await cvOp({op: 'insert', after: id, ...spec});
+    await cvOp({op: 'remove', id});
+    cvLandOn(fresh);
+  } catch (e) { cvStatus(String(e), 'bad'); await undo(); }
+}
+
+//: A block you just asked for should have the cursor in it.
+function cvLandOn(r) {
+  if (!r?.ok) return;
+  const el = $$(`.cv-prose[data-id="${r.brick.id}"]`) || $$(`.cv-brick[data-id="${r.brick.id}"] textarea`);
+  if (!el) return;
+  el.focus(); cvCaretEnd(el);
+}
+
+function cvCaretEnd(el) {
+  if (el.tagName === 'TEXTAREA') { el.selectionStart = el.selectionEnd = el.value.length; return; }
+  const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r);
 }
 
 /* === the palette: what the component host publishes === */
 
 async function cvPalette(after, undo) {
   if (!cv.palette) cv.palette = await (await fetch('/canvas/palette')).json();
-  const items = (cv.palette.bricks || []).map(b => ({label: b.title, hint: `${b.src} · in ${b.ports.map(p => p.name).join(', ') || '—'}`, b}));
-  if (!items.length) return cvStatus('no component host: start lego on 5001', 'bad');
+  const groups = cv.palette.groups || {};
+  const order = Object.keys(groups);
+  const items = (cv.palette.bricks || []).map(b => ({
+    name: b.title, icon: '▦', hint: `${b.doc || b.src}`, alias: [b.name, b.src, ...b.ports.map(p => p.name)],
+    group: `${order.indexOf(b.group) + 1}_${b.group}`, b}));
+  if (!items.length) { cvStatus('no component host: start one and set BRICK_HOST', 'bad'); return undo && undo(); }
   const anchor = brickEl(after)?.getBoundingClientRect() || {left: 200, bottom: 200};
-  cvMenu(items, anchor.left, anchor.bottom + 6, async it => {
+  cvOpenMenu(items, anchor.left, anchor.bottom + 6, async it => {
     const r = await cvOp({op: 'insert', after, kind: 'brick', attrs: {src: it.b.src}, props: {height: String(it.b.height)}});
     if (!r.ok) return void (undo && await undo());
     try { await cvFill(r.brick.id, it.b); }
     catch (e) { cvStatus(String(e), 'bad'); }
     await cvOp({op: 'remove', id: after});                  // the brick is in either way; the `/` line is not
-  });
+  }, {width: 320, empty: 'no component by that name'});
 }
 
 //: Taking the snippet the component's own package ships. This is the whole of "connect it to its

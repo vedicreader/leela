@@ -129,12 +129,52 @@ function cvOccurrence(host, sel, text) {
 /* === keys === */
 
 document.addEventListener('keydown', ev => {
-  const mod = ev.metaKey || ev.ctrlKey;
-  if (mod && ev.key.toLowerCase() === 'k') { ev.preventDefault(); cvInlineAsk(); }
-  if (mod && ev.key.toLowerCase() === 's') { ev.preventDefault(); cvSave(); }
-  if (mod && ev.shiftKey && ev.key === 'Enter') { ev.preventDefault(); cvRunAll(); }
-  if (ev.key === 'Escape') { $$('#cv-inline').hidden = true; $$('#cv-menu').hidden = true; cvWireClose(); }
+  if (cvMenuKey(ev)) return;
+  const mod = ev.metaKey || ev.ctrlKey, k = ev.key.toLowerCase();
+  if (mod && k === 'k') { ev.preventDefault(); return cvInlineAsk(); }
+  if (mod && k === 's') { ev.preventDefault(); return cvSave(); }
+  if (mod && k === 'j') { ev.preventDefault(); return cvMargin(); }
+  if (mod && ev.shiftKey && ev.key === 'Enter') { ev.preventDefault(); return cvRunAll(); }
+  if (ev.key === 'Escape') { $$('#cv-inline').hidden = true; cvCloseMenu(); cvHideFormat(); cvWireClose(); cvPick(null); }
+  if (!cv.picked || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) ||
+      document.activeElement?.isContentEditable) return;
+  cvBlockKey(ev, k);
 });
+
+//: With a block picked and nothing focused, the keyboard drives blocks rather than characters.
+function cvBlockKey(ev, k) {
+  const at = cv.canvas.bricks.findIndex(b => b.id === cv.picked);
+  const b = cv.canvas.bricks[at]; if (!b) return;
+  const go = d => { ev.preventDefault(); const n = cv.canvas.bricks[at + d]; if (n) cvPick(n.id); };
+  if (ev.key === 'ArrowDown' || k === 'j') return go(1);
+  if (ev.key === 'ArrowUp' || k === 'k') return go(-1);
+  if (ev.key === 'Backspace' || ev.key === 'Delete') { ev.preventDefault(); return void cvOp({op: 'remove', id: b.id}); }
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    if (b.kind === 'code') return void cvRun(b.id);
+    const el = $$(`.cv-prose[data-id="${b.id}"]`); if (el) { el.focus(); cvCaretEnd(el); }
+    return;
+  }
+  if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) { ev.preventDefault(); cvMove(b.id, ev.key === 'ArrowUp' ? -1 : 1); }
+}
+
+function cvMargin(on) {
+  const w = $$('.cv-wrap');
+  const open = on ?? !w.classList.contains('margin-open');
+  w.classList.toggle('margin-open', open);
+  $$('#cv-toggle')?.classList.toggle('on', open);
+  return open;
+}
+
+function cvTheme(next) {
+  cv.theme = next || (cv.theme === 'dark' ? 'light' : 'dark');
+  document.body.dataset.theme = cv.theme;
+  localStorage.setItem('cv-theme', cv.theme);
+  for (const f of $all('#cv-doc iframe')) {
+    const u = new URL(f.src, location.href);
+    if (u.searchParams.get('theme') !== cv.theme && !f.srcdoc) { u.searchParams.set('theme', cv.theme); f.src = u.toString(); }
+  }
+}
 
 async function cvBoot() {
   const list = await (await fetch('/canvas/list')).json();
@@ -149,7 +189,10 @@ async function cvBoot() {
   await cvOpen(want, q.get('fresh'));
   $$('#cv-runall').onclick = cvRunAll;
   $$('#cv-save').onclick = cvSave;
-  $$('#cv-add').onclick = () => cvOp({op: 'insert', at: cv.canvas.bricks.length, kind: 'text', body: 'New paragraph.'});
+  $$('#cv-theme').onclick = () => cvTheme();
+  $$('#cv-toggle').onclick = () => cvMargin();
+  cvTheme(localStorage.getItem('cv-theme') || 'light');
+  cvMargin(true);
   $$('#cv-askform').onsubmit = async ev => {
     ev.preventDefault();
     const inp = $$('#cv-askform input'), question = inp.value; inp.value = '';

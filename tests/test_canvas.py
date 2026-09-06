@@ -5,6 +5,7 @@ The point of these is the contract a canvas file makes with git: a document that
 run, wired and asked questions of must come back byte for byte unless somebody changed something."""
 
 import asyncio
+import re
 import json
 import pytest
 from fastcore.all import Path
@@ -13,7 +14,7 @@ from fasthtml.common import fast_app
 
 from leela.blocks.canvas.app import STORE, connect
 from leela.blocks.canvas.doc import Brick, Canvas, defs_of, downstream, order, reads_of
-from leela.blocks.canvas.helper import Ask, Scripted
+from leela.blocks.canvas.helper import TOOLS, Ask, Scripted
 from leela.blocks.canvas.live import Runtime
 from leela.blocks.canvas.ops import apply_op
 from leela.blocks.canvas.store import brick_host
@@ -182,15 +183,22 @@ def turn(question, **kw):
     async def go(): return [e async for e in Scripted().turn(ask)]
     return c, r, asyncio.run(go())
 
-def test_the_helper_answers_a_question_about_the_canvas_itself():
-    _, _, events = turn('what is a bind?')
-    assert any(e == 'answer' for e, _ in events)
-    assert 'evaluated against the canvas namespace' in ''.join(d.get('text', '') for e, d in events if e == 'chunk')
+PALETTE = [{'name': 'thrifty.costs', 'src': 'lego.bricks:thrifty.costs', 'title': 'Cost table', 'group': 'thrifty',
+            'doc': 'Monthly and per-request cost per option.', 'height': 220},
+           {'name': 'learn.cell', 'src': 'lego.bricks:learn.cell', 'title': 'Animal cell', 'group': 'learn',
+            'doc': 'An animal cell. Click an organelle.', 'height': 420}]
 
 def test_the_helper_edits_the_document_through_ops_and_nothing_else():
-    _, _, events = turn('embed the cost table')
+    _, _, events = turn('embed the cost table', palette=PALETTE)
     ops = [d for e, d in events if e == 'op']
     assert ops and ops[0]['op'] == 'insert' and ops[0]['attrs']['src'] == 'lego.bricks:thrifty.costs'
+
+def test_which_component_to_embed_is_scored_against_what_the_host_publishes():
+    "A package that ships a new brick is reachable the day it ships, with no table kept here."
+    _, _, events = turn('embed the animal cell', palette=PALETTE)
+    assert next(d for e, d in events if e == 'op')['attrs']['src'] == 'lego.bricks:learn.cell'
+    _, _, events = turn('embed something nobody has', palette=PALETTE)
+    assert not [d for e, d in events if e == 'op']
 
 def test_a_rewrite_touches_only_the_selection_it_was_given():
     c = Canvas.parse('```canvas note id=n\nIt is really just a very small thing. It works.\n```\n')
@@ -347,3 +355,64 @@ def test_run_all_uses_dependency_order_not_document_order(client):
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     r = client.post('/canvas/runall', json={'path': p, 'sources': {}}).json()
     assert r['ok'] and all(v['ok'] for v in r['runs'].values())
+
+# --- canvas mode ---
+
+def test_the_canvas_skill_is_leelas_and_reaches_the_agent_only_when_a_canvas_is_open():
+    from ramabana.testing import fake_agent
+    from leela.skills import drop, push, pushed
+    agent, _ = fake_agent()
+    assert '`canvas`' not in agent.system_prompt()
+    assert push(agent, 'canvas') == ['canvas']
+    assert '`canvas`' in agent.system_prompt() and pushed(agent) == {'canvas'}
+    assert push(agent, 'canvas') == [], 'pushing twice must not stack'
+    assert drop(agent, 'canvas') == 1 and '`canvas`' not in agent.system_prompt()
+
+def test_canvas_mode_brings_the_eight_tools_and_takes_them_away_again():
+    from ramabana.testing import fake_agent
+    from leela.blocks.canvas.helper import Agentic
+    agent, _ = fake_agent()
+    h = Agentic(agent)
+    h.open(Ask(question='', canvas=canvas(), runtime=Runtime()))
+    assert [t.__name__ for t in agent.registry.tools] == list(TOOLS)
+    h.close()
+    assert agent.registry.tools == []
+
+def test_the_skill_says_what_every_tool_is_for():
+    from leela.blocks.canvas.helper import skill_text
+    body = skill_text()
+    for name in TOOLS: assert f'`{name}`' in body, f'{name} is not in the skill'
+
+def test_the_stand_in_answers_a_canvas_question_out_of_the_skill():
+    from leela.blocks.canvas.helper import section
+    _, _, events = turn('what is a bind?')
+    said = ''.join(d.get('markdown', '') for e, d in events if e == 'answer')
+    assert said == section('bind') and said.startswith('## Bindings')
+
+def test_the_stand_in_explains_a_word_from_the_document_rather_than_inventing_one():
+    "It has no model. What it can do is find where the document already said it."
+    from leela.blocks.canvas.helper import defined_in
+    c = Canvas.load(EXAMPLES/'tunnelling.canvas.md')
+    _, _, events = turn('explain tunnelling', canvas=c)
+    said = ''.join(d.get('markdown', '') for e, d in events if e == 'answer')
+    assert said and said == defined_in(c, 'tunnelling') and 'exponential' in said
+
+def test_a_word_the_document_never_explains_is_not_answered():
+    _, _, events = turn('explain photosynthesis')
+    assert not any(e == 'answer' for e, _ in events)
+    assert 'stand-in' in ''.join(d.get('text', '') for e, d in events if e == 'chunk')
+
+# --- the client ---
+
+def test_the_client_bundle_names_every_module_and_serves_them_in_order(client):
+    from leela.blocks.canvas.ui import FILES
+    js = client.get('/canvas/js').text
+    assert js.index('function cvOpenMenu') < js.index('function cvSlashAt'), 'the menu must be declared first'
+    for f in FILES: assert (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'canvas'/f).is_file()
+    for fn in ('cvGutter', 'cvFormatBar', 'cvMenuKey', 'cvSplit', 'cvPick', 'cvTheme'): assert f'function {fn}' in js
+
+def test_the_stylesheet_carries_both_themes(client):
+    css = client.get('/canvas/css').text
+    light = set(re.findall(r'--cv-[\w-]+(?=:)', css.split('[data-theme=dark]')[0]))
+    dark = set(re.findall(r'--cv-[\w-]+(?=:)', css.split('[data-theme=dark]')[1].split('*')[0]))
+    assert dark and dark <= light, f'dark names a token light does not: {sorted(dark - light)}'

@@ -41,8 +41,8 @@ bind text = f"On the plan as written it lands **{lands}**. You clicked {point['l
 
 <!--canvas note id=m5-->
 The brick above is `lego.bricks:viz.series`. It came from the palette with `/`, and the two lines
-that fill it came from its own package rather than from here. Reopen the wiring panel with the ⚙
-in the rail and the expressions are the ones you would have written.
+that fill it came from its own package rather than from here. Open the wiring panel from the block menu, on the grip in the gutter, and the expressions are
+the ones you would have written.
 <!--/canvas-->
 
 ## Sketching a component before it is a package

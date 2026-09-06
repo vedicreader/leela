@@ -1,7 +1,7 @@
 /* The canvas: one document made of bricks, drawn once and repainted a brick at a time.
  * `cv` is the whole client state, the way `lee` is in the IDE. */
 const cv = {path: '', canvas: null, ports: {}, host: '', names: [], files: [], palette: null, focus: null,
-            dirty: false, edited: new Set()};
+            dirty: false, edited: new Set(), picked: null, theme: 'light'};
 const $$ = (sel, root = document) => root.querySelector(sel);
 const $all = (sel, root = document) => [...root.querySelectorAll(sel)];
 const brickEl = id => $$(`.cv-brick[data-id="${id}"]`);
@@ -28,8 +28,8 @@ async function cvOpen(path, fresh) {
   if (!r.ok) return;
   cv.path = path; cv.canvas = r.canvas; cv.ports = r.ports || {}; cv.host = r.host; cv.names = r.names || [];
   document.title = r.canvas.title;
-  $$('#cv-title').textContent = r.canvas.title;
   $$('#cv-mode').textContent = r.canvas.meta.mode || 'make';
+  cvPick(null);
   cvRender();
   cvTrail(r.trail || []);
   cvStatus(`${r.canvas.bricks.length} bricks · ${cv.names.length} live names`, 'ok');
@@ -42,27 +42,32 @@ function cvRender() {
 }
 
 //: Redrawing the whole document would rebuild every iframe, and a frame that reloads forgets what
-//: the person had selected in it. Only what actually changed is repainted.
+//: the person had selected in it. Only what actually changed is repainted, and what was painted is
+//: read off the element rather than off the model: the model is mutated in place all over.
 function cvSync(canvas) {
-  const was = new Map((cv.canvas?.bricks || []).map(b => [b.id, b]));
   const now = canvas.bricks;
   cv.canvas = canvas;
-  for (const id of was.keys()) if (!now.some(b => b.id === id)) brickEl(id)?.remove();
+  for (const el of $all('#cv-doc .cv-brick')) if (!now.some(b => b.id === el.dataset.id)) el.remove();
   now.forEach((b, i) => {
-    const before = was.get(b.id), el = brickEl(b.id);
-    if (!before || !el) return void cvRepaint(b, i);
+    const el = brickEl(b.id);
+    if (!el) return void cvRepaint(b, i);
     if (cv.edited.has(b.id)) return;                      // being typed in: the server's copy is the older one
-    if (cvSame(before, b)) { if (el.dataset.i !== String(i)) el.dataset.i = i; return; }
-    if (cvFrameKind(b) && before.body === b.body && cvSame(before, b, true)) return;   // bindings alone: props, not a reload
+    const was = el.dataset.sig, sig = cvSig(b);
+    if (was === sig) return;
+    //: A binding that moved is new props and a new strip, not a reload of the frame.
+    if (cvFrameKind(b) && cvSig(b, true) === cvSig({...b, binds: JSON.parse(was).binds}, true)) {
+      el.dataset.sig = sig;
+      $$('.cv-ports', el)?.replaceWith(cvPortStrip(b));
+      return;
+    }
     cvRepaint(b, i);
   });
   cvOrder(now);
 }
 
 const cvFrameKind = b => b.kind === 'brick' || b.kind === 'sim';
-const cvSame = (a, b, ignoreBinds) => a.kind === b.kind && a.body === b.body &&
-  JSON.stringify(a.attrs) === JSON.stringify(b.attrs) && JSON.stringify(a.props) === JSON.stringify(b.props) &&
-  (ignoreBinds || JSON.stringify(a.binds) === JSON.stringify(b.binds));
+const cvSig = (b, noBinds) => JSON.stringify({kind: b.kind, body: b.body, attrs: b.attrs || {},
+                                              props: b.props || {}, binds: noBinds ? 0 : (b.binds || {})});
 
 function cvOrder(bricks) {
   const doc = $$('#cv-doc');
@@ -82,33 +87,16 @@ function cvRepaint(brick, at) {
 
 /* === one brick === */
 
-const KIND_LABEL = {code: 'code', ask: 'ask', brick: 'component', sim: 'sketch', pdf: 'pdf',
-                    video: 'video', reply: 'answer', note: 'note', quiz: 'check', data: 'data', text: 'text'};
-
 function cvPaint(b, i) {
   const wrap = document.createElement('section');
   wrap.className = `cv-brick cv-${b.kind}`; wrap.dataset.id = b.id; wrap.dataset.i = i;
-  wrap.appendChild(cvRail(b));
+  wrap.dataset.kind = b.kind; wrap.dataset.sig = cvSig(b);
+  wrap.appendChild(cvGutter(b));
   wrap.appendChild(({text: cvText, code: cvCode, ask: cvAsk, brick: cvComponent, sim: cvSim,
                      pdf: cvPdf, video: cvVideo, reply: cvProse, note: cvProse, quiz: cvQuiz,
                      data: cvData}[b.kind] || cvProse)(b));
+  wrap.onpointerdown = ev => { if (!ev.target.closest('.cv-gutter')) cvPick(null); };
   return wrap;
-}
-
-function cvRail(b) {
-  const rail = document.createElement('div');
-  rail.className = 'cv-rail';
-  rail.innerHTML = `<span class="cv-kind">${KIND_LABEL[b.kind] || b.kind}</span>`;
-  const btn = (label, title, fn) => {
-    const x = document.createElement('button'); x.className = 'cv-rbtn'; x.textContent = label; x.title = title;
-    x.onclick = fn; rail.appendChild(x); return x;
-  };
-  if (b.kind === 'code') btn('▶', 'run this cell (mod+enter)', () => cvRun(b.id));
-  if (b.kind === 'ask') btn('▶', 'ask', () => cvAskRun(b.id));
-  if (b.kind === 'brick' || b.kind === 'sim') btn('⚙', 'ports and wiring', () => cvWire(b.id));
-  if (b.kind === 'text') btn('</>', 'show the markdown (mod+e)', () => cvRawToggle(b));
-  btn('␡', 'remove this brick', () => cvOp({op: 'remove', id: b.id}));
-  return rail;
 }
 
 /* Prose a person edits in place. It stays rendered while you work in it, and goes back to markdown
@@ -117,8 +105,12 @@ function cvText(b) {
   const el = document.createElement('div');
   el.className = 'cv-prose'; el.contentEditable = 'true'; el.spellcheck = false;
   el.dataset.id = b.id;
-  el.innerHTML = cvMd(b.body) || '<p><br></p>';
-  el.onfocus = () => { cv.focus = b.id; };
+  el.dataset.placeholder = "Write, or press '/' for blocks";
+  el.innerHTML = cvMd(b.body) || '';
+  const blank = () => el.classList.toggle('blank', !el.textContent.trim());
+  el.oninput = () => { blank(); cv.edited.add(b.id); cv.dirty = true; };
+  el.onfocus = () => { cv.focus = b.id; blank(); };
+  blank();
   el.onblur = () => {
     const body = el.classList.contains('raw') ? el.innerText.trimEnd() : cvHtmlToMd(el);
     if (body !== b.body) { b.body = body; cv.edited.delete(b.id); cvOp({op: 'replace', id: b.id, body}, false); }
@@ -165,10 +157,64 @@ function cvHtmlToMd(root) {
 }
 
 function cvTextKeys(ev, b, el) {
+  if (cvMenuKey(ev)) return;
+  const mod = ev.metaKey || ev.ctrlKey;
   if (ev.key === '/' && !el.textContent.trim()) { setTimeout(() => cvSlash(b.id, el), 0); return; }
-  if (ev.key === 'e' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); cvRawToggle(b); return; }
-  if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); el.blur(); return; }
-  if (ev.key === 'Escape') el.blur();
+  if (mod && 'bie'.includes(ev.key)) { ev.preventDefault(); return cvMark(ev.key); }
+  if (mod && ev.key === 'Enter') { ev.preventDefault(); el.blur(); return; }
+  //: Enter splits the block at the caret, the way every editor of this shape does. Shift+Enter is
+  //: the line break inside one.
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); return cvSplit(b, el); }
+  if (ev.key === 'Backspace' && !el.textContent.trim() && cv.canvas.bricks.length > 1) {
+    ev.preventDefault(); cvFocusNear(b.id, -1); cvOp({op: 'remove', id: b.id});
+    return;
+  }
+  if (ev.key === 'Escape') { el.blur(); cvPick(b.id); }
+}
+
+//: Split at the caret by cutting the rendered HTML in two and reading each half back as markdown.
+//: The caret is a position in what is on the screen; the file wants two bodies.
+async function cvSplit(b, el) {
+  const sel = getSelection();
+  if (!sel.rangeCount) return;
+  const at = sel.getRangeAt(0);
+  const cut = side => {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    side === 'before' ? r.setEnd(at.startContainer, at.startOffset) : r.setStart(at.endContainer, at.endOffset);
+    const box = document.createElement('div');
+    box.appendChild(r.cloneContents());
+    return cvHtmlToMd(box);
+  };
+  const head = cut('before'), tail = cut('after');
+  el.blur();
+  b.body = head;
+  cv.edited.delete(b.id);
+  await cvOp({op: 'replace', id: b.id, body: head}, false);
+  cvLandOn(await cvOp({op: 'insert', after: b.id, kind: 'text', body: tail}));
+}
+
+function cvAtEnd(el) {
+  const s = getSelection();
+  if (!s.rangeCount || !s.isCollapsed) return false;
+  const r = s.getRangeAt(0).cloneRange();
+  r.selectNodeContents(el); r.setStart(s.getRangeAt(0).endContainer, s.getRangeAt(0).endOffset);
+  return !r.toString().trim();
+}
+
+function cvFocusNear(id, by) {
+  const at = cv.canvas.bricks.findIndex(b => b.id === id);
+  const next = cv.canvas.bricks[at + by] || cv.canvas.bricks[at + (by > 0 ? -1 : 1)];
+  if (!next) return;
+  const el = $$(`.cv-prose[data-id="${next.id}"]`);
+  if (el) { el.focus(); cvCaretEnd(el); } else cvPick(next.id);
+}
+
+//: A picked block is the keyboard's block when nothing is being typed into.
+function cvPick(id) {
+  $all('#cv-doc .picked').forEach(e => e.classList.remove('picked'));
+  cv.picked = id || null;
+  if (id) brickEl(id)?.classList.add('picked');
 }
 
 function cvProse(b) {
@@ -271,7 +317,7 @@ function cvFrameSrc(b) {
   const src = (b.attrs || {}).src || '';
   if (src.startsWith('http')) return src;
   const name = src.split(':').pop();
-  return `${cv.host}/bricks/f/${name}?frame=${b.id}`;
+  return `${cv.host}/bricks/f/${name}?frame=${b.id}&theme=${cv.theme}`;
 }
 
 function cvComponent(b) {
@@ -297,7 +343,8 @@ function cvSim(b) {
 //: brick gets, and nothing else: no parent DOM, no fetch to this origin.
 function cvSketchDoc(b) {
   return `<!doctype html><meta charset="utf-8"><style>
-  body{margin:0;font:14px/1.5 ui-sans-serif,system-ui,sans-serif;color:#1a1c22}
+  body{margin:0;font:14px/1.5 ui-sans-serif,system-ui,sans-serif;color:${cv.theme === 'dark' ? '#e8eaf0' : '#1c1d21'};
+       background:${cv.theme === 'dark' ? '#191b21' : '#fff'}}
   input[type=range]{width:100%} .row{display:flex;gap:10px;align-items:center;margin:6px 0}
   </style><body><div id="root"></div><script>
   let props = ${JSON.stringify(cv.ports[b.id] ? Object.fromEntries(Object.entries(cv.ports[b.id]).map(([k, v]) => [k, v.value])) : {})};
@@ -398,12 +445,18 @@ async function cvFlush() {
   }
 }
 
+const SHAPE_KEEPING = new Set(['replace', 'bind', 'kind', 'replace_selection']);
+
 async function cvOp(op, redraw = true) {
   if (op.op !== 'replace') await cvFlush();
   const r = await api('/canvas/op', {path: cv.path, op});
   if (!r.ok) return r;
   cv.ports = r.ports || cv.ports;
-  redraw ? cvSync(r.canvas) : (cv.canvas = r.canvas);       // `cvSync` needs the old document to diff against
+  if (redraw) cvSync(r.canvas);
+  //: Without a redraw, only the brick that changed is taken. Replacing the whole document would
+  //: leave the next `cvSync` diffing the new document against itself, and nothing would repaint.
+  else if (r.brick && SHAPE_KEEPING.has(op.op)) Object.assign(cvBrick(r.brick.id) || {}, r.brick);
+  else cv.canvas = r.canvas;
   cv.dirty = true;
   return r;
 }

@@ -143,15 +143,69 @@ carried. It goes into the next turn's context, which is why a follow-up needs no
 
 ![Steering a turn that is already running](screenshots/canvas-steer.png)
 
+## Canvas mode
+
+What the agent knows about a canvas is a skill, and Leela owns it. `leela/skills/canvas.py` is the
+body: the file format, the dataflow, what a component emits, the eight tools, and how to work in one.
+
+It is not a `pyskills` entry point. A skill that is only true inside a canvas should not reach every
+agent that has Leela installed. `leela.skills.push(agent, 'canvas')` puts it on the agent's registry
+when a canvas opens, `drop` takes it off when the canvas closes, and the eight tools go on and come
+off with it. `Agentic.open` and `Agentic.close` are those two calls.
+
+Ramabana holds none of this. `Agent.skills` is `discover(..., extra=registry.skills)`, so a pushed
+skill reaches the skill index and `read_skill` with no change to the agent core. The proposal on
+`ramabana`'s branch is for the tools to become a shalya capability group; the skill stays Leela's
+either way.
+
+The skill is also the stand-in's source. A question about the canvas is answered out of the section
+of the skill that covers it, so there is one text to keep right rather than two.
+
 ## The model
 
 `helper_for(agent)` returns `Agentic` where a model is configured and `Scripted` where none is.
 `Scripted` is deterministic: it reads the same `Ask`, calls the same tools, and emits the same
-events. It matches intents by pattern. It has no judgement. It exists so the canvas can be driven,
-tested and demonstrated with no key and no network.
+events. It has no judgement, and it has no facts: a question about a word is answered by finding
+where this document already explains it, and a word the document never explains gets no answer.
+Which component to embed is scored against what the host publishes, not against a table kept here.
 
-`Agentic` binds the eight tools to a ramabana `Agent` and runs the turn. It is not exercised in the
-spike, because the spike has no model.
+`Agentic` runs the real turn. It is not exercised in the spike, because the spike has no model.
+
+## The editor
+
+The document is edited in place. Prose stays rendered while you work in it and goes back to markdown
+on the way out, so selecting a sentence to ask about it does not change what the sentence looks like.
+
+| where | what |
+|---|---|
+| gutter | `+` inserts under the block, the grip drags it, clicking the grip opens what else it can do |
+| `/` on an empty line | the block menu, grouped, filtered as you type, driven by the keyboard |
+| a text selection | bold, italic, code, link, and Ask AI, which is the inline turn |
+| `Enter` | splits the block at the caret. `shift+Enter` is a line break inside one |
+| `Escape` | leaves the text and picks the block. Then arrows move, `Enter` enters, `Backspace` deletes |
+| `mod+k` | ask, anchored wherever you are |
+| `mod+j` | the helper margin |
+| `mod+b`, `mod+i`, `mod+e` | the three marks, applied to the markdown rather than to the HTML |
+| `mod+enter` | run this cell. `mod+shift+enter` runs the document in dependency order |
+
+![The gutter, on hover](screenshots/canvas-gutter.png)
+
+![The block menu](screenshots/canvas-blockmenu.png)
+
+![The block menu on `/`, filtered as you type](screenshots/canvas-slash.png)
+
+![The format bar, with the helper in it](screenshots/canvas-format.png)
+
+Both themes, and every embedded component follows the one the document is in.
+
+![The same document in the dark](screenshots/canvas-dark.png)
+
+Marks are applied to the file, not to the rendered HTML. `document.execCommand('bold')` would put a
+`<b>` in that the markdown writer has to guess about.
+
+The type scale, the token names and the popover shape follow BlockSuite's, so a canvas put beside an
+editor built on it does not read as a different application. Both themes are in `canvas.css`, and
+`test_canvas.py` asserts the dark half names no token the light half lacks.
 
 ## Modes
 
@@ -217,3 +271,6 @@ A PDF, a sketch and a chart in the same document.
 - A canvas is a page, not a tab. Opening one inside the IDE means a tab kind, a mount, and a place
   in the command palette.
 - `Agentic` has never run.
+- Block selection is one block at a time. Dragging a range across several is not there.
+- The markdown writer handles what the renderer can produce and no more. `mod+e` shows the source
+  for a block where that is not enough.
