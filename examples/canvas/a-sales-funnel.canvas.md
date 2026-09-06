@@ -56,8 +56,8 @@ something it reads moved.
 what is cac?
 ```
 
-```canvas quiz id=sf9
+<!--canvas quiz id=sf9-->
 1. Which stage costs the most to fix, and why is it not the one with the fewest deals
 2. What happens to CAC if you double Leads and hold every conversion rate
 3. Why is payback measured against gross margin rather than revenue
-```
+<!--/canvas-->

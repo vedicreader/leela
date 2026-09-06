@@ -18,9 +18,9 @@ __all__ = ['CAPS', 'connect', 'STORE']
 CAPS = ('ai',)
 STORE = Store()
 
-def _settle(o, touched_names):
+def _settle(o, touched_names, skip=()):
     "Rerun what the change made stale, and re-resolve every binding that reads it."
-    return o.runtime.react(o.canvas.bricks, touched_names)
+    return o.runtime.react(o.canvas.bricks, touched_names, skip=skip)
 
 def _ports(o):
     return {b.id: o.runtime.bindings(b) for b in o.canvas if b.binds}
@@ -92,6 +92,17 @@ def connect(app, ctx=None):
         if not r.get('ok'): return fail(r.get('error', 'op failed'))
         return JSONResponse({**r, 'ports': _ports(o), 'canvas': o.canvas.dict()})
 
+    @rt('/canvas/runall')
+    async def canvas_runall(req):
+        "Every code brick, in dependency order. What the button means, and what opening does."
+        d = await req.json()
+        o = STORE.get(d['path'])
+        for id, src in (d.get('sources') or {}).items():
+            b = o.canvas.by_id(id)
+            if b is not None and b.runs: b.body = src
+        runs = o.runtime.run_all(o.canvas.bricks)
+        return JSONResponse({'ok': True, 'runs': runs, 'ports': _ports(o)})
+
     @rt('/canvas/run')
     async def canvas_run(req):
         d = await req.json()
@@ -100,7 +111,9 @@ def connect(app, ctx=None):
         if b is None or not b.runs: return fail('not a code brick')
         if 'source' in d: b.body = d['source']
         r = o.runtime.run(b)
-        return JSONResponse({'ok': True, 'id': b.id, 'run': r, **_settle(o, r['defs']), 'ports': _ports(o)})
+        #: Only the bindings that moved. Handing back every port would post props to every frame,
+        #: and a frame that takes props redraws, which restarts anything animating in it.
+        return JSONResponse({'ok': True, 'id': b.id, 'run': r, **_settle(o, r['defs'], skip=[b.id])})
 
     @rt('/canvas/emit')
     async def canvas_emit(req):
@@ -108,7 +121,7 @@ def connect(app, ctx=None):
         d = await req.json()
         o = STORE.get(d['path'])
         o.runtime.set(d['name'], d['value'])
-        return JSONResponse({'ok': True, 'name': d['name'], **_settle(o, [d['name']]), 'ports': _ports(o)})
+        return JSONResponse({'ok': True, 'name': d['name'], **_settle(o, [d['name']], skip=d.get('from', ''))})
 
     @rt('/canvas/save')
     async def canvas_save(req):
@@ -130,7 +143,7 @@ def connect(app, ctx=None):
         o = STORE.get(d['path'])
         turn = d.get('turn') or 'turn'
         ask = Ask(question=d.get('question', ''), canvas=o.canvas, runtime=o.runtime,
-                  brick_id=d.get('id', ''), selection=d.get('selection', ''),
+                  brick_id=d.get('id', ''), selection=d.get('selection', ''), nth=int(d.get('nth') or 0),
                   trail=list(o.trail), mode=o.canvas.meta.get('mode', 'make'))
         o.remember(ask.question, ask.brick_id, ask.selection)
         helper = helper_for(ctx.ai if ctx is not None and d.get('model') else None)

@@ -3,7 +3,7 @@
 
 const cvTurnState = {id: null, abort: null};
 
-async function cvTurn({id, question, selection, into}) {
+async function cvTurn({id, question, selection, nth = 0, into}) {
   if (!question?.trim()) return;
   const turn = 'T' + Math.random().toString(36).slice(2, 8);
   cvTurnState.id = turn; cvTurnState.abort = new AbortController();
@@ -17,7 +17,7 @@ async function cvTurn({id, question, selection, into}) {
   const steps = $$('.cv-tsteps', card), reply = $$('.cv-treply', card);
   let raw = '';
   try {
-    await cvEvents('/canvas/ask/stream', {path: cv.path, id, question, selection, turn}, (ev, d) => {
+    await cvEvents('/canvas/ask/stream', {path: cv.path, id, question, selection, nth, turn}, (ev, d) => {
       if (ev === 'step') {
         const row = document.createElement('div'); row.className = 'cv-tstep';
         row.innerHTML = `<code>${cvEsc(d.label)}</code><span>${cvEsc(d.detail || '')}</span>`;
@@ -98,6 +98,8 @@ function cvInlineAsk() {
   const sel = getSelection();
   const text = String(sel).trim();
   const host = sel.anchorNode && sel.anchorNode.parentElement?.closest('.cv-brick');
+  //: The same words can appear twice in one brick. Which one was selected is the count before it.
+  const nth = cvOccurrence(host, sel, text);
   const id = host?.dataset.id || cv.focus || (cv.canvas?.bricks.at(-1)?.id ?? '');
   const box = $$('#cv-inline');
   const r = text && sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : (host?.getBoundingClientRect() || {left: 200, bottom: 200});
@@ -112,8 +114,16 @@ function cvInlineAsk() {
     if (ev.key === 'Escape') { box.hidden = true; return; }
     if (ev.key !== 'Enter' || !inp.value.trim()) return;
     const question = inp.value; box.hidden = true;
-    await cvTurn({id, question, selection: text});
+    await cvTurn({id, question, selection: text, nth});
   };
+}
+
+function cvOccurrence(host, sel, text) {
+  if (!host || !text || !sel.rangeCount) return 0;
+  const before = document.createRange();
+  before.selectNodeContents(host);
+  before.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+  return before.toString().split(text).length - 1;
 }
 
 /* === keys === */

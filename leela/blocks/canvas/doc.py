@@ -18,7 +18,7 @@ FENCE = re.compile(r'^(`{3,})canvas +(\w+)([^\n]*)$')
 TICKS = re.compile(r'^(`{3,})')
 WRAP = re.compile(r'^<!--canvas +(\w+)(.*?)-->$')
 SHUT = '<!--/canvas-->'
-ATTR = re.compile(r'(\w+)=("[^"]*"|\S+)')
+ATTR = re.compile(r'(\w+)=("[^"]*"|\S*)')
 DIRECTIVE = re.compile(r'^(bind|prop) +([\w.]+) *= *(.+)$')
 FRONT = re.compile(r'\A---\n(.*?)\n---\n', re.S)
 
@@ -67,7 +67,13 @@ def _attrs(s):
     return {k: v.strip('"') for k, v in ATTR.findall(s or '')}
 
 def _attrstr(d):
-    return ''.join(f' {k}={v}' if re.fullmatch(r'[\w./:-]+', str(v)) else f' {k}="{v}"' for k, v in d.items() if v not in (None, ''))
+    "Attributes as they are written. An empty value is kept: a reply with no `of` still has one."
+    out = []
+    for k, v in d.items():
+        if v is None: continue
+        v = str(v).replace('"', "'")                       # the format has no escape, so a quote becomes one
+        out.append(f' {k}={v}' if v and re.fullmatch(r'[\w./:-]+', v) else f' {k}="{v}"')
+    return ''.join(out)
 
 def _directives(body):
     "Split a brick body into its `bind`/`prop` lines and whatever is left."
@@ -113,22 +119,44 @@ class Brick(Dictable):
         if self.kind == 'text': return self.body.strip() + '\n'
         body = _directive_lines(self.binds, self.props) + (self.body.strip() + '\n' if self.body.strip() else '')
         if self.kind in WRAPPED: return f'<!--canvas {self.kind}{a}-->\n{body}<!--/canvas-->\n'
-        return f'```canvas {self.kind}{a}\n{body}```\n'
+        tick = '`' * max(3, 1 + max((len(m) for m in re.findall(r'`+', body)), default=0))
+        return f'{tick}canvas {self.kind}{a}\n{body}{tick}\n'
 
 def _walk(source):
     try: return ast.parse(source or '')
     except SyntaxError: return None
 
+#: Nodes with a scope of their own. What they bind is theirs, and what they read of the module is
+#: still the module's, so the walk goes into their bodies but not into their bindings.
+SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+COMPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+def _module_body(tree):
+    "Every node that binds at module level: inside `if`, `for`, `try` and `with`, but not inside a `def`."
+    out = []
+    def walk(nodes):
+        for n in nodes:
+            out.append(n)
+            if isinstance(n, SCOPES): continue
+            walk([c for f in n._fields for c in (getattr(n, f) if isinstance(getattr(n, f, None), list) else [getattr(n, f)])
+                  if isinstance(c, ast.stmt)])
+    walk(tree.body)
+    return out
+
 def defs_of(source):
-    "Top-level names a code brick defines."
+    "Names a code brick binds at module level, however it binds them."
     t = _walk(source)
     if t is None: return L()
     out = L()
-    for n in t.body:
+    for n in _module_body(t):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): out.append(n.name)
         elif isinstance(n, ast.Assign): out += L(n.targets).map(_targets).concat()
         elif isinstance(n, (ast.AnnAssign, ast.AugAssign)): out += _targets(n.target)
+        elif isinstance(n, (ast.For, ast.AsyncFor)): out += _targets(n.target)
+        elif isinstance(n, (ast.With, ast.AsyncWith)): out += L(n.items).map(lambda i: _targets(i.optional_vars)).concat()
         elif isinstance(n, (ast.Import, ast.ImportFrom)): out += L(n.names).map(lambda a: (a.asname or a.name).split('.')[0])
+    for n in ast.walk(t):
+        if isinstance(n, ast.NamedExpr): out += _targets(n.target)
     return out.unique()
 
 def _targets(node):
@@ -136,11 +164,21 @@ def _targets(node):
     if isinstance(node, (ast.Tuple, ast.List)): return L(node.elts).map(_targets).concat()
     return L()
 
+def _local(node):
+    "The names a comprehension or a lambda binds for itself."
+    if isinstance(node, COMPS): return set(L(node.generators).map(lambda g: _targets(g.target)).concat())
+    a = node.args
+    return {x.arg for x in [*a.posonlyargs, *a.args, *a.kwonlyargs, *([a.vararg] if a.vararg else []), *([a.kwarg] if a.kwarg else [])]}
+
 def reads_of(source):
-    "Free names an expression or a block of code loads."
+    "Free names an expression or a block of code loads, not counting what it binds for itself."
     t = _walk(source)
     if t is None: return L()
-    return L(ast.walk(t)).filter(lambda n: isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)).map(lambda n: n.id).unique()
+    bound = set()
+    for n in ast.walk(t):
+        if isinstance(n, COMPS + (ast.Lambda,)): bound |= _local(n)
+    return L(ast.walk(t)).filter(lambda n: isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                                 and n.id not in bound).map(lambda n: n.id).unique()
 
 def order(bricks):
     "Runnable bricks in dependency order, falling back to document order on a cycle."
@@ -184,7 +222,7 @@ class Canvas(Dictable):
         b = self.by_id(id)
         if b: [setattr(b, k, v) for k, v in kw.items()]
         return b
-    def reply_to(self, id): return first(b for b in self.bricks if b.kind == 'reply' and b.attrs.get('of') == id)
+    def reply_to(self, id): return first(b for b in self.bricks if b.kind == 'reply' and b.attrs.get('of') == (id or ''))
     @classmethod
     def parse(cls, text, path=''):
         "Read a canvas file: prose becomes text bricks, fences and comment wraps become the rest."

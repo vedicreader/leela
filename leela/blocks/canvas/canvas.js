@@ -1,6 +1,7 @@
 /* The canvas: one document made of bricks, drawn once and repainted a brick at a time.
  * `cv` is the whole client state, the way `lee` is in the IDE. */
-const cv = {path: '', canvas: null, ports: {}, host: '', names: [], files: [], palette: null, focus: null, dirty: false};
+const cv = {path: '', canvas: null, ports: {}, host: '', names: [], files: [], palette: null, focus: null,
+            dirty: false, edited: new Set()};
 const $$ = (sel, root = document) => root.querySelector(sel);
 const $all = (sel, root = document) => [...root.querySelectorAll(sel)];
 const brickEl = id => $$(`.cv-brick[data-id="${id}"]`);
@@ -50,6 +51,7 @@ function cvSync(canvas) {
   now.forEach((b, i) => {
     const before = was.get(b.id), el = brickEl(b.id);
     if (!before || !el) return void cvRepaint(b, i);
+    if (cv.edited.has(b.id)) return;                      // being typed in: the server's copy is the older one
     if (cvSame(before, b)) { if (el.dataset.i !== String(i)) el.dataset.i = i; return; }
     if (cvFrameKind(b) && before.body === b.body && cvSame(before, b, true)) return;   // bindings alone: props, not a reload
     cvRepaint(b, i);
@@ -119,7 +121,7 @@ function cvText(b) {
   el.onfocus = () => { cv.focus = b.id; };
   el.onblur = () => {
     const body = el.classList.contains('raw') ? el.innerText.trimEnd() : cvHtmlToMd(el);
-    if (body !== b.body) { b.body = body; cvOp({op: 'replace', id: b.id, body}, false); }
+    if (body !== b.body) { b.body = body; cv.edited.delete(b.id); cvOp({op: 'replace', id: b.id, body}, false); }
   };
   el.onkeydown = ev => cvTextKeys(ev, b, el);
   return el;
@@ -139,8 +141,9 @@ function cvHtmlToMd(root) {
     if (n.nodeType === 3) return n.nodeValue;
     if (n.nodeType !== 1) return '';
     const kids = [...n.childNodes].map(inline).join('');
+    if (n.tagName === 'IMG') return `![${n.getAttribute('alt') || ''}](${n.getAttribute('src') || ''})`;
     return {CODE: `\`${kids}\``, STRONG: `**${kids}**`, B: `**${kids}**`, EM: `*${kids}*`, I: `*${kids}*`,
-            A: `[${kids}](${n.getAttribute('href') || ''})`, BR: '\n'}[n.tagName] ?? kids;
+            A: `[${kids}](${n.getAttribute('href') || ''})`, BR: '  \n'}[n.tagName] ?? kids;
   };
   const out = [];
   for (const n of root.childNodes) {
@@ -152,6 +155,10 @@ function cvHtmlToMd(root) {
     else if (t === 'OL') out.push([...n.children].map((li, i) => `${i + 1}. ` + inline(li).trim()).join('\n'));
     else if (t === 'BLOCKQUOTE') out.push('> ' + body);
     else if (t === 'HR') out.push('---');
+    else if (t === 'PRE') {
+      const lang = (n.querySelector('code')?.className || '').replace('language-', '');
+      out.push('```' + lang + '\n' + (n.textContent || '').replace(/\n$/, '') + '\n```');
+    }
     else if (body) out.push(body);
   }
   return out.join('\n\n');
@@ -202,7 +209,7 @@ function cvCode(b) {
   const ta = document.createElement('textarea');
   ta.className = 'cv-src'; ta.value = b.body; ta.spellcheck = false; ta.rows = 1;
   const grow = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
-  ta.oninput = () => { b.body = ta.value; grow(); cv.dirty = true; };
+  ta.oninput = () => { b.body = ta.value; grow(); cv.dirty = true; cv.edited.add(b.id); };
   ta.onfocus = () => { cv.focus = b.id; };
   ta.onkeydown = ev => {
     if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); cvRun(b.id); }
@@ -249,8 +256,13 @@ function cvSettle(r) {
 }
 
 async function cvRunAll() {
-  for (const b of cv.canvas.bricks) if (b.kind === 'code') await cvRun(b.id);
-  cvStatus('whole document run', 'ok');
+  await cvFlush();
+  const sources = Object.fromEntries(cv.canvas.bricks.filter(b => b.kind === 'code').map(b => [b.id, b.body]));
+  const r = await api('/canvas/runall', {path: cv.path, sources});
+  if (!r.ok) return;
+  for (const [id, run] of Object.entries(r.runs)) cvOutputs(id, run);
+  cv.ports = {...cv.ports, ...r.ports}; cvApplyPorts(r.ports);
+  cvStatus(`${Object.keys(r.runs).length} cells run in dependency order`, 'ok');
 }
 
 /* === embedded components === */
@@ -337,14 +349,14 @@ function cvApplyPorts(ports) {
 window.addEventListener('message', async ev => {
   const d = ev.data || {}; if (!d.type?.startsWith('brick:')) return;
   const f = [...document.querySelectorAll('#cv-doc iframe')].find(x => x.contentWindow === ev.source);
-  const id = d.id || f?.dataset.id; if (!id) return;
+  const id = f?.dataset.id || d.id; if (!id) return;       // the window that sent it, not the id it claims
   if (d.type === 'brick:height' && f) f.style.height = Math.max(80, d.px) + 'px';
   //: A frame that has only just loaded missed the props sent when the document was drawn.
   if (d.type === 'brick:ready' && cv.ports[id]) cvApplyPorts({[id]: cv.ports[id]});
   if (d.type === 'brick:emit') {
     const b = cvBrick(id); if (!b) return;
     const name = (b.attrs || {})['emit_' + d.port] || (b.attrs || {}).emit || d.port;
-    const r = await api('/canvas/emit', {path: cv.path, name, value: d.value});
+    const r = await api('/canvas/emit', {path: cv.path, name, value: d.value, from: id});
     if (r.ok) { cvSettle(r); cvStatus(`${name} ← ${JSON.stringify(d.value).slice(0, 40)}`, 'ok'); cvNames(); }
   }
 });
@@ -356,7 +368,7 @@ function cvAsk(b) {
   const ta = document.createElement('textarea');
   ta.className = 'cv-question'; ta.value = b.body; ta.rows = 1; ta.placeholder = 'ask the document…';
   const grow = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
-  ta.oninput = () => { b.body = ta.value; grow(); };
+  ta.oninput = () => { b.body = ta.value; grow(); cv.dirty = true; cv.edited.add(b.id); };
   ta.onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); cvAskRun(b.id); } };
   ta.onfocus = () => { cv.focus = b.id; };
   box.appendChild(ta);
@@ -374,7 +386,20 @@ async function cvAskRun(id, selection = '') {
 
 /* === generic ops === */
 
+//: What is typed lives on the brick object until something sends it. Every path that takes the
+//: document back from the server flushes first, or the reply overwrites the typing.
+async function cvFlush() {
+  if (document.activeElement?.blur) document.activeElement.blur();
+  const dirty = [...cv.edited];
+  cv.edited.clear();
+  for (const id of dirty) {
+    const b = cvBrick(id);
+    if (b) await api('/canvas/op', {path: cv.path, op: {op: 'replace', id, body: b.body}});
+  }
+}
+
 async function cvOp(op, redraw = true) {
+  if (op.op !== 'replace') await cvFlush();
   const r = await api('/canvas/op', {path: cv.path, op});
   if (!r.ok) return r;
   cv.ports = r.ports || cv.ports;
@@ -384,6 +409,7 @@ async function cvOp(op, redraw = true) {
 }
 
 async function cvSave() {
+  await cvFlush();
   for (const b of cv.canvas.bricks) if (b.kind === 'code' || b.kind === 'ask') await cvOp({op: 'replace', id: b.id, body: b.body}, false);
   const r = await api('/canvas/save', {path: cv.path});
   if (r.ok) { cv.dirty = false; cvStatus(`saved · ${r.bytes} bytes`, 'ok'); }

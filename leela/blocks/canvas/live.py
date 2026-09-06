@@ -82,10 +82,11 @@ class Runtime:
         "Every code brick in dependency order. What a canvas does when it opens."
         return {b.id: self.run(b) for b in order(bricks)}
 
-    def react(self, bricks, names):
-        "Rerun what depends on `names` and re-resolve every binding it touched."
+    def react(self, bricks, names, skip=()):
+        "Rerun what depends on `names` and re-resolve every binding it touched. `skip` has just run."
         runs, ports = {}, {}
         for b in downstream(bricks, names):
+            if b.id in skip: continue
             if b.runs: runs[b.id] = self.run(b)
             if b.binds: ports[b.id] = self.bindings(b)
         return dict(runs=runs, ports=ports)

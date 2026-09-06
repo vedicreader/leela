@@ -66,6 +66,7 @@ class Ask:
     runtime: object
     brick_id: str = ''
     selection: str = ''
+    nth: int = 0
     trail: list = field(default_factory=list)
     mode: str = 'make'
     def near(self):
@@ -130,7 +131,7 @@ class Scripted(Helper):
     def _rewrite(self, ask, q, low):
         text = _bulletise(ask.selection) if 'bullet' in low else _tighten(ask.selection)
         yield 'step', {'id': 'rw', 'label': 'canvas_replace', 'detail': f'{len(ask.selection)} chars in {ask.brick_id}'}
-        yield 'op', {'op': 'replace_selection', 'id': ask.brick_id, 'was': ask.selection, 'text': text}
+        yield 'op', {'op': 'replace_selection', 'id': ask.brick_id, 'was': ask.selection, 'nth': ask.nth, 'text': text}
         yield 'chunk', {'text': 'Rewritten in place. The original is one undo away.'}
 
     def _is_help(self, low, ask): return _topic(low, HELP) and any(w in low for w in ('what', 'how', 'why', 'help', '?'))

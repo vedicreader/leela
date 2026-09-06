@@ -70,27 +70,34 @@ function cvMenu(items, x, y, pick) {
 
 function cvSlash(id, el) {
   const r = el.getBoundingClientRect();
+  const was = cvBrick(id)?.body ?? '';
+  const undo = async () => { el.textContent = was; await cvOp({op: 'replace', id, body: was}, true); };
   cvMenu(SLASH, r.left, r.bottom + 6, async it => {
     el.textContent = ''; el.blur();
     await cvOp({op: 'replace', id, body: ''}, false);        // the `/` that opened this menu is not prose
-    if (it.palette) return cvPalette(id);
-    let v = null;
-    if (it.ask) { v = prompt(it.ask); if (!v) return; }
-    await cvOp({op: 'insert', after: id, ...it.make(v)});
-    await cvOp({op: 'remove', id});
+    try {
+      if (it.palette) return await cvPalette(id, undo);
+      let v = null;
+      if (it.ask) { v = prompt(it.ask); if (!v) return await undo(); }
+      await cvOp({op: 'insert', after: id, ...it.make(v)});
+      await cvOp({op: 'remove', id});
+    } catch (e) { cvStatus(String(e), 'bad'); await undo(); }
   });
 }
 
 /* === the palette: what the component host publishes === */
 
-async function cvPalette(after) {
+async function cvPalette(after, undo) {
   if (!cv.palette) cv.palette = await (await fetch('/canvas/palette')).json();
   const items = (cv.palette.bricks || []).map(b => ({label: b.title, hint: `${b.src} · in ${b.ports.map(p => p.name).join(', ') || '—'}`, b}));
   if (!items.length) return cvStatus('no component host: start lego on 5001', 'bad');
   const anchor = brickEl(after)?.getBoundingClientRect() || {left: 200, bottom: 200};
   cvMenu(items, anchor.left, anchor.bottom + 6, async it => {
     const r = await cvOp({op: 'insert', after, kind: 'brick', attrs: {src: it.b.src}, props: {height: String(it.b.height)}});
-    if (r.ok) { await cvFill(r.brick.id, it.b); await cvOp({op: 'remove', id: after}); }
+    if (!r.ok) return void (undo && await undo());
+    try { await cvFill(r.brick.id, it.b); }
+    catch (e) { cvStatus(String(e), 'bad'); }
+    await cvOp({op: 'remove', id: after});                  // the brick is in either way; the `/` line is not
   });
 }
 

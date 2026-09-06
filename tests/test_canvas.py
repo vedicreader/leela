@@ -271,3 +271,79 @@ def test_a_brick_may_embed_a_file_beside_the_canvas_and_nothing_above_it(client)
     assert client.get('/canvas/file', params={'path': 'assets/brick-ports.pdf'}).status_code == 200
     for bad in ('../../etc/passwd', '/etc/passwd', 'assets/nope.pdf'):
         assert client.get('/canvas/file', params={'path': bad}).status_code == 404
+
+@pytest.mark.parametrize('path', sorted(EXAMPLES.glob('*.canvas.md')), ids=lambda p: p.name)
+def test_an_example_on_disk_is_already_what_the_writer_would_write(path):
+    "Opening and saving a shipped canvas must not produce a diff."
+    assert Canvas.load(path).md() == path.read_text()
+
+def test_a_loop_or_a_context_manager_binds_a_name_like_anything_else():
+    assert list(defs_of('for i in range(3): pass')) == ['i']
+    assert list(defs_of('with open("f") as fh: pass')) == ['fh']
+    assert list(defs_of('if (n := 5) > 1: pass')) == ['n']
+    assert list(defs_of('def f():\n  hidden = 1\n  return hidden')) == ['f']
+
+def test_a_comprehension_target_is_not_a_name_the_brick_reads():
+    assert list(reads_of('[q for q in range(3)]')) == ['range']
+    assert list(reads_of('sum(v for v in rows)')) == ['sum', 'rows']
+    assert list(reads_of('lambda t: t + base')) == ['base']
+
+def test_a_cell_that_reads_what_it_defines_runs_once_per_click():
+    c = Canvas.parse('```canvas code id=a\nhits = 0\n```\n\n```canvas code id=b\nhits = hits + 1\nhits\n```\n')
+    r = Runtime(); r.run_all(c.bricks)
+    assert r.ns['hits'] == 1
+    out = apply_op(c, r, {'op': 'run', 'id': 'b'})
+    assert r.ns['hits'] == 2 and out['run']['outputs'][-1]['json'] == 2
+
+def test_a_selection_that_cannot_be_found_changes_nothing():
+    c = Canvas.parse('```canvas note id=n\nOne sentence. And a second.\n```\n')
+    r = apply_op(c, Runtime(), {'op': 'replace_selection', 'id': 'n', 'was': 'not in here', 'text': 'X'})
+    assert r['ok'] is False and c.by_id('n').body == 'One sentence. And a second.'
+
+def test_a_selection_taken_from_rendered_prose_finds_its_markdown():
+    "The selection is what was on the screen; the body still has the asterisks."
+    c = Canvas.parse('```canvas note id=n\nOne **bold** sentence. And a second sentence here.\n```\n')
+    r = apply_op(c, Runtime(), {'op': 'replace_selection', 'id': 'n',
+                                'was': 'One bold sentence.', 'text': 'A short one.'})
+    assert r['ok'] and c.by_id('n').body == 'A short one. And a second sentence here.'
+
+def test_a_code_brick_holding_a_fence_is_written_with_a_longer_one():
+    b = Brick(kind='code', id='c', body='x = """\n```\ninner\n```\n"""\n')
+    c = Canvas(bricks=[b])
+    assert c.md().startswith('````canvas code id=c')
+    assert Canvas.parse(c.md()).by_id('c').body == b.body
+
+def test_an_empty_attribute_survives_the_file():
+    "A reply written from the margin has no anchor, and losing that stacks a second reply on reload."
+    c, r = canvas(), Runtime()
+    apply_op(c, r, {'op': 'answer', 'of': '', 'markdown': 'first'})
+    back = Canvas.parse(c.md())
+    assert back.reply_to('') is not None
+    apply_op(back, r, {'op': 'answer', 'of': '', 'markdown': 'second'})
+    assert len([b for b in back if b.kind == 'reply']) == 1
+
+def test_code_the_helper_inserts_runs_where_it_lands():
+    c, r = Canvas.parse(''), Runtime()
+    out = apply_op(c, r, {'op': 'insert', 'kind': 'code', 'body': 'fresh = 41 + 1'})
+    assert out['run']['ok'] and r.ns['fresh'] == 42
+
+def test_a_repeated_phrase_is_rewritten_where_it_was_selected():
+    for nth, want in [(0, 'ZZZ beta. gamma. alpha beta.'), (1, 'alpha beta. gamma. ZZZ beta.')]:
+        c = Canvas.parse('```canvas note id=n\nalpha beta. gamma. alpha beta.\n```\n')
+        apply_op(c, Runtime(), {'op': 'replace_selection', 'id': 'n', 'was': 'alpha', 'nth': nth, 'text': 'ZZZ'})
+        assert c.by_id('n').body == want
+
+def test_running_a_cell_settles_only_what_reads_it(client):
+    "Handing back every port would post props to every frame, and a frame that takes props redraws."
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    r = client.post('/canvas/run', json={'path': p, 'id': 'sf1'}).json()
+    assert set(r['runs']) == {'sf3'} and set(r['ports']) == {'sf2', 'sf4', 'sf5', 'sf6'}
+    r2 = client.post('/canvas/run', json={'path': p, 'id': 'sf3'}).json()
+    assert 'sf3' not in r2['runs'] and 'sf2' not in r2['ports']
+
+def test_run_all_uses_dependency_order_not_document_order(client):
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    r = client.post('/canvas/runall', json={'path': p, 'sources': {}}).json()
+    assert r['ok'] and all(v['ok'] for v in r['runs'].values())

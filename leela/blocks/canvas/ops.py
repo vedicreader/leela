@@ -1,6 +1,7 @@
 "Every change to a canvas goes through one function, whether a person or the helper asked for it."
 
 from __future__ import annotations
+import re
 from fastcore.all import first, ifnone
 from .doc import Brick, KINDS, brick_id
 
@@ -25,7 +26,11 @@ def _insert(canvas, runtime, op):
     b = Brick(kind=op.get('kind', 'text'), body=op.get('body', ''), attrs=dict(op.get('attrs') or {}),
               binds=dict(op.get('binds') or {}), props=dict(op.get('props') or {}))
     canvas.insert(_at(canvas, op), b)
-    return {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'at': canvas.index(b.id)}
+    out = {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'at': canvas.index(b.id)}
+    if b.runs and b.body.strip() and runtime is not None:   # code arrives to be run, whoever wrote it
+        r = runtime.run(b)
+        out |= {'run': r, **runtime.react(canvas.bricks, r['defs'], skip=[b.id])}
+    return out
 
 def _replace(canvas, runtime, op):
     b = canvas.by_id(op.get('id'))
@@ -68,18 +73,35 @@ def _answer(canvas, runtime, op):
     else: b.body = op.get('markdown', '')
     return {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'at': canvas.index(b.id)}
 
+def _find(body, was, nth=0):
+    """Where the selection sits in the body. It came from rendered prose, so the emphasis markers
+    are gone from it, and the same words may appear more than once: `nth` says which one."""
+    hits = [(m.start(), len(m.group())) for m in re.finditer(re.escape(was), body)]
+    if not hits:
+        plain = re.sub(r'[*_`]', '', was)
+        words = [re.escape(w) for w in plain.split()]
+        if not words: return None
+        pat = r'[*_`]*' + r'[\s*_`]+'.join(words) + r'[*_`]*'
+        hits = [(m.start(), len(m.group())) for m in re.finditer(pat, body)]
+    return hits[min(nth, len(hits) - 1)] if hits else None
+
 def _replace_selection(canvas, runtime, op):
+    "Rewrite the selected span, and only that span. A selection that cannot be found changes nothing."
     b = canvas.by_id(op.get('id'))
     if b is None: return {'ok': False, 'error': 'no such brick'}
     was, now = op.get('was') or op.get('selection') or '', op.get('text', '')
-    b.body = b.body.replace(was, now, 1) if was and was in b.body else now
+    if not was: return {'ok': False, 'error': 'nothing was selected'}
+    at = _find(b.body, was, int(op.get('nth') or 0))
+    if at is None: return {'ok': False, 'error': 'that selection is no longer in this brick'}
+    i, n = at
+    b.body = b.body[:i] + now + b.body[i + n:]
     return {'ok': True, 'touched': [b.id], 'brick': b.dict()}
 
 def _run(canvas, runtime, op):
     b = canvas.by_id(op.get('id'))
     if b is None or not b.runs: return {'ok': False, 'error': 'not a code brick'}
     r = runtime.run(b)
-    settle = runtime.react(canvas.bricks, r['defs'])
+    settle = runtime.react(canvas.bricks, r['defs'], skip=[b.id])
     return {'ok': r['ok'], 'touched': [b.id], 'run': r, **settle}
 
 def _values(canvas, runtime, op):

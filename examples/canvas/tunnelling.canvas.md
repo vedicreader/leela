@@ -62,8 +62,8 @@ explain tunnelling
 Sixty Symbols on quantum tunnelling, if you want it said out loud.
 ```
 
-```canvas quiz id=q8
+<!--canvas quiz id=q8-->
 1. Why does doubling the barrier width cost more than doubling its height
 2. What is the packet doing inside the barrier, if it is not oscillating
 3. Where does the reflected part of the packet go
-```
+<!--/canvas-->

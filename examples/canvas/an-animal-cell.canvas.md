@@ -38,8 +38,8 @@ before it is read. Every membrane in the picture is a boundary condition on a re
 explain mitochondrion
 ```
 
-```canvas quiz id=c6
+<!--canvas quiz id=c6-->
 1. Why does messenger RNA exist at all
 2. What would happen to a cell whose lysosomes leaked
 3. Which organelle carries its own genome, and what does that suggest
-```
+<!--/canvas-->
