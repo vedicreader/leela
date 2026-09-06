@@ -32,6 +32,14 @@ An **aside**, still rendered by anything that reads markdown.
 Fenced kinds: `code`, `ask`, `brick`, `sim`, `data`, `pdf`, `video`. Wrapped kinds: `reply`, `note`,
 `quiz`. Anything else in the file is a `text` brick.
 
+The parser is a line scan rather than a pair of regular expressions, because a canvas fence inside a
+longer markdown fence is an example of one and not one. A document about canvases is a canvas.
+Windows line endings read the same as Unix ones. Two bricks cannot share an id: the second is given
+a fresh one on read, because otherwise every op on the first would reach the second in silence.
+
+A `pdf` brick with a relative `src` is a file beside the canvas, served by `/canvas/file`, which
+resolves under the canvas directory and refuses anything above it.
+
 A brick body holds `bind <port> = <expression>` and `prop <key> = <value>` lines. A code brick body
 is the code, kept exactly, and never read for directives.
 
@@ -100,6 +108,10 @@ The ⚙ in a brick's rail opens the wiring panel: every port, its expression, wh
 resolves to, and the names in the namespace to pick from.
 
 ![The wiring panel](screenshots/canvas-wire.png)
+
+The palette is what the host publishes, grouped by the block that owns each component.
+
+![The palette](screenshots/canvas-palette.png)
 
 ## The helper
 
@@ -190,6 +202,10 @@ Recorded against this branch, with the scripted helper and a lego app on 5001.
 | [making-a-block](../examples/canvas/making-a-block.canvas.md) | make | a function, its chart, and a component sketched in the file |
 
 ![The whole of the panchangam canvas](screenshots/canvas-the-traditional-day.png)
+
+A PDF, a sketch and a chart in the same document.
+
+![A PDF open in a canvas](screenshots/canvas-pdf.png)
 
 ## What the spike does not do
 

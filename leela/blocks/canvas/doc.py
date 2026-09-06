@@ -14,13 +14,53 @@ FENCED = ('code', 'ask', 'brick', 'sim', 'data', 'pdf', 'video')
 WRAPPED = ('reply', 'note', 'quiz')
 KINDS = ('text',) + FENCED + WRAPPED
 
-FENCE = re.compile(r'^```canvas +(\w+)([^\n]*)\n(.*?)^```[ \t]*$', re.S | re.M)
-WRAP = re.compile(r'^<!--canvas +(\w+)([^\n]*?)-->\n(.*?)^<!--/canvas-->[ \t]*$', re.S | re.M)
+FENCE = re.compile(r'^(`{3,})canvas +(\w+)([^\n]*)$')
+TICKS = re.compile(r'^(`{3,})')
+WRAP = re.compile(r'^<!--canvas +(\w+)(.*?)-->$')
+SHUT = '<!--/canvas-->'
 ATTR = re.compile(r'(\w+)=("[^"]*"|\S+)')
 DIRECTIVE = re.compile(r'^(bind|prop) +([\w.]+) *= *(.+)$')
 FRONT = re.compile(r'\A---\n(.*?)\n---\n', re.S)
 
 def brick_id(): return uuid.uuid4().hex[:8]
+
+def _shut(tick): return re.compile(r'`{%d,}[ \t]*$' % len(tick))
+
+def _scan(text):
+    """One pass over the lines: `('text', '', body)` for prose and `(kind, attrs, body)` for a brick.
+
+    Line by line rather than by regex because a canvas fence inside a longer markdown fence is an
+    example of one, not one, and a document about canvases is a canvas."""
+    lines, i, prose, out = text.split('\n'), 0, [], []
+    def flush():
+        if ''.join(prose).strip(): out.append(('text', '', '\n'.join(prose).strip()))
+        prose.clear()
+    def upto(j, shut, keep):
+        body = []
+        while j < len(lines) and not shut(lines[j]): body.append(lines[j]); j += 1
+        if keep and j < len(lines): body.append(lines[j])
+        return j, body
+    while i < len(lines):
+        line = lines[i]
+        if (m := FENCE.match(line)):
+            flush()
+            end = _shut(m[1])
+            i, body = upto(i + 1, lambda l: end.match(l), False)
+            out.append((m[2], m[3], '\n'.join(body) + ('\n' if body else '')))
+        elif (m := TICKS.match(line)):                     # a plain fence is prose, and nothing in it is read
+            end = _shut(m[1])
+            prose.append(line)
+            i, body = upto(i + 1, lambda l: end.match(l), True)
+            prose.extend(body)
+        elif (m := WRAP.match(line)):
+            flush()
+            i, body = upto(i + 1, lambda l: l.strip() == SHUT, False)
+            out.append((m[1], m[2], '\n'.join(body) + ('\n' if body else '')))
+        else:
+            prose.append(line); i += 1; continue
+        i += 1
+    flush()
+    return out
 
 def _attrs(s):
     "The `key=value` pairs on a brick's opening line."
@@ -148,22 +188,21 @@ class Canvas(Dictable):
     @classmethod
     def parse(cls, text, path=''):
         "Read a canvas file: prose becomes text bricks, fences and comment wraps become the rest."
-        meta, m = {}, FRONT.match(text or '')
+        text = (text or '').replace('\r\n', '\n').replace('\r', '\n')
+        meta, m = {}, FRONT.match(text)
         if m:
             for line in m[1].splitlines():
                 if ':' in line: k, v = line.split(':', 1); meta[k.strip()] = v.strip()
             text = text[m.end():]
-        bricks, pos = [], 0
-        def prose(s):
-            if s.strip(): bricks.append(Brick(kind='text', body=s.strip()))
-        for m in sorted(L(FENCE.finditer(text)) + L(WRAP.finditer(text)), key=lambda m: m.start()):
-            if m.start() < pos: continue
-            prose(text[pos:m.start()])
-            a = _attrs(m[2])
-            binds, props, body = _directives(m[3]) if m[1] != 'code' else ({}, {}, m[3])
-            bricks.append(Brick(kind=m[1], body=body, id=a.pop('id', None) or brick_id(), attrs=a, binds=binds, props=props))
-            pos = m.end()
-        prose(text[pos:])
+        bricks, seen = [], set()
+        for kind, attrline, body in _scan(text):
+            if kind == 'text': bricks.append(Brick(kind='text', body=body)); continue
+            a = _attrs(attrline)
+            binds, props, body = _directives(body) if kind != 'code' else ({}, {}, body)
+            id = a.pop('id', None)
+            if not id or id in seen: id = brick_id()       # two bricks sharing an id would answer to each other's ops
+            seen.add(id)
+            bricks.append(Brick(kind=kind, body=body, id=id, attrs=a, binds=binds, props=props))
         return cls(bricks=bricks, meta=meta, path=path)
     def md(self):
         "The whole document, as it goes to disk."

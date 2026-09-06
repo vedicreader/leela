@@ -3,8 +3,10 @@
 
 function cvPdf(b) {
   const box = document.createElement('div'); box.className = 'cv-frame cv-pdfbox';
-  const src = (b.attrs || {}).src || '';
-  box.innerHTML = `<iframe src="${cvEsc(src)}#view=FitH" style="height:${(b.props || {}).height || 520}px"></iframe>` +
+  const raw = (b.attrs || {}).src || '';
+  //: A relative src is a file beside the canvas, which only this server will serve.
+  const src = /^(https?:|\/)/.test(raw) ? raw : `/canvas/file?path=${encodeURIComponent(raw)}`;
+  box.innerHTML = `<iframe src="${cvEsc(src)}#view=FitH&toolbar=0" style="height:${(b.props || {}).height || 560}px"></iframe>` +
     `<div class="cv-cap">${cvEsc((b.body || src).trim())}</div>`;
   return box;
 }

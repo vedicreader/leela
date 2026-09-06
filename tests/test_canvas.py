@@ -79,6 +79,32 @@ def test_a_wrapped_brick_stays_readable_to_a_plain_markdown_renderer():
 def test_code_is_kept_exactly_and_never_read_as_directives():
     assert canvas().by_id('c1').body == 'tokens = 1200\ncost = tokens / 1e6 * 3.0\n'
 
+def test_a_canvas_fence_inside_a_longer_fence_is_an_example_of_one():
+    "A document about canvases is a canvas, and its examples must not become bricks."
+    c = Canvas.parse('Text\n\n````md\n```canvas code id=x\n1\n```\n````\n\nMore.\n')
+    assert [b.kind for b in c] == ['text']
+    assert Canvas.parse(c.md()).md() == c.md()
+
+def test_a_plain_code_fence_stays_prose():
+    c = Canvas.parse('Text\n\n```python\nx = 1\n```\n\nMore.\n')
+    assert [b.kind for b in c] == ['text'] and '```python' in c[0].body
+
+def test_windows_line_endings_read_as_bricks_not_as_one_paragraph():
+    c = Canvas.parse('# Head\r\n\r\n```canvas code id=c\r\nx=1\r\n```\r\n')
+    assert [b.kind for b in c] == ['text', 'code'] and c.by_id('c').body == 'x=1\n'
+
+def test_two_bricks_cannot_share_an_id():
+    "Sharing one would make every op on the first reach the second, silently."
+    c = Canvas.parse('```canvas code id=c\nx=1\n```\n\n```canvas code id=c\ny=2\n```\n')
+    ids = [b.id for b in c]
+    assert len(set(ids)) == 2 and ids[0] == 'c'
+    assert c.by_id(ids[1]).body == 'y=2\n'
+
+def test_an_attribute_value_may_carry_spaces():
+    c = Canvas.parse('```canvas video id=v src="a b c"\ncap\n```\n')
+    assert c.by_id('v').attrs['src'] == 'a b c'
+    assert Canvas.parse(c.md()).md() == c.md()
+
 def test_frontmatter_carries_the_title_and_the_mode():
     c = canvas()
     assert c.title == 'A canvas' and c.meta['mode'] == 'make'
@@ -240,3 +266,8 @@ def test_a_component_writing_a_name_reruns_the_document(client):
 def test_opening_a_canvas_that_is_not_there_says_so(client):
     r = client.get('/canvas/open', params={'path': '/no/such.canvas.md'})
     assert r.status_code == 400 and 'no canvas' in r.json()['error']
+
+def test_a_brick_may_embed_a_file_beside_the_canvas_and_nothing_above_it(client):
+    assert client.get('/canvas/file', params={'path': 'assets/brick-ports.pdf'}).status_code == 200
+    for bad in ('../../etc/passwd', '/etc/passwd', 'assets/nope.pdf'):
+        assert client.get('/canvas/file', params={'path': bad}).status_code == 404

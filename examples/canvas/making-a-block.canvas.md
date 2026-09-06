@@ -19,7 +19,7 @@ def burndown(start, days, done_per_day):
         out.append({'day': (date(2026, 9, 1) + timedelta(days=i)).strftime('%d %b'), 'left': left})
     return out
 
-plan = burndown(180, 12, 14)
+plan = burndown(180, 12, 16)
 labels = [p['day'] for p in plan]
 left = [p['left'] for p in plan]
 ```
@@ -67,6 +67,11 @@ const draw = () => {
 
 ```canvas code id=m7
 done = 1 - left[-1]/180
+```
+
+```canvas pdf id=m9 src=assets/brick-ports.pdf
+The contract a component makes with a document, on one page. It is a file beside this one, and
+`/canvas/file` will not serve anything outside the canvas directory.
 ```
 
 ```canvas ask id=m8

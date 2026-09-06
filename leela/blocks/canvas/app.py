@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio, json, urllib.request
 from fasthtml.common import StreamingResponse, JSONResponse
-from starlette.responses import PlainTextResponse
+from starlette.responses import FileResponse, PlainTextResponse
 from fastcore.all import Path, first
 from ...core.web import fail, sse
 from .doc import Brick, Canvas
@@ -58,6 +58,14 @@ def connect(app, ctx=None):
     def canvas_list(): return JSONResponse({'ok': True, 'files': [str(p) for p in STORE.files()],
                                             'dir': str(canvas_dir())})
 
+    @rt('/canvas/file')
+    def canvas_file(path: str):
+        "A file a brick embeds, resolved under the canvas directory and nowhere else."
+        root = Path(canvas_dir()).resolve()
+        p = (root/path).resolve()
+        if not str(p).startswith(str(root)) or not p.is_file(): return fail('not under the canvas directory', 404)
+        return FileResponse(p)
+
     @rt('/canvas/wire/{name}')
     def canvas_wire(name: str):
         "The component host's wiring for one brick, proxied so the document stays same-origin."
@@ -82,7 +90,6 @@ def connect(app, ctx=None):
         o = STORE.get(d['path'])
         r = apply_op(o.canvas, o.runtime, d['op'])
         if not r.get('ok'): return fail(r.get('error', 'op failed'))
-        names = r.get('run', {}).get('defs') or []
         return JSONResponse({**r, 'ports': _ports(o), 'canvas': o.canvas.dict()})
 
     @rt('/canvas/run')
