@@ -1,9 +1,4 @@
-"""A unit of change: the goal it serves, the tasks under it, the prose, the code, and the diff.
-
-A region groups bricks for reading. A bundle claims a region as one change, so the boundary on
-the canvas is the thing a reviewer opens, the thing a pull request is cut from, and the thing the
-coverage check holds a diff against.
-"""
+"A unit of change: its goal, its tasks, its prose, its code and its diff."
 
 from __future__ import annotations
 import re
@@ -38,11 +33,7 @@ class Bundle:
         return _list(self.brick.attrs.get('refs'))
     @property
     def members(self):
-        """Bricks in this change: its own region, plus anything `covers=` names by id or by heading.
-
-        A goal is never a member. It is what the change serves, and counting it in would make the
-        value view report a goal as part of the work.
-        """
+        "Bricks in this change: its region, plus what `covers=` names. Never the goal."
         want = {self.brick.region} | set(_list(self.brick.attrs.get('covers')))
         return L(b for b in self.doc.bricks
                  if b.id != self.id and not b.heading and b.kind != 'goal'
@@ -50,11 +41,7 @@ class Bundle:
     def of(self, *kinds): return self.members.filter(lambda b: b.kind in set(kinds))
     @property
     def paths(self):
-        """Files this change owns: what its code bricks export, plus whatever `paths=` declares.
-
-        Derived first. A code brick marked `#|export` is the change, so the file it writes is not
-        something anyone should have to also list by hand.
-        """
+        "Files this change owns: what its code exports, then what `paths=` declares."
         mine = {b.id for b in self.of('code')}
         one = Doc(bricks=[b for b in self.doc.bricks if b.id in mine], meta=self.doc.meta)
         return sorted(set(modules(one)) | set(_list(self.brick.attrs.get('paths'))))
@@ -67,16 +54,14 @@ def bundle_of(doc, bid):
 
 def _matches(claim, path): return fnmatch(path, claim) or path == claim
 
-#: Where a change stands. Read off the document, never a field someone remembered to set.
+#: Where a change stands. Read off the document, never set by hand.
 STATES = ('todo', 'doing', 'blocked', 'done')
 
-def state(b, changed=()):
-    """Where one change stands.
-
-    Derived, because a status anyone has to update by hand is a status that lies. Done needs every
-    task done, and every claimed file moved where a diff says what moved. No diff is no evidence
-    about files, which must not read as evidence against.
-    """
+def state(
+    b,             # the `Bundle`
+    changed=(),    # paths a diff says moved, else no evidence about files
+):
+    "Where one change stands, read off the document."
     st = [t.attrs.get('status', 'todo') for t in b.of('task')]
     hit = {p for c in b.paths for p in changed if _matches(c, p)}
     files_ok = not changed or not b.paths or hit == set(b.paths)
@@ -85,12 +70,11 @@ def state(b, changed=()):
     if 'doing' in st or 'done' in st or hit: return 'doing'
     return 'todo'
 
-def coverage(doc, changed):
-    """What each change claims against what actually moved, and what nobody claimed.
-
-    The check the boundary is for. `unmet` is a claim with no code behind it; `unclaimed` is a
-    changed file no bundle explains, which is the half a reviewer never sees coming.
-    """
+def coverage(
+    doc,        # the document
+    changed,    # paths a diff says moved
+):
+    "What each change claims, what moved, and what nobody claimed."
     changed, rows, claimed = sorted(changed), [], set()
     for b in bundles(doc):
         hit = {p for c in b.paths for p in changed if _matches(c, p)}
@@ -113,11 +97,7 @@ def _reasoning(b):
     return out
 
 def pr(doc, bid, branch=None):
-    """A pull request cut from one change: title, branch, body and the files it touches.
-
-    Returns the payload rather than opening anything. Git is `gheasy`'s and the forge is
-    `pullup`'s; what a document knows is what the change was for.
-    """
+    "A pull request cut from one change. It opens nothing."
     b = first(x for x in bundles(doc) if x.id == bid)
     if b is None: raise KeyError(bid)
     body = []
@@ -141,12 +121,7 @@ def pr(doc, bid, branch=None):
             'goal': b.goal.id if b.goal else ''}
 
 def snip(brick, root='.'):
-    """The code a `snippet` brick cites, read out of the file it names.
-
-    `symbol=` finds a function or a class by name, decorators included, and `Class.method` finds
-    one inside the other. `lines=10-30` takes a range instead. A snippet cites code; it never
-    holds a copy, so the page cannot show something the file no longer says.
-    """
+    "The code a `snippet` brick cites, read out of the file it names."
     path = Path(root)/brick.attrs.get('path', '')
     if not path.is_file(): return ''
     text = path.read_text(encoding='utf-8')
@@ -202,12 +177,13 @@ def _copy(b, **attrs):
     return Brick(kind=b.kind, body=b.body, id=b.id, attrs={**b.attrs, **attrs},
                  binds=dict(b.binds), props={})
 
-def review(doc, bid, diff='', values=None):
-    """The change as a document of its own: the value, the reasoning, the diff, what is attached.
-
-    A review is a canvas, so it draws in both views and a question asked inside it can pin the
-    goal. Generated per request from a diff, laid out on the way out, and never written back.
-    """
+def review(
+    doc,           # the document the change lives in
+    bid,           # which bundle
+    diff='',       # unified diff text
+    values=None,   # `{brick id: output text}` from the live namespace
+):
+    "One change as a document: the value, the reasoning, the diff and the checks."
     b = first(x for x in bundles(doc) if x.id == bid)
     if b is None: raise KeyError(bid)
     files = hunks(diff)
@@ -255,11 +231,7 @@ def review(doc, bid, diff='', values=None):
     return arrange(out, values=values)
 
 def value(doc, changed=()):
-    """Goals, and every change serving each one.
-
-    The view that answers what is going to move the measure. Two negatives are the reason it
-    exists: a change that serves no goal, and a goal nothing is serving.
-    """
+    "Every goal, and every change that serves it."
     from .layout import arrange
     out = Doc(meta={'title': f'Value: {doc.title}'}, path='value.canvas.md')
     served, all_b = {}, bundles(doc)

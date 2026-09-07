@@ -3,6 +3,7 @@ from pata import (Brick, Doc, arrange, body_text, bundle_of, bundles, coverage, 
                   from_ipynb, hunks, modules, order, pr, render, resolve, review, to_ipynb,
                   to_report, upstream, weigh)
 from pata import html_of, snip, state, value
+from pata.explain import capture, drafted, explain, prompt_for, replay
 from pata.context import Spec, strip_work_log
 from fastcore.all import Path, first
 
@@ -275,7 +276,8 @@ def test_a_heading_inside_a_plain_fence_is_an_example_not_a_region():
 def test_a_snippet_cites_a_symbol_out_of_the_file_it_names():
     b = Brick('snippet', 'why', attrs={'path': 'pata/change.py', 'symbol': 'state'})
     code = snip(b, PKG)
-    assert code.startswith('def state(b, changed=()):') and 'return \'todo\'' in code
+    assert code.startswith('def state(') and 'return \'todo\'' in code
+    assert '# paths a diff says moved' in code                   # docments come with it
     m = Brick('snippet', '', attrs={'path': 'pata/change.py', 'symbol': 'Bundle.paths'})
     assert snip(m, PKG).splitlines()[0].strip() == '@property'   # decorators come with it
     assert snip(Brick('snippet', '', attrs={'path': 'nope.py'}), PKG) == ''
@@ -291,3 +293,44 @@ def test_the_literate_page_folds_what_a_phone_cannot_hold():
     page = html_of(r, changed=list(hunks(diff())))
     assert page.count('<details') >= 1 and 'viewport' not in page   # the wrapper adds the meta tag
     assert 'class="dl a"' in page and 'class="dl r"' in page
+
+def test_the_prompt_carries_the_rules_the_goal_the_section_and_the_code():
+    d = procurement()
+    d.add(Brick('snippet', '', id='s1', attrs={'path': 'pata/change.py', 'symbol': 'state'}))
+    p = prompt_for(d, 's1', root=PKG, rules='RULEBOOK')
+    assert 'RULEBOOK' in p and 'ASD-STE100' in p
+    assert 'Increase procurement productivity' in p          # the goal
+    assert 'def state(' in p and 'symbol="state"' in p       # the code, and where it came from
+    assert '<cell id=' in p                                  # the section, through `resolve`
+
+def test_no_writing_rule_is_copied_into_this_package():
+    "The rules are a ramabana pyskill. A prompt that pasted one would be that copy."
+    from pata import explain as E
+    body = ' '.join((PKG/'pata'/f).read_text() for f in ('explain.py', 'explain.md', 'ste.md'))
+    assert 'Kill on sight' not in body and 'Banned words' not in body
+    assert 'write_docs' in E.RULES and 'write_docs' in E.rule_text()
+
+def test_drafting_writes_into_the_document_and_marks_what_it_wrote():
+    d = procurement()
+    d.add(Brick('snippet', '', id='s1', attrs={'path': 'pata/change.py', 'symbol': 'state'}))
+    d.add(Brick('snippet', 'a person wrote this', id='s2',
+                attrs={'path': 'pata/change.py', 'symbol': 'coverage'}))
+    said = []
+    ask = lambda prompt, brick: said.append(brick.id) or f'Two sentences about {brick.id}.'
+    got = explain(d, ask, root=PKG, rules='RULEBOOK')
+    assert said == ['s1'] and [b.id for b in got] == ['s1']   # a written body is left alone
+    assert d['s1'].body == 'Two sentences about s1.' and d['s1'].attrs['wrote'] == 'ai'
+    assert [b.id for b in drafted(d)] == ['s1']
+    assert Doc.parse(d.md())['s1'].attrs['wrote'] == 'ai'     # and it survives the file
+    assert explain(d, ask, root=PKG, rules='R', overwrite=True).attrgot('id') == ['s1', 's2']
+
+def test_capture_and_replay_stand_in_for_a_model_that_is_not_here(tmp_path):
+    d = procurement()
+    d.add(Brick('snippet', '', id='s1', attrs={'path': 'pata/change.py', 'symbol': 'state'}))
+    box = tmp_path/'prompts.json'
+    assert explain(d, capture(box), root=PKG, rules='R') == []       # nothing answered
+    import json
+    assert list(json.loads(box.read_text())) == ['s1']
+    box.write_text(json.dumps({'s1': 'One sentence.'}))
+    assert explain(d, replay(box), root=PKG, rules='R').attrgot('id') == ['s1']
+    assert d['s1'].body == 'One sentence.'

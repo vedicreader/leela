@@ -127,7 +127,21 @@ A heading and the prose under it are one brick, and the page renderer took the h
 
 `review` also changed. It now places the prose that cites a path next to that file's hunks, so a document that explains its files produces a literate diff with no further work. That is the feature the exercise was for.
 
-`tools/make_change_page.py` builds the page. `docs/change.canvas.md` is the source, and `media/pata-change.html` is the output.
+`tools/make_change_page.py` builds the page. `docs/change.canvas.md` is the source, and `media/pata-change.html` is the output. `--prompts FILE` writes the drafting prompts and stops; `--answers FILE` puts a model's answers back.
+
+## Where the prompts live
+
+`lit` draws and `explain` writes. Three places hold the three parts, and the split is the point.
+
+The register lives in ramabana. `write_docs` is a pyskill, and `rule_text` reads it through `shalya.skills.discover`. `CLAUDE.md` says no repository holds a copy of a writing skill, and a prompt with one pasted into it is that copy. So `rule_text` raises when the skill is missing rather than falling back, because a silent fallback puts the wrong register on the page and nobody notices.
+
+The task lives in the package. `explain.md` is the template and `ste.md` states the ASD-STE100 limits for this output. Neither restates `write_docs`. `ste.md` is nine lines, and every one of them is an output constraint rather than a rule about English.
+
+The prose lives in the document. `explain` writes each answer into the brick body and marks it `wrote=ai`. A drafted sentence is therefore in `git diff`, a reviewer can see which sentences a model wrote, and editing one is editing the document. A brick that already has a body is left alone, because a sentence a person wrote is the one worth keeping.
+
+The prompt's context comes from `resolve`, which is the same basket a question in the document would send. One context engine serves the reader and the drafter, so a prompt is inspectable by the panel that already exists.
+
+`ask(prompt, brick)` is the host's. Nothing in `pata` imports a model. Leela passes its own assistant. `capture` and `replay` stand in where no model is reachable: `capture` writes the prompts out, `replay` answers from a file.
 
 ## Getting work back out
 

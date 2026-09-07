@@ -15,8 +15,7 @@ SCOPES = ('none', 'page', 'region', 'upstream', 'doc')
 #: A pin that is not a brick id names something outside the document, `kind:ref`.
 REF_KINDS = ('file', 'vault', 'url', 'var', 'sel')
 
-#: The fold a Ramabana turn appends to a reply. Feeding it forward puts whole tool transcripts in
-#: the next question's context.
+#: The fold a Ramabana turn appends to a reply. `calls` already holds it.
 WORK_LOG = re.compile(r'\n*<details>\s*<summary>\s*what i did[^<]*</summary>[\s\S]*</details>\s*\Z', re.I)
 
 def strip_work_log(text): return WORK_LOG.sub('', str(text or '')).rstrip()
@@ -55,11 +54,7 @@ def spec_of(b):
                 goal=b.attrs.get('goal') != 'off')
 
 def body_text(b, values=None, doc=None):
-    """One brick as the model reads it.
-
-    A canvas keeps no outputs, so a code brick's value comes from the live namespace rather than
-    from the file. `values` is `{brick id: output text}`; without it the code is all there is.
-    """
+    "One brick as the model reads it."
     out = []
     if b.kind == 'goal':
         bits = [f'{k}: {v}' for k, v in b.attrs.items()
@@ -116,12 +111,15 @@ def _ref_item(ref, lookup):
     if isinstance(got, Item): return got
     return Item(ref=ref, kind=ref.split(':', 1)[0], label=ref, text=str(got), why='pin', pinned=True)
 
-def resolve(doc, bid, spec=None, values=None, lookup=None, extra=()):
-    """The exact basket for question `bid`, in the order the model will read it.
-
-    Pure and inspectable: the same list draws the panel and builds the prompt, so what a person
-    toggles is what the model gets. `lookup` resolves a `kind:ref` pin the document does not own.
-    """
+def resolve(
+    doc,             # the document
+    bid,             # which brick asks
+    spec=None,       # the rule, else the one the brick carries
+    values=None,     # `{brick id: output text}` from the live namespace
+    lookup=None,     # `lookup(ref)` for a pin the document does not own
+    extra=(),        # items the host adds, such as live variables
+):
+    "The exact basket for question `bid`, in the order the model reads it."
     b = doc.by_id(bid)
     if b is None: raise KeyError(bid)
     spec = spec or spec_of(b)
@@ -166,12 +164,7 @@ def _fit(items, budget):
     return kept
 
 def render(items, doc=None):
-    """The basket as the markup the model reads.
-
-    `<cell>` with a `compact` attribute, which is Leela's own notebook context shape. Ramabana's
-    `compact_notebook_context` sheds elements matching exactly that when a prompt overflows the
-    window, so a document that renders anything else loses the safety net under the budget.
-    """
+    "The basket as `<cell>` markup, which is Leela’s own notebook context shape."
     out = []
     for it in items:
         if not it.text.strip(): continue

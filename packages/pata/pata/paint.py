@@ -69,12 +69,15 @@ def payload(doc, values=None, changed=()):
 
 def _asset(name): return files(__package__).joinpath(name).read_text(encoding='utf-8')
 
-def paint(doc, path=None, shell='bare', values=None, changed=(), **docs):
-    """Write the prototype to `path`.
-
-    `shell='leela'` draws it inside the IDE it would live in. Each keyword is another document
-    behind its own toggle: `review=` is what one click on a boundary opens, `value=` is the goals.
-    """
+def paint(
+    doc,             # the document
+    path=None,       # where to write the page
+    shell='bare',    # `leela` draws it inside the IDE it would live in
+    values=None,     # `{brick id: output text}` from the live namespace
+    changed=(),      # paths a diff says moved
+    **docs,          # another document per toggle, such as `review=` or `value=`
+):
+    "Write the prototype to `path`."
     d = payload(doc, values, changed)
     for name, other in docs.items():
         if other is not None: d[name] = payload(other, values, changed)

@@ -1,10 +1,4 @@
-"""The document: one markdown file where prose is prose and everything else is a brick.
-
-The file format and the AST dataflow are `claude/dynamic-document-canvas-ohgfud`'s. Reading a
-canvas by scanning its lines, rather than by one regex over the file, is what makes a document
-about canvases parse as a document rather than as the canvas it quotes. What is added here is the
-three brick kinds a plan needs, the heading as a region, and the geometry a second view reads.
-"""
+"The document: one markdown file where prose is prose and the rest is bricks."
 
 from __future__ import annotations
 import ast, re, uuid
@@ -80,11 +74,7 @@ def _scan(text):
     return out
 
 def _prose_parts(text):
-    """Prose split at each heading, so one heading is one region.
-
-    Two headings with only prose between them arrive here as one run. Left whole, the second
-    heading would never start a region. A heading inside a plain fence is an example of one.
-    """
+    "Prose split at each heading, so one heading is one region."
     out, cur, fence = [], [], ''
     for line in (text or '').split('\n'):
         if fence: 
@@ -170,11 +160,7 @@ class Brick:
         try: return float(self.props['w'])
         except (KeyError, TypeError, ValueError): return self.at[2] if self.at else None
     def place(self, x, y, w=W, keep=False):
-        """Put this brick at `x`, `y`.
-
-        Transient by default. A layout is derived and belongs in the view; only a brick a person
-        moved is worth a line in the file.
-        """
+        "Put this brick at `x`, `y`. The layout is transient unless `keep`."
         if keep:
             self.props.update(x=round(x), y=round(y))
             if w: self.props['w'] = round(w)
@@ -184,11 +170,7 @@ class Brick:
     def defs(self): return defs_of(self.body) if self.runs else L()
     @property
     def reads(self):
-        """Names this brick needs.
-
-        Code reads what its AST loads and a bound brick reads what its expressions evaluate. A
-        question reads what it puts in backticks, which is what a person means by writing one.
-        """
+        "Names this brick needs: what its code loads, or what it puts in backticks."
         if self.runs: return reads_of(self.body)
         if self.kind in ('ask', 'reply', 'note'): return L(TICKED.findall(self.body or '')).unique()
         return L(self.binds.values()).map(reads_of).concat().unique()
@@ -301,12 +283,7 @@ def anchor_of(bricks, bid):
     return above.id if above is not None else ''
 
 def upstream(bricks, bid, depth=12):
-    """Every brick `bid` reads from, transitively, in document order.
-
-    Derived from the code, not drawn by hand. A name a brick reads is owned by whichever brick
-    binds it, and a diagram maintained beside the code is a diagram that goes wrong. A question
-    anchors on the brick above it, because "fix that" means that one and everything it reads.
-    """
+    "Every brick `bid` reads from, transitively, in document order."
     bricks = L(bricks)
     owner, seen = _owners(bricks), set()
     want = {bid} | ({a} if (a := anchor_of(bricks, bid)) else set())

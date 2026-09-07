@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 "Render `docs/change.canvas.md` as the literate page. The diff slot takes a real `git diff`."
 
-import subprocess, sys
+import argparse, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent/'packages/pata'))
 from pata import Brick, Doc, coverage, diff_stat, hunks, lit
+from pata.explain import capture, explain, replay
 
 SRC, OUT, SLOT = 'docs/change.canvas.md', 'media/pata-change.html', 'd-slot'
 
@@ -22,9 +23,22 @@ def fill(doc, raw):
     return doc._regions()
 
 if __name__ == '__main__':
-    base = sys.argv[1] if len(sys.argv) > 1 else 'origin/main'
+    a = argparse.ArgumentParser(description=__doc__)
+    a.add_argument('--base', default='origin/main', help='what to diff against for the file list')
+    a.add_argument('--prompts', help='write the drafting prompts here and stop')
+    a.add_argument('--answers', help='fill the snippet bodies from this file of answers')
+    a.add_argument('--overwrite', action='store_true', help='redraft a snippet that has a body')
+    args = a.parse_args()
     doc = fill(Doc.load(SRC), git('diff', 'HEAD~1', 'HEAD', '--', 'packages/pata/pata/change.py'))
-    changed = git('diff', '--name-only', f'{base}...HEAD').split()
+    if args.prompts:
+        explain(doc, capture(args.prompts), root='.', overwrite=True)
+        print(f'prompts for {len(doc.of("snippet", "diff"))} brick(s) -> {args.prompts}')
+        raise SystemExit
+    if args.answers:
+        got = explain(doc, replay(args.answers), root='.', overwrite=args.overwrite)
+        Doc.load(SRC).save()          # keep the source readable before writing over it
+        print(f'{len(got)} brick(s) drafted')
+    changed = git('diff', '--name-only', f'{args.base}...HEAD').split()
     loose = coverage(doc, changed)['unclaimed']
     print(f'{len(changed)} file(s) changed, {len(loose)} claimed by nobody')
     print(lit(doc, OUT, changed=changed, root='.',

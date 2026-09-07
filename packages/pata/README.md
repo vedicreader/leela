@@ -127,6 +127,29 @@ Why this matters: the state is read off the document, never set by hand.
 
 `review` places the prose that cites a path next to that file's hunks, so a document that explains its files gives a literate diff with no extra work.
 
+## Drafting the prose
+
+`lit` draws. `explain` writes. The prose above a snippet is drafted under rules this package does not hold.
+
+`write_docs` is a ramabana pyskill, and `rule_text` reads it from where it is installed through `shalya.skills`. A prompt with a writing skill pasted into it would be a copy of that skill, so `rule_text` raises rather than falling back. A caller without `shalya` passes the rule text through `rules=`.
+
+Two files in the package hold the prompt. `explain.md` is the template. `ste.md` states the ASD-STE100 limits for the output: one idea in one sentence, 20 words at most, present tense, active voice, one word for one meaning.
+
+`prompt_for` fills the template. Its context comes from `resolve`, the same basket a question in the document would send, so the reader and the drafter share one context engine.
+
+```python
+from pata import Doc
+from pata.explain import explain
+
+doc = Doc.load('change.canvas.md')
+explain(doc, ask, root='.')      # `ask(prompt, brick) -> str` is yours
+doc.save()
+```
+
+`explain` writes each answer into the brick and marks it `wrote=ai`. The document stays the record, so `git diff` shows the drafting and a person can edit a sentence and delete the mark. A brick that already has a body is left alone unless `overwrite=True`.
+
+Nothing here imports a model. `capture(path)` writes the prompts out and answers nothing. `replay(path)` answers from a file of `{brick id: sentences}`. Both stand in when no model is reachable.
+
 ## Getting work out
 
 - `to_ipynb` / `from_ipynb`: a document as a notebook, questions in Leela's own `metadata.leela` prompt shape. `from_ipynb` also migrates a notebook that was never a document, and `arrange` gives that import a canvas.

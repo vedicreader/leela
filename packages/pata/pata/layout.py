@@ -33,12 +33,16 @@ def _columns(items, tall):
         h += bh + GAP
     return cols + ([cur] if cur else [])
 
-def arrange(doc, w=W, cols=6, tall=560, force=False, values=None, keep=False):
-    """Place every brick that has no `prop x`, region by region, and fit the regions round them.
-
-    `force` re-places bricks a person had moved, which is what "tidy the canvas" means. `keep`
-    writes the result into the file; without it the layout stays a property of the view.
-    """
+def arrange(
+    doc,           # the document
+    w=W,           # how wide one brick draws
+    cols=6,        # how many brick widths a row of regions may use
+    tall=560,      # how tall one column may grow before it splits
+    force=False,   # re-place bricks a person moved, which is "tidy the canvas"
+    values=None,   # outputs, so a code brick is measured with them
+    keep=False,    # write the layout into the file as `prop x`
+):
+    "Place every brick that has no `prop x`, and fit the regions round them."
     groups, order = {}, []
     for b in doc.bricks:
         if b.region not in order: order.append(b.region)

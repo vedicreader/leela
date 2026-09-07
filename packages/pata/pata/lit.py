@@ -1,8 +1,4 @@
-"""The literate render: one document, one column, readable on a phone.
-
-`paint` draws a canvas for someone working in it. This draws the same document for someone
-reading it on the way to a meeting. No JavaScript, no layout, and every long thing folded.
-"""
+"The literate render: one document, one column, readable on a phone."
 
 from __future__ import annotations
 from dataclasses import replace
@@ -18,7 +14,7 @@ __all__ = ['lit', 'html_of', 'md_html', 'GOAL_KEYS', 'FOLD_LINES']
 
 #: What a goal states beyond the goal itself.
 GOAL_KEYS = ('measure', 'baseline', 'target', 'by')
-#: Longer than this and a snippet or a diff arrives folded. A phone screen holds about 20 lines.
+#: Longer than this and a snippet or a diff arrives folded. A phone holds about 20 lines.
 FOLD_LINES = 22
 
 def md_html(text):
@@ -116,11 +112,7 @@ def _brick(b, doc, changed, root):
     return md_html(b.body)
 
 def _sections(doc):
-    """The document split at its headings, so the page has a contents list and jump targets.
-
-    A heading and the prose under it arrive as one brick. The heading becomes the section title
-    and the rest stays in the section, which is why the body is trimmed rather than dropped.
-    """
+    "The document split at its headings, for the contents and the jump targets."
     out, cur = [], None
     def start(title):
         out.append(cur := {'title': title, 'bricks': []})
@@ -171,7 +163,13 @@ def html_of(doc, changed=(), root='.', subtitle=''):
     foot = (f'<footer>{escape(subtitle)}</footer>' if subtitle else '')
     return head + '<div class="wrap">' + toc + ''.join(x for x in body if x) + foot + '</div>'
 
-def lit(doc, path, changed=(), root='.', subtitle=''):
+def lit(
+    doc,           # the document
+    path,          # where to write the page
+    changed=(),    # paths a diff says moved, for the header chips
+    root='.',      # where a `snippet` brick's `path` is relative to
+    subtitle='',   # the footer line
+):
     "Write the literate page to `path`. One file, no JavaScript, no other requests."
     css = files(__package__).joinpath('lit.css').read_text(encoding='utf-8')
     page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">\n'

@@ -10,8 +10,8 @@ Give Leela one document that holds a goal, its plan, its research, its code and 
 
 <!--canvas bundle id=pata title="pata: the document, the basket, and three views" goal=g
      contributes="all of the review step; none of the run step, which the canvas branch owns"
-     covers="The file,The basket,The wiring,The change,The value,This page,The numbers,Checks"
-     paths=packages/pata/pata/*,packages/pata/*,docs/*.md,media/*
+     covers="The file,The basket,The wiring,The change,The value,The prompts,This page,The numbers,Checks"
+     paths=packages/pata/pata/*,packages/pata/*,docs/*.md,media/*,tools/make_change_page.py
      refs=doc:docs/dynamic-documents.md,file:leela/blocks/nb/nb.py,pkg:mdhtml-->
 A notebook decides what the model reads by position. Every cell above the question goes in. This
 is correct for a script. It is wrong for a plan, because a plan holds four lines of work at once.
@@ -166,6 +166,46 @@ arrives.
 ```canvas snippet id=s-value path=packages/pata/pata/change.py symbol=value
 ```
 
+# The prompts
+
+The prose above each snippet is drafted, not invented by the renderer. `lit` draws. `explain`
+writes.
+
+The writing rules are not in this package. `write_docs` is a ramabana pyskill. `rule_text` reads
+it from where it is installed. Leela's rule is that no repository holds a copy of a writing skill,
+and a prompt with one pasted in would be that copy.
+
+```canvas snippet id=s-rules path=packages/pata/pata/explain.py symbol=rule_text
+The function raises when a skill is missing. It does not fall back to a copy, because a silent
+fallback would put the wrong register on the page. A caller without `shalya` passes the rule text
+through `rules=` instead.
+```
+
+Two files in the package hold the prompt itself. `explain.md` is the template. `ste.md` states the
+ASD-STE100 limits for this output: one idea in one sentence, 20 words at most, present tense,
+active voice, one word for one meaning.
+
+`prompt_for` fills the template. The context comes from `resolve`, which is the same basket a
+question in the document would send. One context engine serves the reader and the drafter.
+
+```canvas snippet id=s-prompt path=packages/pata/pata/explain.py symbol=prompt_for
+```
+
+`explain` writes each answer into the brick and marks it `wrote=ai`. The document stays the
+record, so `git diff` shows the drafting and a person can edit a sentence and delete the mark.
+
+```canvas snippet id=s-explain path=packages/pata/pata/explain.py symbol=explain
+A brick that already has a body is left alone. A sentence a person wrote is the one to keep.
+`overwrite` is the only way past that rule.
+```
+
+`ask(prompt, brick)` is the host's. Nothing here imports a model. Leela passes its own assistant.
+`capture` and `replay` stand in when no model is reachable: `capture` writes the prompts out, and
+`replay` answers from a file.
+
+```canvas snippet id=s-replay path=packages/pata/pata/explain.py symbol=replay
+```
+
 # This page
 
 `review` builds a document from a diff. `lit` draws a document as one column for a phone.
@@ -199,26 +239,28 @@ and the sideways scroll.
 
 | file | lines | holds |
 |---|---|---|
-| `pata/doc.py` | 435 | the file, the bricks, the dataflow |
+| `pata/doc.py` | 412 | the file, the bricks, the dataflow |
 | `pata/proto.js` | 321 | the canvas prototype |
-| `pata/change.py` | 297 | bundle, coverage, pull request, review, value |
-| `tests/test_pata.py` | 254 | 30 tests |
-| `pata/context.py` | 197 | the basket |
+| `tests/test_pata.py` | 336 | 40 tests |
+| `pata/change.py` | 269 | bundle, coverage, pull request, review, value |
+| `pata/context.py` | 190 | the basket |
 | `pata/procurement.canvas.md` | 190 | the worked document |
-| `pata/lit.py` | 183 | this page |
-| `pata/proto.css` | 148 | the canvas style |
-| `pata/export.py` | 133 | notebook, report, modules |
-| `pata/lit.css` | 104 | this page's style |
-| `pata/paint.py` | 91 | the prototype payload |
-| `pata/layout.py` | 65 | where a brick sits |
-| other | 71 | exports, the example, the build file |
+| `pata/lit.py` | 181 | this page |
+| `pata/proto.css` | 154 | the canvas style |
+| `pata/export.py` | 125 | notebook, report, modules |
+| `pata/explain.py` | 108 | the prompts |
+| `pata/lit.css` | 105 | this page's style |
+| `pata/paint.py` | 94 | the prototype payload |
+| `pata/layout.py` | 69 | where a brick sits |
+| `pata/explain.md`, `pata/ste.md` | 40 | the prompt and the STE limits |
+| other | 100 | exports, the example, the build files |
 
 Every file is new. There is no earlier version of most of them to compare against. This is why
 the page shows snippets and not one large diff.
 
 # Checks
 
-30 tests pass. Each test states one rule.
+40 tests pass. Each test states one rule.
 
 Five faults came out of writing the tests and this page.
 
@@ -245,3 +287,7 @@ The document format and the dataflow exist twice. `packages/pata/pata/doc.py` an
 
 Ramabana wraps any context in `<notebook path=...>`. A `.canvas.md` path given to `notebook_cells`
 will fail.
+
+No model answered the prompts in this container. There is no key here. The prose above each
+snippet came from the session that wrote the code, under the same prompt. `capture` wrote the
+prompts out and `replay` would put a model's answers back.

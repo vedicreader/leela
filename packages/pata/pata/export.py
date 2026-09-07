@@ -13,11 +13,7 @@ def _out(values, bid):
     return [{'output_type': 'execute_result', 'data': {'text/plain': t}, 'metadata': {}}] if t else []
 
 def to_ipynb(doc, values=None):
-    """The document as nbformat v4.
-
-    Code bricks are code cells. An `ask` takes Leela's own `metadata.leela` prompt shape with its
-    `reply` folded in, so a document opened as a notebook keeps its questions and their answers.
-    """
+    "The document as nbformat v4."
     cells, skip = [], set()
     for b in doc.bricks:
         if b.id in skip: continue
@@ -105,11 +101,7 @@ def _body(source):
     return ''.join(lines[n:]).strip('\n')
 
 def modules(doc, default=None):
-    """`{relative path: source}` for the code bricks marked `#|export`, in dependency order.
-
-    `#|default_exp pkg.mod` names where an unqualified `#|export` goes. `#|export other.mod`
-    overrides it for one brick. A document with no export directive yields nothing.
-    """
+    "`{relative path: source}` for the code bricks marked `#|export`."
     default = default or doc.meta.get('default_exp') or ''
     for b in doc.of('code'):
         if (d := directives(b.body)).get('default_exp'): default = d['default_exp']
