@@ -432,7 +432,7 @@ one, and two tests in `tests/blocks/test_agent_threads.py` hold each half.
      goal=g3
      contributes="the branch being safe to merge"
      covers="The review,t18,t19,t20,t21"
-     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/live.py,leela/blocks/canvas/store.py,leela/blocks/canvas/md.js,leela/blocks/canvas/canvas.js,leela/blocks/canvas/ui.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/helper.js,leela/blocks/canvas/ops.py,leela/blocks/canvas/canvas.css,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/support.py,leela/blocks/pipelines/pipelines.py,leela/blocks/drive/drive.py,leela/blocks/drive/app.py,leela/blocks/workflows/workflows.py,tests/test_seams.py,uv.lock
+     paths=leela/blocks/canvas/*,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/models.py,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,tests/test_seams.py,tests/test_pipelines.py,tests/test_workflows.py,tests/test_git_folder.py,uv.lock
      refs=doc:docs/canvas.md,pkg:kunda,pkg:pullup-->
 Four faults were critical and six were high. Every route that took a path read, ran or overwrote
 whatever it named. A canvas ran its Python in the web process. A frame had this page's origin, and
@@ -444,6 +444,13 @@ The path gate is one function, `canvas_path`, and every source and destination p
 runs in a kunda kernel now, and only after somebody says it may: opening a document draws it and
 executes nothing. Both frames are sandboxed with `allow-scripts` and no same-origin. The client is
 a committed bundle, `leela/static/lee-canvas.js`, built from the order `ui.FILES` states.
+
+The seams cost the widest change. `test_seams.py` guarded eleven libraries and not kunda or pullup,
+the two Leela composes most, so eight reaches into their private names went uncounted.
+`runtime/support.py` re-exported almost the whole of kunda's support half while `core/envs.py` went
+straight to kunda for three of the same names, so `clean_env` had two spellings. Fifteen call sites
+in ten modules now import from kunda directly, which is why this change reaches blocks that have
+nothing to do with a canvas.
 
 <!--canvas note id=n-timeout-->
 Kunda's `execute(timeout=)` does not return on a busy loop. `while True: pass` sat past two hundred
