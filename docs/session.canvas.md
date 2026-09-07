@@ -432,7 +432,7 @@ one, and two tests in `tests/blocks/test_agent_threads.py` hold each half.
      goal=g3
      contributes="the branch being safe to merge"
      covers="The review,t18,t19,t20,t21"
-     paths=leela/blocks/canvas/*,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/models.py,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,tests/test_seams.py,tests/test_pipelines.py,tests/test_workflows.py,tests/test_git_folder.py,uv.lock
+     paths=leela/blocks/canvas/*,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/models.py,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,tests/test_seams.py,tests/test_pipelines.py,tests/test_workflows.py,tests/test_git_folder.py,tests/test_web_slow.py,tests/test_agent_slow.py,tests/test_kernels_ipymini.py,tests/test_agent.py,uv.lock
      refs=doc:docs/canvas.md,pkg:kunda,pkg:pullup-->
 Four faults were critical and six were high. Every route that took a path read, ran or overwrote
 whatever it named. A canvas ran its Python in the web process. A frame had this page's origin, and
@@ -445,11 +445,11 @@ runs in a kunda kernel now, and only after somebody says it may: opening a docum
 executes nothing. Both frames are sandboxed with `allow-scripts` and no same-origin. The client is
 a committed bundle, `leela/static/lee-canvas.js`, built from the order `ui.FILES` states.
 
-The seams cost the widest change. `test_seams.py` guarded eleven libraries and not kunda or pullup,
-the two Leela composes most, so eight reaches into their private names went uncounted.
-`runtime/support.py` re-exported almost the whole of kunda's support half while `core/envs.py` went
-straight to kunda for three of the same names, so `clean_env` had two spellings. Fifteen call sites
-in ten modules now import from kunda directly, which is why this change reaches blocks that have
+The seams cost the widest change. `test_seams.py` guarded eleven libraries and not kunda or
+pullup, the two Leela composes most. Eight reaches into their private names went uncounted.
+`runtime/support.py` re-exported almost the whole of kunda's support half. `core/envs.py` went
+straight to kunda for three of the same names, so `clean_env` had two spellings. Fifteen call
+sites in ten modules now import from kunda directly. That is why this change reaches blocks with
 nothing to do with a canvas.
 
 <!--canvas note id=n-timeout-->
@@ -486,6 +486,34 @@ Sandbox both frames, and refuse a URL or an attribute that is script.
 <!--canvas task id=t21 status=done owner=me-->
 Ship the client in the wheel, and hold it with a test against a built one.
 <!--/canvas-->
+
+<!--canvas task id=t22 status=done owner=me-->
+Make `pytest -m slow` finish, and fix what running it found.
+<!--/canvas-->
+
+<!--canvas note id=n-e2e-->
+`pytest -m slow` was OOM-killed a third of the way in and reported nothing. Not the tests it
+could never run, and not the ones above them that pass in seconds. Two suites resolved a real local
+model, because its bundle happened to be cached on the machine. The trace reads plainly. No engine
+sat at 290MB. The first took it to 871MB and the second to 3.1GB. Each streaming test after that
+added two to three gigabytes while the Python heap stayed flat, so the growth was native and inside
+the engines. A browser test drives painting and panels, and needs no model at all. The suite now
+runs 80 tests in 4m29s, peaking at 967MB.
+<!--/canvas-->
+
+Five monkeypatches aimed at Leela's re-exports rather than the name the library reads.
+`kunda.pool` imports `Kernel` into its own namespace, so the fakes were ignored. One test failed
+and one hung on a real kernel that never signalled. One assertion expected `read_only` to drop the
+delegate tools by default. shalya moved that to a `block=` the caller passes, and both production
+call sites pass it, so the test was red while the behaviour was right. One test read a notebook out
+of an untracked folder a real kernel had written into the checkout. Three counted the buttons in a
+bar that gained a fourth.
+
+```canvas snippet id=s-ram path=tests/test_agent_slow.py symbol=_ram_mb
+The gate asked whether the bundle was cached and not whether the machine could hold it. One engine
+climbs to 12.2GB and a run that reached 13.4GB died with 3.1GB nominally free, so the number is
+16000 and the comment above it says where that came from.
+```
 
 # The diff
 
