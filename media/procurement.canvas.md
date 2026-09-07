@@ -45,7 +45,7 @@ nobody disputes.
 Where does the 10% most plausibly come from? Use only the three sources here.
 ```
 
-<!--canvas reply id=7df84957 of=q-synth-->
+<!--canvas reply id=16b36542 of=q-synth-->
 Tail spend is the only pool big enough. 34% of POs are under EUR 2,000 and carry a three-person
 approval chain that the audit found nobody ever rejects. Auto-approving that band would take
 roughly a third of PO volume off the buyers without touching the categories where negotiation
@@ -120,7 +120,7 @@ pin s-audit
 What would have gone wrong if `triage` had run in Q3? `caught` says 79%. Check it against the audit.
 ```
 
-<!--canvas reply id=93eb631b of=q-risk-->
+<!--canvas reply id=0d450cba of=q-risk-->
 79% of the tail clears the rule, which is 27% of all POs. Against the Q3 extract that is 14 POs
 the audit flagged for split ordering, all from one supplier. Cap the rule per supplier per month
 and those 14 stay in the chain.
@@ -144,7 +144,7 @@ mute n-cap
 Draft the recommendation for the steering committee. One page, no hedging.
 ```
 
-<!--canvas reply id=b2364aa4 of=q-rec-->
+<!--canvas reply id=86a89a4e of=q-rec-->
 Auto-approve indirect POs under EUR 2,000 from contracted suppliers, capped per supplier per
 month. It removes 27% of PO volume from the approval chain, which the interview evidence puts at
 about 12% of buyer time. Pilot one region for a quarter against the measure Finance agreed.
@@ -155,3 +155,36 @@ Steering committee slot. Waiting on the Finance sign-off in the first task.
 <!--/canvas-->
 
 Open: does the cap belong in the rule or in the ERP workflow?
+
+## Cap the rule
+
+<!--canvas goal id=cycle measure="days from raised to approved, tail POs" baseline=6.2 target=2 by=2026-06-30-->
+Cut the approval cycle for tail POs to under 2 days.
+<!--/canvas-->
+
+<!--canvas bundle id=cap title="Cap the rule per supplier" goal=cycle contributes="the audit finding, and the last of the 10 points" paths=procure/cap.py,tests/test_cap.py-->
+Limits how many auto-approved POs one supplier may raise in a month, which is what the Q3 audit's
+split-ordering finding needs before a pilot.
+<!--/canvas-->
+
+<!--canvas task id=k6 status=blocked owner=me-->
+Decide whether the cap lives in the rule or in the ERP workflow.
+<!--/canvas-->
+
+<!--canvas task id=k7 status=todo owner=me-->
+Write the cap and its test.
+<!--/canvas-->
+
+```canvas ask id=q-cap scope=region budget=8000
+Where should the cap live, and what does each choice cost?
+```
+
+## Buyer dashboard
+
+<!--canvas bundle id=dash title="Buyer workload dashboard" paths=procure/dash.py-->
+A weekly view of POs per buyer, so the measure is visible without asking Finance for an extract.
+<!--/canvas-->
+
+<!--canvas task id=k8 status=doing owner=Priya-->
+Agree the weekly cut with Finance.
+<!--/canvas-->

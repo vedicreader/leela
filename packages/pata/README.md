@@ -104,6 +104,10 @@ Adds `triage`, the rule that lets a contracted supplier's small PO skip the appr
 
 `pr(doc, bundle_id)` returns `{title, branch, body, paths, refs, goal}`. The body carries the goal and its measure, the prose, the tasks with their status, the questions asked inside the change with their answers folded, the attachments and the file list. It returns the payload rather than opening anything: git is `gheasy`'s and the forge is `pullup`'s.
 
+`state(bundle, changed)` is derived rather than set: `blocked` if any task is, `done` when every task is and every claimed file moved, `doing` when some of either has. A status somebody has to remember to update is a status that lies. No diff is no evidence about files, so it does not read as evidence against.
+
+`value(doc, changed)` is the third view: every goal, and every change serving it, with its state and its tally. Two negatives are why it exists, and neither shows up anywhere else. A change serving no goal lands under `Serving no goal`. A goal nothing is serving says so under its own heading.
+
 `review(doc, bundle_id, diff)` builds a second document from a unified diff: the value, the reasoning, one `diff` brick per file, the attachments, the coverage checks, and a question with the goal pinned. A review is a canvas, so it draws in both views and you can ask about the change with the goal already in the basket.
 
 ## Getting work out
@@ -117,12 +121,14 @@ Adds `triage`, the rule that lets a contracted supplier's small PO skip the appr
 `pata.paint` writes a standalone page: both views, the outline, and the context panel.
 
 ```python
-from pata.example import VALUES, procurement
+from pata import hunks, review, value
+from pata.example import VALUES, diff, procurement
 from pata.paint import paint
 
 d = procurement()
-paint(d, 'plan.html', values=VALUES)
-paint(d, 'in-leela.html', shell='leela', values=VALUES)
+changed = list(hunks(diff()))
+paint(d, 'plan.html', values=VALUES, changed=changed,
+      review=review(d, 'triage', diff()), value=value(d, changed))
 ```
 
 ## Tests

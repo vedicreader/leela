@@ -321,6 +321,13 @@ class Doc:
     def title(self): return self.meta.get('title') or Path(self.path).name or 'untitled'
     @property
     def goal(self): return first(self.of('goal'))
+    def goal_for(self, bid):
+        "The goal a brick answers to: its own region's, else the document's. None when there is none."
+        b = self.by_id(bid)
+        if b is not None and b.region:
+            g = first(x for x in self.of('goal') if x.region == b.region and x.id != bid)
+            if g is not None: return g
+        return self.goal
     @property
     def regions(self):
         "Every heading in the document, in order, as `(title, [brick ids])`."

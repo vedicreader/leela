@@ -87,6 +87,20 @@ The files come from the code. A code brick marked `#|export` writes a module, so
 
 `coverage(doc, changed)` holds the claim against the diff, and it is what turns the boundary from decoration into a check. Per bundle it reports `matched` and `unmet`, a claimed file the diff never touched. Across the document it reports `unclaimed`, a changed file no bundle explains. That second one is the half a reviewer never sees coming, and no diff tool can produce it, because only the document knows what the change was supposed to be.
 
+## The value view
+
+`value(doc, changed)` is the third document: every goal, and every change serving it, each with the state it is in and a line saying how much of it has landed.
+
+State is derived. `blocked` if any task in the change is blocked, `done` when every task is done and every claimed file moved, `doing` when some of either has. Nothing here is a field anybody sets, because a status that has to be remembered is a status that lies. One case needed care: no diff is no evidence about files, and it must not read as evidence against, or a finished change reports as untouched work the moment you ask without a diff.
+
+Two negatives are the reason the view exists, and neither appears anywhere else in the document.
+
+A change serving no goal lands under `Serving no goal`. That is work somebody is doing that nothing in the plan asked for, and it is the honest question to put next to a ten-point target.
+
+A goal nothing is serving says so under its own heading. That is the other half, and it is worse, because a goal with no change against it looks exactly like a goal that is going fine until the date arrives.
+
+The tally at the end lists every change by state and every changed file no bundle claims, and the question below it has all the goals pinned.
+
 ## Review is another canvas
 
 `review(doc, bundle_id, diff)` builds a document: the goal, what the change contributes, the prose, the tasks, the questions asked inside the change with their recorded answers, one `diff` brick per file, the attachments, the coverage checks, and a question with the goal already pinned.
@@ -109,6 +123,8 @@ Both are generated from the package, not drawn by hand, so what they show is wha
 
 - `media/pata-procurement.html` is the document on its own. The header toggles page and canvas. The right panel is the context basket for whichever question is selected, with the scope, the budget, the per-item cost, and the markup the model reads.
 - `media/pata-in-leela.html` is the same document inside Leela's chrome: tab strip, outline, the agent and variables panes, the status bar.
+
+Both carry three documents behind one toggle: the document, the review of one change, and the value view. `page` and `canvas` switch how whichever one is loaded is drawn.
 
 `media/procurement.canvas.md` is the document itself, and it is meant to be read as a file.
 

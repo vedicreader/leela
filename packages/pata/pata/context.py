@@ -129,7 +129,7 @@ def resolve(doc, bid, spec=None, values=None, lookup=None, extra=()):
         seen.add(x.id)
         items.append(Item(ref=x.id, kind=x.kind, label=_label(x), text=t, why=why,
                           region=x.region, mode=x.mode, pinned=pinned or x.mode == 'keep'))
-    if spec.goal and (g := doc.goal) is not None and g.id not in mutes: take(g, 'goal', True)
+    if spec.goal and (g := doc.goal_for(bid)) is not None and g.id not in mutes: take(g, 'goal', True)
     for r in spec.pins:
         if r in mutes: continue
         if _is_ref(r): items.append(_ref_item(r, lookup))

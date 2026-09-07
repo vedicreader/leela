@@ -138,5 +138,11 @@ border-radius:5px;overflow:hidden;background:var(--bg)}
 .chip.bun{color:var(--green);border-color:rgba(126,231,135,.3)}
 .fr.bundle{border-style:solid;border-color:rgba(126,231,135,.32);background:rgba(126,231,135,.022)}
 .fr.bundle>span{color:var(--green)}
-.fr>em{position:absolute;top:-9px;right:16px;background:var(--bg);padding:0 7px;font-size:10.5px;
+.fr>em{position:absolute;bottom:-9px;right:16px;background:var(--bg);padding:0 7px;font-size:10.5px;
 font-style:normal;font-family:var(--mono);color:var(--fg4)}
+#docs{display:flex;gap:2px}
+#chrome1 #docs button,header #docs button{font-size:11px}
+.chip.done{color:var(--green);border-color:var(--green)}
+.blk[data-k=bundle][data-state=blocked]{border-color:rgba(255,123,114,.45)}
+.blk[data-k=bundle][data-state=done]{border-color:rgba(126,231,135,.55)}
+.blk[data-k=bundle][data-state=todo]{border-color:var(--border);background:transparent}

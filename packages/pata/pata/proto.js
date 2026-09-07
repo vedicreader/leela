@@ -71,6 +71,7 @@ function body(b) {
     add(`<div class="stmt">${esc(b.body)}</div>`);
     const bits = KEYS.filter(k => a[k]).map(k => `<b>${k}</b> ${esc(a[k])}`);
     if (bits.length) add(`<div class="meta">${bits.join(' &nbsp;·&nbsp; ')}</div>`);
+    if (window.PATA.value) add('<div class="acts"><button data-value="1">what is serving this</button></div>');
   } else if (b.kind === 'code') {
     add(`<pre>${esc(b.body)}</pre>`);
     if (b.out) add(`<div class="out">${esc(b.out)}</div>`);
@@ -94,8 +95,9 @@ function body(b) {
       `<span class="file ref">${esc(r)}</span>`).join('')}</div>`);
     if ((u.unmet || []).length) add(`<div class="warn">claimed but unchanged: ${u.unmet.map(esc).join(', ')}</div>`);
     if ((u.tasks_open || []).length) add(`<div class="warn">${u.tasks_open.length} task(s) still open</div>`);
-    add(`<div class="acts"><button data-review="${esc(b.id)}">open the diff</button>` +
-        `<button data-pr="${esc(b.id)}">export as a PR</button></div>`);
+    if (S.doc === 'main')
+      add(`<div class="acts"><button data-review="${esc(b.id)}">open the diff</button>` +
+          `<button data-pr="${esc(b.id)}">export as a PR</button></div>`);
   } else if (b.kind === 'diff') {
     const rows = b.body.split('\n').filter(l => !/^(diff --git|index |--- |\+\+\+ |new file|deleted file)/.test(l));
     add(`<div class="diffbox">${rows.map(l => {
@@ -113,6 +115,7 @@ function body(b) {
 function card(b) {
   const n = el('div', 'blk');
   n.dataset.id = b.id; n.dataset.k = b.kind;
+  if ((b.attrs || {}).status) n.dataset.state = b.attrs.status;
   const hd = el('div', 'hd');
   const a = b.attrs || {};
   hd.innerHTML = `<span class="k">${b.kind}</span><span>${esc(a.path || b.id)}</span><span class="sp"></span>` +
@@ -152,9 +155,10 @@ function paintCanvas() {
     const n = el('div', 'fr' + (u ? ' bundle' : ''));
     Object.assign(n.style, { left: f.x + 'px', top: f.y + 'px', width: f.w + 'px', height: f.h + 'px' });
     n.dataset.frame = f.title;
-    n.innerHTML = `<span>${esc(u ? u.title : f.title)}</span>` + (u
-      ? `<em>change &middot; ${(u.paths || []).length} file(s) &middot; ${(u.tasks || []).length} task(s)` +
-        `${u.goal ? ' &middot; serves the goal' : ''}${(u.unmet || []).length || (u.tasks_open || []).length ? ' &middot; check' : ''}</em>`
+    n.innerHTML = `<span>${esc(f.title)}</span>` + (u
+      ? `<em>change &middot; ${(u.paths || []).length} file(s)${(u.tasks || []).length ? ' &middot; ' + u.tasks.length + ' task(s)' : ''}` +
+        `${u.goal ? ' &middot; serves a goal' : ' &middot; no goal'}` +
+        `${(u.unmet || []).length || (u.tasks_open || []).length ? ' &middot; check' : ''}</em>`
       : '');
     c.appendChild(n);
     mx = Math.max(mx, f.x + f.w); my = Math.max(my, f.y + f.h);
@@ -282,30 +286,36 @@ function togglePin(ref) {
 }
 
 function loadDoc(which) {
+  if (which !== 'main' && !window.PATA[which]) return;
   S.doc = which;
-  D = which === 'review' ? window.PATA.review : window.PATA;
+  D = which === 'main' ? window.PATA : window.PATA[which];
   B = new Map(D.blocks.map(b => [b.id, b]));
   S.sel = null; S.spec = null;
-  setView(S.view === 'review' ? 'canvas' : S.view);
+  setView(S.view);
   select(D.firstPrompt);
 }
 
 function setView(v) {
-  if (v === 'review') return loadDoc(S.doc === 'review' ? 'main' : 'review');
   S.view = v;
   document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === v));
   (v === 'page' ? paintPage : paintCanvas)();
-  document.querySelectorAll('[data-view=review]').forEach(b =>
-    b.setAttribute('aria-pressed', S.doc === 'review'));
+  document.querySelectorAll('[data-doc]').forEach(b =>
+    b.setAttribute('aria-pressed', b.dataset.doc === S.doc));
   mark();
 }
 
+$('#docs')?.addEventListener('click', e => {
+  const b = e.target.closest('[data-doc]');
+  if (b) loadDoc(b.dataset.doc);
+});
+
 document.addEventListener('click', e => {
   const r = e.target.closest('[data-review]'), pq = e.target.closest('[data-pr]');
-  if (r) { e.stopPropagation(); loadDoc('review'); }
+  const v = e.target.closest('[data-value]');
+  if (v) { e.stopPropagation(); loadDoc('value'); }
+  else if (r) { e.stopPropagation(); loadDoc('review'); }
   else if (pq) { e.stopPropagation(); alert('pata.pr() returns the title, branch, body and file list.\n' +
     'Leela hands that to gheasy and pullup; nothing here opens a pull request.'); }
 });
 $('#toggle').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
-setView('canvas');
-select(D.firstPrompt);
+loadDoc('main');

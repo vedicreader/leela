@@ -2,7 +2,9 @@ import pytest
 from pata import (Brick, Doc, arrange, body_text, bundle_of, bundles, coverage, diff_stat,
                   from_ipynb, hunks, modules, order, pr, render, resolve, review, to_ipynb,
                   to_report, upstream, weigh)
+from pata import state, value
 from pata.context import Spec, strip_work_log
+from fastcore.all import first
 from pata.example import VALUES, diff, procurement
 
 SMALL = '''---
@@ -216,3 +218,37 @@ def test_a_review_is_a_canvas_with_the_value_the_diff_and_the_checks():
 def test_a_document_with_no_bundle_still_reports_every_change_as_unclaimed():
     d = Doc.parse(SMALL)
     assert coverage(d, ['a.py'])['unclaimed'] == ['a.py'] and coverage(d, ['a.py'])['bundles'] == []
+
+def test_state_is_read_off_the_document_not_set_by_hand():
+    d, ch = procurement(), list(hunks(diff()))
+    got = {b.id: state(b, ch) for b in bundles(d)}
+    assert got == {'triage': 'done', 'cap': 'blocked', 'dash': 'doing'}
+    tri = first(b for b in bundles(d) if b.id == 'triage')
+    assert state(tri) == 'done'                 # no diff is no evidence about files, not evidence against
+    assert state(tri, ['procure/core.py']) == 'doing'        # one of the two claimed files moved
+
+def test_a_goal_is_what_a_change_serves_and_never_part_of_it():
+    d = procurement()
+    cap = first(b for b in bundles(d) if b.id == 'cap')
+    assert 'cycle' not in {m.id for m in cap.members} and cap.goal.id == 'cycle'
+    assert bundle_of(d, 'cycle') is None
+
+def test_a_question_answers_to_its_own_regions_goal():
+    d = procurement()
+    assert d.goal_for('q-cap').id == 'cycle' and d.goal_for('q-synth').id == 'goal'
+    assert [i.ref for i in resolve(d, 'q-cap')][0] == 'cycle'
+
+def test_the_value_view_names_the_orphan_change_and_the_unserved_goal():
+    d, ch = procurement(), list(hunks(diff()))
+    v = value(d, ch)
+    assert [b.id for b in v.of('bundle')] == ['triage', 'cap', 'dash']
+    assert v['dash'].region == 'Serving no goal'
+    assert v['triage'].region.startswith('Increase procurement') and v['triage'].attrs['status'] == 'done'
+    assert '1/1 tasks done | 2/2 files changed' in v['triage'].body
+    assert 'procure/erp.py' in v['value-tally'].body                # claimed by nobody
+    assert v['value-q'].pins == ['goal', 'cycle'] and all(b.xy for b in v if not b.heading)
+
+def test_a_goal_nothing_serves_is_reported_rather_than_omitted():
+    d = Doc.parse('# One\n\n<!--canvas goal id=g-->\nship it\n<!--/canvas-->\n')
+    v = value(d)
+    assert 'Nothing in this document is serving this goal.' in v['g-nothing'].body

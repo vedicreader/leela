@@ -15,7 +15,8 @@ from .context import body_text, strip_work_log
 from .doc import Brick, Doc
 from .export import directives, modules
 
-__all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'pr', 'review', 'hunks', 'diff_stat']
+__all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'state', 'pr', 'review', 'value',
+           'hunks', 'diff_stat', 'STATES']
 
 def _list(v): return [x.strip() for x in str(v or '').split(',') if x.strip()]
 
@@ -37,10 +38,14 @@ class Bundle:
         return _list(self.brick.attrs.get('refs'))
     @property
     def members(self):
-        "Bricks in this change: its own region, plus anything `covers=` names by id or by heading."
+        """Bricks in this change: its own region, plus anything `covers=` names by id or by heading.
+
+        A goal is never a member. It is what the change serves, and counting it in would make the
+        value view report a goal as part of the work.
+        """
         want = {self.brick.region} | set(_list(self.brick.attrs.get('covers')))
         return L(b for b in self.doc.bricks
-                 if b.id != self.id and not b.heading
+                 if b.id != self.id and not b.heading and b.kind != 'goal'
                  and (b.region in want or b.id in want))
     def of(self, *kinds): return self.members.filter(lambda b: b.kind in set(kinds))
     @property
@@ -61,6 +66,24 @@ def bundle_of(doc, bid):
     return first(b for b in bundles(doc) if any(m.id == bid for m in b.members))
 
 def _matches(claim, path): return fnmatch(path, claim) or path == claim
+
+#: Where a change stands. Read off the document, never a field someone remembered to set.
+STATES = ('todo', 'doing', 'blocked', 'done')
+
+def state(b, changed=()):
+    """Where one change stands.
+
+    Derived, because a status anyone has to update by hand is a status that lies. Done needs every
+    task done, and every claimed file moved where a diff says what moved. No diff is no evidence
+    about files, which must not read as evidence against.
+    """
+    st = [t.attrs.get('status', 'todo') for t in b.of('task')]
+    hit = {p for c in b.paths for p in changed if _matches(c, p)}
+    files_ok = not changed or not b.paths or hit == set(b.paths)
+    if 'blocked' in st: return 'blocked'
+    if st and all(x == 'done' for x in st) and files_ok: return 'done'
+    if 'doing' in st or 'done' in st or hit: return 'doing'
+    return 'todo'
 
 def coverage(doc, changed):
     """What each change claims against what actually moved, and what nobody claimed.
@@ -134,6 +157,15 @@ def diff_stat(text):
     rm = sum(1 for l in text.splitlines() if l.startswith('-') and not l.startswith('---'))
     return add, rm
 
+def _tally(b, changed=()):
+    "One line of status for a change: how many tasks are done, and how much of the claim moved."
+    st = [t.attrs.get('status', 'todo') for t in b.of('task')]
+    hit = {p for c in b.paths for p in changed if _matches(c, p)}
+    bits = [f"{sum(1 for x in st if x == 'done')}/{len(st)} tasks done" if st else 'no tasks']
+    if b.paths: bits.append(f'{len(hit)}/{len(b.paths)} files changed')
+    if (n := sum(1 for x in st if x == 'blocked')): bits.append(f'{n} blocked')
+    return ' | '.join(bits)
+
 def _copy(b, **attrs):
     return Brick(kind=b.kind, body=b.body, id=b.id, attrs={**b.attrs, **attrs},
                  binds=dict(b.binds), props={})
@@ -182,3 +214,45 @@ def review(doc, bid, diff='', values=None):
                   pins=[g.id] if (g := b.goal) is not None else []))
     from .layout import arrange
     return arrange(out, values=values)
+
+def value(doc, changed=()):
+    """Goals, and every change serving each one.
+
+    The view that answers what is going to move the measure. Two negatives are the reason it
+    exists: a change that serves no goal, and a goal nothing is serving.
+    """
+    from .layout import arrange
+    out = Doc(meta={'title': f'Value: {doc.title}'}, path='value.canvas.md')
+    served, all_b = {}, bundles(doc)
+    for b in all_b: served.setdefault(b.goal.id if b.goal else '', []).append(b)
+    for g in doc.of('goal'):
+        out.add(Brick('text', f'## {g.body.strip().rstrip(".")}'))
+        out.add(_copy(g))
+        mine = served.get(g.id, [])
+        for b in mine: out.add(_summary(b, changed))
+        if not mine:
+            out.add(Brick('note', 'Nothing in this document is serving this goal.',
+                          id=f'{g.id}-nothing'))
+    if (loose := served.get('', [])):
+        out.add(Brick('text', '## Serving no goal'))
+        for b in loose: out.add(_summary(b, changed))
+    cov = coverage(doc, list(changed))
+    lines = [f'{len(all_b)} change(s) across {len(doc.of("goal"))} goal(s).']
+    for st in STATES:
+        if (n := [b.id for b in all_b if state(b, changed) == st]): lines.append(f'{st}: ' + ', '.join(n))
+    if cov['unclaimed']:
+        lines.append('Changed but claimed by no bundle: ' + ', '.join(f'`{p}`' for p in cov['unclaimed']))
+    out.add(Brick('text', '## Loose ends'))
+    out.add(Brick('note', '\n\n'.join(lines), id='value-tally'))
+    out.add(Brick('ask', 'Which of these changes actually moves the measure, and what is missing?',
+                  id='value-q', attrs={'scope': 'doc', 'budget': '40000'},
+                  pins=[g.id for g in doc.of('goal')]))
+    return arrange(out)
+
+def _summary(b, changed=()):
+    "One change as it reads in the value view: the same bundle brick, with its facts filled in."
+    return Brick('bundle', _tally(b, changed), id=b.id,
+                 attrs={k: v for k, v in
+                        {'title': b.title, 'goal': b.brick.attrs.get('goal', ''),
+                         'contributes': b.contributes, 'status': state(b, changed),
+                         'paths': ','.join(b.paths), 'refs': ','.join(b.refs)}.items() if v})

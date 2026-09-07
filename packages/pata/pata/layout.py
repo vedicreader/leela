@@ -7,18 +7,20 @@ from fastcore.all import L
 from .context import body_text
 from .doc import W
 
-__all__ = ['arrange', 'measure', 'GAP', 'PAD']
+__all__ = ['arrange', 'measure', 'EXTRA', 'GAP', 'PAD']
 
 GAP, PAD = 26, 30
 #: Header, padding, and the line box the prototype's 13px type occupies.
 HEAD, LINE, CHROME = 27, 21, 22
+#: What a kind draws beyond its text: chip rows, an output box, a button strip.
+EXTRA = {'goal': 34, 'bundle': 78, 'code': 10, 'diff': 12}
 
 def measure(b, w=W, values=None):
     "About how tall a brick draws. Close enough to lay out; the page corrects it on render."
     per = max(20, int((w - CHROME) / 7.1))
     text = body_text(b, values) or ' '
     rows = sum(max(1, math.ceil(len(l) / per)) for l in text.splitlines() or [' '])
-    return HEAD + CHROME + min(rows, 26) * LINE
+    return HEAD + CHROME + EXTRA.get(b.kind, 0) + min(rows, 26) * LINE
 
 def _columns(items, tall):
     "Balanced columns, document order down each. Greedy filling leaves the last column near empty."

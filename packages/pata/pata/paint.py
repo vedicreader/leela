@@ -69,14 +69,15 @@ def payload(doc, values=None, changed=()):
 
 def _asset(name): return files(__package__).joinpath(name).read_text(encoding='utf-8')
 
-def paint(doc, path=None, shell='bare', values=None, changed=(), review=None):
+def paint(doc, path=None, shell='bare', values=None, changed=(), **docs):
     """Write the prototype to `path`.
 
-    `shell='leela'` draws it inside the IDE it would live in. `review` is a second document, drawn
-    behind a third toggle, which is what one click on a boundary opens.
+    `shell='leela'` draws it inside the IDE it would live in. Each keyword is another document
+    behind its own toggle: `review=` is what one click on a boundary opens, `value=` is the goals.
     """
     d = payload(doc, values, changed)
-    if review is not None: d['review'] = payload(review, values, changed)
+    for name, other in docs.items():
+        if other is not None: d[name] = payload(other, values, changed)
     html = (_asset('proto-ide.html' if shell == 'leela' else 'proto.html')
             .replace('__CSS__', _asset('proto.css'))
             .replace('__CSS2__', _asset('proto-ide.css') if shell == 'leela' else '')

@@ -155,3 +155,36 @@ Steering committee slot. Waiting on the Finance sign-off in the first task.
 <!--/canvas-->
 
 Open: does the cap belong in the rule or in the ERP workflow?
+
+## Cap the rule
+
+<!--canvas goal id=cycle measure="days from raised to approved, tail POs" baseline=6.2 target=2 by=2026-06-30-->
+Cut the approval cycle for tail POs to under 2 days.
+<!--/canvas-->
+
+<!--canvas bundle id=cap title="Cap the rule per supplier" goal=cycle contributes="the audit finding, and the last of the 10 points" paths=procure/cap.py,tests/test_cap.py-->
+Limits how many auto-approved POs one supplier may raise in a month, which is what the Q3 audit's
+split-ordering finding needs before a pilot.
+<!--/canvas-->
+
+<!--canvas task id=k6 status=blocked owner=me-->
+Decide whether the cap lives in the rule or in the ERP workflow.
+<!--/canvas-->
+
+<!--canvas task id=k7 status=todo owner=me-->
+Write the cap and its test.
+<!--/canvas-->
+
+```canvas ask id=q-cap scope=region budget=8000
+Where should the cap live, and what does each choice cost?
+```
+
+## Buyer dashboard
+
+<!--canvas bundle id=dash title="Buyer workload dashboard" paths=procure/dash.py-->
+A weekly view of POs per buyer, so the measure is visible without asking Finance for an extract.
+<!--/canvas-->
+
+<!--canvas task id=k8 status=doing owner=Priya-->
+Agree the weekly cut with Finance.
+<!--/canvas-->
