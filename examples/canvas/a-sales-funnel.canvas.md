@@ -16,7 +16,7 @@ spend = 180_000
 deal = 24_000
 ```
 
-```canvas brick id=sf2 src=lego.bricks:viz.funnel emit_stages=stages
+```canvas brick id=sf2 src=leela_bricks:viz.funnel emit_stages=stages
 bind stages = stages
 prop height = 330
 ```
@@ -31,7 +31,7 @@ revenue = won * deal
 payback = round(cac / (deal * 0.7), 2)
 ```
 
-```canvas brick id=sf4 src=lego.bricks:viz.tiles
+```canvas brick id=sf4 src=leela_bricks:viz.tiles
 bind tiles = [{'label': 'Won', 'value': won}, {'label': 'CAC', 'value': f'${cac:,}'}, {'label': 'Revenue', 'value': f'${revenue/1000:.0f}k'}, {'label': 'Worst step', 'value': worst[1], 'delta': worst[0]}]
 prop height = 130
 ```
@@ -40,7 +40,7 @@ prop height = 130
 bind text = f"The weakest link is **{worst[1]}**, converting at **{worst[0]}%**. Taking it to {worst[0]+10:.0f}% would be worth about ${(won*(worst[0]+10)/worst[0]-won)*deal/1000:.0f}k a year, against a customer acquisition cost of ${cac:,} and {payback} months of gross margin to pay it back."
 ```
 
-```canvas brick id=sf6 src=lego.bricks:viz.series
+```canvas brick id=sf6 src=leela_bricks:viz.series
 bind labels = names
 bind series = [{'name': 'conversion %', 'values': rates}]
 prop height = 240

@@ -25,7 +25,7 @@ rows = [{'label': m, 'per_request': round(cost(m), 5), 'monthly': round(cost(m)*
 rows
 ```
 
-```canvas brick id=p3 src=lego.bricks:thrifty.costs emit_row=picked
+```canvas brick id=p3 src=leela_bricks:thrifty.costs emit_row=picked
 bind rows = rows
 prop height = 220
 ```
@@ -54,7 +54,7 @@ const draw = () => {
 };
 ```
 
-```canvas brick id=p7 src=lego.bricks:viz.series
+```canvas brick id=p7 src=leela_bricks:viz.series
 bind labels = [r['label'] for r in rows]
 bind series = [{'name': 'monthly $', 'values': [r['monthly'] for r in rows]}]
 prop height = 240

@@ -13,7 +13,7 @@ organelle = {'name': 'nothing yet', 'doc': 'Click an organelle above.'}
 seen = []
 ```
 
-```canvas brick id=c2 src=lego.bricks:learn.cell emit_organelle=organelle
+```canvas brick id=c2 src=leela_bricks:learn.cell emit_organelle=organelle
 bind label = organelle['name']
 prop height = 420
 ```

@@ -16,11 +16,11 @@ day = _ports['day']
 day['tithi']['name'], day['nakshatra']['name'], day['masa']
 ```
 
-This cell is the wiring `lego.bricks:panchanga.day` ships. Where the package is installed beside
+This cell is the wiring `leela_bricks:panchanga.day` ships. Where the package is installed beside
 the document it is two imports and a call; where it is not, as here, it is the same call to the
 host that owns it. The document keeps whichever one it used, in the open.
 
-```canvas brick id=td2 src=lego.bricks:panchanga.day emit_limb=limb
+```canvas brick id=td2 src=leela_bricks:panchanga.day emit_limb=limb
 bind day = day
 prop height = 250
 ```
@@ -41,7 +41,7 @@ Each daylight and each night is cut into twelve, and the lords run in the Chalde
 first hora of the day belongs to the lord of the weekday, which is why the weekday is named for
 a planet in almost every language that has one.
 
-```canvas brick id=td5 src=lego.bricks:panchanga.horas emit_hora=hora
+```canvas brick id=td5 src=leela_bricks:panchanga.horas emit_hora=hora
 bind horas = day['horas']
 prop height = 150
 ```
@@ -56,7 +56,7 @@ bind text = f"**{hora['name']}** hora, {hora['start'][11:16]} to {hora['end'][11
 
 ## Where the grahas actually are
 
-```canvas brick id=td8 src=lego.bricks:panchanga.wheel emit_rasi=rasi
+```canvas brick id=td8 src=leela_bricks:panchanga.wheel emit_rasi=rasi
 bind planets = day['planets']
 bind highlight = day['moon_rasi']
 prop height = 380

@@ -1,8 +1,8 @@
 import pytest
 from fastcore.all import Path, first
 
-from leela.blocks.canvas.change import (bundle_of, bundles, coverage, diff_stat, hunks, pr,
-                                        review, snip, state, value)
+from leela.blocks.canvas.change import (bundle_of, bundles, coverage, diff_stat, hunks,
+                                        place_diff, pr, review, snip, state, value)
 from leela.blocks.canvas.context import (Spec, body_text, render, resolve, strip_work_log, weigh)
 from leela.blocks.canvas.doc import Brick, Canvas, order, upstream
 from leela.blocks.canvas.example import VALUES, diff, procurement
@@ -364,11 +364,15 @@ def test_a_placed_brick_reports_two_coordinates_however_it_was_placed():
 
 BRICK_FIXTURE = str(Path(__file__).parent/'fixtures')
 
-def demo_libs():
-    "The fixture library, shaped exactly like `lego.bricks`, so these tests pin its contract."
+def demo_libs(name='demobricks'):
+    """Only the fixture library, whatever else this install has.
+
+    `libraries()` also finds `extensions/bricks` through its entry point, so a test that asserted
+    on the whole list would pass or fail by what is installed.
+    """
     import sys
     if BRICK_FIXTURE not in sys.path: sys.path.insert(0, BRICK_FIXTURE)
-    return libraries(extra=('demobricks',))
+    return libraries(extra=(name,)).filter(lambda l: l.name == name)
 
 def test_a_src_keeps_the_library_that_wrote_it():
     "`Brick.src` is `lego.bricks:viz.series`. Dropping the prefix makes two libraries collide."
@@ -428,11 +432,96 @@ def test_a_library_that_is_present_but_will_not_import_says_why():
     import sys
     if BRICK_FIXTURE not in sys.path: sys.path.insert(0, BRICK_FIXTURE)
     p = palette(libraries(extra=('brokenbricks',)))
-    assert p['bricks'] == []
     assert any('brokenbricks' in n and 'ujson_that_is_not_installed' in n for n in p['notes'])
 
 def test_a_library_absent_from_this_install_is_not_a_note():
     "`KNOWN` names a library that may not be here. Absent is normal; broken is not."
     from leela.blocks.canvas.bricks import KNOWN
     assert 'lego.bricks' in KNOWN
-    assert palette(libraries())['notes'] == []
+    assert palette(libraries())['notes'] == []      # absent, so nothing to say
+
+SLOTDOC = """---
+title: slots
+---
+# A change
+
+<!--canvas bundle id=u1 goal=g1 paths=a.py-->
+The change.
+<!--/canvas-->
+
+```canvas diff id=d1 paths=a.py,b.py left=HEAD~1 right=HEAD
+```
+"""
+
+RAW = """diff --git a/a.py b/a.py
+--- a/a.py
++++ b/a.py
+@@ -1,2 +1,3 @@
+ keep
+-gone
++new
++more
+diff --git a/b.py b/b.py
+--- a/b.py
++++ b/b.py
+@@ -1 +1 @@
+-old
++fresh
+"""
+
+def test_an_empty_diff_brick_asks_for_a_diff_and_gets_one_brick_a_file():
+    "The document declares the diff it wants. Leela reads the attributes and fills the slot."
+    doc, seen = Canvas.parse(SLOTDOC), []
+    place_diff(doc, lambda paths, left, right: seen.append((paths, left, right)) or RAW)
+    assert seen == [(['a.py', 'b.py'], 'HEAD~1', 'HEAD')]
+    got = doc.of('diff')
+    assert [b.id for b in got] == ['d1-a.py', 'd1-b.py']
+    assert [b.attrs['path'] for b in got] == ['a.py', 'b.py']
+    assert (got[0].attrs['added'], got[0].attrs['removed']) == ('2', '1')
+
+def test_a_filled_diff_no_bundle_claims_says_so_on_the_brick():
+    "`claimed=no` is what the page turns into a warning chip. The bundle claims `a.py`, not `b.py`."
+    doc = Canvas.parse(SLOTDOC)
+    place_diff(doc, lambda paths, left, right: RAW)
+    by = {b.attrs['path']: b for b in doc.of('diff')}
+    assert 'claimed' not in by['a.py'].attrs
+    assert by['b.py'].attrs['claimed'] == 'no'
+
+def test_a_diff_brick_with_a_body_is_left_alone():
+    "Only an empty brick is a slot. A pasted diff is content, and is never overwritten."
+    doc = Canvas.parse(SLOTDOC.replace('left=HEAD~1 right=HEAD\n```', 'left=x\n' + RAW + '```'))
+    place_diff(doc, lambda *a: pytest.fail('asked for a diff it already had'))
+    assert len(doc.of('diff')) == 1
+
+def test_leela_builds_the_literate_page_end_to_end():
+    "`page` is the whole assembly: fill the slots, count the files, write the HTML."
+    from leela.blocks.canvas.app import page
+    src = PKG.parent.parent/'docs/change.canvas.md'
+    doc = Canvas.load(src)
+    out = Path('/tmp/canvas-page-test.html')
+    r = page(doc, out, 'origin/main')
+    assert r['diffs'] and out.exists()
+    body = out.read_text()
+    assert '<div class="diff">' in body or '<details>' in body
+    assert 'literate diff' in body
+
+GLOBDOC = """---
+title: globs
+---
+# A change
+
+<!--canvas bundle id=u1 goal=g1 paths=pkg/*.py,docs/a.md-->
+Claims a folder by glob, not by name.
+<!--/canvas-->
+
+<!--canvas task id=t1 status=done-->
+Done.
+<!--/canvas-->
+"""
+
+def test_a_change_that_claims_a_glob_reads_done_when_the_glob_matched():
+    "`hit` holds file names and `paths` holds patterns, so comparing the two never agreed."
+    doc = Canvas.parse(GLOBDOC)
+    b = first(bundles(doc))
+    assert state(b, ['pkg/one.py', 'pkg/two.py', 'docs/a.md']) == 'done'
+    assert state(b, ['pkg/one.py']) == 'doing'      # docs/a.md is claimed and did not move

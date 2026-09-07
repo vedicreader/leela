@@ -17,7 +17,7 @@ barrier = 1.02
 width = 6
 ```
 
-```canvas brick id=q2 src=lego.bricks:learn.wavepacket emit_transmission=transmission
+```canvas brick id=q2 src=leela_bricks:learn.wavepacket emit_transmission=transmission
 bind barrier = barrier
 bind width = width
 prop height = 300

@@ -289,8 +289,8 @@ therefore gives a literate diff without more work.
 Here is one real diff, from the commit that added the value view. It shows the fold, the counts
 and the sideways scroll.
 
-<!--canvas diffhere id=d-slot-->
-<!--/canvas-->
+```canvas diff id=d-slot paths=leela/blocks/canvas/change.py left=HEAD~1 right=HEAD
+```
 
 # The numbers
 

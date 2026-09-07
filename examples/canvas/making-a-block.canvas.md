@@ -24,7 +24,7 @@ labels = [p['day'] for p in plan]
 left = [p['left'] for p in plan]
 ```
 
-```canvas brick id=m2 src=lego.bricks:viz.series emit_point=point
+```canvas brick id=m2 src=leela_bricks:viz.series emit_point=point
 bind labels = labels
 bind series = [{'name': 'points left', 'values': left}]
 prop height = 240
@@ -40,7 +40,7 @@ bind text = f"On the plan as written it lands **{lands}**. You clicked {point['l
 ```
 
 <!--canvas note id=m5-->
-The brick above is `lego.bricks:viz.series`. It came from the palette with `/`, and the two lines
+The brick above is `leela_bricks:viz.series`. It came from the palette with `/`, and the two lines
 that fill it came from its own package rather than from here. Open the wiring panel from the block menu, on the grip in the gutter, and the expressions are
 the ones you would have written.
 <!--/canvas-->

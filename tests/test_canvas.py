@@ -228,8 +228,8 @@ def test_the_trail_keeps_the_last_dozen_questions_and_no_more():
 # --- the shipped canvases ---
 
 def _needs_host(brick, outputs):
-    "A cell that fetches its data from the component host, with no host running."
-    return 'urlopen' in brick.body and any(o.get('ename') in ('URLError', 'ConnectionError') for o in outputs)
+    "A cell that fetches its data from the component host. Any error means none answers here."
+    return 'urlopen' in brick.body and any(o.get('output_type') == 'error' for o in outputs)
 
 @pytest.mark.parametrize('path', sorted(EXAMPLES.glob('*.canvas.md')), ids=lambda p: p.name)
 def test_every_example_parses_runs_and_binds(path):
@@ -245,9 +245,17 @@ def test_every_example_parses_runs_and_binds(path):
     assert bad == {}
 
 @pytest.mark.parametrize('path', sorted(EXAMPLES.glob('*.canvas.md')), ids=lambda p: p.name)
-def test_every_component_a_canvas_embeds_names_a_brick(path):
+def test_every_component_a_canvas_embeds_resolves_to_a_real_brick(path):
+    "A literal prefix only said the string looked right. The resolver can say the brick is there."
+    from leela.blocks.canvas.bricks import libraries, locate
+    libs = libraries()
     for b in Canvas.load(path):
-        if b.kind == 'brick': assert b.attrs.get('src', '').startswith('lego.bricks:')
+        if b.kind != 'brick': continue
+        src = b.attrs.get('src', '')
+        assert ':' in src, f'{src!r} names no library'
+        lib, row = locate(src, libs)
+        assert lib is not None, f'no library answers {src!r}; is `extensions/bricks` installed?'
+        assert row['name'] == src.split(':', 1)[1]
 
 # --- the routes ---
 

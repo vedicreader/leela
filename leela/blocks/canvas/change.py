@@ -11,7 +11,7 @@ from .doc import Brick, Canvas
 from .export import directives, modules
 
 __all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'state', 'pr', 'review', 'value',
-           'hunks', 'diff_stat', 'snip', 'STATES']
+           'hunks', 'diff_stat', 'place_diff', 'snip', 'STATES']
 
 def _list(v): return [x.strip() for x in str(v or '').split(',') if x.strip()]
 
@@ -64,7 +64,8 @@ def state(
     "Where one change stands, read off the document."
     st = [t.attrs.get('status', 'todo') for t in b.of('task')]
     hit = {p for c in b.paths for p in changed if _matches(c, p)}
-    files_ok = not changed or not b.paths or hit == set(b.paths)
+    unmet = [c for c in b.paths if not any(_matches(c, p) for p in changed)]
+    files_ok = not changed or not b.paths or not unmet
     if 'blocked' in st: return 'blocked'
     if st and all(x == 'done' for x in st) and files_ok: return 'done'
     if 'doing' in st or 'done' in st or hit: return 'doing'
@@ -163,6 +164,28 @@ def diff_stat(text):
     add = sum(1 for l in text.splitlines() if l.startswith('+') and not l.startswith('+++'))
     rm = sum(1 for l in text.splitlines() if l.startswith('-') and not l.startswith('---'))
     return add, rm
+
+def place_diff(
+    doc,     # the document, with `diff` bricks that carry no body
+    get,     # `get(paths, left, right) -> str`: the diff text those attributes ask for
+):
+    "Fill every empty `diff` brick from the diff it asks for. One brick per file."
+    for slot in doc.of('diff').filter(lambda b: not b.body.strip()):
+        at = doc.index(slot.id)
+        if at is None: continue
+        doc.bricks.pop(at)
+        raw = get(_list(slot.attrs.get('paths')), slot.attrs.get('left', ''),
+                  slot.attrs.get('right', ''))
+        made = []
+        for n, (path, text) in enumerate(hunks(raw).items()):
+            add, rm = diff_stat(text)
+            made.append(Brick('diff', text, id=f'{slot.id}-{Path(path).name}',
+                              attrs={'path': path, 'added': str(add), 'removed': str(rm)}))
+            doc.bricks.insert(at + n, made[-1])
+        loose = set(coverage(doc, [b.attrs['path'] for b in made])['unclaimed'])
+        for b in made:
+            if b.attrs['path'] in loose: b.attrs['claimed'] = 'no'
+    return doc._regions()
 
 def _tally(b, changed=()):
     "One line of status for a change: how many tasks are done, and how much of the claim moved."
