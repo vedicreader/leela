@@ -180,7 +180,7 @@ dropped.
      goal=g
      contributes="all of the review step"
      covers="The change,The page,t3,t4,t9,t12"
-     paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,docs/canvas.md,docs/change.canvas.md,docs/session.canvas.md,docs/dynamic-documents.md,docs/blocks.md,docs/README.md,README.md,media/canvas-*.html,media/*.md,tools/make_change_page.py,tools/canvas_spike.py,tools/canvas_proto/*
+     paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,docs/canvas.md,docs/change.canvas.md,docs/session.canvas.md,docs/dynamic-documents.md,docs/blocks.md,docs/README.md,README.md,media/canvas-*.html,media/*.md,tools/make_change_page.py,tools/canvas_spike.py
      refs=doc:docs/change.canvas.md,pkg:mdhtml,pkg:gheasy-->
 A bundle claims a region, names a goal and owns a list of files. `coverage` compares the claim
 with the diff. Leela reads `state` off the document, and no one sets it by hand. `review`, `value` and `pr`
@@ -259,7 +259,7 @@ falling back, because a silent fallback would draft prose against stale rules.
 
 A brick the model drafted carries `wrote=ai` in the file. `git diff` therefore shows the drafting,
 and a reviewer can read those bricks first. A person wrote every snippet on this page, and no
-brick here carries the mark. `media/e2e/drafted-page.html` is the same path run against a local model.
+brick here carries the mark.
 
 # The library
 
@@ -312,7 +312,7 @@ p = palette(libraries())
      goal=g
      contributes="the run step and every insert menu"
      covers="The editor,What running it found,t8,t13"
-     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,tests/test_web_slow.py,leela/blocks/canvas/live.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/store.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/*.canvas.md,leela/blocks/canvas/triage.diff,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*
+     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,tests/test_web_slow.py,leela/blocks/canvas/live.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/store.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/*.canvas.md,leela/blocks/canvas/triage.diff,examples/canvas/*,docs/screenshots/*,media/canvas/*
      refs=doc:docs/canvas.md-->
 The canvas branch built the editor: a gutter, a block menu, a slash menu, a component palette, an
 inline helper and a live kernel. Both branches read the same file format, and the merge therefore kept one
@@ -321,8 +321,8 @@ inline helper and a live kernel. Both branches read the same file format, and th
 
 Four ways to add a brick, and all four write the same markdown. The gutter handle opens the block
 menu, and a slash on an empty line opens the filter. The palette lists what an installed library
-ships, and a pasted URL or file becomes a `source` or a `pdf`. `media/e2e/25-block-menu.png`,
-`26-slash-menu.png` and `27-palette.png` show the first three.
+ships, and a pasted URL or file becomes a `source` or a `pdf`. `docs/screenshots/canvas-blockmenu.png`,
+`canvas-slash.png` and `canvas-palette.png` show the first three.
 
 <!--canvas bundle id=u-wire title="Wiring the block into Leela"
      goal=g
@@ -378,7 +378,7 @@ Give the basket a panel: a control on an `ask` brick that shows what the questio
      goal=g2
      contributes="the English a reviewer actually reads"
      covers="The prose,t15,t16"
-     paths=README.md,docs/*.md,examples/canvas/*.canvas.md,extensions/bricks/README.md,media/*.md,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/explain.md,leela/blocks/canvas/*.py,extensions/bricks/leela_bricks/*.py,tools/canvas_proto/paint.py,leela/blocks/agent/threads.py,tests/blocks/test_agent_threads.py,tests/test_core.py,tests/test_packaging.py,tests/test_projects.py,tests/test_runtime.py,tests/test_agent.py
+     paths=README.md,docs/*.md,examples/canvas/*.canvas.md,extensions/bricks/README.md,media/*.md,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/explain.md,leela/blocks/canvas/*.py,extensions/bricks/leela_bricks/*.py,leela/blocks/agent/threads.py,tests/blocks/test_agent_threads.py,tests/test_core.py,tests/test_packaging.py,tests/test_projects.py,tests/test_runtime.py,tests/test_agent.py
      refs=pkg:slopometer,pkg:fastaistyle,doc:leela/blocks/canvas/ste.md-->
 `slopometer` scores a page against the reference-prose rules, and `chkstyle` scores Python against
 fastai's. Both ran over every file this branch adds. `ste.md` already held the rules, and nobody had
@@ -471,7 +471,8 @@ Leela writes this page from this file, with a real git diff in the slot.
 <!--/canvas-->
 
 <!--canvas note id=n-loose-->
-The seven files the header reports as unclaimed stay that way on purpose. They are scratch:
-`shot.mjs`, `t-dark.mjs`, `t-help.mjs` and four screenshots under `shots/`, all committed by an
-earlier branch, and none of them a change any bundle here promised.
+The seven files the header used to report as unclaimed were scratch: `shot.mjs`, `t-dark.mjs`,
+`t-help.mjs` and four screenshots under `shots/`. They are deleted, along with the 28 run
+artefacts under `media/e2e/`, ten screenshots nothing cited, and the prototype in
+`tools/canvas_proto` that the block replaced. Nothing here claims a file that is gone.
 <!--/canvas-->

@@ -23,7 +23,7 @@ Give Leela one document that holds a goal, its plan, its research, its code and 
      goal=g
      contributes="all of the review step; none of the run step, which the canvas branch owns"
      covers="Words,Why it helps,The file,The basket,The wiring,The change,The value,The prompts,This page,The numbers,Checks"
-     paths=leela/blocks/canvas/*,tools/canvas_proto/*,tools/make_change_page.py,tests/test_canvas_doc.py,docs/*.md,media/*,leela/blocks/__init__.py,tests/routes.txt,packages/pata/*
+     paths=leela/blocks/canvas/*,tools/make_change_page.py,tests/test_canvas_doc.py,docs/*.md,media/*,leela/blocks/__init__.py,tests/routes.txt
      refs=doc:docs/dynamic-documents.md,file:leela/blocks/nb/nb.py,pkg:mdhtml-->
 Adds `leela/blocks/canvas`, a block that reads and writes the canvas document. A question in the
 document names what the model may read. A boundary on the canvas is one change. A change names the
@@ -341,8 +341,8 @@ branch also has the reactive runtime, the embedded components and the eight `can
 tools. This branch has the basket, the change bundle and the three views. A merge keeps one
 `doc.py` and both halves of the rest.
 
-The block has no client code yet. The eight routes answer, and the canvas prototype in
-`tools/canvas_proto` shows what the browser half draws. Nothing in `lee-ide.js` calls them yet.
+The block serves its own client from `/canvas/js`, built into `leela/static/lee-canvas.js`. The
+prototype that stood in for it while the routes were being written is gone.
 
 `inline_ai` is one conversation with one approval slot. A canvas invites two questions at once.
 

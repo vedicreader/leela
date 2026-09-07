@@ -14,6 +14,8 @@ Design rationale and reference, kept out of the source. The README is the produc
 ## Building on Leela
 
 - [change.canvas.md](change.canvas.md): the canvas block itself, written as a canvas document. `python tools/make_change_page.py` renders it to `media/canvas-change.html`.
+- [session.canvas.md](session.canvas.md): one working session reviewed in the format it built. The same tool renders it to `media/canvas-session.html`.
+- [dynamic-documents.md](dynamic-documents.md): the design the canvas grew from. The `*.canvas.md` format, the context rule a question carries, and what the two halves cost to merge. Built; read it for why, and `canvas.md` for what.
 
 - [blocks.md](blocks.md): the block contract. `CAPS`, `connect(app, ctx)`, wiring order, and where a block's JavaScript goes.
 - [bricks.md](bricks.md): where a canvas component comes from. The resolver, what a library has to be, and the record of extracting the bricks package.
@@ -24,7 +26,6 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 ## Not built yet
 
-- [dynamic-documents.md](dynamic-documents.md): one markdown file holding a goal, its plan, its research, its code and its questions. The `*.canvas.md` format, the context rule a question carries, and what integration costs.
 - [parallel-threads.md](parallel-threads.md): one worktree, branch and agent session per task. The shared-state git lock has to come first.
 - [threads-to-ramabana.md](threads-to-ramabana.md): whether `Feed`, `Thread`, `Threads` and `TurnRunner` move to ramabana. Section 8 is three reasons not to do it as written.
 - [consolidation.md](consolidation.md): the four kosha methods that would delete the fallback halves of `Search.similar`, `clusters`, `peers` and `_anchor`.

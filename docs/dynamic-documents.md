@@ -153,12 +153,11 @@ Nothing here is a new place for work to get stuck.
 
 The package generates both, and nobody draws them by hand. They therefore show what `resolve` and `arrange` actually do.
 
-- `media/canvas-procurement.html` is the document on its own. The header toggles page and canvas. The right panel is the context basket for whichever question is selected, with the scope, the budget, the per-item cost, and the markup the model reads.
-- `media/canvas-in-leela.html` is the same document inside Leela's chrome: tab strip, outline, the agent and variables panes, the status bar.
+- `media/canvas-session.html` and `media/canvas-change.html` are the literate pages, written by the block itself from `docs/session.canvas.md` and `docs/change.canvas.md`. The prototype that drew the first mockups of both views is gone, and so are its two pages.
 
 Both carry three documents behind one toggle: the document, the review of one change, and the value view. `page` and `canvas` switch how the loaded document draws.
 
-`media/procurement-example.canvas.md` is the document itself, and a reader should read it as a file.
+`leela/blocks/canvas/procurement.canvas.md` is the document itself, and a reader should read it as a file.
 
 ## Where the two branches meet
 
@@ -176,9 +175,9 @@ prose splitting and the geometry from this one. The class is `Canvas`. `index` r
 brick that is not there, because `ops._at` and `Ask.near` both read that. A brick body keeps its
 final newline, because the format keeps code exactly.
 
-**What the browser half draws.** The eight routes answer. `tools/canvas_proto` shows the canvas,
-the basket panel and the review as a standalone page, and nothing in `lee-ide.js` calls the routes
-yet. That prototype is a tool, not product code, which is why it is not in the block.
+**What the browser half draws.** `leela/blocks/canvas/*.js` draws it, built into
+`leela/static/lee-canvas.js` and served from `/canvas/js`. The block serves its own page rather
+than joining the IDE's three bundles, so nothing in `lee-ide.js` calls its routes.
 
 **Whether the second view is version one.** The basket, the goal and the plan kinds work in a
 linear document and are most of the value. `arrange` plus `prop x` is the whole of the canvas, and
