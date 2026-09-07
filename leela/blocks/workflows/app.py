@@ -34,7 +34,7 @@ def connect(app, ctx):
     @rt('/workflows/presets')
     def workflows_presets():
         "The builder's vocabulary: triggers and job presets, with their options, as data."
-        from .wfbuild import preset_rows
+        from pullup.wfbuild import preset_rows
         return preset_rows()
     @rt('/workflows/spec')
     def workflows_spec(repo: str = '', file: str = ''):

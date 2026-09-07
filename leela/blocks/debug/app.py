@@ -1,7 +1,7 @@
 "The direct debugpy session as routes: launch, stream, inspect, step, stop."
 
 from __future__ import annotations
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 
 import shutil, subprocess, sys
 from pathlib import Path
@@ -56,7 +56,7 @@ def connect(app, ctx):
         d = await req.json(); name = d.get('name') or ''
         run = ctx.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
-        from ..runtime.support import work_dir
+        from kunda.support import work_dir
         root = ws.project_repo or Path(work_dir())
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())

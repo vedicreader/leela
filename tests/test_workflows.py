@@ -7,7 +7,7 @@ from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.vault.jobs import JobError, Jobs
 from leela.workspace import Workspace
-from leela.blocks.workflows.wfbuild import PRESETS, TRIGGERS, compose, load_spec, preset_rows, save_spec
+from pullup.wfbuild import PRESETS, TRIGGERS, compose, load_spec, preset_rows, save_spec
 
 def fastship_recipe():
     """Skip unless the installed gheasy carries the fastship release recipe.

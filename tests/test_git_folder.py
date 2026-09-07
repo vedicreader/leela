@@ -153,8 +153,8 @@ def test_a_conflict_outranks_everything_else():
 
 # the release flow a crate gets ---------------------------------------------------------------------
 
-from leela.blocks.pipelines.pipelines import (CRATE_STEPS, MATURIN_STEPS, default_steps,  # noqa: E402
-                                              maturin_project, release_flow, rust_project)
+from pullup.project import (CRATE_STEPS, MATURIN_STEPS, default_steps,  # noqa: E402
+                            maturin_project, release_flow, rust_project)
 
 def _crate_files(d, pyproject=None):
     d.mkdir(parents=True, exist_ok=True)

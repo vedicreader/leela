@@ -5,11 +5,13 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
-from leela.blocks.pipelines.pipelines import (APP_STEPS, Release, ReleaseError, app_project,
-    default_steps, fastship_project, nbdev_project, release_flow)
+from pullup.project import (APP_STEPS, app_project, default_steps, fastship_project,
+    nbdev_project, release_flow)
+from leela.blocks.pipelines.pipelines import Release, ReleaseError
 import ast
 from leela.blocks.pipelines.deploys import DEPLOY_KEYS, Deploy, DeployError, deploy_template
-from leela.blocks.drive.drive import PARTS, Drive, context, parts
+from pullup.drive import PARTS, context, parts
+from leela.blocks.drive.drive import Drive
 from leela.blocks.stack.infra import Infra, InfraError
 from leela.blocks.stack.packages import FAMILY, blame, checkout_for, frames, survey
 
@@ -535,7 +537,7 @@ def test_prepare_runs_for_a_project_configured_the_modern_way(tmp_path, monkeypa
 
 def test_prepare_says_what_it_looked_for_when_nbdev_is_not_installed():
     "`nbdev_prepare` with an underscore is not a file any current nbdev ships; the error said so wrongly."
-    from leela.blocks.pipelines.pipelines import resolve_script
+    from pullup.pipeline import resolve_script
     # Both spellings are tried, so asking for the hyphen still finds an underscore-only install.
     assert resolve_script(['nbdev-prepare'], None, env={'PATH': ''}) == ['nbdev-prepare']
 
@@ -543,7 +545,7 @@ def test_prepare_says_what_it_looked_for_when_nbdev_is_not_installed():
 def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkeypatch):
     """`uv run` syncs the lock first. Calling the venv's script does not, so a venv that had been
     synced to another project's lock failed on an import instead of being repaired."""
-    from leela.blocks.pipelines.pipelines import uv_argv
+    from pullup.pipeline import uv_argv
     root = tmp_path/'proj'; root.mkdir()
     monkeypatch.setattr('pullup.pipeline.which', lambda n: '/opt/uv')
     assert uv_argv(root, ['nbdev-prepare']) is None, 'no lock, so uv does not own it'

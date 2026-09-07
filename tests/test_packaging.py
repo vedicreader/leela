@@ -560,7 +560,7 @@ def test_both_bundles_name_what_the_inspector_imports(mac, win):
     Leela's server never imports dhrishti, on purpose, so nothing in Leela's own source states the
     dependency, and a scanner that stopped following it would drop the variables panel out of the
     app with no test to say so."""
-    from leela.blocks.runtime.support import INSPECTOR
+    from kunda.support import INSPECTOR
     for m in (mac, win):
         assert set(INSPECTOR) <= set(m.PACKAGES), f'{m.__name__} carries no {set(INSPECTOR) - set(m.PACKAGES)}'
 

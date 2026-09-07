@@ -5,9 +5,9 @@ without warning on the next release because nothing promised it. Seven of them h
 `gheasy.repo._invalidate`, `_plural`, `_unborn` and `_run`, `gheasy.core._gh_api` and
 `_resolve_gh_token`, and `gheasy.workflow._yaml_instance`. All seven are public names in gheasy now.
 
-`fossick.cdp._debug_ready` is the one that is left, because fossick is not ours to widen. It is
-named here so that adding another is a decision rather than an accident, and so that a fossick
-release which drops it fails this suite rather than the inline browser.
+What is left is in `ALLOWED`, each naming the library that would have to open it. `kunda` and
+`pullup` were missing from `COMPOSED` entirely, so eight reaches into them went uncounted; two of
+those were unused and are gone.
 """
 import ast
 import re
@@ -19,10 +19,21 @@ LEELA = Path(__file__).resolve().parent.parent/'leela'
 
 #: The packages Leela composes and must only reach through their public names.
 COMPOSED = ('ramabana', 'shalya', 'gheasy', 'rishi', 'dhrishti', 'vishalakshi', 'litesearch',
-            'koshas', 'kosha', 'fossick', 'exhash', 'mdhtml', 'ptymini', 'ipymini', 'rgapi')
+            'koshas', 'kosha', 'fossick', 'exhash', 'mdhtml', 'ptymini', 'ipymini', 'rgapi',
+            'kunda', 'pullup')
 
-#: The seam requests still outstanding, each with the library that would have to open it.
-ALLOWED = {('fossick.cdp', '_debug_ready')}
+#: The seam requests still outstanding, each with the library that would have to open it. Leela
+#: cannot widen any of these from here, so each one is a decision recorded rather than an accident,
+#: and a release that drops one fails this suite rather than the feature that needed it.
+ALLOWED = {
+    ('fossick.cdp', '_debug_ready'),        # fossick: the inline browser waits on CDP being up
+    ('kunda.kernel', '_Inspector'),         # kunda: `runtime.runners.Runner` is one
+    ('kunda.kernel', '_give_up_after'),     # kunda: the start deadline a pool admission uses
+    ('kunda.pythons', '_venv_roots'),       # kunda: where to look for a project's environment
+    ('kunda.spec', '_runtime_python'),      # kunda: the interpreter to spawn, right inside a bundle
+    ('kunda.spec', '_spec'),                # kunda: a kernelspec built from Leela's own languages
+    ('pullup.workflows', '_gheasy'),        # pullup: the gheasy core a new fastship workflow needs
+}
 
 
 def _private_imports():
@@ -99,3 +110,54 @@ def test_a_git_stage_is_read_through_the_gateway_rather_than_its_private_runner(
     src = (LEELA/'blocks'/'git'/'git.py').read_text()
     assert 'gateway().run(' in src
     assert callable(gateway().run)
+
+
+def test_the_configuration_leela_sets_in_a_library_takes():
+    """`kunda.use_app` and `pullup.use_spec_dir` are module globals, which is the only seam either
+    offers. Both are called once, on the module every other one reaches the library through. What
+    is asserted here is that the call took, so a release that renames it fails the suite rather
+    than the feature.
+    """
+    from kunda.pythons import app_name, env_name
+    import leela.blocks.runtime.kernels                     # noqa: F401  the import that calls it
+    assert app_name() == 'leela'
+    assert env_name('MAX_KERNELS') == 'LEELA_MAX_KERNELS'
+    from pullup.wfbuild import spec_dir
+    from leela.blocks.workflows.workflows import SPEC_DIR
+    import leela.blocks.workflows.workflows                 # noqa: F401
+    assert spec_dir() == SPEC_DIR == '.leela/workflows'
+
+def test_a_seam_module_re_exports_nothing_the_library_already_publishes():
+    """A raw pass-through is not a seam. `wfbuild` was one whole module of them and is gone; these
+    two keep only what Leela adds, so a reader knows a name here is Leela's decision."""
+    import leela.blocks.pipelines.pipelines as pl
+    import leela.blocks.drive.drive as dr
+    assert set(pl.__all__) == {'Pipeline', 'Release', 'PipelineError', 'ReleaseError',
+                               'STATE_DIR', 'RELEASE_FILE'}
+    assert set(dr.__all__) == {'Drive', 'DriveError', 'DRIVE_FILE'}
+    assert not (LEELA/'blocks'/'workflows'/'wfbuild.py').exists(), 'a pure pass-through module'
+    for name in ('default_steps', 'resolve_script', 'uv_argv', 'APP_STEPS', 'env_value'):
+        assert name not in pl.__all__, f'{name} is pullup\'s to publish'
+    for name in ('PARTS', 'Part', 'context', 'parts'):
+        assert name not in dr.__all__, f'{name} is pullup\'s to publish'
+
+def test_the_support_seam_holds_only_what_leela_renames():
+    """It re-exported almost the whole of kunda's support half while `leela/core/envs.py` went
+    straight to kunda for three of the same names, so `clean_env` had two spellings depending on
+    which module you were reading. `LEELA_PY` is the one name Leela wears differently."""
+    import leela.blocks.runtime.support as sup
+    from kunda.support import HOST_PY
+    assert sup.__all__ == ['LEELA_PY'] and sup.LEELA_PY is HOST_PY
+    for gone in ('clean_env', 'work_dir', 'installable', 'INSPECTOR', 'kernel_support'):
+        assert not hasattr(sup, gone), f'{gone} is kunda\'s to publish'
+
+def test_nothing_reaches_kunda_support_through_two_doors():
+    "One spelling per name: `from kunda...` everywhere, and the seam only for `LEELA_PY`."
+    bad = []
+    for path in sorted(LEELA.rglob('*.py')):
+        for i, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+            m = re.match(r'\s*from \.{1,2}(?:runtime\.)?support import (.+)', line)
+            if not m: continue
+            names = {n.strip() for n in m.group(1).split('#')[0].split(',')}
+            if names - {'LEELA_PY'}: bad.append(f'{path.relative_to(LEELA.parent)}:{i}: {line.strip()}')
+    assert bad == [], 'these should import from kunda directly:\n  ' + '\n  '.join(bad)

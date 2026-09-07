@@ -6,17 +6,21 @@ from kunda.kernel import (GATEWAY_DEPS, KERNELS, SHUTDOWN_WAIT, GatewayKernel,  
     GatewayService, Kernel, _Inspector, _give_up_after, check_gateway_deps, ipymini_available)
 from kunda.pool import (IDLE_SECONDS, SWEEP_SECONDS, KernelLimit,  # noqa: F401
     KernelPool as _KernelPool, RuntimeBroker)
-from kunda.pythons import (VENV_BINS, VENV_DIRS, VENV_PYTHONS, _venv_pythons,  # noqa: F401
+from kunda.pythons import (VENV_BINS, VENV_DIRS, VENV_PYTHONS,  # noqa: F401
     _venv_roots, project_python, use_app, venv_env)
 from kunda.pythons import find_pythons as _find_pythons, nearest_python
 from kunda.pythons import python_for as _python_for
 from kunda.spec import (ExecOutcome, KernelStartError, bootstrap_src as _bootstrap_src,  # noqa: F401
     installed_kernels, missing_kernel_module, output_text, run_file_src)
-from kunda.spec import _kernel_env, _runtime_python  # noqa: F401  four blocks reach for these
+from kunda.spec import _runtime_python  # noqa: F401  four blocks ask which interpreter to spawn
 from kunda.spec import _spec as _kunda_spec
 from kunda.spec import installed_spec as _installed_spec, kernelspec_for as _kernelspec_for
 
-from .support import LEELA_PY, clean_env, strip_bundle, support_paths, work_dir  # noqa: F401
+from .support import LEELA_PY
+
+from kunda.pythons import clean_env, strip_bundle
+
+from kunda.support import support_paths, work_dir
 
 __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'GatewayService', 'KernelPool',
            'RuntimeBroker', 'KernelLimit', 'check_gateway_deps',
@@ -24,6 +28,9 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'Gatewa
            'installed_kernels', 'kernelspec_for', 'installed_spec',
            'project_python', 'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
+#: kunda names itself and its environment prefix through a module global, which is the only seam
+#: it offers. Called once here, on the import every other module reaches kunda through, so what it
+#: reads and what it says are spelled Leela's way. `test_seams.py` asserts it took.
 use_app('leela', 'LEELA_')
 
 #: Where the conversation logs a bootstrapped kernel writes go, under the folder it runs in.

@@ -6,7 +6,7 @@ import json, subprocess, sys
 from pathlib import Path
 
 from ...core.web import fail, off_loop
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 from ..runtime.kernels import venv_env, _runtime_python
 
 __all__ = ['CAPS', 'connect', 'project_package_rows']

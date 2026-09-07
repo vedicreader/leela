@@ -1483,7 +1483,7 @@ def test_a_new_environment_gets_the_kernel_versions_leela_itself_runs():
     it. `ipymini` also names neither `fastcore` nor `microio` and imports both. Leela's own
     environment is the combination known to start a kernel, so that is what is installed."""
     import importlib.metadata as md
-    from leela.blocks.runtime.support import KERNEL_PACKAGES, as_installed
+    from kunda.support import KERNEL_PACKAGES, as_installed
     assert set(KERNEL_PACKAGES) >= {'ipykernel', 'ipymini', 'kernmini', 'fastcore', 'microio'}
     pinned = dict(spec.split('==') for spec in as_installed() if '==' in spec)
     for name in KERNEL_PACKAGES:
@@ -1508,7 +1508,7 @@ def test_an_installed_kernel_that_will_not_import_is_reported_as_that(monkeypatc
 
 def test_the_inspector_a_project_must_install_is_the_one_it_cannot_borrow():
     "numpy and pandas are what is noticed missing; dhrishti is what actually has to be there."
-    from leela.blocks.runtime.support import INSPECTOR
+    from kunda.support import INSPECTOR
     assert INSPECTOR == ('dhrishti',)
 
 def test_the_inspector_probe_asks_the_question_the_kernel_asks(monkeypatch):
@@ -1647,7 +1647,7 @@ def test_every_way_a_child_gets_its_environment_leaves_the_bundle_behind(monkeyp
     what the dev server does, and a terminal in a folder with no venv skipped `venv_env` entirely.
     One strip, applied to whoever hands the environment in."""
     from leela.blocks.runtime.kernels import venv_env
-    from leela.blocks.runtime.support import BUNDLE_ONLY, strip_bundle
+    from kunda.pythons import BUNDLE_ONLY, strip_bundle
     for k in BUNDLE_ONLY: monkeypatch.setenv(k, '/bundle')
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
     for env in (venv_env('/tmp/p/.venv/bin/python'),          # the default
@@ -1690,7 +1690,7 @@ def test_a_frozen_app_starts_children_somewhere_they_can_write(monkeypatch, tmp_
     """A double-clicked app inherits `/` as its working directory and one opened from the bundle
     inherits the bundle, which is read-only. A kernel started there cannot write a file beside
     itself, and says nothing that names the reason."""
-    from leela.blocks.runtime.support import work_dir
+    from kunda.support import work_dir
     assert work_dir(tmp_path) == str(tmp_path), 'a chosen directory is never second-guessed'
     monkeypatch.chdir(tmp_path)
     assert work_dir() == os.getcwd(), 'unfrozen, the working directory is the answer'

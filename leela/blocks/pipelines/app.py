@@ -9,8 +9,9 @@ from ...core.web import fail, off_loop, pipeline_socket
 from ..runtime.kernels import python_for, venv_env
 from .deploys import Deploy
 from ...core.envs import EnvStore
-from .pipelines import PipelineError, nbdev_project, resolve_script, uv_argv
-from .pipelines import Release, app_project, release_flow
+from pullup.pipeline import resolve_script, uv_argv
+from pullup.project import app_project, nbdev_project, release_flow
+from .pipelines import PipelineError, Release
 from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect', 'FASTSHIP_OPS', 'fastship_state', 'fastship_run', 'fastship_new']

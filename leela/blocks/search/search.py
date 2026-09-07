@@ -1,7 +1,7 @@
 "Predictable human search (rg unless a mode is picked), semantic agent search, and every hit."
 
 from __future__ import annotations
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 import ast, json, re, subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field

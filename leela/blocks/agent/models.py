@@ -3,7 +3,7 @@ import json, subprocess, sys, threading, time
 from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 
 __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_model', 'runtimes',
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
