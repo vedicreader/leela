@@ -6,7 +6,6 @@ run, wired and asked questions of must come back byte for byte unless somebody c
 
 import asyncio
 import re
-import json
 import pytest
 from fastcore.all import Path
 from starlette.testclient import TestClient

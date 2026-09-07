@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio, os
 from dataclasses import dataclass, field
-from fastcore.all import L, Path, first
+from fastcore.all import L, Path
 from .doc import Canvas
 from .live import Runtime
 

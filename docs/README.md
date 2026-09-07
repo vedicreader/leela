@@ -16,7 +16,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 - [change.canvas.md](change.canvas.md): the canvas block itself, written as a canvas document. `python tools/make_change_page.py` renders it to `media/canvas-change.html`.
 
 - [blocks.md](blocks.md): the block contract. `CAPS`, `connect(app, ctx)`, wiring order, and where a block's JavaScript goes.
-- [bricks.md](bricks.md): where a canvas component comes from. The resolver, what a library has to be, and the spec for extracting a bricks package out of lego.
+- [bricks.md](bricks.md): where a canvas component comes from. The resolver, what a library has to be, and the record of extracting the bricks package.
 - [integration.md](integration.md): the capability groups `WorkspaceHost` declares, and the block backing each one.
 - [decisions.md](decisions.md): why a symbol has the shape it has. Read the entry before rewriting the symbol.
 - [regressions.md](regressions.md): a fault the code still guards against, and the fix that holds it off. Read the entry before touching the guard.

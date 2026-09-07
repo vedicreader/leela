@@ -83,7 +83,7 @@ cycle
 bind text = f"The tail is **{share:.0%}** of all POs, sits behind **{chain:.0f}** approvers, and takes **{cycle.mean():.1f} days** to clear."
 ```
 
-That sentence is bound, not typed. Change the cut in `bands` and it moves with everything else.
+The sentence above binds to the numbers rather than quoting them. Change the cut in `bands`, and it moves with everything else.
 
 ```canvas ask id=q-fix scope=upstream budget=8000
 `cycle_days` was not a column. Rebuild the cycle time from the timestamps and leave it as `cycle`.
@@ -109,7 +109,7 @@ caught = auto.mean()
 caught
 ```
 
-```canvas brick id=v-bars src=lego.bricks:viz.series emit_row=picked
+```canvas brick id=v-bars src=leela_bricks:viz.series emit_row=picked
 bind labels = list(cycle.index)
 bind series = [{'name': 'days to clear', 'values': list(cycle.values)}]
 prop height = 240
@@ -131,7 +131,7 @@ Backtest the rule against Q3.
 <!--/canvas-->
 
 <!--canvas note id=n-cap-->
-The cap is not implemented. It is the only thing between this and a pilot.
+Nobody has built the cap yet, and a pilot needs it first.
 <!--/canvas-->
 
 ## Decide
@@ -163,8 +163,8 @@ Cut the approval cycle for tail POs to under 2 days.
 <!--/canvas-->
 
 <!--canvas bundle id=cap title="Cap the rule per supplier" goal=cycle contributes="the audit finding, and the last of the 10 points" paths=procure/cap.py,tests/test_cap.py-->
-Limits how many auto-approved POs one supplier may raise in a month, which is what the Q3 audit's
-split-ordering finding needs before a pilot.
+Limits how many auto-approved POs one supplier may raise in a month. The Q3 audit's
+split-ordering finding needs that limit before a pilot.
 <!--/canvas-->
 
 <!--canvas task id=k6 status=blocked owner=me-->
@@ -182,7 +182,7 @@ Where should the cap live, and what does each choice cost?
 ## Buyer dashboard
 
 <!--canvas bundle id=dash title="Buyer workload dashboard" paths=procure/dash.py-->
-A weekly view of POs per buyer, so the measure is visible without asking Finance for an extract.
+A weekly view of POs per buyer, which shows the measure without asking Finance for an extract.
 <!--/canvas-->
 
 <!--canvas task id=k8 status=doing owner=Priya-->

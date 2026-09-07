@@ -7,15 +7,18 @@ It runs as a web application on loopback, or as a packaged desktop application o
 Windows.
 
 This repository is the workspace, the notebook, the agent surface and the frontend. The parts
-that are not specific to an IDE are their own packages, and Leela imports them by name:
-[kunda](https://github.com/vedicreader/kunda) runs the kernels and finds the interpreters,
-[dhrishti](https://github.com/vedicreader/dhrishti) inspects a live namespace from inside the
-kernel that owns it, [ramabana](https://github.com/vedicreader/ramabana) is the agent harness,
-[shalya](https://github.com/vedicreader/shalya) the toolset and the host contract,
-[gheasy](https://github.com/vedicreader/gheasy) the git plumbing,
-[kavacha](https://github.com/vedicreader/kavacha) the native window and both freezer definitions,
-and [pullup](https://github.com/vedicreader/pullup) the project, release, deploy and workflow
-model behind the Ship it panel.
+that are not specific to an IDE are their own packages, and Leela imports them by name.
+
+- [kunda](https://github.com/vedicreader/kunda) runs the kernels and finds the interpreters.
+- [dhrishti](https://github.com/vedicreader/dhrishti) inspects a live namespace from inside the
+  kernel that owns it.
+- [ramabana](https://github.com/vedicreader/ramabana) is the agent harness.
+- [shalya](https://github.com/vedicreader/shalya) is the toolset and the host contract.
+- [gheasy](https://github.com/vedicreader/gheasy) is the git plumbing.
+- [kavacha](https://github.com/vedicreader/kavacha) is the native window and both freezer
+  definitions.
+- [pullup](https://github.com/vedicreader/pullup) is the project, release, deploy and workflow
+  model behind the Ship it panel.
 
 ## Install
 
@@ -40,8 +43,8 @@ leela --shell webview .    # a native desktop window — what the packaged app r
 ```
 
 In `--app` mode each folder gets its own `Workspace`, documents, agent, terminals and kernel
-pool at `folder.localhost:5001`. `--app` picks the workspace *shape*; `--shell` picks what
-opens on top of it: `chrome` (the default under `--app`), `webview` for a native window, or
+pool at `folder.localhost:5001`. `--app` picks the workspace shape. `--shell` picks what opens on
+top of it, and it takes `chrome`, the default under `--app`, or `webview` for a native window, or
 `none`. The same CDP Chrome backs [the inline browser](#the-browser-inside-leela) either way.
 `--transport direct|gateway` picks the kernel transport. `--kernel ipykernel|ipymini` picks
 the kernel. `--agent restricted|readonly|off` sets what the agent may touch. Run
@@ -52,7 +55,7 @@ the kernel. `--agent restricted|readonly|off` sets what the agent may touch. Run
 ### Editing
 
 Notebooks and files sit side by side in CodeMirror 6. A `.py` file runs as a script in the
-tab's own kernel. It gets `__main__` and an argv, and Variables then holds everything it
+tab's own kernel. The script gets `__main__` and an argv, and Variables then holds every name it
 defined. Use `▶ file` for the whole file and `▶ sel` for a selection. `mod+e` opens a
 recently-used switcher. Overflow tabs fold into a `+N` menu. Autosave is atomic, mirrored
 into IndexedDB, and version-checked against disk. Cells fold, headings build an outline, and
@@ -61,11 +64,11 @@ every pane minimises.
 ### Rust and JavaScript notebooks
 
 A notebook's kernelspec says what its cells are, and Leela runs three of them. Python is a managed
-ipykernel as before. Rust and JavaScript run on an installed Jupyter kernel where there is one
-(`evcxr_jupyter`, `deno jupyter`), and on Leela's own runner where there is not: Rust cells become
-a scratch cargo crate that grows, so rustc's diagnostics arrive as the cell's error output with
-`E0382` as its name and the compiler's own rendering underneath; JavaScript cells run against one
-long-lived node context, so a binding made in one cell is there in the next. `notebook language`
+ipykernel as before. Rust and JavaScript run on an installed Jupyter kernel where one exists, either `evcxr_jupyter`
+or `deno jupyter`. Where none exists they run on Leela's own runner. A Rust cell becomes part of
+a scratch cargo crate that grows. Rustc's diagnostics then arrive as the cell's error output,
+named `E0382`, with the compiler's own rendering underneath. JavaScript cells run against one
+long-lived node context, and a binding made in one cell survives into the next. `notebook language`
 in the command palette switches a notebook over. See
 [a notebook that is not Python](docs/languages.md).
 
@@ -73,15 +76,15 @@ in the command palette switches a notebook over. See
 
 ### Staging a folder of a language you have just met
 
-`git add` honours `.gitignore`, so the difficulty with a folder you have just created is that it
-does not have one, and `target/` or `__pycache__` go in with everything else. `stage this folder,
-ignores first` writes the rules the folder's project kinds need -- Rust, maturin, Python, Node,
-detected from the files that declare them and only where `git check-ignore` says a rule is missing
--- and then stages. The rules go in the folder's own `.gitignore`, because `/target/` at the root
+`git add` honours `.gitignore`. A folder you have just created has no `.gitignore`, and `target/`
+or `__pycache__` therefore go in with everything else. `stage this folder, ignores first` writes the rules
+the folder's project kinds need, covering Rust, maturin, Python and Node. It detects each kind
+from the files that declare it, writes a rule only where `git check-ignore` reports one missing,
+and then stages. The rules go in the folder's own `.gitignore`, because `/target/` at the root
 of a repository does not match `mycrate/target/`.
 
 The tree colours every file and every folder by its state: staged, modified, untracked, ignored,
-conflicted. A folder takes the strongest state under it, so a new one reads as untracked before
+conflicted. A folder takes the strongest state under it, and a new one therefore reads as untracked before
 you expand it.
 
 <p align="center">
@@ -93,8 +96,8 @@ you expand it.
 
 Each notebook tab owns a real kernel with a dhrishti inspector inside it. kunda supervises the
 kernel, finds the interpreters and builds the kernelspec; the tree stays responsive while a cell
-runs. `--kernel ipymini` puts execs and shell-channel calls on a subshell, so
-completion does not queue behind a long cell. On a cell that awaits two seconds, a
+runs. `--kernel ipymini` puts execs and shell-channel calls on a subshell, which keeps
+completion out of the queue behind a long cell. On a cell that awaits two seconds, a
 completion request drops from about 3s to about 275ms
 ([screenshot](docs/screenshots/web-concurrency.png)). A trailing value opens in a lazy lens.
 Prefix the Variables filter with `=` to evaluate against the watched runtime.
@@ -113,17 +116,17 @@ briefing. Skills come from `pyskills` entry points and `SKILL.md` directories. T
 
 ### The canvas
 
-A canvas is a document that runs. Prose, code cells, components embedded from a package, sketches
-written in the file, PDFs and video sit in one markdown file, and each thing recomputes when what it
-reads changes. Cells run in dependency order rather than document order. Clicking inside an embedded
-component writes a name into the namespace, so a component is an input as much as an output. The
-helper is reachable from the margin, from an `ask` brick, and from `mod+k` on any selection, and it
-edits the document through eight tools and no others. What it knows about a canvas is a skill Leela
-owns and pushes onto the agent while a canvas is open.
+One markdown file holds prose, code cells, components embedded
+from a package, sketches written in the file, PDFs and video. Each brick recomputes when a name it
+reads changes. Cells run in dependency order rather than document order. Clicking inside an
+embedded component writes a name into the namespace, which makes a component an input as much as
+an output. You reach the helper from the margin, from an `ask` brick, and from `mod+k` on any
+selection. It edits the document through eight tools and no others. Leela owns a skill covering
+what the helper knows about a canvas, and pushes that skill onto the agent while a canvas is open.
 
-The editor is the one every document of this shape has: a gutter that appears on hover with a drag
-grip and an insert button, `/` for a filtered block menu, a format bar on a selection with Ask AI in
-it, `Enter` splitting a block at the caret, and both themes.
+The editor holds what every document of this shape holds. A gutter appears on hover, with a drag
+grip and an insert button. `/` opens a filtered block menu. A format bar appears on a selection,
+with Ask AI in it. `Enter` splits a block at the caret. Both themes ship.
 
 Six canvases ship in `examples/canvas/`, over sales, astrology, quantum tunnelling, cell biology and
 two on building software. `uv run python tools/canvas_spike.py` runs the block with no kernels,
@@ -153,13 +156,13 @@ See [the vault](docs/vault.md).
 
 [fossick](https://github.com/vedicreader/fossick) runs the web search and the extraction to
 clean Markdown. Sources stay beside the reader, and a digest cites them. Everything renders
-through [mdhtml](https://github.com/AnswerDotAI/mdhtml), so pasted `<script>` stays visible
-rather than applied.
+through [mdhtml](https://github.com/AnswerDotAI/mdhtml), which keeps a pasted `<script>` visible
+rather than running it.
 
 ### The browser
 
 A page opens as a tab. Chrome renders it offscreen in fossick's persistent profile and streams
-frames in. A research result is a tab beside the notebook, on the sessions you are already
+frames in. A research result is a tab beside the notebook, on the sessions you already
 signed in to. **read** lifts it to Markdown from the DOM after the scripts ran.
 See [the browser, inside leela](#the-browser-inside-leela).
 
@@ -176,17 +179,22 @@ run across every one at once. Lazygit is in the dock.
 ### Ship it
 
 Workflows draws `.github/workflows` as jobs and `needs` edges. Recent run results paint onto
-the same boxes, and a form builds new ones. Every file written is
-[gheasy](https://github.com/vedicreader/gheasy)'s, and one of them is the
-[fastship](https://github.com/AnswerDotAI/fastship) release for a Python package that is not
-an nbdev template. Release runs the flow the project is: nbdev's four commands where
-`settings.ini` or `[tool.nbdev]` says so, maturin's for a crate with Python bindings (test, wheel,
-refresh the workflow, tag -- the runners build every platform and publish), `cargo publish` for a
-crate without, fastship's five where a `pyproject.toml` does not,
-each as a pty step keeping its own exit code. A project that packages a desktop app gets two
-more, after the release the artefacts attach to. Deploy runs the project's `deploy.py` stage by
-stage, or scaffolds the first one from dockeasy, vpseasy and cfeasy. Drive is the same
-deploy taken apart, one library call per step. A failure names the deepest frame in your own
+the same boxes, and a form builds new ones.
+[gheasy](https://github.com/vedicreader/gheasy) writes every file, and one of those files is the
+[fastship](https://github.com/AnswerDotAI/fastship) release for a Python package outside an nbdev
+template.
+
+Release runs the flow the project already uses, and each step is a pty step keeping its own exit
+code. It runs nbdev's four commands where `settings.ini` or `[tool.nbdev]` says so. It runs
+maturin's flow for a crate with Python bindings. That flow tests, builds a wheel, refreshes the
+workflow and tags, and then the runners build every platform and publish. It runs `cargo publish`
+for a crate without bindings. It runs fastship's five commands where a `pyproject.toml` declares
+no nbdev. A project that packages a desktop app gets two more steps, after the release the
+artefacts attach to.
+
+Deploy runs the project's `deploy.py` stage by stage, or scaffolds the first one from dockeasy,
+vpseasy and cfeasy. Drive is the same deploy taken apart, one library call per step. A failure
+names the deepest frame in your own
 
 <p align="center">
 <img src="docs/screenshots/release-maturin.png" width="290" alt="the maturin flow: test, wheel, workflow, changelog, tag">
@@ -247,7 +255,7 @@ Rebind in `keys.json` in leela's config dir, or wherever `$LEELA_KEYMAP` or `--k
 {"keys": {"run_cell": "mod+enter ctrl+y", "palette": "mod+shift+p", "quit": ""}}
 ```
 
-Separate chords with spaces. `""` unbinds. Only what you changed belongs in `keys`; every action
+Separate chords with spaces. `""` unbinds. Put only what you changed in `keys`. Every action
 absent from it follows leela's default, including when that default moves in a later release.
 `leela --write-keymap` writes the file and lists every action and its default under `_defaults`,
 which leela rewrites and never reads. Copy a line out of it to change one more. Editing in the
@@ -326,12 +334,12 @@ no other order.
 
 `tests/test_packaging.py` checks what a green build would not. That the asset walk reaches
 `vendor/fonts/`. That the plist carries the `NSAllowsLocalNetworking` exemption WKWebView
-needs for a loopback URL. That Windows keeps modules as files, so a kernel subprocess can
+needs for a loopback URL. That Windows keeps modules as files, which lets a kernel subprocess
 import them.
 
 ### Cutting a release
 
-Leela is a fastship project, so the Release panel runs `pytest`, `ship-changelog`, `ship-gh`,
+Leela is a fastship project, and the Release panel therefore runs `pytest`, `ship-changelog`, `ship-gh`,
 `ship-pypi`, then the two desktop steps, then `ship-bump`. From a shell the same sequence is:
 
 ```sh
@@ -346,11 +354,11 @@ ship-bump && git commit -am bump && git push
 Write the `## <version>` section of `CHANGELOG.md` before `ship-gh`. That section is the
 release body.
 
-The tag is what builds the other platform. `.github/workflows/desktop-artifacts.yml` runs on a
-push of `v*` or of a bare version tag, because `ship-gh` tags a Python project `0.1.3` while
-fastship's Rust, Zig and npm flows push `v0.1.3`. Each job exports `uv.lock` as the bundle's
-requirements before it freezes anything: pip resolving `>=` fresh on a runner is what shipped
-the 0.1.2 bundle a jupyasyncclient whose kernel answered 500 to every cell. Each job then runs
+The tag builds the other platform. `.github/workflows/desktop-artifacts.yml` runs on a push of
+`v*` or of a bare version tag. It accepts both, because `ship-gh` tags a Python project `0.1.3`
+while fastship's Rust, Zig and npm flows push `v0.1.3`. Each job exports `uv.lock` as the
+bundle's requirements before it freezes anything. Letting pip resolve `>=` fresh on a runner
+shipped the 0.1.2 bundle a jupyasyncclient whose kernel answered 500 to every cell. Each job then runs
 `tests/test_packaging.py` against the artefact it built and uploads it to the release the tag
 names. Set `LEELA_CODESIGN_IDENTITY` for Developer ID signing. Notarization credentials stay in
 the release environment.
@@ -367,7 +375,7 @@ leela --shell webview .
 
 ### Opening a project without a command line
 
-A packaged leela is double-clicked, so nothing tells it which folder you meant. It takes the
+You double-click a packaged leela, and nothing tells it which folder you meant. It takes the
 folders the desktop handed it, else the set it had open when it was last closed, else none.
 Then it opens the welcome screen rather than guessing. `leela` from a shell means "here", and
 the shell has already chosen where here is. A double-clicked application has no such answer,
@@ -400,7 +408,7 @@ reg add "HKCU\Software\Classes\Directory\shell\Leela\command" /ve /d "\"C:\Path\
 
 A page opens as a tab. Chrome renders it offscreen in the persistent CDP profile and streams
 frames into a canvas over `/browser/ws`. Mouse and keyboard go back the other way. A result
-from Research is therefore a tab beside the notebook, on the sessions fossick is already
+from Research is therefore a tab beside the notebook, on the sessions fossick already
 signed in to.
 
 ![A live page in a leela tab](docs/screenshots/desktop-window-browser.png)
@@ -412,19 +420,19 @@ after the login. A plain fetch cannot reach that. **remember** files it in the v
 ordinary source.
 
 Nothing renders web content in leela's process. Chrome renders, and leela draws JPEG frames.
-Every navigation goes through `fossick.check_url`, so the browser cannot be pointed back at
+Every navigation goes through `fossick.check_url`, which stops anything pointing the browser back at
 leela's own unauthenticated loopback server unless `FOSSICK_ALLOW_PRIVATE` says so. The panel
 keeps the keyboard the way the terminal does. A page's own `j`, `/` and `?` reach the page.
 Only the chords that get you back out stay leela's.
 
 Frames cross the socket as raw JPEG rather than base64 in JSON, which is a third fewer bytes.
-They decode through `createImageBitmap` off the main thread. A frame that arrives mid-decode
-is dropped rather than queued, because latency on a picture nobody will see is worth nothing.
+They decode through `createImageBitmap` off the main thread, which drops any frame arriving
+mid-decode rather than queueing it. Latency on a picture nobody will see is worth nothing.
 Hiding the window stops the cast. The page stays loaded, and resuming asks for a frame at once.
 
 ## What it costs to run
 
-`tools/profile_app.py` measures the three things the desktop app is judged on. Each runs in a
+`tools/profile_app.py` measures the three things that judge the desktop app. Each runs in a
 fresh subprocess, because import cost is order-dependent and RSS is cumulative.
 
 ```sh
@@ -440,18 +448,18 @@ python tools/profile_app.py --imports  # what is on the startup path, and what i
 | one screencast frame, on the wire | 10,775 bytes | **8,080 bytes** |
 | a launch that never opens a web tab | + ~900MB of Chrome | **no Chrome at all** |
 
-The last line is the largest. A headless Chrome is several hundred megabytes across a dozen
-processes, more than the workspace beside it, and most sessions never open a web tab. So the
+The last line is the largest. A headless Chrome runs to some hundreds of megabytes across a dozen
+processes. That is more than the workspace beside it, and most sessions never open a web tab. So the
 first page that wants one starts it. `LEELA_CDP_EAGER=1` trades that memory back for the
 second or two the first tab would spend waiting. Research still offers to open pages while the
 browser is cold. `/browser/ready` answers "is there a Chrome to drive", not "is one running".
 
-Nearly all of the first three lines was dhrishti, which the server imported for two constants
+Nearly every byte of the first three lines was dhrishti, which the server imported for two constants
 and a directory listing. dhrishti belongs *inside a kernel*. `dhrishti.core` imports IPython,
 pandas and numpy at module scope, and leela's server never formats a live value.
-`leela/core/inspectors.py` reaches `dhrishti.registry` for the profile and sort menus and the
-reader for the registry in-kernel inspectors write themselves into, and `kunda.support` for the
-import classifier. Neither import pulls in the kernel half. `tests/test_inspectors.py` imports
+`leela/core/inspectors.py` reaches `dhrishti.registry` for two things: the profile and sort
+menus, and the reader for the registry that in-kernel inspectors write themselves into. It
+reaches `kunda.support` for the import classifier. Neither import pulls in the kernel half. `tests/test_inspectors.py` imports
 the real dhrishti and fails if the two disagree, round trip included. The kernel side is
 untouched, which is why the dependency stays. The IPython still resident arrives through
 `fasthtml.pico`, which `fast_app` imports even for `pico=False`. That one is a one-line fix
@@ -464,16 +472,15 @@ uv sync --group dev --python 3.12
 uv run pytest tests -q   # `-m ""` adds the slow ones: browsers, real kernels, a real model
 ```
 
-Kernels are faked in `tests/conftest.py`, and the harness tests drive a `FakeBackend` over
+`tests/conftest.py` fakes the kernels, and the harness tests drive a `FakeBackend` over
 scripted replies. The suite needs no ipykernel and no gigabytes of weights.
 
-The IDE client is authored beside the feature it serves, as `leela/blocks/<block>/*.js`, with
+Each IDE client module sits beside the feature it serves, as `leela/blocks/<block>/*.js`, with
 the shared vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the
 order its `LAYERS` fixes, into the committed bundles `leela/core/web.py` names in
 `IDE_BUNDLES`: `lee-core.js`, `lee-agent.js` and `lee-ide.js`, served as three deferred tags in
-one lexical scope. Run it after editing a module, or `--check` to see whether a bundle has gone
-stale; it also refuses to build a module it cannot find, or one it finds but the order never
-names. The npm bundles in `leela/vendor/` are committed too, so an
+one lexical scope. Run it after editing a module, or run `--check` to see whether a bundle has gone stale. It
+refuses to build a module it cannot find, and one it finds but the order never names. The repository commits the npm bundles in `leela/vendor/` too, and an
 install needs no node:
 
 ```sh

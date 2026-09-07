@@ -3,9 +3,9 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
-from fastcore.all import L, first
+from fastcore.all import L
 
-from .doc import Canvas, Brick, MODES, upstream
+from .doc import upstream
 
 __all__ = ['SCOPES', 'REF_KINDS', 'Spec', 'Item', 'spec_of', 'resolve', 'render', 'weigh',
            'strip_work_log', 'members', 'body_text']

@@ -5,8 +5,8 @@ mode: learn
 
 # An animal cell
 
-Click anything in the cell. What you clicked becomes a name in this document, and everything
-below it is written from that name.
+Click anything in the cell. What you click becomes a name in this document, and every brick
+below reads that name.
 
 ```canvas code id=c1
 organelle = {'name': 'nothing yet', 'doc': 'Click an organelle above.'}
@@ -27,12 +27,12 @@ found = len(seen)
 bind text = f"### {organelle['name']}\n\n{organelle['doc']}\n\nYou have opened **{found} of 8**: {', '.join(seen) or 'none yet'}."
 ```
 
-## Why any of this is separate
+## What the membranes are for
 
-A cell is compartments because chemistry that would fight is kept apart. Lysosomes are acidic and
-the cytosol is not; the mitochondrion holds a proton gradient that only works across a sealed
-membrane; the nucleus keeps transcription away from translation so a transcript can be edited
-before it is read. Every membrane in the picture is a boundary condition on a reaction.
+A cell keeps compartments because some reactions fight each other. A lysosome holds acid, and
+the cytosol does not. A mitochondrion holds a proton gradient, and only a sealed membrane keeps
+that gradient. The nucleus keeps transcription apart from translation. The cell therefore edits a
+transcript before it reads it. Every membrane in the picture bounds one reaction.
 
 ```canvas ask id=c5
 explain mitochondrion

@@ -1,7 +1,6 @@
 # leela-bricks
 
-Components a canvas document can embed. Ten of them, in four groups, extracted out of
-[lego](https://github.com/Karthik777/lego)'s `lego/bricks/`.
+Components a canvas document can embed. Ten of them, in four groups.
 
 A canvas document embeds one with a `brick` brick:
 
@@ -19,28 +18,29 @@ prop height = 240
 pip install -e extensions/bricks
 ```
 
-Leela finds it through the `leela.bricks` entry point. Nothing else is configured, and
-`LEELA_BRICK_HOST` is only for a library that is not installed. See
+Leela finds it through the `leela.bricks` entry point. Leela needs no other configuration, and
+`LEELA_BRICK_HOST` serves only a library nobody installed. See
 [docs/bricks.md](../../docs/bricks.md).
 
 ## What a brick declares
 
-`Registry.brick(name, title, group, ports, emits, wire, height, doc)`. `ports` are what it draws
-from, `emits` are what a click writes back into the document's namespace, and `wire` is the code
+`Registry.brick(name, title, group, ports, emits, wire, height, doc)`. `ports` name what the component draws
+from. `emits` name what a click writes back into the document's namespace. `wire` is the code
 that fills the ports.
 
-`needs` is derived from `wire` rather than declared: the top-level packages the snippet imports,
-minus the standard library. Six of the ten need nothing. The four under `panchanga` and `thrifty`
-import `lego.muhurtha` and `lego.thrifty`, and a document without those reads its ports over
+`wire` gives `needs`, and nobody declares it. `needs` is the top-level packages the snippet
+imports, minus the standard library. Six of the ten need nothing. The four under `panchanga` and
+`thrifty` each import a domain package, and a document without that package reads its ports over
 `data.remote_wire` instead.
 
-`src` is `LIB:name`, and `LIB` is this package's own module name. It is never a literal, so a brick
-cannot claim a package it no longer lives in.
+`src` is `LIB:name`, and `LIB` is this package's own module name. It is never a literal. A brick
+therefore cannot claim a package it no longer lives in.
 
 ## Routes
 
-`serve.connect(app, page=None)` registers seven routes on any Starlette or FastHTML app and imports
-nothing about it. Leela mounts them on its own process, so there is no second server.
+`serve.connect(app, page=None)` registers seven routes on any Starlette or FastHTML app, and it
+imports nothing from that app. Leela mounts the routes in its own process, and no second server
+runs.
 
 | route | is |
 |---|---|
@@ -53,5 +53,5 @@ nothing about it. Leela mounts them on its own process, so there is no second se
 
 ## Extracting it
 
-This directory is the package. `pip install extensions/bricks` and it works anywhere; nothing in it
-imports Leela. Moving it to its own repository is `git mv` and a remote.
+This directory is the package. `pip install extensions/bricks` works anywhere, because nothing in
+the package imports Leela. To move it to its own repository, use `git mv` and add a remote.

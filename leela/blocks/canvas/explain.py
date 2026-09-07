@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 from importlib.resources import files
-from fastcore.all import L, Path, first
+from fastcore.all import L, Path
 
 from .change import bundle_of, snip
 from .context import Spec, body_text, render, resolve
-from .doc import Canvas
 
 __all__ = ['RULES', 'DRAFTED', 'rule_text', 'prompt_for', 'explain', 'drafted',
            'capture', 'replay']

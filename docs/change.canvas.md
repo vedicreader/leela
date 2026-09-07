@@ -12,7 +12,7 @@ Today each of those lives in a different tool. The plan is in a tracker. The num
 notebook. The research is in browser tabs. The recommendation is in a deck. Nothing crosses
 between them except a person who remembers all four.
 
-This change adds one file that holds all of them. It is a markdown file. Prose stays prose. Each
+One file now holds every one of the four. It is a markdown file. Prose stays prose, and each
 other part is a brick.
 
 <!--canvas goal id=g measure="tools you open to review one change against its goal" baseline="4: tracker, notebook, diff, deck" target="1 page" by=2026-10-31-->
@@ -65,15 +65,15 @@ Read this table first. Every later section uses these words and no others.
 | **canvas** | the second view of the document. The same bricks, with coordinates. |
 
 The block is `canvas` and the file is `*.canvas.md`. An earlier draft of this work was a separate
-package called `pata`, from the Sanskrit `pata`, the cloth that a scroll painting is made on. The
-name is retired. There is one name now, and it is `canvas`.
+package called `pata`, from the Sanskrit `pata`, the cloth a painter paints a scroll on. That
+name is gone, and `canvas` is the only name now.
 
 # Why it helps
 
 A notebook picks context by position: every cell above the question. That is right for a script,
-where the cells above are the steps you took. A plan holds four lines of work at once, so position
-hands the recommendation question three failed attempts at a groupby, or you turn it off and paste
-the same paragraphs again.
+where the cells above are the steps you took. A plan holds four lines of work at once. Position therefore hands the recommendation question
+three failed attempts at a groupby. The alternative is to turn it off and paste the same
+paragraphs again.
 
 An audit shows the limit. It belongs to the question near the top of the document and to the risk
 question near the bottom, and to nothing between them. Where a brick sits says nothing about which
@@ -85,8 +85,8 @@ A question shows its basket before it runs: each brick, why it is there, and wha
 one and the count drops.
 
 A boundary on the canvas is a change you can review. It names the goal, owns the files, and holds
-the tasks, the prose and the code together, so one page answers whether the change does what the
-goal said.
+the tasks, the prose and the code together. One page therefore answers whether the change does
+what the goal said.
 
 A goal shows what serves it, and shows a goal that nothing serves. The second is the worse finding,
 because it looks like a goal that is going well.
@@ -175,8 +175,8 @@ defines `triage` goes in.
 A region groups bricks to read. A `bundle` brick claims its region as one change. The boundary on
 the canvas is then the thing that a reviewer opens.
 
-The files come from the code first. A code brick with `#|export` writes a module. The module path
-is therefore known. `paths=` adds only what the bricks do not write.
+The files come from the code first. A code brick with `#|export` writes a module. Leela therefore knows the module
+path. `paths=` adds only what the bricks do not write.
 
 ```canvas snippet id=s-paths path=leela/blocks/canvas/change.py symbol=Bundle.paths
 A list that a person keeps by hand goes out of date. A claim that is out of date is worse than no
@@ -223,12 +223,12 @@ arrives.
 
 # The prompts
 
-The prose above each snippet is drafted, not invented by the renderer. `lit` draws. `explain`
-writes.
+`explain` drafts the prose above each snippet, and the renderer invents none of it. `lit` draws,
+and `explain` writes.
 
-The writing rules are not in this package. `write_docs` is a ramabana pyskill. `rule_text` reads
-it from where it is installed. Leela's rule is that no repository holds a copy of a writing skill,
-and a prompt with one pasted in would be that copy.
+This package holds no writing rules. `write_docs` is a ramabana pyskill, and `rule_text` reads it
+from wherever ramabana installed it. Leela's rule is that no repository holds a copy of a writing
+skill. A prompt with the rules pasted in would be that copy.
 
 ```canvas snippet id=s-rules path=leela/blocks/canvas/explain.py symbol=rule_text
 The function raises when a skill is missing. It does not fall back to a copy, because a silent
@@ -247,7 +247,7 @@ question in the document would send. One context engine serves the reader and th
 ```
 
 `explain` writes each answer into the brick and marks it `wrote=ai`. The document stays the
-record, so `git diff` shows the drafting and a person can edit a sentence and delete the mark.
+record. `git diff` therefore shows the drafting, and a person can edit a sentence and delete the mark.
 
 ```canvas snippet id=s-explain path=leela/blocks/canvas/explain.py symbol=explain
 A brick that already has a body is left alone. A sentence a person wrote is the one to keep.
@@ -310,8 +310,8 @@ and the sideways scroll.
 | `canvas/explain.md`, `canvas/ste.md` | 44 | the prompt and the STE limits |
 | other | 60 | the block wiring, the example, the build file |
 
-Almost every file is new, so there is no earlier version to compare against. The page
-shows snippets and not one large diff.
+Almost every file is new, and no earlier version exists to compare against. The page therefore
+shows snippets rather than one large diff.
 
 # Checks
 
@@ -322,7 +322,7 @@ Five faults came out of writing the tests and this page.
 A `context=discard` brick left the budget in document order, and not first. The item carried the
 scope that chose it, and not the mode of the brick.
 
-`state` reported `todo` for a finished change when no diff was given.
+`state` reported `todo` for a finished change whenever a caller passed no diff.
 
 The `# %%` text form tore a brick in two when the prose quoted the marker. The markdown form
 removed that fault, because prose is prose.
@@ -342,7 +342,7 @@ tools. This branch has the basket, the change bundle and the three views. A merg
 `doc.py` and both halves of the rest.
 
 The block has no client code yet. The eight routes answer, and the canvas prototype in
-`tools/canvas_proto` shows what the browser half draws, but nothing in `lee-ide.js` calls them.
+`tools/canvas_proto` shows what the browser half draws. Nothing in `lee-ide.js` calls them yet.
 
 `inline_ai` is one conversation with one approval slot. A canvas invites two questions at once.
 

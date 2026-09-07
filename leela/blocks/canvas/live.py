@@ -4,7 +4,6 @@ from __future__ import annotations
 import io, math, time, traceback
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import is_dataclass, asdict
-from fastcore.all import L, first
 from .doc import downstream, order
 
 __all__ = ['Runtime', 'jsonable', 'stream', 'result', 'error_out', 'BOOT']

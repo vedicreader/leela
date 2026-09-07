@@ -24,8 +24,8 @@ out rather than filling the count.
 The reader is a developer who has not seen this code. The reader is on a phone. The sentences sit
 directly above the code, inside the section named above.
 
-Say what a reader cannot get from the code itself: the rule it holds to, the thing it will not do,
-or the fault it exists to prevent. Name the identifier that carries it. One fact to a sentence, and
+Say what a reader cannot get from the code itself. Name the rule it holds to, the thing it will
+not do, or the fault it exists to prevent. Name the identifier that carries it. One fact to a sentence, and
 no fact twice.
 
 Do not describe the syntax. Do not restate the function name or its signature. Do not say what the

@@ -5,8 +5,8 @@ mode: make
 
 # Making a block
 
-This document is the software and the note about the software. The code below is what would go in
-`lego/<name>/data.py`; the component under it is the thing it feeds. Neither is a screenshot.
+This document holds the software and the note about it. The code below is what a library puts in
+its own `data.py`, and the component under it reads that data. Both of them run here.
 
 ```canvas code id=m1
 from datetime import date, timedelta
@@ -40,15 +40,15 @@ bind text = f"On the plan as written it lands **{lands}**. You clicked {point['l
 ```
 
 <!--canvas note id=m5-->
-The brick above is `leela_bricks:viz.series`. It came from the palette with `/`, and the two lines
-that fill it came from its own package rather than from here. Open the wiring panel from the block menu, on the grip in the gutter, and the expressions are
-the ones you would have written.
+The brick above is `leela_bricks:viz.series`. The palette inserted it with `/`, and its own
+package supplied the two lines that fill it. The block menu on the gutter grip opens the wiring
+panel, which shows the expressions you would have written by hand.
 <!--/canvas-->
 
 ## Sketching a component before it is a package
 
-A sketch is a component authored in this file. It gets the same two messages a packaged brick
-gets and nothing else, so it can be promoted into a package without changing a line of it.
+A sketch is a component this file itself defines. It gets the same two messages a packaged brick
+gets, and nothing more. You can move a sketch into a package without changing a line of it.
 
 ```canvas sim id=m6
 bind done = done

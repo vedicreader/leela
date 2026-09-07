@@ -1,6 +1,6 @@
 "Running a brick's own wiring snippet here, for a document that has the component but not the package."
 
-import json, math
+import math
 from dataclasses import is_dataclass, asdict
 from .bricks import find
 

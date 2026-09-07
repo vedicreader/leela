@@ -2,7 +2,6 @@
 
 import re
 from dataclasses import asdict, dataclass, field
-from fastcore.all import L, first
 
 __all__ = ['LIB', 'Port', 'Brick', 'Registry', 'REG', 'brick', 'BRICKS', 'manifest',
            'find', 'GROUPS', 'needs']

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 import re
-from fastcore.all import first, ifnone
-from .doc import Brick, KINDS, brick_id
+from .doc import Brick, KINDS
 
 __all__ = ['apply_op', 'OPS']
 

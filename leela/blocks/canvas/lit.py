@@ -4,11 +4,11 @@ from __future__ import annotations
 from dataclasses import replace
 from html import escape
 from importlib.resources import files
-from fastcore.all import L, Path, first
+from fastcore.all import Path, first
 
 from .change import bundles, coverage, diff_stat, snip, state
-from .context import body_text, strip_work_log
-from .doc import HEAD, Canvas
+from .context import strip_work_log
+from .doc import HEAD
 
 __all__ = ['lit', 'html_of', 'md_html', 'GOAL_KEYS', 'FOLD_LINES']
 

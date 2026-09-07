@@ -15,6 +15,11 @@ Give Leela one document that holds a goal, its plan, its research, its code and 
 and one page that shows all five to a reviewer on a phone.
 <!--/canvas-->
 
+<!--canvas goal id=g2 measure="slopometer density on the worst page of the branch" baseline="26.8" target="under 8" by=2026-09-30-->
+Hold every page this branch adds to the English that ste.md already states, and measure it
+rather than assert it.
+<!--/canvas-->
+
 # Words
 
 Read this table first. Every later section uses these words and no others.
@@ -34,8 +39,8 @@ Read this table first. Every later section uses these words and no others.
 
 # Why it helps
 
-A reviewer of a change gets a diff, which answers one question: which lines moved. It cannot answer
-the three a reviewer has.
+A diff tells a reviewer which lines moved. It cannot answer the three questions a reviewer brings
+to a change.
 
 1. What was this change supposed to do?
 2. Did it do that?
@@ -53,9 +58,9 @@ Why can a diff tool not report `unclaimed` on its own?
 <!--/canvas-->
 
 <!--canvas reply id=r1 of=q1-->
-`unclaimed` is the difference between two sets. A diff tool holds the files that moved, and not the
-files a change said it would touch, which are in each bundle's `paths`. With one set you have a
-file list, and with both you have a finding.
+`unclaimed` is the difference between two sets. A diff tool holds the files that moved. It does
+not hold the files a change promised to touch, which sit in each bundle's `paths`. A finding
+needs both sets.
 <!--/canvas-->
 
 # The plan
@@ -85,7 +90,7 @@ Resolve a component from an installed library, in Leela, with no second server.
 <!--/canvas-->
 
 <!--canvas task id=t7 status=done owner=me-->
-Vendor the lego bricks as `extensions/bricks`, so the package extracts with no code change.
+Vendor the brick library as `extensions/bricks`. The package must extract with no code change.
 <!--/canvas-->
 
 <!--canvas task id=t8 status=done owner=me-->
@@ -96,6 +101,14 @@ Merge the canvas branch: one `doc.py`, one palette, one editor.
 Move the page assembly out of the tool and into Leela.
 <!--/canvas-->
 
+<!--canvas task id=t15 status=done owner=me-->
+Score every page with `slopometer`, and rewrite the prose that fails ASD-STE100.
+<!--/canvas-->
+
+<!--canvas task id=t16 status=done owner=me-->
+Run `chkstyle` over the branch's Python, and cut the imports nothing uses.
+<!--/canvas-->
+
 # The document
 
 <!--canvas bundle id=u-doc title="The format and the dataflow"
@@ -104,8 +117,8 @@ Move the page assembly out of the tool and into Leela.
      covers="The document,t1"
      paths=leela/blocks/canvas/doc.py,leela/blocks/canvas/layout.py,leela/blocks/canvas/ops.py,leela/blocks/canvas/export.py,leela/blocks/canvas/example.py
      refs=doc:docs/canvas.md,file:leela/blocks/nb/nb.py-->
-A canvas is a markdown file. Prose stays prose. A brick is a fence or a comment wrap, so every
-markdown reader shows the file and git shows a useful diff. The `ast` module reads the dataflow
+A canvas is a markdown file. Prose stays prose. A brick is a fence or a comment wrap. Every
+markdown reader therefore shows the file, and git shows a useful diff. The `ast` module reads the dataflow
 between code bricks off the code itself.
 <!--/canvas-->
 
@@ -119,8 +132,8 @@ comment wrap holds what a reader should read as prose, so a goal shows its words
 markup. `KINDS` is the whole vocabulary, and a document with a word outside it does not parse.
 ```
 
-The graph is a read, not a record. `defs_of` asks the code what it defines and `reads_of` asks
-what it reads. Two bricks are joined when one defines what the other reads.
+`order` reads the graph rather than storing it. `defs_of` asks the code what it defines, and
+`reads_of` asks what it reads. `order` joins two bricks when one defines what the other reads.
 
 ```canvas snippet id=s-order path=leela/blocks/canvas/doc.py symbol=order
 `order` reads the dependency from the code. `_owners` says which brick defines each name, and
@@ -136,8 +149,8 @@ and the document order stands, so a plan with a loop in it still opens.
      covers="The basket,t2"
      paths=leela/blocks/canvas/context.py
      refs=pkg:ramabana,file:leela/blocks/nb/nb.py-->
-A question names its own scope, its pins and its budget. `resolve` returns the exact bricks, each
-with the reason it was chosen. `render` emits the cells that ramabana's `compact_notebook_context`
+A question names its own scope, its pins and its budget. `resolve` returns the exact bricks, and each one
+carries the reason it is there. `render` emits the cells that ramabana's `compact_notebook_context`
 already knows how to shed.
 <!--/canvas-->
 
@@ -153,7 +166,8 @@ rather than an error, so a typed attribute cannot stop a document from opening.
 
 <!--canvas note id=n-budget-->
 The budget sheds the least useful brick first, not the oldest, and never a pin or the goal. Each
-`Item` carries the `why` that put it there, so a reviewer can see what was dropped.
+`Item` carries the `why` that put it there. A reviewer can therefore see which bricks the budget
+dropped.
 <!--/canvas-->
 
 # The change
@@ -165,12 +179,12 @@ The budget sheds the least useful brick first, not the oldest, and never a pin o
      paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,docs/canvas.md,docs/change.canvas.md,docs/session.canvas.md,docs/dynamic-documents.md,docs/blocks.md,docs/README.md,README.md,media/canvas-*.html,media/*.md,tools/make_change_page.py,tools/canvas_spike.py,tools/canvas_proto/*
      refs=doc:docs/change.canvas.md,pkg:mdhtml,pkg:gheasy-->
 A bundle claims a region, names a goal and owns a list of files. `coverage` compares the claim
-with the diff. `state` is read off the document and never set by hand. `review`, `value` and `pr`
+with the diff. Leela reads `state` off the document, and no one sets it by hand. `review`, `value` and `pr`
 are three views over the same file.
 <!--/canvas-->
 
-The state of a change is derived. A bundle whose tasks are all done, and whose files all moved,
-is done. Nothing writes that word into the file.
+Leela derives the state of a change. A bundle reaches `done` once every task reaches `done` and
+every claimed file moved. No one writes that word into the file.
 
 ```canvas snippet id=s-state path=leela/blocks/canvas/change.py symbol=state
 `state` reads the word off the document. One blocked task blocks the change, and every task done
@@ -196,8 +210,8 @@ and the unclaimed list, so a caller sees the finding without opening the page.
 ```
 
 A `diff` brick with no body is a slot. It says which paths it wants and which two commits to
-compare. `place_diff` calls git once per slot and replaces the slot with one brick a file. A brick
-no bundle claims is marked, and the page shows a warning on it.
+compare. `place_diff` calls git once per slot and replaces the slot with one brick a file. `place_diff` marks a brick
+no bundle claims, and the page shows a warning on it.
 
 ```canvas snippet id=s-place path=leela/blocks/canvas/change.py symbol=place_diff
 `place_diff` reads the request off the brick. A `diff` brick with a body is content, and is left
@@ -206,7 +220,7 @@ bundle claims gets `claimed=no`, which the page shows as a warning.
 ```
 
 The page folds anything longer than a phone screen. A diff body scrolls sideways inside its own
-box, so a long line never widens the page.
+box, and a long line therefore never widens the page.
 
 ```canvas snippet id=s-fold path=leela/blocks/canvas/lit.py symbol=_diff
 The renderer folds a diff longer than a phone screen, and the summary still names the file and the
@@ -222,9 +236,9 @@ counts. It drops the git headers a reader does not need. It writes no script, so
      covers="The prompts,t5"
      paths=leela/blocks/canvas/explain.py,leela/blocks/canvas/explain.md,leela/blocks/canvas/ste.md
      refs=pkg:ramabana,pkg:shalya-->
-Two prompt files, and no third. `explain.md` is the task and `ste.md` is the English. The writing
-rules are read from ramabana's `write_docs` pyskill at the time of the call, so no copy of them
-lives in this repository.
+Leela drafts from two files, and no third. `explain.md` holds the task and `ste.md` holds the English.
+`rule_text` reads the writing rules from ramabana's `write_docs` pyskill at the time of the call,
+so this repository keeps no copy of them.
 <!--/canvas-->
 
 <!--canvas source id=src-rules url=pyskill:write_docs title="ramabana write_docs"-->
@@ -239,9 +253,9 @@ change to `write_docs` reaches this prompt with no edit here. A missing skill ra
 falling back, because a silent fallback would draft prose against stale rules.
 ```
 
-A brick the model drafted carries `wrote=ai` in the file, so `git diff` shows the drafting and a
-reviewer can read those first. Every snippet on this page was written by a person, so no brick here
-carries the mark. `media/e2e/drafted-page.html` is the same path run against a local model.
+A brick the model drafted carries `wrote=ai` in the file. `git diff` therefore shows the drafting,
+and a reviewer can read those bricks first. A person wrote every snippet on this page, and no
+brick here carries the mark. `media/e2e/drafted-page.html` is the same path run against a local model.
 
 # The library
 
@@ -253,7 +267,7 @@ carries the mark. `media/e2e/drafted-page.html` is the same path run against a l
      refs=pkg:leela-bricks,doc:docs/bricks.md-->
 The palette used to be an HTTP call to a second server. It is now an entry-point group. A library
 answers four questions: its manifest, one brick, that brick's wiring, and its own routes. An HTTP
-host answers the same four, and stays for a library that is not installed.
+host answers the same four, and it stays for a library nobody installed.
 <!--/canvas-->
 
 The four questions are the whole contract. A library that answers them needs to know nothing about
@@ -265,8 +279,8 @@ A library answers four questions and knows nothing about Leela. `manifest` lists
 on the app it is handed. `manifest` is read in process, so the palette needs no second server.
 ```
 
-`needs` is read off the wiring's own imports, so a component cannot claim a dependency it does not
-have, and cannot hide one it does.
+`needs` comes from the wiring's own imports. A component cannot claim a dependency its code does
+not import, and cannot hide one it does.
 
 ```canvas snippet id=s-needs path=extensions/bricks/leela_bricks/bricks.py symbol=needs
 `needs` reads the imports out of the wiring text. A component cannot claim a dependency its code
@@ -275,9 +289,9 @@ a person must install before the cell will run.
 ```
 
 <!--canvas note id=n-src-->
-A library never writes its own name into a `src` string. `LIB` comes from `__name__`, so renaming
-the package renames every `src` it serves. This is what made `extensions/bricks` extract with no
-code change: eight files moved, and the only edit was to `bricks.py`, which grew a `Registry`.
+A library never writes its own name into a `src` string. `LIB` comes from `__name__`. Renaming
+the package therefore renames every `src` it serves. This is why `extensions/bricks` extracted with no
+code change. Eight files moved, and the only edit added a `Registry` to `bricks.py`.
 <!--/canvas-->
 
 The palette this branch resolves, in process:
@@ -297,7 +311,7 @@ p = palette(libraries())
      paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,tests/test_web_slow.py,leela/blocks/canvas/live.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/store.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/*.canvas.md,leela/blocks/canvas/triage.diff,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*
      refs=doc:docs/canvas.md-->
 The canvas branch built the editor: a gutter, a block menu, a slash menu, a component palette, an
-inline helper and a live kernel. Both branches read the same file format, so the merge kept one
+inline helper and a live kernel. Both branches read the same file format, and the merge therefore kept one
 `doc.py` and one palette.
 <!--/canvas-->
 
@@ -312,8 +326,8 @@ ships, and a pasted URL or file becomes a `source` or a `pdf`. `media/e2e/25-blo
      covers="The wiring,t10"
      paths=leela/blocks/__init__.py,leela/blocks/canvas/__init__.py,leela/skills/*,tools/build_ide_js.py,tests/routes.txt,tests/test_canvas.py,tests/test_canvas_doc.py,pyproject.toml,extensions/bricks/pyproject.toml,.gitignore
      refs=file:leela/blocks/__init__.py-->
-A block declares the context it reads in `CAPS`, and the folder is listed in `blocks.NAMES`. Every
-`.js` file is named in the IDE build. `tests/routes.txt` is the record of what the block serves,
+A block declares the context it reads in `CAPS`, and `blocks.NAMES` lists the folder. The IDE
+build names every `.js` file. `tests/routes.txt` is the record of what the block serves,
 so a new route cannot appear unrecorded.
 <!--/canvas-->
 
@@ -329,10 +343,10 @@ not declare fails at load, not at the request that reads it.
 
 # What running it found
 
-Running the merged block end to end found two faults that reading it could not.
+Two faults survived every reading of the merged block. Running it end to end found both.
 
 <!--canvas note id=n-stale-->
-Typing in a code brick was lost. An insert anywhere in the document runs `cvSync`, which keeps the
+The editor lost typing in a code brick. An insert anywhere in the document runs `cvSync`, which keeps the
 element and hands it a new brick object. The textarea then wrote to an object the document no
 longer held, and the next flush read the older body. `cvEdit` writes through to `cvBrick(id)`, and
 `cvKeepEdits` carries an edited body across the sync. The browser test in `tests/test_web_slow.py`
@@ -342,8 +356,8 @@ returns the empty body on the code before the fix.
 <!--canvas note id=n-basket-->
 The context basket has a route and no panel. `/canvas/context` returns the exact bricks one question
 will send, each with the rule that chose it, and 51 tests cover the model. The merged editor has no
-control that opens it, because neither branch built one: the canvas branch built the editor and this
-side built the basket. It is `t14` above.
+control that opens it. Neither branch built one, because the canvas branch built the editor and
+this side built the basket. `t14` above records the gap.
 <!--/canvas-->
 
 <!--canvas task id=t13 status=done owner=me-->
@@ -354,11 +368,50 @@ Fix the stale-object write and add the browser test that reproduces it.
 Give the basket a panel: a control on an `ask` brick that shows what the question will send.
 <!--/canvas-->
 
+# The prose
+
+<!--canvas bundle id=u-prose title="Every page scored, and the English fixed"
+     goal=g2
+     contributes="the English a reviewer actually reads"
+     covers="The prose,t15,t16"
+     paths=README.md,docs/*.md,examples/canvas/*.canvas.md,extensions/bricks/README.md,media/*.md,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/explain.md,leela/blocks/canvas/*.py,extensions/bricks/leela_bricks/*.py,tools/canvas_proto/paint.py
+     refs=pkg:slopometer,pkg:fastaistyle,doc:leela/blocks/canvas/ste.md-->
+`slopometer` scores a page against the reference-prose rules, and `chkstyle` scores Python against
+fastai's. Both ran over every file this branch adds. `ste.md` already held the rules, and nobody had
+checked a hand-written page against them.
+<!--/canvas-->
+
+`explain.md` hands `ste.md` to the model that drafts a snippet. A drafted sentence therefore met
+the rules, and a hand-written one did not. Three patterns carried most of the weight. A sentence states a
+thing and then restates its opposite. A closing line reverses the sentence before it. A passive
+clause drops the doer. `ste.md` bans all three by name.
+
+<!--canvas data id=n-slop-->
+worst_page_before = 26.8
+worst_page_after = 7.5
+readme_before = 12.9
+readme_after = 2.9
+pages_scored = 20
+pages_at_zero = 4
+unused_imports_cut = 27
+<!--/canvas-->
+
+What the score still reports is not slop. A package name reads as a coinage. A bold UI label
+reads as emphasis. A list of three parallel clauses reads as a long sentence. `ste.md` permits
+the third by name, and the first two are the words the product uses.
+
+`docs/screenshots/canvas-prose-goals.png` shows both goals on this page, and
+`canvas-prose-review.png` and `canvas-prose-phone.png` show this section on a desktop and on a
+phone. Leela drew all three from this file.
+
+```canvas diff id=d-prose paths=docs/session.canvas.md,examples/canvas/an-animal-cell.canvas.md left=origin/main right=HEAD
+```
+
 # The diff
 
-Here is the diff for the two files that carry the change: the model and the routes. The slot below
-states its own paths and its own two commits, and Leela filled it. The rest of the branch is in the
-chips at the top of the page, and in `coverage`.
+Below are the two files that carry the change: the model and the routes. The slot states its own
+paths and its own two commits, and Leela filled it. The chips at the top of the page carry the
+rest of the branch, and so does `coverage`.
 
 ```canvas diff id=d-slot paths=leela/blocks/canvas/change.py,leela/blocks/canvas/app.py left=origin/main right=HEAD
 ```
@@ -396,11 +449,11 @@ which set was a promise.
 <!--/canvas-->
 
 <!--canvas task id=t12 status=done owner=me-->
-This page is written by Leela, from this file, with a real git diff in the slot.
+Leela writes this page from this file, with a real git diff in the slot.
 <!--/canvas-->
 
 <!--canvas note id=n-loose-->
-The seven files the header says nobody claims are left that way on purpose. They are scratch:
+The seven files the header reports as unclaimed stay that way on purpose. They are scratch:
 `shot.mjs`, `t-dark.mjs`, `t-help.mjs` and four screenshots under `shots/`, all committed by an
 earlier branch, and none of them a change any bundle here promised.
 <!--/canvas-->

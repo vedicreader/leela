@@ -1,13 +1,12 @@
 ---
-title: A sales funnel that argues back
+title: A sales funnel
 mode: learn
 ---
 
-# A sales funnel that argues back
+# A sales funnel
 
-A funnel is not a picture. It is a chain of conditional probabilities, and the only interesting
-question is which link is worst. Drag any bar below and watch the rest of this document rewrite
-itself, because every number under it is computed from the same five stages.
+A funnel is a chain of conditional probabilities. The link with the worst rate is the one to
+fix. Drag any bar below, and every number under it recomputes from the same five stages.
 
 ```canvas code id=sf1
 stages = [{'name': 'Leads', 'value': 1000}, {'name': 'Qualified', 'value': 420},
@@ -47,9 +46,9 @@ prop height = 240
 ```
 
 <!--canvas note id=sf7-->
-The chart above is bound to `rates`, which is computed in the cell above it, which reads `stages`,
-which the funnel writes when you drag it. Nothing is refreshed. Each thing recomputes because
-something it reads moved.
+The chart above binds to `rates`. The cell above it computes `rates` from `stages`, and the
+funnel writes `stages` when you drag it. Each brick recomputes because a name it reads
+changed.
 <!--/canvas-->
 
 ```canvas ask id=sf8

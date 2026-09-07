@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from fastcore.all import L, Path, first
 
-from .context import body_text, strip_work_log
+from .context import strip_work_log
 from .doc import Brick, Canvas
-from .export import directives, modules
+from .export import modules
 
 __all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'state', 'pr', 'review', 'value',
            'hunks', 'diff_stat', 'place_diff', 'snip', 'STATES']

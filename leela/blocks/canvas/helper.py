@@ -3,8 +3,8 @@
 from __future__ import annotations
 import asyncio, re, textwrap
 from dataclasses import dataclass, field
-from fastcore.all import L, first, ifnone
-from .doc import Brick, brick_id
+from fastcore.all import L, first
+from .doc import brick_id
 
 __all__ = ['TOOLS', 'Ask', 'Helper', 'Scripted', 'Agentic', 'helper_for', 'skill_text', 'section', 'defined_in']
 

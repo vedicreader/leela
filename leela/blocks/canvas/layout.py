@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import math
-from fastcore.all import L
 
 from .context import body_text
 from .doc import W

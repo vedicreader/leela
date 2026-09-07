@@ -5,8 +5,8 @@ mode: make
 
 # Pricing a run
 
-What an agent costs is four numbers and one multiplication, and every argument about it is really
-an argument about one of the four. Put them in a cell and the argument becomes editable.
+An agent run costs four numbers and one multiplication. Every argument about the cost is an
+argument about one of the four. Put the four in a cell, and the argument becomes editable.
 
 ```canvas code id=p1
 in_tokens  = 18_000
@@ -38,7 +38,7 @@ picked = rows[-1]
 bind text = f"**{picked['label']}** at this shape of request is ${picked['per_request']} a call and ${picked['monthly']:,.0f} a month at {runs_a_day} runs a day. The cheapest option is {(min(rows, key=lambda r: r['monthly'])['monthly']/picked['monthly']*100):.0f}% of that."
 ```
 
-Click a row. `picked` changes, and the sentence, being bound to `picked`, changes with it.
+Click a row. `picked` changes, and the sentence below binds to `picked`, which changes it too.
 
 ## The knob that actually matters
 
@@ -60,9 +60,9 @@ bind series = [{'name': 'monthly $', 'values': [r['monthly'] for r in rows]}]
 prop height = 240
 ```
 
-Output tokens are priced at four to five times input on every model here, so a prompt that grows
-is cheap and an answer that grows is not. That is the whole of the cost model, and it is why
-"make it more concise" is a budget decision.
+Every model here prices an output token at four to five times an input token. A longer prompt
+therefore costs little, and a longer answer costs much more. This is why "make it more concise"
+is a budget decision.
 
 ```canvas ask id=p8
 chart rows

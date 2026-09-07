@@ -5,9 +5,9 @@ mode: learn
 
 # The traditional day
 
-A day in the panchangam is not midnight to midnight. It runs sunrise to sunrise, and it is named
-by five limbs read at that sunrise. The components below are lego's, computed here rather than
-fetched: the same functions that serve sankalpa.sh.
+A day in the panchangam runs sunrise to sunrise, not midnight to midnight. Five limbs read at
+that sunrise give the day its name. The components below come from `leela_bricks`, and they
+compute the limbs here rather than fetch them.
 
 ```canvas code id=td1
 import json, urllib.request
@@ -16,9 +16,9 @@ day = _ports['day']
 day['tithi']['name'], day['nakshatra']['name'], day['masa']
 ```
 
-This cell is the wiring `leela_bricks:panchanga.day` ships. Where the package is installed beside
-the document it is two imports and a call; where it is not, as here, it is the same call to the
-host that owns it. The document keeps whichever one it used, in the open.
+This cell is the wiring `leela_bricks:panchanga.day` ships. With the package installed beside the
+document, the wiring is two imports and a call. Without the package, as here, the same call goes
+to the host that owns it. The document keeps whichever wiring it used, in the open.
 
 ```canvas brick id=td2 src=leela_bricks:panchanga.day emit_limb=limb
 bind day = day
@@ -37,9 +37,9 @@ Click a limb above. The card hands the name back into this document, and the sen
 
 ## The twenty-four horas
 
-Each daylight and each night is cut into twelve, and the lords run in the Chaldean order. The
-first hora of the day belongs to the lord of the weekday, which is why the weekday is named for
-a planet in almost every language that has one.
+The panchangam cuts each daylight and each night into twelve horas, and the lords run in the
+Chaldean order. The lord of the weekday takes the first hora of the day. Almost every language
+that names a weekday for a planet follows that rule.
 
 ```canvas brick id=td5 src=leela_bricks:panchanga.horas emit_hora=hora
 bind horas = day['horas']

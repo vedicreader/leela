@@ -1,7 +1,7 @@
 # Canvas
 
-A canvas is a document that runs. Prose, code, embedded components, simulations, PDFs and video sit
-in one file, and the things in it recompute when what they read changes.
+One file holds prose, code, embedded components, simulations, PDFs and video. Each brick in it
+recomputes when a name it reads changes.
 
 The notebook Leela already has is a list of cells. A canvas is prose with everything else inside it,
 and its cells are not the point of the document. `leela/blocks/canvas/` is the block.
@@ -32,20 +32,21 @@ An **aside**, still rendered by anything that reads markdown.
 Fenced kinds: `code`, `ask`, `brick`, `sim`, `data`, `pdf`, `video`. Wrapped kinds: `reply`, `note`,
 `quiz`. Anything else in the file is a `text` brick.
 
-The parser is a line scan rather than a pair of regular expressions, because a canvas fence inside a
-longer markdown fence is an example of one and not one. A document about canvases is a canvas.
-Windows line endings read the same as Unix ones. Two bricks cannot share an id: the second is given
-a fresh one on read, because otherwise every op on the first would reach the second in silence.
+The parser is a line scan rather than a pair of regular expressions. A canvas fence inside a longer
+markdown fence is an example of a brick and not a brick. A document about canvases is itself a
+canvas. Windows line endings read the same as Unix ones. Two bricks cannot share an id, and the
+parser therefore gives the second brick a fresh id on read. Without that rule, every op on the first brick
+would reach the second one in silence.
 
 A `pdf` brick with a relative `src` is a file beside the canvas, served by `/canvas/file`, which
 resolves under the canvas directory and refuses anything above it.
 
-A brick body holds `bind <port> = <expression>` and `prop <key> = <value>` lines. A code brick body
-is the code, kept exactly, and never read for directives.
+A brick body holds `bind <port> = <expression>` and `prop <key> = <value>` lines. The body of a code brick
+is the code itself, kept exactly, and nothing reads it for directives.
 
-A canvas stores no outputs. Opening one runs it. The file therefore diffs to what somebody changed
-and nothing else, and `test_canvas.py` asserts that a canvas which has been opened, run, wired and
-asked questions of saves back byte for byte.
+A canvas stores no outputs, and opening one runs it. The file therefore diffs to what somebody
+changed and nothing else. `test_canvas.py` opens a canvas, runs it, wires it and asks questions of
+it, then asserts that it saves back byte for byte.
 
 ## The dataflow
 
@@ -62,7 +63,8 @@ the brick rather than blanking it.
 
 ## Components
 
-A component is an iframe. The document and the frame exchange four messages and nothing else.
+Every embedded component runs in an iframe. The document and the frame exchange four messages and
+nothing else.
 
 | message | direction | meaning |
 |---|---|---|
@@ -75,28 +77,29 @@ A component is an iframe. The document and the frame exchange four messages and 
 a name into the namespace, and every cell that reads that name reruns. A component is an input as
 much as an output.
 
-The name a port writes to is `emit_<port>` in the brick's attributes, so two funnels in one document
-do not fight over `stages`.
+The brick's attributes name the port's target as `emit_<port>`. Two funnels in one document
+therefore never fight over `stages`.
 
 ![Clicking a component writes into the document](screenshots/canvas-cell.png)
 
 ## Wiring
 
-Ports are declared by the package that owns the component, not by the document. `lego/bricks/` is
-one such package: each brick declares its ports, what it emits, and the code that fills it.
+The package that owns the component declares its ports, and the document never does.
+`leela_bricks` is one such package. Each brick in it declares its ports, what it emits, and the
+code that fills it.
 
-Picking a component from the palette inserts it, reads its wiring, puts that code in the document as
-an ordinary code brick, and binds the ports it filled. The wiring is visible and editable. There is
-no hidden connection.
+Picking a component from the palette inserts it and reads its wiring. Leela puts that code in the
+document as an ordinary code brick, then binds the ports it filled. You can see and edit the
+wiring, and the document holds no hidden connection.
 
-Where a component comes from is [bricks.md](bricks.md). The palette and the wiring are read from a
-library installed beside Leela, in process, and `LEELA_BRICK_HOST` is the fallback for a library
-that is not installed. An earlier version of this block fetched both over HTTP from a default that
-was Leela's own port, so a fresh install had an empty palette and no error.
+Where a component comes from is [bricks.md](bricks.md). Leela reads the palette and the wiring in
+process, from a library installed beside it. `LEELA_BRICK_HOST` is the fallback for a library
+nobody installed. An earlier version of this block fetched both over HTTP, from a default that
+was Leela's own port. A fresh install therefore had an empty palette and no error.
 
-A package ships its wiring twice. The first form imports the package. The second form calls the
-host that owns it. The document runs the first, and falls back to the second when the import fails,
-which is what happens when the package is not installed beside the document.
+A package ships its wiring twice. The first form imports the package, and the second form calls
+the host that owns it. The document runs the first form, and falls back to the second when the
+import fails. That import fails when the package is not beside the document.
 
 ```python
 from lego.muhurtha.panchanga import Place, day_panchanga
@@ -120,8 +123,8 @@ The palette is what the host publishes, grouped by the block that owns each comp
 
 ## The helper
 
-One helper, reachable from three places: the margin, an `ask` brick in the document, and `mod+k`
-anywhere. All three are the same turn. What differs is the selection that travels with it.
+Three places reach the one helper: the margin, an `ask` brick in the document, and `mod+k`
+anywhere. All three run the same turn, and only the selection that travels with it differs.
 
 Its reach into the document is eight tools and no others.
 
@@ -139,9 +142,10 @@ Its reach into the document is eight tools and no others.
 Every one goes through `apply_op`, which is also what the person's own edits go through. There is no
 second path into the document.
 
-A turn streams `step`, `chunk`, `op`, `answer`, `done`. `op` events are applied as they arrive, so a
-brick appears while the turn is still running. Steering is a queue per turn: text posted to
-`/canvas/steer` is taken at the next step boundary and replans the rest of the turn.
+A turn streams `step`, `chunk`, `op`, `answer`, `done`. The document applies each `op` event as it
+arrives, and a brick therefore appears while the turn is still running. Steering is a queue per
+turn. The turn takes text posted to `/canvas/steer` at the next step boundary, and replans the
+rest of the turn.
 
 The trail is the last twelve questions, each with the brick it came from and the selection it
 carried. It goes into the next turn's context, which is why a follow-up needs no preamble.
@@ -153,33 +157,35 @@ carried. It goes into the next turn's context, which is why a follow-up needs no
 What the agent knows about a canvas is a skill, and Leela owns it. `leela/skills/canvas.py` is the
 body: the file format, the dataflow, what a component emits, the eight tools, and how to work in one.
 
-It is not a `pyskills` entry point. A skill that is only true inside a canvas should not reach every
-agent that has Leela installed. `leela.skills.push(agent, 'canvas')` puts it on the agent's registry
-when a canvas opens, `drop` takes it off when the canvas closes, and the eight tools go on and come
-off with it. `Agentic.open` and `Agentic.close` are those two calls.
+It is not a `pyskills` entry point. A skill that is only true inside a canvas should not reach
+every agent that has Leela installed. `leela.skills.push(agent, 'canvas')` puts the skill on the
+agent's registry when a canvas opens, and `drop` takes it off when the canvas closes. The eight
+tools go on and come off with it. `Agentic.open` and `Agentic.close` are those two calls.
 
-Ramabana holds none of this. `Agent.skills` is `discover(..., extra=registry.skills)`, so a pushed
-skill reaches the skill index and `read_skill` with no change to the agent core. The proposal on
-`ramabana`'s branch is for the tools to become a shalya capability group; the skill stays Leela's
-either way.
+Ramabana holds none of this. `Agent.skills` is `discover(..., extra=registry.skills)`. A pushed
+skill therefore reaches the skill index and `read_skill` with no change to the agent core. The
+proposal on `ramabana`'s branch turns the tools into a shalya capability group. The skill stays
+Leela's either way.
 
-The skill is also the stand-in's source. A question about the canvas is answered out of the section
-of the skill that covers it, so there is one text to keep right rather than two.
+The skill is also the stand-in's source. The stand-in answers a question about the canvas out of
+the section of the skill that covers it, which keeps one text right rather than two.
 
 ## The model
 
-`helper_for(agent)` returns `Agentic` where a model is configured and `Scripted` where none is.
-`Scripted` is deterministic: it reads the same `Ask`, calls the same tools, and emits the same
-events. It has no judgement, and it has no facts: a question about a word is answered by finding
-where this document already explains it, and a word the document never explains gets no answer.
-Which component to embed is scored against what the host publishes, not against a table kept here.
+`helper_for(agent)` returns `Agentic` where a model exists and `Scripted` where none does.
+`Scripted` is deterministic. It reads the same `Ask`, calls the same tools, and emits the same
+events. It carries no judgement and no facts. To answer a question about a word, it finds where
+this document already explains that word. A word the document never explains gets no answer.
+It scores which component to embed against what the host publishes, never against a table kept
+here.
 
-`Agentic` runs the real turn. It is not exercised in the spike, because the spike has no model.
+`Agentic` runs the real turn. The spike never exercises it, because the spike has no model.
 
 ## The editor
 
-The document is edited in place. Prose stays rendered while you work in it and goes back to markdown
-on the way out, so selecting a sentence to ask about it does not change what the sentence looks like.
+You edit the document in place. Prose stays rendered while you work in it, and it returns to
+markdown on the way out. Selecting a sentence to ask about it therefore leaves the sentence
+looking the same.
 
 | where | what |
 |---|---|
@@ -205,25 +211,25 @@ Both themes, and every embedded component follows the one the document is in.
 
 ![The same document in the dark](screenshots/canvas-dark.png)
 
-Marks are applied to the file, not to the rendered HTML. `document.execCommand('bold')` would put a
-`<b>` in that the markdown writer has to guess about.
+The editor writes marks to the file, never to the rendered HTML. `document.execCommand('bold')`
+would put in a `<b>` that the markdown writer then has to guess about.
 
-The type scale, the token names and the popover shape follow BlockSuite's, so a canvas put beside an
-editor built on it does not read as a different application. Both themes are in `canvas.css`, and
-`test_canvas.py` asserts the dark half names no token the light half lacks.
+The type scale, the token names and the popover shape follow BlockSuite's. A canvas beside an
+editor built on BlockSuite therefore reads as the same application. Both themes sit in
+`canvas.css`, and `test_canvas.py` asserts the dark half names no token the light half lacks.
 
 ## Modes
 
 `mode: make` and `mode: learn` in the frontmatter. The substrate is the same. The palette and the
-default bricks differ. `a-sales-funnel`, `the-traditional-day`, `tunnelling` and `an-animal-cell` are
-learn. `pricing-a-run` and `making-a-block` are make.
+default bricks differ. `a-sales-funnel`, `the-traditional-day`, `tunnelling` and `an-animal-cell` use
+learn. `pricing-a-run` and `making-a-block` use make.
 
 Nothing in the runtime branches on the mode. It is a label on the document and a filter on the
 palette.
 
 ## Running it
 
-The block is connected in `leela/blocks/__init__.py` and serves `/canvas` from the IDE app. It also
+`leela/blocks/__init__.py` connects the block, which serves `/canvas` from the IDE app. It also
 runs on its own, with no kernels, no agent and no workspace:
 
 ```sh
@@ -231,16 +237,16 @@ uv run python tools/canvas_spike.py                  # http://localhost:5002/can
 BRICK_HOST=http://127.0.0.1:5001 uv run python tools/canvas_spike.py
 ```
 
-The components come from a lego app on `BRICK_HOST`. Without one, the palette is empty and bricks
-already in a document draw with the sample data their package declares.
+The components come from a component host on `BRICK_HOST`. Without one, the palette is empty, and
+a brick already in a document draws with the sample data its package declares.
 
-The canvas serves its own bundle from `/canvas/js` rather than joining the three IDE bundles. Those
-three share one lexical scope, and a separate document does not want to be in it.
-`build_ide_js.OWN_BUNDLE` names the blocks that do this.
+The canvas serves its own bundle from `/canvas/js` rather than joining the three IDE bundles.
+Those three share one lexical scope, which a separate document has no reason to enter.
+`build_ide_js.OWN_BUNDLE` names the blocks that serve their own bundle.
 
 ## Walkthroughs
 
-Recorded against this branch, with the scripted helper and a lego app on 5001.
+Recorded against this branch, with the scripted helper and a component host on 5001.
 
 | what it shows | file |
 |---|---|
@@ -276,6 +282,6 @@ A PDF, a sketch and a chart in the same document.
 - A canvas is a page, not a tab. Opening one inside the IDE means a tab kind, a mount, and a place
   in the command palette.
 - `Agentic` has never run.
-- Block selection is one block at a time. Dragging a range across several is not there.
+- Block selection takes one block at a time. Dragging a range across many blocks is not there.
 - The markdown writer handles what the renderer can produce and no more. `mod+e` shows the source
   for a block where that is not enough.

@@ -5,12 +5,12 @@ mode: learn
 
 # Tunnelling
 
-A particle with less energy than a barrier still turns up on the other side. Not over the top:
-through. The amplitude inside the barrier decays rather than oscillates, and if the barrier ends
-before the decay finishes, whatever is left keeps going.
+A particle with less energy than a barrier still turns up on the other side. It goes through the
+barrier rather than over the top. The amplitude inside the barrier decays instead of oscillating.
+If the barrier ends before the decay finishes, the remaining amplitude keeps going.
 
-The simulation below integrates the one-dimensional Schrödinger equation in the frame, forty
-steps a screen refresh. Nothing is precomputed.
+The simulation below integrates the one-dimensional Schrödinger equation in the frame, at forty
+steps a screen refresh. It computes every frame as it draws.
 
 ```canvas code id=q1
 barrier = 1.02
@@ -50,16 +50,16 @@ predicted = round(2.718281828 ** (-2 * kappa * width) * 100, 2)
 bind text = f"At {barrier:.2f}× the packet energy over {width} cells, the decay constant κ is {kappa} and the crude estimate exp(−2κa) is **{predicted}%**. The simulation is measuring **{transmission*100:.1f}%**."
 ```
 
-Drag the barrier up and the transmitted lobe on the right disappears long before the barrier is
-twice the energy. That steepness is the whole of the effect: tunnelling is exponential in both
-the height and the width, so a barrier one and a half times as thick is not half as leaky.
+Drag the barrier up. The transmitted lobe on the right disappears long before the barrier reaches
+twice the packet energy. Tunnelling falls exponentially with both the height and the width. A
+barrier half again as thick therefore leaks much less than half as much.
 
 ```canvas ask id=q6
 explain tunnelling
 ```
 
 ```canvas video id=q7 src=Ltni6c1lC4c
-Sixty Symbols on quantum tunnelling, if you want it said out loud.
+Sixty Symbols explains quantum tunnelling aloud.
 ```
 
 <!--canvas quiz id=q8-->
