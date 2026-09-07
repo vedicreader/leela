@@ -27,17 +27,26 @@ def _settle(o, touched_names, skip=()):
     "Rerun what the change made stale, and re-resolve every binding that reads it."
     return o.runtime.react(o.canvas.bricks, touched_names, skip=skip)
 
-#: The ops that put code into a kernel. The rest move prose about and need no trust.
-RUNS_CODE = ('run', 'values', 'insert', 'replace', 'bind', 'kind', 'replace_selection')
+#: Kinds whose body is code the runtime executes.
+RUNNING_KINDS = ('code', 'data')
 
 def _runs_code(o, op):
-    "Whether this op would execute or evaluate something in the document's namespace."
-    kind = (op or {}).get('op')
+    """Whether this op would execute or evaluate something in the document's namespace.
+
+    Authoring is not running. `insert` executes only a body it is given, `bind` resolves the
+    expression it is handed, and `run` and `values` are the two that always do. `replace`,
+    `remove`, `kind`, `move` and `replace_selection` retire names and move prose about, so an
+    untrusted document is still editable: this gate refused an empty code brick and made a
+    document you could read but not write in.
+    """
+    op = op or {}
+    kind = op.get('op')
     if kind in ('run', 'values'): return True
-    if kind not in RUNS_CODE: return False
-    b = o.canvas.by_id(op.get('id')) if op.get('id') else None
-    return bool(op.get('binds')) or (b is not None and (b.runs or b.binds)) \
-        or (kind == 'insert' and (op.get('kind') in ('code', 'data') or op.get('binds')))
+    if kind == 'bind': return bool(op.get('expr') or op.get('binds'))
+    if kind == 'insert':
+        return bool((op.get('body') or '').strip()) and op.get('kind') in RUNNING_KINDS \
+            or bool(op.get('binds'))
+    return False
 
 def _ports(o):
     return {b.id: o.runtime.bindings(b) for b in o.canvas if b.binds}

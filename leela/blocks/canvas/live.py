@@ -215,6 +215,15 @@ class KernelRuntime(Dataflow):
     def _call(self, coro, timeout):
         return asyncio.run_coroutine_threadsafe(coro, self._loop()).result(timeout)
 
+    def submit(self, coro, timeout=None):
+        """Run `coro` on this runtime's loop and wait for it.
+
+        A pool's own tasks belong to whichever loop first awaited it, which is this one. Closing
+        that pool from anywhere else leaves its sweep loop cancelling into a loop nobody is
+        running, which is what a caller wants this for.
+        """
+        return self._call(coro, timeout if timeout is not None else self.timeout + 15)
+
     async def _kernel_now(self):
         "The kernel, started on first use and started again after one dies."
         if self._kernel is None:

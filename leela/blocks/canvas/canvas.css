@@ -314,10 +314,13 @@ kbd { font: 11px var(--cv-mono); border: 1px solid var(--cv-border); border-bott
                          padding: 6px 12px; font: 12.5px var(--cv-font); cursor: pointer }
 #cv-wire .cv-apply { background: var(--cv-brand); color: #fff; border-color: var(--cv-brand) }
 
-/* The trust bar: shown until somebody says this document's code may run. */
+/* The trust bar: shown until somebody says this document's code may run. It uses the sheet's own
+ * tokens, so it follows both themes rather than carrying colours of its own. */
 .cv-trust { display: flex; gap: 12px; align-items: center; justify-content: center;
-  padding: 10px 16px; background: var(--cv-warn-bg, #fff8e1); color: var(--cv-warn-fg, #6b5300);
-  border-bottom: 1px solid var(--cv-line); font-size: 13px; }
-.cv-trust[hidden] { display: none; }
-.cv-trust-go { background: var(--cv-accent); color: #fff; border-color: transparent; }
-[data-theme=dark] .cv-trust { background: #2a2410; color: #e8d9a0; }
+  padding: 10px 16px; background: var(--cv-bg-secondary); color: var(--cv-ink);
+  border-bottom: 1px solid var(--cv-border); font-size: var(--cv-sm) }
+.cv-trust[hidden] { display: none }
+.cv-trust-say b { color: var(--cv-warn) }
+.cv-trust-go { background: var(--cv-primary); color: rgb(255, 255, 255); border-color: transparent;
+  font-weight: 600 }
+.cv-trust-go:hover { filter: brightness(1.08) }

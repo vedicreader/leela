@@ -3000,3 +3000,47 @@ def test_the_release_check_authenticates_because_the_repository_is_private(monke
     monkeypatch.setattr(m, 'urljson', fake)
     m._latest_versions([])
     assert seen.get('Authorization') == 'Bearer t', 'the token never reached the releases request'
+
+
+def test_a_subagent_gets_inspect_python_and_neither_writes_nor_delegates():
+    """The toolset `delegate` hands a sub-agent, asserted where the policy is decided.
+
+    This asserted `read_only(tools)` bare and expected it to drop the delegate tools. shalya moved
+    that decision to a `block=` the caller passes, so the bare call kept them and the assertion
+    went red while production stayed correct. It also sat in `test_agent_slow.py`, a suite that
+    needs a local model, so nobody saw it.
+
+    `inspect_python` is the one execution tool safe to delegate: it reads a live namespace and
+    cannot change it.
+    """
+    import ramabana.tools as rt
+    from leela.agent.tools import NO_SUB, WRITE_TOOLS
+
+    class Sub:
+        problems = []
+        def send(self, question, run=None): return 'an answer'
+
+    handed = {}
+    class Backend:
+        class spec: name = 'fake'
+        def spawn(self, sp=None, tools=(), **kw):
+            handed['tools'] = {getattr(t, '__name__', '') for t in tools}
+            return Sub()
+
+    class Fake:
+        def __init__(self, n): self.__name__ = n
+    offered = [Fake(n) for n in ('search_code', 'view_file', 'inspect_python', 'run_python',
+                                 'edit_file', 'delegate_search', 'delegate_parallel')]
+    assert rt.delegate(Backend(), 'a question', tools=offered) == 'an answer'
+    got = handed['tools']
+    assert 'inspect_python' in got, 'the one execution tool that is safe to delegate'
+    assert not (got & WRITE_TOOLS), 'a sub-agent must not be able to write'
+    assert not (got & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
+    assert got == {'inspect_python', 'search_code', 'view_file'}
+
+def test_the_subagent_toolset_is_blocked_at_the_call_site():
+    "The `block=` that does it. A release that drops it would leave delegation recursive."
+    import inspect
+    import ramabana.tools as rt
+    src = inspect.getsource(rt.delegate)
+    assert 'read_only(' in src and 'block=NO_SUB' in src, src

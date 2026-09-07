@@ -26,6 +26,17 @@ def fake_kernels():
     KernelPool.peek = lambda self, key: self.kernels.get(key)
     KernelPool.close_all = lambda self: asyncio.sleep(0)
 
+def fake_model(ws):
+    """Point every job at the scripted backend, so no browser test builds a real engine.
+
+    These tests drive painting, keymaps and panels; none of them needs a model. On a machine with a
+    LiteRT bundle cached, `Routing` resolved one and built it: two engines, and every later agent
+    test grew native memory inside them until the run was OOM-killed a third of the way in. A UI
+    test must not depend on which model bundles the machine happens to hold.
+    """
+    from tests.fakemodel import install
+    return install(ws, [])
+
 def _free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -64,10 +75,15 @@ async def _started(srv, secs=20):
         await asyncio.sleep(.02)
     raise RuntimeError('the app never started')
 
-async def _on_page(fn, roots=(), dpr=None):
-    "Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."
+async def _on_page(fn, roots=(), dpr=None, real_models=False):
+    """Boot the app, open it in chromium, hand the page to `fn`, and return what it returns.
+
+    `real_models=True` leaves `Routing` to resolve a model, which builds an engine. Only the two
+    tests that read the model catalogue ask for it; everything else takes the scripted backend.
+    """
     fake_kernels()
     ws = Workspace(roots=list(roots), approvals='auto')
+    if not real_models: fake_model(ws)
     port = _free_port()
     srv = _serve(ws, port)
     await _started(srv)
@@ -81,8 +97,13 @@ async def _on_page(fn, roots=(), dpr=None):
             finally: await b.close()
     finally:
         srv.should_exit = True
+        #: The workspace holds the kernels, the agent and every turn thread it started. Asking the
+        #: server to exit released none of that, so each streaming test left about seven threads
+        #: and a gigabyte behind and the run was OOM-killed a third of the way in.
+        ws.shutdown_now()
 
-def _run(fn, roots=(), dpr=None): return asyncio.run(_on_page(fn, roots, dpr))
+def _run(fn, roots=(), dpr=None, real_models=False):
+    return asyncio.run(_on_page(fn, roots, dpr, real_models))
 
 def test_a_standalone_code_surface_lints_finds_navigates_and_fits_its_own_text():
     """Every editor Leela mounts outside a tab, in one page session: the lint squiggles, the sticky
@@ -851,7 +872,7 @@ def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
             out['value'] = await pg.evaluate("$('#agentmodel').value")
             out['button'] = (await button.inner_text()).strip()
         return out
-    out = _run(go)
+    out = _run(go, real_models=True)
     assert out['select_hidden'], 'the native menu is what was wrong; the select itself still carries the value'
     assert out['rows'] > 0 and out['label']
     assert out['place']['inside'], f"the menu is off screen: {out['place']}"
@@ -1747,6 +1768,7 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
           const bars = $$('.lee-response-revision', host);
           const read = b => ({turn: b.dataset.turn,
                               off: [...b.querySelectorAll('button')].filter(x => x.disabled).map(x => x.textContent),
+                              all: [...b.querySelectorAll('button')].map(x => x.textContent),
                               why: $('[data-unsay]', b).title});
           const out = {n: bars.length, rows: bars.map(read)};
           host.remove();
@@ -1810,7 +1832,7 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
         await pg.wait_for_timeout(300)
         out['revised'] = await pg.evaluate("() => !!$('[data-revision]')")
         return out
-    got = _run(go)
+    got = _run(go, real_models=True)
     fold = got['fold']
     assert fold['cards'] == 2 and fold['titles'][0] == 'rename the widget'
     assert fold['folded'] and fold['hidden'] and fold['pressed'] == 'false'
@@ -1823,7 +1845,11 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
     assert [r['turn'] for r in bars['rows']] == ['t1', 't2', 't3']
     assert bars['rows'][0]['off'] == [], 'everything this turn can still do is offered'
     assert bars['rows'][1]['off'] == ['Edit what agent remembers'], 'no answer to edit, but files to restore'
-    assert len(bars['rows'][2]['off']) == 3, 'a turn this process holds no boundary for offers nothing'
+    #: Every control, not three of them. The literal went stale the moment the bar gained a fourth
+    #: button, and read as a regression while the behaviour it asserts was right.
+    assert bars['rows'][2]['off'] == bars['rows'][2]['all'], \
+        'a turn this process holds no boundary for offers nothing'
+    assert bars['rows'][2]['all'], 'and there is something there to be refused'
     assert 'not run in this session' in bars['rows'][2]['why'], 'and says which of the two reasons it is'
 
     assert [b['turn'] for b in got['pair']] == ['t1', 't2']
@@ -1835,10 +1861,14 @@ def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
     assert [c['folded'] for c in got['blocked']] == [False, True, False], got['blocked']
 
     look = got['look']
-    assert [b['off'] for b in look['live']['buttons']] == [False] * 3
+    #: Count-free, like the row above: a fourth control appearing is not a regression in whether
+    #: the three that were there still work.
+    assert look['live']['buttons'], 'the live bar has controls'
+    assert not any(b['off'] for b in look['live']['buttons']), 'and every one of them works'
     assert not any(b['faded'] for b in look['live']['buttons']), 'a control that works is drawn full strength'
     assert not look['live']['note'], 'and the row says nothing about availability'
-    assert [b['off'] for b in look['dead']['buttons']] == [True] * 3
+    assert look['dead']['buttons'], 'the dead bar has the same controls'
+    assert all(b['off'] for b in look['dead']['buttons']), 'and every one of them is refused'
     assert all(b['faded'] for b in look['dead']['buttons']), 'an unavailable control is muted, not just inert'
     assert look['dead']['noteShown'] and 'not run in this session' in look['dead']['note'], \
         'and the reason is on the row, not in a tooltip'
@@ -2675,6 +2705,20 @@ _STRIPE_CLASH = r"""async (plan) => {
 }"""
 
 
+def _tall_notebook(cells=60):
+    "A v4 notebook long enough that its overview stripe has something to scroll."
+    def code(i):
+        return {'cell_type': 'code', 'id': f'c{i}', 'metadata': {}, 'execution_count': i + 1,
+                'source': [f'x{i} = {i}\n', f'print(x{i})  # a line long enough to wrap a narrow pane\n'],
+                'outputs': [{'output_type': 'stream', 'name': 'stdout', 'text': [f'{i}\n']}]}
+    def prose(i):
+        return {'cell_type': 'markdown', 'id': f'm{i}', 'metadata': {},
+                'source': [f'## Section {i}\n', 'Prose between the cells, so the stripe has bands.\n']}
+    out = []
+    for i in range(cells): out += [prose(i), code(i)]
+    return {'cells': out, 'metadata': {'kernelspec': {'name': 'python3', 'language': 'python',
+            'display_name': 'Python 3'}}, 'nbformat': 4, 'nbformat_minor': 5}
+
 def test_a_stripe_and_the_pane_scroll_bar_are_never_drawn_at_once(tmp_path):
     """`#editor` is the pane a file's stripe hides the bar of, and it is the pane a notebook's
     stripe hides too. The notebook painter runs on every scroll of every tab and asserted `off`,
@@ -2683,9 +2727,11 @@ def test_a_stripe_and_the_pane_scroll_bar_are_never_drawn_at_once(tmp_path):
     import json
     (tmp_path/'long.py').write_text(''.join(
         f'x{i} = {i}  # a comment long enough to be worth reading\n' for i in range(400)))
-    src = json.loads((PARENT/'fixtures'/'leela_agent_sessions'/'agent_20260825-073912.ipynb').read_text())
-    src['cells'] = [dict(c, id=f'r{r}k{k}') for r in range(3) for k, c in enumerate(src['cells'])]
-    (tmp_path/'nb.ipynb').write_text(json.dumps(src))
+    #: Built here, not read from `tests/fixtures/leela_agent_sessions/`. That folder is what a real
+    #: kernel wrote into the checkout on some earlier run: untracked, absent on a fresh clone, and
+    #: the reason this test could only pass on a machine a previous run had polluted. All it needs
+    #: is a notebook tall enough to scroll.
+    (tmp_path/'nb.ipynb').write_text(json.dumps(_tall_notebook(60)))
     async def go(pg):
         # A bar in the flow, which is what macOS gives every pane under Appearance > Show scroll
         # bars > Always. Chromium draws overlay bars on macOS whatever `::-webkit-scrollbar` says,

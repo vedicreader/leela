@@ -6,6 +6,7 @@ run, wired and asked questions of must come back byte for byte unless somebody c
 
 import asyncio
 import os
+from contextlib import contextmanager
 import re
 import time
 import pytest
@@ -290,6 +291,31 @@ def test_a_trusted_canvas_runs_and_returns_its_bindings(client):
     p = opened(client, 'a-sales-funnel.canvas.md')
     r = client.get('/canvas/open', params={'path': p}).json()
     assert r['trusted'] and r['ports']['sf4']['tiles']['ok'] and 'cac' in r['names']
+
+def test_an_untrusted_canvas_is_still_editable(client):
+    """Trust gates running, not writing. The first gate refused an empty code brick, which makes a
+    document you can read and cannot author in: `insert` executes only a body it is handed."""
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    for op in ({'op': 'insert', 'kind': 'code', 'body': ''},
+               {'op': 'insert', 'kind': 'text', 'body': 'prose is not code'},
+               {'op': 'replace', 'id': 'sf1', 'body': 'stages = []'},
+               {'op': 'kind', 'id': 'sf1', 'kind': 'text'},
+               {'op': 'read'}):
+        r = client.post('/canvas/op', json={'path': p, 'op': op})
+        assert r.status_code == 200, (op, r.json())
+
+@pytest.mark.parametrize('op', [
+    {'op': 'insert', 'kind': 'code', 'body': 'x = 1'},
+    {'op': 'values'},
+    {'op': 'bind', 'id': 'sf2', 'port': 'stages', 'expr': 'stages'},
+])
+def test_an_untrusted_canvas_evaluates_nothing(client, op):
+    "The other side of the same line: a body to run, or an expression to resolve, waits for trust."
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    r = client.post('/canvas/op', json={'path': p, 'op': op})
+    assert r.status_code == 403 and 'trust' in r.json()['error']
 
 @pytest.mark.parametrize('route,body', [
     ('/canvas/run', {'id': 'sf3'}),
@@ -589,28 +615,34 @@ class TestTheKernelBackedRuntime:
     In-process `exec` gave a canvas the web process: `while True` hung every request and
     `os._exit()` ended Leela. These start a real kunda kernel, so they are slow and marked.
     """
+    @contextmanager
     def runtime(self, timeout=5):
+        """A kernel-backed runtime, and the pool closed after it.
+
+        Closing the runtime shuts its kernel; the pool has a sweep loop of its own, and leaving it
+        running made every test after these report a pending task."""
         from leela.blocks.runtime.kernels import KernelPool
         from leela.blocks.canvas.live import runtime_for, KernelRuntime
-        rt = runtime_for(KernelPool(), key=f'test-{id(self)}', timeout=timeout)
+        pool = KernelPool()
+        rt = runtime_for(pool, key=f'test-{id(self)}', timeout=timeout)
         assert isinstance(rt, KernelRuntime), 'a pool means a kernel'
-        return rt
+        try: yield rt
+        finally:
+            rt.submit(pool.close_all(), 20)      # on the loop the pool's own tasks live on
+            rt.close()
 
     def cell(self, body, id='c'):
         return Brick(kind='code', body=body, id=id)
 
     def test_a_cell_runs_in_another_process(self):
-        rt = self.runtime()
-        try:
+        with self.runtime() as rt:
             r = rt.run(self.cell('import os\npid = os.getpid()\npid'))
             assert r['ok'], r['outputs']
             assert rt.eval_many({'p': 'pid'})['p']['value'] != os.getpid()
-        finally: rt.close()
 
     def test_an_endless_cell_is_interrupted_and_the_kernel_survives(self):
         "The reported wedge: one `while True:` and every later request queued behind it for good."
-        rt = self.runtime(timeout=4)
-        try:
+        with self.runtime(timeout=4) as rt:
             rt.run(self.cell('kept = 11', 'a'))
             t0 = time.time()
             r = rt.run(self.cell('while True: pass', 'b'))
@@ -618,42 +650,33 @@ class TestTheKernelBackedRuntime:
             assert not r['ok'] and took < 20, f'{took}s'
             assert 'KeyboardInterrupt' in [o.get('ename') for o in r['outputs']]
             assert rt.eval_many({'k': 'kept'})['k']['value'] == 11, 'and the namespace is still there'
-        finally: rt.close()
 
     def test_a_cell_that_exits_takes_only_its_own_kernel(self):
         "`os._exit()` in a cell used to end Leela. It ends the kernel, and the next cell gets a new one."
-        rt = self.runtime(timeout=4)
-        try:
+        with self.runtime(timeout=4) as rt:
             rt.run(self.cell('import os; os._exit(1)', 'boom'))
             r = rt.run(self.cell('recovered = 3\nrecovered', 'after'))
             assert r['ok'], r['outputs']
             assert rt.eval_many({'r': 'recovered'})['r']['value'] == 3
-        finally: rt.close()
 
     def test_a_port_resolves_through_the_kernel(self):
-        rt = self.runtime()
-        try:
+        with self.runtime() as rt:
             rt.run(self.cell('rows = [{"a": 1}, {"a": 2}]'))
             b = Brick(kind='brick', id='v', binds={'series': 'rows', 'bad': '1/0'})
             got = rt.bindings(b)
             assert got['series'] == {'ok': True, 'value': [{'a': 1}, {'a': 2}]}
             assert got['bad']['ok'] is False and 'ZeroDivisionError' in got['bad']['error']
-        finally: rt.close()
 
     def test_a_value_the_browser_emits_arrives_as_json(self):
-        rt = self.runtime()
-        try:
+        with self.runtime() as rt:
             rt.set('stages', [{'name': 'Leads', 'value': 10}])
             assert rt.eval_many({'s': 'stages[0]["value"]'})['s']['value'] == 10
-        finally: rt.close()
 
     def test_a_name_a_cell_stops_defining_is_dropped_in_the_kernel_too(self):
-        rt = self.runtime()
-        try:
+        with self.runtime() as rt:
             b = self.cell('doomed = 1', 'x')
             rt.run(b)
             assert 'doomed' in rt.names()
             b.body = 'kept = 2'
             assert rt.retire(b) == ['doomed']
             assert 'doomed' not in rt.names()
-        finally: rt.close()
