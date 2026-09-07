@@ -1,8 +1,9 @@
 import pytest
-from pata import (Brick, Doc, arrange, body_text, from_ipynb, modules, order, render, resolve,
-                  to_ipynb, to_report, upstream, weigh)
+from pata import (Brick, Doc, arrange, body_text, bundle_of, bundles, coverage, diff_stat,
+                  from_ipynb, hunks, modules, order, pr, render, resolve, review, to_ipynb,
+                  to_report, upstream, weigh)
 from pata.context import Spec, strip_work_log
-from pata.example import VALUES, procurement
+from pata.example import VALUES, diff, procurement
 
 SMALL = '''---
 title: t
@@ -168,3 +169,50 @@ def test_a_copy_is_not_wired_back_into_the_original():
 
 def test_a_duplicate_id_is_refused():
     with pytest.raises(ValueError): small().add(Brick('text', 'x', id='a'))
+
+def test_a_bundle_claims_its_region_and_the_files_its_code_writes():
+    d = procurement()
+    b = bundles(d)[0]
+    assert b.goal.id == 'goal' and b.title == 'Auto-approve the contracted tail'
+    assert {'c-rule', 'c-backtest', 'k4'} <= {m.id for m in b.members}
+    assert 'c-band' not in {m.id for m in b.members}          # a different region
+    assert b.paths == ['procure/core.py', 'tests/test_triage.py']   # derived, then declared
+    assert bundle_of(d, 'c-rule').id == 'triage' and bundle_of(d, 'c-band') is None
+
+def test_coverage_names_the_claim_with_no_code_and_the_change_nobody_claimed():
+    d = procurement()
+    got = coverage(d, ['procure/core.py', 'procure/erp.py'])
+    row = got['bundles'][0]
+    assert row['matched'] == ['procure/core.py']
+    assert row['unmet'] == ['tests/test_triage.py']            # claimed, never changed
+    assert got['unclaimed'] == ['procure/erp.py']              # changed, never explained
+
+def test_a_pull_request_carries_the_value_the_tasks_and_the_reasoning():
+    r = pr(procurement(), 'triage')
+    assert r['branch'] == 'pata/triage' and r['paths'] == ['procure/core.py', 'tests/test_triage.py']
+    assert 'Increase procurement productivity by 10%' in r['body']
+    assert 'most of the 10 points' in r['body']
+    assert '- [x] Backtest the rule against Q3.' in r['body']
+    assert '<summary>' in r['body'] and '14 POs' in r['body']  # the why a diff never has
+    assert '`procure/core.py`' in r['body'] and '`pkg:pandas`' in r['body']
+
+def test_a_diff_parses_per_file_and_the_stat_ignores_the_headers():
+    files = hunks(diff())
+    assert list(files) == ['procure/core.py', 'tests/test_triage.py', 'procure/erp.py']
+    assert diff_stat(files['procure/erp.py']) == (1, 1)
+    assert diff_stat(files['tests/test_triage.py'])[1] == 0    # `--- /dev/null` is not a removal
+
+def test_a_review_is_a_canvas_with_the_value_the_diff_and_the_checks():
+    d = procurement()
+    r = review(d, 'triage', diff())
+    assert r.goal is not None and r.reply_to('q-risk') is not None
+    assert [b.attrs['path'] for b in r.of('diff')] == list(hunks(diff()))
+    assert r['d-erp.py'].attrs['claimed'] == 'no'
+    assert 'claimed by no bundle' in r['triage-checks'].body
+    assert r['q-risk'].scope == 'none'                         # a recorded answer, not a live turn
+    assert all(b.xy for b in r if not b.heading and b.kind != 'reply')
+    assert r['triage-q'].pins == ['goal']
+
+def test_a_document_with_no_bundle_still_reports_every_change_as_unclaimed():
+    d = Doc.parse(SMALL)
+    assert coverage(d, ['a.py'])['unclaimed'] == ['a.py'] and coverage(d, ['a.py'])['bundles'] == []

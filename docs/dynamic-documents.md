@@ -73,6 +73,30 @@ That deletes the whole staleness problem rather than solving it. There is no has
 
 What it costs is a document that does not open instantly and one that cannot be read offline with its numbers in it. `bind` is the answer to the second: a `data` brick renders a sentence from live values, so the numbers in the prose are never the numbers from last month.
 
+## A boundary that is a unit of change
+
+A region groups bricks for reading. A `bundle` brick claims its region as one change, and that is the difference between a Miro frame and something worth having. The boundary names a goal, owns a set of files, holds the tasks and the prose and the code together, and is the thing a reviewer opens.
+
+Four parts, and the last one is the point.
+
+`goal=<id>` is the value link. A change serves a goal, the goal carries a measure and a target, and `contributes=` says in words what this change is worth against it. No arithmetic is invented: a share of a ten-point target is a judgement, and pretending otherwise would put a fake number in a pull request.
+
+The files come from the code. A code brick marked `#|export` writes a module, so the module is the change and `modules()` already knows the path. `paths=` adds what the bricks do not generate: tests, config, a migration. Deriving first matters because a list maintained by hand is a list that goes stale, and a stale claim is worse than no claim.
+
+`refs=` attaches packages, files and other documents for review. It uses the same `pkg:`, `file:`, `doc:` vocabulary as a context pin, so attaching something for a human reviewer also makes it reachable by the model. One vocabulary, two readers.
+
+`coverage(doc, changed)` holds the claim against the diff, and it is what turns the boundary from decoration into a check. Per bundle it reports `matched` and `unmet`, a claimed file the diff never touched. Across the document it reports `unclaimed`, a changed file no bundle explains. That second one is the half a reviewer never sees coming, and no diff tool can produce it, because only the document knows what the change was supposed to be.
+
+## Review is another canvas
+
+`review(doc, bundle_id, diff)` builds a document: the goal, what the change contributes, the prose, the tasks, the questions asked inside the change with their recorded answers, one `diff` brick per file, the attachments, the coverage checks, and a question with the goal already pinned.
+
+It is a `Doc`, so it draws in both views through the same renderer, keeps the outline, and keeps the context basket. Nothing about the review view is a second implementation of anything, and a question asked inside a review has the whole change in scope.
+
+That also answers whether this replaces Leela's git view. It does not. The existing view is for line-level work: staging, hunks, blame, conflicts. This is for the question a diff cannot answer, which is whether the change does what the goal said. `pata.hunks` takes unified diff text, so whatever produces the diff, `gheasy` included, feeds it.
+
+A review is generated per request and never written back. A diff is a fact about a commit range, not part of the document.
+
 ## Getting work back out
 
 Nothing here is a new place for work to get stuck.
@@ -103,6 +127,8 @@ Two things the canvas branch has that this does not: the reactive runtime, and t
 **Whether `pata` is a package at all.** The context engine is 200 lines. It could be a module inside `leela/blocks/canvas/` and never be a package.
 
 **Whether the second view is version one.** The context basket, the goal and the plan kinds work in a linear document and are most of the value. The canvas is where the layout lives, and `arrange` plus `prop x` is the whole of it, so this is cheap either way.
+
+**Whether a bundle is one pull request or several.** The branch name is `pata/<bundle id>`, which is deterministic, so re-exporting updates the same request. A change that wants two commits has no answer yet.
 
 **What the agent may write.** The canvas branch already answers this: eight tools, and a skill pushed onto the agent while a canvas is open. A question answers into a `reply` brick under it. Whether the agent may also add bricks, rebind ports and reorganise a document is a larger claim, and the tools already allow it.
 

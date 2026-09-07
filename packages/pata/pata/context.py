@@ -71,6 +71,13 @@ def body_text(b, values=None, doc=None):
     elif b.kind == 'source':
         where = b.attrs.get('url') or b.attrs.get('path') or ''
         out = [f'{b.title} <{where}>'.strip(), b.body]
+    elif b.kind == 'bundle':
+        out = [f'change: {b.title}'.strip(), b.body]
+        out += [f'{k}: {v}' for k, v in b.attrs.items()
+                if k in ('goal', 'contributes', 'paths', 'refs', 'covers')]
+    elif b.kind == 'diff':
+        out = [f"{b.attrs.get('path', '')} +{b.attrs.get('added', 0)} -{b.attrs.get('removed', 0)}",
+               b.body]
     elif b.kind in ('brick', 'sim', 'data'):
         out = [b.title or b.attrs.get('src', b.kind)]
         out += [f'bind {k} = {v}' for k, v in b.binds.items()]
@@ -82,6 +89,7 @@ def body_text(b, values=None, doc=None):
     return '\n'.join(x for x in out if str(x).strip())
 
 def _label(b):
+    if b.kind == 'diff': return b.attrs.get('path', 'diff')[:60]
     lines = [l for l in (b.title or b.body or b.attrs.get('src', '')).strip().splitlines()
              if not l.lstrip().startswith('#|')]
     return (lines[0].lstrip('# ') if lines else b.kind)[:60]

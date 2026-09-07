@@ -5,6 +5,7 @@ import json
 from importlib.resources import files
 from fastcore.all import L, Path, first
 
+from .change import bundle_of, bundles, coverage, diff_stat
 from .context import SCOPES, WRAP, _label, body_text, members, spec_of
 from .doc import Doc, W, _owners
 
@@ -27,7 +28,20 @@ def wires(doc):
         uniq.append(w)
     return uniq
 
-def payload(doc, values=None):
+def _bundles(doc, changed=()):
+    "Each change, with what it claims and what a diff says actually moved."
+    cov = {r['id']: r for r in coverage(doc, list(changed))['bundles']}
+    out = []
+    for b in bundles(doc):
+        out.append({'id': b.id, 'title': b.title, 'region': b.brick.region, 'body': b.brick.body,
+                    'goal': b.goal.id if b.goal else '', 'goalText': b.goal.body.strip() if b.goal else '',
+                    'contributes': b.contributes, 'refs': b.refs, 'paths': b.paths,
+                    'members': [m.id for m in b.members],
+                    'tasks': [{'id': t.id, 'status': t.attrs.get('status', 'todo')} for t in b.of('task')],
+                    **{k: cov.get(b.id, {}).get(k, []) for k in ('matched', 'unmet', 'tasks_open')}})
+    return out
+
+def payload(doc, values=None, changed=()):
     "Everything the prototype needs: bricks, regions, wires, and each question's scope membership."
     bricks = []
     for b in doc.bricks:
@@ -40,7 +54,9 @@ def payload(doc, values=None):
                        'body': b.body, 'attrs': b.attrs, 'binds': b.binds, 'props': b.props,
                        'defs': list(b.defs), 'reads': list(b.reads),
                        'out': str((values or {}).get(b.id) or ''),
-                       'reply': (r.body if (r := doc.reply_to(b.id)) is not None else '')})
+                       'reply': (r.body if (r := doc.reply_to(b.id)) is not None else ''),
+                       'bundle': (u.id if (u := bundle_of(doc, b.id)) is not None else ''),
+                       'stat': diff_stat(b.body) if b.kind == 'diff' else None})
     asks = {q.id: {'spec': {'scope': spec_of(q).scope, 'pins': list(q.pins), 'mutes': list(q.mutes),
                             'budget': spec_of(q).budget, 'goal': spec_of(q).goal},
                    'members': {s: [x.id for x in members(doc, q, s)] for s in SCOPES}}
@@ -48,13 +64,19 @@ def payload(doc, values=None):
     return {'title': doc.title, 'blocks': bricks, 'scopes': list(SCOPES), 'wrap': WRAP,
             'regions': list((getattr(doc, 'layout', None) or {}).values()), 'edges': wires(doc),
             'goal': doc.goal.id if doc.goal else '', 'prompts': asks, 'firstPrompt': first(asks) or '',
-            'replies': [b.id for b in doc.of('reply')]}
+            'replies': [b.id for b in doc.of('reply')],
+            'bundles': _bundles(doc, changed), 'unclaimed': coverage(doc, list(changed))['unclaimed']}
 
 def _asset(name): return files(__package__).joinpath(name).read_text(encoding='utf-8')
 
-def paint(doc, path=None, shell='bare', values=None):
-    "Write the prototype to `path`. `shell='leela'` draws it inside the IDE it would live in."
-    d = payload(doc, values)
+def paint(doc, path=None, shell='bare', values=None, changed=(), review=None):
+    """Write the prototype to `path`.
+
+    `shell='leela'` draws it inside the IDE it would live in. `review` is a second document, drawn
+    behind a third toggle, which is what one click on a boundary opens.
+    """
+    d = payload(doc, values, changed)
+    if review is not None: d['review'] = payload(review, values, changed)
     html = (_asset('proto-ide.html' if shell == 'leela' else 'proto.html')
             .replace('__CSS__', _asset('proto.css'))
             .replace('__CSS2__', _asset('proto-ide.css') if shell == 'leela' else '')

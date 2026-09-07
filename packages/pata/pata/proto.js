@@ -1,8 +1,9 @@
-const D = window.PATA, B = new Map(D.blocks.map(b => [b.id, b]));
+let D = window.PATA, B = new Map(D.blocks.map(b => [b.id, b]));
 const $ = s => document.querySelector(s), el = (t, c) => { const n = document.createElement(t); if (c) n.className = c; return n; };
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-const S = { view: 'canvas', sel: null, basket: [], spec: null };
+const S = { view: 'canvas', sel: null, basket: [], spec: null, doc: 'main' };
 const skip = b => D.replies.includes(b.id) || b.heading;
+const BUN = () => new Map((D.bundles || []).map(b => [b.id, b]));
 
 /* The context rules, mirroring `pata.context.resolve`. Scope membership is computed in Python and
  * shipped in `D.prompts[id].members`, so only pins, mutes and the budget are decided here. */
@@ -82,6 +83,24 @@ function body(b) {
     if (b.body) add(`<div class="lede">${esc(b.body)}</div>`);
   } else if (b.kind === 'data') {
     add(binds() || `<pre>${esc(b.body)}</pre>`);
+  } else if (b.kind === 'bundle') {
+    const u = BUN().get(b.id) || {};
+    if (u.goalText) add(`<div class="serves">serves <b>${esc(u.goalText)}</b></div>`);
+    if (u.contributes) add(`<div class="meta">contributes ${esc(u.contributes)}</div>`);
+    add(`<div>${esc(b.body)}</div>`);
+    add(`<div class="files">${(u.paths || []).map(pp =>
+      `<span class="file${(u.matched || []).includes(pp) ? ' hit' : ''}">${esc(pp)}</span>`).join('')}</div>`);
+    if ((u.refs || []).length) add(`<div class="files">${u.refs.map(r =>
+      `<span class="file ref">${esc(r)}</span>`).join('')}</div>`);
+    if ((u.unmet || []).length) add(`<div class="warn">claimed but unchanged: ${u.unmet.map(esc).join(', ')}</div>`);
+    if ((u.tasks_open || []).length) add(`<div class="warn">${u.tasks_open.length} task(s) still open</div>`);
+    add(`<div class="acts"><button data-review="${esc(b.id)}">open the diff</button>` +
+        `<button data-pr="${esc(b.id)}">export as a PR</button></div>`);
+  } else if (b.kind === 'diff') {
+    const rows = b.body.split('\n').filter(l => !/^(diff --git|index |--- |\+\+\+ |new file|deleted file)/.test(l));
+    add(`<div class="diffbox">${rows.map(l => {
+      const c = l.startsWith('+') ? 'add' : l.startsWith('-') ? 'rm' : l.startsWith('@@') ? 'at' : '';
+      return `<div class="dl ${c}">${esc(l || ' ')}</div>`; }).join('')}</div>`);
   } else if (b.kind === 'brick' || b.kind === 'sim') {
     add(`<div class="src">${esc(a.src || b.kind)}${a.emit_row ? ' &rarr; ' + esc(a.emit_row) : ''}</div>`);
     add(binds());
@@ -96,7 +115,10 @@ function card(b) {
   n.dataset.id = b.id; n.dataset.k = b.kind;
   const hd = el('div', 'hd');
   const a = b.attrs || {};
-  hd.innerHTML = `<span class="k">${b.kind}</span><span>${b.id}</span><span class="sp"></span>` +
+  hd.innerHTML = `<span class="k">${b.kind}</span><span>${esc(a.path || b.id)}</span><span class="sp"></span>` +
+    (b.stat ? `<span class="chip add">+${b.stat[0]}</span><span class="chip rm">-${b.stat[1]}</span>` : '') +
+    (a.claimed === 'no' ? '<span class="chip warn">unclaimed</span>' : '') +
+    (b.bundle && b.kind !== 'bundle' ? `<span class="chip bun">${esc(b.bundle)}</span>` : '') +
     (a.status ? `<span class="chip ${a.status}">${a.status}</span>` : '') +
     (a.owner ? `<span class="chip">${esc(a.owner)}</span>` : '') +
     (b.mode !== 'auto' ? `<span class="chip ${b.mode}">${b.mode}</span>` : '') +
@@ -124,11 +146,16 @@ function paintCanvas() {
   v.innerHTML = '<div id="canvas"><svg id="wires"></svg></div>';
   const c = $('#canvas'), svg = $('#wires');
   let mx = 0, my = 0;
+  const byRegion = new Map((D.bundles || []).map(b => [b.region, b]));
   for (const f of D.regions) {
-    const n = el('div', 'fr');
+    const u = byRegion.get(f.title);
+    const n = el('div', 'fr' + (u ? ' bundle' : ''));
     Object.assign(n.style, { left: f.x + 'px', top: f.y + 'px', width: f.w + 'px', height: f.h + 'px' });
     n.dataset.frame = f.title;
-    n.innerHTML = `<span>${esc(f.title)}</span>`;
+    n.innerHTML = `<span>${esc(u ? u.title : f.title)}</span>` + (u
+      ? `<em>change &middot; ${(u.paths || []).length} file(s) &middot; ${(u.tasks || []).length} task(s)` +
+        `${u.goal ? ' &middot; serves the goal' : ''}${(u.unmet || []).length || (u.tasks_open || []).length ? ' &middot; check' : ''}</em>`
+      : '');
     c.appendChild(n);
     mx = Math.max(mx, f.x + f.w); my = Math.max(my, f.y + f.h);
   }
@@ -214,10 +241,8 @@ function paintBasket() {
   const p = $('#basket');
   if (!S.spec) {
     p.innerHTML = '<h4>context</h4><div class="empty">Select an ask brick to see exactly what the model will be given.</div>';
-    $('#app main').classList.add('nobasket');
     return;
   }
-  $('#app main').classList.remove('nobasket');
   const kept = S.basket.filter(i => !i.dropped);
   const total = kept.reduce((n, i) => n + i.chars + WRAP, 0);
   const budget = S.spec.budget || 0;
@@ -256,12 +281,31 @@ function togglePin(ref) {
   recompute();
 }
 
+function loadDoc(which) {
+  S.doc = which;
+  D = which === 'review' ? window.PATA.review : window.PATA;
+  B = new Map(D.blocks.map(b => [b.id, b]));
+  S.sel = null; S.spec = null;
+  setView(S.view === 'review' ? 'canvas' : S.view);
+  select(D.firstPrompt);
+}
+
 function setView(v) {
+  if (v === 'review') return loadDoc(S.doc === 'review' ? 'main' : 'review');
   S.view = v;
   document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', b.dataset.view === v));
   (v === 'page' ? paintPage : paintCanvas)();
+  document.querySelectorAll('[data-view=review]').forEach(b =>
+    b.setAttribute('aria-pressed', S.doc === 'review'));
   mark();
 }
+
+document.addEventListener('click', e => {
+  const r = e.target.closest('[data-review]'), pq = e.target.closest('[data-pr]');
+  if (r) { e.stopPropagation(); loadDoc('review'); }
+  else if (pq) { e.stopPropagation(); alert('pata.pr() returns the title, branch, body and file list.\n' +
+    'Leela hands that to gheasy and pullup; nothing here opens a pull request.'); }
+});
 $('#toggle').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });
 setView('canvas');
 select(D.firstPrompt);

@@ -18,7 +18,6 @@ header .spacer{flex:1}
 header .goal{font-size:12px;color:var(--fg4);max-width:38ch;overflow:hidden;text-overflow:ellipsis;
 white-space:nowrap;border-left:2px solid var(--yellow);padding-left:8px}
 main{display:grid;grid-template-columns:210px 1fr 340px;min-height:0}
-main.nobasket{grid-template-columns:210px 1fr 0}
 aside,#basket{overflow:auto;border-right:1px solid var(--border);background:var(--bg1)}
 #basket{border-right:0;border-left:1px solid var(--border)}
 aside h4,#basket h4{margin:12px 12px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
@@ -115,3 +114,29 @@ white-space:pre-wrap;word-break:break-word}
 .blk .stub{margin-top:7px;height:34px;border:1px dashed var(--bg3);border-radius:5px;
 display:flex;align-items:center;justify-content:center;color:var(--fg4);font-size:11px}
 .chip.scope{color:var(--purple);border-color:rgba(210,168,255,.4)}
+.blk[data-k=bundle]{border-color:rgba(126,231,135,.45);background:rgba(126,231,135,.04)}
+.blk[data-k=bundle]>.hd{color:var(--green)}
+.blk .serves{font-size:12px;color:var(--yellow);margin-bottom:6px}
+.blk .files{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.blk .file{font-family:var(--mono);font-size:10.5px;padding:1px 6px;border-radius:4px;
+border:1px solid var(--border);color:var(--fg4)}
+.blk .file.hit{color:var(--green);border-color:rgba(126,231,135,.45)}
+.blk .file.ref{color:var(--aqua);border-style:dashed}
+.blk .warn{margin-top:7px;font-size:12px;color:var(--orange)}
+.blk .acts{display:flex;gap:6px;margin-top:10px}
+.blk .acts button{font-size:11px;padding:2px 8px}
+.blk[data-k=diff]>.hd{color:var(--aqua)}
+.diffbox{font-family:var(--mono);font-size:11.5px;line-height:1.45;border:1px solid var(--border);
+border-radius:5px;overflow:hidden;background:var(--bg)}
+.dl{padding:0 7px;white-space:pre-wrap;word-break:break-all;color:var(--fg2)}
+.dl.add{background:rgba(126,231,135,.09);color:var(--green)}
+.dl.rm{background:rgba(255,123,114,.09);color:var(--red)}
+.dl.at{background:var(--bg2);color:var(--fg4)}
+.chip.add{color:var(--green);border-color:rgba(126,231,135,.4)}
+.chip.rm{color:var(--red);border-color:rgba(255,123,114,.4)}
+.chip.warn{color:var(--orange);border-color:var(--orange)}
+.chip.bun{color:var(--green);border-color:rgba(126,231,135,.3)}
+.fr.bundle{border-style:solid;border-color:rgba(126,231,135,.32);background:rgba(126,231,135,.022)}
+.fr.bundle>span{color:var(--green)}
+.fr>em{position:absolute;top:-9px;right:16px;background:var(--bg);padding:0 7px;font-size:10.5px;
+font-style:normal;font-family:var(--mono);color:var(--fg4)}

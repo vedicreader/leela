@@ -11,17 +11,19 @@ import ast, re, uuid
 from dataclasses import dataclass, field
 from fastcore.all import L, Path, first
 
-__all__ = ['KINDS', 'FENCED', 'WRAPPED', 'MODES', 'STATUS', 'W', 'Brick', 'Doc', 'brick_id',
+__all__ = ['KINDS', 'FENCED', 'WRAPPED', 'MODES', 'STATUS', 'RELATIONS', 'W', 'Brick', 'Doc', 'brick_id',
            'defs_of', 'reads_of', 'order', 'downstream', 'upstream']
 
 #: Bricks whose body markdown cannot show, written as a fence.
-FENCED = ('code', 'ask', 'brick', 'sim', 'data')
+FENCED = ('code', 'ask', 'brick', 'sim', 'data', 'diff')
 #: Bricks whose body is markdown a plain renderer should still show, written as a comment wrap.
-WRAPPED = ('reply', 'note', 'goal', 'task', 'source')
+WRAPPED = ('reply', 'note', 'goal', 'task', 'source', 'bundle')
 KINDS = ('text',) + FENCED + WRAPPED
 #: What a brick does to the context budget, as notebook cells already do it.
 MODES = ('auto', 'keep', 'discard')
 STATUS = ('todo', 'doing', 'done', 'blocked')
+#: Relations between bricks that the code cannot state. A bundle serves a goal the same way.
+RELATIONS = ('supports', 'refutes', 'blocks', 'goal')
 #: How wide a brick draws when nothing says otherwise.
 W = 380
 
@@ -169,9 +171,9 @@ class Brick:
         return L(self.binds.values()).map(reads_of).concat().unique()
     @property
     def links(self):
-        "Blocks this one claims a relation to, which the AST cannot see. `supports=a,b`."
-        return {k: [x for x in v.split(',') if x]
-                for k, v in self.attrs.items() if k in ('supports', 'refutes', 'blocks')}
+        "Bricks this one claims a relation to, which the AST cannot see. `supports=a,b`."
+        return {k: [x.strip() for x in v.split(',') if x.strip()]
+                for k, v in self.attrs.items() if k in RELATIONS}
     def md(self):
         "This brick as it is written in the file."
         if self.kind == 'text': return self.body.strip() + '\n'

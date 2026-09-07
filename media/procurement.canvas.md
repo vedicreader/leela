@@ -45,7 +45,7 @@ nobody disputes.
 Where does the 10% most plausibly come from? Use only the three sources here.
 ```
 
-<!--canvas reply id=43bfd10a of=q-synth-->
+<!--canvas reply id=7df84957 of=q-synth-->
 Tail spend is the only pool big enough. 34% of POs are under EUR 2,000 and carry a three-person
 approval chain that the audit found nobody ever rejects. Auto-approving that band would take
 roughly a third of PO volume off the buyers without touching the categories where negotiation
@@ -91,6 +91,11 @@ That sentence is bound, not typed. Change the cut in `bands` and it moves with e
 
 ## Prototype the triage rule
 
+<!--canvas bundle id=triage title="Auto-approve the contracted tail" goal=goal contributes="most of the 10 points; the cap is the rest" paths=tests/test_triage.py refs=file:procure/core.py,pkg:pandas,doc:drive/audit-q3.pdf-->
+Adds `triage`, the rule that lets an indirect PO under EUR 2,000 from a contracted supplier skip
+the approval chain. Backtested against the Q3 extract. The per-supplier cap is not in this change.
+<!--/canvas-->
+
 ```canvas code id=c-rule
 #|export
 def triage(po, cut=2000, trusted=frozenset()):
@@ -115,10 +120,14 @@ pin s-audit
 What would have gone wrong if `triage` had run in Q3? `caught` says 79%. Check it against the audit.
 ```
 
-<!--canvas reply id=8d1aeba4 of=q-risk-->
+<!--canvas reply id=93eb631b of=q-risk-->
 79% of the tail clears the rule, which is 27% of all POs. Against the Q3 extract that is 14 POs
 the audit flagged for split ordering, all from one supplier. Cap the rule per supplier per month
 and those 14 stay in the chain.
+<!--/canvas-->
+
+<!--canvas task id=k4 status=done owner=me-->
+Backtest the rule against Q3.
 <!--/canvas-->
 
 <!--canvas note id=n-cap-->
@@ -135,7 +144,7 @@ mute n-cap
 Draft the recommendation for the steering committee. One page, no hedging.
 ```
 
-<!--canvas reply id=a51f4f46 of=q-rec-->
+<!--canvas reply id=b2364aa4 of=q-rec-->
 Auto-approve indirect POs under EUR 2,000 from contracted suppliers, capped per supplier per
 month. It removes 27% of PO volume from the approval chain, which the interview evidence puts at
 about 12% of buyer time. Pilot one region for a quarter against the measure Finance agreed.

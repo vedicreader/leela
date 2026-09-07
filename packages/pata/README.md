@@ -55,6 +55,8 @@ Where does the 10% most plausibly come from?
 | `data` | prose bound to a live value, so a number in a sentence cannot go stale |
 | `brick`, `sim` | an embedded component and one written in the document |
 | `ask`, `reply`, `note` | a question, the answer written back under it, and an aside |
+| `bundle` | one unit of change: the goal it serves, the files it owns, what is attached |
+| `diff` | one file's hunks, in a generated review |
 
 ## Context
 
@@ -78,6 +80,31 @@ Three things extend it where the AST cannot see:
 - A question anchors on the brick above it, because "fix that" means that one and everything it reads. `anchor=<id>` overrides.
 - A name a question puts in backticks is a name it reads. Writing `` `triage` `` in a question pulls in the brick that defines it.
 - `supports=`, `refutes=` and `blocks=` name bricks a prose relation joins. That is where a clipping supporting a claim goes, which no AST can find.
+
+## A bundle is one change
+
+A region groups bricks for reading. A `bundle` brick claims its region as one change, so the boundary on the canvas is the thing a reviewer opens and the thing a pull request is cut from.
+
+```markdown
+<!--canvas bundle id=triage title="Auto-approve the contracted tail" goal=goal
+     contributes="most of the 10 points" paths=tests/test_triage.py refs=pkg:pandas,file:procure/erp.py-->
+Adds `triage`, the rule that lets a contracted supplier's small PO skip the approval chain.
+<!--/canvas-->
+```
+
+- `goal=` is the value link. `contributes=` is what this change is worth against it, in words.
+- Membership is the bundle's own region. `covers=` adds bricks by id or regions by heading.
+- The files it owns are derived from its code bricks' `#|export` targets, plus whatever `paths=` declares. A brick that writes a module is the change, so nobody should have to list the file twice.
+- `refs=` attaches packages, files and documents for review. Same vocabulary as a context pin, so attaching something for a reviewer also makes it available to the model.
+
+`coverage(doc, changed_paths)` is what the boundary is for. It reports, per bundle, what it claimed and what actually moved, and then two things nobody asks for:
+
+- `unmet`: a file the bundle claims that the diff never touched. A claim with no code behind it.
+- `unclaimed`: a changed file no bundle explains. The half a reviewer never sees coming.
+
+`pr(doc, bundle_id)` returns `{title, branch, body, paths, refs, goal}`. The body carries the goal and its measure, the prose, the tasks with their status, the questions asked inside the change with their answers folded, the attachments and the file list. It returns the payload rather than opening anything: git is `gheasy`'s and the forge is `pullup`'s.
+
+`review(doc, bundle_id, diff)` builds a second document from a unified diff: the value, the reasoning, one `diff` brick per file, the attachments, the coverage checks, and a question with the goal pinned. A review is a canvas, so it draws in both views and you can ask about the change with the goal already in the basket.
 
 ## Getting work out
 

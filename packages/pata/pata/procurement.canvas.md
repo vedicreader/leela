@@ -91,6 +91,11 @@ That sentence is bound, not typed. Change the cut in `bands` and it moves with e
 
 ## Prototype the triage rule
 
+<!--canvas bundle id=triage title="Auto-approve the contracted tail" goal=goal contributes="most of the 10 points; the cap is the rest" paths=tests/test_triage.py refs=file:procure/core.py,pkg:pandas,doc:drive/audit-q3.pdf-->
+Adds `triage`, the rule that lets an indirect PO under EUR 2,000 from a contracted supplier skip
+the approval chain. Backtested against the Q3 extract. The per-supplier cap is not in this change.
+<!--/canvas-->
+
 ```canvas code id=c-rule
 #|export
 def triage(po, cut=2000, trusted=frozenset()):
@@ -119,6 +124,10 @@ What would have gone wrong if `triage` had run in Q3? `caught` says 79%. Check i
 79% of the tail clears the rule, which is 27% of all POs. Against the Q3 extract that is 14 POs
 the audit flagged for split ordering, all from one supplier. Cap the rule per supplier per month
 and those 14 stay in the chain.
+<!--/canvas-->
+
+<!--canvas task id=k4 status=done owner=me-->
+Backtest the rule against Q3.
 <!--/canvas-->
 
 <!--canvas note id=n-cap-->
