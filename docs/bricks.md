@@ -1,6 +1,6 @@
 # Bricks
 
-A `brick` in a canvas document embeds a component from a library. `src=lego.bricks:viz.series` says which library and which component. This is where a component comes from, and what a library has to be.
+A `brick` in a canvas document embeds a component from a library. `src=leela_bricks:viz.series` says which library and which component. This is where a component comes from, and what a library has to be.
 
 Read this with [dynamic-documents.md](dynamic-documents.md), which is what a brick sits in.
 
@@ -54,15 +54,37 @@ Take the contract and the six domain-free bricks. Leave the four domain bricks w
 | `app.py` | it is lego's seam: `lego.core`, `RouteOverrides`, lego's nav |
 | `panchanga.*`, `thrifty.*` | their wiring imports `lego.muhurtha` and `lego.thrifty` |
 
+## The spec is now built
+
+`extensions/bricks` is the extracted package, `leela-bricks`. Eight files moved out of lego with no
+edit. Only `bricks.py` changed, and it took all four changes below.
+
+    uv pip install -e extensions/bricks
+
+That is the whole of procurement. The entry point does the rest: `libraries()` finds
+`leela_bricks`, `palette()` reads ten components in four groups, and the notes list is empty.
+`KNOWN` still names `lego.bricks` for a library that publishes no entry point, and a library that
+is absent is not a note.
+
+The four domain bricks came too, and their wiring still imports `lego.muhurtha` and `lego.thrifty`.
+That is what `needs` is for: the palette says which package a component wants before the cell runs.
+
+| brick | needs |
+|---|---|
+| `panchanga.day`, `panchanga.horas`, `panchanga.wheel` | `lego.muhurtha.panchanga` |
+| `thrifty.costs` | `lego.thrifty.data` |
+| `viz.tiles`, `viz.series`, `viz.funnel` | nothing |
+| `learn.cell`, `learn.wavepacket`, `learn.orbit` | nothing |
+
 ## Four changes the extracted package needs
 
-**Own the `src` prefix.** `Brick.src` is `f'lego.bricks:{self.name}'`, hardcoded. After extraction that string names a package that no longer holds the brick. Derive it from the registry's own module name.
+**Own the `src` prefix.** `Brick.src` was `f'lego.bricks:{self.name}'`, hardcoded. After extraction that string names a package that no longer holds the brick. `LIB = __name__.rsplit('.', 1)[0]` derives it, so renaming the package renames every `src` it serves.
 
-**Give each library its own registry.** `BRICKS` is a module-global dict and `brick()` mutates it. That works while one package registers everything. It breaks the moment lego keeps its four bricks: lego would call `brick()` into the extracted package's global, and then every library's `manifest()` would return every library's bricks. The package should expose a `Registry` a library instantiates, with `manifest()` and `find()` reading its own.
+**Give each library its own registry.** `BRICKS` is a module-global dict and `brick()` mutates it. That works while one package registers everything. It breaks the moment lego keeps its four bricks: lego would call `brick()` into the extracted package's global, and then every library's `manifest()` would return every library's bricks. The package exposes a `Registry` a library instantiates, with `manifest()` and `find()` reading its own. `manifest()` also returns `library`, so a caller knows which registry answered.
 
-**Publish the entry point.** `[project.entry-points."leela.bricks"]` so Leela finds the library without `KNOWN`. Then `pip install` is the whole of procurement, and `KNOWN` can go.
+**Publish the entry point.** `[project.entry-points."leela.bricks"]` so Leela finds the library without `KNOWN`. `pip install` is the whole of procurement. `KNOWN` stays for a library that publishes none.
 
-**Say when a snippet needs a package.** A brick whose `wire` imports something should declare it. `data.fill` already catches the failure and `remote_wire` is already the fallback, but a document currently discovers the missing package by running a cell and reading a traceback. The manifest row should carry the requirement so the palette can say so first.
+**Say when a snippet needs a package.** A brick whose `wire` imports something should declare it. `data.fill` already catches the failure and `remote_wire` is already the fallback, but a document currently discovers the missing package by running a cell and reading a traceback. The manifest row carries `needs`, read off the wiring's own imports with `ast`-free regex over `import` lines, minus the standard library. A component cannot claim a dependency its code does not import, and cannot hide one it does.
 
 ## What Leela ships
 

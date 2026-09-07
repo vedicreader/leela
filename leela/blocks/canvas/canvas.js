@@ -7,6 +7,23 @@ const $all = (sel, root = document) => [...root.querySelectorAll(sel)];
 const brickEl = id => $$(`.cv-brick[data-id="${id}"]`);
 const cvBrick = id => (cv.canvas?.bricks || []).find(b => b.id === id);
 
+//: The document is the record, never an element's closure. A `cvSync` keeps the element and hands
+//: back a new brick object, so a write to the captured one is gone at the next flush.
+function cvEdit(id, body) {
+  const b = cvBrick(id);
+  if (b) b.body = body;
+  cv.edited.add(id); cv.dirty = true;
+}
+
+//: The server's copy is older than what someone is typing, so an edited body crosses the sync.
+function cvKeepEdits(canvas) {
+  for (const id of cv.edited) {
+    const was = cvBrick(id), fresh = (canvas.bricks || []).find(b => b.id === id);
+    if (was && fresh) fresh.body = was.body;
+  }
+  return canvas;
+}
+
 async function api(path, body) {
   const r = await fetch(path, body ? {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)}
                               : undefined);
@@ -45,7 +62,7 @@ function cvRender() {
 //: the person had selected in it. Only what actually changed is repainted, and what was painted is
 //: read off the element rather than off the model: the model is mutated in place all over.
 function cvSync(canvas) {
-  const now = canvas.bricks;
+  const now = cvKeepEdits(canvas).bricks;
   cv.canvas = canvas;
   for (const el of $all('#cv-doc .cv-brick')) if (!now.some(b => b.id === el.dataset.id)) el.remove();
   now.forEach((b, i) => {
@@ -113,7 +130,10 @@ function cvText(b) {
   blank();
   el.onblur = () => {
     const body = el.classList.contains('raw') ? el.innerText.trimEnd() : cvHtmlToMd(el);
-    if (body !== b.body) { b.body = body; cv.edited.delete(b.id); cvOp({op: 'replace', id: b.id, body}, false); }
+    if (body !== (cvBrick(b.id)?.body ?? b.body)) {
+      cvEdit(b.id, body); cv.edited.delete(b.id);
+      cvOp({op: 'replace', id: b.id, body}, false);
+    }
   };
   el.onkeydown = ev => cvTextKeys(ev, b, el);
   return el;
@@ -255,7 +275,7 @@ function cvCode(b) {
   const ta = document.createElement('textarea');
   ta.className = 'cv-src'; ta.value = b.body; ta.spellcheck = false; ta.rows = 1;
   const grow = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
-  ta.oninput = () => { b.body = ta.value; grow(); cv.dirty = true; cv.edited.add(b.id); };
+  ta.oninput = () => { cvEdit(b.id, ta.value); grow(); };
   ta.onfocus = () => { cv.focus = b.id; };
   ta.onkeydown = ev => {
     if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); cvRun(b.id); }
@@ -415,7 +435,7 @@ function cvAsk(b) {
   const ta = document.createElement('textarea');
   ta.className = 'cv-question'; ta.value = b.body; ta.rows = 1; ta.placeholder = 'ask the document…';
   const grow = () => { ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
-  ta.oninput = () => { b.body = ta.value; grow(); cv.dirty = true; cv.edited.add(b.id); };
+  ta.oninput = () => { cvEdit(b.id, ta.value); grow(); };
   ta.onkeydown = ev => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); cvAskRun(b.id); } };
   ta.onfocus = () => { cv.focus = b.id; };
   box.appendChild(ta);
@@ -456,7 +476,7 @@ async function cvOp(op, redraw = true) {
   //: Without a redraw, only the brick that changed is taken. Replacing the whole document would
   //: leave the next `cvSync` diffing the new document against itself, and nothing would repaint.
   else if (r.brick && SHAPE_KEEPING.has(op.op)) Object.assign(cvBrick(r.brick.id) || {}, r.brick);
-  else cv.canvas = r.canvas;
+  else cv.canvas = cvKeepEdits(r.canvas);
   cv.dirty = true;
   return r;
 }

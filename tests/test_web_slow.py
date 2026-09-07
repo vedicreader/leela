@@ -3670,3 +3670,25 @@ def test_the_search_dialog_reopens_on_the_choices_it_closed_on(tmp_path, monkeyp
             page.wait_for_function("() => lee.prefs.search.lastExts === 'md'")
             _relaunch(page)
             assert open_search() == ['context', 'project', 'md'], 'a change made in the dialog did not last'
+
+
+def test_typing_in_a_code_brick_survives_the_insert_that_follows_it(tmp_path):
+    """A `cvSync` keeps the element and hands it a new brick object, so a write to the captured one
+    was gone at the next flush: the code you typed ran as an empty cell."""
+    doc = tmp_path/'t.canvas.md'
+    doc.write_text('---\ntitle: t\n---\n# T\n\nA paragraph to hang a gutter on.\n', encoding='utf-8')
+    async def go(pg):
+        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
+        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
+        a = pg.locator('.cv-brick').last
+        await a.hover(); await a.locator('.cv-gadd').click()
+        await pg.wait_for_selector('.cv-item')
+        await pg.keyboard.type('code'); await pg.keyboard.press('Enter')
+        await pg.wait_for_selector('.cv-brick[data-kind=code] textarea')
+        await pg.keyboard.type('x = 41 + 1')
+        code = pg.locator('.cv-brick[data-kind=code]').first
+        await code.hover(); await code.locator('.cv-gadd').click()      # the op that flushes
+        await pg.wait_for_selector('.cv-item')
+        await pg.keyboard.press('Escape')
+        return await pg.evaluate("() => cv.canvas.bricks.filter(b => b.kind == 'code').map(b => b.body)")
+    assert _run(go, roots=[str(tmp_path)]) == ['x = 41 + 1']

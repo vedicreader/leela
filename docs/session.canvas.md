@@ -297,8 +297,8 @@ p = palette(libraries())
 <!--canvas bundle id=u-ed title="The editor the merge brought in"
      goal=g
      contributes="the run step and every insert menu"
-     covers="The editor,t8"
-     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,leela/blocks/canvas/live.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/store.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/*.canvas.md,leela/blocks/canvas/triage.diff,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*
+     covers="The editor,What running it found,t8,t13"
+     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,tests/test_web_slow.py,leela/blocks/canvas/live.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/store.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/*.canvas.md,leela/blocks/canvas/triage.diff,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*
      refs=doc:docs/canvas.md-->
 The canvas branch built the editor: a gutter, a block menu, a slash menu, a component palette, an
 inline helper and a live kernel. The merge kept one `doc.py` and one palette. The document format
@@ -332,20 +332,49 @@ not declare fails at load, not at request time. This is why the canvas block ask
 and no more.
 ```
 
+# What running it found
+
+Running the merged block end to end found two faults that reading it could not.
+
+<!--canvas note id=n-stale-->
+Typing in a code brick was lost. An insert anywhere in the document runs `cvSync`, which keeps the
+element and hands it a new brick object, so the textarea's write went to an object the document no
+longer held. The next flush read the older body, and the cell ran empty. `cvEdit` writes through to
+`cvBrick(id)` and `cvKeepEdits` carries an edited body across the sync. The test is in
+`tests/test_web_slow.py`, and it fails on the code before the fix.
+<!--/canvas-->
+
+<!--canvas note id=n-basket-->
+The context basket has a route and no panel. `/canvas/context` returns the exact bricks one question
+will send, each with the rule that chose it, and 51 tests cover the model. The merged editor has no
+control that opens it, because neither branch built one: the canvas branch built the editor and this
+side built the basket. This is the next piece of work, and the audit is the reason to name it here
+rather than in a tracker.
+<!--/canvas-->
+
+<!--canvas task id=t13 status=done owner=me-->
+Fix the stale-object write and add the browser test that reproduces it.
+<!--/canvas-->
+
+<!--canvas task id=t14 status=todo owner=me-->
+Give the basket a panel: a control on an `ask` brick that shows what the question will send.
+<!--/canvas-->
+
 # The diff
 
-Here is the diff for the assembly this session added last: the page slot, and the route that fills
-it. The slot below states its own paths and its own two commits.
+Here is the diff for the two files that carry the change: the model and the routes. The slot below
+states its own paths and its own two commits, and Leela filled it. The rest of the branch is in the
+chips at the top of the page, and in `coverage`.
 
-```canvas diff id=d-slot paths=leela/blocks/canvas/change.py,leela/blocks/canvas/app.py left=HEAD right=
+```canvas diff id=d-slot paths=leela/blocks/canvas/change.py,leela/blocks/canvas/app.py left=origin/main right=HEAD
 ```
 
 # The numbers
 
 <!--canvas data id=n-tally-->
-files = 116
-insertions = 9746
-tests = 124
+files = 130
+insertions = 11530
+tests = 125
 bricks = 10
 libraries = 1
 prompt_files = 2
@@ -364,7 +393,7 @@ which set was a promise.
 # Checks
 
 <!--canvas task id=t10 status=done owner=me-->
-124 tests pass, 1 skipped: the example that wires itself from a component host, with none running.
+125 tests pass, 1 skipped: the example that wires itself from a component host, with none running.
 <!--/canvas-->
 
 <!--canvas task id=t11 status=done owner=me-->
