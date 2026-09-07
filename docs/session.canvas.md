@@ -20,6 +20,10 @@ Hold every page this branch adds to the English that ste.md already states, and 
 rather than assert it.
 <!--/canvas-->
 
+<!--canvas goal id=g3 measure="findings from a review of this branch that are still open" baseline="17" target=0 by=2026-09-30-->
+Leave nothing in this branch that a reviewer called critical or high.
+<!--/canvas-->
+
 # Words
 
 Read this table first. Every later section uses these words and no others.
@@ -422,28 +426,78 @@ second turn `_pending` exists to refuse. `worker.ident` tells an unstarted threa
 one, and two tests in `tests/blocks/test_agent_threads.py` hold each half.
 <!--/canvas-->
 
-```canvas diff id=d-prose paths=docs/session.canvas.md,examples/canvas/an-animal-cell.canvas.md left=origin/main right=HEAD
+# The review
+
+<!--canvas bundle id=u-rev title="What a review of this branch found, and what it cost to fix"
+     goal=g3
+     contributes="the branch being safe to merge"
+     covers="The review,t18,t19,t20,t21"
+     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/live.py,leela/blocks/canvas/store.py,leela/blocks/canvas/md.js,leela/blocks/canvas/canvas.js,leela/blocks/canvas/ui.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/helper.js,leela/blocks/canvas/ops.py,leela/blocks/canvas/canvas.css,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/support.py,leela/blocks/pipelines/pipelines.py,leela/blocks/drive/drive.py,leela/blocks/drive/app.py,leela/blocks/workflows/workflows.py,tests/test_seams.py,uv.lock
+     refs=doc:docs/canvas.md,pkg:kunda,pkg:pullup-->
+Four faults were critical and six were high. Every route that took a path read, ran or overwrote
+whatever it named. A canvas ran its Python in the web process. A frame had this page's origin, and
+the markdown writer let a URL close an attribute. The wheel excluded the very files the client was
+built from at request time.
+<!--/canvas-->
+
+The path gate is one function, `canvas_path`, and every source and destination passes it. A canvas
+runs in a kunda kernel now, and only after somebody says it may: opening a document draws it and
+executes nothing. Both frames are sandboxed with `allow-scripts` and no same-origin. The client is
+a committed bundle, `leela/static/lee-canvas.js`, built from the order `ui.FILES` states.
+
+<!--canvas note id=n-timeout-->
+Kunda's `execute(timeout=)` does not return on a busy loop. `while True: pass` sat past two hundred
+seconds under it, and `interrupt` stopped the same cell in milliseconds. So `KernelRuntime` holds
+the bound itself: wait, interrupt, wait again, then shut the kernel down and start another. A cell
+that calls `os._exit` takes its kernel and nothing else.
+<!--/canvas-->
+
+```canvas snippet id=s-bounded path=leela/blocks/canvas/live.py symbol=KernelRuntime._bounded
+Three steps, because each one can fail on its own. `interrupt` is what actually stops a cell, and
+the wait around it is what makes the timeout real. Giving up on the kernel costs the namespace,
+which is the whole reason a kernel is worth having.
 ```
+
+```canvas snippet id=s-gate path=leela/blocks/canvas/app.py symbol=canvas_path
+The gate compares the resolved path against the root it must be under, so a relative path cannot
+walk up out of it. With a folder open the workspace decides; with none, which is the spike and the
+tests, the canvas directory does.
+```
+
+<!--canvas task id=t18 status=done owner=me-->
+Gate every route's paths, both source and destination.
+<!--/canvas-->
+
+<!--canvas task id=t19 status=done owner=me-->
+Run a canvas in a kernel, with a timeout, an interrupt and explicit trust.
+<!--/canvas-->
+
+<!--canvas task id=t20 status=done owner=me-->
+Sandbox both frames, and refuse a URL or an attribute that is script.
+<!--/canvas-->
+
+<!--canvas task id=t21 status=done owner=me-->
+Ship the client in the wheel, and hold it with a test against a built one.
+<!--/canvas-->
 
 # The diff
 
-Below are the two files that carry the change: the model and the routes. The slot states its own
-paths and its own two commits, and Leela filled it. The chips at the top of the page carry the
-rest of the branch, and so does `coverage`.
+Every file this branch touches, against `origin/main`. The slot names no path, so Leela filled it
+with one brick a file and marked any that no change on this page claims.
 
-```canvas diff id=d-slot paths=leela/blocks/canvas/change.py,leela/blocks/canvas/app.py left=origin/main right=HEAD
+```canvas diff id=d-all left=origin/main right=HEAD
 ```
 
 # The numbers
 
 <!--canvas data id=n-tally-->
-files = 151
-insertions = 12037
-tests = 125
-browser_tests = 1
-bricks = 10
-libraries = 1
-prompt_files = 2
+files = 126
+insertions = 12161
+deletions = 261
+tests = 2054
+slow_tests = 139
+canvas_tests = 152
+review_findings_closed = 17
 <!--/canvas-->
 
 <!--canvas ask id=q2 scope=doc mutes=d-slot budget=9000-->
