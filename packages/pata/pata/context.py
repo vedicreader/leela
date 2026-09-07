@@ -75,6 +75,9 @@ def body_text(b, values=None, doc=None):
         out = [f'change: {b.title}'.strip(), b.body]
         out += [f'{k}: {v}' for k, v in b.attrs.items()
                 if k in ('goal', 'contributes', 'paths', 'refs', 'covers')]
+    elif b.kind == 'snippet':
+        out = [f"{b.attrs.get('path', '')} {b.attrs.get('symbol') or b.attrs.get('lines') or ''}".strip(),
+               b.body]
     elif b.kind == 'diff':
         out = [f"{b.attrs.get('path', '')} +{b.attrs.get('added', 0)} -{b.attrs.get('removed', 0)}",
                b.body]

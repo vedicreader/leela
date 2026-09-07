@@ -57,6 +57,7 @@ Where does the 10% most plausibly come from?
 | `ask`, `reply`, `note` | a question, the answer written back under it, and an aside |
 | `bundle` | one unit of change: the goal it serves, the files it owns, what is attached |
 | `diff` | one file's hunks, in a generated review |
+| `snippet` | code cited out of a file it names, with prose about it |
 
 ## Context
 
@@ -110,6 +111,22 @@ Adds `triage`, the rule that lets a contracted supplier's small PO skip the appr
 
 `review(doc, bundle_id, diff)` builds a second document from a unified diff: the value, the reasoning, one `diff` brick per file, the attachments, the coverage checks, and a question with the goal pinned. A review is a canvas, so it draws in both views and you can ask about the change with the goal already in the basket.
 
+## The literate page
+
+`lit(doc, path, changed, root)` writes one document as one column of HTML for a phone. No JavaScript, no other requests, and both colour schemes. Long snippets and long diffs arrive folded, because a phone screen holds about 20 lines. A diff body scrolls sideways inside its own box; the page never does.
+
+A `snippet` brick cites code rather than holding a copy:
+
+```markdown
+```canvas snippet id=s1 path=pata/change.py symbol=state
+Why this matters: the state is read off the document, never set by hand.
+```
+```
+
+`snip` reads the file and finds the symbol, decorators included. `Class.method` finds one inside the other, and `lines=10-30` takes a range instead. A page therefore cannot show code the file no longer has.
+
+`review` places the prose that cites a path next to that file's hunks, so a document that explains its files gives a literate diff with no extra work.
+
 ## Getting work out
 
 - `to_ipynb` / `from_ipynb`: a document as a notebook, questions in Leela's own `metadata.leela` prompt shape. `from_ipynb` also migrates a notebook that was never a document, and `arrange` gives that import a canvas.
@@ -129,6 +146,13 @@ d = procurement()
 changed = list(hunks(diff()))
 paint(d, 'plan.html', values=VALUES, changed=changed,
       review=review(d, 'triage', diff()), value=value(d, changed))
+```
+
+## Literate output
+
+```python
+from pata import Doc, lit
+lit(Doc.load('docs/change.canvas.md'), 'change.html', changed=changed, root='.')
 ```
 
 ## Tests

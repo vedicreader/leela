@@ -111,6 +111,24 @@ That also answers whether this replaces Leela's git view. It does not. The exist
 
 A review is generated per request and never written back. A diff is a fact about a commit range, not part of the document.
 
+## The literate page
+
+`lit` writes one document as one column for a phone. `paint` draws a canvas for someone working in it; this draws the same document for someone reading it on the way to a meeting. No JavaScript, no other requests, both colour schemes, and everything long folded.
+
+Writing this repository's own change as a `pata` document, and rendering it with `lit`, found four things the design was missing. That is the argument for dogfooding rather than a claim about the tool.
+
+A `snippet` brick cites code instead of holding it. `snip` reads the file the brick names and finds the symbol in it, decorators included. A literate page wants the function that does the work, not the whole diff, and a copy pasted into prose is a copy that goes stale. This is the primitive the whole page is built on, and nothing before it could do the job.
+
+A comment wrap had to fit on one line. A bundle carries a goal, a contribution, a covers list, a paths list and a refs list, so one line was 300 characters wide in a file a person edits. The reader now joins lines until it finds `-->`.
+
+Two headings with only prose between them became one region, because prose accumulates into one text brick and only its first heading was read. The second heading never started a section. The reader now splits prose at every heading, skipping headings inside a plain fence.
+
+A heading and the prose under it are one brick, and the page renderer took the heading as a section title and dropped the brick. Every paragraph under a first-level heading disappeared. It now trims the heading and keeps the rest.
+
+`review` also changed. It now places the prose that cites a path next to that file's hunks, so a document that explains its files produces a literate diff with no further work. That is the feature the exercise was for.
+
+`tools/make_change_page.py` builds the page. `docs/change.canvas.md` is the source, and `media/pata-change.html` is the output.
+
 ## Getting work back out
 
 Nothing here is a new place for work to get stuck.

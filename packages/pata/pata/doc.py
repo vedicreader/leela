@@ -15,7 +15,7 @@ __all__ = ['KINDS', 'FENCED', 'WRAPPED', 'MODES', 'STATUS', 'RELATIONS', 'W', 'B
            'defs_of', 'reads_of', 'order', 'downstream', 'upstream']
 
 #: Bricks whose body markdown cannot show, written as a fence.
-FENCED = ('code', 'ask', 'brick', 'sim', 'data', 'diff')
+FENCED = ('code', 'ask', 'brick', 'sim', 'data', 'diff', 'snippet')
 #: Bricks whose body is markdown a plain renderer should still show, written as a comment wrap.
 WRAPPED = ('reply', 'note', 'goal', 'task', 'source', 'bundle')
 KINDS = ('text',) + FENCED + WRAPPED
@@ -29,7 +29,8 @@ W = 380
 
 FENCE = re.compile(r'^(`{3,})canvas +(\w+)([^\n]*)$')
 TICKS = re.compile(r'^(`{3,})')
-WRAP = re.compile(r'^<!--canvas +(\w+)(.*?)-->$')
+WRAP = re.compile(r'^<!--canvas +(\w+)\b')
+SHUT_TAG = re.compile(r'-->\s*$')
 SHUT = '<!--/canvas-->'
 ATTR = re.compile(r'(\w+)=("[^"]*"|\S*)')
 DIRECT = re.compile(r'^(bind|prop|pin|mute) +([\w.:/-]+)(?: *= *(.+))?$')
@@ -45,7 +46,7 @@ def _scan(text):
     "`(kind, attrline, body)` per brick. A fence inside a longer fence is an example of one, not one."
     lines, i, prose, out = text.split('\n'), 0, [], []
     def flush():
-        if ''.join(prose).strip(): out.append(('text', '', '\n'.join(prose).strip()))
+        for part in _prose_parts('\n'.join(prose)): out.append(('text', '', part))
         prose.clear()
     def upto(j, shut, keep):
         body = []
@@ -66,12 +67,34 @@ def _scan(text):
             prose.extend(body)
         elif (m := WRAP.match(line)):
             flush()
+            attr = [line[m.end():]]
+            while not SHUT_TAG.search(attr[-1]) and i + 1 < len(lines):    # a long attribute list wraps
+                i += 1
+                attr.append(lines[i])
             i, body = upto(i + 1, lambda l: l.strip() == SHUT, False)
-            out.append((m[1], m[2], '\n'.join(body)))
+            out.append((m[1], SHUT_TAG.sub('', ' '.join(attr)), '\n'.join(body)))
         else:
             prose.append(line); i += 1; continue
         i += 1
     flush()
+    return out
+
+def _prose_parts(text):
+    """Prose split at each heading, so one heading is one region.
+
+    Two headings with only prose between them arrive here as one run. Left whole, the second
+    heading would never start a region. A heading inside a plain fence is an example of one.
+    """
+    out, cur, fence = [], [], ''
+    for line in (text or '').split('\n'):
+        if fence: 
+            if line.startswith(fence): fence = ''
+        elif (m := TICKS.match(line)): fence = m[1]
+        elif HEAD.match(line) and ''.join(cur).strip():
+            out.append('\n'.join(cur).strip())
+            cur = []
+        cur.append(line)
+    if ''.join(cur).strip(): out.append('\n'.join(cur).strip())
     return out
 
 def _attrs(s): return {k: v.strip('"') for k, v in ATTR.findall(s or '')}

@@ -20,6 +20,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 ## Not built yet
 
+- [change.canvas.md](change.canvas.md): the `pata` change, written as a `pata` document. `tools/make_change_page.py` renders it to `media/pata-change.html`.
 - [dynamic-documents.md](dynamic-documents.md): one markdown file holding a goal, its plan, its research, its code and its questions. The `*.canvas.md` format, the context rule a question carries, and what integration costs.
 - [parallel-threads.md](parallel-threads.md): one worktree, branch and agent session per task. The shared-state git lock has to come first.
 - [threads-to-ramabana.md](threads-to-ramabana.md): whether `Feed`, `Thread`, `Threads` and `TurnRunner` move to ramabana. Section 8 is three reasons not to do it as written.

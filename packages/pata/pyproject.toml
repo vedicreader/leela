@@ -9,7 +9,7 @@ description = "Dynamic documents: one space for a goal, its plan, its research, 
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-dependencies = ["fastcore>=1.7"]
+dependencies = ["fastcore>=1.7", "mdhtml>=0.1.38"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

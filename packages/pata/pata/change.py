@@ -16,7 +16,7 @@ from .doc import Brick, Doc
 from .export import directives, modules
 
 __all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'state', 'pr', 'review', 'value',
-           'hunks', 'diff_stat', 'STATES']
+           'hunks', 'diff_stat', 'snip', 'STATES']
 
 def _list(v): return [x.strip() for x in str(v or '').split(',') if x.strip()]
 
@@ -140,6 +140,38 @@ def pr(doc, bid, branch=None):
             'body': '\n\n'.join(body) + '\n', 'paths': b.paths, 'refs': b.refs,
             'goal': b.goal.id if b.goal else ''}
 
+def snip(brick, root='.'):
+    """The code a `snippet` brick cites, read out of the file it names.
+
+    `symbol=` finds a function or a class by name, decorators included, and `Class.method` finds
+    one inside the other. `lines=10-30` takes a range instead. A snippet cites code; it never
+    holds a copy, so the page cannot show something the file no longer says.
+    """
+    path = Path(root)/brick.attrs.get('path', '')
+    if not path.is_file(): return ''
+    text = path.read_text(encoding='utf-8')
+    if (rng := brick.attrs.get('lines')):
+        a, _, b = rng.partition('-')
+        rows = text.splitlines()
+        return '\n'.join(rows[max(0, int(a) - 1):int(b or a)])
+    if not (sym := brick.attrs.get('symbol')): return text
+    return _symbol(text, sym)
+
+import ast
+
+def _symbol(text, sym):
+    "One named function or class out of a module's source, as written."
+    try: tree = ast.parse(text)
+    except SyntaxError: return ''
+    outer, _, inner = sym.partition('.')
+    node = first(n for n in tree.body if getattr(n, 'name', None) == outer)
+    if node is None: return ''
+    if inner: node = first(n for n in getattr(node, 'body', []) if getattr(n, 'name', None) == inner)
+    if node is None: return ''
+    start = min([node.lineno] + [d.lineno for d in getattr(node, 'decorator_list', [])])
+    rows = text.splitlines()
+    return '\n'.join(rows[start - 1:node.end_lineno])
+
 _FILE = re.compile(r'^diff --git a/(\S+) b/(\S+)$', re.M)
 
 def hunks(text):
@@ -192,11 +224,18 @@ def review(doc, bid, diff='', values=None):
             out.add(_copy(q, scope='none'))          # its context lived in the document it came from
             if (r := doc.reply_to(q.id)) is not None: out.add(_copy(r))
     out.add(Brick('text', '## Change'))
+    cited = {}
+    for m in b.members:
+        if m.kind in ('snippet', 'text', 'note') and m.attrs.get('path'):
+            cited.setdefault(m.attrs['path'], []).append(m)
     for path, text in files.items():
         add, rm = diff_stat(text)
         out.add(Brick('diff', text, id=f'd-{Path(path).name}',
                       attrs={'path': path, 'added': str(add), 'removed': str(rm),
                              **({'claimed': 'no'} if path not in cov.get('matched', []) else {})}))
+        for m in cited.pop(path, []): out.add(_copy(m))   # the prose that explains this file
+    for rest in cited.values():
+        for m in rest: out.add(_copy(m))
     if not files: out.add(Brick('note', 'No diff supplied.', id=f'{bid}-nodiff'))
     if b.refs:
         out.add(Brick('text', '## Attached'))

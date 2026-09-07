@@ -2,9 +2,11 @@ import pytest
 from pata import (Brick, Doc, arrange, body_text, bundle_of, bundles, coverage, diff_stat,
                   from_ipynb, hunks, modules, order, pr, render, resolve, review, to_ipynb,
                   to_report, upstream, weigh)
-from pata import state, value
+from pata import html_of, snip, state, value
 from pata.context import Spec, strip_work_log
-from fastcore.all import first
+from fastcore.all import Path, first
+
+PKG = Path(__file__).parent.parent
 from pata.example import VALUES, diff, procurement
 
 SMALL = '''---
@@ -252,3 +254,40 @@ def test_a_goal_nothing_serves_is_reported_rather_than_omitted():
     d = Doc.parse('# One\n\n<!--canvas goal id=g-->\nship it\n<!--/canvas-->\n')
     v = value(d)
     assert 'Nothing in this document is serving this goal.' in v['g-nothing'].body
+
+def test_a_wrapped_attribute_list_is_one_opening_tag():
+    d = Doc.parse('# One\n\n<!--canvas bundle id=b title="A change"\n     goal=g\n'
+                  '     paths=a.py,b.py-->\nprose\n<!--/canvas-->\n')
+    b = d['b']
+    assert b.kind == 'bundle' and b.title == 'A change' and b.body == 'prose'
+    assert b.attrs['goal'] == 'g' and b.attrs['paths'] == 'a.py,b.py'
+    assert Doc.parse(d.md())['b'].attrs == b.attrs      # and it writes back on one line
+
+def test_prose_splits_at_every_heading_so_one_heading_is_one_region():
+    d = Doc.parse('# A\n\nfirst\n\n# B\n\nsecond\n\n```canvas code id=c\nx = 1\n```\n')
+    assert list(d.regions) == ['A', 'B']
+    assert d['c'].region == 'B'
+
+def test_a_heading_inside_a_plain_fence_is_an_example_not_a_region():
+    d = Doc.parse('# A\n\n```\n# B\nnot a heading\n```\n\nafter\n')
+    assert list(d.regions) == ['A']
+
+def test_a_snippet_cites_a_symbol_out_of_the_file_it_names():
+    b = Brick('snippet', 'why', attrs={'path': 'pata/change.py', 'symbol': 'state'})
+    code = snip(b, PKG)
+    assert code.startswith('def state(b, changed=()):') and 'return \'todo\'' in code
+    m = Brick('snippet', '', attrs={'path': 'pata/change.py', 'symbol': 'Bundle.paths'})
+    assert snip(m, PKG).splitlines()[0].strip() == '@property'   # decorators come with it
+    assert snip(Brick('snippet', '', attrs={'path': 'nope.py'}), PKG) == ''
+
+def test_a_literate_page_keeps_the_prose_under_each_heading():
+    d = Doc.parse('# A\n\n| f | n |\n|---|---|\n| x | 1 |\n\n# B\n\nafter\n')
+    page = html_of(d)
+    assert '<h2 id="a">A</h2>' in page and '<table>' in page and 'after' in page
+
+def test_the_literate_page_folds_what_a_phone_cannot_hold():
+    d = procurement()
+    r = review(d, 'triage', diff())
+    page = html_of(r, changed=list(hunks(diff())))
+    assert page.count('<details') >= 1 and 'viewport' not in page   # the wrapper adds the meta tag
+    assert 'class="dl a"' in page and 'class="dl r"' in page
