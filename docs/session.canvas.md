@@ -314,7 +314,7 @@ and `13-slash-menu.png` show the first two, and `14-palette.png` shows the third
      goal=g
      contributes="the block loads with the IDE, and its routes are checked"
      covers="The wiring,t10"
-     paths=leela/blocks/__init__.py,leela/blocks/canvas/__init__.py,leela/skills/*,tools/build_ide_js.py,tests/routes.txt,tests/test_canvas.py,tests/test_canvas_doc.py,pyproject.toml,extensions/bricks/pyproject.toml
+     paths=leela/blocks/__init__.py,leela/blocks/canvas/__init__.py,leela/skills/*,tools/build_ide_js.py,tests/routes.txt,tests/test_canvas.py,tests/test_canvas_doc.py,pyproject.toml,extensions/bricks/pyproject.toml,.gitignore
      refs=file:leela/blocks/__init__.py-->
 A block declares the context it reads in `CAPS`, and the folder is listed in `blocks.NAMES`. Every
 `.js` file is named in the IDE build. `tests/routes.txt` is the record of what the block serves,
@@ -372,9 +372,10 @@ chips at the top of the page, and in `coverage`.
 # The numbers
 
 <!--canvas data id=n-tally-->
-files = 130
-insertions = 11530
+files = 151
+insertions = 12037
 tests = 125
+browser_tests = 1
 bricks = 10
 libraries = 1
 prompt_files = 2
@@ -393,7 +394,7 @@ which set was a promise.
 # Checks
 
 <!--canvas task id=t10 status=done owner=me-->
-125 tests pass, 1 skipped: the example that wires itself from a component host, with none running.
+125 canvas tests pass, 1 skipped: the example that wires itself from a component host, with none running. The browser test needs `-m slow`.
 <!--/canvas-->
 
 <!--canvas task id=t11 status=done owner=me-->
@@ -402,4 +403,11 @@ which set was a promise.
 
 <!--canvas task id=t12 status=done owner=me-->
 This page is written by Leela, from this file, with a real git diff in the slot.
+<!--/canvas-->
+
+<!--canvas note id=n-loose-->
+The header says eight files are claimed by nobody, and they are left that way on purpose. Seven are
+scratch: `shot.mjs`, `t-dark.mjs`, `t-help.mjs` and four screenshots under `shots/`, all committed
+by an earlier branch and none of them a change any bundle here promised. This is what `unclaimed`
+is for, and a page that hid its own finding would be the wrong page.
 <!--/canvas-->

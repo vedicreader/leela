@@ -493,12 +493,14 @@ def test_a_diff_brick_with_a_body_is_left_alone():
     place_diff(doc, lambda *a: pytest.fail('asked for a diff it already had'))
     assert len(doc.of('diff')) == 1
 
-def test_leela_builds_the_literate_page_end_to_end():
+def test_leela_builds_the_literate_page_end_to_end(tmp_path):
     "`page` is the whole assembly: fill the slots, count the files, write the HTML."
+    import subprocess
     from leela.blocks.canvas.app import page
-    src = PKG.parent.parent/'docs/change.canvas.md'
-    doc = Canvas.load(src)
-    out = Path('/tmp/canvas-page-test.html')
+    if subprocess.run(['git', 'rev-parse', '--verify', 'origin/main'], cwd=PKG.parent.parent,
+                      capture_output=True).returncode: pytest.skip('no origin/main to diff against')
+    doc = Canvas.load(PKG.parent.parent/'docs/change.canvas.md')
+    out = tmp_path/'page.html'
     r = page(doc, out, 'origin/main')
     assert r['diffs'] and out.exists()
     body = out.read_text()

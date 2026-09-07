@@ -86,10 +86,12 @@ details>.in{padding:0 14px 14px}
 details>.in>:last-child{margin-bottom:0}
 table{width:100%;border-collapse:collapse;font-size:14px;margin:0 0 16px;display:block;
 overflow-x:auto;-webkit-overflow-scrolling:touch}
-th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+/* A glossary cell is a sentence, so it wraps. A number and a heading stay on one line. */
 th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
-color:var(--fg3);font-weight:600}
-td.n{font-family:var(--mono);text-align:right}
+color:var(--fg3);font-weight:600;white-space:nowrap}
+td:first-child{white-space:nowrap}
+td.n{font-family:var(--mono);text-align:right;white-space:nowrap}
 td.f{font-family:var(--mono);font-size:12.5px;white-space:normal;overflow-wrap:anywhere}
 nav ol{list-style:none;padding:0;margin:0;counter-reset:s}
 nav li{counter-increment:s;border-bottom:1px solid var(--line)}
