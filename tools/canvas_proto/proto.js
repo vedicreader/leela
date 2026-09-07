@@ -5,7 +5,7 @@ const S = { view: 'canvas', sel: null, basket: [], spec: null, doc: 'main' };
 const skip = b => D.replies.includes(b.id) || b.heading;
 const BUN = () => new Map((D.bundles || []).map(b => [b.id, b]));
 
-/* The context rules, mirroring `pata.context.resolve`. Scope membership is computed in Python and
+/* The context rules, mirroring `canvas.context.resolve`. Scope membership is computed in Python and
  * shipped in `D.prompts[id].members`, so only pins, mutes and the budget are decided here. */
 const WRAP = 60;
 function basket(pid, spec) {
@@ -314,7 +314,7 @@ document.addEventListener('click', e => {
   const v = e.target.closest('[data-value]');
   if (v) { e.stopPropagation(); loadDoc('value'); }
   else if (r) { e.stopPropagation(); loadDoc('review'); }
-  else if (pq) { e.stopPropagation(); alert('pata.pr() returns the title, branch, body and file list.\n' +
+  else if (pq) { e.stopPropagation(); alert('canvas.pr() returns the title, branch, body and file list.\n' +
     'Leela hands that to gheasy and pullup; nothing here opens a pull request.'); }
 });
 $('#toggle').addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) setView(b.dataset.view); });

@@ -116,7 +116,7 @@ def pr(doc, bid, branch=None):
     if (why := _reasoning(b)): body.append('### Why\n' + '\n\n'.join(why))
     if b.refs: body.append('### Attached\n' + '\n'.join(f'- `{r}`' for r in b.refs))
     if b.paths: body.append('### Files\n' + '\n'.join(f'- `{p}`' for p in b.paths))
-    return {'id': b.id, 'title': b.title, 'branch': branch or f'pata/{b.id}',
+    return {'id': b.id, 'title': b.title, 'branch': branch or f'canvas/{b.id}',
             'body': '\n\n'.join(body) + '\n', 'paths': b.paths, 'refs': b.refs,
             'goal': b.goal.id if b.goal else ''}
 

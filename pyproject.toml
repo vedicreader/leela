@@ -49,7 +49,7 @@ dependencies = [
     "jupyter-client>=8.9.1",
     "koshas>=0.1.7",
     "litesearch>=0.1.34",   # onnx, onnxruntime and flashrank are extras, on both rerank paths
-    "mdhtml>=0.1.21",
+    "mdhtml>=0.1.38",   # `md2dom(...).to_html()`, which `blocks/canvas/lit.py` renders through
     # The ripgrep flags and its event stream, in one place rather than a command line built here.
     # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.
     "rgapi>=0.1.22",

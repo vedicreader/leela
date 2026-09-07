@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>pata - one document for a goal and its changes</title>
+<title>The canvas document: a goal, its plan and its changes in one file</title>
 <style>:root{color-scheme:light dark;
 --bg:#fff;--bg1:#f6f8fa;--bg2:#eaeef2;--line:#d0d7de;--fg:#1f2328;--fg2:#59636e;--fg3:#818b98;
 --link:#0969da;--add:#1a7f37;--addbg:#e6ffec;--rm:#cf222e;--rmbg:#ffebe9;--warn:#9a6700;
@@ -106,11 +106,56 @@ color:var(--fg3)}
 footer code{font-size:12px}
 @media (min-width:560px){body{font-size:16px}h1{font-size:22px}}
 </style></head><body>
-<header><div class="in"><div class="mark">pata &middot; literate diff</div><h1>pata - one document for a goal and its changes</h1><div class="chips"><span class="chip doing">pata doing</span><span class="chip ok">29 file(s), all claimed</span></div></div></header><div class="wrap"><details><summary>Contents</summary><div class="in"><nav><ol><li><a href="#what-it-adds">What it adds</a></li><li><a href="#the-file">The file</a></li><li><a href="#the-basket">The basket</a></li><li><a href="#the-wiring">The wiring</a></li><li><a href="#the-change">The change</a></li><li><a href="#the-value">The value</a></li><li><a href="#the-prompts">The prompts</a></li><li><a href="#this-page">This page</a></li><li><a href="#the-numbers">The numbers</a></li><li><a href="#checks">Checks</a></li><li><a href="#not-done">Not done</a></li></ol></nav></div></details><h2 id="what-it-adds">What it adds</h2><div class="card goal"><div class="stmt">Give Leela one document that holds a goal, its plan, its research, its code and its questions.</div><dl><dt>measure</dt><dd>tools you open to review one change against its goal</dd><dt>baseline</dt><dd>4 (tracker, notebook, diff, deck)</dd><dt>target</dt><dd>1 page</dd><dt>by</dt><dd>2026-10-31</dd></dl></div><div class="card change"><div class="chips"><span class="chip doing">doing</span></div><div class="meta">Worth: all of the review step; none of the run step, which the canvas branch owns</div><p>A notebook decides what the model reads by position. Every cell above the question goes in. This
-is correct for a script. It is wrong for a plan, because a plan holds four lines of work at once.</p>
-<p><code>pata</code> is one markdown file that holds all of them. A question names what it may read. A boundary
-on the canvas is one change. A change names the goal that it serves.</p>
-<div class="chips"><span class="chip">docs/*.md</span><span class="chip">media/*</span><span class="chip">packages/pata/*</span><span class="chip">packages/pata/pata/*</span><span class="chip">tools/make_change_page.py</span></div><div class="chips"><span class="chip">doc:docs/dynamic-documents.md</span><span class="chip">file:leela/blocks/nb/nb.py</span><span class="chip">pkg:mdhtml</span></div></div><ul class="tasks"><li class="done"><span class="box">[x]</span><span>Read the document format from the canvas branch.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Build the context basket, the bundle, the review and the value view.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Write this page from the document, with the code it explains.</span><span class="who">me</span></li><li class="todo"><span class="box">[ ]</span><span>Move the four modules into `leela/blocks/canvas/`.</span><span class="who">me</span></li></ul><h2 id="the-file">The file</h2><p>A <code>pata</code> document is one markdown file. Prose stays prose. Each other part is a brick. A brick is
+<header><div class="in"><div class="mark">canvas &middot; literate diff</div><h1>The canvas document: a goal, its plan and its changes in one file</h1><div class="chips"><span class="chip doing">canvas doing</span><span class="chip ok">32 file(s), all claimed</span></div></div></header><div class="wrap"><details><summary>Contents</summary><div class="in"><nav><ol><li><a href="#what-this-is">What this is</a></li><li><a href="#words">Words</a></li><li><a href="#why-it-helps">Why it helps</a></li><li><a href="#the-file">The file</a></li><li><a href="#the-basket">The basket</a></li><li><a href="#the-wiring">The wiring</a></li><li><a href="#the-change">The change</a></li><li><a href="#the-value">The value</a></li><li><a href="#the-prompts">The prompts</a></li><li><a href="#this-page">This page</a></li><li><a href="#the-numbers">The numbers</a></li><li><a href="#checks">Checks</a></li><li><a href="#not-done">Not done</a></li></ol></nav></div></details><h2 id="what-this-is">What this is</h2><p>A goal like "increase procurement productivity by 10%" is not one kind of work. You frame the
+measure. You collect what people already know. You pull an extract apart. You prototype one rule.
+You write the recommendation.</p>
+<p>Today each of those lives in a different tool. The plan is in a tracker. The numbers are in a
+notebook. The research is in browser tabs. The recommendation is in a deck. Nothing crosses
+between them except a person who remembers all four.</p>
+<p>This change adds one file that holds all of them. It is a markdown file. Prose stays prose. Each
+other part is a brick.</p>
+<div class="card goal"><div class="stmt">Give Leela one document that holds a goal, its plan, its research, its code and its questions.</div><dl><dt>measure</dt><dd>tools you open to review one change against its goal</dd><dt>baseline</dt><dd>4: tracker, notebook, diff, deck</dd><dt>target</dt><dd>1 page</dd><dt>by</dt><dd>2026-10-31</dd></dl></div><div class="card change"><div class="chips"><span class="chip doing">doing</span></div><div class="meta">Worth: all of the review step; none of the run step, which the canvas branch owns</div><p>Adds <code>leela/blocks/canvas</code>, a block that reads and writes the canvas document. A question in the
+document names what the model may read. A boundary on the canvas is one change. A change names the
+goal that it serves.</p>
+<div class="chips"><span class="chip">docs/*.md</span><span class="chip">leela/blocks/__init__.py</span><span class="chip">leela/blocks/canvas/*</span><span class="chip">media/*</span><span class="chip">packages/pata/*</span><span class="chip">tests/routes.txt</span><span class="chip">tests/test_canvas_doc.py</span><span class="chip">tools/canvas_proto/*</span><span class="chip">tools/make_change_page.py</span></div><div class="chips"><span class="chip">doc:docs/dynamic-documents.md</span><span class="chip">file:leela/blocks/nb/nb.py</span><span class="chip">pkg:mdhtml</span></div></div><ul class="tasks"><li class="done"><span class="box">[x]</span><span>Read the document format from the canvas branch.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Build the context basket, the change bundle, the review and the value view.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Write this page from the document, with the code it explains.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Move the modules into `leela/blocks/canvas/`.</span><span class="who">me</span></li></ul><h2 id="words">Words</h2><p>Read this table first. Every later section uses these words and no others.</p>
+<table>
+<thead>
+<tr><th>word</th><th>means</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>brick</strong></td><td>one part of the document. A fence or a comment wrap. A code cell, a question, a goal, a task, a clipping.</td></tr>
+<tr><td><strong>prose</strong></td><td>ordinary markdown between bricks. It needs no markup of its own.</td></tr>
+<tr><td><strong>region</strong></td><td>the bricks under one heading. Headings make the regions. Nobody writes one.</td></tr>
+<tr><td><strong>basket</strong></td><td>the exact list of bricks that one question sends to the model.</td></tr>
+<tr><td><strong>scope</strong></td><td>how a question gathers its first set of bricks. <code>page</code>, <code>region</code>, <code>upstream</code>, <code>doc</code> or <code>none</code>.</td></tr>
+<tr><td><strong>pin</strong></td><td>a brick a question always reads, whatever the scope says. A <code>mute</code> is the opposite.</td></tr>
+<tr><td><strong>budget</strong></td><td>how many characters a question may send. The goal and the pins survive it.</td></tr>
+<tr><td><strong>upstream</strong></td><td>the bricks a brick reads from. Read off the code, never drawn by hand.</td></tr>
+<tr><td><strong>bundle</strong></td><td>one unit of change. It claims a region, names a goal, and owns a list of files.</td></tr>
+<tr><td><strong>snippet</strong></td><td>a brick that cites code out of a file. It holds no copy of that code.</td></tr>
+<tr><td><strong>canvas</strong></td><td>the second view of the document. The same bricks, with coordinates.</td></tr>
+</tbody>
+</table>
+<p>The block is <code>canvas</code> and the file is <code>*.canvas.md</code>. An earlier draft of this work was a separate
+package called <code>pata</code>, from the Sanskrit <code>pata</code>, the cloth that a scroll painting is made on. The
+name is retired. There is one name now, and it is <code>canvas</code>.</p>
+<h2 id="why-it-helps">Why it helps</h2><p>A notebook decides what the model reads by position. Every cell above the question goes in. This
+is correct for a script, because the cells above are the steps you already took.</p>
+<p>It is wrong for a plan. A plan holds four lines of work at once. Ask the recommendation question
+to read everything above it, and it reads three failed attempts at a groupby. Ask it to read
+nothing, and you paste the same three paragraphs again.</p>
+<p>One case shows it clearly. An audit belongs in the context of the question near the top of the
+document, and in the context of the risk question near the bottom, and in nothing between them.
+Position cannot say that. Where a brick sits says nothing about which questions it answers.</p>
+<p>Three things follow from a document that can say it.</p>
+<p>A question shows its basket before it runs. You see each brick, why it is there, and what it
+costs. You mute one and the count drops.</p>
+<p>A boundary on the canvas is a change you can review. It names the goal, owns the files, and holds
+the tasks, the prose and the code together. One page then answers whether the change does what the
+goal said.</p>
+<p>A goal shows what serves it. Work that serves no goal is visible. A goal that nothing serves is
+visible too, and that one is worse, because it looks like a goal that is going well.</p>
+<h2 id="the-file">The file</h2><p>A <code>pata</code> document is one markdown file. Prose stays prose. Each other part is a brick. A brick is
 a fence or a comment wrap.</p>
 <p>The reader reads the file line by line. It does not use one pattern on the whole file. This is
 necessary. A document about canvases shows fences as examples. A fence inside a longer fence is an
@@ -118,7 +163,7 @@ example. It is not a brick.</p>
 <p>The <code>TICKS</code> branch does the work. It sees a plain fence, puts the fence into the prose, and skips
 to the end of it. Nothing inside that fence becomes a brick. This page is such a document, and it
 reads correctly.</p>
-<figure><figcaption><b>packages/pata/pata/doc.py</b> &middot; _scan</figcaption><details><summary>_scan (36 lines)</summary><div class="in"><pre><code class="lang-python">def _scan(text):
+<figure><figcaption><b>leela/blocks/canvas/doc.py</b> &middot; _scan</figcaption><details><summary>_scan (36 lines)</summary><div class="in"><pre><code class="lang-python">def _scan(text):
     &quot;`(kind, attrline, body)` per brick. A fence inside a longer fence is an example of one, not one.&quot;
     lines, i, prose, out = text.split(&#x27;\n&#x27;), 0, [], []
     def flush():
@@ -155,7 +200,7 @@ reads correctly.</p>
     flush()
     return out</code></pre></div></details></figure><p>Headings are the regions of the document. Nobody writes a region. The reader gives each brick the
 heading above it.</p>
-<figure><figcaption><b>packages/pata/pata/doc.py</b> &middot; Doc._regions</figcaption><pre><code class="lang-python">    def _regions(self):
+<figure><figcaption><b>leela/blocks/canvas/doc.py</b> &middot; Doc._regions</figcaption><pre><code class="lang-python">    def _regions(self):
         &quot;Assign each brick the heading above it. Headings live in prose, so this is a re-read.&quot;
         here = &#x27;&#x27;
         for b in self.bricks:
@@ -168,7 +213,7 @@ and builds the prompt. What a person sees is what the model gets.</p>
 <p>Four rules, in order. The goal goes in first. Then each pin. A pin that no longer exists becomes a
 <code>missing</code> item. It is visible. A silent drop is worse, because the person still believes the pin is
 there.</p>
-<figure><figcaption><b>packages/pata/pata/context.py</b> &middot; resolve</figcaption><details><summary>resolve (29 lines)</summary><div class="in"><pre><code class="lang-python">def resolve(
+<figure><figcaption><b>leela/blocks/canvas/context.py</b> &middot; resolve</figcaption><details><summary>resolve (29 lines)</summary><div class="in"><pre><code class="lang-python">def resolve(
     doc,             # the document
     bid,             # which brick asks
     spec=None,       # the rule, else the one the brick carries
@@ -198,7 +243,7 @@ there.</p>
     items += list(extra)
     return _fit(items, spec.budget)</code></pre></div></details></figure><p>A scope gives the first set of bricks. <code>page</code> is the notebook rule. <code>region</code> is the section that
 you work in. <code>upstream</code> is what the question reads from.</p>
-<figure><figcaption><b>packages/pata/pata/context.py</b> &middot; members</figcaption><pre><code class="lang-python">def members(doc, b, scope):
+<figure><figcaption><b>leela/blocks/canvas/context.py</b> &middot; members</figcaption><pre><code class="lang-python">def members(doc, b, scope):
     &quot;The bricks a scope offers, before pins, mutes and the budget.&quot;
     if scope == &#x27;none&#x27;: return L()
     at = doc.index(b.id)
@@ -209,7 +254,7 @@ you work in. <code>upstream</code> is what the question reads from.</p>
 than the whole budget gets shorter; it does not go.</p>
 <p>The last block is the one that matters. If every item that is left is pinned, the code cuts each
 item to a share of the budget and marks it. It never drops a pin.</p>
-<figure><figcaption><b>packages/pata/pata/context.py</b> &middot; _fit</figcaption><pre><code class="lang-python">def _fit(items, budget):
+<figure><figcaption><b>leela/blocks/canvas/context.py</b> &middot; _fit</figcaption><pre><code class="lang-python">def _fit(items, budget):
     &quot;Trim to `budget`. Pins and `keep` never drop; `discard` goes first, then the oldest `auto`.&quot;
     if not budget: return items
     total = sum(i.chars + WRAP for i in items)
@@ -229,7 +274,7 @@ item to a share of the budget and marks it. It never drops a pin.</p>
     return kept</code></pre></figure><p>The markup is <code>&lt;cell&gt;</code> with a <code>compact</code> attribute. This is Leela's own notebook shape, and the
 choice is deliberate. Ramabana drops <code>&lt;cell&gt;</code> elements when a prompt is too large for the window.
 A document that wrote <code>&lt;block&gt;</code> would lose that net.</p>
-<figure><figcaption><b>packages/pata/pata/context.py</b> &middot; render</figcaption><pre><code class="lang-python">def render(items, doc=None):
+<figure><figcaption><b>leela/blocks/canvas/context.py</b> &middot; render</figcaption><pre><code class="lang-python">def render(items, doc=None):
     &quot;The basket as `&lt;cell&gt;` markup, which is Leela’s own notebook context shape.&quot;
     out = []
     for it in items:
@@ -246,7 +291,7 @@ A diagram beside the code goes wrong; the code does not.</p>
 <p><code>defs_of</code> finds each name that a cell binds at the top level of its code. It looks inside <code>if</code>,
 <code>for</code>, <code>try</code> and <code>with</code>. It does not look inside a <code>def</code>, because a name in a function belongs to
 the function.</p>
-<figure><figcaption><b>packages/pata/pata/doc.py</b> &middot; defs_of</figcaption><pre><code class="lang-python">def defs_of(source):
+<figure><figcaption><b>leela/blocks/canvas/doc.py</b> &middot; defs_of</figcaption><pre><code class="lang-python">def defs_of(source):
     &quot;Names a code brick binds at module level, however it binds them.&quot;
     t = _walk(source)
     if t is None: return L()
@@ -267,7 +312,7 @@ the function.</p>
 <p>A name in backticks is a name that the question reads. Write <code>`triage`</code> and the brick that
 defines <code>triage</code> goes in.</p>
 <p><code>supports=</code>, <code>refutes=</code> and <code>blocks=</code> state a relation between two bricks. No code states these.</p>
-<figure><figcaption><b>packages/pata/pata/doc.py</b> &middot; upstream</figcaption><pre><code class="lang-python">def upstream(bricks, bid, depth=12):
+<figure><figcaption><b>leela/blocks/canvas/doc.py</b> &middot; upstream</figcaption><pre><code class="lang-python">def upstream(bricks, bid, depth=12):
     &quot;Every brick `bid` reads from, transitively, in document order.&quot;
     bricks = L(bricks)
     owner, seen = _owners(bricks), set()
@@ -289,7 +334,7 @@ the canvas is then the thing that a reviewer opens.</p>
 is therefore known. <code>paths=</code> adds only what the bricks do not write.</p>
 <p>A list that a person keeps by hand goes out of date. A claim that is out of date is worse than no
 claim, because a reviewer trusts it.</p>
-<figure><figcaption><b>packages/pata/pata/change.py</b> &middot; Bundle.paths</figcaption><pre><code class="lang-python">    @property
+<figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; Bundle.paths</figcaption><pre><code class="lang-python">    @property
     def paths(self):
         &quot;Files this change owns: what its code exports, then what `paths=` declares.&quot;
         mine = {b.id for b in self.of(&#x27;code&#x27;)}
@@ -299,7 +344,7 @@ claim, because a reviewer trusts it.</p>
 claims and the diff did not change. <code>unclaimed</code> is a file that the diff changed and no bundle
 explains.</p>
 <p>No diff tool can find <code>unclaimed</code>. Only the document knows what the change had to be.</p>
-<figure><figcaption><b>packages/pata/pata/change.py</b> &middot; coverage</figcaption><pre><code class="lang-python">def coverage(
+<figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; coverage</figcaption><pre><code class="lang-python">def coverage(
     doc,        # the document
     changed,    # paths a diff says moved
 ):
@@ -317,7 +362,7 @@ explains.</p>
 and the attachments. It opens nothing. Git belongs to <code>gheasy</code>. The forge belongs to <code>pullup</code>.</p>
 <p>The <code>_reasoning</code> line is the part that a diff never has. Each question inside the change, with the
 answer that it got, goes into the body in a fold.</p>
-<figure><figcaption><b>packages/pata/pata/change.py</b> &middot; pr</figcaption><details><summary>pr (23 lines)</summary><div class="in"><pre><code class="lang-python">def pr(doc, bid, branch=None):
+<figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; pr</figcaption><details><summary>pr (23 lines)</summary><div class="in"><pre><code class="lang-python">def pr(doc, bid, branch=None):
     &quot;A pull request cut from one change. It opens nothing.&quot;
     b = first(x for x in bundles(doc) if x.id == bid)
     if b is None: raise KeyError(bid)
@@ -337,13 +382,13 @@ answer that it got, goes into the body in a fold.</p>
     if (why := _reasoning(b)): body.append(&#x27;### Why\n&#x27; + &#x27;\n\n&#x27;.join(why))
     if b.refs: body.append(&#x27;### Attached\n&#x27; + &#x27;\n&#x27;.join(f&#x27;- `{r}`&#x27; for r in b.refs))
     if b.paths: body.append(&#x27;### Files\n&#x27; + &#x27;\n&#x27;.join(f&#x27;- `{p}`&#x27; for p in b.paths))
-    return {&#x27;id&#x27;: b.id, &#x27;title&#x27;: b.title, &#x27;branch&#x27;: branch or f&#x27;pata/{b.id}&#x27;,
+    return {&#x27;id&#x27;: b.id, &#x27;title&#x27;: b.title, &#x27;branch&#x27;: branch or f&#x27;canvas/{b.id}&#x27;,
             &#x27;body&#x27;: &#x27;\n\n&#x27;.join(body) + &#x27;\n&#x27;, &#x27;paths&#x27;: b.paths, &#x27;refs&#x27;: b.refs,
             &#x27;goal&#x27;: b.goal.id if b.goal else &#x27;&#x27;}</code></pre></div></details></figure><h2 id="the-value">The value</h2><p><code>state</code> comes from the document. No person sets it. A status that a person must remember is a
 status that lies.</p>
 <p>One case needed care. No diff is no evidence about files. It must not read as evidence against
 them. Without this line, a finished change reports <code>todo</code>.</p>
-<figure><figcaption><b>packages/pata/pata/change.py</b> &middot; state</figcaption><pre><code class="lang-python">def state(
+<figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; state</figcaption><pre><code class="lang-python">def state(
     b,             # the `Bundle`
     changed=(),    # paths a diff says moved, else no evidence about files
 ):
@@ -359,7 +404,7 @@ under it.</p>
 <p>Two negatives are the reason for the view. A change that serves no goal is work that the plan did
 not ask for. A goal that nothing serves looks like a goal that is going well, until the date
 arrives.</p>
-<figure><figcaption><b>packages/pata/pata/change.py</b> &middot; value</figcaption><details><summary>value (29 lines)</summary><div class="in"><pre><code class="lang-python">def value(doc, changed=()):
+<figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; value</figcaption><details><summary>value (29 lines)</summary><div class="in"><pre><code class="lang-python">def value(doc, changed=()):
     &quot;Every goal, and every change that serves it.&quot;
     from .layout import arrange
     out = Doc(meta={&#x27;title&#x27;: f&#x27;Value: {doc.title}&#x27;}, path=&#x27;value.canvas.md&#x27;)
@@ -395,7 +440,7 @@ and a prompt with one pasted in would be that copy.</p>
 <p>The function raises when a skill is missing. It does not fall back to a copy, because a silent
 fallback would put the wrong register on the page. A caller without <code>shalya</code> passes the rule text
 through <code>rules=</code> instead.</p>
-<figure><figcaption><b>packages/pata/pata/explain.py</b> &middot; rule_text</figcaption><pre><code class="lang-python">def rule_text(names=RULES):
+<figure><figcaption><b>leela/blocks/canvas/explain.py</b> &middot; rule_text</figcaption><pre><code class="lang-python">def rule_text(names=RULES):
     &quot;The named skills, read from where they are installed. This package holds no copy of them.&quot;
     try: from shalya.skills import discover, find
     except ImportError as e:
@@ -411,7 +456,7 @@ ASD-STE100 limits for this output: one idea in one sentence, 20 words at most, p
 active voice, one word for one meaning.</p>
 <p><code>prompt_for</code> fills the template. The context comes from <code>resolve</code>, which is the same basket a
 question in the document would send. One context engine serves the reader and the drafter.</p>
-<figure><figcaption><b>packages/pata/pata/explain.py</b> &middot; prompt_for</figcaption><details><summary>prompt_for (25 lines)</summary><div class="in"><pre><code class="lang-python">def prompt_for(
+<figure><figcaption><b>leela/blocks/canvas/explain.py</b> &middot; prompt_for</figcaption><details><summary>prompt_for (25 lines)</summary><div class="in"><pre><code class="lang-python">def prompt_for(
     doc,               # the document
     bid,               # which brick to explain
     root=&#x27;.&#x27;,          # where a `snippet` brick&#x27;s `path` is relative to
@@ -439,7 +484,7 @@ question in the document would send. One context engine serves the reader and th
 record, so <code>git diff</code> shows the drafting and a person can edit a sentence and delete the mark.</p>
 <p>A brick that already has a body is left alone. A sentence a person wrote is the one to keep.
 <code>overwrite</code> is the only way past that rule.</p>
-<figure><figcaption><b>packages/pata/pata/explain.py</b> &middot; explain</figcaption><details><summary>explain (23 lines)</summary><div class="in"><pre><code class="lang-python">def explain(
+<figure><figcaption><b>leela/blocks/canvas/explain.py</b> &middot; explain</figcaption><details><summary>explain (23 lines)</summary><div class="in"><pre><code class="lang-python">def explain(
     doc,                          # the document, edited in place
     ask,                          # `ask(prompt, brick) -&gt; str`, the host&#x27;s model
     root=&#x27;.&#x27;,                     # where a `snippet` brick&#x27;s `path` is relative to
@@ -464,14 +509,14 @@ record, so <code>git diff</code> shows the drafting and a person can edit a sent
     return done</code></pre></div></details></figure><p><code>ask(prompt, brick)</code> is the host's. Nothing here imports a model. Leela passes its own assistant.
 <code>capture</code> and <code>replay</code> stand in when no model is reachable: <code>capture</code> writes the prompts out, and
 <code>replay</code> answers from a file.</p>
-<figure><figcaption><b>packages/pata/pata/explain.py</b> &middot; replay</figcaption><pre><code class="lang-python">def replay(path):
+<figure><figcaption><b>leela/blocks/canvas/explain.py</b> &middot; replay</figcaption><pre><code class="lang-python">def replay(path):
     &quot;An `ask` that answers from a file of `{brick id: sentences}`. What a model already said.&quot;
     import json
     said = json.loads(Path(path).read_text(encoding=&#x27;utf-8&#x27;))
     return lambda prompt, brick: said.get(brick.id, &#x27;&#x27;)</code></pre></figure><h2 id="this-page">This page</h2><p><code>review</code> builds a document from a diff. <code>lit</code> draws a document as one column for a phone.</p>
 <p>A <code>snippet</code> brick cites code. It does not hold a copy. <code>snip</code> reads the file and finds the symbol
 in it. This page cannot show code that the file no longer has.</p>
-<figure><figcaption><b>packages/pata/pata/change.py</b> &middot; snip</figcaption><pre><code class="lang-python">def snip(brick, root=&#x27;.&#x27;):
+<figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; snip</figcaption><pre><code class="lang-python">def snip(brick, root=&#x27;.&#x27;):
     &quot;The code a `snippet` brick cites, read out of the file it names.&quot;
     path = Path(root)/brick.attrs.get(&#x27;path&#x27;, &#x27;&#x27;)
     if not path.is_file(): return &#x27;&#x27;
@@ -484,7 +529,7 @@ in it. This page cannot show code that the file no longer has.</p>
     return _symbol(text, sym)</code></pre></figure><p>Each long snippet and each long diff arrives folded. A phone screen holds about 20 lines.</p>
 <p>The diff body scrolls sideways inside its own box. The page does not scroll sideways. This is the
 one rule that most diff pages get wrong on a phone.</p>
-<figure><figcaption><b>packages/pata/pata/lit.py</b> &middot; _diff</figcaption><pre><code class="lang-python">def _diff(b):
+<figure><figcaption><b>leela/blocks/canvas/lit.py</b> &middot; _diff</figcaption><pre><code class="lang-python">def _diff(b):
     rows = [l for l in b.body.split(&#x27;\n&#x27;) if not l.startswith(_SKIP)]
     body = &#x27;&#x27;.join(
         f&#x27;&lt;span class=&quot;dl {&quot;a&quot; if l[:1] == &quot;+&quot; else &quot;r&quot; if l[:1] == &quot;-&quot; else &quot;h&quot; if l[:2] == &quot;@@&quot; else &quot;&quot;}&quot;&gt;&#x27;
@@ -500,7 +545,7 @@ one rule that most diff pages get wrong on a phone.</p>
     return (f&#x27;&lt;figure&gt;&lt;div class=&quot;diff&quot;&gt;&lt;div class=&quot;hd&quot;&gt;&lt;span class=&quot;p&quot;&gt;{escape(path)}&lt;/span&gt;&#x27;
             f&#x27;{chips}&lt;/div&gt;&lt;div class=&quot;body&quot;&gt;{body}&lt;/div&gt;&lt;/div&gt;&lt;/figure&gt;&#x27;)</code></pre></figure><p><code>review</code> now puts the prose next to the file that it explains. A document that explains its files
 therefore gives a literate diff without more work.</p>
-<figure><figcaption><b>packages/pata/pata/lit.py</b> &middot; html_of</figcaption><details><summary>html_of (30 lines)</summary><div class="in"><pre><code class="lang-python">def html_of(doc, changed=(), root=&#x27;.&#x27;, subtitle=&#x27;&#x27;):
+<figure><figcaption><b>leela/blocks/canvas/lit.py</b> &middot; html_of</figcaption><details><summary>html_of (30 lines)</summary><div class="in"><pre><code class="lang-python">def html_of(doc, changed=(), root=&#x27;.&#x27;, subtitle=&#x27;&#x27;):
     &quot;The whole document as one page of HTML.&quot;
     secs = _sections(doc)
     tasks = {b.id for b in doc.of(&#x27;task&#x27;)}
@@ -524,37 +569,37 @@ therefore gives a literate diff without more work.</p>
     loose = coverage(doc, list(changed))[&#x27;unclaimed&#x27;] if changed else []
     if loose: chips.append(f&#x27;&lt;span class=&quot;chip warn&quot;&gt;{len(loose)} file(s) claimed by nobody&lt;/span&gt;&#x27;)
     elif changed: chips.append(f&#x27;&lt;span class=&quot;chip ok&quot;&gt;{len(changed)} file(s), all claimed&lt;/span&gt;&#x27;)
-    head = (f&#x27;&lt;header&gt;&lt;div class=&quot;in&quot;&gt;&lt;div class=&quot;mark&quot;&gt;pata &amp;middot; literate diff&lt;/div&gt;&#x27;
+    head = (f&#x27;&lt;header&gt;&lt;div class=&quot;in&quot;&gt;&lt;div class=&quot;mark&quot;&gt;canvas &amp;middot; literate diff&lt;/div&gt;&#x27;
             f&#x27;&lt;h1&gt;{escape(doc.title)}&lt;/h1&gt;&#x27;
             + (f&#x27;&lt;div class=&quot;chips&quot;&gt;{&quot;&quot;.join(chips)}&lt;/div&gt;&#x27; if chips else &#x27;&#x27;) + &#x27;&lt;/div&gt;&lt;/header&gt;&#x27;)
     toc = _fold(&#x27;Contents&#x27;, f&#x27;&lt;nav&gt;&lt;ol&gt;{&quot;&quot;.join(nav)}&lt;/ol&gt;&lt;/nav&gt;&#x27;) if len(nav) &gt; 2 else &#x27;&#x27;
     foot = (f&#x27;&lt;footer&gt;{escape(subtitle)}&lt;/footer&gt;&#x27; if subtitle else &#x27;&#x27;)
     return head + &#x27;&lt;div class=&quot;wrap&quot;&gt;&#x27; + toc + &#x27;&#x27;.join(x for x in body if x) + foot + &#x27;&lt;/div&gt;&#x27;</code></pre></div></details></figure><p>Here is one real diff, from the commit that added the value view. It shows the fold, the counts
 and the sideways scroll.</p>
-<details><summary>packages/pata/pata/change.py +40 -1</summary><div class="in"><div class="diff"><div class="body"><span class="dl h">@@ -16,7 +16,7 @@ from .doc import Brick, Doc</span><span class="dl "> from .export import directives, modules</span><span class="dl "> </span><span class="dl "> __all__ = [&#x27;Bundle&#x27;, &#x27;bundles&#x27;, &#x27;bundle_of&#x27;, &#x27;coverage&#x27;, &#x27;state&#x27;, &#x27;pr&#x27;, &#x27;review&#x27;, &#x27;value&#x27;,</span><span class="dl r">-           &#x27;hunks&#x27;, &#x27;diff_stat&#x27;, &#x27;STATES&#x27;]</span><span class="dl a">+           &#x27;hunks&#x27;, &#x27;diff_stat&#x27;, &#x27;snip&#x27;, &#x27;STATES&#x27;]</span><span class="dl "> </span><span class="dl "> def _list(v): return [x.strip() for x in str(v or &#x27;&#x27;).split(&#x27;,&#x27;) if x.strip()]</span><span class="dl "> </span><span class="dl h">@@ -140,6 +140,38 @@ def pr(doc, bid, branch=None):</span><span class="dl ">             &#x27;body&#x27;: &#x27;\n\n&#x27;.join(body) + &#x27;\n&#x27;, &#x27;paths&#x27;: b.paths, &#x27;refs&#x27;: b.refs,</span><span class="dl ">             &#x27;goal&#x27;: b.goal.id if b.goal else &#x27;&#x27;}</span><span class="dl "> </span><span class="dl a">+def snip(brick, root=&#x27;.&#x27;):</span><span class="dl a">+    &quot;&quot;&quot;The code a `snippet` brick cites, read out of the file it names.</span><span class="dl a">+</span><span class="dl a">+    `symbol=` finds a function or a class by name, decorators included, and `Class.method` finds</span><span class="dl a">+    one inside the other. `lines=10-30` takes a range instead. A snippet cites code; it never</span><span class="dl a">+    holds a copy, so the page cannot show something the file no longer says.</span><span class="dl a">+    &quot;&quot;&quot;</span><span class="dl a">+    path = Path(root)/brick.attrs.get(&#x27;path&#x27;, &#x27;&#x27;)</span><span class="dl a">+    if not path.is_file(): return &#x27;&#x27;</span><span class="dl a">+    text = path.read_text(encoding=&#x27;utf-8&#x27;)</span><span class="dl a">+    if (rng := brick.attrs.get(&#x27;lines&#x27;)):</span><span class="dl a">+        a, _, b = rng.partition(&#x27;-&#x27;)</span><span class="dl a">+        rows = text.splitlines()</span><span class="dl a">+        return &#x27;\n&#x27;.join(rows[max(0, int(a) - 1):int(b or a)])</span><span class="dl a">+    if not (sym := brick.attrs.get(&#x27;symbol&#x27;)): return text</span><span class="dl a">+    return _symbol(text, sym)</span><span class="dl a">+</span><span class="dl a">+import ast</span><span class="dl a">+</span><span class="dl a">+def _symbol(text, sym):</span><span class="dl a">+    &quot;One named function or class out of a module&#x27;s source, as written.&quot;</span><span class="dl a">+    try: tree = ast.parse(text)</span><span class="dl a">+    except SyntaxError: return &#x27;&#x27;</span><span class="dl a">+    outer, _, inner = sym.partition(&#x27;.&#x27;)</span><span class="dl a">+    node = first(n for n in tree.body if getattr(n, &#x27;name&#x27;, None) == outer)</span><span class="dl a">+    if node is None: return &#x27;&#x27;</span><span class="dl a">+    if inner: node = first(n for n in getattr(node, &#x27;body&#x27;, []) if getattr(n, &#x27;name&#x27;, None) == inner)</span><span class="dl a">+    if node is None: return &#x27;&#x27;</span><span class="dl a">+    start = min([node.lineno] + [d.lineno for d in getattr(node, &#x27;decorator_list&#x27;, [])])</span><span class="dl a">+    rows = text.splitlines()</span><span class="dl a">+    return &#x27;\n&#x27;.join(rows[start - 1:node.end_lineno])</span><span class="dl a">+</span><span class="dl "> _FILE = re.compile(r&#x27;^diff --git a/(\S+) b/(\S+)$&#x27;, re.M)</span><span class="dl "> </span><span class="dl "> def hunks(text):</span><span class="dl h">@@ -192,11 +224,18 @@ def review(doc, bid, diff=&#x27;&#x27;, values=None):</span><span class="dl ">             out.add(_copy(q, scope=&#x27;none&#x27;))          # its context lived in the document it came from</span><span class="dl ">             if (r := doc.reply_to(q.id)) is not None: out.add(_copy(r))</span><span class="dl ">     out.add(Brick(&#x27;text&#x27;, &#x27;## Change&#x27;))</span><span class="dl a">+    cited = {}</span><span class="dl a">+    for m in b.members:</span><span class="dl a">+        if m.kind in (&#x27;snippet&#x27;, &#x27;text&#x27;, &#x27;note&#x27;) and m.attrs.get(&#x27;path&#x27;):</span><span class="dl a">+            cited.setdefault(m.attrs[&#x27;path&#x27;], []).append(m)</span><span class="dl ">     for path, text in files.items():</span><span class="dl ">         add, rm = diff_stat(text)</span><span class="dl ">         out.add(Brick(&#x27;diff&#x27;, text, id=f&#x27;d-{Path(path).name}&#x27;,</span><span class="dl ">                       attrs={&#x27;path&#x27;: path, &#x27;added&#x27;: str(add), &#x27;removed&#x27;: str(rm),</span><span class="dl ">                              **({&#x27;claimed&#x27;: &#x27;no&#x27;} if path not in cov.get(&#x27;matched&#x27;, []) else {})}))</span><span class="dl a">+        for m in cited.pop(path, []): out.add(_copy(m))   # the prose that explains this file</span><span class="dl a">+    for rest in cited.values():</span><span class="dl a">+        for m in rest: out.add(_copy(m))</span><span class="dl ">     if not files: out.add(Brick(&#x27;note&#x27;, &#x27;No diff supplied.&#x27;, id=f&#x27;{bid}-nodiff&#x27;))</span><span class="dl ">     if b.refs:</span><span class="dl ">         out.add(Brick(&#x27;text&#x27;, &#x27;## Attached&#x27;))</span></div></div></div></details><h2 id="the-numbers">The numbers</h2><table>
+<h2 id="the-numbers">The numbers</h2><table>
 <thead>
 <tr><th>file</th><th>lines</th><th>holds</th></tr>
 </thead>
 <tbody>
-<tr><td><code>pata/doc.py</code></td><td>412</td><td>the file, the bricks, the dataflow</td></tr>
-<tr><td><code>pata/proto.js</code></td><td>321</td><td>the canvas prototype</td></tr>
-<tr><td><code>tests/test_pata.py</code></td><td>336</td><td>40 tests</td></tr>
-<tr><td><code>pata/change.py</code></td><td>269</td><td>bundle, coverage, pull request, review, value</td></tr>
-<tr><td><code>pata/context.py</code></td><td>190</td><td>the basket</td></tr>
-<tr><td><code>pata/procurement.canvas.md</code></td><td>190</td><td>the worked document</td></tr>
-<tr><td><code>pata/lit.py</code></td><td>181</td><td>this page</td></tr>
-<tr><td><code>pata/proto.css</code></td><td>154</td><td>the canvas style</td></tr>
-<tr><td><code>pata/export.py</code></td><td>125</td><td>notebook, report, modules</td></tr>
-<tr><td><code>pata/explain.py</code></td><td>108</td><td>the prompts</td></tr>
-<tr><td><code>pata/lit.css</code></td><td>105</td><td>this page's style</td></tr>
-<tr><td><code>pata/paint.py</code></td><td>94</td><td>the prototype payload</td></tr>
-<tr><td><code>pata/layout.py</code></td><td>69</td><td>where a brick sits</td></tr>
-<tr><td><code>pata/explain.md</code>, <code>pata/ste.md</code></td><td>40</td><td>the prompt and the STE limits</td></tr>
-<tr><td>other</td><td>100</td><td>exports, the example, the build files</td></tr>
+<tr><td><code>canvas/doc.py</code></td><td>412</td><td>the file, the bricks, the dataflow</td></tr>
+<tr><td><code>tests/test_canvas_doc.py</code></td><td>336</td><td>40 tests</td></tr>
+<tr><td><code>canvas_proto/proto.js</code></td><td>321</td><td>the canvas prototype</td></tr>
+<tr><td><code>canvas/change.py</code></td><td>269</td><td>bundle, coverage, pull request, review, value</td></tr>
+<tr><td><code>canvas/context.py</code></td><td>190</td><td>the basket</td></tr>
+<tr><td><code>canvas/procurement.canvas.md</code></td><td>190</td><td>the worked document</td></tr>
+<tr><td><code>canvas/lit.py</code></td><td>181</td><td>this page</td></tr>
+<tr><td><code>canvas_proto/proto.css</code></td><td>154</td><td>the canvas style</td></tr>
+<tr><td><code>canvas/export.py</code></td><td>125</td><td>notebook, report, modules</td></tr>
+<tr><td><code>canvas/app.py</code></td><td>108</td><td>the eight routes</td></tr>
+<tr><td><code>canvas/explain.py</code></td><td>108</td><td>the prompts</td></tr>
+<tr><td><code>canvas/lit.css</code></td><td>105</td><td>this page's style</td></tr>
+<tr><td><code>canvas/layout.py</code></td><td>69</td><td>where a brick sits</td></tr>
+<tr><td><code>canvas/explain.md</code>, <code>canvas/ste.md</code></td><td>44</td><td>the prompt and the STE limits</td></tr>
+<tr><td>other</td><td>60</td><td>the block wiring, the example, the build file</td></tr>
 </tbody>
 </table>
-<p>Every file is new. There is no earlier version of most of them to compare against. This is why
-the page shows snippets and not one large diff.</p>
+<p>Almost every file is new, so there is no earlier version to compare against. This is why the page
+shows snippets and not one large diff.</p>
 <h2 id="checks">Checks</h2><p>40 tests pass. Each test states one rule.</p>
 <p>Five faults came out of writing the tests and this page.</p>
 <p>A <code>context=discard</code> brick left the budget in document order, and not first. The item carried the
@@ -566,13 +611,18 @@ removed that fault, because prose is prose.</p>
 now joins the lines until it finds <code>--&gt;</code>.</p>
 <p>Two headings with only prose between them became one region. The second heading never started a
 section. The reader now splits prose at each heading.</p>
-<h2 id="not-done">Not done</h2><p>The document format and the dataflow exist twice. <code>packages/pata/pata/doc.py</code> and
-<code>leela/blocks/canvas/doc.py</code> read the same file. One of them must go.</p>
+<h2 id="not-done">Not done</h2><p>The document format and the dataflow exist twice. <code>leela/blocks/canvas/doc.py</code> here and
+<code>leela/blocks/canvas/doc.py</code> on the <code>dynamic-document-canvas</code> branch read the same file. That
+branch also has the reactive runtime, the embedded components and the eight <code>canvas_*</code> agent
+tools. This branch has the basket, the change bundle and the three views. A merge keeps one
+<code>doc.py</code> and both halves of the rest.</p>
+<p>The block has no client code yet. The eight routes answer, and the canvas prototype in
+<code>tools/canvas_proto</code> shows what the browser half draws, but nothing in <code>lee-ide.js</code> calls them.</p>
 <p><code>inline_ai</code> is one conversation with one approval slot. A canvas invites two questions at once.</p>
 <p>Ramabana wraps any context in <code>&lt;notebook path=...&gt;</code>. A <code>.canvas.md</code> path given to <code>notebook_cells</code>
 will fail.</p>
 <p>No model answered the prompts in this container. There is no key here. The prose above each
 snippet came from the session that wrote the code, under the same prompt. <code>capture</code> wrote the
 prompts out and <code>replay</code> would put a model's answers back.</p>
-<footer>Generated by pata.lit from docs/change.canvas.md. Every snippet is read from the file it names.</footer></div>
+<footer>Generated by canvas.lit from docs/change.canvas.md. Every snippet is read from the file it names.</footer></div>
 </body></html>

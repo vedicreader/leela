@@ -156,7 +156,7 @@ def html_of(doc, changed=(), root='.', subtitle=''):
     loose = coverage(doc, list(changed))['unclaimed'] if changed else []
     if loose: chips.append(f'<span class="chip warn">{len(loose)} file(s) claimed by nobody</span>')
     elif changed: chips.append(f'<span class="chip ok">{len(changed)} file(s), all claimed</span>')
-    head = (f'<header><div class="in"><div class="mark">pata &middot; literate diff</div>'
+    head = (f'<header><div class="in"><div class="mark">canvas &middot; literate diff</div>'
             f'<h1>{escape(doc.title)}</h1>'
             + (f'<div class="chips">{"".join(chips)}</div>' if chips else '') + '</div></header>')
     toc = _fold('Contents', f'<nav><ol>{"".join(nav)}</ol></nav>') if len(nav) > 2 else ''

@@ -12,6 +12,8 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 ## Building on Leela
 
+- [change.canvas.md](change.canvas.md): the canvas block itself, written as a canvas document. `python tools/make_change_page.py` renders it to `media/canvas-change.html`.
+
 - [blocks.md](blocks.md): the block contract. `CAPS`, `connect(app, ctx)`, wiring order, and where a block's JavaScript goes.
 - [integration.md](integration.md): the capability groups `WorkspaceHost` declares, and the block backing each one.
 - [decisions.md](decisions.md): why a symbol has the shape it has. Read the entry before rewriting the symbol.
@@ -20,7 +22,6 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 ## Not built yet
 
-- [change.canvas.md](change.canvas.md): the `pata` change, written as a `pata` document. `tools/make_change_page.py` renders it to `media/pata-change.html`.
 - [dynamic-documents.md](dynamic-documents.md): one markdown file holding a goal, its plan, its research, its code and its questions. The `*.canvas.md` format, the context rule a question carries, and what integration costs.
 - [parallel-threads.md](parallel-threads.md): one worktree, branch and agent session per task. The shared-state git lock has to come first.
 - [threads-to-ramabana.md](threads-to-ramabana.md): whether `Feed`, `Thread`, `Threads` and `TurnRunner` move to ramabana. Section 8 is three reasons not to do it as written.

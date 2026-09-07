@@ -1,4 +1,4 @@
-"The document: one markdown file where prose is prose and the rest is bricks."
+"The canvas document: one markdown file where prose is prose and the rest is bricks."
 
 from __future__ import annotations
 import ast, re, uuid

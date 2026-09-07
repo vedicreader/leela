@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 import json
-from importlib.resources import files
 from fastcore.all import L, Path, first
 
-from .change import bundle_of, bundles, coverage, diff_stat
-from .context import SCOPES, WRAP, _label, body_text, members, spec_of
-from .doc import Doc, W, _owners
+from leela.blocks.canvas.change import bundle_of, bundles, coverage, diff_stat
+from leela.blocks.canvas.context import SCOPES, WRAP, _label, body_text, members, spec_of
+from leela.blocks.canvas.doc import Doc, W, _owners
 
 __all__ = ['payload', 'paint', 'wires']
 
@@ -67,7 +66,7 @@ def payload(doc, values=None, changed=()):
             'replies': [b.id for b in doc.of('reply')],
             'bundles': _bundles(doc, changed), 'unclaimed': coverage(doc, list(changed))['unclaimed']}
 
-def _asset(name): return files(__package__).joinpath(name).read_text(encoding='utf-8')
+def _asset(name): return (Path(__file__).parent/name).read_text(encoding='utf-8')
 
 def paint(
     doc,             # the document
@@ -89,6 +88,6 @@ def paint(
             .replace('__FILE__', Path(doc.path).name or 'plan.canvas.md')
             .replace('__GOAL__', doc.goal.body.strip() if doc.goal else '')
             .replace('__DATA__', json.dumps(d, ensure_ascii=False)))
-    p = Path(path or 'pata.html')
+    p = Path(path or 'canvas.html')
     p.write_text(html, encoding='utf-8')
     return p

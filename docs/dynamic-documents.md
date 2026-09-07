@@ -4,7 +4,7 @@ A goal like "increase procurement productivity by 10%" is not a coding task, and
 
 Leela already holds four of the five. It has the kernel, the files, the vault, the agent and the notebook. What it does not have is a document shaped like the work rather than like a script.
 
-Two branches have gone at that. `claude/dynamic-document-canvas-ohgfud` built the file and the runtime, wired into Leela as a block. `packages/pata` builds the context engine on that file. This document is the design both halves answer to.
+Two branches have gone at that. `claude/dynamic-document-canvas-ohgfud` built the file and the runtime, wired into Leela as a block. `leela/blocks/canvas` builds the context engine on that file. This document is the design both halves answer to.
 
 ## What a notebook cannot be
 
@@ -48,7 +48,7 @@ A name a question puts in backticks is a name it reads. Writing `` `triage` `` i
 
 ## Context is the design
 
-Every question carries a rule, and `pata.context.resolve` turns that rule into the exact list of items the turn will send.
+Every question carries a rule, and `canvas.context.resolve` turns that rule into the exact list of items the turn will send.
 
 ```
 scope=region                 none | page | region | upstream | doc
@@ -107,7 +107,7 @@ The tally at the end lists every change by state and every changed file no bundl
 
 It is a `Doc`, so it draws in both views through the same renderer, keeps the outline, and keeps the context basket. Nothing about the review view is a second implementation of anything, and a question asked inside a review has the whole change in scope.
 
-That also answers whether this replaces Leela's git view. It does not. The existing view is for line-level work: staging, hunks, blame, conflicts. This is for the question a diff cannot answer, which is whether the change does what the goal said. `pata.hunks` takes unified diff text, so whatever produces the diff, `gheasy` included, feeds it.
+That also answers whether this replaces Leela's git view. It does not. The existing view is for line-level work: staging, hunks, blame, conflicts. This is for the question a diff cannot answer, which is whether the change does what the goal said. `canvas.change.hunks` takes unified diff text, so whatever produces the diff, `gheasy` included, feeds it.
 
 A review is generated per request and never written back. A diff is a fact about a commit range, not part of the document.
 
@@ -115,7 +115,7 @@ A review is generated per request and never written back. A diff is a fact about
 
 `lit` writes one document as one column for a phone. `paint` draws a canvas for someone working in it; this draws the same document for someone reading it on the way to a meeting. No JavaScript, no other requests, both colour schemes, and everything long folded.
 
-Writing this repository's own change as a `pata` document, and rendering it with `lit`, found four things the design was missing. That is the argument for dogfooding rather than a claim about the tool.
+Writing this repository's own change as a canvas document, and rendering it with `lit`, found four things the design was missing. That is the argument for dogfooding rather than a claim about the tool.
 
 A `snippet` brick cites code instead of holding it. `snip` reads the file the brick names and finds the symbol in it, decorators included. A literate page wants the function that does the work, not the whole diff, and a copy pasted into prose is a copy that goes stale. This is the primitive the whole page is built on, and nothing before it could do the job.
 
@@ -127,7 +127,7 @@ A heading and the prose under it are one brick, and the page renderer took the h
 
 `review` also changed. It now places the prose that cites a path next to that file's hunks, so a document that explains its files produces a literate diff with no further work. That is the feature the exercise was for.
 
-`tools/make_change_page.py` builds the page. `docs/change.canvas.md` is the source, and `media/pata-change.html` is the output. `--prompts FILE` writes the drafting prompts and stops; `--answers FILE` puts a model's answers back.
+`tools/make_change_page.py` builds the page. `docs/change.canvas.md` is the source, and `media/canvas-change.html` is the output. `--prompts FILE` writes the drafting prompts and stops; `--answers FILE` puts a model's answers back.
 
 ## Where the prompts live
 
@@ -141,7 +141,7 @@ The prose lives in the document. `explain` writes each answer into the brick bod
 
 The prompt's context comes from `resolve`, which is the same basket a question in the document would send. One context engine serves the reader and the drafter, so a prompt is inspectable by the panel that already exists.
 
-`ask(prompt, brick)` is the host's. Nothing in `pata` imports a model. Leela passes its own assistant. `capture` and `replay` stand in where no model is reachable: `capture` writes the prompts out, `replay` answers from a file.
+`ask(prompt, brick)` is the host's. Nothing in `canvas` imports a model. Leela passes its own assistant. `capture` and `replay` stand in where no model is reachable: `capture` writes the prompts out, `replay` answers from a file.
 
 ## Getting work back out
 
@@ -153,32 +153,40 @@ Nothing here is a new place for work to get stuck.
 
 Both are generated from the package, not drawn by hand, so what they show is what `resolve` and `arrange` actually do.
 
-- `media/pata-procurement.html` is the document on its own. The header toggles page and canvas. The right panel is the context basket for whichever question is selected, with the scope, the budget, the per-item cost, and the markup the model reads.
-- `media/pata-in-leela.html` is the same document inside Leela's chrome: tab strip, outline, the agent and variables panes, the status bar.
+- `media/canvas-procurement.html` is the document on its own. The header toggles page and canvas. The right panel is the context basket for whichever question is selected, with the scope, the budget, the per-item cost, and the markup the model reads.
+- `media/canvas-in-leela.html` is the same document inside Leela's chrome: tab strip, outline, the agent and variables panes, the status bar.
 
 Both carry three documents behind one toggle: the document, the review of one change, and the value view. `page` and `canvas` switch how whichever one is loaded is drawn.
 
-`media/procurement.canvas.md` is the document itself, and it is meant to be read as a file.
+`media/procurement-example.canvas.md` is the document itself, and it is meant to be read as a file.
 
 ## Where the two branches meet
 
-The canvas branch owns the format, the parser, the dataflow, the reactive runtime, the embedded components, and the eight `canvas_*` tools the agent gets when a canvas opens. `pata` owns the context engine, the three brick kinds a plan needs, and the second view.
+The canvas branch owns the format, the parser, the dataflow, the reactive runtime, the embedded components, and the eight `canvas_*` tools the agent gets when a canvas opens. `canvas` owns the context engine, the three brick kinds a plan needs, and the second view.
 
-They are one thing, not two. `pata.doc` reimplements the canvas branch's scanner and dataflow so the package can stand alone while the shape is still moving, and that is a fork that should not survive a decision. Merging means one parser, in whichever half is kept, with the other importing it.
+They are one thing, not two. `blocks/canvas/doc.py` reimplements the canvas branch's scanner and dataflow so the package can stand alone while the shape is still moving, and that is a fork that should not survive a decision. Merging means one parser, in whichever half is kept, with the other importing it.
 
 Two things the canvas branch has that this does not: the reactive runtime, and the agent actually editing the document through tools rather than answering into a brick. Two things this has that it does not: a context rule a person can see and change, and a goal.
 
 ## What is not decided
 
-**Where it lives.** The canvas branch is already a Leela block, wired into `NAMES` and `LAYERS` with 418 lines of tests. `packages/pata` imports nothing from Leela. The block is further along; the package is easier to move. One of them has to give.
+**Whether the block keeps its own `doc.py`.** The `dynamic-document-canvas` branch has a `doc.py`
+over the same format, plus the reactive runtime, the embedded components and the eight `canvas_*`
+agent tools. This branch has the basket, the change bundle, the three views and the literate page.
+Both call the folder `canvas`. A merge keeps one `doc.py` and both halves of the rest, and until it
+happens the format has two readers.
 
-**Whether `pata` is a package at all.** The context engine is 200 lines. It could be a module inside `leela/blocks/canvas/` and never be a package.
+**What the browser half draws.** The eight routes answer. `tools/canvas_proto` shows the canvas,
+the basket panel and the review as a standalone page, and nothing in `lee-ide.js` calls the routes
+yet. That prototype is a tool, not product code, which is why it is not in the block.
 
-**Whether the second view is version one.** The context basket, the goal and the plan kinds work in a linear document and are most of the value. The canvas is where the layout lives, and `arrange` plus `prop x` is the whole of it, so this is cheap either way.
+**Whether the second view is version one.** The basket, the goal and the plan kinds work in a
+linear document and are most of the value. `arrange` plus `prop x` is the whole of the canvas, so
+this is cheap either way.
 
-**Whether a bundle is one pull request or several.** The branch name is `pata/<bundle id>`, which is deterministic, so re-exporting updates the same request. A change that wants two commits has no answer yet.
-
-**What the agent may write.** The canvas branch already answers this: eight tools, and a skill pushed onto the agent while a canvas is open. A question answers into a `reply` brick under it. Whether the agent may also add bricks, rebind ports and reorganise a document is a larger claim, and the tools already allow it.
+**What the agent may write.** The canvas branch already answers this with eight tools and a skill
+pushed onto the agent while a canvas is open. Whether the agent may also add bricks, rebind ports
+and reorganise a document is a larger claim.
 
 ## What integration costs
 

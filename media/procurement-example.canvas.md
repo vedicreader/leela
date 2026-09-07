@@ -45,7 +45,7 @@ nobody disputes.
 Where does the 10% most plausibly come from? Use only the three sources here.
 ```
 
-<!--canvas reply id=16b36542 of=q-synth-->
+<!--canvas reply id=42a9f6cf of=q-synth-->
 Tail spend is the only pool big enough. 34% of POs are under EUR 2,000 and carry a three-person
 approval chain that the audit found nobody ever rejects. Auto-approving that band would take
 roughly a third of PO volume off the buyers without touching the categories where negotiation
@@ -120,7 +120,7 @@ pin s-audit
 What would have gone wrong if `triage` had run in Q3? `caught` says 79%. Check it against the audit.
 ```
 
-<!--canvas reply id=0d450cba of=q-risk-->
+<!--canvas reply id=822a062c of=q-risk-->
 79% of the tail clears the rule, which is 27% of all POs. Against the Q3 extract that is 14 POs
 the audit flagged for split ordering, all from one supplier. Cap the rule per supplier per month
 and those 14 stay in the chain.
@@ -144,7 +144,7 @@ mute n-cap
 Draft the recommendation for the steering committee. One page, no hedging.
 ```
 
-<!--canvas reply id=86a89a4e of=q-rec-->
+<!--canvas reply id=996057ab of=q-rec-->
 Auto-approve indirect POs under EUR 2,000 from contracted suppliers, capped per supplier per
 month. It removes 27% of PO volume from the approval chain, which the interview evidence puts at
 about 12% of buyer time. Pilot one region for a quarter against the measure Finance agreed.
