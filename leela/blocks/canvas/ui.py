@@ -46,8 +46,13 @@ def page(path, files, host):
         Div(id='cv-steer', hidden=True)(Span('steer this turn'), Input(placeholder='…and use the local prices')),
         Form(id='cv-askform')(Input(placeholder='ask the document…')),
         Div(id='cv-trail'))
+    #: A canvas is markdown from anywhere, so its code waits behind one deliberate click.
+    trust = Div(id='cv-trust', cls='cv-trust', hidden=True)(
+        Span(cls='cv-trust-say')('This document has code in it. ',
+            B(id='cv-trust-count')('0'), Span(' cells will run.')),
+        Button('run it', id='cv-trust-run', cls='cv-tbtn cv-trust-go'))
     body = Body(data_host=host, data_theme='light')(
-        bar, Main(cls='cv-wrap margin-open')(Article(id='cv-doc', cls='cv-doc'), margin),
+        bar, trust, Main(cls='cv-wrap margin-open')(Article(id='cv-doc', cls='cv-doc'), margin),
         Div(id='cv-inline', hidden=True)(Input(), Div(cls='cv-isel')),
         Div(id='cv-wire', hidden=True), Script(src='/canvas/js'))
     return HTMLResponse('<!doctype html>' + to_xml(Html(head, body)))

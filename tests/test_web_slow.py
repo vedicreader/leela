@@ -3692,3 +3692,80 @@ def test_typing_in_a_code_brick_survives_the_insert_that_follows_it(tmp_path):
         await pg.keyboard.press('Escape')
         return await pg.evaluate("() => cv.canvas.bricks.filter(b => b.kind == 'code').map(b => b.body)")
     assert _run(go, roots=[str(tmp_path)]) == ['x = 41 + 1']
+
+
+CANVAS_WITH_TABLE = '''---
+title: t
+---
+# T
+
+| word | means |
+|---|---|
+| brick | one part of the document |
+| prose | ordinary markdown between bricks |
+
+A paragraph after the table.
+
+```canvas code id=c1
+total = 6 * 7
+```
+'''
+
+def test_opening_a_canvas_runs_nothing_until_it_is_trusted(tmp_path):
+    """A canvas is markdown, so it arrives from a clone or a paste. Opening one used to execute
+    every code brick in it before anybody had read a line."""
+    doc = tmp_path/'t.canvas.md'
+    doc.write_text(CANVAS_WITH_TABLE, encoding='utf-8')
+    async def go(pg):
+        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
+        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
+        before = await pg.evaluate('''() => ({trusted: cv.trusted, names: cv.names.length,
+                                             bar: !$$("#cv-trust").hidden,
+                                             says: $$("#cv-trust-count").textContent})''')
+        await pg.locator('#cv-trust-run').click()
+        await pg.wait_for_function('() => cv.trusted === true')
+        after = await pg.evaluate('() => ({trusted: cv.trusted, hidden: $$("#cv-trust").hidden})')
+        return before, after
+    #: The kernels are fakes here, so nothing the cell defines comes back. What this holds is the
+    #: gate: untrusted on open, one click to trust, and the bar gone after it.
+    before, after = _run(go, roots=[str(tmp_path)])
+    assert before == {'trusted': False, 'names': 0, 'bar': True, 'says': '1'}
+    assert after == {'trusted': True, 'hidden': True}
+
+def test_prose_nobody_edited_is_not_rewritten_by_a_blur(tmp_path):
+    """Blur converted the rendered DOM back to markdown every time, and `cvMd` cannot draw a table,
+    so focusing a table and leaving it flattened the table into its own text."""
+    doc = tmp_path/'t.canvas.md'
+    doc.write_text(CANVAS_WITH_TABLE, encoding='utf-8')
+    async def go(pg):
+        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
+        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
+        table = pg.locator('.cv-brick[data-kind=text]').first
+        await table.click()                       # focus it, change nothing
+        await pg.locator('#cv-doc').click()       # and blur it
+        await pg.wait_for_timeout(300)
+        await pg.evaluate('() => cvSave()')
+        await pg.wait_for_function('() => cv.dirty === false')
+        return None
+    _run(go, roots=[str(tmp_path)])
+    kept = doc.read_text(encoding='utf-8')
+    assert '| word | means |' in kept and '|---|---|' in kept, kept
+    assert '| brick | one part of the document |' in kept
+
+def test_a_save_and_a_blur_do_not_race_each_other(tmp_path):
+    "Clicking Save blurs the brick being edited, and the blur used to post alongside the save."
+    doc = tmp_path/'t.canvas.md'
+    doc.write_text('---\ntitle: t\n---\n# T\n\noriginal words here.\n', encoding='utf-8')
+    async def go(pg):
+        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
+        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
+        para = pg.locator('.cv-brick[data-kind=text] .cv-prose').last
+        await para.click()
+        await pg.keyboard.press('End')
+        await pg.keyboard.type(' plus an edit')
+        await pg.locator('#cv-save').click()       # blurs the paragraph as it saves
+        await pg.wait_for_function('() => cv.dirty === false')
+        return None
+    _run(go, roots=[str(tmp_path)])
+    kept = doc.read_text(encoding='utf-8')
+    assert 'plus an edit' in kept, kept

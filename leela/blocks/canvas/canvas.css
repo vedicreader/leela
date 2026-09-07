@@ -313,3 +313,11 @@ kbd { font: 11px var(--cv-mono); border: 1px solid var(--cv-border); border-bott
 #cv-wire footer button { border: 1px solid var(--cv-border); background: var(--cv-paper); border-radius: 8px;
                          padding: 6px 12px; font: 12.5px var(--cv-font); cursor: pointer }
 #cv-wire .cv-apply { background: var(--cv-brand); color: #fff; border-color: var(--cv-brand) }
+
+/* The trust bar: shown until somebody says this document's code may run. */
+.cv-trust { display: flex; gap: 12px; align-items: center; justify-content: center;
+  padding: 10px 16px; background: var(--cv-warn-bg, #fff8e1); color: var(--cv-warn-fg, #6b5300);
+  border-bottom: 1px solid var(--cv-line); font-size: 13px; }
+.cv-trust[hidden] { display: none; }
+.cv-trust-go { background: var(--cv-accent); color: #fff; border-color: transparent; }
+[data-theme=dark] .cv-trust { background: #2a2410; color: #e8d9a0; }

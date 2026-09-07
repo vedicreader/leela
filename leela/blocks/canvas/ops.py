@@ -111,7 +111,6 @@ def _run(canvas, runtime, op):
     return {'ok': r['ok'], 'touched': [b.id], 'run': r, **settle}
 
 def _values(canvas, runtime, op):
-    names = op.get('names') or [n for n in runtime.ns if not n.startswith('_')]
-    return {'ok': True, 'values': {n: runtime.value(n) for n in names}}
+    return {'ok': True, 'values': runtime.snapshot(op.get('names'))}
 
 def _read(canvas, runtime, op): return {'ok': True, 'canvas': canvas.dict()}

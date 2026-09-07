@@ -14,12 +14,12 @@ from .layout import arrange
 from .lit import lit
 from .helper import Ask, helper_for
 from .ops import apply_op
-from .store import Stale, brick_host, canvas_dir, store_for
+from .store import Stale, Untrusted, brick_host, canvas_dir, store_for
 from . import ui
 
 __all__ = ['CAPS', 'connect', 'page', 'canvas_path', 'Outside', 'SUFFIX']
 
-CAPS = ('fs', 'ai')
+CAPS = ('fs', 'ai', 'pool')   # `pool` is the kernel a canvas's code runs in
 #: What a canvas file is called. The document is markdown, so anything can read it.
 SUFFIX = '.canvas.md'
 
@@ -27,12 +27,24 @@ def _settle(o, touched_names, skip=()):
     "Rerun what the change made stale, and re-resolve every binding that reads it."
     return o.runtime.react(o.canvas.bricks, touched_names, skip=skip)
 
+#: The ops that put code into a kernel. The rest move prose about and need no trust.
+RUNS_CODE = ('run', 'values', 'insert', 'replace', 'bind', 'kind', 'replace_selection')
+
+def _runs_code(o, op):
+    "Whether this op would execute or evaluate something in the document's namespace."
+    kind = (op or {}).get('op')
+    if kind in ('run', 'values'): return True
+    if kind not in RUNS_CODE: return False
+    b = o.canvas.by_id(op.get('id')) if op.get('id') else None
+    return bool(op.get('binds')) or (b is not None and (b.runs or b.binds)) \
+        or (kind == 'insert' and (op.get('kind') in ('code', 'data') or op.get('binds')))
+
 def _ports(o):
     return {b.id: o.runtime.bindings(b) for b in o.canvas if b.binds}
 
 def _payload(o):
     return {'ok': True, 'canvas': o.canvas.dict(), 'ports': _ports(o), 'trail': o.trail,
-            'names': sorted(k for k in o.runtime.ns if not k.startswith('_'))}
+            'names': o.runtime.names(), 'trusted': o.trusted, 'rev': o.rev}
 
 def connect(app, ctx=None):
     rt = app.route
@@ -41,8 +53,11 @@ def connect(app, ctx=None):
     def ctx_fs():
         "The workspace filesystem, and None in the spike, which has no `ctx` and no open folder."
         return None if ctx is None else ctx.fs
+    def ctx_pool():
+        "The kernel pool a canvas's code runs in. None is the spike, which runs in this process."
+        return None if ctx is None else ctx.pool
     #: Read per request, not once: the store follows the roots the workspace has open now.
-    def store(): return store_for(ctx_fs())
+    def store(): return store_for(ctx_fs(), pool=ctx_pool())
     @rt('/canvas/palette')
     def canvas_palette():
         "Every brick every installed library offers. Empty with a note when none is installed."
@@ -162,15 +177,30 @@ def connect(app, ctx=None):
         except FileNotFoundError: return fail(f'no canvas at {path}')
         except Exception as e: return fail(e)
         o = store().reopen(p) if fresh else store().get(p)
-        return JSONResponse({**_payload(o), 'runs': {b.id: {'ok': True} for b in o.canvas if b.runs},
-                             'host': brick_host()})
+        return JSONResponse({**_payload(o), 'runs': {}, 'host': brick_host()})
+
+    @rt('/canvas/trust')
+    async def canvas_trust(req):
+        """Say this document's code may run, then run it.
+
+        A canvas is markdown, so it arrives from a clone, a download or a paste. Opening one used
+        to execute every code brick in it before anybody had read a line.
+        """
+        d = await req.json()
+        try: o = store().get(canvas_path(ctx_fs(), d['path']))
+        except Exception as e: return fail(e)
+        runs = await off_loop(o.allow)
+        return JSONResponse({'ok': True, 'trusted': True, 'runs': runs, 'ports': _ports(o)})
 
     @rt('/canvas/op')
     async def canvas_op(req):
         d = await req.json()
         try: o = store().get(canvas_path(ctx_fs(), d['path']))
         except Exception as e: return fail(e)
-        r = apply_op(o.canvas, o.runtime, d['op'])
+        if _runs_code(o, d['op']):
+            try: o.must_trust()
+            except Untrusted as e: return fail(f'{e}; trust it first', 403)
+        r = await off_loop(apply_op, o.canvas, o.runtime, d['op'])
         if not r.get('ok'): return fail(r.get('error', 'op failed'))
         o.bump()
         return JSONResponse({**r, 'ports': _ports(o), 'canvas': o.canvas.dict(), 'rev': o.rev})
@@ -181,11 +211,13 @@ def connect(app, ctx=None):
         d = await req.json()
         try: o = store().get(canvas_path(ctx_fs(), d['path']))
         except Exception as e: return fail(e)
+        try: o.must_trust()
+        except Untrusted as e: return fail(f'{e}; trust it first', 403)
         for id, src in (d.get('sources') or {}).items():
             b = o.canvas.by_id(id)
             if b is not None and b.runs: b.body = src
-        runs = o.runtime.run_all(o.canvas.bricks)
-        return JSONResponse({'ok': True, 'runs': runs, 'ports': _ports(o)})
+        runs = await off_loop(o.runtime.run_all, o.canvas.bricks)
+        return JSONResponse({'ok': True, 'runs': runs, 'ports': await off_loop(_ports, o)})
 
     @rt('/canvas/run')
     async def canvas_run(req):
@@ -194,11 +226,14 @@ def connect(app, ctx=None):
         except Exception as e: return fail(e)
         b = o.canvas.by_id(d['id'])
         if b is None or not b.runs: return fail('not a code brick')
+        try: o.must_trust()
+        except Untrusted as e: return fail(f'{e}; trust it first', 403)
         if 'source' in d: b.body = d['source']
-        r = o.runtime.run(b)
+        r = await off_loop(o.runtime.run, b)
         #: Only the bindings that moved. Handing back every port would post props to every frame,
         #: and a frame that takes props redraws, which restarts anything animating in it.
-        return JSONResponse({'ok': True, 'id': b.id, 'run': r, **_settle(o, r['defs'], skip=[b.id])})
+        settled = await off_loop(_settle, o, r['defs'], [b.id])
+        return JSONResponse({'ok': True, 'id': b.id, 'run': r, **settled})
 
     @rt('/canvas/emit')
     async def canvas_emit(req):
@@ -206,8 +241,11 @@ def connect(app, ctx=None):
         d = await req.json()
         try: o = store().get(canvas_path(ctx_fs(), d['path']))
         except Exception as e: return fail(e)
-        o.runtime.set(d['name'], d['value'])
-        return JSONResponse({'ok': True, 'name': d['name'], **_settle(o, [d['name']], skip=d.get('from', ''))})
+        try: o.must_trust()
+        except Untrusted as e: return fail(f'{e}; trust it first', 403)
+        await off_loop(o.runtime.set, d['name'], d['value'])
+        settled = await off_loop(_settle, o, [d['name']], d.get('from', ''))
+        return JSONResponse({'ok': True, 'name': d['name'], **settled})
 
     @rt('/canvas/save')
     async def canvas_save(req):

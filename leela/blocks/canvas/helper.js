@@ -189,6 +189,7 @@ async function cvBoot() {
   await cvOpen(want, q.get('fresh'));
   $$('#cv-runall').onclick = cvRunAll;
   $$('#cv-save').onclick = cvSave;
+  $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
   $$('#cv-toggle').onclick = () => cvMargin();
   cvTheme(localStorage.getItem('cv-theme') || 'light');

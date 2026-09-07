@@ -5,7 +5,9 @@ The point of these is the contract a canvas file makes with git: a document that
 run, wired and asked questions of must come back byte for byte unless somebody changed something."""
 
 import asyncio
+import os
 import re
+import time
 import pytest
 from fastcore.all import Path
 from starlette.testclient import TestClient
@@ -265,15 +267,45 @@ def client():
     connect(app, ctx=None)
     return TestClient(app)
 
-def test_opening_a_canvas_runs_it_and_returns_its_bindings(client):
+def opened(client, name, trust=True):
+    """Open a canvas and, unless a test is about trust, say its code may run.
+
+    Opening runs nothing: a canvas is markdown and arrives from a clone or a paste, so `/canvas/trust`
+    is what executes it.
+    """
+    p = str(EXAMPLES/name)
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    if trust: assert client.post('/canvas/trust', json={'path': p}).json()['ok']
+    return p
+
+def test_opening_a_canvas_reads_it_and_runs_nothing(client):
+    "The document, its prose and its ports, with no cell executed and nothing trusted."
     p = str(EXAMPLES/'a-sales-funnel.canvas.md')
     r = client.get('/canvas/open', params={'path': p, 'fresh': 1}).json()
     assert r['ok'] and len(r['canvas']['bricks']) == 10
-    assert r['ports']['sf4']['tiles']['ok'] and 'cac' in r['names']
+    assert r['runs'] == {} and r['trusted'] is False
+    assert 'cac' not in r['names'], 'no cell has run, so nothing it defines is there'
 
-def test_a_component_writing_a_name_reruns_the_document(client):
+def test_a_trusted_canvas_runs_and_returns_its_bindings(client):
+    p = opened(client, 'a-sales-funnel.canvas.md')
+    r = client.get('/canvas/open', params={'path': p}).json()
+    assert r['trusted'] and r['ports']['sf4']['tiles']['ok'] and 'cac' in r['names']
+
+@pytest.mark.parametrize('route,body', [
+    ('/canvas/run', {'id': 'sf3'}),
+    ('/canvas/runall', {}),
+    ('/canvas/emit', {'name': 'stages', 'value': []}),
+    ('/canvas/op', {'op': {'op': 'values'}}),
+])
+def test_an_untrusted_canvas_executes_nothing(client, route, body):
+    "Opening a document must not run it, and nor must anything else until somebody says so."
     p = str(EXAMPLES/'a-sales-funnel.canvas.md')
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    r = client.post(route, json={'path': p, **body})
+    assert r.status_code == 403 and 'trust' in r.json()['error']
+
+def test_a_component_writing_a_name_reruns_the_document(client):
+    p = opened(client, 'a-sales-funnel.canvas.md')
     stages = [{'name': 'Leads', 'value': 1000}, {'name': 'Won', 'value': 500}]
     r = client.post('/canvas/emit', json={'path': p, 'name': 'stages', 'value': stages}).json()
     assert r['ok'] and 'sf3' in r['runs']
@@ -282,8 +314,7 @@ def test_a_component_writing_a_name_reruns_the_document(client):
 def test_a_name_a_cell_stops_defining_is_dropped(client):
     """The namespace kept every name a cell had ever defined. Renaming or deleting a definition left
     the old one readable, so a binding onto it went on resolving against a value nothing computed."""
-    p = str(EXAMPLES/'pricing-a-run.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'pricing-a-run.canvas.md')
     o = store_for(None).get(p)
     ins = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'insert', 'kind': 'code', 'body': 'doomed = 41'}}).json()
@@ -298,8 +329,7 @@ def test_a_name_a_cell_stops_defining_is_dropped(client):
     assert gone['dropped'] == ['kept'] and 'kept' not in o.runtime.ns
 
 def test_code_turned_into_prose_takes_its_names_with_it(client):
-    p = str(EXAMPLES/'pricing-a-run.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'pricing-a-run.canvas.md')
     o = store_for(None).get(p)
     bid = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'insert', 'kind': 'code', 'body': 'temporary = 7'}}).json()['brick']['id']
@@ -309,8 +339,7 @@ def test_code_turned_into_prose_takes_its_names_with_it(client):
 
 def test_inserted_wiring_runs_once(client):
     "`insert` runs a code brick, and the wiring path ran it a second time, doubling its side effects."
-    p = str(EXAMPLES/'pricing-a-run.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'pricing-a-run.canvas.md')
     o = store_for(None).get(p)
     o.runtime.set('tally', 0)
     r = client.post('/canvas/op', json={'path': p, 'op': {
@@ -335,15 +364,13 @@ def test_no_live_route_reaches_a_path_outside_the_tree(client, bad):
 
 def test_a_save_cannot_write_its_destination_outside_the_tree(client):
     "`to` is a destination, and it passes the same gate as the source."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'a-sales-funnel.canvas.md')
     r = client.post('/canvas/save', json={'path': p, 'to': '/tmp/escaped.canvas.md'})
     assert r.status_code == 400 and not Path('/tmp/escaped.canvas.md').exists()
 
 def test_a_save_against_a_stale_revision_is_refused(client):
     "Two editors, one file: the second writer is told rather than silently winning."
-    p = str(EXAMPLES/'making-a-block.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'making-a-block.canvas.md')
     o = store_for(None).get(p)
     was = o.rev
     assert client.post('/canvas/save', json={'path': p, 'rev': was}).json()['ok']
@@ -419,16 +446,14 @@ def test_a_repeated_phrase_is_rewritten_where_it_was_selected():
 
 def test_running_a_cell_settles_only_what_reads_it(client):
     "Handing back every port would post props to every frame, and a frame that takes props redraws."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'a-sales-funnel.canvas.md')
     r = client.post('/canvas/run', json={'path': p, 'id': 'sf1'}).json()
     assert set(r['runs']) == {'sf3'} and set(r['ports']) == {'sf2', 'sf4', 'sf5', 'sf6'}
     r2 = client.post('/canvas/run', json={'path': p, 'id': 'sf3'}).json()
     assert 'sf3' not in r2['runs'] and 'sf2' not in r2['ports']
 
 def test_run_all_uses_dependency_order_not_document_order(client):
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    p = opened(client, 'a-sales-funnel.canvas.md')
     r = client.post('/canvas/runall', json={'path': p, 'sources': {}}).json()
     assert r['ok'] and all(v['ok'] for v in r['runs'].values())
 
@@ -555,3 +580,80 @@ def test_a_frame_speaks_only_for_itself():
     js = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'canvas'/'canvas.js').read_text()
     assert 'const id = f?.dataset.id; if (!id) return;' in js
     assert 'f?.dataset.id || d.id' not in js
+
+
+@pytest.mark.slow
+class TestTheKernelBackedRuntime:
+    """What a document may not do to Leela.
+
+    In-process `exec` gave a canvas the web process: `while True` hung every request and
+    `os._exit()` ended Leela. These start a real kunda kernel, so they are slow and marked.
+    """
+    def runtime(self, timeout=5):
+        from leela.blocks.runtime.kernels import KernelPool
+        from leela.blocks.canvas.live import runtime_for, KernelRuntime
+        rt = runtime_for(KernelPool(), key=f'test-{id(self)}', timeout=timeout)
+        assert isinstance(rt, KernelRuntime), 'a pool means a kernel'
+        return rt
+
+    def cell(self, body, id='c'):
+        return Brick(kind='code', body=body, id=id)
+
+    def test_a_cell_runs_in_another_process(self):
+        rt = self.runtime()
+        try:
+            r = rt.run(self.cell('import os\npid = os.getpid()\npid'))
+            assert r['ok'], r['outputs']
+            assert rt.eval_many({'p': 'pid'})['p']['value'] != os.getpid()
+        finally: rt.close()
+
+    def test_an_endless_cell_is_interrupted_and_the_kernel_survives(self):
+        "The reported wedge: one `while True:` and every later request queued behind it for good."
+        rt = self.runtime(timeout=4)
+        try:
+            rt.run(self.cell('kept = 11', 'a'))
+            t0 = time.time()
+            r = rt.run(self.cell('while True: pass', 'b'))
+            took = time.time() - t0
+            assert not r['ok'] and took < 20, f'{took}s'
+            assert 'KeyboardInterrupt' in [o.get('ename') for o in r['outputs']]
+            assert rt.eval_many({'k': 'kept'})['k']['value'] == 11, 'and the namespace is still there'
+        finally: rt.close()
+
+    def test_a_cell_that_exits_takes_only_its_own_kernel(self):
+        "`os._exit()` in a cell used to end Leela. It ends the kernel, and the next cell gets a new one."
+        rt = self.runtime(timeout=4)
+        try:
+            rt.run(self.cell('import os; os._exit(1)', 'boom'))
+            r = rt.run(self.cell('recovered = 3\nrecovered', 'after'))
+            assert r['ok'], r['outputs']
+            assert rt.eval_many({'r': 'recovered'})['r']['value'] == 3
+        finally: rt.close()
+
+    def test_a_port_resolves_through_the_kernel(self):
+        rt = self.runtime()
+        try:
+            rt.run(self.cell('rows = [{"a": 1}, {"a": 2}]'))
+            b = Brick(kind='brick', id='v', binds={'series': 'rows', 'bad': '1/0'})
+            got = rt.bindings(b)
+            assert got['series'] == {'ok': True, 'value': [{'a': 1}, {'a': 2}]}
+            assert got['bad']['ok'] is False and 'ZeroDivisionError' in got['bad']['error']
+        finally: rt.close()
+
+    def test_a_value_the_browser_emits_arrives_as_json(self):
+        rt = self.runtime()
+        try:
+            rt.set('stages', [{'name': 'Leads', 'value': 10}])
+            assert rt.eval_many({'s': 'stages[0]["value"]'})['s']['value'] == 10
+        finally: rt.close()
+
+    def test_a_name_a_cell_stops_defining_is_dropped_in_the_kernel_too(self):
+        rt = self.runtime()
+        try:
+            b = self.cell('doomed = 1', 'x')
+            rt.run(b)
+            assert 'doomed' in rt.names()
+            b.body = 'kept = 2'
+            assert rt.retire(b) == ['doomed']
+            assert 'doomed' not in rt.names()
+        finally: rt.close()

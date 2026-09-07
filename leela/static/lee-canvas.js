@@ -223,12 +223,32 @@ async function cvOpen(path, fresh) {
   const r = await api(`/canvas/open?path=${encodeURIComponent(path)}${fresh ? '&fresh=1' : ''}`);
   if (!r.ok) return;
   cv.path = path; cv.canvas = r.canvas; cv.ports = r.ports || {}; cv.host = r.host; cv.names = r.names || [];
+  cv.trusted = !!r.trusted; cv.rev = r.rev || 0;
   document.title = r.canvas.title;
   $$('#cv-mode').textContent = r.canvas.meta.mode || 'make';
   cvPick(null);
   cvRender();
   cvTrail(r.trail || []);
-  cvStatus(`${r.canvas.bricks.length} bricks · ${cv.names.length} live names`, 'ok');
+  cvTrustBar();
+  cvStatus(`${r.canvas.bricks.length} bricks · ${cv.trusted ? cv.names.length + ' live names' : 'not run'}`, 'ok');
+}
+
+//: A canvas is markdown, so it arrives from a clone, a download or a paste. Opening one draws it
+//: and runs none of it; this is the one control that says its code may run.
+function cvTrustBar() {
+  const bar = $$('#cv-trust'); if (!bar) return;
+  bar.hidden = cv.trusted;
+  if (!cv.trusted) $$('#cv-trust-count').textContent =
+    cv.canvas.bricks.filter(b => b.kind === 'code' || b.kind === 'data').length;
+}
+
+async function cvTrust() {
+  const r = await api('/canvas/trust', {path: cv.path});
+  if (!r.ok) return cvStatus(r.error || 'not trusted', 'bad');
+  cv.trusted = true; cv.ports = {...cv.ports, ...(r.ports || {})};
+  for (const [id, run] of Object.entries(r.runs || {})) cvOutputs(id, run);
+  cvApplyPorts(cv.ports); cvTrustBar(); cvNames();
+  cvStatus(`${Object.keys(r.runs || {}).length} cells run`, 'ok');
 }
 
 function cvRender() {
@@ -307,12 +327,14 @@ function cvText(b) {
   el.oninput = () => { blank(); cv.edited.add(b.id); cv.dirty = true; };
   el.onfocus = () => { cv.focus = b.id; blank(); };
   blank();
+  //: Blur records; `cvFlush` writes. Blur used to post on its own, so a blur triggered by
+  //: clicking Save raced the save itself and the file was written from whichever landed first.
+  //: It also converted the rendered DOM back to markdown every time, which loses what `cvMd`
+  //: cannot draw: a table came back as its text. Untouched prose is never converted now.
   el.onblur = () => {
+    if (!cv.edited.has(b.id)) return;
     const body = el.classList.contains('raw') ? el.innerText.trimEnd() : cvHtmlToMd(el);
-    if (body !== (cvBrick(b.id)?.body ?? b.body)) {
-      cvEdit(b.id, body); cv.edited.delete(b.id);
-      cvOp({op: 'replace', id: b.id, body}, false);
-    }
+    if (body !== (cvBrick(b.id)?.body ?? b.body)) cvEdit(b.id, body);
   };
   el.onkeydown = ev => cvTextKeys(ev, b, el);
   return el;
@@ -650,22 +672,37 @@ async function cvAskRun(id, selection = '') {
 
 //: What is typed lives on the brick object until something sends it. Every path that takes the
 //: document back from the server flushes first, or the reply overwrites the typing.
+//: Every write goes through this chain, so a save cannot overtake a pending edit. Two callers
+//: arriving together await the same tail rather than interleaving their requests.
+let cvQueue = Promise.resolve();
+function cvSerial(fn) {
+  const next = cvQueue.then(fn, fn);
+  cvQueue = next.catch(() => {});
+  return next;
+}
+
 async function cvFlush() {
   if (document.activeElement?.blur) document.activeElement.blur();
   const dirty = [...cv.edited];
   cv.edited.clear();
   for (const id of dirty) {
     const b = cvBrick(id);
-    if (b) await api('/canvas/op', {path: cv.path, op: {op: 'replace', id, body: b.body}});
+    if (b) {
+      const r = await api('/canvas/op', {path: cv.path, op: {op: 'replace', id, body: b.body}});
+      if (r?.rev != null) cv.rev = r.rev;
+    }
   }
 }
 
 const SHAPE_KEEPING = new Set(['replace', 'bind', 'kind', 'replace_selection']);
 
-async function cvOp(op, redraw = true) {
+function cvOp(op, redraw = true) { return cvSerial(() => cvOpNow(op, redraw)); }
+
+async function cvOpNow(op, redraw = true) {
   if (op.op !== 'replace') await cvFlush();
   const r = await api('/canvas/op', {path: cv.path, op});
   if (!r.ok) return r;
+  if (r.rev != null) cv.rev = r.rev;
   cv.ports = r.ports || cv.ports;
   if (redraw) cvSync(r.canvas);
   //: Without a redraw, only the brick that changed is taken. Replacing the whole document would
@@ -676,11 +713,21 @@ async function cvOp(op, redraw = true) {
   return r;
 }
 
-async function cvSave() {
+function cvSave() { return cvSerial(cvSaveNow); }
+
+async function cvSaveNow() {
   await cvFlush();
-  for (const b of cv.canvas.bricks) if (b.kind === 'code' || b.kind === 'ask') await cvOp({op: 'replace', id: b.id, body: b.body}, false);
-  const r = await api('/canvas/save', {path: cv.path});
+  for (const b of cv.canvas.bricks) {
+    if (b.kind !== 'code' && b.kind !== 'ask') continue;
+    const r = await api('/canvas/op', {path: cv.path, op: {op: 'replace', id: b.id, body: b.body}});
+    if (r?.rev != null) cv.rev = r.rev;
+  }
+  //: `rev` is what the document was when this save was assembled. The server refuses an older one
+  //: rather than overwriting somebody else's write.
+  const r = await api('/canvas/save', {path: cv.path, rev: cv.rev});
   if (r.ok) { cv.dirty = false; cvStatus(`saved · ${r.bytes} bytes`, 'ok'); }
+  else cvStatus(r.error || 'not saved', 'bad');
+  return r;
 }
 
 async function cvNames() {
@@ -1277,6 +1324,7 @@ async function cvBoot() {
   await cvOpen(want, q.get('fresh'));
   $$('#cv-runall').onclick = cvRunAll;
   $$('#cv-save').onclick = cvSave;
+  $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
   $$('#cv-toggle').onclick = () => cvMargin();
   cvTheme(localStorage.getItem('cv-theme') || 'light');

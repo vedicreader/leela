@@ -117,6 +117,7 @@ GET,POST /canvas/runall
 GET,POST /canvas/save
 GET,POST /canvas/state
 GET,POST /canvas/steer
+GET,POST /canvas/trust
 GET,POST /canvas/value
 GET,POST /canvas/wire
 GET,POST /canvas/wire/{name}

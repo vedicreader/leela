@@ -55,7 +55,15 @@ class Ask:
         if i is None: return list(self.canvas)[-3:]
         return self.canvas.bricks[max(0, i - 1):i + 2]
     def names(self):
-        return sorted(k for k in getattr(self.runtime, 'ns', {}) if not k.startswith('_') and not callable(self.runtime.ns[k]))
+        "The public names the document has computed. The runtime answers, whichever one it is."
+        return list(self.runtime.names())
+
+def _kind_of(r):
+    "What a resolved name looks like, for a summary the stand-in writes."
+    if not r or not r.get('ok'): return 'unresolved'
+    v = r.get('value')
+    return {list: 'list', dict: 'dict', bool: 'bool', int: 'int', float: 'float',
+            str: 'str', type(None): 'None'}.get(type(v), type(v).__name__)
 
 class Helper:
     "The contract. `turn` yields `(event, payload)` and may be steered while it runs."
@@ -127,7 +135,8 @@ class Scripted(Helper):
 
     def _is_chart(self, low, ask): return any(w in low for w in ('chart', 'plot', 'graph it', 'draw it'))
     def _chart(self, ask, q, low):
-        names = [n for n in ask.names() if isinstance(ask.runtime.ns.get(n), (list, tuple))]
+        got = ask.runtime.snapshot(ask.names())
+        names = [n for n, r in got.items() if r.get('ok') and isinstance(r.get('value'), list)]
         target = first(n for n in names if n in low) or first(names) or 'series'
         yield 'step', {'id': 'c', 'label': 'canvas_insert', 'detail': f'viz.series bound to {target}'}
         yield 'op', {'op': 'insert', 'after': ask.brick_id, 'kind': 'brick',
@@ -183,8 +192,9 @@ class Scripted(Helper):
 
     def _is_summary(self, low, ask): return any(w in low for w in ('summar', 'what do i have', 'state of'))
     def _summary(self, ask, q, low):
-        ns = ask.runtime.ns
-        rows = [f'- `{n}`, {type(ns[n]).__name__}' for n in ask.names()[:12]]
+        seen = ask.names()[:12]
+        got = ask.runtime.snapshot(seen)
+        rows = [f'- `{n}`, {_kind_of(got.get(n))}' for n in seen]
         body = 'What this document holds right now:\n\n' + ('\n'.join(rows) or '- nothing yet')
         yield 'step', {'id': 's', 'label': 'canvas_values', 'detail': f'{len(rows)} names'}
         yield 'op', {'op': 'insert', 'after': ask.brick_id, 'kind': 'note', 'body': body}
