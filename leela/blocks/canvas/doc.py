@@ -5,13 +5,13 @@ import ast, re, uuid
 from dataclasses import dataclass, field
 from fastcore.all import L, Path, first
 
-__all__ = ['KINDS', 'FENCED', 'WRAPPED', 'MODES', 'STATUS', 'RELATIONS', 'W', 'Brick', 'Doc', 'brick_id',
+__all__ = ['KINDS', 'FENCED', 'WRAPPED', 'MODES', 'STATUS', 'RELATIONS', 'W', 'Brick', 'Canvas', 'brick_id',
            'defs_of', 'reads_of', 'order', 'downstream', 'upstream']
 
 #: Bricks whose body markdown cannot show, written as a fence.
-FENCED = ('code', 'ask', 'brick', 'sim', 'data', 'diff', 'snippet')
+FENCED = ('code', 'ask', 'brick', 'sim', 'data', 'diff', 'snippet', 'pdf', 'video')
 #: Bricks whose body is markdown a plain renderer should still show, written as a comment wrap.
-WRAPPED = ('reply', 'note', 'goal', 'task', 'source', 'bundle')
+WRAPPED = ('reply', 'note', 'quiz', 'goal', 'task', 'source', 'bundle')
 KINDS = ('text',) + FENCED + WRAPPED
 #: What a brick does to the context budget, as notebook cells already do it.
 MODES = ('auto', 'keep', 'discard')
@@ -53,7 +53,7 @@ def _scan(text):
             flush()
             end = _shut(m[1])
             i, body = upto(i + 1, lambda l: end.match(l), False)
-            out.append((m[2], m[3], '\n'.join(body)))
+            out.append((m[2], m[3], '\n'.join(body) + ('\n' if body else '')))
         elif (m := TICKS.match(line)):
             end = _shut(m[1])
             prose.append(line)
@@ -66,7 +66,7 @@ def _scan(text):
                 i += 1
                 attr.append(lines[i])
             i, body = upto(i + 1, lambda l: l.strip() == SHUT, False)
-            out.append((m[1], SHUT_TAG.sub('', ' '.join(attr)), '\n'.join(body)))
+            out.append((m[1], SHUT_TAG.sub('', ' '.join(attr)), '\n'.join(body) + ('\n' if body else '')))
         else:
             prose.append(line); i += 1; continue
         i += 1
@@ -90,9 +90,10 @@ def _prose_parts(text):
 def _attrs(s): return {k: v.strip('"') for k, v in ATTR.findall(s or '')}
 
 def _attrstr(d):
+    "Attributes as they are written. An empty value is kept: a reply with no `of` still has one."
     out = []
     for k, v in d.items():
-        if v in (None, ''): continue
+        if v is None: continue
         v = str(v).replace('"', "'")
         out.append(f' {k}={v}' if re.fullmatch(r'[\w./:,-]+', v) else f' {k}="{v}"')
     return ''.join(out)
@@ -132,7 +133,11 @@ class Brick:
     def __post_init__(self):
         if self.kind not in KINDS: self.kind = 'text'
     @property
+    def src(self): return self.attrs.get('src', '')
+    @property
     def runs(self): return self.kind == 'code'
+    @property
+    def reactive(self): return bool(self.binds)
     @property
     def heading(self):
         "Whether this brick is only a heading. The region label already says it, so nothing else does."
@@ -309,7 +314,7 @@ def upstream(bricks, bid, depth=12):
     return bricks.filter(lambda b: b.id in seen - {bid})
 
 @dataclass
-class Doc:
+class Canvas:
     "A dynamic document. Headings are its regions; `prop x`/`prop y` are the second view."
     bricks: list = field(default_factory=list)
     meta: dict = field(default_factory=dict)
@@ -322,8 +327,9 @@ class Doc:
         return self.bricks[k] if isinstance(k, (int, slice)) else self.by_id(k)
     def by_id(self, bid): return first(b for b in self.bricks if b.id == bid)
     def index(self, bid):
+        "Where a brick sits, or None. `ops._at` and `Ask.near` both read the None."
         b = self.by_id(bid)
-        return self.bricks.index(b) if b is not None else -1
+        return self.bricks.index(b) if b is not None else None
     def of(self, *kinds): return L(b for b in self.bricks if b.kind in set(kinds))
     @property
     def title(self): return self.meta.get('title') or Path(self.path).name or 'untitled'
@@ -346,6 +352,17 @@ class Doc:
     def reply_to(self, bid):
         "The answer written back under question `bid`, or None."
         return first(b for b in self.bricks if b.kind == 'reply' and b.attrs.get('of') == bid)
+    def insert(self, i, brick):
+        "Put a brick at `i`, clamped. What an op does; `add` is what a builder does."
+        self.bricks.insert(max(0, min(int(i), len(self))), brick)
+        self._regions()
+        return brick
+    def replace(self, bid, **kw):
+        b = self.by_id(bid)
+        if b is not None:
+            for k, v in kw.items(): setattr(b, k, v)
+            self._regions()
+        return b
     def add(self, b, at=None):
         if self.by_id(b.id) is not None: raise ValueError(f'duplicate brick id: {b.id}')
         self.bricks.insert(len(self.bricks) if at is None else at, b)

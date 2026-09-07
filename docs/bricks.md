@@ -70,6 +70,13 @@ No components. `sim` is a component written in the document itself, in JavaScrip
 
 Leela ships the resolver and the contract. A chart is not IDE behaviour, and a bundled component library would be a compatibility surface Leela keeps forever on Leela's release clock rather than the library's. This is the same reason `kunda`, `kavacha` and `pullup` are not in this repository.
 
-## Not built
+## What the merge connected
 
-The palette and `_wire_from_host` live on the `dynamic-document-canvas` branch, which is not merged here. That branch fetches over HTTP and drops the `src` prefix; both are what this resolver replaces. Merging is what connects the resolver to a browser that draws from it.
+`leela/blocks/canvas/app.py` now holds both halves. The palette route is the resolver, and the two
+routes that fetched from a host are gone: `/canvas/palette` reads `palette(libs)` and
+`/canvas/wire/{name}` reads the library. `_wire_from_host` keeps its name and reads the library
+too, and it no longer drops the `src` prefix. Nothing in the block imports `urllib` any more.
+
+`brick_host()` survives as the base handed to `remote_wire`, which is the snippet a document runs
+when it has the component but not the package that fills it. That is the one case where HTTP is
+the right answer, and it is now the only one.

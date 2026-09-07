@@ -3,7 +3,7 @@
 from __future__ import annotations
 from importlib.resources import files
 
-from .doc import Doc
+from .doc import Canvas
 from .layout import arrange
 
 __all__ = ['procurement', 'diff', 'PATH', 'VALUES', 'DIFF']
@@ -17,7 +17,7 @@ VALUES = {'c-share': '(0.341, 3.0)', 'c-backtest': '0.79',
 
 def procurement(placed=True):
     "One goal worked end to end: framing, evidence, a baseline, a prototype, a decision."
-    d = Doc.parse(files(__package__).joinpath(PATH).read_text(encoding='utf-8'), PATH)
+    d = Canvas.parse(files(__package__).joinpath(PATH).read_text(encoding='utf-8'), PATH)
     return arrange(d, values=VALUES) if placed else d
 
 def diff():

@@ -6,7 +6,7 @@ from fastcore.all import L, Path, first
 
 from leela.blocks.canvas.change import bundle_of, bundles, coverage, diff_stat
 from leela.blocks.canvas.context import SCOPES, WRAP, _label, body_text, members, spec_of
-from leela.blocks.canvas.doc import Doc, W, _owners
+from leela.blocks.canvas.doc import Canvas, W, _owners
 
 __all__ = ['payload', 'paint', 'wires']
 

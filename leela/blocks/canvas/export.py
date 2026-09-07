@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from fastcore.all import L, Path
 
-from .doc import Brick, Doc, KINDS, order
+from .doc import Brick, Canvas, KINDS, order
 
 __all__ = ['to_ipynb', 'from_ipynb', 'to_report', 'modules', 'write_modules', 'directives']
 
@@ -38,7 +38,7 @@ def to_ipynb(doc, values=None):
 
 def from_ipynb(nb, path=''):
     "Read a notebook in. An unmarked cell becomes a code brick or prose, which is the migration."
-    doc, seen = Doc(path=path), set()
+    doc, seen = Canvas(path=path), set()
     for c in (nb.get('cells') or []):
         src = c.get('source')
         src = ''.join(src) if isinstance(src, list) else str(src or '')

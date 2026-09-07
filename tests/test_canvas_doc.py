@@ -4,7 +4,7 @@ from fastcore.all import Path, first
 from leela.blocks.canvas.change import (bundle_of, bundles, coverage, diff_stat, hunks, pr,
                                         review, snip, state, value)
 from leela.blocks.canvas.context import (Spec, body_text, render, resolve, strip_work_log, weigh)
-from leela.blocks.canvas.doc import Brick, Doc, order, upstream
+from leela.blocks.canvas.doc import Brick, Canvas, order, upstream
 from leela.blocks.canvas.example import VALUES, diff, procurement
 from leela.blocks.canvas.explain import capture, drafted, explain, prompt_for, replay
 from leela.blocks.canvas.export import from_ipynb, modules, to_ipynb, to_report
@@ -45,10 +45,10 @@ what now?
 ```
 '''
 
-def small(): return Doc.parse(SMALL)
+def small(): return Canvas.parse(SMALL)
 
 def test_the_file_round_trips_and_a_quoted_canvas_stays_prose():
-    d = Doc.parse(SMALL + '''
+    d = Canvas.parse(SMALL + '''
 Here is how you write one:
 
 ````markdown
@@ -58,7 +58,7 @@ not a brick
 ````
 ''')
     assert 'fake' not in {b.id for b in d}
-    again = Doc.parse(d.md())
+    again = Canvas.parse(d.md())
     assert again.md() == d.md()                        # prose carries no id, so compare the file
     assert [b.kind for b in again] == [b.kind for b in d]
     assert again['q'].pins == ['a'] and again['q'].scope == 'page' and again['q'].budget == 100000
@@ -132,7 +132,7 @@ def test_a_code_bricks_value_comes_from_the_namespace_not_the_file():
     assert '0.79' in body_text(d['c-backtest'], VALUES)
 
 def test_code_runs_in_dependency_order_not_document_order():
-    d = Doc.parse('```canvas code id=b\ny = x\n```\n\n```canvas code id=a\nx = 1\n```\n')
+    d = Canvas.parse('```canvas code id=b\ny = x\n```\n\n```canvas code id=a\nx = 1\n```\n')
     assert [b.id for b in order(d.bricks)] == ['a', 'b']
 
 def test_a_document_round_trips_through_a_notebook_with_its_answers_intact():
@@ -148,7 +148,7 @@ def test_a_layout_stays_out_of_the_file_until_someone_moves_a_brick():
     arrange(d)
     assert d.md() == before and d['goal'].xy                 # placed for the view, not for the file
     d['goal'].place(10, 20, keep=True)
-    assert 'prop x = 10' in d.md() and Doc.parse(d.md())['goal'].xy == (10.0, 20.0)
+    assert 'prop x = 10' in d.md() and Canvas.parse(d.md())['goal'].xy == (10.0, 20.0)
 
 def test_an_imported_notebook_arrives_with_a_second_view():
     nb = {'cells': [{'cell_type': 'code', 'source': 'x = 1', 'id': 'c1'},
@@ -224,7 +224,7 @@ def test_a_review_is_a_canvas_with_the_value_the_diff_and_the_checks():
     assert r['triage-q'].pins == ['goal']
 
 def test_a_document_with_no_bundle_still_reports_every_change_as_unclaimed():
-    d = Doc.parse(SMALL)
+    d = Canvas.parse(SMALL)
     assert coverage(d, ['a.py'])['unclaimed'] == ['a.py'] and coverage(d, ['a.py'])['bundles'] == []
 
 def test_state_is_read_off_the_document_not_set_by_hand():
@@ -257,25 +257,25 @@ def test_the_value_view_names_the_orphan_change_and_the_unserved_goal():
     assert v['value-q'].pins == ['goal', 'cycle'] and all(b.xy for b in v if not b.heading)
 
 def test_a_goal_nothing_serves_is_reported_rather_than_omitted():
-    d = Doc.parse('# One\n\n<!--canvas goal id=g-->\nship it\n<!--/canvas-->\n')
+    d = Canvas.parse('# One\n\n<!--canvas goal id=g-->\nship it\n<!--/canvas-->\n')
     v = value(d)
     assert 'Nothing in this document is serving this goal.' in v['g-nothing'].body
 
 def test_a_wrapped_attribute_list_is_one_opening_tag():
-    d = Doc.parse('# One\n\n<!--canvas bundle id=b title="A change"\n     goal=g\n'
+    d = Canvas.parse('# One\n\n<!--canvas bundle id=b title="A change"\n     goal=g\n'
                   '     paths=a.py,b.py-->\nprose\n<!--/canvas-->\n')
     b = d['b']
     assert b.kind == 'bundle' and b.title == 'A change' and b.body == 'prose'
     assert b.attrs['goal'] == 'g' and b.attrs['paths'] == 'a.py,b.py'
-    assert Doc.parse(d.md())['b'].attrs == b.attrs      # and it writes back on one line
+    assert Canvas.parse(d.md())['b'].attrs == b.attrs      # and it writes back on one line
 
 def test_prose_splits_at_every_heading_so_one_heading_is_one_region():
-    d = Doc.parse('# A\n\nfirst\n\n# B\n\nsecond\n\n```canvas code id=c\nx = 1\n```\n')
+    d = Canvas.parse('# A\n\nfirst\n\n# B\n\nsecond\n\n```canvas code id=c\nx = 1\n```\n')
     assert list(d.regions) == ['A', 'B']
     assert d['c'].region == 'B'
 
 def test_a_heading_inside_a_plain_fence_is_an_example_not_a_region():
-    d = Doc.parse('# A\n\n```\n# B\nnot a heading\n```\n\nafter\n')
+    d = Canvas.parse('# A\n\n```\n# B\nnot a heading\n```\n\nafter\n')
     assert list(d.regions) == ['A']
 
 def test_a_snippet_cites_a_symbol_out_of_the_file_it_names():
@@ -288,7 +288,7 @@ def test_a_snippet_cites_a_symbol_out_of_the_file_it_names():
     assert snip(Brick('snippet', '', attrs={'path': 'nope.py'}), PKG) == ''
 
 def test_a_literate_page_keeps_the_prose_under_each_heading():
-    d = Doc.parse('# A\n\n| f | n |\n|---|---|\n| x | 1 |\n\n# B\n\nafter\n')
+    d = Canvas.parse('# A\n\n| f | n |\n|---|---|\n| x | 1 |\n\n# B\n\nafter\n')
     page = html_of(d)
     assert '<h2 id="a">A</h2>' in page and '<table>' in page and 'after' in page
 
@@ -326,7 +326,7 @@ def test_drafting_writes_into_the_document_and_marks_what_it_wrote():
     assert said == ['s1'] and [b.id for b in got] == ['s1']   # a written body is left alone
     assert d['s1'].body == 'Two sentences about s1.' and d['s1'].attrs['wrote'] == 'ai'
     assert [b.id for b in drafted(d)] == ['s1']
-    assert Doc.parse(d.md())['s1'].attrs['wrote'] == 'ai'     # and it survives the file
+    assert Canvas.parse(d.md())['s1'].attrs['wrote'] == 'ai'     # and it survives the file
     assert explain(d, ask, root=PKG, rules='R', overwrite=True).attrgot('id') == ['s1', 's2']
 
 def test_capture_and_replay_stand_in_for_a_model_that_is_not_here(tmp_path):
@@ -341,7 +341,7 @@ def test_capture_and_replay_stand_in_for_a_model_that_is_not_here(tmp_path):
     assert d['s1'].body == 'One sentence.'
 
 def test_a_document_serialises_for_the_browser():
-    "Three routes hand `Doc.dict()` to the browser. Running them found it missing."
+    "Three routes hand `Canvas.dict()` to the browser. Running them found it missing."
     d = arrange(procurement())
     got = d.dict()
     assert got['title'] and got['path'] and len(got['bricks']) == len(d)

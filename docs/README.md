@@ -9,6 +9,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 - [languages.md](languages.md): Rust and JavaScript notebooks, and what stays Python.
 - [search.md](search.md): the code search dialog, its modes and its keys.
 - [vault.md](vault.md): shelves, imports, feeds and the workbench.
+- [canvas.md](canvas.md): the living document. Prose, code, embedded components and simulations in one markdown file, the dataflow between them, and the skill Leela pushes to the agent when one is open.
 
 ## Building on Leela
 

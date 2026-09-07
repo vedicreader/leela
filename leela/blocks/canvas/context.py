@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field, replace
 from fastcore.all import L, first
 
-from .doc import Doc, Brick, MODES, upstream
+from .doc import Canvas, Brick, MODES, upstream
 
 __all__ = ['SCOPES', 'REF_KINDS', 'Spec', 'Item', 'spec_of', 'resolve', 'render', 'weigh',
            'strip_work_log', 'members', 'body_text']
@@ -96,7 +96,8 @@ def members(doc, b, scope):
     "The bricks a scope offers, before pins, mutes and the budget."
     if scope == 'none': return L()
     at = doc.index(b.id)
-    if scope == 'page': return L(doc.bricks[:at if at >= 0 else len(doc)])
+    if at is None: at = len(doc)
+    if scope == 'page': return L(doc.bricks[:at])
     if scope == 'doc': return L(x for x in doc.bricks if x.id != b.id)
     if scope == 'region': return L(x for x in doc.in_region(b.region) if x.id != b.id)
     return upstream(doc.bricks, b.id)

@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import L, Path, first
 
 from .context import body_text, strip_work_log
-from .doc import Brick, Doc
+from .doc import Brick, Canvas
 from .export import directives, modules
 
 __all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'state', 'pr', 'review', 'value',
@@ -19,7 +19,7 @@ def _list(v): return [x.strip() for x in str(v or '').split(',') if x.strip()]
 class Bundle:
     "One change: a bundle brick, and everything the region it sits in holds."
     id: str
-    doc: Doc
+    doc: Canvas
     brick: Brick
     @property
     def title(self): return self.brick.title or self.brick.region or self.id
@@ -43,7 +43,7 @@ class Bundle:
     def paths(self):
         "Files this change owns: what its code exports, then what `paths=` declares."
         mine = {b.id for b in self.of('code')}
-        one = Doc(bricks=[b for b in self.doc.bricks if b.id in mine], meta=self.doc.meta)
+        one = Canvas(bricks=[b for b in self.doc.bricks if b.id in mine], meta=self.doc.meta)
         return sorted(set(modules(one)) | set(_list(self.brick.attrs.get('paths'))))
 
 def bundles(doc): return L(Bundle(b.id, doc, b) for b in doc.of('bundle'))
@@ -188,7 +188,7 @@ def review(
     if b is None: raise KeyError(bid)
     files = hunks(diff)
     cov = first(r for r in coverage(doc, list(files))['bundles'] if r['id'] == bid) or {}
-    out = Doc(meta={'title': f'Review: {b.title}'}, path=f'{bid}.review.canvas.md')
+    out = Canvas(meta={'title': f'Review: {b.title}'}, path=f'{bid}.review.canvas.md')
     out.add(Brick('text', f'# {b.title}'))
     if (g := b.goal) is not None: out.add(_copy(g))
     if b.contributes: out.add(Brick('note', f'Contributes: {b.contributes}', id=f'{bid}-contrib'))
@@ -233,7 +233,7 @@ def review(
 def value(doc, changed=()):
     "Every goal, and every change that serves it."
     from .layout import arrange
-    out = Doc(meta={'title': f'Value: {doc.title}'}, path='value.canvas.md')
+    out = Canvas(meta={'title': f'Value: {doc.title}'}, path='value.canvas.md')
     served, all_b = {}, bundles(doc)
     for b in all_b: served.setdefault(b.goal.id if b.goal else '', []).append(b)
     for g in doc.of('goal'):

@@ -6,7 +6,7 @@ from fastcore.all import L, Path, first
 
 from .change import bundle_of, snip
 from .context import Spec, body_text, render, resolve
-from .doc import Doc
+from .doc import Canvas
 
 __all__ = ['RULES', 'DRAFTED', 'rule_text', 'prompt_for', 'explain', 'drafted',
            'capture', 'replay']

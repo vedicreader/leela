@@ -170,11 +170,11 @@ Two things the canvas branch has that this does not: the reactive runtime, and t
 
 ## What is not decided
 
-**Whether the block keeps its own `doc.py`.** The `dynamic-document-canvas` branch has a `doc.py`
-over the same format, plus the reactive runtime, the embedded components and the eight `canvas_*`
-agent tools. This branch has the basket, the change bundle, the three views and the literate page.
-Both call the folder `canvas`. A merge keeps one `doc.py` and both halves of the rest, and until it
-happens the format has two readers.
+**Nothing, on this one.** It is merged. `leela/blocks/canvas/doc.py` is one file: the format and the
+AST dataflow from the canvas branch, with the plan kinds, the regions, the pins and mutes, the
+prose splitting and the geometry from this one. The class is `Canvas`, `index` returns `None` for a
+brick that is not there because `ops._at` and `Ask.near` both read that, and a brick body keeps its
+final newline because code is kept exactly.
 
 **What the browser half draws.** The eight routes answer. `tools/canvas_proto` shows the canvas,
 the basket panel and the review as a standalone page, and nothing in `lee-ide.js` calls the routes

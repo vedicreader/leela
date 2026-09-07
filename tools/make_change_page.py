@@ -5,7 +5,7 @@ import argparse, subprocess, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from leela.blocks.canvas.change import coverage, diff_stat, hunks
-from leela.blocks.canvas.doc import Brick, Doc
+from leela.blocks.canvas.doc import Brick, Canvas
 from leela.blocks.canvas.explain import capture, explain, replay
 from leela.blocks.canvas.lit import lit
 
@@ -16,7 +16,7 @@ def git(*args): return subprocess.run(['git', *args], capture_output=True, text=
 def fill(doc, raw):
     "Replace the `diffhere` brick with one `diff` brick per file in `raw`."
     at = doc.index(SLOT)
-    if at < 0: return doc
+    if at is None: return doc
     doc.bricks.pop(at)
     for n, (path, text) in enumerate(hunks(raw).items()):
         add, rm = diff_stat(text)
@@ -31,14 +31,14 @@ if __name__ == '__main__':
     a.add_argument('--answers', help='fill the snippet bodies from this file of answers')
     a.add_argument('--overwrite', action='store_true', help='redraft a snippet that has a body')
     args = a.parse_args()
-    doc = fill(Doc.load(SRC), git('diff', 'HEAD~1', 'HEAD', '--', 'leela/blocks/canvas/change.py'))
+    doc = fill(Canvas.load(SRC), git('diff', 'HEAD~1', 'HEAD', '--', 'leela/blocks/canvas/change.py'))
     if args.prompts:
         explain(doc, capture(args.prompts), root='.', overwrite=True)
         print(f'prompts for {len(doc.of("snippet", "diff"))} brick(s) -> {args.prompts}')
         raise SystemExit
     if args.answers:
         got = explain(doc, replay(args.answers), root='.', overwrite=args.overwrite)
-        Doc.load(SRC).save()          # keep the source readable before writing over it
+        Canvas.load(SRC).save()          # keep the source readable before writing over it
         print(f'{len(got)} brick(s) drafted')
     changed = git('diff', '--name-only', f'{args.base}...HEAD').split()
     loose = coverage(doc, changed)['unclaimed']

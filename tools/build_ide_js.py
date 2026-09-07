@@ -71,10 +71,16 @@ def missing():
     "Modules the order names but the tree does not have."
     return [p for p in modules() if not p.is_file()]
 
+#: Blocks that serve a page of their own rather than a panel in the IDE, and so ship their own
+#: bundle from their own route. Their modules are deliberately outside `LAYERS`: the IDE's three
+#: bundles share one lexical scope, and a separate document does not want to be in it.
+OWN_BUNDLE = ('canvas',)
+
 def orphans():
     "Modules the tree has but the order does not name, which would silently never load."
     named = {p.resolve() for p in modules()}
-    found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))}
+    found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))
+             if p.parent.name not in OWN_BUNDLE}
     return sorted(found - named)
 
 def build(check=False):

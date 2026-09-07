@@ -1,4 +1,4 @@
-"The canvas document: a goal, its plan, its research, its code, its questions, and its changes."
+"The canvas: a document that runs, the basket a question sends, and the change a boundary claims."
 
 from .._lazy import lazy_app
 
