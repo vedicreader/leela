@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastcore.all import Path, first
 
 from ...core.web import fail, off_loop
+from .bricks import libraries, locate, mount, palette, wire
 from .change import bundles, coverage, pr, review, state, value
 from .context import SCOPES, Spec, resolve, spec_of, weigh
 from .doc import Doc
@@ -25,6 +26,23 @@ def _load(fs, path):
 
 def connect(app, ctx):
     rt = app.route
+    libs = libraries()
+    notes = mount(app, libs)          # a library serves its own gallery, frame and data routes
+    @rt('/canvas/palette')
+    def canvas_palette():
+        "Every brick every installed library offers. Empty with a note when none is installed."
+        return {**palette(libs), 'mount_notes': notes}
+    @rt('/canvas/brick')
+    def canvas_brick(src: str):
+        "One brick's row: its ports, what it emits, and which library it came from."
+        lib, b = locate(src, libs)
+        if lib is None: return fail(f'no brick for {src!r}')
+        return {'ok': True, 'library': lib.name, 'brick': b}
+    @rt('/canvas/wire')
+    def canvas_wire(src: str, base: str = ''):
+        "The wiring this brick ships, for a code brick above it. `base` adds the remote fallback."
+        got = wire(src, libs, base)
+        return got if got.get('ok') else fail(got.get('error', 'no wiring'))
     @rt('/canvas/state')
     def canvas_state(path: str):
         "The document as the browser draws it."

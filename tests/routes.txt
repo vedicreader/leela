@@ -95,14 +95,17 @@ GET,POST /browser/open
 GET,POST /browser/ready
 GET,POST /browser/state
 GET,POST /browser/tabs
+GET,POST /canvas/brick
 GET,POST /canvas/changes
 GET,POST /canvas/context
 GET,POST /canvas/draft
 GET,POST /canvas/page
+GET,POST /canvas/palette
 GET,POST /canvas/pr
 GET,POST /canvas/review
 GET,POST /canvas/state
 GET,POST /canvas/value
+GET,POST /canvas/wire
 GET,POST /clip
 GET,POST /clusters
 GET,POST /code/definition

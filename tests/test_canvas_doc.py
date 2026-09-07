@@ -9,6 +9,8 @@ from leela.blocks.canvas.example import VALUES, diff, procurement
 from leela.blocks.canvas.explain import capture, drafted, explain, prompt_for, replay
 from leela.blocks.canvas.export import from_ipynb, modules, to_ipynb, to_report
 from leela.blocks.canvas.layout import arrange
+from leela.blocks.canvas.bricks import (libraries, locate, mount, palette, split_src,
+                                        wire)
 from leela.blocks.canvas.lit import html_of
 
 PKG = Path(__file__).parent.parent/'leela/blocks'
@@ -356,3 +358,81 @@ def test_a_placed_brick_reports_two_coordinates_however_it_was_placed():
     assert b.xy is None
     assert len(b.place(10, 20, 300).xy) == 2 and b.width == 300
     assert len(b.place(30, 40, 300, keep=True).xy) == 2
+
+
+# === where a component comes from ===
+
+BRICK_FIXTURE = str(Path(__file__).parent/'fixtures')
+
+def demo_libs():
+    "The fixture library, shaped exactly like `lego.bricks`, so these tests pin its contract."
+    import sys
+    if BRICK_FIXTURE not in sys.path: sys.path.insert(0, BRICK_FIXTURE)
+    return libraries(extra=('demobricks',))
+
+def test_a_src_keeps_the_library_that_wrote_it():
+    "`Brick.src` is `lego.bricks:viz.series`. Dropping the prefix makes two libraries collide."
+    assert split_src('lego.bricks:viz.series') == ('lego.bricks', 'viz.series')
+    assert split_src('viz.series') == ('', 'viz.series')
+    assert split_src('') == ('', '')
+
+def test_a_library_is_any_module_with_a_manifest():
+    libs = demo_libs()
+    assert [l.name for l in libs] == ['demobricks']
+    p = palette(libs)
+    assert [b['src'] for b in p['bricks']] == ['demobricks:viz.series']
+    assert p['bricks'][0]['library'] == 'demobricks' and p['groups'] == {'viz': 'Plain figures'}
+    assert [q['name'] for q in p['bricks'][0]['ports']] == ['labels', 'series']
+
+def test_nothing_installed_is_an_empty_palette_and_not_an_error():
+    p = palette([])
+    assert p == {'bricks': [], 'groups': {}, 'libraries': [], 'notes': []}
+
+def test_a_prefixed_src_is_answered_by_that_library_only():
+    libs = demo_libs()
+    lib, b = locate('demobricks:viz.series', libs)
+    assert lib.name == 'demobricks' and b['title'] == 'Series'
+    assert locate('lego.bricks:viz.series', libs) == (None, None)   # a library that is not here
+    assert locate('demobricks:nope', libs) == (None, None)
+    assert locate('viz.series', libs)[0].name == 'demobricks'       # bare, so first match wins
+
+def test_the_wiring_comes_from_the_package_that_owns_the_brick():
+    libs = demo_libs()
+    got = wire('demobricks:viz.series', libs, base='http://host')
+    assert got['ok'] and got['binds'] == {'labels': 'labels', 'series': 'series'}
+    assert got['emits'] == ['point'] and got['height'] == 240
+    assert 'series = [{"name": "s"' in got['wire']
+    assert '/bricks/data/viz.series' in got['remote']                # the not-installed fallback
+    assert wire('demobricks:nope', libs)['ok'] is False
+
+def test_a_library_mounts_its_own_routes_on_leelas_app():
+    "`serve.connect(app, page)` imports nothing about the app, which is why there is no second process."
+    from fasthtml.common import FastHTML
+    app = FastHTML()
+    assert mount(app, demo_libs()) == []                             # no notes means it mounted
+    paths = {r.path for r in app.routes}
+    assert '/bricks/manifest.json' in paths and '/bricks/wire/{name}' in paths
+
+def test_a_host_answers_the_same_four_questions_as_a_library():
+    "The HTTP path stays for a library that is not installed. It is opt-in, never a silent default."
+    import os
+    from leela.blocks.canvas.bricks import HOST_ENV, Host
+    assert not os.getenv(HOST_ENV), 'a default host is what made the palette come back empty'
+    h = Host('h', 'http://h')
+    assert h.mount(None).startswith('h: served by')
+    assert all(hasattr(h, m) for m in ('manifest', 'find', 'wire', 'fill'))
+
+def test_a_library_that_is_present_but_will_not_import_says_why():
+    """A silent skip hides a broken install. `lego/__init__.py` is `from .app import *`, so
+    reaching `lego.bricks` fails on lego's own dependencies and the palette said nothing."""
+    import sys
+    if BRICK_FIXTURE not in sys.path: sys.path.insert(0, BRICK_FIXTURE)
+    p = palette(libraries(extra=('brokenbricks',)))
+    assert p['bricks'] == []
+    assert any('brokenbricks' in n and 'ujson_that_is_not_installed' in n for n in p['notes'])
+
+def test_a_library_absent_from_this_install_is_not_a_note():
+    "`KNOWN` names a library that may not be here. Absent is normal; broken is not."
+    from leela.blocks.canvas.bricks import KNOWN
+    assert 'lego.bricks' in KNOWN
+    assert palette(libraries())['notes'] == []
