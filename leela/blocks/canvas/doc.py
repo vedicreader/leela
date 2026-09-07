@@ -435,8 +435,16 @@ class Canvas:
     @classmethod
     def load(cls, path): return cls.parse(Path(path).read_text(encoding='utf-8'), str(path))
     def save(self, path=None):
+        "Written through a temporary file in the same folder, so a torn write cannot land."
+        import os, tempfile
         p = Path(path or self.path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(self.md(), encoding='utf-8')
+        fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=f'.{p.name}.', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(self.md()); f.flush(); os.fsync(f.fileno())
+            os.replace(tmp, p)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True); raise
         self.path = str(p)
         return p

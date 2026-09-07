@@ -36,11 +36,15 @@ def _replace(canvas, runtime, op):
     if b is None: return {'ok': False, 'error': 'no such brick'}
     for k in ('body', 'attrs', 'binds', 'props'):
         if k in op: setattr(b, k, op[k])
-    return {'ok': True, 'touched': [b.id], 'brick': b.dict()}
+    #: A body that no longer defines a name must not leave the old value readable downstream.
+    gone = runtime.retire(b) if runtime is not None else []
+    return {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'dropped': gone}
 
 def _remove(canvas, runtime, op):
     b = canvas.remove(op.get('id'))
-    return {'ok': bool(b), 'removed': op.get('id')} if b else {'ok': False, 'error': 'no such brick'}
+    if b is None: return {'ok': False, 'error': 'no such brick'}
+    gone = runtime.forget(b.id) if runtime is not None else []
+    return {'ok': True, 'removed': b.id, 'dropped': gone}
 
 def _bind(canvas, runtime, op):
     b = canvas.by_id(op.get('id'))
@@ -60,7 +64,9 @@ def _kind(canvas, runtime, op):
     b = canvas.by_id(op.get('id'))
     if b is None or op.get('kind') not in KINDS: return {'ok': False, 'error': 'no such brick or kind'}
     b.kind = op['kind']
-    return {'ok': True, 'touched': [b.id], 'brick': b.dict()}
+    #: Code turned into prose defines nothing, so what it defined goes with the kind.
+    gone = runtime.retire(b) if runtime is not None else []
+    return {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'dropped': gone}
 
 def _answer(canvas, runtime, op):
     "Prose the helper wrote, attached to the ask that wanted it. One reply per ask, replaced on rerun."
@@ -94,7 +100,8 @@ def _replace_selection(canvas, runtime, op):
     if at is None: return {'ok': False, 'error': 'that selection is no longer in this brick'}
     i, n = at
     b.body = b.body[:i] + now + b.body[i + n:]
-    return {'ok': True, 'touched': [b.id], 'brick': b.dict()}
+    gone = runtime.retire(b) if runtime is not None else []
+    return {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'dropped': gone}
 
 def _run(canvas, runtime, op):
     b = canvas.by_id(op.get('id'))

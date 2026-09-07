@@ -221,12 +221,15 @@ class Agentic(Helper):
     Not exercised in the spike, which has no model. It is here so the seam is code rather than a
     promise."""
     name = 'agentic'
+    #: The registry as it was before `open`, so `close` restores it rather than approximating it.
+    _before = None
 
     def __init__(self, agent): self.agent = agent
 
     def open(self, ask):
         "Turn canvas mode on for this agent: the skill, then the tools that make it true."
         from ...skills import push
+        self._before = list(self.agent.registry.tools)
         push(self.agent, 'canvas')
         for nm in TOOLS: self.agent.registry.tool(self._tool(nm, ask))
         return self.agent
@@ -235,7 +238,10 @@ class Agentic(Helper):
         "Turn it off. A canvas the person has closed is not a document the agent may still edit."
         from ...skills import drop
         drop(self.agent, 'canvas')
-        self.agent.registry.tools[:] = [t for t in self.agent.registry.tools if t.__name__ not in TOOLS]
+        if self._before is None:
+            self.agent.registry.tools[:] = [t for t in self.agent.registry.tools if t.__name__ not in TOOLS]
+        else: self.agent.registry.tools[:] = self._before
+        self._before = None
         self.agent._forget()
 
     def _tool(self, nm, ask):
@@ -246,11 +252,14 @@ class Agentic(Helper):
         return f
 
     async def turn(self, ask, steer=None):
+        "Canvas mode comes off however the turn ends. A raised ask used to leave the tools registered."
         self.open(ask)
-        yield 'step', {'id': 'm', 'label': 'canvas mode', 'detail': f'{len(TOOLS)} tools, skill pushed'}
-        yield 'step', {'id': 'k', 'label': 'model', 'detail': str(getattr(self.agent, 'model', ''))}
-        r = await asyncio.to_thread(self.agent.ask, self._prompt(ask))
-        yield 'chunk', {'text': str(r)}
+        try:
+            yield 'step', {'id': 'm', 'label': 'canvas mode', 'detail': f'{len(TOOLS)} tools, skill pushed'}
+            yield 'step', {'id': 'k', 'label': 'model', 'detail': str(getattr(self.agent, 'model', ''))}
+            r = await asyncio.to_thread(self.agent.ask, self._prompt(ask))
+            yield 'chunk', {'text': str(r)}
+        finally: self.close()
 
     def _prompt(self, ask):
         "The question, with where it was asked from. The skill says what to do with that."

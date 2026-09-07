@@ -11,7 +11,8 @@ from fastcore.all import Path
 from starlette.testclient import TestClient
 from fasthtml.common import fast_app
 
-from leela.blocks.canvas.app import STORE, connect
+from leela.blocks.canvas.app import connect
+from leela.blocks.canvas.store import store_for
 from leela.blocks.canvas.doc import Brick, Canvas, defs_of, downstream, order, reads_of
 from leela.blocks.canvas.helper import TOOLS, Ask, Scripted
 from leela.blocks.canvas.live import Runtime
@@ -276,11 +277,79 @@ def test_a_component_writing_a_name_reruns_the_document(client):
     stages = [{'name': 'Leads', 'value': 1000}, {'name': 'Won', 'value': 500}]
     r = client.post('/canvas/emit', json={'path': p, 'name': 'stages', 'value': stages}).json()
     assert r['ok'] and 'sf3' in r['runs']
-    assert STORE.get(p).runtime.ns['won'] == 500
+    assert store_for(None).get(p).runtime.ns['won'] == 500
+
+def test_a_name_a_cell_stops_defining_is_dropped(client):
+    """The namespace kept every name a cell had ever defined. Renaming or deleting a definition left
+    the old one readable, so a binding onto it went on resolving against a value nothing computed."""
+    p = str(EXAMPLES/'pricing-a-run.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    o = store_for(None).get(p)
+    ins = client.post('/canvas/op', json={'path': p, 'op': {
+        'op': 'insert', 'kind': 'code', 'body': 'doomed = 41'}}).json()
+    bid = ins['brick']['id']
+    assert o.runtime.ns['doomed'] == 41
+    r = client.post('/canvas/op', json={'path': p, 'op': {
+        'op': 'replace', 'id': bid, 'body': 'kept = 42'}}).json()
+    assert r['dropped'] == ['doomed'] and 'doomed' not in o.runtime.ns
+    client.post('/canvas/run', json={'path': p, 'id': bid})
+    assert o.runtime.ns['kept'] == 42
+    gone = client.post('/canvas/op', json={'path': p, 'op': {'op': 'remove', 'id': bid}}).json()
+    assert gone['dropped'] == ['kept'] and 'kept' not in o.runtime.ns
+
+def test_code_turned_into_prose_takes_its_names_with_it(client):
+    p = str(EXAMPLES/'pricing-a-run.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    o = store_for(None).get(p)
+    bid = client.post('/canvas/op', json={'path': p, 'op': {
+        'op': 'insert', 'kind': 'code', 'body': 'temporary = 7'}}).json()['brick']['id']
+    assert o.runtime.ns['temporary'] == 7
+    r = client.post('/canvas/op', json={'path': p, 'op': {'op': 'kind', 'id': bid, 'kind': 'text'}}).json()
+    assert r['dropped'] == ['temporary'] and 'temporary' not in o.runtime.ns
+
+def test_inserted_wiring_runs_once(client):
+    "`insert` runs a code brick, and the wiring path ran it a second time, doubling its side effects."
+    p = str(EXAMPLES/'pricing-a-run.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    o = store_for(None).get(p)
+    o.runtime.set('tally', 0)
+    r = client.post('/canvas/op', json={'path': p, 'op': {
+        'op': 'insert', 'kind': 'code', 'body': 'tally = tally + 1'}}).json()
+    assert r['run']['ok'] and o.runtime.ns['tally'] == 1
 
 def test_opening_a_canvas_that_is_not_there_says_so(client):
-    r = client.get('/canvas/open', params={'path': '/no/such.canvas.md'})
+    r = client.get('/canvas/open', params={'path': 'no-such.canvas.md'})
     assert r.status_code == 400 and 'no canvas' in r.json()['error']
+
+@pytest.mark.parametrize('bad', ['/etc/passwd', '../../etc/passwd', '/no/such.canvas.md',
+                                 '../../pyproject.toml'])
+def test_no_live_route_reaches_a_path_outside_the_tree(client, bad):
+    """Every route that took a path read, ran or overwrote whatever it named. With no folder open
+    the canvas directory is the boundary; with one open `fs._check` is."""
+    assert client.get('/canvas/open', params={'path': bad}).status_code == 400
+    for route, body in (('/canvas/op', {'op': {'op': 'read'}}), ('/canvas/run', {'id': 'x'}),
+                        ('/canvas/runall', {}), ('/canvas/emit', {'name': 'x', 'value': 1}),
+                        ('/canvas/save', {}), ('/canvas/steer', {'turn': 't', 'text': 'x'})):
+        r = client.post(route, json={'path': bad, **body})
+        assert r.status_code == 400, f'{route} accepted {bad}'
+
+def test_a_save_cannot_write_its_destination_outside_the_tree(client):
+    "`to` is a destination, and it passes the same gate as the source."
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    r = client.post('/canvas/save', json={'path': p, 'to': '/tmp/escaped.canvas.md'})
+    assert r.status_code == 400 and not Path('/tmp/escaped.canvas.md').exists()
+
+def test_a_save_against_a_stale_revision_is_refused(client):
+    "Two editors, one file: the second writer is told rather than silently winning."
+    p = str(EXAMPLES/'making-a-block.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    o = store_for(None).get(p)
+    was = o.rev
+    assert client.post('/canvas/save', json={'path': p, 'rev': was}).json()['ok']
+    client.post('/canvas/op', json={'path': p, 'op': {'op': 'insert', 'kind': 'text', 'body': 'x'}})
+    r = client.post('/canvas/save', json={'path': p, 'rev': was})
+    assert r.status_code == 409 and 'moved to rev' in r.json()['error']
 
 def test_a_brick_may_embed_a_file_beside_the_canvas_and_nothing_above_it(client):
     assert client.get('/canvas/file', params={'path': 'assets/brick-ports.pdf'}).status_code == 200
@@ -423,3 +492,66 @@ def test_the_stylesheet_carries_both_themes(client):
     light = set(re.findall(r'--cv-[\w-]+(?=:)', css.split('[data-theme=dark]')[0]))
     dark = set(re.findall(r'--cv-[\w-]+(?=:)', css.split('[data-theme=dark]')[1].split('*')[0]))
     assert dark and dark <= light, f'dark names a token light does not: {sorted(dark - light)}'
+
+
+def _node_md(src):
+    "Render one string through `md.js` in node, the way a canvas frame renders it."
+    import json, shutil, subprocess
+    node = shutil.which('node')
+    if node is None: pytest.skip('no node')
+    js = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'canvas'/'md.js').read_text()
+    prog = js + f'\nprocess.stdout.write(cvMd({json.dumps(src)}));\n'
+    r = subprocess.run([node, '--input-type=module', '-e', prog], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+@pytest.mark.parametrize('src', [
+    '[x](javascript:alert(1))',
+    '[x](JaVaScRiPt:alert(1))',
+    '[x](java\tscript:alert(1))',
+    '![a](data:text/html;base64,PHNjcmlwdD4=)',
+    '![a](data:image/svg+xml;base64,PHN2Zz4=)',
+    '[x](vbscript:msgbox)',
+])
+def test_markdown_refuses_a_url_that_is_script(src):
+    """A scheme that executes is not a URL. A refused one is escaped back to the text it was, so
+    the words may still appear; what must not appear is an `href` or a `src` carrying them."""
+    out = _node_md(src)
+    assert 'href=' not in out and 'src=' not in out, out
+
+@pytest.mark.parametrize('src', [
+    '![a](x" onerror="alert(1))',
+    "![a](x' onerror='alert(1))",
+    '[t](x" onmouseover="alert(1))',
+    '[t"onclick="alert(1)](https://example.com)',
+])
+def test_markdown_cannot_inject_an_attribute(src):
+    """`cvEsc` escaped only `&<>`, so a quote in a URL or a link label closed the attribute and
+    opened one of the author's choosing."""
+    out = _node_md(src)
+    assert re.search(r'<[^>]*\son\w+\s*=', out) is None, out
+
+def test_markdown_still_renders_the_links_a_document_needs():
+    "The gate is not a ban: http, mailto, a relative path and an anchor all still render."
+    for src, want in (('[a](https://example.com/x?y=1)', 'href="https://example.com/x?y=1"'),
+                      ('[a](mailto:x@example.com)', 'href="mailto:x@example.com"'),
+                      ('[a](../notes.md)', 'href="../notes.md"'),
+                      ('[a](#section)', 'href="#section"'),
+                      ('![a](assets/x.png)', 'src="assets/x.png"')):
+        assert want in _node_md(src), (src, _node_md(src))
+
+def test_every_component_frame_is_sandboxed():
+    "A frame runs code the document did not write. Same-origin would give it this page's session."
+    js = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'canvas'/'canvas.js').read_text()
+    code = re.sub(r'/\*.*?\*/', '', js, flags=re.S)          # the prose explains the rule; the code holds it
+    assert "setAttribute('sandbox', CV_SANDBOX)" in code
+    assert re.search(r"CV_SANDBOX\s*=\s*'allow-scripts'", code), 'the one sandbox value'
+    assert 'allow-same-origin' not in code, 'same-origin would undo the sandbox'
+    #: Both the packaged component and the in-document sketch go through the one builder.
+    assert code.count('const f = cvFrame(b);') == 2
+
+def test_a_frame_speaks_only_for_itself():
+    "The id a message claims was trusted when no frame matched the sender, so any window could emit."
+    js = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'canvas'/'canvas.js').read_text()
+    assert 'const id = f?.dataset.id; if (!id) return;' in js
+    assert 'f?.dataset.id || d.id' not in js

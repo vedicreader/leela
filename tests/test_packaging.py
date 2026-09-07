@@ -846,3 +846,39 @@ def test_the_browser_driver_is_a_file_the_app_can_execute():
     with zipfile.ZipFile(z) as f: names = f.namelist()
     assert not [n for n in names if n.split('/')[0] in ('playwright', 'patchright')], \
         'the archive still holds a copy that would shadow the grafted one'
+
+def test_the_canvas_bundle_is_built_and_current():
+    """`/canvas/js` used to concatenate `leela/blocks/canvas/*.js` at request time, and the wheel
+    excludes exactly those files, so an installed Leela served an empty canvas. The bundle is
+    generated and committed like the IDE's three, and this fails when it drifts.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_ide_js as builder
+    for block in builder.OWN_BUNDLE:
+        out = builder.own_out(block)
+        assert out.is_file(), f'{out.name} has never been built'
+        assert out.read_text() == builder.own_bundle(block), \
+            f'{out.name} is stale; run python tools/build_ide_js.py'
+
+def test_the_canvas_bundle_is_what_the_route_serves():
+    "The route reads the built resource, not the modules the wheel leaves out."
+    from leela.blocks.canvas import ui
+    import sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_ide_js as builder
+    assert ui.bundle() == builder.own_out('canvas').read_text()
+
+def test_the_wheel_carries_every_bundle_the_app_serves():
+    """The exclusions keep the modules out of the wheel. A bundle built from them has to be in it,
+    or the route that serves it answers with nothing on an installed Leela."""
+    import zipfile
+    from leela.core.web import IDE_BUNDLES
+    from leela.blocks.canvas import ui
+    wheels = sorted((ROOT/'dist').glob('leela-*.whl'))
+    if not wheels: pytest.skip('no wheel in dist/ — run python -m build --wheel first')
+    with zipfile.ZipFile(wheels[-1]) as z: names = set(z.namelist())
+    for b in (*IDE_BUNDLES, ui.BUNDLE):
+        assert f'leela/static/{b}' in names, f'{b} is not in the wheel'
+    assert not [n for n in names if n.startswith('leela/static/js/')], 'the sources should stay out'
+    assert not [n for n in names if n.startswith('leela/blocks/') and n.endswith('.js')]

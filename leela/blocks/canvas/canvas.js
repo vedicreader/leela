@@ -340,10 +340,25 @@ function cvFrameSrc(b) {
   return `${cv.host}/bricks/f/${name}?frame=${b.id}&theme=${cv.theme}`;
 }
 
+/* A frame runs code the document did not write, so it is sandboxed. `allow-scripts` and nothing
+ * else: no `allow-same-origin`, so the frame gets an opaque origin and cannot read this page's
+ * DOM, cookies or storage, and cannot call this origin's routes with the session's credentials.
+ * The two `postMessage` calls it needs work under that, because messages cross origins by design. */
+const CV_SANDBOX = 'allow-scripts';
+
+function cvFrame(b) {
+  const f = document.createElement('iframe');
+  f.setAttribute('sandbox', CV_SANDBOX);
+  f.setAttribute('referrerpolicy', 'no-referrer');
+  f.dataset.id = b.id;
+  f.style.height = ((b.props || {}).height || 260) + 'px';
+  return f;
+}
+
 function cvComponent(b) {
   const box = document.createElement('div'); box.className = 'cv-frame';
-  const f = document.createElement('iframe');
-  f.src = cvFrameSrc(b); f.dataset.id = b.id; f.style.height = ((b.props || {}).height || 260) + 'px';
+  const f = cvFrame(b);
+  f.src = cvFrameSrc(b);
   f.setAttribute('scrolling', 'no');
   box.appendChild(f);
   box.appendChild(cvPortStrip(b));
@@ -352,8 +367,7 @@ function cvComponent(b) {
 
 function cvSim(b) {
   const box = document.createElement('div'); box.className = 'cv-frame cv-sketch';
-  const f = document.createElement('iframe');
-  f.dataset.id = b.id; f.style.height = ((b.props || {}).height || 260) + 'px';
+  const f = cvFrame(b);
   f.srcdoc = cvSketchDoc(b);
   box.appendChild(f); box.appendChild(cvPortStrip(b));
   return box;
@@ -415,8 +429,10 @@ function cvApplyPorts(ports) {
 
 window.addEventListener('message', async ev => {
   const d = ev.data || {}; if (!d.type?.startsWith('brick:')) return;
+  //: The window that sent it, never the id it claims. A sandboxed frame has an opaque origin, so
+  //: `ev.origin` is "null" for all of them and identity is the frame element or nothing.
   const f = [...document.querySelectorAll('#cv-doc iframe')].find(x => x.contentWindow === ev.source);
-  const id = f?.dataset.id || d.id; if (!id) return;       // the window that sent it, not the id it claims
+  const id = f?.dataset.id; if (!id) return;
   if (d.type === 'brick:height' && f) f.style.height = Math.max(80, d.px) + 'px';
   //: A frame that has only just loaded missed the props sent when the document was drawn.
   if (d.type === 'brick:ready' && cv.ports[id]) cvApplyPorts({[id]: cv.ports[id]});

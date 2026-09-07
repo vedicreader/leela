@@ -1,12 +1,31 @@
 /* Enough markdown for a document: headings, emphasis, code, lists, quotes, links, rules, tables.
  * Leela's own tabs render through mdhtml; a canvas frame is one page and carries this instead. */
-const cvEsc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+const cvEsc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+/* A URL a document may point at. `javascript:` in an href is script, and a data: SVG carries
+ * script too. Only http, https, mailto, a relative path and an anchor get through. Quotes are
+ * already entities by the time this runs, and a URL holding one is refused rather than repaired. */
+const cvUrl = u => {
+  const raw = String(u ?? '').trim();
+  if (!raw || /[\s"'<>`]/.test(raw)) return '';
+  const bare = raw.replace(/[\u0000-\u001f]/g, '');
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i.test(bare)) return bare;
+  const scheme = bare.match(/^([a-z][a-z0-9+.-]*):/i);
+  if (scheme) return /^(https?|mailto)$/i.test(scheme[1]) ? bare : '';
+  return bare;                                      // relative, absolute-path or anchor
+};
 
 function cvInline(s) {
   return cvEsc(s)
     .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
-    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img alt="$1" src="$2">')
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, a, u) => {
+      const src = cvUrl(u); return src ? `<img alt="${a}" src="${src}">` : cvEsc(m);
+    })
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, u) => {
+      const href = cvUrl(u);
+      return href ? `<a href="${href}" target="_blank" rel="noreferrer noopener">${txt}</a>` : cvEsc(m);
+    })
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/(^|[\s(])_([^_\n]+)_/g, '$1<em>$2</em>')

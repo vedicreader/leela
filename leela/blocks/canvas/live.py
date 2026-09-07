@@ -39,6 +39,9 @@ class Runtime:
     def __init__(self, boot=BOOT):
         self.ns = {'__name__': 'canvas'}
         self.count = 0
+        #: What each brick defined the last time it ran. A name a brick stops defining is dropped,
+        #: so a renamed or deleted cell cannot leave the old name readable to everything downstream.
+        self.owned = {}
         if boot: exec(compile(boot, '<boot>', 'exec'), self.ns)
 
     def run(self, brick):
@@ -52,8 +55,28 @@ class Runtime:
         for text, name in ((out.getvalue(), 'stdout'), (err.getvalue(), 'stderr')):
             if text: outputs.insert(0, stream(text, name))
         self.count += 1
+        self.retire(brick)
         return dict(outputs=outputs, ms=(time.perf_counter() - t0) * 1000, count=self.count,
                     defs=list(brick.defs), ok=not any(o['output_type'] == 'error' for o in outputs))
+
+    def retire(self, brick):
+        "Drop the names this brick used to define and no longer does. Returns what went."
+        now = set(brick.defs) if brick.runs else set()
+        gone = self.owned.get(brick.id, set()) - now
+        for n in gone: self.ns.pop(n, None)
+        if now: self.owned[brick.id] = now
+        else: self.owned.pop(brick.id, None)
+        return sorted(gone)
+
+    def forget(self, brick_id):
+        "Drop every name one brick defined. What a removed brick leaves behind is nothing."
+        gone = self.owned.pop(brick_id, set())
+        for n in gone: self.ns.pop(n, None)
+        return sorted(gone)
+
+    def close(self):
+        "Release whatever the namespace holds. In process there is nothing to release."
+        self.ns.clear(); self.owned.clear()
 
     def _exec(self, src, tag):
         "Run a block and hand back its trailing expression, the way a notebook cell does."
