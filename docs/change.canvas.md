@@ -54,7 +54,7 @@ Read this table first. Every later section uses these words and no others.
 |---|---|
 | **brick** | one part of the document. A fence or a comment wrap. A code cell, a question, a goal, a task, a clipping. |
 | **prose** | ordinary markdown between bricks. It needs no markup of its own. |
-| **region** | the bricks under one heading. Headings make the regions. Nobody writes one. |
+| **region** | the bricks under one heading. The headings make the regions, so nobody writes one. |
 | **basket** | the exact list of bricks that one question sends to the model. |
 | **scope** | how a question gathers its first set of bricks. `page`, `region`, `upstream`, `doc` or `none`. |
 | **pin** | a brick a question always reads, whatever the scope says. A `mute` is the opposite. |
@@ -70,28 +70,26 @@ name is retired. There is one name now, and it is `canvas`.
 
 # Why it helps
 
-A notebook decides what the model reads by position. Every cell above the question goes in. This
-is correct for a script, because the cells above are the steps you already took.
+A notebook picks context by position: every cell above the question. That is right for a script,
+where the cells above are the steps you took. A plan holds four lines of work at once, so position
+hands the recommendation question three failed attempts at a groupby, or you turn it off and paste
+the same paragraphs again.
 
-It is wrong for a plan. A plan holds four lines of work at once. Ask the recommendation question
-to read everything above it, and it reads three failed attempts at a groupby. Ask it to read
-nothing, and you paste the same three paragraphs again.
+An audit shows the limit. It belongs to the question near the top of the document and to the risk
+question near the bottom, and to nothing between them. Where a brick sits says nothing about which
+questions it answers.
 
-One case shows it clearly. An audit belongs in the context of the question near the top of the
-document, and in the context of the risk question near the bottom, and in nothing between them.
-Position cannot say that. Where a brick sits says nothing about which questions it answers.
+A document that can say it gives three things.
 
-Three things follow from a document that can say it.
-
-A question shows its basket before it runs. You see each brick, why it is there, and what it
-costs. You mute one and the count drops.
+A question shows its basket before it runs: each brick, why it is there, and what it costs. Mute
+one and the count drops.
 
 A boundary on the canvas is a change you can review. It names the goal, owns the files, and holds
-the tasks, the prose and the code together. One page then answers whether the change does what the
+the tasks, the prose and the code together, so one page answers whether the change does what the
 goal said.
 
-A goal shows what serves it. Work that serves no goal is visible. A goal that nothing serves is
-visible too, and that one is worse, because it looks like a goal that is going well.
+A goal shows what serves it, and shows a goal that nothing serves. The second is the worse finding,
+because it looks like a goal that is going well.
 
 # The file
 
@@ -312,7 +310,7 @@ and the sideways scroll.
 | `canvas/explain.md`, `canvas/ste.md` | 44 | the prompt and the STE limits |
 | other | 60 | the block wiring, the example, the build file |
 
-Almost every file is new, so there is no earlier version to compare against. This is why the page
+Almost every file is new, so there is no earlier version to compare against. The page
 shows snippets and not one large diff.
 
 # Checks

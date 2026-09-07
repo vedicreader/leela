@@ -108,10 +108,10 @@ color:var(--fg3)}
 footer code{font-size:12px}
 @media (min-width:560px){body{font-size:16px}h1{font-size:22px}}
 </style></head><body>
-<header><div class="in"><div class="mark">canvas &middot; literate diff</div><h1>One session, reviewed: the canvas block, the brick library, and the page you are reading</h1><div class="chips"><span class="chip done">u-doc done</span><span class="chip done">u-ctx done</span><span class="chip done">u-chg done</span><span class="chip done">u-pr done</span><span class="chip done">u-brk done</span><span class="chip doing">u-ed doing</span><span class="chip done">u-wire done</span><span class="chip warn">7 file(s) claimed by nobody</span></div></div></header><div class="wrap"><details><summary>Contents</summary><div class="in"><nav><ol><li><a href="#what-this-is">What this is</a></li><li><a href="#words">Words</a></li><li><a href="#why-it-helps">Why it helps</a></li><li><a href="#the-plan">The plan</a></li><li><a href="#the-document">The document</a></li><li><a href="#the-basket">The basket</a></li><li><a href="#the-change">The change</a></li><li><a href="#the-page">The page</a></li><li><a href="#the-prompts">The prompts</a></li><li><a href="#the-library">The library</a></li><li><a href="#the-editor">The editor</a></li><li><a href="#the-wiring">The wiring</a></li><li><a href="#what-running-it-found">What running it found</a></li><li><a href="#the-diff">The diff</a></li><li><a href="#the-numbers">The numbers</a></li><li><a href="#checks">Checks</a></li></ol></nav></div></details><h2 id="what-this-is">What this is</h2><p>This file is the review of one working session. It is not a report about the session. It is the
-session's own document, in the format the session built, read by the code the session added.</p>
-<p>The page you are reading was written by <code>leela/blocks/canvas/app.py:page</code>. It read this file,
-asked git for the diff this file names, and rendered both. Nothing assembled it by hand.</p>
+<header><div class="in"><div class="mark">canvas &middot; literate diff</div><h1>One session, reviewed: the canvas block, the brick library, and the page you are reading</h1><div class="chips"><span class="chip done">u-doc done</span><span class="chip done">u-ctx done</span><span class="chip done">u-chg done</span><span class="chip done">u-pr done</span><span class="chip done">u-brk done</span><span class="chip doing">u-ed doing</span><span class="chip done">u-wire done</span><span class="chip warn">7 file(s) claimed by nobody</span></div></div></header><div class="wrap"><details><summary>Contents</summary><div class="in"><nav><ol><li><a href="#what-this-is">What this is</a></li><li><a href="#words">Words</a></li><li><a href="#why-it-helps">Why it helps</a></li><li><a href="#the-plan">The plan</a></li><li><a href="#the-document">The document</a></li><li><a href="#the-basket">The basket</a></li><li><a href="#the-change">The change</a></li><li><a href="#the-page">The page</a></li><li><a href="#the-prompts">The prompts</a></li><li><a href="#the-library">The library</a></li><li><a href="#the-editor">The editor</a></li><li><a href="#the-wiring">The wiring</a></li><li><a href="#what-running-it-found">What running it found</a></li><li><a href="#the-diff">The diff</a></li><li><a href="#the-numbers">The numbers</a></li><li><a href="#checks">Checks</a></li></ol></nav></div></details><h2 id="what-this-is">What this is</h2><p>This file is the review of one working session, in the format the session built, read by the code
+the session added.</p>
+<p><code>leela/blocks/canvas/app.py:page</code> wrote the page you are reading. It read this file, asked git for
+the diff this file names, and rendered both.</p>
 <div class="card goal"><div class="stmt">Give Leela one document that holds a goal, its plan, its research, its code and its questions,
 and one page that shows all five to a reviewer on a phone.</div><dl><dt>measure</dt><dd>tools you open to review one session against its goal</dd><dt>baseline</dt><dd>4: tracker, notebook, diff, deck</dd><dt>target</dt><dd>1 page</dd><dt>by</dt><dd>2026-10-31</dd></dl></div><h2 id="words">Words</h2><p>Read this table first. Every later section uses these words and no others.</p>
 <table>
@@ -121,7 +121,7 @@ and one page that shows all five to a reviewer on a phone.</div><dl><dt>measure<
 <tbody>
 <tr><td><strong>brick</strong></td><td>one part of the document: a fence or a comment wrap. A code cell, a question, a goal, a task, a clipping.</td></tr>
 <tr><td><strong>prose</strong></td><td>ordinary markdown between bricks. It carries no markup of its own.</td></tr>
-<tr><td><strong>region</strong></td><td>the bricks under one heading. Headings make regions; nobody writes one.</td></tr>
+<tr><td><strong>region</strong></td><td>the bricks under one heading. The headings make the regions, so nobody writes one.</td></tr>
 <tr><td><strong>basket</strong></td><td>the exact list of bricks that one question sends to the model.</td></tr>
 <tr><td><strong>bundle</strong></td><td>one unit of change. It claims a region, names a goal, and owns a list of files.</td></tr>
 <tr><td><strong>snippet</strong></td><td>a brick that cites code out of a file. It keeps no copy of that code.</td></tr>
@@ -131,26 +131,25 @@ and one page that shows all five to a reviewer on a phone.</div><dl><dt>measure<
 <tr><td><strong>pata</strong></td><td>the retired name for this work. Sanskrit for the cloth a scroll painting is made on. The name now is <code>canvas</code>.</td></tr>
 </tbody>
 </table>
-<h2 id="why-it-helps">Why it helps</h2><p>A reviewer of a change gets a diff. A diff answers one question: which lines moved. It cannot
-answer the three questions a reviewer actually has.</p>
+<h2 id="why-it-helps">Why it helps</h2><p>A reviewer of a change gets a diff, which answers one question: which lines moved. It cannot answer
+the three a reviewer has.</p>
 <ol>
 <li>What was this change supposed to do?</li>
 <li>Did it do that?</li>
 <li>Did anything else move that nobody meant to move?</li>
 </ol>
-<p>The diff cannot answer them because the diff does not know the intent. Only the document knows.
-So the document states the intent, the diff states the fact, and Leela compares them. The
-comparison is <code>coverage</code>. Its <code>unmet</code> list is a claim with no change behind it. Its <code>unclaimed</code>
-list is a change with no claim behind it. No diff tool can produce either list.</p>
+<p>The intent is in the document, not in the diff. So the document states the intent, the diff states
+the fact, and <code>coverage</code> compares them. Its <code>unmet</code> list is a claim with no change behind it, and
+its <code>unclaimed</code> list is a change with no claim behind it. Neither list can come out of a diff tool,
+which holds one of the two sets.</p>
 <p>This page shows that comparison at the top, as chips, before any code.</p>
 <div class="card ask"><div class="q"><p>Why can a diff tool not report <code>unclaimed</code> on its own?</p>
-</div><div class="a"><p>Because <code>unclaimed</code> is the difference between two sets, and a diff tool holds only one of them. It
-holds the files that moved. It does not hold the files a change said it would touch. That set is
-written in the document, in each bundle's <code>paths</code>. Subtract one from the other and you have a
-finding. Hold only one and you have a file list.</p>
+</div><div class="a"><p><code>unclaimed</code> is the difference between two sets. A diff tool holds the files that moved, and not the
+files a change said it would touch, which are in each bundle's <code>paths</code>. With one set you have a
+file list, and with both you have a finding.</p>
 </div></div><h2 id="the-plan">The plan</h2><ul class="tasks"><li class="done"><span class="box">[x]</span><span>Read the document format from the canvas branch and adopt it.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Build the context basket: scope, pins, mutes, budget, and an inspectable result.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Make a boundary on the canvas a unit of change: tasks, prose, code and diff together.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Add the value view: every goal, and every change that serves it.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Write the literate page from the document, in ASD-STE100 English, under ramabana&#x27;s rules.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Resolve a component from an installed library, in Leela, with no second server.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Vendor the lego bricks as `extensions/bricks`, so the package extracts with no code change.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Merge the canvas branch: one `doc.py`, one palette, one editor.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>Move the page assembly out of the tool and into Leela.</span><span class="who">me</span></li></ul><h2 id="the-document">The document</h2><div class="card change"><div class="chips"><span class="chip done">done</span></div><div class="meta">Worth: the file every other part reads</div><p>A canvas is a markdown file. Prose stays prose. A brick is a fence or a comment wrap, so every
-markdown reader shows the file and git shows a useful diff. The dataflow between code bricks is
-read off the code with the <code>ast</code> module. Nobody draws an edge.</p>
+markdown reader shows the file and git shows a useful diff. The <code>ast</code> module reads the dataflow
+between code bricks off the code itself.</p>
 <div class="chips"><span class="chip">leela/blocks/canvas/doc.py</span><span class="chip">leela/blocks/canvas/example.py</span><span class="chip">leela/blocks/canvas/export.py</span><span class="chip">leela/blocks/canvas/layout.py</span><span class="chip">leela/blocks/canvas/ops.py</span></div><div class="chips"><span class="chip">doc:docs/canvas.md</span><span class="chip">file:leela/blocks/nb/nb.py</span></div></div><p>Two brick shapes, and the shape follows the content. Code goes in a fence, because a fence is how
 markdown holds code. A goal or a task goes in a comment wrap, because a reader should see the
 words and not the markup.</p>
@@ -163,8 +162,8 @@ WRAPPED = (&#x27;reply&#x27;, &#x27;note&#x27;, &#x27;quiz&#x27;, &#x27;goal&#x2
 KINDS = (&#x27;text&#x27;,) + FENCED + WRAPPED</code></pre></figure><p>The graph is a read, not a record. <code>defs_of</code> asks the code what it defines and <code>reads_of</code> asks
 what it reads. Two bricks are joined when one defines what the other reads.</p>
 <p><code>order</code> reads the dependency from the code. <code>_owners</code> says which brick defines each name, and
-<code>b.reads</code> says which names a brick needs, so no person draws an edge. A cycle does not raise. The
-visit stops and the document order stands, because a plan with a loop in it must still open.</p>
+<code>b.reads</code> says which names a brick needs, so no person draws an edge. On a cycle the visit stops
+and the document order stands, so a plan with a loop in it still opens.</p>
 <figure><figcaption><b>leela/blocks/canvas/doc.py</b> &middot; order</figcaption><pre><code class="lang-python">def order(bricks):
     &quot;Runnable bricks in dependency order, falling back to document order on a cycle.&quot;
     live = L(bricks).filter(lambda b: b.runs)
@@ -179,10 +178,9 @@ visit stops and the document order stands, because a plan with a loop in it must
     return L(out)</code></pre></figure><h2 id="the-basket">The basket</h2><div class="card change"><div class="chips"><span class="chip done">done</span></div><div class="meta">Worth: what a question in the document may read</div><p>A question names its own scope, its pins and its budget. <code>resolve</code> returns the exact bricks, each
 with the reason it was chosen. <code>render</code> emits the cells that ramabana's <code>compact_notebook_context</code>
 already knows how to shed.</p>
-<div class="chips"><span class="chip">leela/blocks/canvas/context.py</span></div><div class="chips"><span class="chip">pkg:ramabana</span><span class="chip">file:leela/blocks/nb/nb.py</span></div></div><p>A notebook decides what the model reads by position: every cell above the question. That is right
-for a script and wrong for a plan, because a plan holds four lines of work at once. One case shows
-it. An audit belongs to the question at the top of the page and to the question at the bottom, and
-to nothing between them. Position cannot say that. A pin can.</p>
+<div class="chips"><span class="chip">leela/blocks/canvas/context.py</span></div><div class="chips"><span class="chip">pkg:ramabana</span><span class="chip">file:leela/blocks/nb/nb.py</span></div></div><p>A notebook sends every brick above the question. A pin sends the two that matter, wherever they
+sit. An audit belongs to the question at the top of the page and the one at the bottom, and to
+nothing between.</p>
 <p>A question states its own rule, and the rule is four fields. <code>scope</code> gathers the first set, <code>pins</code>
 add what the scope missed, and <code>mutes</code> remove what it caught. An unknown scope becomes <code>page</code>
 rather than an error, so a typed attribute cannot stop a document from opening.</p>
@@ -195,17 +193,16 @@ class Spec:
     budget: int | None = None
     goal: bool = True
     def __post_init__(self):
-        if self.scope not in SCOPES: self.scope = &#x27;page&#x27;</code></pre></figure><div class="card note"><p>The budget sheds the least useful brick first, not the oldest. A brick a question pinned survives
-the budget, and so does the goal. This is why <code>resolve</code> returns <code>Item</code>s with a <code>why</code> on each one:
-a reviewer can see what was dropped and ask why.</p>
+        if self.scope not in SCOPES: self.scope = &#x27;page&#x27;</code></pre></figure><div class="card note"><p>The budget sheds the least useful brick first, not the oldest, and never a pin or the goal. Each
+<code>Item</code> carries the <code>why</code> that put it there, so a reviewer can see what was dropped.</p>
 </div><h2 id="the-change">The change</h2><div class="card change"><div class="chips"><span class="chip done">done</span></div><div class="meta">Worth: all of the review step</div><p>A bundle claims a region, names a goal and owns a list of files. <code>coverage</code> compares the claim
 with the diff. <code>state</code> is read off the document and never set by hand. <code>review</code>, <code>value</code> and <code>pr</code>
 are three views over the same file.</p>
 <div class="chips"><span class="chip">README.md</span><span class="chip">docs/README.md</span><span class="chip">docs/blocks.md</span><span class="chip">docs/canvas.md</span><span class="chip">docs/change.canvas.md</span><span class="chip">docs/dynamic-documents.md</span><span class="chip">docs/session.canvas.md</span><span class="chip">leela/blocks/canvas/change.py</span><span class="chip">leela/blocks/canvas/lit.css</span><span class="chip">leela/blocks/canvas/lit.py</span><span class="chip">media/*.md</span><span class="chip">media/canvas-*.html</span><span class="chip">tools/canvas_proto/*</span><span class="chip">tools/canvas_spike.py</span><span class="chip">tools/make_change_page.py</span></div><div class="chips"><span class="chip">doc:docs/change.canvas.md</span><span class="chip">pkg:mdhtml</span><span class="chip">pkg:gheasy</span></div></div><p>The state of a change is derived. A bundle whose tasks are all done, and whose files all moved,
 is done. Nothing writes that word into the file.</p>
-<p><code>state</code> reads the word off the document. One blocked task blocks the change. Every task done, and
-every claimed file moved, makes it done. A change with no diff behind it is not punished for that,
-because <code>files_ok</code> treats an absent diff as no evidence, not as evidence against.</p>
+<p><code>state</code> reads the word off the document. One blocked task blocks the change, and every task done
+with every claimed file moved makes it done. <code>files_ok</code> treats an absent diff as no evidence, so a
+change nobody has diffed yet does not read as work not started.</p>
 <figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; state</figcaption><pre><code class="lang-python">def state(
     b,             # the `Bundle`
     changed=(),    # paths a diff says moved, else no evidence about files
@@ -219,9 +216,9 @@ because <code>files_ok</code> treats an absent diff as no evidence, not as evide
     if st and all(x == &#x27;done&#x27; for x in st) and files_ok: return &#x27;done&#x27;
     if &#x27;doing&#x27; in st or &#x27;done&#x27; in st or hit: return &#x27;doing&#x27;
     return &#x27;todo&#x27;</code></pre></figure><p>The comparison a diff tool cannot make:</p>
-<p><code>coverage</code> is the comparison. <code>matched</code> is a claim the diff confirms, <code>unmet</code> is a claim with
-nothing behind it, and <code>unclaimed</code> is a file that moved with no claim on it. The third list is the
-one no diff tool can produce, because only the document holds the promise to subtract from.</p>
+<p><code>matched</code> is a claim the diff confirms, <code>unmet</code> is a claim with nothing behind it, and <code>unclaimed</code>
+is a file that moved with no claim on it. A claim is a glob, so <code>leela/blocks/canvas/*</code> covers
+every file the change touched in that folder without naming one of them.</p>
 <figure><figcaption><b>leela/blocks/canvas/change.py</b> &middot; coverage</figcaption><pre><code class="lang-python">def coverage(
     doc,        # the document
     changed,    # paths a diff says moved
@@ -237,9 +234,8 @@ one no diff tool can produce, because only the document holds the promise to sub
                      &#x27;tasks_open&#x27;: [t.id for t in b.of(&#x27;task&#x27;)
                                     if t.attrs.get(&#x27;status&#x27;, &#x27;todo&#x27;) not in (&#x27;done&#x27;,)]})
     return {&#x27;bundles&#x27;: rows, &#x27;unclaimed&#x27;: [p for p in changed if p not in claimed]}</code></pre></figure><h2 id="the-page">The page</h2><p>Leela now assembles this page. The tool that used to do it picks a file and prints a line.</p>
-<p><code>page</code> is the whole assembly, and it is Leela's, not a script's. It fills the slots, counts the
-files, and writes the HTML in one call. It returns the file list and the unclaimed list, so a
-caller sees the finding without reading the page.</p>
+<p><code>page</code> fills the slots, counts the files and writes the HTML in one call. It returns the file list
+and the unclaimed list, so a caller sees the finding without opening the page.</p>
 <figure><figcaption><b>leela/blocks/canvas/app.py</b> &middot; page</figcaption><pre><code class="lang-python">def page(
     doc,           # the document, its `diff` bricks still empty
     dest,          # where to write the page
@@ -280,8 +276,8 @@ bundle claims gets <code>claimed=no</code>, which the page shows as a warning.</
         loose = set(coverage(doc, [b.attrs[&#x27;path&#x27;] for b in made])[&#x27;unclaimed&#x27;])
         for b in made:
             if b.attrs[&#x27;path&#x27;] in loose: b.attrs[&#x27;claimed&#x27;] = &#x27;no&#x27;
-    return doc._regions()</code></pre></figure><p>The page folds anything longer than a phone screen, and a diff body scrolls sideways inside its
-own box, so a long line never widens the page.</p>
+    return doc._regions()</code></pre></figure><p>The page folds anything longer than a phone screen. A diff body scrolls sideways inside its own
+box, so a long line never widens the page.</p>
 <p>The renderer folds a diff longer than a phone screen, and the summary still names the file and the
 counts. It drops the git headers a reader does not need. It writes no script, so the fold is
 <code>&lt;details&gt;</code> and the page works with JavaScript turned off.</p>
@@ -386,31 +382,29 @@ code change: eight files moved, and the only edit was to <code>bricks.py</code>,
 p = palette(libraries())
 [(b[&#x27;src&#x27;], b[&#x27;needs&#x27;]) for b in p[&#x27;bricks&#x27;]]
 </code></pre></figure><h2 id="the-editor">The editor</h2><div class="card change"><div class="chips"><span class="chip doing">doing</span></div><div class="meta">Worth: the run step and every insert menu</div><p>The canvas branch built the editor: a gutter, a block menu, a slash menu, a component palette, an
-inline helper and a live kernel. The merge kept one <code>doc.py</code> and one palette. The document format
-is the seam that let two branches meet.</p>
-<div class="chips"><span class="chip">docs/screenshots/*</span><span class="chip">examples/canvas/*</span><span class="chip">leela/blocks/canvas/*.canvas.md</span><span class="chip">leela/blocks/canvas/*.js</span><span class="chip">leela/blocks/canvas/app.py</span><span class="chip">leela/blocks/canvas/canvas.css</span><span class="chip">leela/blocks/canvas/helper.py</span><span class="chip">leela/blocks/canvas/live.py</span><span class="chip">leela/blocks/canvas/store.py</span><span class="chip">leela/blocks/canvas/triage.diff</span><span class="chip">leela/blocks/canvas/ui.py</span><span class="chip">media/canvas/*</span><span class="chip">media/e2e/*</span><span class="chip">tests/test_web_slow.py</span></div><div class="chips"><span class="chip">doc:docs/canvas.md</span></div></div><p>Five ways to add a brick, and all five write the same markdown. The gutter handle opens the block
-menu. A slash at the start of an empty line opens the filter. The palette lists what an installed
-library ships. A paste of a URL or a file makes a <code>source</code> or a <code>pdf</code>. <code>media/e2e/12-block-menu.png</code>
-and <code>13-slash-menu.png</code> show the first two, and <code>14-palette.png</code> shows the third.</p>
+inline helper and a live kernel. Both branches read the same file format, so the merge kept one
+<code>doc.py</code> and one palette.</p>
+<div class="chips"><span class="chip">docs/screenshots/*</span><span class="chip">examples/canvas/*</span><span class="chip">leela/blocks/canvas/*.canvas.md</span><span class="chip">leela/blocks/canvas/*.js</span><span class="chip">leela/blocks/canvas/app.py</span><span class="chip">leela/blocks/canvas/canvas.css</span><span class="chip">leela/blocks/canvas/helper.py</span><span class="chip">leela/blocks/canvas/live.py</span><span class="chip">leela/blocks/canvas/store.py</span><span class="chip">leela/blocks/canvas/triage.diff</span><span class="chip">leela/blocks/canvas/ui.py</span><span class="chip">media/canvas/*</span><span class="chip">media/e2e/*</span><span class="chip">tests/test_web_slow.py</span></div><div class="chips"><span class="chip">doc:docs/canvas.md</span></div></div><p>Four ways to add a brick, and all four write the same markdown. The gutter handle opens the block
+menu, and a slash on an empty line opens the filter. The palette lists what an installed library
+ships, and a pasted URL or file becomes a <code>source</code> or a <code>pdf</code>. <code>media/e2e/25-block-menu.png</code>,
+<code>26-slash-menu.png</code> and <code>27-palette.png</code> show the first three.</p>
 <div class="card change"><div class="chips"><span class="chip done">done</span></div><div class="meta">Worth: the block loads with the IDE, and its routes are checked</div><p>A block declares the context it reads in <code>CAPS</code>, and the folder is listed in <code>blocks.NAMES</code>. Every
 <code>.js</code> file is named in the IDE build. <code>tests/routes.txt</code> is the record of what the block serves,
 so a new route cannot appear unrecorded.</p>
 <div class="chips"><span class="chip">.gitignore</span><span class="chip">extensions/bricks/pyproject.toml</span><span class="chip">leela/blocks/__init__.py</span><span class="chip">leela/blocks/canvas/__init__.py</span><span class="chip">leela/skills/*</span><span class="chip">pyproject.toml</span><span class="chip">tests/routes.txt</span><span class="chip">tests/test_canvas.py</span><span class="chip">tests/test_canvas_doc.py</span><span class="chip">tools/build_ide_js.py</span></div><div class="chips"><span class="chip">file:leela/blocks/__init__.py</span></div></div><h2 id="the-wiring">The wiring</h2><p><code>CAPS</code> must name exactly what the routes read off <code>ctx</code>. The canvas block reads two things: the
 file system, and the model.</p>
 <p><code>CAPS</code> is a promise about <code>ctx</code>, and Leela checks it. A route that reads a capability the block did
-not declare fails at load, not at request time. This is why the canvas block asks for two things
-and no more.</p>
+not declare fails at load, not at the request that reads it.</p>
 <figure><figcaption><b>leela/blocks/canvas/app.py</b> &middot; 24-24</figcaption><pre><code class="lang-python">CAPS = (&#x27;fs&#x27;, &#x27;ai&#x27;)</code></pre></figure><h2 id="what-running-it-found">What running it found</h2><p>Running the merged block end to end found two faults that reading it could not.</p>
 <div class="card note"><p>Typing in a code brick was lost. An insert anywhere in the document runs <code>cvSync</code>, which keeps the
-element and hands it a new brick object, so the textarea's write went to an object the document no
-longer held. The next flush read the older body, and the cell ran empty. <code>cvEdit</code> writes through to
-<code>cvBrick(id)</code> and <code>cvKeepEdits</code> carries an edited body across the sync. The test is in
-<code>tests/test_web_slow.py</code>, and it fails on the code before the fix.</p>
+element and hands it a new brick object. The textarea then wrote to an object the document no
+longer held, and the next flush read the older body. <code>cvEdit</code> writes through to <code>cvBrick(id)</code>, and
+<code>cvKeepEdits</code> carries an edited body across the sync. The browser test in <code>tests/test_web_slow.py</code>
+returns the empty body on the code before the fix.</p>
 </div><div class="card note"><p>The context basket has a route and no panel. <code>/canvas/context</code> returns the exact bricks one question
 will send, each with the rule that chose it, and 51 tests cover the model. The merged editor has no
 control that opens it, because neither branch built one: the canvas branch built the editor and this
-side built the basket. This is the next piece of work, and the audit is the reason to name it here
-rather than in a tracker.</p>
+side built the basket. It is <code>t14</code> above.</p>
 </div><ul class="tasks"><li class="done"><span class="box">[x]</span><span>Fix the stale-object write and add the browser test that reproduces it.</span><span class="who">me</span></li><li class="todo"><span class="box">[ ]</span><span>Give the basket a panel: a control on an `ask` brick that shows what the question will send.</span><span class="who">me</span></li></ul><h2 id="the-diff">The diff</h2><p>Here is the diff for the two files that carry the change: the model and the routes. The slot below
 states its own paths and its own two commits, and Leela filled it. The rest of the branch is in the
 chips at the top of the page, and in <code>coverage</code>.</p>
@@ -424,9 +418,8 @@ prompt_files = 2</code></pre></figure><div class="card ask"><div class="q"><p>Wh
 </div><div class="a"><p>The intent. Every line of code on this branch is in the diff, and none of the four <code>contributes</code>
 lines is. A reader of the diff can see that <code>coverage</code> subtracts two sets. Only the document says
 which set was a promise.</p>
-</div></div><h2 id="checks">Checks</h2><ul class="tasks"><li class="done"><span class="box">[x]</span><span>125 canvas tests pass, 1 skipped: the example that wires itself from a component host, with none running. The browser test needs `-m slow`.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>`leela_bricks` installs from `extensions/bricks` and the resolver finds all ten of its components.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>This page is written by Leela, from this file, with a real git diff in the slot.</span><span class="who">me</span></li></ul><div class="card note"><p>The header says eight files are claimed by nobody, and they are left that way on purpose. Seven are
-scratch: <code>shot.mjs</code>, <code>t-dark.mjs</code>, <code>t-help.mjs</code> and four screenshots under <code>shots/</code>, all committed
-by an earlier branch and none of them a change any bundle here promised. This is what <code>unclaimed</code>
-is for, and a page that hid its own finding would be the wrong page.</p>
+</div></div><h2 id="checks">Checks</h2><ul class="tasks"><li class="done"><span class="box">[x]</span><span>125 canvas tests pass, 1 skipped: the example that wires itself from a component host, with none running. The browser test needs `-m slow`.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>`leela_bricks` installs from `extensions/bricks` and the resolver finds all ten of its components.</span><span class="who">me</span></li><li class="done"><span class="box">[x]</span><span>This page is written by Leela, from this file, with a real git diff in the slot.</span><span class="who">me</span></li></ul><div class="card note"><p>The seven files the header says nobody claims are left that way on purpose. They are scratch:
+<code>shot.mjs</code>, <code>t-dark.mjs</code>, <code>t-help.mjs</code> and four screenshots under <code>shots/</code>, all committed by an
+earlier branch, and none of them a change any bundle here promised.</p>
 </div><footer>Generated by canvas.lit from session.canvas.md. Every snippet is read from the file it names.</footer></div>
 </body></html>

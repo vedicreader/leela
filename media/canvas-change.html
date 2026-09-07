@@ -127,7 +127,7 @@ goal that it serves.</p>
 <tbody>
 <tr><td><strong>brick</strong></td><td>one part of the document. A fence or a comment wrap. A code cell, a question, a goal, a task, a clipping.</td></tr>
 <tr><td><strong>prose</strong></td><td>ordinary markdown between bricks. It needs no markup of its own.</td></tr>
-<tr><td><strong>region</strong></td><td>the bricks under one heading. Headings make the regions. Nobody writes one.</td></tr>
+<tr><td><strong>region</strong></td><td>the bricks under one heading. The headings make the regions, so nobody writes one.</td></tr>
 <tr><td><strong>basket</strong></td><td>the exact list of bricks that one question sends to the model.</td></tr>
 <tr><td><strong>scope</strong></td><td>how a question gathers its first set of bricks. <code>page</code>, <code>region</code>, <code>upstream</code>, <code>doc</code> or <code>none</code>.</td></tr>
 <tr><td><strong>pin</strong></td><td>a brick a question always reads, whatever the scope says. A <code>mute</code> is the opposite.</td></tr>
@@ -141,22 +141,21 @@ goal that it serves.</p>
 <p>The block is <code>canvas</code> and the file is <code>*.canvas.md</code>. An earlier draft of this work was a separate
 package called <code>pata</code>, from the Sanskrit <code>pata</code>, the cloth that a scroll painting is made on. The
 name is retired. There is one name now, and it is <code>canvas</code>.</p>
-<h2 id="why-it-helps">Why it helps</h2><p>A notebook decides what the model reads by position. Every cell above the question goes in. This
-is correct for a script, because the cells above are the steps you already took.</p>
-<p>It is wrong for a plan. A plan holds four lines of work at once. Ask the recommendation question
-to read everything above it, and it reads three failed attempts at a groupby. Ask it to read
-nothing, and you paste the same three paragraphs again.</p>
-<p>One case shows it clearly. An audit belongs in the context of the question near the top of the
-document, and in the context of the risk question near the bottom, and in nothing between them.
-Position cannot say that. Where a brick sits says nothing about which questions it answers.</p>
-<p>Three things follow from a document that can say it.</p>
-<p>A question shows its basket before it runs. You see each brick, why it is there, and what it
-costs. You mute one and the count drops.</p>
+<h2 id="why-it-helps">Why it helps</h2><p>A notebook picks context by position: every cell above the question. That is right for a script,
+where the cells above are the steps you took. A plan holds four lines of work at once, so position
+hands the recommendation question three failed attempts at a groupby, or you turn it off and paste
+the same paragraphs again.</p>
+<p>An audit shows the limit. It belongs to the question near the top of the document and to the risk
+question near the bottom, and to nothing between them. Where a brick sits says nothing about which
+questions it answers.</p>
+<p>A document that can say it gives three things.</p>
+<p>A question shows its basket before it runs: each brick, why it is there, and what it costs. Mute
+one and the count drops.</p>
 <p>A boundary on the canvas is a change you can review. It names the goal, owns the files, and holds
-the tasks, the prose and the code together. One page then answers whether the change does what the
+the tasks, the prose and the code together, so one page answers whether the change does what the
 goal said.</p>
-<p>A goal shows what serves it. Work that serves no goal is visible. A goal that nothing serves is
-visible too, and that one is worse, because it looks like a goal that is going well.</p>
+<p>A goal shows what serves it, and shows a goal that nothing serves. The second is the worse finding,
+because it looks like a goal that is going well.</p>
 <h2 id="the-file">The file</h2><p>A <code>pata</code> document is one markdown file. Prose stays prose. Each other part is a brick. A brick is
 a fence or a comment wrap.</p>
 <p>The reader reads the file line by line. It does not use one pattern on the whole file. This is
@@ -596,7 +595,7 @@ and the sideways scroll.</p>
 <tr><td>other</td><td>60</td><td>the block wiring, the example, the build file</td></tr>
 </tbody>
 </table>
-<p>Almost every file is new, so there is no earlier version to compare against. This is why the page
+<p>Almost every file is new, so there is no earlier version to compare against. The page
 shows snippets and not one large diff.</p>
 <h2 id="checks">Checks</h2><p>40 tests pass. Each test states one rule.</p>
 <p>Five faults came out of writing the tests and this page.</p>

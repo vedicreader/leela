@@ -4,11 +4,11 @@ title: One session, reviewed: the canvas block, the brick library, and the page 
 
 # What this is
 
-This file is the review of one working session. It is not a report about the session. It is the
-session's own document, in the format the session built, read by the code the session added.
+This file is the review of one working session, in the format the session built, read by the code
+the session added.
 
-The page you are reading was written by `leela/blocks/canvas/app.py:page`. It read this file,
-asked git for the diff this file names, and rendered both. Nothing assembled it by hand.
+`leela/blocks/canvas/app.py:page` wrote the page you are reading. It read this file, asked git for
+the diff this file names, and rendered both.
 
 <!--canvas goal id=g measure="tools you open to review one session against its goal" baseline="4: tracker, notebook, diff, deck" target="1 page" by=2026-10-31-->
 Give Leela one document that holds a goal, its plan, its research, its code and its questions,
@@ -23,7 +23,7 @@ Read this table first. Every later section uses these words and no others.
 |---|---|
 | **brick** | one part of the document: a fence or a comment wrap. A code cell, a question, a goal, a task, a clipping. |
 | **prose** | ordinary markdown between bricks. It carries no markup of its own. |
-| **region** | the bricks under one heading. Headings make regions; nobody writes one. |
+| **region** | the bricks under one heading. The headings make the regions, so nobody writes one. |
 | **basket** | the exact list of bricks that one question sends to the model. |
 | **bundle** | one unit of change. It claims a region, names a goal, and owns a list of files. |
 | **snippet** | a brick that cites code out of a file. It keeps no copy of that code. |
@@ -34,17 +34,17 @@ Read this table first. Every later section uses these words and no others.
 
 # Why it helps
 
-A reviewer of a change gets a diff. A diff answers one question: which lines moved. It cannot
-answer the three questions a reviewer actually has.
+A reviewer of a change gets a diff, which answers one question: which lines moved. It cannot answer
+the three a reviewer has.
 
 1. What was this change supposed to do?
 2. Did it do that?
 3. Did anything else move that nobody meant to move?
 
-The diff cannot answer them because the diff does not know the intent. Only the document knows.
-So the document states the intent, the diff states the fact, and Leela compares them. The
-comparison is `coverage`. Its `unmet` list is a claim with no change behind it. Its `unclaimed`
-list is a change with no claim behind it. No diff tool can produce either list.
+The intent is in the document, not in the diff. So the document states the intent, the diff states
+the fact, and `coverage` compares them. Its `unmet` list is a claim with no change behind it, and
+its `unclaimed` list is a change with no claim behind it. Neither list can come out of a diff tool,
+which holds one of the two sets.
 
 This page shows that comparison at the top, as chips, before any code.
 
@@ -53,10 +53,9 @@ Why can a diff tool not report `unclaimed` on its own?
 <!--/canvas-->
 
 <!--canvas reply id=r1 of=q1-->
-Because `unclaimed` is the difference between two sets, and a diff tool holds only one of them. It
-holds the files that moved. It does not hold the files a change said it would touch. That set is
-written in the document, in each bundle's `paths`. Subtract one from the other and you have a
-finding. Hold only one and you have a file list.
+`unclaimed` is the difference between two sets. A diff tool holds the files that moved, and not the
+files a change said it would touch, which are in each bundle's `paths`. With one set you have a
+file list, and with both you have a finding.
 <!--/canvas-->
 
 # The plan
@@ -106,8 +105,8 @@ Move the page assembly out of the tool and into Leela.
      paths=leela/blocks/canvas/doc.py,leela/blocks/canvas/layout.py,leela/blocks/canvas/ops.py,leela/blocks/canvas/export.py,leela/blocks/canvas/example.py
      refs=doc:docs/canvas.md,file:leela/blocks/nb/nb.py-->
 A canvas is a markdown file. Prose stays prose. A brick is a fence or a comment wrap, so every
-markdown reader shows the file and git shows a useful diff. The dataflow between code bricks is
-read off the code with the `ast` module. Nobody draws an edge.
+markdown reader shows the file and git shows a useful diff. The `ast` module reads the dataflow
+between code bricks off the code itself.
 <!--/canvas-->
 
 Two brick shapes, and the shape follows the content. Code goes in a fence, because a fence is how
@@ -125,8 +124,8 @@ what it reads. Two bricks are joined when one defines what the other reads.
 
 ```canvas snippet id=s-order path=leela/blocks/canvas/doc.py symbol=order
 `order` reads the dependency from the code. `_owners` says which brick defines each name, and
-`b.reads` says which names a brick needs, so no person draws an edge. A cycle does not raise. The
-visit stops and the document order stands, because a plan with a loop in it must still open.
+`b.reads` says which names a brick needs, so no person draws an edge. On a cycle the visit stops
+and the document order stands, so a plan with a loop in it still opens.
 ```
 
 # The basket
@@ -142,10 +141,9 @@ with the reason it was chosen. `render` emits the cells that ramabana's `compact
 already knows how to shed.
 <!--/canvas-->
 
-A notebook decides what the model reads by position: every cell above the question. That is right
-for a script and wrong for a plan, because a plan holds four lines of work at once. One case shows
-it. An audit belongs to the question at the top of the page and to the question at the bottom, and
-to nothing between them. Position cannot say that. A pin can.
+A notebook sends every brick above the question. A pin sends the two that matter, wherever they
+sit. An audit belongs to the question at the top of the page and the one at the bottom, and to
+nothing between.
 
 ```canvas snippet id=s-spec path=leela/blocks/canvas/context.py symbol=Spec
 A question states its own rule, and the rule is four fields. `scope` gathers the first set, `pins`
@@ -154,9 +152,8 @@ rather than an error, so a typed attribute cannot stop a document from opening.
 ```
 
 <!--canvas note id=n-budget-->
-The budget sheds the least useful brick first, not the oldest. A brick a question pinned survives
-the budget, and so does the goal. This is why `resolve` returns `Item`s with a `why` on each one:
-a reviewer can see what was dropped and ask why.
+The budget sheds the least useful brick first, not the oldest, and never a pin or the goal. Each
+`Item` carries the `why` that put it there, so a reviewer can see what was dropped.
 <!--/canvas-->
 
 # The change
@@ -176,17 +173,17 @@ The state of a change is derived. A bundle whose tasks are all done, and whose f
 is done. Nothing writes that word into the file.
 
 ```canvas snippet id=s-state path=leela/blocks/canvas/change.py symbol=state
-`state` reads the word off the document. One blocked task blocks the change. Every task done, and
-every claimed file moved, makes it done. A change with no diff behind it is not punished for that,
-because `files_ok` treats an absent diff as no evidence, not as evidence against.
+`state` reads the word off the document. One blocked task blocks the change, and every task done
+with every claimed file moved makes it done. `files_ok` treats an absent diff as no evidence, so a
+change nobody has diffed yet does not read as work not started.
 ```
 
 The comparison a diff tool cannot make:
 
 ```canvas snippet id=s-cov path=leela/blocks/canvas/change.py symbol=coverage
-`coverage` is the comparison. `matched` is a claim the diff confirms, `unmet` is a claim with
-nothing behind it, and `unclaimed` is a file that moved with no claim on it. The third list is the
-one no diff tool can produce, because only the document holds the promise to subtract from.
+`matched` is a claim the diff confirms, `unmet` is a claim with nothing behind it, and `unclaimed`
+is a file that moved with no claim on it. A claim is a glob, so `leela/blocks/canvas/*` covers
+every file the change touched in that folder without naming one of them.
 ```
 
 # The page
@@ -194,9 +191,8 @@ one no diff tool can produce, because only the document holds the promise to sub
 Leela now assembles this page. The tool that used to do it picks a file and prints a line.
 
 ```canvas snippet id=s-page path=leela/blocks/canvas/app.py symbol=page
-`page` is the whole assembly, and it is Leela's, not a script's. It fills the slots, counts the
-files, and writes the HTML in one call. It returns the file list and the unclaimed list, so a
-caller sees the finding without reading the page.
+`page` fills the slots, counts the files and writes the HTML in one call. It returns the file list
+and the unclaimed list, so a caller sees the finding without opening the page.
 ```
 
 A `diff` brick with no body is a slot. It says which paths it wants and which two commits to
@@ -209,8 +205,8 @@ alone, so a pasted diff is never overwritten. Each slot becomes one brick a file
 bundle claims gets `claimed=no`, which the page shows as a warning.
 ```
 
-The page folds anything longer than a phone screen, and a diff body scrolls sideways inside its
-own box, so a long line never widens the page.
+The page folds anything longer than a phone screen. A diff body scrolls sideways inside its own
+box, so a long line never widens the page.
 
 ```canvas snippet id=s-fold path=leela/blocks/canvas/lit.py symbol=_diff
 The renderer folds a diff longer than a phone screen, and the summary still names the file and the
@@ -301,14 +297,14 @@ p = palette(libraries())
      paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,tests/test_web_slow.py,leela/blocks/canvas/live.py,leela/blocks/canvas/helper.py,leela/blocks/canvas/store.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/*.canvas.md,leela/blocks/canvas/triage.diff,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*
      refs=doc:docs/canvas.md-->
 The canvas branch built the editor: a gutter, a block menu, a slash menu, a component palette, an
-inline helper and a live kernel. The merge kept one `doc.py` and one palette. The document format
-is the seam that let two branches meet.
+inline helper and a live kernel. Both branches read the same file format, so the merge kept one
+`doc.py` and one palette.
 <!--/canvas-->
 
-Five ways to add a brick, and all five write the same markdown. The gutter handle opens the block
-menu. A slash at the start of an empty line opens the filter. The palette lists what an installed
-library ships. A paste of a URL or a file makes a `source` or a `pdf`. `media/e2e/12-block-menu.png`
-and `13-slash-menu.png` show the first two, and `14-palette.png` shows the third.
+Four ways to add a brick, and all four write the same markdown. The gutter handle opens the block
+menu, and a slash on an empty line opens the filter. The palette lists what an installed library
+ships, and a pasted URL or file becomes a `source` or a `pdf`. `media/e2e/25-block-menu.png`,
+`26-slash-menu.png` and `27-palette.png` show the first three.
 
 <!--canvas bundle id=u-wire title="Wiring the block into Leela"
      goal=g
@@ -328,8 +324,7 @@ file system, and the model.
 
 ```canvas snippet id=s-caps path=leela/blocks/canvas/app.py lines=24-24
 `CAPS` is a promise about `ctx`, and Leela checks it. A route that reads a capability the block did
-not declare fails at load, not at request time. This is why the canvas block asks for two things
-and no more.
+not declare fails at load, not at the request that reads it.
 ```
 
 # What running it found
@@ -338,18 +333,17 @@ Running the merged block end to end found two faults that reading it could not.
 
 <!--canvas note id=n-stale-->
 Typing in a code brick was lost. An insert anywhere in the document runs `cvSync`, which keeps the
-element and hands it a new brick object, so the textarea's write went to an object the document no
-longer held. The next flush read the older body, and the cell ran empty. `cvEdit` writes through to
-`cvBrick(id)` and `cvKeepEdits` carries an edited body across the sync. The test is in
-`tests/test_web_slow.py`, and it fails on the code before the fix.
+element and hands it a new brick object. The textarea then wrote to an object the document no
+longer held, and the next flush read the older body. `cvEdit` writes through to `cvBrick(id)`, and
+`cvKeepEdits` carries an edited body across the sync. The browser test in `tests/test_web_slow.py`
+returns the empty body on the code before the fix.
 <!--/canvas-->
 
 <!--canvas note id=n-basket-->
 The context basket has a route and no panel. `/canvas/context` returns the exact bricks one question
 will send, each with the rule that chose it, and 51 tests cover the model. The merged editor has no
 control that opens it, because neither branch built one: the canvas branch built the editor and this
-side built the basket. This is the next piece of work, and the audit is the reason to name it here
-rather than in a tracker.
+side built the basket. It is `t14` above.
 <!--/canvas-->
 
 <!--canvas task id=t13 status=done owner=me-->
@@ -406,8 +400,7 @@ This page is written by Leela, from this file, with a real git diff in the slot.
 <!--/canvas-->
 
 <!--canvas note id=n-loose-->
-The header says eight files are claimed by nobody, and they are left that way on purpose. Seven are
-scratch: `shot.mjs`, `t-dark.mjs`, `t-help.mjs` and four screenshots under `shots/`, all committed
-by an earlier branch and none of them a change any bundle here promised. This is what `unclaimed`
-is for, and a page that hid its own finding would be the wrong page.
+The seven files the header says nobody claims are left that way on purpose. They are scratch:
+`shot.mjs`, `t-dark.mjs`, `t-help.mjs` and four screenshots under `shots/`, all committed by an
+earlier branch, and none of them a change any bundle here promised.
 <!--/canvas-->
