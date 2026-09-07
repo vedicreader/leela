@@ -337,3 +337,22 @@ def test_capture_and_replay_stand_in_for_a_model_that_is_not_here(tmp_path):
     box.write_text(json.dumps({'s1': 'One sentence.'}))
     assert explain(d, replay(box), root=PKG, rules='R').attrgot('id') == ['s1']
     assert d['s1'].body == 'One sentence.'
+
+def test_a_document_serialises_for_the_browser():
+    "Three routes hand `Doc.dict()` to the browser. Running them found it missing."
+    d = arrange(procurement())
+    got = d.dict()
+    assert got['title'] and got['path'] and len(got['bricks']) == len(d)
+    assert [r['title'] for r in got['regions']] == list(d.regions)
+    one = first(b for b in got['bricks'] if b['id'] == 'c-share')
+    assert one['defs'] == ['tail', 'rest', 'share', 'chain'] and 'bands' in one['reads']
+    assert one['x'] is not None and one['region'] == 'Baseline the tail'
+    import json
+    assert json.loads(json.dumps(got))['bricks'][0]['kind']      # and it is JSON
+
+def test_a_placed_brick_reports_two_coordinates_however_it_was_placed():
+    "`place` keeps a width beside them, and unpacking `xy` into two names must not depend on that."
+    b = Brick('text', 'x')
+    assert b.xy is None
+    assert len(b.place(10, 20, 300).xy) == 2 and b.width == 300
+    assert len(b.place(30, 40, 300, keep=True).xy) == 2

@@ -154,7 +154,7 @@ class Brick:
     def xy(self):
         "Where a second view draws it: what a person moved it to, else what a layout worked out."
         try: return float(self.props['x']), float(self.props['y'])
-        except (KeyError, TypeError, ValueError): return self.at
+        except (KeyError, TypeError, ValueError): return self.at[:2] if self.at else None
     @property
     def width(self):
         try: return float(self.props['w'])
@@ -179,6 +179,14 @@ class Brick:
         "Bricks this one claims a relation to, which the AST cannot see. `supports=a,b`."
         return {k: [x.strip() for x in v.split(',') if x.strip()]
                 for k, v in self.attrs.items() if k in RELATIONS}
+    def dict(self):
+        "This brick as the browser reads it. `defs` and `reads` are the dataflow, already resolved."
+        x, y = self.xy or (None, None)
+        return {'id': self.id, 'kind': self.kind, 'body': self.body, 'attrs': dict(self.attrs),
+                'binds': dict(self.binds), 'props': dict(self.props), 'pins': list(self.pins),
+                'mutes': list(self.mutes), 'region': self.region, 'heading': self.heading,
+                'x': x, 'y': y, 'w': self.width, 'mode': self.mode,
+                'defs': list(self.defs), 'reads': list(self.reads)}
     def md(self):
         "This brick as it is written in the file."
         if self.kind == 'text': return self.body.strip() + '\n'
@@ -399,6 +407,11 @@ class Doc:
             bricks.append(Brick(kind=kind, body=body, id=bid, attrs=a, binds=binds, props=props,
                                 pins=pins, mutes=mutes))
         return cls(bricks=bricks, meta=meta, path=path)._regions()
+    def dict(self):
+        "The document as the browser reads it. The regions carry the layout `arrange` worked out."
+        return {'title': self.title, 'path': self.path, 'meta': dict(self.meta),
+                'regions': list((self.layout or {}).values()) or [{'title': r} for r in self.regions],
+                'bricks': [b.dict() for b in self.bricks]}
     def md(self):
         front = ''.join(f'{k}: {v}\n' for k, v in self.meta.items())
         return (f'---\n{front}---\n\n' if front else '') + '\n'.join(b.md() for b in self.bricks)
