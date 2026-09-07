@@ -219,8 +219,14 @@ def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
     assert 'cursor' not in why, 'and Cursor is no longer offered at all'
 
 def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
-    "ramabana reads $LEELA_LITERT_BACKEND when it builds an engine."
-    monkeypatch.delenv('LEELA_LITERT_BACKEND', raising=False)
+    """ramabana reads $LEELA_LITERT_BACKEND when it builds an engine.
+
+    `setenv` rather than `delenv` for the first call. `delenv` records no undo for a variable that
+    was never set, so the export below outlived the test and every later engine in the run was
+    built on the GPU. On a machine whose driver cannot take one, that failed three model tests in
+    `test_web.py` and passed on their own.
+    """
+    monkeypatch.setenv('LEELA_LITERT_BACKEND', 'cpu')
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
     with TestClient(ide_app(ws)) as c:
         assert c.post('/agent/settings', json={'litert_backend': 'gpu'}).json()['litert_backend'] == 'gpu'

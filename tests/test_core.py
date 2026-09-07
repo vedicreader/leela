@@ -1017,6 +1017,10 @@ def owner(route):
         if callable(v) and m and m != 'fasthtml.core': return m
     return type(route).__name__
 
+def library_owned(mod):
+    "A route an installed brick library mounted. The surface is the library's, so Leela does not guard it."
+    return bool(mod) and '.' in mod and mod.split('.')[0] != 'leela'
+
 def owners(app=None):
     "`{path: module}` for every route with a Python handler."
     app = app or ide_app(Workspace(roots=[]))
@@ -1028,7 +1032,7 @@ def test_no_extracted_path_is_still_handled_by_the_closure():
     claimed = {f'{m.__name__}.app' for m in BLOCKS}
     served = owners()
     for path, mod in served.items():
-        if mod in claimed: continue
+        if mod in claimed or library_owned(mod): continue
         assert mod in (CLOSURE, 'Mount', 'HostRoute', 'WebSocketRoute'), \
             f'{path} is served by unexpected module {mod}'
 
@@ -1050,9 +1054,13 @@ def _row(r):
     return f"{','.join(ms) or type(r).__name__} {path}"
 
 def inventory(app=None):
-    "Every registered route as a sorted list of `METHODS PATH` lines."
+    """Every registered route as a sorted list of `METHODS PATH` lines.
+
+    A brick library mounts its own routes when one is installed, so the inventory would depend on
+    what the machine has installed. Those belong to the library.
+    """
     app = app or ide_app(Workspace(roots=[]))
-    return sorted(_row(r) for r in app.router.routes)
+    return sorted(_row(r) for r in app.router.routes if not library_owned(owner(r)))
 
 def test_the_browser_url_surface_is_unchanged():
     have = inventory()

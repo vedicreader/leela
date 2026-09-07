@@ -2049,15 +2049,31 @@ def test_a_hung_command_is_killed_and_says_so(project):
     code, out = project.run_cmd('sleep 30', timeout=1)
     assert code == 124 and 'killed after 1s' in out
 
+def killed(pid):
+    """Dead, or dead and not yet reaped.
+
+    A zombie answers `os.kill(pid, 0)` without raising, so that call alone proves nothing. Nothing
+    reaps a grandchild once its own shell is gone unless PID 1 is a reaper, which it is not in a
+    container. `/proc` carries the state where it exists.
+    """
+    import os
+    from pathlib import Path
+    if Path('/proc').is_dir():
+        stat = Path(f'/proc/{pid}/stat')
+        if not stat.exists(): return True
+        return stat.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
+    try: os.kill(pid, 0)
+    except OSError: return True
+    return False
+
 def test_a_timeout_takes_the_children_with_it(project):
-    "`pytest -n 4` behind a pipe leaves children that outlive the shell, and a leaked"
-    import os, time
+    "`pytest -n 4` behind a pipe leaves children that outlive the shell, and a leaked one holds the pipe open."
+    import time
     marker = project.roots[0] + '/child.pid'
     project.run_cmd(f'(sleep 30 & echo $! > {marker}); sleep 30', timeout=2)
     pid = int(open(marker).read().strip())
     time.sleep(0.2)
-    with pytest.raises(OSError):
-        os.kill(pid, 0)
+    assert killed(pid), f'the grandchild {pid} outlived the timeout'
 
 def test_the_probe_command_never_spawns_anything(project):
     assert project.run_cmd('') == (0, '')

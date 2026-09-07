@@ -230,6 +230,32 @@ def test_a_second_turn_is_rejected_while_the_first_is_pending_registration():
     assert not worker.is_alive() and result['accepted']['run'] == 'run-1'
 
 
+def _pending_entry(worker):
+    "The record `start` publishes, with `worker` as the thread that has yet to speak."
+    return {'id': 'x', 'event': threading.Event(), 'gate': threading.Event(),
+            'accepted': False, 'run': '', 'error': None, 'at': time.time(), 'worker': worker}
+
+
+def test_a_pending_turn_is_not_reaped_before_its_worker_starts():
+    """`start` publishes the pending turn and only then starts the worker. A request arriving in
+    that window read the unstarted thread as a finished one, reaped the turn and was accepted,
+    which is the second live turn `_pending` exists to refuse. `Thread.is_alive` is False both
+    before `start` and after the run, so `ident` is what tells the two apart.
+    """
+    ws = _Workspace(); runner = TurnRunner(ws)
+    runner._pending['x'] = _pending_entry(threading.Thread(target=lambda: None))
+    assert runner._reap(ws.ai) == [], 'an unstarted worker is not a finished one'
+    assert 'x' in runner._pending, 'and the turn it is setting up still holds the thread'
+
+
+def test_a_pending_turn_whose_worker_finished_is_reaped():
+    "The other half: once the worker has run and gone, nothing is running and the turn clears."
+    ws = _Workspace(); runner = TurnRunner(ws)
+    worker = threading.Thread(target=lambda: None); worker.start(); worker.join()
+    runner._pending['x'] = _pending_entry(worker)
+    assert runner._reap(ws.ai) == ['x'] and not runner._pending
+
+
 class _Latched(_AI):
     "An assistant that registers its run before the engine reports it, as Ramabana's `stream` does."
     registered = False

@@ -109,6 +109,10 @@ Score every page with `slopometer`, and rewrite the prose that fails ASD-STE100.
 Run `chkstyle` over the branch's Python, and cut the imports nothing uses.
 <!--/canvas-->
 
+<!--canvas task id=t17 status=done owner=me-->
+Get the suite green: 2003 pass, 15 skip, none fail.
+<!--/canvas-->
+
 # The document
 
 <!--canvas bundle id=u-doc title="The format and the dataflow"
@@ -374,7 +378,7 @@ Give the basket a panel: a control on an `ask` brick that shows what the questio
      goal=g2
      contributes="the English a reviewer actually reads"
      covers="The prose,t15,t16"
-     paths=README.md,docs/*.md,examples/canvas/*.canvas.md,extensions/bricks/README.md,media/*.md,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/explain.md,leela/blocks/canvas/*.py,extensions/bricks/leela_bricks/*.py,tools/canvas_proto/paint.py
+     paths=README.md,docs/*.md,examples/canvas/*.canvas.md,extensions/bricks/README.md,media/*.md,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/explain.md,leela/blocks/canvas/*.py,extensions/bricks/leela_bricks/*.py,tools/canvas_proto/paint.py,leela/blocks/agent/threads.py,tests/blocks/test_agent_threads.py,tests/test_core.py,tests/test_packaging.py,tests/test_projects.py,tests/test_runtime.py,tests/test_agent.py
      refs=pkg:slopometer,pkg:fastaistyle,doc:leela/blocks/canvas/ste.md-->
 `slopometer` scores a page against the reference-prose rules, and `chkstyle` scores Python against
 fastai's. Both ran over every file this branch adds. `ste.md` already held the rules, and nobody had
@@ -403,6 +407,20 @@ the third by name, and the first two are the words the product uses.
 `docs/screenshots/canvas-prose-goals.png` shows both goals on this page, and
 `canvas-prose-review.png` and `canvas-prose-phone.png` show this section on a desktop and on a
 phone. Leela drew all three from this file.
+
+Eighteen tests failed on this branch before the review, and none of them for a reason the branch
+introduced. Four were the environment: no brick library installed, no generated icon, and no venv
+on `PATH`. Two guards read a route surface that grows with whatever library the machine has, so
+they now measure Leela's own. Three tests compared a liveness that a zombie also reports, or a PNG that
+Pillow re-encodes between versions.
+
+<!--canvas note id=n-reap-->
+One was a fault in the code. `TurnRunner._reap` read `Thread.is_alive` alone, which is False before
+a thread starts as well as after it ends. `start` publishes the pending turn and only then starts
+its worker. A request arriving in that window reaped a live turn and won acceptance. That is the
+second turn `_pending` exists to refuse. `worker.ident` tells an unstarted thread from a finished
+one, and two tests in `tests/blocks/test_agent_threads.py` hold each half.
+<!--/canvas-->
 
 ```canvas diff id=d-prose paths=docs/session.canvas.md,examples/canvas/an-animal-cell.canvas.md left=origin/main right=HEAD
 ```

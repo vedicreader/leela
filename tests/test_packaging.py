@@ -231,17 +231,27 @@ def test_a_release_says_what_is_missing_rather_than_failing_inside_shutil(monkey
         with pytest.raises(SystemExit) as e: build()
         assert 'was not built' in str(e.value)
 
+def embedded_png(svg):
+    "The artwork an icon SVG carries, decoded. PNG bytes vary by encoder; the pixels do not."
+    import base64, io
+    from PIL import Image
+    href = re.search(r'base64,([^"]+)', svg).group(1)
+    return Image.open(io.BytesIO(base64.b64decode(href))).convert('RGBA')
+
 def test_the_favicon_is_the_mark_it_is_generated_from():
     """The favicons ship in the wheel, which has no build step, so they are committed like the JS
     bundles rather than drawn at install. Committed and generated means they can drift.
 
     Two of them: the mark is line work with no plate, so a tab strip shows its own colour through
     it and the ink has to follow `prefers-color-scheme`.
+
+    The comparison is on pixels. Pillow's PNG encoder changes output between versions, so comparing
+    the base64 failed on a fresh Pillow against artwork that had not moved.
     """
     pytest.importorskip('PIL')
     import tools.build_icons as icons
     for variant, path in icons.FAVICONS.items():
-        assert path.read_text() == icons.favicon(variant), \
+        assert embedded_png(path.read_text()).tobytes() == embedded_png(icons.favicon(variant)).tobytes(), \
             f'{path.name} is stale; run python tools/build_icons.py'
     assert icons.FAVICONS['light'].read_text() != icons.FAVICONS['dark'].read_text(), \
         'one artwork under two names is not a light and a dark variant'
@@ -327,8 +337,10 @@ def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
     "The generated PNG must be what the generator makes, or a stale one is shipped."
     pytest.importorskip('PIL')
     import tools.build_icons as icons
+    png = ROOT/'packaging'/'assets'/'Leela.png'
+    if not png.is_file(): pytest.skip('no packaging/assets/Leela.png — run python tools/build_icons.py first')
     made = icons.image(1024)
-    committed = __import__('PIL.Image', fromlist=['Image']).open(ROOT/'packaging'/'assets'/'Leela.png')
+    committed = __import__('PIL.Image', fromlist=['Image']).open(png)
     assert made.tobytes() == committed.convert('RGBA').tobytes()
 
 APP = ROOT/'dist'/('Leela.app/Contents/MacOS/Leela' if sys.platform == 'darwin' else 'Leela/Leela.exe')

@@ -364,9 +364,14 @@ def test_asking_the_shell_never_hangs_the_launch(monkeypatch):
 
 
 def test_an_ascii_locale_is_repaired_before_anything_imports(monkeypatch):
-    "The failure it prevents is `UnicodeDecodeError` out of an import, blamed on the import."
-    import locale
+    """The failure it prevents is `UnicodeDecodeError` out of an import, blamed on the import.
+
+    UTF-8 mode pins `getpreferredencoding` to utf-8 whatever the locale, and Python turns it on by
+    itself when `LC_CTYPE` is C at startup. There is no ASCII locale to repair under it.
+    """
+    import locale, sys
     from leela import use_utf8
+    if sys.flags.utf8_mode: pytest.skip('UTF-8 mode leaves no ASCII locale to repair')
     was = locale.setlocale(locale.LC_CTYPE)
     try:
         locale.setlocale(locale.LC_CTYPE, 'C')
