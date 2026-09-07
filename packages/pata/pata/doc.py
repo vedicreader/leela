@@ -1,260 +1,403 @@
-"The block tree: one document, two views."
+"""The document: one markdown file where prose is prose and everything else is a brick.
+
+The file format and the AST dataflow are `claude/dynamic-document-canvas-ohgfud`'s. Reading a
+canvas by scanning its lines, rather than by one regex over the file, is what makes a document
+about canvases parse as a document rather than as the canvas it quotes. What is added here is the
+three brick kinds a plan needs, the heading as a region, and the geometry a second view reads.
+"""
 
 from __future__ import annotations
-import json, re, uuid
+import ast, re, uuid
 from dataclasses import dataclass, field
 from fastcore.all import L, Path, first
 
-__all__ = ['NS', 'FLAVOURS', 'MODES', 'STATUS', 'RELATIONS', 'Block', 'Doc', 'block_id',
-           'flavour', 'short']
+__all__ = ['KINDS', 'FENCED', 'WRAPPED', 'MODES', 'STATUS', 'W', 'Brick', 'Doc', 'brick_id',
+           'defs_of', 'reads_of', 'order', 'downstream', 'upstream']
 
-NS = 'pata'
-#: Every kind of block. A flavour is `pata:<name>`, BlockSuite's `namespace:name`.
-FLAVOURS = ('text', 'code', 'prompt', 'goal', 'task', 'source', 'data', 'frame', 'edge', 'approval')
-#: What a block does to the context budget, as notebook cells already do it.
+#: Bricks whose body markdown cannot show, written as a fence.
+FENCED = ('code', 'ask', 'brick', 'sim', 'data')
+#: Bricks whose body is markdown a plain renderer should still show, written as a comment wrap.
+WRAPPED = ('reply', 'note', 'goal', 'task', 'source')
+KINDS = ('text',) + FENCED + WRAPPED
+#: What a brick does to the context budget, as notebook cells already do it.
 MODES = ('auto', 'keep', 'discard')
 STATUS = ('todo', 'doing', 'done', 'blocked')
-#: What one edge asserts about the two blocks it joins.
-RELATIONS = ('feeds', 'supports', 'refutes', 'blocks')
+#: How wide a brick draws when nothing says otherwise.
+W = 380
 
-def block_id(): return uuid.uuid4().hex[:8]
-def flavour(name): return name if ':' in name else f'{NS}:{name}'
-def short(f): return str(f).split(':')[-1]
+FENCE = re.compile(r'^(`{3,})canvas +(\w+)([^\n]*)$')
+TICKS = re.compile(r'^(`{3,})')
+WRAP = re.compile(r'^<!--canvas +(\w+)(.*?)-->$')
+SHUT = '<!--/canvas-->'
+ATTR = re.compile(r'(\w+)=("[^"]*"|\S*)')
+DIRECT = re.compile(r'^(bind|prop|pin|mute) +([\w.:/-]+)(?: *= *(.+))?$')
+FRONT = re.compile(r'\A---\n(.*?)\n---\n', re.S)
+HEAD = re.compile(r'^(#{1,6}) +(.+?)\s*$', re.M)
+#: A name in backticks inside a question. What the asker pointed at.
+TICKED = re.compile(r'`([A-Za-z_]\w*)`')
+
+def brick_id(): return uuid.uuid4().hex[:8]
+def _shut(tick): return re.compile(r'`{%d,}[ \t]*$' % len(tick))
+
+def _scan(text):
+    "`(kind, attrline, body)` per brick. A fence inside a longer fence is an example of one, not one."
+    lines, i, prose, out = text.split('\n'), 0, [], []
+    def flush():
+        if ''.join(prose).strip(): out.append(('text', '', '\n'.join(prose).strip()))
+        prose.clear()
+    def upto(j, shut, keep):
+        body = []
+        while j < len(lines) and not shut(lines[j]): body.append(lines[j]); j += 1
+        if keep and j < len(lines): body.append(lines[j])
+        return j, body
+    while i < len(lines):
+        line = lines[i]
+        if (m := FENCE.match(line)):
+            flush()
+            end = _shut(m[1])
+            i, body = upto(i + 1, lambda l: end.match(l), False)
+            out.append((m[2], m[3], '\n'.join(body)))
+        elif (m := TICKS.match(line)):
+            end = _shut(m[1])
+            prose.append(line)
+            i, body = upto(i + 1, lambda l: end.match(l), True)
+            prose.extend(body)
+        elif (m := WRAP.match(line)):
+            flush()
+            i, body = upto(i + 1, lambda l: l.strip() == SHUT, False)
+            out.append((m[1], m[2], '\n'.join(body)))
+        else:
+            prose.append(line); i += 1; continue
+        i += 1
+    flush()
+    return out
+
+def _attrs(s): return {k: v.strip('"') for k, v in ATTR.findall(s or '')}
+
+def _attrstr(d):
+    out = []
+    for k, v in d.items():
+        if v in (None, ''): continue
+        v = str(v).replace('"', "'")
+        out.append(f' {k}={v}' if re.fullmatch(r'[\w./:,-]+', v) else f' {k}="{v}"')
+    return ''.join(out)
+
+def _split(body):
+    "A brick body's `bind`/`prop`/`pin`/`mute` lines, and whatever is left."
+    binds, props, pins, mutes, rest = {}, {}, [], [], []
+    for line in (body or '').splitlines():
+        m = DIRECT.match(line.strip())
+        if not m: rest.append(line)
+        elif m[1] == 'bind': binds[m[2]] = (m[3] or '').strip()
+        elif m[1] == 'prop': props[m[2]] = (m[3] or '').strip()
+        elif m[1] == 'pin': pins.append(m[2])
+        else: mutes.append(m[2])
+    return binds, props, pins, mutes, '\n'.join(rest).strip()
+
+def _lines(b):
+    return ''.join([f'bind {k} = {v}\n' for k, v in b.binds.items()]
+                   + [f'prop {k} = {v}\n' for k, v in b.props.items()]
+                   + [f'pin {r}\n' for r in b.pins] + [f'mute {r}\n' for r in b.mutes])
 
 @dataclass
-class Block:
-    "One block. `kind` names what it is, `props` holds everything that kind owns."
+class Brick:
+    "One node: prose, a runnable cell, a question, a goal, a task, a clipping, a component."
     kind: str = 'text'
+    body: str = ''
+    id: str = field(default_factory=brick_id)
+    attrs: dict = field(default_factory=dict)
+    binds: dict = field(default_factory=dict)
     props: dict = field(default_factory=dict)
-    id: str = field(default_factory=block_id)
-    frame: str = ''
-    mode: str = 'auto'
-    x: float | None = None
-    y: float | None = None
-    w: float | None = None
-    h: float | None = None
+    pins: list = field(default_factory=list)
+    mutes: list = field(default_factory=list)
+    #: Which heading this brick sits under. Derived on parse, never written.
+    region: str = ''
+    #: `(x, y, w)` a view worked out. Derived, so it stays out of the file until someone moves it.
+    at: tuple | None = None
     def __post_init__(self):
-        self.kind = short(self.kind)
-        if self.kind not in FLAVOURS: raise ValueError(f'unknown flavour: {self.kind}')
-        if self.mode not in MODES: self.mode = 'auto'
+        if self.kind not in KINDS: self.kind = 'text'
     @property
-    def flavour(self): return flavour(self.kind)
+    def runs(self): return self.kind == 'code'
     @property
-    def source(self): return str(self.props.get('source') or '')
+    def heading(self):
+        "Whether this brick is only a heading. The region label already says it, so nothing else does."
+        body = (self.body or '').strip()
+        return self.kind == 'text' and bool(body) and all(HEAD.match(l) for l in body.splitlines() if l.strip())
     @property
-    def title(self): return str(self.props.get('title') or '')
+    def mode(self):
+        m = self.attrs.get('context', 'auto')
+        return m if m in MODES else 'auto'
     @property
-    def placed(self): return self.x is not None and self.y is not None
-    def get(self, k, d=None): return self.props.get(k, d)
-    def set(self, **kw):
-        self.props.update(kw)
-        return self
-    def place(self, x, y, w=None, h=None):
-        self.x, self.y = float(x), float(y)
-        if w is not None: self.w = float(w)
-        if h is not None: self.h = float(h)
-        return self
+    def title(self): return self.attrs.get('title', '')
     @property
-    def outputs(self): return list(self.props.get('outputs') or [])
+    def scope(self): return self.attrs.get('scope', '')
     @property
-    def has_error(self): return any(o.get('output_type') == 'error' for o in self.outputs)
+    def budget(self):
+        try: return int(self.attrs.get('budget') or 0) or None
+        except ValueError: return None
     @property
-    def ran_at(self): return float(self.props.get('ran_at') or 0)
+    def xy(self):
+        "Where a second view draws it: what a person moved it to, else what a layout worked out."
+        try: return float(self.props['x']), float(self.props['y'])
+        except (KeyError, TypeError, ValueError): return self.at
     @property
-    def stale(self):
-        "Whether the outputs held here came from source this block no longer has."
-        h = str(self.props.get('output_hash') or '')
-        return bool(self.outputs and h and h != src_hash(self.source))
-    def ran(self, at=None):
-        "Mark this block as having just run, which is what makes everything below it stale."
-        import time
-        self.props['ran_at'] = float(at if at is not None else time.time())
-        self.props['output_hash'] = src_hash(self.source)
-        return self
-    def clear(self):
-        for k in ('outputs', 'execution_count', 'execution_ms', 'output_hash', 'reply', 'calls', 'usage'):
-            self.props.pop(k, None)
-        return self
-    def dict(self):
-        d = {'id': self.id, 'flavour': self.flavour, 'props': dict(self.props)}
-        for k in ('frame', 'mode', 'x', 'y', 'w', 'h'):
-            v = getattr(self, k)
-            if v not in ('', None) and not (k == 'mode' and v == 'auto'): d[k] = v
-        return d
-    @classmethod
-    def from_dict(cls, d):
-        d = dict(d or {})
-        return cls(kind=d.get('flavour') or d.get('kind') or 'text', props=dict(d.get('props') or {}),
-                   id=str(d.get('id') or block_id()), frame=str(d.get('frame') or ''),
-                   mode=str(d.get('mode') or 'auto'),
-                   **{k: d.get(k) for k in ('x', 'y', 'w', 'h')})
+    def width(self):
+        try: return float(self.props['w'])
+        except (KeyError, TypeError, ValueError): return self.at[2] if self.at else None
+    def place(self, x, y, w=W, keep=False):
+        """Put this brick at `x`, `y`.
 
-def src_hash(source):
-    import hashlib
-    return hashlib.sha256((source or '').encode()).hexdigest()[:12]
+        Transient by default. A layout is derived and belongs in the view; only a brick a person
+        moved is worth a line in the file.
+        """
+        if keep:
+            self.props.update(x=round(x), y=round(y))
+            if w: self.props['w'] = round(w)
+        else: self.at = (float(x), float(y), float(w))
+        return self
+    @property
+    def defs(self): return defs_of(self.body) if self.runs else L()
+    @property
+    def reads(self):
+        """Names this brick needs.
+
+        Code reads what its AST loads and a bound brick reads what its expressions evaluate. A
+        question reads what it puts in backticks, which is what a person means by writing one.
+        """
+        if self.runs: return reads_of(self.body)
+        if self.kind in ('ask', 'reply', 'note'): return L(TICKED.findall(self.body or '')).unique()
+        return L(self.binds.values()).map(reads_of).concat().unique()
+    @property
+    def links(self):
+        "Blocks this one claims a relation to, which the AST cannot see. `supports=a,b`."
+        return {k: [x for x in v.split(',') if x]
+                for k, v in self.attrs.items() if k in ('supports', 'refutes', 'blocks')}
+    def md(self):
+        "This brick as it is written in the file."
+        if self.kind == 'text': return self.body.strip() + '\n'
+        a = _attrstr({'id': self.id, **self.attrs})
+        body = _lines(self) + (self.body.strip() + '\n' if self.body.strip() else '')
+        if self.kind in WRAPPED: return f'<!--canvas {self.kind}{a}-->\n{body}{SHUT}\n'
+        tick = '`' * max(3, 1 + max((len(m) for m in re.findall(r'`+', body)), default=0))
+        return f'{tick}canvas {self.kind}{a}\n{body}{tick}\n'
+
+def _walk(source):
+    try: return ast.parse(source or '')
+    except SyntaxError: return None
+
+SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+COMPS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+def _module_body(tree):
+    "Every node binding at module level: inside `if`, `for`, `try` and `with`, not inside a `def`."
+    out = []
+    def walk(nodes):
+        for n in nodes:
+            out.append(n)
+            if isinstance(n, SCOPES): continue
+            walk([c for f in n._fields
+                  for c in (getattr(n, f) if isinstance(getattr(n, f, None), list) else [getattr(n, f)])
+                  if isinstance(c, ast.stmt)])
+    walk(tree.body)
+    return out
+
+def _targets(node):
+    if isinstance(node, ast.Name): return L([node.id])
+    if isinstance(node, (ast.Tuple, ast.List)): return L(node.elts).map(_targets).concat()
+    return L()
+
+def defs_of(source):
+    "Names a code brick binds at module level, however it binds them."
+    t = _walk(source)
+    if t is None: return L()
+    out = L()
+    for n in _module_body(t):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)): out.append(n.name)
+        elif isinstance(n, ast.Assign): out += L(n.targets).map(_targets).concat()
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)): out += _targets(n.target)
+        elif isinstance(n, (ast.For, ast.AsyncFor)): out += _targets(n.target)
+        elif isinstance(n, (ast.With, ast.AsyncWith)):
+            out += L(n.items).map(lambda i: _targets(i.optional_vars)).concat()
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            out += L(n.names).map(lambda a: (a.asname or a.name).split('.')[0])
+    for n in ast.walk(t):
+        if isinstance(n, ast.NamedExpr): out += _targets(n.target)
+    return out.unique()
+
+def _local(node):
+    if isinstance(node, COMPS):
+        return set(L(node.generators).map(lambda g: _targets(g.target)).concat())
+    a = node.args
+    return {x.arg for x in [*a.posonlyargs, *a.args, *a.kwonlyargs,
+                            *([a.vararg] if a.vararg else []), *([a.kwarg] if a.kwarg else [])]}
+
+def reads_of(source):
+    "Free names an expression loads, not counting what it binds for itself."
+    t = _walk(source)
+    if t is None: return L()
+    bound = set()
+    for n in ast.walk(t):
+        if isinstance(n, COMPS + (ast.Lambda,)): bound |= _local(n)
+    return L(ast.walk(t)).filter(lambda n: isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                                 and n.id not in bound).map(lambda n: n.id).unique()
+
+def _owners(bricks):
+    return {n: b.id for b in L(bricks).filter(lambda b: b.runs) for n in b.defs}
+
+def order(bricks):
+    "Runnable bricks in dependency order, falling back to document order on a cycle."
+    live = L(bricks).filter(lambda b: b.runs)
+    owner = _owners(live)
+    need = {b.id: {owner[n] for n in b.reads if n in owner and owner[n] != b.id} for b in live}
+    out, seen = [], set()
+    def visit(b, path):
+        if b.id in seen or b.id in path: return
+        for dep in need[b.id]: visit(first(x for x in live if x.id == dep), path | {b.id})
+        seen.add(b.id); out.append(b)
+    for b in live: visit(b, set())
+    return L(out)
+
+def downstream(bricks, names):
+    "Every brick whose result depends on one of `names`, transitively, in run order."
+    names, hit = set(names), []
+    for b in order(bricks):
+        if set(b.reads) & names: hit.append(b); names |= set(b.defs)
+    return L(hit) + L(bricks).filter(lambda b: b.binds and set(b.reads) & names)
+
+def anchor_of(bricks, bid):
+    "What a question that is not itself code is asking about: the last runnable brick above it."
+    bricks = L(bricks)
+    at = first(i for i, b in enumerate(bricks) if b.id == bid)
+    if at is None: return ''
+    b = bricks[at]
+    if b.runs or b.binds: return ''
+    if (named := b.attrs.get('anchor')): return named
+    above = first(x for x in reversed(list(bricks[:at])) if x.runs or x.binds)
+    return above.id if above is not None else ''
+
+def upstream(bricks, bid, depth=12):
+    """Every brick `bid` reads from, transitively, in document order.
+
+    Derived from the code, not drawn by hand. A name a brick reads is owned by whichever brick
+    binds it, and a diagram maintained beside the code is a diagram that goes wrong. A question
+    anchors on the brick above it, because "fix that" means that one and everything it reads.
+    """
+    bricks = L(bricks)
+    owner, seen = _owners(bricks), set()
+    want = {bid} | ({a} if (a := anchor_of(bricks, bid)) else set())
+    seen |= want - {bid}
+    for _ in range(depth):
+        nxt = set()
+        for b in bricks.filter(lambda b: b.id in want):
+            nxt |= {owner[n] for n in b.reads if n in owner}
+            for ids in b.links.values(): nxt |= set(ids)
+        nxt -= seen | {bid}
+        if not nxt: break
+        seen |= nxt
+        want = nxt
+    seen |= {b.id for b in bricks if bid in {i for ids in b.links.values() for i in ids}}
+    return bricks.filter(lambda b: b.id in seen - {bid})
 
 @dataclass
 class Doc:
-    "A dynamic document. The list is the page view; `x`/`y` and `frame` are the edgeless view."
-    blocks: list = field(default_factory=list)
+    "A dynamic document. Headings are its regions; `prop x`/`prop y` are the second view."
+    bricks: list = field(default_factory=list)
     meta: dict = field(default_factory=dict)
     path: str = ''
-    def __len__(self): return len(self.blocks)
-    def __iter__(self): return iter(self.blocks)
-    def __getitem__(self, k): return self.blocks[k] if isinstance(k, (int, slice)) else self.by_id(k)
-    def by_id(self, bid): return first(b for b in self.blocks if b.id == bid)
+    #: What the last `arrange` worked out, per region. Derived, and never written to the file.
+    layout: dict = field(default_factory=dict)
+    def __len__(self): return len(self.bricks)
+    def __iter__(self): return iter(self.bricks)
+    def __getitem__(self, k):
+        return self.bricks[k] if isinstance(k, (int, slice)) else self.by_id(k)
+    def by_id(self, bid): return first(b for b in self.bricks if b.id == bid)
     def index(self, bid):
         b = self.by_id(bid)
-        return self.blocks.index(b) if b is not None else -1
-    def of(self, *kinds):
-        "Every block of these flavours, in document order."
-        want = {short(k) for k in kinds}
-        return L(b for b in self.blocks if b.kind in want)
+        return self.bricks.index(b) if b is not None else -1
+    def of(self, *kinds): return L(b for b in self.bricks if b.kind in set(kinds))
+    @property
+    def title(self): return self.meta.get('title') or Path(self.path).name or 'untitled'
     @property
     def goal(self): return first(self.of('goal'))
-    def goal_for(self, bid):
-        "The goal a block answers to: its own frame's, else the document's. None when there is none."
-        b = self.by_id(bid)
-        if b is not None and b.frame:
-            g = first(x for x in self.of('goal') if x.frame == b.frame and x.id != bid)
-            if g is not None: return g
-        return self.goal
-    def stale(self, bid):
-        """Whether a block's outputs still describe the document.
-
-        Two ways to go stale. Its own source changed since it ran, which a hash catches. Or
-        something it reads from ran again afterwards, which only the edge graph can say.
-        """
-        b = self.by_id(bid)
-        if b is None or not b.outputs: return False
-        if b.stale: return True
-        return any((u.ran_at or 0) > b.ran_at for u in
-                   (self.by_id(i) for i in self.reachable(bid, back=True)) if u is not None)
     @property
-    def edges(self): return self.of('edge')
+    def regions(self):
+        "Every heading in the document, in order, as `(title, [brick ids])`."
+        out = {}
+        for b in self.bricks: out.setdefault(b.region, []).append(b.id)
+        return out
+    def in_region(self, name): return L(b for b in self.bricks if b.region == name)
+    def reply_to(self, bid):
+        "The answer written back under question `bid`, or None."
+        return first(b for b in self.bricks if b.kind == 'reply' and b.attrs.get('of') == bid)
     def add(self, b, at=None):
-        "Append `b`, or insert it at `at`. A colliding id is refused rather than silently dropped."
-        if self.by_id(b.id) is not None: raise ValueError(f'duplicate block id: {b.id}')
-        self.blocks.insert(len(self.blocks) if at is None else at, b)
+        if self.by_id(b.id) is not None: raise ValueError(f'duplicate brick id: {b.id}')
+        self.bricks.insert(len(self.bricks) if at is None else at, b)
+        self._regions()
         return b
     def remove(self, bid):
-        "Drop a block and every edge that named it. Pins and mutes elsewhere are left to `prune`."
         b = self.by_id(bid)
         if b is None: return None
-        self.blocks = [x for x in self.blocks
-                       if x.id != bid and not (x.kind == 'edge' and bid in (x.get('src'), x.get('dst')))]
-        for x in self.blocks:
-            if x.frame == bid: x.frame = ''
-        self.prune()
+        self.bricks.remove(b)
+        for x in self.bricks:
+            x.pins = [r for r in x.pins if r != bid]
+            x.mutes = [r for r in x.mutes if r != bid]
+            for k, ids in list(x.links.items()):
+                if bid in ids: x.attrs[k] = ','.join(i for i in ids if i != bid)
         return b
-    def prune(self):
-        "Drop pins and mutes naming blocks that are gone, so a resolved basket cannot cite a ghost."
-        live = {b.id for b in self.blocks}
-        for b in self.of('prompt'):
-            spec = b.props.get('context')
-            if not isinstance(spec, dict): continue
-            for k in ('pins', 'mutes'):
-                v = spec.get(k)
-                if isinstance(v, list): spec[k] = [r for r in v if not _is_block_ref(r) or r in live]
-        return self
-    def in_frame(self, fid):
-        "Blocks assigned to frame `fid`, in document order."
-        return L(b for b in self.blocks if b.frame == fid and b.kind != 'frame')
-    def neighbours(self, bid, back=True):
-        "One hop along `pata:edge`: sources feeding `bid`, or targets it feeds."
-        a, z = ('dst', 'src') if back else ('src', 'dst')
-        return L(e.get(z) for e in self.edges if e.get(a) == bid and e.get(z))
-    def reachable(self, bid, back=True, depth=8):
-        "Blocks connected to `bid` by edges, breadth first. Cycles terminate; `bid` is never in it."
-        seen, front = set(), [bid]
-        for _ in range(depth):
-            nxt = [n for b in front for n in self.neighbours(b, back) if n not in seen and n != bid]
-            if not nxt: break
-            seen.update(nxt)
-            front = nxt
-        return L(b.id for b in self.blocks if b.id in seen)
-    def copy(self, ids, dx=40, dy=40):
-        """Duplicate blocks under fresh ids, with every reference inside the copy remapped.
-
-        Edges, frames, pins and mutes all name blocks by id. Copying without remapping leaves the
-        duplicate wired back into the original, which reads as one graph and answers as two.
-        """
+    def copy(self, ids):
+        "Duplicate bricks under fresh ids, remapping pins, mutes and declared links inside the copy."
         ids = list(ids)
-        want = set(ids) | {e.id for e in self.edges
-                           if e.get('src') in ids and e.get('dst') in ids}
-        new = {i: block_id() for i in ids}
-        out = []
-        for b in self.blocks:
-            if b.id not in want: continue
-            c = Block.from_dict(json.loads(json.dumps(b.dict())))
-            c.id = new.get(b.id, block_id())
-            c.frame = new.get(b.frame, '' if b.frame not in new else c.frame)
-            if c.x is not None: c.x += dx
-            if c.y is not None: c.y += dy
-            for k in ('src', 'dst'):
-                if c.get(k) in new: c.props[k] = new[c.props[k]]
-            spec = c.props.get('context')
-            if isinstance(spec, dict):
-                for k in ('pins', 'mutes'):
-                    spec[k] = [new.get(r, r) for r in (spec.get(k) or [])]
+        new = {i: brick_id() for i in ids}
+        out = L()
+        for b in [x for x in self.bricks if x.id in ids]:
+            c = Brick(kind=b.kind, body=b.body, id=new[b.id], attrs=dict(b.attrs),
+                      binds=dict(b.binds), props=dict(b.props),
+                      pins=[new.get(r, r) for r in b.pins], mutes=[new.get(r, r) for r in b.mutes])
+            for k, links in b.links.items():
+                c.attrs[k] = ','.join(new.get(i, i) for i in links)
             out.append(self.add(c))
-        return L(out)
-    def code(self, lang='python'):
-        "Every code block's source, for handing the document to something that wants a script."
-        return '\n\n'.join(b.source for b in self.of('code')
-                           if b.source.strip() and (b.get('lang') or 'python') == lang)
-    def dict(self): return {'pata': 1, 'meta': dict(self.meta), 'blocks': [b.dict() for b in self.blocks]}
-    def json(self, indent=1): return json.dumps(self.dict(), indent=indent, ensure_ascii=False)
+        return out
+    def code(self):
+        "Every code brick's source, in dependency order, for handing the document to a script."
+        return '\n\n'.join(b.body.strip() for b in order(self.bricks) if b.body.strip())
+    def _regions(self):
+        "Assign each brick the heading above it. Headings live in prose, so this is a re-read."
+        here = ''
+        for b in self.bricks:
+            if b.kind == 'text' and (m := first(HEAD.finditer(b.body))): here = m.group(2)
+            b.region = here
+        return self
     @classmethod
-    def from_dict(cls, d, path=''):
-        d = dict(d or {})
-        return cls(blocks=[Block.from_dict(b) for b in (d.get('blocks') or [])],
-                   meta=dict(d.get('meta') or {}), path=str(path))
+    def parse(cls, text, path=''):
+        text = (text or '').replace('\r\n', '\n').replace('\r', '\n')
+        meta, m = {}, FRONT.match(text)
+        if m:
+            for line in m[1].splitlines():
+                if ':' in line:
+                    k, v = line.split(':', 1)
+                    meta[k.strip()] = v.strip()
+            text = text[m.end():]
+        bricks, seen = [], set()
+        for kind, attrline, body in _scan(text):
+            if kind == 'text':
+                bricks.append(Brick(kind='text', body=body))
+                continue
+            a = _attrs(attrline)
+            binds, props, pins, mutes, body = ({}, {}, [], [], body) if kind == 'code' else _split(body)
+            bid = a.pop('id', '')
+            if not bid or bid in seen: bid = brick_id()
+            seen.add(bid)
+            bricks.append(Brick(kind=kind, body=body, id=bid, attrs=a, binds=binds, props=props,
+                                pins=pins, mutes=mutes))
+        return cls(bricks=bricks, meta=meta, path=path)._regions()
+    def md(self):
+        front = ''.join(f'{k}: {v}\n' for k, v in self.meta.items())
+        return (f'---\n{front}---\n\n' if front else '') + '\n'.join(b.md() for b in self.bricks)
     @classmethod
-    def from_json(cls, text, path=''): return cls.from_dict(json.loads(text or '{}'), path)
-    @classmethod
-    def load(cls, path): return cls.from_json(Path(path).read_text(encoding='utf-8'), str(path))
+    def load(cls, path): return cls.parse(Path(path).read_text(encoding='utf-8'), str(path))
     def save(self, path=None):
         p = Path(path or self.path)
-        tmp = p.with_suffix(p.suffix + '.tmp')
-        tmp.write_text(self.json(), encoding='utf-8')
-        tmp.replace(p)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(self.md(), encoding='utf-8')
         self.path = str(p)
         return p
-    def source_text(self):
-        "The document as one diffable file: every source under a `# %%` marker naming kind and id."
-        out = []
-        for b in self.blocks:
-            head = f'# %% {b.kind} {b.id}'
-            if b.frame: head += f' frame={b.frame}'
-            body = b.source if b.source else _edge_text(b) if b.kind == 'edge' else b.title
-            out.append(f'{head}\n{_quote(body).rstrip()}')
-        return '\n'.join(out)
-    def take_source_text(self, text):
-        "Read `source_text` back. A block whose id survived keeps its props; only its source moves."
-        held, out = {b.id: b for b in self.blocks}, []
-        for kind, bid, frame, body in _blocks_of(text):
-            b = held.get(bid)
-            if b is None or b.kind != kind: b = Block(kind=kind, **({'id': bid} if bid else {}))
-            if b.kind != 'edge': b.props['source' if b.kind != 'frame' else 'title'] = _unquote(body)
-            if frame: b.frame = frame
-            out.append(b)
-        self.blocks = out
-        return self
-
-def _is_block_ref(ref): return isinstance(ref, str) and not (':' in ref or '/' in ref)
-
-#: A body line that would read as a marker is indented by one space on the way out. Prose and
-#: clipped research quote jupytext far more often than Python does.
-def _quote(text): return re.sub(r'(?m)^( *)(# %%)', r' \1\2', str(text or ''))
-def _unquote(text): return re.sub(r'(?m)^ ( *# %%)', r'\1', str(text or ''))
-def _edge_text(b): return f"{b.get('src','')} {b.get('rel','feeds')} {b.get('dst','')}"
-
-_MARK = re.compile(r'^# %% (\w+)(?: ([\w-]+))?(?: frame=([\w-]+))?$', re.M)
-
-def _blocks_of(text):
-    "`(kind, id, frame, body)` for each `# %%` marker in a `source_text` document."
-    marks = list(_MARK.finditer(text or ''))
-    for i, m in enumerate(marks):
-        end = marks[i+1].start() if i+1 < len(marks) else len(text)
-        yield m.group(1), m.group(2) or '', m.group(3) or '', text[m.end():end].strip('\n')

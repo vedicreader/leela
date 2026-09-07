@@ -1,111 +1,97 @@
-"Getting work back out: a notebook, a report, or the modules the code blocks were always for."
+"Getting work out: a notebook, a plain report, or the modules the code bricks were always for."
 
 from __future__ import annotations
 import re
 from fastcore.all import L, Path
 
-from .doc import Doc, Block, short
+from .doc import Brick, Doc, KINDS, order
 
-__all__ = ['to_ipynb', 'from_ipynb', 'to_markdown', 'modules', 'write_modules', 'directives']
+__all__ = ['to_ipynb', 'from_ipynb', 'to_report', 'modules', 'write_modules', 'directives']
 
-def _md(source, meta=None):
-    c = {'cell_type': 'markdown', 'source': source, 'metadata': {}}
-    if meta: c['metadata'] = {'leela' if meta.get('kind') == 'prompt' else 'pata': meta}
-    return c
+def _out(values, bid):
+    t = str((values or {}).get(bid) or '')
+    return [{'output_type': 'execute_result', 'data': {'text/plain': t}, 'metadata': {}}] if t else []
 
-def to_ipynb(doc):
+def to_ipynb(doc, values=None):
     """The document as nbformat v4.
 
-    Code blocks are code cells. Prompt blocks take Leela's own `metadata.leela` shape, so a
-    document opened as a notebook keeps its prompts. Everything else is markdown carrying
-    `metadata.pata`, which `from_ipynb` reads back.
+    Code bricks are code cells. An `ask` takes Leela's own `metadata.leela` prompt shape with its
+    `reply` folded in, so a document opened as a notebook keeps its questions and their answers.
     """
-    cells = []
-    for b in doc.blocks:
-        if b.kind == 'edge': continue
-        m = {'flavour': b.flavour, **{k: v for k, v in
-             (('frame', b.frame), ('mode', b.mode), ('x', b.x), ('y', b.y), ('w', b.w), ('h', b.h))
-             if v not in ('', None, 'auto')}}
-        if b.kind == 'code':
-            c = {'cell_type': 'code', 'source': b.source, 'outputs': b.outputs, 'id': b.id,
-                 'execution_count': b.get('execution_count'), 'metadata': {'pata': m}}
-        elif b.kind == 'prompt':
-            c = _md(b.source, {'kind': 'prompt', 'reply': b.get('reply', ''),
-                               'calls': b.get('calls', []), 'usage': b.get('usage', {}), **m})
-            c['id'] = b.id
+    cells, skip = [], set()
+    for b in doc.bricks:
+        if b.id in skip: continue
+        m = {'kind': b.kind, 'attrs': dict(b.attrs), 'binds': dict(b.binds), 'props': dict(b.props),
+             'pins': list(b.pins), 'mutes': list(b.mutes)}
+        if b.runs:
+            cells.append({'cell_type': 'code', 'source': b.body, 'id': b.id, 'execution_count': None,
+                          'outputs': _out(values, b.id), 'metadata': {'pata': m}})
+        elif b.kind == 'ask':
+            r = doc.reply_to(b.id)
+            if r is not None: skip.add(r.id)
+            cells.append({'cell_type': 'markdown', 'source': b.body, 'id': b.id,
+                          'metadata': {'leela': {'kind': 'prompt', 'reply': r.body if r else '',
+                                                 'calls': [], 'usage': {}}, 'pata': m}})
         else:
-            c = _md(_as_markdown(b), {**m, 'props': {k: v for k, v in b.props.items() if k != 'source'}})
-            c['id'] = b.id
-        cells.append(c)
-    edges = [e.dict() for e in doc.edges]
-    meta = {'pata': {'edges': edges, **doc.meta}} if (edges or doc.meta) else {}
-    return {'cells': cells, 'metadata': {'kernelspec': {'name': 'python3', 'language': 'python',
-            'display_name': 'Python 3'}, **meta}, 'nbformat': 4, 'nbformat_minor': 5}
+            cells.append({'cell_type': 'markdown', 'source': to_report_brick(b), 'id': b.id,
+                          'metadata': {'pata': m}})
+    return {'cells': cells, 'nbformat': 4, 'nbformat_minor': 5,
+            'metadata': {'kernelspec': {'name': 'python3', 'language': 'python',
+                                        'display_name': 'Python 3'},
+                         'pata': dict(doc.meta)}}
 
 def from_ipynb(nb, path=''):
-    "Read a notebook back, or migrate one Leela already had. Unmarked cells become text and code."
-    doc = Doc(path=path)
-    seen = set()
+    "Read a notebook in. An unmarked cell becomes a code brick or prose, which is the migration."
+    doc, seen = Doc(path=path), set()
     for c in (nb.get('cells') or []):
         src = c.get('source')
         src = ''.join(src) if isinstance(src, list) else str(src or '')
-        lee, pm = (c.get('metadata') or {}).get('leela') or {}, (c.get('metadata') or {}).get('pata') or {}
-        kind = short(pm.get('flavour') or ('prompt' if lee.get('kind') == 'prompt'
-                                           else 'code' if c.get('cell_type') == 'code' else 'text'))
-        props = dict(pm.get('props') or {})
-        props['source'] = src
-        if kind == 'code':
-            props.update(outputs=list(c.get('outputs') or []), execution_count=c.get('execution_count'))
-        if kind == 'prompt':
-            props.update(reply=lee.get('reply', ''), calls=list(lee.get('calls') or []),
-                         usage=dict(lee.get('usage') or {}))
-        if kind in ('source', 'frame') and not props.get('title'):
-            props['title'] = src.strip().splitlines()[0].lstrip('# ') if src.strip() else ''
+        lee = (c.get('metadata') or {}).get('leela') or {}
+        pm = (c.get('metadata') or {}).get('pata') or {}
+        kind = pm.get('kind') or ('ask' if lee.get('kind') == 'prompt'
+                                  else 'code' if c.get('cell_type') == 'code' else 'text')
+        if kind not in KINDS: kind = 'text'
         bid = str(c.get('id') or '')
-        b = Block(kind=kind, props=props, frame=str(pm.get('frame') or ''),
-                  mode=str(pm.get('mode') or 'auto'),
-                  **{k: pm.get(k) for k in ('x', 'y', 'w', 'h')},
+        b = Brick(kind=kind, body=src, attrs=dict(pm.get('attrs') or {}),
+                  binds=dict(pm.get('binds') or {}), props=dict(pm.get('props') or {}),
+                  pins=list(pm.get('pins') or []), mutes=list(pm.get('mutes') or []),
                   **({'id': bid} if bid and bid not in seen else {}))
         seen.add(b.id)
         doc.add(b)
-    for e in ((nb.get('metadata') or {}).get('pata') or {}).get('edges') or []:
-        doc.add(Block.from_dict(e))
-    doc.meta = {k: v for k, v in (((nb.get('metadata') or {}).get('pata')) or {}).items() if k != 'edges'}
+        if kind == 'ask' and (r := str(lee.get('reply') or '')).strip():
+            doc.add(Brick(kind='reply', body=r, attrs={'of': b.id}))
+    doc.meta = dict((nb.get('metadata') or {}).get('pata') or {})
     return doc
 
-def _as_markdown(b):
+def to_report_brick(b):
+    "One brick as plain markdown, for a reader who has never heard of a canvas."
     if b.kind == 'goal':
-        bits = [f'**{k}**: {b.get(k)}' for k in ('measure', 'baseline', 'target', 'by') if b.get(k)]
-        return '\n\n'.join(x for x in [f'# {b.source}'.strip(), '  \n'.join(bits)] if x)
+        bits = [f'**{k}**: {v}' for k, v in b.attrs.items()
+                if k in ('measure', 'baseline', 'target', 'by')]
+        return '\n\n'.join(x for x in [b.body.strip(), '  \n'.join(bits)] if x)
     if b.kind == 'task':
-        mark = 'x' if b.get('status') == 'done' else ' '
-        owner = f" ({b.get('owner')})" if b.get('owner') else ''
-        return f'- [{mark}] {b.source}{owner}'
+        owner = f" ({b.attrs['owner']})" if b.attrs.get('owner') else ''
+        return f"- [{'x' if b.attrs.get('status') == 'done' else ' '}] {b.body.strip()}{owner}"
     if b.kind == 'source':
-        where = b.get('url') or b.get('path') or ''
+        where = b.attrs.get('url') or b.attrs.get('path') or ''
         head = f'[{b.title or where}]({where})' if where else (b.title or '')
-        return '\n\n'.join(x for x in [f'> {head}', str(b.get('text') or '')] if x.strip())
-    if b.kind == 'frame': return f'## {b.title}'
-    if b.kind == 'data': return f'`{b.get("name") or b.get("path") or ""}`\n\n{b.get("preview") or ""}'
-    return b.source
+        return '\n\n'.join(x for x in [f'> {head}'.strip('> '), b.body.strip()] if x)
+    if b.runs: return f'```python\n{b.body.strip()}\n```'
+    if b.kind == 'ask': return f'**{b.body.strip()}**'
+    if b.kind in ('brick', 'sim', 'data'):
+        return f"`{b.attrs.get('src') or b.kind}`" + ''.join(f'\n- `{k}` = `{v}`'
+                                                             for k, v in b.binds.items())
+    return b.body.strip()
 
-def to_markdown(doc, code=True):
-    "The document as a report. `code` keeps the code blocks; without it, only the narrative."
-    out = []
-    for b in doc.blocks:
-        if b.kind == 'edge': continue
-        if b.kind == 'code':
-            if not code: continue
-            out.append(f'```{b.get("lang") or "python"}\n{b.source}\n```')
-        elif b.kind == 'prompt':
-            out.append(f'**{b.source.strip()}**\n\n{str(b.get("reply") or "").strip()}')
-        else: out.append(_as_markdown(b))
+def to_report(doc, code=True):
+    "The document as a report. `code` keeps the code bricks; without it, only the narrative."
+    out = [to_report_brick(b) for b in doc.bricks if code or not b.runs]
     return '\n\n'.join(x for x in out if x.strip()) + '\n'
 
 _DIRECT = re.compile(r'^#\|\s*(\S+)(?:\s+(\S+))?\s*$', re.M)
 
 def directives(source):
-    "The nbdev `#|` lines a code block opens with, as `{name: value}`."
+    "The nbdev `#|` lines a code brick opens with, as `{name: value}`."
     head = []
     for line in (source or '').splitlines():
         if not line.lstrip().startswith('#|'): break
@@ -119,23 +105,21 @@ def _body(source):
     return ''.join(lines[n:]).strip('\n')
 
 def modules(doc, default=None):
-    """`{relative path: source}` for the code blocks marked `#|export`.
+    """`{relative path: source}` for the code bricks marked `#|export`, in dependency order.
 
     `#|default_exp pkg.mod` names where an unqualified `#|export` goes. `#|export other.mod`
-    overrides it for one block. A document with no export directive yields nothing.
+    overrides it for one brick. A document with no export directive yields nothing.
     """
     default = default or doc.meta.get('default_exp') or ''
     for b in doc.of('code'):
-        d = directives(b.source)
-        if d.get('default_exp'): default = d['default_exp']
+        if (d := directives(b.body)).get('default_exp'): default = d['default_exp']
     out = {}
-    for b in doc.of('code'):
-        d = directives(b.source)
-        if 'export' not in d and 'exporti' not in d: continue
-        mod = d.get('export') or d.get('exporti') or default
+    for b in order(doc.bricks):
+        d = directives(b.body)
+        mod = d.get('export') or d.get('exporti') or (default if 'export' in d or 'exporti' in d else '')
         if not mod: continue
-        out.setdefault(mod.replace('.', '/') + '.py', []).append(_body(b.source))
-    head = f'"""Generated by pata from {Path(doc.path).name or "a dynamic document"}. Edit the document."""\n'
+        out.setdefault(mod.replace('.', '/') + '.py', []).append(_body(b.body))
+    head = f'"""Generated by pata from {Path(doc.path).name or "a dynamic document"}."""\n'
     return {p: head + '\n' + '\n\n'.join(v) + '\n' for p, v in out.items()}
 
 def write_modules(doc, root, default=None):

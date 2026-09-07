@@ -1,22 +1,23 @@
-"Giving a document a canvas: where a block sits when nobody has placed it."
+"Giving a document a second view: where a brick sits when nobody has placed it."
 
 from __future__ import annotations
 import math
 from fastcore.all import L
 
 from .context import body_text
-from .doc import Doc
+from .doc import W
 
-__all__ = ['arrange', 'measure', 'W', 'GAP', 'PAD']
+__all__ = ['arrange', 'measure', 'GAP', 'PAD']
 
-W, GAP, PAD = 380, 26, 30
-#: Header, padding, and the line box the prototype's 13px type actually occupies.
+GAP, PAD = 26, 30
+#: Header, padding, and the line box the prototype's 13px type occupies.
 HEAD, LINE, CHROME = 27, 21, 22
 
-def measure(b, w=W):
-    "About how tall a block draws. Close enough to lay out; the page corrects it on render."
+def measure(b, w=W, values=None):
+    "About how tall a brick draws. Close enough to lay out; the page corrects it on render."
     per = max(20, int((w - CHROME) / 7.1))
-    rows = sum(max(1, math.ceil(len(l) / per)) for l in (body_text(b) or ' ').splitlines() or [' '])
+    text = body_text(b, values) or ' '
+    rows = sum(max(1, math.ceil(len(l) / per)) for l in text.splitlines() or [' '])
     return HEAD + CHROME + min(rows, 26) * LINE
 
 def _columns(items, tall):
@@ -30,34 +31,33 @@ def _columns(items, tall):
         h += bh + GAP
     return cols + ([cur] if cur else [])
 
-def arrange(doc, w=W, cols=6, tall=560, force=False):
-    """Place every block that has no geometry, frame by frame, and fit the frames round them.
+def arrange(doc, w=W, cols=6, tall=560, force=False, values=None, keep=False):
+    """Place every brick that has no `prop x`, region by region, and fit the regions round them.
 
-    `force` re-places blocks that were already positioned, which is what a person means by
-    "tidy the canvas". Without it, anything already moved by hand stays where it was put.
+    `force` re-places bricks a person had moved, which is what "tidy the canvas" means. `keep`
+    writes the result into the file; without it the layout stays a property of the view.
     """
     groups, order = {}, []
-    for b in doc.blocks:
-        if b.kind in ('edge', 'frame'): continue
-        groups.setdefault(b.frame, []).append(b)
-        if b.frame not in order: order.append(b.frame)
-    x, y, row_h = PAD, PAD, 0
-    for fid in order:
-        members = [(b, measure(b, w)) for b in groups[fid]]
-        packed = _columns(members, tall)
-        fw = len(packed) * w + (len(packed) - 1) * GAP + 2 * PAD
-        if x > PAD and x + fw > cols * (w + GAP) + 2 * PAD:
-            x, y, row_h = PAD, y + row_h + GAP * 2, 0
-        cx, fh = x + PAD, 0
+    for b in doc.bricks:
+        if b.region not in order: order.append(b.region)
+        if b.heading or b.kind == 'reply': continue     # the region label says one; the ask shows the other
+        groups.setdefault(b.region, []).append(b)
+    x, y, row_h, rects = PAD, PAD, 0, {}
+    for name in order:
+        if not groups.get(name): continue
+        packed = _columns([(b, measure(b, w, values)) for b in groups[name]], tall)
+        rw = len(packed) * w + (len(packed) - 1) * GAP + 2 * PAD
+        if x > PAD and x + rw > cols * (w + GAP) + 2 * PAD: x, y, row_h = PAD, y + row_h + GAP * 2, 0
+        cx, rh = x + PAD, 0
         for col in packed:
             cy = y + PAD + HEAD
             for b, bh in col:
-                if force or not b.placed: b.place(cx, cy, w, bh)
-                cy += (b.h or bh) + GAP
-            fh = max(fh, cy - y)
+                if force or b.props.get('x') is None: b.place(cx, cy, w, keep)
+                cy += bh + GAP
+            rh = max(rh, cy - y)
             cx += w + GAP
-        if (f := doc.by_id(fid)) is not None and f.kind == 'frame':
-            if force or not f.placed: f.place(x, y, fw, fh + PAD)
-        row_h = max(row_h, fh + PAD)
-        x += fw + GAP
+        rects[name] = {'title': name, 'x': x, 'y': y, 'w': rw, 'h': rh + PAD}
+        row_h = max(row_h, rh + PAD)
+        x += rw + GAP
+    doc.layout = rects
     return doc

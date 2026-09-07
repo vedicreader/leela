@@ -1,115 +1,170 @@
-import time
 import pytest
-from pata import Block, Doc, arrange, modules, render, resolve, to_ipynb, from_ipynb, to_markdown, weigh
+from pata import (Brick, Doc, arrange, body_text, from_ipynb, modules, order, render, resolve,
+                  to_ipynb, to_report, upstream, weigh)
 from pata.context import Spec, strip_work_log
-from pata.example import procurement
+from pata.example import VALUES, procurement
 
-def doc():
-    d = Doc()
-    d.add(Block('goal', {'source': 'ship it'}, id='g'))
-    d.add(Block('text', {'source': 'a' * 300}, id='a'))
-    d.add(Block('text', {'source': 'b' * 300}, id='b', mode='discard'))
-    d.add(Block('code', {'source': 'c' * 300}, id='c', mode='keep'))
-    d.add(Block('prompt', {'source': 'what now?'}, id='p'))
-    return d
+SMALL = '''---
+title: t
+---
 
-def test_scopes_choose_different_blocks():
+# One
+
+<!--canvas goal id=g-->
+ship it
+<!--/canvas-->
+
+```canvas code id=a
+x = 1
+```
+
+## Two
+
+```canvas code id=b
+y = x + 1
+```
+
+```canvas code id=c context=discard
+z = 99
+```
+
+```canvas ask id=q scope=page budget=100000
+pin a
+what now?
+```
+'''
+
+def small(): return Doc.parse(SMALL)
+
+def test_the_file_round_trips_and_a_quoted_canvas_stays_prose():
+    d = Doc.parse(SMALL + '''
+Here is how you write one:
+
+````markdown
+```canvas code id=fake
+not a brick
+```
+````
+''')
+    assert 'fake' not in {b.id for b in d}
+    again = Doc.parse(d.md())
+    assert again.md() == d.md()                        # prose carries no id, so compare the file
+    assert [b.kind for b in again] == [b.kind for b in d]
+    assert again['q'].pins == ['a'] and again['q'].scope == 'page' and again['q'].budget == 100000
+
+def test_headings_are_the_regions_and_carry_no_weight_of_their_own():
+    d = small()
+    assert d['b'].region == 'Two' and d['g'].region == 'One'
+    assert [b.id for b in d.in_region('Two')] == ['b', 'c', 'q'] or 'b' in [x.id for x in d.in_region('Two')]
+    head = next(b for b in d if b.heading)
+    assert body_text(head) == ''                       # the region label already says it
+
+def test_upstream_is_read_off_the_code_not_drawn_by_hand():
     d = procurement()
-    at = lambda s: {i.ref for i in resolve(d, 'p-risk', Spec(scope=s, goal=False))}
-    assert 'c-backtest' in at('upstream') and 'k-1' not in at('upstream')
-    assert at('frame') and at('frame').isdisjoint({'k-1', 'k-2'})
+    up = [b.id for b in upstream(d.bricks, 'c-share')]
+    assert up == ['c-load', 'c-band']                  # bands and pos, and nothing else
+    risk = [b.id for b in upstream(d.bricks, 'q-risk')]
+    assert {'c-rule', 'c-backtest'} <= set(risk)       # the names the question put in backticks
+    assert 's-audit' in risk                           # and the relation it declared
+    assert 'k1' not in risk                            # tasks are not upstream of anything
+
+def test_a_question_anchors_on_the_brick_above_it():
+    d = procurement()
+    assert 'c-cycle' in [b.id for b in upstream(d.bricks, 'q-fix')]
+
+def test_scopes_choose_different_bricks():
+    d = procurement()
+    at = lambda s: {i.ref for i in resolve(d, 'q-risk', Spec(scope=s, goal=False))}
     assert at('none') == set()
     assert at('page') < at('doc')
-    assert 'p-rec' in at('doc') and 'p-rec' not in at('page')   # only `doc` reads forwards
+    assert 'q-rec' in at('doc') and 'q-rec' not in at('page')     # only `doc` reads forwards
+    assert at('region') and 'k1' not in at('region')
+    assert 'c-backtest' in at('upstream') and 'k1' not in at('upstream')
 
 def test_the_goal_and_pins_survive_a_budget_that_drops_everything_else():
-    d = doc()
-    got = resolve(d, 'p', Spec(scope='page', pins=['a'], budget=800))
+    d = small()
+    d['b'].body = 'y = x + ' + '1' * 400
+    got = resolve(d, 'q', Spec(scope='page', pins=['a'], budget=400))
     kept = [i.ref for i in got]
-    assert kept[0] == 'g' and 'a' in kept and 'c' in kept   # goal, pin, and the `keep` block
-    assert 'b' not in kept                                  # `discard` goes first
-    assert weigh(got)['chars'] <= 800
+    assert kept[0] == 'g' and 'a' in kept and 'c' not in kept    # `discard` goes first
+    assert weigh(got)['chars'] <= 400
 
 def test_a_pin_larger_than_the_whole_budget_is_clipped_not_dropped():
-    d = doc()
-    d['a'].props['source'] = 'x' * 5000
-    got = resolve(d, 'p', Spec(scope='none', pins=['a'], budget=1000, goal=False))
+    d = small()
+    d['a'].body = 'x = "' + 'q' * 5000 + '"'
+    got = resolve(d, 'q', Spec(scope='none', pins=['a'], budget=1000, goal=False))
     assert [i.ref for i in got] == ['a'] and got[0].clipped and got[0].chars < 5000
 
 def test_a_pin_that_no_longer_resolves_is_visible_rather_than_silent():
-    d = doc()
-    got = resolve(d, 'p', Spec(scope='none', pins=['gone'], goal=False))
-    assert weigh(got)['missing'] == ['gone']
+    d = small()
+    assert weigh(resolve(d, 'q', Spec(scope='none', pins=['gone'], goal=False)))['missing'] == ['gone']
     d.remove('a')
-    d['p'].props['context'] = {'scope': 'none', 'pins': ['a']}
-    d.prune()
-    assert weigh(resolve(d, 'p'))['missing'] == []          # pruned, not left dangling
+    assert d['q'].pins == [] and weigh(resolve(d, 'q'))['missing'] == []
 
 def test_render_keeps_the_shape_ramabana_sheds_when_a_prompt_overflows():
     "`compact_notebook_context` matches `<cell ... compact=\"auto|keep|discard\">`; anything else is unshedable."
-    out = render(resolve(doc(), 'p', Spec(scope='page', budget=None)))
+    out = render(resolve(small(), 'q'))
     assert '<cell id="g" type="goal" compact="keep"' in out
-    assert 'compact="auto"' in out and '<block ' not in out
+    assert 'compact="auto"' in out and 'region="Two"' in out and '<block ' not in out
 
-def test_a_reply_is_fed_forward_without_its_work_log():
-    d = doc()
-    d.add(Block('prompt', {'source': 'first', 'reply':
-        'the answer\n\n<details><summary>what i did</summary>\ntool spam\n</details>'}, id='q'), at=4)
-    assert strip_work_log(d['q'].get('reply')) == 'the answer'
-    out = render(resolve(d, 'p', Spec(scope='page')))
-    assert 'the answer' in out and 'tool spam' not in out
-
-def test_a_block_goes_stale_when_something_upstream_runs_again():
-    d = Doc()
-    d.add(Block('code', {'source': 'df = load()'}, id='u')).ran(at=100)
-    d.add(Block('code', {'source': 'chart(df)', 'outputs': [{'output_type': 'stream', 'text': 'ok'}]},
-                id='v')).ran(at=200)
-    d.add(Block('edge', {'src': 'u', 'dst': 'v'}, id='e1'))
-    assert not d.stale('v')
-    d['u'].ran(at=300)
-    assert d.stale('v') and not d['v'].stale     # the hash cannot see it; the graph can
-
-def test_the_edge_graph_survives_a_cycle_and_a_copy():
-    d = Doc()
-    for i in 'xyz': d.add(Block('code', {'source': i}, id=i))
-    for a, b in (('x', 'y'), ('y', 'z'), ('z', 'x')): d.add(Block('edge', {'src': a, 'dst': b}, id=f'e{a}'))
-    assert set(d.reachable('z', back=True)) == {'x', 'y'}
-    made = d.copy(['x', 'y'])
-    new = {b.id for b in made if b.kind != 'edge'}
-    assert len(new) == 2 and not new & {'x', 'y'}
-    copied = [b for b in made if b.kind == 'edge']
-    assert copied and all(e.get('src') in new and e.get('dst') in new for e in copied)
-
-def test_a_pasted_jupytext_snippet_survives_the_diffable_document():
-    d = Doc()
-    d.add(Block('text', {'source': 'quoting the format:\n# %% code fake\nnot a block'}, id='t'))
-    d.add(Block('code', {'source': 'x = 1'}, id='k'))
-    back = Doc.from_json(d.json()).take_source_text(d.source_text())
-    assert [b.id for b in back] == ['t', 'k']
-    assert back['t'].source.endswith('not a block')
-
-def test_a_document_round_trips_through_a_notebook_with_its_work_intact():
+def test_an_answer_is_fed_forward_without_its_work_log():
     d = procurement()
-    back = from_ipynb(to_ipynb(d))
-    assert [b.kind for b in back] == [b.kind for b in d]
-    assert back['c-share'].outputs == d['c-share'].outputs
-    assert back['p-risk'].get('reply') == d['p-risk'].get('reply')
-    assert back['goal'].get('measure') == d['goal'].get('measure')
-    assert {(e.get('src'), e.get('dst')) for e in back.edges} == {(e.get('src'), e.get('dst')) for e in d.edges}
+    r = d.reply_to('q-synth')
+    r.body += '\n\n<details><summary>what i did</summary>\ntool spam\n</details>'
+    assert strip_work_log(r.body).endswith('clears the target.')
+    out = render(resolve(d, 'q-rec', values=VALUES))
+    assert 'clears the target' in out and 'tool spam' not in out
 
-def test_an_imported_notebook_arrives_with_a_canvas():
-    nb = {'cells': [{'cell_type': 'code', 'source': 'x = 1', 'outputs': [], 'id': 'c1'},
+def test_a_code_bricks_value_comes_from_the_namespace_not_the_file():
+    d = procurement()
+    assert '<output>' not in d.md()
+    assert '0.79' in body_text(d['c-backtest'], VALUES)
+
+def test_code_runs_in_dependency_order_not_document_order():
+    d = Doc.parse('```canvas code id=b\ny = x\n```\n\n```canvas code id=a\nx = 1\n```\n')
+    assert [b.id for b in order(d.bricks)] == ['a', 'b']
+
+def test_a_document_round_trips_through_a_notebook_with_its_answers_intact():
+    d = procurement()
+    back = from_ipynb(to_ipynb(d, VALUES))
+    assert back['q-rec'].pins == d['q-rec'].pins and back['q-rec'].scope == 'doc'
+    assert 'Auto-approve indirect' in back.reply_to('q-rec').body
+    assert back['c-band'].body == d['c-band'].body
+
+def test_a_layout_stays_out_of_the_file_until_someone_moves_a_brick():
+    d = procurement(placed=False)
+    before = d.md()
+    arrange(d)
+    assert d.md() == before and d['goal'].xy                 # placed for the view, not for the file
+    d['goal'].place(10, 20, keep=True)
+    assert 'prop x = 10' in d.md() and Doc.parse(d.md())['goal'].xy == (10.0, 20.0)
+
+def test_an_imported_notebook_arrives_with_a_second_view():
+    nb = {'cells': [{'cell_type': 'code', 'source': 'x = 1', 'id': 'c1'},
                     {'cell_type': 'markdown', 'source': '# notes', 'id': 'm1'}], 'nbformat': 4}
     d = arrange(from_ipynb(nb))
-    assert all(b.placed for b in d) and d['c1'].y < d['m1'].y
+    assert d['c1'].xy and d['c1'].xy != (None, None)
 
-def test_export_directives_pick_the_module():
+def test_export_writes_the_marked_bricks_in_dependency_order():
     d = procurement()
     assert set(modules(d)) == {'procure/core.py'}
-    assert 'def triage' in modules(d)['procure/core.py']
-    d['c-rule'].props['source'] = d['c-rule'].source.replace('#|export', '#|export procure.rules')
+    src = modules(d)['procure/core.py']
+    assert src.index('def bands') < src.index('def triage')
+    d['c-rule'].body = d['c-rule'].body.replace('#|export', '#|export procure.rules')
     assert set(modules(d)) == {'procure/core.py', 'procure/rules.py'}
 
+def test_a_report_leaves_the_canvas_behind():
+    out = to_report(procurement())
+    assert '```canvas' not in out and '<!--canvas' not in out
+    assert '- [ ] Ship the triage rule' in out and '**measure**' in out
+
+def test_a_copy_is_not_wired_back_into_the_original():
+    d = procurement()
+    made = d.copy(['s-audit', 'q-risk'])
+    new = {b.id for b in made}
+    assert not new & {'s-audit', 'q-risk'}
+    copy = next(b for b in made if b.kind == 'ask')
+    assert set(copy.pins) < new and set(copy.links['supports']) < new
+
 def test_a_duplicate_id_is_refused():
-    d = doc()
-    with pytest.raises(ValueError): d.add(Block('text', {}, id='a'))
+    with pytest.raises(ValueError): small().add(Brick('text', 'x', id='a'))

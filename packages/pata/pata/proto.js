@@ -2,6 +2,7 @@ const D = window.PATA, B = new Map(D.blocks.map(b => [b.id, b]));
 const $ = s => document.querySelector(s), el = (t, c) => { const n = document.createElement(t); if (c) n.className = c; return n; };
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const S = { view: 'canvas', sel: null, basket: [], spec: null };
+const skip = b => D.replies.includes(b.id) || b.heading;
 
 /* The context rules, mirroring `pata.context.resolve`. Scope membership is computed in Python and
  * shipped in `D.prompts[id].members`, so only pins, mutes and the budget are decided here. */
@@ -10,7 +11,7 @@ function basket(pid, spec) {
   const P = D.prompts[pid], mute = new Set(spec.mutes), seen = new Set([pid]), out = [];
   const take = (id, why, pin) => {
     const b = B.get(id);
-    if (!b || seen.has(id) || mute.has(id) || b.kind === 'edge' || !b.chars) return;
+    if (!b || seen.has(id) || mute.has(id) || !b.chars) return;
     seen.add(id);
     out.push({ ref: id, kind: b.kind, label: b.label, chars: b.chars, why, pinned: !!pin || b.mode === 'keep' });
   };
@@ -35,7 +36,7 @@ const specOf = pid => JSON.parse(JSON.stringify({ scope: 'page', pins: [], mutes
 function select(id) {
   S.sel = id;
   const b = B.get(id);
-  S.spec = (b && b.kind === 'prompt') ? specOf(id) : null;
+  S.spec = (b && b.kind === 'ask') ? specOf(id) : null;
   recompute();
 }
 function recompute() {
@@ -59,32 +60,34 @@ function mark() {
   });
 }
 
+const KEYS = ['measure', 'baseline', 'target', 'by'];
 function body(b) {
-  const p = b.props, n = el('div', 'bd');
+  const a = b.attrs || {}, n = el('div', 'bd');
   const add = h => { const d = el('div'); d.innerHTML = h; n.appendChild(d); };
+  const binds = () => Object.entries(b.binds || {}).map(([k, v]) =>
+    `<div class="bind"><span class="port">${esc(k)}</span> = <code>${esc(v)}</code></div>`).join('');
   if (b.kind === 'goal') {
-    add(`<div class="stmt">${esc(p.source)}</div>`);
-    const bits = ['measure', 'baseline', 'target', 'by'].filter(k => p[k]).map(k => `<b>${k}</b> ${esc(p[k])}`);
-    if (bits.length) add(`<div style="margin-top:7px;color:var(--fg2);font-size:12px">${bits.join(' &nbsp;·&nbsp; ')}</div>`);
+    add(`<div class="stmt">${esc(b.body)}</div>`);
+    const bits = KEYS.filter(k => a[k]).map(k => `<b>${k}</b> ${esc(a[k])}`);
+    if (bits.length) add(`<div class="meta">${bits.join(' &nbsp;·&nbsp; ')}</div>`);
   } else if (b.kind === 'code') {
-    add(`<pre>${esc(p.source)}</pre>`);
-    for (const o of (p.outputs || [])) {
-      const t = o.output_type === 'error' ? `${o.ename}: ${o.evalue}` : (o.text || (o.data || {})['text/plain'] || '');
-      if (t) add(`<div class="out${o.output_type === 'error' ? ' err' : ''}">${esc(t)}</div>`);
-    }
-  } else if (b.kind === 'prompt') {
-    add(`<div class="ask">${esc(p.source)}</div>`);
-    if (p.reply) add(`<div class="reply">${esc(p.reply)}</div>`);
+    add(`<pre>${esc(b.body)}</pre>`);
+    if (b.out) add(`<div class="out">${esc(b.out)}</div>`);
+  } else if (b.kind === 'ask') {
+    add(`<div class="ask">${esc(b.body)}</div>`);
+    if (b.reply) add(`<div class="reply">${esc(b.reply)}</div>`);
   } else if (b.kind === 'source') {
-    const w = p.url || p.path || '';
-    add(`<div><a href="${esc(w)}">${esc(p.title || w)}</a></div>`);
-    if (p.text) add(`<div style="margin-top:6px;color:var(--fg2)">${esc(p.text)}</div>`);
-  } else if (b.kind === 'task') {
-    add(`<div>${esc(p.source)}</div>`);
+    const w = a.url || a.path || '';
+    add(`<div><a href="${esc(w)}">${esc(a.title || w)}</a></div>`);
+    if (b.body) add(`<div class="lede">${esc(b.body)}</div>`);
   } else if (b.kind === 'data') {
-    add(`<pre>${esc(p.name || p.path || '')}</pre>`);
-    if (p.preview) add(`<div class="out">${esc(p.preview)}</div>`);
-  } else add(`<div>${esc(p.source || p.title || '')}</div>`);
+    add(binds() || `<pre>${esc(b.body)}</pre>`);
+  } else if (b.kind === 'brick' || b.kind === 'sim') {
+    add(`<div class="src">${esc(a.src || b.kind)}${a.emit_row ? ' &rarr; ' + esc(a.emit_row) : ''}</div>`);
+    add(binds());
+    add(`<div class="stub">component, ${esc((b.props || {}).height || 240)}px</div>`);
+  } else add(`<div>${esc(b.body)}</div>`);
+  if (b.defs && b.defs.length) add(`<div class="meta">defines ${b.defs.map(d => `<code>${esc(d)}</code>`).join(' ')}</div>`);
   return n;
 }
 
@@ -92,12 +95,12 @@ function card(b) {
   const n = el('div', 'blk');
   n.dataset.id = b.id; n.dataset.k = b.kind;
   const hd = el('div', 'hd');
+  const a = b.attrs || {};
   hd.innerHTML = `<span class="k">${b.kind}</span><span>${b.id}</span><span class="sp"></span>` +
-    (b.props.status ? `<span class="chip ${b.props.status}">${b.props.status}</span>` : '') +
-    (b.props.owner ? `<span class="chip">${esc(b.props.owner)}</span>` : '') +
+    (a.status ? `<span class="chip ${a.status}">${a.status}</span>` : '') +
+    (a.owner ? `<span class="chip">${esc(a.owner)}</span>` : '') +
     (b.mode !== 'auto' ? `<span class="chip ${b.mode}">${b.mode}</span>` : '') +
-    (b.stale ? '<span class="chip stale">stale</span>' : '') +
-    (b.props.execution_count ? `<span class="chip">[${b.props.execution_count}]</span>` : '') +
+    (a.scope ? `<span class="chip scope">${esc(a.scope)}</span>` : '') +
     `<span class="chip">${b.chars}c</span>`;
   n.append(hd, body(b));
   n.addEventListener('mousedown', e => { if (!e.target.closest('a')) select(b.id); });
@@ -108,9 +111,10 @@ function paintPage() {
   const v = $('#view'); v.innerHTML = '<div id="page"></div>';
   const p = $('#page');
   let frame = null;
+  let region = null;
   for (const b of D.blocks) {
-    if (b.kind === 'edge') continue;
-    if (b.kind === 'frame') { const h = el('div', 'fr'); h.textContent = b.props.title; h.style.position = 'static'; p.appendChild(h); frame = b.id; continue; }
+    if (skip(b)) continue;
+    if (b.region !== region) { region = b.region; const h = el('div', 'fr'); h.textContent = region; h.style.position = 'static'; p.appendChild(h); }
     p.appendChild(card(b));
   }
 }
@@ -120,16 +124,16 @@ function paintCanvas() {
   v.innerHTML = '<div id="canvas"><svg id="wires"></svg></div>';
   const c = $('#canvas'), svg = $('#wires');
   let mx = 0, my = 0;
-  for (const f of D.frames) {
+  for (const f of D.regions) {
     const n = el('div', 'fr');
     Object.assign(n.style, { left: f.x + 'px', top: f.y + 'px', width: f.w + 'px', height: f.h + 'px' });
-    n.dataset.frame = f.id;
+    n.dataset.frame = f.title;
     n.innerHTML = `<span>${esc(f.title)}</span>`;
     c.appendChild(n);
     mx = Math.max(mx, f.x + f.w); my = Math.max(my, f.y + f.h);
   }
   for (const b of D.blocks) {
-    if (b.kind === 'edge' || b.kind === 'frame' || b.x == null) continue;
+    if (b.x == null || skip(b)) continue;
     const n = card(b);
     Object.assign(n.style, { left: b.x + 'px', top: b.y + 'px', width: (b.w || 280) + 'px' });
     c.appendChild(n);
@@ -142,7 +146,7 @@ function paintCanvas() {
     const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     l.dataset.src = e.src; l.dataset.dst = e.dst;
     l.setAttribute('stroke', '#30363d'); l.setAttribute('stroke-width', '1.5');
-    if (e.rel === 'blocks') l.setAttribute('stroke-dasharray', '4 3');
+    if (['supports', 'refutes', 'blocks'].includes(e.rel)) l.setAttribute('stroke-dasharray', '4 3');
     svg.appendChild(l);
   }
   wires();
@@ -154,9 +158,9 @@ function fitFrames() {
   const c = $('#canvas'); if (!c) return;
   const box = {};
   for (const b of D.blocks) {
-    if (!b.frame || b.x == null) continue;
+    if (!b.region || b.x == null) continue;
     const n = c.querySelector(`.blk[data-id="${b.id}"]`); if (!n) continue;
-    const r = box[b.frame] || (box[b.frame] = { x1: 1e9, y1: 1e9, x2: -1e9, y2: -1e9 });
+    const r = box[b.region] || (box[b.region] = { x1: 1e9, y1: 1e9, x2: -1e9, y2: -1e9 });
     r.x1 = Math.min(r.x1, n.offsetLeft); r.y1 = Math.min(r.y1, n.offsetTop);
     r.x2 = Math.max(r.x2, n.offsetLeft + n.offsetWidth); r.y2 = Math.max(r.y2, n.offsetTop + n.offsetHeight);
   }
@@ -192,10 +196,15 @@ function drag(n, b) {
 function outline() {
   const a = $('#outline'); a.innerHTML = '';
   const on = inCtx();
+  let seenRegion = null;
   for (const b of D.blocks) {
-    if (b.kind === 'edge') continue;
-    const r = el('div', 'row' + (b.kind === 'frame' ? ' frame' : ' kid') + (b.id === S.sel ? ' sel' : '') + (on.has(b.id) ? ' inctx' : ''));
-    r.textContent = b.kind === 'frame' ? b.props.title : (b.label || b.kind);
+    if (skip(b)) continue;
+    if (b.region !== seenRegion) {
+      seenRegion = b.region;
+      const h = el('div', 'row frame'); h.textContent = b.region; a.appendChild(h);
+    }
+    const r = el('div', 'row kid' + (b.id === S.sel ? ' sel' : '') + (on.has(b.id) ? ' inctx' : ''));
+    r.textContent = b.label || b.kind;
     r.onclick = () => { select(b.id); const n = document.querySelector(`.blk[data-id="${b.id}"]`); if (n) n.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
     a.appendChild(r);
   }
@@ -204,7 +213,7 @@ function outline() {
 function paintBasket() {
   const p = $('#basket');
   if (!S.spec) {
-    p.innerHTML = '<h4>context</h4><div class="empty">Select a prompt block to see exactly what the model will be given.</div>';
+    p.innerHTML = '<h4>context</h4><div class="empty">Select an ask brick to see exactly what the model will be given.</div>';
     $('#app main').classList.add('nobasket');
     return;
   }

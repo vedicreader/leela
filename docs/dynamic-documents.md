@@ -4,7 +4,7 @@ A goal like "increase procurement productivity by 10%" is not a coding task, and
 
 Leela already holds four of the five. It has the kernel, the files, the vault, the agent and the notebook. What it does not have is a document shaped like the work rather than like a script.
 
-`packages/pata` is that document, and `pata.paint` draws two prototypes of it.
+Two branches have gone at that. `claude/dynamic-document-canvas-ohgfud` built the file and the runtime, wired into Leela as a block. `packages/pata` builds the context engine on that file. This document is the design both halves answer to.
 
 ## What a notebook cannot be
 
@@ -12,86 +12,108 @@ A notebook is a list. Its prompt cells read from the top of the document down to
 
 That rule dies the moment the document holds more than one line of work. Framing the goal, reading the audit, cleaning the extract and drafting the recommendation are four strands, not four consecutive steps. Ask the recommendation prompt to read everything above it and it reads three failed attempts at a groupby. Ask it to read nothing and you are pasting again.
 
-The audit is the case that makes it concrete. It belongs in the context of the synthesis prompt near the top, and in the context of the risk prompt near the bottom, and in nothing between them. Position cannot express that. Nothing about where a block sits says which questions it answers.
+The audit is the case that makes it concrete. It belongs in the context of the synthesis question near the top, and in the context of the risk question near the bottom, and in nothing between them. Position cannot express that. Nothing about where a brick sits says which questions it answers.
+
+## The file
+
+`*.canvas.md`. Prose is prose. A brick markdown cannot show is a fence, `` ```canvas code id=c1 ``. A brick whose body is markdown a plain renderer should still show is a comment wrap, `<!--canvas goal id=goal-->`. Headings are the document's regions. Frontmatter carries the title.
+
+This is the canvas branch's format and it is the right one. A plan, a design doc and a set of research clippings are prose, and prose in JSON is prose nobody will read or review. Markdown means `git diff` shows the argument changing rather than a re-serialised tree, means the document opens in anything, and means the design doc and the code that tests it are the same file rather than two files that disagree.
+
+Reading it works line by line rather than by one regex over the file. A canvas fence inside a longer markdown fence is an example of one, not one, so a document about canvases parses as a document. That is not a nicety. A `source` brick holding a clipped page is exactly where quoted markup arrives.
 
 ## What AFFiNE contributes
 
-AFFiNE's [BlockSuite](https://blocksuite.io) puts one block tree behind two views. A document is a list of blocks, each with a flavour named `namespace:name`. Page mode reads the tree top to bottom. Edgeless mode reads the same blocks off a surface that gives them coordinates, frames that group them, and connectors that join them. Neither view owns the document. Moving a block on the canvas does not fork it.
+AFFiNE's [BlockSuite](https://blocksuite.io) puts one block tree behind two views. A document is a list of blocks, each with a flavour named `namespace:name`. Page mode reads the tree top to bottom. Edgeless mode reads the same blocks off a surface that gives them coordinates, frames that group them, and connectors that join them. Neither view owns the document.
 
-Three of those ideas earn their place here.
+Two of those ideas earn their place here, and one is replaced by something better.
 
-The flavour is one. A notebook cell has three types because a notebook has three kinds of thing in it. A document that holds a goal, a task, a clipping and a chart needs the names for them, and `pata:goal` is a better home for a measure and a baseline than a markdown cell with a convention.
+The named kind earns it. A notebook cell has three types because a notebook has three kinds of thing in it. A document that holds a goal, a task, a clipping and a chart needs the names for them, and a `goal` brick carrying `measure`, `baseline`, `target` and `by` is a better home for a measure than a markdown cell with a convention.
 
-The two views are the second. The list is still the right way to read finished work, and it is what exports to a notebook and to a report. The canvas is the right way to hold work in progress, because unfinished thinking is not linear and forcing it into a line is what sends people to a whiteboard.
+The two views earn it. The list is the right way to read finished work and the only way to review it. The canvas is the right way to hold work in progress, because unfinished thinking is not linear. `prop x` and `prop y` are the only trace the canvas leaves in the file, so a document nobody has laid out is still complete, and `arrange` places one that has never been opened on a canvas.
 
-The connector is the third, and it is the one that matters most. On AFFiNE's canvas a connector is decoration. Here it carries a relation: this block reads from that one, this source supports that claim, this open question blocks that task. Once the edges exist, a prompt can ask for what it reads from instead of what sits above it.
+The connector does not earn it. On AFFiNE's canvas a connector is drawn by hand, and a diagram maintained beside the code is a diagram that goes wrong. The code already states the graph.
+
+## Upstream is read off the code
+
+`defs_of` and `reads_of` walk the AST. A name is owned by whichever brick binds it, so which bricks a brick reads from is a fact about the document rather than a drawing over it. `order` runs code in dependency order, and `upstream` answers what one question is downstream of.
+
+Three things extend it where the AST cannot see.
+
+A question anchors on the brick above it. "Fix that" means that brick and everything it reads, which is what a person means and what `scope=upstream` on a question should give them. `anchor=<id>` overrides it.
+
+A name a question puts in backticks is a name it reads. Writing `` `triage` `` in a question pulls in the brick that defines `triage` and its own upstream. Backticks around an identifier already mean "this one", so nothing new has to be learned.
+
+`supports=`, `refutes=` and `blocks=` name a relation between bricks that no AST can find. That is where a clipping supporting a claim goes, and it is the only hand-drawn edge left.
 
 ## Context is the design
 
-Every prompt block carries a rule, and `pata.context.resolve` turns that rule into the exact list of items the turn will send.
+Every question carries a rule, and `pata.context.resolve` turns that rule into the exact list of items the turn will send.
 
 ```
-scope    none | page | frame | upstream | doc
-pins     always in, block ids or file:, vault:, url:, var:, sel:
-mutes    always out
-budget   characters
+scope=region                 none | page | region | upstream | doc
+pin s-audit                  always in; also file:, vault:, url:, var:, sel:
+mute n-cap                   always out
+budget=12000                 characters
 ```
 
-`page` is the notebook's own behaviour, kept because it is right for a document being read as a document. `frame` is the region you are working in. `upstream` walks the edges backwards, so the risk prompt reads the backtest, the rule, the split and the extract, and reads none of the four tasks sitting beside them.
+`page` is the notebook's own behaviour, kept because it is right for a document being read as a document. `region` is the section you are working in. `upstream` is the dataflow, so the risk question reads the backtest, the rule, the split and the extract, and reads none of the four tasks sitting beside them.
 
-The panel is the point. `resolve` is pure, it returns items rather than a string, and the same list that builds the prompt draws the panel: every block in the basket, what put it there, what it costs in characters, and a running total against the budget. Blocks in the basket glow on the canvas. Click a row to mute it and the glow goes out. There is no hidden step between what you can see and what the model is handed.
+The panel is the point. `resolve` is pure, it returns items rather than a string, and the same list that builds the prompt draws the panel: every brick in the basket, what put it there, what it costs in characters, and a running total against the budget. Bricks in the basket glow on the canvas. Click a row to mute it and the glow goes out. There is no hidden step between what you can see and what the model is handed.
 
-Under a budget, the goal and the pins survive. A `discard` block goes first, then the oldest ordinary one, which is what notebook cells already do through `context_mode`. A pin larger than the whole budget is clipped and marked rather than dropped, because a pin that vanishes silently is worse than one that arrives short.
+Under a budget, the goal and the pins survive. A `context=discard` brick goes first, then the oldest ordinary one, which is what notebook cells already do through `context_mode`. A pin larger than the whole budget is clipped and marked rather than dropped, because a pin that vanishes silently is worse than one that arrives short.
 
-`render` emits `<cell id= type= compact= why=>`. That is Leela's own notebook markup, and it is deliberate. Ramabana's `compact_notebook_context` sheds elements matching exactly that pattern when a prompt overflows the window. A document that rendered `<block>` instead would have a budget with nothing underneath it, and an oversized turn would fail at the provider rather than shed a research clipping.
+`render` emits `<cell id= type= compact= why= region=>`. That is Leela's own notebook markup, and it is deliberate. Ramabana's `compact_notebook_context` sheds elements matching exactly that pattern when a prompt overflows the window. A document that rendered anything else would have a budget with nothing underneath it, and an oversized turn would fail at the provider rather than shed a research clipping.
 
-## Staleness the graph can see
+## No stored outputs
 
-`Cell.stale` compares a hash of the cell's source against the hash its outputs came from. It catches an edited cell. It cannot catch the other case, which is a chart that is still correct about a dataframe that has since been reloaded.
+A canvas keeps no outputs. Opening one runs it, and a code brick's value comes from the live namespace.
 
-The edges close that. Each block that runs stamps `ran_at`. `Doc.stale` is true when the local hash disagrees, or when anything reachable backwards has a later stamp. The model sees `stale="true"` on the output either way, so it stops answering about last week's numbers.
+That deletes the whole staleness problem rather than solving it. There is no hash to compare, no `output_hash` to carry, and no case where a chart is correct about a dataframe that has since been reloaded. It also deletes the merge conflicts that notebook outputs cause, which is most of them.
 
-This is the first thing the edge graph buys that a list could not, and it is a reason to draw the connectors even for someone who never opens the canvas.
+What it costs is a document that does not open instantly and one that cannot be read offline with its numbers in it. `bind` is the answer to the second: a `data` brick renders a sentence from live values, so the numbers in the prose are never the numbers from last month.
 
 ## Getting work back out
 
 Nothing here is a new place for work to get stuck.
 
-`to_ipynb` writes a real notebook, with prompt blocks in the `metadata.leela` shape `Cell.nbcell` already uses, so Leela opens it and the prompts are still prompts. `from_ipynb` reads it back, and migrates a notebook that was never a document. `arrange` then gives that import a canvas, so an `.ipynb` opened as a document arrives laid out rather than in one column.
-
-`to_markdown` writes the narrative for a report. `modules` writes the code blocks marked `#|export` as modules, on nbdev's rules, which is the "extract the software" half of the goal.
-
-`source_text` writes a `# %%` document for git to diff, the same trick `Notebook.source_text` uses. One difference: a body line that would read as a marker is indented on the way out and restored on the way in. Notebooks hold Python, which rarely quotes jupytext. A document holds prose and pasted research, which does.
+`to_ipynb` writes a real notebook, with questions in the `metadata.leela` shape `Cell.nbcell` already uses, so Leela opens it and the prompts are still prompts. `from_ipynb` reads it back and migrates a notebook that was never a document. `to_report` writes the document with the canvas taken off. `modules` writes the code bricks marked `#|export` in dependency order, which is the "extract the software" half of the goal.
 
 ## The prototypes
 
 Both are generated from the package, not drawn by hand, so what they show is what `resolve` and `arrange` actually do.
 
-- `media/pata-procurement.html` is the document on its own. The header toggles page and canvas. The right panel is the context basket for whichever prompt block is selected, with the scope, the budget, the per-item cost, and the markup the model reads.
-- `media/pata-in-leela.html` is the same document inside Leela's chrome: tab strip, outline, the agent and variables panes, the status bar. It answers what this looks like as a tab rather than as a toy.
+- `media/pata-procurement.html` is the document on its own. The header toggles page and canvas. The right panel is the context basket for whichever question is selected, with the scope, the budget, the per-item cost, and the markup the model reads.
+- `media/pata-in-leela.html` is the same document inside Leela's chrome: tab strip, outline, the agent and variables panes, the status bar.
 
-`media/procurement.pata` is the document itself.
+`media/procurement.canvas.md` is the document itself, and it is meant to be read as a file.
+
+## Where the two branches meet
+
+The canvas branch owns the format, the parser, the dataflow, the reactive runtime, the embedded components, and the eight `canvas_*` tools the agent gets when a canvas opens. `pata` owns the context engine, the three brick kinds a plan needs, and the second view.
+
+They are one thing, not two. `pata.doc` reimplements the canvas branch's scanner and dataflow so the package can stand alone while the shape is still moving, and that is a fork that should not survive a decision. Merging means one parser, in whichever half is kept, with the other importing it.
+
+Two things the canvas branch has that this does not: the reactive runtime, and the agent actually editing the document through tools rather than answering into a brick. Two things this has that it does not: a context rule a person can see and change, and a goal.
 
 ## What is not decided
 
-Four questions, each of which changes what gets built.
+**Where it lives.** The canvas branch is already a Leela block, wired into `NAMES` and `LAYERS` with 418 lines of tests. `packages/pata` imports nothing from Leela. The block is further along; the package is easier to move. One of them has to give.
 
-**Where the document lives.** `packages/pata` is standalone and imports nothing from Leela. That is the cheap position to hold while the shape is still moving. The alternative is a `leela/blocks/pata/` folder, which buys the routes and the kernel for free and costs a split later.
+**Whether `pata` is a package at all.** The context engine is 200 lines. It could be a module inside `leela/blocks/canvas/` and never be a package.
 
-**Whether `.pata` should be `.ipynb`.** A separate format is honest about being a different thing, and costs a second copy of a format Leela already reads. An `.ipynb` with `metadata.pata` costs nothing new, keeps `merge_rows` and the notebook conflict resolver, keeps search indexing it, and constrains what a block can hold to what a cell can carry.
+**Whether the second view is version one.** The context basket, the goal and the plan kinds work in a linear document and are most of the value. The canvas is where the layout lives, and `arrange` plus `prop x` is the whole of it, so this is cheap either way.
 
-**Whether the canvas is version one.** The context basket and the flavours work in a linear document and are most of the value. The canvas is where the edges get drawn, and the edges are where `upstream` and graph staleness come from. Shipping the list first means shipping the two features that depend on the canvas later.
+**What the agent may write.** The canvas branch already answers this: eight tools, and a skill pushed onto the agent while a canvas is open. A question answers into a `reply` brick under it. Whether the agent may also add bricks, rebind ports and reorganise a document is a larger claim, and the tools already allow it.
 
-**What the agent may write.** A prompt block answers into itself today. Letting it add blocks, move them, or draw an edge makes the document something the agent maintains rather than something it annotates. That is a much larger claim, and it wants its own decision.
+## What integration costs
 
-## What integration actually costs
+A review of the standalone design against the repository found the seam work, and none of it is one line. The canvas branch has done some of it already.
 
-A review of this design against the repository found the seam work, and none of it is one line.
+`Assistant.compose` in Ramabana wraps any context in `<notebook path=...>`, and the briefing tells the model to call `notebook_cells` on that path. A `.canvas.md` path handed to `notebook_cells` reaches `Notebook.load` on text that is not nbformat. Ramabana needs to know a second document kind, or Leela needs to hand it a path it can honour.
 
-`Assistant.compose` in Ramabana wraps any context in `<notebook path=...>`, and the briefing tells the model to call `notebook_cells` on that path. A `.pata` path handed to `notebook_cells` reaches `Notebook.load` on JSON that is not nbformat, and raises. Ramabana needs to know a second document kind, or Leela needs to hand it a path it can honour.
+`Tab.kind` is decided by suffix in `workspace.py` with no extension point, and `tab_state`, `tab_disk`, `tab_buffer`, `cwd_for` and `kernel_key` each need a branch. `write_text_at` special-cases `.ipynb` so a rollback does not put jupytext markers into JSON. `DocStore` holds notebooks only. `blocks/refactor` treats anything not `.ipynb` as text to rewrite, which would rename identifiers inside prose; a markdown file makes that more likely rather than less.
 
-`Tab.kind` is decided by suffix in `workspace.py` with no extension point, and `tab_state`, `tab_disk`, `tab_buffer`, `cwd_for` and `kernel_key` each need a branch. `write_text_at` special-cases `.ipynb` so that a rollback does not put jupytext markers into JSON, and `.pata` needs the same branch or it reintroduces a fault this repository already fixed. `DocStore` holds notebooks only. `blocks/search` gates indexing on the extension. `blocks/refactor` treats anything not `.ipynb` as text to rewrite, which would rename identifiers inside prose. Git conflicts on a canvas are more likely than on a notebook, because two people moving the same block both write `props.x`, and there is no cell-level resolver for a format that is not `.ipynb`.
+Two things are answered by the format rather than by code. Git conflicts on prose are ordinary text conflicts, which is what markdown buys. Undo granularity for a canvas drag is a stream of `prop x` writes, and a drag that writes only on release is one edit.
 
-Two things in the model are answered and were not: undo granularity for a drag, which is a stream of coordinate writes against a checkpoint scheme built for cell edits, and concurrency, because `inline_ai` is one conversation with one `_approval_target` while a canvas invites running two prompt blocks at once.
-
-None of these is a reason not to build it. All of them are the reason the first question above is the one to answer first.
+One is not answered anywhere. `inline_ai` is one conversation with one `_approval_target`, while a canvas invites running two questions at once.

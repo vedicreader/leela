@@ -1,8 +1,8 @@
 # pata
 
-One document that holds a goal, the plan under it, the research behind it, the code that tests it, and the prompts that moved it along. Built for [Leela](https://github.com/vedicreader/leela), and usable on its own.
+One markdown file that holds a goal, the plan under it, the research behind it, the code that tests it, and the questions that moved it along. Built for [Leela](https://github.com/vedicreader/leela), and usable on its own.
 
-A notebook decides what the model sees by position: everything above the cell. A document that also holds a plan, a research shelf and a canvas has no "above". `pata` replaces position with a context set you can read, toggle and count before the turn runs.
+The file format and the AST dataflow come from Leela's `dynamic-document-canvas` branch. What `pata` adds is the context engine: a question names what it may see, and the basket it will send is a list you can read, toggle and count before the turn runs.
 
 ## Install
 
@@ -10,70 +10,92 @@ A notebook decides what the model sees by position: everything above the cell. A
 pip install pata
 ```
 
-## The model
+## The file
 
-One document is a flat, ordered list of blocks. Each block has a flavour, `pata:name`, after BlockSuite's `namespace:name`.
+`*.canvas.md`. Prose is prose. A brick that markdown cannot show is a fence, and a brick whose body is markdown a plain renderer should still show is a comment wrap. Headings are the document's regions, so a canvas opened in any markdown viewer is still a readable document.
 
-| flavour | holds |
-|---|---|
-| `pata:goal` | the statement, its measure, baseline, target and date |
-| `pata:task` | one plan item, its status and owner |
-| `pata:text` | prose |
-| `pata:source` | something collected: a page, a file, a vault document |
-| `pata:data` | a live variable or a table, with a preview |
-| `pata:code` | a runnable cell, its outputs, and where `#|export` sends it |
-| `pata:prompt` | a question, its answer, and the context rule that fed it |
-| `pata:frame` | a named region grouping the blocks assigned to it |
-| `pata:edge` | `src` reads from, supports, refutes or blocks `dst` |
+````markdown
+---
+title: Procurement productivity +10%
+---
 
-The list is the page view. `x`, `y` and `frame` are the edgeless view. Both draw the same blocks, so moving one on the canvas does not fork the document.
+# Increase procurement productivity by 10%
 
-```python
-from pata import Block, Doc, arrange, render, resolve
+<!--canvas goal id=goal measure="POs per buyer FTE per month" baseline=41 target=45-->
+Increase procurement productivity by 10% in FY26.
+<!--/canvas-->
 
-d = Doc()
-d.add(Block('goal', {'source': 'Increase procurement productivity by 10%'}, id='g'))
-d.add(Block('source', {'title': 'Q3 audit', 'text': '34% of POs are under EUR 2,000.'}, id='s'))
-p = d.add(Block('prompt', {'source': 'Where does the 10% come from?',
-                           'context': {'scope': 'page', 'pins': ['s'], 'budget': 12000}}))
-print(render(resolve(d, p.id), d))
-arrange(d)
+## What we already know
+
+<!--canvas source id=s-audit title="Internal audit, Q3 FY25" path=drive/audit-q3.pdf-->
+34% of purchase orders raised in Q3 were under EUR 2,000.
+<!--/canvas-->
+
+```canvas code id=c-share
+tail, rest = bands(pos)
+share = len(tail) / len(pos)
 ```
+
+```canvas data id=d-say
+bind text = f"The tail is **{share:.0%}** of all POs."
+```
+
+```canvas ask id=q scope=region budget=12000
+pin s-audit
+Where does the 10% most plausibly come from?
+```
+````
+
+| kind | holds |
+|---|---|
+| `goal` | the statement, and `measure`, `baseline`, `target`, `by` |
+| `task` | one plan item, its `status` and `owner` |
+| `source` | something collected: a page, a file, a vault document |
+| `code` | a runnable cell. No outputs are stored: opening the document runs it |
+| `data` | prose bound to a live value, so a number in a sentence cannot go stale |
+| `brick`, `sim` | an embedded component and one written in the document |
+| `ask`, `reply`, `note` | a question, the answer written back under it, and an aside |
 
 ## Context
 
-`resolve(doc, block_id)` returns the exact list a turn will send, in order, with the rule that put each item there. The same list draws the panel and builds the prompt, so what a person toggles is what the model gets.
+`resolve(doc, brick_id)` returns the exact list a turn will send, in order, with the rule that put each item there. The same list draws the panel and builds the prompt, so what a person toggles is what the model gets.
 
-A prompt block's `context` prop is a `Spec`:
+A question carries its rule as attributes and directives:
 
-- `scope` gathers a starting set. `none`, `page` (blocks before it in document order, which is a notebook), `frame` (its own region), `upstream` (what it reads from, along the edges), `doc`.
-- `pins` are always included. A block id, or `file:`, `vault:`, `url:`, `var:` and `sel:` for things the document does not own. A host resolves those through the `lookup` argument.
-- `mutes` are excluded whatever the scope says.
-- `budget` is a character budget. The goal and the pins survive it. A `discard` block goes first, then the oldest ordinary one. A pin larger than the whole budget is clipped and marked, never dropped silently.
+- `scope=` gathers a starting set. `none`, `page` (bricks before it), `region` (under the same heading), `upstream` (what it reads from), `doc`.
+- `pin <ref>` is always included. A brick id, or `file:`, `vault:`, `url:`, `var:` and `sel:` for things the document does not own. A host resolves those through the `lookup` argument.
+- `mute <ref>` is excluded whatever the scope says.
+- `budget=` is a character budget. The goal and the pins survive it. A `context=discard` brick goes first, then the oldest ordinary one. A pin larger than the whole budget is clipped and marked, never dropped silently.
 
-`render` emits `<cell id= type= compact= why=>`, which is Leela's notebook context shape. Ramabana's `compact_notebook_context` sheds elements matching exactly that when a prompt overflows the window, so the budget has a safety net underneath it.
+`render` emits `<cell id= type= compact= why= region=>`, which is Leela's notebook context shape. Ramabana's `compact_notebook_context` sheds elements matching exactly that when a prompt overflows the window, so the budget has a safety net underneath it.
 
-## Staleness
+## Upstream is read, not drawn
 
-A hash over a block's own source says the block was edited. It cannot say an ancestor re-ran. `Doc.stale(id)` reads both: the hash, and whether anything reachable backwards along the edges has a later `ran_at`.
+`upstream` walks the dataflow the code already states. `defs_of` and `reads_of` say which brick binds a name and which bricks load it, so the graph is right without anyone maintaining it.
+
+Three things extend it where the AST cannot see:
+
+- A question anchors on the brick above it, because "fix that" means that one and everything it reads. `anchor=<id>` overrides.
+- A name a question puts in backticks is a name it reads. Writing `` `triage` `` in a question pulls in the brick that defines it.
+- `supports=`, `refutes=` and `blocks=` name bricks a prose relation joins. That is where a clipping supporting a claim goes, which no AST can find.
 
 ## Getting work out
 
-- `to_ipynb` / `from_ipynb`: a document as a notebook, prompt blocks in Leela's own `metadata.leela` shape. `from_ipynb` also migrates a notebook that was never a document.
-- `to_markdown`: the narrative, for a report.
-- `modules` / `write_modules`: the code blocks marked `#|export`, written as modules. `#|default_exp` names where an unqualified export goes.
-- `source_text` / `take_source_text`: a `# %%` document for git to diff. A body line that would read as a marker is indented on the way out and restored on the way in.
+- `to_ipynb` / `from_ipynb`: a document as a notebook, questions in Leela's own `metadata.leela` prompt shape. `from_ipynb` also migrates a notebook that was never a document, and `arrange` gives that import a canvas.
+- `to_report`: the document with the canvas taken off, for a reader who has never heard of one.
+- `modules` / `write_modules`: the code bricks marked `#|export`, written out in dependency order.
 
 ## Prototypes
 
 `pata.paint` writes a standalone page: both views, the outline, and the context panel.
 
 ```python
-from pata.example import procurement
+from pata.example import VALUES, procurement
 from pata.paint import paint
 
-paint(procurement(), 'plan.html')                   # on its own
-paint(procurement(), 'in-leela.html', shell='leela')  # inside the IDE it would live in
+d = procurement()
+paint(d, 'plan.html', values=VALUES)
+paint(d, 'in-leela.html', shell='leela', values=VALUES)
 ```
 
 ## Tests
