@@ -530,7 +530,12 @@ def test_prepare_runs_for_a_project_configured_the_modern_way(tmp_path, monkeypa
     session = SimpleNamespace(fs=SimpleNamespace(roots=[Path(root)]))
     monkeypatch.setattr('leela.blocks.pipelines.app.repo_for', lambda s, t: Path(root))
     monkeypatch.setattr('leela.blocks.pipelines.app.python_for', lambda r, s: None)
+    #: Whether nbdev is installed is the sibling test's subject, not this one's, and reading it off
+    #: the ambient PATH made this test pass or fail on how pytest was invoked.
+    script = str(root/'.venv/bin/nbdev-prepare')
+    monkeypatch.setattr('leela.blocks.pipelines.app.resolve_script', lambda argv, *a, **kw: [script])
     d = nbdev_prepare(session)
+    assert ran['argv'] == [script], 'it runs the resolved script, never the bare name'
     assert d['ok'] and d['root'] == str(root) and d['nbs_path'] == 'nbs'
     assert ran['cwd'] == str(root), 'and it runs in the folder that owns the config'
 

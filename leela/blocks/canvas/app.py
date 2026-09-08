@@ -389,6 +389,14 @@ def _changed(doc, base=''):
     from .change import hunks
     return list(hunks(_diff(doc, base)))
 
+def _mine(doc, dest):
+    "The page's own path, as the diff spells it: relative to the repository root."
+    from gheasy.repo import repo_root
+    root = repo_root(Path(doc.path).parent)
+    if root is None: return ''
+    try: return str(Path(dest).resolve().relative_to(Path(root).resolve()))
+    except ValueError: return ''
+
 def _demote(b):
     "A review's own `## Change` under eight reviews is a third-level heading, not a section."
     if b.kind == 'text' and b.body.strip().startswith('## '): b.body = '#' + b.body.strip()
@@ -406,11 +414,14 @@ def branch_page(
     that path. So a document that explains its files is a literate diff, and this is the whole
     branch read that way rather than one slot with every file under it.
     """
-    changed = _changed(doc, base)
+    #: The page is a tracked file the document claims, and diffing it into itself grows the file
+    #: every run. One render went to 12MB before this line.
+    mine = _mine(doc, dest)
+    changed = [p for p in _changed(doc, base) if p != mine]
     out = Canvas(meta={'title': doc.title}, path=doc.path)
     for g in doc.of('goal'): out.add(g)
     for i, b in enumerate(bundles(doc)):
-        r = review(doc, b.id, _diff(doc, base, b.paths, ''))
+        r = review(doc, b.id, _diff(doc, base, b.paths, ''), skip=(mine,))
         for brick in r.bricks:
             #: One document out of many reviews, and `add` refuses a repeated id.
             brick.id = f'b{i}-{brick.id}'

@@ -11,7 +11,7 @@ from .change import bundles, coverage, diff_stat, snip, state
 from .context import strip_work_log
 from .doc import HEAD
 
-__all__ = ['lit', 'html_of', 'md_html', 'GOAL_KEYS', 'FOLD_LINES', 'DIFF_CAP']
+__all__ = ['lit', 'html_of', 'md_html', 'GOAL_KEYS', 'FOLD_LINES', 'DIFF_CAP', 'DIFF_COLS']
 
 #: What a goal states beyond the goal itself.
 GOAL_KEYS = ('measure', 'baseline', 'target', 'by')
@@ -19,6 +19,8 @@ GOAL_KEYS = ('measure', 'baseline', 'target', 'by')
 FOLD_LINES = 22
 #: A generated artifact diffs to thousands of unreadable lines. Past this, the rest is a count.
 DIFF_CAP = 400
+#: And one minified line can hold the whole file. Past this, the line ends in an ellipsis.
+DIFF_COLS = 400
 
 def md_html(text):
     "Markdown as HTML. `mdhtml` does this; nothing here parses markdown."
@@ -80,6 +82,7 @@ _SKIP = ('diff --git', 'index ', '--- ', '+++ ', 'new file', 'deleted file', 'si
 
 def _dline(l):
     cls = 'a' if l[:1] == '+' else 'r' if l[:1] == '-' else 'h' if l[:2] == '@@' else ''
+    if len(l) > DIFF_COLS: l = l[:DIFF_COLS] + f' … +{len(l) - DIFF_COLS} chars'
     return f'<span class="dl {cls}">{escape(l) or " "}</span>'
 
 def _diff(b):

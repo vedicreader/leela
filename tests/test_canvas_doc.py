@@ -232,6 +232,18 @@ def test_two_changed_files_with_one_basename_get_one_brick_id_each():
     assert len(set(ids)) == 2
     assert ids == ['d-procure-__init__.py', 'd-tests-__init__.py']
 
+def test_a_note_on_a_glob_heads_the_run_it_describes():
+    "Fifteen screenshots want one note above them, not the same note repeated fifteen times."
+    d = procurement()
+    b = first(x for x in bundles(d) if x.id == 'triage')
+    d.insert(d.index(b.members[0].id) + 1,
+             Brick('note', 'Both of these.', id='n-all', attrs={'path': 'procure/*.py'}))
+    two = ('diff --git a/procure/core.py b/procure/core.py\n@@ -1 +1 @@\n-a\n+b\n'
+           'diff --git a/procure/erp.py b/procure/erp.py\n@@ -1 +1 @@\n-c\n+d\n')
+    ids = [x.id for x in review(d, 'triage', two) if x.kind in ('diff', 'note')]
+    assert ids.count('n-all') == 1, 'once, not once per matching file'
+    assert ids.index('n-all') < ids.index('d-core.py'), 'and above the run it describes'
+
 def test_a_document_with_no_bundle_still_reports_every_change_as_unclaimed():
     d = Canvas.parse(SMALL)
     assert coverage(d, ['a.py'])['unclaimed'] == ['a.py'] and coverage(d, ['a.py'])['bundles'] == []
@@ -307,6 +319,26 @@ def test_the_literate_page_folds_what_a_phone_cannot_hold():
     page = html_of(r, changed=list(hunks(diff())))
     assert page.count('<details') >= 1 and 'viewport' not in page   # the wrapper adds the meta tag
     assert 'class="dl a"' in page and 'class="dl r"' in page
+
+def test_one_minified_line_cannot_be_the_whole_page():
+    "A generated page diffs to few lines and megabytes, so the row cap alone did not hold."
+    from leela.blocks.canvas.lit import DIFF_COLS
+    d = Canvas.parse(SMALL)
+    wide = DIFF_COLS * 3
+    d.add(Brick('diff', f'@@ -1 +1 @@\n+{"x" * wide}', id='d1', attrs={'path': 'media/page.html'}))
+    page = html_of(d)
+    assert 'x' * (DIFF_COLS - 1) in page and 'x' * DIFF_COLS not in page   # the `+` costs one
+    assert f'+{wide + 1 - DIFF_COLS} chars' in page
+
+def test_a_page_never_diffs_itself():
+    "The page is a tracked file the document claims, and each render grew it. One reached 12MB."
+    from leela.blocks.canvas.app import _mine
+    doc = Canvas(meta={'title': 't'}, path=str(PKG/'canvas/x.canvas.md'))
+    assert _mine(doc, PKG.parent.parent/'media/canvas-branch.html') == 'media/canvas-branch.html'
+    assert _mine(doc, '/etc/passwd') == '', 'a destination outside the repo is nobody\'s hunk'
+    d = procurement()
+    got = [b.attrs['path'] for b in review(d, 'triage', diff(), skip=('procure/erp.py',)).of('diff')]
+    assert 'procure/erp.py' not in got and 'procure/core.py' in got
 
 def test_a_generated_artifact_diffs_to_a_count_not_to_every_line():
     "One committed HTML page took a branch review to 3MB of lines nobody reads."

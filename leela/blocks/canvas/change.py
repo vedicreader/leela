@@ -201,6 +201,8 @@ def _copy(b, **attrs):
     return Brick(kind=b.kind, body=b.body, id=b.id, attrs={**b.attrs, **attrs},
                  binds=dict(b.binds), props={})
 
+def _globby(p): return any(c in p for c in '*?[')
+
 def _dids(paths):
     "One brick id per changed file: the basename, or the whole path when two files share one."
     n = Counter(Path(p).name for p in paths)
@@ -212,11 +214,12 @@ def review(
     bid,           # which bundle
     diff='',       # unified diff text
     values=None,   # `{brick id: output text}` from the live namespace
+    skip=(),       # paths whose hunks to leave out, the page's own file among them
 ):
     "One change as a document: the value, the reasoning, the diff and the checks."
     b = first(x for x in bundles(doc) if x.id == bid)
     if b is None: raise KeyError(bid)
-    files = hunks(diff)
+    files = {k: v for k, v in hunks(diff).items() if k not in skip}
     cov = first(r for r in coverage(doc, list(files))['bundles'] if r['id'] == bid) or {}
     out = Canvas(meta={'title': f'Review: {b.title}'}, path=f'{bid}.review.canvas.md')
     out.add(Brick('text', f'# {b.title}'))
@@ -234,8 +237,13 @@ def review(
     for m in b.members:
         if m.kind in ('snippet', 'text', 'note') and m.attrs.get('path'):
             cited.setdefault(m.attrs['path'], []).append(m)
-    dids = _dids(files)
+    dids, globs = _dids(files), {k: v for k, v in cited.items() if _globby(k)}
     for path, text in files.items():
+        #: A note on `docs/screenshots/*` heads the run it describes rather than repeating under
+        #: each of fifteen files. Prose on one exact path still follows that file's own hunks.
+        for pat in [k for k in globs if fnmatch(path, k)]:
+            for m in globs.pop(pat): out.add(_copy(m))
+            cited.pop(pat, None)
         add, rm = diff_stat(text)
         out.add(Brick('diff', text, id=dids[path],
                       attrs={'path': path, 'added': str(add), 'removed': str(rm),
