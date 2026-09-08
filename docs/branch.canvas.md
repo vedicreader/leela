@@ -5,7 +5,8 @@ title: "One branch, reviewed: where a canvas runs, the seams, and the page you a
 # What this is
 
 This file is the review of one branch, in the format the branch built, read by the code the branch
-added.
+added. It also teaches the feature to someone new: what Leela is, the reason a canvas exists, what a
+canvas can do, and how you author and use one. The review of the branch begins at "Why it helps".
 
 ```canvas snippet id=s-page path=leela/blocks/canvas/app.py symbol=page
 `page` wrote the page you are reading. It read this file, filled the one `diff` slot below from
@@ -21,6 +22,42 @@ and one page that shows all five to a reviewer on a phone.
 <!--canvas goal id=g2 measure="findings from a review of this branch that are still open" baseline="17" target=0 by=2026-09-30-->
 Leave nothing in this branch that a reviewer called critical or high.
 <!--/canvas-->
+
+# What Leela is
+
+Leela is a browser IDE for notebooks, files and live variables, with a coding agent in the same
+window. Its one line is "creative workspace that starts with coding". It runs on loopback in a
+browser, or as a packaged desktop app on macOS and Windows. The kernel, the files, the notebook and
+the agent share one surface. A canvas is a new surface in that window, and this branch builds it.
+
+# The reason for a canvas
+
+A written document goes stale. The prose says one thing, the code beside it says another, and nobody
+reruns the code to find out. A notebook runs code, but top to bottom, and it stores its outputs, so
+the saved file and the last real run drift apart. Reviewing a branch is harder still. It takes four
+tools: a tracker for the goal, a notebook for the code, a diff for the change, and a deck for the
+reviewer.
+
+A canvas is one markdown file that holds all of it: the goal, the plan, the research, the code and
+the questions. It keeps no outputs. Opening it runs it, and every brick recomputes when a name it
+reads changes. The document cannot drift from its own results, because the results are computed from
+the document each time it is read. That is the reason for the feature: one live file that stays true
+to itself, and that a reviewer reads as a single page.
+
+# What a canvas can do
+
+- Runs code cells that share one namespace and run in dependency order, not document order.
+- Recomputes reactively. Set a name, and only the bricks that read it rerun.
+- Embeds components from a library. A component is an input as well as an output. Clicking an
+  organelle, a bar or a shape writes a name, and every cell that reads that name reruns.
+- Asks the model in place, from the margin, an `ask` brick, or `mod+k`. The turn reaches eight tools
+  and no others.
+- Shows the exact context basket a question will send, so you see what the model gets before it runs.
+- Keeps no stored outputs. A value always comes from the live namespace.
+- Exports back out: a real `.ipynb`, a report, or the code bricks marked `#|export`, in order.
+- Renders one literate page for a phone: no JavaScript, both colour schemes, every long part folded.
+- Makes a change reviewable: a `bundle` claims a region, `coverage` holds the claim against the diff,
+  and `review` builds the change as its own canvas.
 
 # Words
 
@@ -62,6 +99,71 @@ Names this branch retired.
 | `leela.blocks.workflows.wfbuild` | `pullup.wfbuild`. The Leela file was nine pass-through lines. |
 | `ramabana.tools` | `shalya`. The re-export lives for one release. |
 | `ramabana.git` | `gheasy`. Gone already. |
+
+# How you author one
+
+A canvas is a markdown file. Prose stays prose. A brick is a fence or a comment wrap, and seventeen
+kinds are the whole vocabulary. You write a runnable cell as a fenced block:
+
+    ```canvas code id=c1
+    organelle = {'name': 'nothing yet'}
+    seen = []
+    ```
+
+You embed a component from a library and wire it to a name it emits:
+
+    ```canvas brick id=c2 src=leela_bricks:learn.cell emit_organelle=organelle
+    bind label = organelle['name']
+    prop height = 420
+    ```
+
+You render a sentence from live values:
+
+    ```canvas data id=c4
+    bind text = f"### {organelle['name']}"
+    ```
+
+The nine fenced kinds are `code`, `ask`, `brick`, `sim`, `data`, `diff`, `snippet`, `pdf` and
+`video`. The seven wrapped kinds use a comment pair, and carry their fields in the opening tag:
+
+    <!--canvas goal id=g measure="tools to review one branch" baseline="4" target="1 page" by=2026-10-31-->
+    Give Leela one document that holds a goal, its code and its questions.
+    <!--/canvas-->
+
+They are `reply`, `note`, `quiz`, `goal`, `task`, `source` and `bundle`. Plain markdown with no
+wrapper is the seventeenth kind, `text`. A heading starts a region, so nobody writes a region by
+hand. Inside a brick, `bind port = expr` feeds a live value into the component, and `prop key = value`
+sets a fixed one.
+
+`examples/canvas/an-animal-cell.canvas.md` is the smallest worked file. Click an organelle in its
+`c2` component and it writes to `organelle`, the `c1` cell reruns, and the `c4` sentence re-resolves.
+That is the reactive loop on one screen.
+
+# How you use it
+
+Open, trust, run, click, ask, review, render.
+
+- **Open.** `/canvas/open` reads the file and shows it. Opening runs nothing.
+- **Trust.** One click, `/canvas/trust`, says the code may run, and then runs every cell in
+  dependency order. A markdown file arrives from a clone, a download or a paste, so its code waits
+  for this one deliberate click. Reading, editing and saving never need it.
+- **Run.** `/canvas/run` runs one cell and settles the dataflow, and only the values that moved come
+  back. `/canvas/runall` runs them all.
+- **Click a component.** It hands a value back through `/canvas/emit`, which sets a name, and every
+  brick that reads that name reruns. This is the reactive loop.
+- **Ask.** `/canvas/ask/stream` runs the helper turn and streams the answer and its edits back as
+  they happen. The turn is Ramabana's agent, told only what a canvas is, and reaching eight tools.
+- **Review.** A `bundle` claims its files. `/canvas/review` builds the change as its own canvas, and
+  `coverage` names what is matched, what is unmet and what is unclaimed.
+- **Render.** `/canvas/page`, or `tools/make_change_page.py`, writes the literate page you are
+  reading, with the real git diff filled into each slot.
+
+Code runs behind one gate. `canvas_path` resolves every path a route touches against the open folder,
+or the canvas folder when none is open, and refuses anything outside the tree. Saves pass their
+destination through the same gate, and a stale write is refused. Every embedded component runs in an
+iframe with `sandbox=allow-scripts` and no same-origin grant, so it gets an opaque origin and cannot
+read this page, its cookies or its routes. The only channel is a message that speaks for the brick
+whose frame sent it.
 
 # Why it helps
 
