@@ -78,6 +78,7 @@ white-space:pre;color:var(--fg2);border-left:3px solid transparent}
 .dl.a{background:var(--addbg);color:var(--add);border-left-color:var(--add)}
 .dl.r{background:var(--rmbg);color:var(--rm);border-left-color:var(--rm)}
 .dl.h{background:var(--bg2);color:var(--fg3)}
+.dl.cut{background:var(--bg2);color:var(--fg3);font-style:italic;text-align:center}
 details{border:1px solid var(--line);border-radius:9px;margin:0 0 16px;background:var(--bg1)}
 details>summary{padding:13px 14px;cursor:pointer;font-size:15px;font-weight:600;list-style:none;
 min-height:44px;display:flex;align-items:center;gap:8px}
@@ -528,9 +529,8 @@ in it. This page cannot show code that the file no longer has.</p>
 one rule that most diff pages get wrong on a phone.</p>
 <figure><figcaption><b>leela/blocks/canvas/lit.py</b> &middot; _diff</figcaption><pre><code class="lang-python">def _diff(b):
     rows = [l for l in b.body.split(&#x27;\n&#x27;) if not l.startswith(_SKIP)]
-    body = &#x27;&#x27;.join(
-        f&#x27;&lt;span class=&quot;dl {&quot;a&quot; if l[:1] == &quot;+&quot; else &quot;r&quot; if l[:1] == &quot;-&quot; else &quot;h&quot; if l[:2] == &quot;@@&quot; else &quot;&quot;}&quot;&gt;&#x27;
-        f&#x27;{escape(l) or &quot; &quot;}&lt;/span&gt;&#x27; for l in rows)
+    body = &#x27;&#x27;.join(_dline(l) for l in rows[:DIFF_CAP])
+    if (over := len(rows) - DIFF_CAP) &gt; 0: body += f&#x27;&lt;span class=&quot;dl cut&quot;&gt;{over} more lines, not shown&lt;/span&gt;&#x27;
     add, rm = diff_stat(b.body)
     chips = (f&#x27;&lt;span class=&quot;chip add&quot;&gt;+{add}&lt;/span&gt;&lt;span class=&quot;chip rm&quot;&gt;-{rm}&lt;/span&gt;&#x27;
              + (&#x27;&lt;span class=&quot;chip warn&quot;&gt;no bundle claims this&lt;/span&gt;&#x27;
@@ -542,13 +542,15 @@ one rule that most diff pages get wrong on a phone.</p>
     return (f&#x27;&lt;figure&gt;&lt;div class=&quot;diff&quot;&gt;&lt;div class=&quot;hd&quot;&gt;&lt;span class=&quot;p&quot;&gt;{escape(path)}&lt;/span&gt;&#x27;
             f&#x27;{chips}&lt;/div&gt;&lt;div class=&quot;body&quot;&gt;{body}&lt;/div&gt;&lt;/div&gt;&lt;/figure&gt;&#x27;)</code></pre></figure><p><code>review</code> now puts the prose next to the file that it explains. A document that explains its files
 therefore gives a literate diff without more work.</p>
-<figure><figcaption><b>leela/blocks/canvas/lit.py</b> &middot; html_of</figcaption><details><summary>html_of (30 lines)</summary><div class="in"><pre><code class="lang-python">def html_of(doc, changed=(), root=&#x27;.&#x27;, subtitle=&#x27;&#x27;):
+<figure><figcaption><b>leela/blocks/canvas/lit.py</b> &middot; html_of</figcaption><details><summary>html_of (34 lines)</summary><div class="in"><pre><code class="lang-python">def html_of(doc, changed=(), root=&#x27;.&#x27;, subtitle=&#x27;&#x27;, unclaimed=None):
     &quot;The whole document as one page of HTML.&quot;
     secs = _sections(doc)
     tasks = {b.id for b in doc.of(&#x27;task&#x27;)}
-    nav, body = [], []
+    nav, body, used = [], [], Counter()
     for n, sec in enumerate(secs):
         sid = _slug(sec[&#x27;title&#x27;], n)
+        used[sid] += 1
+        if used[sid] &gt; 1: sid = f&#x27;{sid}-{used[sid]}&#x27;   # eight reviews on one page each have a Change
         if sec[&#x27;title&#x27;]:
             nav.append(f&#x27;&lt;li&gt;&lt;a href=&quot;#{sid}&quot;&gt;{escape(sec[&quot;title&quot;])}&lt;/a&gt;&lt;/li&gt;&#x27;)
             body.append(f&#x27;&lt;h2 id=&quot;{sid}&quot;&gt;{escape(sec[&quot;title&quot;])}&lt;/h2&gt;&#x27;)
@@ -563,7 +565,9 @@ therefore gives a literate diff without more work.</p>
     for u in bundles(doc):
         st = state(u, changed)
         chips.append(f&#x27;&lt;span class=&quot;chip {st}&quot;&gt;{escape(u.id)} {st}&lt;/span&gt;&#x27;)
-    loose = coverage(doc, list(changed))[&#x27;unclaimed&#x27;] if changed else []
+    #: A stitched page carries no bundle brick, so its caller knows the coverage and this does not.
+    loose = (coverage(doc, list(changed))[&#x27;unclaimed&#x27;] if changed else []) if unclaimed is None \
+            else list(unclaimed)
     if loose: chips.append(f&#x27;&lt;span class=&quot;chip warn&quot;&gt;{len(loose)} file(s) claimed by nobody&lt;/span&gt;&#x27;)
     elif changed: chips.append(f&#x27;&lt;span class=&quot;chip ok&quot;&gt;{len(changed)} file(s), all claimed&lt;/span&gt;&#x27;)
     head = (f&#x27;&lt;header&gt;&lt;div class=&quot;in&quot;&gt;&lt;div class=&quot;mark&quot;&gt;canvas &amp;middot; literate diff&lt;/div&gt;&#x27;

@@ -432,12 +432,12 @@ one, and two tests in `tests/blocks/test_agent_threads.py` hold each half.
      goal=g3
      contributes="the branch being safe to merge"
      covers="The review,t18,t19,t20,t21"
-     paths=leela/blocks/canvas/*,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/models.py,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,tests/test_seams.py,tests/test_pipelines.py,tests/test_workflows.py,tests/test_git_folder.py,tests/test_web_slow.py,tests/test_agent_slow.py,tests/test_kernels_ipymini.py,tests/test_agent.py,uv.lock
+     paths=leela/blocks/canvas/*,leela/static/lee-canvas.js,tools/build_ide_js.py,leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/models.py,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,tests/test_seams.py,tests/test_pipelines.py,tests/test_workflows.py,tests/test_git_folder.py,tests/test_web_slow.py,tests/test_agent_slow.py,tests/test_kernels_ipymini.py,tests/test_agent.py,media/e2e/*,uv.lock
      refs=doc:docs/canvas.md,pkg:kunda,pkg:pullup-->
 Four faults were critical and six were high. Every route that took a path read, ran or overwrote
 whatever it named. A canvas ran its Python in the web process. A frame had this page's origin, and
-the markdown writer let a URL close an attribute. The wheel excluded the very files the client was
-built from at request time.
+the markdown writer let a URL close an attribute. The wheel excluded the files the client read at
+request time.
 <!--/canvas-->
 
 The path gate is one function, `canvas_path`, and every source and destination passes it. A canvas
@@ -557,6 +557,12 @@ which set was a promise.
 
 <!--canvas task id=t12 status=done owner=me-->
 Leela writes this page from this file, with a real git diff in the slot.
+<!--/canvas-->
+
+<!--canvas note id=n-shots path=media/e2e/01-canvas-untrusted.png-->
+Thirteen shots off the built page, at 430 by 932 and two times scale. The trust line before and
+after the click, the block menu open and filtered, the dark theme, one review, and the branch page
+this document's sibling renders.
 <!--/canvas-->
 
 <!--canvas note id=n-loose-->

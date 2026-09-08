@@ -75,6 +75,7 @@ white-space:pre;color:var(--fg2);border-left:3px solid transparent}
 .dl.a{background:var(--addbg);color:var(--add);border-left-color:var(--add)}
 .dl.r{background:var(--rmbg);color:var(--rm);border-left-color:var(--rm)}
 .dl.h{background:var(--bg2);color:var(--fg3)}
+.dl.cut{background:var(--bg2);color:var(--fg3);font-style:italic;text-align:center}
 details{border:1px solid var(--line);border-radius:9px;margin:0 0 16px;background:var(--bg1)}
 details>summary{padding:13px 14px;cursor:pointer;font-size:15px;font-weight:600;list-style:none;
 min-height:44px;display:flex;align-items:center;gap:8px}

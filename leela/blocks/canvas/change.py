@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import re
+from collections import Counter
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from fastcore.all import L, Path, first
@@ -200,6 +201,12 @@ def _copy(b, **attrs):
     return Brick(kind=b.kind, body=b.body, id=b.id, attrs={**b.attrs, **attrs},
                  binds=dict(b.binds), props={})
 
+def _dids(paths):
+    "One brick id per changed file: the basename, or the whole path when two files share one."
+    n = Counter(Path(p).name for p in paths)
+    uniq = lambda p: Path(p).name if n[Path(p).name] == 1 else re.sub(r'[^\w.-]+', '-', str(p))
+    return {p: f'd-{uniq(p)}' for p in paths}
+
 def review(
     doc,           # the document the change lives in
     bid,           # which bundle
@@ -227,9 +234,10 @@ def review(
     for m in b.members:
         if m.kind in ('snippet', 'text', 'note') and m.attrs.get('path'):
             cited.setdefault(m.attrs['path'], []).append(m)
+    dids = _dids(files)
     for path, text in files.items():
         add, rm = diff_stat(text)
-        out.add(Brick('diff', text, id=f'd-{Path(path).name}',
+        out.add(Brick('diff', text, id=dids[path],
                       attrs={'path': path, 'added': str(add), 'removed': str(rm),
                              **({'claimed': 'no'} if path not in cov.get('matched', []) else {})}))
         for m in cited.pop(path, []): out.add(_copy(m))   # the prose that explains this file

@@ -223,6 +223,15 @@ def test_a_review_is_a_canvas_with_the_value_the_diff_and_the_checks():
     assert all(b.xy for b in r if not b.heading and b.kind != 'reply')
     assert r['triage-q'].pins == ['goal']
 
+def test_two_changed_files_with_one_basename_get_one_brick_id_each():
+    "A branch touches several `__init__.py`, and `Canvas.add` rejects a duplicate id."
+    d = procurement()
+    two = ('diff --git a/procure/__init__.py b/procure/__init__.py\n@@ -1 +1 @@\n-a\n+b\n'
+           'diff --git a/tests/__init__.py b/tests/__init__.py\n@@ -1 +1 @@\n-c\n+d\n')
+    ids = [b.id for b in review(d, 'triage', two).of('diff')]
+    assert len(set(ids)) == 2
+    assert ids == ['d-procure-__init__.py', 'd-tests-__init__.py']
+
 def test_a_document_with_no_bundle_still_reports_every_change_as_unclaimed():
     d = Canvas.parse(SMALL)
     assert coverage(d, ['a.py'])['unclaimed'] == ['a.py'] and coverage(d, ['a.py'])['bundles'] == []
@@ -298,6 +307,33 @@ def test_the_literate_page_folds_what_a_phone_cannot_hold():
     page = html_of(r, changed=list(hunks(diff())))
     assert page.count('<details') >= 1 and 'viewport' not in page   # the wrapper adds the meta tag
     assert 'class="dl a"' in page and 'class="dl r"' in page
+
+def test_a_generated_artifact_diffs_to_a_count_not_to_every_line():
+    "One committed HTML page took a branch review to 3MB of lines nobody reads."
+    from leela.blocks.canvas.lit import DIFF_CAP
+    n = DIFF_CAP + 50
+    body = '\n'.join(['@@ -1 +1 @@'] + [f'+line {i}' for i in range(n)])
+    d = Canvas.parse(SMALL)
+    d.add(Brick('diff', body, id='d1', attrs={'path': 'media/page.html'}))
+    page = html_of(d)
+    assert 'line 0' in page and f'line {n - 1}' not in page
+    assert f'{n + 1 - DIFF_CAP} more lines, not shown' in page
+
+def test_an_attached_reference_renders_instead_of_leaving_a_bare_heading():
+    "`review` writes an Attached heading, and every `source` under it rendered to nothing."
+    d = Canvas.parse(SMALL)
+    d.add(Brick('source', '', id='r1', attrs={'title': 'the pool', 'path': 'kunda/pool.py'}))
+    d.add(Brick('source', '', id='r2', attrs={'title': 'doc:docs/a.md', 'path': 'docs/a.md'}))
+    page = html_of(d)
+    assert '<b>the pool</b>' in page and 'kunda/pool.py' in page
+    assert page.count('docs/a.md') == 1                        # the title already ends in the path
+
+def test_a_repeated_heading_gets_its_own_anchor():
+    "Eight reviews on one page each have a Change, and every nav link went to the first."
+    d = Canvas.parse('# Change\n\none\n\n# Change\n\ntwo\n\n# Change\n\nthree\n')
+    page = html_of(d)
+    assert 'id="change"' in page and 'id="change-2"' in page and 'id="change-3"' in page
+    assert page.count('href="#change"') == 1                   # the nav no longer aims all three here
 
 def test_the_prompt_carries_the_rules_the_goal_the_section_and_the_code():
     d = procurement()

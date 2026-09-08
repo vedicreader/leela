@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import replace
+from collections import Counter
 from html import escape
 from importlib.resources import files
 from fastcore.all import Path, first
@@ -10,12 +11,14 @@ from .change import bundles, coverage, diff_stat, snip, state
 from .context import strip_work_log
 from .doc import HEAD
 
-__all__ = ['lit', 'html_of', 'md_html', 'GOAL_KEYS', 'FOLD_LINES']
+__all__ = ['lit', 'html_of', 'md_html', 'GOAL_KEYS', 'FOLD_LINES', 'DIFF_CAP']
 
 #: What a goal states beyond the goal itself.
 GOAL_KEYS = ('measure', 'baseline', 'target', 'by')
 #: Longer than this and a snippet or a diff arrives folded. A phone holds about 20 lines.
 FOLD_LINES = 22
+#: A generated artifact diffs to thousands of unreadable lines. Past this, the rest is a count.
+DIFF_CAP = 400
 
 def md_html(text):
     "Markdown as HTML. `mdhtml` does this; nothing here parses markdown."
@@ -75,11 +78,14 @@ def _snippet(b, root):
 _SKIP = ('diff --git', 'index ', '--- ', '+++ ', 'new file', 'deleted file', 'similarity ',
          'rename ', 'old mode', 'new mode')
 
+def _dline(l):
+    cls = 'a' if l[:1] == '+' else 'r' if l[:1] == '-' else 'h' if l[:2] == '@@' else ''
+    return f'<span class="dl {cls}">{escape(l) or " "}</span>'
+
 def _diff(b):
     rows = [l for l in b.body.split('\n') if not l.startswith(_SKIP)]
-    body = ''.join(
-        f'<span class="dl {"a" if l[:1] == "+" else "r" if l[:1] == "-" else "h" if l[:2] == "@@" else ""}">'
-        f'{escape(l) or " "}</span>' for l in rows)
+    body = ''.join(_dline(l) for l in rows[:DIFF_CAP])
+    if (over := len(rows) - DIFF_CAP) > 0: body += f'<span class="dl cut">{over} more lines, not shown</span>'
     add, rm = diff_stat(b.body)
     chips = (f'<span class="chip add">+{add}</span><span class="chip rm">-{rm}</span>'
              + ('<span class="chip warn">no bundle claims this</span>'
@@ -108,8 +114,17 @@ def _brick(b, doc, changed, root):
         binds = '\n'.join(f'{k} = {v}' for k, v in b.binds.items())
         return (f'<figure><figcaption><b>{escape(b.attrs.get("src") or b.kind)}</b></figcaption>'
                 f'{_pre(binds or b.body, "python")}</figure>')
+    if b.kind == 'source': return _source(b)
     if b.kind == 'reply': return ''
     return md_html(b.body)
+
+def _source(b):
+    "An attached reference: its title, and its path when the title does not already end in it."
+    path = b.attrs.get('path', '')
+    ttl = b.attrs.get('title') or path or 'source'
+    where = f' &middot; {escape(path)}' if path and not ttl.endswith(path) else ''
+    return (f'<figure><figcaption><b>{escape(ttl)}</b>{where}</figcaption>'
+            f'{md_html(b.body) if b.body.strip() else ""}</figure>')
 
 def _sections(doc):
     "The document split at its headings, for the contents and the jump targets."
@@ -132,13 +147,15 @@ def _slug(s, n):
     keep = ''.join(c if c.isalnum() else '-' for c in (s or '').lower())
     return '-'.join(x for x in keep.split('-') if x)[:40] or f's{n}'
 
-def html_of(doc, changed=(), root='.', subtitle=''):
+def html_of(doc, changed=(), root='.', subtitle='', unclaimed=None):
     "The whole document as one page of HTML."
     secs = _sections(doc)
     tasks = {b.id for b in doc.of('task')}
-    nav, body = [], []
+    nav, body, used = [], [], Counter()
     for n, sec in enumerate(secs):
         sid = _slug(sec['title'], n)
+        used[sid] += 1
+        if used[sid] > 1: sid = f'{sid}-{used[sid]}'   # eight reviews on one page each have a Change
         if sec['title']:
             nav.append(f'<li><a href="#{sid}">{escape(sec["title"])}</a></li>')
             body.append(f'<h2 id="{sid}">{escape(sec["title"])}</h2>')
@@ -153,7 +170,9 @@ def html_of(doc, changed=(), root='.', subtitle=''):
     for u in bundles(doc):
         st = state(u, changed)
         chips.append(f'<span class="chip {st}">{escape(u.id)} {st}</span>')
-    loose = coverage(doc, list(changed))['unclaimed'] if changed else []
+    #: A stitched page carries no bundle brick, so its caller knows the coverage and this does not.
+    if unclaimed is not None: loose = list(unclaimed)
+    else: loose = coverage(doc, list(changed))['unclaimed'] if changed else []
     if loose: chips.append(f'<span class="chip warn">{len(loose)} file(s) claimed by nobody</span>')
     elif changed: chips.append(f'<span class="chip ok">{len(changed)} file(s), all claimed</span>')
     head = (f'<header><div class="in"><div class="mark">canvas &middot; literate diff</div>'
@@ -169,13 +188,14 @@ def lit(
     changed=(),    # paths a diff says moved, for the header chips
     root='.',      # where a `snippet` brick's `path` is relative to
     subtitle='',   # the footer line
+    unclaimed=None,# the coverage gap, when the caller knows it and the page's own bundles do not
 ):
     "Write the literate page to `path`. One file, no JavaScript, no other requests."
     css = files(__package__).joinpath('lit.css').read_text(encoding='utf-8')
     page = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">\n'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">\n'
             f'<title>{escape(doc.title)}</title>\n<style>{css}</style></head><body>\n'
-            f'{html_of(doc, changed, root, subtitle)}\n</body></html>\n')
+            f'{html_of(doc, changed, root, subtitle, unclaimed)}\n</body></html>\n')
     p = Path(path)
     p.write_text(page, encoding='utf-8')
     return p
