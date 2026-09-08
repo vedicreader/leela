@@ -219,13 +219,7 @@ def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
     assert 'cursor' not in why, 'and Cursor is no longer offered at all'
 
 def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
-    """ramabana reads $LEELA_LITERT_BACKEND when it builds an engine.
-
-    `setenv` rather than `delenv` for the first call. `delenv` records no undo for a variable that
-    was never set, so the export below outlived the test and every later engine in the run was
-    built on the GPU. On a machine whose driver cannot take one, that failed three model tests in
-    `test_web.py` and passed on their own.
-    """
+    """ramabana reads $LEELA_LITERT_BACKEND when it builds an engine."""
     monkeypatch.setenv('LEELA_LITERT_BACKEND', 'cpu')
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
     with TestClient(ide_app(ws)) as c:
@@ -321,8 +315,7 @@ def test_the_interpreter_and_a_new_venv_follow_the_chosen_folder(tmp_path):
         assert (b/'.venv').is_dir() and not (a/'.venv'/'pyvenv.cfg').exists(), 'nothing landed in a'
 
 def test_a_folder_of_clones_creates_the_venv_in_the_checkout_being_worked_in(tmp_path):
-    """`orgs` open as one folder: the environment panel described `orgs` and offered to create a
-    `.venv` beside the clones. The same walk the kernel takes names the checkout instead."""
+    """`orgs` open as one folder: the environment panel described `orgs` and offered to create a `.venv` beside the clones."""
     import subprocess
     orgs = tmp_path/'orgs'
     a = orgs/'dockeasy'; (a/'nbs').mkdir(parents=True)
@@ -408,9 +401,7 @@ def test_an_external_terminal_is_offered_only_when_one_is_installed(tmp_path, mo
 
 
 def test_a_terminal_says_which_checkout_it_belongs_to(tmp_path):
-    """A shell is one process in one directory and cannot follow the project by itself, so the
-    client keeps one per checkout. It can only do that if the server says which checkout each pty
-    is in, and which one a new terminal would open in."""
+    """A shell is one process in one directory and cannot follow the project by itself, so the client keeps one per checkout."""
     import subprocess
     orgs = tmp_path/'orgs'
     a, b = orgs/'repo-a', orgs/'repo-b'
@@ -451,8 +442,7 @@ def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
             ws.terms.close_all()
 
 def test_the_picker_lists_the_venvs_of_repos_inside_one_open_folder(tmp_path):
-    """A folder of checkouts opened as one root: the kernel already ran in the repo's own venv, but
-    the picker only scanned the root itself, so that interpreter was neither listed nor marked."""
+    """A folder of checkouts opened as one root: the kernel already ran in the repo's own venv, but the picker only scanned the root itself, so that interpreter was neither listed nor marked."""
     orgs = tmp_path/'orgs'; orgs.mkdir()
     _venv(orgs)
     pb = _venv(orgs/'dockeasy')
@@ -962,9 +952,7 @@ def test_the_runs_file_follows_the_folder_you_chose(tmp_path):
 
 
 def test_the_pickers_unsaved_configuration_starts_the_file_it_names(tmp_path, monkeypatch):
-    """`/runs` offers a configuration for the open file so the picker is never empty, and that one
-    is saved nowhere. Its name therefore resolves to no configuration and to no file, so starting
-    it has to fall back to the path -- the only handle it has that means anything."""
+    """`/runs` offers a configuration for the open file so the picker is never empty, and that one is saved nowhere."""
     from types import SimpleNamespace
     root = tmp_path/'cassowary'; root.mkdir()
     main = root/'main.py'; main.write_text('print("up")\n')
@@ -1007,9 +995,7 @@ async def _finished(s, tries=80):
     return s
 
 def test_a_run_reports_the_command_not_the_inspector(tmp_path):
-    """The child keeps the inspector up after the command returns, so process liveness says nothing
-    about whether the app is running. A run that died on its first line reported itself healthy for
-    as long as leela stayed open, and Logs could never announce the failure."""
+    """The child keeps the inspector up after the command returns, so process liveness says nothing about whether the app is running."""
     p = tmp_path/'boom.py'; p.write_text(SCRATCH_RUNS.format(code=3))
     s = asyncio.run(_finished(DevServer(script=str(p), port=9471)))
     try:
@@ -1038,8 +1024,7 @@ def test_a_run_is_on_a_terminal_its_viewers_can_attach_to(tmp_path):
     finally: asyncio.run(s.stop())
 
 def test_a_reloader_is_called_out_wherever_it_is_switched_on():
-    """`--reload` in a command line was already warned about. Set in code it was not, and that is
-    the common shape -- `serve(..., reload=True)` in the script the picker offers to run."""
+    """`--reload` in a command line was already warned about."""
     from leela.blocks.runtime.devserver import _wants_reload
     assert _wants_reload("serve('app', 'site', port=8000, reload=True)")
     assert _wants_reload('uvicorn.run(app, reload = True)')
@@ -1048,8 +1033,7 @@ def test_a_reloader_is_called_out_wherever_it_is_switched_on():
 
 
 def test_a_run_happens_in_the_project_environment_not_leelas(tmp_path):
-    """A release step already resolves its interpreter from the project. A run did not: it went
-    through `sys.executable`, so an app's imports came out of leela's site-packages."""
+    """A release step already resolves its interpreter from the project."""
     from leela.blocks.runtime.devserver import _boot_src, leela_path
     py = _venv(tmp_path)
     s = DevServer(script=str(tmp_path/'app.py'), python=str(py))
@@ -1078,8 +1062,7 @@ def test_the_run_environment_points_at_the_project_venv(tmp_path):
 
 
 def test_the_header_says_what_is_running_beside_the_kernel(tmp_path):
-    """A dev server has no window of its own. Until this the only evidence one existed was output
-    arriving in a dock -- which is exactly what a run that failed to start does not produce."""
+    """A dev server has no window of its own."""
     client, _ = _client(tmp_path)
     with client as c: page = c.get('/').text
     assert 'id="runspill"' in page, 'server-rendered, so the header does not reflow on first poll'
@@ -1093,11 +1076,7 @@ def test_the_runs_pill_reads_the_poll_that_already_runs():
 
 
 def test_leelas_own_polling_is_not_the_apps_output():
-    """The variable panel asks the inspector for /api/rows every 2.5s, and the inspector shares
-    the app's stdout -- so a run's log filled up with leela watching the run.
-
-    dhrishti owns that, not leela: it is the one that knows which routes are its own, and it is
-    the thing riding in someone else's process. Leela keeps no copy of the route list."""
+    """The variable panel asks the inspector for /api/rows every 2.5s, and the inspector shares the app's stdout, so a run's log filled up with leela watching the run."""
     import logging, logging.config
     from uvicorn.config import LOGGING_CONFIG
     assert '/api/rows' in ds._own_paths(), 'derived from the app, not hand-copied'
@@ -1118,9 +1097,7 @@ def test_leelas_own_polling_is_not_the_apps_output():
 
 
 def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
-    """Two folders open, each with an environment. `default_python` is one interpreter for the
-    whole workspace, adopted from whichever was opened first, so everything in the second repo
-    was told it belonged to the first and had to be pointed at its own venv by hand."""
+    """Two folders open, each with an environment."""
     a, b = tmp_path/'first', tmp_path/'second'
     a.mkdir(); b.mkdir()
     pa, pb = _venv(a), _venv(b)
@@ -1144,8 +1121,7 @@ def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
 
 
 def test_closing_the_last_tab_of_a_folder_closes_its_kernel(tmp_path):
-    """Only private kernels were closed on `/tab/close`, so a folder kernel outlived every tab that
-    used it. Twenty of them accumulated in one session."""
+    """Only private kernels were closed on `/tab/close`, so a folder kernel outlived every tab that used it."""
     proj, other = tmp_path/'proj', tmp_path/'other'
     proj.mkdir(); other.mkdir()
     a, b = other/'a.py', other/'b.py'
@@ -1193,8 +1169,7 @@ def _pooled(idle=60):
     return KernelPool(idle=idle)
 
 def test_the_sweep_closes_a_kernel_nobody_has_used(tmp_path):
-    """Kernels were never evicted, so a session accumulated twenty of them: 130 threads and
-    1.4GB before anything ran."""
+    """Kernels were never evicted, so a session accumulated twenty of them: 130 threads and 1.4GB before anything ran."""
     import asyncio, time
     pool = _pooled(idle=60)
     fresh, stale = _FakeKernel(), _FakeKernel()
@@ -1242,8 +1217,7 @@ def _broker_with(n, busy=(), **kw):
     return b, pool
 
 def test_the_kernel_limit_names_the_kernel_it_offers_to_close():
-    """`admit` raised a bare RuntimeError, so the UI had nothing to offer but the text. It now
-    carries the stalest idle kernel."""
+    """`admit` raised a bare RuntimeError, so the UI had nothing to offer but the text."""
     from leela.blocks.runtime.kernels import KernelLimit
     b, pool = _broker_with(3)
     with pytest.raises(KernelLimit) as e: asyncio.run(b.admit(pool, 'new'))
@@ -1253,11 +1227,7 @@ def test_the_kernel_limit_names_the_kernel_it_offers_to_close():
     assert all(k.shutdown_calls == 0 for k in pool.kernels.values()), 'nothing closes without a yes'
 
 def test_runtime_limit_is_structured_for_every_live_runtime_request(tmp_path):
-    """Every request that would start a kernel says so the same way when it cannot.
-
-    `/kernel/info` and `/vars` are not among them any more: they peek, so they cannot reach the
-    limit, and a page load no longer starts anything to be refused.
-    """
+    """Every request that would start a kernel says so the same way when it cannot."""
     from leela.blocks.runtime.kernels import KernelLimit
     ws = Workspace(roots=[tmp_path])
     e = KernelLimit('kernel limit reached (1)', candidate={'key': 'old', 'name': 'old', 'idle_for': 0}, limit=1)
@@ -1360,10 +1330,7 @@ def test_a_busy_runtime_is_refused_even_when_named(tmp_path):
 
 
 def test_nothing_a_page_load_asks_for_starts_a_kernel(tmp_path):
-    """Opening Leela booted Python whether or not anybody ran anything. `/kernel/info` paints the
-    kernel pill and `/vars` polls the variable list every 2.5 seconds, and both asked
-    `session.runtime()`, which starts one: over a second on the load path, and a process nobody
-    asked for. Both already draw the empty case."""
+    """Opening Leela booted Python whether or not anybody ran anything."""
     from starlette.testclient import TestClient
     from leela.app import ide_app
     from leela.workspace import Workspace
@@ -1388,10 +1355,7 @@ def test_nothing_a_page_load_asks_for_starts_a_kernel(tmp_path):
 
 
 def test_a_kernel_that_cannot_import_the_inspector_is_offered_the_packages(tmp_path, monkeypatch):
-    """dhrishti.core imports numpy and pandas at module level, and a kernel borrows Leela's copies
-    over the sys.path `bootstrap_src` appends. A project interpreter on another minor version cannot:
-    the extension modules carry the wrong ABI tag, the bootstrap cell raises, and the panel used to
-    offer only a kernel restart, which cannot install a package."""
+    """dhrishti.core imports numpy and pandas at module level, and a kernel borrows Leela's copies over the sys.path `bootstrap_src` appends."""
     py = tmp_path/'.venv'/'bin'/'python'
     py.parent.mkdir(parents=True); py.write_text('#!/bin/sh\nexit 1\n'); py.chmod(0o755)
     ws = Workspace(roots=[tmp_path])
@@ -1450,9 +1414,7 @@ def test_installing_the_inspector_reports_what_still_stops_it(monkeypatch, tmp_p
     assert list(support.INSPECTOR) == [c for c in calls[0] if c in support.INSPECTOR]
 
 def test_creating_a_venv_does_not_install_numpy_and_pandas_unasked(tmp_path, monkeypatch):
-    """`checkProjectRuntime` runs `/runtime/create` without asking when uv is there, on the rule that
-    a directory it made is a directory it may fill. That exemption does not reach a hundred megabytes
-    of numpy and pandas, so the inspector has its own route and its own dialog."""
+    """`checkProjectRuntime` runs `/runtime/create` without asking when uv is there, on the rule that a directory it made is a directory it may fill."""
     python = tmp_path/'bin'/'python'; python.parent.mkdir(); python.write_text('')
     calls = []
     monkeypatch.setattr(support.shutil, 'which', lambda n: '/usr/local/bin/uv' if n == 'uv' else None)
@@ -1465,10 +1427,7 @@ def test_creating_a_venv_does_not_install_numpy_and_pandas_unasked(tmp_path, mon
 
 
 def test_a_kernel_of_another_python_borrows_nothing_from_leela():
-    """Leela's `sys.path` was appended to every kernel. A frozen build ships bytecode-only modules
-    in its zip, so an import that fell through to them died as `bad magic number in 'stack_data'`:
-    a 3.13 project could not start the inspector against a 3.12 app, and installing numpy and
-    pandas did not help, because numpy and pandas were never what stopped it."""
+    """Leela's `sys.path` was appended to every kernel."""
     from leela.blocks.runtime.kernels import bootstrap_src
     from leela.blocks.runtime.support import LEELA_PY
     src = bootstrap_src(name='t')
@@ -1478,10 +1437,7 @@ def test_a_kernel_of_another_python_borrows_nothing_from_leela():
     assert src.count('tuple(sys.version_info[:2])') >= 2, 'the dhrishti pin is guarded too'
 
 def test_a_new_environment_gets_the_kernel_versions_leela_itself_runs():
-    """Resolving the declared requirements gave `ipymini 0.1.20` beside `kernmini 0.1.9`, which
-    import each other and do not fit: `ipymini` imports `kernmini.debug`, and 0.1.9 does not ship
-    it. `ipymini` also names neither `fastcore` nor `microio` and imports both. Leela's own
-    environment is the combination known to start a kernel, so that is what is installed."""
+    """Resolving the declared requirements gave `ipymini 0.1.20` beside `kernmini 0.1.9`, which import each other and do not fit: `ipymini` imports `kernmini.debug`, and 0.1.9 does not ship it."""
     import importlib.metadata as md
     from kunda.support import KERNEL_PACKAGES, as_installed
     assert set(KERNEL_PACKAGES) >= {'ipykernel', 'ipymini', 'kernmini', 'fastcore', 'microio'}
@@ -1492,9 +1448,7 @@ def test_a_new_environment_gets_the_kernel_versions_leela_itself_runs():
     assert loose[-1] == 'no-such-distribution-at-all', 'and a name Leela lacks is left to resolve'
 
 def test_an_installed_kernel_that_will_not_import_is_reported_as_that(monkeypatch, tmp_path):
-    """The installer returned 0 and the kernel would not import, and what reached the person was
-    `No module named pip` from the fallback attempt: a report about the installer a uv environment
-    was never going to have, rather than about the package that does not work."""
+    """The installer returned 0 but reached the person as `No module named pip` from the fallback, a report about pip a uv env never has rather than the package that fails."""
     from kunda import support
     monkeypatch.setattr(support, '_run', lambda args, timeout=180: completed(args))
     monkeypatch.setattr(support, 'kernel_support', lambda python: {
@@ -1548,9 +1502,7 @@ def _loaded_engine(monkeypatch, live):
     return engine, be    # the users are a WeakSet, so the caller holds the backend
 
 def test_clearing_the_local_engines_releases_a_failed_models_weights(tmp_path, monkeypatch):
-    """The weights of a dialog model whose chat failed are held until this asks for them.
-
-    The answer says what went, so the person knows the memory came back."""
+    """The weights of a dialog model whose chat failed are held until this asks for them."""
     engine, be = _loaded_engine(monkeypatch, live=False)
     with _client(tmp_path)[0] as c: r = c.post('/runtime/engines/clear', json={}).json()
     assert r['ok'] and r['live'] == 0 and r['freed'] == [{'runtime': 'mlx', 'model': 'qwen'}]
@@ -1623,8 +1575,7 @@ def _bare_venv(tmp_path):
     return first(p for p in (tmp_path/'v'/'bin'/'python', tmp_path/'v'/'Scripts'/'python.exe') if p.exists())
 
 def test_an_environment_that_cannot_run_a_kernel_says_which_module_it_is_short_of(tmp_path):
-    """`uv sync` against another lock empties a project venv, and the kernel then exits before its
-    first message. jupyter_client can only say the kernel died; the environment can say why."""
+    """`uv sync` against another lock empties a project venv, and the kernel then exits before its first message."""
     from leela.blocks.runtime.kernels import missing_kernel_module
     assert missing_kernel_module(sys.executable) is None, "leela's own interpreter has ipykernel"
     py = _bare_venv(tmp_path)
@@ -1643,9 +1594,7 @@ def test_a_kernel_in_an_emptied_venv_fails_with_the_venv_and_not_the_protocol(tm
     assert 'uv sync' in str(e.value), 'and it names the way out'
 
 def test_every_way_a_child_gets_its_environment_leaves_the_bundle_behind(monkeypatch):
-    """The first fix only covered the default. A caller handing in its own dict skipped it, which is
-    what the dev server does, and a terminal in a folder with no venv skipped `venv_env` entirely.
-    One strip, applied to whoever hands the environment in."""
+    """The first fix only covered the default."""
     from leela.blocks.runtime.kernels import venv_env
     from kunda.pythons import BUNDLE_ONLY, strip_bundle
     for k in BUNDLE_ONLY: monkeypatch.setenv(k, '/bundle')
@@ -1666,11 +1615,7 @@ def test_the_pipeline_routes_run_a_child_with_that_environment():
         assert 'env=' in block, f'a child with no environment of its own: {line.strip()}'
 
 def test_a_frozen_app_hands_a_child_its_own_interpreter_and_not_the_bundles(monkeypatch):
-    """py2app points `PYTHONPATH`, `PYTHONHOME` and `__PYVENV_LAUNCHER__` at the bundle so its helper
-    starts. A child that keeps them imports the bundle's standard library under another interpreter:
-    `nbdev-test` run from the packaged app died inside `linecache` doing that, before it reported a
-    single notebook. Kernels were already started from `clean_env`; pipelines and terminals go
-    through `venv_env`, which did not."""
+    """py2app points `PYTHONPATH`, `PYTHONHOME` and `__PYVENV_LAUNCHER__` at the bundle so its helper starts."""
     from leela.blocks.runtime.kernels import venv_env
     for k, v in {'PYTHONPATH': '/bundle/lib', 'PYTHONHOME': '/bundle', 'RESOURCEPATH': '/bundle',
                  '__PYVENV_LAUNCHER__': '/bundle/python', 'PYTHONEXECUTABLE': '/bundle/python'}.items():
@@ -1687,9 +1632,7 @@ def test_a_frozen_app_hands_a_child_its_own_interpreter_and_not_the_bundles(monk
 
 
 def test_a_frozen_app_starts_children_somewhere_they_can_write(monkeypatch, tmp_path):
-    """A double-clicked app inherits `/` as its working directory and one opened from the bundle
-    inherits the bundle, which is read-only. A kernel started there cannot write a file beside
-    itself, and says nothing that names the reason."""
+    """A double-clicked app inherits `/` as its working directory and one opened from the bundle inherits the bundle, which is read-only."""
     from kunda.support import work_dir
     assert work_dir(tmp_path) == str(tmp_path), 'a chosen directory is never second-guessed'
     monkeypatch.chdir(tmp_path)
@@ -1701,9 +1644,7 @@ def test_a_frozen_app_starts_children_somewhere_they_can_write(monkeypatch, tmp_
     assert work_dir(tmp_path) == str(tmp_path)
 
 def test_a_devserver_child_borrows_leelas_path_only_on_leelas_python():
-    """`_boot_src` runs under the project's interpreter. Leela's `sys.path` carries bytecode and
-    extension modules built for Leela's own, so a project on another 3.x that extended anyway died
-    on the import instead of running the command."""
+    """`_boot_src` runs under the project's interpreter."""
     from leela.blocks.runtime.devserver import _boot_src
     from leela.blocks.runtime.support import LEELA_PY
     src = _boot_src(['/somewhere/leela'])

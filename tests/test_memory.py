@@ -385,9 +385,7 @@ def test_pii_evidence_matches_the_badge_and_an_override_is_durable(mem_vaults, t
     assert mem_vaults.pii(doc_id)['has_pii'], 'automatic detection comes back'
 
 def test_a_retrieval_policy_masks_or_withholds_what_the_model_would_have_read(mem_vaults, tmp_path):
-    """The gate is on the retrieval, not on the model: `off` hands the text over, `redact` masks the
-    identifiers in it, `refuse` hands back a stand-in saying what was held. A person browsing their
-    own vault is never gated; only what a retrieval returns is."""
+    """The gate is on the retrieval, not on the model: `off` hands the text over, `redact` masks the identifiers in it, `refuse` hands back a stand-in saying what was held."""
     mem_vaults.clip([tmp_path/'minute.md'])
     node = mem_vaults.search('Babbage signed the minute')[0]['node_id']
     plain = mem_vaults.read(node)['text']
@@ -409,8 +407,7 @@ def test_an_unknown_retrieval_policy_is_refused_rather_than_read_as_off(mem_vaul
     with pytest.raises(ValueError): mem_vaults.context('who signed it', pii='refuze')
 
 def test_a_document_can_be_forced_private_and_the_gate_honours_it(mem_vaults, tmp_path):
-    """`mark_not_pii` was the only override, so a document arithmetic cannot read as private -- a
-    bare name, a loose address, a scanned page -- had no way to be treated as one."""
+    """`mark_not_pii` was the only override, so a document arithmetic cannot read as private, a bare name, a loose address, a scanned page, had no way to be treated as one."""
     doc_id = mem_vaults.clip([tmp_path/'notes.md'])[0]['doc_id']
     assert not mem_vaults.pii(doc_id)['has_pii'], 'nothing in it is a pattern'
     mem_vaults.mark_pii(doc_id, reason='a colleague is named in it')
@@ -486,8 +483,7 @@ def test_a_document_arithmetic_cannot_read_as_private_can_still_be_marked_one(ws
         assert c.post('/vault/pii/mark', data={'doc': doc_id, 'vault': 'nope'}).status_code in (400, 403)
 
 def test_both_privacy_overrides_have_a_button_in_the_reader_and_reach_their_route():
-    """`/vault/pii/mark` shipped as a route with no caller once before, on the branch routes. Draw
-    the button in the source and the bundle the app actually serves, and wire it to the route."""
+    """`/vault/pii/mark` shipped as a route with no caller once before, on the branch routes."""
     from pathlib import Path as _P
     root = _P(__file__).resolve().parents[1]/'leela'
     for js in ((root/'blocks'/'vault'/'reader.js').read_text(), (root/'static'/'lee-ide.js').read_text()):

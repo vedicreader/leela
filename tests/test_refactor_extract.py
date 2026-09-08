@@ -29,8 +29,7 @@ METHOD = """class A:
 
 
 def test_an_indented_selection_extracts_at_all():
-    """`ast` will not parse an indented block, and the selection carries its own indentation, so
-    every extraction from inside a function or class used to raise a bare IndentationError."""
+    """`ast` will not parse an indented block, and the selection carries its own indentation, so every extraction from inside a function or class used to raise a bare IndentationError."""
     start, end = _cut(FUNC, '    total = 0', '    print(scaled)')
     after = extract('x.py', FUNC, start, end, 'function', 'accumulate').after
     ast.parse(after)
@@ -61,8 +60,7 @@ def test_a_value_read_before_it_is_written_arrives_as_a_parameter():
 
 
 def test_an_extracted_method_is_a_sibling_of_the_one_it_came_from():
-    """Nested inside its own caller, `self.name` is not an attribute of anything, so the call the
-    extraction writes would fail at runtime."""
+    """Nested inside its own caller, `self.name` is not an attribute of anything, so the call the extraction writes would fail at runtime."""
     start, end = _cut(METHOD, '        base =', '        print(out)')
     after = extract('y.py', METHOD, start, end, 'method', 'scale').after
     tree = ast.parse(after)

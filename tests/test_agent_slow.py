@@ -131,14 +131,7 @@ def test_an_inspection_cannot_change_what_the_user_has(tmp_path, kind):
     _run(go())
 
 def test_the_briefing_says_what_is_true_of_both_kernels():
-    """Leela runs each inspection in the kernel's own subshell, on either launcher, so its briefing
-    says so on either launcher.
-
-    The claim is the host's to make: Ramabana reads `concurrent` off the launcher, because a kernel
-    that serialises is the common case, and this asserted the sentence against Ramabana's own test
-    doubles instead of Leela's host, so it went red when that gate arrived and said nothing about
-    Leela either way.
-    """
+    """Leela runs each inspection in the kernel's own subshell, on either launcher, so its briefing says so on either launcher."""
     from leela.agent.agent import system_prompt
     from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
@@ -216,11 +209,7 @@ def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
 
 @pytest.mark.parametrize('kind', KINDS[:1])
 def test_a_binding_reaches_the_user_only_when_it_is_handed_over(tmp_path, kind):
-    """The whole round trip with no model in it: bind, be seen, hand over, be read by the user.
-
-    `run_python` writes to the agent's layer, so the user's next cell cannot see what it bound.
-    `host.promote_var` is the only route across, it is the vars pane's own gesture, and no tool
-    exposes it: `_land` calls it when the user's own prompt named the destination."""
+    """The whole round trip with no model in it: bind, be seen, hand over, be read by the user."""
     from leela.blocks.agent.ai import WorkspaceHost
     async def go():
         ws = Workspace(roots=[str(tmp_path)], port=8760, approvals='auto')

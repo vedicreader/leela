@@ -51,11 +51,7 @@ def __getattr__(name):
 
 @cache
 def cm_exports():
-    """The names `leela/vendor/lee-cm6.js` exports, read from the map itself.
-
-    The call that builds the map is named by the minifier, so anchoring on it broke on the next
-    rebuild of any part of `frontend/editor.js` and read as a dropped export.
-    """
+    """The names `leela/vendor/lee-cm6.js` exports, read from the map itself."""
     import re
     b = read('leela/vendor/lee-cm6.js')
     i = b.index('undo:()=>')

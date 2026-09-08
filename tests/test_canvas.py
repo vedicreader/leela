@@ -1,8 +1,4 @@
-"""The canvas document: the file it round-trips through, the dataflow between its bricks, and the
-helper's reach into it.
-
-The point of these is the contract a canvas file makes with git: a document that has been opened,
-run, wired and asked questions of must come back byte for byte unless somebody changed something."""
+"""The canvas document: the file it round-trips through, the dataflow between its bricks, and the helper's reach into it."""
 
 import asyncio
 import os
@@ -269,11 +265,7 @@ def client():
     return TestClient(app)
 
 def opened(client, name, trust=True):
-    """Open a canvas and, unless a test is about trust, say its code may run.
-
-    Opening runs nothing: a canvas is markdown and arrives from a clone or a paste, so `/canvas/trust`
-    is what executes it.
-    """
+    """Open a canvas and, unless a test is about trust, say its code may run."""
     p = str(EXAMPLES/name)
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     if trust: assert client.post('/canvas/trust', json={'path': p}).json()['ok']
@@ -293,8 +285,7 @@ def test_a_trusted_canvas_runs_and_returns_its_bindings(client):
     assert r['trusted'] and r['ports']['sf4']['tiles']['ok'] and 'cac' in r['names']
 
 def test_an_untrusted_canvas_is_still_editable(client):
-    """Trust gates running, not writing. The first gate refused an empty code brick, which makes a
-    document you can read and cannot author in: `insert` executes only a body it is handed."""
+    """Trust gates running, not writing."""
     p = str(EXAMPLES/'a-sales-funnel.canvas.md')
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     for op in ({'op': 'insert', 'kind': 'code', 'body': ''},
@@ -338,8 +329,7 @@ def test_a_component_writing_a_name_reruns_the_document(client):
     assert store_for(None).get(p).runtime.ns['won'] == 500
 
 def test_a_name_a_cell_stops_defining_is_dropped(client):
-    """The namespace kept every name a cell had ever defined. Renaming or deleting a definition left
-    the old one readable, so a binding onto it went on resolving against a value nothing computed."""
+    """The namespace kept every name a cell had ever defined."""
     p = opened(client, 'pricing-a-run.canvas.md')
     o = store_for(None).get(p)
     ins = client.post('/canvas/op', json={'path': p, 'op': {
@@ -379,8 +369,7 @@ def test_opening_a_canvas_that_is_not_there_says_so(client):
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../../etc/passwd', '/no/such.canvas.md',
                                  '../../pyproject.toml'])
 def test_no_live_route_reaches_a_path_outside_the_tree(client, bad):
-    """Every route that took a path read, ran or overwrote whatever it named. With no folder open
-    the canvas directory is the boundary; with one open `fs._check` is."""
+    """Every route that took a path read, ran or overwrote whatever it named."""
     assert client.get('/canvas/open', params={'path': bad}).status_code == 400
     for route, body in (('/canvas/op', {'op': {'op': 'read'}}), ('/canvas/run', {'id': 'x'}),
                         ('/canvas/runall', {}), ('/canvas/emit', {'name': 'x', 'value': 1}),
@@ -565,8 +554,7 @@ def _node_md(src):
     '[x](vbscript:msgbox)',
 ])
 def test_markdown_refuses_a_url_that_is_script(src):
-    """A scheme that executes is not a URL. A refused one is escaped back to the text it was, so
-    the words may still appear; what must not appear is an `href` or a `src` carrying them."""
+    """A scheme that executes is not a URL."""
     out = _node_md(src)
     assert 'href=' not in out and 'src=' not in out, out
 
@@ -577,8 +565,7 @@ def test_markdown_refuses_a_url_that_is_script(src):
     '[t"onclick="alert(1)](https://example.com)',
 ])
 def test_markdown_cannot_inject_an_attribute(src):
-    """`cvEsc` escaped only `&<>`, so a quote in a URL or a link label closed the attribute and
-    opened one of the author's choosing."""
+    """`cvEsc` escaped only `&<>`, so a quote in a URL or a link label closed the attribute and opened one of the author's choosing."""
     out = _node_md(src)
     assert re.search(r'<[^>]*\son\w+\s*=', out) is None, out
 
@@ -610,17 +597,10 @@ def test_a_frame_speaks_only_for_itself():
 
 @pytest.mark.slow
 class TestTheKernelBackedRuntime:
-    """What a document may not do to Leela.
-
-    In-process `exec` gave a canvas the web process: `while True` hung every request and
-    `os._exit()` ended Leela. These start a real kunda kernel, so they are slow and marked.
-    """
+    """What a document may not do to Leela."""
     @contextmanager
     def runtime(self, timeout=5):
-        """A kernel-backed runtime, and the pool closed after it.
-
-        Closing the runtime shuts its kernel; the pool has a sweep loop of its own, and leaving it
-        running made every test after these report a pending task."""
+        """A kernel-backed runtime, and the pool closed after it."""
         from leela.blocks.runtime.kernels import KernelPool
         from leela.blocks.canvas.live import runtime_for, KernelRuntime
         pool = KernelPool()

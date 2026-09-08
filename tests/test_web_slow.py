@@ -27,13 +27,7 @@ def fake_kernels():
     KernelPool.close_all = lambda self: asyncio.sleep(0)
 
 def fake_model(ws):
-    """Point every job at the scripted backend, so no browser test builds a real engine.
-
-    These tests drive painting, keymaps and panels; none of them needs a model. On a machine with a
-    LiteRT bundle cached, `Routing` resolved one and built it: two engines, and every later agent
-    test grew native memory inside them until the run was OOM-killed a third of the way in. A UI
-    test must not depend on which model bundles the machine happens to hold.
-    """
+    """Point every job at the scripted backend, so no browser test builds a real engine."""
     from tests.fakemodel import install
     return install(ws, [])
 
@@ -76,11 +70,7 @@ async def _started(srv, secs=20):
     raise RuntimeError('the app never started')
 
 async def _on_page(fn, roots=(), dpr=None, real_models=False):
-    """Boot the app, open it in chromium, hand the page to `fn`, and return what it returns.
-
-    `real_models=True` leaves `Routing` to resolve a model, which builds an engine. Only the two
-    tests that read the model catalogue ask for it; everything else takes the scripted backend.
-    """
+    """Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."""
     fake_kernels()
     ws = Workspace(roots=list(roots), approvals='auto')
     if not real_models: fake_model(ws)
@@ -106,11 +96,7 @@ def _run(fn, roots=(), dpr=None, real_models=False):
     return asyncio.run(_on_page(fn, roots, dpr, real_models))
 
 def test_a_standalone_code_surface_lints_finds_navigates_and_fits_its_own_text():
-    """Every editor Leela mounts outside a tab, in one page session: the lint squiggles, the sticky
-    gutter, mod-click to a definition, the dotted chain under the cursor, the snippet box a rendered
-    code fence gets, and find over the whole document rather than the visible lines. Each step drops
-    its host again, so the next one is not clicking through the last one's fixed overlay.
-    """
+    """Every editor Leela mounts outside a tab in one page session, each step re-dropping its host so the next is not clicking through the last's overlay."""
     async def go(pg):
         out = {}
         await pg.evaluate("""() => {
@@ -286,10 +272,7 @@ def test_a_standalone_code_surface_lints_finds_navigates_and_fits_its_own_text()
     assert got['unchanged'] == got['found']['doc'] and got['closed'] == 0
 
 def test_tab_takes_the_completion_that_is_on_screen():
-    """Tab accepted a ghost suggestion and otherwise indented, and `completionKeymap` does not bind
-    Tab at all, so an open completion list was indented past rather than accepted. Every editor
-    people arrive from accepts it with Tab, and indenting is what Tab does when nothing is offered.
-    """
+    """Tab accepted a ghost suggestion and otherwise indented, and `completionKeymap` does not bind Tab at all, so an open completion list was indented past rather than accepted."""
     import json
     async def go(pg):
         await pg.route('**/complete*', lambda route: asyncio.ensure_future(route.fulfill(
@@ -323,10 +306,7 @@ def test_tab_takes_the_completion_that_is_on_screen():
     assert out['indented'].startswith((' ', '\t')), 'and still indents when nothing is offered'
 
 def test_completing_a_slash_command_leaves_the_caret_after_it():
-    """Tab on the composer's command list replaced the whole box, and assigning `value` on a box the
-    browser has not focused leaves the caret at 0, so completing a command read as Home. Every other
-    branch of the chooser sets the caret; this one now does too.
-    """
+    """Tab on the composer's command list replaced the whole box, and assigning `value` on a box the browser has not focused leaves the caret at 0, so completing a command read as Home."""
     async def go(pg):
         await pg.click('#agentprompt')
         await pg.keyboard.type('/')
@@ -340,11 +320,7 @@ def test_completing_a_slash_command_leaves_the_caret_after_it():
     assert out['focused'], 'and the composer still has the keys'
 
 def test_changing_a_routed_job_model_saves_it_and_a_refusal_says_so():
-    """Changing the subagent model did nothing and said nothing. The routed jobs are rows this file
-    draws, with no id of their own, and `paintModelPickers` built `'#' + ''` for each -- a
-    SyntaxError, not a selector. It took `loadAgentModels` down, and `leeAgentModel` reloaded the
-    panel before reporting, so the reload's failure threw the refusal away before anyone saw it.
-    """
+    """Changing the subagent model did nothing and said nothing."""
     async def go(pg):
         errors = []
         pg.on('pageerror', lambda e: errors.append(str(e)))
@@ -374,13 +350,7 @@ def test_changing_a_routed_job_model_saves_it_and_a_refusal_says_so():
     assert 'no-such-model-anywhere' in out['refused'], f"a refusal is reported: {out['refused']!r}"
 
 def test_saving_the_file_in_a_split_pane_does_not_read_as_a_disk_conflict(tmp_path):
-    """Every edit in a split pane raised "changed on disk after this browser draft began".
-
-    `lee.diskVersion` is one value for the tab on screen. The split pane holds a second file, and
-    its draft was based on -- and saved against -- the first file's version, so the two never
-    matched and the save was refused as somebody else's write. Twice, because a pane that saved
-    also recorded nothing, so the next edit began from the same stale base.
-    """
+    """Every edit in a split pane raised "changed on disk after this browser draft began"."""
     a, b = tmp_path/'primary.py', tmp_path/'secondary.py'
     a.write_text('a = 1\n'); b.write_text('b = 1\n')
 
@@ -412,12 +382,7 @@ def test_saving_the_file_in_a_split_pane_does_not_read_as_a_disk_conflict(tmp_pa
 
 
 def test_the_modals_the_editor_opens_own_their_focus_and_their_controls():
-    """One page for every overlay a person reaches from the editing surface: the kernel picker traps
-    focus and answers the arrows, the platform preferences chord opens settings from a focused cell,
-    the bundled code fonts load and their ligatures reach CodeMirror, completion opens on the real
-    extension rather than only the endpoint, help on a selection is previewed before it replaces
-    anything, and opening a folder is an in-app browser rather than a native prompt.
-    """
+    """Every overlay reachable from the editing surface: kernel picker, preferences chord, code fonts, completion, help preview and the in-app folder browser."""
     async def go(pg):
         out = {}
         await pg.evaluate("leeAct('pick_kernel')")
@@ -499,12 +464,7 @@ def test_the_modals_the_editor_opens_own_their_focus_and_their_controls():
     assert got['folderPath'].startswith('/') and got['folderRows'] >= 0
 
 def test_the_keymap_answers_every_chord_it_claims_in_one_browser_session():
-    """One page for the whole keymap, because booting one per chord is the cost of this file.
-
-    A keymap edit left a bare letter silently unbound, a hyper default matched no event the browser
-    actually sends, the text-field guard swallowed shift+enter in the editing panes, Cmd+R stopped
-    being Chrome's reload, and the contextual panel grew into a copy of the full overlay.
-    """
+    """One page for the whole keymap, because booting one per chord is the cost of this file."""
     async def go(pg):
         out = {}
         out['keymap'] = await pg.evaluate("""() => {
@@ -590,12 +550,7 @@ def test_the_keymap_answers_every_chord_it_claims_in_one_browser_session():
     assert 'files' in got['fileScope']
 
 def test_the_right_panels_filter_search_look_up_and_remember():
-    """One page for the panels beside the editor: the variable filter takes what is typed, research
-    lists the commands it runs, an expandable result opens in a floating lens under the expression
-    that made it, unified search previews highlighted code and hands a location back on a click,
-    the tree's own menu discovers the actions and their chords, and durable memory reads its shelf
-    and offers to purge it.
-    """
+    """Every panel beside the editor: variable filter, research commands, floating result lens, unified search, tree menu and durable memory."""
     async def go(pg):
         out = {}
         await pg.click('#filetree', button='right')
@@ -684,15 +639,7 @@ def test_the_right_panels_filter_search_look_up_and_remember():
     assert got['purgeAll'] == 'purge everything'
 
 def test_a_search_result_is_previewed_before_it_opens_and_a_click_takes_the_row_on_screen():
-    """A click on a result selects and previews it, and a click on the row already in the preview
-    opens it, so a mouse can read a result before committing to it.
-
-    Which row that is, is the selected one. It was the last row the mouse hit, and the two differ
-    wherever the selection moved without the mouse. The first result is selected and previewed the
-    moment the results land, so opening the row on screen took two clicks, which is what left the
-    search modal over the rest of the page in `test_the_right_panels_filter_search_look_up_and_remember`.
-    A row reached with the arrow keys was previewed and then ignored the click that meant open.
-    """
+    """A click on a result selects and previews it, and a click on the row already in the preview opens it, so a mouse can read a result before committing to it."""
     async def go(pg):
         out = {}
         await pg.route('**/code/status', lambda route: route.fulfill(status=200, content_type='application/json',
@@ -773,9 +720,7 @@ def test_user_checkbox_settings_survive_close_and_reopen(tmp_path, monkeypatch):
 
 
 def test_a_key_can_be_set_from_inside_leela_when_the_shell_gives_the_wrong_answer(tmp_path, monkeypatch):
-    """The escape hatch, end to end. Asking the shell is a guess about a machine; where it guesses
-    wrong every hosted model refuses every turn, and there has to be a way in that does not involve
-    a terminal. What a secret is set to never comes back from the server, so the row says `set`."""
+    """The escape hatch, end to end."""
     import leela
     monkeypatch.setattr(leela, 'leela_cfg', tmp_path)
     async def go(pg):
@@ -807,10 +752,7 @@ def test_a_key_can_be_set_from_inside_leela_when_the_shell_gives_the_wrong_answe
     assert stored_env() == {}, 'and removing it takes it back out of the file'
 
 def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
-    """A native `<select>` hands its menu to the platform, and WKWebView drew a list this long at
-    the top of the screen rather than under the control. The menu is Leela's now, so it can be
-    placed, filtered and driven from the keyboard -- and the select stays underneath it as the
-    value, the id and the change event every other caller reads."""
+    """A native `<select>` hands its menu to the platform, and WKWebView drew a list this long at the top of the screen rather than under the control."""
     async def go(pg):
         out = {}
         await pg.wait_for_selector('[data-model-pick]')
@@ -890,9 +832,7 @@ def test_the_model_picker_opens_where_it_belongs_and_chooses_by_keyboard():
         assert out['wanted'].split('/')[-1][:6] in out['button'], 'the control shows what was chosen'
 
 def test_settings_say_which_layer_a_value_comes_from_and_offer_to_clear_it(tmp_path, monkeypatch):
-    """A `languages.python` block in the user file beats the plain user section, and a workspace
-    file beats both, so "I saved it to user and nothing happened" is a fair thing to think. The
-    server has always worked out which layer supplies each key; nothing showed it."""
+    """A `languages.python` block in the user file beats the plain user section, and a workspace file beats both, so "I saved it to user and nothing happened" is a fair thing to think."""
     import json
     import leela.blocks.settings.settings as settings_module
     user = tmp_path/'settings.json'
@@ -926,11 +866,7 @@ def test_settings_say_which_layer_a_value_comes_from_and_offer_to_clear_it(tmp_p
     assert s.effective('python')['editor']['useTabs'] is False, 'and the user value is back in charge'
 
 def test_tabs_and_panes_overflow_switch_and_come_back_where_they_were_left():
-    """One page for the shell's layout. Tabs past the strip's width belong in the overflow menu and
-    nowhere else, `mod+e` is the switcher's chord, `sessionStorage` died with the window so every
-    reopened tab came back at line 1, `leeDock` opens the bottom pane to show its tab so a restore
-    has to run before the hiding, and a minimised files pane must keep its grid column.
-    """
+    """One page for the shell's layout."""
     async def go(pg):
         out = {}
         # One tab first: with more than one open the chord cycles to the next instead of listing.
@@ -1021,11 +957,7 @@ def test_tabs_and_panes_overflow_switch_and_come_back_where_they_were_left():
 
 
 def test_a_notebook_recovers_its_drafts_and_answers_the_editing_chords():
-    """One page for the work a person does inside a cell. A draft in IndexedDB has to come back
-    before the mount and go away again when it matches the disk, `mod+c` is cell copy only when no
-    source text is selected, indent and outdent are Leela's own bindings rather than CodeMirror's,
-    and the split chord makes one cell per symbol.
-    """
+    """One page for the work a person does inside a cell."""
     async def go(pg):
         out = {}
         out['recovered'] = await pg.evaluate("""async () => {
@@ -1127,13 +1059,7 @@ def test_a_notebook_recovers_its_drafts_and_answers_the_editing_chords():
 
 
 def test_a_completion_on_a_cells_last_line_is_drawn_whole():
-    """It was cut off at the code box, and what escaped was painted over by the next cell.
-
-    Two clippers: `overflow` on `.lee-cm`, and the paint containment `content-visibility: auto`
-    brings to `.lee-cell`, which also makes each cell a stacking context the next one paints over.
-    The check is what the person sees: the list is taller than the box, and the point two thirds
-    of the way down it belongs to the list.
-    """
+    """It was cut off at the code box, and what escaped was painted over by the next cell."""
     async def go(pg):
         await pg.evaluate("leeAct('new_notebook')")
         await pg.wait_for_selector('.lee-cell .cm-editor')
@@ -1161,10 +1087,7 @@ def test_a_completion_on_a_cells_last_line_is_drawn_whole():
     assert out['hits'], 'the point two thirds down the list is the list, not what is drawn over it'
 
 def test_every_steer_is_drawn_and_not_just_the_first_one():
-    """`setQueuedSteer` gave the queued card `id="agentqueuedsteer"` and never took it back when the
-    steer was consumed. The next steer found that card as `old`, de-queued it again and returned,
-    so it was never drawn. The agent acted on a message the transcript never showed.
-    """
+    """`setQueuedSteer` gave the queued card `id="agentqueuedsteer"` and never took it back when the steer was consumed."""
     async def go(pg):
         return await pg.evaluate("""() => {
           const log = document.getElementById('agentlog');
@@ -1184,10 +1107,7 @@ def test_every_steer_is_drawn_and_not_just_the_first_one():
     assert not out['stranded'], 'a consumed steer is no longer the queued one'
 
 def test_the_selection_chords_reach_ask_and_summarise_and_say_what_is_in_the_way():
-    """Both controls were mouse-only. The chords go through the panel rather than the route, so the
-    selection, the coordinates and the four guards in `showSelectionHelp` stay in one place, and each
-    way of being unavailable names itself: a chord that quietly does nothing reads as broken.
-    """
+    """Both controls were mouse-only."""
     async def go(pg):
         await pg.evaluate("leeAct('new_notebook')")
         await pg.wait_for_selector('.lee-cell .cm-editor')
@@ -1225,12 +1145,7 @@ def test_the_selection_chords_reach_ask_and_summarise_and_say_what_is_in_the_way
     assert 'open suggestion' in out['busy'], f'a suggestion on screen is named as what is in the way: {out["busy"]!r}'
 
 def test_a_streaming_reply_repaints_while_it_streams():
-    """The pane sat still through a burst of chunks and then jumped a paragraph at a time.
-
-    `renderMarkdown` aborted the render already on the wire on every call, so a reply arriving
-    faster than one round trip only painted when the model paused: 320 chunks repainted twice.
-    A render in flight is left to land now, and one more runs after it if the text moved on.
-    """
+    """The pane sat still through a burst of chunks and then jumped a paragraph at a time."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           const el = document.createElement('div');
@@ -1273,13 +1188,7 @@ def test_a_burst_of_chunks_is_painted_once_a_frame():
                                    'row', '5', 'row', '6', 'row', '7'], out['text']
 
 def test_a_code_block_is_mounted_once_however_often_the_reply_around_it_repaints():
-    """A reply is re-rendered whole on every chunk, and every render rebuilt its code surfaces.
-
-    Measured on one nine-second turn ending in eight blocks: 455 CodeMirror views constructed and
-    447 thrown away, 1.7s of main thread, in the faster of the two engines Leela runs in. The
-    packaged app runs the slower one, and this was the jitter in the agent pane. Surfaces are keyed
-    by the code they hold and re-parented now, so only a block whose text moved is built again.
-    """
+    """A reply is re-rendered whole on every chunk, and every render rebuilt its code surfaces."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           const el = document.createElement('div'); el.className = 'lee-reply';
@@ -1307,16 +1216,7 @@ def test_a_code_block_is_mounted_once_however_often_the_reply_around_it_repaints
     assert out['built'] == 2, f'two code blocks were mounted {out["built"]} times over 12 repaints'
 
 def test_a_long_reply_is_not_re_rendered_from_the_top_ten_times_a_second():
-    """Every pass over a streaming reply costs the whole reply: a `/markdown/render` round trip that
-    parses and highlights the document again, an `innerHTML` write, and a re-measure of every code
-    surface in it. At a fixed 100ms gap a 12,000-character answer paid that thirty times, over an
-    average of six thousand characters, which is the pane going stiff exactly when the model is
-    writing its longest answer.
-
-    The gap grows with the text now. What keeps the words arriving at the rate they were written is
-    the unparsed tail after the prose, which costs a `textContent` write and no parse, and which
-    `seal` renders properly and removes at the end of the stretch.
-    """
+    """Every pass over a streaming reply costs the whole reply: a `/markdown/render` round trip that parses and highlights the document again, an `innerHTML` write, and a re-measure of every code surface in it."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           const log = document.querySelector('#agentlog');
@@ -1355,14 +1255,7 @@ def test_a_long_reply_is_not_re_rendered_from_the_top_ten_times_a_second():
     assert out['shown'] == 60, f"the sealed reply is {out['shown']} of its 60 chunks: {out}"
 
 def test_the_live_agent_pane_keeps_a_bounded_number_of_turns():
-    """Folding hides a turn from layout and frees nothing. Every turn of a session stayed in the
-    live pane holding its rendered replies and a CodeMirror view per code block in them, so a long
-    day's conversation was hundreds of live views carried through every paint.
-
-    The pane keeps the last `LIVE_TURNS`, tears down what it drops, and says where they went. A turn
-    holding a checkpoint nobody has answered is never dropped: its buttons are the only way that run
-    continues.
-    """
+    """Folding hides a turn from layout and frees nothing."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           const log = document.querySelector('#agentlog');
@@ -1393,13 +1286,7 @@ def test_the_live_agent_pane_keeps_a_bounded_number_of_turns():
     assert out['note'], 'nothing on screen said where the earlier turns went'
 
 def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_they_are_reading():
-    """Every paint in the pane wrote `scrollTop = scrollHeight`, and wrote it *before* the markdown
-    render it had just asked for had landed: the pane was measured short, jumped when the text
-    arrived, and took the reader with it however far up they had scrolled.
-
-    Stickiness follows the reader now. The last step is the one that made this worth scoping: a
-    checkpoint's proposal editor re-renders as a person types in it, and it must not re-pin the log.
-    """
+    """Every paint pinned `scrollTop` before the markdown render landed, jerking the reader; stickiness follows the reader now and the proposal editor must not re-pin the log."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           const log = document.querySelector('#agentlog');
@@ -1439,12 +1326,7 @@ def test_the_agent_pane_follows_the_stream_without_dragging_a_reader_off_what_th
     assert out['afterProposal'] == 0, 'typing in a checkpoint re-pinned the log to the bottom'
 
 def test_every_editor_refuses_the_systems_own_autocorrect():
-    """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged
-    app curled quotes, corrected identifiers, and offered inline predictions under CodeMirror. An
-    inline prediction is accepted with Tab, which is the key the completion list is waiting for.
-    `leela/desktop.py` turns it off for the process; this is the same refusal on the view, for every
-    editor Leela builds.
-    """
+    """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged app curled quotes, corrected identifiers, and offered inline predictions under CodeMirror."""
     async def go(pg):
         return await pg.evaluate("""() => {
           const el = document.createElement('div'); document.body.appendChild(el);
@@ -1465,12 +1347,7 @@ def test_every_editor_refuses_the_systems_own_autocorrect():
     assert out['everyMounted'], 'an editor on the page was left with the system text checker on'
 
 def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
-    """Moving between packages showed the first package's release log, and closing the terminal
-
-    was the only way to see the one you were looking at. The record was keyed by kind alone, so
-    there was one `release` terminal for the whole window holding the socket opened with whichever
-    package came first. The server always kept one pipeline per package.
-    """
+    """Moving between packages showed the first package's release log, and closing the terminal was the only way to see the one you were looking at."""
     a, b = tmp_path/'alpha', tmp_path/'beta'
     for d in (a, b): d.mkdir()
     async def go(pg):
@@ -1499,15 +1376,7 @@ def test_a_pipeline_terminal_follows_the_package_it_was_opened_for(tmp_path):
     assert out['after_slash'] == 2, 'a trailing slash is not a second package'
 
 def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
-    """The runstrip was a single 34px line whatever it held, so a root and its subagents spilled out
-    of it over the conversation, and a `.lee-spacer` beside them left each row 118px of a 420px pane
-    -- every row reading `openai/gpt-5.6-luna suba…` and none of them saying what it was asked. A
-    refused approval is a synthetic `user_steering` call, which every surface drew as an ordinary
-    tool row with the direction given hidden behind a chevron. A steer appended to the log sat below
-    every chunk and tool row that followed, and one taken straight to a waiting approval was never
-    recorded at all, live or on replay. And `ask_cell` stores its work log twice, so the second copy
-    came out as literal `<details>` tags under accordions already holding it.
-    """
+    """The runstrip fixed at 34px spilled subagents over the conversation, refused approvals drew as ordinary tool rows, steers sat mislaid or unrecorded, and `ask_cell` doubled its work log."""
     async def go(pg):
         out = {}
         out['runstrip'] = await pg.evaluate("""() => {
@@ -1686,9 +1555,7 @@ def test_the_agent_pane_draws_its_runs_its_steers_and_its_work_logs():
 
 
 def test_a_turn_stopped_at_a_checkpoint_still_folds_when_the_next_one_begins():
-    """A checkpoint the run never answered kept `proposed`, and `foldAgentTurn` refuses a card
-    holding one, so a turn stopped at a checkpoint stayed open for the rest of the session and
-    `trimAgentLog` could never drop it. `done` retires the checkpoints its own stream raised."""
+    """A checkpoint the run never answered kept `proposed`, and `foldAgentTurn` refuses a card holding one, so a turn stopped at a checkpoint stayed open for the rest of the session and `trimAgentLog` could never drop it."""
     async def go(pg):
         return await pg.evaluate("""() => {
           const log = $('#agentlog'); log.innerHTML = ''; log.dataset.foldScope = 'stale-checkpoint';
@@ -1719,15 +1586,7 @@ def test_a_turn_stopped_at_a_checkpoint_still_folds_when_the_next_one_begins():
 
 
 def test_a_conversation_folds_its_turns_and_keeps_each_ones_own_controls():
-    """Every turn painted the same flat run of siblings into one log, so there was nothing to fold
-    and nothing that knew where a turn ended. Folding a turn the agent is blocked on would hide the
-    only controls that let it continue, so a card holding a proposed checkpoint refuses, and the
-    bulk fold has to inherit that refusal. `addResponseRevision` ran only from the live `done`
-    handler, so undo, restore and revise disappeared on every history toggle, resume, thread switch
-    and resync. `.lee-btn` had no disabled appearance, so a dead Undo was pixel-identical to a live
-    one. And a feed left following paints a second turn into the card already on screen, where
-    resolving a bar to the first `.lee-turn-answer` had it acting on the first turn's text.
-    """
+    """Every turn painted the same flat run of siblings into one log, so there was nothing to fold and nothing that knew where a turn ended."""
     async def go(pg):
         out = {}
         out['fold'] = await pg.evaluate("""() => {
@@ -1919,10 +1778,7 @@ _NO_SAVED_THEME = ("() => post('/settings/save', {scope: 'user', language: '',"
                    " section: 'appearance', values: {theme: ''}})")
 
 def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(proj_web_th):
-    """Every family in every mode, the picker that offers them, the density that moves the header
-    without moving the colours, and the pre-family preference a reload has to migrate rather than
-    reset. One page, because each of the four is a handful of evaluates over the same shell.
-    """
+    """Every family in every mode, the picker that offers them, the density that moves the header without moving the colours, and the pre-family preference a reload has to migrate rather than reset."""
     ws = Workspace(roots=[proj_web_th])
     with serve(ws) as url:
         from playwright.sync_api import sync_playwright
@@ -1992,11 +1848,7 @@ def test_every_family_repaints_and_the_picker_and_the_stored_preference_agree(pr
 
 
 def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
-    """The packaged app takes whatever port it is given when 5001 is busy, and `localStorage` is per
-    origin, so a theme kept only there is gone on the next launch. Saving from the panel writes
-    settings.json, counts as a saved setting, and holds for a browser that has never seen the
-    origin. A theme that only ever lived in `localStorage` is migrated rather than dropped.
-    """
+    """The packaged app takes whatever port it is given when 5001 is busy, and `localStorage` is per origin, so a theme kept only there is gone on the next launch."""
     ws = Workspace(roots=[proj_web_th])
     with serve(ws) as url:
         from playwright.sync_api import sync_playwright
@@ -2039,9 +1891,7 @@ def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
 
 
 def test_the_bundles_parse_and_share_one_scope(proj_web_th):
-    """`node` is blocked here, so the browser is the syntax check. Loading them in order also
-    proves the later ones can see what the first declared.
-    """
+    """`node` is blocked here, so the browser is the syntax check."""
     ws = Workspace(roots=[proj_web_th])
     with serve(ws) as url:
         from playwright.sync_api import sync_playwright
@@ -2067,10 +1917,7 @@ def _vault(page):
     page.wait_for_selector('#vaultpanel')
 
 def test_a_clipped_file_lands_on_the_shelf_opens_as_a_reader_and_answers_review(proj_web_va):
-    """The whole affordance in one session: right-click a file, clip it, watch it land, read it in
-    the tab it opens as, and ask the ranker what it thinks of the shelf. Clipping is a real job with
-    a real index behind it, so booting a page per step is most of what this file costs.
-    """
+    """The whole affordance in one session: right-click a file, clip it, watch it land, read it in the tab it opens as, and ask the ranker what it thinks of the shelf."""
     from playwright.sync_api import sync_playwright
     ws = Workspace(roots=[proj_web_va])
     with serve(ws) as url, sync_playwright() as pw:
@@ -2360,13 +2207,7 @@ def test_agent_state_markdown_lint_reports_missing_charter_sections(tmp_path):
 HANDLER_ATTRS = ('onclick', 'oninput', 'onchange', 'onkeydown', 'onsubmit')
 
 def test_every_name_the_painted_page_reaches_for_resolves_in_the_shared_scope():
-    """The whole of what a page load promises, in one page load. The server writes handler names
-    into attributes as strings and `ACTIONS` became thunks, so a renamed or dropped function is a
-    dead control that no import error and no unit test ever reports. A jump hit rendered as its
-    basename was `document.py` twice over. `findMatches` is the whole of the merged find pane. And
-    copy path is dispatched from `lee-core.js`, defined in `lee-ide.js` and resolves its target from
-    whichever menu opened, so both halves have to meet at call time.
-    """
+    """The whole of what a page load promises, in one page load."""
     async def go(pg):
         out = {}
         for op in ("leeRight('agent')", "leeRight('git')", "leeRight('vars')", "leePane('left', true)"):
@@ -2480,13 +2321,7 @@ def test_every_name_the_painted_page_reaches_for_resolves_in_the_shared_scope():
     assert copied['fromTab'] == ['pkg/mod.py'], copied['fromTab']
 
 def test_the_shell_boots_from_three_tags_in_order_and_paints_without_a_page_error():
-    """Three tags, one scope. `defer` executes them in document order, not response order, so the
-    tag order is the contract, and a 404 on any of them leaves the shell painted and inert. A syntax
-    error or a bad reference in any module takes the whole shared-scope bundle down from its first
-    line, and every later module with it. A failed optional request is not that: `/lsp/*` answers
-    400 without pyright installed, and the client carries on. One boot answers all three, because
-    the listeners that catch them are the same ones.
-    """
+    """Three tags, one scope."""
     fake_kernels()
     ws = Workspace(roots=[], approvals='auto')
     port = _free_port()
@@ -2521,12 +2356,7 @@ def test_the_shell_boots_from_three_tags_in_order_and_paints_without_a_page_erro
 
 
 def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_them(tmp_path):
-    """Multi-select by mouse, then one operation over the whole selection, on a real tree.
-
-    A file row's own click handler stops there, so a held modifier has to be read in that handler
-    or it never reaches the selection at all: this is the test that a meta-click marks instead of
-    opening.
-    """
+    """Multi-select by mouse, then one operation over the whole selection, on a real tree."""
     for name in ('a.py', 'b.py', 'c.py'): (tmp_path/name).write_text('x = 1\n')
     (tmp_path/'dest').mkdir()
     async def go(pg):
@@ -2614,15 +2444,7 @@ _STRIPE_WATCH = r"""async (fixture) => {
 
 
 def test_a_stripe_holds_its_pane_still_and_does_not_take_the_bar_back(tmp_path):
-    """`has-overview` hides the bar, and where the platform draws that bar in the flow its width
-    goes to the text. Wrapped text rewraps, `scrollHeight` moves, and that is the number the stripe
-    decides on: it appeared, the pane got shorter, it went, the bar came back, and it flickered at
-    frame rate. The rewrap here is 600px, so no hysteresis would have held it. Every editor in a
-    scrolling panel resolves to that panel, so at `overviewMode: 'long'` a short one says `off`
-    about the very pane a long one beside it is drawing over: the short editor's `off` was granted,
-    the panel's bar came back, and the long editor's stripe stayed drawn beside it. Both watches
-    take seconds of real frames, so they share one page.
-    """
+    """`has-overview` hides the bar, and where the platform draws that bar in the flow its width goes to the text."""
     async def go(pg):
         fixture = await pg.evaluate(_STRIPE_FIXTURE)
         watch = await pg.evaluate(_STRIPE_WATCH, fixture)
@@ -2720,10 +2542,7 @@ def _tall_notebook(cells=60):
             'display_name': 'Python 3'}}, 'nbformat': 4, 'nbformat_minor': 5}
 
 def test_a_stripe_and_the_pane_scroll_bar_are_never_drawn_at_once(tmp_path):
-    """`#editor` is the pane a file's stripe hides the bar of, and it is the pane a notebook's
-    stripe hides too. The notebook painter runs on every scroll of every tab and asserted `off`,
-    which took the class back off under a file's stripe: the stripe drew on regardless, the native
-    bar returned beside it, and whose frame ran last decided which of the two you saw."""
+    """`#editor` is the pane a file's stripe hides the bar of, and it is the pane a notebook's stripe hides too."""
     import json
     (tmp_path/'long.py').write_text(''.join(
         f'x{i} = {i}  # a comment long enough to be worth reading\n' for i in range(400)))
@@ -2782,9 +2601,7 @@ _PANEL_PAIR = r"""async () => {
 
 
 def test_a_draft_from_a_version_the_file_no_longer_has_is_discarded(tmp_path):
-    """Drafts are keyed by path and cell id, and both survive a rewrite by another tool, so a draft
-    left over an older version landed back on the file that replaced it. Recovering it also
-    suppressed the reload that would have shown the new text."""
+    """Drafts are keyed by path and cell id, and both survive a rewrite by another tool, so a draft left over an older version landed back on the file that replaced it."""
     f = tmp_path/'note.py'; f.write_text('from disk\n')
     async def go(pg):
         await pg.evaluate("path => leeOpenFile(path)", str(f))
@@ -2810,9 +2627,7 @@ def test_a_draft_from_a_version_the_file_no_longer_has_is_discarded(tmp_path):
     assert kept.strip() == 'my unsaved edit', 'a draft of the version in hand is still the users work'
 
 def test_one_broken_step_of_boot_costs_itself_and_nothing_below_it(tmp_path):
-    """`boot` was a single sequence of awaits, so a throw anywhere in it took every step below with
-    it: the pills were never repainted, the file watcher and the polls never started, and nothing
-    said why. The steps below the failure are what this checks; the failure itself is reported."""
+    """`boot` was a single sequence of awaits, so a throw anywhere in it took every step below with it: the pills were never repainted, the file watcher and the polls never started, and nothing said why."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           window.checkProjectRuntime = () => { throw new Error('a step that fails'); };
@@ -2829,9 +2644,7 @@ def test_one_broken_step_of_boot_costs_itself_and_nothing_below_it(tmp_path):
     assert 'ready' in d['status'], 'and boot finishes'
 
 def test_boot_finishes_in_a_webview_without_requestidlecallback(tmp_path):
-    """WebKit has never shipped `requestIdleCallback`, and `boot` referenced it bare, which is a
-    ReferenceError rather than a falsy value. That is why the branch pill, the kernel poll, the run
-    log and the file watcher all worked in Chrome and none of them worked in the packaged app."""
+    """WebKit has never shipped `requestIdleCallback`, and `boot` referenced it bare, which is a ReferenceError rather than a falsy value."""
     async def go(pg):
         return await pg.evaluate("""async () => {
           delete window.requestIdleCallback;                 // the webview Leela ships in
@@ -2847,10 +2660,7 @@ def test_boot_finishes_in_a_webview_without_requestidlecallback(tmp_path):
     assert 'ready' in d['status']
 
 def test_an_emptied_rich_display_renders_as_nothing_not_as_its_placeholder():
-    """Clearing a rich display is publishing an empty one of the same type: fastprogress ends a
-    progress bar with `HTML('')`. Testing the string rather than the key sent that output down to
-    its `text/plain`, which for any rich object is `<IPython.core.display.HTML object>` -- the line
-    that appeared under a finished `cg.from_dir(...)`."""
+    """Clearing a rich display is publishing an empty one of the same type: fastprogress ends a progress bar with `HTML('')`."""
     async def go(pg):
         return await pg.evaluate("""() => {
           const plain = '<IPython.core.display.HTML object>';
@@ -2872,8 +2682,7 @@ def test_an_emptied_rich_display_renders_as_nothing_not_as_its_placeholder():
     assert d['only'] == 'kept', 'text is still what an output with only text says'
 
 def test_a_tab_comes_back_where_it_was_scrolled_to(tmp_path):
-    """Two scrollers, and only the inner one was kept: a notebook scrolls in `#editor` while each
-    cell's CodeMirror sits at zero, so every switch back landed at the top of the notebook."""
+    """Two scrollers, and only the inner one was kept: a notebook scrolls in `#editor` while each cell's CodeMirror sits at zero, so every switch back landed at the top of the notebook."""
     import json
     cells = [{'cell_type': 'code', 'source': [f'x = {i}\n' * 4], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(60)]
@@ -2897,8 +2706,7 @@ def test_a_tab_comes_back_where_it_was_scrolled_to(tmp_path):
     assert abs(back - went) < 80, f'came back at {back}, was left at {went}'
 
 def test_all_repos_shows_a_folder_opened_after_the_page_was(tmp_path):
-    """`gitUI.repos` was fetched once per page and nothing cleared it, so under All repos the window
-    that had been open longest showed the least. A browser tab that reloads on open hid it."""
+    """`gitUI.repos` was fetched once per page and nothing cleared it, so under All repos the window that had been open longest showed the least."""
     import subprocess
     first, second = tmp_path/'first', tmp_path/'second'
     for r in (first, second):
@@ -2918,9 +2726,7 @@ def test_all_repos_shows_a_folder_opened_after_the_page_was(tmp_path):
     assert any(r.endswith('second') for r in after), 'the folder just opened is one of the repositories'
 
 def test_the_editor_saves_as_you_go_after_a_run_and_across_a_tab_switch(tmp_path):
-    """Two ways a tab sat dirty for minutes with nothing coming to save it. A run rewrites the
-    outputs, which is a change to the document, and only typing scheduled a save. Switching tabs
-    cancelled the save queued for the tab being left and put nothing in its place."""
+    """Two ways a tab sat dirty for minutes with nothing coming to save it."""
     import json
     (tmp_path/'run.ipynb').write_text(json.dumps({'cells': [
         {'cell_type': 'code', 'source': ['1 + 1'], 'metadata': {}, 'outputs': [], 'execution_count': None}],
@@ -2946,9 +2752,7 @@ def test_the_editor_saves_as_you_go_after_a_run_and_across_a_tab_switch(tmp_path
     assert (tmp_path/'a.py').read_text() == 'a = 99\n', 'the tab that was left is written, not dropped'
 
 def test_the_overview_stripe_follows_the_pane_it_was_measured_against(tmp_path):
-    """The stripe is placed by measuring the pane, and it repainted on a window resize only. Opening
-    or closing the agent pane moves the notebook's right edge without one, so the stripe stayed where
-    that edge used to be, hanging in the middle of the page. It was 424px adrift."""
+    """The stripe is placed by measuring the pane, and it repainted on a window resize only."""
     import json
     cells = [{'cell_type': 'code', 'source': [f'x = {i}\n' * 6], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(40)]
@@ -2973,9 +2777,7 @@ def test_the_overview_stripe_follows_the_pane_it_was_measured_against(tmp_path):
     assert wide == 0 and closed == 0, f'and stays there through a pane opening and closing: {wide}, {closed}'
 
 def test_a_project_file_mounts_before_the_answers_it_does_not_need(tmp_path):
-    """`/editor/packages` starts an interpreter to read version metadata and `/git/file` is four git
-    subprocesses, and the mount awaited both before creating the editor. A pyproject was a blank box
-    for as long as they took, which read as a file that would not load."""
+    """`/editor/packages` starts an interpreter to read version metadata and `/git/file` is four git subprocesses, and the mount awaited both before creating the editor."""
     (tmp_path/'pyproject.toml').write_text('[project]\nname = "x"\ndependencies = ["fastcore"]\n')
     import time
     async def go(pg):
@@ -2998,9 +2800,7 @@ def test_a_project_file_mounts_before_the_answers_it_does_not_need(tmp_path):
     assert mounted < 1.0, f'the editor waited {mounted:.2f}s for answers it does not need'
 
 def test_opening_a_file_does_not_wait_for_the_panel_beside_it(tmp_path):
-    """`leeOpenFile` awaited `leeVars`, so a switch was not done until the variables panel had
-    painted: 97ms of the 113 a switch into a 100-cell notebook cost in the engine the packaged app
-    runs. The panel is beside the editor, not part of it."""
+    """`leeOpenFile` awaited `leeVars`, so a switch was not done until the variables panel had painted: 97ms of the 113 a switch into a 100-cell notebook cost in the engine the packaged app runs."""
     import json
     cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(12)]
@@ -3023,10 +2823,7 @@ def test_opening_a_file_does_not_wait_for_the_panel_beside_it(tmp_path):
     assert drawn == 12, 'and the notebook is on screen'
 
 def test_the_state_box_says_why_a_save_failed_and_names_what_it_activated(tmp_path):
-    """Save and activate closed the box only when the request answered. A refusal, which is what the
-    packaged app gets because it cannot reach memory at all, left the box open with no reason on it
-    and no toast, so the button read as dead. The badge said `state active` for every state there
-    could be, so it never said which charter the agent was carrying."""
+    """Save and activate closed the box only when the request answered."""
     async def go(pg):
         await pg.evaluate("() => { leePane('right', true); leeRight('agent'); }")
         await pg.route('**/agent/state/save', lambda route: asyncio.ensure_future(
@@ -3049,10 +2846,7 @@ def test_the_state_box_says_why_a_save_failed_and_names_what_it_activated(tmp_pa
     assert badge == 'Kosha charter', f'the badge names the charter, not the word active: {badge!r}'
 
 def test_running_cells_one_after_another_stays_quick(tmp_path):
-    """Two things sat in front of a run. The stream waited out a 120ms output poll for a cell that
-    printed nothing, and the run before it had only marked the tab dirty, so this run flushed the
-    whole notebook to disk on the way in. On gheasy's 155-cell notebook that was 172ms a cell for
-    work the kernel does in two."""
+    """Two things sat in front of a run."""
     import json, statistics
     cells = [{'cell_type': 'code', 'source': [f'z{i} = {i}'], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(8)]
@@ -3073,9 +2867,7 @@ def test_running_cells_one_after_another_stays_quick(tmp_path):
     assert median < 90, f'a cell that assigns a number took {median:.0f}ms: {[round(t) for t in times]}'
 
 def test_running_a_cell_writes_the_notebook_once(tmp_path):
-    """Marking the tab dirty after a run left the file to the autosave delay, and the next run
-    flushed it on the way in, so every cell wrote the whole notebook twice. On a 184KB notebook that
-    is two writes and two git refreshes per cell, against a run that takes twelve milliseconds."""
+    """Marking the tab dirty after a run left the file to the autosave delay, and the next run flushed it on the way in, so every cell wrote the whole notebook twice."""
     import json
     cells = [{'cell_type': 'code', 'source': [f'z{i} = {i}'], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(6)]
@@ -3099,8 +2891,7 @@ def test_running_a_cell_writes_the_notebook_once(tmp_path):
     assert not out['dirty'], 'and the tab is not left waiting to be saved'
 
 def test_any_two_tabs_can_be_read_side_by_side(tmp_path):
-    """The split offered text tabs only and refused everything else, so two notebooks -- which is
-    what somebody merging them wants to see -- could not be put beside each other at all."""
+    """The split offered text tabs only and refused everything else, so two notebooks, which is what somebody merging them wants to see, could not be put beside each other at all."""
     import json
     cells = [{'cell_type': 'code', 'source': ['first = 1'], 'metadata': {}, 'outputs': [], 'execution_count': 3},
              {'cell_type': 'markdown', 'source': ['## a heading'], 'metadata': {}}]
@@ -3160,9 +2951,7 @@ def _conflicted_notebook_repo(tmp_path):
     return root, nb
 
 def test_a_conflicted_notebook_is_merged_cell_by_cell_in_the_browser(tmp_path):
-    """The text panes showed a conflicted notebook as JSON with markers through it, which is neither
-    a notebook nor anything a person can answer. `.ipynb` now opens the cell view instead: two sides
-    per contested cell, the settled cells folded away, and no apply until every row has an answer."""
+    """The text panes showed a conflicted notebook as JSON with markers through it, which is neither a notebook nor anything a person can answer."""
     import json
     root, nb = _conflicted_notebook_repo(tmp_path)
     assert '<<<<<<<' in nb.read_text(), 'precondition: the file on disk is marked up'
@@ -3200,9 +2989,7 @@ def test_a_conflicted_notebook_is_merged_cell_by_cell_in_the_browser(tmp_path):
     assert not [c for c in info['changes'] if c['conflicted']], 'the merge has nothing left to settle'
 
 def test_a_delegation_row_keeps_its_kind_on_one_line(tmp_path):
-    """A step's summary is a grid, and a delegation has one child more than the others: the `open`
-    button. With four positional columns the kind landed in the twelve pixel chevron column, where
-    `delegate` wrapped one letter to a line and the chevron dropped to a row of its own."""
+    """A step's summary is a grid, and a delegation has one child more than the others: the `open` button."""
     async def go(pg):
         await pg.evaluate("() => { leePane('right', true); leeRight('agent'); }")
         return await pg.evaluate("""() => {
@@ -3251,13 +3038,7 @@ SEARCH_STUB = """() => {
 }"""
 
 def test_the_code_search_dialog_has_one_selection_and_one_keyboard():
-    """Tab used to move DOM focus rather than the mode, because the dialog's own key handler ran
-    after the modal's focus trap, so Enter landed on a focused rail button whose activation the
-    handler then cancelled: the mode never changed and Enter did nothing. Selection and focus are
-    one thing now -- focus stays in the query box, the selection is `aria-activedescendant`, Tab
-    switches the mode, Enter steps into the results and then opens, and a click previews before it
-    commits.
-    """
+    """Tab moved DOM focus instead of the mode so Enter did nothing; selection and focus are one now, Tab switches mode and Enter steps into results."""
     async def go(pg):
         await pg.evaluate(SEARCH_STUB)
         await pg.fill('#cs', 'thing')
@@ -3316,9 +3097,7 @@ def test_the_code_search_dialog_has_one_selection_and_one_keyboard():
 
 
 def test_the_inline_reply_stays_on_screen_and_escape_closes_it(tmp_path):
-    """The panel was placed while it was still a loading skeleton and never placed again, so the
-    answer grew off the bottom of the window and took the discard button with it. Escape only
-    reached it while the focus was still inside, which the first click elsewhere ended."""
+    """The panel was placed while it was still a loading skeleton and never placed again, so the answer grew off the bottom of the window and took the discard button with it."""
     import json
     cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(40)]
@@ -3368,8 +3147,7 @@ def test_the_inline_reply_stays_on_screen_and_escape_closes_it(tmp_path):
 
 
 def test_running_a_cell_near_the_bottom_leaves_room_under_the_next_one(tmp_path):
-    """`scrollIntoView({block: 'nearest'})` parked the next cell flush against the bottom edge, so
-    shift+enter showed the reader nothing of what they had just moved to."""
+    """`scrollIntoView({block: 'nearest'})` parked the next cell flush against the bottom edge, so shift+enter showed the reader nothing of what they had just moved to."""
     import json
     cells = [{'cell_type': 'code', 'source': [f'x{i} = {i}\n'], 'metadata': {}, 'outputs': [],
               'execution_count': None} for i in range(60)]
@@ -3414,8 +3192,7 @@ def test_running_a_cell_near_the_bottom_leaves_room_under_the_next_one(tmp_path)
 
 
 def test_the_inline_reply_says_what_it_looked_at_even_when_that_is_nothing(tmp_path):
-    """An empty trail rendered as no trail at all, so a reader could not tell an answer written
-    without looking anything up from a panel whose trail had stopped working."""
+    """An empty trail rendered as no trail at all, so a reader could not tell an answer written without looking anything up from a panel whose trail had stopped working."""
     import json
     (tmp_path/'a.py').write_text('x = 1\n')
     async def go(pg):
@@ -3451,14 +3228,7 @@ def test_the_inline_reply_says_what_it_looked_at_even_when_that_is_nothing(tmp_p
     assert 'without looking anything up' in out['none'], out['none']
 
 def test_the_completion_log_is_its_own_surface_and_opens_onto_what_was_asked_and_suggested(tmp_path, monkeypatch):
-    """The inline panel's telemetry used to be appended to the bottom of a conversation in the
-    agent's History view. Reaching it meant opening a conversation nobody wanted, and the two
-    preferences that decide whether any of it is recorded, and the purge button, lived there too.
-
-    It has a surface of its own now, and a row opens onto the question, the selection and the
-    suggestion. That last part never worked: `summary` joined asks to outcomes on `ask_id` and the
-    browser logged the ask before the route minted one, so every row read `(no instruction)`.
-    """
+    """The inline panel's telemetry used to be appended to the bottom of a conversation in the agent's History view."""
     from playwright.sync_api import sync_playwright
     from leela.blocks.agent.completions import completions
     from leela.blocks.settings.settings import Settings
@@ -3515,14 +3285,7 @@ def test_the_completion_log_is_its_own_surface_and_opens_onto_what_was_asked_and
 
 
 def test_agent_preferences_are_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
-    """The composer's notify box, reasoning picker and history filter, across a relaunch.
-
-    `localStorage` is per origin and the packaged app takes whatever port is free, so a preference
-    kept only there was gone at the next launch and read as its default: desktop notifications a
-    person switched on came back off without anyone asking for it. Each is saved to settings.json,
-    holds for a browser that has never seen the origin, and a value that only ever lived in the old
-    per-origin key is migrated rather than dropped.
-    """
+    """The composer's notify box, reasoning picker and history filter, across a relaunch."""
     import leela.blocks.settings.settings as settings_module
     saved = tmp_path/'settings.json'
     monkeypatch.setattr(settings_module, 'user_settings_file', lambda: saved)
@@ -3590,10 +3353,7 @@ def _settings_file(monkeypatch, tmp_path):
     return saved
 
 def test_the_dotfile_toggle_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
-    """Showing dotfiles came back off at every launch, because the port moves and `localStorage` is
-    per origin. It is `workbench.showHiddenFiles` now, it holds for a browser that has never seen
-    the origin, and a `lee-tree-hidden` that only ever lived in the old key is adopted, not dropped.
-    """
+    """Showing dotfiles came back off at every launch, because the port moves and `localStorage` is per origin."""
     _settings_file(monkeypatch, tmp_path)
     (tmp_path/'.hidden.py').write_text('x = 1\n')
     fake_kernels()
@@ -3617,10 +3377,7 @@ def test_the_dotfile_toggle_is_kept_in_settings_and_not_only_in_this_origin(tmp_
             assert page.evaluate('() => treeHidden()') is False, 'turning it off did not last either'
 
 def test_the_markdown_view_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
-    """Split, rendered or edit, chosen once and held across a relaunch. The setting names the views
-    `source`, `preview` and `split`; the buttons and the stage's CSS say `edit`, `rendered` and
-    `split`, and a `lee-md-view` from the old key is adopted through that mapping.
-    """
+    """Split, rendered or edit, chosen once and held across a relaunch."""
     _settings_file(monkeypatch, tmp_path)
     md = tmp_path/'note.md'
     md.write_text('# Title\n\ntext\n')
@@ -3649,10 +3406,7 @@ def test_the_markdown_view_is_kept_in_settings_and_not_only_in_this_origin(tmp_p
                 'the buttons and the stage disagree about the view'
 
 def test_a_pinned_pane_is_kept_in_settings_and_not_only_in_this_origin(tmp_path, monkeypatch):
-    """A pane holds its pin across a relaunch. There was a `lee-pin-<pane>` key per pane and the
-    setting is one list of the panes that are pinned, so the old keys are gathered into it once.
-    Pinned is still the default: an empty list is a fresh install, not two panes somebody unpinned.
-    """
+    """A pane holds its pin across a relaunch."""
     _settings_file(monkeypatch, tmp_path)
     (tmp_path/'main.py').write_text('x = 1\n')
     fake_kernels()
@@ -3678,10 +3432,7 @@ def test_a_pinned_pane_is_kept_in_settings_and_not_only_in_this_origin(tmp_path,
             assert page.evaluate("() => leePinned('left')") is True, 'pinning it again did not last'
 
 def test_the_search_dialog_reopens_on_the_choices_it_closed_on(tmp_path, monkeypatch):
-    """The mode, the scope and the extension filter, across a relaunch rather than only across a
-    reopen. All three were `localStorage`, so a moving port reset them; they are `search.last*` now,
-    and the old keys are adopted before the dialog reads anything.
-    """
+    """The mode, the scope and the extension filter, across a relaunch rather than only across a reopen."""
     _settings_file(monkeypatch, tmp_path)
     (tmp_path/'main.py').write_text('x = 1\n')
     fake_kernels()
@@ -3719,8 +3470,7 @@ def test_the_search_dialog_reopens_on_the_choices_it_closed_on(tmp_path, monkeyp
 
 
 def test_typing_in_a_code_brick_survives_the_insert_that_follows_it(tmp_path):
-    """A `cvSync` keeps the element and hands it a new brick object, so a write to the captured one
-    was gone at the next flush: the code you typed ran as an empty cell."""
+    """A `cvSync` keeps the element and hands it a new brick object, so a write to the captured one was gone at the next flush: the code you typed ran as an empty cell."""
     doc = tmp_path/'t.canvas.md'
     doc.write_text('---\ntitle: t\n---\n# T\n\nA paragraph to hang a gutter on.\n', encoding='utf-8')
     async def go(pg):
@@ -3758,8 +3508,7 @@ total = 6 * 7
 '''
 
 def test_opening_a_canvas_runs_nothing_until_it_is_trusted(tmp_path):
-    """A canvas is markdown, so it arrives from a clone or a paste. Opening one used to execute
-    every code brick in it before anybody had read a line."""
+    """A canvas is markdown, so it arrives from a clone or a paste."""
     doc = tmp_path/'t.canvas.md'
     doc.write_text(CANVAS_WITH_TABLE, encoding='utf-8')
     async def go(pg):
@@ -3779,8 +3528,7 @@ def test_opening_a_canvas_runs_nothing_until_it_is_trusted(tmp_path):
     assert after == {'trusted': True, 'hidden': True}
 
 def test_prose_nobody_edited_is_not_rewritten_by_a_blur(tmp_path):
-    """Blur converted the rendered DOM back to markdown every time, and `cvMd` cannot draw a table,
-    so focusing a table and leaving it flattened the table into its own text."""
+    """Blur converted the rendered DOM back to markdown every time, and `cvMd` cannot draw a table, so focusing a table and leaving it flattened the table into its own text."""
     doc = tmp_path/'t.canvas.md'
     doc.write_text(CANVAS_WITH_TABLE, encoding='utf-8')
     async def go(pg):

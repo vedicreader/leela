@@ -69,7 +69,7 @@ def test_apply_refuses_to_overwrite_an_unsaved_open_buffer(tmp_path):
     assert (tmp_path/'a.py').read_text() == 'alpha\n'
 
 def test_replacement_text_is_literal_unless_regex_is_asked_for(tmp_path):
-    "`\n` and `\1` in the replacement box are characters, not escapes."
+    """` ` and `` in the replacement box are characters, not escapes."""
     (tmp_path/'a.txt').write_text('root = HERE\n')
     c, _ = client(tmp_path)
     d = preview(c, find='HERE', replace=r'C:\new\1')

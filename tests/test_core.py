@@ -783,14 +783,7 @@ def test_workspace_journal_refuses_diverged_files_atomically(tmp_path):
     assert a.read_text() == 'a2' and b.read_text() == 'newer'
 
 def test_the_second_capability_model_is_retired():
-    """`leela/core/ports.py` and `leela/conformance.py` were a parallel answer to the question
-    shalya's `Host` already answers: three Protocols over fifty method signatures, a provider
-    registry, an environment override, and a conformance checker with a hand-maintained table of
-    expected parameter names. Exactly one provider was ever registered per port, all three named
-    `leela`, and the swap the machinery existed to permit never happened once. `RuntimePort` was a
-    hand-copy of `ramabana.runtime.Backend` that had already drifted: `Backend` grew `spawn`,
-    `resume_hist`, `revise_last_assistant`, `used_tokens`, `pct_full`, `fits` and `problem`, and
-    the Protocol listed none of them."""
+    """`leela/core/ports.py` and `conformance.py` were a parallel `Host` shalya already answers, with only `leela` ever registered and `RuntimePort` already drifted from `Backend`."""
     assert not (ROOT/'leela'/'core'/'ports.py').exists()
     assert not (ROOT/'leela'/'conformance.py').exists()
     with pytest.raises(ImportError): importlib.import_module('leela.core.ports')
@@ -1054,11 +1047,7 @@ def _row(r):
     return f"{','.join(ms) or type(r).__name__} {path}"
 
 def inventory(app=None):
-    """Every registered route as a sorted list of `METHODS PATH` lines.
-
-    A brick library mounts its own routes when one is installed, so the inventory would depend on
-    what the machine has installed. Those belong to the library.
-    """
+    """Every registered route as a sorted list of `METHODS PATH` lines."""
     app = app or ide_app(Workspace(roots=[]))
     return sorted(_row(r) for r in app.router.routes if not library_owned(owner(r)))
 
@@ -1113,9 +1102,7 @@ if __name__ == '__main__':
         print(f'\n{blocks} routes served by blocks, {counts.get(CLOSURE, 0)} still by the ide_app closure')
 
 def test_the_wiring_order_lives_with_the_blocks_not_with_the_application():
-    """`app.py` held 25 aliased imports and the list. A block could not be added without
-    editing the application, and the list could disagree with what is on disk.
-    """
+    """`app.py` held 25 aliased imports and the list."""
     from leela import blocks
     folders = {p.name for p in BLOCKS_DIR.iterdir() if (p/'__init__.py').is_file()}
     assert set(blocks.NAMES) == folders, 'the order and the folders on disk disagree'
@@ -1127,9 +1114,7 @@ def test_the_wiring_order_lives_with_the_blocks_not_with_the_application():
     assert imported == set(), f'app.py still aliases blocks one by one: {sorted(imported)}'
 
 def test_every_block_with_client_code_is_named_in_the_load_order():
-    """A `.js` file in a block is only reachable if `LAYERS` names it. Dropping one in and
-    forgetting that is a feature that silently never loads, with no import error to say so.
-    """
+    """A `.js` file in a block is only reachable if `LAYERS` names it."""
     import sys
     sys.path.insert(0, str(ROOT/'tools'))
     import build_ide_js as builder
@@ -1142,10 +1127,7 @@ def test_every_block_with_client_code_is_named_in_the_load_order():
 HANDED_OFF = {'editor': ('pool',)}   # `python_for(session=ctx)` reads `session.fs` and `session.pool`
 
 def test_caps_declares_exactly_what_the_route_layer_reads():
-    """`Ctx` refuses an undeclared capability, so an over-broad `CAPS` grants reach nobody asked
-    for and an under-broad one is an AttributeError on a route nobody exercised. Both are silent
-    until then, so compare the declaration against what `app.py` and `ui.py` actually read.
-    """
+    """`Ctx` refuses an undeclared capability, so an over-broad `CAPS` grants reach nobody asked for and an under-broad one is an AttributeError on a route nobody exercised."""
     import ast
     from leela.core import CAPABILITIES
     caps_all = set(CAPABILITIES)
@@ -1195,9 +1177,7 @@ def test_local_history_forgets_the_oldest_and_the_bodies_nothing_names(tmp_path)
     finally: session.KEEP_PER_PATH = 60
 
 def test_no_test_can_reach_the_real_conversation_log(tmp_path, cfg_home):
-    """A test wrote `ai.history_path` with `write_text`, which truncates. One config dir shared by
-    the whole session meant the file it truncated was whichever one the suite had been pointed at.
-    """
+    """A test wrote `ai.history_path` with `write_text`, which truncates."""
     from tests.conftest import REAL_CONFIG_HOME
     import leela
     fresh = Workspace(roots=[tmp_path])
@@ -1208,9 +1188,7 @@ def test_no_test_can_reach_the_real_conversation_log(tmp_path, cfg_home):
     fresh.threads.shutdown()
 
 def test_the_log_helper_refuses_a_path_outside_the_suites_config_dir(tmp_path, cfg_home):
-    """The write that truncated a real log came from a script run without these fixtures, where
-    `agent.configFolder` resolved to the person's own directory. Every test writer goes through
-    `history_file`, which checks the path rather than trusting the fixture that is usually there."""
+    """The write that truncated a real log came from a script run without these fixtures, where `agent.configFolder` resolved to the person's own directory."""
     from tests.conftest import history_file
     fresh = Workspace(roots=[tmp_path])
     assert history_file(fresh).parent == Path(cfg_home), 'an isolated log is handed straight back'
@@ -1222,9 +1200,7 @@ def test_the_log_helper_refuses_a_path_outside_the_suites_config_dir(tmp_path, c
 
 
 def test_a_disabled_state_layer_keeps_its_text_and_stays_out_of_the_briefing(tmp_path):
-    """The toggle silences a layer for one piece of work without writing it again, so what changes
-    has to be the briefing and not the text. Clearing is the other one: empty text, and gone.
-    """
+    """The toggle silences a layer for one piece of work without writing it again, so what changes has to be the briefing and not the text."""
     from leela.app import _state_text
     ws = Workspace(roots=[tmp_path])
     try:
@@ -1239,10 +1215,7 @@ def test_a_disabled_state_layer_keeps_its_text_and_stays_out_of_the_briefing(tmp
 
 
 def test_attention_names_the_active_conversations_state_even_where_the_list_omits_it(tmp_path):
-    """The pane clears `agentBusy` on the stream's `done`, and a stream that drops as the turn ends
-    never sends one, so it needs the server's own view to correct itself against. `dicts` leaves out
-    the empty conversation a person was handed, which is the one they are usually looking at.
-    """
+    """The pane clears `agentBusy` on the stream's `done`, and a stream that drops as the turn ends never sends one, so it needs the server's own view to correct itself against."""
     ws = Workspace(roots=[tmp_path])
     try:
         seen = ws.threads.attention()
@@ -1275,8 +1248,7 @@ def test_a_write_from_outside_leela_is_kept_before_the_editor_takes_it(tmp_path)
     finally: ws.threads.shutdown()
 
 def test_local_history_keeps_every_write_leela_can_see_and_puts_one_back(tmp_path):
-    """Undo is one step back. What a person needs after an agent, a tool or another editor has been
-    through the tree is the file as it was earlier, and a way to choose which earlier."""
+    """Undo is one step back."""
     from starlette.testclient import TestClient
     from leela.app import ide_app
     src = tmp_path/'mod.py'; src.write_text('one\n')
@@ -1304,9 +1276,7 @@ def test_local_history_keeps_every_write_leela_can_see_and_puts_one_back(tmp_pat
     finally: ws.threads.shutdown()
 
 def test_a_huge_file_is_noted_rather_than_copied(tmp_path):
-    """A 70MB notebook saved through a day put gigabytes of bodies in the journal, and every write
-    after that reloaded and rewrote all of them. The version still says the file changed and when;
-    the copy is what stops."""
+    """A 70MB notebook saved through a day put gigabytes of bodies in the journal, and every write after that reloaded and rewrote all of them."""
     from leela.core.session import MAX_BODY, FileHistory
     h = FileHistory(tmp_path/'h')
     big, small = 'x' * (MAX_BODY + 1), 'y' * 32
@@ -1352,8 +1322,7 @@ def test_the_journal_keeps_bodies_by_reference_and_pins_them(tmp_path):
     assert f.read_text() == 'one\n'
 
 def test_a_window_opened_from_finder_takes_the_shell_environment_it_was_denied(tmp_path):
-    """An app launched from Finder has launchd's environment, so a key exported from a shell profile
-    is invisible to it while the same Leela started from a terminal sees it."""
+    """An app launched from Finder has launchd's environment, so a key exported from a shell profile is invisible to it while the same Leela started from a terminal sees it."""
     import os
     from leela.core.envs import import_login_env
     shell = tmp_path/'fakeshell'
@@ -1378,9 +1347,7 @@ def test_a_shell_that_cannot_be_asked_changes_nothing(tmp_path):
     assert env == {'PATH': '/usr/bin'}
 
 def test_the_shell_is_asked_the_way_a_person_uses_it(tmp_path):
-    """zsh reads `.zshrc` only for an interactive shell, and that is where an API key usually lives.
-    Asked with `-l` alone it answered with eight names and no key, so every hosted model refused
-    every turn in the packaged app and nowhere else."""
+    """zsh reads `.zshrc` only for an interactive shell, and that is where an API key usually lives."""
     from leela.core.envs import shell_env
     shell = tmp_path/'fussy'
     # only an interactive shell exports the key, which is what a `.zshrc` amounts to
@@ -1394,8 +1361,7 @@ def test_the_shell_is_asked_the_way_a_person_uses_it(tmp_path):
     assert shell_env(str(plain)) == {'PATH': '/opt/tools'}, 'a shell that refuses -i is asked without it'
 
 def test_the_shell_a_person_chose_is_the_one_asked(tmp_path, monkeypatch):
-    """`$SHELL` is the shell the login record names, which is not always the one in use. Leela
-    already has a terminal setting for that, and this reads the same one."""
+    """`$SHELL` is the shell the login record names, which is not always the one in use."""
     from leela.blocks.settings.settings import Settings
     from leela.core import envs
     monkeypatch.setenv('SHELL', '/bin/zsh')
@@ -1406,10 +1372,7 @@ def test_the_shell_a_person_chose_is_the_one_asked(tmp_path, monkeypatch):
     assert envs.preferred_shell() == '/opt/homebrew/bin/fish', 'the chosen shell is the one asked'
 
 def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_path, monkeypatch):
-    """A packaged app hands every child `PYTHONHOME` and `PYTHONPATH` aimed at itself. The shell
-    does not read them, but the `python` a profile runs does, and it dies on a path configuration
-    and takes the whole profile with it: fish exited 1 having exported nothing, so every key was
-    missing in the app and present everywhere else."""
+    """A packaged app hands every child `PYTHONHOME` and `PYTHONPATH` aimed at itself."""
     from leela.core import envs
     shell = tmp_path/'profile-runs-python'
     # what a startup file doing anything with python amounts to, once the bundle has pointed it home
@@ -1422,8 +1385,7 @@ def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_pa
     assert envs.shell_env(str(shell)) == {'GITHUB_TOKEN': 'ghp-from-the-profile'}
 
 def test_a_value_typed_into_leela_beats_the_environment_it_was_launched_with(tmp_path, monkeypatch):
-    """The escape hatch. Asking the shell is a guess about a machine, and where the guess is wrong
-    there has to be somewhere to say so, or every hosted model refuses every turn with no way in."""
+    """The escape hatch."""
     import leela
     from leela.core import envs
     monkeypatch.setattr(leela, 'leela_cfg', tmp_path)
@@ -1468,8 +1430,7 @@ def test_a_secrets_value_never_leaves_the_server(tmp_path, monkeypatch):
     assert rows['ANTHROPIC_API_KEY']['set'] is False, 'the names the models read are offered anyway'
 
 def test_two_windows_accumulate_folders_in_the_one_saved_session(tmp_path):
-    """One file, several windows. `save` wrote the roots it had over the roots the file had, so
-    opening the app on one folder emptied a session that a browser window had four folders in."""
+    """One file, several windows."""
     from leela.workspace import Workspace
     a, b, c = (tmp_path/'a', tmp_path/'b', tmp_path/'c')
     for d in (a, b, c): d.mkdir()
@@ -1527,9 +1488,7 @@ def test_a_partial_save_and_an_unreadable_file_leave_the_folders_alone(tmp_path)
 
 
 def test_the_first_paint_uses_the_saved_theme_not_only_this_origin_s_cache(tmp_path, monkeypatch):
-    """The boot script read `localStorage` alone and fell back to the light cursor theme. That
-    cache is per origin, and the app's port moves, so a launch at a new origin painted the wrong
-    theme before the settings arrived. Which is the flash the theme fix alone does not remove."""
+    """The boot script read `localStorage` alone and fell back to the light cursor theme."""
     import re
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -1550,13 +1509,7 @@ def test_the_first_paint_uses_the_saved_theme_not_only_this_origin_s_cache(tmp_p
 
 
 def test_writing_a_notebook_back_through_the_host_keeps_it_a_notebook(tmp_path):
-    """`text_at` hands out a notebook as its `# %%` document, and `write` put that back verbatim.
-
-    `rollback_turn` restores a turn's `before`, which is exactly what `text_at` gave it, so undoing
-    a turn that touched an `.ipynb` left a file that is no longer JSON and a notebook nothing could
-    open. The marker carries a cell's type and id and nothing else, so the outputs have to come
-    from the notebook already on disk rather than from the document.
-    """
+    """`text_at` hands out a notebook as its `# %%` document, and `write` put that back verbatim."""
     import json
     nb = tmp_path/'demo.ipynb'
     nb.write_text(json.dumps({'cells': [

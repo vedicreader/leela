@@ -144,12 +144,7 @@ def test_the_transcript_covers_the_whole_release_not_just_the_last_step(tmp_path
     assert '❯ echo alpha' in tail and '✓ first exited 0' in tail
 
 def test_each_package_gets_its_own_pipeline(tmp_path):
-    """One pipeline per package, and the terminal that watches one is keyed the same way.
-
-    The route holds `live[(kind, root)]`, so a release running in one package keeps running while
-    another is looked at. The client used to key its terminal by kind alone and show the first
-    package's log for all of them; `dock.js` keys by root now, and this is the other half.
-    """
+    """One pipeline per package, and the terminal that watches one is keyed the same way."""
     import subprocess
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -513,10 +508,7 @@ TypeError: Could not resolve authentication method.
 
 
 def test_prepare_runs_for_a_project_configured_the_modern_way(tmp_path, monkeypatch):
-    """It demanded `settings.ini`, so a project keeping `[tool.nbdev]` was told it was not one.
-
-    That is how every nbdev project written since nbdev 2.3 is configured, ramabana included.
-    """
+    """It demanded `settings.ini`, so a project keeping `[tool.nbdev]` was told it was not one."""
     from leela.blocks.pipelines.app import nbdev_config, nbdev_prepare
     from leela.blocks.pipelines.pipelines import PipelineError
     root = project_releas(tmp_path/'modern', nbdev=True)
@@ -548,8 +540,7 @@ def test_prepare_says_what_it_looked_for_when_nbdev_is_not_installed():
 
 
 def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkeypatch):
-    """`uv run` syncs the lock first. Calling the venv's script does not, so a venv that had been
-    synced to another project's lock failed on an import instead of being repaired."""
+    """`uv run` syncs the lock first."""
     from pullup.pipeline import uv_argv
     root = tmp_path/'proj'; root.mkdir()
     monkeypatch.setattr('pullup.pipeline.which', lambda n: '/opt/uv')

@@ -30,14 +30,7 @@ from leela.blocks.runtime.kernels import ExecOutcome, KernelPool
 from leela.workspace import Workspace
 
 def history_file(ws):
-    """The conversation log, checked before a test replaces it.
-
-    Every test writer replaces this file whole, and `agent.configFolder` can point it at a real
-    directory, so a caller that has escaped the config isolation truncates a person's whole
-    conversation log. `cfg_home` is what keeps it in a temp dir and
-    `test_no_test_can_reach_the_real_conversation_log` pins that; this refuses when something is
-    outside it, including a script run without these fixtures at all.
-    """
+    """The conversation log, checked before a test replaces it."""
     p = _pathlib.Path(ws.ai.history_path)
     assert REAL_CONFIG_HOME not in p.parents and _pathlib.Path.home() not in p.parents, \
         f'refusing to write a test conversation log to {p}'
@@ -61,16 +54,7 @@ def _isolate_credentials(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def cfg_home(monkeypatch, tmp_path_factory):
-    """A config dir per test, and never the real one.
-
-    One dir for the whole session was not isolation: a test that wrote `agent-history.jsonl`
-    truncated the log every other test read, which is why one of them could pass alone and fail
-    in the suite. And `leela_cfg` is a module-level name in every module that imported it, so the
-    environment variable alone does not move it -- each binding is repointed here.
-
-    Beside `tmp_path`, never inside it: a test whose project root is `tmp_path` walks it, and a
-    config dir in there is a file that project does not have.
-    """
+    """A config dir per test, and never the real one."""
     cfg = tmp_path_factory.mktemp('cfg')/'leela'
     cfg.mkdir(parents=True, exist_ok=True)
     # `XDG_CONFIG_HOME` stays where the top of this file put it: it is already a temp dir, and
@@ -88,28 +72,13 @@ def cfg_home(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_backup_threads(monkeypatch):
-    """No test schedules real backups.
-
-    `ide_app` starts a daemon that takes a copy whenever one is due, and nothing stops it. Across a
-    suite that builds the app hundreds of times, those threads outlive the tests that made them and
-    fire into whichever config dir the current test is using, which is how a listing asserted to be
-    empty came back holding somebody else's copy.
-    """
+    """No test schedules real backups."""
     from leela.core import backups
     monkeypatch.setattr(backups, 'schedule_backups', lambda *a, **k: (lambda: None))
 
 @pytest.fixture(autouse=True)
 def _sessions_off_the_repo(tmp_path_factory):
-    """No test writes an agent transcript into the checked-out repository.
-
-    `dhrishti`'s logging directories are process-global and default to relative paths, so a session
-    logs into whatever the working directory happens to be, and `test_leela_can_redirect_both_
-    transcript_streams` restores those relative defaults in its `finally`.
-
-    This covers the pytest process only. A kernel is another process and logs into the folder its
-    workspace is rooted at, which is correct and is why a test roots one at a temp copy rather than
-    at `tests/fixtures`.
-    """
+    """No test writes an agent transcript into the checked-out repository."""
     from dhrishti.runtime import set_logging
     root = tmp_path_factory.mktemp('sessions')
     set_logging(dir=root/'_leela_sessions', agent_dir=root/'_leela_agent_sessions')
@@ -118,14 +87,7 @@ def _sessions_off_the_repo(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_warm_probes(monkeypatch):
-    """No test asks the machine what it holds behind its own back.
-
-    `ide_app` warms the model probes on a startup thread, and a suite that builds the app hundreds
-    of times leaves those threads running long after the test that made them. One gathers a catalog
-    under one test's environment and writes it in under the next test's, so a picker patched to
-    offer `gpt-4.1` was served a catalog with no OpenAI in it at all, at whatever interval the
-    thread happened to finish on.
-    """
+    """No test asks the machine what it holds behind its own back."""
     from leela import app
     monkeypatch.setattr(app, '_warm_probes', lambda: None)
 
@@ -234,12 +196,7 @@ def _no_local_engine_loads(request, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _cold_probes():
-    """No test inherits another's answer about what is installed or who is signed in.
-
-    `probed` caches machine state for the life of the process, which is what a picker on the boot
-    path needs and what a suite must not carry between tests: one that patches `available_models`
-    was otherwise served the catalog a previous test had already cached.
-    """
+    """No test inherits another's answer about what is installed or who is signed in."""
     from leela.blocks.agent.models import forget_probes
     forget_probes()
     yield

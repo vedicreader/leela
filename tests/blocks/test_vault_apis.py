@@ -1,9 +1,4 @@
-"""Calling a described API with the caller's own key, and reaching the news shelf from a turn.
-
-Nothing here reaches the network or the machine's keychain: `Creds` is given a store that keeps
-what it is handed, and the assertions are about which headers reach which spec and what a tool
-is allowed to say about them.
-"""
+"""Calling a described API with the caller's own key, and reaching the news shelf from a turn."""
 
 from __future__ import annotations
 

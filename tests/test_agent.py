@@ -153,9 +153,7 @@ def test_a_host_offers_only_the_tools_it_supports():
 
 
 def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
-    """Pointing the turn at a frontier model must not move completions. The cheap jobs sit on
-    the local default; delegation is the one whose default is a cloud model, because local
-    models did not do it well enough to be worth the wait."""
+    """Pointing the turn at a frontier model must not move completions."""
     monkeypatch.delenv('LEELA_MODEL', raising=False)
     r = models.Routing(turn='gemma-e2b')
     r.set('gemma-12b')
@@ -694,8 +692,7 @@ def test_a_new_conversation_keeps_every_saved_job_model(tmp_path):
     assert {job: ws.ai.routing.name_for(job) for job in ws.job_models} == ws.job_models
 
 def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
-    """Claude Code is a runtime, not a pip extra; the picker used to say `pip install rishi[cursor]`.
-    Cursor itself is no longer offered, so nothing should reserve a row for it."""
+    """Claude Code is a runtime, not a pip extra; the picker used to say `pip install rishi[cursor]`."""
     from leela.blocks.agent.models import runtimes
     rows = {r['value']: r for r in runtimes()}
     assert 'claude' in rows and 'cursor' not in rows
@@ -717,8 +714,7 @@ def test_older_specialized_openai_models_are_opt_in(monkeypatch):
     assert {'gpt-4.1', 'gpt-4.1-mini'} <= older
 
 def test_an_anthropic_key_no_longer_publishes_a_model_catalog(monkeypatch):
-    """Claude reaches Leela as the `claude` runtime, not as a provider model list, so the key alone
-    publishes nothing. Offering `anthropic/...` rows would name models nothing here can route to."""
+    """Claude reaches Leela as the `claude` runtime, not as a provider model list, so the key alone publishes nothing."""
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'connected')
     rows = models.available_models()
     assert not [r for r in rows if r['provider'] == 'anthropic']
@@ -1085,11 +1081,7 @@ def test_an_approval_exchange_is_written_into_the_notebook():
     assert 'that file is generated' in nb[2].source
 
 def test_workspace_path_refusal_names_the_folders_that_are_open(tmp_path):
-    """The gate is the open roots, and it used to name the open tabs instead.
-
-    A refusal listing five files that happened to be open read as a path or quoting bug in one of
-    them, so the fix people reached for was to re-quote a path that was never the problem.
-    """
+    """The gate is the open roots, and it used to name the open tabs instead."""
     from leela.blocks.agent.ai import WorkspaceHost
     p = tmp_path/'dialog.ipynb'
     p.write_text('{}')
@@ -1128,11 +1120,7 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
 
 
 class _Rows:
-    """A kernel inspector with two namespaces: the user's, and the layer `run_python` writes to.
-
-    `/api/rows` is what the user's next cell can see; `/agent/api/rows` is that plus the agent's own
-    bindings, which is the view `DhrishtiHost` reads and the one the agent must be shown.
-    """
+    """A kernel inspector with two namespaces: the user's, and the layer `run_python` writes to."""
     base = 'http://kernel'
     def __init__(self, owner=('df',), layer=('df_norm',)):
         self.owner, self.layer, self.calls = list(owner), list(layer), []
@@ -1156,11 +1144,7 @@ def _host(k, ws=None):
     return WorkspaceHost(ws)
 
 def test_the_agent_is_shown_the_binding_it_just_made():
-    """`run_python` writes to the overlay, so an owner-only `list_vars` denies its own work.
-
-    The agent bound `df_norm` and was then told, by every reader Leela had, that `df_norm` does not
-    exist. Ramabana's own `DhrishtiHost.list_vars` reads `/agent/api/rows`; this reads it too.
-    """
+    """`run_python` writes to the overlay, so an owner-only `list_vars` denies its own work."""
     k = _Rows()
     h = _host(k)
     assert 'df_norm: DataFrame' in h.list_vars()
@@ -1196,12 +1180,7 @@ def test_a_promotion_never_replaces_what_the_user_made():
     assert h.promote_var('1x') == "'1x' is not a variable name"
 
 def test_no_tool_hands_the_agents_own_binding_to_the_user(tmp_path):
-    """The overlay exists so that nothing the agent decides to do reaches the user's namespace.
-
-    A promotion the agent could call was that decision handed back: it bound a name in its own
-    layer and then moved it across on its own judgement. Landing a name stays Leela's, and only
-    when the user's own prompt named it.
-    """
+    """The overlay exists so that nothing the agent decides to do reaches the user's namespace."""
     from leela.blocks.agent.ai import WRITE_TOOLS as LEELA_WRITES, ide_tools
     ws = Workspace(roots=[tmp_path])
     for names in ({t.__name__ for t in ws.ai.tools}, {t.__name__ for t in ws.ai._sub_plain()},
@@ -1211,11 +1190,7 @@ def test_no_tool_hands_the_agents_own_binding_to_the_user(tmp_path):
     assert ws.ai.host.promote_var, 'the mechanism `_land` calls is still there'
 
 def test_a_failed_run_reports_what_it_had_already_done():
-    """A NameError on the last line read as total failure, and the live model call two lines above
-
-    it had already gone out and bound its reply. What ran before the error is not undone, so the
-    result says so: the printed output, and the names that exist because of this call.
-    """
+    """A NameError on the last line read as total failure, and the live model call two lines above it had already gone out and bound its reply."""
     class Broken(_Rows):
         def api_sync(self, path, params=None, timeout=30):
             if path == '/agent/api/exec':
@@ -1251,10 +1226,7 @@ def test_one_variable_can_be_asked_about_without_globals():
     assert h.inspect_var('1x') == "'1x' is not a variable name"
 
 def test_a_variable_says_which_run_bound_it():
-    """A value alone does not say where it came from, and a name bound by a call that then raised
-
-    looked exactly like one bound by a call that worked.
-    """
+    """A value alone does not say where it came from, and a name bound by a call that then raised looked exactly like one bound by a call that worked."""
     class Broken(_Rows):
         def api_sync(self, path, params=None, timeout=30):
             if path == '/agent/api/exec' and 'boom' in ((params or {}).get('code') or ''):
@@ -1289,11 +1261,7 @@ def test_a_cell_run_is_the_provenance_of_what_it_bound(tmp_path):
     assert 'which then failed' in o.note('bad')
 
 def test_output_is_marked_when_the_source_that_made_it_is_gone(tmp_path):
-    """The traceback shown was for an assertion the cell no longer contained, and nothing said so.
-
-    Output carries the hash of the source that produced it, and the context the model reads says
-    which run it was and whether the cell has changed since.
-    """
+    """The traceback shown was for an assertion the cell no longer contained, and nothing said so."""
     from leela.blocks.nb.nb import Cell, Notebook, src_hash
     c = Cell(source='assert x == 1', cell_type='code', id='c1', execution_count=3, execution_ms=12.0,
              outputs=[{'output_type': 'error', 'ename': 'AssertionError', 'evalue': '',
@@ -1319,11 +1287,7 @@ def test_the_hash_of_a_run_survives_the_file(tmp_path):
     assert back[0].stale, 'a notebook reopened knows its output predates its source'
 
 def test_the_writable_folders_are_named_before_the_first_refusal(tmp_path):
-    """Both folders were open and both were said to be the agent's, and the edit to the second was
-
-    refused as a cross-workspace write. Readable and writable are two lists, and the briefing and
-    the refusal both name the writable one.
-    """
+    """Both folders were open and both were said to be the agent's, and the edit to the second was refused as a cross-workspace write."""
     from leela.blocks.agent.ai import WorkspaceHost
     a, b = tmp_path/'a', tmp_path/'b'
     for d in (a, b): d.mkdir()
@@ -1345,11 +1309,7 @@ def test_one_open_folder_is_writable_and_says_nothing(tmp_path):
     assert 'Writable folders' not in ws.ai.system_prompt()
 
 def test_a_notebook_cell_runs_in_the_users_own_kernel(tmp_path):
-    """`run_python` runs in the agent's layer, so it could never answer "does this cell work".
-
-    The substitutes changed source-inspection behaviour and were not what Jupyter would do. This
-    runs the exact cell in the tab's kernel, and reports the count, the output and what moved.
-    """
+    """`run_python` runs in the agent's layer, so it could never answer "does this cell work"."""
     import asyncio, json as _json
     from leela.blocks.runtime.kernels import ExecOutcome
     from leela.workspace import Workspace
@@ -1405,9 +1365,7 @@ def test_the_name_a_prompt_asks_for_survives_the_way_people_write_it():
         assert Workspace._requested_name(prompt) == want, prompt
 
 def test_the_incomplete_action_retry_names_tools_that_exist(tmp_path):
-    """The retry told the model to call `scale_numeric`, which exists in neither Leela nor ramabana,
-    and measured completion against the owner rows that `run_python` cannot reach. It could not be
-    satisfied, so it burned every attempt."""
+    """The retry told the model to call `scale_numeric`, which exists in neither Leela nor ramabana, and measured completion against the owner rows that `run_python` cannot reach."""
     ws = Workspace(roots=[tmp_path])
     agent = type('A', (), {'host': _host(_Rows(owner=(), layer=('df_norm',)), ws)})()
     retry = ws._action_retry('scale the numeric columns as df_norm', agent)
@@ -1576,10 +1534,7 @@ def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
     assert closed == [True]
 
 def test_run_python_is_offered_before_any_kernel_exists(tmp_path):
-    """`session` was probed, and the probe asks a workspace with no kernel yet. It got
-    `NotImplementedError` and dropped `run_python` for the life of that assistant, so a notebook
-    opened straight onto a prompt cell could describe the code it wanted to run and never run it --
-    while the same request after one code cell worked."""
+    """`session` was probed, and the probe asks a workspace with no kernel yet."""
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     assert ws.inline_ai.host.can('session'), 'declared, not proved by a kernel'
@@ -1604,9 +1559,7 @@ def test_running_python_starts_the_kernel_it_needs(tmp_path):
     asyncio.run(go())
 
 def test_run_python_cannot_touch_what_the_user_made(tmp_path):
-    """It ran `scope: 'global'`, straight into the user's namespace, where the refusal the tool
-    promises does not exist: `mine.append(4)`, `mine = ...` and `del mine` all went through and the
-    variable was gone. The agent gets a layer over the namespace, not the namespace."""
+    """It ran `scope: 'global'`, straight into the user's namespace, where the refusal the tool promises does not exist: `mine.append(4)`, `mine = ...` and `del mine` all went through and the variable was gone."""
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path], port=8288)
     async def go():
@@ -1644,10 +1597,7 @@ def test_a_tool_on_the_loop_itself_does_not_wait_for_the_loop(tmp_path):
     asyncio.run(go())
 
 def test_a_stream_still_open_at_shutdown_does_not_shout_on_the_way_out(tmp_path):
-    """Both httpcore2 byte streams `yield` inside `async with safe_async_iterate(...)`. A response
-    still streaming when the process ends is finalised by the loop's asyncgen shutdown, and the
-    generator-based context manager could not always stop when `GeneratorExit` was thrown into it
-    there -- printing `generator didn't stop after athrow()` once per open stream at exit."""
+    """Both httpcore2 byte streams `yield` inside `async with safe_async_iterate(...)`."""
     import subprocess, sys as _sys
     script = tmp_path/'dangling.py'
     script.write_text(
@@ -1769,9 +1719,7 @@ def test_workspace_repo_writes_setting_route_persists_and_reports_approval(tmp_p
     assert 'approval rules still apply' in response.json()['note']
 
 def test_the_vault_privacy_policy_is_persisted_and_reaches_what_the_model_retrieves(tmp_path):
-    """The policy is the workspace's, never the model's: `WorkspaceHost.ask` drops a `pii` the caller
-    sent and puts the workspace's in its place, and the memory tools carry the same one. A route that
-    saved a setting nothing read would be a promise with no mechanism behind it."""
+    """The policy is the workspace's, never the model's: `WorkspaceHost.ask` drops a `pii` the caller sent and puts the workspace's in its place, and the memory tools carry the same one."""
     path = tmp_path/'workspace.json'
     ws = Workspace(roots=[tmp_path]); ws._state_path = path
     assert ws.vault_pii == 'off'
@@ -2050,12 +1998,7 @@ def test_a_hung_command_is_killed_and_says_so(project):
     assert code == 124 and 'killed after 1s' in out
 
 def killed(pid):
-    """Dead, or dead and not yet reaped.
-
-    A zombie answers `os.kill(pid, 0)` without raising, so that call alone proves nothing. Nothing
-    reaps a grandchild once its own shell is gone unless PID 1 is a reaper, which it is not in a
-    container. `/proc` carries the state where it exists.
-    """
+    """Dead, or dead and not yet reaped."""
     import os
     from pathlib import Path
     if Path('/proc').is_dir():
@@ -2269,7 +2212,12 @@ def _native_write(text):
     "Write straight to fd 2, the way a C++ engine does -- around Python's sys.stderr, not through it."
     os.write(2, text.encode())
 
-def test_native_output_is_captured_without_being_lost():
+@pytest.fixture
+def own_fd2(capfd):
+    "Hand fd 2 to `captured()` alone: pytest's own fd capture nested under xdist drops the write."
+    with capfd.disabled(): yield
+
+def test_native_output_is_captured_without_being_lost(own_fd2):
     with captured() as cap:
         _native_write(GEMMA)
     assert 'exceed the maximum number of tokens 4096' in cap.text
@@ -2286,7 +2234,7 @@ def test_native_output_is_captured_without_being_lost():
     assert 'exceed the maximum number of tokens' in getattr(e.value, 'native_output', '')
 
 
-def test_the_descriptor_survives_an_exception_inside_the_block():
+def test_the_descriptor_survives_an_exception_inside_the_block(own_fd2):
     "A broken stderr would be a far worse bug than the one this fixes."
     before = os.dup(2)
     try:
@@ -2299,7 +2247,7 @@ def test_the_descriptor_survives_an_exception_inside_the_block():
     finally: os.close(before)
 
 
-def test_capture_can_be_switched_off(monkeypatch):
+def test_capture_can_be_switched_off(monkeypatch, own_fd2):
     "Anything that moves a file descriptor needs a way out."
     monkeypatch.setenv('LEELA_NO_NATIVE_CAPTURE', '1')
     with captured() as cap: _native_write('x\n')
@@ -2570,8 +2518,7 @@ def test_the_turn_pictures_become_data_urls_a_browser_can_draw():
     assert turn_media(C()) == []
 
 def test_a_steer_rides_the_next_tool_result(tmp_path):
-    """The path the UI actually promises -- 'applies after current call' -- and the only one of
-    the three with no test. It is what a steer queued mid-call takes."""
+    """The path the UI actually promises, 'applies after current call', and the only one of the three with no test."""
     (tmp_path/'a.py').write_text('x = 1\n')
     ws = Workspace(roots=[tmp_path], approvals='auto')
     view = next(t for t in ws.ai.tools if t.__name__ == 'view_file')
@@ -2583,10 +2530,7 @@ def test_a_steer_rides_the_next_tool_result(tmp_path):
 
 
 def test_delegation_never_gets_the_git_write_tools(monkeypatch):
-    """Leela's Git writes are kept off the delegation surface. Filtering `_plain` only covered the
-    branch that returns it: a sub-agent sized to a different model is built from `registry.tools`,
-    and a writing one is handed the recorded wrappers. Neither passes through `_plain`, so both
-    arrived holding `git_push`."""
+    """Leela's Git writes are kept off the delegation surface."""
     from leela.blocks.agent.ai import GIT_WRITE_TOOLS, Assistant
 
     def git_push(): pass
@@ -2696,9 +2640,7 @@ def test_stream_disconnect_never_owns_or_cancels_the_turn():
     assert 'req.is_disconnected()' in stream, 'and a tab that has gone stops being served'
 
 def test_what_a_sub_agent_is_given_follows_the_model_it_runs_on(tmp_path):
-    """`_sub_plain` has two branches, and which one answers depends on routing, not on accumulated
-    state. A sub-agent sized like its parent shares the parent's list; one sized differently gets a
-    list built to its own budget. Reading a count without pinning the routing measures neither."""
+    """`_sub_plain` has two branches, and which one answers depends on routing, not on accumulated state."""
     from leela.workspace import Workspace
     shared = Workspace(roots=[tmp_path], model='gpt-4.1').ai
     assert shared.subagent_budget == shared.budget
@@ -2722,8 +2664,7 @@ def test_only_the_on_device_runtimes_are_offered_as_a_download():
         if not r['installable']: assert r['requirements'] == [], f'{name} needs no package'
 
 def test_a_backend_is_pinned_to_the_rishi_that_is_here():
-    """Never the newest. The bundle freezes one rishi, and a backend resolved against a later one
-    is a version skew that surfaces as an import error long after the install looked fine."""
+    """Never the newest."""
     import importlib.metadata as md
     from leela.blocks.agent.models import runtime_requirements
     declared = ' '.join(md.distribution('rishi').requires or [])
@@ -2766,9 +2707,7 @@ def test_a_frozen_app_installs_beside_itself_and_a_normal_one_into_its_own_env(m
     m._installs.clear()
 
 def test_uv_installs_a_backend_but_never_for_a_frozen_app(monkeypatch, tmp_path):
-    """uv resolves better, so it wins where it works. Pointed at a py2app binary with `--python` it
-    runs it to interrogate it, the binary starts Leela instead of answering, and the install hangs
-    rather than failing. The bundle ships pip for exactly that reason."""
+    """uv resolves better, so it wins where it works."""
     import shutil, sys
     import leela.blocks.agent.models as m
     _pretend_pip(monkeypatch)
@@ -2799,8 +2738,7 @@ def test_with_neither_uv_nor_pip_the_install_says_so(monkeypatch):
 
 
 def test_the_setup_pane_leads_with_what_costs_nothing():
-    """Accounts before downloads, on purpose: a hosted model is better than a 400MB local one for
-    most work, so the offline half is the second question and never the default."""
+    """Accounts before downloads, on purpose: a hosted model is better than a 400MB local one for most work, so the offline half is the second question and never the default."""
     from leela.blocks.agent.models import ACCOUNTS, INSTALLABLE, setup_plan
     d = setup_plan()
     assert [a['value'] for a in d['accounts']] == [v for v, _, _ in ACCOUNTS]
@@ -2851,10 +2789,7 @@ def test_a_version_check_that_fails_does_not_break_the_pane(monkeypatch):
 
 
 def test_an_unreachable_harness_says_what_went_wrong(monkeypatch):
-    """`runtime_available` answers yes or no and swallows the reason, which is how Claude Code read
-    as "not installed" in the packaged app with nothing anywhere naming the cause. The reason lives
-    beside `runtime_remedy` in Ramabana now: Leela was importing `rishi.claude` and `rishi.copilot`
-    itself to recover it, which is the runtime's business and not an IDE's."""
+    """`runtime_available` answers yes or no and swallows the reason, which is how Claude Code read as "not installed" in the packaged app with nothing anywhere naming the cause."""
     import leela.blocks.agent.models as m
     from leela.agent import core
     assert not hasattr(m, 'unavailable_detail') and not hasattr(m, 'HARNESS')
@@ -2878,8 +2813,7 @@ def test_a_harness_whose_probe_returns_nothing_says_so(monkeypatch):
 
 
 def test_the_language_server_is_an_installable_tool():
-    """The app ships no language server and finds one on PATH, so there were no squiggles in it and
-    nothing offering to fix that. It is a row on the setup modal now."""
+    """The app ships no language server and finds one on PATH, so there were no squiggles in it and nothing offering to fix that."""
     from leela.blocks.agent.models import TOOLS, setup_plan, tool_rows
     row = next(r for r in tool_rows() if r['value'] == 'langserver')
     assert row['requirements'] and row['mb'] and row['blurb']
@@ -2899,8 +2833,7 @@ def test_a_tool_installs_through_the_same_path_as_a_backend(monkeypatch, tmp_pat
     m._installs.clear()
 
 def test_any_of_the_four_language_servers_will_do():
-    """Leela drove `pyright-langserver` by name. `ty` and `pyrefly` need no node at all, and
-    `basedpyright` brings its own, so the client asks for whichever is there."""
+    """Leela drove `pyright-langserver` by name."""
     from leela.blocks.lsp.lsp import SERVERS, find_server
     names = [n for n, _ in SERVERS]
     assert names[0] == 'basedpyright-langserver', 'the most complete one leads'
@@ -2911,10 +2844,7 @@ def test_any_of_the_four_language_servers_will_do():
     if argv: assert argv[0].endswith(found) and len(argv) >= 1
 
 def test_the_local_runtime_leela_recommends_is_named_and_offered_first():
-    """The setup pane said nothing about which to take. LiteRT used to be the answer; rishi 0.1.32
-    took `litert-lm-api` on as a base dependency, so it is there before the pane is opened and there
-    is no `rishi[litert]` left to offer. llama.cpp is the smaller of the two that remain and the
-    only one that runs off a Mac."""
+    """The setup pane said nothing about which to take."""
     from leela.blocks.agent.models import INSTALLABLE, RECOMMENDED, SETUP_SIZES, setup_plan
     assert 'litert' not in INSTALLABLE, 'rishi carries LiteRT itself; there is no extra to install'
     assert RECOMMENDED == 'llama' and SETUP_SIZES['llama'] < SETUP_SIZES['mlx']
@@ -2926,9 +2856,7 @@ def test_the_local_runtime_leela_recommends_is_named_and_offered_first():
     assert sum(o['recommended'] for o in offline) == 1, 'one recommendation, not a list of them'
 
 def test_memory_says_what_to_do_when_the_runtime_it_needs_is_missing():
-    """The vault reaches its model through `rishi.litert`, so without LiteRT the failure arrives as
-    `No module named 'litert_lm'`: nothing about memory, nothing about the remedy. The packaged app
-    is that case, because the runtime is a download rather than part of the bundle."""
+    """The vault reaches its model through `rishi.litert`, so without LiteRT the failure arrives as `No module named 'litert_lm'`: nothing about memory, nothing about the remedy."""
     from leela.blocks.memory.memory import _why_no_vault
     note = _why_no_vault(ModuleNotFoundError("No module named 'litert_lm'", name='litert_lm'))
     assert 'LiteRT' in note and 'settings' in note.lower() and 'litert_lm' not in note
@@ -2942,14 +2870,7 @@ def _wait_kernel(ws, want=True, secs=10):
     return ws.runtime_peek()
 
 def test_a_turn_starts_a_kernel_when_the_window_has_none(ws):
-    """The agent's own tools run Python in an overlay over the tab's kernel. Asked for a turn in a
-    window where nothing had been run yet, there was no kernel to overlay, and the tool reported that
-    it could not reach the inspector rather than starting one.
-
-    Scripted, because what is under test is the kernel. The `ws` fixture fakes kernels and not the
-    model, so the turn reached whatever this machine resolves to -- on-device LiteRT here, which
-    asked for a 4GB KV cache and took the whole pytest process down with it in native code.
-    """
+    """The agent's own tools run Python in an overlay over the tab's kernel."""
     from starlette.testclient import TestClient
     from leela.app import ide_app
     from tests.fakemodel import Step, install
@@ -2975,10 +2896,7 @@ def test_a_turn_leaves_a_running_kernel_alone(ws):
 
 
 def test_the_update_check_survives_being_asked_twice(monkeypatch):
-    """`_latest` was assigned without `global`, so the name was local and the read on the first
-    line raised `UnboundLocalError` on every call inside the hour. The first short-circuited on
-    `_latest_at` being zero, so the check worked once per process and threw from then on, and the
-    pane that asks it on every open showed `could not check`."""
+    """`_latest` was assigned without `global`, so the name was local and the read on the first line raised `UnboundLocalError` on every call inside the hour."""
     from leela.blocks.agent import models as m
     monkeypatch.setattr(m, '_latest', {}); monkeypatch.setattr(m, '_latest_at', 0.0)
     monkeypatch.setattr(m, 'urljson', lambda url, **kw: {'info': {'version': '9.9.9'},
@@ -3003,16 +2921,7 @@ def test_the_release_check_authenticates_because_the_repository_is_private(monke
 
 
 def test_a_subagent_gets_inspect_python_and_neither_writes_nor_delegates():
-    """The toolset `delegate` hands a sub-agent, asserted where the policy is decided.
-
-    This asserted `read_only(tools)` bare and expected it to drop the delegate tools. shalya moved
-    that decision to a `block=` the caller passes, so the bare call kept them and the assertion
-    went red while production stayed correct. It also sat in `test_agent_slow.py`, a suite that
-    needs a local model, so nobody saw it.
-
-    `inspect_python` is the one execution tool safe to delegate: it reads a live namespace and
-    cannot change it.
-    """
+    """The toolset `delegate` hands a sub-agent, asserted where the policy is decided."""
     import ramabana.tools as rt
     from leela.agent.tools import NO_SUB, WRITE_TOOLS
 

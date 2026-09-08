@@ -113,9 +113,7 @@ def test_a_language_leela_knows_no_server_for_says_that_instead(tmp_path):
     assert 'no language server' in LspService(tmp_path, 'cobol').note
 
 def test_a_language_server_is_rooted_in_the_checkout_being_worked_in(tmp_path):
-    """A server reads the project's configuration from its root, and a folder of clones holds no
-    `Cargo.toml` and no `pyproject.toml`. One service per language *and* root, so moving to a file
-    in another repo starts that repo's server instead of going on asking one rooted beside them."""
+    """A server reads the project's configuration from its root, and a folder of clones holds no `Cargo.toml` and no `pyproject.toml`."""
     import subprocess
     orgs = tmp_path/'orgs'
     a, b = orgs/'repo-a', orgs/'repo-b'

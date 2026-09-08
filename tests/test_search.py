@@ -80,9 +80,7 @@ def _repo(root, indexed=True):
     return root
 
 def test_the_index_read_is_the_one_belonging_to_the_repo_being_worked_in(monkeypatch, tmp_path):
-    """The reported failure: `orgs` open as one folder, and every indexed leg read an index at
-    `orgs` that nothing had built, while the index in each repo below it sat unread. The walk is
-    the one the interpreter already takes for a venv."""
+    """The reported failure: `orgs` open as one folder, and every indexed leg read an index at `orgs` that nothing had built, while the index in each repo below it sat unread."""
     orgs = tmp_path/'orgs'; orgs.mkdir()
     a, b = _repo(orgs/'dockeasy'), _repo(orgs/'fossick')
     s = Search(Sandbox([orgs]), prefer_kosha=False)
@@ -343,8 +341,7 @@ def test_the_search_route_follows_the_chosen_folder_and_never_takes_a_root(tmp_p
         assert filtered['hits'] == [] and filtered['exts'] == 'md'
 
 def test_project_scope_is_the_checkout_not_the_folder_of_clones(tmp_path):
-    """With `orgs` open as one folder the two scopes named the same thing, and the indexed legs
-    answered from one repo while ripgrep answered from all of them."""
+    """With `orgs` open as one folder the two scopes named the same thing, and the indexed legs answered from one repo while ripgrep answered from all of them."""
     import subprocess
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -378,7 +375,7 @@ def a_notebook(path):
     return path
 
 def test_a_notebooks_symbols_are_read_from_its_cells_not_from_its_json(tmp_path):
-    'A notebook read as text has no symbols: the line is ` "def f(x):\n",`.'
+    """A notebook read as text has no symbols: the line is ` "def f(x): ",`."""
     p = a_notebook(tmp_path/'demo.ipynb')
     s = Search(Sandbox([tmp_path]), prefer_kosha=False)
     syms = s.symbols(p)
@@ -702,9 +699,7 @@ def _hammer(target, n=4):
     for t in threads: t.join()
 
 def test_one_search_handle_is_never_inside_two_threads_at_once():
-    """apsw binds a connection to whichever thread is in it, and every reader shares one handle:
-    `/search/stream` runs three legs at once, so four concurrent composed searches lost one to
-    `ThreadingViolationError` and the leg reported the exception instead of its results."""
+    """apsw binds a connection to its thread and readers share one handle, so `/search/stream`'s three concurrent legs lost one to `ThreadingViolationError`."""
     from leela.blocks.search.search import _Serial
     bare = _FakeKosha()
     _hammer(lambda: bare.context('q'))
@@ -716,10 +711,7 @@ def test_one_search_handle_is_never_inside_two_threads_at_once():
     assert k.status() == {}, 'and a plain result still comes back as itself'
 
 def test_a_store_reached_through_the_handle_keeps_its_methods_and_the_lock():
-    """A store is an object that is callable, so wrapping every callable attribute in a function
-    left `code_st` with no `rows_where` at all, and the symbol leg answered with that AttributeError
-    on every search anyone ran. Reaching the real store is no reason to read it unguarded: apsw
-    refuses a cursor on a connection another thread is inside, reading as much as writing."""
+    """A store is an object that is callable, so wrapping every callable attribute in a function left `code_st` with no `rows_where` at all, and the symbol leg answered with that AttributeError on every search anyone ran."""
     from leela.blocks.search.search import _Serial
     guarded = _FakeKosha()
     k = _Serial(guarded)
@@ -750,9 +742,7 @@ def test_what_the_search_dialog_was_last_set_to_is_a_setting_it_can_save(tmp_pat
     assert s.describe()['origins']['search']['lastMode'] == 'user'
 
 def test_ripgrep_is_called_through_rgapi_and_not_a_hand_built_command_line():
-    """`_rg` built ripgrep's `--json` command line and parsed its event stream by hand, about
-    forty lines. shalya calls `rgapi.rg`, and now so does this: one place knows the flags, and a
-    non-UTF8 path or a colon in a filename is rgapi's problem rather than a parser here."""
+    """`_rg` built ripgrep's `--json` command line and parsed its event stream by hand, about forty lines."""
     import inspect
     from leela.blocks.search import search as mod
     src = inspect.getsource(mod.Search._rg)

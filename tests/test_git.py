@@ -487,8 +487,7 @@ def journalled(ws, label):
     return first(op for op in ws.journal.rows() if op['label'] == label)
 
 def test_ignoring_a_path_is_versioned_and_undoable(repo_git):
-    """`ignore` wrote through Ramabana's own `write_text`, so nothing kept a copy of what it
-    replaced and `/history/undo` could not reach it."""
+    """`ignore` wrote through Ramabana's own `write_text`, so nothing kept a copy of what it replaced and `/history/undo` could not reach it."""
     c, ws = served([repo_git])
     (repo_git/'.gitignore').write_text('build/\n')
     assert gitop(c, op='ignore', path='src/app.py').status_code == 200
@@ -784,9 +783,7 @@ def test_choosing_a_folder_moves_source_control_to_that_checkout(tmp_path):
     assert ws.state()['active_root'] == str(b), 'and it survives a restart'
 
 def test_a_folder_of_checkouts_follows_the_file_from_repository_to_repository(tmp_path):
-    """Open a directory of clones -- `orgs`, or anything holding a set of repositories -- and every
-    Git surface said the folder is not a repository, while every file open inside it was in one.
-    The chosen folder is only an answer when it is itself a checkout."""
+    """Open a directory of clones, `orgs`, or anything holding a set of repositories, and every Git surface said the folder is not a repository, while every file open inside it was in one."""
     from leela.blocks.git.repos import discover
     a, b = _repo(tmp_path/'ramabana', 'main'), _repo(tmp_path/'rishi', 'dev')
     (tmp_path/'repos.txt').write_text('ramabana\nrishi\n')
@@ -1618,9 +1615,7 @@ def test_the_agent_can_rehearse_a_divergence_without_being_able_to_run_it(repo_g
 
 
 def test_a_folder_without_a_repository_is_an_answer_not_an_error(tmp_path):
-    """Every boot in a non-repo folder logged a console error, because "there is no repository
-    here" came back as HTTP 400 -- which also made a real 400 from this route indistinguishable.
-    """
+    """Every boot in a non-repo folder logged a console error, because "there is no repository here" came back as HTTP 400, which also made a real 400 from this route indistinguishable."""
     from starlette.testclient import TestClient
     from leela.app import ide_app
     plain = tmp_path/'notes'; plain.mkdir(); (plain/'a.md').write_text('# a\n')
@@ -1646,9 +1641,7 @@ def test_a_real_git_failure_is_still_a_400(tmp_path):
 
 
 def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
-    """`divergence` puts `conflicts` on `merge` and `rebase` only, and no option carries a
-    `label`. Reading either unguarded killed the dialog on the first option, every time.
-    """
+    """`divergence` puts `conflicts` on `merge` and `rebase` only, and no option carries a `label`."""
     import sys
     from pathlib import Path as _P
     sys.path.insert(0, str(_P(__file__).resolve().parents[1]/'tools'))
@@ -1667,10 +1660,7 @@ def test_the_sync_dialog_survives_the_options_that_carry_no_conflicts(tmp_path):
 
 
 def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch, tmp_path):
-    """`GhApi(owner=, repo=)` fills `/repos/{owner}/{repo}/...` itself, so passing them again
-    positionally bound them to *query* parameters: `pulls.list` filtered on a base branch named
-    after the owner and `compare_commits` dropped its fourth argument.
-    """
+    """`GhApi(owner=, repo=)` fills `/repos/{owner}/{repo}/...` itself, so passing them again positionally bound them to *query* parameters: `pulls.list` filtered on a base branch named after the owner and `compare_commits` dropped its fourth argument."""
     import types
     from leela.blocks.git import hub
     seen = {}
@@ -1702,18 +1692,14 @@ def test_the_pull_request_panel_calls_github_the_way_ghapi_binds_it(monkeypatch,
 
 
 def test_the_branch_search_box_does_not_grow_into_the_list():
-    """`.lee-input` grows, which is what a search bar in a row wants. A modal box is a column, so
-    the branch modal's search box grew *taller* and took every pixel the list could not use once
-    its max-height was reached -- worst in a repo with few branches, where it filled the modal."""
+    """`.lee-input` grows, which is what a search bar in a row wants."""
     from tests.assets import CSS
     assert '.lee-input { flex: 1 1 auto; }' in CSS, 'the rule this guards against is still there'
     assert '.lee-modalbox > .lee-input { flex: none; }' in CSS
     assert '.lee-branchlist { max-height: min(58vh, 520px); }' in CSS, 'the cap that made it visible'
 
 def test_the_pull_request_panel_gets_a_blocking_github_client(monkeypatch, tmp_path):
-    """`GhApi` defaults to `sync=False`, and gheasy below 0.0.7 took that default: `pulls.list(...)`
-    handed back a coroutine nobody awaited, `first` raised, and the panel reported `GitHub: ...`
-    instead of the pull request. `gheasy>=0.0.7` is what holds the operations blocking."""
+    """`GhApi` defaults to `sync=False`, and gheasy below 0.0.7 took that default: `pulls.list(...)` handed back a coroutine nobody awaited, `first` raised, and the panel reported `GitHub: ...` instead of the pull request."""
     from inspect import iscoroutinefunction
     from leela.blocks.git import hub
     g = pytest.importorskip('gheasy.core')
@@ -1744,8 +1730,7 @@ def _lfs_repo(tmp_path):
     return tmp_path
 
 def test_a_binary_diff_says_so_instead_of_showing_the_pointer(tmp_path):
-    """An LFS pointer is a text file, so git diffs it as text and the viewer showed three lines of
-    oid and size where the image should be."""
+    """An LFS pointer is a text file, so git diffs it as text and the viewer showed three lines of oid and size where the image should be."""
     lfs_aware()
     from gheasy.repo import GitRepo
     r = GitRepo.at(_lfs_repo(tmp_path))
@@ -1772,9 +1757,7 @@ def test_the_diff_tab_renders_the_fact_and_not_the_pointer():
 
 
 def test_deleting_a_branch_or_a_stash_reports_the_commit_it_was_at(tmp_path):
-    """Git prints `Deleted branch x (was abc1234)` and the gateway returns None, so the sha never
-    reached the panel. It is the only handle for putting the branch back, and it has to be read
-    before the delete, because afterwards there is no ref left to ask."""
+    """Git prints `Deleted branch x (was abc1234)` and the gateway returns None, so the sha never reached the panel."""
     from leela.blocks.git.app import _dropped
     from leela.blocks.git.git import GitRepo
     r = GitRepo.at(_repo(tmp_path/'repo', 'main'))
@@ -1787,8 +1770,7 @@ def test_deleting_a_branch_or_a_stash_reports_the_commit_it_was_at(tmp_path):
     assert 'feature' in r.run('branch', '--list', 'feature')
 
 def test_one_reading_of_delete_a_branch_in_both_menus():
-    """The branch pill forced every unmerged delete after a single confirm while the panel's menu
-    sent no force at all, so the same branch was refused in one place and destroyed in the other."""
+    """The branch pill forced every unmerged delete after a single confirm while the panel's menu sent no force at all, so the same branch was refused in one place and destroyed in the other."""
     bar = (ROOT/'leela'/'blocks'/'git'/'branchbar.js').read_text()
     menu = (ROOT/'leela'/'blocks'/'git'/'branchmenu.js').read_text()
     assert 'force: !b.merged' not in bar, 'no forced delete behind one confirmation'
@@ -1798,8 +1780,7 @@ def test_one_reading_of_delete_a_branch_in_both_menus():
     assert "force: true" in bar and 'force delete' in bar, 'forcing is a second, named ask'
 
 def test_the_commit_message_survives_the_panel_being_redrawn():
-    """The panel replaces its own `innerHTML` on every save anywhere in the repository, and the
-    textarea was rendered with no value, so a message being typed vanished."""
+    """The panel replaces its own `innerHTML` on every save anywhere in the repository, and the textarea was rendered with no value, so a message being typed vanished."""
     views = (ROOT/'leela'/'blocks'/'git'/'views.js').read_text()
     state = (ROOT/'leela'/'blocks'/'git'/'state.js').read_text()
     panel = (ROOT/'leela'/'blocks'/'git'/'panel.js').read_text()
@@ -1964,8 +1945,7 @@ def whole_side(client, choice, before, path='src/app.py'):
     return gitop(client, op='resolve_conflict', path=path, choice=choice, before=before)
 
 def test_choosing_ours_is_journalled_versioned_and_undoable(repo_git):
-    """`ours` was a Git checkout rather than a write through `saver`, so it staged a file and left
-    no journal row at all."""
+    """`ours` was a Git checkout rather than a write through `saver`, so it staged a file and left no journal row at all."""
     _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
     markers = path.read_text()
     c, ws = served([repo_git])
@@ -2068,8 +2048,7 @@ def test_undoing_a_binary_side_after_the_merge_was_committed_says_what_it_left(r
     assert path.read_bytes() == b'\x00theirs\x00'
 
 def test_a_side_that_deleted_the_file_is_never_staged_as_an_empty_one(repo_git):
-    """`git show :3:` is `''` for a missing stage, so writing it would stage the empty blob and
-    finish the merge with content nobody chose. Taking the file away is what the button asks for."""
+    """`git show :3:` is `''` for a missing stage, so writing it would stage the empty blob and finish the merge with content nobody chose."""
     r, path = GitRepo.at(repo_git), repo_git/'src'/'app.py'
     r.create('other'); git(repo_git, 'rm', '-q', 'src/app.py')
     git(repo_git, 'commit', '-m', 'deleted on the other side')
@@ -2107,10 +2086,7 @@ def test_a_symlink_side_is_still_a_checkout(repo_git):
     assert (repo_git/'src'/'one.py').read_text() == 'one\n', 'nothing was written through the link'
 
 def modify_delete(repo_git, deleted_by, name='src/app.py', body=None):
-    """Leave `repo` mid-merge with one side holding no file at all.
-
-    `git checkout --ours` refuses on the side that has no stage, which is the whole point.
-    """
+    """Leave `repo` mid-merge with one side holding no file at all."""
     r, path = GitRepo.at(repo_git), repo_git/name
     path.parent.mkdir(parents=True, exist_ok=True)
     if body is not None: path.write_bytes(body)
@@ -2132,8 +2108,7 @@ def modify_delete(repo_git, deleted_by, name='src/app.py', body=None):
 
 @pytest.mark.parametrize('deleted_by', ['ours', 'theirs'])
 def test_taking_the_side_that_deleted_the_file_removes_it(repo_git, deleted_by):
-    """It failed with `path 'src/app.py' does not have their version`, which is Git's answer to a
-    checkout, not to what the button asks for."""
+    """It failed with `path 'src/app.py' does not have their version`, which is Git's answer to a checkout, not to what the button asks for."""
     _, path = modify_delete(repo_git, deleted_by)
     survives = path.read_text()
     c, ws = served([repo_git])
@@ -2254,8 +2229,7 @@ def test_an_unsaved_tab_refuses_the_batch(repo_git):
     assert '<<<<<<<' in path.read_text()
 
 def test_a_batch_that_fails_part_way_leaves_nothing_staged(repo_git, monkeypatch):
-    """`resolve_safe_conflicts` writes and stages one file at a time, so a failure on the second
-    file leaves the first one's conflict stages already collapsed to one settled blob."""
+    """`resolve_safe_conflicts` writes and stages one file at a time, so a failure on the second file leaves the first one's conflict stages already collapsed to one settled blob."""
     _, path = conflicted(repo_git, MIXED_OURS, MIXED_THEIRS)
     same = 'top\n<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> other\nnext\n'
     path.write_text(same)
@@ -2298,8 +2272,7 @@ def _conflicted_notebook(tmp_path):
     return root, nb
 
 def test_a_conflicted_notebook_is_read_as_cells_not_as_marked_up_json(tmp_path):
-    """The worktree file carries conflict markers, so the text panes showed unreadable JSON. Git keeps
-    all three sides in the index as whole notebooks, and those are what a person can answer about."""
+    """The worktree file carries conflict markers, so the text panes showed unreadable JSON."""
     root, nb = _conflicted_notebook(tmp_path)
     assert '<<<<<<<' in nb.read_text(), 'precondition: the file on disk is marked up'
     ws = Workspace(roots=[root])

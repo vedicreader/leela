@@ -442,11 +442,7 @@ def test_a_placed_brick_reports_two_coordinates_however_it_was_placed():
 BRICK_FIXTURE = str(Path(__file__).parent/'fixtures')
 
 def demo_libs(name='demobricks'):
-    """Only the fixture library, whatever else this install has.
-
-    `libraries()` also finds `extensions/bricks` through its entry point, so a test that asserted
-    on the whole list would pass or fail by what is installed.
-    """
+    """Only the fixture library, whatever else this install has."""
     import sys
     if BRICK_FIXTURE not in sys.path: sys.path.insert(0, BRICK_FIXTURE)
     return libraries(extra=(name,)).filter(lambda l: l.name == name)
@@ -504,8 +500,7 @@ def test_a_host_answers_the_same_four_questions_as_a_library():
     assert all(hasattr(h, m) for m in ('manifest', 'find', 'wire', 'fill'))
 
 def test_a_library_that_is_present_but_will_not_import_says_why():
-    """A silent skip hides a broken install. `lego/__init__.py` is `from .app import *`, so
-    reaching `lego.bricks` fails on lego's own dependencies and the palette said nothing."""
+    """A silent skip hides a broken install."""
     import sys
     if BRICK_FIXTURE not in sys.path: sys.path.insert(0, BRICK_FIXTURE)
     p = palette(libraries(extra=('brokenbricks',)))

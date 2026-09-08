@@ -1,10 +1,4 @@
-"""A block's client module should talk to its own block's routes.
-
-This is the measurement that found `editor/gutter.js` holding the git panel's state, the
-notebook's cell code filed under the editor, and `search/similar.js` calling no search route at
-all. It is a heuristic, so `PURE_DOM` names the modules that legitimately make few or no server
-calls, and `SHARED` maps route prefixes onto the block that serves them.
-"""
+"""A block's client module should talk to its own block's routes."""
 
 from __future__ import annotations
 import collections, re, sys
@@ -80,9 +74,7 @@ def test_a_blocks_client_module_talks_mostly_to_its_own_routes():
     assert wrong == [], 'client modules filed under the wrong block:\n  ' + '\n  '.join(wrong)
 
 def test_every_keymap_action_has_a_dispatch_entry():
-    """A named command with no `ACTIONS` entry is a menu row and a chord that do nothing.
-    `leeAct` answers 'no handler for x' at the status line, which is easy to miss.
-    """
+    """A named command with no `ACTIONS` entry is a menu row and a chord that do nothing."""
     import ast as _ast
     from leela.core.keys import KEYS
     src = next(p for p in builder.modules() if p.name == 'actions.js').read_text()

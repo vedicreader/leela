@@ -1,14 +1,4 @@
-"""What Leela is allowed to reach for in the libraries it composes.
-
-A private import is not reuse. It is a request for a seam the library has not opened, and it breaks
-without warning on the next release because nothing promised it. Seven of them had accumulated:
-`gheasy.repo._invalidate`, `_plural`, `_unborn` and `_run`, `gheasy.core._gh_api` and
-`_resolve_gh_token`, and `gheasy.workflow._yaml_instance`. All seven are public names in gheasy now.
-
-What is left is in `ALLOWED`, each naming the library that would have to open it. `kunda` and
-`pullup` were missing from `COMPOSED` entirely, so eight reaches into them went uncounted; two of
-those were unused and are gone.
-"""
+"""What Leela is allowed to reach for in the libraries it composes."""
 import ast
 import re
 from pathlib import Path
@@ -113,11 +103,7 @@ def test_a_git_stage_is_read_through_the_gateway_rather_than_its_private_runner(
 
 
 def test_the_configuration_leela_sets_in_a_library_takes():
-    """`kunda.use_app` and `pullup.use_spec_dir` are module globals, which is the only seam either
-    offers. Both are called once, on the module every other one reaches the library through. What
-    is asserted here is that the call took, so a release that renames it fails the suite rather
-    than the feature.
-    """
+    """`kunda.use_app` and `pullup.use_spec_dir` are module globals, which is the only seam either offers."""
     from kunda.pythons import app_name, env_name
     import leela.blocks.runtime.kernels                     # noqa: F401  the import that calls it
     assert app_name() == 'leela'
@@ -128,8 +114,7 @@ def test_the_configuration_leela_sets_in_a_library_takes():
     assert spec_dir() == SPEC_DIR == '.leela/workflows'
 
 def test_a_seam_module_re_exports_nothing_the_library_already_publishes():
-    """A raw pass-through is not a seam. `wfbuild` was one whole module of them and is gone; these
-    two keep only what Leela adds, so a reader knows a name here is Leela's decision."""
+    """A raw pass-through is not a seam."""
     import leela.blocks.pipelines.pipelines as pl
     import leela.blocks.drive.drive as dr
     assert set(pl.__all__) == {'Pipeline', 'Release', 'PipelineError', 'ReleaseError',
@@ -142,9 +127,7 @@ def test_a_seam_module_re_exports_nothing_the_library_already_publishes():
         assert name not in dr.__all__, f'{name} is pullup\'s to publish'
 
 def test_the_support_seam_holds_only_what_leela_renames():
-    """It re-exported almost the whole of kunda's support half while `leela/core/envs.py` went
-    straight to kunda for three of the same names, so `clean_env` had two spellings depending on
-    which module you were reading. `LEELA_PY` is the one name Leela wears differently."""
+    """It re-exported almost the whole of kunda's support half while `leela/core/envs.py` went straight to kunda for three of the same names, so `clean_env` had two spellings depending on which module you were reading."""
     import leela.blocks.runtime.support as sup
     from kunda.support import HOST_PY
     assert sup.__all__ == ['LEELA_PY'] and sup.LEELA_PY is HOST_PY

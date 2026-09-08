@@ -61,11 +61,7 @@ def test_a_plain_workspace_serves_the_folders_it_was_given(tmp_path):
     assert 'lee-ide' in body and 'one' in body
 
 def test_app_windows_serve_one_isolated_workspace_per_folder(tmp_path):
-    """The `--app` shape, which is what the desktop entry launches.
-
-    Each folder gets its own `Workspace` behind a host-dispatching hub, so this is also the
-    branch that goes through `Workspace.load` with every argument `serve_ide` forwards.
-    """
+    """The `--app` shape, which is what the desktop entry launches."""
     for name in ('alpha', 'beta'): (tmp_path/name).mkdir()
     port = serve(roots=[str(tmp_path/'alpha'), str(tmp_path/'beta')], app_window=True,
                  gateway_port=0)
@@ -93,9 +89,7 @@ def test_a_desktop_launch_with_no_folder_does_not_open_your_home_directory(monke
     assert json.load(get(f'http://127.0.0.1:{port}/workspace/info'))['roots'] == []
 
 def test_a_plain_workspace_has_a_kernel_ceiling(tmp_path):
-    """`RuntimeBroker` was built only inside the `--app` branch, so a plain `leela` registered no
-    broker: `admit` never ran, `LEELA_MAX_KERNELS` never applied, and kernels accumulated without
-    a ceiling until the machine noticed."""
+    """`RuntimeBroker` was built only inside the `--app` branch, so a plain `leela` registered no broker: `admit` never ran, `LEELA_MAX_KERNELS` never applied, and kernels accumulated without a ceiling until the machine noticed."""
     (tmp_path/'one').mkdir()
     port = serve(roots=[str(tmp_path/'one')])
     out = json.loads(get(f'http://127.0.0.1:{port}/runtime/broker').read())

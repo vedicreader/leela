@@ -1,9 +1,4 @@
-"""Where a jump hit says it is.
-
-A package hit used to render as its basename, so `store_attr` read `basics.py` with no mention of
-fastcore, `exhash` read `__init__.py`, and looking up `Document` gave two rows both reading
-`document.py` from different packages.
-"""
+"""Where a jump hit says it is."""
 
 from __future__ import annotations
 import re, sys

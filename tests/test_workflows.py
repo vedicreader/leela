@@ -10,12 +10,7 @@ from leela.workspace import Workspace
 from pullup.wfbuild import PRESETS, TRIGGERS, compose, load_spec, preset_rows, save_spec
 
 def fastship_recipe():
-    """Skip unless the installed gheasy carries the fastship release recipe.
-
-    Both halves of it are gheasy's to write -- the standalone `fastship_release` and the
-    `fastship_release_job` on the builder -- and no published gheasy has them yet. Leela asks for
-    the recipe and says what is missing when it is absent; it does not keep a copy of one.
-    """
+    """Skip unless the installed gheasy carries the fastship release recipe."""
     pytest.importorskip('gheasy')
     from gheasy.workflow import WorkflowBuilder
     import gheasy.workflow as w

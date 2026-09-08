@@ -1,9 +1,4 @@
-"""`/lsp/rename` builds the workspace rename from references, not from the server's rename edit.
-
-pyright and basedpyright both answer `textDocument/rename` for one file, whatever is open, while
-`textDocument/references` returns every use across the workspace. The route read `changes` off a
-`WorkspaceEdit` that arrives as `documentChanges`, so it renamed nothing at all.
-"""
+"""`/lsp/rename` builds the workspace rename from references, not from the server's rename edit."""
 
 from __future__ import annotations
 

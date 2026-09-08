@@ -1,10 +1,4 @@
-"""Staging a folder of a language you are meeting for the first time.
-
-`git add` honours `.gitignore`, so the whole difficulty is that a folder you have just created
-does not have one. These cover the rules being written from what the folder is, git being asked
-rather than guessed at about what it already covers, and the tree saying which files are in which
-state without being expanded.
-"""
+"""Staging a folder of a language you are meeting for the first time."""
 import subprocess
 from pathlib import Path
 
@@ -100,8 +94,7 @@ def test_existing_rules_are_added_to_rather_than_replaced(tmp_path):
 # the route ---------------------------------------------------------------------------------------
 
 def test_staging_a_folder_writes_its_ignores_first(tmp_path):
-    """The fault this exists for: `git add mycrate` on a fresh crate stages 'target/' too, and a
-    person meeting Rust has no way to know that is wrong."""
+    """The fault this exists for: `git add mycrate` on a fresh crate stages 'target/' too, and a person meeting Rust has no way to know that is wrong."""
     repo = _repo(tmp_path)
     d = _crate(tmp_path)
     ws = Workspace(roots=[tmp_path])
@@ -177,8 +170,7 @@ def test_a_crate_without_them_releases_to_crates_io(tmp_path):
     assert [s.id for s in default_steps(d)] == ['test', 'clippy', 'package', 'publish']
 
 def test_a_maturin_crate_is_not_mistaken_for_a_plain_python_package(tmp_path):
-    """It has a `pyproject.toml`, so the fastship flow used to claim it -- and `ship-pypi` would
-    upload one platform's wheel where the workflow builds every platform's."""
+    """It has a `pyproject.toml`, so the fastship flow used to claim it, and `ship-pypi` would upload one platform's wheel where the workflow builds every platform's."""
     d = _crate_files(tmp_path/'c', MATURIN_PY)
     assert release_flow(d) != 'fastship'
     assert not any(s.cmd.startswith('ship-pypi') for s in default_steps(d))
