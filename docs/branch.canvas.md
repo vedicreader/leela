@@ -8,10 +8,8 @@ This file is the review of one branch, in the format the branch built, read by t
 added. It also teaches the feature to someone new: what Leela is, the reason a canvas exists, what a
 canvas can do, and how you author and use one. The review of the branch begins at "Why it helps".
 
-```canvas snippet id=s-page path=leela/blocks/canvas/app.py symbol=page
-`page` wrote the page you are reading. It read this file, filled the one `diff` slot below from
-git, and rendered both. The slot names the two files that carry the change. The rest of the branch
-is in the chips at the top and in `coverage`.
+```canvas snippet id=s-page path=leela/blocks/canvas/app.py symbol=page wrote=ai
+`diff` bricks in the document are empty on entry; `place_diff` fills them by running the actual diff at render time, so stale diffs are never stored in the source document. `unclaimed` in the return value counts changed lines that no brick in the document covers, giving a reviewer a signal when the canvas misses part of the diff.
 ```
 
 <!--canvas goal id=g measure="tools you open to review one branch against its goal" baseline="4: tracker, notebook, diff, deck" target="1 page" by=2026-10-31-->
@@ -19,7 +17,7 @@ Give Leela one document that holds a goal, its plan, its research, its code and 
 and one page that shows all five to a reviewer on a phone.
 <!--/canvas-->
 
-<!--canvas goal id=g2 measure="findings from a review of this branch that are still open" baseline="17" target=0 by=2026-09-30-->
+<!--canvas goal id=g2 measure="findings from a review of this branch that are still open" baseline=17 target=0 by=2026-09-30-->
 Leave nothing in this branch that a reviewer called critical or high.
 <!--/canvas-->
 
@@ -165,6 +163,25 @@ iframe with `sandbox=allow-scripts` and no same-origin grant, so it gets an opaq
 read this page, its cookies or its routes. The only channel is a message that speaks for the brick
 whose frame sent it.
 
+# Where to start reading
+
+<!--canvas note id=n-start-->
+Two files carry the feature and one holds the format. Read the document model first, then the
+surface that serves it, then the rule that decides what a question sends to the model.
+<!--/canvas-->
+
+```canvas snippet id=s-doc path=leela/blocks/canvas/doc.py symbol=Canvas wrote=ai
+`save` writes to a temp file then calls `os.replace`, so a crash cannot leave a partial file at `path`. The file format stores no `region` field. `_regions` re-derives it from heading positions in `text` bricks after every mutation.
+```
+
+```canvas snippet id=s-connect path=leela/blocks/canvas/app.py symbol=connect wrote=ai
+`store` re-derives from the current workspace roots on each request, not once at startup. `canvas_save` applies the same path gate to the destination as to the source, blocking writes outside the canvas directory. `_settle` limits `canvas_run`'s reply to moved bindings only, to avoid triggering redraws in frames that take props.
+```
+
+```canvas snippet id=s-basket path=leela/blocks/canvas/context.py symbol=resolve wrote=ai
+A brick never appears in its own basket. Items marked `pinned` survive `_fit`'s budget trim. `mutes` excludes a brick even when it is the document's goal for `bid`.
+```
+
 # Why it helps
 
 A reviewer of a branch gets a diff, which answers one question: which lines moved. It cannot answer
@@ -180,31 +197,21 @@ it. Neither list can come out of a diff tool, which holds one of the two sets.
 
 # Where the code runs
 
-<!--canvas bundle id=u-live title="A document's code, in a kernel that can be stopped"
-     goal=g2
-     contributes="a document that cannot hang or end Leela"
-     covers="t1"
-     paths=leela/blocks/canvas/live.py,leela/blocks/canvas/store.py,leela/blocks/canvas/context.py
-     refs=pkg:kunda,pkg:ramabana-->
+<!--canvas bundle id=u-live title="A document's code, in a kernel that can be stopped" goal=g2 contributes="a document that cannot hang or end Leela" covers=t1 paths=leela/blocks/canvas/live.py,leela/blocks/canvas/store.py,leela/blocks/canvas/context.py refs=pkg:kunda,pkg:ramabana-->
 A canvas executed its Python in the web process. One `while True:` hung every request Leela served.
 One `os._exit()` ended Leela. This is the change that matters most in the branch.
 <!--/canvas-->
 
-```canvas snippet id=s-bounded path=leela/blocks/canvas/live.py symbol=KernelRuntime._bounded
-Kunda's `execute(timeout=)` does not return on a busy loop, so the caller cannot wait on it alone.
-This waits, interrupts, waits again, then replaces the kernel and says the namespace is gone. A
-document that will not stop costs its own names and nothing else.
+```canvas snippet id=s-bounded path=leela/blocks/canvas/live.py symbol=KernelRuntime._bounded wrote=ai
+`asyncio.shield` keeps the execute task alive after `wait_for` raises `TimeoutError`, so the interrupt and the second wait act on the same task rather than a cancelled one. The `alive` attribute, set outside this method, is the only signal that distinguishes a silent crash (`os._exit` or segfault) from a kernel that is merely hung. A kernel that survives the interrupt is shut down and replaced; the namespace is gone and the caller receives `TimeoutError`.
 ```
 
-```canvas snippet id=s-runtime path=leela/blocks/canvas/live.py symbol=Dataflow
-One base holds what does not care where code runs. `Runtime` is this process's, for the spike and
-the tests. `KernelRuntime` is a kernel. Nothing in either reaches into a namespace dict.
+```canvas snippet id=s-runtime path=leela/blocks/canvas/live.py symbol=Dataflow wrote=ai
+`retire` runs after every execution, not only on deletion. A brick that stops defining a name loses it in the same run. `owned` records names under the brick that last defined them, not in a single shared namespace.
 ```
 
-```canvas snippet id=s-trust path=leela/blocks/canvas/app.py symbol=_runs_code
-The trust line gates what evaluates, not what edits. A markdown file from anywhere can be opened,
-read and written. Its code waits for one deliberate click. A first attempt gated inserting an
-empty code brick, which made a document unwritable.
+```canvas snippet id=s-trust path=leela/blocks/canvas/app.py symbol=_runs_code wrote=ai
+`values` counts as running code because it evaluates expressions in the document's namespace, not only in stored data. An `insert` op with `binds` returns `True` even when its `body` is empty or its `kind` is not in `RUNNING_KINDS`.
 ```
 
 <!--canvas task id=t1 status=done owner=me-->
@@ -213,34 +220,22 @@ Run a canvas in a kernel, with a timeout, an interrupt and explicit trust.
 
 # The routes
 
-<!--canvas bundle id=u-web title="One gate for every path, one sandbox for every frame"
-     goal=g2
-     contributes="the block being safe to serve"
-     covers="t2,t3,t4"
-     paths=leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/helper.py,leela/blocks/canvas/explain.py,leela/blocks/canvas/explain.md,leela/blocks/canvas/ste.md,leela/blocks/canvas/bricks.py,leela/skills/*,leela/static/lee-canvas.js,tools/build_ide_js.py,tools/canvas_spike.py
-     refs=pkg:shalya-->
+<!--canvas bundle id=u-web title="One gate for every path, one sandbox for every frame" goal=g2 contributes="the block being safe to serve" covers=t2,t3,t4 paths="leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/helper.py,leela/blocks/canvas/explain.py,leela/blocks/canvas/explain.md,leela/blocks/canvas/ste.md,leela/blocks/canvas/bricks.py,leela/skills/*,leela/static/lee-canvas.js,tools/build_ide_js.py,tools/canvas_spike.py" refs=pkg:shalya-->
 A path named anything the process could reach, and the block read it, ran it or wrote over it. A
 frame carried this page's origin. The markdown writer let a URL close an attribute. The wheel left
 out the files the client asked for at request time.
 <!--/canvas-->
 
-```canvas snippet id=s-gate path=leela/blocks/canvas/app.py symbol=canvas_path
-One gate, and every source and destination passes it, including `save`'s `to` and `page`'s `out`.
-With a folder open `fs._check` decides. With none, which is the spike and the tests, the canvas
-folder decides. `is_relative_to` replaced a string prefix, which called `/root/canvasx` inside
-`/root/canvas`.
+```canvas snippet id=s-gate path=leela/blocks/canvas/app.py symbol=canvas_path wrote=ai
+`Outside` signals that a resolved path escaped the canvas root. The `suffix` check rejects a file that sits inside the root but does not carry the canvas extension.
 ```
 
-```canvas snippet id=s-url path=leela/blocks/canvas/md.js symbol=cvUrl
-`cvEsc` escaped `&<>` only, so a quote in a URL or a label closed the attribute and opened one of
-the author's choosing. It escapes quotes too now. This allows http, https, mailto, a relative path,
-an anchor and a raster data URL. A `javascript:` scheme and a data SVG do not pass.
+```canvas snippet id=s-url path=leela/blocks/canvas/md.js symbol=cvUrl wrote=ai
+`cvUrl` blocks every character that would close an HTML attribute. Only `https`, `http`, and `mailto` schemes pass. The function strips control characters before the scheme test, so a null byte cannot disguise a forbidden scheme.
 ```
 
-```canvas snippet id=s-frame path=leela/blocks/canvas/canvas.js symbol=cvFrame
-Both frames are `sandbox=allow-scripts` and nothing grants `allow-same-origin`. A component gets
-an opaque origin. It cannot read this page's DOM, cookies or routes. A message speaks for the brick
-whose frame sent it, never for the id it claims.
+```canvas snippet id=s-frame path=leela/blocks/canvas/canvas.js symbol=cvFrame wrote=ai
+Every frame receives exactly the permissions `CV_SANDBOX` encodes. `referrerpolicy: 'no-referrer'` prevents the frame from reading the URL of the page that loaded it.
 ```
 
 <!--canvas task id=t2 status=done owner=me-->
@@ -257,68 +252,49 @@ Ship the client in the wheel, and hold it with a test against a built one.
 
 # The change and the page
 
-<!--canvas bundle id=u-chg title="What a bundle claims, and the page it renders to"
-     goal=g
-     contributes="all of the review step"
-     paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,leela/blocks/canvas/triage.diff,tools/make_change_page.py
-     refs=pkg:mdhtml,pkg:gheasy-->
+<!--canvas bundle id=u-chg title="What a bundle claims, and the page it renders to" goal=g contributes="all of the review step" paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,leela/blocks/canvas/triage.diff,tools/make_change_page.py refs=pkg:mdhtml,pkg:gheasy-->
 A bundle claims a region, names a goal and owns a list of files. This is the half that compares the
 claim with the diff, and the half that writes the comparison out.
 <!--/canvas-->
 
-```canvas snippet id=s-coverage path=leela/blocks/canvas/change.py symbol=coverage
-`matched` is a claim the diff confirms. `unmet` is a claim with nothing behind it. `unclaimed` is a
-file that moved with no claim on it. A claim is a glob or a name, so a bundle can own a folder.
+```canvas snippet id=s-coverage path=leela/blocks/canvas/change.py symbol=coverage wrote=ai
+`unmet` holds the paths a bundle claimed but the diff did not touch, flagging a claim that exceeds the actual change. `unclaimed` holds the changed paths that no bundle claimed, surfacing changes the plan did not account for.
 ```
 
-```canvas snippet id=s-review path=leela/blocks/canvas/change.py symbol=review
-One change as a document. For each file it emits the hunks, then every brick citing that path. A
-citation is a name or a glob: a note on `docs/screenshots/*` heads the run of fifteen it describes
-instead of repeating under each. A file id is its basename, or its whole path when two files share
-one basename.
+```canvas snippet id=s-review path=leela/blocks/canvas/change.py symbol=review wrote=ai
+The `claimed: 'no'` attribute marks a file the diff touched but the bundle's path list did not include. `doc.reply_to` fetches existing answers and places each one after its question in the review page. The checks brick appears even when all claims are met, so a reviewer never mistakes silence for a clean status.
 ```
 
-```canvas snippet id=s-lit path=leela/blocks/canvas/lit.py symbol=_diff
-The renderer writes no script, so the page works with JavaScript off. `DIFF_CAP` ends a long hunk
-in a count and `DIFF_COLS` ends a long line in one. A generated artifact had otherwise put 12,650
-lines and three megabytes into a page nobody could read.
+```canvas snippet id=s-lit path=leela/blocks/canvas/lit.py symbol=_diff wrote=ai
+When the diff exceeds `FOLD_LINES` lines, the `claimed: 'no'` warning moves from a chip into the fold summary text, so the signal survives folding. Lines beyond `DIFF_CAP` are replaced by an explicit count, not dropped silently.
 ```
 
 # The document
 
-<!--canvas bundle id=u-doc title="The format, unchanged in kind and larger in reach"
-     goal=g
-     contributes="the file every other part reads"
-     paths=leela/blocks/canvas/doc.py,leela/blocks/canvas/layout.py,leela/blocks/canvas/ops.py,leela/blocks/canvas/export.py,leela/blocks/canvas/example.py,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/__init__.py,leela/blocks/__init__.py,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*
-     refs=doc:docs/canvas.md-->
+<!--canvas bundle id=u-doc title="The format, unchanged in kind and larger in reach" goal=g contributes="the file every other part reads" paths="leela/blocks/canvas/doc.py,leela/blocks/canvas/layout.py,leela/blocks/canvas/ops.py,leela/blocks/canvas/export.py,leela/blocks/canvas/example.py,leela/blocks/canvas/procurement.canvas.md,leela/blocks/canvas/__init__.py,leela/blocks/__init__.py,examples/canvas/*,docs/screenshots/*,media/canvas/*,media/e2e/*" refs=doc:docs/canvas.md-->
 A canvas is a markdown file. Prose stays prose. A brick is a fence or a comment wrap. Every markdown
 reader shows the file. Git shows a useful diff. Seventeen words are the whole
 vocabulary. Six worked documents, fifteen shots and four screencasts show the format in use.
 <!--/canvas-->
 
-```canvas snippet id=s-save path=leela/blocks/canvas/doc.py symbol=Canvas.save
-The document is the only store, so a torn write is a lost document. This writes through a temporary
-file in the same folder and renames it. `ops` retires the names a changed or deleted code brick
-used to define, so a renamed definition cannot stay readable downstream.
+```canvas snippet id=s-save path=leela/blocks/canvas/doc.py symbol=Canvas.save wrote=ai
+`mkstemp` places the temporary file in the same directory as the target, keeping both on the same filesystem.
+
+On POSIX, `os.replace` is atomic: readers see either the old file or the new, never a partial write.
+
+`os.fsync` flushes kernel write buffers to storage before `os.replace` renames the file.
 ```
 
 # The seams
 
-<!--canvas bundle id=u-seam title="What Leela adds to the libraries it composes, and nothing more"
-     goal=g2
-     contributes="one spelling per name"
-     covers="t5"
-     paths=leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/*,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,extensions/bricks/*,pyproject.toml,uv.lock,.gitignore
-     refs=pkg:kunda,pkg:pullup,pkg:kavacha,pkg:dhrishti-->
+<!--canvas bundle id=u-seam title="What Leela adds to the libraries it composes, and nothing more" goal=g2 contributes="one spelling per name" covers=t5 paths="leela/blocks/runtime/*,leela/blocks/pipelines/*,leela/blocks/drive/*,leela/blocks/workflows/*,leela/blocks/agent/*,leela/blocks/debug/*,leela/blocks/editor/app.py,leela/blocks/search/search.py,leela/blocks/vars/app.py,leela/blocks/vault/jobs.py,extensions/bricks/*,pyproject.toml,uv.lock,.gitignore" refs=pkg:kunda,pkg:pullup,pkg:kavacha,pkg:dhrishti-->
 `test_seams.py` guarded eleven libraries. It did not guard kunda or pullup, the two Leela composes
 most. Eight reaches into their private names went uncounted. The Words table above is the result:
 one owner and one spelling per name.
 <!--/canvas-->
 
-```canvas snippet id=s-support path=leela/blocks/runtime/support.py
-This module published almost the whole of kunda's support half again, while `core/envs.py` went
-straight to kunda for three of the same names. `clean_env` had two spellings, depending on which
-module you read. One name is left, the one Leela renames. Thirteen files now import from kunda.
+```canvas snippet id=s-support path=leela/blocks/runtime/support.py wrote=ai
+`LEELA_PY` is the one spelling this codebase uses for kunda's `HOST_PY`. Only this file imports `HOST_PY`. `__all__` ensures nothing else from `kunda.support` is reachable from Leela.
 ```
 
 <!--canvas task id=t5 status=done owner=me-->
@@ -327,12 +303,7 @@ Reduce each seam to what Leela adds, and guard every library it composes.
 
 # What running it found
 
-<!--canvas bundle id=u-test title="Four faults that had nothing to do with a canvas"
-     goal=g2
-     contributes="a suite that finishes"
-     covers="t6"
-     paths=tests/*,tests/blocks/*,tests/fixtures/*,docs/*.md,README.md,media/*.html,media/*.md
-     refs=pkg:kunda,pkg:shalya-->
+<!--canvas bundle id=u-test title="Four faults that had nothing to do with a canvas" goal=g2 contributes="a suite that finishes" covers=t6 paths="tests/*,tests/blocks/*,tests/fixtures/*,docs/*.md,README.md,media/*.html,media/*.md" refs=pkg:kunda,pkg:shalya-->
 The kernel killed `pytest -m slow` a third of the way in and it reported nothing. Fixing that
 turned up three more faults, none of them in the canvas.
 <!--/canvas-->
@@ -368,21 +339,13 @@ Make `pytest -m slow` finish, and fix what running it found.
 
 # The prose
 
-<!--canvas bundle id=u-prose title="Every page scored against the branch's own rulebook"
-     goal=g
-     contributes="the English a reviewer reads"
-     covers="t7"
-     paths=leela/blocks/canvas/ste.md,leela/blocks/canvas/explain.md
-     refs=pkg:slopometer,doc:leela/blocks/canvas/ste.md-->
+<!--canvas bundle id=u-prose title="Every page scored against the branch's own rulebook" goal=g contributes="the English a reviewer reads" covers=t7 paths=leela/blocks/canvas/ste.md,leela/blocks/canvas/explain.md refs=pkg:slopometer,doc:leela/blocks/canvas/ste.md-->
 `ste.md` held the rules and `explain.md` handed them to the model that drafts a snippet. A drafted
 sentence met them. A hand-written one did not. `slopometer` now scores every page on the branch.
 <!--/canvas-->
 
-```canvas snippet id=s-ste path=leela/blocks/canvas/ste.md lines=1-12
-Twenty words a sentence, active voice, one meaning per word. It bans the em dash, the semicolon,
-the parenthetical, the restatement and the closing reversal. Three patterns carried most of the
-weight on the pages that failed: a sentence that states a thing and then restates its opposite, a
-closing line that reverses the one before it, and a passive clause that drops the doer.
+```canvas snippet id=s-ste path=leela/blocks/canvas/ste.md lines=1-12 wrote=ai
+The one-word-per-meaning rule prevents "the heartbeat" from becoming "beats" in the next sentence.
 ```
 
 <!--canvas task id=t7 status=done owner=me-->
@@ -400,7 +363,7 @@ below names them and its own two commits. Leela filled it. The chips at the top 
 
 # The numbers
 
-<!--canvas data id=n-tally-->
+```canvas data id=n-tally
 files = 145
 insertions = 13606
 deletions = 290
@@ -410,7 +373,7 @@ tests = 2045
 review_findings_closed = 17
 worst_page_before = 26.8
 worst_page_after = 2.5
-<!--/canvas-->
+```
 
 # Checks
 
@@ -426,6 +389,6 @@ Seven tests fail against the original code, one per fault a reviewer called crit
 Leela writes this page from this file, with a real git diff in the slot.
 <!--/canvas-->
 
-<!--canvas ask id=q1 scope=doc budget=40000-->
+```canvas ask id=q1 scope=doc budget=40000
 Name the change here you would push back on, and say what you would want instead.
-<!--/canvas-->
+```
