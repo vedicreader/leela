@@ -159,11 +159,7 @@ def _by_ast(text, sym):
     return '\n'.join(rows[start - 1:node.end_lineno])
 
 def _by_scan(text, name):
-    """The block a declaration owns, for a file `ast` cannot read or a name it does not carry.
-
-    A snippet on `cvUrl` in a `.js` file, or on a module-level constant, rendered to an empty
-    figure under its own caption before this.
-    """
+    "The block a declaration owns, for a file `ast` cannot read or a name it does not carry."
     rows = text.splitlines()
     at = first(i for i, r in enumerate(rows)
                if (m := DECL.match(r.strip())) and m.group('name') == name)
@@ -265,8 +261,7 @@ def review(
             cited.setdefault(m.attrs['path'], []).append(m)
     dids, globs = _dids(files), {k: v for k, v in cited.items() if _globby(k)}
     for path, text in files.items():
-        #: A note on `docs/screenshots/*` heads the run it describes rather than repeating under
-        #: each of fifteen files. Prose on one exact path still follows that file's own hunks.
+        #: A glob note heads the run of files it matches; an exact-path note still follows that file's hunks.
         for pat in [k for k in globs if fnmatch(path, k)]:
             for m in globs.pop(pat): out.add(_copy(m))
             cited.pop(pat, None)

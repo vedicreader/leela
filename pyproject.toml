@@ -120,6 +120,7 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[local]",
+    "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
     "rishi[all]==0.1.36",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
@@ -145,6 +146,7 @@ constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
+leela-bricks = { path = "extensions/bricks", editable = true }
 # The six packages Leela's own code was lifted into are taken from PyPI, not from the checkouts
 # beside this one. `setup_app.lock_requirements` exports this lock as the app's requirements, and
 # an editable path there builds a bundle that depends on directories only this machine has.

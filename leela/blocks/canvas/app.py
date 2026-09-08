@@ -31,14 +31,7 @@ def _settle(o, touched_names, skip=()):
 RUNNING_KINDS = ('code', 'data')
 
 def _runs_code(o, op):
-    """Whether this op would execute or evaluate something in the document's namespace.
-
-    Authoring is not running. `insert` executes only a body it is given, `bind` resolves the
-    expression it is handed, and `run` and `values` are the two that always do. `replace`,
-    `remove`, `kind`, `move` and `replace_selection` retire names and move prose about, so an
-    untrusted document is still editable: this gate refused an empty code brick and made a
-    document you could read but not write in.
-    """
+    "Whether this op would execute or evaluate something in the document's namespace."
     op = op or {}
     kind = op.get('op')
     if kind in ('run', 'values'): return True
@@ -190,11 +183,7 @@ def connect(app, ctx=None):
 
     @rt('/canvas/trust')
     async def canvas_trust(req):
-        """Say this document's code may run, then run it.
-
-        A canvas is markdown, so it arrives from a clone, a download or a paste. Opening one used
-        to execute every code brick in it before anybody had read a line.
-        """
+        "Say this document's code may run, then run it."
         d = await req.json()
         try: o = store().get(canvas_path(ctx_fs(), d['path']))
         except Exception as e: return fail(e)
@@ -314,11 +303,7 @@ def connect(app, ctx=None):
         return StreamingResponse(stream(), media_type='text/event-stream')
 
 def _assistant(ctx):
-    """The workspace's assistant when a model is configured, else None for the stand-in.
-
-    The browser used to decide this by sending `model`, which `helper.js` never sent, so every ask
-    reached the scripted stand-in however the workspace was configured.
-    """
+    "The workspace's assistant when a model is configured, else None for the stand-in."
     if ctx is None: return None
     try: ai = ctx.ai
     except Exception: return None
@@ -349,13 +334,7 @@ class Outside(Exception):
     "A path that resolves outside everything this block may touch."
 
 def canvas_path(fs, path, must_exist=True, suffix=SUFFIX):
-    """The one gate every route passes a path through, source and destination alike.
-
-    With a folder open the workspace decides, so a canvas cannot reach past `fs.roots`. With none
-    open, which is the spike and the tests, the canvas directory decides. Neither answers a
-    relative path by walking up: `resolve` compares the resolved path against the root it must be
-    under.
-    """
+    "The one gate every route passes a path through, source and destination alike."
     if fs is not None and getattr(fs, 'roots', None):
         p = fs._check(path, must_exist=must_exist)
     else:

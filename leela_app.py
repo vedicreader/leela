@@ -21,24 +21,15 @@ if getattr(sys, 'frozen', False):
     use_extras()
     use_utf8()            # no LANG means an ASCII default, and importing rishi.claude then raises
     use_login_path()      # Finder starts an app with almost no PATH, so git and claude go missing
-    # And the rest of the environment with it. A window opened from Finder has launchd's, so a key
-    # exported from a shell profile is missing and every hosted model refuses the turn. This is the
-    # entry the bundle freezes; `leela.cli` is the terminal's and does the same for itself.
+    # A Finder launch has launchd's environment, so a key from a shell profile is missing and every hosted model refuses the turn. `leela.cli` does the same for the terminal.
     if os.environ.get('LEELA_SHELL_ENV', '1') != '0': import_login_env()
     apply_stored_env()    # last, and winning: what a person typed into Leela beats a wrong shell
 
-#: The ladder a window is served from. A short fixed range, not an OS-assigned port: a window's
-#: origin is `http://<slug>.localhost:<port>`, so a port that moves between launches moves the
-#: origin with it, and everything the browser keeps per origin is empty at the new one.
+#: The ladder a window is served from. Fixed, not OS-assigned: a moving port moves the `http://<slug>.localhost:<port>` origin, and the browser keeps nothing per origin at the new one.
 PORTS = range(5001, 5011)
 
 def leela_on(port, host=HOST, timeout=.6):
-    """Whether `port` holds a Leela that can be attached to.
-
-    Asked through the route an attach would use, with the argument left off, so a yes means the
-    hub is there to answer rather than that something Leela-shaped is listening. A `leela` started
-    without `--app` has no hub and is correctly not attachable.
-    """
+    "Whether `port` holds a Leela that can be attached to, asked through the attach route so a yes means the hub answers, not that something Leela-shaped listens."
     import json, urllib.error, urllib.request
     from leela.hub import OPEN_PATH
     try:
@@ -57,12 +48,7 @@ def running_leela(ports=PORTS, host=HOST):
     return first(p for p in ports if not is_port_free(p, host) and leela_on(p, host))
 
 def free_port(preferred=5001, ports=PORTS, host=HOST):
-    """The first port on the ladder nothing holds.
-
-    Deterministic, so a second launch lands where the first one did and finds what it left. The
-    OS-assigned fallback remains for a machine where the whole ladder is taken: a moving origin
-    beats refusing to start.
-    """
+    "The first free port on the ladder. Deterministic, so a relaunch lands where the first did; OS-assigned fallback only when the whole ladder is taken."
     rungs = [preferred, *(p for p in ports if p != preferred)]
     return first(p for p in rungs if is_port_free(p, host)) or any_port(host)
 
@@ -120,12 +106,7 @@ def run():
               on_open_folder=lambda p: open_folder(port, p))
 
 def attach(port, dirs, host=HOST):
-    """Windows on the Leela already serving `port`, rather than a second server beside it.
-
-    The workspace is opened through the running server's own route, so the slug and the URL are
-    the ones it assigned rather than a guess made here. A folder it refuses is reported and the
-    rest still open; nothing left to open means there is nothing to show and the launch is over.
-    """
+    "Windows on the Leela already serving `port`. Opens through its own route so the slug and URL are the ones it assigned; a refused folder is reported and the rest still open."
     from leela.desktop import run_shell
     rows = []
     for d in dirs:

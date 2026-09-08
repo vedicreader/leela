@@ -11,8 +11,7 @@ __all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'OPEN_PATH', 'w
            'workspace_slugs', 'assign_slugs', 'slug_map', 'save_slug_map', 'workspace_urls']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
-#: Where a running Leela is asked for another workspace. On the hub, not on any one workspace,
-#: because it is the hub the new site joins.
+#: Where a running Leela is asked for another workspace. On the hub, which the new site joins, not on any one workspace.
 OPEN_PATH = '/hub/open'
 
 def workspace_slug(value, used=()):

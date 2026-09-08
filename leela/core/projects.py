@@ -20,11 +20,9 @@ def project_dir(start, stop=None):
     "The nearest checkout at or above `start`, not searched past `stop`. See `nearest_marked`."
     return nearest_marked(start, PROJECT_MARKERS, stop)[0]
 
-#: The session a person opens. A test points `SESSION` at its own file; the guard below
-#: is about this one.
+#: The session a person opens. A test points `SESSION` at its own file; the guard below is about this one.
 DEFAULT_SESSION = SESSION = leela_cfg/'desktop.json'
-#: A running Leela's address. The desktop shell takes whatever port is free, so nothing outside
-#: it could otherwise guess where to post.
+#: A running Leela's address. The desktop shell takes any free port, so nothing outside it could otherwise guess where to post.
 SERVING = leela_cfg/'serving.json'
 MAX_RECENT = 12
 

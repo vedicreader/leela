@@ -19,10 +19,7 @@ def connect(app, ctx):
         "The driver for one project, made once and kept: a running step is a process."
         root = repo_for(ctx.session, target)
         key = str(root)
-        #: Built with the interpreter it will run under, not built and then told. Setting `python`
-        #: afterwards left whatever pullup had already resolved from Leela's own interpreter, so a
-        #: step could be spawned under the app rather than under the project's environment. A
-        #: changed interpreter builds a new `Drive` rather than mutating the live one.
+        #: A changed interpreter builds a new `Drive`; setting `python` after build ran steps under the app, not the project.
         python = python_for(root, ctx.session)
         d = live.get(key)
         if d is None or getattr(d, 'python', None) != python:

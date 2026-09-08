@@ -82,10 +82,7 @@ def _tighten(text):
     return re.sub(r'\s{2,}', ' ', out).strip()
 
 class Scripted(Helper):
-    """A deterministic stand-in for the model, so the canvas can be driven with no key and no network.
-
-    It reads the same `Ask`, calls the same tools and emits the same events as the real turn. What it
-    does not have is judgement: the intents below are patterns, not understanding."""
+    "A deterministic stand-in for the model, so the canvas can be driven with no key and no network."
     name = 'scripted'
 
     async def turn(self, ask, steer=None):
@@ -222,14 +219,7 @@ class Scripted(Helper):
         for part in textwrap.wrap(text, 90): yield 'chunk', {'text': part + ' '}
 
 class Agentic(Helper):
-    """The real turn. `Agent` is ramabana's, and canvas mode is what it knows about a canvas.
-
-    Leela owns the know-how and pushes it: the `canvas` skill goes onto the agent's registry while a
-    canvas is open, the eight tools with it, and both come off when it closes. Nothing about a canvas
-    is compiled into ramabana, and no agent that is not in a canvas carries it.
-
-    Not exercised in the spike, which has no model. It is here so the seam is code rather than a
-    promise."""
+    "The real turn. `Agent` is ramabana's, and canvas mode is what it knows about a canvas."
     name = 'agentic'
     #: The registry as it was before `open`, so `close` restores it rather than approximating it.
     _before = None

@@ -15,8 +15,7 @@ from .. import errstr
 __all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop',
            'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES']
 
-#: The client's bundles, in the order the browser must execute them. They share one lexical
-#: scope, so `lee-core.js` declares the vocabulary and the rest read it.
+#: Client bundles in execution order. They share one lexical scope, so `lee-core.js` declares the vocabulary and the rest read it.
 IDE_BUNDLES = ('lee-core.js', 'lee-agent.js', 'lee-ide.js')
 
 def asset_dir(name):

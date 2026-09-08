@@ -100,8 +100,7 @@ def shell_env(shell=None, timeout=8):
     "What `shell` exports, as `{name: value}`, asked the way a person's terminal is."
     shell = shell or preferred_shell()
     for args in (('-l', '-i', '-c', 'env -0'), ('-l', '-c', 'env -0')):
-# `clean_env`, or the shell inherits the bundle's `PYTHONHOME` and hands it to whatever Python
-# its startup files run.
+        # clean_env: else the shell inherits the bundle's PYTHONHOME and hands it to any Python its startup files run.
         try: r = subprocess.run([shell, *args], capture_output=True, timeout=timeout, env=clean_env())
         except (OSError, subprocess.SubprocessError): return {}
         if r.returncode != 0: continue

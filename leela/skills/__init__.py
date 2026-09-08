@@ -5,8 +5,7 @@ from shalya.skills import Skill
 
 __all__ = ['NAMES', 'skill', 'push', 'drop', 'pushed']
 
-#: A mode's name, and the module whose docstring is its body. The body lives here rather than in a
-#: `pyskills` entry point: a skill that is only true inside a canvas should not reach every agent.
+#: Mode name -> module whose docstring is its body. Kept here, not in a `pyskills` entry point, so a canvas-only skill does not reach every agent.
 NAMES = {'canvas': 'leela.skills.canvas'}
 
 def _describe(text, mx=300):

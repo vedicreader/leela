@@ -2477,6 +2477,7 @@ dev = [
     { name = "fastaistyle" },
     { name = "fastship" },
     { name = "leela", extra = ["local"] },
+    { name = "leela-bricks" },
     { name = "nbformat" },
     { name = "pandas" },
     { name = "pillow" },
@@ -2541,6 +2542,7 @@ dev = [
     { name = "fastaistyle", specifier = ">=0.0.17" },
     { name = "fastship", specifier = ">=0.1.2" },
     { name = "leela", extras = ["local"], editable = "." },
+    { name = "leela-bricks", editable = "extensions/bricks" },
     { name = "nbformat", specifier = ">=5.10.0" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pillow", specifier = ">=10.0" },
@@ -2551,6 +2553,21 @@ dev = [
     { name = "rishi", specifier = "==0.1.36" },
     { name = "rishi", extras = ["all"], specifier = "==0.1.36" },
     { name = "setuptools", specifier = ">=68.0" },
+]
+
+[[package]]
+name = "leela-bricks"
+version = "0.0.1"
+source = { editable = "extensions/bricks" }
+dependencies = [
+    { name = "fastcore" },
+    { name = "python-fasthtml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastcore", specifier = ">=1.7" },
+    { name = "python-fasthtml", specifier = ">=0.14.0" },
 ]
 
 [[package]]

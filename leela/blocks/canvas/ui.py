@@ -12,12 +12,7 @@ FILES = ('md.js', 'menu.js', 'canvas.js', 'gutter.js', 'format.js', 'wire.js', '
 BUNDLE = 'lee-canvas.js'
 
 def bundle():
-    """The committed bundle, and the modules it was built from only in a source tree.
-
-    The wheel excludes `leela/blocks/*/*.js`, so reading `FILES` at runtime served an empty page
-    from an installed Leela. `leela/static/lee-canvas.js` is generated and shipped, like the IDE's
-    three, and `test_packaging.py` holds both facts.
-    """
+    "The committed bundle, and the modules it was built from only in a source tree."
     from ...core.web import asset_dir
     built = Path(asset_dir('static'))/BUNDLE
     if built.is_file(): return built.read_text()

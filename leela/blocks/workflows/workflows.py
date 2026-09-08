@@ -8,7 +8,5 @@ __all__ = ['Workflows', 'WorkflowError', 'levels', 'SPEC_DIR']
 
 SPEC_DIR = '.leela/workflows'
 
-#: pullup keeps the spec directory in a module global, which is the only seam it offers. Called
-#: here rather than beside the builder, which is imported lazily and so would fire after the first
-#: spec had already been written somewhere else. `test_seams.py` asserts it took.
+#: Set here, not beside the lazily-imported builder, which would fire after the first spec was already written.
 use_spec_dir(SPEC_DIR)

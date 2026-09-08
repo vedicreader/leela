@@ -40,12 +40,7 @@ def error_out(e):
 def _err(name, msg): return dict(output_type='error', ename=name, evalue=msg, traceback=[f'{name}: {msg}'])
 
 class Dataflow:
-    """The dataflow half, which is the same wherever the code runs.
-
-    A backend supplies four things: `exec_cell`, `eval_many`, `assign` and `names`. Nothing here
-    reaches into a namespace dict, so a document runs the same whether its code is in this process
-    or in a kernel.
-    """
+    "The dataflow half, which is the same wherever the code runs."
     def __init__(self):
         self.count = 0
         #: What each brick defined the last time it ran. A name a brick stops defining is dropped,
@@ -104,12 +99,7 @@ class Dataflow:
     def close(self): pass
 
 class Runtime(Dataflow):
-    """This process's own namespace, for the spike and the tests.
-
-    Never the IDE's. A cell here holds the web process: `while True` hangs every request and
-    `os._exit()` takes Leela with it. `runtime_for` hands out a `KernelRuntime` wherever a pool
-    exists, and this one only where there is none to hand out.
-    """
+    "This process's own namespace, for the spike and the tests, never the IDE's."
     def __init__(self, boot=BOOT):
         super().__init__()
         self.ns = {'__name__': 'canvas'}
@@ -189,13 +179,7 @@ def _cv_names():
 '''
 
 class KernelRuntime(Dataflow):
-    """Canvas code on a kunda kernel: another process, a bounded run, and an interrupt.
-
-    A cell cannot hang Leela or exit it. `while True` is interrupted at `timeout` and the kernel
-    keeps serving; `os._exit()` ends the kernel alone and the next cell starts a new one. Kunda's
-    own `execute(timeout=)` does not return on a busy loop, so the bound is enforced here and
-    `interrupt` is what actually stops the cell.
-    """
+    "Canvas code on a kunda kernel: another process, a bounded run, and an interrupt."
     def __init__(self, start, timeout=TIMEOUT, boot=BOOT, loop=None):
         super().__init__()
         #: `start` is kept, not just the kernel it returns: a kernel that dies is started again.
@@ -216,12 +200,7 @@ class KernelRuntime(Dataflow):
         return asyncio.run_coroutine_threadsafe(coro, self._loop()).result(timeout)
 
     def submit(self, coro, timeout=None):
-        """Run `coro` on this runtime's loop and wait for it.
-
-        A pool's own tasks belong to whichever loop first awaited it, which is this one. Closing
-        that pool from anywhere else leaves its sweep loop cancelling into a loop nobody is
-        running, which is what a caller wants this for.
-        """
+        "Run `coro` on this runtime's loop and wait for it."
         return self._call(coro, timeout if timeout is not None else self.timeout + 15)
 
     async def _kernel_now(self):
@@ -236,12 +215,7 @@ class KernelRuntime(Dataflow):
         return self._kernel
 
     async def _bounded(self, k, code, timeout):
-        """Run `code`, and stop it when it outstays `timeout`.
-
-        Three steps, because each can fail on its own: wait, interrupt and wait again, then give up
-        on the kernel. Giving up costs the namespace and nothing else, which is the point of a
-        kernel.
-        """
+        "Run `code`, and stop it when it outstays `timeout`."
         task = asyncio.ensure_future(k.execute(code, timeout=timeout))
         try: return await asyncio.wait_for(asyncio.shield(task), timeout)
         except (asyncio.TimeoutError, TimeoutError): pass
@@ -311,11 +285,7 @@ class KernelRuntime(Dataflow):
             self._lp = None
 
 def runtime_for(pool=None, key='canvas', cwd=None, timeout=TIMEOUT):
-    """A kernel-backed runtime where a pool can give one, and this process's namespace where none can.
-
-    The IDE always has a pool, so a document opened in Leela runs in a kernel. The spike and the
-    tests have none.
-    """
+    "A kernel-backed runtime where a pool can give one, and this process's namespace where none can."
     if pool is None: return Runtime()
     async def start():
         kw = {'cwd': str(cwd)} if cwd else {}

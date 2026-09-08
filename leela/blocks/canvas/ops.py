@@ -79,8 +79,7 @@ def _answer(canvas, runtime, op):
     return {'ok': True, 'touched': [b.id], 'brick': b.dict(), 'at': canvas.index(b.id)}
 
 def _find(body, was, nth=0):
-    """Where the selection sits in the body. It came from rendered prose, so the emphasis markers
-    are gone from it, and the same words may appear more than once: `nth` says which one."""
+    "Where the selection sits in the body; `nth` says which occurrence when the words repeat."
     hits = [(m.start(), len(m.group())) for m in re.finditer(re.escape(was), body)]
     if not hits:
         plain = re.sub(r'[*_`]', '', was)

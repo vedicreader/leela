@@ -17,11 +17,8 @@ VENV = ROOT/'packaging'/'.app-venv'
 APP_EXTRAS = ('desktop', 'macapp')   # the gateway is a dependency now, not an extra
 #: Written into the bundle at build; read back to tell a stale install from a current one.
 STAMP = 'leela-build.json'
-# Framework builds on macOS, best first. Not newest first: the version here is the version the
-# app ships, and a kernel may only borrow Leela's own `sys.path` from an interpreter of the same
-# minor version (`blocks/runtime/support.py`). So the order is what projects are most likely to be
-# on, and 3.13 leads. uv's and pyenv's interpreters are absent on purpose: both are
-# python-build-standalone, `PYTHONFRAMEWORK` is empty, and py2app cannot embed one in a bundle.
+# Framework builds on macOS, by likely project version (3.13 leads), not newest: a kernel borrows Leela's `sys.path` only from its own minor version (`blocks/runtime/support.py`).
+# uv and pyenv are excluded: both are python-build-standalone with empty `PYTHONFRAMEWORK`, which py2app cannot embed.
 FRAMEWORK_CANDIDATES = (
     '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13',
     '/Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14',
@@ -90,11 +87,7 @@ def stamp_path(bundle):
     return (b/'Contents'/'Resources'/STAMP) if b.suffix == '.app' else (b/STAMP)
 
 def write_stamp(bundle):
-    """Record which commit the bundle was built from.
-
-    A bundle is derived from the tree and nothing else compared them, so an app built before a fix
-    installs over one built after it and reports the version it always did.
-    """
+    "Record which commit the bundle was built from, so a stale install does not go on reporting the version it always did."
     if (st := git_stamp()) is None: st = {'commit': '', 'dirty': False, 'version': _leela_version(),
                                           'built': time.strftime('%Y-%m-%dT%H:%M:%S')}
     p = stamp_path(bundle)
@@ -125,22 +118,11 @@ def build_venv(python, force=False):
     else: run(exe, '-m', 'pip', 'install', '--quiet', '-e', f'{ROOT}[desktop,macapp]')
     return exe
 
-#: PEP 420 namespaces py2app has to copy whole. `ruamel` arrives with `ruamel.yaml`, which gheasy
-#: reads and writes workflows through.
+#: PEP 420 namespaces py2app copies whole. `ruamel` arrives with `ruamel.yaml`, which gheasy reads and writes workflows through.
 NAMESPACE_PKGS = ('ruamel',)
 
 def mark_namespaces():
-    """Give each PEP 420 namespace an `__init__.py`, because py2app cannot find one without it.
-
-    py2app's `detect_dunder_file` recipe puts every package that reads `__file__` in the copy-whole
-    list, and `collect_packagedirs` then resolves each through modulegraph's `imp.find_module`,
-    which predates PEP 420 and raises `No module named 'ruamel'` on a directory with no
-    `__init__.py`. The build died there with nothing else said.
-
-    Marks the interpreter that is about to run py2app, whichever it is. Doing this in `build_venv`
-    covered a local build and missed the runner entirely: `actions/setup-python` is a framework
-    build, so `main` never rebuilds a venv there and goes straight to py2app.
-    """
+    "Give each PEP 420 namespace an `__init__.py`. py2app's modulegraph predates PEP 420 and raises `No module named` on a directory without one. Marks the interpreter about to run py2app, since a framework runner rebuilds no venv."
     import site as _site
     for root in map(Path, _site.getsitepackages()):
         for name in NAMESPACE_PKGS:
@@ -151,12 +133,7 @@ def mark_namespaces():
             print(f'· marked {d} as a package for py2app')
 
 def lock_requirements(extras=APP_EXTRAS):
-    """`uv.lock` as a pinned requirements file, or None where uv cannot answer.
-
-    pip resolves `>=` against whatever it finds and keeps whatever it already has, so a build
-    environment went on shipping the rishi and ramabana the app was built with months ago while
-    the repository moved. The lock is the tested set; the bundle should carry that one.
-    """
+    "`uv.lock` as a pinned requirements file, or None where uv cannot answer. The lock is the tested set; pip's `>=` would keep whatever it already has."
     if not (ROOT/'uv.lock').exists(): return None
     args = ['uv', 'export', '--frozen', '--no-dev', '--no-hashes', '--no-emit-project',
             '--format', 'requirements-txt']
@@ -196,13 +173,7 @@ def check():
     except ImportError: print('pywebview       MISSING — pip install "leela[desktop]"')
 
 def running_from(bundle):
-    """The pids of processes running out of `bundle`, so a build does not overwrite a live app.
-
-    py2app writes the bundle in place, and `python313.zip` is the running app's standard library.
-    Replacing it under a live process leaves every import it has not made yet reading a file that
-    is no longer the one it opened: `ZipImportError: bad local file header`, from whatever happens
-    to import next, naming nothing that would lead anyone back to a rebuild.
-    """
+    "Pids running out of `bundle`, so a build does not overwrite a live app. Replacing `python313.zip` under a live process breaks its next import with a bare `ZipImportError`."
     target = str(Path(bundle).resolve())
     try: out = subprocess.run(['ps', '-Ao', 'pid,command'], capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError): return []

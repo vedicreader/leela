@@ -28,9 +28,7 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'Gatewa
            'installed_kernels', 'kernelspec_for', 'installed_spec',
            'project_python', 'nearest_python', 'python_for', 'venv_env', 'run_file_src']
 
-#: kunda names itself and its environment prefix through a module global, which is the only seam
-#: it offers. Called once here, on the import every other module reaches kunda through, so what it
-#: reads and what it says are spelled Leela's way. `test_seams.py` asserts it took.
+#: Names kunda's app and env prefix Leela's way; must run on the import other modules reach kunda through.
 use_app('leela', 'LEELA_')
 
 #: Where the conversation logs a bootstrapped kernel writes go, under the folder it runs in.

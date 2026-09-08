@@ -1,9 +1,4 @@
-"""Where a component comes from: a library installed beside Leela, or a host over HTTP.
-
-A library is any module with `manifest()` and `find(name)`. `lego.bricks` is one, and its
-`serve.connect(app, page)` says it imports nothing about the application it mounts in, so Leela
-mounts it on its own app rather than talking to a second process.
-"""
+"""Where a component comes from: a library installed beside Leela, or a host over HTTP."""
 
 from __future__ import annotations
 import json, os, urllib.request
@@ -24,20 +19,12 @@ HOST_ENV = 'LEELA_BRICK_HOST'
 TIMEOUT = 4
 
 def split_src(src):
-    """`lego.bricks:viz.series` -> `('lego.bricks', 'viz.series')`. A bare name has no library.
-
-    The prefix is the library's own, from `Brick.src`. Dropping it makes two libraries with a
-    `viz.series` each resolve to whichever answered first.
-    """
+    "`lego.bricks:viz.series` -> `('lego.bricks', 'viz.series')`. A bare name has no library."
     s = str(src or '').strip()
     return tuple(s.split(':', 1)) if ':' in s else ('', s)
 
 def _reg(mod):
-    """The module holding the registry: the library itself, or its `bricks` submodule.
-
-    Attribute access can raise on a module with a lazy `__getattr__`, which Leela's own blocks
-    have, so this reports nothing rather than letting that escape as a palette failure.
-    """
+    "The module holding the registry: the library itself, or its `bricks` submodule."
     try:
         if hasattr(mod, 'manifest') and hasattr(mod, 'find'): return mod
     except Exception: return None
@@ -151,11 +138,7 @@ def palette(libs=None):
     return {'bricks': bricks, 'groups': groups, 'libraries': names, 'notes': notes}
 
 def locate(src, libs=None):
-    """`(library, brick)` for one `src`, or `(None, None)`.
-
-    A prefixed `src` is answered by that library only. A bare name searches every library and
-    takes the first, which is why writing the prefix is what a document should do.
-    """
+    "`(library, brick)` for one `src`, or `(None, None)`."
     lib_name, name = split_src(src)
     if not name: return None, None
     for lib in (libs if libs is not None else libraries()):

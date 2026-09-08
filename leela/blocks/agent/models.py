@@ -201,8 +201,7 @@ _latest, _latest_at = {}, 0.0
 LATEST_TTL = 3600          #: a courtesy check, not a heartbeat
 
 def _release_headers():
-    """A GitHub token where there is one. Leela's own repository is private, and an unauthenticated
-    releases request answers 404 there, which the caller cannot tell from having no releases."""
+    "A GitHub token where there is one; without it the private repo 404s instead of returning no releases."
     head = {'Accept': 'application/vnd.github+json'}
     try:
         from ..git.seam import gh_token

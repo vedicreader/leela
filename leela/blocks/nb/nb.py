@@ -412,13 +412,7 @@ class Notebook:
         "The whole notebook as one diffable document: every cell's source under a jupytext `# %%` marker."
         return '\n'.join(f'# %% {c.cell_type} {c.id}\n{c.source.rstrip()}' for c in self.cells)
     def take_source_text(self, text):
-        """Read `source_text` back in, keeping the outputs it never carried.
-
-        Lossy in one direction only: the marker holds a cell's type and id and nothing else, so a
-        cell still named here keeps the outputs, counts and metadata it already had, and only its
-        source moves. Writing the document out as a file instead loses all of that and the JSON
-        with it.
-        """
+        "Read `source_text` back in, keeping the outputs it never carried."
         by_id, out = {c.id: c for c in self.cells}, []
         for kind, cid, src in _source_blocks(text):
             c = by_id.get(cid)

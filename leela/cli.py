@@ -62,7 +62,7 @@ def main(argv=None):
         print('  "keys" holds what you changed; copy a line out of "_defaults" to change one more.')
         for n in NOTES: print(f'  ⚠ {n}')
         return
-# Put the extras directory on the path where the process starts, not only after an install.
+    # Put the extras directory on the path where the process starts, not only after an install.
     from . import use_extras
     use_extras()
     # A window opened from Finder has launchd's environment, not a shell's, so the keys and the
