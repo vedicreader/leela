@@ -124,6 +124,7 @@ dev = [
     "rishi[all]==0.1.36",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
@@ -135,7 +136,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow' -n auto"
 markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv]

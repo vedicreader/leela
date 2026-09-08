@@ -776,8 +776,9 @@ def connect(app, ctx):
         async def events():
             seq, ended = since, False
             while not feed.closed and (follow or not feed.finished(seq)):
-                # the feed wakes this loop directly: a subscriber must not hold a shared worker
-                rows = await feed.anext(seq, 1 if ended else 15)
+                # the feed wakes this loop directly: a subscriber must not hold a shared worker.
+                # a finite replay polls briefly and breaks when caught up; only `follow` keeps the 15s keepalive
+                rows = await feed.anext(seq, 1 if ended else (0.1 if not follow else 15))
                 if await req.is_disconnected(): break
                 if not rows:
                     # A finite replay ends at settlement. Neither a producer that never settles nor

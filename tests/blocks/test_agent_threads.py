@@ -1101,6 +1101,20 @@ def test_a_conversation_that_is_not_on_screen_can_still_be_reached(tmp_path):
         assert second.approvals.state().get('queued_steer') == 'go left'
 
 
+def test_a_finite_replay_of_an_idle_thread_does_not_block_on_the_keepalive(tmp_path):
+    "A non-follow stream of a settled, idle thread returns at once, not after the keepalive poll."
+    import time
+    ws = _threaded_workspace(tmp_path)
+    t = ws.threads.new()
+    t.feed.emit('user', {'text': 'hi'})
+    with TestClient(ide_app(ws)) as client:
+        t0 = time.monotonic()
+        body = client.get(f'/agent/stream?since=0&thread={t.id}').text
+        dt = time.monotonic() - t0
+    assert 'hi' in body
+    assert dt < 5, f'idle finite replay took {dt:.1f}s; the keepalive wait is not being skipped'
+
+
 def test_a_finite_subscriber_is_not_held_by_a_conversation_with_no_turn_running(tmp_path):
     "There is nothing left to settle, so waiting for a settlement would wait forever."
     ws = _threaded_workspace(tmp_path)

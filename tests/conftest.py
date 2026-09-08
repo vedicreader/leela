@@ -221,6 +221,18 @@ def serve(ws):
 
 
 @pytest.fixture(autouse=True)
+def _no_local_engine_loads(request, monkeypatch):
+    "Fake the local engine so a fast test switching model checks routing, not multi-GB weights; slow tests load the real one."
+    if request.node.get_closest_marker('slow'): return
+    try: from rishi.litert import LitertChat
+    except Exception: return
+    class _FakeEngine:
+        def close(self): pass
+        def create_conversation(self, *a, **kw):
+            raise RuntimeError('a faked local engine cannot run a turn; mark the test slow to load the real one')
+    monkeypatch.setattr(LitertChat, 'create_engine', classmethod(lambda cls, *a, **kw: _FakeEngine()))
+
+@pytest.fixture(autouse=True)
 def _cold_probes():
     """No test inherits another's answer about what is installed or who is signed in.
 
