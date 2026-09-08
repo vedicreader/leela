@@ -517,10 +517,11 @@ climbs to 12.2GB and a run that reached 13.4GB died with 3.1GB nominally free, s
 
 # The diff
 
-Every file this branch touches, against `origin/main`. The slot names no path, so Leela filled it
-with one brick a file and marked any that no change on this page claims.
+Three files carry this session: the model the format reads, the runtime that holds a document's
+names, and the routes that reach both. The slot below names them and its own two commits. Leela
+filled it. The chips at the top of the page and `coverage` account for the rest.
 
-```canvas diff id=d-all left=origin/main right=HEAD
+```canvas diff id=d-core paths=leela/blocks/canvas/change.py,leela/blocks/canvas/live.py,leela/blocks/canvas/app.py left=origin/main right=HEAD
 ```
 
 # The numbers

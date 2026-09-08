@@ -72,6 +72,10 @@ def _snippet(b, root):
     where = b.attrs.get('symbol') or b.attrs.get('lines') or ''
     cap = (f'<figcaption><b>{escape(b.attrs.get("path", ""))}</b>'
            + (f' &middot; {escape(where)}' if where else '') + '</figcaption>')
+    #: A citation nobody can resolve rendered as a caption over an empty box.
+    if not code.strip():
+        return (f'{md_html(b.body)}<figure>{cap}'
+                f'<div class="card note">Nothing at that citation.</div></figure>')
     block = _pre(code, b.attrs.get('lang', 'python'))
     if code.count('\n') + 1 > FOLD_LINES:
         block = _fold(f'{where or b.attrs.get("path", "code")} ({code.count(chr(10)) + 1} lines)', block)

@@ -15,7 +15,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 - [change.canvas.md](change.canvas.md): the canvas block itself, written as a canvas document. `python tools/make_change_page.py` renders it to `media/canvas-change.html`.
 - [session.canvas.md](session.canvas.md): one working session reviewed in the format it built. The same tool renders it to `media/canvas-session.html`.
-- [branch.canvas.md](branch.canvas.md): every file this branch changes, grouped by what it is for, with the prose about each file under that file's own hunks. `make_change_page.py --reviews` renders one `review` per change and stitches them into `media/canvas-branch.html`.
+- [branch.canvas.md](branch.canvas.md): one branch reviewed. A `Words` table first, then the core logic as snippets, then one `diff` slot naming the two files that carry the change. `make_change_page.py --src docs/branch.canvas.md --out media/canvas-branch.html` renders it.
 - [dynamic-documents.md](dynamic-documents.md): the design the canvas grew from. The `*.canvas.md` format, the context rule a question carries, and what the two halves cost to merge. Built; read it for why, and `canvas.md` for what.
 
 - [blocks.md](blocks.md): the block contract. `CAPS`, `connect(app, ctx)`, wiring order, and where a block's JavaScript goes.

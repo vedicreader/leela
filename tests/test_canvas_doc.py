@@ -330,15 +330,24 @@ def test_one_minified_line_cannot_be_the_whole_page():
     assert 'x' * (DIFF_COLS - 1) in page and 'x' * DIFF_COLS not in page   # the `+` costs one
     assert f'+{wide + 1 - DIFF_COLS} chars' in page
 
-def test_a_page_never_diffs_itself():
-    "The page is a tracked file the document claims, and each render grew it. One reached 12MB."
-    from leela.blocks.canvas.app import _mine
-    doc = Canvas(meta={'title': 't'}, path=str(PKG/'canvas/x.canvas.md'))
-    assert _mine(doc, PKG.parent.parent/'media/canvas-branch.html') == 'media/canvas-branch.html'
-    assert _mine(doc, '/etc/passwd') == '', 'a destination outside the repo is nobody\'s hunk'
-    d = procurement()
-    got = [b.attrs['path'] for b in review(d, 'triage', diff(), skip=('procure/erp.py',)).of('diff')]
-    assert 'procure/erp.py' not in got and 'procure/core.py' in got
+def test_a_snippet_cites_a_name_in_a_file_python_cannot_parse(tmp_path):
+    "A snippet on `cvUrl` in a `.js` file rendered as a caption over an empty box."
+    js = tmp_path/'md.js'
+    js.write_text('const CV = 1;\nfunction cvUrl(u) {\n  if (!u) return "";\n  return u;\n}\n'
+                  'function other() { return 2; }\n')
+    b = Brick('snippet', '', id='s1', attrs={'path': 'md.js', 'symbol': 'cvUrl', 'lang': 'js'})
+    got = snip(b, root=tmp_path)
+    assert got.startswith('function cvUrl') and 'return u;' in got
+    assert 'function other' not in got, 'the block ends where the indent returns'
+
+def test_a_citation_nobody_can_resolve_says_so(tmp_path):
+    "An empty snippet is a caption over nothing, which reads as a rendering bug."
+    (tmp_path/'a.py').write_text('def real(): pass\n')
+    d = Canvas.parse(SMALL)
+    d.add(Brick('snippet', 'The prose survives.', id='s1',
+                attrs={'path': 'a.py', 'symbol': 'absent'}))
+    page = html_of(d, root=tmp_path)
+    assert 'Nothing at that citation.' in page and 'The prose survives.' in page
 
 def test_a_generated_artifact_diffs_to_a_count_not_to_every_line():
     "One committed HTML page took a branch review to 3MB of lines nobody reads."

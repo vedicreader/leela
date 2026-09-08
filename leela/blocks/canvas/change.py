@@ -136,8 +136,17 @@ def snip(brick, root='.'):
 
 import ast
 
+#: A name being declared, in any of the languages a canvas cites. `ast` is exact where it applies.
+DECL = re.compile(r'^(?:export\s+|async\s+)*(?:def|class|function|const|let|var)?\s*'
+                  r'(?P<name>[A-Za-z_$][\w$]*)\s*(?:[=(:]|$)')
+
 def _symbol(text, sym):
-    "One named function or class out of a module's source, as written."
+    "One named function or class out of a file's source, as written."
+    if (got := _by_ast(text, sym)): return got
+    return _by_scan(text, sym.rpartition('.')[2])
+
+def _by_ast(text, sym):
+    "Exact, for Python. A dotted name is a method of its class."
     try: tree = ast.parse(text)
     except SyntaxError: return ''
     outer, _, inner = sym.partition('.')
@@ -148,6 +157,24 @@ def _symbol(text, sym):
     start = min([node.lineno] + [d.lineno for d in getattr(node, 'decorator_list', [])])
     rows = text.splitlines()
     return '\n'.join(rows[start - 1:node.end_lineno])
+
+def _by_scan(text, name):
+    """The block a declaration owns, for a file `ast` cannot read or a name it does not carry.
+
+    A snippet on `cvUrl` in a `.js` file, or on a module-level constant, rendered to an empty
+    figure under its own caption before this.
+    """
+    rows = text.splitlines()
+    at = first(i for i, r in enumerate(rows)
+               if (m := DECL.match(r.strip())) and m.group('name') == name)
+    if at is None: return ''
+    lead = len(rows[at]) - len(rows[at].lstrip())
+    end = at + 1
+    for i in range(at + 1, len(rows)):
+        if not rows[i].strip(): continue
+        if len(rows[i]) - len(rows[i].lstrip()) <= lead: break
+        end = i + 1
+    return '\n'.join(rows[at:end])
 
 _FILE = re.compile(r'^diff --git a/(\S+) b/(\S+)$', re.M)
 
@@ -214,12 +241,11 @@ def review(
     bid,           # which bundle
     diff='',       # unified diff text
     values=None,   # `{brick id: output text}` from the live namespace
-    skip=(),       # paths whose hunks to leave out, the page's own file among them
 ):
     "One change as a document: the value, the reasoning, the diff and the checks."
     b = first(x for x in bundles(doc) if x.id == bid)
     if b is None: raise KeyError(bid)
-    files = {k: v for k, v in hunks(diff).items() if k not in skip}
+    files = hunks(diff)
     cov = first(r for r in coverage(doc, list(files))['bundles'] if r['id'] == bid) or {}
     out = Canvas(meta={'title': f'Review: {b.title}'}, path=f'{bid}.review.canvas.md')
     out.add(Brick('text', f'# {b.title}'))
