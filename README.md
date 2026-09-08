@@ -39,7 +39,7 @@ leela                      # the saved workspace
 leela .                    # a folder
 leela src tests            # one workspace, two roots
 leela --app src tests      # two app windows in fossick's persistent CDP Chrome
-leela --shell webview .    # a native desktop window — what the packaged app runs
+leela --shell webview .    # a native desktop window, what the packaged app runs
 ```
 
 In `--app` mode each folder gets its own `Workspace`, documents, agent, terminals and kernel

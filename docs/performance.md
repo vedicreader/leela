@@ -170,7 +170,7 @@ In order:
 7. **`RepoSet.run('sync')`.** The same plan per repo, reporting which need a decision rather
    than erroring.
 
-1–4 are the substance and are self-contained in `git.py`, `blocks/git/app.py`, two JS modules
+1 to 4 are the substance and are self-contained in `git.py`, `blocks/git/app.py`, two JS modules
 and `blocks/agent/ai.py`. New mutations go through `_guarded`. `classify()` already covers
 `pull --rebase` and `rebase --onto`.
 
