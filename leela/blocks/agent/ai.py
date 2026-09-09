@@ -652,6 +652,18 @@ def _session_tools(host):
         except Exception as e: return f'run_cell failed: {errstr(e)}'
     return [inspect_var, run_cell]
 
+def _canvas_toolset(host):
+    """The canvas block's tools, so the agent pane can work a dynamic document like any other file.
+
+    Built here with the rest, not pushed on for the length of a turn: a backend hands its tool list
+    to the engine once, so anything registered later is a name the model is told about and cannot
+    call. Each tool resolves the open canvas when it runs, so one registration serves every tab.
+    """
+    try:
+        from ..canvas.helper import canvas_tools
+        return canvas_tools(host)
+    except Exception: return []
+
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
     @summary(lambda a: f'Search all for {_1(a.get("query"))}')
@@ -856,6 +868,7 @@ class Assistant(Agent):
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
+        self._canvas_toolset = _canvas_toolset(host)
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
@@ -907,7 +920,8 @@ class Assistant(Agent):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in [*self._news_toolset, *self._session_toolset,
-                                                   *self._search_toolset, *self._video_toolset]
+                                                   *self._search_toolset, *self._video_toolset,
+                                                   *self._canvas_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             built = super().tools

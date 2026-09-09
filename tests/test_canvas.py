@@ -698,3 +698,64 @@ class TestTheKernelBackedRuntime:
             b.body = 'kept = 2'
             assert rt.retire(b) == ['doomed']
             assert 'doomed' not in rt.names()
+
+
+# --- the canvas as tools on the workspace agent ---
+
+def _ws_with_canvas(tmp_path, body='# t\n\n```canvas code id=c1\ncost = 3.6\ncost\n```\n'):
+    from leela.workspace import Workspace
+    p = tmp_path/'t.canvas.md'
+    p.write_text(body)
+    ws = Workspace(roots=[tmp_path])
+    ws.open(p)
+    return ws, p
+
+def test_the_canvas_tools_are_built_with_the_agent_not_pushed_on_for_one_turn(tmp_path):
+    """A backend hands its tool list to the engine once.
+
+    Registered per turn, the model was told the canvas tools existed and every live call came back
+    `KeyError`. They belong in the set the assistant is built with.
+    """
+    from leela.blocks.canvas.helper import TOOLS
+    ws, _ = _ws_with_canvas(tmp_path)
+    names = {t.__name__ for t in ws.ai.tools}
+    assert set(TOOLS) <= names, sorted(set(TOOLS) - names)
+
+def test_a_canvas_tool_finds_the_document_through_the_host_the_agent_is_given(tmp_path):
+    "The agent holds a `WorkspaceHost`; the tabs and the pool are on the workspace behind it."
+    from leela.blocks.canvas.helper import open_canvas
+    ws, p = _ws_with_canvas(tmp_path)
+    assert open_canvas(ws.ai.host) is not None, 'the tools resolve nothing through the real host'
+    assert open_canvas(ws) is not None
+    (tmp_path/'plain.md').write_text('hi')
+    ws.open(tmp_path/'plain.md')
+    assert open_canvas(ws) is None, 'a text tab is not a canvas'
+
+def test_a_tool_edits_the_open_document_and_writes_it_back(tmp_path):
+    "The reply and the edit both land in the file, which is where a canvas keeps its reasoning."
+    from leela.blocks.canvas.helper import canvas_tools
+    from leela.blocks.canvas.doc import Canvas
+    ws, p = _ws_with_canvas(tmp_path)
+    by = {t.__name__: t for t in canvas_tools(ws)}
+    assert 'c1' in by['canvas_read']()
+    assert 'inserted' in by['canvas_insert'](kind='note', body='what it means', after='c1')
+    doc = Canvas.load(p)
+    assert [b.kind for b in doc] == ['text', 'code', 'note']
+
+def test_the_tools_hold_the_same_trust_gate_the_routes_do(tmp_path):
+    "The pane is another way of asking, not a way past the gate."
+    from leela.blocks.canvas.helper import canvas_tools, open_canvas
+    ws, p = _ws_with_canvas(tmp_path)
+    by = {t.__name__: t for t in canvas_tools(ws)}
+    assert 'trusted' in by['canvas_run'](id='c1')
+    assert 'trusted' in by['canvas_values']()
+    open_canvas(ws).allow()
+    assert 'trusted' not in by['canvas_run'](id='c1')
+
+def test_a_tool_says_so_when_no_canvas_is_open(tmp_path):
+    "One registration serves every tab, so the answer when there is no tab has to be a sentence."
+    from leela.blocks.canvas.helper import canvas_tools
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    by = {t.__name__: t for t in canvas_tools(ws)}
+    assert 'no canvas is open' in by['canvas_read']()
