@@ -1778,3 +1778,60 @@ def test_saving_every_tab_says_what_it_wrote(tmp_path):
             'the version it reports is the one on disk after the write'
         assert d['versions'][str(p)] != before, 'and it is not the version the browser started with'
     assert p.read_text() == 'x = 2\n'
+
+
+# --- a canvas is an ordinary tab ---
+
+def test_a_canvas_file_opens_as_a_canvas_tab_and_a_plain_markdown_file_does_not(tmp_path):
+    "The suffix decides, in `Tab.__post_init__`, so rename and session restore agree with `open`."
+    from leela.workspace import Tab
+    (tmp_path/'plan.canvas.md').write_text('# plan\n')
+    (tmp_path/'notes.md').write_text('# notes\n')
+    ws = Workspace(roots=[tmp_path])
+    assert ws.open(tmp_path/'plan.canvas.md').kind == 'canvas'
+    assert ws.open(tmp_path/'notes.md').kind == 'text'
+    assert Tab(path=str(tmp_path/'x.canvas.md')).kind == 'canvas'
+
+def test_renaming_a_file_into_a_canvas_moves_the_tab_with_it(tmp_path):
+    "`retarget` rewrites the path; the kind is derived from it rather than kept from before."
+    from leela.workspace import Tab
+    assert Tab(path='/w/notes.md').kind == 'text'
+    assert Tab(path='/w/notes.canvas.md', kind='text').kind == 'canvas'
+
+def test_a_new_canvas_is_created_as_a_document_that_parses(tmp_path):
+    "`create_document` is the seam `/fs/new` journals, so a canvas is made the way a file is."
+    from leela.blocks.canvas.doc import Canvas
+    ws = Workspace(roots=[tmp_path])
+    e = ws.create_document(tmp_path/'pricing-a-run.canvas.md')
+    doc = Canvas.load(e.path)
+    assert doc.meta.get('title') == 'pricing a run'
+    assert [b.kind for b in doc.of('code', 'ask')] == ['code', 'ask']
+    assert doc.md() == Canvas.parse(doc.md()).md()          # a starter that round-trips
+
+def test_the_canvas_tab_state_says_canvas_rather_than_falling_through_to_text(tmp_path):
+    "`/tab/state` is what `mountTab` dispatches on; a kind it does not name mounts in CodeMirror."
+    (tmp_path/'plan.canvas.md').write_text('# plan\n\n```canvas code id=c1\nx = 1\n```\n')
+    ws = Workspace(roots=[tmp_path])
+    ws.open(tmp_path/'plan.canvas.md')
+    c = TestClient(ide_app(ws))
+    got = c.get('/tab/state').json()
+    assert got['kind'] == 'canvas' and got['path'].endswith('plan.canvas.md')
+    assert 'text' not in got, 'a canvas is not shipped as editor text'
+
+def test_the_new_canvas_command_is_reachable_from_every_surface_that_makes_a_file():
+    "A command with no button, menu row or palette entry is a chord nobody finds."
+    from leela.core.keys import KEYS, lookup
+    from leela.core.ui import BUTTONS
+    from leela.blocks.keys.menus import MENUS, BAR
+    assert lookup('new_canvas').label == 'new canvas'          # a label is what puts it in the palette
+    assert 'new_canvas' in BUTTONS.attrgot('action')
+    for surface in ('files', 'file', 'folder', 'root'):
+        assert 'new_canvas' in [i.action for i in MENUS[surface]], surface
+    assert 'new_canvas' in [r.action for name, rows in BAR if name == 'File' for r in rows]
+
+def test_a_canvas_keeps_the_chords_that_get_you_back_out_of_it():
+    "The page is a frame and owns its keyboard, so it is routed like the terminal and the browser."
+    from leela.core.keys import SCOPES
+    assert 'canvas' in SCOPES
+    src = (ROOT/'leela/blocks/keys/keymap.js').read_text()
+    assert "scope === 'canvas'" in src, 'the canvas has no escape hatch, so no IDE chord works in it'

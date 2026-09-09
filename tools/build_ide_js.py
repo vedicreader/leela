@@ -47,6 +47,7 @@ LAYERS = {
         'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/refactor/move.js',
         'blocks/git/conflictfiles.js', 'blocks/git/conflictcells.js',
         'blocks/vault/reader.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
+        'blocks/canvas/tab.js',
         'blocks/workspace/projects.js'
     ],
 }

@@ -53,7 +53,7 @@ def spec_of(b):
     return Spec(scope=b.scope or 'page', pins=list(b.pins), mutes=list(b.mutes), budget=b.budget,
                 goal=b.attrs.get('goal') != 'off')
 
-def body_text(b, values=None, doc=None):
+def body_text(b, values=None):
     "One brick as the model reads it."
     out = []
     if b.kind == 'goal':
@@ -127,7 +127,7 @@ def resolve(
     mutes, items, seen = set(spec.mutes), [], {b.id}
     def take(x, why, pinned=False):
         if x.id in seen or x.id in mutes: return
-        if not (t := body_text(x, values, doc)).strip(): return
+        if not (t := body_text(x, values)).strip(): return
         seen.add(x.id)
         items.append(Item(ref=x.id, kind=x.kind, label=_label(x), text=t, why=why,
                           region=x.region, mode=x.mode, pinned=pinned or x.mode == 'keep'))

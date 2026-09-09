@@ -321,6 +321,44 @@ def test_an_untrusted_canvas_executes_nothing(client, route, body):
     r = client.post(route, json={'path': p, **body})
     assert r.status_code == 403 and 'trust' in r.json()['error']
 
+@pytest.mark.parametrize('question', [
+    'connect series to __import__("os").environ.setdefault("CV_ESCAPED", "1")',
+    'embed the cost table',
+])
+def test_the_helper_is_not_a_way_round_trust(client, question):
+    "A turn is a way of asking, not a way past the gate the direct routes hold."
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    with client.stream('POST', '/canvas/ask/stream',
+                       json={'path': p, 'question': question, 'id': 'sf1'}) as r:
+        body = b''.join(r.iter_bytes()).decode()
+    assert 'trusted to run' in body, body[:400]
+    assert os.environ.get('CV_ESCAPED') is None
+    assert 'cac' not in client.get('/canvas/open', params={'path': p}).json()['names']
+
+def test_the_helper_still_answers_and_writes_prose_untrusted(client):
+    "The gate is on running, not on the turn: prose a document has not trusted is still written."
+    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    client.get('/canvas/open', params={'path': p, 'fresh': 1})
+    with client.stream('POST', '/canvas/ask/stream',
+                       json={'path': p, 'question': 'what is a brick?', 'id': 'sf1'}) as r:
+        body = b''.join(r.iter_bytes()).decode()
+    assert 'trusted to run' not in body and 'event: chunk' in body
+
+def test_a_trusted_canvas_lets_the_helper_wire_a_port(client):
+    "The other side of the gate: once trusted, the same question does resolve."
+    p = opened(client, 'a-sales-funnel.canvas.md')
+    with client.stream('POST', '/canvas/ask/stream',
+                       json={'path': p, 'question': 'connect stages to stages', 'id': 'sf1'}) as r:
+        body = b''.join(r.iter_bytes()).decode()
+    assert 'trusted to run' not in body and '"ok": true' in body
+
+def test_the_wiring_route_answers_for_a_brick_it_can_reach(client):
+    "`/canvas/wire?src=` reached for a name that was never bound here, and answered 500 to every call."
+    r = client.get('/canvas/wire', params={'src': 'leela_bricks:thrifty.costs'})
+    assert r.status_code == 200 and r.json()['ok'], r.text
+    assert client.get('/canvas/wire', params={'src': 'nobody:nothing'}).json()['ok'] is False
+
 def test_a_component_writing_a_name_reruns_the_document(client):
     p = opened(client, 'a-sales-funnel.canvas.md')
     stages = [{'name': 'Leads', 'value': 1000}, {'name': 'Won', 'value': 500}]

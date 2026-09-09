@@ -200,10 +200,13 @@ def place_diff(
         doc.bricks.pop(at)
         raw = get(_list(slot.attrs.get('paths')), slot.attrs.get('left', ''),
                   slot.attrs.get('right', ''))
-        made = []
-        for n, (path, text) in enumerate(hunks(raw).items()):
+        made, cut = [], hunks(raw)
+        #: `_dids`, not the basename: two changed files called `app.py` would otherwise share an id,
+        #: and `by_id` would resolve both to the first.
+        dids = _dids(list(cut))
+        for n, (path, text) in enumerate(cut.items()):
             add, rm = diff_stat(text)
-            made.append(Brick('diff', text, id=f'{slot.id}-{Path(path).name}',
+            made.append(Brick('diff', text, id=f'{slot.id}-{dids[path][2:]}',
                               attrs={'path': path, 'added': str(add), 'removed': str(rm)}))
             doc.bricks.insert(at + n, made[-1])
         loose = set(coverage(doc, [b.attrs['path'] for b in made])['unclaimed'])

@@ -10,19 +10,19 @@ __all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus']
 S = MenuItem
 MENUS = {
     'files': L(S('quick_open'), S('open_folder'), S('add_root'), S(), S('new_file'), S('new_notebook'),
-               S('new_dir'), S(), S('nbdev_prepare'), S('fastship'),
+               S('new_canvas'), S('new_dir'), S(), S('nbdev_prepare'), S('fastship'),
                S(), S('code_search'), S('refresh_files')),
     'file': L(S('open'), S('show_diff'), S('git_blame'), S(), S('git_stage'), S('git_unstage'),
               S('git_discard', 'warn'), S('git_ignore'), S(), S('copy_rel_path'), S('copy_abs_path'),
-              S(), S('clip_to_vault'), S(), S('new_file'),
-              S('new_dir'), S(), S('file_cut'), S('file_copy'), S('file_paste'),
+              S(), S('clip_to_vault'), S(), S('new_file'), S('new_notebook'),
+              S('new_canvas'), S('new_dir'), S(), S('file_cut'), S('file_copy'), S('file_paste'),
               S('file_duplicate'), S(), S('rename'), S('delete', 'warn')),
-    'folder': L(S('add_folder'), S('git_stage'), S('git_ignore'), S(), S('new_file'), S('new_dir'), S(),
+    'folder': L(S('add_folder'), S('git_stage'), S('git_ignore'), S(), S('new_file'), S('new_notebook'), S('new_canvas'), S('new_dir'), S(),
                 S('copy_rel_path'), S('copy_abs_path'), S(),
                 S('clip_to_vault'), S(), S('file_cut'), S('file_copy'), S('file_paste'),
                 S('file_duplicate'), S(), S('rename'), S('delete', 'warn'), S(), S('open_folder'), S('add_root'),
                 S('refresh_files')),
-    'root': L(S('new_file'), S('new_dir'), S(), S('copy_abs_path'), S(), S('remove_root', 'warn'),
+    'root': L(S('new_file'), S('new_notebook'), S('new_canvas'), S('new_dir'), S(), S('copy_abs_path'), S(), S('remove_root', 'warn'),
               S(), S('open_folder'), S('add_root'), S('refresh_files')),
     'editor': L(S('complete'), S('ai_complete'), S('show_docs'), S('ask_ai'), S('summarise'), S(), S('find_similar'),
                 S('code_map'), S('git_blame'), S(), S('extract_variable'), S('extract_method'),
@@ -72,7 +72,7 @@ if _missing := sorted({i.action for rows in MENUS.values() for i in rows if i.ac
 #: rather than made a menu of its own. Rows are keymap actions, AppKit selectors, or JS.
 BAR = (
     ('__app__', L(S('settings'), S('setup_models'))),
-    ('File',    L(S('new_file'), S('new_notebook'), S('new_dir'), S(),
+    ('File',    L(S('new_file'), S('new_notebook'), S('new_canvas'), S('new_dir'), S(),
                   S('quick_open'), S('open_folder'), S('add_root'), S('recent_tabs'), S(),
                   S('save'), S('save_all'), S('reload_file'), S(), S('close_tab'), S('close_others'),
                   S('close_right'), S('close_saved'), S('remove_root'), S(),

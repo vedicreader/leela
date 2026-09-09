@@ -129,6 +129,29 @@ def budget_value(v, lo, hi):
     except (TypeError, ValueError): return 'auto'
     return n if lo <= n <= hi else 'auto'
 
+#: A dynamic document. Named here rather than imported: `Tab` must not drag the canvas block in.
+CANVAS_SUFFIX = '.canvas.md'
+#: What a new one opens as, so a person is never handed an empty file and left to guess the syntax.
+CANVAS_STARTER = '''---
+title: {title}
+mode: make
+---
+
+# {title}
+
+Write here. Prose is prose; everything else is a brick.
+
+```canvas code id={cid}
+tokens = 1200
+cost = tokens / 1e6 * 3.0
+cost
+```
+
+```canvas ask id={aid}
+What should this document work out?
+```
+'''
+
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
@@ -160,6 +183,7 @@ class Tab(Dictable):
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
         if self.path.endswith('.ipynb'): self.kind = 'notebook'
+        elif self.path.endswith(CANVAS_SUFFIX): self.kind = 'canvas'
         elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
         elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
         elif Path(self.path).suffix.lower() in AUDIO_EXTS: self.kind = 'audio'
@@ -557,6 +581,11 @@ class Workspace:
         if p.suffix.lower() == '.ipynb':
             Notebook.blank(p).save(p, sandbox=self.fs)
             return self.fs.entry(p)
+        if str(p).endswith(CANVAS_SUFFIX):
+            from uuid import uuid4
+            title = p.name[:-len(CANVAS_SUFFIX)].replace('-', ' ').replace('_', ' ').strip() or 'untitled'
+            body = CANVAS_STARTER.format(title=title, cid=uuid4().hex[:8], aid=uuid4().hex[:8])
+            return self.fs.write(p, body)
         return self.fs.touch(p)
     def close(self, i=None):
         i = self.active if i is None else i

@@ -23,11 +23,12 @@ def _src(p):
     t = p.read_text()
     return t if t.endswith('\n') else t + '\n'
 
-def page(path, files, host):
+def page(path, files, host, embed=False):
+    "The canvas page. `embed` is the IDE tab, whose own strip already names the document."
     head = Head(Meta(charset='utf-8'), Meta(name='viewport', content='width=device-width,initial-scale=1'),
                 Title('canvas'), Link(rel='stylesheet', href='/canvas/css'))
     bar = Header(cls='cv-bar')(
-        Div(cls='cv-doctitle')(Select(id='cv-file')),
+        Div(cls='cv-doctitle', hidden=embed)(Select(id='cv-file')),
         Span('make', id='cv-mode', cls='cv-pill'),
         Span(cls='cv-keys')(NotStr('<kbd>/</kbd> blocks &nbsp;<kbd>⌘K</kbd> ask')),
         Div(cls='cv-tools')(
@@ -46,7 +47,7 @@ def page(path, files, host):
         Span(cls='cv-trust-say')('This document has code in it. ',
             B(id='cv-trust-count')('0'), Span(' cells will run.')),
         Button('run it', id='cv-trust-run', cls='cv-tbtn cv-trust-go'))
-    body = Body(data_host=host, data_theme='light')(
+    body = Body(data_host=host, data_theme='light', data_embed='1' if embed else '')(
         bar, trust, Main(cls='cv-wrap margin-open')(Article(id='cv-doc', cls='cv-doc'), margin),
         Div(id='cv-inline', hidden=True)(Input(), Div(cls='cv-isel')),
         Div(id='cv-wire', hidden=True), Script(src='/canvas/js'))

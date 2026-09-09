@@ -49,6 +49,15 @@ class Ask:
     palette: list = field(default_factory=list)
     trail: list = field(default_factory=list)
     mode: str = 'make'
+    #: The `Open` this question is against. It carries the trust, so `apply` can refuse.
+    doc: object = None
+    def apply(self, op):
+        "Every edit a turn makes. An untrusted document runs nothing, whoever asked and however."
+        from .ops import apply_op, runs_code
+        if self.doc is not None and not self.doc.trusted and runs_code(op):
+            return {'ok': False, 'error': 'this document has not been trusted to run; trust it first',
+                    'refused': op.get('op', '')}
+        return apply_op(self.canvas, self.runtime, op)
     def near(self):
         "The brick the question came from, and the two either side of it."
         i = self.canvas.index(self.brick_id)
@@ -219,7 +228,13 @@ class Scripted(Helper):
         for part in textwrap.wrap(text, 90): yield 'chunk', {'text': part + ' '}
 
 class Agentic(Helper):
-    "The real turn. `Agent` is ramabana's, and canvas mode is what it knows about a canvas."
+    """The real turn. `Agent` is ramabana's, and canvas mode is what it knows about a canvas.
+
+    Registering the tools here does not reach a backend that is already running: it hands its tool
+    list to the engine once, so a live Claude Code turn is told the canvas tools exist and gets
+    `KeyError` from every call. Canvas mode has to be on before the backend is built, which is a
+    tab's lifetime rather than a turn's.
+    """
     name = 'agentic'
     #: The registry as it was before `open`, so `close` restores it rather than approximating it.
     _before = None
@@ -232,6 +247,7 @@ class Agentic(Helper):
         self._before = list(self.agent.registry.tools)
         push(self.agent, 'canvas')
         for nm in TOOLS: self.agent.registry.tool(self._tool(nm, ask))
+        self.agent._forget()
         return self.agent
 
     def close(self):
@@ -245,8 +261,7 @@ class Agentic(Helper):
         self.agent._forget()
 
     def _tool(self, nm, ask):
-        from .ops import apply_op
-        def f(**kw): return apply_op(ask.canvas, ask.runtime, {'op': nm.removeprefix('canvas_'), **kw})
+        def f(**kw): return ask.apply({'op': nm.removeprefix('canvas_'), **kw})
         f.__name__ = nm
         f.__doc__ = f'{nm}. See `read_skill("canvas")` for what a canvas is and how to work in one.'
         return f
@@ -262,8 +277,17 @@ class Agentic(Helper):
         finally: self.close()
 
     def _prompt(self, ask):
-        "The question, with where it was asked from. The skill says what to do with that."
-        bits = [ask.question]
+        """The question, the document it was asked of, and the tools that edit it.
+
+        Naming the document is not decoration: given only the question, a model with the whole
+        workspace toolset in reach answered `add a note` by opening a new notebook and calling
+        `add_cell` on it. The canvas is the thing being edited, and nothing else said so.
+        """
+        doc = getattr(ask.canvas, 'path', '') or 'this canvas'
+        bits = [f'You are working inside the open canvas `{doc}`. Edit it with the `canvas_*` tools '
+                f'and nothing else: {", ".join(TOOLS)}. Do not create or edit notebooks, scripts or '
+                'other files to answer this. Call `read_skill("canvas")` if you need the vocabulary.'
+                f'\n\n{ask.question}']
         if ask.brick_id: bits.append(f'\n\nasked from brick `{ask.brick_id}`')
         if ask.selection: bits.append(f', with this selected:\n\n> {ask.selection}')
         if ask.trail: bits.append('\n\ntrail: ' + '; '.join(t['question'][:60] for t in ask.trail[-4:]))

@@ -1,4 +1,4 @@
-"Drafting the prose a literate page needs. The rules come from ramabana."
+"Drafting the prose a literate page needs. The rules are the installed writing skills."
 
 from __future__ import annotations
 from importlib.resources import files
@@ -69,7 +69,7 @@ def explain(
     kinds=('snippet', 'diff'),    # which brick kinds to draft
     overwrite=False,              # redraft a brick that already has a body
     sentences=3,                  # how many sentences to ask for
-    rules=None,                   # the writing rules, else read from ramabana
+    rules=None,                   # the writing rules, else read from the installed skills
     on=None,                      # called with each brick as it is drafted
 ):
     "Draft the missing prose into the document, and return the bricks it changed."

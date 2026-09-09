@@ -13,33 +13,17 @@ from .explain import explain
 from .layout import arrange
 from .lit import lit
 from .helper import Ask, helper_for
-from .ops import apply_op
-from .store import Stale, Untrusted, brick_host, canvas_dir, store_for
+from .ops import apply_op, runs_code
+from .store import SUFFIX, Stale, Untrusted, brick_host, canvas_dir, store_for
 from . import ui
 
 __all__ = ['CAPS', 'connect', 'page', 'canvas_path', 'Outside', 'SUFFIX']
 
 CAPS = ('fs', 'ai', 'pool')   # `pool` is the kernel a canvas's code runs in
-#: What a canvas file is called. The document is markdown, so anything can read it.
-SUFFIX = '.canvas.md'
 
 def _settle(o, touched_names, skip=()):
     "Rerun what the change made stale, and re-resolve every binding that reads it."
     return o.runtime.react(o.canvas.bricks, touched_names, skip=skip)
-
-#: Kinds whose body is code the runtime executes.
-RUNNING_KINDS = ('code', 'data')
-
-def _runs_code(o, op):
-    "Whether this op would execute or evaluate something in the document's namespace."
-    op = op or {}
-    kind = op.get('op')
-    if kind in ('run', 'values'): return True
-    if kind == 'bind': return bool(op.get('expr') or op.get('binds'))
-    if kind == 'insert':
-        return bool((op.get('body') or '').strip()) and op.get('kind') in RUNNING_KINDS \
-            or bool(op.get('binds'))
-    return False
 
 def _ports(o):
     return {b.id: o.runtime.bindings(b) for b in o.canvas if b.binds}
@@ -73,7 +57,7 @@ def connect(app, ctx=None):
     @rt('/canvas/wire')
     def canvas_wire(src: str, base: str = ''):
         "The wiring this brick ships, for a code brick above it. `base` adds the remote fallback."
-        got = wire(src, libs, base)
+        got = brick_wire(src, libs, base)
         return got if got.get('ok') else fail(got.get('error', 'no wiring'))
     @rt('/canvas/state')
     def canvas_state(path: str):
@@ -147,7 +131,8 @@ def connect(app, ctx=None):
     def canvas_index(req):
         files = store().files()
         path = req.query_params.get('path') or (str(files[0]) if files else '')
-        return ui.page(path, [str(p) for p in files], brick_host())
+        return ui.page(path, [str(p) for p in files], brick_host(),
+                       embed=bool(req.query_params.get('embed')))
 
     @rt('/canvas/js')
     def canvas_js(): return PlainTextResponse(ui.bundle(), media_type='text/javascript')
@@ -161,7 +146,11 @@ def connect(app, ctx=None):
 
     @rt('/canvas/file')
     def canvas_file(path: str):
-        "A file a brick embeds, resolved under the canvas directory and nowhere else."
+        "A file a brick embeds, resolved through the same gate a document is, and nowhere else."
+        fs = ctx_fs()
+        if fs is not None and getattr(fs, 'roots', None):
+            try: return FileResponse(fs._check(path, must_exist=True))
+            except Exception: return fail('not under an open folder', 404)
         root = Path(canvas_dir()).resolve()
         p = (root/path).resolve()
         if not p.is_relative_to(root) or not p.is_file(): return fail('not under the canvas directory', 404)
@@ -195,7 +184,7 @@ def connect(app, ctx=None):
         d = await req.json()
         try: o = store().get(canvas_path(ctx_fs(), d['path']))
         except Exception as e: return fail(e)
-        if _runs_code(o, d['op']):
+        if runs_code(d['op']):
             try: o.must_trust()
             except Untrusted as e: return fail(f'{e}; trust it first', 403)
         r = await off_loop(apply_op, o.canvas, o.runtime, d['op'])
@@ -242,7 +231,8 @@ def connect(app, ctx=None):
         try: o.must_trust()
         except Untrusted as e: return fail(f'{e}; trust it first', 403)
         await off_loop(o.runtime.set, d['name'], d['value'])
-        settled = await off_loop(_settle, o, [d['name']], d.get('from', ''))
+        #: A list, not the bare string: `react` tests `skip` for membership.
+        settled = await off_loop(_settle, o, [d['name']], [f] if (f := d.get('from', '')) else [])
         return JSONResponse({'ok': True, 'name': d['name'], **settled})
 
     @rt('/canvas/save')
@@ -275,7 +265,7 @@ def connect(app, ctx=None):
         turn = d.get('turn') or 'turn'
         ask = Ask(question=d.get('question', ''), canvas=o.canvas, runtime=o.runtime,
                   brick_id=d.get('id', ''), selection=d.get('selection', ''), nth=int(d.get('nth') or 0),
-                  palette=palette(libs)['bricks'],
+                  palette=palette(libs)['bricks'], doc=o,
                   trail=list(o.trail), mode=o.canvas.meta.get('mode', 'make'))
         o.remember(ask.question, ask.brick_id, ask.selection)
         helper = helper_for(_assistant(ctx))
@@ -287,11 +277,13 @@ def connect(app, ctx=None):
                 async for event, data in helper.turn(ask, q):
                     if event == 'chunk': reply += data['text']
                     if event == 'answer':
-                        r = apply_op(o.canvas, o.runtime, {'op': 'answer', 'of': ask.brick_id, 'markdown': data['markdown']})
+                        r = ask.apply({'op': 'answer', 'of': ask.brick_id, 'markdown': data['markdown']})
                         ops.append(r); yield sse('op', r)
                         continue
                     if event == 'op':
-                        r = apply_op(o.canvas, o.runtime, {**data, 'op': data['op']})
+                        #: The same gate the direct routes pass. The helper is a way of asking, not
+                        #: a way round the trust a person has not given.
+                        r = ask.apply({**data, 'op': data['op']})
                         if r.get('ok') and data.get('wire'): r = _wire_from_host(o, r, libs)
                         ops.append(r); yield sse('op', r)
                         continue

@@ -177,22 +177,29 @@ function cvTheme(next) {
 }
 
 async function cvBoot() {
-  const list = await (await fetch('/canvas/list')).json();
-  cv.files = list.files || [];
-  const sel = $$('#cv-file');
-  sel.innerHTML = cv.files.map(f => `<option value="${cvEsc(f)}">${cvEsc(f.split('/').pop().replace('.canvas.md', ''))}</option>`).join('');
-  sel.onchange = () => cvOpen(sel.value);
   const q = new URLSearchParams(location.search);
+  //: Embedded, the IDE's tab strip names the document and owns switching between them, so the
+  //: picker is neither drawn nor filled: one frame shows the one document its tab was opened on.
+  cv.embed = document.body.dataset.embed === '1';
+  const sel = $$('#cv-file');
+  if (!cv.embed) {
+    const list = await (await fetch('/canvas/list')).json();
+    cv.files = list.files || [];
+    sel.innerHTML = cv.files.map(f => `<option value="${cvEsc(f)}">${cvEsc(f.split('/').pop().replace('.canvas.md', ''))}</option>`).join('');
+    sel.onchange = () => cvOpen(sel.value);
+  }
   const want = q.get('path') || cv.files[0];
   if (!want) return cvStatus('no canvases found', 'bad');
-  sel.value = want;
+  if (!cv.embed) sel.value = want;
   await cvOpen(want, q.get('fresh'));
   $$('#cv-runall').onclick = cvRunAll;
   $$('#cv-save').onclick = cvSave;
   $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
   $$('#cv-toggle').onclick = () => cvMargin();
-  cvTheme(localStorage.getItem('cv-theme') || 'light');
+  //: Embedded, the theme is the IDE's, handed over on the URL rather than read from a store the
+  //: frame keeps separately and would disagree with.
+  cvTheme(q.get('theme') || localStorage.getItem('cv-theme') || 'light');
   cvMargin(true);
   $$('#cv-askform').onsubmit = async ev => {
     ev.preventDefault();

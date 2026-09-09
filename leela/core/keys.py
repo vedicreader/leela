@@ -10,7 +10,7 @@ __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAUL
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
-SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term')
+SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas')
 
 WEB_ONLY_SCOPES = ()
 
@@ -146,6 +146,7 @@ DEFAULTS = L(
     Key('run_file',         'mod+alt+enter',  'global', 'run this script',    'toast'),
     Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
+    Key('new_canvas',       'hyper+j',       'global', 'new canvas'),
     Key('notebook_language', '',           'global', 'notebook language'),
     Key('add_folder',       '',              'global', 'stage this folder, ignores first'),
     Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),

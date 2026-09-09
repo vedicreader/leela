@@ -4,9 +4,24 @@ from __future__ import annotations
 import re
 from .doc import Brick, KINDS
 
-__all__ = ['apply_op', 'OPS']
+__all__ = ['apply_op', 'runs_code', 'OPS', 'RUNNING_KINDS']
 
 OPS = ('insert', 'replace', 'remove', 'bind', 'move', 'kind', 'answer', 'replace_selection', 'run', 'values', 'read')
+#: Kinds whose body is code the runtime executes.
+RUNNING_KINDS = ('code', 'data')
+
+def runs_code(op):
+    "Whether this op would execute or evaluate anything in the document's namespace."
+    op = op or {}
+    kind = op.get('op')
+    if kind in ('run', 'values'): return True
+    #: A wired embed inserts the snippet its package ships as a code brick, and runs it.
+    if op.get('wire'): return True
+    if kind == 'bind': return bool(op.get('expr') or op.get('binds'))
+    if kind == 'insert':
+        return bool((op.get('body') or '').strip()) and op.get('kind') in RUNNING_KINDS \
+            or bool(op.get('binds'))
+    return False
 
 def _at(canvas, op):
     "Where a new brick goes: after a named brick, at an index, or at the end."

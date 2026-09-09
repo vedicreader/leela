@@ -559,6 +559,17 @@ def test_a_filled_diff_no_bundle_claims_says_so_on_the_brick():
     assert 'claimed' not in by['a.py'].attrs
     assert by['b.py'].attrs['claimed'] == 'no'
 
+def test_two_changed_files_with_one_basename_get_ids_of_their_own():
+    "The basename alone collided, so `by_id` resolved both hunks to whichever came first."
+    doc = Canvas.parse(SLOTDOC.replace("paths=a.py,b.py", "paths=x/app.py,y/app.py"))
+    raw = ('diff --git a/x/app.py b/x/app.py\n@@ -1 +1 @@\n-a\n+b\n'
+           'diff --git a/y/app.py b/y/app.py\n@@ -1 +1 @@\n-c\n+d\n')
+    place_diff(doc, lambda paths, left, right: raw)
+    got = doc.of('diff')
+    ids = [b.id for b in got]
+    assert len(set(ids)) == len(ids), ids
+    assert [doc.by_id(i).attrs['path'] for i in ids] == ['x/app.py', 'y/app.py']
+
 def test_a_diff_brick_with_a_body_is_left_alone():
     "Only an empty brick is a slot. A pasted diff is content, and is never overwritten."
     doc = Canvas.parse(SLOTDOC.replace('left=HEAD~1 right=HEAD\n```', 'left=x\n' + RAW + '```'))

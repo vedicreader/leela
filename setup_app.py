@@ -17,7 +17,7 @@ VENV = ROOT/'packaging'/'.app-venv'
 APP_EXTRAS = ('desktop', 'macapp')   # the gateway is a dependency now, not an extra
 #: Written into the bundle at build; read back to tell a stale install from a current one.
 STAMP = 'leela-build.json'
-# Framework builds on macOS, by likely project version (3.13 leads), not newest: a kernel borrows Leela's `sys.path` only from its own minor version (`blocks/runtime/support.py`).
+# Framework builds on macOS, by likely project version (3.13 leads), not newest: a kernel borrows Leela's `sys.path` only from its own minor version (`kunda.support.HOST_PY`).
 # uv and pyenv are excluded: both are python-build-standalone with empty `PYTHONFRAMEWORK`, which py2app cannot embed.
 FRAMEWORK_CANDIDATES = (
     '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13',

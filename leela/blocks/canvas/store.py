@@ -7,7 +7,11 @@ from fastcore.all import L, Path
 from .doc import Canvas
 from .live import Runtime, runtime_for
 
-__all__ = ['Open', 'Store', 'store_for', 'canvas_dir', 'brick_host', 'Stale', 'Untrusted']
+__all__ = ['Open', 'Store', 'store_for', 'canvas_dir', 'brick_host', 'Stale', 'Untrusted', 'SUFFIX']
+
+#: What a canvas file is called. `app.SUFFIX` re-exports it; `workspace.CANVAS_SUFFIX` is the
+#: same string said where `Tab` can reach it without importing this block.
+SUFFIX = '.canvas.md'
 
 class Stale(Exception):
     "A write against a revision the document has moved past."
@@ -51,10 +55,15 @@ class Open:
 
 class Store:
     "Every canvas one workspace has open, keyed by resolved path."
-    def __init__(self, pool=None): self.open, self.pool = {}, pool
+    def __init__(self, pool=None, fs=None): self.open, self.pool, self.fs = {}, pool, fs
     def files(self, d=None):
+        "Documents to offer: the workspace's own where a folder is open, else the examples."
+        if d is None and getattr(self.fs, 'roots', None):
+            #: `walk` is the sandbox's own cached, skip-aware crawl. Globbing the roots here would
+            #: descend into `.venv` and `node_modules` on every request.
+            return L(sorted(p for p in self.fs.walk() if str(p).endswith(SUFFIX)))
         d = Path(d or canvas_dir())
-        return L(sorted(d.glob('*.canvas.md'))) if d.is_dir() else L()
+        return L(sorted(d.glob(f'*{SUFFIX}'))) if d.is_dir() else L()
     @staticmethod
     def key(path):
         "Two spellings of one file are one entry, so a second spelling cannot fork the namespace."
@@ -82,6 +91,8 @@ _STORES: dict = {}
 def store_for(fs=None, pool=None):
     "The store belonging to `fs`'s workspace."
     key = tuple(sorted(str(r) for r in (getattr(fs, 'roots', None) or ())))
-    if key not in _STORES: _STORES[key] = Store(pool=pool)
-    elif pool is not None and _STORES[key].pool is None: _STORES[key].pool = pool
+    if key not in _STORES: _STORES[key] = Store(pool=pool, fs=fs)
+    else:
+        if pool is not None and _STORES[key].pool is None: _STORES[key].pool = pool
+        if fs is not None: _STORES[key].fs = fs
     return _STORES[key]
