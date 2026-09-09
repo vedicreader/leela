@@ -2220,9 +2220,10 @@ def own_fd2(capfd):
 def _captured_write(text, tries=40):
     """Capture one native write, retrying a pass the pump thread lost.
 
-    `_Tee.stop` restores the descriptor, closes the read end, and only then joins the thread that
-    drains it, so bytes still in the pipe go when the machine is too busy to schedule the pump
-    first. That is ramabana's to fix. Retrying tests the same fact here without also testing how
+    `_Tee.stop` in ramabana 0.1.33 restores the descriptor, closes the read end, and only then
+    joins the thread that drains it, so bytes still in the pipe go when the machine is too busy to
+    schedule the pump first. Fixed upstream by joining before the close; drop the retry at the
+    ramabana bump that carries it. Retrying tests the same fact here without also testing how
     loaded the machine is; a capture that is really broken never fills.
     """
     for _ in range(tries):
