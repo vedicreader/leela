@@ -570,12 +570,13 @@ def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
         body = lambda i: {'i': i, 'id': None, 'source': f'q{i} = {i}', 'path': path}
         with client.stream('POST', '/nb/run/stream', json=body(0)) as r:   # this one starts the kernel
             for _ in r.iter_lines(): pass
-        began = time.perf_counter()
-        for i in range(1, 6):
-            with client.stream('POST', '/nb/run/stream', json=body(i)) as r:
-                assert any('event: done' in line for line in r.iter_lines())
-        took = time.perf_counter() - began
-    # The regression this guards adds the full 120ms poll to each of the five cells, so it lands
-    # near a second. A budget just above the observed cost made this fail on a loaded machine
-    # instead, which is a different fact about the world.
-    assert took < .7, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'
+        # The best of three, not one run: the regression this guards costs every cell the full
+        # 120ms poll, so it cannot hide in the fastest pass, while a busy machine slows all of them.
+        def five():
+            began = time.perf_counter()
+            for i in range(1, 6):
+                with client.stream('POST', '/nb/run/stream', json=body(i)) as r:
+                    assert any('event: done' in line for line in r.iter_lines())
+            return time.perf_counter() - began
+        took = min(five() for _ in range(3))
+    assert took < .5, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'

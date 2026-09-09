@@ -94,7 +94,11 @@ def _no_warm_probes(monkeypatch):
 @pytest.fixture(autouse=True)
 def _isolate_vault(monkeypatch, tmp_path_factory):
     "Keep vault I/O out of ~/.vishalakshi and skip real encoders in the suite."
-    vault = _pathlib.Path(TEST_CONFIG_HOME)/'vaults'/tmp_path_factory.mktemp('v').name
+    #: Keyed by worker as well as by name. `mktemp` numbers from zero inside each xdist worker, so
+    #: the basename alone gave all four of them `vaults/v0` and one `vault.db`; a shelf is named
+    #: for the workspace root, and two workers ingesting into `proj` counted each other's documents.
+    worker = _os.environ.get('PYTEST_XDIST_WORKER', 'master')
+    vault = _pathlib.Path(TEST_CONFIG_HOME)/'vaults'/worker/tmp_path_factory.mktemp('v').name
     vault.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(vault/'vault.db'))
     # The search telemetry vault is a second file, and a route that records one search session

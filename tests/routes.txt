@@ -96,7 +96,6 @@ GET,POST /browser/ready
 GET,POST /browser/state
 GET,POST /browser/tabs
 GET,POST /canvas
-GET,POST /canvas/ask/stream
 GET,POST /canvas/brick
 GET,POST /canvas/changes
 GET,POST /canvas/context
@@ -105,7 +104,6 @@ GET,POST /canvas/draft
 GET,POST /canvas/emit
 GET,POST /canvas/file
 GET,POST /canvas/js
-GET,POST /canvas/list
 GET,POST /canvas/op
 GET,POST /canvas/open
 GET,POST /canvas/page
@@ -116,7 +114,6 @@ GET,POST /canvas/run
 GET,POST /canvas/runall
 GET,POST /canvas/save
 GET,POST /canvas/state
-GET,POST /canvas/steer
 GET,POST /canvas/trust
 GET,POST /canvas/value
 GET,POST /canvas/wire

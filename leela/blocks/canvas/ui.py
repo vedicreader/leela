@@ -23,12 +23,11 @@ def _src(p):
     t = p.read_text()
     return t if t.endswith('\n') else t + '\n'
 
-def page(path, files, host, embed=False):
-    "The canvas page. `embed` is the IDE tab, whose own strip already names the document."
+def page(path, host):
+    "The canvas page, as an IDE tab loads it. The tab strip names the document, so nothing here does."
     head = Head(Meta(charset='utf-8'), Meta(name='viewport', content='width=device-width,initial-scale=1'),
                 Title('canvas'), Link(rel='stylesheet', href='/canvas/css'))
     bar = Header(cls='cv-bar')(
-        Div(cls='cv-doctitle', hidden=embed)(Select(id='cv-file')),
         Span('make', id='cv-mode', cls='cv-pill'),
         Span(cls='cv-keys')(NotStr('<kbd>/</kbd> blocks &nbsp;<kbd>⌘K</kbd> ask')),
         Div(cls='cv-tools')(
@@ -37,17 +36,15 @@ def page(path, files, host, embed=False):
             Button('save', id='cv-save', cls='cv-tbtn', title='mod+s'),
             Button('◐', id='cv-theme', cls='cv-tbtn', title='light or dark'),
             Button('✦ helper', id='cv-toggle', cls='cv-tbtn', title='mod+j')))
+    #: One box. The turn, its steps and its approvals are the agent pane's.
     margin = Aside(cls='cv-margin')(
-        H4('helper'), Div(id='cv-thread'),
-        Div(id='cv-steer', hidden=True)(Span('steer this turn'), Input(placeholder='…and use the local prices')),
-        Form(id='cv-askform')(Input(placeholder='ask the document…')),
-        Div(id='cv-trail'))
+        H4('ask'), Form(id='cv-askform')(Input(placeholder='ask the document…')))
     #: A canvas is markdown from anywhere, so its code waits behind one deliberate click.
     trust = Div(id='cv-trust', cls='cv-trust', hidden=True)(
         Span(cls='cv-trust-say')('This document has code in it. ',
             B(id='cv-trust-count')('0'), Span(' cells will run.')),
         Button('run it', id='cv-trust-run', cls='cv-tbtn cv-trust-go'))
-    body = Body(data_host=host, data_theme='light', data_embed='1' if embed else '')(
+    body = Body(data_host=host, data_theme='light')(
         bar, trust, Main(cls='cv-wrap margin-open')(Article(id='cv-doc', cls='cv-doc'), margin),
         Div(id='cv-inline', hidden=True)(Input(), Div(cls='cv-isel')),
         Div(id='cv-wire', hidden=True), Script(src='/canvas/js'))

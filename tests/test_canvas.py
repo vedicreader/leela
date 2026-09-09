@@ -13,7 +13,7 @@ from fasthtml.common import fast_app
 from leela.blocks.canvas.app import connect
 from leela.blocks.canvas.store import store_for
 from leela.blocks.canvas.doc import Brick, Canvas, defs_of, downstream, order, reads_of
-from leela.blocks.canvas.helper import TOOLS, Ask, Scripted
+from leela.blocks.canvas.helper import TOOLS
 from leela.blocks.canvas.live import Runtime
 from leela.blocks.canvas.ops import apply_op
 from leela.blocks.canvas.store import brick_host
@@ -173,57 +173,6 @@ def test_an_answer_replaces_the_reply_it_already_wrote_rather_than_stacking():
     replies = [b for b in c if b.kind == 'reply']
     assert len(replies) == 1 and replies[0].body == 'second'
 
-# --- the helper ---
-
-def turn(question, **kw):
-    c, r = kw.pop('canvas', None) or canvas(), kw.pop('runtime', None) or Runtime()
-    r.run_all(c.bricks)
-    ask = Ask(question=question, canvas=c, runtime=r, **kw)
-    async def go(): return [e async for e in Scripted().turn(ask)]
-    return c, r, asyncio.run(go())
-
-PALETTE = [{'name': 'thrifty.costs', 'src': 'lego.bricks:thrifty.costs', 'title': 'Cost table', 'group': 'thrifty',
-            'doc': 'Monthly and per-request cost per option.', 'height': 220},
-           {'name': 'learn.cell', 'src': 'lego.bricks:learn.cell', 'title': 'Animal cell', 'group': 'learn',
-            'doc': 'An animal cell. Click an organelle.', 'height': 420}]
-
-def test_the_helper_edits_the_document_through_ops_and_nothing_else():
-    _, _, events = turn('embed the cost table', palette=PALETTE)
-    ops = [d for e, d in events if e == 'op']
-    assert ops and ops[0]['op'] == 'insert' and ops[0]['attrs']['src'] == 'lego.bricks:thrifty.costs'
-
-def test_which_component_to_embed_is_scored_against_what_the_host_publishes():
-    "A package that ships a new brick is reachable the day it ships, with no table kept here."
-    _, _, events = turn('embed the animal cell', palette=PALETTE)
-    assert next(d for e, d in events if e == 'op')['attrs']['src'] == 'lego.bricks:learn.cell'
-    _, _, events = turn('embed something nobody has', palette=PALETTE)
-    assert not [d for e, d in events if e == 'op']
-
-def test_a_rewrite_touches_only_the_selection_it_was_given():
-    c = Canvas.parse('```canvas note id=n\nIt is really just a very small thing. It works.\n```\n')
-    _, _, events = turn('tighten this', canvas=c, brick_id='n', selection='It is really just a very small thing.')
-    op = next(d for e, d in events if e == 'op')
-    assert op['text'] == 'It is a small thing.' and op['was'].startswith('It is really')
-    apply_op(c, Runtime(), op)
-    assert c.by_id('n').body == 'It is a small thing. It works.'
-
-def test_steering_arrives_mid_turn_and_changes_what_the_rest_of_it_does():
-    c, r = canvas(), Runtime(); r.run_all(c.bricks)
-    ask = Ask(question='summarise this', canvas=c, runtime=r)
-    async def go():
-        q = asyncio.Queue()
-        await q.put('quiz me instead')
-        return [e async for e in Scripted().turn(ask, q)]
-    events = asyncio.run(go())
-    assert any(d.get('label') == 'steering taken' for e, d in events if e == 'step')
-    assert any(d.get('kind') == 'quiz' for e, d in events if e == 'op')
-
-def test_the_trail_keeps_the_last_dozen_questions_and_no_more():
-    from leela.blocks.canvas.store import Open
-    o = Open(canvas=canvas())
-    for i in range(20): o.remember(f'q{i}', 'c1')
-    assert len(o.trail) == 12 and o.trail[-1]['question'] == 'q19'
-
 # --- the shipped canvases ---
 
 def _needs_host(brick, outputs):
@@ -256,37 +205,56 @@ def test_every_component_a_canvas_embeds_resolves_to_a_real_brick(path):
         assert lib is not None, f'no library answers {src!r}; is `extensions/bricks` installed?'
         assert row['name'] == src.split(':', 1)[1]
 
+def _val(rt, name):
+    "One name out of the document's namespace, whichever runtime is behind it."
+    got = rt.snapshot([name]).get(name) or {}
+    return got.get('value') if got.get('ok') else None
+
+def _bound(rt, name): return (rt.snapshot([name]).get(name) or {}).get('ok', False)
+
 # --- the routes ---
 
 @pytest.fixture(scope='module')
-def client():
-    app, _ = fast_app(default_hdrs=False, pico=False, live=False)
-    connect(app, ctx=None)
-    return TestClient(app)
+def corpus(tmp_path_factory):
+    "A copy of the examples. The suite used to save over the ones in the checkout as it read them."
+    import shutil
+    d = tmp_path_factory.mktemp('canvases')
+    shutil.copytree(EXAMPLES, d/'canvas')
+    return d/'canvas'
 
-def opened(client, name, trust=True):
+@pytest.fixture(scope='module')
+def ws(corpus):
+    from leela.workspace import Workspace
+    return Workspace(roots=[str(corpus)])
+
+@pytest.fixture(scope='module')
+def client(ws):
+    from leela.app import ide_app
+    return TestClient(ide_app(ws))
+
+def opened(client, corpus, name, trust=True):
     """Open a canvas and, unless a test is about trust, say its code may run."""
-    p = str(EXAMPLES/name)
+    p = str(corpus/name)
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     if trust: assert client.post('/canvas/trust', json={'path': p}).json()['ok']
     return p
 
-def test_opening_a_canvas_reads_it_and_runs_nothing(client):
+def test_opening_a_canvas_reads_it_and_runs_nothing(client, corpus):
     "The document, its prose and its ports, with no cell executed and nothing trusted."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    p = str(corpus/'a-sales-funnel.canvas.md')
     r = client.get('/canvas/open', params={'path': p, 'fresh': 1}).json()
     assert r['ok'] and len(r['canvas']['bricks']) == 10
     assert r['runs'] == {} and r['trusted'] is False
     assert 'cac' not in r['names'], 'no cell has run, so nothing it defines is there'
 
-def test_a_trusted_canvas_runs_and_returns_its_bindings(client):
-    p = opened(client, 'a-sales-funnel.canvas.md')
+def test_a_trusted_canvas_runs_and_returns_its_bindings(client, corpus):
+    p = opened(client, corpus, 'a-sales-funnel.canvas.md')
     r = client.get('/canvas/open', params={'path': p}).json()
     assert r['trusted'] and r['ports']['sf4']['tiles']['ok'] and 'cac' in r['names']
 
-def test_an_untrusted_canvas_is_still_editable(client):
+def test_an_untrusted_canvas_is_still_editable(client, corpus):
     """Trust gates running, not writing."""
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    p = str(corpus/'a-sales-funnel.canvas.md')
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     for op in ({'op': 'insert', 'kind': 'code', 'body': ''},
                {'op': 'insert', 'kind': 'text', 'body': 'prose is not code'},
@@ -301,9 +269,9 @@ def test_an_untrusted_canvas_is_still_editable(client):
     {'op': 'values'},
     {'op': 'bind', 'id': 'sf2', 'port': 'stages', 'expr': 'stages'},
 ])
-def test_an_untrusted_canvas_evaluates_nothing(client, op):
+def test_an_untrusted_canvas_evaluates_nothing(client, corpus, op):
     "The other side of the same line: a body to run, or an expression to resolve, waits for trust."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    p = str(corpus/'a-sales-funnel.canvas.md')
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     r = client.post('/canvas/op', json={'path': p, 'op': op})
     assert r.status_code == 403 and 'trust' in r.json()['error']
@@ -314,124 +282,92 @@ def test_an_untrusted_canvas_evaluates_nothing(client, op):
     ('/canvas/emit', {'name': 'stages', 'value': []}),
     ('/canvas/op', {'op': {'op': 'values'}}),
 ])
-def test_an_untrusted_canvas_executes_nothing(client, route, body):
+def test_an_untrusted_canvas_executes_nothing(client, corpus, route, body):
     "Opening a document must not run it, and nor must anything else until somebody says so."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
+    p = str(corpus/'a-sales-funnel.canvas.md')
     client.get('/canvas/open', params={'path': p, 'fresh': 1})
     r = client.post(route, json={'path': p, **body})
     assert r.status_code == 403 and 'trust' in r.json()['error']
 
-@pytest.mark.parametrize('question', [
-    'connect series to __import__("os").environ.setdefault("CV_ESCAPED", "1")',
-    'embed the cost table',
-])
-def test_the_helper_is_not_a_way_round_trust(client, question):
-    "A turn is a way of asking, not a way past the gate the direct routes hold."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
-    with client.stream('POST', '/canvas/ask/stream',
-                       json={'path': p, 'question': question, 'id': 'sf1'}) as r:
-        body = b''.join(r.iter_bytes()).decode()
-    assert 'trusted to run' in body, body[:400]
-    assert os.environ.get('CV_ESCAPED') is None
-    assert 'cac' not in client.get('/canvas/open', params={'path': p}).json()['names']
-
-def test_the_helper_still_answers_and_writes_prose_untrusted(client):
-    "The gate is on running, not on the turn: prose a document has not trusted is still written."
-    p = str(EXAMPLES/'a-sales-funnel.canvas.md')
-    client.get('/canvas/open', params={'path': p, 'fresh': 1})
-    with client.stream('POST', '/canvas/ask/stream',
-                       json={'path': p, 'question': 'what is a brick?', 'id': 'sf1'}) as r:
-        body = b''.join(r.iter_bytes()).decode()
-    assert 'trusted to run' not in body and 'event: chunk' in body
-
-def test_a_trusted_canvas_lets_the_helper_wire_a_port(client):
-    "The other side of the gate: once trusted, the same question does resolve."
-    p = opened(client, 'a-sales-funnel.canvas.md')
-    with client.stream('POST', '/canvas/ask/stream',
-                       json={'path': p, 'question': 'connect stages to stages', 'id': 'sf1'}) as r:
-        body = b''.join(r.iter_bytes()).decode()
-    assert 'trusted to run' not in body and '"ok": true' in body
-
-def test_the_wiring_route_answers_for_a_brick_it_can_reach(client):
+def test_the_wiring_route_answers_for_a_brick_it_can_reach(client, corpus):
     "`/canvas/wire?src=` reached for a name that was never bound here, and answered 500 to every call."
     r = client.get('/canvas/wire', params={'src': 'leela_bricks:thrifty.costs'})
     assert r.status_code == 200 and r.json()['ok'], r.text
     assert client.get('/canvas/wire', params={'src': 'nobody:nothing'}).json()['ok'] is False
 
-def test_a_component_writing_a_name_reruns_the_document(client):
-    p = opened(client, 'a-sales-funnel.canvas.md')
+def test_a_component_writing_a_name_reruns_the_document(client, corpus, ws):
+    p = opened(client, corpus, 'a-sales-funnel.canvas.md')
     stages = [{'name': 'Leads', 'value': 1000}, {'name': 'Won', 'value': 500}]
     r = client.post('/canvas/emit', json={'path': p, 'name': 'stages', 'value': stages}).json()
     assert r['ok'] and 'sf3' in r['runs']
-    assert store_for(None).get(p).runtime.ns['won'] == 500
+    assert _val(store_for(ws.fs).get(p).runtime, 'won') == 500
 
-def test_a_name_a_cell_stops_defining_is_dropped(client):
+def test_a_name_a_cell_stops_defining_is_dropped(client, corpus, ws):
     """The namespace kept every name a cell had ever defined."""
-    p = opened(client, 'pricing-a-run.canvas.md')
-    o = store_for(None).get(p)
+    p = opened(client, corpus, 'pricing-a-run.canvas.md')
+    o = store_for(ws.fs).get(p)
     ins = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'insert', 'kind': 'code', 'body': 'doomed = 41'}}).json()
     bid = ins['brick']['id']
-    assert o.runtime.ns['doomed'] == 41
+    assert _val(o.runtime, 'doomed') == 41
     r = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'replace', 'id': bid, 'body': 'kept = 42'}}).json()
-    assert r['dropped'] == ['doomed'] and 'doomed' not in o.runtime.ns
+    assert r['dropped'] == ['doomed'] and not _bound(o.runtime, 'doomed')
     client.post('/canvas/run', json={'path': p, 'id': bid})
-    assert o.runtime.ns['kept'] == 42
+    assert _val(o.runtime, 'kept') == 42
     gone = client.post('/canvas/op', json={'path': p, 'op': {'op': 'remove', 'id': bid}}).json()
-    assert gone['dropped'] == ['kept'] and 'kept' not in o.runtime.ns
+    assert gone['dropped'] == ['kept'] and not _bound(o.runtime, 'kept')
 
-def test_code_turned_into_prose_takes_its_names_with_it(client):
-    p = opened(client, 'pricing-a-run.canvas.md')
-    o = store_for(None).get(p)
+def test_code_turned_into_prose_takes_its_names_with_it(client, corpus, ws):
+    p = opened(client, corpus, 'pricing-a-run.canvas.md')
+    o = store_for(ws.fs).get(p)
     bid = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'insert', 'kind': 'code', 'body': 'temporary = 7'}}).json()['brick']['id']
-    assert o.runtime.ns['temporary'] == 7
+    assert _val(o.runtime, 'temporary') == 7
     r = client.post('/canvas/op', json={'path': p, 'op': {'op': 'kind', 'id': bid, 'kind': 'text'}}).json()
-    assert r['dropped'] == ['temporary'] and 'temporary' not in o.runtime.ns
+    assert r['dropped'] == ['temporary'] and not _bound(o.runtime, 'temporary')
 
-def test_inserted_wiring_runs_once(client):
+def test_inserted_wiring_runs_once(client, corpus, ws):
     "`insert` runs a code brick, and the wiring path ran it a second time, doubling its side effects."
-    p = opened(client, 'pricing-a-run.canvas.md')
-    o = store_for(None).get(p)
+    p = opened(client, corpus, 'pricing-a-run.canvas.md')
+    o = store_for(ws.fs).get(p)
     o.runtime.set('tally', 0)
     r = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'insert', 'kind': 'code', 'body': 'tally = tally + 1'}}).json()
-    assert r['run']['ok'] and o.runtime.ns['tally'] == 1
+    assert r['run']['ok'] and _val(o.runtime, 'tally') == 1
 
-def test_opening_a_canvas_that_is_not_there_says_so(client):
+def test_opening_a_canvas_that_is_not_there_says_so(client, corpus):
     r = client.get('/canvas/open', params={'path': 'no-such.canvas.md'})
     assert r.status_code == 400 and 'no canvas' in r.json()['error']
 
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../../etc/passwd', '/no/such.canvas.md',
                                  '../../pyproject.toml'])
-def test_no_live_route_reaches_a_path_outside_the_tree(client, bad):
+def test_no_live_route_reaches_a_path_outside_the_tree(client, corpus, bad):
     """Every route that took a path read, ran or overwrote whatever it named."""
     assert client.get('/canvas/open', params={'path': bad}).status_code == 400
     for route, body in (('/canvas/op', {'op': {'op': 'read'}}), ('/canvas/run', {'id': 'x'}),
                         ('/canvas/runall', {}), ('/canvas/emit', {'name': 'x', 'value': 1}),
-                        ('/canvas/save', {}), ('/canvas/steer', {'turn': 't', 'text': 'x'})):
+                        ('/canvas/save', {})):
         r = client.post(route, json={'path': bad, **body})
         assert r.status_code == 400, f'{route} accepted {bad}'
 
-def test_a_save_cannot_write_its_destination_outside_the_tree(client):
+def test_a_save_cannot_write_its_destination_outside_the_tree(client, corpus):
     "`to` is a destination, and it passes the same gate as the source."
-    p = opened(client, 'a-sales-funnel.canvas.md')
+    p = opened(client, corpus, 'a-sales-funnel.canvas.md')
     r = client.post('/canvas/save', json={'path': p, 'to': '/tmp/escaped.canvas.md'})
     assert r.status_code == 400 and not Path('/tmp/escaped.canvas.md').exists()
 
-def test_a_save_against_a_stale_revision_is_refused(client):
+def test_a_save_against_a_stale_revision_is_refused(client, corpus, ws):
     "Two editors, one file: the second writer is told rather than silently winning."
-    p = opened(client, 'making-a-block.canvas.md')
-    o = store_for(None).get(p)
+    p = opened(client, corpus, 'making-a-block.canvas.md')
+    o = store_for(ws.fs).get(p)
     was = o.rev
     assert client.post('/canvas/save', json={'path': p, 'rev': was}).json()['ok']
     client.post('/canvas/op', json={'path': p, 'op': {'op': 'insert', 'kind': 'text', 'body': 'x'}})
     r = client.post('/canvas/save', json={'path': p, 'rev': was})
     assert r.status_code == 409 and 'moved to rev' in r.json()['error']
 
-def test_a_brick_may_embed_a_file_beside_the_canvas_and_nothing_above_it(client):
+def test_a_brick_may_embed_a_file_beside_the_canvas_and_nothing_above_it(client, corpus):
     assert client.get('/canvas/file', params={'path': 'assets/brick-ports.pdf'}).status_code == 200
     for bad in ('../../etc/passwd', '/etc/passwd', 'assets/nope.pdf'):
         assert client.get('/canvas/file', params={'path': bad}).status_code == 404
@@ -497,16 +433,16 @@ def test_a_repeated_phrase_is_rewritten_where_it_was_selected():
         apply_op(c, Runtime(), {'op': 'replace_selection', 'id': 'n', 'was': 'alpha', 'nth': nth, 'text': 'ZZZ'})
         assert c.by_id('n').body == want
 
-def test_running_a_cell_settles_only_what_reads_it(client):
+def test_running_a_cell_settles_only_what_reads_it(client, corpus):
     "Handing back every port would post props to every frame, and a frame that takes props redraws."
-    p = opened(client, 'a-sales-funnel.canvas.md')
+    p = opened(client, corpus, 'a-sales-funnel.canvas.md')
     r = client.post('/canvas/run', json={'path': p, 'id': 'sf1'}).json()
     assert set(r['runs']) == {'sf3'} and set(r['ports']) == {'sf2', 'sf4', 'sf5', 'sf6'}
     r2 = client.post('/canvas/run', json={'path': p, 'id': 'sf3'}).json()
     assert 'sf3' not in r2['runs'] and 'sf2' not in r2['ports']
 
-def test_run_all_uses_dependency_order_not_document_order(client):
-    p = opened(client, 'a-sales-funnel.canvas.md')
+def test_run_all_uses_dependency_order_not_document_order(client, corpus):
+    p = opened(client, corpus, 'a-sales-funnel.canvas.md')
     r = client.post('/canvas/runall', json={'path': p, 'sources': {}}).json()
     assert r['ok'] and all(v['ok'] for v in r['runs'].values())
 
@@ -538,46 +474,14 @@ def test_the_canvas_skill_follows_the_open_tab_rather_than_the_turn(tmp_path):
     ws.ai.system_prompt()
     assert pushed(ws.ai) == set(), 'the vocabulary outstayed the document'
 
-def test_the_margin_thread_is_the_stand_in_and_only_the_stand_in():
-    "A turn with a model in it is the pane's. The margin answers the standalone page."
-    import leela.blocks.canvas.helper as H
-    assert not hasattr(H, 'Agentic') and not hasattr(H, 'helper_for')
-    assert 'Scripted()' in (Path(__file__).parent.parent/'leela/blocks/canvas/app.py').read_text()
-
-def test_the_skill_says_what_every_tool_is_for():
-    from leela.blocks.canvas.helper import skill_text
-    body = skill_text()
-    for name in TOOLS: assert f'`{name}`' in body, f'{name} is not in the skill'
-
-def test_the_stand_in_answers_a_canvas_question_out_of_the_skill():
-    from leela.blocks.canvas.helper import section
-    _, _, events = turn('what is a bind?')
-    said = ''.join(d.get('markdown', '') for e, d in events if e == 'answer')
-    assert said == section('bind') and said.startswith('## Bindings')
-
-def test_the_stand_in_explains_a_word_from_the_document_rather_than_inventing_one():
-    "It has no model. What it can do is find where the document already said it."
-    from leela.blocks.canvas.helper import defined_in
-    c = Canvas.load(EXAMPLES/'tunnelling.canvas.md')
-    _, _, events = turn('explain tunnelling', canvas=c)
-    said = ''.join(d.get('markdown', '') for e, d in events if e == 'answer')
-    assert said and said == defined_in(c, 'tunnelling') and 'exponential' in said
-
-def test_a_word_the_document_never_explains_is_not_answered():
-    _, _, events = turn('explain photosynthesis')
-    assert not any(e == 'answer' for e, _ in events)
-    assert 'stand-in' in ''.join(d.get('text', '') for e, d in events if e == 'chunk')
-
-# --- the client ---
-
-def test_the_client_bundle_names_every_module_and_serves_them_in_order(client):
+def test_the_client_bundle_names_every_module_and_serves_them_in_order(client, corpus):
     from leela.blocks.canvas.ui import FILES
     js = client.get('/canvas/js').text
     assert js.index('function cvOpenMenu') < js.index('function cvSlashAt'), 'the menu must be declared first'
     for f in FILES: assert (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'canvas'/f).is_file()
     for fn in ('cvGutter', 'cvFormatBar', 'cvMenuKey', 'cvSplit', 'cvPick', 'cvTheme'): assert f'function {fn}' in js
 
-def test_the_stylesheet_carries_both_themes(client):
+def test_the_stylesheet_carries_both_themes(client, corpus):
     css = client.get('/canvas/css').text
     light = set(re.findall(r'--cv-[\w-]+(?=:)', css.split('[data-theme=dark]')[0]))
     dark = set(re.findall(r'--cv-[\w-]+(?=:)', css.split('[data-theme=dark]')[1].split('*')[0]))
@@ -806,3 +710,10 @@ def test_a_read_only_tool_writes_nothing(tmp_path):
     by = {t.__name__: t for t in canvas_tools(ws)}
     by['canvas_read']()
     assert p.read_text() == was and not ws.journal.operations
+
+
+def test_the_skill_names_every_tool_the_agent_is_given():
+    "The vocabulary and the toolset are two files, and they drift apart in silence."
+    from leela.skills import skill
+    body = skill('canvas').text()
+    for name in TOOLS: assert f'`{name}`' in body, f'{name} is not in the skill'

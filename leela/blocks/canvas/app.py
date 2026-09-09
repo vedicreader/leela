@@ -1,10 +1,10 @@
 "The canvas as routes: open, run, react, wire, save, the basket, the change, and one helper turn."
 
 from __future__ import annotations
-from fasthtml.common import StreamingResponse, JSONResponse
+from fasthtml.common import JSONResponse
 from starlette.responses import FileResponse, PlainTextResponse
 from fastcore.all import Path
-from ...core.web import fail, off_loop, sse
+from ...core.web import fail, off_loop
 from .bricks import libraries, locate, mount, palette, wire as brick_wire
 from .change import bundles, coverage, place_diff, pr, review, state, value
 from .context import SCOPES, Spec, resolve, spec_of, weigh
@@ -12,9 +12,8 @@ from .doc import Canvas
 from .explain import explain
 from .layout import arrange
 from .lit import lit
-from .helper import Ask, Scripted
 from .ops import apply_op, runs_code
-from .store import SUFFIX, Stale, Untrusted, brick_host, canvas_dir, store_for
+from .store import SUFFIX, Stale, Untrusted, brick_host, store_for
 from . import ui
 
 __all__ = ['CAPS', 'connect', 'page', 'canvas_path', 'Outside', 'SUFFIX']
@@ -29,7 +28,7 @@ def _ports(o):
     return {b.id: o.runtime.bindings(b) for b in o.canvas if b.binds}
 
 def _payload(o):
-    return {'ok': True, 'canvas': o.canvas.dict(), 'ports': _ports(o), 'trail': o.trail,
+    return {'ok': True, 'canvas': o.canvas.dict(), 'ports': _ports(o),
             'names': o.runtime.names(), 'trusted': o.trusted, 'rev': o.rev}
 
 def connect(app, ctx=None):
@@ -129,10 +128,8 @@ def connect(app, ctx=None):
 
     @rt('/canvas')
     def canvas_index(req):
-        files = store().files()
-        path = req.query_params.get('path') or (str(files[0]) if files else '')
-        return ui.page(path, [str(p) for p in files], brick_host(),
-                       embed=bool(req.query_params.get('embed')))
+        "The page an IDE canvas tab loads in its frame. `path` names the document; there is no picker."
+        return ui.page(req.query_params.get('path') or '', brick_host())
 
     @rt('/canvas/js')
     def canvas_js(): return PlainTextResponse(ui.bundle(), media_type='text/javascript')
@@ -140,21 +137,11 @@ def connect(app, ctx=None):
     @rt('/canvas/css')
     def canvas_css(): return PlainTextResponse((Path(__file__).parent/'canvas.css').read_text(), media_type='text/css')
 
-    @rt('/canvas/list')
-    def canvas_list(): return JSONResponse({'ok': True, 'files': [str(p) for p in store().files()],
-                                            'dir': str(canvas_dir())})
-
     @rt('/canvas/file')
     def canvas_file(path: str):
         "A file a brick embeds, resolved through the same gate a document is, and nowhere else."
-        fs = ctx_fs()
-        if fs is not None and getattr(fs, 'roots', None):
-            try: return FileResponse(fs._check(path, must_exist=True))
-            except Exception: return fail('not under an open folder', 404)
-        root = Path(canvas_dir()).resolve()
-        p = (root/path).resolve()
-        if not p.is_relative_to(root) or not p.is_file(): return fail('not under the canvas directory', 404)
-        return FileResponse(p)
+        try: return FileResponse(canvas_path(ctx_fs(), path, suffix=''))
+        except Exception: return fail('not under an open folder', 404)
 
     @rt('/canvas/wire/{name}')
     def canvas_wire_named(name: str):
@@ -249,50 +236,6 @@ def connect(app, ctx=None):
         p = o.canvas.save(dest)
         return JSONResponse({'ok': True, 'path': str(p), 'bytes': p.stat().st_size, 'rev': o.rev})
 
-    @rt('/canvas/steer')
-    async def canvas_steer(req):
-        d = await req.json()
-        try: o = store().get(canvas_path(ctx_fs(), d['path']))
-        except Exception as e: return fail(e)
-        await o.queue(d['turn']).put(d['text'])
-        return JSONResponse({'ok': True})
-
-    @rt('/canvas/ask/stream')
-    async def canvas_ask(req):
-        d = await req.json()
-        try: o = store().get(canvas_path(ctx_fs(), d['path']))
-        except Exception as e: return fail(e)
-        turn = d.get('turn') or 'turn'
-        ask = Ask(question=d.get('question', ''), canvas=o.canvas, runtime=o.runtime,
-                  brick_id=d.get('id', ''), selection=d.get('selection', ''), nth=int(d.get('nth') or 0),
-                  palette=palette(libs)['bricks'], doc=o,
-                  trail=list(o.trail), mode=o.canvas.meta.get('mode', 'make'))
-        o.remember(ask.question, ask.brick_id, ask.selection)
-        helper = Scripted()
-        q = o.queue(turn)
-
-        async def stream():
-            reply, ops = '', []
-            try:
-                async for event, data in helper.turn(ask, q):
-                    if event == 'chunk': reply += data['text']
-                    if event == 'answer':
-                        r = ask.apply({'op': 'answer', 'of': ask.brick_id, 'markdown': data['markdown']})
-                        ops.append(r); yield sse('op', r)
-                        continue
-                    if event == 'op':
-                        #: The gate the direct routes pass. Asking is not a way round it.
-                        r = ask.apply({**data, 'op': data['op']})
-                        if r.get('ok') and data.get('wire'): r = _wire_from_host(o, r, libs)
-                        ops.append(r); yield sse('op', r)
-                        continue
-                    yield sse(event, data)
-                yield sse('done', {'reply': reply, 'ops': ops, 'canvas': o.canvas.dict(),
-                                   'ports': _ports(o), 'trail': o.trail})
-            except Exception as e: yield sse('error', {'text': f'{type(e).__name__}: {e}'})
-            finally: o.close_turn(turn)
-        return StreamingResponse(stream(), media_type='text/event-stream')
-
 def _wire_from_host(o, r, libs=None):
     "Take the snippet the component's own package ships, put it above the brick, and bind the ports."
     src = (r.get('brick') or {}).get('attrs', {}).get('src', '')
@@ -319,14 +262,8 @@ class Outside(Exception):
 
 def canvas_path(fs, path, must_exist=True, suffix=SUFFIX):
     "The one gate every route passes a path through, source and destination alike."
-    if fs is not None and getattr(fs, 'roots', None):
-        p = fs._check(path, must_exist=must_exist)
-    else:
-        root = Path(canvas_dir()).resolve()
-        raw = Path(path).expanduser()
-        p = (raw if raw.is_absolute() else root/raw).resolve()
-        if not p.is_relative_to(root): raise Outside(f'{p} is outside {root}')
-        if must_exist and not p.is_file(): raise FileNotFoundError(str(p))
+    if fs is None or not getattr(fs, 'roots', None): raise Outside('no folder is open')
+    p = fs._check(path, must_exist=must_exist)
     if suffix and not str(p).endswith(suffix): raise ValueError(f'not a canvas: {p}')
     return p
 

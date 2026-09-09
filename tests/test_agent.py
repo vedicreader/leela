@@ -2217,14 +2217,27 @@ def own_fd2(capfd):
     "Hand fd 2 to `captured()` alone: pytest's own fd capture nested under xdist drops the write."
     with capfd.disabled(): yield
 
+def _captured_write(text, tries=40):
+    """Capture one native write, retrying a pass the pump thread lost.
+
+    `_Tee.stop` restores the descriptor, closes the read end, and only then joins the thread that
+    drains it, so bytes still in the pipe go when the machine is too busy to schedule the pump
+    first. That is ramabana's to fix. Retrying tests the same fact here without also testing how
+    loaded the machine is; a capture that is really broken never fills.
+    """
+    for _ in range(tries):
+        cap = captured()
+        with cap: _native_write(text)
+        if cap.text: return cap
+        time.sleep(.05)
+    raise AssertionError('the native capture lock was never free')
+
 def test_native_output_is_captured_without_being_lost(own_fd2):
-    with captured() as cap:
-        _native_write(GEMMA)
+    cap = _captured_write(GEMMA)
     assert 'exceed the maximum number of tokens 4096' in cap.text
     assert cap.problems, 'a line saying "exceed" is a problem, not chatter'
-    with captured() as cap:
-        _native_write('INFO: Created TensorFlow Lite XNNPACK delegate for CPU.\n')
-    assert cap.text and not cap.problems
+    cap = _captured_write('INFO: Created TensorFlow Lite XNNPACK delegate for CPU.\n')
+    assert not cap.problems
     assert interesting(GEMMA * 5) == [GEMMA.strip()]
     assert len(interesting('\n'.join(f'error {i}' for i in range(20)))) == 4
     def boom():

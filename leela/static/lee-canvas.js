@@ -179,7 +179,7 @@ function cvMenuKey(ev) {
 }
 /* The canvas: one document made of bricks, drawn once and repainted a brick at a time.
  * `cv` is the whole client state, the way `lee` is in the IDE. */
-const cv = {path: '', canvas: null, ports: {}, host: '', names: [], files: [], palette: null, focus: null,
+const cv = {path: '', canvas: null, ports: {}, host: '', names: [], palette: null, focus: null,
             dirty: false, edited: new Set(), picked: null, theme: 'light'};
 const $$ = (sel, root = document) => root.querySelector(sel);
 const $all = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -228,7 +228,6 @@ async function cvOpen(path, fresh) {
   $$('#cv-mode').textContent = r.canvas.meta.mode || 'make';
   cvPick(null);
   cvRender();
-  cvTrail(r.trail || []);
   cvTrustBar();
   cvStatus(`${r.canvas.bricks.length} bricks · ${cv.trusted ? cv.names.length + ' live names' : 'not run'}`, 'ok');
 }
@@ -1136,109 +1135,20 @@ function cvPeek(v) {
 /* The helper: one thread in the margin, and the same turn reachable from anywhere in the document.
  * Inline asks and margin asks are the same call. What differs is the selection that travels with it. */
 
-const cvTurnState = {id: null, abort: null};
+/* The margin: where a question is asked, and where the answer comes back.
 
-async function cvTurn({id, question, selection, nth = 0, into}) {
+   The turn itself belongs to the agent pane. It drives the same agent through the same canvas
+   tools, and it already owns approvals, steering and the history this used to redraw badly. */
+
+async function cvTurn({id, question, selection, nth = 0}) {
   if (!question?.trim()) return;
-  //: Embedded, the turn belongs to the pane: same agent, same tools, and it owns the approvals.
-  //: The margin keeps its own thread only on the standalone page, where the stand-in answers.
-  if (cv.embed) {
-    try {
-      if (typeof parent?.canvasAskPane === 'function') {
-        const sent = await parent.canvasAskPane({question, brickId: id || '', selection: selection || '',
-                                                 path: cv.path});
-        if (sent) return cvStatus('asked in the agent pane', 'ok');
-      }
-    } catch (e) { cvStatus('could not reach the agent pane: ' + e, 'bad'); return; }
-  }
-  const turn = 'T' + Math.random().toString(36).slice(2, 8);
-  cvTurnState.id = turn; cvTurnState.abort = new AbortController();
-  const thread = into || $$('#cv-thread');
-  const card = document.createElement('div'); card.className = 'cv-turn running';
-  card.innerHTML = `<div class="cv-tq">${cvEsc(question)}</div>` +
-    (selection ? `<div class="cv-tsel">“${cvEsc(selection.slice(0, 140))}”</div>` : '') +
-    '<div class="cv-tsteps"></div><div class="cv-treply"></div>';
-  thread.appendChild(card); card.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-  cvSteerBar(turn, true);
-  const steps = $$('.cv-tsteps', card), reply = $$('.cv-treply', card);
-  let raw = '';
   try {
-    await cvEvents('/canvas/ask/stream', {path: cv.path, id, question, selection, nth, turn}, (ev, d) => {
-      if (ev === 'step') {
-        const row = document.createElement('div'); row.className = 'cv-tstep';
-        row.innerHTML = `<code>${cvEsc(d.label)}</code><span>${cvEsc(d.detail || '')}</span>`;
-        steps.appendChild(row);
-      } else if (ev === 'chunk') { raw += d.text; reply.innerHTML = cvMd(raw); }
-      else if (ev === 'op') cvTurnOp(d);
-      else if (ev === 'error') { card.classList.add('failed'); reply.textContent = d.text; }
-      else if (ev === 'done') {
-        cv.ports = d.ports || cv.ports;
-        cvSync(d.canvas); cvApplyPorts(cv.ports); cvTrail(d.trail || []);
-        if (d.reply) reply.innerHTML = cvMd(d.reply);
-      }
-    }, cvTurnState.abort.signal);
-  } catch (e) { card.classList.add('failed'); reply.textContent = String(e); }
-  card.classList.remove('running');
-  cvSteerBar(turn, false);
-  cvTurnState.id = null;
+    if (typeof parent?.canvasAskPane !== 'function') return cvStatus('no agent pane to ask', 'bad');
+    const sent = await parent.canvasAskPane({question, brickId: id || '', selection: selection || '',
+                                             path: cv.path});
+    return cvStatus(sent ? 'asked in the agent pane' : 'the agent pane refused it', sent ? 'ok' : 'bad');
+  } catch (e) { cvStatus('could not reach the agent pane: ' + e, 'bad'); }
 }
-
-function cvTurnOp(r) {
-  if (!r.ok) return;
-  if (r.removed) return brickEl(r.removed)?.remove();
-  if (r.brick) {
-    const node = cvRepaint(r.brick, r.at ?? 0);
-    node.classList.add('fresh');
-    setTimeout(() => node.classList.remove('fresh'), 1600);
-    node.scrollIntoView({block: 'center', behavior: 'smooth'});
-  }
-}
-
-async function cvEvents(url, body, on, signal) {
-  const r = await fetch(url, {method: 'POST', headers: {'content-type': 'application/json'},
-                              body: JSON.stringify(body), signal});
-  const rd = r.body.getReader(), dec = new TextDecoder();
-  let buf = '';
-  for (;;) {
-    const {value, done} = await rd.read(); if (done) break;
-    buf += dec.decode(value, {stream: true});
-    let i;
-    while ((i = buf.indexOf('\n\n')) >= 0) {
-      const frame = buf.slice(0, i); buf = buf.slice(i + 2);
-      const ev = (frame.match(/^event: (.*)$/m) || [, 'message'])[1];
-      const data = (frame.match(/^data: (.*)$/m) || [, '{}'])[1];
-      try { on(ev, JSON.parse(data)); } catch (e) { on('error', {text: String(e)}); }
-    }
-  }
-}
-
-/* === steering, while it runs === */
-
-function cvSteerBar(turn, on) {
-  const bar = $$('#cv-steer');
-  bar.hidden = !on;
-  if (!on) return;
-  const inp = $$('#cv-steer input');
-  inp.value = ''; inp.focus();
-  inp.onkeydown = async ev => {
-    if (ev.key !== 'Enter' || !inp.value.trim()) return;
-    const text = inp.value; inp.value = '';
-    await api('/canvas/steer', {path: cv.path, turn, text});
-    cvStatus('steering sent', 'ok');
-  };
-}
-
-/* === the trail === */
-
-function cvTrail(trail) {
-  const el = $$('#cv-trail');
-  el.innerHTML = trail.length
-    ? '<h4>trail</h4>' + trail.slice(-6).map(t =>
-        `<div class="cv-trow"><span>${cvEsc(t.question.slice(0, 60))}</span>${t.brick ? `<code>${cvEsc(t.brick)}</code>` : ''}</div>`).join('')
-    : '<h4>trail</h4><div class="cv-trow dim">nothing asked yet</div>';
-}
-
-/* === the inline ask === */
 
 function cvInlineAsk() {
   const sel = getSelection();
@@ -1324,26 +1234,16 @@ function cvTheme(next) {
 
 async function cvBoot() {
   const q = new URLSearchParams(location.search);
-  //: Embedded, the tab strip names the document and owns switching, so the picker is not drawn.
-  cv.embed = document.body.dataset.embed === '1';
-  const sel = $$('#cv-file');
-  if (!cv.embed) {
-    const list = await (await fetch('/canvas/list')).json();
-    cv.files = list.files || [];
-    sel.innerHTML = cv.files.map(f => `<option value="${cvEsc(f)}">${cvEsc(f.split('/').pop().replace('.canvas.md', ''))}</option>`).join('');
-    sel.onchange = () => cvOpen(sel.value);
-  }
-  const want = q.get('path') || cv.files[0];
-  if (!want) return cvStatus('no canvases found', 'bad');
-  if (!cv.embed) sel.value = want;
+  const want = q.get('path');
+  if (!want) return cvStatus('no document named', 'bad');
   await cvOpen(want, q.get('fresh'));
   $$('#cv-runall').onclick = cvRunAll;
   $$('#cv-save').onclick = cvSave;
   $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
   $$('#cv-toggle').onclick = () => cvMargin();
-  //: Embedded, the theme comes on the URL; a store of the frame's own would disagree with it.
-  cvTheme(q.get('theme') || localStorage.getItem('cv-theme') || 'light');
+  //: The theme comes on the URL; a store of the frame's own would disagree with the IDE's.
+  cvTheme(q.get('theme') || 'light');
   cvMargin(true);
   $$('#cv-askform').onsubmit = async ev => {
     ev.preventDefault();

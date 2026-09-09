@@ -1,13 +1,13 @@
 "What an open canvas needs beside the file: a namespace, a trail, and somewhere to put steering."
 
 from __future__ import annotations
-import asyncio, os
+import os
 from dataclasses import dataclass, field
-from fastcore.all import L, Path
+from fastcore.all import Path
 from .doc import Canvas
 from .live import Runtime, runtime_for
 
-__all__ = ['Open', 'Store', 'store_for', 'canvas_dir', 'brick_host', 'Stale', 'Untrusted', 'SUFFIX']
+__all__ = ['Open', 'Store', 'store_for', 'brick_host', 'Stale', 'Untrusted', 'SUFFIX']
 
 #: What a canvas file is called. `workspace.CANVAS_SUFFIX` says it where `Tab` can reach it.
 SUFFIX = '.canvas.md'
@@ -18,7 +18,6 @@ class Stale(Exception):
 class Untrusted(Exception):
     "Code in a document nobody has said may run."
 
-def canvas_dir(): return Path(os.getenv('CANVAS_DIR') or (Path(__file__).parent.parent.parent.parent/'examples'/'canvas'))
 def brick_host(): return os.getenv('BRICK_HOST') or 'http://127.0.0.1:5001'
 
 @dataclass
@@ -26,8 +25,6 @@ class Open:
     "One canvas, open: the document, the namespace it runs in, and the questions asked of it."
     canvas: Canvas
     runtime: object = field(default_factory=Runtime)
-    trail: list = field(default_factory=list)
-    steer: dict = field(default_factory=dict)
     #: Bumped by every edit. A save carrying an older one is refused rather than overwriting.
     rev: int = 0
     #: A document is markdown from anywhere, so opening one runs nothing until somebody says so.
@@ -42,26 +39,10 @@ class Open:
     def check(self, rev):
         "Refuse a write whose base revision is not the one on disk-to-be."
         if rev is not None and int(rev) != self.rev: raise Stale(f'document moved to rev {self.rev}')
-    def remember(self, question, brick_id='', selection=''):
-        self.trail.append({'question': question, 'brick': brick_id, 'selection': selection[:160]})
-        del self.trail[:-12]
-        return self.trail
-    def queue(self, turn):
-        q = self.steer.get(turn)
-        if q is None: q = self.steer[turn] = asyncio.Queue()
-        return q
-    def close_turn(self, turn): self.steer.pop(turn, None)
 
 class Store:
     "Every canvas one workspace has open, keyed by resolved path."
     def __init__(self, pool=None, fs=None): self.open, self.pool, self.fs = {}, pool, fs
-    def files(self, d=None):
-        "Documents to offer: the workspace's own where a folder is open, else the examples."
-        if d is None and getattr(self.fs, 'roots', None):
-            #: `walk` is cached and skips `.venv`; a glob here would crawl them every request.
-            return L(sorted(p for p in self.fs.walk() if str(p).endswith(SUFFIX)))
-        d = Path(d or canvas_dir())
-        return L(sorted(d.glob(f'*{SUFFIX}'))) if d.is_dir() else L()
     @staticmethod
     def key(path):
         "Two spellings of one file are one entry, so a second spelling cannot fork the namespace."

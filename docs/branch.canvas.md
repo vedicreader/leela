@@ -149,7 +149,7 @@ Open, trust, run, click, ask, review, render.
   back. `/canvas/runall` runs them all.
 - **Click a component.** It hands a value back through `/canvas/emit`, which sets a name, and every
   brick that reads that name reruns. This is the reactive loop.
-- **Ask.** `/canvas/ask/stream` runs the helper turn and streams the answer and its edits back as
+- **Ask.** A question posts into the agent pane, which runs the turn and writes its edits back as
   they happen. The turn is Ramabana's agent, told only what a canvas is, and reaching eight tools.
 - **Review.** A `bundle` claims its files. `/canvas/review` builds the change as its own canvas, and
   `coverage` names what is matched, what is unmet and what is unclaimed.
@@ -220,7 +220,7 @@ Run a canvas in a kernel, with a timeout, an interrupt and explicit trust.
 
 # The routes
 
-<!--canvas bundle id=u-web title="One gate for every path, one sandbox for every frame" goal=g2 contributes="the block being safe to serve" covers=t2,t3,t4 paths="leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/helper.py,leela/blocks/canvas/explain.py,leela/blocks/canvas/explain.md,leela/blocks/canvas/ste.md,leela/blocks/canvas/bricks.py,leela/skills/*,leela/static/lee-canvas.js,tools/build_ide_js.py,tools/canvas_spike.py" refs=pkg:shalya-->
+<!--canvas bundle id=u-web title="One gate for every path, one sandbox for every frame" goal=g2 contributes="the block being safe to serve" covers=t2,t3,t4 paths="leela/blocks/canvas/app.py,leela/blocks/canvas/ui.py,leela/blocks/canvas/*.js,leela/blocks/canvas/canvas.css,leela/blocks/canvas/helper.py,leela/blocks/canvas/explain.py,leela/blocks/canvas/explain.md,leela/blocks/canvas/ste.md,leela/blocks/canvas/bricks.py,leela/skills/*,leela/static/lee-canvas.js,tools/build_ide_js.py" refs=pkg:shalya-->
 A path named anything the process could reach, and the block read it, ran it or wrote over it. A
 frame carried this page's origin. The markdown writer let a URL close an attribute. The wheel left
 out the files the client asked for at request time.

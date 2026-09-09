@@ -129,8 +129,8 @@ grip and an insert button. `/` opens a filtered block menu. A format bar appears
 with Ask AI in it. `Enter` splits a block at the caret. Both themes ship.
 
 Six canvases ship in `examples/canvas/`, over sales, astrology, quantum tunnelling, cell biology and
-two on building software. `uv run python tools/canvas_spike.py` runs the block with no kernels,
-no agent and no workspace. See [the canvas](docs/canvas.md).
+two on building software. Open one with `+canvas` in the files strip, or `new canvas` in the command
+palette. See [the canvas](docs/canvas.md).
 
 ![A canvas](docs/screenshots/canvas-funnel.png)
 

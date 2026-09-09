@@ -184,7 +184,7 @@ dropped.
      goal=g
      contributes="all of the review step"
      covers="The change,The page,t3,t4,t9,t12"
-     paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,docs/canvas.md,docs/change.canvas.md,docs/session.canvas.md,docs/dynamic-documents.md,docs/blocks.md,docs/README.md,README.md,media/canvas-*.html,media/*.md,tools/make_change_page.py,tools/canvas_spike.py
+     paths=leela/blocks/canvas/change.py,leela/blocks/canvas/lit.py,leela/blocks/canvas/lit.css,docs/canvas.md,docs/change.canvas.md,docs/session.canvas.md,docs/dynamic-documents.md,docs/blocks.md,docs/README.md,README.md,media/canvas-*.html,media/*.md,tools/make_change_page.py
      refs=doc:docs/change.canvas.md,pkg:mdhtml,pkg:gheasy-->
 A bundle claims a region, names a goal and owns a list of files. `coverage` compares the claim
 with the diff. Leela reads `state` off the document, and no one sets it by hand. `review`, `value` and `pr`

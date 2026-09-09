@@ -123,10 +123,11 @@ The palette is what the host publishes, grouped by the block that owns each comp
 
 ## The helper
 
-Three places reach the one helper: the margin, an `ask` brick in the document, and `mod+k`
-anywhere. All three run the same turn, and only the selection that travels with it differs.
+Three places ask: the margin, an `ask` brick in the document, and `mod+k` anywhere. All three post
+the same question into the agent pane, and only the selection that travels with it differs.
 
-Its reach into the document is eight tools and no others.
+There is no second assistant. The pane's agent is the workspace agent, and its reach into an open
+canvas is eight tools and no others.
 
 | tool | does |
 |---|---|
@@ -142,10 +143,9 @@ Its reach into the document is eight tools and no others.
 Every one goes through `apply_op`, which is also what the person's own edits go through. There is no
 second path into the document.
 
-A turn streams `step`, `chunk`, `op`, `answer`, `done`. The document applies each `op` event as it
-arrives, and a brick therefore appears while the turn is still running. Steering is a queue per
-turn. The turn takes text posted to `/canvas/steer` at the next step boundary, and replans the
-rest of the turn.
+The turn runs in the pane, so approvals, steering, budgets and the conversation history are the
+pane's and there is only one of each. When it ends, the paths it wrote are in the turn's `edits`
+and the frame reloads from them.
 
 The trail is the last twelve questions, each with the brick it came from and the selection it
 carried. It goes into the next turn's context, which is why a follow-up needs no preamble.
@@ -181,12 +181,9 @@ approvals in the pane where the person who asked could not see them. An ask from
 canvas now goes to the pane through `canvasAskPane`, carrying the brick it was asked from as an
 attachment. Approvals, steering, history and the model picker come with it.
 
-`helper_for` returns `Scripted` and only `Scripted`. It answers the standalone `/canvas` page,
-which has no pane. It is deterministic: it reads the same `Ask`, applies the same ops, and emits
-the same events, but carries no judgement and no facts. To answer a question about a word, it
-finds where this document already explains that word, and a word the document never explains gets
-no answer. It scores which component to embed against what the host publishes, never against a
-table kept here.
+There is no stand-in any more. A canvas is a tab in Leela, so the assistant a canvas asks is the
+one the workspace already has, and a machine with no model configured says so in the pane rather
+than in a second place.
 
 ## The editor
 
@@ -236,13 +233,9 @@ palette.
 
 ## Running it
 
-`leela/blocks/__init__.py` connects the block, which serves `/canvas` from the IDE app. It also
-runs on its own, with no kernels, no agent and no workspace:
-
-```sh
-uv run python tools/canvas_spike.py                  # http://localhost:5002/canvas
-BRICK_HOST=http://127.0.0.1:5001 uv run python tools/canvas_spike.py
-```
+`leela/blocks/__init__.py` connects the block, and `/canvas` is the page an IDE canvas tab loads in
+its frame. It is not a place you visit: it takes the document on `path`, and every path it resolves
+goes through the open folders.
 
 The components come from a component host on `BRICK_HOST`. Without one, the palette is empty, and
 a brick already in a document draws with the sample data its package declares.
@@ -289,8 +282,6 @@ A PDF, a sketch and a chart in the same document.
   tracks Ramabana's write tools and `canvas_*` is not among them.
 - Prose editing round-trips through `cvHtmlToMd`, which handles what `cvMd` can produce and no more.
   `mod+e` shows the markdown for a block where that is not enough.
-- The margin still draws a thread of its own on the standalone page, and a steer bar that only
-  `/canvas/ask/stream` reads. Embedded, both are dead weight.
 - Block selection takes one block at a time. Dragging a range across many blocks is not there.
 - The markdown writer handles what the renderer can produce and no more. `mod+e` shows the source
   for a block where that is not enough.

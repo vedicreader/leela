@@ -1,6 +1,6 @@
 /* The canvas: one document made of bricks, drawn once and repainted a brick at a time.
  * `cv` is the whole client state, the way `lee` is in the IDE. */
-const cv = {path: '', canvas: null, ports: {}, host: '', names: [], files: [], palette: null, focus: null,
+const cv = {path: '', canvas: null, ports: {}, host: '', names: [], palette: null, focus: null,
             dirty: false, edited: new Set(), picked: null, theme: 'light'};
 const $$ = (sel, root = document) => root.querySelector(sel);
 const $all = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -49,7 +49,6 @@ async function cvOpen(path, fresh) {
   $$('#cv-mode').textContent = r.canvas.meta.mode || 'make';
   cvPick(null);
   cvRender();
-  cvTrail(r.trail || []);
   cvTrustBar();
   cvStatus(`${r.canvas.bricks.length} bricks · ${cv.trusted ? cv.names.length + ' live names' : 'not run'}`, 'ok');
 }
