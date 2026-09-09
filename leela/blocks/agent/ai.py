@@ -652,6 +652,22 @@ def _session_tools(host):
         except Exception as e: return f'run_cell failed: {errstr(e)}'
     return [inspect_var, run_cell]
 
+def _canvas_path(host, args):
+    "Which file a canvas tool is about to change, named the way the tool itself resolves it."
+    from ..canvas.helper import open_canvas
+    o = open_canvas(host, args.get('path') or '')
+    return o.canvas.path if o is not None else ''
+
+def leela_writes():
+    """Leela's own write tools: `{name: (host, args) -> path}`.
+
+    Ramabana records the file a write tool is about to touch, and `changes()` reads that back to
+    journal the turn and offer to restore it. It only knows its own writers, so a tool Leela adds
+    changes a file that no undo can see. Every Leela tool that writes belongs in here.
+    """
+    from ..canvas.helper import WRITES as CANVAS_WRITES
+    return {n: _canvas_path for n in CANVAS_WRITES}
+
 def _canvas_toolset(host):
     "The canvas block's tools. Built with the rest, because a backend takes its tool list once."
     try:
@@ -864,6 +880,7 @@ class Assistant(Agent):
         self._session_toolset = _session_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         self._canvas_toolset = _canvas_toolset(host)
+        self._writes = leela_writes()
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
@@ -919,6 +936,8 @@ class Assistant(Agent):
                                                    *self._canvas_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
+            if self._note_write not in self.registry.hooks['before_tool']:
+                self.registry.on('before_tool', self._note_write)
             built = super().tools
             # `_plain` is what the briefing is written from, and `built` is untouched: the turn
             # model keeps the Git writes without being invited to reach for them.
@@ -934,6 +953,14 @@ class Assistant(Agent):
         "Whether this turn's model runs on this machine, and what it is called."
         spec = self.spec_or_none()
         return (bool(spec and spec.local), spec.name if spec else 'an unresolved model')
+    def _note_write(self, agent, name, args):
+        "Ramabana's `before_tool`, for the writers only Leela knows about."
+        find = self._writes.get(name)
+        if find is None: return
+        try: p = find(self.host, args or {})
+        except Exception: return
+        if p and p not in self.before: self.before[p] = self.host.text_at(p) or ''
+
     def _canvas_mode(self):
         "The canvas vocabulary while a canvas is open. The prompt is rebuilt every turn; the tools are not."   # noqa: E501
         from ...skills import drop, push

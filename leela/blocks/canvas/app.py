@@ -12,7 +12,7 @@ from .doc import Canvas
 from .explain import explain
 from .layout import arrange
 from .lit import lit
-from .helper import Ask, helper_for
+from .helper import Ask, Scripted
 from .ops import apply_op, runs_code
 from .store import SUFFIX, Stale, Untrusted, brick_host, canvas_dir, store_for
 from . import ui
@@ -268,7 +268,7 @@ def connect(app, ctx=None):
                   palette=palette(libs)['bricks'], doc=o,
                   trail=list(o.trail), mode=o.canvas.meta.get('mode', 'make'))
         o.remember(ask.question, ask.brick_id, ask.selection)
-        helper = helper_for()
+        helper = Scripted()
         q = o.queue(turn)
 
         async def stream():

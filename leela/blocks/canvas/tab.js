@@ -69,11 +69,3 @@ async function canvasAskPane({question, brickId = '', selection = '', path = ''}
   return true;
 }
 window.canvasAskPane = canvasAskPane;
-
-/* Repaint from the store, not `fresh`: reopening builds a new `Open` and drops the namespace and
-   the trust the person granted. */
-function canvasRepaint() {
-  const win = canvasWindow();
-  if (win && typeof win.cvOpen === 'function' && win.cv?.path) win.cvOpen(win.cv.path);
-}
-window.canvasRepaint = canvasRepaint;

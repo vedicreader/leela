@@ -540,9 +540,9 @@ def test_the_canvas_skill_follows_the_open_tab_rather_than_the_turn(tmp_path):
 
 def test_the_margin_thread_is_the_stand_in_and_only_the_stand_in():
     "A turn with a model in it is the pane's. The margin answers the standalone page."
-    from leela.blocks.canvas.helper import Scripted, helper_for
-    assert isinstance(helper_for(), Scripted)
-    assert isinstance(helper_for(object()), Scripted), 'an assistant must not resurrect a second turn UI'
+    import leela.blocks.canvas.helper as H
+    assert not hasattr(H, 'Agentic') and not hasattr(H, 'helper_for')
+    assert 'Scripted()' in (Path(__file__).parent.parent/'leela/blocks/canvas/app.py').read_text()
 
 def test_the_skill_says_what_every_tool_is_for():
     from leela.blocks.canvas.helper import skill_text
@@ -768,18 +768,35 @@ def test_a_tool_says_so_when_no_canvas_is_open(tmp_path):
     by = {t.__name__: t for t in canvas_tools(ws)}
     assert 'no canvas is open' in by['canvas_read']()
 
-def test_a_tool_write_leaves_a_row_workspace_undo_can_take_back(tmp_path):
-    "`Canvas.save` goes straight to disk, leaving no journal row for `workspace undo` to reach."
+def test_a_tool_write_is_a_change_the_turn_can_take_back(tmp_path):
+    "Ramabana records `before` for its own writers only, so Leela records it for Leela\'s."
     from leela.blocks.canvas.helper import canvas_tools
     ws, p = _ws_with_canvas(tmp_path)
-    before = p.read_text()
+    ai = ws.ai
+    ai.tools                                        # wires the registry, as a turn does
     by = {t.__name__: t for t in canvas_tools(ws)}
+    ai.registry.fire('before_tool', ai, 'canvas_insert', {'kind': 'note', 'body': 'x'})
     by['canvas_insert'](kind='note', body='written by a tool', after='c1')
     assert 'written by a tool' in p.read_text()
-    ops = ws.journal.operations
-    assert ops and 'Canvas edit' in ops[-1]['label'], [o['label'] for o in ops[-3:]]
-    assert ws.history.latest(str(p)) is not None, 'no version to go back to'
-    assert before != p.read_text()
+    was, now = ai.changes()[str(p)]
+    assert 'written by a tool' in now and 'written by a tool' not in was
+
+def test_a_reading_tool_is_not_a_change(tmp_path):
+    "A reader in the write registry would make every turn offer to restore a file nothing touched."
+    from leela.blocks.canvas.helper import WRITES, canvas_tools
+    ws, p = _ws_with_canvas(tmp_path)
+    ai = ws.ai
+    ai.tools
+    for name in ('canvas_read', 'canvas_values', 'canvas_run'):
+        assert name not in WRITES
+        ai.registry.fire('before_tool', ai, name, {})
+    assert ai.before == {} and ai.changes() == {}
+
+def test_every_leela_write_tool_is_declared_where_the_hook_looks(tmp_path):
+    "A Leela tool that writes and is not in this registry changes a file no undo can see."
+    from leela.blocks.agent.ai import leela_writes
+    from leela.blocks.canvas.helper import WRITES
+    assert set(leela_writes()) == set(WRITES)
 
 def test_a_read_only_tool_writes_nothing(tmp_path):
     "`canvas_read` and `canvas_values` must not file an operation, or undo fills up with nothing."

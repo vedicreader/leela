@@ -7266,14 +7266,6 @@ async function canvasAskPane({question, brickId = '', selection = '', path = ''}
   return true;
 }
 window.canvasAskPane = canvasAskPane;
-
-/* Repaint from the store, not `fresh`: reopening builds a new `Open` and drops the namespace and
-   the trust the person granted. */
-function canvasRepaint() {
-  const win = canvasWindow();
-  if (win && typeof win.cvOpen === 'function' && win.cv?.path) win.cvOpen(win.cv.path);
-}
-window.canvasRepaint = canvasRepaint;
 /* Opening a project when there is no command line to type one on.
  *
  * A packaged Leela is double-clicked. The ways in are the folders it had open last time, which the

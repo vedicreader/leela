@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 import re
-from fastcore.all import L, Path
+from fastcore.all import Path
 
 from .doc import Brick, Canvas, KINDS, order
 
-__all__ = ['to_ipynb', 'from_ipynb', 'to_report', 'modules', 'write_modules', 'directives']
+__all__ = ['to_ipynb', 'from_ipynb', 'to_report', 'modules', 'directives']
 
 def _out(values, bid):
     t = str((values or {}).get(bid) or '')
@@ -113,13 +113,3 @@ def modules(doc, default=None):
         out.setdefault(mod.replace('.', '/') + '.py', []).append(_body(b.body))
     head = f'"""Generated from {Path(doc.path).name or "a dynamic document"}."""\n'
     return {p: head + '\n' + '\n\n'.join(v) + '\n' for p, v in out.items()}
-
-def write_modules(doc, root, default=None):
-    "Write `modules` under `root`, returning the paths written."
-    root, out = Path(root), L()
-    for rel, src in modules(doc, default).items():
-        p = root/rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(src, encoding='utf-8')
-        out.append(p)
-    return out

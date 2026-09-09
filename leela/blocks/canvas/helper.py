@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio, re, textwrap
 from dataclasses import dataclass, field
-from fastcore.all import L, Path, first
+from fastcore.all import L, first
 from ... import errstr
 from .doc import brick_id
 
@@ -14,13 +14,15 @@ def clip(t, mx=MAX_TOOL_CHARS):
     t = str(t or '')
     return t if len(t) <= mx else t[:mx] + f'\n… {len(t) - mx} more characters'
 
-__all__ = ['TOOLS', 'Ask', 'Helper', 'Scripted', 'helper_for', 'skill_text', 'section',
-           'defined_in', 'canvas_tools', 'open_canvas']
+__all__ = ['TOOLS', 'WRITES', 'Ask', 'Scripted', 'skill_text', 'section', 'defined_in',
+           'canvas_tools', 'open_canvas']
 
 #: What the helper may do to a document. The names, and only the names: what each one is for is in
 #: the `canvas` skill, which Leela pushes onto the agent when a canvas is open.
 TOOLS = ('canvas_read', 'canvas_insert', 'canvas_replace', 'canvas_remove',
          'canvas_bind', 'canvas_run', 'canvas_answer', 'canvas_values')
+#: The ones that change the file. `ai.LEELA_WRITES` records `before` for them.
+WRITES = ('canvas_insert', 'canvas_replace', 'canvas_remove', 'canvas_bind', 'canvas_answer')
 
 def skill_text():
     "The canvas skill body. One source of truth for the model and for the stand-in."
@@ -78,17 +80,12 @@ def canvas_tools(host):
         return r
 
     def _write(o, was):
-        "Save through the sandbox and the journal, so `workspace undo` can reach an agent's edit."
+        "Save through the sandbox. The turn journals it, from the `before` the write hook recorded."
         now = o.canvas.md()
         if now == was: return
         ws = getattr(host, 'ws', host)
-        p = o.canvas.path
-        try: ws.fs.write(p, now)
-        except Exception: o.canvas.save(); return   # no sandbox here: the spike, and the tests
-        j = getattr(ws, 'journal', None)
-        if j is not None:
-            try: j.record(f'Canvas edit in {Path(p).name}', [(p, was, now)], kind='file')
-            except Exception: pass                  # a lost undo row must not fail the write
+        try: ws.fs.write(o.canvas.path, now)
+        except Exception: o.canvas.save()           # no sandbox: the spike, and the tests
 
     def _rows(o):
         return '\n'.join(f"{b.id}  {b.kind:8} {(b.title or b.body).strip().splitlines()[0][:60] if (b.title or b.body).strip() else ''}"
@@ -185,11 +182,6 @@ def _kind_of(r):
     return {list: 'list', dict: 'dict', bool: 'bool', int: 'int', float: 'float',
             str: 'str', type(None): 'None'}.get(type(v), type(v).__name__)
 
-class Helper:
-    "The contract. `turn` yields `(event, payload)` and may be steered while it runs."
-    name = 'helper'
-    async def turn(self, ask, steer=None): raise NotImplementedError
-
 def _words(text): return {w.strip('?.,!:;()`"\'') for w in (text or '').lower().split()}
 
 def _bulletise(text):
@@ -201,7 +193,7 @@ def _tighten(text):
     out = re.sub(r'\bin order to\b', 'to', out, flags=re.I)
     return re.sub(r'\s{2,}', ' ', out).strip()
 
-class Scripted(Helper):
+class Scripted:
     "A deterministic stand-in for the model, so the canvas can be driven with no key and no network."
     name = 'scripted'
 
@@ -337,7 +329,3 @@ class Scripted(Helper):
                 f'namespace. Trail so far: {trail}.')
         yield 'step', {'id': 'f', 'label': 'canvas_read', 'detail': 'no intent matched'}
         for part in textwrap.wrap(text, 90): yield 'chunk', {'text': part + ' '}
-
-def helper_for(agent=None):
-    "The margin's thread, which is the stand-in. A turn with a model in it is the agent pane's."
-    return Scripted()
