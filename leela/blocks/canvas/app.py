@@ -231,7 +231,7 @@ def connect(app, ctx=None):
         try: o.must_trust()
         except Untrusted as e: return fail(f'{e}; trust it first', 403)
         await off_loop(o.runtime.set, d['name'], d['value'])
-        #: A list, not the bare string: `react` tests `skip` for membership.
+        #: A list: `react` tests `skip` for membership.
         settled = await off_loop(_settle, o, [d['name']], [f] if (f := d.get('from', '')) else [])
         return JSONResponse({'ok': True, 'name': d['name'], **settled})
 
@@ -268,7 +268,7 @@ def connect(app, ctx=None):
                   palette=palette(libs)['bricks'], doc=o,
                   trail=list(o.trail), mode=o.canvas.meta.get('mode', 'make'))
         o.remember(ask.question, ask.brick_id, ask.selection)
-        helper = helper_for(_assistant(ctx))
+        helper = helper_for()
         q = o.queue(turn)
 
         async def stream():
@@ -281,8 +281,7 @@ def connect(app, ctx=None):
                         ops.append(r); yield sse('op', r)
                         continue
                     if event == 'op':
-                        #: The same gate the direct routes pass. The helper is a way of asking, not
-                        #: a way round the trust a person has not given.
+                        #: The gate the direct routes pass. Asking is not a way round it.
                         r = ask.apply({**data, 'op': data['op']})
                         if r.get('ok') and data.get('wire'): r = _wire_from_host(o, r, libs)
                         ops.append(r); yield sse('op', r)
@@ -293,13 +292,6 @@ def connect(app, ctx=None):
             except Exception as e: yield sse('error', {'text': f'{type(e).__name__}: {e}'})
             finally: o.close_turn(turn)
         return StreamingResponse(stream(), media_type='text/event-stream')
-
-def _assistant(ctx):
-    "The workspace's assistant when a model is configured, else None for the stand-in."
-    if ctx is None: return None
-    try: ai = ctx.ai
-    except Exception: return None
-    return ai if getattr(ai, 'ready', False) else None
 
 def _wire_from_host(o, r, libs=None):
     "Take the snippet the component's own package ships, put it above the brick, and bind the ports."

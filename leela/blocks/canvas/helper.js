@@ -5,6 +5,17 @@ const cvTurnState = {id: null, abort: null};
 
 async function cvTurn({id, question, selection, nth = 0, into}) {
   if (!question?.trim()) return;
+  //: Embedded, the turn belongs to the pane: same agent, same tools, and it owns the approvals.
+  //: The margin keeps its own thread only on the standalone page, where the stand-in answers.
+  if (cv.embed) {
+    try {
+      if (typeof parent?.canvasAskPane === 'function') {
+        const sent = await parent.canvasAskPane({question, brickId: id || '', selection: selection || '',
+                                                 path: cv.path});
+        if (sent) return cvStatus('asked in the agent pane', 'ok');
+      }
+    } catch (e) { cvStatus('could not reach the agent pane: ' + e, 'bad'); return; }
+  }
   const turn = 'T' + Math.random().toString(36).slice(2, 8);
   cvTurnState.id = turn; cvTurnState.abort = new AbortController();
   const thread = into || $$('#cv-thread');
@@ -178,8 +189,7 @@ function cvTheme(next) {
 
 async function cvBoot() {
   const q = new URLSearchParams(location.search);
-  //: Embedded, the IDE's tab strip names the document and owns switching between them, so the
-  //: picker is neither drawn nor filled: one frame shows the one document its tab was opened on.
+  //: Embedded, the tab strip names the document and owns switching, so the picker is not drawn.
   cv.embed = document.body.dataset.embed === '1';
   const sel = $$('#cv-file');
   if (!cv.embed) {
@@ -197,8 +207,7 @@ async function cvBoot() {
   $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
   $$('#cv-toggle').onclick = () => cvMargin();
-  //: Embedded, the theme is the IDE's, handed over on the URL rather than read from a store the
-  //: frame keeps separately and would disagree with.
+  //: Embedded, the theme comes on the URL; a store of the frame's own would disagree with it.
   cvTheme(q.get('theme') || localStorage.getItem('cv-theme') || 'light');
   cvMargin(true);
   $$('#cv-askform').onsubmit = async ev => {

@@ -201,8 +201,7 @@ def place_diff(
         raw = get(_list(slot.attrs.get('paths')), slot.attrs.get('left', ''),
                   slot.attrs.get('right', ''))
         made, cut = [], hunks(raw)
-        #: `_dids`, not the basename: two changed files called `app.py` would otherwise share an id,
-        #: and `by_id` would resolve both to the first.
+        #: `_dids`, not the basename: two files called `app.py` would share an id.
         dids = _dids(list(cut))
         for n, (path, text) in enumerate(cut.items()):
             add, rm = diff_stat(text)

@@ -117,6 +117,24 @@ async def drive(url, root, model):
         await page.keyboard.press('Control+s')
         await page.wait_for_timeout(2500)
         await shot(page, 'saved', 'mod+s reaches the canvas, which owns its own save')
+
+        # 8. the same document, worked from the agent pane rather than the margin
+        await page.click('#agentprompt')
+        await page.wait_for_timeout(600)
+        await page.fill('#agentprompt',
+            'Read the open canvas. Add a note brick under the cost cell explaining what the '
+            'number means, then tell me the brick id you made.')
+        await shot(page, 'pane-asked', 'the question typed into the agent pane, not the margin')
+        await page.click('#agentsend')
+        await page.wait_for_timeout(75000)
+        await shot(page, 'pane-worked-the-canvas', 'the pane turn, with its canvas tool calls')
+        # the frame is showing what it loaded; the pane wrote the file underneath it
+        try:
+            await frame.locator('#cv-doc').click(timeout=4000)
+            await page.evaluate("document.querySelector('iframe.lee-canvasframe').contentWindow.location.reload()")
+            await page.wait_for_timeout(6000)
+        except Exception as e: print('   reload:', e)
+        await shot(page, 'canvas-after-pane-turn', 'the brick the pane wrote, in the document')
         await b.close()
 
 def main():

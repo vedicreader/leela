@@ -154,32 +154,39 @@ carried. It goes into the next turn's context, which is why a follow-up needs no
 
 ## Canvas mode
 
-What the agent knows about a canvas is a skill, and Leela owns it. `leela/skills/canvas.py` is the
-body: the file format, the dataflow, what a component emits, the eight tools, and how to work in one.
+What the agent knows about a canvas is split in two, because the two halves have different
+lifetimes.
 
-It is not a `pyskills` entry point. A skill that is only true inside a canvas should not reach
-every agent that has Leela installed. `leela.skills.push(agent, 'canvas')` puts the skill on the
-agent's registry when a canvas opens, and `drop` takes it off when the canvas closes. The eight
-tools go on and come off with it. `Agentic.open` and `Agentic.close` are those two calls.
+The eight tools are permanent. `_canvas_toolset` builds them with the workspace assistant, beside
+Leela's other toolsets, and each resolves the open canvas when it runs. They cannot come and go
+with a document: a backend hands its tool list to the engine once, when it is built, so a tool
+registered later is a name the model is told about and cannot call. Registering them per turn is
+what made every live call answer `KeyError`.
 
-Ramabana holds none of this. `Agent.skills` is `discover(..., extra=registry.skills)`. A pushed
-skill therefore reaches the skill index and `read_skill` with no change to the agent core. The
-proposal on `ramabana`'s branch turns the tools into a shalya capability group. The skill stays
-Leela's either way.
+The vocabulary is not permanent. `leela/skills/canvas.py` is the body, and it is deliberately not
+a `pyskills` entry point, because a skill that is only true inside a canvas should not reach every
+agent that has Leela installed. The system prompt is rebuilt every turn, so `_canvas_mode` pushes
+the skill while a canvas tab is open and drops it when none is. That costs a line in the prompt
+and nothing else; the body still arrives through `read_skill`.
 
-The skill is also the stand-in's source. The stand-in answers a question about the canvas out of
-the section of the skill that covers it, which keeps one text right rather than two.
+Ramabana holds none of this. `Agent.skills` is `discover(..., extra=registry.skills)`, so a pushed
+skill reaches the skill index and `read_skill` with no change to the agent core.
 
 ## The model
 
-`helper_for(agent)` returns `Agentic` where a model exists and `Scripted` where none does.
-`Scripted` is deterministic. It reads the same `Ask`, calls the same tools, and emits the same
-events. It carries no judgement and no facts. To answer a question about a word, it finds where
-this document already explains that word. A word the document never explains gets no answer.
-It scores which component to embed against what the host publishes, never against a table kept
-here.
+A turn with a model in it belongs to the agent pane. The pane and the margin were never two
+assistants: both resolve to the workspace's own agent, and it is the same agent the canvas tools
+are registered on. What the margin added was a second, thinner turn UI, and it rendered its
+approvals in the pane where the person who asked could not see them. An ask from an embedded
+canvas now goes to the pane through `canvasAskPane`, carrying the brick it was asked from as an
+attachment. Approvals, steering, history and the model picker come with it.
 
-`Agentic` runs the real turn. The spike never exercises it, because the spike has no model.
+`helper_for` returns `Scripted` and only `Scripted`. It answers the standalone `/canvas` page,
+which has no pane. It is deterministic: it reads the same `Ask`, applies the same ops, and emits
+the same events, but carries no judgement and no facts. To answer a question about a word, it
+finds where this document already explains that word, and a word the document never explains gets
+no answer. It scores which component to embed against what the host publishes, never against a
+table kept here.
 
 ## The editor
 
@@ -276,12 +283,14 @@ A PDF, a sketch and a chart in the same document.
 
 - The runtime is `exec` in the web process, not a kunda kernel. Ordering, staleness and error shape
   are the real ones. Isolation, interrupt and restart are not there.
-- There is no undo. `apply_op` is the single write path a history would hook, and nothing hooks it.
+- Undo reaches an agent's edit but not a person's. A canvas tool writes through the sandbox and
+  files a journal row, so `workspace undo` takes it back; `/canvas/save` still writes straight to
+  disk and files nothing. The turn's own "Restore files" never sees either, because `changes()`
+  tracks Ramabana's write tools and `canvas_*` is not among them.
 - Prose editing round-trips through `cvHtmlToMd`, which handles what `cvMd` can produce and no more.
   `mod+e` shows the markdown for a block where that is not enough.
-- A canvas is a page, not a tab. Opening one inside the IDE means a tab kind, a mount, and a place
-  in the command palette.
-- `Agentic` has never run.
+- The margin still draws a thread of its own on the standalone page, and a steer bar that only
+  `/canvas/ask/stream` reads. Embedded, both are dead weight.
 - Block selection takes one block at a time. Dragging a range across many blocks is not there.
 - The markdown writer handles what the renderer can produce and no more. `mod+e` shows the source
   for a block where that is not enough.

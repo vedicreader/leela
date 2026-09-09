@@ -136,7 +136,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow' -n auto"
+#: `loadfile` keeps one file's tests on one worker. Spread across workers, tests that share
+#: process state (captured file descriptors, module globals) interleaved with unrelated
+#: files and failed at random, a different one each run.
+addopts = "-m 'not slow' -n auto --dist loadfile"
 markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv]

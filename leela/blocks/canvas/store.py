@@ -9,8 +9,7 @@ from .live import Runtime, runtime_for
 
 __all__ = ['Open', 'Store', 'store_for', 'canvas_dir', 'brick_host', 'Stale', 'Untrusted', 'SUFFIX']
 
-#: What a canvas file is called. `app.SUFFIX` re-exports it; `workspace.CANVAS_SUFFIX` is the
-#: same string said where `Tab` can reach it without importing this block.
+#: What a canvas file is called. `workspace.CANVAS_SUFFIX` says it where `Tab` can reach it.
 SUFFIX = '.canvas.md'
 
 class Stale(Exception):
@@ -59,8 +58,7 @@ class Store:
     def files(self, d=None):
         "Documents to offer: the workspace's own where a folder is open, else the examples."
         if d is None and getattr(self.fs, 'roots', None):
-            #: `walk` is the sandbox's own cached, skip-aware crawl. Globbing the roots here would
-            #: descend into `.venv` and `node_modules` on every request.
+            #: `walk` is cached and skips `.venv`; a glob here would crawl them every request.
             return L(sorted(p for p in self.fs.walk() if str(p).endswith(SUFFIX)))
         d = Path(d or canvas_dir())
         return L(sorted(d.glob(f'*{SUFFIX}'))) if d.is_dir() else L()

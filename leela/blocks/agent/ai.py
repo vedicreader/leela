@@ -653,12 +653,7 @@ def _session_tools(host):
     return [inspect_var, run_cell]
 
 def _canvas_toolset(host):
-    """The canvas block's tools, so the agent pane can work a dynamic document like any other file.
-
-    Built here with the rest, not pushed on for the length of a turn: a backend hands its tool list
-    to the engine once, so anything registered later is a name the model is told about and cannot
-    call. Each tool resolves the open canvas when it runs, so one registration serves every tab.
-    """
+    "The canvas block's tools. Built with the rest, because a backend takes its tool list once."
     try:
         from ..canvas.helper import canvas_tools
         return canvas_tools(host)
@@ -939,7 +934,18 @@ class Assistant(Agent):
         "Whether this turn's model runs on this machine, and what it is called."
         spec = self.spec_or_none()
         return (bool(spec and spec.local), spec.name if spec else 'an unresolved model')
+    def _canvas_mode(self):
+        "The canvas vocabulary while a canvas is open. The prompt is rebuilt every turn; the tools are not."   # noqa: E501
+        from ...skills import drop, push
+        try: from ..canvas.helper import open_canvas
+        except Exception: return
+        try: want = open_canvas(self.host) is not None
+        except Exception: want = False
+        try: push(self, 'canvas') if want else drop(self, 'canvas')
+        except Exception: pass
+
     def system_prompt(self):
+        self._canvas_mode()
         base = super().system_prompt() + api_context(self.host)
         if (writable := self.host.writable_roots) != self.host.roots:
             base += ('\n\n## Writable folders\n\nEvery folder above can be read. Edits and new files may only '

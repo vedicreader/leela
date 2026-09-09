@@ -3386,6 +3386,8 @@ function agentListen(thread, since, card = null) {
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
     await reloadAfterEdits(d.edits || []);
+  // A canvas is not in `edits`, so the reload above cannot reach it.
+  if (lee.kind === 'canvas' && typeof canvasRepaint === 'function') canvasRepaint();
   }));
 
   es.onerror = () => {

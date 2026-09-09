@@ -522,15 +522,27 @@ def test_the_canvas_skill_is_leelas_and_reaches_the_agent_only_when_a_canvas_is_
     assert push(agent, 'canvas') == [], 'pushing twice must not stack'
     assert drop(agent, 'canvas') == 1 and '`canvas`' not in agent.system_prompt()
 
-def test_canvas_mode_brings_the_eight_tools_and_takes_them_away_again():
-    from ramabana.testing import fake_agent
-    from leela.blocks.canvas.helper import Agentic
-    agent, _ = fake_agent()
-    h = Agentic(agent)
-    h.open(Ask(question='', canvas=canvas(), runtime=Runtime()))
-    assert [t.__name__ for t in agent.registry.tools] == list(TOOLS)
-    h.close()
-    assert agent.registry.tools == []
+def test_the_canvas_skill_follows_the_open_tab_rather_than_the_turn(tmp_path):
+    "The tools are permanent; the vocabulary is not, because the prompt is rebuilt every turn."
+    from leela.skills import pushed
+    from leela.workspace import Workspace
+    (tmp_path/'p.canvas.md').write_text('# p\n')
+    (tmp_path/'p.md').write_text('# plain\n')
+    ws = Workspace(roots=[tmp_path])
+    ws.ai.system_prompt()
+    assert pushed(ws.ai) == set()
+    ws.open(tmp_path/'p.canvas.md')
+    ws.ai.system_prompt()
+    assert pushed(ws.ai) == {'canvas'}
+    ws.open(tmp_path/'p.md')
+    ws.ai.system_prompt()
+    assert pushed(ws.ai) == set(), 'the vocabulary outstayed the document'
+
+def test_the_margin_thread_is_the_stand_in_and_only_the_stand_in():
+    "A turn with a model in it is the pane's. The margin answers the standalone page."
+    from leela.blocks.canvas.helper import Scripted, helper_for
+    assert isinstance(helper_for(), Scripted)
+    assert isinstance(helper_for(object()), Scripted), 'an assistant must not resurrect a second turn UI'
 
 def test_the_skill_says_what_every_tool_is_for():
     from leela.blocks.canvas.helper import skill_text
@@ -711,11 +723,7 @@ def _ws_with_canvas(tmp_path, body='# t\n\n```canvas code id=c1\ncost = 3.6\ncos
     return ws, p
 
 def test_the_canvas_tools_are_built_with_the_agent_not_pushed_on_for_one_turn(tmp_path):
-    """A backend hands its tool list to the engine once.
-
-    Registered per turn, the model was told the canvas tools existed and every live call came back
-    `KeyError`. They belong in the set the assistant is built with.
-    """
+    "A backend takes its tool list once: registered per turn, every live call came back `KeyError`."
     from leela.blocks.canvas.helper import TOOLS
     ws, _ = _ws_with_canvas(tmp_path)
     names = {t.__name__ for t in ws.ai.tools}
@@ -759,3 +767,25 @@ def test_a_tool_says_so_when_no_canvas_is_open(tmp_path):
     ws = Workspace(roots=[tmp_path])
     by = {t.__name__: t for t in canvas_tools(ws)}
     assert 'no canvas is open' in by['canvas_read']()
+
+def test_a_tool_write_leaves_a_row_workspace_undo_can_take_back(tmp_path):
+    "`Canvas.save` goes straight to disk, leaving no journal row for `workspace undo` to reach."
+    from leela.blocks.canvas.helper import canvas_tools
+    ws, p = _ws_with_canvas(tmp_path)
+    before = p.read_text()
+    by = {t.__name__: t for t in canvas_tools(ws)}
+    by['canvas_insert'](kind='note', body='written by a tool', after='c1')
+    assert 'written by a tool' in p.read_text()
+    ops = ws.journal.operations
+    assert ops and 'Canvas edit' in ops[-1]['label'], [o['label'] for o in ops[-3:]]
+    assert ws.history.latest(str(p)) is not None, 'no version to go back to'
+    assert before != p.read_text()
+
+def test_a_read_only_tool_writes_nothing(tmp_path):
+    "`canvas_read` and `canvas_values` must not file an operation, or undo fills up with nothing."
+    from leela.blocks.canvas.helper import canvas_tools
+    ws, p = _ws_with_canvas(tmp_path)
+    was = p.read_text()
+    by = {t.__name__: t for t in canvas_tools(ws)}
+    by['canvas_read']()
+    assert p.read_text() == was and not ws.journal.operations

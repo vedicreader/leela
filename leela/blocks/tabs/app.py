@@ -106,9 +106,8 @@ def connect(app, ctx):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
         if t.kind == 'canvas':
-            # A place with its own page, like the workbench: the client mounts `/canvas` and the
-            # document is read, run and saved there. `disk_version` still travels, so the watcher
-            # can tell the tab its file moved underneath it.
+            # A place with its own page, like the workbench. `disk_version` still travels, so
+            # the watcher can tell the tab its file moved underneath it.
             return {'kind': 'canvas', 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
         if t.kind == 'vault':

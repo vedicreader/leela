@@ -20,6 +20,9 @@ from .turns import (edit_diffs, history_sessions, latest_started_here, project_s
 
 __all__ = ['CAPS', 'connect']
 
+#: Attachment shapes a turn accepts beside a path. `Workspace._attachment_context` renders these.
+ATTACH_KINDS = ('selection', 'vault')
+
 CAPS = ('fs', 'memory', 'ai', 'inline_ai', 'docs')
 
 def connect(app, ctx):
@@ -742,7 +745,11 @@ def connect(app, ctx):
         if not q: return fail('nothing to ask')
         attachments = d.get('attachments') or []
         if not isinstance(attachments, list): return fail('attachments must be a JSON array')
-        if not all(isinstance(ref, str) for ref in attachments): return fail('attachments must contain text paths')
+        #: A path, or one of the shapes `Workspace._attachment_context` already renders. The guard
+        #: took strings only, so every selection and vault ref the pane sends answered 400.
+        if not all(isinstance(ref, str) or (isinstance(ref, dict) and ref.get('kind') in ATTACH_KINDS)
+                   for ref in attachments):
+            return fail(f'an attachment is a path, or an object whose kind is one of {", ".join(ATTACH_KINDS)}')
         if not isinstance(d.get('reasoning', ''), str): return fail('reasoning must be text')
         reasoning = (d.get('reasoning') or '').lower()
         if reasoning not in ('', 'auto', 'low', 'medium', 'high'):

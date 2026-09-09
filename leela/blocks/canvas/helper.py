@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio, re, textwrap
 from dataclasses import dataclass, field
-from fastcore.all import L, first
+from fastcore.all import L, Path, first
 from ... import errstr
 from .doc import brick_id
 
@@ -14,7 +14,7 @@ def clip(t, mx=MAX_TOOL_CHARS):
     t = str(t or '')
     return t if len(t) <= mx else t[:mx] + f'\n… {len(t) - mx} more characters'
 
-__all__ = ['TOOLS', 'Ask', 'Helper', 'Scripted', 'Agentic', 'helper_for', 'skill_text', 'section',
+__all__ = ['TOOLS', 'Ask', 'Helper', 'Scripted', 'helper_for', 'skill_text', 'section',
            'defined_in', 'canvas_tools', 'open_canvas']
 
 #: What the helper may do to a document. The names, and only the names: what each one is for is in
@@ -47,15 +47,9 @@ def defined_in(canvas, term):
     return ''
 
 def open_canvas(host, path=''):
-    """The canvas the person is looking at, opened. `None` when the active tab is not one.
-
-    Resolved per call rather than captured, because a tool registered once outlives any one
-    document: the pane's agent is built before a canvas is open and goes on running after it closes.
-    """
+    "The canvas the active tab is showing, opened. None when that tab is not one."
     from .store import store_for
-    #: The agent is handed a `WorkspaceHost`, not the workspace; the tabs and the pool are on the
-    #: workspace behind it. `host` itself is a `Workspace` in a test and in the spike.
-    ws = getattr(host, 'ws', host)
+    ws = getattr(host, 'ws', host)      # the agent holds a `WorkspaceHost`; the tabs are behind it
     if not path:
         t = getattr(ws, 'tab', None)
         if t is None or getattr(t, 'kind', '') != 'canvas': return None
@@ -64,12 +58,7 @@ def open_canvas(host, path=''):
     return store_for(getattr(ws, 'fs', None), pool=getattr(ws, 'pool', None)).get(path)
 
 def canvas_tools(host):
-    """The canvas as tools on the workspace agent, so the agent pane can work a document.
-
-    Registered for good, beside Leela's other toolsets, rather than pushed onto the agent for the
-    length of a turn. A backend hands its tool list to the engine once when it is built, so a tool
-    added afterwards is a name the model is told about and cannot call.
-    """
+    "The canvas as tools on the workspace agent, each resolving the open document when it runs."
     from .ops import apply_op, runs_code
 
     def _doc(path=''):
@@ -81,11 +70,25 @@ def canvas_tools(host):
         o = _doc(path)
         if runs_code(op) and not o.trusted:
             return "this document has not been trusted to run; the person clicks 'run it' first"
+        was = o.canvas.md()
         r = apply_op(o.canvas, o.runtime, op)
         if not r.get('ok'): return f"canvas_{op['op']} failed: {r.get('error', 'refused')}"
         o.bump()
-        o.canvas.save()
+        _write(o, was)
         return r
+
+    def _write(o, was):
+        "Save through the sandbox and the journal, so `workspace undo` can reach an agent's edit."
+        now = o.canvas.md()
+        if now == was: return
+        ws = getattr(host, 'ws', host)
+        p = o.canvas.path
+        try: ws.fs.write(p, now)
+        except Exception: o.canvas.save(); return   # no sandbox here: the spike, and the tests
+        j = getattr(ws, 'journal', None)
+        if j is not None:
+            try: j.record(f'Canvas edit in {Path(p).name}', [(p, was, now)], kind='file')
+            except Exception: pass                  # a lost undo row must not fail the write
 
     def _rows(o):
         return '\n'.join(f"{b.id}  {b.kind:8} {(b.title or b.body).strip().splitlines()[0][:60] if (b.title or b.body).strip() else ''}"
@@ -93,7 +96,7 @@ def canvas_tools(host):
 
     def canvas_read(path: str = '') -> str:
         """Every brick in the open canvas: its id, its kind and its first line.
-        Read this before editing, because every other canvas tool addresses a brick by id."""
+        Read this before editing: every other canvas tool addresses a brick by id."""
         try: o = _doc(path)
         except Exception as e: return errstr(e)
         return f'{o.canvas.path}  ({len(o.canvas)} bricks, {"trusted" if o.trusted else "not trusted"})\n' + _rows(o)
@@ -157,7 +160,7 @@ class Ask:
     palette: list = field(default_factory=list)
     trail: list = field(default_factory=list)
     mode: str = 'make'
-    #: The `Open` this question is against. It carries the trust, so `apply` can refuse.
+    #: The `Open` this question is against, which carries the trust `apply` refuses on.
     doc: object = None
     def apply(self, op):
         "Every edit a turn makes. An untrusted document runs nothing, whoever asked and however."
@@ -335,72 +338,6 @@ class Scripted(Helper):
         yield 'step', {'id': 'f', 'label': 'canvas_read', 'detail': 'no intent matched'}
         for part in textwrap.wrap(text, 90): yield 'chunk', {'text': part + ' '}
 
-class Agentic(Helper):
-    """The real turn. `Agent` is ramabana's, and canvas mode is what it knows about a canvas.
-
-    Registering the tools here does not reach a backend that is already running: it hands its tool
-    list to the engine once, so a live Claude Code turn is told the canvas tools exist and gets
-    `KeyError` from every call. Canvas mode has to be on before the backend is built, which is a
-    tab's lifetime rather than a turn's.
-    """
-    name = 'agentic'
-    #: The registry as it was before `open`, so `close` restores it rather than approximating it.
-    _before = None
-
-    def __init__(self, agent): self.agent = agent
-
-    def open(self, ask):
-        "Turn canvas mode on for this agent: the skill, then the tools that make it true."
-        from ...skills import push
-        self._before = list(self.agent.registry.tools)
-        push(self.agent, 'canvas')
-        for nm in TOOLS: self.agent.registry.tool(self._tool(nm, ask))
-        self.agent._forget()
-        return self.agent
-
-    def close(self):
-        "Turn it off. A canvas the person has closed is not a document the agent may still edit."
-        from ...skills import drop
-        drop(self.agent, 'canvas')
-        if self._before is None:
-            self.agent.registry.tools[:] = [t for t in self.agent.registry.tools if t.__name__ not in TOOLS]
-        else: self.agent.registry.tools[:] = self._before
-        self._before = None
-        self.agent._forget()
-
-    def _tool(self, nm, ask):
-        def f(**kw): return ask.apply({'op': nm.removeprefix('canvas_'), **kw})
-        f.__name__ = nm
-        f.__doc__ = f'{nm}. See `read_skill("canvas")` for what a canvas is and how to work in one.'
-        return f
-
-    async def turn(self, ask, steer=None):
-        "Canvas mode comes off however the turn ends. A raised ask used to leave the tools registered."
-        self.open(ask)
-        try:
-            yield 'step', {'id': 'm', 'label': 'canvas mode', 'detail': f'{len(TOOLS)} tools, skill pushed'}
-            yield 'step', {'id': 'k', 'label': 'model', 'detail': str(getattr(self.agent, 'model', ''))}
-            r = await asyncio.to_thread(self.agent.ask, self._prompt(ask))
-            yield 'chunk', {'text': str(r)}
-        finally: self.close()
-
-    def _prompt(self, ask):
-        """The question, the document it was asked of, and the tools that edit it.
-
-        Naming the document is not decoration: given only the question, a model with the whole
-        workspace toolset in reach answered `add a note` by opening a new notebook and calling
-        `add_cell` on it. The canvas is the thing being edited, and nothing else said so.
-        """
-        doc = getattr(ask.canvas, 'path', '') or 'this canvas'
-        bits = [f'You are working inside the open canvas `{doc}`. Edit it with the `canvas_*` tools '
-                f'and nothing else: {", ".join(TOOLS)}. Do not create or edit notebooks, scripts or '
-                'other files to answer this. Call `read_skill("canvas")` if you need the vocabulary.'
-                f'\n\n{ask.question}']
-        if ask.brick_id: bits.append(f'\n\nasked from brick `{ask.brick_id}`')
-        if ask.selection: bits.append(f', with this selected:\n\n> {ask.selection}')
-        if ask.trail: bits.append('\n\ntrail: ' + '; '.join(t['question'][:60] for t in ask.trail[-4:]))
-        return ''.join(bits)
-
 def helper_for(agent=None):
-    "The real helper where a model is configured, the stand-in where none is."
-    return Agentic(agent) if agent is not None else Scripted()
+    "The margin's thread, which is the stand-in. A turn with a model in it is the agent pane's."
+    return Scripted()

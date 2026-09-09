@@ -129,9 +129,9 @@ def budget_value(v, lo, hi):
     except (TypeError, ValueError): return 'auto'
     return n if lo <= n <= hi else 'auto'
 
-#: A dynamic document. Named here rather than imported: `Tab` must not drag the canvas block in.
+#: Named here, not imported: `Tab` must not drag the canvas block in.
 CANVAS_SUFFIX = '.canvas.md'
-#: What a new one opens as, so a person is never handed an empty file and left to guess the syntax.
+#: What a new one opens as, rather than an empty file and a syntax to guess.
 CANVAS_STARTER = '''---
 title: {title}
 mode: make
