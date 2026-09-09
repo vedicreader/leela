@@ -1,4 +1,4 @@
-"The registry. `lego.bricks` declares its bricks this way, and `Brick.src` names its own library."
+"The registry. `leela_bricks` declares its bricks this way, and `Brick.src` names its own library."
 
 from dataclasses import asdict, dataclass, field
 

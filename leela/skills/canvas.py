@@ -59,7 +59,7 @@ Two components in one document must not write to the same name unless they are m
 
 ## Components, bricks and sketches
 
-`brick` embeds a component from a package: `src=lego.bricks:viz.series`. The package declares the
+`brick` embeds a component from a package: `src=leela_bricks:viz.series`. The package declares the
 ports, what it emits, and the code that fills it. Take that code rather than writing your own:
 `canvas_wire(name)` returns it, `canvas_insert` puts it in the document as an ordinary code brick,
 and `canvas_bind` points the ports at what it defined. The wiring stays visible in the file.

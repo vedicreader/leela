@@ -34,7 +34,7 @@ tokens = 1200
 cost = tokens / 1e6 * 3.0
 ```
 
-```canvas brick id=b1 src=lego.bricks:thrifty.costs emit_row=picked
+```canvas brick id=b1 src=leela_bricks:thrifty.costs emit_row=picked
 bind rows = [{'label': 'one', 'monthly': cost}]
 prop height = 220
 ```
@@ -69,7 +69,7 @@ def test_a_brick_body_splits_into_bindings_props_and_the_rest():
     b = canvas().by_id('b1')
     assert b.binds == {'rows': "[{'label': 'one', 'monthly': cost}]"}
     assert b.props == {'height': '220'}
-    assert b.attrs == {'src': 'lego.bricks:thrifty.costs', 'emit_row': 'picked'}
+    assert b.attrs == {'src': 'leela_bricks:thrifty.costs', 'emit_row': 'picked'}
     assert b.body == ''
 
 def test_a_wrapped_brick_stays_readable_to_a_plain_markdown_renderer():

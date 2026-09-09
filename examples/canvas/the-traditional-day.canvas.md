@@ -6,8 +6,8 @@ mode: learn
 # The traditional day
 
 A day in the panchangam runs sunrise to sunrise, not midnight to midnight. Five limbs read at
-that sunrise give the day its name. The components below come from `leela_bricks`, and they
-compute the limbs here rather than fetch them.
+that sunrise give the day its name. The components below come from `leela_bricks`. They draw a
+day; they do not compute one. This document fetches the day and binds it to them.
 
 ```canvas code id=td1
 import json, urllib.request
@@ -16,9 +16,10 @@ day = _ports['day']
 day['tithi']['name'], day['nakshatra']['name'], day['masa']
 ```
 
-This cell is the wiring `leela_bricks:panchanga.day` ships. With the package installed beside the
-document, the wiring is two imports and a call. Without the package, as here, the same call goes
-to the host that owns it. The document keeps whichever wiring it used, in the open.
+`/bricks/data/panchanga.day` is Leela serving the brick's own ports, sample values included when
+nothing better is at hand. Swap this cell for an almanac of your own and the three components
+below follow it: they read `day`, and they do not care who filled it. The wiring stays in the
+document, in the open.
 
 ```canvas brick id=td2 src=leela_bricks:panchanga.day emit_limb=limb
 bind day = day

@@ -10,7 +10,9 @@ Read this with [dynamic-documents.md](dynamic-documents.md), which is what a bri
 
 An entry point under `leela.bricks`, which is how a pip-installed library publishes itself. `shalya` finds pyskills the same way, and the codebase therefore already uses this pattern.
 
-A name in `KNOWN`, for a library that publishes no entry point. `lego.bricks` is the only one.
+A name in `KNOWN`, for a library that publishes no entry point. It is empty. `leela_bricks`
+publishes one, and a name that is simply not installed is skipped without a note, the same way
+an absent `extra=` name is.
 
 `LEELA_BRICK_HOST`, for a library nobody installed. It is empty by default. The earlier design defaulted it to `http://127.0.0.1:5001`, which is Leela's own port. A fresh install therefore fetched its palette from Leela, got nothing, and reported nothing.
 
@@ -24,67 +26,129 @@ The library's `serve.py` takes `(app, page=None)`, and it opens with "Nothing he
 
 `split_src` keeps the library prefix. The earlier code did `src.split(':')[-1]` and threw it away, which makes two libraries that each have a `viz.series` resolve to whichever answered first. Only the named library now answers a prefixed `src`. A bare name searches every library and takes the first, which is why a document should write the prefix.
 
-## What was measured
+## What was extracted
 
-Eight files went into an empty package with a two-line `__init__.py`, and nothing else changed. The package imports on `fastcore` and `fasthtml` alone. Leela's resolver reads it as 10 bricks in 4 groups. `locate` finds ports and emits. `wire` returns the package's own snippet and its remote fallback. `mount` registers all seven routes on a `FastHTML` app. `data.fill('viz.series')` runs the snippet and returns real values.
-
-The extraction is a packaging change rather than a redesign, and the code already sits on the right side of the line.
-
-Two facts decide where the line goes.
-
-`lego/__init__.py` is `from .app import *` and `lego/bricks/__init__.py` is `from .app import connect`. Either one is enough to make `import lego.bricks` boot lego's whole application. In this container it fails on `ujson`, one of lego's thirteen dependencies. Nothing under `lego/bricks/` other than `app.py` imports `lego`.
-
-Four of the ten bricks carry wiring that imports a domain package. `panchanga.day`, `panchanga.horas` and `panchanga.wheel` import `lego.muhurtha.panchanga`. `thrifty.costs` imports `lego.thrifty.data`. The other six, every `viz.*` and every `learn.*`, ship no wiring at all. They are display components that read whatever the document already computed.
-
-## What to extract
-
-Take the contract and the six domain-free bricks. Leave the four domain bricks with the packages their wiring needs.
-
-| goes | is |
-|---|---|
-| `bricks.py` | `Port`, `Brick`, the registry, `manifest()`, `find()` |
-| `cfg.py` | the seven route paths |
-| `serve.py` | `connect(app, page=None)`, which imports nothing about the app |
-| `data.py` | `fill()` runs a brick's snippet here; `remote_wire()` is the call for a document that lacks the package |
-| `ui.py`, `bricks.js`, `bricks.css`, `frame.js` | the gallery, the frame, and the drawing keyed by brick name |
-| `viz.*`, `learn.*` | six bricks with no wiring and no domain dependency |
-
-| stays | why |
-|---|---|
-| `app.py` | it is the upstream seam: `lego.core`, `RouteOverrides`, the upstream nav |
-| `panchanga.*`, `thrifty.*` | their wiring imports `lego.muhurtha` and `lego.thrifty` |
-
-## The spec is now built
-
-`extensions/bricks` is the extracted package, `leela-bricks`. Eight files moved with no
-edit. Only `bricks.py` changed, and it took all four changes below.
+Eight files went into an empty package with a two-line `__init__.py`. The package imports on
+`fastcore` and `fasthtml` alone. Leela's resolver reads it as ten bricks in four groups, `locate`
+finds ports and emits, `mount` registers all seven routes on a `FastHTML` app, and
+`data.fill('viz.series')` runs and returns real values. A packaging change, not a redesign.
 
     uv pip install -e extensions/bricks
 
-That is the whole install, and the entry point does the rest. `libraries()` finds
-`leela_bricks`, `palette()` reads ten components in four groups, and the notes list is empty.
-`KNOWN` still names `lego.bricks` for a library that publishes no entry point, and an absent
-library produces no note.
+That is the whole install. The entry point does the rest.
 
-The four domain bricks came too, and their wiring still imports `lego.muhurtha` and `lego.thrifty`.
-`needs` exists for that case, and the palette therefore names the package a component wants before the cell runs.
+## Four changes the extracted package needed
 
-| brick | needs |
-|---|---|
-| `panchanga.day`, `panchanga.horas`, `panchanga.wheel` | `lego.muhurtha.panchanga` |
-| `thrifty.costs` | `lego.thrifty.data` |
-| `viz.tiles`, `viz.series`, `viz.funnel` | nothing |
-| `learn.cell`, `learn.wavepacket`, `learn.orbit` | nothing |
+**Own the `src` prefix.** `Brick.src` was `f'lego.bricks:{self.name}'`, hardcoded. After
+extraction that string named a package that no longer held the brick.
+`LIB = __name__.rsplit('.', 1)[0]` derives it, so renaming the package updates every `src` it
+serves. The hardcoded form outlived itself anyway: `KNOWN`, the canvas skill, both docs and two
+test files went on saying `lego.bricks` for a release after the package became `leela_bricks`,
+and an agent following the skill wrote a `src` that resolved to nothing.
 
-## Four changes the extracted package needs
+**Give each library its own registry.** `BRICKS` was a module global and `brick()` mutated it.
+Fine while one package registers everything, broken the moment a second library keeps its own:
+that library would call `brick()` into the first one's global, and every `manifest()` would
+return every library's bricks. `Registry` is the instance a library makes for itself.
+`manifest()` also returns `library`, so a caller knows which registry answered.
 
-**Own the `src` prefix.** `Brick.src` was `f'lego.bricks:{self.name}'`, hardcoded. After extraction that string names a package that no longer holds the brick. `LIB = __name__.rsplit('.', 1)[0]` derives it. Renaming the package therefore updates every `src` it serves.
+**Publish the entry point.** `[project.entry-points."leela.bricks"]`, so `pip install` is the
+whole of procurement.
 
-**Give each library its own registry.** `BRICKS` is a module-global dict and `brick()` mutates it. That works while one package registers everything. It breaks as soon as a second library keeps its own bricks. That library would call `brick()` into the extracted package's global, and then every library's `manifest()` would return every library's bricks. The package exposes a `Registry` a library instantiates, with `manifest()` and `find()` reading its own. `manifest()` also returns `library`, which tells a caller which registry answered.
+**Say when a snippet needs a package.** A brick whose `wire` imports something should declare it,
+rather than let a document find out from a traceback. A regex over the snippet's own `import`
+lines produces `needs`, minus the standard library. A component cannot claim a dependency its
+code does not import, and cannot hide one it does.
 
-**Publish the entry point.** `[project.entry-points."leela.bricks"]` so Leela finds the library without `KNOWN`. `pip install` is the whole of procurement. `KNOWN` stays for a library that publishes none.
+## Where lego went
 
-**Say when a snippet needs a package.** A brick whose `wire` imports something should declare it. `data.fill` already catches the failure, and `remote_wire` is already the fallback. A document still discovers the missing package by running a cell and reading a traceback. The manifest row carries `needs`. A regex over the wiring's own `import` lines produces it, minus the standard library. A component cannot claim a dependency its code does not import, and cannot hide one it does.
+Four bricks came across carrying wiring that imported `lego`, the repository they were extracted
+from. `panchanga.day`, `panchanga.horas` and `panchanga.wheel` imported `lego.muhurtha.panchanga`;
+`thrifty.costs` imported `lego.thrifty.data`. Nothing else in the package touched it. The plan
+had been to leave those four behind. They came anyway, and `lego` is not a dependency of
+`leela-bricks` and is not on PyPI, so the wiring raised `ModuleNotFoundError` for everyone.
+
+The wiring is gone. The components stayed. That is the smaller change and it costs nothing,
+because the drawings never needed `lego`: they are JavaScript that reads whatever ports the
+document bound. Two shipped examples already proved it. `pricing-a-run.canvas.md` computes its
+own price table in a code cell and binds it to `thrifty.costs`, and it has always run green.
+`the-traditional-day.canvas.md` fetches `/bricks/data/panchanga.day` from Leela's own port, which
+answers with the sample day the brick declares.
+
+So no brick in `leela_bricks` ships wiring now, and `needs` is empty for all ten. `needs`,
+`data.fill`'s exec path and `remote_wire` stay: they are the contract a library with its own
+data uses, and the next section builds one.
+
+## Writing your own library
+
+A library is any module with `manifest()` and `find(name)`. There is no base class, nothing to
+subclass, nothing to register with Leela. Expose a `data` submodule as well and the components
+can fill their own ports.
+
+`pyproject.toml` publishes the entry point. The value is the module holding the registry.
+
+```toml
+[project]
+name = "sales-bricks"
+dependencies = ["pandas>=2"]
+
+[project.entry-points."leela.bricks"]
+sales_bricks = "sales_bricks"
+```
+
+`sales_bricks/bricks.py` declares the components against a registry of its own.
+
+```python
+from leela_bricks.bricks import Port, Registry
+
+REG = Registry(lib='sales_bricks', groups={'pipeline': 'Where the quarter stands'})
+brick, find, manifest = REG.brick, REG.find, REG.manifest
+
+brick('pipeline.stages', 'Pipeline', 'pipeline',
+      doc='Every stage in the quarter, and what it converts at.',
+      ports=[Port('stages', 'list', '[{name, value}]',
+                  sample=[{'name': 'Leads', 'value': 1000}, {'name': 'Won', 'value': 23}])],
+      emits=[Port('stage', 'dict', 'the stage clicked')],
+      height=300,
+      wire="""
+from sales_bricks.warehouse import monthly
+stages = monthly('2026-Q3')
+""")
+```
+
+That `wire` is what separates a library like this one from `leela_bricks`, whose components draw
+only what the document already computed. Nobody declares the dependency: `needs` comes back as
+`['sales_bricks.warehouse']`, read off the import line, so the gallery can name what a component
+wants before a cell runs.
+
+`sales_bricks/data.py` runs that snippet on request. Copy it from `leela_bricks/data.py` rather
+than importing it. `fill` and `remote_wire` both close over `find`, which binds them to one
+registry, so a shared copy would answer for the wrong library. `tests/fixtures/demobricks` copies
+them too. Only `jsonable` is safe to import.
+
+`sales_bricks/__init__.py` is the seam Leela reads.
+
+```python
+from . import data, serve
+from .bricks import find, manifest
+```
+
+Leaving `data` off that line costs you the remote fallback with no error: `Library.wire` looks
+for `module.data.remote_wire`, finds nothing, and returns `remote: ''`.
+
+`sales_bricks/bricks.js` draws the component, keyed by the same name, and `serve.connect(app)`
+mounts the seven routes. Copy `serve.py` and `cfg.py`; neither imports the application it is
+mounted in, which is why nothing here runs a second server.
+
+Then `pip install -e .` beside Leela. `libraries()` finds it, `palette()` merges it with
+everything else installed, and a document embeds it as `src=sales_bricks:pipeline.stages`. A
+document whose interpreter has no `sales_bricks` takes the second wiring instead:
+
+```python
+import json, urllib.request
+_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5001/bricks/data/pipeline.stages'))
+stages = _ports['stages']
+```
 
 ## What Leela ships
 

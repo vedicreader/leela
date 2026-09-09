@@ -8,7 +8,7 @@
   const post = m => parent.postMessage({...m, brick: name, id: root.dataset.frame}, '*');
 
   function draw() {
-    const fn = (window.LEGO_BRICKS || {})[name];
+    const fn = (window.LEELA_BRICKS || {})[name];
     if (!fn) { root.innerHTML = `<div class="bk-missing">no renderer for <code>${name}</code></div>`; return; }
     if (teardown) { try { teardown(); } catch (e) {} }
     root.innerHTML = '';

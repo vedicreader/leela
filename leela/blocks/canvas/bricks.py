@@ -11,15 +11,15 @@ __all__ = ['GROUP', 'KNOWN', 'HOST_ENV', 'Library', 'Host', 'libraries', 'palett
 
 #: The entry-point group a brick library publishes itself under, as `shalya` does for pyskills.
 GROUP = 'leela.bricks'
-#: Libraries to try even when they publish no entry point.
-KNOWN = ('lego.bricks',)
+#: Libraries to try even when they publish no entry point. Empty: `leela_bricks` publishes one.
+KNOWN = ()
 #: A host to ask when nothing is installed. Empty by default, because a silent default that
 #: pointed at Leela's own port is what made the palette come back empty with no error.
 HOST_ENV = 'LEELA_BRICK_HOST'
 TIMEOUT = 4
 
 def split_src(src):
-    "`lego.bricks:viz.series` -> `('lego.bricks', 'viz.series')`. A bare name has no library."
+    "`leela_bricks:viz.series` -> `('leela_bricks', 'viz.series')`. A bare name has no library."
     s = str(src or '').strip()
     return tuple(s.split(':', 1)) if ':' in s else ('', s)
 
@@ -108,7 +108,7 @@ def libraries(extra=(), host=None):
         seen.add(name)
         try: mod = import_module(name)
         except Exception as e:
-            if name in KNOWN and not _installed(name): continue   # not installed here, and that is fine
+            if not _installed(name): continue          # not here at all, which is not a fault
             notes.append(f'{name}: {type(e).__name__}: {e}')
             continue
         if _reg(mod) is None:

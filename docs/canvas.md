@@ -19,7 +19,7 @@ comment-wrapped region, and both survive a plain markdown renderer.
 tokens = 1200
 ```
 
-```canvas brick id=b1 src=lego.bricks:thrifty.costs emit_row=picked
+```canvas brick id=b1 src=leela_bricks:thrifty.costs emit_row=picked
 bind rows = rows
 prop height = 220
 ```
@@ -102,15 +102,18 @@ the host that owns it. The document runs the first form, and falls back to the s
 import fails. That import fails when the package is not beside the document.
 
 ```python
-from lego.muhurtha.panchanga import Place, day_panchanga
-day = day_panchanga(Place(12.97, 77.59, 'Asia/Kolkata', 'Bengaluru'), date.today())
+from sales_bricks.warehouse import monthly
+stages = monthly('2026-Q3')
 ```
 
 ```python
 import json, urllib.request
-_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5001/bricks/data/panchanga.day'))
-day = _ports['day']
+_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5001/bricks/data/pipeline.stages'))
+stages = _ports['stages']
 ```
+
+No brick in `leela_bricks` ships wiring: every one of them draws what the document already
+computed. [bricks.md](bricks.md) builds `sales_bricks` as a worked example of one that does.
 
 The ⚙ in a brick's rail opens the wiring panel: every port, its expression, what it currently
 resolves to, and the names in the namespace to pick from.
@@ -237,8 +240,10 @@ palette.
 its frame. It is not a place you visit: it takes the document on `path`, and every path it resolves
 goes through the open folders.
 
-The components come from a component host on `BRICK_HOST`. Without one, the palette is empty, and
-a brick already in a document draws with the sample data its package declares.
+The components come from the libraries installed beside Leela, read in process. `BRICK_HOST` is
+not where the palette comes from: it is the base `remote_wire` writes into a document, and it
+defaults to Leela's own port because Leela serves `/bricks/data/{name}` itself. A brick whose
+ports nothing has bound draws with the sample data its package declares.
 
 The canvas serves its own bundle from `/canvas/js` rather than joining the three IDE bundles.
 Those three share one lexical scope, which a separate document has no reason to enter.

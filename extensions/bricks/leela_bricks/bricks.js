@@ -327,4 +327,4 @@ B['learn.orbit'] = (root, p, emit) => {
   return () => cancelAnimationFrame(timer);
 };
 
-window.LEGO_BRICKS = B;
+window.LEELA_BRICKS = B;

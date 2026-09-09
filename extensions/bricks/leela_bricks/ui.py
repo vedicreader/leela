@@ -54,7 +54,7 @@ def gallery():
             Div(cls='grid gap-4 md:grid-cols-2')(*[_card(b) for b in bs])))
     return Div(cls='max-w-5xl mx-auto p-4')(
         H1('Bricks', cls='text-2xl font-bold'),
-        P('Every embeddable component lego offers a document. Each declares the ports it draws from, '
+        P('Every embeddable component this library offers a document. Each declares the ports it draws from, '
           'what it hands back when you click it, and the code that fills it from the package that owns it.',
           cls='text-sm opacity-70 mb-6'),
         *secs)

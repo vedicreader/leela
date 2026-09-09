@@ -448,8 +448,8 @@ def demo_libs(name='demobricks'):
     return libraries(extra=(name,)).filter(lambda l: l.name == name)
 
 def test_a_src_keeps_the_library_that_wrote_it():
-    "`Brick.src` is `lego.bricks:viz.series`. Dropping the prefix makes two libraries collide."
-    assert split_src('lego.bricks:viz.series') == ('lego.bricks', 'viz.series')
+    "`Brick.src` is `leela_bricks:viz.series`. Dropping the prefix makes two libraries collide."
+    assert split_src('leela_bricks:viz.series') == ('leela_bricks', 'viz.series')
     assert split_src('viz.series') == ('', 'viz.series')
     assert split_src('') == ('', '')
 
@@ -469,7 +469,7 @@ def test_a_prefixed_src_is_answered_by_that_library_only():
     libs = demo_libs()
     lib, b = locate('demobricks:viz.series', libs)
     assert lib.name == 'demobricks' and b['title'] == 'Series'
-    assert locate('lego.bricks:viz.series', libs) == (None, None)   # a library that is not here
+    assert locate('nosuchlib:viz.series', libs) == (None, None)     # a library that is not here
     assert locate('demobricks:nope', libs) == (None, None)
     assert locate('viz.series', libs)[0].name == 'demobricks'       # bare, so first match wins
 
@@ -507,10 +507,47 @@ def test_a_library_that_is_present_but_will_not_import_says_why():
     assert any('brokenbricks' in n and 'ujson_that_is_not_installed' in n for n in p['notes'])
 
 def test_a_library_absent_from_this_install_is_not_a_note():
-    "`KNOWN` names a library that may not be here. Absent is normal; broken is not."
-    from leela.blocks.canvas.bricks import KNOWN
-    assert 'lego.bricks' in KNOWN
-    assert palette(libraries())['notes'] == []      # absent, so nothing to say
+    "A name Leela is asked to try may not be here. Absent is normal; broken is not."
+    assert palette(libraries(extra=('nosuchlib',)))['notes'] == []
+    assert palette(libraries())['notes'] == []
+
+PROSE = ('leela/skills/canvas.py', 'docs/canvas.md', 'docs/bricks.md', 'docs/branch.canvas.md',
+         'extensions/bricks/README.md')
+ROOT = Path(__file__).parent.parent
+
+def _written_srcs():
+    "Every `src=LIB:name` Leela's own prose tells a reader to write."
+    import re
+    return {m for f in PROSE for m in re.findall(r'src=([\w.]+:[\w.]+)', (ROOT/f).read_text())}
+
+def test_every_src_the_docs_teach_names_a_library_that_exists():
+    """The rename to `leela_bricks` missed the skill, both docs and two test files, so an agent
+    following the skill wrote `src=lego.bricks:viz.series` and the resolver answered nothing.
+    `sales_bricks` is the library `docs/bricks.md` teaches you to write, and is the only name
+    here that may be absent."""
+    libs, unresolved = libraries(), set()
+    for src in _written_srcs():
+        if locate(src, libs)[0] is None: unresolved.add(split_src(src)[0])
+    assert unresolved == {'sales_bricks'}, 'a name nobody ships; is `extensions/bricks` installed?'
+
+def test_every_brick_the_library_registers_has_a_drawing():
+    "The registration and the drawing are joined by name alone, so deleting one leaves the other."
+    import re
+    import leela_bricks
+    js = (ROOT/'extensions/bricks/leela_bricks/bricks.js').read_text()
+    drawn = set(re.findall(r"B\['([\w.]+)'\]", js))
+    registered = set(leela_bricks.REG.bricks)
+    assert registered == drawn
+    assert 'LEELA_BRICKS' in js and 'LEGO' not in js
+
+def test_no_brick_ships_wiring_that_imports_a_package_the_library_lacks():
+    """Four bricks carried wiring importing `lego`, which is not a dependency and not on PyPI, so
+    `data.fill` raised for everyone. `needs` is what says a wire wants something."""
+    import leela_bricks
+    from leela_bricks.data import fill
+    for name, b in leela_bricks.REG.bricks.items():
+        assert b.needs == [], f'{name} wants {b.needs}, which `leela-bricks` does not depend on'
+        assert '_error' not in (fill(name) or {}), f'{name} cannot fill its own ports'
 
 SLOTDOC = """---
 title: slots

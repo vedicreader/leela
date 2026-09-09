@@ -74,8 +74,8 @@ BRICKS = REG.bricks
 brick, find, manifest = REG.brick, REG.find, REG.manifest
 
 GROUPS = REG.groups
-GROUPS.update({'panchanga': 'The traditional day, from lego.muhurtha',
-          'thrifty':   'Model and agent cost, from lego.thrifty',
+GROUPS.update({'panchanga': 'The traditional day: limbs, horas, rasis',
+          'thrifty':   'Model and agent cost',
           'viz':       'Plain figures: tiles, series, funnels',
           'learn':     'Explaining a concept rather than reporting on one'})
 
@@ -91,25 +91,14 @@ brick('panchanga.day', 'Panchangam day', 'panchanga',
                           'masa': 'Shravana', 'paksha': 'Krishna', 'moon_phase': 'Waning crescent',
                           'sunrise': '2026-09-06T06:08:00', 'sunset': '2026-09-06T18:24:00'})],
       emits=[Port('limb', 'str', 'Which limb was clicked')],
-      height=250,
-      wire='''
-from datetime import date
-from lego.muhurtha.panchanga import Place, day_panchanga
-place = Place(12.97, 77.59, 'Asia/Kolkata', 'Bengaluru')
-day = day_panchanga(place, date.today(), planets=True, spans=False)
-''')
+      height=250)
 
 brick('panchanga.horas', 'Hora ribbon', 'panchanga',
       doc='The twenty-four planetary hours as a ribbon. Click one to select it.',
       ports=[Port('horas', 'list', 'day["horas"]', sample=[{'name': p, 'planet': p, 'start': f'2026-09-06T{h:02d}:00:00', 'end': f'2026-09-06T{h+1:02d}:00:00'}
                                                            for h, p in enumerate(['Sun', 'Venus', 'Mercury', 'Moon', 'Saturn', 'Jupiter', 'Mars'] * 4)][:24])],
       emits=[Port('hora', 'dict', 'The hora clicked')],
-      height=150,
-      wire='''\nfrom datetime import date
-from lego.muhurtha.panchanga import Place, day_panchanga
-place = Place(12.97, 77.59, 'Asia/Kolkata', 'Bengaluru')
-day = day_panchanga(place, date.today(), planets=True, spans=False)
-horas = day['horas']\n''')
+      height=150)
 
 brick('panchanga.wheel', 'Rasi wheel', 'panchanga',
       doc='The twelve rasis with the grahas placed. Click a rasi to select it.',
@@ -119,12 +108,7 @@ brick('panchanga.wheel', 'Rasi wheel', 'panchanga',
                            ('Jupiter', 96.4, '♃'), ('Venus', 118.7, '♀'), ('Saturn', 349.1, '♄'), ('Rahu', 322.8, '☊'), ('Ketu', 142.8, '☋')]]),
               Port('highlight', 'str', 'A rasi name to ring', required=False, sample=None)],
       emits=[Port('rasi', 'dict', 'The rasi clicked, with what sits in it')],
-      height=380,
-      wire='''\nfrom datetime import date
-from lego.muhurtha.panchanga import Place, day_panchanga
-place = Place(12.97, 77.59, 'Asia/Kolkata', 'Bengaluru')
-day = day_panchanga(place, date.today(), planets=True, spans=False)
-planets = day['planets']\nhighlight = day['moon_rasi']\n''')
+      height=380)
 
 # === thrifty ===
 
@@ -135,13 +119,7 @@ brick('thrifty.costs', 'Cost table', 'thrifty',
                           {'label': 'Sonnet 5', 'monthly': 890.0, 'per_request': 0.0089},
                           {'label': 'Haiku 4.5', 'monthly': 148.0, 'per_request': 0.00148}])],
       emits=[Port('row', 'dict', 'The row clicked')],
-      height=220,
-      wire='''
-from lego.thrifty.data import get_all_platforms
-options = get_all_platforms()['observability'].values()
-rows = [{'label': p.name, 'monthly': p.estimated_monthly_base, 'per_request': p.estimated_per_request}
-        for p in options if p.estimated_monthly_base]
-''')
+      height=220)
 
 # === viz ===
 
