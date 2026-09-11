@@ -1069,8 +1069,6 @@ class Assistant(Agent):
     def turn_media(self):
         "Everything the newest turn has to draw: what the model generated, plus finished video jobs."
         return self.last_media + (self.video_jobs.unshown() if self.video_jobs else [])
-    @property
-    def tools_note(self): return f'{len(self.tools)} tools, {len(self.skills)} skills'
 
 class _PolicyApprovals(Approvals):
     "An `Approvals` wrapping a plain `approve(tool_call) -> bool`."

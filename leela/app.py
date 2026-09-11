@@ -37,7 +37,6 @@ from .core.web import Assets, IDE_BUNDLES, static_dirs
 from .core.text import did_you_mean
 from .core.text import md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
-from .blocks.debug.debug import notebook_state_ui, paused_kernel
 from .blocks.nb.nb import Notebook
 from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
@@ -231,24 +230,6 @@ def _inline_values(source, groups, outputs=(), result_info=None):
                             'accessor': info.get('accessor') or ['_']})
         except (SyntaxError, IndexError): pass
     return out
-
-async def _cell_extras(k, cell):
-    "Inspector rows and the rich last result for a finished cell, or `(None, None)`."
-    if not k or cell.has_error: return None, None
-    rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
-    has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
-    latest = await k.api('/api/result', timeout=2) if has_result else None
-    return rows, (latest or {}).get('result')
-
-def _activity_changes(a, versions):
-    "Activity rows that moved since the last poll: new calls and in-place transitions"
-    changed = []
-    for row in a.activity.rows(mark=a.activity._mark):
-        version = (row.get('done'), row.get('ok'), row.get('line'), row.get('detail'), row.get('secs'))
-        if versions.get(row['id']) != version:
-            versions[row['id']] = version
-            changed.append(row)
-    return changed
 
 def _history_sessions(turns, execution=()):
     "Turns grouped by durable model-context id; old untagged history splits after 30m."
@@ -899,32 +880,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     _buffers: dict[str, str] = _docstore.buffers
     _buffer_bases: dict[str, str] = _docstore.bases
     _doc_versions: dict[str, str] = _docstore.versions
-    _run_locks: dict[str, asyncio.Lock] = _docstore.run_locks
     _debugstate = DebugState()
     def _doc():
         t = ws.tab
         return None if t is None else _docs.get(t.path or t.title)
-    def _dbg(method=None): return paused_kernel(_debugstate, method)
-    def _open_path(path):
-        "The workspace file a debug frame refers to, or '' when it is outside the sandbox."
-        try: return str(ws.fs._check(path, must_exist=True))
-        except Exception: return ''
-    def _frame_path(frame): return (frame.get('source') or {}).get('path') or ''
-    def _debug_ui(state): return notebook_state_ui(_debugstate, ws.fs, state)
-    def _previous_runs():
-        "A reset namespace makes every saved output historical, even though it remains useful."
-        _docstore.mark_all_stale()
     async def _k(tab=None):
         "The explicitly picked runtime, else the addressed tab's own project/notebook kernel."
         return await ws.runtime(tab)
-    def _run_owner(d):
-        "Resolve a notebook request to the tab that submitted it, even after a tab switch."
-        ref = str(d.get('path') or '')
-        tab = (first(t for t in ws.tabs if (t.path or t.title) == ref) if ref else ws.tab)
-        if tab is None or tab.kind != 'notebook': return None, None, None
-        nb = _docs.get(tab.path or tab.title)
-        key = ws.kernel_key(tab)
-        return tab, nb, _run_locks.setdefault(key, asyncio.Lock())
     async def _api(path, params=None, timeout=15):
         "Proxy inspection through the exact runtime used by Run."
         client = await _k()

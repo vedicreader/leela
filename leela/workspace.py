@@ -836,9 +836,6 @@ class Workspace:
     def pending_approval(self):
         "The write waiting for a person, or None. What the web frontend polls during a turn."
         return self.approvals.pending
-    def answer_approval(self, id, ok, note='', session=False, tool=None, args=None):
-        "Resolve one checkpoint, including an optional user rewrite of the proposed call."
-        return self.approvals.answer(id, ok, note, session=session, tool=tool, args=args)
     def put_screen(self, png=None, text='', note=''):
         "Hold a capture for the next question. One slot, because the useful capture is the latest."
         self.screen = (png or None, text or '', note or '')
@@ -847,13 +844,6 @@ class Workspace:
         "Consume the pending capture as `(png, text, note)`."
         s, self.screen = self.screen, (None, '', '')
         return s
-    def save_screen(self, svg, name=None):
-        "Write a captured screen into leela's own config dir, not the project."
-        d = leela_cfg/'screens'
-        d.mkdir(parents=True, exist_ok=True)
-        p = d/(name or f"screen-{time.strftime('%Y%m%d-%H%M%S')}.svg")
-        p.write_text(svg)
-        return p
     def cwd_for(self, tab=None):
         "The tab's working directory: override, notebook directory, then project root."
         t = tab or self.tab
@@ -1018,12 +1008,6 @@ class Workspace:
         elif old_key.startswith('tab:'): await self.pool.close(old_key)
         await self.kernel(t)
         return self.kernel_options(t)
-    async def restart_kernel(self, tab=None):
-        "Restart the tab's kernel in place, keeping its key and its port."
-        k = self.kernel_peek(tab)
-        if k is None: return await self.kernel(tab)
-        await k.restart()
-        return k
     def initialize_notebook(self, path, nb=None):
         "Make one zero-byte `.ipynb` valid JSON before code reads it; `nb`, when already open, keeps its cell ids."
         if not path: return None
