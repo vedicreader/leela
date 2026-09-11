@@ -12,11 +12,11 @@ from ..runtime.kernels import output_text
 from ..refactor.move import top_symbols
 import json
 
-try:  # orjson parses large .ipynb JSON faster; stdlib is the superset that also allows NaN/Infinity.
+try:
     import orjson
     def _jloads(s):
         try: return orjson.loads(s)
-        except orjson.JSONDecodeError: return json.loads(s)
+        except orjson.JSONDecodeError: return json.loads(s)   # orjson rejects NaN/Infinity; stdlib takes them
 except ImportError:
     _jloads = json.loads
 

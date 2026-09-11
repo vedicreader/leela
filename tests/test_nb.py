@@ -580,3 +580,15 @@ def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
             return time.perf_counter() - began
         took = min(five() for _ in range(3))
     assert took < .5, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'
+
+
+def test_read_cells_parses_notebooks_that_orjson_alone_rejects():
+    from leela.blocks.nb.nb import read_cells
+    nb = json.dumps({'cells': [{'cell_type': 'code', 'source': ['x=1\n'], 'outputs': []}],
+                     'nbformat': 4, 'nbformat_minor': 5})
+    assert len(read_cells(nb)) == 1
+    nan = '{"cells": [{"cell_type":"code","source":[],"outputs":[{"data":{"x":NaN}}]}], "nbformat":4}'
+    assert read_cells(nan) is not None, 'orjson rejects NaN; a real notebook carries it, so parsing must fall through'
+    assert read_cells('not json') is None
+    assert read_cells('[1,2,3]') is None      # valid json, but not a notebook object
+    assert read_cells('') is None
