@@ -12,12 +12,13 @@ from ..runtime.kernels import output_text
 from ..refactor.move import top_symbols
 import json
 
-try:  # orjson parses large .ipynb JSON faster; stdlib json is the fallback.
-    from orjson import loads as _jloads
-    _JSONERR = ValueError
+try:  # orjson parses large .ipynb JSON faster; stdlib is the superset that also allows NaN/Infinity.
+    import orjson
+    def _jloads(s):
+        try: return orjson.loads(s)
+        except orjson.JSONDecodeError: return json.loads(s)
 except ImportError:
-    from json import loads as _jloads
-    _JSONERR = json.JSONDecodeError
+    _jloads = json.loads
 
 __all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
            'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'strip_work_log',
@@ -442,7 +443,7 @@ def _source_blocks(text):
 def read_cells(text):
     "The cells of a notebook's JSON text, or `None` when this is not a notebook we can read."
     try: nb = _jloads(text or '')
-    except (TypeError, _JSONERR): return None
+    except (TypeError, ValueError): return None
     if not isinstance(nb, dict): return None
     cells = nb.get('cells')
     return cells if isinstance(cells, list) else None
