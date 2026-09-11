@@ -995,11 +995,12 @@ class Search:
         for h in hits:
             if not _is_nb(h.path) or h.cell_index >= 0: continue
             if h.path not in cache:
-                try: cache[h.path] = self.fs.read(h.path)
-                except Exception: cache[h.path] = ''
-            text = cache[h.path]
-            at = cell_at(text, h.line) if int(h.line or 0) > 1 else None
-            if at is None: at = cell_of(text, h.text)
+                try: text = self.fs.read(h.path)
+                except Exception: text = ''
+                cache[h.path] = (text, read_cells(text))   # parse once per file, not once per hit
+            text, cells = cache[h.path]
+            at = cell_at(text, h.line, cells) if int(h.line or 0) > 1 else None
+            if at is None: at = cell_of(text, h.text, cells)
             if at is None: continue
             h.cell, h.cell_index, h.cell_line = at['id'], at['index'], at['line']
             if int(h.line or 0) <= 1 and at['file_line']: h.line = at['file_line']

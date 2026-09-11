@@ -4,10 +4,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher, get_close_matches
+from functools import lru_cache
 from fastcore.all import L
 from fastcore.xtras import str_diff
 from .. import Dictable
 from fastcore.basics import first
+
+try:  # rapidfuzz is C/SIMD-backed; difflib is the drop-in fallback when it is not installed.
+    from rapidfuzz.fuzz import ratio as _rf_ratio
+    def _ratio(a, b): return _rf_ratio(a, b) / 100.0
+except ImportError:
+    def _ratio(a, b): return SequenceMatcher(None, a, b).ratio()
 
 __all__ = ['DiffRow', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
            'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds',
@@ -73,7 +80,7 @@ def _fuzzy_score(q, s):
     "How well the lowercased query `q` matches candidate `s`."
     low = s.lower()
     base = low.rsplit('/', 1)[-1]
-    score = max(SequenceMatcher(None, q, base).ratio(), SequenceMatcher(None, q, low).ratio() * .5)
+    score = max(_ratio(q, base), _ratio(q, low) * .5)
     if q in base: score += 1.
     if base.startswith(q): score += .5
     return score
@@ -116,15 +123,19 @@ def _block_row(b, lines):
     if kind == 'code_block': row |= {'lang': str(b.get('lang') or ''), 'code': str(b.get('text') or '')}
     return row
 
+@lru_cache(maxsize=128)
+def _md_parse(text):
+    "The mdhtml parse of `text`, cached; a tuple so callers never mutate the shared result."
+    try:
+        from mdhtml import blocks
+        return tuple(blocks(text, **_MD_OPTS))
+    except Exception: return ()
+
 def md_blocks(text):
     "Every top-level block of `text`: 1-based inclusive source lines, expected tag, and code."
     text = str(text or '')
-    try:
-        from mdhtml import blocks
-        found = blocks(text, **_MD_OPTS)
-    except Exception: return []
     lines = text.split('\n')
-    return [_block_row(b, lines) for b in found]
+    return [_block_row(b, lines) for b in _md_parse(text)]
 
 def _change_kind(kinds):
     "One block's status from the kinds of the ranges touching it; None when none do."
@@ -139,6 +150,7 @@ def md_change_kinds(blocks, ranges):
                           if int(r.get('from') or 0) <= b['to'] and int(r.get('to') or 0) >= b['from']})
             for b in blocks]
 
+@lru_cache(maxsize=128)
 def _line_stat(left, right):
     "Added and removed line counts between two texts, the way `git diff --stat` counts them."
     a, b = str(left or '').split('\n'), str(right or '').split('\n')

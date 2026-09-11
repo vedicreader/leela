@@ -58,6 +58,10 @@ dependencies = [
     "uvicorn>=0.30.0",
     "httpx2>=2.10.0",
     "numpy>=1.26",
+    # rapidfuzz backs the quick-open ranker (`core.text._fuzzy_score`), orjson the .ipynb parse in
+    # `blocks/nb`. Both are import-guarded with a stdlib fallback, so a partial install still runs.
+    "rapidfuzz>=3.0",
+    "orjson>=3.9",
     "packaging>=24.0",
     "ptymini>=0.0.5",   # the pty layer: one ring per session, replayed on attach
     # `workspace._attachment_context` imports `ramabana.cli` for the media helpers, and that

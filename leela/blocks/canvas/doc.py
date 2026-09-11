@@ -268,11 +268,12 @@ def order(bricks):
     "Runnable bricks in dependency order, falling back to document order on a cycle."
     live = L(bricks).filter(lambda b: b.runs)
     owner = _owners(live)
+    byid = {b.id: b for b in live}
     need = {b.id: {owner[n] for n in b.reads if n in owner and owner[n] != b.id} for b in live}
     out, seen = [], set()
     def visit(b, path):
         if b.id in seen or b.id in path: return
-        for dep in need[b.id]: visit(first(x for x in live if x.id == dep), path | {b.id})
+        for dep in need[b.id]: visit(byid[dep], path | {b.id})
         seen.add(b.id); out.append(b)
     for b in live: visit(b, set())
     return L(out)

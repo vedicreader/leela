@@ -244,7 +244,8 @@ def review(
     b = first(x for x in bundles(doc) if x.id == bid)
     if b is None: raise KeyError(bid)
     files = hunks(diff)
-    cov = first(r for r in coverage(doc, list(files))['bundles'] if r['id'] == bid) or {}
+    cov_all = coverage(doc, list(files))
+    cov = first(r for r in cov_all['bundles'] if r['id'] == bid) or {}
     out = Canvas(meta={'title': f'Review: {b.title}'}, path=f'{bid}.review.canvas.md')
     out.add(Brick('text', f'# {b.title}'))
     if (g := b.goal) is not None: out.add(_copy(g))
@@ -282,7 +283,7 @@ def review(
     checks = []
     if cov.get('unmet'): checks.append('Claimed but unchanged: ' + ', '.join(f'`{p}`' for p in cov['unmet']))
     if cov.get('tasks_open'): checks.append(f"{len(cov['tasks_open'])} task(s) still open in this change.")
-    loose = coverage(doc, list(files))['unclaimed']
+    loose = cov_all['unclaimed']
     if loose: checks.append('Changed but claimed by no bundle: ' + ', '.join(f'`{p}`' for p in loose))
     out.add(Brick('note', '\n\n'.join(checks) or 'Every changed file is claimed and every task is done.',
                   id=f'{bid}-checks'))
