@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import base64, json, uuid
+import base64, json
 from pathlib import Path
 
 from fastcore.basics import first
+from fastcore.xtras import atomic_save
 
 from ...core.web import diff_payload
 
@@ -39,14 +40,10 @@ def mark_surface(cfg, sid, surface='agent', keep=4000):
     rows[sid] = surface
     if len(rows) > keep: rows = dict(list(rows.items())[-keep:])
     p = Path(cfg)/SURFACES_FILE
-    tmp = p.with_name(f'.{p.name}.{uuid.uuid4().hex}.tmp')
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps({'version': 1, 'sessions': rows}, ensure_ascii=False))
-        tmp.replace(p)
+        with atomic_save(p, mode='w', encoding='utf-8') as f:
+            f.write(json.dumps({'version': 1, 'sessions': rows}, ensure_ascii=False))
     except Exception: pass
-    finally:
-        if tmp.exists(): tmp.unlink()
     return rows
 
 def project_state_context(ws, max_files=120, max_chars=12_000):

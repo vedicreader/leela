@@ -305,7 +305,7 @@ def test_a_snippet_cites_a_symbol_out_of_the_file_it_names():
     assert code.startswith('def state(') and 'return \'todo\'' in code
     assert '# paths a diff says moved' in code                   # docments come with it
     m = Brick('snippet', '', attrs={'path': 'canvas/change.py', 'symbol': 'Bundle.paths'})
-    assert snip(m, PKG).splitlines()[0].strip() == '@property'   # decorators come with it
+    assert snip(m, PKG).splitlines()[0].strip() == '@cached_property'   # decorators come with it
     assert snip(Brick('snippet', '', attrs={'path': 'nope.py'}), PKG) == ''
 
 def test_a_literate_page_keeps_the_prose_under_each_heading():

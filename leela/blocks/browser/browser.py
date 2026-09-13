@@ -3,7 +3,7 @@
 from __future__ import annotations
 import asyncio, json, os, shutil
 from dataclasses import dataclass
-from fastcore.all import L, Path, ifnone, store_attr
+from fastcore.all import L, Path, atomic_save, ifnone, store_attr
 
 from ... import Dictable, errstr, leela_cfg
 
@@ -90,12 +90,9 @@ class Browser:
         guid, stored, _ = self._stored()
         keep = sorted(((stored if guid == self.guid else set()) | self._mine) - set(drop))
         try:
-            p = self._owned_path()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix('.writing')
-            tmp.write_text(json.dumps({'browser': self.guid, 'targets': keep,
-                                       'launched': self.port in _OURS}))
-            os.replace(tmp, p)
+            with atomic_save(self._owned_path(), mode='w', encoding='utf-8') as f:
+                f.write(json.dumps({'browser': self.guid, 'targets': keep,
+                                    'launched': self.port in _OURS}))
         except Exception: pass
 
     async def _own(self):

@@ -361,12 +361,8 @@ class Workspace:
         with self._timeline_lock:
             rows = self._timelines(); rows.pop(key, None); rows[key] = self._retained(parts)
             for old in list(rows)[:-self.TIMELINE_KEEP]: rows.pop(old, None)
-            self._timeline_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._timeline_path.with_name(f'.{self._timeline_path.name}.{os.getpid()}.tmp')
-            try:
-                tmp.write_json(rows); os.replace(tmp, self._timeline_path)
-            finally:
-                if tmp.exists(): tmp.unlink()
+            with atomic_save(self._timeline_path, mode='w', encoding='utf-8') as f:
+                f.write(json.dumps(rows))
             # this process wrote it, so what is in hand is the file and the next read is free
             try: st = self._timeline_path.stat(); self._timeline_stamp = f'{st.st_mtime_ns}:{st.st_size}'
             except Exception: self._timeline_stamp = ''

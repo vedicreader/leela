@@ -997,10 +997,11 @@ class Search:
             if h.path not in cache:
                 try: text = self.fs.read(h.path)
                 except Exception: text = ''
-                cache[h.path] = (text, read_cells(text))   # parse once per file, not once per hit
-            text, cells = cache[h.path]
-            at = cell_at(text, h.line, cells) if int(h.line or 0) > 1 else None
-            if at is None: at = cell_of(text, h.text, cells)
+                cells = read_cells(text)
+                cache[h.path] = (text, cells, source_spans(text, cells) if cells else None)
+            text, cells, spans = cache[h.path]
+            at = cell_at(text, h.line, cells, spans) if int(h.line or 0) > 1 else None
+            if at is None: at = cell_of(text, h.text, cells, spans)
             if at is None: continue
             h.cell, h.cell_index, h.cell_line = at['id'], at['index'], at['line']
             if int(h.line or 0) <= 1 and at['file_line']: h.line = at['file_line']

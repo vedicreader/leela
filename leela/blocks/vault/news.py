@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import json, os, re, time
+import json, re, time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 
-from fastcore.all import AttrDict, L, Path, first
+from fastcore.all import AttrDict, L, Path, atomic_save, first
 
 from ... import Dictable, errstr, leela_cfg
 from .jobs import every_seconds
@@ -137,10 +137,8 @@ class Feeds:
         except Exception: return None
     def save(self):
         try:
-            self.file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.file.parent/f'{self.file.name}.{os.getpid()}.tmp'
-            tmp.write_text(json.dumps({'feeds': [asdict(r) for r in self.rows]}, indent=2))
-            tmp.replace(self.file)
+            with atomic_save(self.file, mode='w', encoding='utf-8') as f:
+                f.write(json.dumps({'feeds': [asdict(r) for r in self.rows]}, indent=2))
         except Exception as e: self.note = f'could not save {self.file.name} ({errstr(e)})'
         return self
     def __len__(self): return len(self.rows)

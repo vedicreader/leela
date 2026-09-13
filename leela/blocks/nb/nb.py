@@ -535,24 +535,25 @@ def _at(cells, spans, i, line_in_cell):
     return dict(index=i, id=str(cells[i].get('id') or ''), line=line_in_cell,
         file_line=(span[0] + line_in_cell - 1) if span else 0, kind=str(cells[i].get('cell_type') or 'code'))
 
-def cell_at(text, line, cells=None):
+def cell_at(text, line, cells=None, spans=None):
     "The cell containing file line `line`, or `None` when no cell's source does."
     cells = read_cells(text) if cells is None else cells
     if not cells: return None
     try: line = int(line)
     except (TypeError, ValueError): return None
-    spans = source_spans(text, cells)
+    if spans is None: spans = source_spans(text, cells)
     for i, span in enumerate(spans):
         if span and span[0] <= line <= span[1]: return _at(cells, spans, i, line - span[0] + 1)
     return None
 
-def cell_of(text, snippet, cells=None):
+def cell_of(text, snippet, cells=None, spans=None):
     "The cell holding `snippet`, when exactly one does; `None` for none or several."
     needle = str(snippet or '').strip().split('\n')[0].strip()
     if not needle: return None
     cells = read_cells(text) if cells is None else cells
     if not cells: return None
-    spans, found = source_spans(text, cells), []
+    if spans is None: spans = source_spans(text, cells)
+    found = []
     for i, cell in enumerate(cells):
         for n, line in enumerate(cell_lines(cell), 1):
             if needle in str(line):

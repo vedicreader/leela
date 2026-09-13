@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from functools import cached_property
 from fnmatch import fnmatch
 from fastcore.all import L, Path, first
 
@@ -32,7 +33,7 @@ class Bundle:
     def refs(self):
         "Packages, files and documents attached for review. Same vocabulary as a context pin."
         return _list(self.brick.attrs.get('refs'))
-    @property
+    @cached_property
     def members(self):
         "Bricks in this change: its region, plus what `covers=` names. Never the goal."
         want = {self.brick.region} | set(_list(self.brick.attrs.get('covers')))
@@ -40,7 +41,7 @@ class Bundle:
                  if b.id != self.id and not b.heading and b.kind != 'goal'
                  and (b.region in want or b.id in want))
     def of(self, *kinds): return self.members.filter(lambda b: b.kind in set(kinds))
-    @property
+    @cached_property
     def paths(self):
         "Files this change owns: what its code exports, then what `paths=` declares."
         mine = {b.id for b in self.of('code')}
@@ -75,10 +76,11 @@ def state(
 def coverage(
     doc,        # the document
     changed,    # paths a diff says moved
+    bs=None,    # bundles already built, else read from `doc`
 ):
     "What each change claims, what moved, and what nobody claimed."
     changed, rows, claimed = sorted(changed), [], set()
-    for b in bundles(doc):
+    for b in (bundles(doc) if bs is None else bs):
         hit = {p for c in b.paths for p in changed if _matches(c, p)}
         claimed |= hit
         rows.append({'id': b.id, 'title': b.title, 'goal': b.goal.id if b.goal else '',
@@ -310,7 +312,7 @@ def value(doc, changed=()):
     if (loose := served.get('', [])):
         out.add(Brick('text', '## Serving no goal'))
         for b in loose: out.add(_summary(b, changed))
-    cov = coverage(doc, list(changed))
+    cov = coverage(doc, list(changed), all_b)
     lines = [f'{len(all_b)} change(s) across {len(doc.of("goal"))} goal(s).']
     for st in STATES:
         if (n := [b.id for b in all_b if state(b, changed) == st]): lines.append(f'{st}: ' + ', '.join(n))
