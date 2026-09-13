@@ -16,8 +16,7 @@ except ImportError:                                  # a broken wheel still rank
     def _ratio(a, b): return SequenceMatcher(None, a, b).ratio()
 
 __all__ = ['DiffRow', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
-           'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds',
-           'MARKDOWN_SUFFIXES']
+           'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds']
 
 @dataclass
 class DiffRow(Dictable):
@@ -95,9 +94,7 @@ def fuzzy_rank(q, items, key=str, limit=None):
     return ranked if limit is None else ranked[:limit]
 
 
-MARKDOWN_SUFFIXES = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn')
-
-_MD_TAGS = {'paragraph': ('p',), 'code_block': ('pre',), 'list': ('ul', 'ol'), 'table': ('table',),
+_MD_TAGS ={'paragraph': ('p',), 'code_block': ('pre',), 'list': ('ul', 'ol'), 'table': ('table',),
             'block_quote': ('blockquote',), 'thematic_break': ('hr',), 'figure': ('figure',),
             'html_block': (), 'math_block': (), 'template': ()}
 

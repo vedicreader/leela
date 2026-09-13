@@ -30,11 +30,6 @@ def _runtimes():
 LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hosted API / FastLLM',
           'cursor': 'Cursor agent', 'claude': 'Claude Code', 'copilot': 'GitHub Copilot'}
 
-def _why(runtime, agents):
-    "What to do about an unreachable runtime, from ramabana, which declares them."
-    from ...agent.core import runtime_remedy
-    return runtime_remedy(runtime)
-
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
 INSTALLABLE = ('mlx', 'llama')
 
@@ -298,9 +293,9 @@ def setup_plan():
 
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."
-    from ...agent.core import AGENTS, runtime_available, runtime_detail
+    from ...agent.core import runtime_available, runtime_detail, runtime_remedy
     return [{'value': r, 'label': LABELS.get(r, r), 'available': bool(runtime_available(r)),
-             'why': _why(r, AGENTS), 'installable': r in INSTALLABLE,
+             'why': runtime_remedy(r), 'installable': r in INSTALLABLE,
              'requirements': runtime_requirements(r), 'install': install_state(r),
              'detail': '' if runtime_available(r) else runtime_detail(r)}
             for r in _runtimes()]

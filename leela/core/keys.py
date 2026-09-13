@@ -4,15 +4,13 @@ import json, os
 from dataclasses import dataclass, asdict, replace
 from fastcore.all import L, Path, first, ifnone
 
-__all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
+__all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas')
-
-WEB_ONLY_SCOPES = ()
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
           'home', 'end', 'pageup', 'pagedown', *[f'f{i}' for i in range(1, 13)]}
