@@ -3,6 +3,7 @@
 from __future__ import annotations
 import asyncio
 from fastcore.basics import first
+from fastcore.xtras import atomic_save
 import gzip, hashlib, json, shutil, time, uuid
 from pathlib import Path
 
@@ -65,10 +66,8 @@ class FileHistory:
         try: self.rows_ = json.loads(self.path.read_text()).get('versions', [])
         except Exception: self.rows_ = []
     def _save(self):
-        self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix('.tmp')
-        tmp.write_text(json.dumps({'versions': self.rows_}, ensure_ascii=False))
-        tmp.replace(self.path)
+        with atomic_save(self.path, mode='w', encoding='utf-8') as f:
+            f.write(json.dumps({'versions': self.rows_}, ensure_ascii=False))
     def _blob(self, text):
         digest = hashlib.sha256(text.encode('utf-8', 'replace')).hexdigest()[:16]
         p = self.root/'blobs'/f'{digest}.gz'
@@ -267,10 +266,8 @@ class OperationJournal:
         try: self.operations = json.loads(self.path.read_text()).get('operations', [])[-MAX_OPERATIONS:]
         except Exception: self.operations = []
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix('.tmp')
-        tmp.write_text(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
-        tmp.replace(self.path)
+        with atomic_save(self.path, mode='w', encoding='utf-8') as f:
+            f.write(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
     def record(self,
                label,
                resources,          # content changes, as `(path, before, after)`
