@@ -140,7 +140,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow' -n auto"
+# `loadgroup` is `load` plus one rule: tests marked `xdist_group` stay on one worker. Modules whose
+# fixtures are module-scoped and expensive declare a group rather than being rebuilt per worker.
+addopts = "-m 'not slow' -n auto --dist loadgroup"
 markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv]

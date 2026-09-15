@@ -18,6 +18,11 @@ from leela.blocks.canvas.live import Runtime
 from leela.blocks.canvas.ops import apply_op
 from leela.blocks.canvas.store import brick_host
 
+#: One worker takes the whole module. `client`, `ws` and `corpus` are module-scoped, so scattering
+#: these across workers rebuilds the ide app per worker and runs canvas runtimes concurrently:
+#: 600s against 30s, and the trust a test reads is whichever ordering the scheduler picked.
+pytestmark = pytest.mark.xdist_group('canvas')
+
 EXAMPLES = Path(__file__).resolve().parents[1]/'examples'/'canvas'
 
 SRC = '''---
