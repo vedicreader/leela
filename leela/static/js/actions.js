@@ -53,6 +53,7 @@ const ACTIONS = {
   run_selection: () => runSelection(),
   pick_kernel:  () => pickKernel(),
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
+  new_canvas:   () => newCanvas(),
   notebook_language: () => pickNotebookLanguage(),
   add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),

@@ -11,11 +11,7 @@ from tests.assets import read
 from leela import desktop
 
 def test_the_pipeline_terminal_is_keyed_by_the_package_it_watches():
-    """A browser test covers the behaviour; this catches a silent revert without paying for one.
-
-    `openReleaseTerm` keyed its record by kind alone, so one `release` terminal served every
-    package and showed whichever one it was opened with first.
-    """
+    """A browser test covers the behaviour; this catches a silent revert without paying for one."""
     for f in ('leela/blocks/term/dock.js', 'leela/static/lee-ide.js'):
         js = read(f)
         body = js.split('async function openReleaseTerm')[1].split('\nasync function')[0]
@@ -29,10 +25,7 @@ def test_each_platform_gets_the_webview_its_os_already_ships():
     assert desktop.backend('sunos5') is None
 
 def test_the_system_text_checker_is_turned_off_before_a_window_can_ask(monkeypatch):
-    """WKWebView hands a `contenteditable` to NSSpellChecker where a browser does not, so the
-    packaged app curled quotes and corrected identifiers behind CodeMirror's back. Written to
-    Leela's own defaults domain, so nothing outside Leela changes.
-    """
+    """WKWebView hands a `contenteditable` to NSSpellChecker where a browser does not, so the packaged app curled quotes and corrected identifiers behind CodeMirror's back."""
     written = {}
     class Defaults:
         def setBool_forKey_(self, value, key): written[key] = value
@@ -108,9 +101,7 @@ def test_the_port_moves_out_of_the_way_of_a_leela_already_running():
     assert got != taken and got > 0
 
 def test_the_port_a_window_is_served_from_is_the_same_one_next_launch():
-    """A window's origin is `http://<slug>.localhost:<port>`. The port used to fall back to
-    whatever the OS handed out, so a launch that could not have 5001 got a new origin and found
-    every per-origin thing the browser had kept for it empty: the theme reset on every reopen."""
+    """A window's origin is `http://<slug>.localhost:<port>`."""
     import socket
     ladder = range(5001, 5011)
     assert leela_app.free_port(ports=ladder) in ladder
@@ -198,9 +189,7 @@ def test_the_shell_opens_a_window_and_loads_the_workspace_into_it(tmp_path):
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='Apple Events are macOS only')
 def test_the_open_folder_handler_can_be_constructed():
-    """It is an Objective-C subclass, so `super().init()` finds nothing and registration raised
-    `'super' object has no attribute 'init'` on every launch. Nothing opened a folder dropped on
-    the Dock or chosen through Open With, and the failure was one printed line."""
+    """It is an Objective-C subclass, so `super().init()` finds nothing and registration raised `'super' object has no attribute 'init'` on every launch."""
     pytest.importorskip('objc')
     from leela.desktop import _OpenHandler
     assert _OpenHandler is not None, 'the class itself failed to define'
@@ -213,9 +202,7 @@ def test_the_open_folder_handler_can_be_constructed():
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
 def test_closing_the_last_window_hides_it_rather_than_quitting():
-    """pywebview stops the run loop when its last window closes, so Leela vanished from the Dock
-    while every other Mac app stays there. Both delegates are subclassed, because an Objective-C
-    method cannot be reassigned once its class is built."""
+    """pywebview stops the run loop when its last window closes, so Leela vanished from the Dock while every other Mac app stays there."""
     pytest.importorskip('webview.platforms.cocoa')
     from webview.platforms.cocoa import BrowserView
     from leela.desktop import keep_running_in_dock
@@ -244,8 +231,7 @@ def test_a_pywebview_that_moved_on_leaves_the_old_behaviour(monkeypatch, capsys)
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='the Cocoa shell is macOS only')
 def test_reopening_brings_back_one_window_and_not_every_one_you_closed():
-    """Four windows closed one at a time should not all come back at once: the one closed most
-    recently is what a Dock click is asking for."""
+    """Four windows closed one at a time should not all come back at once: the one closed most recently is what a Dock click is asking for."""
     pytest.importorskip('webview.platforms.cocoa')
     from webview.platforms.cocoa import BrowserView
     from leela.desktop import keep_running_in_dock
@@ -274,9 +260,7 @@ def test_reopening_brings_back_one_window_and_not_every_one_you_closed():
 
 @pytest.mark.skipif(sys.platform != 'darwin', reason='NSMenu is macOS only')
 def test_the_dock_menu_offers_recent_folders_and_opens_one(tmp_path, monkeypatch):
-    """`recent_folders` gives paths, not dicts. Indexing them as dicts raised, the handler caught
-    it, and the Dock menu never appeared -- so this drives the real function and not a shape I
-    invented for the test."""
+    """`recent_folders` gives paths, not dicts."""
     pytest.importorskip('AppKit')
     import leela.core.projects as projects
     from leela.desktop import DOCK_RECENT, dock_menu
@@ -305,9 +289,7 @@ def test_a_dock_menu_with_no_history_says_so(monkeypatch, tmp_path):
 
 
 def test_a_folder_is_never_opened_on_the_thread_running_the_gui():
-    """`webview.create_window` builds nothing at all when it is called from the main thread once
-    `webview.start` owns it, so a folder from the Dock or from Finder made a window that was not
-    one and then hung waiting for it to load."""
+    """`webview.create_window` builds nothing at all when it is called from the main thread once `webview.start` owns it, so a folder from the Dock or from Finder made a window that was not one and then hung waiting for it to load."""
     seen, done = [], threading.Event()
     def note(path): seen.append((path, threading.current_thread().name)); done.set()
     desktop.off_main_thread(note, 'leela-open-folder')('/tmp/somewhere')
@@ -376,8 +358,7 @@ def test_the_menu_bar_names_only_actions_the_keymap_declares():
     assert named - known == set()
 
 def test_the_menu_bar_names_only_actions_the_client_can_dispatch():
-    """`leeAct` answers `no handler for …` for anything absent from its table, so being in the
-    keymap is necessary and not sufficient."""
+    """`leeAct` answers `no handler for …` for anything absent from its table, so being in the keymap is necessary and not sufficient."""
     from leela.blocks.keys.menus import BAR, MenuItem
     # Two ways in: the table in `actions.js`, and `ACTIONS.name =` from a block that owns the action.
     js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + \
@@ -415,8 +396,7 @@ def test_a_leela_chord_becomes_the_key_equivalent_appkit_spells(chord, want):
     assert desktop.mac_key(chord) == want
 
 def test_a_menu_row_takes_no_chord_that_would_be_stolen_from_the_page():
-    """A key equivalent is consulted before the keystroke reaches the web view. Binding the files
-    pane's bare `n` would fire New File every time the letter n was typed anywhere."""
+    """A key equivalent is consulted before the keystroke reaches the web view."""
     assert desktop.menu_chord('new_file') is None, 'bare letter, and files-scoped'
     assert desktop.menu_chord('run_cell') is None, 'editor-scoped: a menu cannot express scope'
     assert desktop.menu_chord('quit') is None, 'unbound'
@@ -468,10 +448,7 @@ def test_the_menu_bar_is_a_no_op_off_macos(monkeypatch):
     assert desktop.menus() == []
 
 def test_nothing_opens_a_window_the_app_cannot_open():
-    """A scripted `window.open` is `WKNavigationTypeOther`, and pywebview's delegate only acts on a
-    link activation, so in the packaged app it opens nothing and returns null. Four git and workspace
-    buttons took the bare form and failed silently. `openExternal` is the one place that checks the
-    return value and asks the server for a real browser instead."""
+    """A scripted `window.open` is `WKNavigationTypeOther`, and pywebview's delegate only acts on a link activation, so in the packaged app it opens nothing and returns null."""
     js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + read('leela/static/lee-agent.js')
     calls = [l.strip() for l in js.splitlines() if 'window.open(' in l]
     assert calls, 'the guarded form went missing rather than the guard'
@@ -480,9 +457,7 @@ def test_nothing_opens_a_window_the_app_cannot_open():
             f'a window this app cannot open: {line[:120]}'
 
 def test_an_external_link_never_navigates_the_app_window_away():
-    """pywebview injects its bridge asynchronously, so `window.pywebview` is undefined for the first
-    moment of the packaged app's life. A markdown link clicked in that window took the browser
-    branch, which in WKWebView means the app's own window navigates to the site with no back."""
+    """pywebview injects its bridge asynchronously, so `window.pywebview` is undefined for the first moment of the packaged app's life."""
     js = read('leela/static/lee-core.js')
     assert 'const inDesktopShell = () => Boolean(window.pywebview || lee.inShell)' in js
     handler = js.split('function routeMarkdownLinks')[1].split('\n}')[0]
@@ -509,8 +484,7 @@ def _stub_server(handler_body, status=400):
 
 
 def test_only_a_leela_that_could_answer_an_attach_is_taken_for_one():
-    """The probe asks through the route an attach would use. A `leela` started without `--app` has
-    no hub and 404s there, and attaching to it would have opened nothing and said nothing."""
+    """The probe asks through the route an attach would use."""
     import json
     hub, hub_port = _stub_server(json.dumps({'ok': False, 'error': 'not a folder: '}).encode(), 400)
     plain, plain_port = _stub_server(b'404 Not Found', 404)
@@ -527,8 +501,7 @@ def test_only_a_leela_that_could_answer_an_attach_is_taken_for_one():
 
 
 def test_a_second_launch_opens_windows_on_the_running_leela_instead_of_a_second_server(monkeypatch):
-    """One server means one origin, so what the first copy saved is what the second reads. It was
-    starting a second server on another port, which is a different origin and an empty one."""
+    """One server means one origin, so what the first copy saved is what the second reads."""
     opened, served = [], []
     monkeypatch.setattr(leela_app, 'running_leela', lambda *a, **k: 5001)
     monkeypatch.setattr(leela_app, 'serve', lambda *a, **k: served.append(a))

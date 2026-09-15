@@ -5,11 +5,13 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
-from leela.blocks.pipelines.pipelines import (APP_STEPS, Release, ReleaseError, app_project,
-    default_steps, fastship_project, nbdev_project, release_flow)
+from pullup.project import (APP_STEPS, app_project, default_steps, fastship_project,
+    nbdev_project, release_flow)
+from leela.blocks.pipelines.pipelines import Release, ReleaseError
 import ast
 from leela.blocks.pipelines.deploys import DEPLOY_KEYS, Deploy, DeployError, deploy_template
-from leela.blocks.drive.drive import PARTS, Drive, context, parts
+from pullup.drive import PARTS, context, parts
+from leela.blocks.drive.drive import Drive
 from leela.blocks.stack.infra import Infra, InfraError
 from leela.blocks.stack.packages import FAMILY, blame, checkout_for, frames, survey
 
@@ -142,12 +144,7 @@ def test_the_transcript_covers_the_whole_release_not_just_the_last_step(tmp_path
     assert '❯ echo alpha' in tail and '✓ first exited 0' in tail
 
 def test_each_package_gets_its_own_pipeline(tmp_path):
-    """One pipeline per package, and the terminal that watches one is keyed the same way.
-
-    The route holds `live[(kind, root)]`, so a release running in one package keeps running while
-    another is looked at. The client used to key its terminal by kind alone and show the first
-    package's log for all of them; `dock.js` keys by root now, and this is the other half.
-    """
+    """One pipeline per package, and the terminal that watches one is keyed the same way."""
     import subprocess
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -511,10 +508,7 @@ TypeError: Could not resolve authentication method.
 
 
 def test_prepare_runs_for_a_project_configured_the_modern_way(tmp_path, monkeypatch):
-    """It demanded `settings.ini`, so a project keeping `[tool.nbdev]` was told it was not one.
-
-    That is how every nbdev project written since nbdev 2.3 is configured, ramabana included.
-    """
+    """It demanded `settings.ini`, so a project keeping `[tool.nbdev]` was told it was not one."""
     from leela.blocks.pipelines.app import nbdev_config, nbdev_prepare
     from leela.blocks.pipelines.pipelines import PipelineError
     root = project_releas(tmp_path/'modern', nbdev=True)
@@ -528,22 +522,26 @@ def test_prepare_runs_for_a_project_configured_the_modern_way(tmp_path, monkeypa
     session = SimpleNamespace(fs=SimpleNamespace(roots=[Path(root)]))
     monkeypatch.setattr('leela.blocks.pipelines.app.repo_for', lambda s, t: Path(root))
     monkeypatch.setattr('leela.blocks.pipelines.app.python_for', lambda r, s: None)
+    #: Whether nbdev is installed is the sibling test's subject, not this one's, and reading it off
+    #: the ambient PATH made this test pass or fail on how pytest was invoked.
+    script = str(root/'.venv/bin/nbdev-prepare')
+    monkeypatch.setattr('leela.blocks.pipelines.app.resolve_script', lambda argv, *a, **kw: [script])
     d = nbdev_prepare(session)
+    assert ran['argv'] == [script], 'it runs the resolved script, never the bare name'
     assert d['ok'] and d['root'] == str(root) and d['nbs_path'] == 'nbs'
     assert ran['cwd'] == str(root), 'and it runs in the folder that owns the config'
 
 
 def test_prepare_says_what_it_looked_for_when_nbdev_is_not_installed():
     "`nbdev_prepare` with an underscore is not a file any current nbdev ships; the error said so wrongly."
-    from leela.blocks.pipelines.pipelines import resolve_script
+    from pullup.pipeline import resolve_script
     # Both spellings are tried, so asking for the hyphen still finds an underscore-only install.
     assert resolve_script(['nbdev-prepare'], None, env={'PATH': ''}) == ['nbdev-prepare']
 
 
 def test_a_uv_project_runs_through_uv_the_way_the_terminal_does(tmp_path, monkeypatch):
-    """`uv run` syncs the lock first. Calling the venv's script does not, so a venv that had been
-    synced to another project's lock failed on an import instead of being repaired."""
-    from leela.blocks.pipelines.pipelines import uv_argv
+    """`uv run` syncs the lock first."""
+    from pullup.pipeline import uv_argv
     root = tmp_path/'proj'; root.mkdir()
     monkeypatch.setattr('pullup.pipeline.which', lambda n: '/opt/uv')
     assert uv_argv(root, ['nbdev-prepare']) is None, 'no lock, so uv does not own it'

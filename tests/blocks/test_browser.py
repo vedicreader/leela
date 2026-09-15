@@ -188,10 +188,7 @@ def test_closing_the_page_closes_it_in_chrome(client):
     assert ws.browser.closed == ['T1']
 
 def test_closing_the_leela_tab_closes_the_page_it_opened(client):
-    """`/browser/close` had no caller, so a page opened here outlived its tab for the session.
-
-    The report: open a site, close the tab, and it is still on the list `browse_tabs` offers.
-    """
+    """`/browser/close` had no caller, so a page opened here outlived its tab for the session."""
     c, ws = client
     c.get('/browser/open?url=https://example.com/a')
     assert ws.tabs[ws.active].kind == 'web'
@@ -281,10 +278,7 @@ def wired(cdp, port=4321):
     return b
 
 def test_a_page_a_previous_leela_opened_is_still_closeable_after_a_restart():
-    """`_mine` lived on the process, so a page opened before a restart could never be closed.
-
-    The report: quit Leela, adopt the page again, close the tab, and the page is still in Chrome.
-    """
+    """`_mine` lived on the process, so a page opened before a restart could never be closed."""
     cdp = FakeCDP()
     tid = asyncio.run(wired(cdp).open('https://example.com/a')).id
     later = wired(cdp)                                    # a new process, an empty `_mine`
@@ -353,11 +347,7 @@ def test_adopting_a_page_records_no_ownership_of_it():
     assert b._mine == set() and not b._owned_path().exists()
 
 def test_a_chrome_that_cannot_rasterise_at_the_wanted_scale_is_measured_and_said():
-    """`SCALE_FLAG` takes at launch, so a Chrome that predates it goes on sending 1x frames.
-
-    The ratio between the two layout viewports is the browser's own scale factor, and it reads the
-    same under the `Emulation` override `resize` applies.
-    """
+    """`SCALE_FLAG` takes at launch, so a Chrome that predates it goes on sending 1x frames."""
     b = Browser(port=1)
     asyncio.run(b._measure(StubPage(756, 756)))
     assert b.scale == 1
@@ -427,11 +417,7 @@ def test_hiding_the_window_stops_the_encoding_and_showing_it_starts_again():
     assert [c[0] for c in drive({'t': 'resume', 'w': 800, 'h': 600})] == ['start_cast']
 
 def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
-    """Pausing and resuming must not orphan the cast.
-
-    Teardown stops the stream by owner. If `resume` took a fresh identity, the socket's own
-    teardown would no longer match and a closed tab would leave Chrome encoding forever.
-    """
+    """Pausing and resuming must not orphan the cast."""
     b = Browser(port=1)
     started = []
 
@@ -446,11 +432,7 @@ def test_the_stream_belongs_to_the_socket_rather_than_to_each_start(ws):
     assert started == [mine] and b._casts['T1'] is mine
 
 def test_two_attachers_to_one_page_get_the_same_session(monkeypatch):
-    """Attaching twice is two CDP sessions, of which the cache keeps one.
-
-    The caller left holding the other filters frames by a session id nothing will ever send,
-    so its screencast is silent -- and the session it holds is never closed.
-    """
+    """Attaching twice is two CDP sessions, of which the cache keeps one."""
     import fastcdp
     b, made = Browser(port=1), []
 
@@ -488,11 +470,7 @@ def _cast(scale, **kw):
     return out, dict(p.calls)
 
 def test_the_frame_ceiling_leaves_room_for_a_browser_that_rasterises_above_one_to_one():
-    """A frame captured at 1x and drawn into a 2x display is the blur this fixes.
-
-    `maxWidth` was pinned to the viewport in CSS pixels, so a Chrome rasterising at 2x had its
-    frame scaled straight back down to 1x before it reached the socket. It is a ceiling now.
-    """
+    """A frame captured at 1x and drawn into a 2x display is the blur this fixes."""
     (w, h, _), calls = _cast(2)
     assert (w, h) == (900, 700), 'the viewport stays in CSS pixels'
     assert calls['startScreencast']['maxWidth'] == 900*MAX_SCALE
@@ -512,12 +490,7 @@ def test_the_frames_are_encoded_at_the_quality_text_needs():
     assert calls['startScreencast']['quality'] == 80
 
 def test_chrome_is_started_at_the_scale_a_screencast_frame_is_rasterised_at(monkeypatch):
-    """The only lever on how many pixels a frame carries is the browser's own scale factor.
-
-    Measured against Chrome, a 200px div is 200 image pixels in the frame at every per-page
-    `deviceScaleFactor`, and 400 with this flag. The flag only takes at launch, so a Chrome
-    already running when Leela connects goes on sending 1x frames.
-    """
+    """The only lever on how many pixels a frame carries is the browser's own scale factor."""
     assert SCALE_FLAG == '--force-device-scale-factor=2'
     b, seen = Browser(port=1), {}
     async def fake_connect(**kw):
@@ -561,13 +534,7 @@ def site():
 @pytest.mark.slow
 def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, monkeypatch,
                                                                       tmp_path, request):
-    """The whole path, once: Chrome renders, a frame arrives, a click lands, the page reads.
-
-    `FOSSICK_ALLOW_PRIVATE` because the fixture site is on loopback, which the URL guard is
-    otherwise right to refuse -- see `test_the_browser_will_not_be_pointed_at...`. The profile
-    is a throwaway rather than fossick's: Chrome allows one process per user-data-dir, so a
-    suite sharing the real one would either fail to start or attach to the developer's session.
-    """
+    """The whole path, once: Chrome renders, a frame arrives, a click lands, the page reads."""
     monkeypatch.setenv('FOSSICK_ALLOW_PRIVATE', '1')
     pytest.importorskip('fastcdp')
     profile = tmp_path/'chrome'
@@ -642,11 +609,7 @@ def test_a_real_page_streams_frames_into_the_socket_and_takes_a_click(ws, site, 
 @pytest.mark.slow
 def test_a_real_chrome_started_without_the_flag_is_measured_at_one_to_one(ws, site, monkeypatch,
                                                                           tmp_path):
-    """The user's report, reproduced: Leela reuses a Chrome that predates the flag and it stays 1x.
-
-    A fresh port and a throwaway profile, so the Chrome a person is using is never the one under
-    test. It is quit at the end, because this test is the only thing that opened it.
-    """
+    """The user's report, reproduced: Leela reuses a Chrome that predates the flag and it stays 1x."""
     monkeypatch.setenv('FOSSICK_ALLOW_PRIVATE', '1')
     pytest.importorskip('fastcdp')
     port = _free_port()
@@ -797,11 +760,7 @@ def test_the_workspace_teardown_quits_the_browser(ws):
 
 @pytest.mark.slow
 def test_the_chrome_leela_starts_really_does_die_when_leela_quits(tmp_path, monkeypatch):
-    """The fakes prove the decision; only a real Chrome proves the process goes away.
-
-    A free port and a throwaway profile, so this starts its own Chrome rather than adopting the
-    developer's, and cannot leave one behind on a well-known port if it fails.
-    """
+    """The fakes prove the decision; only a real Chrome proves the process goes away."""
     pytest.importorskip('fastcdp')
     monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
     port = _free_port()

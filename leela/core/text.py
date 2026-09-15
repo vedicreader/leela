@@ -9,9 +9,14 @@ from fastcore.xtras import str_diff
 from .. import Dictable
 from fastcore.basics import first
 
+try:
+    from rapidfuzz.fuzz import ratio as _rf_ratio
+    def _ratio(a, b): return _rf_ratio(a, b) / 100.0
+except ImportError:                                  # a broken wheel still ranks, just slower
+    def _ratio(a, b): return SequenceMatcher(None, a, b).ratio()
+
 __all__ = ['DiffRow', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
-           'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds',
-           'MARKDOWN_SUFFIXES']
+           'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds']
 
 @dataclass
 class DiffRow(Dictable):
@@ -73,7 +78,7 @@ def _fuzzy_score(q, s):
     "How well the lowercased query `q` matches candidate `s`."
     low = s.lower()
     base = low.rsplit('/', 1)[-1]
-    score = max(SequenceMatcher(None, q, base).ratio(), SequenceMatcher(None, q, low).ratio() * .5)
+    score = max(_ratio(q, base), _ratio(q, low) * .5)
     if q in base: score += 1.
     if base.startswith(q): score += .5
     return score
@@ -89,9 +94,7 @@ def fuzzy_rank(q, items, key=str, limit=None):
     return ranked if limit is None else ranked[:limit]
 
 
-MARKDOWN_SUFFIXES = ('.md', '.markdown', '.mdown', '.mkd', '.mkdn')
-
-_MD_TAGS = {'paragraph': ('p',), 'code_block': ('pre',), 'list': ('ul', 'ol'), 'table': ('table',),
+_MD_TAGS ={'paragraph': ('p',), 'code_block': ('pre',), 'list': ('ul', 'ol'), 'table': ('table',),
             'block_quote': ('blockquote',), 'thematic_break': ('hr',), 'figure': ('figure',),
             'html_block': (), 'math_block': (), 'template': ()}
 

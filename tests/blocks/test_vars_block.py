@@ -1,9 +1,4 @@
-"""The variables pane's own routes, where `→live` can take a name the user already has.
-
-`/vars/promote` passed the accessor straight to dhrishti, whose `_promote` rebinds the owner
-namespace without looking. The agent's `promote_var` refused the same collision, so the button
-and the `p` key could do what the tool would not.
-"""
+"""The variables pane's own routes, where `→live` can take a name the user already has."""
 
 from __future__ import annotations
 

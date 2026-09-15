@@ -101,7 +101,7 @@ class DevServer:
     def _cwd(self):
         if self.cwd: return str(self.cwd)
         a = self.argv[0]
-        from .support import work_dir
+        from kunda.support import work_dir
         return str(Path(a).parent) if a.endswith('.py') else work_dir()
     async def start(self):
         "Spawn the app on a pty and begin draining it. Returns self once the inspector registers."

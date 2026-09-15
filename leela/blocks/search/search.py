@@ -1,7 +1,7 @@
 "Predictable human search (rg unless a mode is picked), semantic agent search, and every hit."
 
 from __future__ import annotations
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 import ast, json, re, subprocess
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -995,11 +995,13 @@ class Search:
         for h in hits:
             if not _is_nb(h.path) or h.cell_index >= 0: continue
             if h.path not in cache:
-                try: cache[h.path] = self.fs.read(h.path)
-                except Exception: cache[h.path] = ''
-            text = cache[h.path]
-            at = cell_at(text, h.line) if int(h.line or 0) > 1 else None
-            if at is None: at = cell_of(text, h.text)
+                try: text = self.fs.read(h.path)
+                except Exception: text = ''
+                cells = read_cells(text)
+                cache[h.path] = (text, cells, source_spans(text, cells) if cells else None)
+            text, cells, spans = cache[h.path]
+            at = cell_at(text, h.line, cells, spans) if int(h.line or 0) > 1 else None
+            if at is None: at = cell_of(text, h.text, cells, spans)
             if at is None: continue
             h.cell, h.cell_index, h.cell_line = at['id'], at['index'], at['line']
             if int(h.line or 0) <= 1 and at['file_line']: h.line = at['file_line']

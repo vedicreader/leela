@@ -4,7 +4,7 @@ Roadmap: [litesearch](https://github.com/Karthik777/litesearch/blob/main/docs/co
 
 ## Search
 
-`blocks/search/search.py` adapts litesearch and kosha. The member-by-member table this file used to carry named four members that no longer exist (`_store`, `_rows`, `_cluster`, `MIN_CLUSTERABLE`), so it read as unstarted work that had in fact already landed. What follows is the state as it is.
+`blocks/search/search.py` adapts litesearch and kosha. The member-by-member table this file used to carry named four members that no longer exist (`_store`, `_rows`, `_cluster`, `MIN_CLUSTERABLE`), so it read as unstarted work that had already landed. What follows is the state as it is.
 
 Done upstream. `Table.clusters` and `Table.peers` are litesearch's, in `litesearch/topics.py`, and `Search` reaches them through `k.code_st`.
 

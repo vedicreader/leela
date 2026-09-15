@@ -74,8 +74,7 @@ def _venv(root, files):
     return site
 
 def test_a_symbol_a_package_defines_is_found_in_the_venv(ws, tmp_path, no_index):
-    """A name the project only imports is defined in site-packages, which the project walk skips
-    on purpose. Without it the only answer was the import lines that mention it."""
+    """A name the project only imports is defined in site-packages, which the project walk skips on purpose."""
     site = _venv(tmp_path, {
         'fastcore/basics.py': 'def store_attr(names=None):\n    pass\n',
         'fastcore/other.py': 'class STORE_ATTR: pass\n',
@@ -147,8 +146,7 @@ def test_a_package_api_row_says_which_file_the_name_is_in(ws, tmp_path, monkeypa
     assert ws.search.package_api('') == []
 
 def test_a_dotted_module_name_opens_the_module_it_names(ws, tmp_path, no_index):
-    """`fastcore.test` is a module, and nothing declares a module. The name alone found whichever
-    package happened to have a `def test`, which is never the file that was clicked."""
+    """`fastcore.test` is a module, and nothing declares a module."""
     site = _venv(tmp_path, {'fastcore/__init__.py': '__version__ = "1"\n',
                             'fastcore/test.py': 'def test_eq(a, b):\n    pass\n',
                             'rich/style.py': 'def test():\n    pass\n'})
@@ -194,8 +192,7 @@ def test_a_sibling_module_answers_a_relative_import(ws, tmp_path, no_index):
     assert str(s.module_file('leela.workspace', str(tmp_path/'x.py'))) == str(pkg/'workspace.py')
 
 def test_an_indexed_package_path_is_remapped_to_this_project_copy(ws, tmp_path, no_index):
-    """One Kosha index serves every checkout, so a row can name another project's virtualenv. Same
-    package, possibly a different version, and the sandbox cannot open it at all."""
+    """One Kosha index serves every checkout, so a row can name another project's virtualenv."""
     site = _venv(tmp_path, {'fastcore/aio.py': 'def run_sync(): pass\n'})
     s, elsewhere = ws.search, '/somewhere/else/.venv/lib/python3.12/site-packages/fastcore/aio.py'
     assert s._here(elsewhere) == str(site/'fastcore'/'aio.py')
@@ -208,8 +205,7 @@ def test_a_project_without_a_venv_has_no_environment_to_search(ws, tmp_path, no_
     assert ws.search.env_definitions('anything') == []
 
 def test_the_index_answers_before_the_scan_when_it_knows_the_name(ws, tmp_path, monkeypatch):
-    """Kosha carries the package and the line. A path prefix only guesses at the package, and a
-    namespace package, a vendored copy or an editable install each break the guess."""
+    """Kosha carries the package and the line."""
     import json
     from leela.blocks.search.search import Search
     site = _venv(tmp_path, {'fastcore/basics.py': 'def store_attr(x):\n    pass\n'})

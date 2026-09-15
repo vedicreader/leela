@@ -1,15 +1,4 @@
-"""`leela.core.inspectors` must keep agreeing with dhrishti, which owns both of these things.
-
-Leela's server reads the inspector registry and renders dhrishti's profile and sort menus
-without importing dhrishti, because `dhrishti.core` imports IPython, pandas and numpy at
-module scope and the server has no use for any of them. The saving is real -- 45MB and 400ms
-off every workspace -- and the risk is equally real: a copy that drifts is a Leela that
-disagrees with the inspectors it is talking to.
-
-So these tests import the real dhrishti, which the test environment has, and compare. If
-dhrishti changes the profiles or the registry layout, this file fails and the copy gets
-updated, instead of the variable panel quietly offering a profile that no longer exists.
-"""
+"""`leela.core.inspectors` must keep agreeing with dhrishti, which owns both of these things."""
 
 from __future__ import annotations
 
@@ -85,11 +74,7 @@ PROBE = textwrap.dedent('''
 ''')
 
 def test_the_server_does_not_drag_the_kernels_scientific_stack_into_itself(tmp_path):
-    """The regression this whole module exists to prevent.
-
-    One `from dhrishti.core import ...` put back at module scope anywhere on the import path
-    costs 45MB in every workspace process, and nothing else in the suite would notice.
-    """
+    """The regression this whole module exists to prevent."""
     env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path), 'PYTHONPATH': os.getcwd()}
     out = subprocess.run([sys.executable, '-c', PROBE % (HEAVY,)],
                          capture_output=True, text=True, timeout=300, env=env)

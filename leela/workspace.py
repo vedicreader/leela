@@ -116,8 +116,7 @@ def has_own_window(root, state):
     except Exception: return False
     return root in (held.get('roots') or [])
 
-#: What a saved session is, as against the preferences saved beside it. Only a workspace that has
-#: read or opened one writes them: a bare `Workspace` recording a model choice used to blank them.
+#: A saved session, as against the preferences saved beside it. Only a workspace that read or opened one writes them, so a bare `Workspace` recording a model choice does not blank them.
 SESSION_KEYS = ('roots', 'tabs', 'active', 'active_root')
 
 TOOL_RANGE, STEP_RANGE = (20, 400), (8, 80)
@@ -130,12 +129,34 @@ def budget_value(v, lo, hi):
     except (TypeError, ValueError): return 'auto'
     return n if lo <= n <= hi else 'auto'
 
+#: Named here, not imported: `Tab` must not drag the canvas block in.
+CANVAS_SUFFIX = '.canvas.md'
+#: What a new one opens as, rather than an empty file and a syntax to guess.
+CANVAS_STARTER = '''---
+title: {title}
+mode: make
+---
+
+# {title}
+
+Write here. Prose is prose; everything else is a brick.
+
+```canvas code id={cid}
+tokens = 1200
+cost = tokens / 1e6 * 3.0
+cost
+```
+
+```canvas ask id={aid}
+What should this document work out?
+```
+'''
+
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
 
-#: What the inline panel promises, said to the model that has to keep it. The tools are gone rather
-#: than discouraged, so this describes the situation rather than forbidding anything.
+#: What the inline panel promises, said to the model that keeps it. The tools are gone, so this describes the situation, not a rule.
 SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
 
 Follow the instruction against the selection. Look things up first if the instruction needs it:
@@ -157,12 +178,12 @@ class Tab(Dictable):
     running: int = 0
     cwd: str = ''
     ref: str = ''
-    #: A notebook's own language, from its kernelspec. Set when the document is read, because the
-    #: tab knows its path and the parsed notebook lives in the nb block's store, not here.
+    #: A notebook's own language, from its kernelspec. Set when the document is read: the tab knows its path, and the parsed notebook lives in the nb block's store.
     nb_lang: str = ''
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
         if self.path.endswith('.ipynb'): self.kind = 'notebook'
+        elif self.path.endswith(CANVAS_SUFFIX): self.kind = 'canvas'
         elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
         elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
         elif Path(self.path).suffix.lower() in AUDIO_EXTS: self.kind = 'audio'
@@ -340,12 +361,8 @@ class Workspace:
         with self._timeline_lock:
             rows = self._timelines(); rows.pop(key, None); rows[key] = self._retained(parts)
             for old in list(rows)[:-self.TIMELINE_KEEP]: rows.pop(old, None)
-            self._timeline_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._timeline_path.with_name(f'.{self._timeline_path.name}.{os.getpid()}.tmp')
-            try:
-                tmp.write_json(rows); os.replace(tmp, self._timeline_path)
-            finally:
-                if tmp.exists(): tmp.unlink()
+            with atomic_save(self._timeline_path, mode='w', encoding='utf-8') as f:
+                f.write(json.dumps(rows))
             # this process wrote it, so what is in hand is the file and the next read is free
             try: st = self._timeline_path.stat(); self._timeline_stamp = f'{st.st_mtime_ns}:{st.st_size}'
             except Exception: self._timeline_stamp = ''
@@ -560,6 +577,11 @@ class Workspace:
         if p.suffix.lower() == '.ipynb':
             Notebook.blank(p).save(p, sandbox=self.fs)
             return self.fs.entry(p)
+        if str(p).endswith(CANVAS_SUFFIX):
+            from uuid import uuid4
+            title = p.name[:-len(CANVAS_SUFFIX)].replace('-', ' ').replace('_', ' ').strip() or 'untitled'
+            body = CANVAS_STARTER.format(title=title, cid=uuid4().hex[:8], aid=uuid4().hex[:8])
+            return self.fs.write(p, body)
         return self.fs.touch(p)
     def close(self, i=None):
         i = self.active if i is None else i
@@ -595,12 +617,7 @@ class Workspace:
         try: return Notebook.load(p).source_text() if p.suffix == '.ipynb' else self.fs.read(p)
         except Exception: return None
     def write_text_at(self, ref, text):
-        """The inverse of `text_at`: a notebook takes the `# %%` document back into its cells.
-
-        `text_at` hands out a notebook as that document, so anything writing back what it read --
-        `rollback_turn` restoring a turn's `before`, above all -- was putting jupytext markers into
-        a `.ipynb` and leaving a file that is no longer JSON.
-        """
+        "Inverse of `text_at`: a notebook takes the `# %%` document back into its cells, so writing back read text does not leave jupytext markers in a `.ipynb`."
         p = self.fs._check(ref)
         if p.suffix != '.ipynb' or read_cells(text) is not None: return self.fs.write(p, text).path
         nb = Notebook.load(p) if p.exists() else Notebook([])
@@ -815,9 +832,6 @@ class Workspace:
     def pending_approval(self):
         "The write waiting for a person, or None. What the web frontend polls during a turn."
         return self.approvals.pending
-    def answer_approval(self, id, ok, note='', session=False, tool=None, args=None):
-        "Resolve one checkpoint, including an optional user rewrite of the proposed call."
-        return self.approvals.answer(id, ok, note, session=session, tool=tool, args=args)
     def put_screen(self, png=None, text='', note=''):
         "Hold a capture for the next question. One slot, because the useful capture is the latest."
         self.screen = (png or None, text or '', note or '')
@@ -826,13 +840,6 @@ class Workspace:
         "Consume the pending capture as `(png, text, note)`."
         s, self.screen = self.screen, (None, '', '')
         return s
-    def save_screen(self, svg, name=None):
-        "Write a captured screen into leela's own config dir, not the project."
-        d = leela_cfg/'screens'
-        d.mkdir(parents=True, exist_ok=True)
-        p = d/(name or f"screen-{time.strftime('%Y%m%d-%H%M%S')}.svg")
-        p.write_text(svg)
-        return p
     def cwd_for(self, tab=None):
         "The tab's working directory: override, notebook directory, then project root."
         t = tab or self.tab
@@ -997,14 +1004,8 @@ class Workspace:
         elif old_key.startswith('tab:'): await self.pool.close(old_key)
         await self.kernel(t)
         return self.kernel_options(t)
-    async def restart_kernel(self, tab=None):
-        "Restart the tab's kernel in place, keeping its key and its port."
-        k = self.kernel_peek(tab)
-        if k is None: return await self.kernel(tab)
-        await k.restart()
-        return k
     def initialize_notebook(self, path, nb=None):
-        "Make one zero-byte ``.ipynb`` valid JSON before code reads it, and report it when written. `nb` is the document already open, whose cell ids are kept."
+        "Make one zero-byte `.ipynb` valid JSON before code reads it; `nb`, when already open, keeps its cell ids."
         if not path: return None
         path = Path(path)
         try:
@@ -1013,7 +1014,7 @@ class Workspace:
         (nb or Notebook.blank(path)).save(path, sandbox=self.fs)
         return str(path)
     def initialize_empty_notebooks(self, root=None):
-        "Turn zero-byte ``.ipynb`` placeholders into valid empty notebooks before code runs."
+        "Turn zero-byte `.ipynb` placeholders into valid empty notebooks before code runs."
         root = self.fs._check(root or self.cwd_for(), must_exist=True)
         if str(root) in self._swept: return []
         self._swept.add(str(root))
@@ -1189,8 +1190,7 @@ class Workspace:
                                        if t.path == str(was.get('path') or '')), 0)
         return opened
     def _merge_roots(self, held, mine):
-        """The folders the saved session should hold: everything in it this window did not close, then everything this window has.
-        """
+        "Folders the saved session should hold: what this window did not close, then what this window has."
         closed = self._closed_roots
         out = [r for r in held if isinstance(r, str) and r not in closed]
         return out + [r for r in mine if r not in out]

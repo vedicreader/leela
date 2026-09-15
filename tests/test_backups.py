@@ -118,8 +118,7 @@ def test_pruning_removes_only_what_retention_did_not_choose(tmp_path):
 
 
 def test_a_copy_is_taken_before_anything_overwrites_the_log(tmp_path):
-    """The failure this exists for is one write to the conversation log, so the copy happens on
-    that write rather than on a cadence that may be hours away."""
+    """The failure this exists for is one write to the conversation log, so the copy happens on that write rather than on a cadence that may be hours away."""
     cfg = _cfg(tmp_path)
     log = cfg/'agent-history.jsonl'
     kept = B.guard(log, cfg, reason='before an overwrite')
@@ -239,9 +238,7 @@ def test_only_known_entries_can_be_saved_as_the_set(tmp_path):
     with pytest.raises(ValueError): held.save('user', 'backups', {'include': 'journals'})
 
 def test_a_live_database_is_copied_through_sqlite_not_as_three_files(tmp_path, monkeypatch):
-    """A `.db` in WAL mode is three files that change independently, so copying them one after
-    another can capture a set that never existed together -- and a stale `-shm` confuses recovery
-    rather than helping it. The backup API hands over one consistent file instead."""
+    """A `.db` in WAL mode is three files that change independently, so copying them one after another can capture a set that never existed together, and a stale `-shm` confuses recovery rather than helping it."""
     import sqlite3, tarfile
     from leela.core import backups as B
     cfg = Path(tmp_path)/'cfg'; (cfg/'memory').mkdir(parents=True)

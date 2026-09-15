@@ -55,7 +55,6 @@ def connect(app, ctx):
     def note_origin(tab, cell): ws.origins.cell(cell, (tab.path or tab.title) if tab else '')
     def dbg(method=None): return paused_kernel(dbgstate, method)
     def debug_ui(state): return notebook_state_ui(dbgstate, ctx.fs, state)
-    def previous_runs(): store.mark_all_stale()
     async def runtime_for(tab=None): return await ws.runtime(tab)
     async def explain(k, err, scope='live'):
         "A kernel error with a `did you mean` appended, when a near-miss name exists."

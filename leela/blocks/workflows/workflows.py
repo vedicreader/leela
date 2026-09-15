@@ -8,5 +8,5 @@ __all__ = ['Workflows', 'WorkflowError', 'levels', 'SPEC_DIR']
 
 SPEC_DIR = '.leela/workflows'
 
-# Here and not in `wfbuild`, which is imported lazily and so fires after the first spec is written.
+#: Set here, not beside the lazily-imported builder, which would fire after the first spec was already written.
 use_spec_dir(SPEC_DIR)

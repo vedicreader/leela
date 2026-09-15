@@ -28,9 +28,7 @@ def test_running_desktop_entry_from_a_kernel_uses_a_background_thread(monkeypatc
     assert called.is_set()
 
 def test_the_frozen_entry_takes_the_shell_environment_the_window_was_denied():
-    """`leela.cli` asks the login shell for the environment, and the bundle does not run it: py2app
-    freezes `leela_app.py`. So the app kept launchd's environment, `OPENAI_API_KEY` was not in it,
-    and every hosted model refused the turn with `Missing API key`."""
+    """`leela.cli` asks the login shell for the environment, and the bundle does not run it: py2app freezes `leela_app.py`."""
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1]/'leela_app.py').read_text()
     frozen = src[src.index("if getattr(sys, 'frozen'"):src.index('def free_port')]

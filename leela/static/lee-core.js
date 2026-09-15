@@ -804,7 +804,9 @@ function findBinding(e, scope) {
   if (scope === 'overlay') return null;
   // `term` and `web` hand the keyboard to something that is not Leela, keeping only the chords
   // that get you back out.
-  const allowed = (scope === 'term' || scope === 'web')
+  // A canvas is a frame with its own keyboard, so it is routed like the terminal and the browser:
+  // only the chords that get you back out are taken from it.
+  const allowed = (scope === 'term' || scope === 'web' || scope === 'canvas')
     ? k => k.scope === scope || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
     : k => k.scope === scope || k.scope === 'global';
   const guard = !EDITING_SCOPES.has(scope) && isTextEntry(e.target);
@@ -921,6 +923,7 @@ const ACTIONS = {
   run_selection: () => runSelection(),
   pick_kernel:  () => pickKernel(),
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
+  new_canvas:   () => newCanvas(),
   notebook_language: () => pickNotebookLanguage(),
   add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),
@@ -1628,6 +1631,7 @@ async function mountTab(expectedPath = '') {
   if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'vaultwb') await mountVaultWorkbench(host, st);
   else if (st.kind === 'web') mountWeb(host, st);
+  else if (st.kind === 'canvas') mountCanvas(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
@@ -3852,6 +3856,8 @@ function showSaveConflict(message) {
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
   // A document the browser renders has no editor behind it, so `getDoc` would be called on
   // nothing. Reporting success is honest: the file on disk is what is being shown.
+  // The canvas page owns its own save, revision check included.
+  if (lee.kind === 'canvas') return saveCanvasTab(quiet);
   if (lee.kind === 'pdf' || lee.kind === 'image') {
     if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
     return true;

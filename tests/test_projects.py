@@ -1,10 +1,4 @@
-"""Which folders the app opens when nobody tells it — the whole of a double-click.
-
-A command line answers "which project" every time. A desktop app is launched by double-click,
-by a Dock drop, or by Finder's "Open With", and has to work all three out for itself. These
-tests are about that: what is remembered, what is offered, and -- the one with teeth -- what is
-*not* opened when there is nothing to go on.
-"""
+"""Which folders the app opens when nobody tells it ,  the whole of a double-click."""
 
 from __future__ import annotations
 
@@ -67,10 +61,7 @@ def test_the_folders_a_launch_opened_are_what_the_next_one_reopens(dirs):
     assert projects.last_folders() == dirs[:2]
 
 def test_opening_another_folder_adds_to_the_set_rather_than_replacing_it(dirs):
-    """Under `--app` each folder is its own `Workspace`.
-
-    Each recording itself would leave the session naming whichever one wrote last.
-    """
+    """Under `--app` each folder is its own `Workspace`."""
     projects.remember([dirs[0]])
     projects.note_folder(dirs[1])
     assert projects.last_folders() == dirs[:2]
@@ -137,10 +128,7 @@ def test_a_folder_given_by_the_desktop_wins_over_the_remembered_session(dirs, mo
     assert projects.last_folders() == [dirs[2]]
 
 def test_every_workspace_gets_its_own_window(dirs, monkeypatch):
-    """`--app` gives each folder an isolated workspace behind a host-dispatching hub.
-
-    One window on the bare loopback host would show the first folder and strand the rest.
-    """
+    """`--app` gives each folder an isolated workspace behind a host-dispatching hub."""
     seen = {}
     monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: None)
     monkeypatch.setattr(leela_app, 'free_port', lambda preferred=5001: 5199)
@@ -164,12 +152,7 @@ def test_with_nothing_to_open_there_is_still_one_window(monkeypatch):
     assert seen['urls'] == ['http://127.0.0.1:5199/'] and seen['titles'] == ['leela']
 
 def test_a_frozen_app_with_no_folder_opens_on_nothing_rather_than_on_your_home_directory():
-    """The bad guess this replaces had teeth.
-
-    `leela` from a shell means "here", and the shell already chose where here is. A
-    double-clicked application has no such answer, and the old fallback -- the home directory
-    -- handed Kosha every file the user owns to index and the watcher every one to follow.
-    """
+    """The bad guess this replaces had teeth."""
     import inspect
 
     from leela import app as appmod
@@ -213,12 +196,7 @@ def test_opening_a_folder_in_the_app_is_remembered_for_next_launch(tmp_path, dir
     assert dirs[1] in projects.recent_folders()
 
 def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dirs, monkeypatch):
-    """The Dock-drop path: macOS delivers the folder to the process already running.
-
-    It used to be added as another root of the window already open, so two projects shared one
-    kernel, one tab bar and one agent. A folder is a workspace, and a workspace is a window. It
-    still goes through HTTP because the server owns the workspaces on another thread and loop.
-    """
+    """The Dock-drop path: macOS delivers the folder to the process already running."""
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
     import threading
@@ -255,11 +233,7 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
     finally: server.should_exit = True
 
 def test_a_folder_opened_as_its_own_site_is_remembered_whoever_opened_it(dirs):
-    """The browser posts `/hub/open` and gets no desktop shell, so the shell cannot be what remembers.
-
-    Noting it there left a folder opened from a browser tab out of the reopen set and out of the
-    welcome screen's recent list, while the same folder opened from the app was in both.
-    """
+    """The browser posts `/hub/open` and gets no desktop shell, so the shell cannot be what remembers."""
     from leela.hub import WorkspaceHub, WorkspaceSite
     build = lambda root, slug: WorkspaceSite(slug, os.path.basename(str(root)), str(root), lambda *a: None)
     hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', dirs[0], lambda *a: None)], 5209, build=build)
@@ -298,8 +272,7 @@ def test_the_open_folder_handler_is_a_no_op_where_there_is_nothing_to_register()
     assert watch_open_events(lambda p: None) is None
 
 def test_a_running_workspace_publishes_where_it_is_answering(serving_file, dirs):
-    """A hotkey, a script, anything outside the window has to find it, and the desktop shell takes
-    whatever port is free -- so there is nothing to guess at."""
+    """A hotkey, a script, anything outside the window has to find it, and the desktop shell takes whatever port is free, so there is nothing to guess at."""
     d = projects.now_serving('127.0.0.1', 5173, dirs)
     assert d['url'] == 'http://127.0.0.1:5173/' and d['pid'] == os.getpid()
     assert d['folders'] == dirs
@@ -309,8 +282,7 @@ def test_a_running_workspace_publishes_where_it_is_answering(serving_file, dirs)
     assert projects.serving() is None, 'and it stops claiming to be up once it is not'
 
 def test_an_address_left_behind_by_a_dead_workspace_is_not_offered(serving_file):
-    """A workspace killed outright never reaches its own cleanup. By the time anything reads the
-    file the port may belong to something else, which is the one way this could misdirect a post."""
+    """A workspace killed outright never reaches its own cleanup."""
     projects.now_serving('127.0.0.1', 5173, [])
     d = json.loads(serving_file.read_text()); d['pid'] = 2 ** 31 - 1
     serving_file.write_text(json.dumps(d))
@@ -326,9 +298,7 @@ def test_a_missing_or_unreadable_address_reads_as_nothing_rather_than_failing(se
 
 
 def test_a_windowed_launch_gets_the_path_a_terminal_has(monkeypatch):
-    """Finder and the Dock start an app with almost nothing on PATH, so `git` and `claude` went
-    missing and the app reported no repository and no Claude Code while both worked in its own
-    terminal. Asking the login shell is what closes that gap."""
+    """Finder and the Dock start an app with almost nothing on PATH, so `git` and `claude` went missing and the app reported no repository and no Claude Code while both worked in its own terminal."""
     import os, shutil
     from leela import use_login_path
     monkeypatch.setenv('PATH', '/usr/bin:/bin')
@@ -364,9 +334,10 @@ def test_asking_the_shell_never_hangs_the_launch(monkeypatch):
 
 
 def test_an_ascii_locale_is_repaired_before_anything_imports(monkeypatch):
-    "The failure it prevents is `UnicodeDecodeError` out of an import, blamed on the import."
-    import locale
+    """The failure it prevents is `UnicodeDecodeError` out of an import, blamed on the import."""
+    import locale, sys
     from leela import use_utf8
+    if sys.flags.utf8_mode: pytest.skip('UTF-8 mode leaves no ASCII locale to repair')
     was = locale.setlocale(locale.LC_CTYPE)
     try:
         locale.setlocale(locale.LC_CTYPE, 'C')
@@ -384,8 +355,7 @@ def test_a_locale_that_is_already_utf8_is_left_alone(monkeypatch):
 
 
 def test_a_launch_with_no_arguments_reopens_one_folder(tmp_path, monkeypatch):
-    """Quitting with four open and launching again reopened all four, one window each. The rest are
-    still in `recent`, which the Dock menu and the welcome screen offer."""
+    """Quitting with four open and launching again reopened all four, one window each."""
     import leela.core.projects as projects
     monkeypatch.setattr(projects, 'SESSION', tmp_path/'session.json')
     dirs = []
@@ -410,9 +380,7 @@ def test_with_nothing_remembered_a_launch_opens_no_folder(tmp_path, monkeypatch)
     assert projects.last_folder() == []
 
 def test_a_folder_under_the_system_temp_dir_is_never_remembered(tmp_path, monkeypatch):
-    """A folder in the temp dir belongs to a test, a probe or an unpacked archive. One written into
-    the session a person opens is a folder they then have to close by hand, in every window, and a
-    suite that opened eleven of them put all eleven in front of somebody."""
+    """A folder in the temp dir belongs to a test, a probe or an unpacked archive."""
     import tempfile
     from pathlib import Path
     from leela.core import projects

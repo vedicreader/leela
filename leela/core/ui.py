@@ -64,6 +64,7 @@ BUTTONS = L(
     Btn('cell_delete',  '×',        'delete this cell',                'cell', 'warn'),
     Btn('new_file',     '+file',    'new file',                        'files'),
     Btn('new_notebook', '+nb',      'new notebook',                    'files'),
+    Btn('new_canvas',   '+canvas',  'new dynamic document',            'files'),
     Btn('new_dir',      '+dir',     'new folder',                      'files'),
     Btn('refresh_files','⟳',        'reread the tree',                 'files'),
     Btn('show_hidden',  '.*',       'show dotfiles like .gitignore and .github', 'files'),

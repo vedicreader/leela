@@ -1,8 +1,4 @@
-"""The agent block's routes, now that they are its own rather than `ide_app`'s.
-
-Route presence used to be asserted by grepping `getsource(ide_app)`, which said nothing about
-whether the route was reachable and broke the moment the routes moved. Ask the app instead.
-"""
+"""The agent block's routes, now that they are its own rather than `ide_app`'s."""
 
 from __future__ import annotations
 import time
@@ -25,9 +21,7 @@ def test_the_execution_surface_is_reachable(tmp_path):
     assert missing == [], missing
 
 def test_saved_states_say_which_project_and_layer_they_came_from(tmp_path, monkeypatch):
-    """Every workspace saves into the one shared store, so the list has always held other projects'
-    charters. Nothing said so, and `Working state` with a date is not something anyone can reuse on
-    purpose. The layer is recorded on the way in, and the origin is reported on the way out."""
+    """Every workspace saves into the one shared store, so the list has always held other projects' charters."""
     from leela.blocks.memory.memory import Memory
     here, elsewhere = tmp_path/'here', tmp_path/'elsewhere'
     for d in (here, elsewhere): d.mkdir()
@@ -71,10 +65,7 @@ def test_the_block_declares_what_it_touches():
     assert {'ai', 'memory', 'docs'} <= set(block.CAPS)
 
 def test_every_tool_the_agent_can_be_given_has_a_family_the_picker_shows():
-    """`TOOL_GROUPS` was a hand-copy of shalya's `GROUPS` naming twenty tools, and shalya ships
-    about fifty. Every git, memory, watch, api, skill and image tool fell through to `Other`, so a
-    checkpoint form drew `git_status` and `remember` in the same unnamed pile. shalya builds the
-    name-to-group table from its own factories now, so this cannot go stale again."""
+    """`TOOL_GROUPS` was a hand-copy of shalya's `GROUPS` naming twenty tools, and shalya ships about fifty."""
     from shalya.tools import tool_groups
     from leela.blocks.agent.turns import GROUP_LABELS, LEELA_TOOLS, tool_group
     assert tool_group('search_code') == 'Repository' and tool_group('run_python') == 'Runtime'
@@ -100,10 +91,7 @@ def test_the_tools_leela_adds_are_the_ones_it_labels_itself():
                                       f'only built: {built - set(LEELA_TOOLS)}')
 
 def test_the_tool_tables_have_one_home():
-    """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`. Nothing called
-    them, and they drifted: `promote_var` was added to the ones in `turns.py` alone, so the two
-    tables disagreed about a tool that exists.
-    """
+    """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`."""
     import ast
     owner = 'leela/blocks/agent/turns.py'
     for name in ('GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_preview'):
@@ -130,9 +118,7 @@ def test_history_groups_untagged_turns_by_the_gap_between_them():
 THREAD_ROUTES = ('/agent/approve', '/agent/command', '/agent/history', '/agent/steer')
 
 def test_an_unknown_conversation_is_refused_with_a_code_and_a_sentence(tmp_path):
-    """Thread-aware routes answer `code` and `message`, never `error`. A client reading only
-    `error` showed a person the word "Conflict" instead of the sentence it was sent.
-    """
+    """Thread-aware routes answer `code` and `message`, never `error`."""
     app = ide_app(Workspace(roots=[tmp_path]))
     served = paths(app)
     with TestClient(app) as client:
@@ -146,10 +132,7 @@ def test_an_unknown_conversation_is_refused_with_a_code_and_a_sentence(tmp_path)
 
 
 def test_history_says_which_app_started_each_conversation(tmp_path):
-    """Leela and the ramabana CLI append to one log. The filter that hides the CLI's conversations
-    needs to tell them apart, and only Leela marks the sessions it started, so anything unmarked
-    is the CLI's.
-    """
+    """Leela and the ramabana CLI append to one log."""
     from leela.blocks.agent.turns import history_sessions, mark_surface, surfaces
     assert surfaces(tmp_path) == {} and surfaces(None) == {}
     assert mark_surface(tmp_path, '') == {} and mark_surface(None, 's1') == {}
@@ -168,9 +151,7 @@ def test_history_says_which_app_started_each_conversation(tmp_path):
 
 
 def test_every_routed_job_says_where_its_model_is_spent():
-    """The settings pane renders three model controls server-side and the rest from
-    `/agent/models`. One copy of the text, because two drifted apart the first time.
-    """
+    """The settings pane renders three model controls server-side and the rest from `/agent/models`."""
     from leela.agent.core import JOBS
     from leela.blocks.agent.models import JOB_HELP
     from leela.app import help_mark
@@ -194,14 +175,7 @@ def test_an_unlinked_delegation_is_not_reported_as_having_done_nothing(tmp_path)
         assert d['records_sub_calls'] is False
 
 def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path):
-    """A delegated sub-agent's conversation is thrown away when it answers, so its recorded calls
-    are the only account of it. Where the agent core still hands a read-only sub-agent unwrapped
-    tools there are none, and the pane must be told that rather than draw an empty list.
-
-    `records_sub_calls` was `hasattr(ai, '_record_sub')`, a name no ramabana release has, so the
-    answer was always no and the pane said nothing was being recorded even where it plainly was.
-    It is evidence now: a call stamped with the delegation it was made inside.
-    """
+    """A delegated sub-agent's conversation is thrown away when it answers, so its recorded calls are the only account of it."""
     ws = Workspace(roots=[tmp_path])
     app = ide_app(ws)
     ai = ws.threads.active.ai
@@ -228,10 +202,7 @@ def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path
 
 
 def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_path):
-    """Missing run, nothing said, and an agent core that cannot carry a steer are all structured,
-    the way `cancel` and `terminate` already answer. Which run is asked about is settled before
-    what was said to it, so a stale button in the pane names the run it could not reach.
-    """
+    """Missing run, nothing said, and an agent core that cannot carry a steer are all structured, the way `cancel` and `terminate` already answer."""
     ws = Workspace(roots=[tmp_path])
     app = ide_app(ws)
     assert '/agent/runs/{run_id}/steer' in paths(app)
@@ -255,10 +226,7 @@ def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_pa
 
 
 def test_a_painted_turn_carries_what_can_still_be_done_to_it(tmp_path):
-    """Undo, restore and revise reached the browser only on the live `done` payload, so they
-    vanished on every repaint that rebuilt from the turn log. `known` separates a turn that
-    changed nothing from one this process no longer holds a boundary for.
-    """
+    """Undo, restore and revise reached the browser only on the live `done` payload, so they vanished on every repaint that rebuilt from the turn log."""
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         d = client.get('/agent/thread/turns').json()
@@ -268,9 +236,7 @@ def test_a_painted_turn_carries_what_can_still_be_done_to_it(tmp_path):
                     'files': [], 'irreversible': []}
 
 def test_a_tool_installed_into_a_frozen_app_is_actually_found(tmp_path, monkeypatch):
-    """The Tools row installs into `extras_site`, because the bundle is signed and read-only, and
-    `find_server` looked only on PATH. So in a packaged app the language server installed, worked,
-    and was found by nothing: the row went on offering to install it forever."""
+    """The Tools row installs into `extras_site`, because the bundle is signed and read-only, and `find_server` looked only on PATH."""
     import leela
     from leela.blocks.lsp import lsp
     bin_dir = tmp_path/'extras'/'bin'
@@ -299,8 +265,7 @@ def test_the_tools_row_reports_what_it_would_install_and_what_is_here(monkeypatc
 
 
 def test_listing_conversations_does_not_start_a_kernel(tmp_path):
-    """`api()` reaches for `ws.runtime()`, which starts one, and that is over a second. Listing what
-    has been said must not boot Python to decorate the answer with kernel run counts."""
+    """`api()` reaches for `ws.runtime()`, which starts one, and that is over a second."""
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         assert client.get('/agent/history').status_code == 200
@@ -310,8 +275,7 @@ def test_listing_conversations_does_not_start_a_kernel(tmp_path):
     assert 'api_peek(' in route and 'await api(' not in route, 'the peek is what it may use'
 
 def test_history_is_leelas_own_until_the_rest_is_asked_for(tmp_path, monkeypatch):
-    """One log holds Leela's conversations and the CLI's, and most of it is the CLI's. Grouping and
-    shipping all of them so the browser could filter them out was the wrong end to do it at."""
+    """One log holds Leela's conversations and the CLI's, and most of it is the CLI's."""
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         mine, both = (client.get('/agent/history').json(),
@@ -328,8 +292,7 @@ def test_history_is_leelas_own_until_the_rest_is_asked_for(tmp_path, monkeypatch
     assert "if not everything: groups = [g for g in groups if g.get('app') == 'leela']" in route
 
 def test_a_probe_serves_its_last_answer_and_refreshes_behind_it():
-    """Asking what is installed and who is signed in reaches for every backend and every account:
-    together they were most of a seven-second first paint of the model picker."""
+    """Asking what is installed and who is signed in reaches for every backend and every account: together they were most of a seven-second first paint of the model picker."""
     from leela.blocks.agent import models
     calls = []
     def slow():
@@ -347,11 +310,7 @@ def test_a_probe_serves_its_last_answer_and_refreshes_behind_it():
     models.forget_probes(disk=True)
 
 def test_a_probe_already_gathering_when_the_cache_is_dropped_does_not_come_back(tmp_path, monkeypatch):
-    """`forget_probes` means the machine changed under us: the refresh button, or the next test.
-
-    A probe already gathering wrote its answer in afterwards, so the next caller was served the
-    state that had just been thrown away, and it landed in whichever config dir was current by
-    then. In the suite that is one test's catalog answering another's request."""
+    """`forget_probes` means the machine changed under us: the refresh button, or the next test."""
     import threading
     import leela.blocks.agent.models as models
     monkeypatch.setattr(models, 'leela_cfg', tmp_path)
@@ -369,8 +328,7 @@ def test_a_probe_already_gathering_when_the_cache_is_dropped_does_not_come_back(
     models.forget_probes(disk=True)
 
 def test_which_row_a_chosen_model_is_is_a_lookup_not_a_scan():
-    """`selected` resolved every one of ninety-odd rows to find the one a chosen model matched, and
-    it ran three times a request. The catalog is probed with that index already built."""
+    """`selected` resolved every one of ninety-odd rows to find the one a chosen model matched, and it ran three times a request."""
     src = (ROOT/'leela/blocks/agent/app.py').read_text()
     route = src[src.index("def agent_models("):src.index("@rt('/agent/models/add')")]
     picked = route[route.index('def selected('):route.index('# The routed jobs')]
@@ -383,8 +341,7 @@ def test_which_row_a_chosen_model_is_is_a_lookup_not_a_scan():
     assert all(isinstance(k, str) and isinstance(v, str) for k, v in index.items())
 
 def test_a_probe_survives_the_process_that_made_it(tmp_path, monkeypatch):
-    """A desktop app is a fresh process every launch, so an in-memory cache is empty exactly when
-    the picker is first drawn. What a previous run learned is served at once and re-probed behind."""
+    """A desktop app is a fresh process every launch, so an in-memory cache is empty exactly when the picker is first drawn."""
     import leela.blocks.agent.models as models
     monkeypatch.setattr(models, 'leela_cfg', tmp_path)
     models.forget_probes()
@@ -406,9 +363,7 @@ def test_a_probe_survives_the_process_that_made_it(tmp_path, monkeypatch):
     assert not models.probe_path('disk-test').is_file(), 'the refresh button drops it'
 
 def test_the_picker_marks_a_model_once_not_once_per_request():
-    """`model_marks` reaches `spec_caps`, which scans the Hugging Face cache for a local model.
-    Running that over ninety rows on every request was three and a half seconds of a route that is
-    fetched on load. The catalog carries the marks; `mark_models` leaves a marked row alone."""
+    """`model_marks` reaches `spec_caps`, which scans the Hugging Face cache for a local model."""
     from leela.blocks.agent import models
     rows = [{'value': 'x', 'modalities': 'text'}, {'value': 'y', 'gen_image': False}]
     seen = []
@@ -427,9 +382,7 @@ def _completion_prefs(values):
     Settings(None).save('user', 'completions', values)
 
 def test_only_a_decided_completion_counts_towards_the_accept_rate(tmp_path):
-    """A rate is accepts over decisions. An ask still open, one abandoned, and one whose selection
-    moved under it are not decisions, and counting any of them would report a rejection nobody made.
-    """
+    """A rate is accepts over decisions."""
     from leela.blocks.agent.completions import summary
     rows = [{'kind': 'ask', 'ask_id': 'a', 'instruction': 'add a docstring', 'model': 'm1'},
             {'kind': 'reply', 'ask_id': 'a', 'model': 'm1', 'ms': 900},
@@ -469,10 +422,7 @@ def test_the_accept_rate_is_reported_per_model(tmp_path):
         'an outcome whose ask is off the end of the log still has to go somewhere'
 
 def test_the_selection_route_answers_with_the_ask_id_the_browser_sent(tmp_path, monkeypatch):
-    """The browser logs the ask before this request and the verdict long after it, so an id minted
-    here reached the reply and the outcome and never the ask. Nothing joined the instruction and the
-    selected code to what became of them, and the log read `(no instruction)` for every row.
-    """
+    """The browser logs the ask before this request and the verdict long after it, so an id minted here reached the reply and the outcome and never the ask."""
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     monkeypatch.setattr(type(ws.ai), 'summarise', lambda self, text, sp='': 'a shorter version')
@@ -486,14 +436,7 @@ def test_the_selection_route_answers_with_the_ask_id_the_browser_sent(tmp_path, 
 
 
 def test_a_completion_row_carries_the_question_the_suggestion_and_the_verdict(tmp_path, monkeypatch):
-    """The three things a completion log is for, none of which could be read.
-
-    `summary` joins asks to outcomes on `ask_id`, and the browser logged the ask before the route
-    minted one, so the join was always empty and every row said `(no instruction)`. The id is the
-    browser's now. `judgements` builds from the asks, so one still open and one whose model failed
-    are here too, and it never joins on an empty id: rows recorded before this heap together
-    otherwise, and they come back marked `unlinked`.
-    """
+    """The three things a completion log is for, none of which could be read."""
     from leela.blocks.agent.completions import judgements
     rows = [{'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy this', 'lang': 'python', 'text': 'x=1'},
             {'kind': 'reply', 'ask_id': 'a', 'model': 'fast', 'ms': 90, 'reply': 'x = 1'},
@@ -519,13 +462,7 @@ def test_a_completion_row_carries_the_question_the_suggestion_and_the_verdict(tm
 
 
 def test_a_suggestion_accepted_after_it_went_stale_is_the_one_that_counts(tmp_path):
-    """`stale` is the selection moving out from under a replace. It leaves the panel open and the
-    suggestion still there to accept once the caret is back, so it is not a verdict and must not end
-    the log: `completionLog` stopped on it, and the accept that followed was never recorded.
-
-    One ask, one outcome, and the last one. Counting both would have a single suggestion rejected
-    and accepted at once, which is the accept rate this exists to report.
-    """
+    """`stale` is the selection moving out from under a replace."""
     from leela.blocks.agent.completions import judgements, summary
     rows = [{'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy this'},
             {'kind': 'reply', 'ask_id': 'a', 'model': 'fast'},
@@ -538,11 +475,7 @@ def test_a_suggestion_accepted_after_it_went_stale_is_the_one_that_counts(tmp_pa
 
 
 def test_an_ask_that_never_carried_an_id_still_shows_what_was_asked(tmp_path):
-    """Every event recorded before the browser began minting ids is this shape, so it is what the
-    log shows on its first open. Joining needs an id and these have none, but the ask still holds
-    the instruction, which is the field most worth reading. Dropping it left the reader a list of
-    unlinked verdicts with the one thing that was recorded correctly thrown away.
-    """
+    """Every event recorded before the browser began minting ids is this shape, so it is what the log shows on its first open."""
     from leela.blocks.agent.completions import judgements
     rows = [{'kind': 'ask', 'instruction': 'this is so convoluted', 'lang': 'python', 'at': 1},
             {'ask_id': 'ec14fa9705e9', 'kind': 'reply', 'model': 'gpt-mini', 'ms': 5474, 'at': 2},
@@ -555,10 +488,7 @@ def test_an_ask_that_never_carried_an_id_still_shows_what_was_asked(tmp_path):
 
 
 def test_the_code_is_not_written_because_a_project_said_so(tmp_path, monkeypatch):
-    """The reader's gate is the user scope, and so is the writer's. A workspace overrides the user
-    for any section, so a cloned repo carrying `completions.snippets` would write selections and
-    suggestions into the one global store while the checkbox and the banner both said otherwise.
-    """
+    """The reader's gate is the user scope, and so is the writer's."""
     from leela.blocks.agent.completions import completions
     from leela.blocks.settings.settings import Settings
     monkeypatch.setattr(Settings, 'raw', lambda self, scope: {'completions': {'snippets': False}}
@@ -573,10 +503,7 @@ def test_the_code_is_not_written_because_a_project_said_so(tmp_path, monkeypatch
 
 
 def test_the_completion_route_reads_the_snippet_gate_from_the_user_scope_alone(tmp_path, monkeypatch):
-    """One store holds every project's events, and `effective` lets a workspace override the user.
-    Reading the effective value would let `snippets` turned on in one project serve selections
-    recorded in every other one.
-    """
+    """One store holds every project's events, and `effective` lets a workspace override the user."""
     from leela.blocks.agent.completions import completions
     from leela.blocks.settings.settings import Settings
     completions().record([{'kind': 'ask', 'ask_id': 'a', 'instruction': 'tidy', 'text': 'x=1'},
@@ -637,9 +564,7 @@ def _pane_js():
     return read('leela/blocks/agent/live.js') + read('leela/blocks/agent/steer.js')
 
 def test_the_panes_three_preferences_round_trip_through_settings(tmp_path):
-    """`localStorage` is per origin and the app takes whatever port it is given, so a preference
-    kept only there read as its default at the next launch: notifications a person switched on came
-    back off without anyone asking."""
+    """`localStorage` is per origin and the app takes whatever port it is given, so a preference kept only there read as its default at the next launch: notifications a person switched on came back off without anyone asking."""
     from leela.blocks.settings.settings import Settings, DEFAULT_SETTINGS
     for key in ('notify', 'reasoning', 'historyLeelaOnly'): assert key in DEFAULT_SETTINGS['agent'], key
     path = tmp_path/'settings.json'
@@ -659,8 +584,7 @@ def test_the_per_origin_keys_are_read_only_by_the_one_migration():
     assert "prefSet('agent', 'reasoning', reasoning.value)" in src
 
 def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
-    """settings.json answers with a default for every key, so a saved `false` and a default `false`
-    read the same and `prefAdopt` would skip the migration. `origins` tells them apart."""
+    """settings.json answers with a default for every key, so a saved `false` and a default `false` read the same and `prefAdopt` would skip the migration."""
     from leela.blocks.settings.settings import Settings
     path = tmp_path/'settings.json'
     s = Settings(root=tmp_path, user_path=path)
@@ -670,10 +594,7 @@ def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
     assert "origins?.agent?.[key]" in _pane_js(), 'the pane decides from origins, not from the value'
 
 def test_the_probe_memo_and_the_alias_file_are_ramabanas_and_leela_only_names_the_place():
-    """`probed` was a TTL memo with atomic disk persistence and a background refresh here, while
-    Ramabana hand-rolled two worse versions of the same idea as bare module tuples. `register_model`
-    is in-process only, so the file that outlives the process was Leela's alone, and Ramabana's own
-    CLI wanted the same one for the same reason. Both are Ramabana's; what stays is the path."""
+    """`probed` was a TTL memo with atomic disk persistence and a background refresh here, while Ramabana hand-rolled two worse versions of the same idea as bare module tuples."""
     import inspect
     from leela.agent import core
     from leela.blocks.agent import models
@@ -696,10 +617,7 @@ def test_the_probe_directory_and_the_alias_file_are_under_leelas_own_config():
     assert model_path('/elsewhere/models.json') == Path('/elsewhere/models.json')
 
 def test_pinned_notes_reach_a_completion_prompt_and_not_only_the_briefing(tmp_path, monkeypatch):
-    """`Completer._prompt` reached `self.a.ws.agent_memory_context(...)`. Ramabana sets `Agent.ws`
-    nowhere, so on any embedder but Leela the call raised into a bare `except` and the notes were
-    silently dropped; in Leela it worked only because `Assistant` happens to carry `ws`. The hook
-    is `Agent.memory_context` now, so the completer asks the agent and every agent answers."""
+    """`Completer._prompt` reached `self.a.ws.agent_memory_context(...)`."""
     from leela.agent.agent import Completer
     from leela.agent.core import env
     from leela.blocks.agent.ai import BRIEFING_NOTES, Assistant
@@ -726,9 +644,7 @@ def test_the_briefing_and_the_completer_ask_the_same_hook_with_different_budgets
     assert inspect.signature(Assistant.memory_context).parameters['max_chars'].default == BRIEFING_NOTES
 
 def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
-    """`JOB_HELP` told the user the subagent model was used for folder-monitor reviews.
-    `ramabana.monitor` is imported nowhere in Leela but `leela/agent/monitor.py`, which exists so
-    `every_seconds` can reach `secs`. Nothing schedules a folder review, so nothing offers one."""
+    """`JOB_HELP` told the user the subagent model was used for folder-monitor reviews."""
     from leela.blocks.agent.models import JOB_HELP
     assert 'folder-monitor' not in JOB_HELP['subagent']
     users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')

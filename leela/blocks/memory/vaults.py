@@ -1,10 +1,10 @@
 "Every vault leela can reach, which is active, and what may write to each."
 
 from __future__ import annotations
-import json, os, time
+import json, time
 from dataclasses import asdict, dataclass, field, replace
 
-from fastcore.all import L, Path, first
+from fastcore.all import L, Path, atomic_save, first
 
 from ... import Dictable, errstr, leela_cfg
 from .memory import GLOBAL, Memory, memory_path, safe_shelf
@@ -67,10 +67,8 @@ class Vaults:
         "Persist all but leela's own vault, whose location the workspace decides."
         rows = [asdict(r) for r in self.rows if r.name != WORKSPACE]
         try:
-            self.file.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.file.parent/f'{self.file.name}.{os.getpid()}.tmp'
-            tmp.write_text(json.dumps({'active': self.active_name, 'vaults': rows}, indent=2))
-            tmp.replace(self.file)
+            with atomic_save(self.file, mode='w', encoding='utf-8') as f:
+                f.write(json.dumps({'active': self.active_name, 'vaults': rows}, indent=2))
         except Exception as e: self.note = f'could not save {self.file.name} ({errstr(e)})'
         return self
     def __len__(self): return len(self.rows)

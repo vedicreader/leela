@@ -143,8 +143,7 @@ def _written(path, keys=None, keep=True):
     return json.loads(path.read_text())
 
 def test_a_written_keymap_holds_only_what_a_person_changed(tmp_path):
-    """`--write-keymap` used to dump all ~160 chords. That froze the map: a default that moved
-    afterwards collided with the copy of its old chord sitting in the file."""
+    """`--write-keymap` used to dump all ~160 chords."""
     d = _written(tmp_path/'keys.json', keys=DEFAULTS)
     assert d['keys'] == {}
     ks = apply_overrides(DEFAULTS, {'run_cell': 'ctrl+y', 'save': ''}, notes=[])
@@ -183,8 +182,7 @@ def test_a_full_dump_is_pruned_and_what_it_replaced_is_kept(tmp_path):
     assert len(list((backup_dir()/'guard').glob('keys.json.*'))) == 1
 
 def test_a_keymap_written_before_a_default_moved_does_not_collide_after_it(tmp_path):
-    """`add_root` moved from `o` to `O` and `open_folder` took `o`. Every full dump written before
-    that carried the stale `add_root: o`, which `apply_overrides` refused on every launch."""
+    """`add_root` moved from `o` to `O` and `open_folder` took `o`."""
     from dataclasses import replace
     from fastcore.all import L
     import leela.core.keys as K
@@ -254,8 +252,7 @@ def test_cell_menu_exposes_cross_notebook_clipboard_without_stealing_text_shortc
 
 
 def test_cmd_z_is_notebook_undo_and_the_old_chord_migrates():
-    """Deleting a cell was not undoable by the key everyone presses: `mod+alt+z` was the only way
-    and nobody found it. Anyone still holding the old default moves to the new one."""
+    """Deleting a cell was not undoable by the key everyone presses: `mod+alt+z` was the only way and nobody found it."""
     from leela.core import keys as K
     by = {k.action: k for k in K.KEYS}
     assert by['notebook_undo'].key == 'mod+z' and by['notebook_redo'].key == 'mod+shift+z'
@@ -266,8 +263,7 @@ def test_cmd_z_is_notebook_undo_and_the_old_chord_migrates():
     assert kept['notebook_redo'] == 'hyper+u', 'a chord somebody chose is left alone'
 
 def test_the_document_undoes_first_and_the_notebook_after():
-    """`mod+z` in a cell is CodeMirror's history until that runs out, and the cell operation after.
-    Its command answers False with nothing left, which is the whole hinge."""
+    """`mod+z` in a cell is CodeMirror's history until that runs out, and the cell operation after."""
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'keys'/'keymap.js').read_text()
     assert 'notebook_undo:' in src and 'notebook_redo:' in src, 'both chords route through it'
@@ -276,9 +272,7 @@ def test_the_document_undoes_first_and_the_notebook_after():
     assert body.index('LeeCM[cmd](view)') < body.index('leeAct(match.binding.action)')
 
 def test_indent_is_named_so_it_reaches_the_palette_and_the_help():
-    """The three indent commands worked, because CodeMirror's `defaultKeymap` binds them, and were
-    in neither the palette nor the keys help because nothing named them. `indent_selection` had
-    only `mod+alt+\\`, which nobody finds."""
+    """The three indent commands worked, because CodeMirror's `defaultKeymap` binds them, and were in neither the palette nor the keys help because nothing named them."""
     assert lookup('indent_more').key == 'mod+]'
     assert lookup('indent_less').key == 'mod+['
     assert lookup('indent_selection').key == 'hyper+]'
@@ -297,9 +291,7 @@ def test_undo_is_reachable_on_the_editor_bundle():
     assert {'create', 'getDoc', 'focus', 'selection'} <= names, 'and nothing else was dropped'
 
 def test_reload_from_disk_is_reachable_without_a_chord():
-    """Every `takeDiskVersion` call sat behind some other flow, so a tab showing a version that had
-    moved on had no command to fix it. The palette lists any labelled action, and the File and tab
-    menus name it."""
+    """Every `takeDiskVersion` call sat behind some other flow, so a tab showing a version that had moved on had no command to fix it."""
     k = lookup('reload_file')
     assert k.label == 'reload from disk' and k.scope == 'global'
     assert k.key == '', 'it is a menu and palette command; a default chord would need an audit'

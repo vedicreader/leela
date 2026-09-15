@@ -20,11 +20,7 @@ JS = _bundles()
 class _NoTab: tab = None
 
 def test_a_file_row_opens_through_the_one_versioned_opener(tmp_path):
-    """Mouse opens used to stopPropagation without painting `.sel`; keys already did.
-
-    The row now names `leeTreeClick`, which is where a held modifier means select rather than open,
-    so the opener it has to reach is one call further in.
-    """
+    """Mouse opens used to stopPropagation without painting `.sel`; keys already did."""
     from leela.blocks.fs.ui import tree_node
     (tmp_path/'alpha.py').write_text('x = 1\n')
     ws = Workspace(roots=[tmp_path])
@@ -110,8 +106,7 @@ def test_file_click_sets_the_same_selected_state_as_keyboard_navigation(tmp_path
 
 
 def test_the_agent_can_be_pointed_at_ramabanas_own_config_dir(tmp_path, monkeypatch):
-    """Ramabana writes the log and its sidecars from the same code Leela drives, so one folder can
-    serve both surfaces. Empty keeps every existing install exactly where it was."""
+    """Ramabana writes the log and its sidecars from the same code Leela drives, so one folder can serve both surfaces."""
     from leela.blocks.settings.settings import Settings, agent_cfg
     import leela
     settings = Settings(user_path=tmp_path/'settings.json')

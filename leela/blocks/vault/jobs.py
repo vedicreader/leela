@@ -165,7 +165,7 @@ class Jobs:
 def run_script(argv, cwd=None, timeout=SCRIPT_TIMEOUT):
     cmd = shlex.split(argv) if isinstance(argv, str) else [str(a) for a in argv]
     if not cmd: raise JobError('nothing to run')
-    from ..runtime.support import clean_env
+    from kunda.pythons import clean_env
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
                        env=clean_env())
     if r.returncode: raise JobError(f'{cmd[0]} exited {r.returncode}: {(r.stderr or r.stdout).strip()[-600:]}')

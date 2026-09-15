@@ -17,8 +17,7 @@ BACKUP_DIR = 'backups'
 STAMP = '%Y%m%d_%H%M%S'
 ARCHIVE = '.tar.gz'
 
-#: What a person cannot get back by rebuilding, and what to call it on the settings page. Every
-#: path is under the config dir except `vault`.
+#: What a person cannot rebuild, and its name on the settings page. Every path is under the config dir except `vault`.
 ENTRIES = {
     'agent-history.jsonl': 'conversations',
     'agent-sessions.json': 'conversation titles',
@@ -41,8 +40,7 @@ ENTRIES = {
 #: Chosen until a person chooses otherwise. `ENTRIES` still offers `vault` and `journals`.
 PRECIOUS = tuple(k for k in ENTRIES if k not in ('vault', 'journals'))
 
-#: How often, in hours. `off` keeps the pre-write guard and nothing else, because a bad write to the
-#: log does not wait for a schedule.
+#: How often, in hours. `off` keeps the pre-write guard only, because a bad write to the log does not wait for a schedule.
 CADENCES = {'off': 0, 'hourly': 1, 'sixhourly': 6, 'daily': 24, 'weekly': 168}
 
 def stamp(when=None): return (when or datetime.now()).strftime(STAMP)
@@ -58,8 +56,7 @@ def _top(name): return str(name).split('/')[0]
 
 def backup_dir(cfg=None): return Path(cfg or leela_cfg)/BACKUP_DIR
 
-#: The entries Ramabana writes, which `agent.configFolder` can move out of Leela's config dir.
-#: A backup that copies the old location protects an empty log.
+#: Entries Ramabana writes, which `agent.configFolder` can move out of Leela's config dir; copying the old location backs up an empty log.
 AGENT_ENTRIES = ('agent-history.jsonl', 'agent-sessions.json', 'agent-branches.json', 'agent-plans')
 
 def agent_source(cfg=None):

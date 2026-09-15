@@ -49,7 +49,7 @@ dependencies = [
     "jupyter-client>=8.9.1",
     "koshas>=0.1.7",
     "litesearch>=0.1.34",   # onnx, onnxruntime and flashrank are extras, on both rerank paths
-    "mdhtml>=0.1.21",
+    "mdhtml>=0.1.38",   # `md2dom(...).to_html()`, which `blocks/canvas/lit.py` renders through
     # The ripgrep flags and its event stream, in one place rather than a command line built here.
     # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.
     "rgapi>=0.1.22",
@@ -58,6 +58,10 @@ dependencies = [
     "uvicorn>=0.30.0",
     "httpx2>=2.10.0",
     "numpy>=1.26",
+    # rapidfuzz backs the quick-open ranker (`core.text._fuzzy_score`), orjson the .ipynb parse in
+    # `blocks/nb`. Both are import-guarded with a stdlib fallback, so a partial install still runs.
+    "rapidfuzz>=3.0",
+    "orjson>=3.9",
     "packaging>=24.0",
     "ptymini>=0.0.5",   # the pty layer: one ring per session, replayed on attach
     # `workspace._attachment_context` imports `ramabana.cli` for the media helpers, and that
@@ -120,9 +124,11 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[local]",
+    "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
     "rishi[all]==0.1.36",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
@@ -134,7 +140,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow' -n auto"
 markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 
 [tool.uv]
@@ -145,6 +151,7 @@ constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
+leela-bricks = { path = "extensions/bricks", editable = true }
 # The six packages Leela's own code was lifted into are taken from PyPI, not from the checkouts
 # beside this one. `setup_app.lock_requirements` exports this lock as the app's requirements, and
 # an editable path there builds a bundle that depends on directories only this machine has.

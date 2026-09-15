@@ -10,7 +10,7 @@ from ...core.inspectors import import_failure
 from ...core.session import kernel_api
 from ...core.web import fail
 from ..runtime.kernels import KernelLimit
-from ..runtime.support import INSPECTOR, installable
+from kunda.support import INSPECTOR, installable
 
 __all__ = ['CAPS', 'connect']
 

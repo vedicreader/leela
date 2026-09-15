@@ -95,9 +95,7 @@ def test_an_unreadable_cadence_is_the_default_rather_than_a_busy_loop():
     assert every_seconds('0s') == 60, 'zero would poll continuously'
 
 def test_the_units_table_is_the_one_the_rest_of_the_family_uses():
-    """`every_seconds` carried its own `UNITS` dict. `ramabana.monitor.secs` exists for exactly
-    this and says so in its own comment, delegating to `pobblebonk.core.secs`. What stays here is
-    Leela's: a bare number means hours in this field, and an unreadable cadence is the default."""
+    """`every_seconds` carried its own `UNITS` dict."""
     import inspect
     from leela.agent.monitor import secs
     from leela.blocks.vault import jobs
@@ -362,9 +360,7 @@ def test_the_workbench_is_one_tab_however_often_it_is_opened(tmp_path, monkeypat
     assert ws.tab.ref == 'find', 'reopening it should move to the view asked for'
 
 def test_the_workbench_reopens_on_the_section_you_left_it_on(tmp_path, monkeypatch):
-    """Reading a story opens a document tab. Coming back to the vault showed `browse`: the
-    section was swapped into the page and never recorded on the tab that remembers it.
-    """
+    """Reading a story opens a document tab."""
     from starlette.testclient import TestClient
     from leela.app import ide_app
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))

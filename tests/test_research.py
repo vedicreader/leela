@@ -118,10 +118,7 @@ def test_url_slug_has_a_safe_fallback():
     assert _url_slug('https://www.example.com/a useful/page') == 'example-com-a-useful-page'
 
 def test_the_page_reader_lives_in_shalya_and_leela_only_wraps_it():
-    """`Research.read` and `shalya.host.read_page` were two spellings of one reader dispatch and
-    one thin-page escalation, diverged in both directions: Leela had the extraction fallback and
-    the repeated-`<article>` sectioning, shalya had JSON-LD and the stealthy retry, and each was
-    worse than the union. `read_page` is the union, and this module holds none of it."""
+    """`Research.read` and `shalya.host.read_page` were two diverged spellings of one reader; `read_page` is the union and this module holds none of it."""
     import inspect
     from leela.blocks.research import research as mod
     src = inspect.getsource(mod)

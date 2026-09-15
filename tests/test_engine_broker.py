@@ -89,10 +89,7 @@ def test_a_local_server_runtime_has_no_engine_to_share(monkeypatch):
     assert eng.engine_kw('ollama', {'n_ctx': 8000}) == {}
 
 def test_a_failed_chat_holds_its_engine_until_something_asks_for_it(broker):
-    """A dialog model whose chat failed keeps its weights: nothing releases an engine on its own.
-
-    `/runtime/engines/clear` is what a person asks with, and the ceiling is what asks for them
-    otherwise. Releasing on the next attach would close engines that are mid-load or lent out."""
+    """A dialog model whose chat failed keeps its weights: nothing releases an engine on its own."""
     be = FakeBackend(spec())
     engine = broker.attach(be)
     be.failed()
@@ -102,9 +99,7 @@ def test_a_failed_chat_holds_its_engine_until_something_asks_for_it(broker):
     assert engine.closed and broker.status()['live'] == 0
 
 def test_a_vision_model_is_built_by_the_class_that_will_receive_it(monkeypatch):
-    """The broker asked `get_runtime('mlx')`, which cannot see the model, and built a text engine
-    for a vision repo. Rishi then handed that engine to `MlxVlmChat` and the first turn died in
-    mlx-vlm with `'Model' object has no attribute 'config'`."""
+    """The broker asked `get_runtime('mlx')`, which cannot see the model, and built a text engine for a vision repo."""
     monkeypatch.setattr(eng, '_chat_cls', lambda runtime: DispatchingChat)
     b, be = EngineBroker(max_engines=2), FakeBackend(spec('qwen3-vl'))
     engine = b.attach(be)

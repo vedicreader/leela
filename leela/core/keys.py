@@ -4,15 +4,13 @@ import json, os
 from dataclasses import dataclass, asdict, replace
 from fastcore.all import L, Path, first, ifnone
 
-__all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'WEB_ONLY_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
+__all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
-SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term')
-
-WEB_ONLY_SCOPES = ()
+SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas')
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
           'home', 'end', 'pageup', 'pagedown', *[f'f{i}' for i in range(1, 13)]}
@@ -146,6 +144,7 @@ DEFAULTS = L(
     Key('run_file',         'mod+alt+enter',  'global', 'run this script',    'toast'),
     Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
+    Key('new_canvas',       'hyper+j',       'global', 'new canvas'),
     Key('notebook_language', '',           'global', 'notebook language'),
     Key('add_folder',       '',              'global', 'stage this folder, ignores first'),
     Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),

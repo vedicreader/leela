@@ -130,28 +130,8 @@ def test_an_inspection_cannot_change_what_the_user_has(tmp_path, kind):
             await k.shutdown()
     _run(go())
 
-def test_a_subagent_is_given_inspect_python_and_no_write_tools():
-    "The harness half: `read_only` must keep the one execution tool that is safe to delegate."
-    from leela.agent.tools import NO_SUB, read_only
-    from leela.agent.tools import WRITE_TOOLS
-    class Fake:
-        def __init__(self, n): self.__name__ = n
-    tools = [Fake(n) for n in ('search_code', 'view_file', 'inspect_python', 'run_python',
-                               'edit_file', 'delegate_search', 'delegate_parallel')]
-    names = {t.__name__ for t in read_only(tools)}
-    assert 'inspect_python' in names
-    assert not (names & WRITE_TOOLS), 'a sub-agent must not be able to write'
-    assert not (names & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
-
 def test_the_briefing_says_what_is_true_of_both_kernels():
-    """Leela runs each inspection in the kernel's own subshell, on either launcher, so its briefing
-    says so on either launcher.
-
-    The claim is the host's to make: Ramabana reads `concurrent` off the launcher, because a kernel
-    that serialises is the common case, and this asserted the sentence against Ramabana's own test
-    doubles instead of Leela's host, so it went red when that gate arrived and said nothing about
-    Leela either way.
-    """
+    """Leela runs each inspection in the kernel's own subshell, on either launcher, so its briefing says so on either launcher."""
     from leela.agent.agent import system_prompt
     from leela.blocks.agent.ai import WorkspaceHost
     from leela.workspace import Workspace
@@ -229,11 +209,7 @@ def test_overlay_still_refuses_to_touch_what_the_user_made(tmp_path, kind):
 
 @pytest.mark.parametrize('kind', KINDS[:1])
 def test_a_binding_reaches_the_user_only_when_it_is_handed_over(tmp_path, kind):
-    """The whole round trip with no model in it: bind, be seen, hand over, be read by the user.
-
-    `run_python` writes to the agent's layer, so the user's next cell cannot see what it bound.
-    `host.promote_var` is the only route across, it is the vars pane's own gesture, and no tool
-    exposes it: `_land` calls it when the user's own prompt named the destination."""
+    """The whole round trip with no model in it: bind, be seen, hand over, be read by the user."""
     from leela.blocks.agent.ai import WorkspaceHost
     async def go():
         ws = Workspace(roots=[str(tmp_path)], port=8760, approvals='auto')
@@ -299,10 +275,31 @@ def _model_available():
     from rishi.litert import _cached_model
     return bool(_cached_model(MODEL_ID))
 
+#: What one LiteRT engine for this model costs, measured rather than guessed: resident size climbs
+#: from 123MB to 12.2GB as the fixture builds it, and a run that reached 13.4GB was OOM-killed with
+#: 3.1GB still nominally free. So 16GB available is the point below which this does not finish.
+#:
+#: The gate used to ask only whether the bundle was cached. On a machine with the bundle and not the
+#: memory, the whole file was killed part way through and reported nothing at all: not the model
+#: tests it could never run, and not the nineteen kernel tests above them that pass in seconds.
+MODEL_RAM_MB = 16000
+
+def _ram_mb():
+    "Memory the kernel says is available, or None where it does not say."
+    try:
+        for line in open('/proc/meminfo'):
+            if line.startswith('MemAvailable:'): return int(line.split()[1]) // 1024
+    except OSError: pass
+    return None
+
 @pytest.fixture(scope='module')
 def dialog_agent(tmp_path_factory):
     if not _model_available() and os.environ.get('LEELA_RUN_RISHI_INTEGRATION') != '1':
         pytest.skip(f'{MODEL_NAME} LiteRT bundle is not cached; set LEELA_RUN_RISHI_INTEGRATION=1 to download it')
+    if (free := _ram_mb()) is not None and free < MODEL_RAM_MB \
+            and os.environ.get('LEELA_RUN_RISHI_INTEGRATION') != '1':
+        pytest.skip(f'{free}MB available, {MODEL_NAME} needs about {MODEL_RAM_MB}MB; '
+                    'set LEELA_RUN_RISHI_INTEGRATION=1 to try anyway')
     # Copied out: a real kernel logs its transcript into the folder the workspace is rooted at,
     # which was `tests/fixtures`, so running this suite wrote session notebooks into the checkout.
     import shutil

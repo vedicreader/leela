@@ -87,12 +87,7 @@ def test_pyproject_dependencies_get_runtime_version_pills(tmp_path):
     assert data['summary']['missing'] == 1
 
 def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
-    """One interpreter answered for every open project at once.
-
-    With two checkouts open, the pills on the second one's pyproject were read out of the first
-    one's environment, so a checkout holding a newer release of a shared dependency was reported at
-    the older one's version. The formatter picked its ruff the same way.
-    """
+    """One interpreter answered for every open project at once."""
     import os, sys
     roots = []
     for name in ('one', 'two'):
@@ -449,12 +444,7 @@ def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_pat
 
 
 def test_nothing_clips_a_completion_opened_on_a_cells_last_line():
-    """The list was cut off at the code box and the rest painted over by the next cell.
-
-    Two clippers, and a fix for one alone leaves it cut: `.lee-cm` clips with `overflow`, and
-    `.lee-cell` clips through the paint containment `content-visibility: auto` brings with it,
-    which also makes every cell a stacking context that the next one paints over.
-    """
+    """The list was cut off at the code box and the rest painted over by the next cell."""
     css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
     assert 'content-visibility: auto' in css, 'the containment this is about is still there'
     for rule in ('.lee-cm:has(.cm-tooltip) { overflow: visible; }',
@@ -476,8 +466,7 @@ def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp
 
 
 def test_selection_help_summarises_on_the_summary_job_and_asks_the_readonly_agent_to_rewrite(tmp_path):
-    """Summarising is one call and needs nothing looked up. A rewrite is a turn of an agent that can
-    read the file the selection came from, and the selection reaches it with its path and lines."""
+    """Summarising is one call and needs nothing looked up."""
     ws = Workspace(roots=[tmp_path])
     calls, asked = [], []
     class FakeAI:
@@ -509,8 +498,7 @@ def test_selection_help_summarises_on_the_summary_job_and_asks_the_readonly_agen
 
 
 def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
-    """The panel promises nothing changes until Replace. The guarantee is that the tools are gone,
-    not that the briefing asked the model to leave them alone."""
+    """The panel promises nothing changes until Replace."""
     from ramabana.tools import NO_SUB
     from shalya.core import ACTING_TOOLS, WRITE_TOOLS
     ws = Workspace(roots=[tmp_path])
@@ -526,10 +514,7 @@ def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
 
 
 def test_changing_the_inline_model_moves_the_selection_panel_too(tmp_path):
-    """One control is labelled `prompt cells · inline AI`, and both run on what it says.
-
-    The panel's assistant was built once and kept the model it was built with, so a change made
-    after the first selection only took effect at the next restart."""
+    """One control is labelled `prompt cells · inline AI`, and both run on what it says."""
     ws = Workspace(roots=[tmp_path])
     assert ws.selection_ai.routing.name_for('turn') == ws.inline_model
     with TestClient(ide_app(ws)) as client:
@@ -551,12 +536,7 @@ def test_a_second_selection_is_refused_while_the_first_is_still_answering(tmp_pa
     assert not d.get('ok') and 'still answering' in d.get('error', '')
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
-    """The property is that the tag is escaped, not that the string `onerror=` is absent.
-
-    It used to be spelled the second way, which passed only because the highlighter split the
-    attribute across spans. Highlighting is an mdhtml extra, and without it the same safe output
-    holds the same characters.
-    """
+    """The property is that the tag is escaped, not that the string `onerror=` is absent."""
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
         safe = client.post('/markdown/render', json={'text': raw, 'allow_raw': False}).json()['html']
@@ -566,11 +546,7 @@ def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     assert '<img' in trusted and 'onerror' in trusted, 'an explicit `{=html}` block is deliberate'
 
 def test_a_render_does_not_report_a_missing_package_as_a_problem_with_the_markdown(tmp_path):
-    """mdhtml moved highlighting into its `hl` extra. Asking for it anyway renders the same plain
-
-    code and warns about a missing Python package, which the editor draws on the person's document
-    as a diagnostic they cannot act on.
-    """
+    """mdhtml moved highlighting into its `hl` extra."""
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         out = client.post('/markdown/render', json={'text': '```python\nx = 1\n```'}).json()
     assert '<code class="language-python">' in out['html']
@@ -641,9 +617,7 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
     assert missing.status_code == 400
 
 def test_the_vault_privacy_control_offers_every_policy_and_can_recover_from_a_refusal():
-    """A three-valued control cannot recover by flipping a box, so it carries the value it had. Read
-    it out of the markup: a `data-was` the server never wrote would reset a refusal to `off`, which
-    is the least private answer and the one nobody chose."""
+    """A three-valued control cannot recover by flipping a box, so it carries the value it had."""
     from leela.app import _agent_panel
     from leela.blocks.memory.memory import PII_GATES
     ws = Workspace(roots=[]); ws.vault_pii = 'redact'
@@ -777,16 +751,7 @@ def test_explicit_reload_invalidates_the_notebook_cache_and_reads_agent_changes(
 
 
 def test_a_restored_file_is_dropped_from_every_tab_holding_it_not_only_the_active_one(tmp_path):
-    """A rolled-back turn restores files wherever they happen to be open, and `/tab/reload` refused
-    every path but the active tab's. A notebook in a background tab kept the copy from before the
-    restore, in the browser and in `docs`, and wrote it back over the restored file at the next
-    `/tabs/save-all`. Neither `/fs/events` nor `/tab/watch` reports a tab that is not on screen, so
-    nothing else was going to tell it.
-
-    A tab with unsaved edits is held rather than dropped, because a restore underneath somebody is
-    not a reason to discard their typing. `bases` is armed for those instead, which is what makes
-    save-all refuse the write and send them to the tab to look at it.
-    """
+    """A rolled-back turn restores files wherever they happen to be open, and `/tab/reload` refused every path but the active tab's."""
     a, b = tmp_path/'a.ipynb', tmp_path/'b.ipynb'
     _nb(a, 'value = "before"'); _nb(b, 'value = "before"')
     ws = Workspace(roots=[tmp_path]); ws.open(a); ws.open(b)
@@ -1038,8 +1003,7 @@ def test_the_pane_sees_and_answers_a_prompt_cell_approval(tmp_path):
         assert held['a'].note == 'use the other file', 'answered where it was raised'
 
 def test_a_file_can_be_named_relatively_or_absolutely(tmp_path):
-    """Copying a path is for giving it to somebody: relative for a colleague in the same repository,
-    absolute for a shell here. Only the server knows which open folder a path is under."""
+    """Copying a path is for giving it to somebody: relative for a colleague in the same repository, absolute for a shell here."""
     root = tmp_path/'proj'; (root/'pkg').mkdir(parents=True)
     (root/'pkg'/'mod.py').write_text('x = 1\n')
     ws = Workspace(roots=[root])
@@ -1065,9 +1029,7 @@ def test_copying_a_path_is_offered_wherever_a_file_is_named():
         assert lookup(action).keys, f'{action} has a chord of its own'
 
 def test_the_prompt_cell_model_is_the_saved_one_not_the_routing_default(tmp_path):
-    """`inline` is in `JOBS` and `**jobs` is spread last, so the routing default for the job
-    overwrote the saved prompt-cell model every time. The choice was saved correctly and always
-    came back reading as the turn model, which is what looked like shutdown reverting it."""
+    """`inline` is in `JOBS` and `**jobs` is spread last, so the routing default for the job overwrote the saved prompt-cell model every time."""
     ws = Workspace(roots=[tmp_path], inline_model='gpt-4.1-nano')
     with TestClient(ide_app(ws)) as client:
         picked = client.get('/agent/models').json()['selected']
@@ -1076,9 +1038,7 @@ def test_the_prompt_cell_model_is_the_saved_one_not_the_routing_default(tmp_path
     assert 'summary' in picked and 'classify' in picked, 'the routed jobs are still reported'
 
 def test_naming_a_folder_keeps_the_settings_the_last_session_saved(tmp_path):
-    """Naming a folder built a fresh workspace carrying three model names, so a per-job model, a
-    budget or a charter chosen yesterday was gone today -- which reads as shutting down having
-    reverted it."""
+    """Naming a folder built a fresh workspace carrying three model names, so a per-job model, a budget or a charter chosen yesterday was gone today, which reads as shutting down having reverted it."""
     state = tmp_path/'state.json'
     first = Workspace(roots=[tmp_path]); first._state_path = state
     first.job_models = {'summary': 'gpt-4.1-mini', 'classify': 'gpt-4.1-nano'}
@@ -1098,9 +1058,7 @@ def test_naming_a_folder_keeps_the_settings_the_last_session_saved(tmp_path):
     assert Workspace(roots=[tmp_path]).restore_settings(None).job_models == {}, 'and nothing saved is no error'
 
 def test_the_journal_follows_the_folders_that_are_open(tmp_path):
-    """Built once in `__init__`, a workspace that started with no folders kept the key for *no*
-    folders after one was opened, so every project a desktop launch touched wrote into one shared
-    file. That is how a single journal reached gigabytes."""
+    """Built once in `__init__`, a workspace that started with no folders kept the key for *no* folders after one was opened, so every project a desktop launch touched wrote into one shared file."""
     a, b = tmp_path/'a', tmp_path/'b'
     a.mkdir(); b.mkdir()
     ws = Workspace(roots=[])
@@ -1116,9 +1074,7 @@ def test_the_journal_follows_the_folders_that_are_open(tmp_path):
     assert ws.journal.history is ws.history and ws.history.pinned == ws.journal.blobs
 
 def test_a_save_conflict_says_who_wrote_the_version_on_disk(tmp_path):
-    """`load disk version` read the same whether another process had written the file or Leela had
-    written it and the browser draft was holding a base from before that save. They need different
-    answers, and the dialog could not tell them apart."""
+    """`load disk version` read the same whether another process had written the file or Leela had written it and the browser draft was holding a base from before that save."""
     f = tmp_path/'notes.py'; f.write_text('one\n')
     ws = Workspace(roots=[tmp_path]); ws.open(f)
     with TestClient(ide_app(ws)) as client:
@@ -1136,8 +1092,7 @@ def test_a_save_conflict_says_who_wrote_the_version_on_disk(tmp_path):
     assert f.read_text() == 'two\n', 'and neither refusal wrote anything'
 
 def test_the_hub_gives_the_lifespan_to_every_workspace_not_just_the_default():
-    """Lifespan carries no Host header. Dispatched by host it reached one workspace, so the others
-    never heard the shutdown and never stopped their kernels, terminals or dev servers."""
+    """Lifespan carries no Host header."""
     down = []
     def site(slug):
         async def app(scope, receive, send):
@@ -1174,8 +1129,7 @@ def test_shutdown_runs_once_and_no_failed_step_skips_a_later_one(tmp_path):
     assert ran == ['terms', 'watch', 'backups'], 'and it does not run a second time'
 
 def test_naming_a_folder_reopens_that_folder_s_tabs_and_no_other_project_s(tmp_path):
-    """`leela .` skipped the saved session entirely and always opened empty. The folder named is
-    still that folder's session; another project's tabs are not part of it."""
+    """`leela .` skipped the saved session entirely and always opened empty."""
     mine, other = tmp_path/'mine', tmp_path/'other'
     mine.mkdir(); other.mkdir()
     (a := mine/'a.py').write_text('a = 1\n')
@@ -1213,8 +1167,7 @@ def test_shutdown_saves_the_session_so_the_next_window_opens_where_this_one_left
     assert [t['path'] for t in json.loads(state.read_text())['tabs']] == [str(f)]
 
 def test_a_workspace_can_be_torn_down_from_outside_the_event_loop(tmp_path):
-    """The desktop shell runs the server on a daemon thread and the window on the main one, so
-    closing the window ends the process without uvicorn reaching its shutdown lifespan."""
+    """The desktop shell runs the server on a daemon thread and the window on the main one, so closing the window ends the process without uvicorn reaching its shutdown lifespan."""
     import atexit
     ws = Workspace(roots=[tmp_path])
     assert ws.at_exit() is ws
@@ -1338,9 +1291,7 @@ def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_wat
 
 
 def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
-    """`subscribe` was the only other caller of `start`, and it runs once per page load. Opening
-    a folder from the welcome screen left the watcher with the empty root set it booted with.
-    """
+    """`subscribe` was the only other caller of `start`, and it runs once per page load."""
     a, b = tmp_path/'a', tmp_path/'b'
     a.mkdir(); b.mkdir()
     ws = Workspace(roots=[a])
@@ -1395,9 +1346,7 @@ def test_replacing_the_watcher_does_not_wait_for_the_old_thread(tmp_path):
     assert not old.is_alive(), 'and it still stops'
 
 def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_path):
-    """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the
-    tree keeps showing files that are gone until something unrelated happens to touch it.
-    """
+    """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the tree keeps showing files that are gone until something unrelated happens to touch it."""
     from leela.blocks.fs.fs import Sandbox
     from leela.blocks.fs.watch import Watcher, MAX_BATCH
     async def run():
@@ -1429,10 +1378,7 @@ def _one_cell_nb(src):
          'execution_count': None, 'id': 'c1'}]})
 
 def test_an_open_notebook_does_not_resurrect_itself_over_newer_work(tmp_path):
-    """`/tab/state` served the cached notebook stamped with the version now on disk, so the browser
-    sent that back as its base, `/nb/save` found base and disk equal, and the old branch's cells
-    overwrote the new ones. Opening the tab was enough: no unsaved edit was needed. The live notebook
-    stays authoritative because it carries outputs the file does not, so the fix is the stamp."""
+    """`/tab/state` served the cached notebook stamped with the version now on disk, so the browser sent that back as its base, `/nb/save` found base and disk equal, and the old branch's cells overwrote the new ones."""
     p = tmp_path/'core.ipynb'
     p.write_text(_one_cell_nb('X = "branch-a"'))
     ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
@@ -1486,10 +1432,7 @@ def test_saving_makes_the_cached_copy_current_again(tmp_path):
 
 
 def test_the_history_list_and_the_model_picker_carry_what_the_pane_filters_on(tmp_path):
-    """`/agent/history` says which app started each conversation, so the pane can hide the CLI's.
-    `/agent/models` ships the job help, so the `?` beside a model control reads the same sentence
-    the server-rendered ones do.
-    """
+    """`/agent/history` says which app started each conversation, so the pane can hide the CLI's."""
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as client:
         d = client.get('/agent/history').json()
@@ -1509,8 +1452,7 @@ def _nb_json(cells):
                                   'execution_count': None, 'metadata': {}} for i, s, o in cells]})
 
 def test_a_clean_run_over_the_notebook_does_not_block_a_source_edit(tmp_path):
-    """`nbdev_clean` strips outputs and metadata; a browser save writes cell sources. Those never
-    touch the same thing, and a conflict on the version token alone stopped the save anyway."""
+    """`nbdev_clean` strips outputs and metadata; a browser save writes cell sources."""
     nb = tmp_path/'n.ipynb'
     nb.write_text(_nb_json([('c1', 'x = 1', [{'output_type': 'stream', 'text': 'noise'}]),
                             ('c2', 'y = 2', [])]))
@@ -1561,8 +1503,7 @@ def test_a_cell_the_external_write_removed_is_not_reconciled(tmp_path):
 
 
 def test_a_tab_whose_file_moved_is_reported_as_stale(tmp_path):
-    """`/tab/state` keeps serving the cached copy, so the flag is the only thing that says the file
-    moved. Nothing read it, and an open notebook showed the version from before `nbdev-prepare`."""
+    """`/tab/state` keeps serving the cached copy, so the flag is the only thing that says the file moved."""
     nb = tmp_path/'n.ipynb'
     nb.write_text(_nb_json([('c1', 'x = 1', [{'output_type': 'stream', 'text': 'noise'}])]))
     ws = Workspace(roots=[tmp_path]); ws.open(nb)
@@ -1586,8 +1527,7 @@ def test_the_client_acts_on_the_stale_flag():
 
 
 def test_a_rewrite_that_changed_nothing_is_not_a_disk_change(tmp_path):
-    """`nbdev_clean` rewrites a notebook it has nothing to change, and any formatter does the same.
-    On an mtime token that read as an outside write and turned the next save into a conflict."""
+    """`nbdev_clean` rewrites a notebook it has nothing to change, and any formatter does the same."""
     import time
     from leela.blocks.tabs.app import disk_version
     f = tmp_path/'n.ipynb'
@@ -1642,8 +1582,7 @@ def _hub_get(hub, path, query=b''):
     return sent[0]['status'], json.loads(sent[-1]['body'])
 
 def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
-    """`open_folder` added a root to the window that was already open, so the second folder shared
-    the first one's kernels, tabs and agent. A folder is a workspace, and a workspace is a window."""
+    """`open_folder` added a root to the window that was already open, so the second folder shared the first one's kernels, tabs and agent."""
     (one := tmp_path/'one').mkdir(); (two := tmp_path/'two').mkdir()
     made = []
     def build(root, slug):
@@ -1679,8 +1618,7 @@ def test_a_workspace_that_cannot_open_another_folder_says_so_rather_than_failing
     assert 'cannot open another folder' in d['error'], d
 
 def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):
-    """The lifespan legs were zipped over the sites present at startup, so a workspace opened later
-    never heard `lifespan.shutdown` and left its kernels, terminals and dev servers running."""
+    """The lifespan legs were zipped over the sites present at startup, so a workspace opened later never heard `lifespan.shutdown` and left its kernels, terminals and dev servers running."""
     (late := tmp_path/'late').mkdir()
     up, down = [], []
     def site(slug, root=''):
@@ -1707,8 +1645,7 @@ def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):
     assert [m['type'] for m in sent] == ['lifespan.startup.complete', 'lifespan.shutdown.complete']
 
 def test_a_folders_slug_does_not_depend_on_the_order_it_was_opened_in(tmp_path):
-    """The slug names the state file, and a counter made it positional: open two projects that both
-    end in `src` the other way round and each was served the other one's tabs."""
+    """The slug names the state file, and a counter made it positional: open two projects that both end in `src` the other way round and each was served the other one's tabs."""
     (a := tmp_path/'a'/'src').mkdir(parents=True); (b := tmp_path/'b'/'src').mkdir(parents=True)
     store = tmp_path/'index.json'
     forward = dict(zip([a, b], assign_slugs([a, b], store)))
@@ -1725,9 +1662,7 @@ def test_a_slug_already_given_out_survives_a_corrupt_or_missing_index(tmp_path):
     assert assign_slugs([a], store) == ['src'], 'and the obvious slug is still the obvious one'
 
 def test_a_kernel_that_will_not_start_is_answered_and_not_raised(tmp_path, monkeypatch):
-    """Both routes called `_k()` bare, so an environment that cannot run a kernel arrived as a 500
-    with an ASGI traceback, where every other route in that file answers with something the client
-    can read. The index completes without a kernel, so only the runtime names are lost."""
+    """Both routes called `_k()` bare, so an environment that cannot run a kernel arrived as a 500 with an ASGI traceback, where every other route in that file answers with something the client can read."""
     from leela.blocks.runtime.kernels import KernelPool, KernelStartError
     async def _no_kernel(self, key, **kw):
         raise KernelStartError('/p/.venv/bin/python cannot import ipykernel_launcher, so it can run no kernel.')
@@ -1743,9 +1678,7 @@ def test_a_kernel_that_will_not_start_is_answered_and_not_raised(tmp_path, monke
         assert 'matches' in c.json(), 'the index answers even where the kernel cannot'
 
 def test_the_branch_pill_is_rendered_true_and_never_claims_a_folder_has_no_repository(tmp_path):
-    """It shipped as the literal `no git`, so any first paint the client did not reach left a claim
-    about the project on screen. An unknown says so; only a folder really outside a checkout is
-    called one."""
+    """It shipped as the literal `no git`, so any first paint the client did not reach left a claim about the project on screen."""
     from leela.app import _git_pill_text
     import subprocess
     repo = tmp_path/'repo'; (repo/'sub').mkdir(parents=True)
@@ -1767,8 +1700,7 @@ def test_the_branch_pill_is_rendered_true_and_never_claims_a_folder_has_no_repos
         assert 'trunk' in client.get('/').text
 
 def test_the_polled_kernel_pill_reads_the_runtime_the_cells_run_in(tmp_path):
-    """`/kernel/info` peeked only the tab's own kernel while `runtime()` runs in the watched
-    environment when there is one, so the pill reported dead for a kernel that was executing."""
+    """`/kernel/info` peeked only the tab's own kernel while `runtime()` runs in the watched environment when there is one, so the pill reported dead for a kernel that was executing."""
     (tmp_path/'nb.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
     ws = Workspace(roots=[tmp_path]); ws.open(tmp_path/'nb.ipynb')
     class _Live:
@@ -1794,8 +1726,7 @@ def test_the_kernel_pill_calls_a_tab_the_same_thing_alive_or_dead(tmp_path):
     assert ws.runtime_label() == dead_name == '01_graph.ipynb', 'the tab names its own kernel, running or not'
 
 def test_one_language_server_however_many_lints_arrive_together(tmp_path):
-    """`start` checked `alive` and spawned with nothing between them, and a notebook mount fires one
-    lint per mounted cell, so a window ran two language servers with one of them orphaned."""
+    """`start` checked `alive` and spawned with nothing between them, and a notebook mount fires one lint per mounted cell, so a window ran two language servers with one of them orphaned."""
     import threading
     from leela.blocks.lsp.lsp import PyrightService
     svc = PyrightService(tmp_path)
@@ -1818,9 +1749,7 @@ def test_one_language_server_however_many_lints_arrive_together(tmp_path):
     assert len(spawned) == 1, f'{len(spawned)} language servers for one workspace'
 
 def test_a_frozen_app_does_not_run_itself_to_read_package_versions(tmp_path, monkeypatch):
-    """In the bundle `sys.executable` is Leela, so the fallback ran `Leela.app/Contents/MacOS/Leela
-    -c ...`: it relaunched the app and then waited out the eight second timeout, once per switch,
-    for any project without an environment of its own."""
+    """In the bundle `sys.executable` is Leela, so the fallback ran `Leela.app/Contents/MacOS/Leela -c ...`: it relaunched the app and then waited out the eight second timeout, once per switch, for any project without an environment of its own."""
     (tmp_path/'pyproject.toml').write_text('[project]\nname = "x"\ndependencies = ["fastcore"]\n')
     import sys
     ran = []
@@ -1837,9 +1766,7 @@ def test_a_frozen_app_does_not_run_itself_to_read_package_versions(tmp_path, mon
     assert ran == [], 'and nothing was run to find that out'
 
 def test_saving_every_tab_says_what_it_wrote(tmp_path):
-    """`/tabs/save-all` wrote from the buffers the server holds and answered with a count. The browser
-    kept the version it had before that write, so its next save read as another process having
-    written the file, and the poll that watches the open file called it an outside edit."""
+    """`/tabs/save-all` wrote from the buffers the server holds and answered with a count."""
     p = tmp_path/'m.py'; p.write_text('x = 1\n')
     ws = Workspace(roots=[tmp_path]); ws.open(p)
     with TestClient(ide_app(ws)) as client:
@@ -1851,3 +1778,60 @@ def test_saving_every_tab_says_what_it_wrote(tmp_path):
             'the version it reports is the one on disk after the write'
         assert d['versions'][str(p)] != before, 'and it is not the version the browser started with'
     assert p.read_text() == 'x = 2\n'
+
+
+# --- a canvas is an ordinary tab ---
+
+def test_a_canvas_file_opens_as_a_canvas_tab_and_a_plain_markdown_file_does_not(tmp_path):
+    "The suffix decides, in `Tab.__post_init__`, so rename and session restore agree with `open`."
+    from leela.workspace import Tab
+    (tmp_path/'plan.canvas.md').write_text('# plan\n')
+    (tmp_path/'notes.md').write_text('# notes\n')
+    ws = Workspace(roots=[tmp_path])
+    assert ws.open(tmp_path/'plan.canvas.md').kind == 'canvas'
+    assert ws.open(tmp_path/'notes.md').kind == 'text'
+    assert Tab(path=str(tmp_path/'x.canvas.md')).kind == 'canvas'
+
+def test_renaming_a_file_into_a_canvas_moves_the_tab_with_it(tmp_path):
+    "`retarget` rewrites the path; the kind is derived from it rather than kept from before."
+    from leela.workspace import Tab
+    assert Tab(path='/w/notes.md').kind == 'text'
+    assert Tab(path='/w/notes.canvas.md', kind='text').kind == 'canvas'
+
+def test_a_new_canvas_is_created_as_a_document_that_parses(tmp_path):
+    "`create_document` is the seam `/fs/new` journals, so a canvas is made the way a file is."
+    from leela.blocks.canvas.doc import Canvas
+    ws = Workspace(roots=[tmp_path])
+    e = ws.create_document(tmp_path/'pricing-a-run.canvas.md')
+    doc = Canvas.load(e.path)
+    assert doc.meta.get('title') == 'pricing a run'
+    assert [b.kind for b in doc.of('code', 'ask')] == ['code', 'ask']
+    assert doc.md() == Canvas.parse(doc.md()).md()          # a starter that round-trips
+
+def test_the_canvas_tab_state_says_canvas_rather_than_falling_through_to_text(tmp_path):
+    "`/tab/state` is what `mountTab` dispatches on; a kind it does not name mounts in CodeMirror."
+    (tmp_path/'plan.canvas.md').write_text('# plan\n\n```canvas code id=c1\nx = 1\n```\n')
+    ws = Workspace(roots=[tmp_path])
+    ws.open(tmp_path/'plan.canvas.md')
+    c = TestClient(ide_app(ws))
+    got = c.get('/tab/state').json()
+    assert got['kind'] == 'canvas' and got['path'].endswith('plan.canvas.md')
+    assert 'text' not in got, 'a canvas is not shipped as editor text'
+
+def test_the_new_canvas_command_is_reachable_from_every_surface_that_makes_a_file():
+    "A command with no button, menu row or palette entry is a chord nobody finds."
+    from leela.core.keys import KEYS, lookup
+    from leela.core.ui import BUTTONS
+    from leela.blocks.keys.menus import MENUS, BAR
+    assert lookup('new_canvas').label == 'new canvas'          # a label is what puts it in the palette
+    assert 'new_canvas' in BUTTONS.attrgot('action')
+    for surface in ('files', 'file', 'folder', 'root'):
+        assert 'new_canvas' in [i.action for i in MENUS[surface]], surface
+    assert 'new_canvas' in [r.action for name, rows in BAR if name == 'File' for r in rows]
+
+def test_a_canvas_keeps_the_chords_that_get_you_back_out_of_it():
+    "The page is a frame and owns its keyboard, so it is routed like the terminal and the browser."
+    from leela.core.keys import SCOPES
+    assert 'canvas' in SCOPES
+    src = (ROOT/'leela/blocks/keys/keymap.js').read_text()
+    assert "scope === 'canvas'" in src, 'the canvas has no escape hatch, so no IDE chord works in it'

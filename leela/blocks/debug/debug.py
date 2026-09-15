@@ -1,6 +1,6 @@
 "A small Debug Adapter Protocol client for direct Python/debugpy sessions."
 from __future__ import annotations
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 
 import json, queue, subprocess, threading, time
 from pathlib import Path

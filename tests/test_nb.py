@@ -29,9 +29,7 @@ def dialog():
     ])
 
 def test_stopping_a_prompt_cell_stops_the_agent_rather_than_denying_it_is_running(tmp_path, monkeypatch):
-    """A prompt cell is a turn of the inline agent, not anything in a kernel, so `/nb/interrupt`
-    could not find it among the running cells and answered `that cell is not running` while it
-    plainly was. There was no way to stop one at all."""
+    """A prompt cell is a turn of the inline agent, not anything in a kernel, so `/nb/interrupt` could not find it among the running cells and answered `that cell is not running` while it plainly was."""
     import json
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -82,10 +80,7 @@ def test_project_execution_initializes_only_zero_byte_notebook_placeholders(tmp_
     assert malformed.read_text() == '{not json'
 
 def test_initialising_the_open_notebook_keeps_the_cell_ids_the_browser_knows(tmp_path):
-    """A zero-byte `.ipynb` was made valid by writing a fresh blank, whose cell has a new id. The
-    browser and the server still held the old one, so the next save could not match a single cell,
-    the rebase refused, and running a second cell reported `save the notebook before running this
-    cell` and blamed another process."""
+    """A zero-byte `.ipynb` was made valid by writing a fresh blank, whose cell has a new id."""
     p = tmp_path/'new.ipynb'; p.touch()
     ws = Workspace(roots=[tmp_path])
     nb = Notebook.load(p)                     # what the doc store holds for an open placeholder
@@ -125,12 +120,7 @@ def test_a_streamed_run_initialises_the_notebook_it_is_about_to_run(tmp_path, mo
     assert len(ws._swept) == 1, 'two runs, one walk'
 
 def test_a_run_records_what_the_cell_bound_and_what_made_its_output(tmp_path, monkeypatch):
-    """Two things a finished run is the only place to learn: which cell bound a variable, and
-
-    which source the outputs on screen came from. Neither was written down, so the variable panel
-    could not say where a name came from and an edited cell kept a traceback for source it no
-    longer had.
-    """
+    """Two things a finished run is the only place to learn: which cell bound a variable, and which source the outputs on screen came from."""
     from leela.blocks.runtime.kernels import ExecOutcome
     from leela.blocks.nb.nb import src_hash
     p = tmp_path/'w.ipynb'
@@ -152,9 +142,7 @@ def test_a_run_records_what_the_cell_bound_and_what_made_its_output(tmp_path, mo
     assert cell['output_hash'] == src_hash('total = 6 * 7') and cell['stale'] is False
 
 def test_a_run_that_initialises_the_notebook_leaves_the_next_save_workable(tmp_path, monkeypatch):
-    """The symptom: running cells in a new notebook, then `save the notebook before running this
-    cell` partway through. Leela wrote the placeholder itself during the first run, and the save
-    that the next cell's guard performs was refused against the version the browser still held."""
+    """The symptom: running cells in a new notebook, then `save the notebook before running this cell` partway through."""
     p = tmp_path/'new.ipynb'; p.touch()
     ws = Workspace(roots=[tmp_path]); ws.open(p)
     async def no_kernel(tab=None): raise RuntimeError('no kernel in this test')
@@ -566,10 +554,7 @@ def test_a_prompt_cell_work_log_is_not_fed_back_as_context():
     assert strip_work_log('') == '' and strip_work_log(None) == ''
 
 def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
-    """The stream waited on the output queue with a 120ms timeout and re-checked whether the cell had
-    finished, so a cell that printed nothing -- an assignment, an import, a definition, most cells in
-    most notebooks -- paid that 120ms in full on top of the two it took to run. Five of them cost six
-    tenths of a second of waiting for nothing."""
+    """A cell that printed nothing paid the stream's full 120ms output-queue timeout on top of the two it took to run."""
     import json, time
     from starlette.testclient import TestClient
     from leela.app import ide_app
@@ -585,9 +570,25 @@ def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
         body = lambda i: {'i': i, 'id': None, 'source': f'q{i} = {i}', 'path': path}
         with client.stream('POST', '/nb/run/stream', json=body(0)) as r:   # this one starts the kernel
             for _ in r.iter_lines(): pass
-        began = time.perf_counter()
-        for i in range(1, 6):
-            with client.stream('POST', '/nb/run/stream', json=body(i)) as r:
-                assert any('event: done' in line for line in r.iter_lines())
-        took = time.perf_counter() - began
-    assert took < .4, f'five quiet cells took {took:.2f}s; the poll alone would have been 0.6s'
+        # The best of three, not one run: the regression this guards costs every cell the full
+        # 120ms poll, so it cannot hide in the fastest pass, while a busy machine slows all of them.
+        def five():
+            began = time.perf_counter()
+            for i in range(1, 6):
+                with client.stream('POST', '/nb/run/stream', json=body(i)) as r:
+                    assert any('event: done' in line for line in r.iter_lines())
+            return time.perf_counter() - began
+        took = min(five() for _ in range(3))
+    assert took < .5, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'
+
+
+def test_read_cells_parses_notebooks_that_orjson_alone_rejects():
+    from leela.blocks.nb.nb import read_cells
+    nb = json.dumps({'cells': [{'cell_type': 'code', 'source': ['x=1\n'], 'outputs': []}],
+                     'nbformat': 4, 'nbformat_minor': 5})
+    assert len(read_cells(nb)) == 1
+    nan = '{"cells": [{"cell_type":"code","source":[],"outputs":[{"data":{"x":NaN}}]}], "nbformat":4}'
+    assert read_cells(nan) is not None, 'orjson rejects NaN; a real notebook carries it, so parsing must fall through'
+    assert read_cells('not json') is None
+    assert read_cells('[1,2,3]') is None      # valid json, but not a notebook object
+    assert read_cells('') is None

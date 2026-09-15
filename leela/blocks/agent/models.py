@@ -3,7 +3,7 @@ import json, subprocess, sys, threading, time
 from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
-from ..runtime.support import clean_env
+from kunda.pythons import clean_env
 
 __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_model', 'runtimes',
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
@@ -29,11 +29,6 @@ def _runtimes():
 
 LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hosted API / FastLLM',
           'cursor': 'Cursor agent', 'claude': 'Claude Code', 'copilot': 'GitHub Copilot'}
-
-def _why(runtime, agents):
-    "What to do about an unreachable runtime, from ramabana, which declares them."
-    from ...agent.core import runtime_remedy
-    return runtime_remedy(runtime)
 
 #: Runtimes a package can supply, named as rishi's own extras. The rest want a CLI, a daemon or a key.
 INSTALLABLE = ('mlx', 'llama')
@@ -201,8 +196,7 @@ _latest, _latest_at = {}, 0.0
 LATEST_TTL = 3600          #: a courtesy check, not a heartbeat
 
 def _release_headers():
-    """A GitHub token where there is one. Leela's own repository is private, and an unauthenticated
-    releases request answers 404 there, which the caller cannot tell from having no releases."""
+    "A GitHub token where there is one; without it the private repo 404s instead of returning no releases."
     head = {'Accept': 'application/vnd.github+json'}
     try:
         from ..git.seam import gh_token
@@ -299,9 +293,9 @@ def setup_plan():
 
 def runtimes():
     "Every runtime, whether rishi can reach it here, and what it wants when it cannot."
-    from ...agent.core import AGENTS, runtime_available, runtime_detail
+    from ...agent.core import runtime_available, runtime_detail, runtime_remedy
     return [{'value': r, 'label': LABELS.get(r, r), 'available': bool(runtime_available(r)),
-             'why': _why(r, AGENTS), 'installable': r in INSTALLABLE,
+             'why': runtime_remedy(r), 'installable': r in INSTALLABLE,
              'requirements': runtime_requirements(r), 'install': install_state(r),
              'detail': '' if runtime_available(r) else runtime_detail(r)}
             for r in _runtimes()]

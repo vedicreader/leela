@@ -49,7 +49,9 @@ def test_pool_default_kernel_forwarded(monkeypatch):
         def __init__(self, **kw): seen.update(kw); self.alive = False
         def touch(self): return self          # the pool stamps every kernel it hands out
         async def start(self): return self
-    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
+    #: `kunda.pool` imports `Kernel` into its own namespace and `_class_for` reads it there, so
+    #: patching Leela's re-export patched a name the pool never looks at.
+    monkeypatch.setattr('kunda.pool.Kernel', Fake)
     pool = KernelPool(default_kernel='ipymini')
     asyncio.new_event_loop().run_until_complete(pool.get('k'))
     assert seen['kernel'] == 'ipymini'
@@ -188,7 +190,7 @@ def test_concurrent_pool_gets_share_one_start(monkeypatch):
             await asyncio.sleep(0.02)
             self.alive = True
             return self
-    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
+    monkeypatch.setattr('kunda.pool.Kernel', Fake)   # the name `_class_for` reads
     async def go():
         pool = KernelPool()
         got = await asyncio.gather(*[pool.get('project') for _ in range(5)])
@@ -211,7 +213,7 @@ def test_pool_does_not_expose_a_half_started_kernel(monkeypatch):
             await finish_start.wait()
             self.kc = object()
             return self
-    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
+    monkeypatch.setattr('kunda.pool.Kernel', Fake)   # the name `_class_for` reads
     async def go():
         pool = KernelPool()
         first = asyncio.create_task(pool.get('project'))
@@ -229,12 +231,13 @@ def test_pool_peek_hides_a_kernel_until_start_is_complete(monkeypatch):
     started, finish = asyncio.Event(), asyncio.Event()
     class Fake:
         def __init__(self, **kw): self.alive = False
+        def touch(self): return self          # the pool stamps every kernel before it starts it
         async def start(self):
             started.set()
             await finish.wait()
             self.alive = True
             return self
-    monkeypatch.setattr('leela.blocks.runtime.kernels.Kernel', Fake)
+    monkeypatch.setattr('kunda.pool.Kernel', Fake)   # the name `_class_for` reads
     async def go():
         pool = KernelPool()
         pending = asyncio.create_task(pool.get('project'))
@@ -264,7 +267,7 @@ def test_stop_forces_restart_when_execution_ignores_interrupt(monkeypatch):
 
 def test_fallback_when_ipymini_missing(monkeypatch):
     "Asking for ipymini when it isn't installed warns and falls back."
-    monkeypatch.setattr('leela.blocks.runtime.kernels.ipymini_available', lambda: False)
+    monkeypatch.setattr('kunda.kernel.ipymini_available', lambda: False)   # where `Kernel` reads it
     with warnings.catch_warnings(record=True) as ws:
         warnings.simplefilter('always')
         k = Kernel(kernel='ipymini')

@@ -1,8 +1,4 @@
-"""The file tree's operations: what they do to disk, to the journal and to what is open.
-
-These four routes were the only mutating surface in the codebase with no tests, which is a fair
-part of why a folder delete left no record and a rename of a PNG could destroy it.
-"""
+"""The file tree's operations: what they do to disk, to the journal and to what is open."""
 
 from __future__ import annotations
 import json
@@ -21,8 +17,7 @@ def ws_client(tmp_path, cfg):
     return ws, TestClient(ide_app(ws))
 
 def test_deleting_a_folder_is_recorded_and_comes_back_whole(tmp_path, monkeypatch):
-    """It used to record nothing at all: `before` was only read for a file, and the journal row was
-    conditional on it, so a recursive tree removal left no row, no version and no undo."""
+    """It used to record nothing at all: `before` was only read for a file, and the journal row was conditional on it, so a recursive tree removal left no row, no version and no undo."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     (tmp_path/'pkg').mkdir()
     (tmp_path/'pkg'/'a.py').write_text('x = 1\n')
@@ -50,8 +45,7 @@ def test_deleting_and_undoing_a_binary_returns_the_same_bytes(tmp_path, monkeypa
     assert p.read_bytes() == PNG, 'byte for byte, or the file was not recovered'
 
 def test_renaming_a_binary_and_undoing_it_keeps_one_intact_copy(tmp_path, monkeypatch):
-    """Rename recorded two text rows, so undoing a renamed image wrote mojibake to the old path and
-    unlinked the good file at the new one, leaving no intact copy anywhere."""
+    """Rename recorded two text rows, so undoing a renamed image wrote mojibake to the old path and unlinked the good file at the new one, leaving no intact copy anywhere."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     p = tmp_path/'logo.png'; p.write_bytes(PNG)
     ws = Workspace(roots=[tmp_path])
@@ -63,9 +57,7 @@ def test_renaming_a_binary_and_undoing_it_keeps_one_intact_copy(tmp_path, monkey
     assert p.read_bytes() == PNG and not (tmp_path/'mark.png').exists()
 
 def test_a_rename_moves_the_open_tab_with_the_file(tmp_path, monkeypatch):
-    """The tab kept the old path, so its next save saw a `missing` disk version, and the conflict
-    dialog offered to force it through, recreating the file under the name it was renamed away from.
-    """
+    """The tab kept the old path, so its next save saw a `missing` disk version, and the conflict dialog offered to force it through, recreating the file under the name it was renamed away from."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     p = tmp_path/'mod.py'; p.write_text('VALUE = 1\n')
     ws = Workspace(roots=[tmp_path]); ws.open(p)
@@ -92,8 +84,7 @@ def test_a_reused_path_does_not_serve_the_deleted_file_from_cache(tmp_path, monk
             'a different file with the same name'
 
 def test_deleting_a_folder_closes_the_tabs_inside_it(tmp_path, monkeypatch):
-    """The close matched one exact path, so tabs on files inside a deleted directory stayed open and
-    dirty, and the tab strip is index-addressed, so the indices to the right went stale."""
+    """The close matched one exact path, so tabs on files inside a deleted directory stayed open and dirty, and the tab strip is index-addressed, so the indices to the right went stale."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     (tmp_path/'pkg').mkdir()
     inside, outside = tmp_path/'pkg'/'a.py', tmp_path/'keep.py'
@@ -210,8 +201,7 @@ def test_a_folder_cannot_be_copied_or_moved_into_itself(tmp_path, monkeypatch):
     assert (tmp_path/'pkg'/'inner').is_dir()
 
 def test_the_tab_strip_can_be_refetched_after_the_server_closes_a_tab(tmp_path, monkeypatch):
-    """A folder delete and removing a root both close tabs server-side, and the strip is
-    index-addressed, so a stale one makes the next click select and close a different document."""
+    """A folder delete and removing a root both close tabs server-side, and the strip is index-addressed, so a stale one makes the next click select and close a different document."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     (tmp_path/'pkg').mkdir()
     inside, outside = tmp_path/'pkg'/'a.py', tmp_path/'keep.py'
@@ -227,9 +217,7 @@ def test_the_tab_strip_can_be_refetched_after_the_server_closes_a_tab(tmp_path, 
     assert files.count('refreshTabStrip()') >= 3, 'delete and remove-root both have to call it'
 
 def test_creating_refuses_the_names_renaming_refuses(tmp_path, monkeypatch):
-    """`/fs/new` joined the typed name onto `parent`, so `../sibling/x.py` created the file in
-    another folder while `rename` had always refused a separator. Both go through `Sandbox.under`.
-    """
+    """`/fs/new` joined the typed name onto `parent`, so `../sibling/x.py` created the file in another folder while `rename` had always refused a separator."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     (tmp_path/'pkg').mkdir(); (tmp_path/'sibling').mkdir()
     (tmp_path/'pkg'/'mod.py').write_text('x = 1\n')
@@ -251,9 +239,7 @@ def test_creating_refuses_the_names_renaming_refuses(tmp_path, monkeypatch):
     assert json.loads((tmp_path/'pkg'/'notes.ipynb').read_text())['nbformat'] == 4
 
 def test_a_change_on_disk_drops_the_cached_copy_of_a_clean_tab(tmp_path, monkeypatch):
-    """Only the active tab's poll refreshed a cached document, so a background tab mounted the
-    version from before the change. A tab with unsaved edits holds the user's work, not a copy of
-    the file, and keeps what it has."""
+    """Only the active tab's poll refreshed a cached document, so a background tab mounted the version from before the change."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     from leela.core.block import Ctx
     from leela.core.session import DocStore
@@ -283,8 +269,7 @@ NB_JSON = ('{"cells": [{"cell_type": "code", "source": ["x = 1"], "metadata": {}
            ' "execution_count": null}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
 
 def test_a_notebook_dropped_by_a_change_on_disk_is_read_back_for_the_next_run(tmp_path, monkeypatch):
-    """Freshening a clean tab drops what `DocStore` holds, and `/nb/run` reads that and nothing else,
-    so a notebook that was open answered `no notebook open` until it was mounted again."""
+    """Freshening a clean tab drops what `DocStore` holds, and `/nb/run` reads that and nothing else, so a notebook that was open answered `no notebook open` until it was mounted again."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     from leela.core.session import DocStore
     p = tmp_path/'n.ipynb'; p.write_text(NB_JSON)
@@ -305,9 +290,7 @@ def test_a_notebook_dropped_by_a_change_on_disk_is_read_back_for_the_next_run(tm
     assert docs.owner(str(p))[1] is None, 'a file that is gone is still nothing to run'
 
 def test_a_save_leela_made_is_not_a_change_to_follow(tmp_path, monkeypatch):
-    """Leela's own write reached the watcher like anybody else's, so the tab dropped what it held and
-    read the file again on its next mount, and the version it had been told about no longer matched
-    what was on disk. That is the `another process wrote it` a person sees after autosave."""
+    """Leela's own write reached the watcher like anybody else's, so the tab dropped what it held and read the file again on its next mount, and the version it had been told about no longer matched what was on disk."""
     monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
     from leela.core.block import Ctx
     from leela.core.session import DocStore

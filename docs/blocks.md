@@ -18,10 +18,10 @@ leela/blocks/git/
 - `*.js` is that block's client code, concatenated into a served bundle
 
 A block's `.js` files are the browser half of the same feature. They share one lexical scope
-with every other module, so `tools/build_ide_js.py` owns the load order in `LAYERS` and refuses
-to build when a file is named but absent, or present but unnamed. `leela/static/js/` holds only
+with every other module. `tools/build_ide_js.py` therefore owns the load order in `LAYERS`. It refuses to build when
+`LAYERS` names an absent file, and when it misses a file that is present. `leela/static/js/` holds only
 the shared vocabulary: `lee`, `$`, `esc`, dispatch, focus, overlays and boot. `core.web`'s
-`IDE_BUNDLES` is what the page actually loads, in order.
+`IDE_BUNDLES` names what the page loads, in order.
 
 ```python
 from .._lazy import lazy_app
@@ -35,11 +35,17 @@ def connect(app, ctx):
     def git_info(): return ui.info(ctx.fs)
 ```
 
-`CAPS` limits services exposed through `Ctx`, and must name exactly what `app.py` and `ui.py`
-read as `ctx.<name>`: over-declaring grants reach nobody asked for, under-declaring is an
-`AttributeError` on a route nobody exercised, and both are silent until then. `test_core.py`
-compares the two. Session state that is not a capability, like `project_root`, comes through
-`ctx.session`; reaching a capability that way bypasses the check, so don't.
+A block that serves its own page, rather than a panel in the IDE, ships its own bundle from its
+own route. `build_ide_js.OWN_BUNDLE` names that bundle. Such a block keeps its modules out of
+`LAYERS` on purpose, because the IDE's three bundles share one lexical scope. `canvas` is the
+only block that does this today, and it serves `/canvas/js`.
+
+`CAPS` limits the services `Ctx` exposes. It must name exactly what `app.py` and `ui.py` read as
+`ctx.<name>`. Over-declaring grants reach nobody asked for, and under-declaring raises an
+`AttributeError` on a route nobody exercised. Both faults stay silent until then, and
+`test_core.py` compares the two lists. Session state that is not a capability, such as
+`project_root`, comes through `ctx.session`. Never reach a capability that way, because it
+bypasses the check.
 
 A block's `.js` should call its own block's routes more than any other block's.
 `tests/blocks/test_block_affinity.py` measures it, with an allowlist for DOM-only modules and
@@ -54,15 +60,15 @@ from .blocks import BLOCKS
 connect_all(app, workspace, BLOCKS, docs=docs, debug=debug, running=running, gate=gate, catalog=catalog)
 ```
 
-Wiring order is `leela/blocks/__init__.py`'s `NAMES`, so a block is added by making the folder
-and naming it there. `test_core.py` asserts `NAMES` and the folders on disk agree.
+`leela/blocks/__init__.py`'s `NAMES` fixes the wiring order. To add a block, make the folder and
+name it there. `test_core.py` asserts `NAMES` and the folders on disk agree.
 
-`core.session` holds what an application session owns and hands to blocks: `DocStore` for open
-documents (`ctx.docs`), `DebugState` for whichever debugger is paused (`ctx.debug`), `RunState`
-for in-flight cells (`ctx.running`).
+`core.session` holds what an application session owns and hands to blocks. `DocStore` holds open
+documents as `ctx.docs`. `DebugState` holds whichever debugger has stopped, as `ctx.debug`.
+`RunState` holds in-flight cells as `ctx.running`.
 
-`blocks/agent` is the largest: `turns.py` shapes one turn for the browser, `models.py` is the
-picker's catalogue, `ai.py` the assistant, `app.py` the 56 routes. `blocks/nb` owns the notebook
+`blocks/agent` is the largest. `turns.py` builds one turn for the browser, `models.py` is the
+picker's catalogue, `ai.py` the assistant, and `app.py` the 56 routes. `blocks/nb` owns the notebook
 document and the routes that run and save it. `blocks/debug` owns both debuggers, the direct
 debugpy session and the notebook one, over the single `DebugState`.
 

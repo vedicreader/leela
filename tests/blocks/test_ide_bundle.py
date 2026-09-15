@@ -1,9 +1,4 @@
-"""What the client's bundles must hold true, whatever the modules say.
-
-They are concatenations into one shared lexical scope, so order is a contract and a name
-declared twice is the last one winning silently. These are structural checks over the built
-assets, not assertions about anyone's source text.
-"""
+"""What the client's bundles must hold true, whatever the modules say."""
 
 from __future__ import annotations
 import re, sys
@@ -36,10 +31,7 @@ def test_the_bundles_are_what_the_application_serves():
     for name in IDE_BUNDLES: assert (builder.OUTDIR/name).is_file(), name
 
 def test_the_dispatch_table_holds_thunks_and_not_bare_references():
-    """`ACTIONS` used to hold `help: showHelp`, read the moment the module ran. A function
-    declaration hoists to the top of its own script and no further, so that pinned the whole
-    client to one script tag. Every entry is a thunk now; a bare name would pin it again.
-    """
+    """`ACTIONS` used to hold `help: showHelp`, read the moment the module ran."""
     src = next(p for p in builder.modules() if p.name == 'actions.js').read_text()
     lines = src.split('\n')
     start = next(i for i, l in enumerate(lines) if l.startswith('const ACTIONS = {'))
@@ -49,11 +41,7 @@ def test_the_dispatch_table_holds_thunks_and_not_bare_references():
     assert bare == [], f'bare references would pin the client to one script tag: {bare}'
 
 def test_no_bundle_reads_a_later_bundles_declaration_at_load_time():
-    """The failure this prevents is not graceful: the throw aborts the rest of that bundle, so
-    every `let` after it stays in its temporal dead zone and the shell paints but does nothing.
-    A bare name used as a value in a top-level literal is read when the module runs, so it must
-    not name a function some later bundle declares.
-    """
+    """The failure this prevents is not graceful: the throw aborts the rest of that bundle, so every `let` after it stays in its temporal dead zone and the shell paints but does nothing."""
     mods = builder.modules()
     at, bundle_of = {}, {}
     for i, (name, names) in enumerate(builder.LAYERS.items()):
@@ -153,8 +141,7 @@ def test_the_pill_neutralises_the_button_defaults():
 
 
 def test_no_class_is_both_an_inline_badge_and_a_container():
-    """`lee-help` was the `?` badge and the keyboard panel at once. The panel's rule is later in the
-    file, so it won, and every badge rendered as a padded two-column grid with a 50% radius."""
+    """`lee-help` was the `?` badge and the keyboard panel at once."""
     css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
     import re
     decls = {}
@@ -178,9 +165,7 @@ def test_the_hint_badge_and_the_help_panel_are_different_classes():
 
 
 def test_the_overview_stripe_redraws_when_a_panel_resizes():
-    """It positions itself from `getBoundingClientRect` and redrew on scroll, document, viewport and
-    geometry changes. Moving a panel resizes the pane that scrolls without any of those, so the
-    stripe kept its old top and height and stranded itself where the pane used to be."""
+    """It positions itself from `getBoundingClientRect` and redrew on scroll, document, viewport and geometry changes."""
     src = (ROOT/'frontend'/'editor.js').read_text()
     plugin = src[src.index('function overviewPlugin'):src.index('const stickyPlugin')]
     assert 'new ResizeObserver' in plugin, 'resize is the signal that was missing'
@@ -191,10 +176,7 @@ def test_the_overview_stripe_redraws_when_a_panel_resizes():
 
 
 def test_hiding_the_scroll_bar_holds_back_the_width_it_was_taking():
-    """Where the platform draws the bar in the flow, `has-overview` handed its width to the text.
-    Wrapped text rewrapped, `scrollHeight` moved, and that is the number the stripe decides on: it
-    appeared, the pane got shorter, it went, and it flickered at frame rate. The thickness is
-    measured, so an overlay bar reserves nothing."""
+    """Where the platform draws the bar in the flow, `has-overview` handed its width to the text."""
     src = (ROOT/'frontend'/'editor.js').read_text()
     gutter = src[src.index('export function overviewGutter'):src.index('// The element that really')]
     assert 'el.offsetWidth - el.clientWidth' in gutter, 'the thickness is measured, never assumed'
@@ -207,11 +189,7 @@ def test_hiding_the_scroll_bar_holds_back_the_width_it_was_taking():
         assert "host.classList.toggle('has-overview'" not in nb
 
 def test_the_built_editor_bundle_matches_its_source():
-    """`lee-cm6.js` is committed, so a change to `frontend/editor.js` that was never built is a lie.
-
-    The export map is read by the names it exports, not by the minifier's name for the call that
-    builds it: that one is chosen per build, and any edit to the source could rename it.
-    """
+    """`lee-cm6.js` is committed, so a change to `frontend/editor.js` that was never built is a lie."""
     bundle = (ROOT/'leela'/'vendor'/'lee-cm6.js').read_text()
     assert 'ResizeObserver' in bundle, 'rebuild with frontend/node_modules/@esbuild/*/bin/esbuild'
     from tests.assets import cm_exports
@@ -219,10 +197,7 @@ def test_the_built_editor_bundle_matches_its_source():
 
 
 def test_the_setup_modal_renders_into_the_box_and_not_over_it():
-    """`renderSetup` assigned to the element `modal()` returns, which is the backdrop. That threw
-    away the `.lee-modalbox` wrapper and with it every style, the grip and the close button, and the
-    two panes plus Tools lay transparent over the page. It re-renders, so overwriting the box itself
-    is no better: the second render would drop the chrome again."""
+    """`renderSetup` assigned to the element `modal()` returns, which is the backdrop."""
     src = (ROOT/'leela/blocks/agent/panel.js').read_text()
     render = src[src.index('function renderSetup('):src.index('async function leeSetupModal')]
     assert '.lee-setup-body' in render, 'only the middle region may be rewritten'
@@ -235,9 +210,7 @@ def test_the_setup_modal_renders_into_the_box_and_not_over_it():
 
 
 def test_the_setup_body_scrolls_and_every_colour_it_names_exists():
-    """`.lee-setup-pane` asked for `var(--lee-bd)`, which nothing defines, so the whole border
-    shorthand was invalid and the panes drew no edge at all. The box is `overflow: hidden`, so the
-    middle region has to be the one that scrolls or the Updates rows are unreachable."""
+    """`.lee-setup-pane` asked for `var(--lee-bd)`, which nothing defines, so the whole border shorthand was invalid and the panes drew no edge at all."""
     assert '.lee-modalbox > .lee-setup-body { min-height: 0; flex: 1 1 auto; overflow: auto; }' in CSS
     declared = set(re.findall(r'(--lee-[\w-]+)\s*:', CSS))
     # Some are written onto an element as an inline style instead: the indent guides from
@@ -248,10 +221,7 @@ def test_the_setup_body_scrolls_and_every_colour_it_names_exists():
 
 
 def test_a_routing_row_keeps_its_help_mark_out_of_the_control_column():
-    """`.lee-routing-popover label` is a two-column row: name, then control. A row with a `?` had
-    three children, so the mark took the control's column and the select wrapped onto a second line
-    into the 82px name column, where every model name was clipped. The name and its mark are one
-    item, in both the server-rendered rows and the ones `paintJobModels` draws."""
+    """`.lee-routing-popover label` is a two-column row: name, then control."""
     assert '.lee-routing-popover label > .lee-routing-name' in CSS
     app = (ROOT/'leela/app.py').read_text()
     panel = (ROOT/'leela/blocks/agent/panel.js').read_text()
@@ -265,20 +235,14 @@ def test_a_routing_row_keeps_its_help_mark_out_of_the_control_column():
 
 
 def test_a_cell_run_blocked_by_a_failed_save_keeps_the_reason():
-    """`saveTab` reports why it failed, in the status line or the conflict dialog, and the run guard
-    then wrote `save the notebook before running this cell` over the top of it. The only diagnosable
-    part of the failure was replaced by advice to do the thing that had just failed."""
+    """`saveTab` reports why it failed, in the status line or the conflict dialog, and the run guard then wrote `save the notebook before running this cell` over the top of it."""
     src = (ROOT/'leela/blocks/nb/motion.js').read_text()
     assert 'save the notebook before running this cell' not in src
     assert re.search(r"\.dirty'\) && !await saveTab\(true\)\) return;", src)
 
 
 def test_the_overview_stripe_does_not_decide_from_a_measure_it_changes_itself():
-    """`shown` compared `scrollHeight` against `clientHeight`, and `has-overview` sets
-    `scrollbar-width: none`. `clientHeight` excludes a horizontal bar, so hiding one grew it by the
-    bar's thickness: a pane overflowing by less than that said yes, took the class, then said no on
-    the next frame, and the bar flickered. Code cells have the horizontal bar, and an agent pane
-    streaming tokens re-measures every frame."""
+    """`shown` compared `scrollHeight` against `clientHeight`, and `has-overview` sets `scrollbar-width: none`."""
     src = (ROOT/'frontend'/'editor.js').read_text()
     helper = src[src.index('const OVER_SHOW'):src.index('function scrollerFor')]
     assert 'getBoundingClientRect().height' in helper, 'the border box is what a bar cannot move'
@@ -292,9 +256,7 @@ def test_the_overview_stripe_does_not_decide_from_a_measure_it_changes_itself():
 
 
 def test_the_stripe_hides_the_bar_of_whatever_it_actually_replaced():
-    """`has-overview` goes on the element that really scrolls, which is not always `.lee-editor`:
-    a markdown preview scrolls itself. The rule was scoped to one class name, so the stripe replaced
-    a bar it had not hidden and both were on screen."""
+    """`has-overview` goes on the element that really scrolls, which is not always `.lee-editor`: a markdown preview scrolls itself."""
     assert '.has-overview { scrollbar-width:none; }' in CSS
     assert '.has-overview::-webkit-scrollbar' in CSS
     assert '.lee-editor.has-overview {' not in CSS, 'the rule follows the class, not one element'
@@ -303,9 +265,7 @@ def test_the_stripe_hides_the_bar_of_whatever_it_actually_replaced():
 
 
 def test_the_scroller_walk_never_reaches_the_document():
-    """In a browser the document overflows where the app window does not, so the walk returned
-    `<body>`. `has-overview` on `<body>` matches no rule, so the bar it was meant to hide stayed:
-    the leftover scroll bar that was fixed in the app and not on the web."""
+    """In a browser the document overflows where the app window does not, so the walk returned `<body>`."""
     src = (ROOT/'frontend'/'editor.js').read_text()
     walk = src[src.index('function scrollerFor'):src.index('function overviewPlugin')]
     assert 'e !== document.body' in walk.replace('el', 'e'), 'body ends the walk, never answers it'
@@ -316,9 +276,7 @@ def test_the_scroller_walk_never_reaches_the_document():
 
 
 def test_indent_runs_against_the_cell_or_the_file_the_caret_is_in():
-    """Indent has to work in a notebook cell and in a python file. The router hands the chord to
-    CodeMirror's own command on the editor the event came from, which is either; the palette path
-    goes through `curEditor`, which answers for either. Neither may reach for the file editor."""
+    """Indent has to work in a notebook cell and in a python file."""
     from tests.assets import cm_exports
     assert {'indentMore', 'indentLess', 'indentSelection'} <= cm_exports(), \
         'rebuild frontend/editor.js with frontend/node_modules/@esbuild/*/bin/esbuild'
@@ -338,9 +296,7 @@ def test_indent_runs_against_the_cell_or_the_file_the_caret_is_in():
 
 
 def test_the_setup_rows_are_not_the_keyboard_help_row():
-    """`.lee-krow` is a flex line with `nowrap` and an ellipsis on every span. The setup modal
-    borrowed it, so `ready` rendered as `rea…` and every blurb was cut mid-sentence: these rows
-    are a name, a state and a sentence, and the sentence has to be allowed to wrap."""
+    """`.lee-krow` is a flex line with `nowrap` and an ellipsis on every span."""
     panel = (ROOT/'leela/blocks/agent/panel.js').read_text()
     assert 'lee-krow' not in panel, 'the help row is not this row'
     rule = CSS[CSS.index('.lee-setup-row {'):]
@@ -362,9 +318,7 @@ def test_the_setup_modal_can_be_started_over():
 
 
 def test_a_splitter_drag_does_no_work_that_has_to_wait_for_a_disk():
-    """`localStorage` is synchronous and disk-backed, and the drag handler wrote to it on every
-    pointer event. In a WKWebView that is the difference between a smooth drag and a stuttering
-    one; the width a person let go at is the only one worth keeping."""
+    """`localStorage` is synchronous and disk-backed, and the drag handler wrote to it on every pointer event."""
     src = (ROOT/'leela/blocks/editor/split.js').read_text()
     def body(at):
         "The `move` handler's own braces, so init code that clamps a stored width is not read as one."
@@ -382,8 +336,7 @@ def test_a_splitter_drag_does_no_work_that_has_to_wait_for_a_disk():
 
 
 def test_the_overview_stripe_settles_after_a_resize_rather_than_chasing_it():
-    """A splitter drag resizes every mounted editor at pointer rate, and each redraw resizes and
-    repaints a canvas. Scroll still draws on the next frame, because there the stripe is the thumb."""
+    """A splitter drag resizes every mounted editor at pointer rate, and each redraw resizes and repaints a canvas."""
     src = (ROOT/'frontend'/'editor.js').read_text()
     plugin = src[src.index('function overviewPlugin'):src.index('const stickyPlugin')]
     assert 'new ResizeObserver(() => this.later())' in plugin, 'resize goes through the debounce'
@@ -394,9 +347,7 @@ def test_the_overview_stripe_settles_after_a_resize_rather_than_chasing_it():
 
 
 def test_the_first_history_read_is_paid_for_before_anybody_clicks():
-    """The agent's log is one append-only file that grows without bound. Reading a large one costs
-    seconds, and it is cached after that, so the first click on History paid for every session ever
-    while the second was instant."""
+    """The agent's log is one append-only file that grows without bound."""
     boot = (ROOT/'leela/static/js/boot.js').read_text()
     live = (ROOT/'leela/blocks/agent/live.js').read_text()
     assert 'warmAgentHistory' in boot and 'requestIdleCallback' in boot, 'at idle, not on the boot path'
@@ -421,11 +372,7 @@ def test_a_cell_wears_its_id_rather_than_hiding_it_behind_a_hover():
 
 
 def test_rebuilding_the_shell_repaints_the_git_pill():
-    """Opening a folder swaps the whole shell, which puts the server's `no git` placeholder back.
-
-    Only a tab swap asked the server again, so the bar sat on the placeholder until a file was
-    clicked, claiming a perfectly ordinary checkout was not one.
-    """
+    """Opening a folder swaps the whole shell, which puts the server's `no git` placeholder back."""
     boot = (ROOT/'leela/static/js/boot.js').read_text()
     swap = boot[boot.index("htmx:afterSwap"):]
     shell = swap[swap.index("id === 'shell'"):swap.index('});')]
@@ -457,10 +404,7 @@ def test_the_pill_repaint_survives_a_broken_tree_or_notice():
 
 
 def test_a_finished_run_stops_its_clock_and_loses_its_stop_button():
-    """The strip drew every row from `Date.now()`, so a subagent that had stopped counted on.
-
-    The server sends `ended` and a terminal `state` for exactly this; neither was read.
-    """
+    """The strip drew every row from `Date.now()`, so a subagent that had stopped counted on."""
     src = (ROOT/'leela/blocks/agent/steer.js').read_text()
     fn = src[src.index('function updateAgentRunstrip'):src.index('async function pauseAgentAfterCurrent')]
     assert 'r.ended' in fn, 'the clock still ignores when the run actually ended'

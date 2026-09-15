@@ -6,7 +6,7 @@ import os, shutil
 
 from ... import errstr
 from ...core.web import fail, off_loop, pipeline_socket
-from .support import INSPECTOR
+from kunda.support import INSPECTOR
 
 __all__ = ['CAPS', 'connect']
 
@@ -67,7 +67,7 @@ def connect(app, ctx):
         "Whether this project has an interpreter Leela can run cells with."
         from ..agent.models import probed
         from .kernels import project_python
-        from .support import inspector_support, installable, kernel_support
+        from kunda.support import inspector_support, installable, kernel_support
         # The checkout in hand, not the folder that holds it: a panel offering to create an
         # environment has to offer it where the work is, and name the one already there.
         root = session.project_repo
@@ -84,7 +84,7 @@ def connect(app, ctx):
             'uv': bool(shutil.which('uv'))}
     @rt('/runtime/support')
     async def runtime_support(req):
-        from .support import install_kernel_support
+        from kunda.support import install_kernel_support
         d = await req.json()
         py = d.get('python') or ctx.pool.default_python
         if not py: return fail('choose a project interpreter first')
@@ -93,7 +93,7 @@ def connect(app, ctx):
     @rt('/runtime/inspector')
     async def runtime_inspector(req):
         "Give a project environment its own copy of what the live-variable inspector imports."
-        from .support import install_inspector_support, installable
+        from kunda.support import install_inspector_support, installable
         d = await req.json()
         py = d.get('python') or ctx.pool.default_python
         if not py: return fail('choose a project interpreter first')
@@ -113,7 +113,7 @@ def connect(app, ctx):
             if uv := shutil.which('uv'): subprocess.run([uv, 'venv', str(target)], check=True, env=os.environ.copy())
             else: venv.EnvBuilder(with_pip=True).create(target)
             py = target/('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
-            from .support import install_kernel_support
+            from kunda.support import install_kernel_support
             install_kernel_support(py)
             return str(py)
         try: py = await off_loop(create)

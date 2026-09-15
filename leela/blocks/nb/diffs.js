@@ -143,6 +143,8 @@ function showSaveConflict(message) {
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
   // A document the browser renders has no editor behind it, so `getDoc` would be called on
   // nothing. Reporting success is honest: the file on disk is what is being shown.
+  // The canvas page owns its own save, revision check included.
+  if (lee.kind === 'canvas') return saveCanvasTab(quiet);
   if (lee.kind === 'pdf' || lee.kind === 'image') {
     if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
     return true;

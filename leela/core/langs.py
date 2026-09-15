@@ -2,9 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
-__all__ = ['Lang', 'LANGS', 'lang_named', 'lang_of_ext', 'lang_ids', 'servers_for', 'DEFAULT_LANG']
-
-DEFAULT_LANG = 'python'
+__all__ = ['Lang', 'LANGS', 'lang_named', 'lang_of_ext', 'servers_for']
 
 @dataclass(frozen=True)
 class Lang:
@@ -47,8 +45,6 @@ def lang_named(name):
 def lang_of_ext(ext):
     "The language id for a file extension, or None."
     return _BY_EXT.get(str(ext or '').lower())
-
-def lang_ids(): return tuple(LANGS)
 
 def servers_for(lang):
     "LSP server candidates for a language, in the order they should be tried."

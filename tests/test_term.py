@@ -40,10 +40,7 @@ def test_killing_a_terminal_ends_its_stream_and_logs_nothing():
 
 
 def test_a_burst_arrives_whole_in_few_frames_and_the_last_of_it_is_not_lost():
-    """macOS returns 1024 bytes a read whatever is asked for, so `stream` called `on_data` once per
-    kilobyte and the socket sent a frame each, which is what made the terminal crawl in the app.
-    Reads are gathered now, and the gathering must not swallow the output a child writes as it
-    exits: the end of the stream can sit in the middle of a batch."""
+    """macOS returns 1024 bytes a read whatever is asked for, so `stream` called `on_data` once per kilobyte and the socket sent a frame each, which is what made the terminal crawl in the app."""
     import asyncio
     line, n = 'leela' * 4, 40000
     async def run():
@@ -79,8 +76,7 @@ def test_a_child_that_writes_and_exits_at_once_still_delivers_what_it_wrote():
     assert b'abcdef' in asyncio.run(run())
 
 def test_a_second_stream_over_one_pty_is_refused_and_the_first_keeps_reading():
-    """Two terminals keyed the same shared a pty, and `add_reader` handed the fd to whichever
-    attached last: the older view stayed on screen and never printed another byte."""
+    """Two terminals keyed the same shared a pty, and `add_reader` handed the fd to whichever attached last: the older view stayed on screen and never printed another byte."""
     import asyncio, pytest
     async def run():
         p = Pty(['sh', '-c', 'echo one; sleep 30']).start()
@@ -103,8 +99,7 @@ def test_a_second_stream_over_one_pty_is_refused_and_the_first_keeps_reading():
     assert b'one' in seen and b'two' in seen
 
 def test_the_terminal_bundle_sends_the_id_the_server_keys_the_pty_by():
-    """`dock.js` passes an id per session, but the wrapper dropped it and the hello went without
-    one, so every shell keyed as its kind and the second one took the first one's pty."""
+    """`dock.js` passes an id per session, but the wrapper dropped it and the hello went without one, so every shell keyed as its kind and the second one took the first one's pty."""
     import re
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
@@ -114,8 +109,7 @@ def test_the_terminal_bundle_sends_the_id_the_server_keys_the_pty_by():
         assert re.search(r'\bid\b', hello[1]), f'{js.name} sends no id; rebuild with npm run build'
 
 def test_a_view_that_reconnects_is_owed_only_what_it_missed():
-    """A pty outlives the socket that draws it, and the ring holds what the child printed while
-    nothing was attached. The next view is owed that, and not a second copy of what it already had."""
+    """A pty outlives the socket that draws it, and the ring holds what the child printed while nothing was attached."""
     import asyncio
     async def run():
         p = Pty(['sh', '-c', 'echo one; sleep .6; echo two; sleep 30']).start()

@@ -652,6 +652,29 @@ def _session_tools(host):
         except Exception as e: return f'run_cell failed: {errstr(e)}'
     return [inspect_var, run_cell]
 
+def _canvas_path(host, args):
+    "Which file a canvas tool is about to change, named the way the tool itself resolves it."
+    from ..canvas.helper import open_canvas
+    o = open_canvas(host, args.get('path') or '')
+    return o.canvas.path if o is not None else ''
+
+def leela_writes():
+    """Leela's own write tools: `{name: (host, args) -> path}`.
+
+    Ramabana records the file a write tool is about to touch, and `changes()` reads that back to
+    journal the turn and offer to restore it. It only knows its own writers, so a tool Leela adds
+    changes a file that no undo can see. Every Leela tool that writes belongs in here.
+    """
+    from ..canvas.helper import WRITES as CANVAS_WRITES
+    return {n: _canvas_path for n in CANVAS_WRITES}
+
+def _canvas_toolset(host):
+    "The canvas block's tools. Built with the rest, because a backend takes its tool list once."
+    try:
+        from ..canvas.helper import canvas_tools
+        return canvas_tools(host)
+    except Exception: return []
+
 def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
     "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
     @summary(lambda a: f'Search all for {_1(a.get("query"))}')
@@ -856,6 +879,8 @@ class Assistant(Agent):
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
         self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
+        self._canvas_toolset = _canvas_toolset(host)
+        self._writes = leela_writes()
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         super().__init__(host, model=model, sp=sp, **kwargs)
@@ -907,9 +932,12 @@ class Assistant(Agent):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in [*self._news_toolset, *self._session_toolset,
-                                                   *self._search_toolset, *self._video_toolset]
+                                                   *self._search_toolset, *self._video_toolset,
+                                                   *self._canvas_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
+            if self._note_write not in self.registry.hooks['before_tool']:
+                self.registry.on('before_tool', self._note_write)
             built = super().tools
             # `_plain` is what the briefing is written from, and `built` is untouched: the turn
             # model keeps the Git writes without being invited to reach for them.
@@ -925,7 +953,26 @@ class Assistant(Agent):
         "Whether this turn's model runs on this machine, and what it is called."
         spec = self.spec_or_none()
         return (bool(spec and spec.local), spec.name if spec else 'an unresolved model')
+    def _note_write(self, agent, name, args):
+        "Ramabana's `before_tool`, for the writers only Leela knows about."
+        find = self._writes.get(name)
+        if find is None: return
+        try: p = find(self.host, args or {})
+        except Exception: return
+        if p and p not in self.before: self.before[p] = self.host.text_at(p) or ''
+
+    def _canvas_mode(self):
+        "The canvas vocabulary while a canvas is open. The prompt is rebuilt every turn; the tools are not."   # noqa: E501
+        from ...skills import drop, push
+        try: from ..canvas.helper import open_canvas
+        except Exception: return
+        try: want = open_canvas(self.host) is not None
+        except Exception: want = False
+        try: push(self, 'canvas') if want else drop(self, 'canvas')
+        except Exception: pass
+
     def system_prompt(self):
+        self._canvas_mode()
         base = super().system_prompt() + api_context(self.host)
         if (writable := self.host.writable_roots) != self.host.roots:
             base += ('\n\n## Writable folders\n\nEvery folder above can be read. Edits and new files may only '
@@ -1022,8 +1069,6 @@ class Assistant(Agent):
     def turn_media(self):
         "Everything the newest turn has to draw: what the model generated, plus finished video jobs."
         return self.last_media + (self.video_jobs.unshown() if self.video_jobs else [])
-    @property
-    def tools_note(self): return f'{len(self.tools)} tools, {len(self.skills)} skills'
 
 class _PolicyApprovals(Approvals):
     "An `Approvals` wrapping a plain `approve(tool_call) -> bool`."

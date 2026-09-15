@@ -3,17 +3,16 @@
 from __future__ import annotations
 import asyncio
 from fastcore.basics import first
+from fastcore.xtras import atomic_save
 import gzip, hashlib, json, shutil, time, uuid
 from pathlib import Path
 
 __all__ = ['DocStore', 'DebugState', 'FileHistory', 'Origins', 'RunState', 'Trash',
            'assigned_names', 'kernel_api']
 
-#: How many versions of one file are kept. A person looking for what a tool overwrote is looking
-#: at this morning, not at last month, and every version holds the whole file.
+#: Versions kept per file. Recovery looks at this morning, not last month, and every version holds the whole file.
 KEEP_PER_PATH = 60
-#: Bodies past this are noted but not copied. A 70MB notebook saved through a day is gigabytes of
-#: history for a file git already tracks, and copying it makes saving slow.
+#: Bodies past this are noted but not copied. Copying a 70MB notebook saved through a day makes saving slow, for history git already tracks.
 MAX_BODY = 2_000_000
 
 def assigned_names(code):
@@ -60,18 +59,15 @@ class FileHistory:
     def __init__(self, root, pinned=None):
         self.root = Path(root); self.path = self.root/'index.json'
         self.rows_ = []
-        #: Digests something else still needs. Pruning a version must not take a body the journal
-        #: is holding an operation open against.
+        #: Digests something else still needs, so pruning does not take a body the journal holds an operation open against.
         self.pinned = pinned or (lambda: ())
         self._load()
     def _load(self):
         try: self.rows_ = json.loads(self.path.read_text()).get('versions', [])
         except Exception: self.rows_ = []
     def _save(self):
-        self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix('.tmp')
-        tmp.write_text(json.dumps({'versions': self.rows_}, ensure_ascii=False))
-        tmp.replace(self.path)
+        with atomic_save(self.path, mode='w', encoding='utf-8') as f:
+            f.write(json.dumps({'versions': self.rows_}, ensure_ascii=False))
     def _blob(self, text):
         digest = hashlib.sha256(text.encode('utf-8', 'replace')).hexdigest()[:16]
         p = self.root/'blobs'/f'{digest}.gz'
@@ -129,8 +125,7 @@ class FileHistory:
         if not p.exists(): raise ValueError(f"the stored body for {row['path']} is gone")
         return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
     def keep(self, path, before, after, label='change'):
-        """Both sides of one change. The first `before` for a path is the only copy of what was there before Leela ever looked.
-        """
+        "Both sides of one change. The first `before` for a path is the only copy of what was there before Leela looked."
         if before is not None and self.latest(path) is None:
             self.record(path, before, 'before the first change seen')
         return self.record(path, after, label)
@@ -154,8 +149,7 @@ class DocStore:
         self.docs = {}
         self.buffers = {}
         self.bases = {}
-        #: The `disk_version` each cached document was read at. What is held matches that, not what
-        #: is on disk now, and a branch switch is the difference.
+        #: The `disk_version` each cached document was read at. What is held matches that, not disk now; a branch switch is the difference.
         self.versions = {}
         self.run_locks = {}
     @staticmethod
@@ -260,14 +254,11 @@ class OperationJournal:
     "The last `MAX_OPERATIONS` workspace operations, on disk, newest last."
     def __init__(self, path, sandbox, history=None, trash=None):
         self.path, self.sandbox = Path(path), sandbox
-        #: Deleted files and folders live here rather than as journal text, which cannot hold
-        #: either. `None` leaves a delete unrecoverable, so `record` refuses to pretend otherwise.
+        #: Deleted files and folders live here, not as journal text. `None` leaves a delete unrecoverable, and `record` refuses to pretend otherwise.
         self.trash = trash
-        #: Every write that reaches here is also kept version by version. Undo is one step back;
-        #: after an agent or another editor has been through the tree a person wants this morning.
+        #: Every write that reaches here is also kept version by version, so undo can reach past this morning's edits by an agent or editor.
         self.history = history
-        #: `kind -> hook(op, side)`, called once the rows are back. State a row's text cannot hold,
-        #: such as Git's index, belongs to the block that made it, not to the journal.
+        #: `kind -> hook(op, side)`, called once the rows are back. State a row's text cannot hold, such as Git's index, belongs to the block.
         self.hooks = {}
         self.operations = []
         self._load()
@@ -275,10 +266,8 @@ class OperationJournal:
         try: self.operations = json.loads(self.path.read_text()).get('operations', [])[-MAX_OPERATIONS:]
         except Exception: self.operations = []
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix('.tmp')
-        tmp.write_text(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
-        tmp.replace(self.path)
+        with atomic_save(self.path, mode='w', encoding='utf-8') as f:
+            f.write(json.dumps({'operations': self.operations[-MAX_OPERATIONS:]}, ensure_ascii=False))
     def record(self,
                label,
                resources,          # content changes, as `(path, before, after)`

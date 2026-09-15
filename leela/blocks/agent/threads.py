@@ -183,12 +183,7 @@ class Threads:
         return [d for d in (row.dict() for row in rows)
                 if d['title'] or d['unread'] or d['state'] != 'idle']
     def attention(self):
-        """What the badge and the switcher need: how many are working, how many want a person.
-
-        `active_state` because `dicts` leaves out the empty conversation a person was handed, so the
-        pane cannot always find the active row to read its state from. Without it a client that
-        missed the `done` event has nothing authoritative to correct itself against.
-        """
+        "What the badge and the switcher need: how many are working, how many want a person."
         rows = self.rows()
         states = {r.id: r.state for r in rows}   # a property with a reap behind it: read it once
         return {'working': sum(1 for s in states.values() if s == 'working'),
@@ -416,7 +411,10 @@ class TurnRunner:
         with self._lock:
             for ident, r in list(self._pending.items()):
                 worker = r.get('worker')
-                gone = worker is not None and not worker.is_alive()
+                # `ident` is None until the thread runs. `start` publishes the pending turn before
+                # it starts the worker, so `is_alive` alone reaps the turn it is still setting up.
+                started = worker is not None and worker.ident is not None
+                gone = started and not worker.is_alive()
                 quiet = (r['accepted'] and r['gate'].is_set() and not running
                          and now - r['at'] >= self.stale_after)
                 if not (gone or quiet): continue
