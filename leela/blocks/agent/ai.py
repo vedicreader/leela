@@ -27,7 +27,7 @@ FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | GIT_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -938,12 +938,13 @@ class Assistant(Agent):
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             if self._note_write not in self.registry.hooks['before_tool']:
                 self.registry.on('before_tool', self._note_write)
-            built = super().tools
-            # `_plain` is what the briefing is written from, and `built` is untouched: the turn
-            # model keeps the Git writes without being invited to reach for them.
-            self._plain = [f for f in self._plain if f.__name__ not in GIT_WRITE_TOOLS]
-            return built
+            return super().tools
         return super().tools
+
+    @property
+    def _plain(self):
+        "No briefing offers leela's Git writes, though the turn model still holds them."
+        return [f for f in super()._plain if f.__name__ not in GIT_WRITE_TOOLS]
 
     def _sub_plain(self):
         "No delegated agent gets leela's Git writes, whichever list upstream hands back."

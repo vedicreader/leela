@@ -12,6 +12,10 @@ COMPOSED = ('ramabana', 'shalya', 'gheasy', 'rishi', 'dhrishti', 'vishalakshi', 
             'koshas', 'kosha', 'fossick', 'exhash', 'mdhtml', 'ptymini', 'ipymini', 'rgapi',
             'kunda', 'pullup')
 
+#: Leela modules that are another package under one of Leela's names, so a relative import
+#: through them reaches a composed library without naming it.
+ALIASES = ('agent.tools', 'agent')
+
 #: The seam requests still outstanding, each with the library that would have to open it. Leela
 #: cannot widen any of these from here, so each one is a decision recorded rather than an accident,
 #: and a release that drops one fails this suite rather than the feature that needed it.
@@ -34,7 +38,7 @@ def _private_imports():
         except SyntaxError: continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom) or not node.module: continue
-            if node.module.split('.')[0] not in COMPOSED: continue
+            if node.module.split('.')[0] not in COMPOSED and node.module not in ALIASES: continue
             for alias in node.names:
                 if alias.name.startswith('_'):
                     out.append((node.module, alias.name, f'{path.relative_to(LEELA.parent)}:{node.lineno}'))

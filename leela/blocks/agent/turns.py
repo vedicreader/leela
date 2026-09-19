@@ -75,19 +75,19 @@ def tool_preview(agent, tool, args):
         before = agent.host.text_at(path) or ''
         return {'kind': 'diff', **diff_payload(before, str(args.get('text', '')))}
     if tool == 'edit_file':
-        from ...agent.tools import _cmds
+        from shalya.core import cmds
         from exhash import exhash
         path = args.get('path', '')
         before = agent.host.text_at(path)
         if before is None: raise ValueError(f'no such file: {path}')
-        result = exhash(before, _cmds(args.get('commands', '[]')))
+        result = exhash(before, cmds(args.get('commands', '[]')))
         return {'kind': 'patch', 'text': str(result)}
     if tool == 'replace_text':
-        from ...agent.tools import _apply_edits, _edits
+        from shalya.core import apply_edits, edits
         path = args.get('path', '')
         before = agent.host.text_at(path)
         if before is None: raise ValueError(f'no such file: {path}')
-        return {'kind': 'diff', **diff_payload(before, _apply_edits(before, _edits(args.get('edits', '[]'))))}
+        return {'kind': 'diff', **diff_payload(before, apply_edits(before, edits(args.get('edits', '[]'))))}
     if tool in {'run_python', 'inspect_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
     if tool == 'inspect_var':
