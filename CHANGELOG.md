@@ -2,6 +2,24 @@
 
 <!-- do not remove -->
 
+## 0.1.4
+
+Built against ramabana 0.1.34, rishi 0.1.38 and shalya 0.0.8, all of which land behaviour Leela had to change for.
+
+### Canvas
+
+- A document that runs: bricks, the dataflow between them, trusted runs, and the bundles a brick embeds. Literate diff and review over it. `leela-bricks` is the example brick set the tests resolve against.
+
+### Agent
+
+- Merged ramabana derives `_plain` from the catalog rather than holding a list. Leela filters the Git writes out of the briefing by overriding it, the way `_sub_plain` beside it already did; assigning to it raised and took 28 tests with it.
+- Edits and commands go through shalya's public `cmds`, `edits` and `apply_edits`, not ramabana's private aliases through Leela's own alias module. `test_seams` follows those aliases now.
+
+### Suite
+
+- `test_canvas` stays on one xdist worker (`--dist loadgroup`): its fixtures are module-scoped, and scattering them rebuilt the ide app per worker, 600s against 30s.
+- `uv.lock` re-resolved to match the merged `pyproject.toml`.
+
 ## 0.1.3
 
 The first release whose macOS DMG and Windows zip are built from `uv.lock`. Both earlier releases shipped no usable desktop artefact: the v0.1.1 build failed on `No module named 'ruamel'`, and the v0.1.2 build resolved jupyasyncclient fresh from PyPI and took 0.2.14, whose `run` is a bare async generator where `GatewayKernel` reads `.reply` off a `Run`. The bundled kernel in that build answers 500 to every cell.

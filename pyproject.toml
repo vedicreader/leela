@@ -96,7 +96,7 @@ ipymini = [] # compatibility extra; ipymini now ships with Leela
 # pane, pinned to the rishi the bundle was frozen with.
 # `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
 # dependency, so naming it here would install nothing and warn.
-local = ["rishi[mlx,llama]==0.1.37"]
+local = ["rishi[mlx,llama]==0.1.38"]
 # The native window and the two freezers, through kavacha, which installs each platform's own
 # bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
 desktop = ["kavacha[window]>=0.0.1"]
@@ -125,14 +125,14 @@ dev = [
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[local]",
     "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
-    "rishi[all]==0.1.37",
+    "rishi[all]==0.1.38",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.37",
+    "rishi==0.1.38",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
