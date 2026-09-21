@@ -80,8 +80,11 @@ def _registered_encoder(path, store):
     if not p.is_file(): return None
     try:
         with sqlite3.connect(f'file:{p}?mode=ro', uri=True) as c:
-            r = c.execute('select encoder from vault_stores where store=?', (store,)).fetchone()
-        return r[0] if r else None
+            for q in ('select encoder from store_meta where name=?', 'select encoder from vault_stores where store=?'):
+                try: r = c.execute(q, (store,)).fetchone()
+                except sqlite3.OperationalError: r = None
+                if r and r[0]: return r[0]
+        return None
     except Exception: return None
 
 

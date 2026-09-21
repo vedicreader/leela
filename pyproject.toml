@@ -70,7 +70,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dhrishti>=0.1.4",
     "watchfiles>=1.0",
-    "vishalakshi>=0.1.14",   # 0.1.14 is the retrieval PII gate, and `mark_pii` beside `mark_not_pii`
+    "vishalakshi>=0.1.15",   # 0.1.15 keeps shelf encoders in litesearch's `store_meta`, which the registry read follows
     # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
     # hover paths, the pull request a branch belongs to, the workflow editor, and the kernels the
     # gateway serves -- so they are dependencies. The guards below them stay: they still have a
