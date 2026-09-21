@@ -126,8 +126,9 @@ The palette is what the host publishes, grouped by the block that owns each comp
 
 ## The helper
 
-Three places ask: the margin, an `ask` brick in the document, and `mod+k` anywhere. All three post
-the same question into the agent pane, and only the selection that travels with it differs.
+Two places ask: an `ask` brick in the document, and `mod+k` anywhere (also the gutter menu's "Ask
+about this" and the format bar's "Ask AI"). Both post the question into the agent pane; what differs
+is the brick and the selection that travel with it.
 
 There is no second assistant. The pane's agent is the workspace agent, and its reach into an open
 canvas is eight tools and no others.
@@ -149,9 +150,6 @@ second path into the document.
 The turn runs in the pane, so approvals, steering, budgets and the conversation history are the
 pane's and there is only one of each. When it ends, the paths it wrote are in the turn's `edits`
 and the frame reloads from them.
-
-The trail is the last twelve questions, each with the brick it came from and the selection it
-carried. It goes into the next turn's context, which is why a follow-up needs no preamble.
 
 ![Steering a turn that is already running](screenshots/canvas-steer.png)
 
@@ -177,12 +175,10 @@ skill reaches the skill index and `read_skill` with no change to the agent core.
 
 ## The model
 
-A turn with a model in it belongs to the agent pane. The pane and the margin were never two
-assistants: both resolve to the workspace's own agent, and it is the same agent the canvas tools
-are registered on. What the margin added was a second, thinner turn UI, and it rendered its
-approvals in the pane where the person who asked could not see them. An ask from an embedded
-canvas now goes to the pane through `canvasAskPane`, carrying the brick it was asked from as an
-attachment. Approvals, steering, history and the model picker come with it.
+A turn with a model in it belongs to the agent pane. The canvas has no assistant of its own: an ask
+goes to the pane through `canvasAskPane`, carrying the brick it was asked from as an attachment,
+and approvals, steering, history and the model picker are the pane's. The margin that once held a
+second, thinner turn UI is gone.
 
 There is no stand-in any more. A canvas is a tab in Leela, so the assistant a canvas asks is the
 one the workspace already has, and a machine with no model configured says so in the pane rather
@@ -202,7 +198,6 @@ looking the same.
 | `Enter` | splits the block at the caret. `shift+Enter` is a line break inside one |
 | `Escape` | leaves the text and picks the block. Then arrows move, `Enter` enters, `Backspace` deletes |
 | `mod+k` | ask, anchored wherever you are |
-| `mod+j` | the helper margin |
 | `mod+b`, `mod+i`, `mod+e` | the three marks, applied to the markdown rather than to the HTML |
 | `mod+enter` | run this cell. `mod+shift+enter` runs the document in dependency order |
 

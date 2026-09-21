@@ -1,5 +1,5 @@
 /* The bar that follows a text selection: the three marks that matter, a link, and the helper.
- * "Ask AI" is the same turn the margin runs; what it adds is the span you had selected. */
+ * "Ask AI" is the same agent-pane turn; what it adds is the span you had selected. */
 
 const MARKS = [
   {key: 'b', label: 'B', title: 'bold (mod+b)', wrap: '**', style: 'font-weight:700'},

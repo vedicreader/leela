@@ -34,8 +34,8 @@ async function cvInsertUnder(id, anchor) {
 const BLOCK_ACTIONS = [
   {name: 'Run', icon: '▶', hint: 'run this cell', group: '1_This', when: b => b.kind === 'code',
    act: b => cvRun(b.id)},
-  {name: 'Ask about this', icon: '✦', hint: 'the helper, anchored here', group: '1_This',
-   act: b => cvTurn({id: b.id, question: prompt('ask about this block') || '', selection: ''})},
+  {name: 'Ask about this', icon: '✦', hint: 'the agent, anchored here', group: '1_This',
+   act: b => cvInlineAsk(b.id)},
   {name: 'Ports and wiring', icon: '⌗', hint: 'what it draws from', group: '1_This',
    when: b => b.kind === 'brick' || b.kind === 'sim', act: b => cvWire(b.id)},
   {name: 'Show markdown', icon: '‹›', hint: 'the source of this paragraph', group: '1_This',
@@ -44,7 +44,7 @@ const BLOCK_ACTIONS = [
    act: b => cvOp({op: 'insert', after: b.id, kind: b.kind, body: b.body, attrs: b.attrs, binds: b.binds, props: b.props})},
   {name: 'Move up', icon: '↑', group: '2_Move', act: b => cvMove(b.id, -1)},
   {name: 'Move down', icon: '↓', group: '2_Move', act: b => cvMove(b.id, 1)},
-  {name: 'Copy id', icon: '#', hint: 'to name it to the helper', group: '3_More',
+  {name: 'Copy id', icon: '#', hint: 'to name it to the agent', group: '3_More',
    act: b => { navigator.clipboard?.writeText(b.id); cvStatus(`${b.id} copied`, 'ok'); }},
   {name: 'Delete', icon: '✕', hint: 'take it out', group: '3_More', act: b => cvOp({op: 'remove', id: b.id})}];
 

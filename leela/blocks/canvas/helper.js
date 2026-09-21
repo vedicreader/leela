@@ -1,10 +1,5 @@
-/* The helper: one thread in the margin, and the same turn reachable from anywhere in the document.
- * Inline asks and margin asks are the same call. What differs is the selection that travels with it. */
-
-/* The margin: where a question is asked, and where the answer comes back.
-
-   The turn itself belongs to the agent pane. It drives the same agent through the same canvas
-   tools, and it already owns approvals, steering and the history this used to redraw badly. */
+/* Asking: the same agent-pane turn from anywhere in the document. What differs is the brick and
+   the selection that travel with it. The turn itself is the pane's: approvals, steering, history. */
 
 async function cvTurn({id, question, selection, nth = 0}) {
   if (!question?.trim()) return;
@@ -16,10 +11,10 @@ async function cvTurn({id, question, selection, nth = 0}) {
   } catch (e) { cvStatus('could not reach the agent pane: ' + e, 'bad'); }
 }
 
-function cvInlineAsk() {
+function cvInlineAsk(bid) {
   const sel = getSelection();
-  const text = String(sel).trim();
-  const host = sel.anchorNode && sel.anchorNode.parentElement?.closest('.cv-brick');
+  const text = bid ? '' : String(sel).trim();
+  const host = bid ? $$(`.cv-brick[data-id="${bid}"]`) : sel.anchorNode && sel.anchorNode.parentElement?.closest('.cv-brick');
   //: The same words can appear twice in one brick. Which one was selected is the count before it.
   const nth = cvOccurrence(host, sel, text);
   const id = host?.dataset.id || cv.focus || (cv.canvas?.bricks.at(-1)?.id ?? '');
@@ -55,7 +50,6 @@ document.addEventListener('keydown', ev => {
   const mod = ev.metaKey || ev.ctrlKey, k = ev.key.toLowerCase();
   if (mod && k === 'k') { ev.preventDefault(); return cvInlineAsk(); }
   if (mod && k === 's') { ev.preventDefault(); return cvSave(); }
-  if (mod && k === 'j') { ev.preventDefault(); return cvMargin(); }
   if (mod && ev.shiftKey && ev.key === 'Enter') { ev.preventDefault(); return cvRunAll(); }
   if (ev.key === 'Escape') { $$('#cv-inline').hidden = true; cvCloseMenu(); cvHideFormat(); cvWireClose(); cvPick(null); }
   if (!cv.picked || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) ||
@@ -80,14 +74,6 @@ function cvBlockKey(ev, k) {
   if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) { ev.preventDefault(); cvMove(b.id, ev.key === 'ArrowUp' ? -1 : 1); }
 }
 
-function cvMargin(on) {
-  const w = $$('.cv-wrap');
-  const open = on ?? !w.classList.contains('margin-open');
-  w.classList.toggle('margin-open', open);
-  $$('#cv-toggle')?.classList.toggle('on', open);
-  return open;
-}
-
 function cvTheme(next) {
   cv.theme = next || (cv.theme === 'dark' ? 'light' : 'dark');
   document.body.dataset.theme = cv.theme;
@@ -107,14 +93,7 @@ async function cvBoot() {
   $$('#cv-save').onclick = cvSave;
   $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
-  $$('#cv-toggle').onclick = () => cvMargin();
   //: The theme comes on the URL; a store of the frame's own would disagree with the IDE's.
   cvTheme(q.get('theme') || 'light');
-  cvMargin(true);
-  $$('#cv-askform').onsubmit = async ev => {
-    ev.preventDefault();
-    const inp = $$('#cv-askform input'), question = inp.value; inp.value = '';
-    await cvTurn({id: cv.focus || '', question, selection: ''});
-  };
 }
 document.addEventListener('DOMContentLoaded', cvBoot);

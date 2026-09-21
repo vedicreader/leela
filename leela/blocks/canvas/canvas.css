@@ -90,8 +90,7 @@ kbd { font: 11px var(--cv-mono); border: 1px solid var(--cv-border); border-bott
 .cv-status.ok { color: var(--cv-good) } .cv-status.bad { color: var(--cv-bad) }
 
 /* ── the page ────────────────────────────────────────────────────────────── */
-.cv-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 0; transition: grid-template-columns .22s ease }
-.cv-wrap.margin-open { grid-template-columns: minmax(0, 1fr) 340px }
+.cv-wrap { display: grid; grid-template-columns: minmax(0, 1fr) }
 .cv-doc { max-width: var(--cv-measure); margin: 44px auto 50vh; padding: 0 8px 0 var(--cv-gutter) }
 
 /* ── a block ─────────────────────────────────────────────────────────────── */
@@ -218,37 +217,6 @@ kbd { font: 11px var(--cv-mono); border: 1px solid var(--cv-border); border-bott
 .cv-vid { font: 11.5px var(--cv-mono); color: #9aa2b4 }
 .cv-play:hover .cv-tri { transform: scale(1.1) }
 
-/* ── the margin ──────────────────────────────────────────────────────────── */
-.cv-margin { position: sticky; top: 44px; height: calc(100vh - 44px); display: flex; flex-direction: column;
-             border-left: 1px solid var(--cv-divider); background: var(--cv-paper); overflow: hidden }
-.cv-wrap:not(.margin-open) .cv-margin { display: none }
-.cv-margin h4 { margin: 12px 15px 4px; font: 600 10.5px/1 var(--cv-font); letter-spacing: .09em;
-                text-transform: uppercase; color: var(--cv-ink-3) }
-#cv-thread { flex: 1; overflow: auto; padding: 6px 12px }
-.cv-turn { border: 1px solid var(--cv-divider); border-radius: var(--cv-radius-lg); padding: 10px 12px;
-           margin-bottom: 9px; background: var(--cv-bg-secondary) }
-.cv-turn.running { border-color: var(--cv-brand); box-shadow: 0 0 0 3px var(--cv-accent-soft) }
-.cv-turn.failed { border-color: var(--cv-bad) }
-.cv-tq { font: 600 var(--cv-sm)/1.4 var(--cv-font) }
-.cv-tsel { font: 12.5px/1.45 var(--cv-serif); color: var(--cv-ink-2); border-left: 2px solid var(--cv-border);
-           padding-left: 8px; margin: 6px 0 }
-.cv-tstep { display: flex; gap: 7px; font: 11px var(--cv-mono); color: var(--cv-ink-3); padding: 1px 0 }
-.cv-tstep code { color: var(--cv-brand) }
-.cv-treply { font: 13.5px/1.55 var(--cv-font); margin-top: 7px }
-.cv-treply p { margin: .35em 0 }
-#cv-steer { padding: 7px 12px; border-top: 1px solid var(--cv-divider);
-            background: color-mix(in srgb, var(--cv-warn) 8%, var(--cv-paper)) }
-#cv-steer span { font: 600 10px/1 var(--cv-font); letter-spacing: .09em; text-transform: uppercase; color: var(--cv-warn) }
-#cv-askform { padding: 9px 12px; border-top: 1px solid var(--cv-divider) }
-#cv-steer input, #cv-askform input { width: 100%; border: 1px solid var(--cv-border); border-radius: 8px;
-                                     padding: 7px 10px; font: 13px var(--cv-font); outline: none; margin-top: 5px;
-                                     background: var(--cv-paper); color: inherit }
-#cv-steer input:focus, #cv-askform input:focus { border-color: var(--cv-brand); box-shadow: 0 0 0 3px var(--cv-accent-soft) }
-#cv-trail { border-top: 1px solid var(--cv-divider); max-height: 168px; overflow: auto; padding-bottom: 8px }
-.cv-trow { display: flex; gap: 6px; justify-content: space-between; font-size: var(--cv-xs); padding: 3px 15px;
-           color: var(--cv-ink-2) }
-.cv-trow code { font: 10.5px var(--cv-mono); color: var(--cv-ink-3) }
-.cv-trow.dim { color: var(--cv-ink-3) }
 
 /* ── popovers ────────────────────────────────────────────────────────────── */
 .cv-pop { position: fixed; z-index: 60; background: var(--cv-overlay); border: 1px solid var(--cv-border);
@@ -292,7 +260,6 @@ kbd { font: 11px var(--cv-mono); border: 1px solid var(--cv-border); border-bott
 
 #cv-wire { position: fixed; right: 22px; top: 58px; z-index: 60; width: 430px; background: var(--cv-overlay);
            border: 1px solid var(--cv-border); border-radius: 12px; box-shadow: var(--cv-shadow); padding: 13px }
-.cv-wrap.margin-open ~ #cv-wire { right: 356px }
 #cv-wire header { display: flex; gap: 8px; align-items: baseline; margin-bottom: 9px }
 #cv-wire header code { font: 11px var(--cv-mono); color: var(--cv-ink-3) }
 #cv-wire .cv-x { margin-left: auto; border: 0; background: transparent; cursor: pointer; color: var(--cv-ink-3) }
