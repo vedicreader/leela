@@ -15,6 +15,10 @@ name: desktop-artifacts
 ## flows use, pushes `v0.1.3`. A tag matching neither pattern builds no artefact and says nothing.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attach the artefacts to (blank: build only)'
+        default: ''
   push:
     tags: ['v*', '[0-9]*']
 
@@ -46,7 +50,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r "$RUNNER_TEMP/app-req.txt"
           python -m pip install --no-deps -e ".[macapp]"
-          python -m pip install pytest
+          python -m pip install pytest pytest-xdist
       # Signing and notarising are opt-in on the secrets being set: with none of them the build
       # still produces a launchable, linker-signed app, which is what a fork gets.
       - name: import the signing certificate
@@ -83,10 +87,10 @@ jobs:
           path: dist/Leela-macOS.dmg
           if-no-files-found: error
       - name: attach to the release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python tools/build_release.py upload ${{ github.ref_name }}
+        run: python tools/build_release.py upload ${{ inputs.tag || github.ref_name }}
 
   windows:
     runs-on: windows-latest
@@ -105,7 +109,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r "$RUNNER_TEMP/app-req.txt"
           python -m pip install --no-deps -e ".[windows]"
-          python -m pip install pytest
+          python -m pip install pytest pytest-xdist
       - name: build
         run: python tools/build_release.py
       - name: smoke
@@ -120,7 +124,7 @@ jobs:
           path: dist/Leela-Windows.zip
           if-no-files-found: error
       - name: attach to the release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python tools/build_release.py upload ${{ github.ref_name }}
+        run: python tools/build_release.py upload ${{ inputs.tag || github.ref_name }}
