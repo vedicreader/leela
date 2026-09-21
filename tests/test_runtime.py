@@ -198,18 +198,18 @@ def test_finding_a_repository_is_reachable_from_any_panel():
 def test_the_runtime_list_is_asked_of_ramabana_not_duplicated(tmp_path):
     "leela's copy of the runtime list drifted twice."
     from leela.blocks.agent.models import runtimes
-    from leela.agent.core import RUNTIMES, runtime_available
+    from leela.agent.core import RUNTIME_NAMES, runtime_available
     got = {r['value']: r['available'] for r in runtimes()}
-    assert tuple(got) == tuple(RUNTIMES), 'exactly what register_model accepts, in its order'
+    assert tuple(got) == RUNTIME_NAMES, 'exactly what register_model accepts, in its order'
     for name, avail in got.items():
         assert avail is bool(runtime_available(name)), f'{name} must report what rishi says'
     assert got['remote'] is True
 
 def test_the_model_dialog_is_told_which_runtimes_exist(tmp_path):
-    from leela.agent.core import RUNTIMES
+    from leela.agent.core import RUNTIME_NAMES
     ws = Workspace(roots=[tmp_path])
     with TestClient(ide_app(ws)) as c: d = c.get('/agent/models').json()
-    assert [r['value'] for r in d['runtimes']] == list(RUNTIMES)
+    assert [r['value'] for r in d['runtimes']] == list(RUNTIME_NAMES)
     # The remedy moved to the server with the label: `pip install rishi[cursor]` is not how you
     # get the Cursor agent, and the browser had no way to know that.
     why = {r['value']: r['why'] for r in d['runtimes']}

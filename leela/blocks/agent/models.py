@@ -24,8 +24,8 @@ JOB_HELP = {
  'subagent': 'Delegated searches, which run as their own read-only agent. Defaults to gpt-4.1, not to oneshot.'}
 
 def _runtimes():
-    from ...agent.core import RUNTIMES
-    return tuple(RUNTIMES)
+    from ...agent.core import RUNTIME_NAMES
+    return RUNTIME_NAMES
 
 LABELS = {'litert': 'LiteRT', 'mlx': 'MLX', 'llama': 'llama.cpp', 'remote': 'hosted API / FastLLM',
           'cursor': 'Cursor agent', 'claude': 'Claude Code', 'copilot': 'GitHub Copilot'}
