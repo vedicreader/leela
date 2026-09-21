@@ -250,16 +250,18 @@ def test_the_release_is_found_under_whichever_tag_spelling_it_carries(tmp_path, 
     assert 'ship-gh' in str(e.value), 'say what to run, not `release not found`'
 
 def test_the_desktop_workflow_puts_the_artefacts_on_the_release():
-    "A tag push builds both bundles; without `contents: write` neither can attach."
+    "A tag push or a dispatch naming a tag builds both bundles and attaches them; without `contents: write` neither can."
     import yaml
     doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
     assert doc['permissions']['contents'] == 'write'
     assert doc[True]['push']['tags'] == ['v*', '[0-9]*'], 'both spellings fastship tags with'
+    assert 'tag' in doc[True]['workflow_dispatch']['inputs']
     for job in doc['jobs'].values():
         step = first(job['steps'], lambda s: s.get('name') == 'attach to the release')
         assert step, 'both platforms attach what they built'
-        assert 'build_release.py upload' in step['run']
-        assert step['if'] == "startsWith(github.ref, 'refs/tags/')"
+        assert 'build_release.py upload ${{ inputs.tag || github.ref_name }}' in step['run']
+        assert step['if'] == "startsWith(github.ref, 'refs/tags/') || inputs.tag != ''"
+        assert 'pytest-xdist' in first(job['steps'], lambda s: s.get('name') == 'install')['run'], 'the smoke step runs under the suite addopts'
 
 def test_both_desktop_jobs_freeze_the_dependency_set_the_lock_names():
     """py2app and py2exe freeze whatever the install step put there."""
