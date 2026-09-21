@@ -32,7 +32,7 @@ dependencies = [
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.0.8",   # 0.0.8 is summarise() building the tool table for a bare name
+    "shalya>=0.0.9",   # 0.0.9 imports litesearch where it runs, so the server stays free of numpy
     "gheasy>=0.0.10",  # 0.0.10 opened the six helpers; `blocks/git/seam.py` still takes either
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not

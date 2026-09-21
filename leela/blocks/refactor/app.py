@@ -6,7 +6,6 @@ import time, uuid
 from fastcore.all import Path
 
 from ...core.web import fail, off_loop
-from kosha.refactor import replace_plan, extract, inline, module_of, move_plan, top_symbols
 
 __all__ = ['CAPS', 'connect']
 
@@ -38,6 +37,7 @@ def _candidates(ctx, names, limit=400):
     return sorted({str(p) for p in out if str(p).endswith('.py')})
 
 def connect(app, ctx):
+    from kosha.refactor import replace_plan, extract, inline, module_of, move_plan, top_symbols
     rt, plans = app.route, {}
     def _disk(path):
         "The file as it is now, or None when it is not there yet."

@@ -4,21 +4,17 @@
 
 ## 0.1.4
 
-Built against ramabana 0.1.34, rishi 0.1.38 and shalya 0.0.8, all of which land behaviour Leela had to change for.
+Needs ramabana 0.1.34, rishi 0.1.38, shalya 0.0.9, koshas 0.1.8.
 
-### Canvas
-
-- A document that runs: bricks, the dataflow between them, trusted runs, and the bundles a brick embeds. Literate diff and review over it. `leela-bricks` is the example brick set the tests resolve against.
-
-### Agent
-
-- Merged ramabana derives `_plain` from the catalog rather than holding a list. Leela filters the Git writes out of the briefing by overriding it, the way `_sub_plain` beside it already did; assigning to it raised and took 28 tests with it.
-- Edits and commands go through shalya's public `cmds`, `edits` and `apply_edits`, not ramabana's private aliases through Leela's own alias module. `test_seams` follows those aliases now.
-
-### Suite
-
-- `test_canvas` stays on one xdist worker (`--dist loadgroup`): its fixtures are module-scoped, and scattering them rebuilt the ide app per worker, 600s against 30s.
-- `uv.lock` re-resolved to match the merged `pyproject.toml`.
+- Canvas: a document that runs. Bricks, the dataflow between them, trusted runs, embedded bundles, literate diff and review. `leela-bricks` is the brick set the tests resolve against.
+- `_plain` is overridden, not assigned; ramabana derives it from the catalog now. Git writes still stay out of the briefing.
+- Edits and commands go through shalya's public `cmds`, `edits`, `apply_edits`; `test_seams` follows the aliases.
+- Runtime names come from ramabana's `RUNTIME_NAMES`; `RUNTIMES` is urai's registry.
+- The refactor engine is kosha's (`kosha.refactor`); Leela's copy is gone. Its comprehension-ordering rule went upstream first.
+- `kosha.refactor` is imported where it runs, so the server does not load numpy and pandas.
+- `Memory.poll` builds the typed graph only when online; an offline vault polls its reminders without a model.
+- `KernelPool.close_all` cancels kernels still starting and gives up after a bound. Leaving a workspace could hang on a kernel that never came up; so could the suite.
+- `test_canvas` stays on one xdist worker (`--dist loadgroup`). `uv.lock` re-resolved.
 
 ## 0.1.3
 

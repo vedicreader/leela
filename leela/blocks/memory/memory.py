@@ -497,5 +497,5 @@ class Memory:
     def unwatch(self, watch_id, shelf=None): return self._shelf(shelf).unwatch(watch_id)
     def poll(self, shelf=None):
         "Run every watch that has come due. The tick a scheduler calls."
-        try: return dict(self._shelf(shelf).poll())
+        try: return dict(self._shelf(shelf).poll(connect=not self.offline))
         except Exception as e: return dict(note=f'poll failed ({errstr(e)})', ran=0, checked=0)

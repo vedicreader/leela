@@ -9,7 +9,6 @@ from fastcore.all import first, L, Path, ifnone
 from fastcore.nbio import read_nb, write_nb, new_nb, nb2str
 from ... import Dictable
 from ..runtime.kernels import output_text
-from kosha.refactor import top_symbols
 import json
 
 try:
@@ -261,6 +260,7 @@ class Notebook:
         "Each top-level class and function of cell `i` into a cell of its own, in source order."
         c = self.cells[i]
         if c.cell_type != 'code': return 0
+        from kosha.refactor import top_symbols
         head, tag, body = _directives(c.source)
         try: syms = top_symbols(body)
         except SyntaxError: return 0
