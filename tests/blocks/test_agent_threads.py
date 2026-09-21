@@ -1,11 +1,22 @@
 import asyncio, re, threading, time
 from pathlib import Path
 
+import pytest
 from starlette.testclient import TestClient
 from leela.app import ide_app
+from leela.blocks.runtime.kernels import KernelPool
 from leela.blocks.agent.threads import Feed, Thread, Threads, TurnError, TurnRunner
 from leela.workspace import Workspace
 from tests.conftest import history_file
+
+
+@pytest.fixture(autouse=True)
+def _kernels_stay_in_process(monkeypatch):
+    "These workspaces are built bare, and a turn warms a kernel: give them the fixture's fake ones rather than a real ipykernel per test."
+    from tests.blocks.conftest import _FakeKernel
+    async def _get(self, key, **kw): return self.kernels.setdefault(key, _FakeKernel())
+    monkeypatch.setattr(KernelPool, 'get', _get)
+    monkeypatch.setattr(KernelPool, 'peek', lambda self, key: self.kernels.get(key))
 
 
 def test_threads_are_lazy_isolated_and_keep_workspace_compatibility(tmp_path):
@@ -771,6 +782,16 @@ def test_shutdown_cancels_the_run_and_wakes_a_waiting_subscriber(tmp_path):
         assert seen['rows'] == [] and ws.turn_runner.feed.closed
         assert ws.ai.runs(active=True) == []
     assert not waiter.is_alive(), 'the waiter was woken rather than left on its timeout'
+
+def test_closing_the_pool_does_not_wait_for_a_kernel_that_never_comes_up():
+    "A kernel still starting when the workspace shuts down is cancelled, not awaited, so leaving the app cannot hang on it."
+    async def go():
+        pool = KernelPool()
+        stuck = pool._starting['tab:1'] = asyncio.ensure_future(asyncio.Event().wait())
+        await asyncio.wait_for(pool.close_all(), 5)
+        return stuck.cancelled()
+    assert asyncio.run(go())
+
 
 def _threaded_workspace(tmp):
     from leela.workspace import Workspace

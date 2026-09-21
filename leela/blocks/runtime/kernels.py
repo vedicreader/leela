@@ -86,3 +86,7 @@ class KernelPool(_KernelPool):
         from .runners import runner_for
         super().__init__(port, default_kernel, default_python, broker, transport, gateway, idle,
                          runner_for=runner_for, known_kernels=_known(), install_hints=_installs())
+    async def close_all(self):
+        "Leaving waits for nothing still coming up: a kernel that has not answered yet is cancelled, and the rest is given a deadline."
+        for task in list(self._starting.values()): task.cancel()
+        await _give_up_after(super().close_all(), SHUTDOWN_WAIT * 3)
