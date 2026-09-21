@@ -9,7 +9,7 @@ from fastcore.all import first, L, Path, ifnone
 from fastcore.nbio import read_nb, write_nb, new_nb, nb2str
 from ... import Dictable
 from ..runtime.kernels import output_text
-from ..refactor.move import top_symbols
+from kosha.refactor import top_symbols
 import json
 
 try:

@@ -2,7 +2,7 @@
 
 import ast
 import pytest
-from leela.blocks.refactor.move import module_of, move_plan, top_symbols
+from kosha.refactor import module_of, move_plan, top_symbols
 
 
 def tree(tmp_path, files, package=False):
@@ -21,8 +21,8 @@ def tree(tmp_path, files, package=False):
 
 def plan(tmp_path, files, src, names, dest, package=False, **kw):
     read = tree(tmp_path, files, package)
-    rows, notes = move_plan(read, tmp_path/src, names, tmp_path/dest,
-                            [tmp_path/n for n in files if n.endswith('.py')], **kw)
+    rows, notes = move_plan(tmp_path/src, names, tmp_path/dest,
+                            [tmp_path/n for n in files if n.endswith('.py')], read=read, **kw)
     return {str(r.path).replace(str(tmp_path) + '/', ''): r for r in rows}, notes
 
 

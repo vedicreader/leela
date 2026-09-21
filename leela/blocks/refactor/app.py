@@ -6,9 +6,7 @@ import time, uuid
 from fastcore.all import Path
 
 from ...core.web import fail, off_loop
-from .refactor import replace_plan
-from .python import extract, inline
-from .move import module_of, move_plan, top_symbols
+from kosha.refactor import replace_plan, extract, inline, module_of, move_plan, top_symbols
 
 __all__ = ['CAPS', 'connect']
 
@@ -73,8 +71,8 @@ def connect(app, ctx):
         try:
             d = await req.json()
             _prune(plans)
-            rows, skipped = await off_loop(replace_plan, ctx.fs, d.get('find', ''), d.get('replace', ''),
-                                           d.get('regex', False), d.get('case', False), d.get('word', False))
+            rows, skipped = await off_loop(replace_plan, ctx.fs.walk(limit=20000), d.get('find', ''), d.get('replace', ''),
+                                           d.get('regex', False), d.get('case', False), d.get('word', False), read=ctx.fs.read)
             token = 'replace_' + uuid.uuid4().hex
             plans[token] = {'at': time.time(), 'label': f"Replace {str(d.get('find', ''))!r}",
                             'kind': 'replace-text', 'rows': rows}
@@ -130,8 +128,7 @@ def connect(app, ctx):
             if src.suffix != '.py': return fail('move supports Python files only')
             names = [str(n) for n in (d.get('names') or [])]
             others = await off_loop(_candidates, ctx, names)
-            rows, notes = await off_loop(move_plan, _disk, str(src), names, str(dest), others,
-                                         bool(d.get('shim', True)))
+            rows, notes = await off_loop(move_plan, str(src), names, str(dest), others, bool(d.get('shim', True)), read=_disk)
             token = 'refactor_' + uuid.uuid4().hex
             plans[token] = {'at': time.time(), 'kind': 'move-symbol', 'rows': rows,
                             'label': f"Move {', '.join(names)} to {dest.name}",

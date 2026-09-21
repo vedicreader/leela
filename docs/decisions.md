@@ -200,15 +200,6 @@ What the terminal does. uv syncs the lock before it runs anything, so a venv tha
 ## `leela/blocks/pipelines/pipelines.py` `release_flow`
 Rust is asked before fastship, because a maturin crate has a `pyproject.toml` too and the fastship flow would try to `ship-pypi` a wheel that only the runners can build.
 
-## `leela/blocks/refactor/move.py` `move_plan`
-A destination that did not exist comes back with `before` None, which is what makes undo delete it again.
-
-## `leela/blocks/refactor/python.py` `_reads`
-The tail of a file is the middle of a block and rarely parses. The identifier fallback errs towards handing a value back, which is untidy rather than broken.
-
-## `leela/blocks/refactor/python.py` `_reads_before_writes`
-A name both read and bound, as in `total = total + n`, is a parameter as well as a result. Subtracting the bound names from the read ones would miss it.
-
 ## `leela/blocks/runtime/app.py` `connect.runtime_engines_clear`
 Weights outlive the chats built on them, so the memory is held until something asks for it.
 

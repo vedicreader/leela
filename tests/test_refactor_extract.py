@@ -2,7 +2,7 @@
 
 import ast
 import pytest
-from leela.blocks.refactor.python import extract
+from kosha.refactor import extract
 
 
 def _cut(src, first, after):
