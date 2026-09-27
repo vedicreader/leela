@@ -75,7 +75,7 @@ def warm_probes():
     "Pay for the first probe at startup rather than on the first click."
     from ...agent.core import auth_status
     for legacy in (True, False):
-        try: probed(f'catalog:{legacy}', lambda legacy=legacy: catalog(legacy))
+        try: probed(f'catalog2:{legacy}', lambda legacy=legacy: catalog(legacy))
         except Exception: pass
     for key, fn in (('auth', auth_status), ('runtimes', runtimes)):
         try: probed(key, fn)

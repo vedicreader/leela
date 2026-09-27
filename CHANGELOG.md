@@ -4,7 +4,7 @@
 
 ## 0.1.4
 
-Needs ramabana 0.1.34, rishi 0.1.38, shalya 0.0.9, koshas 0.1.8, vishalakshi 0.1.15.
+Needs ramabana 0.1.42, rishi 0.1.38, shalya 0.0.11 (below 0.1), dhrona 0.1.4, koshas 0.1.8, vishalakshi 0.1.15.
 
 - Canvas: a document that runs. Bricks, the dataflow between them, trusted runs, embedded bundles, literate diff and review. `leela-bricks` is the brick set the tests resolve against.
 - `_plain` is overridden, not assigned; ramabana derives it from the catalog now. Git writes still stay out of the briefing.
@@ -17,7 +17,7 @@ Needs ramabana 0.1.34, rishi 0.1.38, shalya 0.0.9, koshas 0.1.8, vishalakshi 0.1
 - `KernelPool.close_all` cancels kernels still starting and gives up after a bound. Leaving a workspace could hang on a kernel that never came up; so could the suite.
 - `test_canvas` stays on one xdist worker (`--dist loadgroup`). `uv.lock` re-resolved.
 - Agent pane: a **warm** toggle seeds the next new conversation from dhrona's reviewed rounds, a collapsed transcript block shows every replayed message and tool call and why the other rounds were skipped, and **assess** / **capture** / **accept** score a conversation, write it as a review notebook under `<root>/.dhrona/`, and install the reviewed round (`dhrona>=0.1.4`). A notebook saved in Leela keeps the metadata other tools put on its cells.
-- shalya is capped below 0.1; aidialog (below 0.0.24) and python-fastllm (0.0.45) are held where the Claude Code runtime still imports and ramabana's model list still reads as it did.
+- ramabana 0.1.42: it owns the model catalog now (curated ids plus live discovery from the providers' `/v1/models` and Codex's cache), so current models appear and the caps that held aidialog and python-fastllm for its old fastllm-table reads are gone. The saved catalog probe is re-keyed so the new list shows without a manual refresh. shalya is capped below 0.1.
 
 ## 0.1.3
 

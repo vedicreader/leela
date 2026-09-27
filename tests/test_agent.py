@@ -705,31 +705,37 @@ def test_an_agent_harness_is_not_a_pip_extra(monkeypatch):
     assert 'pip install' not in rows['remote']['why'], 'a hosted model wants a key, not an extra'
 
 def test_older_specialized_openai_models_are_opt_in(monkeypatch):
+    import ramabana.models as rm
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
     models.forget_probes()
-    monkeypatch.setattr(models, '_openai_ids', lambda: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5'])
+    monkeypatch.setattr(rm, 'LIVE', {'openai': lambda: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-5']})   # what the key "lists"
     normal = {r['label'] for r in models.available_models() if r['provider'] == 'openai'}
     older = {r['label'] for r in models.available_models(include_legacy=True) if r['provider'] == 'openai'}
     assert 'gpt-5' in normal and 'gpt-4.1' not in normal
     assert {'gpt-4.1', 'gpt-4.1-mini'} <= older
 
-def test_an_anthropic_key_no_longer_publishes_a_model_catalog(monkeypatch):
-    """Claude reaches Leela as the `claude` runtime, not as a provider model list, so the key alone publishes nothing."""
+def test_an_anthropic_key_publishes_ramabanas_curated_catalog(monkeypatch):
+    """ramabana 0.1.42 owns the catalog: a key publishes its curated ids without asking the network, and the `claude` runtime is still its own entry."""
+    import ramabana.models as rm
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'connected')
-    rows = models.available_models()
-    assert not [r for r in rows if r['provider'] == 'anthropic']
+    monkeypatch.setattr(rm, 'LIVE', {})          # curated only: no `/v1/models` call from a test
+    models.forget_probes()
+    anthropic = [r['label'] for r in models.available_models() if r['provider'] == 'anthropic']
+    assert anthropic == list(rm.CATALOG['anthropic']) and 'claude-fable-5-1' in anthropic
     from leela.blocks.agent.models import runtimes
     assert 'claude' in {r['value'] for r in runtimes()}
 
 def test_available_models_follow_environment_and_codex_login(monkeypatch, tmp_path):
+    import ramabana.models as rm
     auth = tmp_path/'auth.json'
     auth.write_text('{"tokens":{"access_token":"present"}}')
     monkeypatch.setenv('CODEX_AUTH_PATH', str(auth))
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path))     # no `models_cache.json`: the curated codex ids
     monkeypatch.setenv('OPENAI_API_KEY', 'present')
     monkeypatch.setenv('GEMINI_API_KEY', 'present')
     monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
     models.forget_probes()
-    monkeypatch.setattr(models, '_openai_ids', lambda: [])
+    monkeypatch.setattr(rm, 'LIVE', {})          # curated only: nothing leaves the test
     rows = models.available_models()
     providers = {r['provider'] for r in rows}
     assert {'openai', 'codex', 'gemini'} <= providers

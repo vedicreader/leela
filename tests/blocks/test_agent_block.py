@@ -330,7 +330,7 @@ def test_which_row_a_chosen_model_is_is_a_lookup_not_a_scan():
     route = src[src.index("def agent_models("):src.index("@rt('/agent/models/add')")]
     picked = route[route.index('def selected('):route.index('# The routed jobs')]
     assert 'by_id.get(' in picked and 'for r in rows' not in picked, 'no scan per selection'
-    assert "probed(f'catalog:{legacy}'" in route, 'and the catalog itself is probed'
+    assert "probed(f'catalog2:{legacy}'" in route, 'and the catalog itself is probed'
     assert 'if refresh: forget_probes(disk=True)' in route, 'with a way to ask for a fresh one'
     from leela.blocks.agent.models import catalog
     rows, index = catalog(legacy=False)

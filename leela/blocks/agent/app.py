@@ -284,9 +284,10 @@ def connect(app, ctx):
         def _name(what, get, dflt): return _try(what, get, dflt) or dflt
         saved = _try('saved models', load_models, []) or []
         # The catalog and the id each row resolves to are the machine's, not this workspace's.
-        # Probed together, served from the last answer, refreshed behind this.
+        # Probed together, served from the last answer, refreshed behind this. `catalog2` since ramabana
+        # 0.1.42 owns the catalog: a list saved under the old key would hide the current models.
         if refresh: forget_probes(disk=True)   # the button means ask again, not read the last answer
-        rows, by_id = _try('model catalog', lambda: probed(f'catalog:{legacy}',
+        rows, by_id = _try('model catalog', lambda: probed(f'catalog2:{legacy}',
                                                            lambda: catalog(legacy)), ([], {})) or ([], {})
         rows = [dict(r) for r in rows]      # decorated below with this workspace's own choices
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],

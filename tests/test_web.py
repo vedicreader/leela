@@ -657,7 +657,8 @@ def test_model_picker_shows_older_models_by_default(monkeypatch):
     from leela.app import _agent_panel, ide_app
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     models.forget_probes()
-    monkeypatch.setattr(models, '_openai_ids', lambda: ['gpt-4.1', 'gpt-5.6-luna'])
+    import ramabana.models as rm
+    monkeypatch.setattr(rm, 'LIVE', {'openai': lambda: ['gpt-4.1', 'gpt-5.6-luna']})
     ws = Workspace(roots=[])
     assert 'id="legacymodels"' in str(_agent_panel(ws)) and 'checked' in str(_agent_panel(ws))
     with TestClient(ide_app(ws)) as client:
@@ -668,7 +669,8 @@ def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
     from leela.agent import core as models
     monkeypatch.setenv('OPENAI_API_KEY', 'top-secret')
     models.forget_probes()
-    monkeypatch.setattr(models, '_openai_ids', lambda: ['gpt-5.4'])
+    import ramabana.models as rm
+    monkeypatch.setattr(rm, 'LIVE', {'openai': lambda: ['gpt-5.4']})
     with TestClient(ide_app(Workspace(roots=[]))) as client:
         data = client.get('/agent/models').json()
     assert any(m['value'] == 'openai/gpt-5.4' for m in data['models'])

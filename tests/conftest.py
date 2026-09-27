@@ -53,6 +53,12 @@ def _isolate_credentials(monkeypatch):
     for key in CREDENTIAL_KEYS: monkeypatch.delenv(key, raising=False)
 
 @pytest.fixture(autouse=True)
+def _curated_models_only(monkeypatch):
+    "ramabana 0.1.42 lists models live from a provider once a key is set; a test that sets one must not wait on the network."
+    import ramabana.models as rm
+    monkeypatch.setattr(rm, 'LIVE', {})     # a test that wants a listing sets its own
+
+@pytest.fixture(autouse=True)
 def cfg_home(monkeypatch, tmp_path_factory):
     """A config dir per test, and never the real one."""
     cfg = tmp_path_factory.mktemp('cfg')/'leela'

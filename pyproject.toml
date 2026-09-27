@@ -27,7 +27,7 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.1.38",   # approval rules and `edits`, `Agent.tell`, `on_watch`, `on_background_done`, run transcripts
+    "ramabana[cli]==0.1.42",   # owns its model catalog (curated ids + live discovery); approval wait/re-ask; `edits`, `Agent.tell`, run transcripts
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
@@ -90,10 +90,6 @@ dependencies = [
     # the first with `fit_rounds` reporting skips, `Finding.turn`, `install_round` returning its
     # path, and floors that leave the stack below alone.
     "dhrona>=0.1.4",
-    # Capped: 0.0.24 dropped `ServerToolResult`, which python-fastllm <0.0.50 imports through
-    # rishi.claude -> llmsurgery.ant -> fastllm.anthropic, and fastllm >=0.0.47 has no gemini
-    # registry rows for ramabana 0.1.38's model list to read. Not ours, but ours to hold still.
-    "aidialog>=0.0.10,<0.0.24",
 ]
 
 [project.optional-dependencies]
@@ -156,13 +152,7 @@ markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 # Leela imports no `mcp`; `koshas` brings it and asks only for `>=1.2.0`. 2.x renamed `FastMCP`
 # to `MCPServer`, which `ramabana.mcp` imports, so an unconstrained resolve takes the major and
 # `import ramabana.mcp` stops working. A constraint rather than a dependency: it is not ours.
-constraint-dependencies = [
-    "mcp<2",
-    # rishi brings `python-fastllm`, and ramabana 0.1.38's `available_models` reads its
-    # `model_info_registry`: 0.0.46 adds an anthropic row (a key alone then publishes a model)
-    # and 0.0.47 drops the gemini rows. Held at 0.0.45, rishi's floor, alongside `aidialog`.
-    "python-fastllm<0.0.46",
-]
+constraint-dependencies = ["mcp<2"]
 
 [tool.uv.sources]
 leela = { workspace = true }
