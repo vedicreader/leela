@@ -2,6 +2,16 @@
 
 <!-- do not remove -->
 
+## 0.1.6
+
+Same pins as 0.1.5.
+
+- Run a `.py` app, stop it, run it again: the terminal shows the new run. A run ends its viewers' queues when its stream ends, `/run/ws` sends `{"t": "exit"}` the way `/term/ws` does, and the run terminal is replaced when the same path comes back under another pid.
+- A run keeps every `http://` URL it printed (`urls` in `/dev/list`), and a stopped run still reports the last one (`last_url`).
+- Reopening the page brings the running servers back: the first `/dev/list` poll adopts each into its run terminal, and the runs menu lists every URL a running app printed as an **open** row.
+- `Memory._store` opens a shelf under a lock. The poll tick and a request opening the same shelf at once built two Vaults over one file and crashed the test worker with a bus error.
+- CI: the test job sets a git identity, has `timeout-minutes: 45`, and the two tests that resolve a Claude Code model skip where `claude` is not installed. The Windows desktop job is `continue-on-error` until pyghostty ships a Windows wheel; macOS is the release.
+
 ## 0.1.5
 
 Needs ramabana 0.2.2 (pinned), shalya 0.1.0, vishalakshi 0.1.17, dhrona 0.1.4, rishi 0.1.38.
