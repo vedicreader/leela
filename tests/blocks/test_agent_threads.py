@@ -1625,10 +1625,14 @@ def test_the_new_thread_route_takes_opt_ins_and_the_optin_route_saves_the_defaul
 def test_a_threads_opt_ins_survive_eviction_and_resume(tmp_path, monkeypatch):
     from tests.fakemodel import Step, install
     from leela.blocks.agent.ai import Assistant
-    ws = Workspace(roots=[tmp_path]); t = ws.threads.new(optin=('exhash',)); sid = t.id
+    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
+    t = ws.threads.new(optin=('exhash',)); sid = t.id
     install(ws, [Step(text='ok')], token_delay=0); t.ai.ask('first')
     ws.threads.close(sid); assert sid not in ws.threads._rows
     monkeypatch.setattr(Assistant, 'set_model', lambda self, name, job='turn': None)   # the scripted model is not in the catalog
     r = ws.threads.resume(sid)
     assert 'edit_file' in {f.__name__ for f in r.ai.tools} and r.dict()['optin'] == ['exhash']
-    assert ws.thread_optins.get(sid) == ['exhash'] and Workspace.load(ws._state_path or None).thread_optins.get(sid) == ['exhash'] if getattr(ws, '_state_path', None) else True
+    assert ws.thread_optins.get(sid) == ['exhash'], 'kept on the workspace'
+    again = Workspace.load(ws._state_path)
+    assert again.thread_optins.get(sid) == ['exhash'], 'and in its saved file, so a restart resumes the same catalog'
+    assert 'edit_file' in {f.__name__ for f in again.threads.resume(sid).ai.tools}

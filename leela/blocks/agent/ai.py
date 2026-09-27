@@ -1095,14 +1095,17 @@ class Assistant(Agent):
         tx['rolled_back'] = True
         return tx
     def _undo_git_writes(self, writes):
-        "Apply the turn's git `undo` tokens, newest first; a token gheasy refuses raises with every problem named, and the turn stays undoable."
+        "Apply the turn's git `undo` tokens, newest first, stopping at the first gheasy refuses: the error names what was already undone and that HEAD moved with it, so a retry meets the HEAD guard rather than applying a token twice. The turn stays undoable."
         from gheasy.repo import GitRepo
-        repo, done, problems = GitRepo.at(self.host.roots[0]), 0, []
+        repo, undone = GitRepo.at(self.host.roots[0]), []
         for w in reversed(writes):
-            try: repo.undo(w['undo']); done += 1
-            except Exception as e: problems.append(f"{w['tool']}: {errstr(e)}")
-        if problems: raise ValueError(f'undid {done} git write(s); ' + '; '.join(problems))
-        return f'undid {done} git write(s)'
+            try: repo.undo(w['undo']); undone.append(w)
+            except Exception as e:
+                names = ', '.join(f"{u['tool']} ({u.get('summary') or u.get('undoes') or u['undo']})" for u in undone) or 'none'
+                head, _ = self._repo_state()
+                raise ValueError(f"undid {len(undone)} git write(s) — already undone: {names}; HEAD moved to {head[:12]} as a result, "
+                                 f"so the turn's later undo is refused until you look at the tree; {w['tool']}: {errstr(e)}")
+        return f'undid {len(undone)} git write(s)'
 
     def _action_meta(self, name, args):
         base = super()._action_meta(name, args)

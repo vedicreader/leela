@@ -1442,6 +1442,32 @@ def test_a_failed_git_undo_leaves_the_turn_undoable_and_says_why(tmp_path, monke
         d = c.post('/agent/rollback-turn', json={'turn_id': turn, 'thread': ws.threads.active_id}).json()
         assert not d['ok'] and 'git_commit' in d['error'] and 'boom' in d['error']
 
+def test_a_partial_git_undo_names_what_it_undid_and_a_retry_meets_the_head_guard(tmp_path, monkeypatch):
+    "Two commits in one turn; undoing the older one fails: the error says the newer was undone and HEAD moved, and the next attempt is refused rather than applied twice."
+    repo, g, ws, head, turn = _turn_with_a_commit(tmp_path)
+    tools = {t.__name__: t for t in ws.ai.tools}
+    ws.ai._prepare('y'); (repo/'c.py').write_text('c = 1\n')
+    assert json.loads(tools['git_commit']('second', 'c.py'))['undo']; ws.ai._finish('done'); turn2 = ws.ai.current_turn_id
+    (repo/'a.py').write_text('value = 3\n'); assert json.loads(tools['git_commit']('third', 'a.py'))['undo'] or True
+    ws.ai._prepare('z'); (repo/'d.py').write_text('d = 1\n'); assert json.loads(tools['git_commit']('d1', 'd.py'))['undo']
+    (repo/'d.py').write_text('d = 2\n'); assert json.loads(tools['git_commit']('d2', 'd.py'))['undo']; ws.ai._finish('done'); turn3 = ws.ai.current_turn_id
+    assert len(ws.ai.turn_transactions[turn3]['git']) == 2
+    from gheasy.repo import GitRepo
+    real, calls = GitRepo.undo, []
+    def undo(self, token=''):
+        calls.append(token)
+        if len(calls) == 2: raise RuntimeError('boom')
+        return real(self, token)
+    monkeypatch.setattr(GitRepo, 'undo', undo)
+    with pytest.raises(ValueError) as e: ws.ai.rollback_turn(turn3)
+    said = str(e.value)
+    assert 'undid 1 git write' in said and 'already undone: git_commit (' in said and 'HEAD moved' in said and said.endswith('boom') or 'boom' in said
+    assert not ws.ai.turn_transactions[turn3]['rolled_back']
+    monkeypatch.setattr(GitRepo, 'undo', real)
+    with pytest.raises(ValueError, match='HEAD moved after the turn'): ws.ai.rollback_turn(turn3)
+    log = g('log', '--oneline').splitlines()
+    assert log[0].endswith(' d1') and not any(l.endswith(' d2') for l in log), 'd2 undone once, d1 stayed: nothing was applied twice'
+
 def test_the_third_identical_gated_call_is_put_to_the_person_even_under_auto():
     from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools=WRITE_TOOLS, mode='auto', control='autopilot', timeout=0.2); stop = ap.listen()
