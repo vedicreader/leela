@@ -1,7 +1,10 @@
 GET /{fname:path}.{ext:static}
 GET,POST /
 GET,POST /agent/approval
+GET,POST /agent/approval/always
 GET,POST /agent/approval/request
+GET,POST /agent/approval/rules
+GET,POST /agent/approval/rules/delete
 GET,POST /agent/approve
 GET,POST /agent/ask
 GET,POST /agent/attachment
@@ -17,6 +20,7 @@ GET,POST /agent/control
 GET,POST /agent/conversation/notebook
 GET,POST /agent/conversation/parts
 GET,POST /agent/conversation/reshape
+GET,POST /agent/environment
 GET,POST /agent/fork
 GET,POST /agent/history
 GET,POST /agent/history/apply
@@ -41,6 +45,7 @@ GET,POST /agent/rollback-turn
 GET,POST /agent/run-policy
 GET,POST /agent/runs
 GET,POST /agent/runs/{run_id}/cancel
+GET,POST /agent/runs/{run_id}/log
 GET,POST /agent/runs/{run_id}/steer
 GET,POST /agent/runs/{run_id}/terminate
 GET,POST /agent/runtimes
@@ -49,6 +54,7 @@ GET,POST /agent/sessions
 GET,POST /agent/settings
 GET,POST /agent/setup
 GET,POST /agent/setup/dismiss
+GET,POST /agent/shell/{run_id}/stop
 GET,POST /agent/state/activate
 GET,POST /agent/state/bootstrap
 GET,POST /agent/state/compare

@@ -134,8 +134,8 @@ def test_a_host_offers_only_the_tools_it_supports():
     # `add_root` is a write: multi-repo edits need it, and widening the boundary is a change
     # to what every later call may touch, so it is gated like any other write.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
-            'run_shell', 'memory_forget', 'create_skill', 'add_root',
-            'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
+            'run_shell', 'run_shell_bg', 'memory_forget', 'create_skill', 'add_root',
+            'cancel_watch', 'cart_add', 'cart_remove', 'remember_note'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
     assert not (names & WRITE_TOOLS)
@@ -281,7 +281,7 @@ def test_the_briefing_says_what_is_true_of_this_project():
     assert 'inside the folders above' in narrow
     # The last three arrive with a host that has them: `get_skills`, and `monitor_tools` for the
     # folder watch. Naming them here keeps the check on `RULES` rather than on this host's shape.
-    real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel',
+    real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel', 'delegate_search',
                                                          'memory_search', 'web_search', 'run_python',
                                                          'read_skill', 'watch_folder'}
     assert {tool for tool, _ in RULES if tool} <= real
@@ -909,7 +909,7 @@ def test_the_index_carries_names_not_bodies():
     idx = skills.skill_index(ss)
     assert 'read_skill' in idx
     for s in ss: assert s.name in idx
-    assert len(idx) < 4000
+    assert len(idx) < 200 + len(ss) * (skills.SKILL_DESC_MAX + 40)
     rows = [l for l in idx.splitlines() if l.startswith('- `')]
     assert rows and all(len(l) <= 60 + skills.SKILL_DESC_MAX for l in rows), max(rows, key=len)
 

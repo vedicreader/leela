@@ -38,10 +38,11 @@ function updateAgentRunstrip(state = {}) {
     const label = r.state === 'cancelling' ? `Cancelling ${who}…` : `${what} · ${who}`;
     return `<span class="lee-agent-run${r.kind === 'child' ? ' child' : ''}"><span>${esc(label)}</span>` +
       `<time>${esc(clock)}</time>` +
-      (r.kind === 'child' ? `<button type="button" data-open-subs>Open</button>` : '') +
+      (r.kind === 'child' ? `<button type="button" data-open-subs>Open</button><button type="button" data-watch-run="${esc(r.id)}" data-title="${esc(r.question || r.id)}">Watch</button>` : '') +
       (done ? '' : `<button type="button" data-stop-run="${esc(r.id)}">Stop</button>`) + `</span>`;
   }).join('') : esc(rootLabel);
   $$('[data-open-subs]', strip).forEach(b => b.onclick = e => { e.stopPropagation(); leeSubagents(); });
+  $$('[data-watch-run]', strip).forEach(b => b.onclick = e => { e.stopPropagation(); leeWatchRun(b.dataset.watchRun, b.dataset.title); });
   $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
     try { const d = await post(`/agent/runs/${encodeURIComponent(btn.dataset.stopRun)}/cancel`, {}); updateAgentRunstrip({runs: (await api('/agent/runs')).runs}); status(d.state, 'ok'); }
@@ -241,8 +242,9 @@ function subagentRunRow(r) {
     `<strong>${esc(r.question || '(no question)')}</strong>` +
     `<span>${esc(r.state)} · ${esc((r.model || '').split('/').pop())} · ` +
     `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, '0')}` +
-    `${r.steer_pending ? ' · steer queued' : ''}</span>` +
-    `<button class="lee-btn" type="button" data-steer-run>Steer</button>` +
+    `${r.inbox ? ' · message queued' : ''}</span>` +
+    `<button class="lee-btn" type="button" data-watch-run="${esc(r.id)}" data-title="${esc(r.question || r.id)}">Transcript</button>` +
+    `<button class="lee-btn" type="button" data-steer-run>Message</button>` +
     `<button class="lee-btn warn" type="button" data-stop-run="${esc(r.id)}">Stop</button></div>`;
 }
 function paintSubagents(box, d) {
@@ -267,7 +269,7 @@ function paintSubagents(box, d) {
   }).join('');
   const runs = (d.runs || []).map(subagentRunRow).join('');
   list.innerHTML = (runs ? `<section class="lee-subagent running"><header><strong>Running now</strong>` +
-      `<span>steer one and it reads you on its next tool result</span></header>${runs}</section>` : '') +
+      `<span>message one and it reads you on its next tool result</span></header>${runs}</section>` : '') +
     (cards || `<p class="lee-dim">No delegated questions in this conversation yet.</p>`);
   for (const x of d.delegations || []) {
     const host = $(`[data-calls="${CSS.escape(x.id)}"]`, list); if (!host) continue;
@@ -281,11 +283,71 @@ function paintSubagents(box, d) {
   });
   $$('[data-steer-run]', list).forEach(b => b.onclick = async () => {
     const id = b.closest('.lee-subagent-run').dataset.run;
-    const text = await textDialog('Steer this sub-agent', 'It reads this on its next tool result', ''); if (!text) return;
-    try { await post(`/agent/runs/${encodeURIComponent(id)}/steer`, {text, thread: lee.agentThread || ''}); status('steer queued for that sub-agent', 'ok'); }
+    const text = await textDialog('Message this sub-agent', 'It reads this on its next tool result', ''); if (!text) return;
+    try { const d = await post(`/agent/runs/${encodeURIComponent(id)}/steer`, {text, thread: lee.agentThread || ''}); status(d.note || 'message sent', 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
+  $$('[data-watch-run]', list).forEach(b => b.onclick = () => leeWatchRun(b.dataset.watchRun, b.dataset.title));
 }
+/* A run's transcript is a file the agent core appends to. The logs dock tails it under the `runs`
+   filter, one poll a second, until the run ends; a background command's output arrives the same way. */
+lee.watches = new Map();
+async function leeWatchRun(runId, title = '') {
+  if (!runId || lee.watches.has(runId)) { leeDock('logs'); leeLogFilter('runs'); return; }
+  const w = {since: 0, title: title || runId}; lee.watches.set(runId, w);
+  leeDock('logs'); leeLogFilter('runs'); leeLog('runs', `watching ${w.title}`, '', '');
+  const stop = $('#logstop'); if (stop && runId.startsWith('cmd_')) { stop.hidden = false; stop.dataset.run = runId; }
+  const tick = async () => {
+    if (!lee.watches.has(runId)) return;
+    if (!$('#bottomdock')?.classList.contains('dock-logs')) { w.timer = setTimeout(tick, 1000); return; }
+    try {
+      const d = await api(`/agent/runs/${encodeURIComponent(runId)}/log?since=${w.since}` + (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : ''));
+      if (d.text) { w.since = d.since; leeLog('runs', w.title, d.text.replace(/\n$/, ''), ''); }
+      if (d.done) { leeLog('runs', `${w.title} · ${d.state}`, '', ''); return leeWatchStop(runId); }
+    } catch (e) { leeLog('runs', `${w.title} · ${e.message || e}`, '', 'err'); return leeWatchStop(runId); }
+    w.timer = setTimeout(tick, 1000);
+  };
+  tick();
+}
+async function leeWatchStop(runId = '') {
+  const stop = $('#logstop'), id = runId || stop?.dataset.run || '';
+  if (!runId && id.startsWith('cmd_')) {
+    try { const d = await post(`/agent/shell/${encodeURIComponent(id)}/stop` + (lee.agentThread ? '?thread=' + encodeURIComponent(lee.agentThread) : ''), {}); status(`${id} ${d.state}`, 'ok'); }
+    catch (e) { status(e.message || String(e), 'err'); }
+  }
+  const w = lee.watches.get(id); if (w) { clearTimeout(w.timer); lee.watches.delete(id); }
+  if (stop && stop.dataset.run === id) { stop.hidden = true; delete stop.dataset.run; }
+}
+window.leeWatchRun = leeWatchRun; window.leeWatchStop = leeWatchStop;
+/* A delegation that finished while nobody was asking: painted when it lands, and carried into the
+   next turn by the agent core itself. */
+function backgroundCard(log, d) {
+  const el = document.createElement('section'); el.className = `lee-agent-background ${esc(d.state || '')}`;
+  el.innerHTML = `<header><strong>Background result</strong><span>${esc(d.id || '')} · ${esc(d.state || '')}</span></header>` +
+    `<p>${esc(d.question || '')}</p><pre>${esc(d.answer || '')}</pre>` +
+    `<button class="lee-btn" type="button" data-watch-run="${esc(d.id || '')}">Transcript</button>`;
+  $('[data-watch-run]', el).onclick = () => leeWatchRun(d.id, d.question || d.id);
+  (log || $('#agentlog'))?.appendChild(el); stickAgentLog(log || $('#agentlog'));
+}
+async function leeApprovalRules() {
+  const url = () => '/agent/approval/rules' + (lee.agentThread ? '?thread=' + encodeURIComponent(lee.agentThread) : '');
+  let d; try { d = await api(url()); } catch (e) { return status(e.message || String(e), 'err'); }
+  const box = modal(`<div class="lee-mhead">Approval rules<span class="sub">calls that run without asking · ${esc(d.path || 'this session only')}</span></div>` +
+    `<div class="lee-rule-list"></div>`, null, null, {className: 'lee-rules-modal', storageKey: 'approvalrules'});
+  const paint = rules => {
+    $('.lee-rule-list', box).innerHTML = rules.length ? rules.map(([tool, pat, verdict]) =>
+      `<div class="lee-rule ${esc(verdict)}"><code>${esc(tool)}</code><span>${esc(pat)}</span><em>${esc(verdict)}</em>` +
+      `<button class="lee-btn warn" type="button" data-rule="${esc(JSON.stringify([tool, pat, verdict]))}">Remove</button></div>`).join('')
+      : `<p class="lee-dim">No saved rules. Always allow on an approval card adds one.</p>`;
+    $$('[data-rule]', box).forEach(b => b.onclick = async () => {
+      try { paint((await post('/agent/approval/rules/delete', {rule: JSON.parse(b.dataset.rule), thread: lee.agentThread || ''})).rules || []); }
+      catch (e) { status(e.message || String(e), 'err'); }
+    });
+  };
+  paint(d.rules || []);
+}
+window.leeApprovalRules = leeApprovalRules;
+
 async function leeSubagents(actionId = '') {
   const url = () => '/agent/subagents?action_id=' + encodeURIComponent(actionId) +
     (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : '');

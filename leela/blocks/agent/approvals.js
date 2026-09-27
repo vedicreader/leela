@@ -143,6 +143,7 @@ function showApproval(a, destination = null) {
     `<option value="until_write">Allow reads, pause before changes</option><option value="reads">Allow read-only tools</option>` +
     `<option value="until_failure">Continue until a tool fails</option><option value="completion">Continue until finished</option>` +
     `<option value="approve_session">Trust changes for this session</option></select></label>` +
+    `<button class="lee-btn" data-always title="run it, and save this command or path so it never asks again">Always allow</button>` +
     `<button class="lee-btn go" data-ok="1">Run this tool</button></footer>`;
   const raw = $('[data-args]', card); raw.value = JSON.stringify(a.args || {}, null, 2); mountProposalEditors(card);
   const switchTab = name => {
@@ -168,7 +169,7 @@ function showApproval(a, destination = null) {
     }
     return proposalArgs(card);
   };
-  const answer = async ok => {
+  const answer = async (ok, always = false) => {
     const buttons = $$('button', card), error = $('.lee-proposal-error', card);
     // Two different HITL decisions, not one form with a boolean. Approval executes the displayed
     // call, so it must parse and validate edits. Rejection executes no call, so malformed or
@@ -190,7 +191,8 @@ function showApproval(a, destination = null) {
           await post('/agent/run-policy', {policy, count: Number(count || 1)});
       }
       const session = ok && $('[data-run-policy]', card).value === 'approve_session';
-      await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''});
+      if (always) await post('/agent/approval/always', {id: a.id, tool, args, thread: lee.agentThread || ''});
+      else await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''});
       card.classList.remove('proposed'); card.classList.add(ok ? 'running' : 'refused'); if (changed) card.classList.add('edited');
       const checkpointState = $('.lee-checkpoint-title small', card);
       if (checkpointState) checkpointState.textContent = ok
@@ -210,6 +212,7 @@ function showApproval(a, destination = null) {
   };
   $('[data-ok="1"]', card).onclick = () => answer(true);
   $('[data-ok="0"]', card).onclick = () => answer(false);
+  $('[data-always]', card).onclick = () => answer(true, true);
   card.onkeydown = e => {
     if (e.target.matches('input, textarea, select') && e.key !== 'Escape' && !(e.key === 'Enter' && (e.metaKey || e.ctrlKey))) return;
     if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); answer(false); }

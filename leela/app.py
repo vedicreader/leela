@@ -522,6 +522,7 @@ def _log_panel():
             Button('history', cls='lee-logfilter', data_log_filter='history', onclick='leeLogFilter("history")'),
             Button('runs', cls='lee-logfilter', data_log_filter='runs', onclick='leeLogFilter("runs")'),
             Span(cls='lee-spacer'),
+            Button('stop', id='logstop', cls='lee-icon', hidden=True, title='stop the command being tailed', onclick='leeWatchStop()'),
             Button('copy', cls='lee-icon', title='copy the visible log', onclick='leeLogCopy()'),
             Button('clear', cls='lee-icon', title='clear the log', onclick='leeLogClear()'),
             cls='lee-phead'),
@@ -604,6 +605,7 @@ def _agent_panel(ws):
     completion_model = ws.completion_model or _env('MODEL_COMPLETION') or 'gpt-4.1'
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())
     control = getattr(ws.approvals, 'control', 'guided')
+    edits = getattr(ws.approvals, 'mode', '') == 'edits'
     welcome = None if has_state else Div(
         Strong('Set up this workspace agent'),
         Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),
@@ -655,12 +657,13 @@ def _agent_panel(ws):
             Div(Div(Select(Option('loading…', value=agent_model), id='agentmodel',
                            cls='lee-select lee-composer-model', onchange='leeAgentModel("agent", this.value)',
                            aria_label='conversation model', title=JOB_HELP['turn']),
-                    Select(Option('autopilot', value='autopilot', selected=control == 'autopilot'),
+                    Select(Option('autopilot', value='autopilot', selected=control == 'autopilot' and not edits),
                            Option('guided', value='guided', selected=control == 'guided'),
                            Option('directed', value='directed', selected=control == 'directed'),
+                           Option('edits', value='edits', selected=edits),
                            id='agentcontrol', cls='lee-select lee-composer-control',
                            onchange='leeAgentControl(this.value)', aria_label='agent mode',
-                           title='autopilot: writes pause · guided: writes and network pause · directed: every tool pauses'),
+                           title='autopilot: writes pause · guided: writes and network pause · directed: every tool pauses · edits: file and notebook edits run, the rest pause'),
                     Select(Option('automatic reasoning', value='auto'), Option('low reasoning', value='low'),
                            Option('medium reasoning', value='medium'), Option('high reasoning', value='high'),
                            id='agentreasoning', cls='lee-select lee-composer-reasoning',
@@ -730,6 +733,8 @@ def _agent_panel(ws):
                               cls='lee-check-setting'),
                         Button('+ model',type='button',cls='lee-btn',onclick='leeAddModel()',
                                title='save a Hugging Face repo or hosted API model'),
+                        Button('approval rules',type='button',cls='lee-btn',onclick='leeApprovalRules()',
+                               title='the calls that run without asking, saved by Always allow'),
                         cls='lee-routing-popover'), cls='lee-routing lee-agent-settings lee-dismissable'),
                 Button('Send', id='agentsend', cls='lee-btn go lee-composer-send',
                        onclick='sendAgent(event.shiftKey)', aria_label='Send',

@@ -6,9 +6,10 @@ import asyncio, json, os, re
 from pathlib import Path
 
 from fasthtml.common import JSONResponse, StreamingResponse
-from fastcore.all import L, first, ifnone
+from fastcore.all import L, atomic_save, first, ifnone
 
 from ... import errstr
+from ...agent.agent import subject
 from ...agent.core import model_note
 from ...agent.runtime import estimate_tokens
 from ...core.web import diff_payload, fail, off_loop, sse
@@ -700,16 +701,13 @@ def connect(app, ctx):
         if run is None: return _run_missing(t, run_id)
         text = str(d.get('text') or '').strip()
         if not text: return fail('nothing to say to it')
-        # the agent core carries the steer; an older one has no way to hand it over
-        if not hasattr(run, 'steer'):
-            return JSONResponse({'ok': False, 'code': 'steer_unsupported', 'thread': t.id, 'run': run_id,
-                                 'message': 'this ramabana release cannot carry a steer to a sub-agent'},
-                                status_code=501)
-        if not run.steer(text):
+        if run.terminal:
             return JSONResponse({'ok': False, 'code': 'run_over', 'thread': t.id, 'run': run_id,
                                  'message': f'that sub-agent is {run.state} and will read nothing more'},
                                 status_code=409)
-        return {'ok': True, 'thread': t.id, **run.dict()}
+        note = t.ai.tell(run_id, text)
+        if not note.startswith('told'): return fail(note)
+        return {'ok': True, 'thread': t.id, 'note': note, **run.dict()}
     @rt('/agent/subagents')
     def agent_subagents(action_id: str = '', thread: str = '', limit: int = 40):
         "One delegation: the call that asked, what its sub-agents did, and the runs still going."
@@ -821,9 +819,11 @@ def connect(app, ctx):
         d = await req.json()
         try: th = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
-        try: control = th.approvals.set_control((d.get('control') or '').strip())
+        want = (d.get('control') or '').strip()
+        try: control = th.approvals.set_control('autopilot' if want == 'edits' else want)
         except ValueError as e: return fail(e)
-        return {'ok': True, 'thread': th.id, 'control': control}
+        note = th.approvals.set_mode('edits') if want == 'edits' else (th.approvals.set_mode(ws.approvals_mode) if th.approvals.mode == 'edits' else '')
+        return {'ok': True, 'thread': th.id, 'control': want if want == 'edits' else control, 'mode': th.approvals.mode, 'note': note}
     @rt('/agent/run-policy')
     async def agent_run_policy(req):
         "Run through bounded future calls, or pause immediately after the current one."
@@ -1137,6 +1137,70 @@ def connect(app, ctx):
                           session=bool(d.get('session')), tool=tool, args=args)
         if a is None: return fail('nothing is waiting for an answer')
         return {'ok': True, 'thread': t.id, 'answer': a.dict()}
+    @rt('/agent/approval/always')
+    async def agent_approval_always(req):
+        "Save the pending call, as edited, as an allow rule, then run it."
+        d = await req.json()
+        args = d.get('args')
+        if args is not None and not isinstance(args, dict): return fail('tool arguments must be an object')
+        tool = (d.get('tool') or '').strip() or None
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        a = t.approvals.pending
+        if a is None or a.id != (d.get('id') or ''): return fail('nothing is waiting for an answer')
+        choices = {c.__name__: c for c in t.ai.tools}
+        if tool and tool not in choices: return fail(f'unknown tool {tool}')
+        if tool and args is not None:
+            import inspect
+            try: inspect.signature(choices[tool]).bind(**args)
+            except TypeError as e: return fail(f'invalid {tool} arguments: {e}')
+        name = tool or a.tool
+        rule = t.approvals.always(name, subject(name, a.args if args is None else args))
+        t.approvals.answer(a.id, True, 'always allowed', tool=tool, args=args)
+        return {'ok': True, 'thread': t.id, 'rule': rule, 'rules': t.approvals.rules}
+    @rt('/agent/approval/rules')
+    def agent_approval_rules(thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'thread': t.id, 'rules': t.approvals.rules, 'path': str(t.approvals.rules_path or '')}
+    @rt('/agent/approval/rules/delete')
+    async def agent_approval_rules_delete(req):
+        d = await req.json()
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        rules = list(t.approvals.rules)
+        try: rules.remove(tuple(d.get('rule') or ()))
+        except ValueError: return fail('no such rule')
+        if (path := t.approvals.rules_path) is not None:
+            with atomic_save(path, 'w') as f: json.dump(rules, f, indent=1)
+        for th in ws.threads.rows(): th.approvals.rules = list(rules)
+        return {'ok': True, 'thread': t.id, 'rules': rules}
+    @rt('/agent/runs/{run_id}/log')
+    def agent_run_log(run_id: str, since: int = 0, thread: str = ''):
+        "New transcript text since byte `since`: a run's log, `monitors`, or a background command's output."
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        if run_id.startswith('cmd_'):
+            try: state, text = t.ai.host.cmd_output(run_id, 0)
+            except Exception: return _run_missing(t, run_id)
+            b, done = text.encode(), state != 'running'
+        else:
+            run = None if run_id == 'monitors' else t.ai.run(run_id)
+            log = t.ai.monitors.log if run_id == 'monitors' else getattr(run, 'log', None)
+            if log is None: return _run_missing(t, run_id)
+            b, done, state = log.read_bytes() if log.exists() else b'', bool(run is not None and run.terminal), getattr(run, 'state', 'watching')
+        return {'ok': True, 'thread': t.id, 'run': run_id, 'text': b[since:].decode(errors='replace'), 'since': len(b), 'done': done, 'state': state}
+    @rt('/agent/environment')
+    def agent_environment(thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        return {'ok': True, 'thread': t.id, 'text': t.ai.host.environment()}
+    @rt('/agent/shell/{run_id}/stop')
+    def agent_shell_stop(run_id: str, thread: str = ''):
+        try: t = _thread(thread)
+        except Exception as e: return _thread_error(e)
+        try: return {'ok': True, 'thread': t.id, 'run': run_id, 'state': t.ai.host.cmd_stop(run_id)}
+        except Exception: return _run_missing(t, run_id)
     @rt('/agent/command')
     async def agent_command(req):
         "Run a slash command (`/model`, `/cost`, `/compact`, `/skills`, `/tools`, `/reload`)."

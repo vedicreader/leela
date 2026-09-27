@@ -8,9 +8,10 @@ from fastcore.all import L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
+from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed, one_line as _1, summary)
-from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, MemoryHost, NotebookHost,
+from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost, NotebookHost,
                          SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
@@ -191,17 +192,17 @@ class Interventions(Approvals):
             (self.control == 'guided' and name in GUIDED_TOOLS))
         checkpoint = force or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, args),
-            preview=preview_for(name, args, self.host), control=self.control)
+            preview=preview_for(name, args, self.host), control=self.control,
+            run_id=getattr(current_run(), 'id', '') or '')
         if action_id: a.id = str(action_id)
         a.revision, a.branch_id, a.parent_action_id = int(revision or 0), branch_id, parent_action_id
         if self.host is not None and name in {'edit_file', 'create_file'} and args.get('path'):
             a.before = self.host.text_at(args['path'])
         self.history.append(a)
         if self.stopping: return a.resolve(False, STOP_NOTE)
+        if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
+            if (d := self.decide(name, args, ask=a)) is not None: return d
         if not checkpoint: return a.resolve(True)
-        if required and self.mode == 'auto' and self.control != 'directed': return a.resolve(True)
-        if required and self.mode == 'off':
-            return a.resolve(False, 'approval is switched off for this session')
         if self.listeners < 1:
             return a.resolve(False, 'nothing is listening for interventions, so this could not be asked')
         self.current = a
@@ -263,7 +264,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
     # Leela serves the inspector from inside the kernel process, so this holds for ipykernel too.
     concurrent = True
-    def __init__(self, ws, session=None): self.ws, self.session = ws, session
+    def __init__(self, ws, session=None): self.ws, self.session, self._bg = ws, session, {}
     #: Every group above is declared by inheritance rather than probed.
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
@@ -603,14 +604,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         "Run one command in the project, the way the user would run it in leela's terminal."
         import signal, subprocess
         if not str(command or '').strip(): return 0, ''
-        if not self.roots: raise NotImplementedError('no folder is open')
-        d = self.check(cwd) if cwd else self.check(self.project)
-        if not d.is_dir(): d = d.parent
-        new_session = os.name == 'posix'
+        d, new_session = self._cwd(cwd), os.name == 'posix'
         # The bundle's interpreter redirection is taken off: a shell command that runs python
         # would otherwise import the app's own standard library.
-        p = subprocess.Popen(str(command), shell=True, cwd=str(d), text=True, errors='replace',
-                             env=venv_env(python_for(d, session=None)),
+        p = subprocess.Popen(str(command), shell=True, cwd=str(d), text=True, errors='replace', env=self._env(d),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=new_session)
         try:
@@ -626,6 +623,37 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
     @property
     def shell_note(self):
         return f'commands run in {self.project}' if self.roots else 'no folder is open'
+    def _cwd(self, cwd=None):
+        if not self.roots: raise NotImplementedError('no folder is open')
+        d = self.check(cwd) if cwd else self.check(self.project)
+        return d if d.is_dir() else d.parent
+    def _env(self, d): return venv_env(python_for(d, session=None))
+    def run_cmd_bg(self, command, cwd=None):
+        "Start `command` in the project with its output in a log file; returns a run id."
+        import subprocess, tempfile, uuid
+        d = self._cwd(cwd)
+        log = tempfile.NamedTemporaryFile('w', prefix='leela-bg-', suffix='.log', delete=False)
+        p = subprocess.Popen(str(command), shell=True, cwd=str(d), env=self._env(d),
+                             stdout=log, stderr=subprocess.STDOUT, start_new_session=os.name == 'posix')
+        log.close()
+        rid = f'cmd_{uuid.uuid4().hex[:8]}'
+        self._bg[rid] = (p, Path(log.name))
+        return rid
+    _bg_run, cmd_output, cmd_stop = LocalHost._bg_run, LocalHost.cmd_output, LocalHost.cmd_stop
+    def close(self):
+        for rid, (p, log) in list(self._bg.items()):
+            if p.poll() is None: self.cmd_stop(rid)
+            log.unlink(missing_ok=True)
+        self._bg.clear()
+    def environment(self):
+        "This process, the project's interpreter, the live runtimes and the commands on PATH."
+        import shutil, sys
+        proj = self.project
+        lines = [f'this process: {sys.executable}; inspect_python honours {", ".join(self.scopes)}',
+                 f'project python: {python_for(proj, session=None) if proj else "no folder is open"}']
+        lines += [f"runtime: {e['name']} ({e['kind']}, pid {e.get('pid')}){' current' if e.get('current') else ''}" for e in self.ws.envs()]
+        lines += [f'{c}: {shutil.which(c) or "not on PATH"}' for c in ('python', 'uv', 'git', 'rg', 'ffmpeg')]
+        return '\n'.join(lines)
     @property
     def approvals(self): return getattr(self.ws, 'approvals', None)
     def note(self, text):
@@ -872,6 +900,7 @@ class Assistant(Agent):
         kwargs.setdefault('max_tool_calls', getattr(ws, 'tool_budget', 'auto'))
         kwargs.setdefault('max_steps', getattr(ws, 'step_budget', 'auto'))
         kwargs.setdefault('subagent_writes', getattr(ws, 'subagent_writes', False))
+        kwargs.setdefault('verify', getattr(ws, 'verify', ''))
         if approve is not None and kwargs.get('approvals') is None:
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface

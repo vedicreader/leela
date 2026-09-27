@@ -87,7 +87,7 @@ def tool_preview(agent, tool, args):
         path = args.get('path', '')
         before = agent.host.text_at(path)
         if before is None: raise ValueError(f'no such file: {path}')
-        return {'kind': 'diff', **diff_payload(before, apply_edits(before, edits(args.get('edits', '[]'))))}
+        return {'kind': 'diff', **diff_payload(before, apply_edits(before, edits(args.get('spec', '[]'))))}
     if tool in {'run_python', 'inspect_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
     if tool == 'inspect_var':

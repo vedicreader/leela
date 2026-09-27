@@ -980,6 +980,14 @@ kbd {
 .lee-subagent-answer > pre { max-height: 260px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--lee-fg2); white-space: pre-wrap; font: 9.5px/1.5 var(--lee-mono); }
 .lee-subagent-run { display: flex; align-items: center; gap: 8px; padding: 6px 9px; border-top: 1px solid var(--lee-border); }
 .lee-subagent-run:first-of-type { border-top: 0; }
+.lee-agent-background { margin: 6px 0; border: 1px solid var(--lee-border); border-left: 3px solid var(--lee-accent); border-radius: 6px; font-size: 11px; }
+.lee-agent-background.failed { border-left-color: var(--lee-red); }
+.lee-agent-background > header { display: flex; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--lee-border); }
+.lee-agent-background p, .lee-agent-background pre { margin: 0; padding: 6px 9px; white-space: pre-wrap; }
+.lee-rule-list { display: grid; gap: 4px; padding: 10px 12px; max-height: 60vh; overflow: auto; }
+.lee-rule { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: 1px solid var(--lee-border); border-radius: 4px; font: 400 10.5px/1.4 var(--lee-mono); }
+.lee-rule span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-rule.deny em { color: var(--lee-red); }
 .lee-subagent-run strong { flex: 1; min-width: 0; overflow: hidden; color: var(--lee-fg2); white-space: nowrap; text-overflow: ellipsis; font: 400 10.5px/1.4 var(--lee-mono); }
 .lee-subagent-run span { flex: none; color: var(--lee-fg4); font-size: 9.5px; }
 .lee-agent-run.child > span { padding-left: 10px; border-left: 1px solid var(--lee-border); }

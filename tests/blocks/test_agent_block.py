@@ -215,11 +215,8 @@ def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_pa
         assert client.post(f'/agent/runs/{run.id}/steer', json={'text': '   '}).status_code == 400
 
         r = client.post(f'/agent/runs/{run.id}/steer', json={'text': 'look in tests too'})
-        if not hasattr(run, 'steer'):    # an agent core with no way to carry it says so, once
-            assert r.status_code == 501 and r.json()['code'] == 'steer_unsupported', r.json()
-            assert 'error' not in r.json() and r.json()['message']
-            return
-        assert r.status_code == 200 and r.json()['ok'] and r.json()['steer_pending'], r.json()
+        assert r.status_code == 200 and r.json()['ok'] and r.json()['note'] == f'told {run.id}', r.json()
+        assert list(run.inbox) == ['look in tests too'], 'the agent core carries the message'
         run.finish()
         r = client.post(f'/agent/runs/{run.id}/steer', json={'text': 'too late'})
         assert r.status_code == 409 and r.json()['code'] == 'run_over', r.json()
@@ -649,4 +646,4 @@ def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
     assert 'folder-monitor' not in JOB_HELP['subagent']
     users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')
              if 'monitor' in p.read_text(encoding='utf-8') and p.name != 'monitor.py']
-    assert users == ['leela/blocks/vault/jobs.py'], f'monitor is wired now, so say so again: {users}'
+    assert users == ['leela/blocks/agent/app.py', 'leela/blocks/vault/jobs.py'], f'monitors reach the UI only through /agent/runs/monitors/log: {users}'

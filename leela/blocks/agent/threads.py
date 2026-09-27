@@ -96,8 +96,9 @@ class Thread:
     "One live conversation and every mutable object that belongs only to it."
     def __init__(self, workspace, ai=None, approvals=None, feed=None):
         from .ai import Assistant, Interventions, WRITE_TOOLS
+        from ..settings.settings import agent_cfg
         self.workspace = workspace
-        self.approvals = approvals or Interventions(tools=WRITE_TOOLS, mode=workspace.approvals_mode)
+        self.approvals = approvals or Interventions(tools=WRITE_TOOLS, mode=workspace.approvals_mode, rules_path=agent_cfg()/'approvals.json')
         self.ai = ai or Assistant(workspace, model=workspace.model, surface='agent',
             local_multimodal=workspace.local_multimodal, on_compact=workspace._compacted,
             history_name='agent', approvals=self.approvals)
@@ -106,6 +107,8 @@ class Thread:
         self.id = getattr(self.ai, 'session_id', '') or f'thread_{uuid.uuid4().hex[:12]}'
         self._stop_approvals = self.approvals.listen()
         self.feed = feed or Feed(self.id)
+        self.ai.on_watch = lambda target, log: self.feed.emit('watch', {'target': target, 'log': str(log)})
+        self.ai.on_background_done = lambda run, ans: self.feed.emit('background', {**run.dict(), 'answer': ans})
         self.runner = TurnRunner(workspace, self.feed, ai=self.ai, approvals=self.approvals, thread=self)
         self.created = self.touched = time.time(); self.title = ''; self.unread = 0
         self.opener = ''
@@ -216,10 +219,11 @@ class Threads:
         with self._lock:return self._activate(self.require(thread_id))
     def resume(self, session):
         from .ai import Assistant, Interventions, WRITE_TOOLS
+        from ..settings.settings import agent_cfg
         with self._lock:
             if session in self._rows:return self._activate(self._rows[session])
             self._room()
-            approvals = Interventions(tools=WRITE_TOOLS, mode=self.workspace.approvals_mode)
+            approvals = Interventions(tools=WRITE_TOOLS, mode=self.workspace.approvals_mode, rules_path=agent_cfg()/'approvals.json')
             source = self._rows.get(self.active_id)
             ai = Assistant(self.workspace, model=self.workspace.model, surface='agent',
                 local_multimodal=self.workspace.local_multimodal, on_compact=self.workspace._compacted,
