@@ -885,6 +885,7 @@ class Assistant(Agent):
         approve=None,
         surface='agent',
         engines=True,      # share loaded engines with the rest of the daemon; an `EngineBroker`, or False
+        warm=False,        # seed a fresh conversation with dhrona's accepted rounds
         **kwargs
     ):
         from .models import load_models
@@ -912,6 +913,8 @@ class Assistant(Agent):
         self._writes = leela_writes()
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
+        # ramabana 0.1.38 has no `warm`; when it does, this passes through and `warm_start` below goes
+        self.warm, self._warmed, self.warm_report, self.on_warm = bool(warm), False, None, None
         super().__init__(host, model=model, sp=sp, **kwargs)
         self.mark_surface()
         host.model_local = self.model_local     # a local-only api is gated on the turn model
@@ -931,9 +934,32 @@ class Assistant(Agent):
         steer = self.approvals.consume_steer()
         return f'{prompt}\n\nUser steering: {steer}'.strip() if steer else prompt
 
+    def warm_start(self):
+        "Seed a fresh chat from dhrona's rounds that bind to this conversation's tools; a resumed or opted-out one gets none."
+        if not self.warm or self._warmed: return []
+        b = self._be('turn')
+        if b.hist or getattr(b, '_resume_hist', None) is not None: return []
+        self._warmed, msgs = True, []
+        try:
+            from .warm import WARM_ROUNDS, fit_rounds, warm_messages, warm_report
+            self.tools                                    # registers Leela's toolsets before the catalog is read
+            used, skipped = fit_rounds(self._plain, model=b.spec.name, limit=WARM_ROUNDS)
+            self.warm_report = warm_report(used, skipped)
+            msgs = warm_messages(used)                    # the canonical messages, not the JSON copy
+        except Exception as e:
+            self.warm_report = {'used': [], 'skipped': [], 'problem': str(e)}
+            self.note = f'no warm start: {e}'
+        if msgs: b.resume_hist(msgs)
+        if self.on_warm: self.on_warm(self.warm_report)
+        return msgs
+
     def _prepare(self, prompt):
         if self.approvals is not None and hasattr(self.approvals, 'resume'): self.approvals.resume()
-        return super()._prepare(self._steered(prompt))
+        # before ramabana's `_prepare`, so the seeds are in turn 1's `before` checkpoint like a resumed history
+        seeded = self.warm_start() if not self._session_started else []
+        out = super()._prepare(self._steered(prompt))
+        if seeded: self._turn_plan['warm'] = [r['name'] for r in self.warm_report['used']]
+        return out
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."

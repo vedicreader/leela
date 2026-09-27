@@ -94,14 +94,14 @@ class TurnError(Exception):
 
 class Thread:
     "One live conversation and every mutable object that belongs only to it."
-    def __init__(self, workspace, ai=None, approvals=None, feed=None):
+    def __init__(self, workspace, ai=None, approvals=None, feed=None, warm=False):
         from .ai import Assistant, Interventions, WRITE_TOOLS
         from ..settings.settings import agent_cfg
         self.workspace = workspace
         self.approvals = approvals or Interventions(tools=WRITE_TOOLS, mode=workspace.approvals_mode, rules_path=agent_cfg()/'approvals.json')
         self.ai = ai or Assistant(workspace, model=workspace.model, surface='agent',
             local_multimodal=workspace.local_multimodal, on_compact=workspace._compacted,
-            history_name='agent', approvals=self.approvals)
+            history_name='agent', approvals=self.approvals, warm=warm)
         if hasattr(self.ai, 'set_model'): workspace.sync_agent_routing(self.ai)
         if hasattr(self.ai, 'host'): self.approvals.host = self.ai.host
         self.id = getattr(self.ai, 'session_id', '') or f'thread_{uuid.uuid4().hex[:12]}'
@@ -109,6 +109,7 @@ class Thread:
         self.feed = feed or Feed(self.id)
         self.ai.on_watch = lambda target, log: self.feed.emit('watch', {'target': target, 'log': str(log)})
         self.ai.on_background_done = lambda run, ans: self.feed.emit('background', {**run.dict(), 'answer': ans})
+        self.ai.on_warm = lambda report: self.feed.emit('warm', report)
         self.runner = TurnRunner(workspace, self.feed, ai=self.ai, approvals=self.approvals, thread=self)
         self.created = self.touched = time.time(); self.title = ''; self.unread = 0
         self.opener = ''
@@ -148,6 +149,7 @@ class Thread:
         return {'id': self.id, 'title': self.name(meta), 'state': self.state,
                 'created': self.created, 'touched': self.touched, 'unread': self.unread,
                 'branch': getattr(self.ai, 'current_branch_id', '') or 'main',
+                'warm': bool(getattr(self.ai, 'warm', False)),
                 'muted': bool(meta.get('muted', self.muted)), 'problem': self.mute_problem}
     def close(self):
         "Close every part, and report what refused rather than skipping the rest."
@@ -210,9 +212,10 @@ class Threads:
         if not idle: raise TurnError('no_evictable_thread', 'all six conversations are working or waiting', self.active_id)
         victim = min(idle, key=lambda row: row.touched)
         self._rows.pop(victim.id); victim.close()
-    def new(self, ai=None):
+    def new(self, ai=None, warm=False):
+        "A fresh conversation; `warm` seeds it from dhrona's rounds. `resume` never is: its history is the log's."
         with self._lock:
-            self._room(); thread = Thread(self.workspace, ai=ai)
+            self._room(); thread = Thread(self.workspace, ai=ai, warm=warm)
             self._rows[thread.id] = thread
             return self._activate(thread)
     def switch(self, thread_id):
