@@ -266,7 +266,7 @@ conflicting, reports it, and keeps that action's default. A typo cannot stop lee
 
 ```
 leela/
-  agent/          the alias seam: `leela.agent.*` is `ramabana.*`
+  agent/          the alias seam: `leela.agent.*` is `ramabana.*` (one `__init__.py`)
   core/           what every block may import
     block.py      `Ctx` (capabilities), the block contract, ordered wiring
     langs.py      the languages Leela runs, serves and highlights

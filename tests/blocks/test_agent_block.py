@@ -662,6 +662,7 @@ def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
     """`JOB_HELP` told the user the subagent model was used for folder-monitor reviews."""
     from leela.blocks.agent.models import JOB_HELP
     assert 'folder-monitor' not in JOB_HELP['subagent']
+    seam = ROOT/'leela/agent/__init__.py'      # aliases `ramabana.monitor` by name; wires nothing
     users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')
-             if 'monitor' in p.read_text(encoding='utf-8') and p.name != 'monitor.py']
+             if p != seam and 'monitor' in p.read_text(encoding='utf-8')]
     assert users == ['leela/blocks/agent/app.py', 'leela/blocks/vault/jobs.py'], f'monitors reach the UI only through /agent/runs/monitors/log: {users}'

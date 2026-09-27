@@ -110,6 +110,19 @@ def fake_agent(host=None, replies=(), **kw):
     a._be_or_none = lambda job='turn': be
     return a, be
 
+def test_leela_agent_is_one_module_aliasing_ramabana():
+    import importlib, pathlib, os, leela.agent as pkg
+    assert [p.name for p in pathlib.Path(pkg.__file__).parent.glob('*.py')] == ['__init__.py']
+    import ramabana.tools, ramabana.agent, ramabana.core, ramabana.runtime, ramabana.spec, ramabana.monitor, ramabana.testing
+    for n, m in dict(tools=ramabana.tools, agent=ramabana.agent, core=ramabana.core, runtime=ramabana.runtime,
+                     spec=ramabana.spec, monitor=ramabana.monitor, testing=ramabana.testing).items():
+        assert importlib.import_module(f'leela.agent.{n}') is m and getattr(pkg, n) is m
+    from leela.agent.tools import NO_SUB; from leela.agent import core as models; from leela.agent.agent import Agent
+    assert NO_SUB is ramabana.tools.NO_SUB and models is ramabana.core and Agent is ramabana.agent.Agent
+    os.environ['LEELA_PROBE_X'] = '1'                       # `use_env_prefix` ran: LEELA_ is read first
+    try: assert models.env('PROBE_X') == '1'
+    finally: os.environ.pop('LEELA_PROBE_X')
+
 def test_agent_package_does_not_import_leela():
     "The harness lives inside leela now, but it must still not reach back into the IDE."
     import pathlib, re
