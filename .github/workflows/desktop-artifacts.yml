@@ -94,6 +94,10 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    # macOS only for now. `ramabana[cli]` needs pyghostty, which publishes macOS wheels alone, so
+    # the install step cannot resolve on Windows. Until it does, this job may fail without failing
+    # the workflow, and the DMG still reaches the release.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

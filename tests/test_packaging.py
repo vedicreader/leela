@@ -274,6 +274,13 @@ def test_both_desktop_jobs_freeze_the_dependency_set_the_lock_names():
         assert first(job['steps'], lambda s: str(s.get('uses', '')).startswith('astral-sh/setup-uv')), \
             f'{name} has no uv, and `uv export` answers nothing without it'
 
+def test_the_windows_build_cannot_take_the_macos_release_down():
+    "pyghostty ships no Windows wheel and `ramabana[cli]` needs it, so the Windows job cannot install yet. macOS still ships."
+    import yaml
+    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
+    assert doc['jobs']['windows'].get('continue-on-error') is True
+    assert not doc['jobs']['macos'].get('continue-on-error'), 'a broken macOS build is still a failure'
+
 def test_a_missing_window_icon_is_reported_rather_than_shrugged_off(monkeypatch, capsys):
     """`_icon` answers with `first`, which is None when nothing matches."""
     import leela_app
