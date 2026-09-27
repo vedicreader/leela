@@ -1262,6 +1262,18 @@ wheels = [
 ]
 
 [[package]]
+name = "fastmux"
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastcore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/49/9468b14945380d10642612cedf10e7da5306268048120f79726d883b56cb/fastmux-0.0.2.tar.gz", hash = "sha256:bb1f147a391f97b828387f15286e58d45dde69aa23bc9d95d53ef3e5fd58ce80", size = 18295, upload-time = "2026-07-23T02:17:12.154Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/9a/ae24ddb4e6a63a6500a40fecf5891071407e011fba9ff3c4e929f2efac38/fastmux-0.0.2-py3-none-any.whl", hash = "sha256:cb504c4c1beeae77b23ce51e4c28f4419b734240c0af883dae8d99f98e4edc42", size = 18565, upload-time = "2026-07-23T02:17:11.129Z" },
+]
+
+[[package]]
 name = "fastprogress"
 version = "1.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -2343,7 +2355,7 @@ wheels = [
 
 [[package]]
 name = "koshas"
-version = "0.1.8"
+version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-grep-py" },
@@ -2353,9 +2365,9 @@ dependencies = [
     { name = "pyskills" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/21/cd4bdf0fa75da4340080c590246458f63ddc494e29e6b22cabba1fcb764d/koshas-0.1.8.tar.gz", hash = "sha256:bf2391ba1c598b8431f7aba97470670e37be824fcd3cfccc29c4281397059a28", size = 64157, upload-time = "2026-09-21T10:36:10.724Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/90/a3a65aef9308763997f36a36da6ed1383e77edef3dbd7b6c80eb30857c5e/koshas-0.1.9.tar.gz", hash = "sha256:90acbf1bcf917c6d528e47610c08b5e5e4122bcd2b6434d4a8d3479b55fcb02c", size = 64158, upload-time = "2026-09-22T23:03:54.315Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/06/28c003e3e995e268afe1bcfc7098ba9e05830375db009ead626ee6a0a16a/koshas-0.1.8-py3-none-any.whl", hash = "sha256:7bb7652049a7d7c18f7b758a3a84b94fc64e1c87ddc1065481f0a6aa29b7c461", size = 68606, upload-time = "2026-09-21T10:36:09.304Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/f4/f662a7084d3b4521b742303fe4fd85afa816dfbafb3cef3ac9a94e81c7b0/koshas-0.1.9-py3-none-any.whl", hash = "sha256:f2d47239e60fa551a2ba586f8f75e75e5a7cd9dcf3787b00cc3fad9a9ea568c1", size = 68602, upload-time = "2026-09-22T23:03:52.833Z" },
 ]
 
 [[package]]
@@ -2413,7 +2425,6 @@ dependencies = [
     { name = "numpy" },
     { name = "orjson" },
     { name = "packaging" },
-    { name = "ptymini" },
     { name = "pullup" },
     { name = "pyright" },
     { name = "python-dotenv" },
@@ -2493,18 +2504,17 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "orjson", specifier = ">=3.9" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "ptymini", specifier = ">=0.0.5" },
     { name = "pullup", specifier = ">=0.0.6" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.1.34" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.1.38" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.38" },
-    { name = "shalya", specifier = ">=0.0.9" },
+    { name = "shalya", specifier = ">=0.0.11" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "vishalakshi", specifier = ">=0.1.15" },
@@ -4659,7 +4669,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.1.34"
+version = "0.1.38"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -4682,14 +4692,15 @@ dependencies = [
     { name = "uraiyadal" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0c/11/3c12fb022f02568dfe38c61a1869a8d10ff699e822a39f7dc9c58325772a/ramabana-0.1.34.tar.gz", hash = "sha256:ce392c5fc546d09bcf4e39651b79e24ef2c02d5a610222ee6407e5633b31c494", size = 185721, upload-time = "2026-09-21T10:26:25.044Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/7e/c0bf1b3f8f2f9646f292c2f0f9d5111b10c756115f66a31620bcec378413/ramabana-0.1.38.tar.gz", hash = "sha256:8131ebc516593950d2af7b36bc25dd88fe4391f98afa8323fc9a9a5987f61500", size = 195126, upload-time = "2026-09-23T00:33:47.872Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/c5/1a5c12722a4e2608826af05867b6118f4971fdff56f564cc6bc524ad8f3c/ramabana-0.1.34-py3-none-any.whl", hash = "sha256:7f695972bc8dc0b96c69285de6c483b281fb92c0d7537aada0ed3f775bb35b28", size = 196822, upload-time = "2026-09-21T10:26:23.622Z" },
+    { url = "https://files.pythonhosted.org/packages/25/1e/2093db5fa4e12a217944d308ede2a837308904e6b7469c05bf139f5559ec/ramabana-0.1.38-py3-none-any.whl", hash = "sha256:0e34611edcc27c0622530b18034c7a26bbae275146059607f51169941d190375", size = 206232, upload-time = "2026-09-23T00:33:46.459Z" },
 ]
 
 [package.optional-dependencies]
 cli = [
     { name = "pyghostty" },
+    { name = "shalya", extra = ["tmux"] },
     { name = "teleprint" },
 ]
 
@@ -5245,7 +5256,7 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.0.9"
+version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -5258,9 +5269,14 @@ dependencies = [
     { name = "litesearch" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/ba/c2ca2abf13044d4b187bf064dff4bb202611db58cdfa938032006197b7f5/shalya-0.0.9.tar.gz", hash = "sha256:de104e7a786f7d4274a97e21e85865a35b4293bd95042efd0facd25d8db1ea40", size = 43491, upload-time = "2026-09-21T10:48:05.276Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/75/235f973f9b308011e14786b15357f71bb6b8bdc978a018fb7bcc211fe85f/shalya-0.0.11.tar.gz", hash = "sha256:4b5224ef72a154890e0dc13ffc2b95f65b8cc667fa288a8a3bff09c9e0febdf6", size = 47841, upload-time = "2026-09-23T00:31:25.819Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/e9/db29e345643a1972bccdd17168889c22e6d913756d135020edcd4c9c8bf5/shalya-0.0.9-py3-none-any.whl", hash = "sha256:a7a027ab6faf27533d7567ccb0bb95574fa3f8cd413a67d96eb16c8b30f70d8b", size = 46882, upload-time = "2026-09-21T10:48:04.04Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/5b/5807ca1cfd182109eca97d42940dc27c2abaf72ddb6c113883dfbbbfc060/shalya-0.0.11-py3-none-any.whl", hash = "sha256:1984c68e17d8dbc19cfb38c3c02b2838048550b5a84198dbb46b76416819db4d", size = 51216, upload-time = "2026-09-23T00:31:24.619Z" },
+]
+
+[package.optional-dependencies]
+tmux = [
+    { name = "fastmux" },
 ]
 
 [[package]]
@@ -5808,7 +5824,7 @@ wheels = [
 
 [[package]]
 name = "vishalakshi"
-version = "0.1.15"
+version = "0.1.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -5827,9 +5843,9 @@ dependencies = [
     { name = "varga" },
     { name = "vruksha" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/20/99/cfc9ca7e7b0da344ba0b0ed0da70b71b22f58410746f6f65956b6bdb35bb/vishalakshi-0.1.15.tar.gz", hash = "sha256:8b4c8a3165d8867e4642e4985289c71000a3825b957c16d90f067be2de1cf845", size = 72822, upload-time = "2026-09-21T10:23:28.75Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/c3/7f478db4b6fbbe5eb447be8fbf931a97368e50f52aff212fbd382999eb8d/vishalakshi-0.1.16.tar.gz", hash = "sha256:69d9316cd37f10432b69392d3d6f4ac34de71ce97e261e865783def660940f7d", size = 72914, upload-time = "2026-09-22T23:02:57.413Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/56/5fc31a7040efc10316d39db33a8c2b3df0ea8e649e942432a4b829ac66b8/vishalakshi-0.1.15-py3-none-any.whl", hash = "sha256:df5fd40d60480790cc3464fe772acd42ad5503565ae5092c0b666b79b974a8a5", size = 80459, upload-time = "2026-09-21T10:23:27.607Z" },
+    { url = "https://files.pythonhosted.org/packages/58/4d/313776b3bd78804f8ae5cc589dd0ab9a52deb0008786a65a35a742944269/vishalakshi-0.1.16-py3-none-any.whl", hash = "sha256:7eacfecc3e1d6a72187e48afd77928816011a0d3749b4602f635ab1d91377672", size = 80544, upload-time = "2026-09-22T23:02:55.75Z" },
 ]
 
 [[package]]
