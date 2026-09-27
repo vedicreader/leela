@@ -35,18 +35,17 @@ Leela constructs one: `Agent` resolves the model for each routed job itself, fro
 
 ## dhrona warm starts
 
-`Assistant(warm=True)` seeds a fresh conversation from dhrona's accepted rounds. The seam is
-`Assistant._prepare`: it calls `Assistant.warm_start` before `Agent._prepare`, handing the replayed
-messages to the backend through `resume_hist`, the path a resumed session takes. On a backend that is
-already running they are in place when ramabana snapshots turn 1's `before` checkpoint; on one that
-starts lazily they are restored at `start()`, after the snapshot, so a fork or rollback to turn 1
-restores an empty history -- exactly as it does for `resume_session`. The seeded turn's `plan.warm`
-names the rounds. A resumed conversation gets none, by the same `hist` / `_resume_hist` guard.
-`blocks/agent/warm.py` holds the dhrona calls -- `fit_rounds` (used, and skipped with a reason),
-`assess_session`, `capture_round`, `accept_round` -- and imports dhrona lazily, so a missing package
-is a note in the pane, not a failed turn. When ramabana takes `warm=` itself, `Assistant.warm_start`
-and the line in `_prepare` go, `warm` passes through to `Agent.__init__`, and `warm_report` stays:
-the pane and the routes read nothing else.
+`Assistant(warm=True)` passes `warm=` through to `Agent.__init__`; the warm start is ramabana's.
+Its `_prepare` calls `warm_start()` before turn 1's `before` checkpoint, fits dhrona's accepted rounds
+to `_plain` (`dhrona.core.fit_rounds`), hands the replayed messages to the backend through
+`resume_hist`, sets `plan.warm` to the rounds used, and fires `on_warm(report)` with the used and
+skipped rows. It seeds only when the model's window admits inlined skills (`budget.inline`), so a
+small local model starts cold with a note, and a resumed conversation gets none. Leela's part is the
+transcript block: `Thread._warmed` is the `on_warm` hook, `blocks/agent/warm.py` `with_messages`
+reads each used round back from the library and adds its messages to the report, and
+`/agent/thread/turns` returns that report (or `null` for a cold conversation). `warm.py` also holds
+`assess_session`, `capture_round` and `accept_round`, importing dhrona lazily so a missing package is
+a note in the pane, not a failed turn.
 
 `capture` writes the review notebook to `<first root>/.dhrona/<name>.ipynb`, and `accept` -- which
 takes only a notebook under that folder -- writes the compiled `<name>.json` beside it before

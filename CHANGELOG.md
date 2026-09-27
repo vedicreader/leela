@@ -2,6 +2,23 @@
 
 <!-- do not remove -->
 
+## 0.1.5
+
+Needs ramabana 0.2.0 (pinned), shalya 0.1.0, vishalakshi 0.1.17, dhrona 0.1.4, rishi 0.1.38.
+
+- The tool set is shalya 0.1.0's: `replace_text(path, edits)` and `edit_cell(path, cell_id, edits)` take a list of `{oldText, newText}` (a JSON string still parses this release), `ls` lists files, `inspect_python('')` reads the live namespace, `remember(key=)` upserts a note, and one `watch(kind='url'|'remind'|'search'|'folder')` replaces the watch, reminder and folder-watch tools. `edit_file` (hash-addressed edits) and `research` are opt-ins.
+- Leela's own `inspect_var`, `search_all` and `api_access` are gone: `inspect_python`, `search_code` and the API paragraph of the briefing carry what they did. `user_steering` is dispatchable after a refused call and never offered, briefed, or shown in a form.
+- The default workspace briefs 46 tools (was 77 of a backend list of 81); a sub-agent gets 42 (was 70). Canvas tools appear only while a canvas is open (+8) and news tools only while the workspace follows a feed (+6); the live backend is re-briefed at the next turn when either changes, and only then.
+- Opt-ins per conversation: **research** and **exhash** toggles beside **warm** give the next new conversation shalya's slow `research` tool or `edit_file` plus the exhash skill; the settings pane holds the workspace default (`agent_optin`), and a browser's own toggle overrides it. A conversation's opt-ins survive eviction and resume, and its row wears them like `·warm`.
+- Warm starts are ramabana's `Agent(warm=)`. The pane's toggle, the transcript block (with each replayed message) and assess / capture / accept are unchanged; a cold or resumed conversation gets no seeds. ramabana seeds only a model whose window admits inlined skills, so a small local model (about 24k context or less) starts cold with a note.
+- Checkpoint forms edit list arguments (`edits`, `commands`, `items`, `questions`) as JSON with the error on the field; previews diff `edits` for `replace_text` and, per cell, `edit_cell`; activity rows print list arguments; Undo covers `replace_text` and `edit_cell`.
+- Git in the agent pane: `git_commit`, `git_checkout`, `git_stash` and `git_remote` are briefed and go through the same approval as any write; `run_shell` refuses `git commit|push|pull|fetch|stash|switch|checkout` and names the tool. The turn card shows the git writes with their undo tokens, and **Restore files** undoes them first, then the files — refusing, and touching nothing, when HEAD or the branch moved after the turn or a file changed since. A partial undo says what it undid.
+- The approval queue carries ramabana's repeat guard: the third identical gated call in a row is put to the person whatever the mode or run policy, and a read between neither counts nor resets. A folder watch opened by `watch(kind='folder')` reaches the harness's monitors.
+- `ask_memory` picks its own policy (local when a local runtime exists, else redact); the vault PII setting governs retrieval only. The host remembers by `key`, answers `exists`, and `delete`s only inside the writable roots.
+- `leela.agent` is one module: `leela.agent.X` is `ramabana.X`, aliased in `__init__`.
+- The exhash skill is inlined only when it is discoverable on the machine (a skills directory holding it) and `edit_file` is offered.
+- Tests: `pytest-timeout` bounds every test (300 s) and approvals default to a 2 s wait under pytest. `tests/fakemodel.py` gains `WIDE`, a 128k scripted window.
+
 ## 0.1.4
 
 Needs ramabana 0.1.42, rishi 0.1.38, shalya 0.0.11 (below 0.1), dhrona 0.1.4, koshas 0.1.8, vishalakshi 0.1.15.
