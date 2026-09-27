@@ -197,7 +197,7 @@ class Interventions(Approvals):
             run_id=getattr(current_run(), 'id', '') or '')
         if action_id: a.id = str(action_id)
         a.revision, a.branch_id, a.parent_action_id = int(revision or 0), branch_id, parent_action_id
-        if self.host is not None and name in {'edit_file', 'create_file'} and args.get('path'):
+        if self.host is not None and name in {'edit_file', 'create_file', 'replace_text', 'edit_cell'} and args.get('path'):
             a.before = self.host.text_at(args['path'])
         self.history.append(a)
         if self.stopping: return a.resolve(False, STOP_NOTE)
@@ -1078,7 +1078,8 @@ class _PolicyApprovals(Approvals):
     def __init__(self, approve):
         super().__init__(tools=WRITE_TOOLS, mode='ask')
         self._approve = approve
-    def request(self, name, args):
+    def request(self, name, args, force=False, timeout=None):
+        "`force` and `timeout` are the base signature's; a plain policy answers at once either way."
         a = Ask(tool=name, args=args, summary=_summary(name, args), preview=preview_for(name, args))
         self.history.append(a)
         try: ok = self._approve({'function': {'name': name, 'arguments': args}})

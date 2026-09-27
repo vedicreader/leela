@@ -89,6 +89,12 @@ def test_the_tools_leela_adds_are_the_ones_it_labels_itself():
     assert set(LEELA_TOOLS) == built, (f'only in the table: {set(LEELA_TOOLS) - built}; '
                                       f'only built: {built - set(LEELA_TOOLS)}')
 
+def test_the_undo_button_and_the_json_field_follow_the_new_dialect():
+    js = (ROOT/'leela/blocks/agent/approvals.js').read_text()
+    assert "['edit_file', 'create_file', 'replace_text', 'edit_cell']" in js and "field.kind === 'json'" in js and 'JSON.parse' in js
+    core = (ROOT/'leela/static/js/core.js').read_text()
+    assert 'JSON.stringify(value)' in core and 'list_files' not in core
+
 def test_the_tool_tables_have_one_home():
     """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`."""
     import ast

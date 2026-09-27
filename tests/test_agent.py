@@ -2091,6 +2091,50 @@ def test_the_browser_previews_an_exact_text_edit_as_a_diff_without_writing_it(pr
     assert preview['kind'] == 'diff'
     assert open(path).read() == 'value = 1\n'
 
+def test_the_browser_previews_native_edits_and_the_old_string_still(project):
+    from leela.blocks.agent.turns import tool_preview
+    path = project.roots[0] + '/src/app.py'
+    es = [{'oldText': 'value = 1', 'newText': 'value = 2'}]
+    assert tool_preview(project.ws.ai, 'replace_text', {'path': path, 'edits': es})['kind'] == 'diff'
+    assert tool_preview(project.ws.ai, 'replace_text', {'path': path, 'edits': json.dumps(es)})['kind'] == 'diff'
+    assert tool_preview(project.ws.ai, 'replace_text', {'path': path, 'spec': json.dumps(es)})['text'] == 'no edits given'
+    from exhash import lnhash
+    assert tool_preview(project.ws.ai, 'edit_file', {'path': path, 'commands': [[lnhash(1, 'value = 1'), 's', 'value = 1', 'value = 3']]})['kind'] == 'patch'
+    assert open(path).read() == 'value = 1\n'
+
+def test_edit_cell_previews_as_a_diff_of_the_cell(tmp_path):
+    from leela.blocks.agent.turns import tool_preview
+    nb = tmp_path/'n.ipynb'
+    nb.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
+        {'id': 'c1', 'cell_type': 'code', 'metadata': {}, 'execution_count': None, 'outputs': [], 'source': ['x = 1\n']}]}))
+    ws = Workspace(roots=[tmp_path])
+    d = tool_preview(ws.ai, 'edit_cell', {'path': str(nb), 'cell_id': 'c1', 'edits': [{'oldText': 'x = 1', 'newText': 'x = 2'}]})
+    assert d['kind'] == 'diff' and 'x = 2' in json.dumps(d['rows']) and 'nbformat' not in json.dumps(d['rows'])
+    old = tool_preview(ws.ai, 'edit_cell', {'path': str(nb), 'cell_id': 'c1', 'source': 'x = 3\n'})
+    assert old['kind'] == 'code' and old['text'] == 'x = 3\n'
+
+def test_tool_schemas_name_list_fields_as_json(tmp_path):
+    from leela.blocks.agent.turns import tool_schemas
+    rows = {r['name']: r for r in tool_schemas(Workspace(roots=[tmp_path]).ai)}
+    f = {x['name']: x for x in rows['replace_text']['fields']}
+    assert f['edits']['kind'] == 'json' and f['edits']['multiline'] and f['path']['kind'] == 'string'
+    assert {x['name']: x['kind'] for x in rows['set_plan']['fields']}['items'] == 'json'
+    assert {x['name']: x['kind'] for x in rows['delegate_search']['fields']}['questions'] == 'json'
+    assert {x['name']: x['kind'] for x in rows['ls']['fields']}['recursive'] == 'boolean'
+    json.dumps(rows)
+
+def test_a_policy_approvals_takes_force_and_timeout():
+    from leela.blocks.agent.ai import _PolicyApprovals
+    ap = _PolicyApprovals(lambda tc: True)
+    assert ap.request('replace_text', {'path': 'a.py', 'edits': []}, force=True, timeout=1)
+
+def test_a_saved_rule_for_a_leela_tool_survives_the_prune(tmp_path):
+    p = tmp_path/'approvals.json'; p.write_text(json.dumps([['news_follow', '*', 'allow'], ['remember_note', '*', 'allow']]))
+    from leela.blocks.agent.ai import Interventions, WRITE_TOOLS
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', rules_path=p); ap.prune()
+    rules = [tuple(r) for r in ap.rules]
+    assert ('news_follow', '*', 'allow') in rules and not [r for r in rules if r[0] == 'remember_note']
+
 def test_the_browser_previews_a_command_as_a_command(project):
     from leela.blocks.agent.turns import tool_preview as _tool_preview
     p = _tool_preview(project.ws.ai, 'run_shell', {'command': 'pytest -q'})

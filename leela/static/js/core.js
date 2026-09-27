@@ -411,7 +411,7 @@ function portableToolKind(tool) {
   return 'tool';
 }
 function portableToolSummary(tool, args) {
-  const a = args || {}, short = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const a = args || {}, short = value => (typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value || '')).replace(/\s+/g, ' ').trim();
   if (tool === 'search_code') return `Search code · ${short(a.query).slice(0, 92)}`;
   if (tool === 'view_file') {
     const range = a.start || a.end ? `:${a.start || 1}–${a.end || 'end'}` : '';

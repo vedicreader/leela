@@ -80,14 +80,18 @@ def tool_preview(agent, tool, args):
         path = args.get('path', '')
         before = agent.host.text_at(path)
         if before is None: raise ValueError(f'no such file: {path}')
-        result = exhash(before, cmds(args.get('commands', '[]')))
+        result = exhash(before, cmds(args.get('commands') or []))
         return {'kind': 'patch', 'text': str(result)}
-    if tool == 'replace_text':
+    if tool == 'replace_text' or (tool == 'edit_cell' and 'edits' in args):
         from shalya.core import apply_edits, edits
+        es = edits(args.get('edits') or [])
+        if not es: return {'kind': 'code', 'text': 'no edits given'}
         path = args.get('path', '')
-        before = agent.host.text_at(path)
-        if before is None: raise ValueError(f'no such file: {path}')
-        return {'kind': 'diff', **diff_payload(before, apply_edits(before, edits(args.get('spec', '[]'))))}
+        if tool == 'edit_cell': before = agent.host.nb_cell(path, args.get('cell_id', ''))[2]
+        else:
+            before = agent.host.text_at(path)
+            if before is None: raise ValueError(f'no such file: {path}')
+        return {'kind': 'diff', **diff_payload(before, apply_edits(before, es))}
     if tool in {'run_python', 'inspect_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
     if tool == 'run_cell':
@@ -120,7 +124,7 @@ def tool_group(name):
 
 def tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms, over what the model is offered; callable validation remains authoritative."
-    import inspect
+    import inspect, typing
     from .ai import WRITE_TOOLS
     out = []
     for tool in agent._plain:
@@ -128,12 +132,12 @@ def tool_schemas(agent):
         fields = []
         for name, p in sig.parameters.items():
             ann = p.annotation
-            kind = ('boolean' if ann is bool else 'integer' if ann is int else
-                    'number' if ann is float else 'string')
+            kind = ('boolean' if ann is bool else 'integer' if ann is int else 'number' if ann is float else
+                    'json' if ann in (list, dict) or typing.get_origin(ann) in (list, dict) else 'string')
+            default = None if p.default is inspect.Parameter.empty else p.default
             fields.append({'name': name, 'kind': kind, 'required': p.default is inspect.Parameter.empty,
-                           'default': None if p.default is inspect.Parameter.empty else p.default,
-                           'multiline': name in {'code', 'text', 'commands', 'edits', 'source',
-                                                 'questions', 'command'}})
+                           'default': json.dumps(default) if kind == 'json' and default is not None else default,
+                           'multiline': kind == 'json' or name in {'code', 'text', 'source', 'command'}})
         out.append({'name': tool.__name__, 'description': (inspect.getdoc(tool) or '').split('\n')[0],
                     'changes_state': tool.__name__ in WRITE_TOOLS,
                     'retryable': tool.__name__ not in WRITE_TOOLS,

@@ -27,6 +27,10 @@ function proposalArgs(card) {
       if (!field.required && raw === '') continue;
       if (field.kind === 'integer') args[field.name] = Number.parseInt(raw, 10);
       else if (field.kind === 'number') args[field.name] = Number.parseFloat(raw);
+      else if (field.kind === 'json') {
+        try { args[field.name] = JSON.parse(raw); }
+        catch (e) { throw new Error(`${field.name} must be JSON: ${e.message}`); }
+      }
       else args[field.name] = raw;
       if (field.required && (args[field.name] === '' || Number.isNaN(args[field.name])))
         throw new Error(`${field.name} is required`);
@@ -36,7 +40,8 @@ function proposalArgs(card) {
 }
 function proposalFields(schema, args) {
   return (schema?.fields || []).map(field => {
-    const value = args[field.name] ?? field.default ?? '', required = field.required ? ' required' : '';
+    const raw = args[field.name] ?? field.default ?? '', required = field.required ? ' required' : '';
+    const value = typeof raw === 'object' && raw !== null ? JSON.stringify(raw, null, 2) : raw;
     if (field.kind === 'boolean')
       return `<label class="lee-proposal-check"><input type="checkbox" data-field="${esc(field.name)}"${value ? ' checked' : ''}>${esc(field.name)}</label>`;
     const type = field.kind === 'integer' || field.kind === 'number' ? 'number' : 'text';
@@ -50,7 +55,8 @@ function mountProposalEditors(card) {
   $$('[data-field-editor], .lee-proposal-field-editor', card).forEach(host => {
     if (host._leeView) return;
     const field = host.dataset.field || '', tool = $('[data-tool]', card)?.value || '';
-    const lang = field === 'commands' ? 'json' : field === 'text' || field === 'source'
+    const kind = (card._schema?.fields || []).find(f => f.name === field)?.kind;
+    const lang = kind === 'json' ? 'json' : field === 'text' || field === 'source'
       ? codeLang('', proposalArgsSafe(card).path || '') : tool.includes('python') ? 'python' : 'text';
     host._leeView = createEditor(host, {doc: host.dataset.value || '', lang, lineNums: true});
   });
@@ -203,7 +209,7 @@ function showApproval(a, destination = null) {
       card.dataset.retryable = String(!!byName.get(resolvedTool)?.retryable);
       $('.lee-approval-actions', card).innerHTML = `<span>${ok ? (changed ? 'Edited call is running' : 'Running approved tool') : (note ? 'Not run · your direction was sent to the agent' : 'Not run')}</span>` +
         (ok && card.dataset.retryable === 'true' ? `<button class="lee-btn" data-retry title="Run this read-only tool again without changing the conversation">Run again</button>` : '') +
-        (ok && ['edit_file','create_file'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
+        (ok && ['edit_file', 'create_file', 'replace_text', 'edit_cell'].includes(resolvedTool) ? `<button class="lee-btn warn" data-rollback disabled>Undo file change</button>` : '');
       $('[data-retry]', card)?.addEventListener('click', () => retryProposal(card, resolvedTool, args));
       const rollback = $('[data-rollback]', card);
       if (rollback) { setTimeout(() => rollback.disabled = false, 700); rollback.onclick = () => rollbackProposal(card, a.id); }
