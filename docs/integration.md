@@ -33,6 +33,19 @@ the retrieval that answers well for one answers badly for the other.
 `ramabana.runtime.Backend` is the model session, and `leela.agent.runtime` aliases it. Nothing in
 Leela constructs one: `Agent` resolves the model for each routed job itself, from `Routing`.
 
+## dhrona warm starts
+
+`Assistant(warm=True)` seeds a fresh conversation from dhrona's accepted rounds. The seam is
+`Assistant._prepare`: it calls `Assistant.warm_start` before `Agent._prepare`, so the replayed
+messages are in the backend (`resume_hist`, the path a resumed session takes) when ramabana snapshots
+turn 1's `before` checkpoint, and the seeded turn's `plan.warm` names the rounds. A resumed
+conversation gets none, by the same `hist` / `_resume_hist` guard. `blocks/agent/warm.py` holds the
+dhrona calls -- `fit_rounds` (used, and skipped with a reason), `assess_session`, `capture_round`,
+`accept_round` -- and imports dhrona lazily, so a missing package is a note in the pane, not a
+failed turn. When ramabana takes `warm=` itself, `Assistant.warm_start` and the line in `_prepare`
+go, `warm` passes through to `Agent.__init__`, and `warm_report` stays: the pane and the routes read
+nothing else.
+
 ## Adding to the host
 
 1. Declare the group by inheriting shalya's class for it, and implement every method it names.

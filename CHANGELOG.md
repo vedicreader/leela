@@ -16,6 +16,8 @@ Needs ramabana 0.1.34, rishi 0.1.38, shalya 0.0.9, koshas 0.1.8, vishalakshi 0.1
 - `Memory.poll` builds the typed graph only when online; an offline vault polls its reminders without a model.
 - `KernelPool.close_all` cancels kernels still starting and gives up after a bound. Leaving a workspace could hang on a kernel that never came up; so could the suite.
 - `test_canvas` stays on one xdist worker (`--dist loadgroup`). `uv.lock` re-resolved.
+- Agent pane: a **warm** toggle seeds the next new conversation from dhrona's reviewed rounds, a collapsed transcript block shows every replayed message and tool call and why the other rounds were skipped, and **assess** / **capture** / **accept** score a conversation, write it as a review notebook under `<root>/.dhrona/`, and install the reviewed round (`dhrona>=0.1.3`). A notebook saved in Leela keeps the metadata other tools put on its cells.
+- `dhrona` lifts aidialog to 0.0.36 and python-fastllm to 0.0.63 (the older fastllm imports a name aidialog dropped, and the Claude Code runtime with it). shalya is capped below 0.1.
 
 ## 0.1.3
 
