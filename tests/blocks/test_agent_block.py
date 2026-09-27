@@ -106,6 +106,7 @@ def test_the_pane_offers_the_opt_ins_beside_the_warm_toggle_and_the_settings_hol
 def test_the_restore_dialog_names_the_git_writes_and_the_loop_note_survives_a_preview_refresh():
     js = (ROOT/'leela/blocks/agent/approvals.js').read_text()
     assert 'g.tool' in js and 'g.summary' in js and 'g.undoes' in js, 'each git write the rollback would undo is named'
+    assert 'uncommitted' in js[js.index('function gitWritesList'):], 'the dialog says the undo is refused over uncommitted edits outside the turn'
     assert 'card._loopNote =' in js and 'card._loopNote ?' in js[js.index('async function refreshProposalPreview'):], 'kept on the card, re-painted on refresh'
 
 def test_the_tool_tables_have_one_home():

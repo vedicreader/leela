@@ -226,11 +226,19 @@ class Threads:
             if optin is not None: self._remember_optin(thread)
             return self._activate(thread)
     def _remember_optin(self, thread):
-        "A conversation's own opt-ins outlive its eviction: kept on the workspace, keyed by session, read back on resume."
-        rows = self.workspace.__dict__.setdefault('thread_optins', {})
-        rows[thread.id] = list(getattr(thread.ai, 'optin', ()) or ())
-        try: self.workspace.save()
+        "A conversation's own opt-ins outlive its eviction: kept on the workspace, keyed by session, read back on resume. Only what differs from the workspace default is a row."
+        ws = self.workspace; rows = ws.__dict__.setdefault('thread_optins', {})
+        own = list(getattr(thread.ai, 'optin', ()) or ())
+        if own != list(getattr(ws, 'agent_optin', ()) or ()): rows[thread.id] = own
+        else: rows.pop(thread.id, None)
+        self._prune_optins(rows)
+        try: ws.save()
         except Exception: pass
+    def _prune_optins(self, rows):
+        "Drop rows for conversations that are neither live nor in the log."
+        try: logged = {str(r.get('id')) for r in self.workspace.ai.sessions()}
+        except Exception: logged = set()
+        for sid in [s for s in rows if s not in self._rows and s not in logged]: rows.pop(sid)
     def switch(self, thread_id):
         with self._lock:return self._activate(self.require(thread_id))
     def resume(self, session):
@@ -241,7 +249,9 @@ class Threads:
             self._room()
             approvals = Interventions(tools=WRITE_TOOLS, mode=self.workspace.approvals_mode, rules_path=agent_cfg()/'approvals.json')
             source = self._rows.get(self.active_id)
-            optin = (getattr(self.workspace, 'thread_optins', None) or {}).get(session)
+            rows = getattr(self.workspace, 'thread_optins', None) or {}
+            optin = rows.get(session)
+            if optin is None and rows: self._prune_optins(rows)     # a miss is a cheap moment to forget dead rows
             ai = Assistant(self.workspace, model=self.workspace.model, surface='agent',
                 local_multimodal=self.workspace.local_multimodal, on_compact=self.workspace._compacted,
                 history_name='agent', approvals=approvals, **({} if optin is None else {'optin': tuple(optin)}))

@@ -392,7 +392,8 @@ function gitWritesNote(git) {
 function gitWritesList(git) {
   const rows = (git || []).filter(g => g.undo);
   return rows.length ? '\n\nGit writes undone, newest first:\n' + rows.slice().reverse().map(g =>
-    `• ${g.tool}${g.summary ? ' · ' + g.summary : ''}${g.undoes ? ' · undoes ' + g.undoes : ''}`).join('\n') : '';
+    `• ${g.tool}${g.summary ? ' · ' + g.summary : ''}${g.undoes ? ' · undoes ' + g.undoes : ''}`).join('\n') +
+    '\n\nRefused, touching nothing, if HEAD moved since or the tree holds uncommitted changes outside this turn\'s files.' : '';
 }
 async function restoreTurnFiles(bar) {
   const {turnId, out, revisable} = responseTurn(bar);

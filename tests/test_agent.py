@@ -1481,6 +1481,47 @@ def test_a_partial_git_undo_names_what_it_undid_and_a_retry_meets_the_head_guard
     log = g('log', '--oneline').splitlines()
     assert log[0].endswith(' d1') and not any(l.endswith(' d2') for l in log), 'd2 undone once, d1 stayed: nothing was applied twice'
 
+def _turn_committing(tmp_path, extra=('b.py', 'c.py')):
+    "A repository tracking `a.py` and `extra`; one finished turn that edited `a.py` and `c.py` but committed only `a.py`."
+    repo, g = _git_repo(tmp_path/'r')
+    for n in extra: (repo/n).write_text(f'{n[0]} = 0\n')
+    g('add', '.'); g('commit', '-m', 'more files')
+    ws = Workspace(roots=[repo], approvals='auto'); tools = {t.__name__: t for t in ws.ai.tools}
+    ws.ai._prepare('x')
+    assert not failed(tools['replace_text'](str(repo/'a.py'), [{'oldText': 'value = 1', 'newText': 'value = 2'}]))
+    assert not failed(tools['replace_text'](str(repo/'c.py'), [{'oldText': 'c = 0', 'newText': 'c = 1'}]))
+    assert json.loads(tools['git_commit']('bump a', 'a.py'))['undo']
+    ws.ai._finish('done')
+    return repo, g, ws, ws.ai.current_turn_id
+
+def test_rollback_refuses_over_the_users_uncommitted_edits_but_not_over_its_own(tmp_path):
+    "A git undo is a hard reset: it must never take an uncommitted edit outside the turn's files with it."
+    repo, g, ws, turn = _turn_committing(tmp_path)
+    (repo/'b.py').write_text('b = 99\n')                       # the user's, uncommitted, not a turn file
+    with pytest.raises(ValueError, match='uncommitted changes outside this turn.*b.py'): ws.ai.rollback_turn(turn)
+    assert (repo/'b.py').read_text() == 'b = 99\n' and (repo/'a.py').read_text() == 'value = 2\n', 'nothing touched'
+    assert not ws.ai.turn_transactions[turn]['rolled_back']
+    g('checkout', '--', 'b.py')                                # `c.py` is still dirty, but it is the turn's own file
+    assert 'c.py' in g('status', '--porcelain')
+    tx = ws.ai.rollback_turn(turn)
+    assert tx['rolled_back'] and (repo/'a.py').read_text() == 'value = 1\n' and (repo/'c.py').read_text() == 'c = 0\n'
+
+def test_rollback_refuses_when_the_git_state_is_unknown(tmp_path, monkeypatch):
+    repo, g, ws, turn = _turn_committing(tmp_path)
+    monkeypatch.setattr(ws.ai, '_repo_state', lambda: ('', ''))
+    with pytest.raises(ValueError, match='git state unknown'): ws.ai.rollback_turn(turn)
+    assert not ws.ai.turn_transactions[turn]['rolled_back'] and (repo/'a.py').read_text() == 'value = 2\n'
+    ws.ai.turn_transactions[turn]['git_state'] = ('', '')      # recorded side missing, current fine
+    monkeypatch.undo()
+    with pytest.raises(ValueError, match='git state unknown'): ws.ai.rollback_turn(turn)
+
+def test_rollback_names_a_git_write_made_in_another_repository(tmp_path):
+    repo, g, ws, turn = _turn_committing(tmp_path)
+    assert ws.ai.turn_transactions[turn]['git'][0]['root'].rstrip('/') == str(repo).rstrip('/'), 'each row remembers its repository'
+    ws.ai.turn_transactions[turn]['git'].append({'tool': 'git_commit', 'undo': 'tok', 'summary': 'elsewhere', 'undoes': '', 'head': '', 'root': '/elsewhere/repo'})
+    with pytest.raises(ValueError, match="git writes in /elsewhere/repo can't be undone from here"): ws.ai.rollback_turn(turn)
+    assert not ws.ai.turn_transactions[turn]['rolled_back']
+
 def test_the_third_identical_gated_call_is_put_to_the_person_even_under_auto():
     from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools=WRITE_TOOLS, mode='auto', control='autopilot', timeout=0.2); stop = ap.listen()

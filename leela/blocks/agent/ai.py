@@ -1071,6 +1071,19 @@ class Assistant(Agent):
         return {'revisable': revisable, 'undoable': bool(files or [g for g in git if g.get('undo')]) and not tx.get('rolled_back'),
             'branchable': str(turn_id) in self.checkpoints, 'known': bool(checkpoint or tx),
             'files': files, 'git': git, 'irreversible': list(tx.get('irreversible') or [])}
+    def _keep_undo(self, name, out):
+        "ramabana keeps the undo token; the row also remembers which repository it belongs to, so a multi-root rollback can say what it cannot reach."
+        super()._keep_undo(name, out)
+        try: root = json.loads(out).get('root')
+        except Exception: return
+        rows = self.git_undo.get(self.current_turn_id) or []
+        if root and rows and 'root' not in rows[-1]: rows[-1]['root'] = str(root)
+    def _dirty_paths(self):
+        "Tracked files with uncommitted changes in the project repository, as absolute paths (a rename counts by its new name)."
+        from gheasy.repo import GitRepo
+        root = Path(self.host.roots[0])
+        out = str(GitRepo.at(root).run('status', '--porcelain', '--untracked-files=no'))
+        return [str((root/line[3:].split(' -> ')[-1].strip().strip('"')).resolve()) for line in out.splitlines() if line.strip()]
     def _repo_state(self):
         "`(head, branch)` of the project repository, or `('', '')` without one."
         try:
@@ -1087,9 +1100,17 @@ class Assistant(Agent):
         if conflicts: raise ValueError('changed after the turn: ' + ', '.join(conflicts))
         writes = [g for g in tx.get('git') or [] if g.get('undo')]
         if writes:
+            here = Path(self.host.roots[0]).resolve()
+            if foreign := [g['root'] for g in writes if g.get('root') and Path(g['root']).resolve() != here]:
+                raise ValueError(f"git writes in {foreign[0]} can't be undone from here (the rollback runs in {here}) — undo refused")
             (head, branch), (now, on) = tx.get('git_state') or ('', ''), self._repo_state()
+            if not head or not now: raise ValueError('git state unknown: the repository could not be read before or after the turn — undo refused')
             if head != now or branch != on:
                 raise ValueError(f'HEAD moved after the turn: {head[:12]} on {branch} .. {now[:12]} on {on} — undo refused')
+            own = {str(Path(p).resolve()) for p in tx['files']}
+            if outside := [p for p in self._dirty_paths() if p not in own]:
+                raise ValueError("uncommitted changes outside this turn's files: " + ', '.join(outside)
+                                 + ' — a git undo would discard them; commit or stash them first — undo refused')
             tx['git_result'] = self._undo_git_writes(writes)
         for path, snap in tx['files'].items(): self.host.write(path, snap['before'])
         tx['rolled_back'] = True

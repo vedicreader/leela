@@ -1636,3 +1636,15 @@ def test_a_threads_opt_ins_survive_eviction_and_resume(tmp_path, monkeypatch):
     again = Workspace.load(ws._state_path)
     assert again.thread_optins.get(sid) == ['exhash'], 'and in its saved file, so a restart resumes the same catalog'
     assert 'edit_file' in {f.__name__ for f in again.threads.resume(sid).ai.tools}
+
+
+def test_opt_in_rows_are_kept_only_for_conversations_that_differ_from_the_default_and_still_exist(tmp_path):
+    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
+    ws.agent_optin = ('research',)
+    same = ws.threads.new(optin=('research',)); own = ws.threads.new(optin=('exhash',)); none = ws.threads.new(optin=())
+    assert same.id not in ws.thread_optins, 'the workspace default needs no row'
+    assert ws.thread_optins[own.id] == ['exhash'] and ws.thread_optins[none.id] == [], 'an explicit none differs from the default and is kept'
+    ws.thread_optins['agent_gone-long-ago'] = ['exhash']
+    ws.threads.new(optin=('exhash',))
+    assert 'agent_gone-long-ago' not in ws.thread_optins and own.id in ws.thread_optins, 'a row for a conversation neither live nor in the log is pruned; live ones stay'
+    assert 'agent_gone-long-ago' not in Workspace.load(ws._state_path).thread_optins
