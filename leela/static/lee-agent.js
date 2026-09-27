@@ -1432,6 +1432,7 @@ function paintAgentThreads(d) {
     bindAgentThreadCards(list);
   }
   paintAgentWarmToggle();   // the preference arrives with the settings; the button shows it once they have
+  paintAgentAcceptButton();
   paintAgentAttention(d.attention || {}, rows);
 }
 function bindAgentThreadCards(list) {
@@ -1784,6 +1785,40 @@ function renderWarmStart(log, rep) {
   }
   const first = $('.lee-agent-turn', log);
   first ? log.insertBefore(block, first) : log.appendChild(block);
+}
+/* Assess, capture, accept: dhrona's loop from the pane. The assessment is a card at the end of
+   the log; a capture opens the review notebook as a tab, and editing it there is the review. The
+   accept button shows once something is here to accept: a capture this page made, or an open
+   `.dhrona/*.ipynb` tab. */
+const agentRoundSource = () => lee.agentRoundSource || (/\/\.dhrona\/[^/]+\.ipynb$/.test(lee.path || '') ? lee.path : '');
+function paintAgentAcceptButton() { const b = $('#agentaccept'); if (b) b.hidden = !agentRoundSource(); }
+async function leeAgentAssess() {
+  try {
+    const d = await post('/agent/thread/assess', {thread: lee.agentThread});
+    const log = $('#agentlog'); if (!log) return;
+    const card = document.createElement('details'); card.className = 'lee-agent-warm lee-agent-assess'; card.open = true;
+    const rows = (d.findings || []).map(f => `<li><code>${esc(f.kind)}</code> ${esc(f.tool)} · turn ${f.turn + 1}, call ${f.index + 1} — ${esc(f.message)}</li>`).join('');
+    card.innerHTML = `<summary><span class="lee-agent-step-copy">Assessment · score ${esc(d.score)} · ${esc(d.calls)} call${d.calls === 1 ? '' : 's'} over ${esc(d.turns)} turn${d.turns === 1 ? '' : 's'}</span>` +
+      `<span class="lee-agent-step-chevron" aria-hidden="true"></span></summary>` +
+      (rows ? `<ul class="lee-agent-warm-skipped">${rows}</ul>` : '<div class="lee-dim">no findings</div>');
+    log.appendChild(card); stickAgentLog(log, true);
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+async function leeAgentCapture() {
+  const name = prompt('round name', lee.agentTitle || ''); if (name === null) return;
+  try {
+    const d = await post('/agent/thread/capture', {thread: lee.agentThread, name});
+    lee.agentRoundSource = d.path; paintAgentAcceptButton(); await leeOpenFile(d.path);
+    status(`review ${d.name}: remove poor routes, save, then accept`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+async function leeAgentAccept() {
+  const source = agentRoundSource(); if (!source) { status('capture a round first, or open its review notebook', 'err'); return; }
+  const reviewer = prompt('reviewer', lee.agentReviewer || ''); if (!reviewer) return;
+  try {
+    const d = await post('/agent/round/accept', {source, reviewer}); lee.agentReviewer = reviewer;
+    status(`installed ${d.installed}`, 'ok');
+  } catch (e) { status(String(e.message || e), 'err'); }
 }
 async function leeAgentNew() {
   rememberAgentThread();

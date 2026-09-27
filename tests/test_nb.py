@@ -592,3 +592,21 @@ def test_read_cells_parses_notebooks_that_orjson_alone_rejects():
     assert read_cells('not json') is None
     assert read_cells('[1,2,3]') is None      # valid json, but not a notebook object
     assert read_cells('') is None
+
+def test_another_tools_cell_and_notebook_metadata_survive_a_save(tmp_path):
+    "A dialog notebook (aidialog's prompt cells, dhrona's review) opened and saved here keeps what it came with."
+    import nbformat
+    nb = nbformat.v4.new_notebook(metadata={'dhrona': {'status': 'review', 'score': 80}, 'kernelspec': {'name': 'python3', 'language': 'python', 'display_name': 'Python 3'}})
+    prompt = nbformat.v4.new_markdown_cell('%%prompt\nwhat is here?', metadata={'solveit_ai': True, 'pinned': 1})
+    prompt['outputs'] = [{'output_type': 'display_data', 'data': {'text/markdown': 'two files'}, 'metadata': {}}]
+    note = nbformat.v4.new_markdown_cell('# Dhrona review', metadata={'skipped': 1, 'meta': {'dhrona': {'score': 80}}})
+    code = nbformat.v4.new_code_cell('x = 1', metadata={'tags': ['keep']})
+    nb.cells = [note, prompt, code]
+    p = tmp_path/'round.ipynb'; p.write_text(nbformat.writes(nb))
+    doc = Notebook.load(p); doc.save(p)
+    back = json.loads(p.read_text())
+    assert back['metadata']['dhrona'] == {'status': 'review', 'score': 80}
+    assert back['cells'][0]['metadata'] == {'skipped': 1, 'meta': {'dhrona': {'score': 80}}}
+    assert back['cells'][1]['metadata'] == {'solveit_ai': True, 'pinned': 1} and back['cells'][1]['outputs'][0]['data'] == {'text/markdown': 'two files'}
+    assert back['cells'][2]['metadata'] == {'tags': ['keep']} and back['cells'][2]['cell_type'] == 'code'
+    assert 'leela' not in back['cells'][1]['metadata']

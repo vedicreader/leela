@@ -97,6 +97,10 @@ class Cell(Dictable):
     #: The source hash the outputs came from. A cell edited since its run keeps outputs that
     #: describe source that is gone, and a traceback for an assertion nobody can find any more.
     output_hash: str = ''
+    #: Metadata another tool keeps on the cell (aidialog's `solveit_ai` and `skipped`, dhrona's
+    #: review). Leela reads none of it and writes all of it back, so editing a dialog notebook
+    #: here is a review of it, not the loss of every turn it held.
+    extra: dict = field(default_factory=dict)
     def __post_init__(self):
         if self.context_mode not in CONTEXT_MODES: self.context_mode = 'auto'
     @property
@@ -132,14 +136,16 @@ class Cell(Dictable):
             if self.outputs: meta['outputs'] = list(self.outputs)   # markdown cells have nowhere else to keep them
             if self.execution_ms is not None: meta['execution_ms'] = round(self.execution_ms, 3)
         elif self.approval is not None: meta.update(self.approval, kind='approval')
-        if meta: c['metadata'] = {'leela': meta}
+        elif self.outputs: c['outputs'] = list(self.outputs)   # a dialog's markdown prompt keeps its reply where it came
+        c['metadata'] = {**deepcopy(self.extra), **({'leela': meta} if meta else {})}
         return c
     @classmethod
     def from_nb(cls, c):
         src = c.get('source', '')
         if isinstance(src, list): src = ''.join(src)
-        meta = (c.get('metadata') or {}).get('leela') or {}
-        return cls(source=src, outputs=list(c.get('outputs') or meta.get('outputs') or []),
+        held = dict(c.get('metadata') or {})
+        meta = held.pop('leela', None) or {}
+        return cls(source=src, outputs=list(c.get('outputs') or meta.get('outputs') or []), extra=held,
             id=str(c.get('id') or cell_id()),
             cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
             execution_count=c.get('execution_count'), execution_ms=meta.get('execution_ms'),

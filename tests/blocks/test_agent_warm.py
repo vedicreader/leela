@@ -130,3 +130,79 @@ def test_the_warm_feed_event_precedes_the_first_chunk(rounds, tmp_path):
     assert 'warm' in events and events.index('warm') < events.index('done')
     warm = next(row['data'] for row in t.feed.since(0) if row['event'] == 'warm')
     assert warm['used'][0]['name'] == 'fits' and warm['thread'] == t.id
+
+
+def library(tmp_path, monkeypatch):
+    "A rounds library of this test's own, in place of `~/.config/dhrona/rounds`, for both dhrona modules that name it."
+    lib = tmp_path/'lib'; lib.mkdir()
+    import dhrona.rounds, dhrona.core
+    monkeypatch.setattr(dhrona.rounds, 'ROUNDS_DIR', lib); monkeypatch.setattr(dhrona.core, 'ROUNDS_DIR', lib)
+    return lib
+
+
+def test_assess_scores_this_thread_and_tags_turns(tmp_path):
+    ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
+    install(ws, [Step(tool=('run_shell', {'command': 'git status'})), Step(text='clean')], token_delay=0)
+    t.ai.ask('is the tree clean?')
+    from leela.blocks.agent.warm import assess_session
+    a = assess_session(t.ai.history_path, t.id)
+    assert a['turns'] == 1 and a['calls'] == 1
+    assert any(f['kind'] == 'bypass' and f['turn'] == 0 and f['tool'] == 'run_shell' for f in a['findings'])
+    assert a['findings'][0]['turn_id'] == t.ai.history[-1]['turn_id']
+    assert a['score'] == 100 - 20*len(a['findings'])
+    json.dumps(a)
+
+
+def test_capture_then_accept_installs_a_round_the_next_warm_thread_replays(tmp_path, monkeypatch):
+    lib = library(tmp_path, monkeypatch)
+    ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
+    install(ws, [Step(tool=('list_files', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
+    from leela.blocks.agent.warm import capture_round, accept_round, fit_rounds
+    nb = capture_round(t.ai.history_path, t.id, tmp_path/'.dhrona'/'tree.ipynb', 'tree')
+    assert Path(nb).exists()
+    installed = accept_round(nb, 'Karthik')
+    assert Path(installed).parent == lib and json.loads(Path(installed).read_text())['meta']['status'] == 'accepted'
+    used, _ = fit_rounds(ws.ai._plain, dirs=[lib])
+    assert [r['meta']['name'] for r in used] == ['tree']
+    fresh = ws.threads.new(warm=True); be = install(ws, [Step(text='ok')], token_delay=0)
+    use_library(monkeypatch, lib)
+    fresh.ai.ask('again')
+    assert seeded_names(be) == ['list_files'] and fresh.ai.history[-1]['plan']['warm'] == ['tree']
+
+
+def test_a_review_notebook_saved_by_leela_still_accepts(tmp_path, monkeypatch):
+    "Editing the dialog in Leela is the review: its save must keep aidialog's cell and notebook metadata."
+    library(tmp_path, monkeypatch)
+    ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
+    install(ws, [Step(tool=('list_files', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
+    from leela.blocks.agent.warm import capture_round, accept_round
+    from leela.blocks.nb.nb import Notebook
+    src = capture_round(t.ai.history_path, t.id, tmp_path/'.dhrona'/'edited.ipynb')
+    nb = Notebook.load(src); nb.save(src)
+    from dhrona.rounds import read_dialog
+    dlg = read_dialog(src)
+    assert dlg.meta['dhrona']['status'] == 'review' and [m for m in dlg if m.msg_type == 'prompt' and not m.skipped]
+    installed = accept_round(src, 'Karthik')
+    history = json.loads(Path(installed).read_text())['history']
+    assert history[0]['role'] == 'user' and 'two files' in json.dumps(history)
+
+
+def test_capture_and_accept_routes(ws, tmp_path, monkeypatch):
+    library(tmp_path, monkeypatch)
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(ws)) as c:
+        t = ws.threads.new()
+        install(ws, [Step(text='hello')], token_delay=0); ws.ai.ask('first')
+        d = c.post('/agent/thread/capture', json={'thread': t.id, 'name': 'Hello World'}).json()
+        assert d['ok'] and d['name'] == 'hello-world' and d['path'].endswith('/.dhrona/hello-world.ipynb')
+        assert Path(d['path']).is_relative_to(tmp_path)
+        assert 'lee-err' not in c.post('/tab/open', data={'path': d['path']}).text   # the review is reachable as a tab
+        r = c.post('/agent/round/accept', json={'source': d['path'], 'reviewer': ''})
+        assert r.status_code == 400 and 'reviewer' in r.json()['error']
+        r = c.post('/agent/round/accept', json={'source': d['path'], 'reviewer': 'Karthik'}).json()
+        assert r['ok'] and Path(r['installed']).exists()
+        a = c.post('/agent/thread/assess', json={'thread': t.id}).json()
+        assert a['ok'] and a['score'] == 100 and a['turns'] == 1
+        empty = ws.threads.new()
+        assert c.post('/agent/thread/capture', json={'thread': empty.id}).status_code == 400

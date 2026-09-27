@@ -42,6 +42,7 @@ GET,POST /agent/retry-tool
 GET,POST /agent/revise
 GET,POST /agent/rollback-tool
 GET,POST /agent/rollback-turn
+GET,POST /agent/round/accept
 GET,POST /agent/run-policy
 GET,POST /agent/runs
 GET,POST /agent/runs/{run_id}/cancel
@@ -72,6 +73,8 @@ GET,POST /agent/stop
 GET,POST /agent/stream
 GET,POST /agent/subagent-writes
 GET,POST /agent/subagents
+GET,POST /agent/thread/assess
+GET,POST /agent/thread/capture
 GET,POST /agent/thread/close
 GET,POST /agent/thread/mute
 GET,POST /agent/thread/new

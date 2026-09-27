@@ -16,6 +16,7 @@ from ...core.web import diff_payload, fail, off_loop, sse
 from ...blocks.memory.memory import pii_gate
 from ...workspace import STEP_RANGE, TOOL_RANGE
 from .threads import TurnError
+from .warm import NoDhrona, accept_round, assess_session, capture_round
 from .turns import (edit_diffs, history_sessions, latest_started_here, project_state_context,
                     surfaces, tool_preview, tool_schemas, with_capabilities)
 
@@ -187,6 +188,38 @@ def connect(app, ctx):
                 'title': row['title'], 'turns': with_capabilities(t.ai, ws.with_timelines(turns)),
                 # the warm-start block repaints from here: what was replayed, and why the rest was not
                 'warm': getattr(t.ai, 'warm_report', None), 'warm_on': bool(getattr(t.ai, 'warm', False))}
+    def _round_dir():
+        "Review notebooks live in the workspace, where `/tab/open` can reach them: `<first root>/.dhrona/`."
+        return Path(first(ws.fs.roots))/'.dhrona'
+    @rt('/agent/thread/assess')
+    async def agent_thread_assess(req):
+        "dhrona's score and findings for one conversation, each finding tagged with its turn."
+        d = await req.json()
+        try: t = _thread(d.get('thread')); await off_loop(ws.fresh_history, t.ai)
+        except Exception as e: return _thread_error(e)
+        try: return {'ok': True, 'thread': t.id, **await off_loop(assess_session, t.ai.history_path, t.id)}
+        except NoDhrona as e: return fail(e, 501)
+        except Exception as e: return fail(e, 400)
+    @rt('/agent/thread/capture')
+    async def agent_thread_capture(req):
+        "One conversation as a dhrona review notebook under `.dhrona/`, named after the conversation unless told otherwise."
+        d = await req.json()
+        try: t = _thread(d.get('thread')); await off_loop(ws.fresh_history, t.ai)
+        except Exception as e: return _thread_error(e)
+        name = re.sub(r'[^a-z0-9]+', '-', str(d.get('name') or t.name() or t.id).lower()).strip('-')[:40] or t.id
+        try: path = await off_loop(capture_round, t.ai.history_path, t.id, _round_dir()/f'{name}.ipynb', name)
+        except NoDhrona as e: return fail(e, 501)
+        except ValueError as e: return fail(e, 400)     # no completed turns, or an ambiguous session
+        return {'ok': True, 'thread': t.id, 'path': path, 'name': name}
+    @rt('/agent/round/accept')
+    async def agent_round_accept(req):
+        "Accept a reviewed notebook into the rounds library; the next warm conversation may replay it."
+        d = await req.json()
+        # no fallback to `$USER`: accepting is a person putting their name to the round
+        try: path = await off_loop(accept_round, d.get('source') or '', str(d.get('reviewer') or '').strip())
+        except NoDhrona as e: return fail(e, 501)
+        except (ValueError, FileNotFoundError) as e: return fail(e, 400)
+        return {'ok': True, 'installed': path}
     @rt('/agent/thread/title')
     async def agent_thread_title(req):
         d = await req.json()
