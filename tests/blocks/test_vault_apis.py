@@ -352,14 +352,14 @@ def test_what_is_followed_is_reported_without_reading_anything(tmp_path):
     tools = {t.__name__: t for t in ide_tools(Workspace(roots=[tmp_path]))}
     assert tools['news_feeds']() and 'not following' in tools['news_unfollow']('https://x.test')
 
-def test_an_unkeyed_spec_is_something_to_explain_rather_than_retry(tmp_path):
-    tools = {t.__name__: t for t in ide_tools(Workspace(roots=[tmp_path]))}
-    out = tools['api_access']()
-    assert 'api_load' in out and 'azure-retail-prices.json' in out, 'and a keyless one to try'
-
-def test_api_access_reports_the_header_name_and_not_the_value(tmp_path, kept):
-    ws = Workspace(roots=[tmp_path])
+def test_the_api_paragraph_says_what_api_access_used_to(tmp_path, kept):
+    "The briefing carries it: header names, never a value; what is unkeyed; and not to load a spec twice."
+    ws = Workspace(roots=[tmp_path]); h = WorkspaceHost(ws)
+    assert api_context(h) == ''                                  # nothing loaded: nothing said
     ws.__dict__.setdefault('_api_specs', {})['stripe'] = object()
+    ws.__dict__.setdefault('_api_spec_info', {})['stripe'] = {'title': 'Stripe', 'operations': 3, 'groups': ['charges']}
     kept.set('stripe', {'Authorization': 'Bearer sk_live_supersecret'})
-    out = {t.__name__: t for t in ide_tools(ws)}['api_access']()
-    assert 'Authorization' in out and 'sk_live_supersecret' not in out
+    ctx = api_context(h)
+    assert 'sends Authorization' in ctx and 'sk_live_supersecret' not in ctx and 'do not `api_load` them again' in ctx
+    ws.__dict__['_api_specs']['github'] = object()
+    assert 'no credentials' in api_context(h) and 'api_access' not in {t.__name__ for t in ide_tools(ws)}

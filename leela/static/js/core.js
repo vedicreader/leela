@@ -401,11 +401,11 @@ function compactPath(path) {
   return bits.slice(-2).join('/') || String(path || '');
 }
 function portableToolKind(tool) {
-  if (['search_code', 'similar_code', 'outline', 'list_files'].includes(tool)) return 'search';
+  if (['search_code', 'similar_code', 'outline', 'ls'].includes(tool)) return 'search';
   if (['view_file', 'view_cell', 'notebook_cells', 'read_terminal'].includes(tool)) return 'view';
   if (['edit_file', 'create_file', 'edit_cell', 'add_cell'].includes(tool)) return 'edit';
   if (['web_search', 'read_url', 'research'].includes(tool)) return 'web';
-  if (['run_python', 'inspect_python', 'list_vars', 'inspect_var', 'run_cell'].includes(tool)) return 'run';
+  if (['run_python', 'inspect_python', 'run_cell'].includes(tool)) return 'run';
   if (tool === 'read_skill') return 'skill';
   if (tool.startsWith('delegate_')) return 'delegate';
   return 'tool';
@@ -418,10 +418,9 @@ function portableToolSummary(tool, args) {
     return `Read · ${compactPath(a.path)}${range}`;
   }
   if (tool === 'read_skill') return `Load skill · ${short(a.name)}`;
-  if (tool === 'list_files') return `Scan files · ${short(a.pattern) || 'all'}`;
+  if (tool === 'ls') return `Scan files · ${short(a.path) || '.'}${a.pattern ? ' ' + short(a.pattern) : ''}`;
   if (tool === 'run_python') return `Run Python · ${short(a.code).split(';')[0].slice(0, 82)}`;
   if (tool === 'inspect_python') return `Inspect · ${short(a.code).split(';')[0].slice(0, 82)}`;
-  if (tool === 'inspect_var') return `Inspect var · ${short(a.name)}`;
   if (tool === 'run_cell') return `Run cell · ${compactPath(a.path)} ${short(a.cell_id)}`;
   if (tool === 'web_search') return `Search web · ${short(a.query).slice(0, 92)}`;
   if (tool === 'read_url') return `Read web · ${short(a.url).slice(0, 92)}`;

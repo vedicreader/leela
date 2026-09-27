@@ -22,9 +22,10 @@ from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
 from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
+#: Tools the backend can dispatch that no briefing, warm fit, form or picker names.
+HIDDEN = frozenset({'user_steering', *GIT_WRITE_TOOLS})
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
-FAST_SEARCH_LEGS = ('symbols', 'rg', 'fts')
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
@@ -669,14 +670,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
             except Exception: pass
 
 def _session_tools(host):
-    "One variable read and the Run button, as the two tools Leela adds to the live session."
-    @summary(lambda a: f'Inspect {a.get("name","")}')
-    def inspect_var(name: str, attrs: str = '') -> str:
-        """Report one live variable: whether it is bound, what it is, and the attributes `attrs` names.
-        `attrs` is comma separated, such as `shape, dtypes`. This needs no approval. Use `list_vars` for the whole namespace. The sandbox refuses `inspect_python` over `globals()` or `vars()`.
-        """
-        try: return clip(host.inspect_var(name, [a for a in str(attrs).replace(',', ' ').split() if a]))
-        except Exception as e: return f'inspect_var failed: {errstr(e)}'
+    "The Run button, as the one tool Leela adds to the live session; `inspect_python('')` reads the namespace."
     @summary(lambda a: f'Run {a.get("path","")} cell {a.get("cell_id","?")}')
     def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run one notebook cell in the user's live kernel, as pressing Run on it would.
@@ -684,7 +678,7 @@ def _session_tools(host):
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
-    return [inspect_var, run_cell]
+    return [run_cell]
 
 def _canvas_path(host, args):
     "Which file a canvas tool is about to change, named the way the tool itself resolves it."
@@ -709,21 +703,8 @@ def _canvas_toolset(host):
         return canvas_tools(host)
     except Exception: return []
 
-def _search_tools(host, legs=None, mx=MAX_TOOL_CHARS):
-    "Leela's blended search as one tool: every backend at once, each hit stamped with what agreed."
-    @summary(lambda a: f'Search all for {_1(a.get("query"))}')
-    def search_all(query: str) -> str:
-        "Search every code backend at once: exact symbols, literal text, keywords, and meaning."
-        try: hits = host.search_blend(query, limit=MAX_HITS, legs=legs)
-        except Exception as e: return f'search_all failed: {errstr(e)}'
-        if not hits: return f'no matches ({host.search_note})'
-        rows = L(hits).map(lambda h: f'{h.path}:{h.line}  {h.symbol or ""}  {h.text}'
-            f'  [{"+".join(getattr(h, "sources", None) or [])}]')
-        return clip(f'[{host.search_note}]\n' + '\n'.join(rows), mx)
-    return [search_all]
-
 def _news_tools(host, mx=MAX_TOOL_CHARS):
-    "The feeds and the loaded specs, as tools. The memory tools read the main shelf; feeds are on `news`."
+    "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."
     from ..vault.news import NEWS_SHELF, fetch_feed, feed_title, news_rows, poll_feeds
     def feeds():
         f = getattr(host.ws, 'feeds', None)
@@ -787,22 +768,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'news_refresh failed: {errstr(e)}'
         if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
         return clip(json.dumps(out, default=str), mx)
-    @summary(lambda a: 'API access')
-    def api_access() -> str:
-        """Report what each loaded spec sends, what backs it, and which models may call it.
-        Header and environment variable names only, never a value. A spec with no credentials goes out unauthenticated. A local-only spec refuses on a hosted model, and the refusal names what to change.
-        """
-        from ..vault.spec import EXAMPLES
-        keyed, loaded = host.api_keyed(), sorted(host.specs)
-        if not loaded:
-            ex = ', '.join(f'api_load({x.path!r})' for x in EXAMPLES)
-            return f'no specification is loaded; call api_load first. Keyless examples: {ex}.'
-        rows = {n: keyed.get(n) or dict(headers=[], reach='cloud', env={}) for n in loaded}
-        for n, r in rows.items():
-            if not r['headers']: r['note'] = 'no credentials — calls go out unauthenticated'
-            if refusal := host.reach_refusal(n): r['refused'] = refusal
-        return clip(json.dumps(rows, default=str), mx)
-    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh, api_access]
+    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh]
 
 def api_context(host):
     "The specs already loaded in this session, as something the model is told rather than finds."
@@ -816,6 +782,7 @@ def api_context(host):
                 f"{len(groups)} group{'' if len(groups) == 1 else 's'}"]
         if groups[:8]: bits.append('groups: ' + ', '.join(groups[:8]) + ('…' if len(groups) > 8 else ''))
         if pol.get('headers'): bits.append('sends ' + ', '.join(pol['headers']))
+        else: bits.append('no credentials: calls go out unauthenticated')
         if missing := [k for k, ok in (pol.get('env') or {}).items() if not ok]:
             bits.append(f"but nothing here sets {', '.join(missing)}, so a call will fail")
         if pol.get('reach') == 'local': bits.append('local-only: a hosted model may not call it')
@@ -908,13 +875,13 @@ class Assistant(Agent):
         kwargs.setdefault('max_steps', getattr(ws, 'step_budget', 'auto'))
         kwargs.setdefault('subagent_writes', getattr(ws, 'subagent_writes', False))
         kwargs.setdefault('verify', getattr(ws, 'verify', ''))
+        kwargs.setdefault('optin', tuple(getattr(ws, 'agent_optin', ()) or ()))
         if approve is not None and kwargs.get('approvals') is None:
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
-        self._search_toolset = _search_tools(host, legs=None if surface == 'agent' else FAST_SEARCH_LEGS)
         self._canvas_toolset = _canvas_toolset(host)
         self._writes = leela_writes()
         self.video_jobs = VideoJobs() if video_available() else None
@@ -968,8 +935,7 @@ class Assistant(Agent):
         if self._tools is None:
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in [*self._news_toolset, *self._session_toolset,
-                                                   *self._search_toolset, *self._video_toolset,
-                                                   *self._canvas_toolset]
+                                                   *self._video_toolset, *self._canvas_toolset]
                 if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
             if self._note_write not in self.registry.hooks['before_tool']:
@@ -979,8 +945,8 @@ class Assistant(Agent):
 
     @property
     def _plain(self):
-        "No briefing offers leela's Git writes, though the turn model still holds them."
-        return [f for f in super()._plain if f.__name__ not in GIT_WRITE_TOOLS]
+        "What the model is offered: no `user_steering` (dispatchable after a refusal, never advertised) and none of the hidden Git writes, though the turn model holds both."
+        return [f for f in super()._plain if f.__name__ not in HIDDEN]
 
     def _sub_plain(self):
         "No delegated agent gets leela's Git writes, whichever list upstream hands back."
@@ -1122,4 +1088,4 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_news_tools(host) + _search_tools(host) + _session_tools(host))
+    return tools_for(host, extra=_news_tools(host) + _session_tools(host), optin=tuple(getattr(ws, 'agent_optin', ()) or ()))

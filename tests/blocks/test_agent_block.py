@@ -70,10 +70,10 @@ def test_every_tool_the_agent_can_be_given_has_a_family_the_picker_shows():
     from leela.blocks.agent.turns import GROUP_LABELS, LEELA_TOOLS, tool_group
     assert tool_group('search_code') == 'Repository' and tool_group('run_python') == 'Runtime'
     assert tool_group('web_search') == 'Web' and tool_group('edit_cell') == 'Notebook'
-    assert tool_group('git_status') == 'Git' and tool_group('remember') == 'Watches'
+    assert tool_group('git_status') == 'Git' and tool_group('remember') == 'Memory'
     assert tool_group('memory_search') == 'Memory' and tool_group('read_skill') == 'Skills'
     assert tool_group('api_call') == 'API' and tool_group('generate_image') == 'Media'
-    assert tool_group('run_cell') == 'Runtime' and tool_group('search_all') == 'Repository'
+    assert tool_group('run_cell') == 'Runtime' and tool_group('news_feeds') == 'Web'
     assert tool_group('something_else') == 'Other'
     ungrouped = sorted(n for n in tool_groups() if tool_group(n) == 'Other')
     assert ungrouped == [], f'shalya groups these and Leela does not label them: {ungrouped}'
@@ -82,11 +82,10 @@ def test_every_tool_the_agent_can_be_given_has_a_family_the_picker_shows():
 
 def test_the_tools_leela_adds_are_the_ones_it_labels_itself():
     "A name in `LEELA_TOOLS` that Leela no longer builds is a stale label hiding the next gap."
-    from leela.blocks.agent.ai import _news_tools, _search_tools, _session_tools
+    from leela.blocks.agent.ai import _news_tools, _session_tools
     from leela.blocks.agent.turns import LEELA_TOOLS
     from leela.blocks.agent.video import video_tools
-    built = {t.__name__ for f in (_session_tools, _search_tools, _news_tools, video_tools)
-             for t in f(None)}
+    built = {t.__name__ for f in (_session_tools, _news_tools, video_tools) for t in f(None)}
     assert set(LEELA_TOOLS) == built, (f'only in the table: {set(LEELA_TOOLS) - built}; '
                                       f'only built: {built - set(LEELA_TOOLS)}')
 

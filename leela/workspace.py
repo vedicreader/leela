@@ -272,6 +272,7 @@ class Workspace:
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.vault_pii = 'off'              # what a vault retrieval does about personal information
+        self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
         self.active_root = None
         #: Folders this window closed. Everything else in the saved session belongs to somebody.
         self._closed_roots = set()
@@ -1132,6 +1133,7 @@ class Workspace:
                 'agent_read_outside': self.agent_read_outside,
                 'subagent_writes': self.subagent_writes,
                 'vault_pii': self.vault_pii,
+                'agent_optin': list(self.agent_optin),
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'per_folder': True, 'saved': time.time()}
@@ -1148,6 +1150,8 @@ class Workspace:
         # a saved policy this build no longer knows is `off`, not a workspace that will not load
         try: self.vault_pii = pii_gate(d.get('vault_pii'))
         except ValueError: self.vault_pii = 'off'
+        from shalya.tools import OPTIN     # a group this shalya lacks is dropped, not a workspace that will not load
+        self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
         self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
         self.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')

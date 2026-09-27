@@ -697,7 +697,7 @@ def connect(app, ctx):
         return {
             'commands': [{'name': n, 'help': help_by_name.get(n) or builtins.get(n, '')}
                          for n in ctx.ai.commands()],
-            'tools': [{'name': t.__name__, 'help': describe(t)} for t in ctx.ai.tools],
+            'tools': [{'name': t.__name__, 'help': describe(t)} for t in ctx.ai._plain],
             'skills': [{'name': s.name, 'help': s.description} for s in ctx.ai.skills],
         }
     @rt('/agent/status')

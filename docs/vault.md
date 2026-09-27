@@ -35,6 +35,6 @@ A header value may name an environment variable instead. Write `Authorization: B
 
 Each spec is `cloud` or `local`. A local-only spec refuses a call from a hosted model and sends nothing. The refusal names both ways out. It refuses rather than reroutes. Switching models in the middle of a turn would hand the same numbers to the hosted model that had already read the question. The gate sits on `api_call`, which the agent reaches. The page calls `api_fetch`. The person reading the response owns the data in it.
 
-The briefing names the specs this session holds: operation counts, groups, the headers each sends, its reach. The agent then leaves alone a spec the page loaded a minute ago. `api_access` answers the same live for a spec that arrives during a turn. Header names and variable names only. A value never reaches the model. An unauthenticated 401 becomes something the agent explains rather than retries.
+The briefing names the specs this session holds: operation counts, groups, the headers each sends, its reach. The agent then leaves alone a spec the page loaded a minute ago, and a spec that arrives during a turn is in the next briefing. Header names and variable names only. A value never reaches the model. An unauthenticated 401 becomes something the agent explains rather than retries.
 
 Use notebooks and the live kernel for table analysis. PII reports appear on document rows and tidy candidates.

@@ -90,8 +90,6 @@ def tool_preview(agent, tool, args):
         return {'kind': 'diff', **diff_payload(before, apply_edits(before, edits(args.get('spec', '[]'))))}
     if tool in {'run_python', 'inspect_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
-    if tool == 'inspect_var':
-        return {'kind': 'code', 'text': str(args.get('name', '')), 'language': 'python'}
     if tool == 'run_cell':
         return {'kind': 'code', 'text': f"{args.get('path', '')}  {args.get('cell_id', '')}".strip()}
     if tool == 'run_shell':
@@ -110,8 +108,7 @@ GROUP_LABELS = {'code': 'Repository', 'file': 'Repository', 'notebook': 'Noteboo
                 'session': 'Runtime', 'shell': 'Runtime', 'git': 'Git', 'skill': 'Skills',
                 'image': 'Media'}
 #: The tools Leela adds to shalya's, which shalya has no way to name for us.
-LEELA_TOOLS = {'inspect_var': 'Runtime', 'run_cell': 'Runtime', 'search_all': 'Repository',
-               'api_access': 'API', 'generate_video': 'Media', 'video_status': 'Media',
+LEELA_TOOLS = {'run_cell': 'Runtime', 'generate_video': 'Media', 'video_status': 'Media',
                'video_jobs': 'Media', 'news_feeds': 'Web', 'news_latest': 'Web',
                'news_story': 'Web', 'news_follow': 'Web', 'news_unfollow': 'Web',
                'news_refresh': 'Web'}
@@ -122,11 +119,11 @@ def tool_group(name):
     return LEELA_TOOLS.get(name) or GROUP_LABELS.get(group_of(name)) or 'Other'
 
 def tool_schemas(agent):
-    "Browser-sized schemas for editable checkpoint forms; callable validation remains authoritative."
+    "Browser-sized schemas for editable checkpoint forms, over what the model is offered; callable validation remains authoritative."
     import inspect
     from .ai import WRITE_TOOLS
     out = []
-    for tool in agent.tools:
+    for tool in agent._plain:
         sig = inspect.signature(tool)
         fields = []
         for name, p in sig.parameters.items():

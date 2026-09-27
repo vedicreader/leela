@@ -954,19 +954,18 @@ def test_activity_fires_at_the_start_of_a_call_not_only_at_the_end():
 
 def test_every_tool_leela_adds_summarises_itself_in_words():
     from shalya.core import summarise
-    from leela.blocks.agent.ai import _news_tools, _search_tools, _session_tools
+    from leela.blocks.agent.ai import _news_tools, _session_tools
     from leela.blocks.agent.video import video_tools
     class NoHost:
         ws = None
         def __getattr__(self, k): raise AttributeError(k)
-    args = {'inspect_var': {'name': 'df'}, 'run_cell': {'path': 'a.ipynb', 'cell_id': 'c1'},
-            'search_all': {'query': 'kernel pool'}, 'news_feeds': {},
+    args = {'run_cell': {'path': 'a.ipynb', 'cell_id': 'c1'}, 'news_feeds': {},
             'news_latest': {'match': 'rust', 'feed': 'LWN'}, 'news_story': {'doc': 'doc-9'},
             'news_follow': {'url': 'https://lwn.net', 'title': 'LWN'},
-            'news_unfollow': {'url': 'https://lwn.net'}, 'news_refresh': {}, 'api_access': {},
+            'news_unfollow': {'url': 'https://lwn.net'}, 'news_refresh': {},
             'generate_video': {'prompt': 'a heron'}, 'video_status': {}, 'video_jobs': {}}
     h = NoHost()
-    tools = [*_session_tools(h), *_search_tools(h), *_news_tools(h), *video_tools(h)]
+    tools = [*_session_tools(h), *_news_tools(h), *video_tools(h)]
     assert {t.__name__ for t in tools} == set(args)
     for t in tools:
         line = summarise(t, args[t.__name__])
@@ -1360,9 +1359,29 @@ def test_a_cell_that_is_not_there_is_said_so_not_run(tmp_path):
 
 def test_running_a_cell_is_a_write_and_the_new_reads_are_not(tmp_path):
     from leela.blocks.agent.ai import WRITE_TOOLS as LEELA_WRITES, ide_tools
-    assert 'run_cell' in LEELA_WRITES and 'inspect_var' not in LEELA_WRITES
+    assert 'run_cell' in LEELA_WRITES
     names = {t.__name__ for t in ide_tools(Workspace(roots=[tmp_path]))}
-    assert {'run_cell', 'inspect_var'} <= names
+    assert 'run_cell' in names and 'inspect_var' not in names, 'the one-variable shim is gone; `inspect_python` reads a name'
+
+def test_the_shims_are_gone_and_steering_is_never_advertised(tmp_path):
+    from leela.blocks.agent.turns import tool_schemas
+    ws = Workspace(roots=[tmp_path])
+    names = {t.__name__ for t in ws.ai.tools}; briefed = {t.__name__ for t in ws.ai._plain}
+    assert not ({'inspect_var', 'search_all', 'api_access'} & names)
+    assert 'user_steering' in names and 'user_steering' not in briefed, 'dispatchable after a refusal, never offered'
+    assert 'user_steering' not in ws.ai.system_prompt() and 'user_steering' not in {r['name'] for r in tool_schemas(ws.ai)}
+    assert 'inspect_python' in names and 'run_cell' in names
+    with TestClient(ide_app(ws)) as client:
+        assert 'user_steering' not in {x['name'] for x in client.get('/agent/commands').json()['tools']}
+
+def test_optin_reaches_the_catalog_from_the_workspace(tmp_path):
+    from leela.blocks.agent.ai import ide_tools
+    ws = Workspace(roots=[tmp_path]); assert ws.agent_optin == () and 'edit_file' not in {t.__name__ for t in ws.ai.tools}
+    ws.agent_optin = ('exhash',); ws.save()
+    ws2 = Workspace.load(ws_path()); assert ws2.agent_optin == ('exhash',)
+    assert 'edit_file' in {t.__name__ for t in ws2.ai.tools} and 'edit_file' in {t.__name__ for t in ide_tools(ws2)}
+    ws2.restore_settings({'agent_optin': ['exhash', 'not-a-group']})
+    assert ws2.agent_optin == ('exhash',), 'a saved name this shalya lacks is dropped, not a refusal to start'
 
 def test_the_name_a_prompt_asks_for_survives_the_way_people_write_it():
     for prompt, want in [('scale the numeric columns as df_norm', 'df_norm'),
@@ -2100,42 +2119,25 @@ def _index_legs(ws, monkeypatch, path):
         monkeypatch.setattr(ws.search, f'_{name}', leg)
     return ran
 
-def test_search_all_reports_the_engines_that_agreed_on_each_hit(project, monkeypatch):
-    "One location four engines found is the point: the row has to say so, or it is just another list."
-    path = project.roots[0] + '/src/app.py'
-    open(path, 'w').write('def compute_total(x):\n    return x\n')
-    _index_legs(project.ws, monkeypatch, path)
-    panel = project.ws.ai
-    panel.tools
-    out = named(panel.registry.tools)['search_all']('compute_total')
-    lines = out.splitlines()
-    assert lines[0].startswith('[all:')
-    agreed = first(lines, lambda r: r.startswith(f'{path}:1'))
-    alone = first(lines, lambda r: r.startswith(f'{path}:2'))
-    assert agreed.endswith('[symbols+rg+fts]') and 'def compute_total(x):' in agreed
-    assert alone.endswith('[ann]')
-    assert len([r for r in lines if r.startswith(path)]) == 2
-
-def test_the_inline_agent_never_waits_on_the_embedding_leg(project, monkeypatch):
-    "A prompt cell is answered while someone waits mid-line; `ann` embeds the query first."
+def test_the_blend_stamps_each_hit_with_the_engines_that_agreed(project, monkeypatch):
+    "One location several engines found is the point: the row has to say so, or it is just another list. The blend is the host's; `search_code` is the tool."
     path = project.roots[0] + '/src/app.py'
     open(path, 'w').write('def compute_total(x):\n    return x\n')
     ran = _index_legs(project.ws, monkeypatch, path)
-    inline = project.ws.inline_ai
-    inline.tools
-    out = named(inline.registry.tools)['search_all']('compute_total')
-    assert set(ran) == {'symbols', 'fts'} and 'ann' not in ran
-    assert '[ann]' not in out and f'{path}:1' in out
+    hits = project.ws.ai.host.search_blend('compute_total')
+    by_line = {h.line: h for h in hits if h.path == path}
+    assert set(by_line) == {1, 2} and 'def compute_total(x):' in by_line[1].text
+    assert by_line[1].sources == ['symbols', 'rg', 'fts'] and by_line[2].sources == ['ann']
+    ran.clear()
+    quick = project.ws.inline_ai.host.search_blend('compute_total', legs=('symbols', 'rg', 'fts'))
+    assert set(ran) == {'symbols', 'fts'} and 'ann' not in ran, 'a caller in a hurry names the legs; `ann` embeds the query first'
+    assert not any('ann' in h.sources for h in quick) and any(h.line == 1 for h in quick)
 
-def test_both_surfaces_offer_the_blend_and_a_sub_agent_keeps_it(project):
-    "Reading is never the dangerous part, so delegation should not lose the better search."
+def test_search_code_is_the_search_both_surfaces_and_a_sub_agent_get(project):
     from leela.agent.tools import read_only
     from leela.blocks.agent.ai import ide_tools
-    panel = project.ws.ai
-    panel.tools
-    assert 'search_all' in named(panel.registry.tools)
-    assert 'search_all' in named(read_only(ide_tools(project)))
-    assert 'search_code' in named(ide_tools(project))
+    assert 'search_code' in named(ide_tools(project)) and 'search_code' in named(read_only(ide_tools(project)))
+    assert 'search_all' not in named(project.ws.ai.tools) and 'search_all' not in named(project.ws.inline_ai.tools)
 
 sys.path.insert(0, str(ROOT/'tools'))
 
