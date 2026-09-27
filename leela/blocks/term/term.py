@@ -1,10 +1,9 @@
 "Real terminals for the IDE, and the lazygit bridge built on them."
 
 from __future__ import annotations
-import asyncio, os, secrets, shlex, shutil, signal, subprocess, sys, time
+import asyncio, errno, os, pty, secrets, shlex, shutil, signal, subprocess, sys, termios, time
 from fastcore.all import Path, L, first, store_attr
 from fastcore.xtras import clean_cli_output
-from ptymini.core import PtySession
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
            'LazygitMissing', 'default_shell', 'path_prelude', 'shell_argv',
@@ -13,8 +12,8 @@ __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', '
 #: A frame carries everything the ring gathered since the last one, up to this: a websocket frame
 #: costs a WKWebView about 140 times what its own bytes do.
 MAX_FRAME = 65536
-#: What the ring holds. Headroom, not history: `stream` keeps the transcript in `Pty.scrollback`,
-#: and this is how far ptymini's reader thread may run ahead of a slow socket before it drops bytes.
+#: What the ring holds while no socket is reading. Headroom, not history: `stream` keeps the
+#: transcript in `Pty.scrollback`.
 RING = 1_000_000
 DEFAULT_SHELL = '/bin/bash'
 SCROLLBACK = 200_000
@@ -81,13 +80,109 @@ def gh_auth_argv():
         'the GitHub CLI is not installed or not on PATH — see https://cli.github.com')
     return [exe, 'auth', 'login']
 
-def _kids():
-    "Pids of this process's direct children. `ps` because ptymini keeps its child's pid to itself."
-    # `-A`, or BSD ps lists only what shares this process's terminal, and a bundled app has none.
-    try: out = subprocess.run(['ps', '-A', '-o', 'pid=,ppid='], capture_output=True, text=True, timeout=2).stdout
-    except Exception: return set()
-    me, rows = str(os.getpid()), (r.split() for r in out.splitlines())
-    return {int(a) for a, b in (r for r in rows if len(r) == 2) if b == me}
+_PTY_BOOT = r'''
+import fcntl, os, sys, termios
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
+'''
+
+class PtySession:
+    "A command on its own pty and process group, read on the loop into a ring a late viewer replays from."
+    def __init__(self, argv, cwd, env, rows, cols, buffer_bytes):
+        self.loop = asyncio.get_running_loop()
+        self.buf, self.pending = bytearray(), bytearray()
+        self.end, self.limit = 0, buffer_bytes
+        self.changed = asyncio.Event()
+        self.eof = False
+        self.stopping = False
+        self.escalation = None
+        exe = sys.executable
+        if getattr(sys, 'frozen', False):
+            from kunda.pythons import find_pythons, strip_bundle
+            exe = first(p['path'] for p in find_pythons([cwd] if cwd else ()) if p['path'] != sys.executable)
+            if not exe: raise RuntimeError('A Python interpreter is required to start a terminal')
+            env = strip_bundle(dict(env))
+        self.fd, slave = pty.openpty()
+        try:
+            termios.tcsetwinsize(slave, (rows, cols))
+            self.proc = subprocess.Popen([exe, '-c', _PTY_BOOT, *argv],
+                stdin=slave, stdout=slave, stderr=slave, cwd=cwd, env=env, start_new_session=True)
+        except BaseException:
+            os.close(self.fd)
+            raise
+        finally: os.close(slave)
+        self.pid = self.proc.pid
+        os.set_blocking(self.fd, False)
+        self.loop.add_reader(self.fd, self._read)
+    @property
+    def alive(self): return self.proc.poll() is None
+    @property
+    def exit_code(self): return self.proc.poll()
+    def _read(self):
+        for _ in range(256):
+            try: data = os.read(self.fd, MAX_FRAME)
+            except BlockingIOError: break
+            except OSError: data = b''   # EIO once the slave is gone; anything else is as final
+            if not data:
+                self.close()
+                break
+            self.buf.extend(data)
+            self.end += len(data)
+            if len(self.buf) > self.limit: del self.buf[:-self.limit]
+        self.changed.set()
+    def close(self):
+        if self.eof: return
+        self.eof = True
+        self.loop.remove_reader(self.fd)
+        self.loop.remove_writer(self.fd)
+        try: os.close(self.fd)
+        except OSError: pass
+        self.changed.set()
+        self.proc.poll()
+    def read_from(self, off):
+        start = self.end - len(self.buf)
+        return bytes(self.buf[max(0, off-start):]), self.end, max(0, start-off)
+    async def wait_change(self, seen_end, timeout=None):
+        "Until the ring moves past `seen_end`, the pty closes, or `timeout` passes."
+        self.changed.clear()
+        if self.end != seen_end or self.eof: return
+        try: await asyncio.wait_for(self.changed.wait(), timeout)
+        except asyncio.TimeoutError: pass
+    def resize(self, rows, cols):
+        if not self.eof: termios.tcsetwinsize(self.fd, (rows, cols))
+    def write(self, data):
+        if self.eof: raise OSError(errno.EIO, 'terminal closed')
+        self.pending.extend(data)
+        self._write()
+    def _write(self):
+        while self.pending:
+            try: n = os.write(self.fd, self.pending)
+            except BlockingIOError:
+                self.loop.add_writer(self.fd, self._write)
+                return
+            except OSError:
+                self.close()
+                return
+            del self.pending[:n]
+        self.loop.remove_writer(self.fd)
+    def kill(self, sig):
+        try: os.killpg(self.pid, sig)
+        except (ProcessLookupError, PermissionError): pass   # gone, or only zombies left
+    @property
+    def group_alive(self):
+        "Whether anything in the owned group is still running: the leader reaped first, then a null signal."
+        self.proc.poll()
+        try: os.killpg(self.pid, 0)
+        except ProcessLookupError: return False
+        except Exception: return True   # EPERM or anything odd: assume alive, and let the deadline decide
+        return True
+    def _escalate(self, end):
+        self.escalation = None
+        if not self.group_alive: return
+        if time.monotonic() >= end:
+            self.kill(signal.SIGKILL)
+            return
+        self.escalation = self.loop.call_later(.02, self._escalate, end)
 
 class Pty:
     "One command on a pseudo-terminal: bytes in, bytes out, and a size."
@@ -115,11 +210,9 @@ class Pty:
         env = dict(os.environ if self.env is None else self.env)
         env.setdefault('TERM', 'xterm-256color')
         env.pop('PYTHONSTARTUP', None)
-        # Nothing else of ours can spawn between the two counts: `start` never awaits.
-        before = _kids()
         self.sess = PtySession(self.argv, cwd=self.cwd, env=env, rows=self.rows, cols=self.cols,
                                buffer_bytes=RING)
-        self.pid = first(sorted(_kids() - before))
+        self.pid = self.sess.pid
         self._off = 0
         if self.prelude: self.sess.write(self.prelude.encode() + b'\n')
         return self
@@ -142,14 +235,23 @@ class Pty:
         if (s := self.sess) is None:
             self.exit_note = self.exit_note or '[exited]'
             return
-        self._reading, pending = True, bytearray()
+        self._reading, pending, gone = True, bytearray(), None
         try:
             while True:
                 data, self._off, _ = s.read_from(self._off)
                 pending += data
                 if not pending:
-                    if not s.alive: break
-                    await s.wait_change(seen_end=self._off)
+                    if s.eof:
+                        while s.alive: await asyncio.sleep(.01)
+                        break
+                    # A leader that exits while a background job holds the slave sends no EOF: give
+                    # its trailing output half a second, then release the fd rather than wait on it.
+                    if not s.alive:
+                        gone = gone or time.monotonic() + .5
+                        if time.monotonic() >= gone:
+                            s.close()
+                            continue
+                    await s.wait_change(seen_end=self._off, timeout=.25)
                     continue
                 # Whatever the ring gathered while the last frame was in flight goes in this one.
                 frame = bytes(pending[:MAX_FRAME]); del pending[:MAX_FRAME]
@@ -167,19 +269,22 @@ class Pty:
         s = clean_cli_output(bytes(self.scrollback).decode('utf-8', 'replace'))
         return '\n'.join(s.rstrip('\n').split('\n')[-max(1, n):])
     def kill(self, grace=2.0):
-        "Terminate the whole process group: ptymini signals it, and a shell has children of its own."
-        if (s := self.sess) is None or not s.alive: return
-        try: s.kill(signal.SIGTERM)
-        except ProcessLookupError: return
-        try: asyncio.get_running_loop().call_later(grace, self._force)
+        "Signal the owned group, including workers that outlive its leader."
+        if (s := self.sess) is None: return
+        if grace <= 0:
+            if s.escalation: s.escalation.cancel()
+            s.kill(signal.SIGKILL)
+            return
+        if s.stopping: return
+        s.kill(signal.SIGTERM)
+        s.stopping = True
+        try:
+            asyncio.get_running_loop()
+            s._escalate(time.monotonic() + grace)
         except RuntimeError:
             end = time.monotonic() + grace
-            while s.alive and time.monotonic() < end: time.sleep(.02)
-            self._force()
-    def _force(self):
-        if self.alive:
-            try: self.sess.kill(signal.SIGKILL)
-            except ProcessLookupError: pass
+            while s.group_alive and time.monotonic() < end: time.sleep(.02)
+            if s.group_alive: s.kill(signal.SIGKILL)
     def state(self):
         return dict(pid=self.pid, alive=self.alive, argv=self.argv, cwd=self.cwd, cols=self.cols,
             rows=self.rows, exit=self.exit_note)

@@ -9,7 +9,7 @@ LEELA = Path(__file__).resolve().parent.parent/'leela'
 
 #: The packages Leela composes and must only reach through their public names.
 COMPOSED = ('ramabana', 'shalya', 'gheasy', 'rishi', 'dhrishti', 'vishalakshi', 'litesearch',
-            'koshas', 'kosha', 'fossick', 'exhash', 'mdhtml', 'ptymini', 'ipymini', 'rgapi',
+            'koshas', 'kosha', 'fossick', 'exhash', 'mdhtml', 'ipymini', 'rgapi',
             'kunda', 'pullup')
 
 #: Leela modules that are another package under one of Leela's names, so a relative import

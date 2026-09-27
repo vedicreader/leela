@@ -561,7 +561,7 @@ The weights, found by being numbers rather than by naming what they are not: the
 `path -> ((mtime_ns, size), token)`. Hashing is only paid when the stat moves, which is the rare case; a poll on an untouched file costs one `stat` as it always did. Capped because a long session opens many files and none of these entries is ever worth keeping.
 
 ## `leela/blocks/term/term.py` `MAX_FRAME`
-macOS returns 1024 bytes a read however much is asked for, so a burst arrives as thousands of them. ptymini's reader gathers them into the ring, and a frame carries whatever is there since the last one. Large enough to take the per-frame cost out, small enough that one frame is not a visible pause in the terminal that draws it.
+macOS returns 1024 bytes a read however much is asked for, so a burst arrives as thousands of them. `PtySession`'s reader gathers them into the ring, and a frame carries whatever is there since the last one. Large enough to take the per-frame cost out, small enough that one frame is not a visible pause in the terminal that draws it.
 
 ## `leela/cli.py` `main`
 An optional backend is installed beside the bundle rather than into it, and `use_extras` was called in one place: straight after an install. So a backend worked for the session that installed it and was gone at the next launch, which made every install look like it had not taken. Put the directory on the path where the process starts.
@@ -597,10 +597,10 @@ What this tab's kernel is actually started under. `Workspace.kernel` resolves it
 The numbers here and the `Weights` dataclass defaults in `leela/blocks/search/search.py` are the same numbers, and a test says so. The comment naming them sat above `completions` rather than `search` until this pass moved it.
 
 ## `leela/blocks/term/term.py` `Terminals`
-Not `ptymini.PtyRegistry`: that one holds `PtySession`s and reaps them with `await`, and these are `Pty`, opened and closed from synchronous routes.
+A dict keyed by the frontend's id, not a registry that reaps with `await`: these are `Pty`, opened and closed from synchronous routes.
 
 ## `leela/blocks/term/term.py` `Pty`
-ptymini owns the pty, the reader thread and the ring a late viewer replays from, so `Pty` is an adapter over `PtySession`. The frame coalescing a WKWebView needs stays here, and so does the argv building: `shell_argv`, `default_shell`, `path_prelude`, `lazygit_argv`, `gh_auth_argv` and `external_terminal_argv` know this machine's shells and tools, which no pty library can.
+`PtySession` owns the pty, the process group, the loop reader and the ring a late viewer replays from, so `Pty` is an adapter over it; it was ptymini's until the group shutdown and liveness checks Leela needed made owning the two hundred lines cheaper than working around them. The frame coalescing a WKWebView needs stays here, and so does the argv building: `shell_argv`, `default_shell`, `path_prelude`, `lazygit_argv`, `gh_auth_argv` and `external_terminal_argv` know this machine's shells and tools, which no pty library can.
 
 ## `leela/blocks/agent/models.py` `probed`
 The memo is `ramabana.core.probed`, and only the directory is Leela's. Ramabana held two worse versions of the same idea as bare module tuples, and its own CLI wants what the picker wants: an answer about this machine that survives the process, refreshed behind whoever asked. `disk=False` is the same memo for a library that must leave nothing behind.

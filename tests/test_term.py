@@ -1,6 +1,92 @@
 "What the agent reads back off a terminal."
 
+import asyncio, os, signal, sys
 from leela.blocks.term.term import MAX_FRAME, SCROLLBACK, Pty
+
+async def _ready(p, marker):
+    async with asyncio.timeout(10):
+        while marker not in p.sess.read_from(0)[0]: await asyncio.sleep(.01)
+
+def test_owned_terminal_resize_and_interrupt():
+    src = r'''
+import os, signal
+signal.signal(signal.SIGINT, lambda *_: exit(23))
+print('READY', os.getpid(), os.getpgrp(), os.tcgetpgrp(0), os.get_terminal_size(), flush=True)
+while True: signal.pause()
+'''
+    async def run():
+        p = Pty([sys.executable, '-u', '-c', src], cols=93, rows=37).start()
+        try:
+            await _ready(p, b'READY')
+            assert p.pid == p.sess.pid
+            assert f'READY {p.pid} {p.pid} {p.pid}'.encode() in p.sess.read_from(0)[0]
+            assert b'columns=93, lines=37' in p.sess.read_from(0)[0]
+            p.write(b'\x03')
+            await asyncio.wait_for(p.stream(lambda b: None), 10)
+            assert p.exit_code == 23
+        finally:
+            p.kill(0)
+    asyncio.run(run())
+
+def test_group_shutdown_after_parent_exit(tmp_path):
+    ready = tmp_path/'worker'
+    src = r'''
+import os, signal, sys
+from pathlib import Path
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+pid = os.fork()
+if pid:
+    print('PARENT', flush=True)
+    while not Path(sys.argv[1]).exists(): pass
+    os._exit(0)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()))
+while True: signal.pause()
+'''
+    async def run():
+        from leela.core.inspectors import alive
+        p = Pty([sys.executable, '-u', '-c', src, str(ready)]).start()
+        worker = None
+        try:
+            async with asyncio.timeout(10):
+                while not ready.exists() or p.alive: await asyncio.sleep(.01)
+            worker = int(ready.read_text())
+            assert alive(worker)
+            p.kill(.05)
+            p.kill(.05)
+            async with asyncio.timeout(3):
+                while alive(worker): await asyncio.sleep(.01)
+        finally:
+            if worker is not None:
+                try: os.kill(worker, signal.SIGKILL)
+                except ProcessLookupError: pass
+            p.kill(0)
+    asyncio.run(run())
+
+def test_escalation_stays_with_the_original_session():
+    src = r'''
+import signal
+signal.signal(signal.SIGTERM, lambda *_: exit(0))
+print('READY', flush=True)
+while True: signal.pause()
+'''
+    async def run():
+        p = Pty([sys.executable, '-u', '-c', src]).start()
+        try:
+            await _ready(p, b'READY')
+            old = p.sess
+            p.kill(.2)
+            async with asyncio.timeout(5):
+                while p.alive: await asyncio.sleep(.01)
+            p.start()
+            await _ready(p, b'READY')
+            await asyncio.sleep(.3)
+            assert p.alive and p.sess is not old
+            assert old.escalation is None
+        finally:
+            p.kill(0)
+            await asyncio.wait_for(p.stream(lambda b: None), 5)
+    asyncio.run(run())
 
 def _held(raw):
     "A Pty holding `raw` as scrollback, with no child ever spawned."
@@ -132,3 +218,59 @@ def test_a_view_that_reconnects_is_owed_only_what_it_missed():
     first, second = asyncio.run(run())
     assert b'one' in first and b'two' not in first
     assert b'two' in second and b'one' not in second, 'the replay starts where the last view stopped'
+
+def test_a_shell_that_exits_while_a_background_job_holds_the_tty_still_ends_the_stream(monkeypatch):
+    """`nohup sleep 100 &` keeps the slave open after the shell is gone, so on Linux the pty never sends EOF: the stream ran on with no `[exited]`, and the fd and its reader stayed registered. macOS revokes the slave when the leader exits, so the reader is staged to hear bytes and then silence, which is what a held slave gives."""
+    from leela.blocks.term import term
+    def held(self):
+        try: data = os.read(self.fd, MAX_FRAME)
+        except BlockingIOError: return
+        except OSError: data = b''
+        if not data: return self.loop.remove_reader(self.fd)
+        self.buf.extend(data); self.end += len(data); self.changed.set()
+    monkeypatch.setattr(term.PtySession, '_read', held)
+    async def run():
+        p = Pty(['sh', '-c', 'sleep 30 & echo up; exit 3']).start()
+        seen = bytearray()
+        await asyncio.wait_for(p.stream(lambda b: seen.extend(b)), 5)
+        try: return bytes(seen), p.exit_note, p.sess.eof
+        finally: p.kill(0)
+    seen, note, eof = asyncio.run(run())
+    assert b'up' in seen
+    assert note == '[exited 3]'
+    assert eof, 'the master fd is released once the leader is gone'
+
+def test_escalation_reaches_sigkill_without_ps(monkeypatch):
+    "The liveness check ran `ps -A` on the loop every 20 ms, and a `ps` that failed left the group alive."
+    import subprocess
+    from leela.blocks.term import term
+    def no_ps(*a, **k): raise OSError('ps is not for the event loop')
+    monkeypatch.setattr(term.subprocess, 'run', no_ps)
+    src = r"""
+import signal
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+print('READY', flush=True)
+while True: signal.pause()
+"""
+    async def run():
+        p = Pty([sys.executable, '-u', '-c', src]).start()
+        try:
+            await _ready(p, b'READY')
+            p.kill(.1)
+            async with asyncio.timeout(3):
+                while p.alive: await asyncio.sleep(.01)
+            assert p.exit_code == -signal.SIGKILL
+        finally: p.kill(0)
+    asyncio.run(run())
+
+def test_kill_outside_a_loop_returns_as_soon_as_the_group_is_gone():
+    "The synchronous fallback slept the whole grace whether or not anything was left to wait for."
+    import time
+    async def start(): return Pty(['sh', '-c', 'sleep 30']).start()
+    p = asyncio.run(start())
+    try:
+        t = time.monotonic()
+        p.kill(2.0)
+        assert time.monotonic() - t < 1, 'polled, not slept'
+        assert not p.alive
+    finally: p.kill(0)
