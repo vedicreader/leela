@@ -456,7 +456,7 @@ def test_run_all_uses_dependency_order_not_document_order(client, corpus):
 def test_the_canvas_skill_is_leelas_and_reaches_the_agent_only_when_a_canvas_is_open():
     from ramabana.testing import fake_agent
     from leela.skills import drop, push, pushed
-    agent, _ = fake_agent()
+    agent, _ = fake_agent(warm=False)
     assert '`canvas`' not in agent.system_prompt()
     assert push(agent, 'canvas') == ['canvas']
     assert '`canvas`' in agent.system_prompt() and pushed(agent) == {'canvas'}

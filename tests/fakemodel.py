@@ -6,9 +6,10 @@ import time
 from leela.agent.runtime import Backend, Usage
 from leela.agent.core import ModelSpec
 
-__all__ = ['SPEC', 'ScriptedBackend', 'Step', 'install']
+__all__ = ['SPEC', 'WIDE', 'ScriptedBackend', 'Step', 'install']
 
 SPEC = ModelSpec('scripted', 'scripted', 'scripted/model', ctx=8000)
+WIDE = ModelSpec('scripted', 'scripted', 'scripted/model', ctx=128_000)   # the same model on a full window: seeds and inlined skills fit
 
 class Step:
     "One thing the scripted model does: call a tool, or say something."
@@ -71,15 +72,15 @@ class ScriptedBackend(Backend):
             yield w
         self.hist_.append({'role': 'assistant', 'content': ''.join(out)})
 
-def install(ws, steps, token_delay=0.02):
-    "Point every job on `ws`'s agent at one `ScriptedBackend`, and hand it back."
+def install(ws, steps, token_delay=0.02, spec=SPEC):
+    "Point every job on `ws`'s agent at one `ScriptedBackend`, and hand it back. `spec` sizes the window the agent budgets for."
     a = ws.ai
     ws._inline_ai = a
-    be = ScriptedBackend(steps=steps, token_delay=token_delay)
+    be = ScriptedBackend(spec=spec, steps=steps, token_delay=token_delay)
     be.tools = a.tools
-    a.routing.turn = SPEC.name
-    a.routing._cache[SPEC.name] = SPEC
-    for j in a.routing.policy: a.routing.policy[j] = SPEC.name
+    a.routing.turn = spec.name
+    a.routing._cache[spec.name] = spec
+    for j in a.routing.policy: a.routing.policy[j] = spec.name
     a._be = lambda job='turn': be
     a._be_or_none = lambda job='turn': be
     return be

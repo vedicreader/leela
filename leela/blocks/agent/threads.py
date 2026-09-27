@@ -109,11 +109,16 @@ class Thread:
         self.feed = feed or Feed(self.id)
         self.ai.on_watch = lambda target, log: self.feed.emit('watch', {'target': target, 'log': str(log)})
         self.ai.on_background_done = lambda run, ans: self.feed.emit('background', {**run.dict(), 'answer': ans})
-        self.ai.on_warm = lambda report: self.feed.emit('warm', report)
+        self.ai.on_warm = self._warmed
         self.runner = TurnRunner(workspace, self.feed, ai=self.ai, approvals=self.approvals, thread=self)
         self.created = self.touched = time.time(); self.title = ''; self.unread = 0
         self.opener = ''
         self.muted, self.mute_problem = False, ''
+    def _warmed(self, report):
+        "ramabana seeded this conversation: keep what each round replayed for the transcript block, and tell the pane."
+        from .warm import with_messages
+        self.ai.warm_report = with_messages(report)
+        self.feed.emit('warm', {**self.ai.warm_report, 'thread': self.id})
     @property
     def state(self):
         if self.approvals.pending is not None:return 'waiting'

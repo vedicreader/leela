@@ -3,11 +3,15 @@
 import json, sys, pytest
 from pathlib import Path
 from leela.workspace import Workspace
-from tests.fakemodel import Step, install
+from tests.fakemodel import WIDE, Step, install as _install
 dhrona = pytest.importorskip('dhrona')
 
+def install(ws, steps, token_delay=0.02):
+    "The scripted backend on a full window: ramabana seeds only when `budget.inline` admits it, and the 8k default does not."
+    return _install(ws, steps, token_delay=token_delay, spec=WIDE)
 
-def a_round(name, tool='list_files', args=None, rank=50, model=None):
+
+def a_round(name, tool='ls', args=None, rank=50, model=None):
     "An accepted round whose one call is `tool(**args)`."
     return {'meta': {'name': name, 'status': 'accepted', 'reviewer': 't', 'tools': [tool], 'rank': rank, 'model': model},
             'history': [
@@ -19,10 +23,9 @@ def a_round(name, tool='list_files', args=None, rank=50, model=None):
 
 
 def use_library(monkeypatch, d):
-    "Point Leela's `fit_rounds` at the library `d` rather than the config dir and the packaged seeds."
-    from leela.blocks.agent import warm
-    monkeypatch.setattr(warm, 'fit_rounds', lambda tools, model=None, limit=warm.WARM_ROUNDS, dirs=None, _f=warm.fit_rounds:
-                        _f(tools, model, limit, dirs=[d]))
+    "Point dhrona's library at `d`: ramabana's warm start reads `fit_rounds` from `dhrona.core` at call time, and Leela's `with_messages` reads the same rounds back."
+    import dhrona.core as dc
+    monkeypatch.setattr(dc, 'load_rounds', lambda dirs=None, _f=dc.load_rounds: _f(dirs or [d]))
 
 
 @pytest.fixture
@@ -40,40 +43,40 @@ def seeded_names(be):
     return [tc['function']['name'] for m in be.hist_ if m.get('tool_calls') for tc in m['tool_calls']]
 
 
-def test_fit_rounds_explains_every_skip(rounds, ws):
-    from leela.blocks.agent.warm import fit_rounds, warm_report
-    used, skipped = fit_rounds(ws.ai._plain, dirs=[rounds])
-    assert [r['meta']['name'] for r in used] == ['fits']
-    reasons = {r['meta']['name']: why for r, why in skipped}
-    assert reasons['alien'] == 'tool teleport is not offered here' and 'does not match' in reasons['badsig']
-    rep = warm_report(used, skipped)
-    assert rep['used'][0]['messages'][0]['role'] == 'user' and len(rep['skipped']) == 2
-    assert rep['used'][0]['messages'][1]['tool_calls'][0]['name'] == 'list_files'
-    assert rep['used'][0]['messages'][2]['tool_call_id'] == 'c_fits'
+def test_the_assistant_hands_warm_to_ramabana(tmp_path):
+    from leela.blocks.agent.ai import Assistant
+    ws = Workspace(roots=[tmp_path])
+    assert Assistant(ws, engines=False).warm is False and Assistant(ws, engines=False, warm=True).warm is True
+
+
+def test_with_messages_paints_each_used_round_and_forgives_a_missing_one(rounds):
+    from leela.blocks.agent.warm import with_messages
+    rep = with_messages({'used': [{'name': 'fits', 'rank': 50, 'model': None}, {'name': 'gone', 'rank': 50, 'model': None}],
+                         'skipped': [{'name': 'alien', 'reason': 'tool teleport is not offered here'}]})
+    fits, gone = rep['used']
+    assert [m['role'] for m in fits['messages']] == ['user', 'assistant', 'tool', 'assistant']
+    assert fits['messages'][1]['tool_calls'][0]['name'] == 'ls' and fits['messages'][2]['tool_call_id'] == 'c_fits'
+    assert gone['messages'] == [] and rep['skipped'][0]['name'] == 'alien'
     json.dumps(rep)   # what the feed and `/agent/thread/turns` carry
-
-
-def test_fit_rounds_agrees_with_dhrona_warm_start(rounds, ws):
-    from leela.blocks.agent.warm import fit_rounds, warm_messages
-    used, _ = fit_rounds(ws.ai._plain, dirs=[rounds])
-    assert warm_messages(used) == dhrona.core.warm_start(ws.ai._plain, limit=3, dirs=[rounds])
 
 
 def test_a_warm_thread_is_seeded_once_and_the_turn_records_it(rounds, tmp_path):
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new(warm=True)
     be = install(ws, [Step(text='hello')], token_delay=0)
+    assert t.ai.budget.inline, 'the scripted window must admit seeds or this test proves nothing'
     t.ai.ask('first'); t.ai.ask('second')
-    assert be.hist_[0]['role'] == 'user' and seeded_names(be) == ['list_files']
+    assert be.hist_[0]['role'] == 'user' and seeded_names(be) == ['ls']
     assert [m['role'] for m in be.hist_][:4] == ['user', 'assistant', 'tool', 'assistant']
     assert be.hist_[4]['content'].startswith('first')
     assert t.ai.history[-2]['plan']['warm'] == ['fits'] and 'warm' not in t.ai.history[-1]['plan']
-    assert t.ai.warm_report['used'][0]['name'] == 'fits' and {s['name'] for s in t.ai.warm_report['skipped']} == {'alien', 'badsig'}
+    assert t.ai.warm_report['used'][0]['name'] == 'fits' and t.ai.warm_report['used'][0]['messages'][1]['tool_calls'][0]['name'] == 'ls'
+    assert {s['name'] for s in t.ai.warm_report['skipped']} == {'alien', 'badsig'}
 
 
 def test_default_off_and_resume_get_no_seeds(rounds, tmp_path, monkeypatch):
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
     be = install(ws, [Step(text='hi')], token_delay=0); t.ai.ask('plain')
-    assert not seeded_names(be) and t.ai.warm_report is None
+    assert not seeded_names(be) and t.ai.warm_report == {'used': [], 'skipped': []} and not t.ai._warmed
     sid = t.id
     # `Threads.resume` builds its own `Assistant`, and ramabana validates the logged model name on
     # resume, which the scripted one fails. So: a thread the fake is installed on, already routed
@@ -82,16 +85,16 @@ def test_default_off_and_resume_get_no_seeds(rounds, tmp_path, monkeypatch):
     be2 = install(ws2, [Step(text='again')], token_delay=0)
     monkeypatch.setattr(r.ai, 'set_model', lambda name, job='turn': None)
     r.ai.refresh_history(); r.ai.resume_session(sid); r.ai.ask('more')
-    assert not seeded_names(be2) and be2.hist_[0]['content'] == 'plain' and r.ai.warm_report is None
+    assert not seeded_names(be2) and be2.hist_[0]['content'] == 'plain' and r.ai.warm_report == {'used': [], 'skipped': []}
     assert 'warm' not in r.ai.history[-1]['plan']
 
 
 def test_missing_dhrona_is_a_note_not_a_failure(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, 'dhrona', None)
+    monkeypatch.setitem(sys.modules, 'dhrona', None); monkeypatch.setitem(sys.modules, 'dhrona.core', None)
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new(warm=True)
+    said = []; monkeypatch.setattr(t.ai.host, 'note', said.append)
     be = install(ws, [Step(text='ok')], token_delay=0); t.ai.ask('x')
-    assert be.hist_[0]['content'].startswith('x') and t.ai.warm_report['problem'].startswith('warm starts need')
-    assert 'no warm start' in t.ai.note
+    assert be.hist_[0]['content'].startswith('x') and any('no warm start' in s for s in said)
 
 
 def test_no_round_fits_says_so(rounds, tmp_path):
@@ -117,6 +120,9 @@ def test_thread_new_takes_warm_and_turns_reports_the_block(rounds, ws):
         assert bare['ok'] and bare['warm'] is False
         turns = c.get('/agent/thread/turns', params={'thread': cold['active']}).json()
         assert turns['warm'] is None and turns['warm_on'] is False
+        install(ws, [Step(text='cold')], token_delay=0); ws.ai.ask('first')
+        turns = c.get('/agent/thread/turns', params={'thread': cold['active']}).json()
+        assert turns['warm'] is None, 'a cold thread never paints an empty warm block'
 
 
 def test_the_warm_feed_event_precedes_the_first_chunk(rounds, tmp_path):
@@ -129,7 +135,7 @@ def test_the_warm_feed_event_precedes_the_first_chunk(rounds, tmp_path):
         t.feed.wait(t.feed.seq, timeout=5)
     assert 'warm' in events and events.index('warm') < events.index('done')
     warm = next(row['data'] for row in t.feed.since(0) if row['event'] == 'warm')
-    assert warm['used'][0]['name'] == 'fits' and warm['thread'] == t.id
+    assert warm['used'][0]['name'] == 'fits' and warm['thread'] == t.id and warm['used'][0]['messages']
 
 
 def library(tmp_path, monkeypatch):
@@ -156,8 +162,9 @@ def test_assess_scores_this_thread_and_tags_turns(tmp_path):
 def test_capture_then_accept_installs_a_round_the_next_warm_thread_replays(tmp_path, monkeypatch):
     lib = library(tmp_path, monkeypatch)
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
-    install(ws, [Step(tool=('list_files', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
-    from leela.blocks.agent.warm import capture_round, accept_round, fit_rounds
+    install(ws, [Step(tool=('ls', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
+    from leela.blocks.agent.warm import capture_round, accept_round
+    from dhrona.core import fit_rounds
     nb = capture_round(t.ai.history_path, t.id, tmp_path/'.dhrona'/'tree.ipynb', 'tree')
     assert Path(nb).exists()
     installed = accept_round(nb, 'Karthik')
@@ -167,14 +174,14 @@ def test_capture_then_accept_installs_a_round_the_next_warm_thread_replays(tmp_p
     fresh = ws.threads.new(warm=True); be = install(ws, [Step(text='ok')], token_delay=0)
     use_library(monkeypatch, lib)
     fresh.ai.ask('again')
-    assert seeded_names(be) == ['list_files'] and fresh.ai.history[-1]['plan']['warm'] == ['tree']
+    assert seeded_names(be) == ['ls'] and fresh.ai.history[-1]['plan']['warm'] == ['tree']
 
 
 def test_a_review_notebook_saved_by_leela_still_accepts(tmp_path, monkeypatch):
     "Editing the dialog in Leela is the review: its save must keep aidialog's cell and notebook metadata."
     library(tmp_path, monkeypatch)
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
-    install(ws, [Step(tool=('list_files', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
+    install(ws, [Step(tool=('ls', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
     from leela.blocks.agent.warm import capture_round, accept_round
     from leela.blocks.nb.nb import Notebook
     src = capture_round(t.ai.history_path, t.id, tmp_path/'.dhrona'/'edited.ipynb')
@@ -229,7 +236,7 @@ def test_accept_takes_only_a_review_notebook_under_the_roots_dhrona_folder(ws, t
 def test_the_installed_round_is_named_after_the_notebook_not_what_its_metadata_says(tmp_path, monkeypatch):
     lib = library(tmp_path, monkeypatch)
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
-    install(ws, [Step(tool=('list_files', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
+    install(ws, [Step(tool=('ls', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
     from leela.blocks.agent.warm import capture_round, accept_round, round_name
     src = Path(capture_round(t.ai.history_path, t.id, tmp_path/'.dhrona'/'..evil..ipynb', '../x'))
     nb = json.loads(src.read_text()); nb['metadata']['dhrona']['name'] = '../x'; src.write_text(json.dumps(nb))

@@ -103,6 +103,7 @@ def spec(): return models.ModelSpec('fake', 'fake', 'fake/model', ctx=1000)
 
 def fake_agent(host=None, replies=(), **kw):
     "An `Agent` whose every job routes to one `FakeBackend`."
+    kw.setdefault('warm', False)
     a = Agent(host or MemHost_agent({'/proj/a.py': 'def a(): pass\n'}), extensions=False, **kw)
     be = FakeBackend(models.ModelSpec('fake', 'fake', 'fake/model', ctx=1000), replies=replies)
     a._be = lambda job='turn': be
@@ -1944,7 +1945,7 @@ def test_ls_lists_the_open_folders_when_asked_for_nothing(tmp_path):
 def agent_on(host):
     "An `Agent` over `host` with no model behind it: these tests are about the tool layer."
     from leela.agent.testing import fake_agent
-    return fake_agent(host, replies=['done'], subagents=False, compact=False)[0]
+    return fake_agent(host, replies=['done'], subagents=False, compact=False, warm=False)[0]
 
 def test_a_failed_tool_call_is_recorded_as_failed():
     "The old test was a list of prefixes ('edit failed', 'could not') that each new tool"

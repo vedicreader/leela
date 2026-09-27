@@ -187,7 +187,7 @@ def connect(app, ctx):
         return {'ok': True, 'thread': t.id, 'state': row['state'], 'seq': t.feed.settled_seq,
                 'title': row['title'], 'turns': with_capabilities(t.ai, ws.with_timelines(turns)),
                 # the warm-start block repaints from here: what was replayed, and why the rest was not
-                'warm': getattr(t.ai, 'warm_report', None), 'warm_on': bool(getattr(t.ai, 'warm', False))}
+                'warm': t.ai.warm_report if t.ai.warm and t.ai._warmed else None, 'warm_on': bool(t.ai.warm)}
     def _round_dir():
         "Review notebooks live in the workspace, where `/tab/open` can reach them: `<first root>/.dhrona/`."
         root = first(ws.fs.roots)

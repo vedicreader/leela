@@ -3,10 +3,7 @@
 import json, re
 from pathlib import Path
 
-__all__ = ['WARM_ROUNDS', 'NoDhrona', 'fit_rounds', 'warm_messages', 'warm_report', 'assess_session', 'capture_round',
-           'round_name', 'accept_round']
-
-WARM_ROUNDS = 3   #: rounds a fresh conversation is seeded with; each is a few hundred tokens
+__all__ = ['NoDhrona', 'with_messages', 'assess_session', 'capture_round', 'round_name', 'accept_round']
 
 
 class NoDhrona(RuntimeError):
@@ -22,15 +19,6 @@ def _rounds():
     except ImportError as e: raise NoDhrona('capturing rounds needs `uv add dhrona`') from e
 
 
-def fit_rounds(tools, model=None, limit=WARM_ROUNDS, dirs=None):
-    "`(used, skipped)`: dhrona's ranking of the accepted rounds against `tools`, and `(round, reason)` for every one left out."
-    return _core().fit_rounds(tools, model, limit, dirs)
-
-def warm_messages(used):
-    "The canonical Urai messages `used` replays, in order: what the backend is seeded with."
-    core = _core()
-    return [m for r in used for m in core.round_msgs(r)]
-
 def _call(tc):
     "One urai `ToolCall` (OpenAI-shaped: `function.name`) as the flat row the pane paints."
     fn = tc.get('function') or {}
@@ -40,12 +28,13 @@ def _plain_msgs(msgs):
     "Urai messages as JSON: `tool_calls` become `{id, name, arguments}` rows."
     return [{**m, 'tool_calls': [_call(tc) for tc in m['tool_calls']]} if m.get('tool_calls') else dict(m) for m in msgs]
 
-def warm_report(used, skipped):
-    "What the transcript block paints: names, replayed messages, and the reason for every skip."
+def with_messages(report, dirs=None):
+    "ramabana's warm report with the messages each used round replayed, for the transcript block; a round the library no longer has gets none."
     core = _core()
-    return {'used': [{'name': r['meta'].get('name', ''), 'rank': r['meta'].get('rank', 50),
-                      'model': r['meta'].get('model'), 'messages': _plain_msgs(core.round_msgs(r))} for r in used],
-            'skipped': [{'name': r['meta'].get('name', ''), 'reason': why} for r, why in skipped]}
+    by_name = {r['meta'].get('name', ''): r for r in core.load_rounds(dirs)}
+    used = [{**row, 'messages': _plain_msgs(core.round_msgs(by_name[row['name']])) if row['name'] in by_name else []}
+            for row in report.get('used', [])]
+    return {**report, 'used': used}
 
 
 def assess_session(history, session):
