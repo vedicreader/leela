@@ -95,6 +95,13 @@ def test_the_undo_button_and_the_json_field_follow_the_new_dialect():
     core = (ROOT/'leela/static/js/core.js').read_text()
     assert 'JSON.stringify(value)' in core and 'list_files' not in core
 
+def test_the_pane_offers_the_opt_ins_beside_the_warm_toggle_and_the_settings_hold_the_default():
+    live = (ROOT/'leela/blocks/agent/live.js').read_text(); app = (ROOT/'leela/app.py').read_text()
+    assert "optin: agentOptins()" in live and 'lee-thread-warm' in live and "'·' + " in live, 'a thread row wears its opt-ins like ·warm'
+    assert "id='agentoptin-research'" in app and "id='agentoptin-exhash'" in app, 'per-chat toggles beside warm'
+    assert "id='agent-optin-research'" in app and "id='agent-optin-exhash'" in app, 'workspace defaults in settings'
+    assert "/agent/optin" in (ROOT/'leela/blocks/agent/budgets.js').read_text()
+
 def test_the_tool_tables_have_one_home():
     """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`."""
     import ast
@@ -235,7 +242,7 @@ def test_a_painted_turn_carries_what_can_still_be_done_to_it(tmp_path):
         assert d['ok'] and all('capabilities' in t for t in d['turns'])
     caps = ws.threads.active.ai.turn_capabilities('nothing-like-this')
     assert caps == {'revisable': False, 'undoable': False, 'branchable': False, 'known': False,
-                    'files': [], 'irreversible': []}
+                    'files': [], 'git': [], 'irreversible': []}
 
 def test_a_tool_installed_into_a_frozen_app_is_actually_found(tmp_path, monkeypatch):
     """The Tools row installs into `extras_site`, because the bundle is signed and read-only, and `find_server` looked only on PATH."""

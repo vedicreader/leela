@@ -627,6 +627,13 @@ def _agent_panel(ws):
                        onclick='leeAgentNew()'),
                 Button('warm', id='agentwarm', cls='lee-btn', aria_pressed='false',
                        title="seed the next new conversation with dhrona's reviewed rounds", onclick='leeAgentWarmToggle()'),
+                # per-chat opt-ins, painted from the workspace default and overridden by a preference
+                Button('research', id='agentoptin-research', cls='lee-btn', data_optin='research',
+                       aria_pressed=str('research' in ws.agent_optin).lower(),
+                       title='give the next new conversation the slow `research` tool', onclick="leeAgentOptinToggle('research')"),
+                Button('exhash', id='agentoptin-exhash', cls='lee-btn', data_optin='exhash',
+                       aria_pressed=str('exhash' in ws.agent_optin).lower(),
+                       title='give the next new conversation hash-addressed edits (`edit_file`) and the exhash skill', onclick="leeAgentOptinToggle('exhash')"),
                 Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
                        onclick='leeAgentHistory()'),
                 Button('assess', id='agentassess', cls='lee-btn', title="dhrona's score and findings for this conversation",
@@ -736,6 +743,14 @@ def _agent_panel(ws):
                               title='What a vault retrieval hands the model. off: as it is. redact: identifiers '
                                     'masked. refuse: the section withheld. A document you marked not personal '
                                     'is never gated; one you marked personal always is'),
+                        Label(Input(type='checkbox', id='agent-optin-research', checked='research' in ws.agent_optin,
+                                    onchange="leeAgentOptin('research', this.checked)"), ' research tool by default',
+                              cls='lee-check-setting',
+                              title='New conversations get the slow `research` tool unless their own toggle says otherwise'),
+                        Label(Input(type='checkbox', id='agent-optin-exhash', checked='exhash' in ws.agent_optin,
+                                    onchange="leeAgentOptin('exhash', this.checked)"), ' hash-addressed edits by default',
+                              cls='lee-check-setting',
+                              title='New conversations get `edit_file` and the exhash skill (about 3k tokens a turn) unless their own toggle says otherwise'),
                         Label(Input(type='checkbox', id='legacymodels', checked=True,
                                     onchange='leeLoadModels(this.checked)'), ' show older models',
                               cls='lee-check-setting'),

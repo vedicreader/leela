@@ -149,13 +149,31 @@ def connect(app, ctx):
         active = ws.threads.active
         return {'active': active.id, 'threads': ws.threads.dicts(),
                 'attention': ws.threads.attention()}
+    def _optin(names):
+        "Opt-in group names as a tuple, checked against what this shalya offers; None stands for the workspace default."
+        if names is None: return None
+        from shalya.tools import OPTIN
+        names = tuple(str(n) for n in (names if isinstance(names, (list, tuple)) else [names]))
+        if unknown := [n for n in names if n not in OPTIN]:
+            raise ValueError(f"unknown opt-in {', '.join(unknown)}; one of {', '.join(OPTIN)}")
+        return names
     @rt('/agent/thread/new')
     async def agent_thread_new(req):
-        "A fresh conversation; `warm` seeds it from dhrona's rounds. An empty body is the old client, and cold."
+        "A fresh conversation; `warm` seeds it from dhrona's rounds, `optin` names its opt-in tool groups. An empty body is the old client: cold, on the workspace's opt-ins."
         d = await req.json() if int(req.headers.get('content-length') or 0) else {}
-        try: thread = await off_loop(ws.threads.new, None, bool(d.get('warm')))
+        try: optin = _optin(d.get('optin'))
+        except ValueError as e: return fail(e)
+        try: thread = await off_loop(ws.threads.new, None, bool(d.get('warm')), optin)
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'warm': thread.ai.warm}
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'warm': thread.ai.warm, 'optin': list(thread.ai.optin)}
+    @rt('/agent/optin')
+    async def agent_optin(req):
+        "Which opt-in tool groups a new conversation here gets unless it says otherwise."
+        d = await req.json()
+        try: names = _optin(d.get('optin')) or ()
+        except ValueError as e: return fail(e)
+        ws.agent_optin = names; ws.save()
+        return {'ok': True, 'optin': list(names), 'note': f"new conversations opt into {', '.join(names) or 'nothing'} by default"}
     @rt('/agent/thread/switch')
     async def agent_thread_switch(req):
         d = await req.json()

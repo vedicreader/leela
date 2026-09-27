@@ -1276,7 +1276,7 @@ def test_pane_routes_act_on_the_named_conversation_not_the_active_one(tmp_path):
     with TestClient(ide_app(ws)) as client:
         rolled = client.post('/agent/rollback-turn', json={'turn_id': 'turn-1', 'thread': first.id})
         assert rolled.json() == {'ok': True, 'thread': first.id, 'turn_id': 'turn-1',
-                                'paths': [], 'irreversible': []}
+                                'paths': [], 'git': '', 'irreversible': []}
         tx = client.get(f'/agent/turn-transaction?turn_id=turn-1&thread={first.id}')
         assert tx.json()['transaction']['turn_id'] == 'turn-1'
         assert client.get('/agent/turn-transaction?turn_id=turn-1').status_code == 404, \
@@ -1591,3 +1591,32 @@ def test_the_boot_resume_asks_under_the_same_filter_as_the_history_list():
     js = (Path(__file__).resolve().parents[2]/'leela'/'blocks'/'agent'/'live.js').read_text()
     boot = js.split('async function resumeLatestAgent()')[1].split('\n}')[0]
     assert 'everything: !leelaOnly()' in boot and 'agentPrefsReady()' in boot
+
+
+def test_a_thread_takes_its_own_opt_ins_and_the_default_thread_takes_none(tmp_path):
+    "A per-chat opt-in reaches that thread's catalog alone; `exhash` also earns its inlined skill there and nowhere else."
+    ws = Workspace(roots=[tmp_path], model='gpt-4.1')       # a full window, so `budget.inline` admits the skill
+    t, plain = ws.threads.new(optin=('exhash',)), ws.threads.new()
+    names = lambda a: {f.__name__ for f in a.tools}
+    assert 'edit_file' in names(t.ai) and 'edit_file' not in names(plain.ai)
+    assert t.ai.optin == ('exhash',) and plain.ai.optin == () and t.dict()['optin'] == ['exhash'] and plain.dict()['optin'] == []
+    has_skill = any(sk.name == 'exhash' for sk in t.ai.skills)
+    assert ('\n## exhash\n' in t.ai.system_prompt()) is has_skill and '\n## exhash\n' not in plain.ai.system_prompt()
+    ws.agent_optin = ('research',)
+    assert 'research' in names(ws.threads.new().ai) and 'research' not in names(ws.threads.new(optin=()).ai), \
+        'the workspace default seeds a thread that names none; an explicit empty list means none'
+
+
+def test_the_new_thread_route_takes_opt_ins_and_the_optin_route_saves_the_default(ws):
+    with TestClient(ide_app(ws)) as c:
+        d = c.post('/agent/thread/new', json={'optin': ['research']}).json()
+        assert d['ok'] and d['optin'] == ['research'] and d['thread']['optin'] == ['research']
+        bad = c.post('/agent/thread/new', json={'optin': ['teleport']})
+        assert bad.status_code == 400 and 'teleport' in bad.json()['error']
+        r = c.post('/agent/optin', json={'optin': ['exhash']}).json()
+        assert r['ok'] and r['optin'] == ['exhash'] and ws.agent_optin == ('exhash',)
+        assert c.post('/agent/optin', json={'optin': ['teleport']}).status_code == 400 and ws.agent_optin == ('exhash',)
+        d2 = c.post('/agent/thread/new', json={}).json()
+        assert d2['optin'] == ['exhash'], 'a thread naming no opt-ins takes the workspace default'
+        # `/agent/threads` lists only conversations something was said in; the rows themselves carry the opt-ins
+        assert ws.threads.require(d['active']).dict()['optin'] == ['research'] and ws.threads.require(d2['active']).dict()['optin'] == ['exhash']

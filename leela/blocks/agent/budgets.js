@@ -103,6 +103,18 @@ window.leeAgentReadOutside = leeAgentReadOutside;
 
 /* Three-valued, so the control is a select and the recovery is putting the old value back rather
    than flipping a box. The policy is the workspace's: the model is never asked to respect it. */
+/* Workspace default for the per-chat opt-ins: which groups a new conversation gets unless its
+   own toggles say otherwise. The pane's buttons are painted from it on the next load. */
+async function leeAgentOptin(name, on) {
+  const box = $(`#agent-optin-${name}`);
+  const names = ['research', 'exhash'].filter(n => n === name ? on : $(`#agent-optin-${n}`)?.checked);
+  try {
+    const d = await post('/agent/optin', {optin: names});
+    if (!d.ok && box) box.checked = !on;
+    status(d.ok ? d.note : (d.error || 'opt-in setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) { if (box) box.checked = !on; status(String(e.message || e), 'err'); }
+}
+window.leeAgentOptin = leeAgentOptin;
 async function leeVaultPii(policy) {
   const sel = $('#vault-pii'), was = sel ? sel.dataset.was || 'off' : 'off';
   try {

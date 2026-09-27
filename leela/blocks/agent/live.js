@@ -550,6 +550,7 @@ function paintAgentThreads(d) {
       return `<article class="lee-thread-card${live ? ' active' : ''}${t.state === 'waiting' ? ' wants' : ''}"` +
         ` role="option" aria-selected="${live}" tabindex="0" data-thread="${esc(t.id)}">` +
         `<header><strong>${esc(threadName(t))}</strong>${t.warm ? '<span class="lee-thread-warm" title="seeded from dhrona\'s rounds">·warm</span>' : ''}` +
+        (t.optin || []).map(o => `<span class="lee-thread-warm" title="opted into ${esc(o)}">` + '·' + esc(o) + '</span>').join('') +
         `<span class="lee-thread-state ${esc(t.state)}">${esc(t.state)}</span></header>` +
         `<footer><span>${t.unread ? `${t.unread} new` : (live ? 'on screen' : 'idle')}` +
         `${t.branch && t.branch !== 'main' ? ` · on ${esc(t.branch)}` : ''}` +
@@ -876,11 +877,28 @@ window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = 
 /* Warm starts are opt-in per new conversation: the toggle is a preference, read when `+` is
    pressed, so a person decides before the first prompt and sees the choice on the button. */
 function agentWarmEnabled() { return prefGet('agent', 'warm', false) === true; }
-function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); }
+function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); paintAgentOptins(); }
 function leeAgentWarmToggle() {
   const on = !agentWarmEnabled(); prefSet('agent', 'warm', on); paintAgentWarmToggle();
   status(on ? 'the next new conversation starts warm' : 'new conversations start cold', 'ok');
 }
+/* Opt-in tool groups for the next new conversation. The buttons are painted from the workspace
+   default on the server; a preference, once set, overrides it for this browser. */
+function agentOptinButtons() { return $$('[data-optin]').filter(b => b.id.startsWith('agentoptin-')); }
+function agentOptins() { return agentOptinButtons().filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.dataset.optin); }
+function paintAgentOptins() {
+  for (const b of agentOptinButtons()) {
+    const pref = prefGet('agent', 'optin:' + b.dataset.optin, null);
+    if (pref !== null) b.setAttribute('aria-pressed', String(pref === true));
+  }
+}
+function leeAgentOptinToggle(name) {
+  const b = $(`#agentoptin-${name}`); if (!b) return;
+  const on = b.getAttribute('aria-pressed') !== 'true';
+  prefSet('agent', 'optin:' + name, on); b.setAttribute('aria-pressed', String(on));
+  status(on ? `the next new conversation gets ${name}` : `new conversations go without ${name}`, 'ok');
+}
+window.leeAgentOptinToggle = leeAgentOptinToggle; window.agentOptins = agentOptins;
 /* A warm start is one collapsed block above the first turn. Its body is the rounds as they were
    replayed: the user line, the assistant's words, and every tool call painted with the same step
    renderer a live call gets, so "seeing the instructions run" reads like the conversation does.
@@ -959,7 +977,7 @@ async function leeAgentAccept() {
 async function leeAgentNew() {
   rememberAgentThread();
   try {
-    const d = await post('/agent/thread/new', {warm: agentWarmEnabled()}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    const d = await post('/agent/thread/new', {warm: agentWarmEnabled(), optin: agentOptins()}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
     approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
     if (log) { dropCodeSurfaces(log); log.innerHTML = ''; lee.agentLive = null; lee.agentView = 'live'; } if (input) input.value = '';
     await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
