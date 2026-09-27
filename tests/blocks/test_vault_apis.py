@@ -305,8 +305,8 @@ def test_the_specs_view_offers_somewhere_to_put_a_key(tmp_path):
 
 @pytest.fixture
 def newsy(tmp_path):
-    "A workspace whose news shelf has two stories on it."
-    ws = Workspace(roots=[tmp_path])
+    "A workspace following one source, whose news shelf has two stories on it: the news tools follow the source, not the shelf."
+    ws = follow(Workspace(roots=[tmp_path]))
     for title, source, feed, when, summary in (
             ('Rates hold', 'https://blog.test/1', 'A blog', '2026-08-14T09:00:00+00:00', 'The bank waited.'),
             ('A quiet day', 'https://journal.test/2', 'A journal', '2026-08-15T09:00:00+00:00', 'Rates were dull.')):
