@@ -303,8 +303,8 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
      'Start a branch that continues from this turn, leaving this conversation as it is',
      gone ? unheld : 'this turn has no captured boundary to branch at'],
     ['undo', 'lee-btn warn', 'Restore files', !!capabilities.undoable,
-     `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn`,
-     gone ? unheld : 'this turn made no reversible file changes']];
+     `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn${gitWritesNote(capabilities.git)}`,
+     gone ? unheld : 'this turn made no reversible file or git changes']];
   const off = controls.filter(c => !c[3]);
   bar.dataset.turn = turnId;
   bar.dataset.revisable = capabilities.revisable ? '1' : '';
@@ -382,6 +382,11 @@ const noteHeldRestores = held => held.length && status(
   `${held.length} file${held.length === 1 ? '' : 's'} with unsaved edits ${held.length === 1 ? 'was' : 'were'} not reloaded: `
   + held.map(p => p.split('/').pop()).join(', '), 'err');
 
+/* A turn's git writes carry gheasy undo tokens; the rollback applies them before the files. */
+function gitWritesNote(git) {
+  const n = (git || []).filter(g => g.undo).length;
+  return n ? ` and undo ${n} git write${n === 1 ? '' : 's'}` : '';
+}
 async function restoreTurnFiles(bar) {
   const {turnId, out, revisable} = responseTurn(bar);
   {
@@ -390,7 +395,7 @@ async function restoreTurnFiles(bar) {
         (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : ''));
       const files = tx.transaction.files || [], warning = (tx.transaction.irreversible || []).length
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
-      if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn?${warning}`, 'restore files')) return;
+      if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn${gitWritesNote(tx.transaction.git)}?${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);

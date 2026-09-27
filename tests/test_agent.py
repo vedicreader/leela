@@ -1374,6 +1374,44 @@ def test_the_shims_are_gone_and_steering_is_never_advertised(tmp_path):
     with TestClient(ide_app(ws)) as client:
         assert 'user_steering' not in {x['name'] for x in client.get('/agent/commands').json()['tools']}
 
+def _git_repo(path):
+    "A repository with one tracked `a.py`, committed."
+    import subprocess
+    path.mkdir(parents=True, exist_ok=True)
+    def g(*a): return subprocess.run(['git', *a], cwd=path, check=True, text=True, capture_output=True).stdout.strip()
+    g('init', '-b', 'main'); g('config', 'user.email', 't@leela.local'); g('config', 'user.name', 'Leela tests')
+    (path/'a.py').write_text('value = 1\n'); g('add', '.'); g('commit', '-m', 'initial')
+    return path, g
+
+def test_git_writes_are_briefed_and_run_shell_points_at_them(tmp_path):
+    from leela.blocks.agent.ai import GIT_WRITE_TOOLS
+    repo, g = _git_repo(tmp_path/'r')
+    ws = Workspace(roots=[repo], approvals='auto')
+    briefed = {t.__name__ for t in ws.ai._plain}
+    assert GIT_WRITE_TOOLS <= briefed and 'git_commit' in ws.ai.system_prompt()
+    assert not (GIT_WRITE_TOOLS & {t.__name__ for t in ws.ai._sub_plain()}), 'a sub-agent still gets no git writes'
+    from leela.blocks.agent.turns import tool_schemas
+    assert GIT_WRITE_TOOLS <= {r['name'] for r in tool_schemas(ws.ai)}, 'the approval form can edit them'
+    tools = {t.__name__: t for t in ws.ai.tools}; ws.ai._prepare('x')
+    out = tools['run_shell']('git commit -m x'); assert failed(out) and '`git_commit`' in out
+    assert not failed(tools['run_shell']('git status')) and not failed(tools['run_shell']('git stash list'))
+    (repo/'a.py').write_text('value = 2\n'); said = tools['git_commit']('a change', 'a.py')
+    assert json.loads(said)['undo'] and ws.ai.git_undo[ws.ai.current_turn_id][0]['tool'] == 'git_commit'
+    ws.ai._finish('done'); caps = ws.ai.turn_capabilities(ws.ai.current_turn_id)
+    assert caps['git'][0]['undo'] and caps['git'][0]['tool'] == 'git_commit' and caps['undoable']
+
+def test_rolling_a_turn_back_undoes_its_git_writes_first_then_its_files(tmp_path):
+    repo, g = _git_repo(tmp_path/'r'); head = g('rev-parse', 'HEAD')
+    ws = Workspace(roots=[repo], approvals='auto'); tools = {t.__name__: t for t in ws.ai.tools}
+    ws.ai._prepare('x')
+    assert not failed(tools['replace_text'](str(repo/'a.py'), [{'oldText': 'value = 1', 'newText': 'value = 2'}]))
+    assert json.loads(tools['git_commit']('bump', 'a.py'))['undo'] and g('rev-parse', 'HEAD') != head
+    ws.ai._finish('done'); turn = ws.ai.current_turn_id
+    tx = ws.ai.rollback_turn(turn)
+    assert g('rev-parse', 'HEAD') == head, 'the commit was undone'
+    assert (repo/'a.py').read_text() == 'value = 1\n' and tx['rolled_back'] and 'undid 1 git write' in tx['git_result']
+    assert not ws.ai.turn_capabilities(turn)['undoable']
+
 def test_the_default_workspace_offers_the_model_at_most_45_tools(tmp_path):
     ws = Workspace(roots=[tmp_path])
     briefed = [t.__name__ for t in ws.ai._plain]

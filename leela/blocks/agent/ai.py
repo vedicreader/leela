@@ -22,8 +22,10 @@ from ..vault.jobs import cadence
 from .video import VideoJobs, video_available, video_tools
 
 from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
-#: Tools the backend can dispatch that no briefing, warm fit, form or picker names.
-HIDDEN = frozenset({'user_steering', *GIT_WRITE_TOOLS})
+#: Tools the backend can dispatch that no briefing, warm fit, form or picker names. The git writes
+#: are not among them: they are briefed, gated by `Interventions` like any write, and undone by the
+#: turn's rollback (option A of the phase 5 plan).
+HIDDEN = frozenset({'user_steering'})
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
@@ -967,11 +969,11 @@ class Assistant(Agent):
 
     @property
     def _plain(self):
-        "What the model is offered: no `user_steering` (dispatchable after a refusal, never advertised) and none of the hidden Git writes, though the turn model holds both."
+        "What the model is offered: everything but `user_steering`, which is dispatchable after a refusal and never advertised."
         return [f for f in super()._plain if f.__name__ not in HIDDEN]
 
     def _sub_plain(self):
-        "No delegated agent gets leela's Git writes, whichever list upstream hands back."
+        "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable) nor `user_steering`, whichever list upstream hands back. Its own set, not `HIDDEN`."
         refused = {*GIT_WRITE_TOOLS, 'user_steering'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
@@ -1034,6 +1036,7 @@ class Assistant(Agent):
         self.turn_transactions[self.current_turn_id] = {
             'turn_id': self.current_turn_id, 'branch_id': self.current_branch_id,
             'files': {p: {'before': before, 'after': after} for p, (before, after) in changes.items()},
+            'git': list(self.git_undo.get(self.current_turn_id, [])),   # each with gheasy's `undo` token
             'irreversible': irreversible, 'rolled_back': False}
         self.ws.journal.record('Agent turn', [(p, before, after) for p, (before, after) in changes.items()],
             kind='agent', irreversible=irreversible)
@@ -1045,17 +1048,18 @@ class Assistant(Agent):
         revisable = any(isinstance(m, dict) and m.get('role') == 'assistant' and
             not m.get('tool_calls') and str(m.get('content') or '').strip() for m in after)
         tx = self.turn_transactions.get(str(turn_id)) or {}
-        files = list((tx.get('files') or {}).keys())
-        return {'revisable': revisable, 'undoable': bool(files) and not tx.get('rolled_back'),
+        files, git = list((tx.get('files') or {}).keys()), list(tx.get('git') or [])
+        return {'revisable': revisable, 'undoable': bool(files or [g for g in git if g.get('undo')]) and not tx.get('rolled_back'),
             'branchable': str(turn_id) in self.checkpoints, 'known': bool(checkpoint or tx),
-            'files': files, 'irreversible': list(tx.get('irreversible') or [])}
+            'files': files, 'git': git, 'irreversible': list(tx.get('irreversible') or [])}
     def rollback_turn(self, turn_id):
-        "Atomically restore every unchanged artifact from a completed turn."
+        "Atomically restore every unchanged artifact from a completed turn: its git writes first (a checkout undone puts the tree where the file texts were taken from), then its files."
         tx = self.turn_transactions.get(str(turn_id))
         if tx is None: raise KeyError(f'no transaction for {turn_id}')
         if tx['rolled_back']: raise ValueError('that turn was already rolled back')
         conflicts = [p for p, snap in tx['files'].items() if self.host.text_at(p) != snap['after']]
         if conflicts: raise ValueError('changed after the turn: ' + ', '.join(conflicts))
+        tx['git_result'] = self._undo_git(tx['git']) if tx.get('git') else ''
         for path, snap in tx['files'].items(): self.host.write(path, snap['before'])
         tx['rolled_back'] = True
         return tx

@@ -1130,7 +1130,7 @@ def connect(app, ctx):
         try: tx = t.ai.rollback_turn(d.get('turn_id') or '')
         except Exception as e: return fail(e)
         return {'ok': True, 'thread': t.id, 'turn_id': tx['turn_id'], 'paths': list(tx['files']),
-                'irreversible': tx['irreversible']}
+                'git': tx.get('git_result', ''), 'irreversible': tx['irreversible']}
     @rt('/agent/rollback-tool')
     async def agent_rollback_tool(req):
         "Rollback one snapshotted file call when its output is still the current file."
