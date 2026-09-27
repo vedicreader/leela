@@ -119,7 +119,7 @@ async function leeRunsMenu(anchor) {
   // Where each running app is listening, as rows: a port is the thing you want back after a reload.
   const urls = runs.filter(s => s.running !== false).flatMap(s => (s.urls || []).map(url => ({url, s})));
   if (urls.length) rows.push({separator: true});
-  for (const {url, s} of urls) rows.push({label: 'open ' + url, detail: s.label || s.path, run: () => window.open(url, '_blank')});
+  for (const {url, s} of urls) rows.push({label: 'open ' + url, detail: s.label || s.path, run: () => openExternal(url)});
   if (rows.length) rows.push({separator: true});
   for (const s of runs.filter(s => s.running !== false)) rows.push({
     label: 'stop ' + (s.label || s.path), warn: true,
