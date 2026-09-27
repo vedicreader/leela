@@ -38,7 +38,7 @@ def history_file(ws):
     return p
 
 def needs_runtime(name):
-    "Skip where the runtime a model name resolves through is not installed: `sonnet` is Claude Code's, and CI has none."
+    "Skip where `name` is a runtime this machine lacks. `sonnet` resolves through `claude` (Claude Code), which CI does not have."
     from leela.agent.core import runtime_available
     return pytest.mark.skipif(not runtime_available(name), reason=f'the {name} runtime is not installed here')
 

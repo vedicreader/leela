@@ -62,6 +62,11 @@ def memory_shelf(root=None):
 def _offline(): return os.getenv('LEELA_MEMORY_OFFLINE', '').lower() in ('1', 'true', 'yes')
 
 _ENC_LOCK, _ENCODERS = threading.Lock(), {}
+_OPEN_LOCKS = {}
+
+def _open_lock(path):
+    "One lock per vault file, for the threads that open shelves over it."
+    with _ENC_LOCK: return _OPEN_LOCKS.setdefault(str(Path(path).resolve()), threading.Lock())
 
 def shared_encoder(enc=None, offline=False):
     "One built encoder per (name, offline); `mk_encoder` loads a fresh ~1GB matrix on every call."
@@ -103,13 +108,13 @@ class Memory:
         self.path, self.encoder = memory_path(path), encoder
         self.offline = _offline() if offline is None else bool(offline)
         self._stores, self.note = {}, 'vault not opened yet'
-        self._opening = threading.Lock()
     def _store(self, name):
         "Open one shelf directly, never via the root vault, which would load another encoder."
-        # Under the lock: the poll tick runs on its own thread, and two threads opening the same
-        # shelf at once built two Vaults over one file, honker's native open racing an apsw
-        # `execute` on the other. That is a bus error, not an exception.
-        with self._opening:
+        # Under the file's lock: the poll tick runs on its own thread, and two threads opening a
+        # shelf over the same file at once built two Vaults, honker's native open racing an apsw
+        # `execute` on the other. That is a bus error, not an exception. The lock is the file's,
+        # not this object's: every workspace root has a Memory, all over the one vault.db.
+        with _open_lock(self.path):
             if name not in self._stores:
                 from vishalakshi import Vault
                 store = 'store' if name in (None, '', 'main') else safe_shelf(name)

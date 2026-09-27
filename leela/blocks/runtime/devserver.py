@@ -3,6 +3,7 @@
 from __future__ import annotations
 import asyncio, os, re, sys, time, traceback
 from collections import deque
+from contextlib import suppress
 from dataclasses import dataclass
 from fastcore.all import Path, L, first
 from fastcore.xtras import clean_cli_output
@@ -182,7 +183,10 @@ class DevServer:
         for _ in range(max(1, int(grace * 10)) + 5):
             if not self.alive: break
             await asyncio.sleep(0.1)
-        if self._reader: self._reader.cancel()
+        if self._reader and not self._reader.done():
+            # Waited for, so `ended` and the viewers' end-of-run are delivered before stop returns.
+            self._reader.cancel()
+            with suppress(asyncio.CancelledError): await self._reader
         self.base = None
     async def restart(self):
         await self.stop()

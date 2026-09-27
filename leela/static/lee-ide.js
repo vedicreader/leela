@@ -365,10 +365,9 @@ window.leeRunsMenu = leeRunsMenu;
 function adoptRuns(servers) {
   if (lee.runsAdopted) return;
   lee.runsAdopted = true;
-  for (const s of servers) {
-    if (s.running === false || !s.pid || lee.terms.has('run:' + (s.script || s.path))) continue;
-    leeRunTerm(s.script || s.path, s.label, s.pid).catch(() => {});
-  }
+  const up = servers.filter(s => s.running !== false && s.pid && !lee.terms.has('run:' + (s.script || s.path)));
+  for (const s of up) leeRunTerm(s.script || s.path, s.label, s.pid, true).catch(() => {});
+  if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still up — see the runs pill`);
 }
 
 async function pollRunLogs() {
@@ -506,7 +505,7 @@ async function openReleaseTerm(root = '', kind = 'release') {
    for a dev server is colour, progress, a traceback as it arrives, and a keyboard so ctrl-c reaches
    the app. Same component as the shell, pointed at `/run/ws`, which hands back the pty the run is
    already on rather than starting anything. */
-async function leeRunTerm(path, label = '', pid = null) {
+async function leeRunTerm(path, label = '', pid = null, quiet = false) {
   if (!path) return;
   await loadTermBundle();
   const d = await api('/term/info');
@@ -514,12 +513,13 @@ async function leeRunTerm(path, label = '', pid = null) {
   const id = 'run:' + path, prior = lee.terms.get(id);
   // Same path, another process: the view was attached to the run that ended, so Stop then Run
   // kept showing the first run's output. A new pid gets a new view.
-  if (prior && !prior.exited && (!pid || prior.pid === pid)) return switchTerm(id);
+  if (prior && !prior.exited && (!pid || prior.pid === pid)) return quiet ? undefined : switchTerm(id);
   if (prior) { prior.view.dispose(); prior.host.remove(); lee.terms.delete(id); }
-  $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
+  // `quiet` is a reload adopting a run that is still up: the tab appears, hidden, and nothing
+  // else moves. `switchTerm` refits it when it is chosen.
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
-  host.dataset.term = id; parent.appendChild(host);
+  host.dataset.term = id; host.hidden = quiet; parent.appendChild(host);
   const name = label || path.split('/').pop();
   const record = {id, kind: 'run', label: name, cwd: path, pid, host, view: null};
   record.view = LeeTerm.create(host, {
@@ -527,7 +527,10 @@ async function leeRunTerm(path, label = '', pid = null) {
     onStatus: m => status(`${name}: ${m}`),
     onExit: () => { record.exited = true; paintTermTabs(); },
   });
-  lee.terms.set(id, record); switchTerm(id);
+  lee.terms.set(id, record);
+  if (quiet) { paintTermTabs(); return; }
+  $('#shell').classList.add('show-term');
+  switchTerm(id);
 }
 window.leeRunTerm = leeRunTerm;
 

@@ -139,10 +139,9 @@ window.leeRunsMenu = leeRunsMenu;
 function adoptRuns(servers) {
   if (lee.runsAdopted) return;
   lee.runsAdopted = true;
-  for (const s of servers) {
-    if (s.running === false || !s.pid || lee.terms.has('run:' + (s.script || s.path))) continue;
-    leeRunTerm(s.script || s.path, s.label, s.pid).catch(() => {});
-  }
+  const up = servers.filter(s => s.running !== false && s.pid && !lee.terms.has('run:' + (s.script || s.path)));
+  for (const s of up) leeRunTerm(s.script || s.path, s.label, s.pid, true).catch(() => {});
+  if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still up — see the runs pill`);
 }
 
 async function pollRunLogs() {

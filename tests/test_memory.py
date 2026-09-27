@@ -181,6 +181,20 @@ def test_two_threads_opening_one_shelf_open_it_once(tmp_path, monkeypatch):
     assert len(built) == 1, f'the shelf was opened by {built}'
     assert got['poll'] is got['request']
 
+def test_two_memories_over_one_file_do_not_open_it_at_once(tmp_path, monkeypatch):
+    "One Memory per workspace root, all over the same vault.db: the lock is the file's, not the instance's."
+    import threading, time, vishalakshi
+    active, most = [0], [0]
+    class SlowVault:
+        def __init__(self, path, **kw):
+            active[0] += 1; most[0] = max(most[0], active[0]); time.sleep(0.2); active[0] -= 1
+    monkeypatch.setattr(vishalakshi, 'Vault', SlowVault)
+    mems = [Memory(shelf=s, path=tmp_path/'vault.db', offline=True) for s in ('a', 'b')]
+    ts = [threading.Thread(target=m._open) for m in mems]
+    for t in ts: t.start()
+    for t in ts: t.join(5)
+    assert most[0] == 1, 'two Vaults were being built over one file at the same time'
+
 def test_a_folder_name_becomes_a_shelf_a_hyphen_cannot_break(tmp_path):
     "A shelf is a table-name prefix, so the name reaches raw SQL."
     assert safe_shelf('my-repo') == safe_shelf('My.Repo') == 'my_repo'

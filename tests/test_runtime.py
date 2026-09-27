@@ -1043,6 +1043,7 @@ def test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream(tm
         assert s1.urls == ['http://127.0.0.1:8765', 'http://127.0.0.1:8766'], 'every URL a run prints, not the first'
         assert s1.app_url == 'http://127.0.0.1:8765'
         await dev.stop(str(p))
+        assert s1._reader.done() and s1.ended is not None, 'stop returns after its reader has finished'
         got = []
         while not q.empty(): got.append(q.get_nowait())
         assert got and got[-1] is None, 'the viewer is told the run ended'
@@ -1097,8 +1098,13 @@ def test_a_reloaded_page_shows_what_is_still_running_and_where():
     "Close the tab and open it again: the servers are still up, so their terminals and ports come back."
     logs = read('leela/blocks/runs/logs.js')
     assert 'function adoptRuns(' in logs and 'adoptRuns(servers)' in logs, 'the first poll adopts every running server'
-    assert "leeRunTerm(s.script || s.path, s.label, s.pid)" in logs
+    assert "leeRunTerm(s.script || s.path, s.label, s.pid, true)" in logs, 'adopted quietly: a reload must not take the dock and the focus'
     assert "label: 'open ' + url" in logs and "openExternal(url)" in logs, 'each URL a run printed is a row that opens it, in the packaged app too'
+    dock = read('leela/blocks/term/dock.js')
+    assert 'quiet = false' in dock and 'host.hidden = quiet' in dock, 'a quiet view is created hidden'
+    assert 'if (quiet) { paintTermTabs(); return; }' in dock, 'and is a tab, not the tab'
+    assert "$('#shell').classList.add('show-term')" not in dock.split('async function leeRunTerm')[1].split('if (quiet)')[0], \
+        'the dock is not opened before the quiet check'
 
 def test_a_reloader_is_called_out_wherever_it_is_switched_on():
     """`--reload` in a command line was already warned about."""
