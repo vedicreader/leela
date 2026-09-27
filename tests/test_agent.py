@@ -1748,9 +1748,39 @@ def test_the_vault_privacy_policy_is_persisted_and_reaches_what_the_model_retrie
         read=lambda n, **kw: dict(kw, kind='read'), toc=lambda d=None, **kw: dict(kw, kind='toc'),
         sections=lambda d, **kw: dict(kw, kind='sections'))
     host.ask('who signed it', pii='off')
-    assert asked['pii'] == 'refuse', "the caller's `pii` is dropped, not honoured"
+    assert 'pii' not in asked, "the caller's `pii` is dropped, and ask picks its own policy (vishalakshi 0.1.17)"
     assert host.memory_search('x')['pii'] == host.memory_read('n#1')['pii'] == 'refuse'
     assert host.memory_tree()['pii'] == host.memory_sections('d')['pii'] == 'refuse'
+
+def test_the_host_remembers_by_key_and_asks_without_a_gate(tmp_path, monkeypatch):
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1'); monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
+    from leela.blocks.agent.ai import WorkspaceHost
+    ws = Workspace(roots=[tmp_path]); h = WorkspaceHost(ws)
+    seen = {}
+    class V:   # what `_vault(write=True)._open()` returns
+        def note(self, text, title=None, tags=(), key=''): seen.update(text=text, key=key); return {'doc_id': 'd1', 'title': title}
+    monkeypatch.setattr(h, '_vault', lambda write=False: type('M', (), {'_open': lambda s: V(), 'vault': type('X', (), {'ask': lambda s, q, **kw: seen.update(kw) or {}})()})())
+    h.remember('use uv', title='Tooling', key='tooling')
+    assert seen['key'] == 'tooling'
+    ws.vault_pii = 'off'; h.ask('what tooling?')
+    assert 'pii' not in seen, 'ask chooses its own policy (vishalakshi 0.1.17); off would only warn'
+    with pytest.raises(HostError): h.memory_topics()
+
+def test_the_host_answers_exists_and_deletes_only_inside_writable_roots(tmp_path):
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.blocks.fs.fs import Unsafe
+    (tmp_path/'a.py').write_text('x\n'); ws = Workspace(roots=[tmp_path]); h = WorkspaceHost(ws)
+    assert h.exists(str(tmp_path/'a.py')) and not h.exists(str(tmp_path/'nope.py')) and not h.exists('/etc/passwd')
+    with pytest.raises(Unsafe): h.delete('/etc/passwd')
+    h.delete(str(tmp_path/'a.py')); assert not (tmp_path/'a.py').exists()
+    h.delete(str(tmp_path/'a.py'))     # already gone: not an error, like ramabana's LocalHost
+
+def test_a_write_through_the_recorded_tool_reaches_the_undo_journal(tmp_path):
+    "`Agent._record` asks `host.exists` before a path write; a host without it fails every write."
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    create = next(t for t in ws.ai.tools if t.__name__ == 'create_file')
+    ws.ai._prepare('x')                                   # a turn's `before` map
+    assert not failed(create(str(tmp_path/'n.py'), 'y = 1\n')) and str(tmp_path/'n.py') in ws.ai.new
 
 def test_a_workspace_saved_with_a_policy_this_build_lost_still_opens(tmp_path):
     "A settings file is not a reason to refuse to start; an unreadable policy is the safest default."

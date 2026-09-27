@@ -313,6 +313,13 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
                 'agent settings to write to the other open folders')
         return target
     def write(self, path, text): return self.ws.write_text_at(self.check_write(path), text)
+    def exists(self, path):
+        "Whether `path` is a file the agent may read; one outside the roots, or missing, is not."
+        try: return self.check(path, reading=True).exists()
+        except Exception: return False
+    def delete(self, path):
+        "Remove one file inside the writable roots (a `/rewind` of a created file); one already gone is not an error."
+        self.check_write(path).unlink(missing_ok=True)
     def text_at(self, path): return self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):
@@ -347,18 +354,17 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
     def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit, pii=self._pii)
     def memory_tree(self, document=''): return self._vault().toc(document or None, pii=self._pii)
     def memory_read(self, node_id): return self._vault().read(node_id, pii=self._pii)
-    def memory_topics(self, limit=12): return self._vault().clusters(limit)
     def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
     def memory_documents(self, limit=50): return self._vault().all_documents(limit)
     def memory_sections(self, doc_id): return self._vault().sections(doc_id, pii=self._pii)
     def ask(self, question, ref=None, instruction='', **kw):
-        "The vault answers with citations, on this session's model. `pii` is not the caller's to set."
+        "The vault answers with citations, on this session's model. It chooses its own policy: local when a local runtime exists, else redact; `vault_pii` governs retrieval, not this."
         kw.pop('pii', None)
         if self.mk_chat is not None: kw.setdefault('mk_chat', self.mk_chat)
-        return self._vault().vault.ask(question, ref=ref, instruction=str(instruction or ''),
-                                       pii=self._pii, **kw)
-    def remember(self, text, title=None, tags=()):
-        return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []))
+        return self._vault().vault.ask(question, ref=ref, instruction=str(instruction or ''), **kw)
+    def remember(self, text, title=None, tags=(), key=''):
+        "File a note; `key` upserts the same note later."
+        return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []), key=key)
     def watch(self, target, action='url', every='1d', note=None, **kw):
         return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
     def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)

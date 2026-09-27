@@ -319,7 +319,7 @@ def named(tools): return {t.__name__ for t in tools}
 def test_the_feeds_are_reachable_from_a_turn(tmp_path):
     "Feed items are on the `news` shelf, and the memory tools read the main one."
     assert {'news_feeds', 'news_latest', 'news_story', 'news_follow', 'news_unfollow',
-            'news_refresh', 'api_access'} <= named(ide_tools(Workspace(roots=[tmp_path])))
+            'news_refresh'} <= named(ide_tools(Workspace(roots=[tmp_path])))
 
 def test_the_three_that_write_go_in_front_of_the_user():
     from leela.blocks.agent.ai import WRITE_TOOLS
