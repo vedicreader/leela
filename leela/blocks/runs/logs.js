@@ -114,7 +114,7 @@ async function leeRunsMenu(anchor) {
   const runs = lee.runs || [];
   const rows = runs.map(s => ({
     label: (s.running === false ? '⚠ ' : '▶ ') + (s.label || s.path),
-    detail: runState(s), run: () => leeRunTerm(s.script || s.path, s.label),
+    detail: runState(s), run: () => leeRunTerm(s.script || s.path, s.label, s.pid),
   }));
   if (rows.length) rows.push({separator: true});
   for (const s of runs.filter(s => s.running !== false)) rows.push({

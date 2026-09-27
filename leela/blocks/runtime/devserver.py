@@ -63,7 +63,7 @@ class DevServer:
         self.pty = None
         self.log = deque(maxlen=self.max_log)
         self.base = None
-        self.app_url = None
+        self.urls = []               # every http URL the run printed; the first is `app_url`
         self.started = self.ended = None
         self._reader = None
         self.command_code = None
@@ -77,6 +77,10 @@ class DevServer:
         return self.alive and self.command_code is None
     @property
     def pid(self): return self.pty.pid if self.pty else None
+    @property
+    def app_url(self): return first(self.urls)
+    @property
+    def exit_note(self): return self.pty.exit_note if self.pty else ''
     @property
     def argv(self): return split_cmd(self.script) + [str(a) for a in self.args]
     @property
@@ -107,9 +111,8 @@ class DevServer:
         "Spawn the app on a pty and begin draining it. Returns self once the inspector registers."
         if self.alive: return self
         from ..term.term import Pty
-        self.log.clear(); self.screen.clear()
-        self.base = self.app_url = self.ended = None
-        self.command_code = None
+        self.log.clear(); self.screen.clear(); self.urls.clear()
+        self.base = self.ended = self.command_code = None
         # A pty rather than a pipe: many apps write colour and progress only on a terminal, and
         # some say nothing at all into a pipe.
         from .kernels import venv_env
@@ -128,22 +131,28 @@ class DevServer:
             rest.extend(data)
             while (i := rest.find(b'\n')) >= 0:
                 self._line(bytes(rest[:i])); del rest[:i + 1]
-        await self.pty.stream(on_data)
-        if rest: self._line(bytes(rest))
-        self.ended = time.time()
+        try: await self.pty.stream(on_data)
+        finally:
+            if rest: self._line(bytes(rest))
+            self.ended = time.time()
+            # `None` ends a viewer's queue. A socket left waiting on a dead server showed the old
+            # run forever, while the next run of the same script had no viewer at all.
+            for q in list(self._subs): q.put_nowait(None)
+            self._subs.clear()
     def _line(self, raw):
         "One output line, kept for `/dev/log`: the escape codes belong to the terminal, not a list."
         s = clean_cli_output(raw.decode('utf-8', 'replace').rstrip('\r\n')).rstrip()
         self.log.append(s)
         if (m := _EXITED.match(s)): self.command_code = int(m.group(1))
-        if s.startswith('[leela]') or self.app_url is not None: return
+        if s.startswith('[leela]'): return
         if any(h in s.lower() for h in _URL_HINTS) and (i := s.find('http://')) >= 0:
-            self.app_url = s[i:].split()[0].rstrip('.,')
+            if (u := s[i:].split()[0].rstrip('.,')) not in self.urls: self.urls.append(u)
     def subscribe(self):
-        "A queue of terminal frames for one viewer, primed with what has already scrolled by."
+        "A queue of terminal frames for one viewer: primed with what already scrolled by, and ended if the run has."
         q = asyncio.Queue()
         if self.screen: q.put_nowait(bytes(self.screen))
-        self._subs.add(q)
+        if self.ended is not None: q.put_nowait(None)
+        else: self._subs.add(q)
         return q
     def unsubscribe(self, q): self._subs.discard(q)
     def _broadcast(self, data):
@@ -174,7 +183,7 @@ class DevServer:
             if not self.alive: break
             await asyncio.sleep(0.1)
         if self._reader: self._reader.cancel()
-        self.base = self.app_url = None
+        self.base = None
     async def restart(self):
         await self.stop()
         return await self.start()
@@ -183,7 +192,8 @@ class DevServer:
         return {'label': self.label, 'script': self.script, 'cmd': ' '.join(self.argv),
             'alive': self.alive, 'running': self.running, 'code': self.command_code,
             'pid': self.pid, 'returncode': self.pty.exit_code if self.pty else None,
-            'watch': self.watch or infer_watch(self.argv), 'base': self.base, 'app_url': self.app_url,
+            'watch': self.watch or infer_watch(self.argv), 'base': self.base,
+            'app_url': self.app_url if self.running else None, 'last_url': self.app_url, 'urls': list(self.urls),
             'started': self.started, 'ended': self.ended,
             'uptime': (time.time() - self.started) if self.started and self.alive else 0}
 

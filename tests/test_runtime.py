@@ -1023,6 +1023,76 @@ def test_a_run_is_on_a_terminal_its_viewers_can_attach_to(tmp_path):
         s.unsubscribe(q); assert q not in s._subs
     finally: asyncio.run(s.stop())
 
+SERVER_RUN = """\
+import time
+print('Uvicorn running on http://127.0.0.1:{port}', flush=True)
+print('also listening on http://127.0.0.1:{port2}', flush=True)
+while True: time.sleep(0.1)
+"""
+
+def test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream(tmp_path):
+    """Stop then Run: the viewer's queue was left open on the dead server, and the new server had no viewer, so the terminal froze on the first run's output."""
+    p = tmp_path/'srv.py'; p.write_text(SERVER_RUN.format(port=8765, port2=8766))
+    async def go():
+        dev = DevServers(port=9474)
+        s1 = await dev.start(str(p))
+        q = s1.subscribe()
+        for _ in range(50):
+            if len(s1.urls) == 2: break
+            await asyncio.sleep(0.1)
+        assert s1.urls == ['http://127.0.0.1:8765', 'http://127.0.0.1:8766'], 'every URL a run prints, not the first'
+        assert s1.app_url == 'http://127.0.0.1:8765'
+        await dev.stop(str(p))
+        got = []
+        while not q.empty(): got.append(q.get_nowait())
+        assert got and got[-1] is None, 'the viewer is told the run ended'
+        assert not s1._subs, 'and is no longer subscribed to a dead server'
+        assert s1.state()['last_url'] == 'http://127.0.0.1:8765', 'a stopped run remembers where it was'
+        late = s1.subscribe(); items = [late.get_nowait() for _ in range(late.qsize())]
+        assert items[0] and items[-1] is None, 'a late viewer of a finished run is primed, then told it ended'
+        s2 = await dev.start(str(p))
+        assert s2 is not s1 and s2.pid != s1.pid
+        q2 = dev.get(str(p)).subscribe()
+        seen = bytearray()
+        for _ in range(50):
+            while not q2.empty(): seen += q2.get_nowait() or b''
+            if b'Uvicorn running' in seen: break
+            await asyncio.sleep(0.1)
+        assert b'Uvicorn running' in seen, 'a viewer that resubscribes sees the new run'
+        await dev.stop_all()
+    asyncio.run(asyncio.wait_for(go(), 60))
+
+def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
+    "`/run/ws` used to hang on an empty queue forever, so the browser never learned the run ended."
+    p = tmp_path/'srv.py'; p.write_text(SERVER_RUN.format(port=8767, port2=8768))
+    ws = Workspace(roots=[tmp_path], dev_port=9476)
+    with TestClient(ide_app(ws)) as c:
+        info = c.get('/term/info').json()
+        if not info['enabled']: pytest.skip(info['why'])
+        r = c.get(f'/dev/start?path={p}').json()
+        assert r['ok'], r
+        try:
+            with c.websocket_connect('/run/ws') as sock:
+                sock.send_json({'token': info['token'], 'kind': 'run', 'cwd': str(p), 'cols': 80, 'rows': 24})
+                first = sock.receive()
+                assert 'bytes' in first, f'setup failed instead of attaching: {first}'
+                c.get(f'/dev/stop?path={p}')
+                for _ in range(200):
+                    m = sock.receive()
+                    if 'text' in m: break
+                assert json.loads(m['text'])['t'] == 'exit'
+            listed = c.get('/dev/list').json()['servers'][0]
+            assert listed['running'] is False and listed['last_url'] == 'http://127.0.0.1:8767'
+            assert listed['urls'] == ['http://127.0.0.1:8767', 'http://127.0.0.1:8768']
+        finally: c.get(f'/dev/stop?path={p}')
+
+def test_the_run_terminal_is_recreated_for_a_new_process():
+    "Same path, new pid: the old view was attached to the old server, and `switchTerm` kept showing it."
+    dock, cfg, logs = read('leela/blocks/term/dock.js'), read('leela/blocks/runs/config.js'), read('leela/blocks/runs/logs.js')
+    assert 'prior.pid === pid' in dock and 'cwd: path, pid, host' in dock, 'the view remembers which process it shows'
+    assert 'leeRunTerm(s.script || r.cmd, s.label, s.pid)' in cfg, 'starting a run names the process to show'
+    assert 'leeRunTerm(s.script || s.path, s.label, s.pid)' in logs
+
 def test_a_reloader_is_called_out_wherever_it_is_switched_on():
     """`--reload` in a command line was already warned about."""
     from leela.blocks.runtime.devserver import _wants_reload

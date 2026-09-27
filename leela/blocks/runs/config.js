@@ -8,7 +8,7 @@ async function startRun(r) {
            `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
   // A dev server's output is the thing you watch, so open the terminal it is on rather than
   // leaving it to be found under a dock tab and a filter.
-  leeRunTerm(s.script || r.cmd, s.label).catch(e => status(String(e.message || e), 'err'));
+  leeRunTerm(s.script || r.cmd, s.label, s.pid).catch(e => status(String(e.message || e), 'err'));
   if (s.base) {
     // Running is an explicit choice of runtime, so connect the variable panel rather than making
     // the user repeat that choice in "env…".

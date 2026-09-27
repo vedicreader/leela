@@ -81,7 +81,9 @@ def pipeline_socket(app, path, gate, resolve):
             await sock.close()
             return
         async def to_browser():
-            while True: await sock.send_bytes(await q.get())
+            # `None` is the end of the run: say so, the way `/term/ws` does, so the view knows.
+            while (data := await q.get()) is not None: await sock.send_bytes(data)
+            await sock.send_text(json.dumps({'t': 'exit', 'note': getattr(pipeline, 'exit_note', '')}))
         async def from_browser():
             while True:
                 m = await sock.receive()

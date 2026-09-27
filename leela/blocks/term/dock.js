@@ -98,20 +98,22 @@ async function openReleaseTerm(root = '', kind = 'release') {
    for a dev server is colour, progress, a traceback as it arrives, and a keyboard so ctrl-c reaches
    the app. Same component as the shell, pointed at `/run/ws`, which hands back the pty the run is
    already on rather than starting anything. */
-async function leeRunTerm(path, label = '') {
+async function leeRunTerm(path, label = '', pid = null) {
   if (!path) return;
   await loadTermBundle();
   const d = await api('/term/info');
   if (!d.enabled) return status(d.why, 'err');
   const id = 'run:' + path, prior = lee.terms.get(id);
-  if (prior && !prior.exited) return switchTerm(id);
+  // Same path, another process: the view was attached to the run that ended, so Stop then Run
+  // kept showing the first run's output. A new pid gets a new view.
+  if (prior && !prior.exited && (!pid || prior.pid === pid)) return switchTerm(id);
   if (prior) { prior.view.dispose(); prior.host.remove(); lee.terms.delete(id); }
   $('#shell').classList.add('show-term');
   const parent = $('#terms'); if (!parent) return status('no terminal pane', 'err');
   const host = document.createElement('div'); host.className = 'lee-term lee-term-session';
   host.dataset.term = id; parent.appendChild(host);
   const name = label || path.split('/').pop();
-  const record = {id, kind: 'run', label: name, cwd: path, host, view: null};
+  const record = {id, kind: 'run', label: name, cwd: path, pid, host, view: null};
   record.view = LeeTerm.create(host, {
     token: d.token, cwd: path, kind: 'run', id, url: '/run/ws',
     onStatus: m => status(`${name}: ${m}`),
