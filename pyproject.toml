@@ -27,12 +27,12 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.1.42",   # owns its model catalog (curated ids + live discovery); approval wait/re-ask; `edits`, `Agent.tell`, run transcripts
+    "ramabana[cli]==0.2.0",   # 0.2.0: Agent(warm=, optin=), git through the git tools, shalya 0.1.0 tool set
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.0.11,<0.1",   # `run_cmd_bg`, `environment`, and `background_done`/`watch` among the hook events; 0.1 is a new tool set Leela adopts deliberately
+    "shalya>=0.1.0",   # native edits, ls, inspect_python(''), remember(key=), one watch(kind=)
     "gheasy>=0.0.10",  # 0.0.10 opened the six helpers; `blocks/git/seam.py` still takes either
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
@@ -69,7 +69,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dhrishti>=0.1.4",
     "watchfiles>=1.0",
-    "vishalakshi>=0.1.15",   # 0.1.15 keeps shelf encoders in litesearch's `store_meta`, which the registry read follows
+    "vishalakshi>=0.1.17",   # ask policy local-else-redact; note(key=); age/stale rows
     # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
     # hover paths, the pull request a branch belongs to, the workflow editor, and the kernels the
     # gateway serves -- so they are dependencies. The guards below them stay: they still have a
