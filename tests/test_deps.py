@@ -10,7 +10,7 @@ def _deps():
 
 def test_the_tool_simplification_releases_are_the_floor():
     deps = _deps()
-    assert deps['ramabana'].specifier.contains('0.2.0') and not deps['ramabana'].specifier.contains('0.1.42')
+    assert deps['ramabana'].specifier.contains('0.2.2') and not deps['ramabana'].specifier.contains('0.2.0')
     assert deps['shalya'].specifier.contains('0.1.0') and not deps['shalya'].specifier.contains('0.0.11')
     assert deps['vishalakshi'].specifier.contains('0.1.17') and not deps['vishalakshi'].specifier.contains('0.1.16')
     assert deps['dhrona'].specifier.contains('0.1.4')
@@ -18,7 +18,7 @@ def test_the_tool_simplification_releases_are_the_floor():
 
 def test_the_installed_set_matches_the_pins():
     import ramabana, shalya, vishalakshi, dhrona
-    assert Version(ramabana.__version__) >= Version('0.2.0') and Version(shalya.__version__) >= Version('0.1.0')
+    assert Version(ramabana.__version__) >= Version('0.2.2') and Version(shalya.__version__) >= Version('0.1.0')
     assert Version(vishalakshi.__version__) >= Version('0.1.17') and Version(dhrona.__version__) >= Version('0.1.4')
 
 def test_the_claude_code_runtime_chain_imports():

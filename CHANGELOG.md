@@ -4,7 +4,7 @@
 
 ## 0.1.5
 
-Needs ramabana 0.2.0 (pinned), shalya 0.1.0, vishalakshi 0.1.17, dhrona 0.1.4, rishi 0.1.38.
+Needs ramabana 0.2.2 (pinned), shalya 0.1.0, vishalakshi 0.1.17, dhrona 0.1.4, rishi 0.1.38.
 
 - The tool set is shalya 0.1.0's: `replace_text(path, edits)` and `edit_cell(path, cell_id, edits)` take a list of `{oldText, newText}` (a JSON string still parses this release), `ls` lists files, `inspect_python('')` reads the live namespace, `remember(key=)` upserts a note, and one `watch(kind='url'|'remind'|'search'|'folder')` replaces the watch, reminder and folder-watch tools. `edit_file` (hash-addressed edits) and `research` are opt-ins.
 - Leela's own `inspect_var`, `search_all` and `api_access` are gone: `inspect_python`, `search_code` and the API paragraph of the briefing carry what they did. `user_steering` is dispatchable after a refused call and never offered, briefed, or shown in a form.
