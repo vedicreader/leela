@@ -1,7 +1,10 @@
 "dhrona in the agent pane: which rounds fit this conversation's tools, why the rest did not, and the capture → review → accept loop."
 
+import json, re
+from pathlib import Path
+
 __all__ = ['WARM_ROUNDS', 'NoDhrona', 'fit_rounds', 'warm_messages', 'warm_report', 'assess_session', 'capture_round',
-           'accept_round']
+           'round_name', 'accept_round']
 
 WARM_ROUNDS = 3   #: rounds a fresh conversation is seeded with; each is a few hundred tokens
 
@@ -57,7 +60,15 @@ def capture_round(history, session, output, name=None):
     "One conversation as a dhrona review notebook at `output`."
     return str(_rounds().capture(str(output), session=session, history=str(history), name=name))
 
+def round_name(name):
+    "A round's file name in the library: one path component, no leading dots, `round` when nothing is left."
+    return re.sub(r'[^A-Za-z0-9._-]+', '-', str(name or '')).strip('.-') or 'round'
+
 def accept_round(source, reviewer):
-    "Accept a reviewed notebook into the rounds library; the installed path comes back."
-    rounds = _rounds()
-    return str(rounds.install_round(rounds.accept(str(source), reviewer)))
+    "Accept a reviewed notebook into the rounds library under the notebook's own name; the installed path comes back."
+    rounds = _rounds(); source = Path(source)
+    name = round_name(source.stem)      # the notebook names the round; its metadata does not choose a path
+    compiled = Path(rounds.accept(str(source), reviewer))
+    data = json.loads(compiled.read_text()); data['meta']['name'] = name
+    compiled.write_text(json.dumps(data, indent=2))
+    return str(rounds.install_round(compiled, name=name))

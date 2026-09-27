@@ -36,15 +36,22 @@ Leela constructs one: `Agent` resolves the model for each routed job itself, fro
 ## dhrona warm starts
 
 `Assistant(warm=True)` seeds a fresh conversation from dhrona's accepted rounds. The seam is
-`Assistant._prepare`: it calls `Assistant.warm_start` before `Agent._prepare`, so the replayed
-messages are in the backend (`resume_hist`, the path a resumed session takes) when ramabana snapshots
-turn 1's `before` checkpoint, and the seeded turn's `plan.warm` names the rounds. A resumed
-conversation gets none, by the same `hist` / `_resume_hist` guard. `blocks/agent/warm.py` holds the
-dhrona calls -- `fit_rounds` (used, and skipped with a reason), `assess_session`, `capture_round`,
-`accept_round` -- and imports dhrona lazily, so a missing package is a note in the pane, not a
-failed turn. When ramabana takes `warm=` itself, `Assistant.warm_start` and the line in `_prepare`
-go, `warm` passes through to `Agent.__init__`, and `warm_report` stays: the pane and the routes read
-nothing else.
+`Assistant._prepare`: it calls `Assistant.warm_start` before `Agent._prepare`, handing the replayed
+messages to the backend through `resume_hist`, the path a resumed session takes. On a backend that is
+already running they are in place when ramabana snapshots turn 1's `before` checkpoint; on one that
+starts lazily they are restored at `start()`, after the snapshot, so a fork or rollback to turn 1
+restores an empty history -- exactly as it does for `resume_session`. The seeded turn's `plan.warm`
+names the rounds. A resumed conversation gets none, by the same `hist` / `_resume_hist` guard.
+`blocks/agent/warm.py` holds the dhrona calls -- `fit_rounds` (used, and skipped with a reason),
+`assess_session`, `capture_round`, `accept_round` -- and imports dhrona lazily, so a missing package
+is a note in the pane, not a failed turn. When ramabana takes `warm=` itself, `Assistant.warm_start`
+and the line in `_prepare` go, `warm` passes through to `Agent.__init__`, and `warm_report` stays:
+the pane and the routes read nothing else.
+
+`capture` writes the review notebook to `<first root>/.dhrona/<name>.ipynb`, and `accept` -- which
+takes only a notebook under that folder -- writes the compiled `<name>.json` beside it before
+installing a copy into `~/.config/dhrona/rounds`. The folder is the workspace's, so `/tab/open`
+reaches it; it holds working material, and a project may want it in `.gitignore`.
 
 ## Adding to the host
 

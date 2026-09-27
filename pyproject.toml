@@ -86,9 +86,14 @@ dependencies = [
     # `.reply` off. An unpinned resolve took the latter and every cell came back 500.
     "jupyasyncclient>=0.2.1,<0.2.8",
     "jupywire>=0.1.1",
-    # Warm starts, assess, capture and accept in the agent pane (`blocks/agent/warm.py`). 0.1.3 is
-    # the first with `fit_rounds` reporting skips, `Finding.turn`, and `install_round` returning its path.
-    "dhrona>=0.1.3",
+    # Warm starts, assess, capture and accept in the agent pane (`blocks/agent/warm.py`). 0.1.4 is
+    # the first with `fit_rounds` reporting skips, `Finding.turn`, `install_round` returning its
+    # path, and floors that leave the stack below alone.
+    "dhrona>=0.1.4",
+    # Capped: 0.0.24 dropped `ServerToolResult`, which python-fastllm <0.0.50 imports through
+    # rishi.claude -> llmsurgery.ant -> fastllm.anthropic, and fastllm >=0.0.47 has no gemini
+    # registry rows for ramabana 0.1.38's model list to read. Not ours, but ours to hold still.
+    "aidialog>=0.0.10,<0.0.24",
 ]
 
 [project.optional-dependencies]
@@ -151,7 +156,13 @@ markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 # Leela imports no `mcp`; `koshas` brings it and asks only for `>=1.2.0`. 2.x renamed `FastMCP`
 # to `MCPServer`, which `ramabana.mcp` imports, so an unconstrained resolve takes the major and
 # `import ramabana.mcp` stops working. A constraint rather than a dependency: it is not ours.
-constraint-dependencies = ["mcp<2"]
+constraint-dependencies = [
+    "mcp<2",
+    # rishi brings `python-fastllm`, and ramabana 0.1.38's `available_models` reads its
+    # `model_info_registry`: 0.0.46 adds an anthropic row (a key alone then publishes a model)
+    # and 0.0.47 drops the gemini rows. Held at 0.0.45, rishi's floor, alongside `aidialog`.
+    "python-fastllm<0.0.46",
+]
 
 [tool.uv.sources]
 leela = { workspace = true }

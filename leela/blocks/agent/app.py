@@ -190,7 +190,15 @@ def connect(app, ctx):
                 'warm': getattr(t.ai, 'warm_report', None), 'warm_on': bool(getattr(t.ai, 'warm', False))}
     def _round_dir():
         "Review notebooks live in the workspace, where `/tab/open` can reach them: `<first root>/.dhrona/`."
-        return Path(first(ws.fs.roots))/'.dhrona'
+        root = first(ws.fs.roots)
+        if root is None: raise ValueError('open a folder first: review notebooks live in its .dhrona/')
+        return Path(root)/'.dhrona'
+    def _review_source(source):
+        "The notebook `accept` may act on: dhrona saves it and writes beside it, so only one under `.dhrona/` will do."
+        p = Path(str(source or '')).expanduser().resolve()
+        if p.suffix != '.ipynb' or _round_dir().resolve() not in p.parents:
+            raise ValueError(f'source must be a review notebook under {_round_dir()}')
+        return p
     @rt('/agent/thread/assess')
     async def agent_thread_assess(req):
         "dhrona's score and findings for one conversation, each finding tagged with its turn."
@@ -216,7 +224,7 @@ def connect(app, ctx):
         "Accept a reviewed notebook into the rounds library; the next warm conversation may replay it."
         d = await req.json()
         # no fallback to `$USER`: accepting is a person putting their name to the round
-        try: path = await off_loop(accept_round, d.get('source') or '', str(d.get('reviewer') or '').strip())
+        try: path = await off_loop(accept_round, _review_source(d.get('source')), str(d.get('reviewer') or '').strip())
         except NoDhrona as e: return fail(e, 501)
         except (ValueError, FileNotFoundError) as e: return fail(e, 400)
         return {'ok': True, 'installed': path}

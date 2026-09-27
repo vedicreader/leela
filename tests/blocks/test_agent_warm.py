@@ -206,3 +206,44 @@ def test_capture_and_accept_routes(ws, tmp_path, monkeypatch):
         assert a['ok'] and a['score'] == 100 and a['turns'] == 1
         empty = ws.threads.new()
         assert c.post('/agent/thread/capture', json={'thread': empty.id}).status_code == 400
+
+
+def test_accept_takes_only_a_review_notebook_under_the_roots_dhrona_folder(ws, tmp_path, monkeypatch):
+    "A `source` outside `<root>/.dhrona/` is refused before dhrona touches it: accept saves the notebook and writes beside it."
+    lib = library(tmp_path, monkeypatch)
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    elsewhere = tmp_path/'elsewhere'; elsewhere.mkdir()
+    with TestClient(ide_app(ws)) as c:
+        t = ws.threads.new(); install(ws, [Step(text='hello')], token_delay=0); ws.ai.ask('first')
+        d = c.post('/agent/thread/capture', json={'thread': t.id, 'name': 'ok'}).json()
+        stray = elsewhere/'stray.ipynb'; stray.write_bytes(Path(d['path']).read_bytes())
+        for source in (str(stray), str(tmp_path/'.dhrona'/'..'/'elsewhere'/'stray.ipynb'), '/etc/passwd', ''):
+            r = c.post('/agent/round/accept', json={'source': source, 'reviewer': 'Karthik'})
+            assert r.status_code == 400 and '.dhrona' in r.json()['error'], source
+        assert sorted(p.name for p in elsewhere.iterdir()) == ['stray.ipynb'] and not list(lib.iterdir())
+        r = c.post('/agent/round/accept', json={'source': d['path'], 'reviewer': 'Karthik'}).json()
+        assert r['ok'] and Path(r['installed']) == lib/'ok.json'
+
+
+def test_the_installed_round_is_named_after_the_notebook_not_what_its_metadata_says(tmp_path, monkeypatch):
+    lib = library(tmp_path, monkeypatch)
+    ws = Workspace(roots=[tmp_path]); t = ws.threads.new()
+    install(ws, [Step(tool=('list_files', {})), Step(text='two files')], token_delay=0); t.ai.ask('what is here?')
+    from leela.blocks.agent.warm import capture_round, accept_round, round_name
+    src = Path(capture_round(t.ai.history_path, t.id, tmp_path/'.dhrona'/'..evil..ipynb', '../x'))
+    nb = json.loads(src.read_text()); nb['metadata']['dhrona']['name'] = '../x'; src.write_text(json.dumps(nb))
+    installed = Path(accept_round(src, 'Karthik'))
+    assert installed.parent == lib and installed.name == 'evil.json'
+    assert json.loads(installed.read_text())['meta']['name'] == 'evil'
+    assert round_name('../../x') == 'x' and round_name('..') == 'round' and round_name('Hello World.v2') == 'Hello-World.v2'
+
+
+def test_capture_without_an_open_folder_is_a_sentence_not_a_crash(ws, monkeypatch):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(ws)) as c:
+        t = ws.threads.new(); install(ws, [Step(text='hello')], token_delay=0); ws.ai.ask('first')
+        monkeypatch.setattr(ws.fs, 'roots', type(ws.fs.roots)())
+        r = c.post('/agent/thread/capture', json={'thread': t.id})
+        assert r.status_code == 400 and 'open a folder' in r.json()['error']
