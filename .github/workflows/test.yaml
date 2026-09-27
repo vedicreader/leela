@@ -11,6 +11,8 @@ on: [workflow_dispatch, pull_request, push]
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # A hung kernel or socket fails by the clock rather than holding the runner for six hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -19,5 +21,10 @@ jobs:
       # refuses the install outright (PEP 668), which is where every run since 2 September died.
       - name: install
         run: uv sync --group dev --python 3.12
+      # The git tests commit in temporary repositories, and a runner has no identity of its own.
+      - name: git identity
+        run: |
+          git config --global user.name leela-ci
+          git config --global user.email leela-ci@users.noreply.github.com
       - name: test
         run: uv run pytest tests -q

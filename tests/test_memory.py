@@ -165,6 +165,22 @@ def mem_vault(tmp_path, monkeypatch):
 
 def _ids(m): return [d.get('doc_id') or d.get('id') for d in m.documents()]
 
+def test_two_threads_opening_one_shelf_open_it_once(tmp_path, monkeypatch):
+    "The poll tick and a request both reached `_store` first; each built a Vault over the same file, and the native opens raced to a bus error."
+    import threading, time, vishalakshi
+    built = []
+    class SlowVault:
+        def __init__(self, path, **kw): built.append(threading.current_thread().name); time.sleep(0.2)
+    monkeypatch.setattr(vishalakshi, 'Vault', SlowVault)
+    mem = Memory(shelf='proj', path=tmp_path/'vault.db', offline=True)
+    got = {}
+    def open_it(who): got[who] = mem._store('proj')
+    ts = [threading.Thread(target=open_it, args=(w,), name=w) for w in ('poll', 'request')]
+    for t in ts: t.start()
+    for t in ts: t.join(5)
+    assert len(built) == 1, f'the shelf was opened by {built}'
+    assert got['poll'] is got['request']
+
 def test_a_folder_name_becomes_a_shelf_a_hyphen_cannot_break(tmp_path):
     "A shelf is a table-name prefix, so the name reaches raw SQL."
     assert safe_shelf('my-repo') == safe_shelf('My.Repo') == 'my_repo'

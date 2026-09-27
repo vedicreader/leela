@@ -281,6 +281,17 @@ def test_the_windows_build_cannot_take_the_macos_release_down():
     assert doc['jobs']['windows'].get('continue-on-error') is True
     assert not doc['jobs']['macos'].get('continue-on-error'), 'a broken macOS build is still a failure'
 
+def test_the_test_workflow_is_bounded_and_has_a_git_identity():
+    "A hung suite fails by the clock, and the tests that commit find a name to commit as."
+    import yaml
+    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'test.yaml').read_text())
+    job = doc['jobs']['pytest']
+    assert isinstance(job.get('timeout-minutes'), int) and job['timeout-minutes'] <= 60
+    names = [s.get('name') for s in job['steps']]
+    ident = first(job['steps'], lambda s: 'user.name' in str(s.get('run', '')))
+    assert ident and 'user.email' in ident['run']
+    assert names.index(ident.get('name')) < names.index('test'), 'set before the tests run'
+
 def test_a_missing_window_icon_is_reported_rather_than_shrugged_off(monkeypatch, capsys):
     """`_icon` answers with `first`, which is None when nothing matches."""
     import leela_app

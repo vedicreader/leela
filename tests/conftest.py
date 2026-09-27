@@ -37,6 +37,11 @@ def history_file(ws):
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
+def needs_runtime(name):
+    "Skip where the runtime a model name resolves through is not installed: `sonnet` is Claude Code's, and CI has none."
+    from leela.agent.core import runtime_available
+    return pytest.mark.skipif(not runtime_available(name), reason=f'the {name} runtime is not installed here')
+
 FIXTURES = 'fixtures'
 
 def fixture_dir(request):

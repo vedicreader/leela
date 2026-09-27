@@ -24,6 +24,7 @@ from fastcore.all import Path
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.workspace import Workspace
+from tests.conftest import needs_runtime
 ROOT = Path(__file__).resolve().parents[1]
 import os
 from leela.agent.runtime import Compactor, RESERVE, threshold
@@ -785,6 +786,7 @@ def test_skills_are_discovered_and_selected_by_the_prompt():
     assert meta == {'name': 'x', 'description': 'y z'} and body.strip() == 'body'
 
 
+@needs_runtime('claude')
 def test_explicit_research_uses_only_the_request_not_composed_notebook_context():
     class ResearchHost(MemHost_agent, WebHost):
         def __init__(self): super().__init__(); self.queries = []

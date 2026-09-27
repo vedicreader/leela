@@ -103,16 +103,21 @@ class Memory:
         self.path, self.encoder = memory_path(path), encoder
         self.offline = _offline() if offline is None else bool(offline)
         self._stores, self.note = {}, 'vault not opened yet'
+        self._opening = threading.Lock()
     def _store(self, name):
         "Open one shelf directly, never via the root vault, which would load another encoder."
-        if name not in self._stores:
-            from vishalakshi import Vault
-            store = 'store' if name in (None, '', 'main') else safe_shelf(name)
-            enc = None if self.offline else (_registered_encoder(self.path, store) or self.encoder)
-            self._stores[name] = Vault(self.path, store=store, encoder=shared_encoder(enc, self.offline),
-                                       offline=self.offline)
-            self.note = f'vault at {self.path} · {self.shelf_name}'
-        return self._stores[name]
+        # Under the lock: the poll tick runs on its own thread, and two threads opening the same
+        # shelf at once built two Vaults over one file, honker's native open racing an apsw
+        # `execute` on the other. That is a bus error, not an exception.
+        with self._opening:
+            if name not in self._stores:
+                from vishalakshi import Vault
+                store = 'store' if name in (None, '', 'main') else safe_shelf(name)
+                enc = None if self.offline else (_registered_encoder(self.path, store) or self.encoder)
+                self._stores[name] = Vault(self.path, store=store, encoder=shared_encoder(enc, self.offline),
+                                           offline=self.offline)
+                self.note = f'vault at {self.path} · {self.shelf_name}'
+            return self._stores[name]
     def _open(self): return self._store(self.shelf_name)
     def _agent(self): return self._store(GLOBAL)
     def _shelf(self, shelf=None):

@@ -5,6 +5,7 @@ from leela.blocks.term.term import TerminalGate
 from leela.app import _shell
 from leela.workspace import Workspace
 from tests.assets import read
+from tests.conftest import needs_runtime
 from pathlib import Path
 from leela.blocks.runtime.kernels import bootstrap_src, project_python
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +61,7 @@ def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
     assert 'id="agentreasoning"' in html and 'lee-composer-footer' in html
 
 
+@needs_runtime('claude')
 def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     skill = tmp_path/'.agents/skills/notebook-tests/SKILL.md'
     skill.parent.mkdir(parents=True)
