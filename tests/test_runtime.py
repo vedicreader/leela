@@ -1093,6 +1093,13 @@ def test_the_run_terminal_is_recreated_for_a_new_process():
     assert 'leeRunTerm(s.script || r.cmd, s.label, s.pid)' in cfg, 'starting a run names the process to show'
     assert 'leeRunTerm(s.script || s.path, s.label, s.pid)' in logs
 
+def test_a_reloaded_page_shows_what_is_still_running_and_where():
+    "Close the tab and open it again: the servers are still up, so their terminals and ports come back."
+    logs = read('leela/blocks/runs/logs.js')
+    assert 'function adoptRuns(' in logs and 'adoptRuns(servers)' in logs, 'the first poll adopts every running server'
+    assert "leeRunTerm(s.script || s.path, s.label, s.pid)" in logs
+    assert "label: 'open ' + url" in logs and "window.open(url" in logs, 'each URL a run printed is a row that opens it'
+
 def test_a_reloader_is_called_out_wherever_it_is_switched_on():
     """`--reload` in a command line was already warned about."""
     from leela.blocks.runtime.devserver import _wants_reload

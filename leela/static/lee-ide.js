@@ -342,6 +342,10 @@ async function leeRunsMenu(anchor) {
     label: (s.running === false ? '⚠ ' : '▶ ') + (s.label || s.path),
     detail: runState(s), run: () => leeRunTerm(s.script || s.path, s.label, s.pid),
   }));
+  // Where each running app is listening, as rows: a port is the thing you want back after a reload.
+  const urls = runs.filter(s => s.running !== false).flatMap(s => (s.urls || []).map(url => ({url, s})));
+  if (urls.length) rows.push({separator: true});
+  for (const {url, s} of urls) rows.push({label: 'open ' + url, detail: s.label || s.path, run: () => window.open(url, '_blank')});
   if (rows.length) rows.push({separator: true});
   for (const s of runs.filter(s => s.running !== false)) rows.push({
     label: 'stop ' + (s.label || s.path), warn: true,
@@ -356,11 +360,22 @@ async function leeRunsMenu(anchor) {
 }
 window.leeRunsMenu = leeRunsMenu;
 
+/* A reload closes the page, not the servers. The first poll after one puts each running server
+   back on a terminal, so what is running is on screen rather than only in a pill's tooltip. */
+function adoptRuns(servers) {
+  if (lee.runsAdopted) return;
+  lee.runsAdopted = true;
+  for (const s of servers) {
+    if (s.running === false || !s.pid || lee.terms.has('run:' + (s.script || s.path))) continue;
+    leeRunTerm(s.script || s.path, s.label, s.pid).catch(() => {});
+  }
+}
+
 async function pollRunLogs() {
   let servers = [];
   try { servers = (await api('/dev/list')).servers || []; } catch (_) { lee.runs = []; paintRunsPill(); return false; }
   lee.runs = servers.map(s => ({...s, path: s.path || s.script || ''}));
-  paintRunsPill();
+  paintRunsPill(); adoptRuns(servers);
   for (const srv of servers) {
     const path = srv.path || srv.script || '';
     if (!path) continue;
