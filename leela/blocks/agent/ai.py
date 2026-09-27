@@ -38,6 +38,7 @@ __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_cont
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 STOP_NOTE = 'the user stopped this turn'
+def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
 STATE_TEMPLATE = """# Agent charter
@@ -190,13 +191,17 @@ class Interventions(Approvals):
         branch_id='main', parent_action_id=''):
         args = dict(args or {})
         required = name in self.tools
+        # ramabana's repeat guard: the DOOM_LOOPth identical gated call is put to the person whatever
+        # the mode or run policy says; a read between neither counts nor resets the streak
+        loop = (force or required) and self._looping(name, args)
         bypassed = not force and self._policy_bypasses(name)
         control_checkpoint = not bypassed and (self.control == 'directed' or
             (self.control == 'guided' and name in GUIDED_TOOLS))
-        checkpoint = force or (required and not bypassed) or control_checkpoint
+        checkpoint = force or loop or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, args),
             preview=preview_for(name, args, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
+        if loop: a.preview = f'the same call {_times(self._streak)} running -- allow it?\n\n{a.preview}'.strip()
         if action_id: a.id = str(action_id)
         a.revision, a.branch_id, a.parent_action_id = int(revision or 0), branch_id, parent_action_id
         if self.host is not None and name in {'edit_file', 'create_file', 'replace_text', 'edit_cell'} and args.get('path'):
@@ -204,10 +209,12 @@ class Interventions(Approvals):
         self.history.append(a)
         if self.stopping: return a.resolve(False, STOP_NOTE)
         if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
-            if (d := self.decide(name, args, ask=a)) is not None: return d
+            if (d := self.decide(name, args, ask=a, loop=loop)) is not None: return d
         if not checkpoint: return a.resolve(True)
         if self.listeners < 1:
-            return a.resolve(False, 'nothing is listening for interventions, so this could not be asked')
+            why = (f'the same call {_times(self._streak)} running, and nothing is listening to ask about it' if loop
+                   else 'nothing is listening for interventions, so this could not be asked')
+            return self._decided(a, False, why)
         self.current = a
         self._notify('ask', a)
         wait_for = self.timeout if timeout is None else timeout
@@ -368,6 +375,11 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
     def remember(self, text, title=None, tags=(), key=''):
         "File a note; `key` upserts the same note later."
         return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []), key=key)
+    @property
+    def watch_actions(self):
+        "Every kind the vault watches, folders included: a vault is always attached here."
+        from vishalakshi.acquire import ACTIONS
+        return ACTIONS
     def watch(self, target, action='url', every='1d', note=None, **kw):
         return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
     def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)

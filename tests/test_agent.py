@@ -1412,6 +1412,34 @@ def test_rolling_a_turn_back_undoes_its_git_writes_first_then_its_files(tmp_path
     assert (repo/'a.py').read_text() == 'value = 1\n' and tx['rolled_back'] and 'undid 1 git write' in tx['git_result']
     assert not ws.ai.turn_capabilities(turn)['undoable']
 
+def test_the_third_identical_gated_call_is_put_to_the_person_even_under_auto():
+    from leela.blocks.agent.ai import Interventions
+    ap = Interventions(tools=WRITE_TOOLS, mode='auto', control='autopilot', timeout=0.2); stop = ap.listen()
+    a1 = ap.request('run_shell', {'command': 'pytest'}); a2 = ap.request('run_shell', {'command': 'pytest'})
+    assert a1 and a2
+    assert ap.request('view_file', {'path': 'a.py'}), 'a read between neither counts nor resets'
+    a3 = ap.request('run_shell', {'command': 'pytest'})
+    assert not a3 and 'no answer' in a3.note and 'three times running' in a3.preview
+    assert ap.request('run_shell', {'command': 'pytest -x'}), 'a different call starts a new streak'
+    stop()
+
+def test_a_repeat_refused_by_the_guard_is_one_ask_row_on_the_activity(tmp_path):
+    ws = Workspace(roots=[tmp_path]); ap = ws.ai.approvals
+    ap.mode, ap.control, ap.timeout = 'auto', 'autopilot', 0.2
+    before = len(ws.ai.activity.acts)
+    for _ in range(3): a = ap.request('run_shell', {'command': 'pytest'})
+    assert not a and 'three times running' in a.preview
+    rows = ws.ai.activity.acts[before:]
+    assert [r.kind for r in rows] == ['ask'] and rows[0].tool == 'run_shell' and not rows[0].ok
+    assert 'no answer' in a.note, "the thread's feed listens, so it was asked and timed out; refused, and still recorded"
+
+def test_a_folder_watch_opened_by_the_tool_is_seen_by_the_harness(tmp_path, monkeypatch):
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1'); monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
+    ws = Workspace(roots=[tmp_path], approvals='auto'); tools = {t.__name__: t for t in ws.ai.tools}
+    said = tools['watch'](str(tmp_path), kind='folder', instructions='Review each change.', pattern='*.py')
+    assert said.startswith('watching folder'), said
+    ws.ai.monitors.sync(); assert [w.folder for w in ws.ai.monitors.all()] == [str(tmp_path)]
+
 def test_the_default_workspace_offers_the_model_at_most_45_tools(tmp_path):
     ws = Workspace(roots=[tmp_path])
     briefed = [t.__name__ for t in ws.ai._plain]
