@@ -492,6 +492,19 @@ def test_canvas_tools_are_offered_only_while_a_canvas_is_open(tmp_path):
     ws.ai.ask('still'); assert not forgets, 'no mode change, no rebuild'
     ws.open(tmp_path/'p.md'); ws.ai.ask('three'); assert 'canvas_read' not in names(be.tools) and '`canvas`' not in be.sp
 
+def test_a_briefing_rebuilt_between_turns_does_not_skip_the_re_brief(tmp_path):
+    "An approval form or `/agent/commands` rebuilds `tools` mid-way; the backend was still briefed for the old mode."
+    from leela.workspace import Workspace
+    from leela.blocks.agent.turns import tool_schemas
+    from tests.fakemodel import Step, install
+    (tmp_path/'p.canvas.md').write_text('# p\n')
+    ws = Workspace(roots=[tmp_path]); be = install(ws, [Step(text='ok')] * 2, token_delay=0)
+    ws.ai.ask('one'); assert 'canvas_read' not in {t.__name__ for t in be.tools}
+    ws.open(tmp_path/'p.canvas.md')
+    tool_schemas(ws.ai); ws.ai.system_prompt()        # rebuilt for the browser, not for the backend
+    ws.ai.ask('two')
+    assert 'canvas_read' in {t.__name__ for t in be.tools} and '`canvas`' in be.sp
+
 def test_the_client_bundle_names_every_module_and_serves_them_in_order(client, corpus):
     from leela.blocks.canvas.ui import FILES
     js = client.get('/canvas/js').text

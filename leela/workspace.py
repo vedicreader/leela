@@ -273,6 +273,7 @@ class Workspace:
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.vault_pii = 'off'              # what a vault retrieval does about personal information
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
+        self.thread_optins = {}             # a conversation's own opt-ins, by session id, for `Threads.resume`
         self.active_root = None
         #: Folders this window closed. Everything else in the saved session belongs to somebody.
         self._closed_roots = set()
@@ -1134,6 +1135,7 @@ class Workspace:
                 'subagent_writes': self.subagent_writes,
                 'vault_pii': self.vault_pii,
                 'agent_optin': list(self.agent_optin),
+                'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'per_folder': True, 'saved': time.time()}
@@ -1152,6 +1154,8 @@ class Workspace:
         except ValueError: self.vault_pii = 'off'
         from shalya.tools import OPTIN     # a group this shalya lacks is dropped, not a workspace that will not load
         self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
+        rows = d.get('thread_optins') if isinstance(d.get('thread_optins'), dict) else {}
+        self.thread_optins = {str(k): [x for x in (v or ()) if x in OPTIN] for k, v in rows.items()}
         self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
         self.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')

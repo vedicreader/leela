@@ -101,6 +101,12 @@ def test_the_pane_offers_the_opt_ins_beside_the_warm_toggle_and_the_settings_hol
     assert "id='agentoptin-research'" in app and "id='agentoptin-exhash'" in app, 'per-chat toggles beside warm'
     assert "id='agent-optin-research'" in app and "id='agent-optin-exhash'" in app, 'workspace defaults in settings'
     assert "/agent/optin" in (ROOT/'leela/blocks/agent/budgets.js').read_text()
+    assert 'overrides this default' in app.split("id='agent-optin-research'")[1][:600], "the settings tooltip says a browser's own toggle overrides the default"
+
+def test_the_restore_dialog_names_the_git_writes_and_the_loop_note_survives_a_preview_refresh():
+    js = (ROOT/'leela/blocks/agent/approvals.js').read_text()
+    assert 'g.tool' in js and 'g.summary' in js and 'g.undoes' in js, 'each git write the rollback would undo is named'
+    assert 'card._loopNote =' in js and 'card._loopNote ?' in js[js.index('async function refreshProposalPreview'):], 'kept on the card, re-painted on refresh'
 
 def test_the_tool_tables_have_one_home():
     """`app.py` carried its own `TOOL_GROUPS`, `_tool_group` and `_tool_preview`."""

@@ -2210,7 +2210,7 @@ async function refreshProposalPreview(card) {
     card._previewArgs = null;
     host.innerHTML = '<div class="lee-proposal-loading"><i></i><i></i><i></i><span>Building dry-run preview</span></div>';
     const d = await post('/agent/tool-preview', {tool, args, thread: lee.agentThread || ''});
-    host.innerHTML = previewContent(d.preview); error.textContent = '';
+    host.innerHTML = (card._loopNote ? `<div class="lee-dim">${esc(card._loopNote)}</div>` : '') + previewContent(d.preview); error.textContent = '';
   } catch (e) { host.innerHTML = ''; error.textContent = e.message || String(e); }
 }
 function checkpointExplanation(tool, args = {}, schema = {}) {
@@ -2251,6 +2251,8 @@ function showApproval(a, destination = null) {
   const pendingRow = [...$$('.lee-agent-step.pending', host.closest('.lee-agent-turn') || log)].at(-1);
   if (pendingRow) { pendingRow.hidden = true; card._activityRow = pendingRow; }
   card._schema = byName.get(a.tool) || {name: a.tool, fields: Object.keys(a.args || {}).map(name => ({name, kind: 'string'}))};
+  // the repeat guard's line comes with the ask, not with a dry-run preview: kept, so an edit does not lose it
+  card._loopNote = (String(a.preview || '').match(/^the same call .*? running -- allow it\?/) || [''])[0];
   const explanation = checkpointExplanation(a.tool, a.args, card._schema);
   card.innerHTML = `<header class="lee-approval-head"><span class="lee-proposal-mark" aria-hidden="true"></span>` +
     `<span class="lee-checkpoint-title"><strong>${esc(explanation.title)}</strong><small><b>${esc(a.control || 'guided')}</b> paused for your decision</small></span>` +
@@ -2513,6 +2515,11 @@ function gitWritesNote(git) {
   const n = (git || []).filter(g => g.undo).length;
   return n ? ` and undo ${n} git write${n === 1 ? '' : 's'}` : '';
 }
+function gitWritesList(git) {
+  const rows = (git || []).filter(g => g.undo);
+  return rows.length ? '\n\nGit writes undone, newest first:\n' + rows.slice().reverse().map(g =>
+    `• ${g.tool}${g.summary ? ' · ' + g.summary : ''}${g.undoes ? ' · undoes ' + g.undoes : ''}`).join('\n') : '';
+}
 async function restoreTurnFiles(bar) {
   const {turnId, out, revisable} = responseTurn(bar);
   {
@@ -2521,7 +2528,7 @@ async function restoreTurnFiles(bar) {
         (lee.agentThread ? '&thread=' + encodeURIComponent(lee.agentThread) : ''));
       const files = tx.transaction.files || [], warning = (tx.transaction.irreversible || []).length
         ? `\n\nCannot undo external effects: ${tx.transaction.irreversible.join(', ')}` : '';
-      if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn${gitWritesNote(tx.transaction.git)}?${warning}`, 'restore files')) return;
+      if (!await confirmDialog('Restore files changed by this turn', `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn${gitWritesNote(tx.transaction.git)}?${gitWritesList(tx.transaction.git)}${warning}`, 'restore files')) return;
       const d = await post('/agent/rollback-turn', {turn_id: turnId, thread: lee.agentThread || ''});
       // Marked before the files are reloaded, so a reload that raises still shows the turn undone.
       markTurnUndone(out, bar, (d.paths || []).length, revisable ? $('[data-revise]', bar) : null);

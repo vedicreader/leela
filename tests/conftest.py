@@ -211,3 +211,14 @@ def _cold_probes():
     forget_probes()
     yield
     forget_probes()
+
+
+@pytest.fixture(autouse=True)
+def _asks_time_out_quickly(monkeypatch):
+    "An approval nobody answers waits two seconds under pytest, not ramabana's default; a test naming its own timeout keeps it."
+    from ramabana.agent import Approvals
+    orig = Approvals.__init__
+    def init(self, *a, **kw):
+        kw.setdefault('timeout', 2)
+        return orig(self, *a, **kw)
+    monkeypatch.setattr(Approvals, '__init__', init)

@@ -25,6 +25,7 @@ class ScriptedBackend(Backend):
         self.hist_, self.sent = [], []
     def _start(self): return self
     def _close(self): pass
+    def _refresh(self): pass          # a re-brief lands in `sp`/`tools`; the scripted chat has nothing to reconfigure
     def _oneshot(self, prompt, sp, max_tokens): return 'a one-shot answer'
     def _usage(self): return Usage(model=self.spec.model_id, input=1840, output=96, total=1936,
                                    cached=1200, cost=0.0031, turns=1)

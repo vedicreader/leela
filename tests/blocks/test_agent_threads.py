@@ -1620,3 +1620,15 @@ def test_the_new_thread_route_takes_opt_ins_and_the_optin_route_saves_the_defaul
         assert d2['optin'] == ['exhash'], 'a thread naming no opt-ins takes the workspace default'
         # `/agent/threads` lists only conversations something was said in; the rows themselves carry the opt-ins
         assert ws.threads.require(d['active']).dict()['optin'] == ['research'] and ws.threads.require(d2['active']).dict()['optin'] == ['exhash']
+
+
+def test_a_threads_opt_ins_survive_eviction_and_resume(tmp_path, monkeypatch):
+    from tests.fakemodel import Step, install
+    from leela.blocks.agent.ai import Assistant
+    ws = Workspace(roots=[tmp_path]); t = ws.threads.new(optin=('exhash',)); sid = t.id
+    install(ws, [Step(text='ok')], token_delay=0); t.ai.ask('first')
+    ws.threads.close(sid); assert sid not in ws.threads._rows
+    monkeypatch.setattr(Assistant, 'set_model', lambda self, name, job='turn': None)   # the scripted model is not in the catalog
+    r = ws.threads.resume(sid)
+    assert 'edit_file' in {f.__name__ for f in r.ai.tools} and r.dict()['optin'] == ['exhash']
+    assert ws.thread_optins.get(sid) == ['exhash'] and Workspace.load(ws._state_path or None).thread_optins.get(sid) == ['exhash'] if getattr(ws, '_state_path', None) else True

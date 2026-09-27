@@ -223,7 +223,14 @@ class Threads:
         with self._lock:
             self._room(); thread = Thread(self.workspace, ai=ai, warm=warm, optin=optin)
             self._rows[thread.id] = thread
+            if optin is not None: self._remember_optin(thread)
             return self._activate(thread)
+    def _remember_optin(self, thread):
+        "A conversation's own opt-ins outlive its eviction: kept on the workspace, keyed by session, read back on resume."
+        rows = self.workspace.__dict__.setdefault('thread_optins', {})
+        rows[thread.id] = list(getattr(thread.ai, 'optin', ()) or ())
+        try: self.workspace.save()
+        except Exception: pass
     def switch(self, thread_id):
         with self._lock:return self._activate(self.require(thread_id))
     def resume(self, session):
@@ -234,9 +241,10 @@ class Threads:
             self._room()
             approvals = Interventions(tools=WRITE_TOOLS, mode=self.workspace.approvals_mode, rules_path=agent_cfg()/'approvals.json')
             source = self._rows.get(self.active_id)
+            optin = (getattr(self.workspace, 'thread_optins', None) or {}).get(session)
             ai = Assistant(self.workspace, model=self.workspace.model, surface='agent',
                 local_multimodal=self.workspace.local_multimodal, on_compact=self.workspace._compacted,
-                history_name='agent', approvals=approvals)
+                history_name='agent', approvals=approvals, **({} if optin is None else {'optin': tuple(optin)}))
             if source is not None:
                 self.workspace.fresh_history(source.ai); ai.history = list(source.ai.history)
             ai.refresh_history()          # another live thread may have written this session

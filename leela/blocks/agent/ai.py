@@ -901,6 +901,7 @@ class Assistant(Agent):
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
         self._built_mode = None            # the `(canvas_open, has_feeds)` the tool list was last built for
+        self._briefed_mode = None          # …and the one the live turn backend was last briefed with
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
         self.mark_surface()
         host.model_local = self.model_local     # a local-only api is gated on the turn model
@@ -935,10 +936,13 @@ class Assistant(Agent):
         return canvas, feeds is not None and any(True for _ in feeds)
 
     def _follow_mode(self):
-        "Re-brief the live turn backend when a canvas opened or closed, or a feed came or went, since its tool list was built. A turn with no change rebuilds nothing."
-        if self._built_mode is None or self._mode() == self._built_mode: return
+        "Re-brief the live turn backend when a canvas opened or closed, or a feed came or went, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
+        if self._briefed_mode is None: self._briefed_mode = self._built_mode   # a backend installed from outside (`tests.fakemodel`) was briefed with what `tools` built
+        mode = self._mode()
+        if self._briefed_mode is None or mode == self._briefed_mode: self._briefed_mode = self._briefed_mode or mode; return
         self._forget()
         self._be('turn').refresh(self.system_prompt(), self.tools)
+        self._briefed_mode = mode
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."
@@ -957,7 +961,9 @@ class Assistant(Agent):
 
     def _be(self, job='turn'):
         "The backend for `job`, on an engine the whole daemon shares rather than a copy of the weights per workspace."
+        spec = self.routing.spec(job); fresh = (spec.backend, spec.model_id) not in self._backends
         be = super()._be(job)
+        if fresh and job == 'turn': self._briefed_mode = self._built_mode   # built with `tools=self.tools` just now
         if self.engines is not None: self.engines.attach(be)
         return be
 
@@ -1049,6 +1055,7 @@ class Assistant(Agent):
             'turn_id': self.current_turn_id, 'branch_id': self.current_branch_id,
             'files': {p: {'before': before, 'after': after} for p, (before, after) in changes.items()},
             'git': list(self.git_undo.get(self.current_turn_id, [])),   # each with gheasy's `undo` token
+            'git_state': self._repo_state() if self.git_undo.get(self.current_turn_id) else ('', ''),   # (head, branch) after the turn
             'irreversible': irreversible, 'rolled_back': False}
         self.ws.journal.record('Agent turn', [(p, before, after) for p, (before, after) in changes.items()],
             kind='agent', irreversible=irreversible)
@@ -1064,17 +1071,39 @@ class Assistant(Agent):
         return {'revisable': revisable, 'undoable': bool(files or [g for g in git if g.get('undo')]) and not tx.get('rolled_back'),
             'branchable': str(turn_id) in self.checkpoints, 'known': bool(checkpoint or tx),
             'files': files, 'git': git, 'irreversible': list(tx.get('irreversible') or [])}
+    def _repo_state(self):
+        "`(head, branch)` of the project repository, or `('', '')` without one."
+        try:
+            from gheasy.repo import GitRepo
+            r = GitRepo.at(self.host.roots[0])
+            return str(r.run('rev-parse', 'HEAD')).strip(), str(r.run('branch', '--show-current')).strip()   # `info()` may answer from its cache
+        except Exception: return '', ''
     def rollback_turn(self, turn_id):
-        "Atomically restore every unchanged artifact from a completed turn: its git writes first (a checkout undone puts the tree where the file texts were taken from), then its files."
+        "Atomically restore every unchanged artifact from a completed turn: its git writes first (a checkout undone puts the tree where the file texts were taken from), then its files. Refused, touching nothing, when a file or HEAD moved after the turn: a git undo is a hard reset to before the turn, and it must not take a later commit with it."
         tx = self.turn_transactions.get(str(turn_id))
         if tx is None: raise KeyError(f'no transaction for {turn_id}')
         if tx['rolled_back']: raise ValueError('that turn was already rolled back')
         conflicts = [p for p, snap in tx['files'].items() if self.host.text_at(p) != snap['after']]
         if conflicts: raise ValueError('changed after the turn: ' + ', '.join(conflicts))
-        tx['git_result'] = self._undo_git(tx['git']) if tx.get('git') else ''
+        writes = [g for g in tx.get('git') or [] if g.get('undo')]
+        if writes:
+            (head, branch), (now, on) = tx.get('git_state') or ('', ''), self._repo_state()
+            if head != now or branch != on:
+                raise ValueError(f'HEAD moved after the turn: {head[:12]} on {branch} .. {now[:12]} on {on} — undo refused')
+            tx['git_result'] = self._undo_git_writes(writes)
         for path, snap in tx['files'].items(): self.host.write(path, snap['before'])
         tx['rolled_back'] = True
         return tx
+    def _undo_git_writes(self, writes):
+        "Apply the turn's git `undo` tokens, newest first; a token gheasy refuses raises with every problem named, and the turn stays undoable."
+        from gheasy.repo import GitRepo
+        repo, done, problems = GitRepo.at(self.host.roots[0]), 0, []
+        for w in reversed(writes):
+            try: repo.undo(w['undo']); done += 1
+            except Exception as e: problems.append(f"{w['tool']}: {errstr(e)}")
+        if problems: raise ValueError(f'undid {done} git write(s); ' + '; '.join(problems))
+        return f'undid {done} git write(s)'
+
     def _action_meta(self, name, args):
         base = super()._action_meta(name, args)
         if self.approvals is not None:

@@ -1412,6 +1412,36 @@ def test_rolling_a_turn_back_undoes_its_git_writes_first_then_its_files(tmp_path
     assert (repo/'a.py').read_text() == 'value = 1\n' and tx['rolled_back'] and 'undid 1 git write' in tx['git_result']
     assert not ws.ai.turn_capabilities(turn)['undoable']
 
+def _turn_with_a_commit(tmp_path):
+    "A repository, a workspace on it, and one finished turn that edited and committed `a.py`."
+    repo, g = _git_repo(tmp_path/'r'); head = g('rev-parse', 'HEAD')
+    ws = Workspace(roots=[repo], approvals='auto'); tools = {t.__name__: t for t in ws.ai.tools}
+    ws.ai._prepare('x')
+    assert not failed(tools['replace_text'](str(repo/'a.py'), [{'oldText': 'value = 1', 'newText': 'value = 2'}]))
+    assert json.loads(tools['git_commit']('bump', 'a.py'))['undo']
+    ws.ai._finish('done')
+    return repo, g, ws, head, ws.ai.current_turn_id
+
+def test_rollback_refuses_when_head_moved_after_the_turn(tmp_path):
+    "A hard reset over the user's later commit is the one thing the undo must never do."
+    repo, g, ws, head, turn = _turn_with_a_commit(tmp_path); turned = g('rev-parse', 'HEAD')
+    (repo/'b.py').write_text('later = 1\n'); g('add', 'b.py'); g('commit', '-m', 'the user, afterwards'); theirs = g('rev-parse', 'HEAD')
+    with pytest.raises(ValueError, match='HEAD moved after the turn.*undo refused'): ws.ai.rollback_turn(turn)
+    assert g('rev-parse', 'HEAD') == theirs and (repo/'a.py').read_text() == 'value = 2\n' and (repo/'b.py').exists(), 'nothing was touched'
+    assert ws.ai.turn_capabilities(turn)['undoable'] and not ws.ai.turn_transactions[turn]['rolled_back']
+    g('checkout', '-q', '-b', 'side', turned)      # back on the turn's commit, but on another branch
+    with pytest.raises(ValueError, match='undo refused'): ws.ai.rollback_turn(turn)
+
+def test_a_failed_git_undo_leaves_the_turn_undoable_and_says_why(tmp_path, monkeypatch):
+    repo, g, ws, head, turn = _turn_with_a_commit(tmp_path)
+    from gheasy.repo import GitRepo
+    monkeypatch.setattr(GitRepo, 'undo', lambda self, token='': (_ for _ in ()).throw(RuntimeError('boom')))
+    with pytest.raises(ValueError, match='git_commit: .*boom'): ws.ai.rollback_turn(turn)
+    assert not ws.ai.turn_transactions[turn]['rolled_back'] and ws.ai.turn_capabilities(turn)['undoable']
+    with TestClient(ide_app(ws)) as c:
+        d = c.post('/agent/rollback-turn', json={'turn_id': turn, 'thread': ws.threads.active_id}).json()
+        assert not d['ok'] and 'git_commit' in d['error'] and 'boom' in d['error']
+
 def test_the_third_identical_gated_call_is_put_to_the_person_even_under_auto():
     from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools=WRITE_TOOLS, mode='auto', control='autopilot', timeout=0.2); stop = ap.listen()
