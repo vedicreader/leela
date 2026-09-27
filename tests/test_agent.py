@@ -136,7 +136,7 @@ def test_a_host_offers_only_the_tools_it_supports():
     # to what every later call may touch, so it is gated like any other write.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
             'run_shell', 'run_shell_bg', 'memory_forget', 'create_skill', 'add_root',
-            'cancel_watch', 'cart_add', 'cart_remove', 'remember_note'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
+            'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
     assert not (names & WRITE_TOOLS)
@@ -282,9 +282,9 @@ def test_the_briefing_says_what_is_true_of_this_project():
     assert 'inside the folders above' in narrow
     # The last three arrive with a host that has them: `get_skills`, and `monitor_tools` for the
     # folder watch. Naming them here keeps the check on `RULES` rather than on this host's shape.
-    real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_parallel', 'delegate_search',
-                                                         'memory_search', 'web_search', 'run_python',
-                                                         'read_skill', 'watch_folder'}
+    real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_search', 'memory_search',
+                                                         'web_search', 'run_python', 'read_skill', 'watch',
+                                                         'git_status', 'edit_file'}   # `edit_file` is the exhash opt-in's
     assert {tool for tool, _ in RULES if tool} <= real
     h = MemHost({'/proj/AGENTS.md': '# House rules\n\nUse uv, never pip.\n'})
     ctx = project_context(h)
@@ -448,8 +448,8 @@ def test_approved_notebook_call_passes_only_activity_identity_metadata(tmp_path)
 def test_queued_steering_runs_the_current_tool_and_reaches_the_next_decision(tmp_path):
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.queue_steer('inspect the failing test before editing')
-    tool = next(t for t in ws.ai.tools if t.__name__ == 'list_files')
-    out = tool('')
+    tool = next(t for t in ws.ai.tools if t.__name__ == 'ls')
+    out = tool()
     assert 'inspect the failing test before editing' in out
     assert ws.approvals.state()['queued_steer'] == ''
 
@@ -483,7 +483,7 @@ def test_subagent_writes_are_opt_in_persisted_and_reach_the_assistant(tmp_path):
     assert not (sub & GIT_WRITE_TOOLS), 'and pushing is still not delegable'
     # A sub-agent reads and researches on its own, but it does not run the session: no nested
     # delegation, no plan or todo list, no steering the person, no long-running media jobs.
-    assert {'read_url', 'web_search', 'research', 'memory_read'} <= sub
+    assert {'read_url', 'web_search', 'memory_read'} <= sub   # `research` is an opt-in now
     assert not (sub & {'delegate_search', 'delegate_parallel'}), 'and it cannot delegate onwards'
     assert 'user_steering' not in sub, 'steering belongs to the main agent'
     assert 'user_steering' not in sub, 'steering belongs to the main agent, which passes guidance in a delegated prompt'
@@ -636,7 +636,7 @@ def test_a_workspace_answers_the_whole_host_protocol(tmp_path, monkeypatch):
     h = WorkspaceHost(Workspace(roots=[tmp_path]))
     assert {'api', 'memory', 'watch'} <= h.provides
     names = set(named(tools_for(h)))
-    assert {'api_load', 'api_ops', 'api_call', 'ask_memory', 'poll_watches', 'grep'} <= names
+    assert {'api_load', 'api_ops', 'api_call', 'ask_memory', 'watch', 'grep'} <= names
     hits = h.grep('def hello', regex=False)
     assert [(Path(x.path).name, x.line) for x in hits] == [('a.py', 1)], 'ripgrep, not a read per file'
     assert h.grep('DEF HELLO', regex=False) == [], 'a cased ask is not answered case-folded'
@@ -780,7 +780,7 @@ def test_explicit_research_uses_only_the_request_not_composed_notebook_context()
         def read_url(self, url, remember=True): return None
         def research(self, query): self.queries.append(query); return 'grounded research'
     host = ResearchHost()
-    a, be = fake_agent(host=host, replies=['done'], model='sonnet')
+    a, be = fake_agent(host=host, replies=['done'], model='sonnet', optin=('research',))
     composed = a.compose('add tests /research nbdev test cells', context='<cell>implementation details</cell>',
                          context_path='/proj/nbs/core.ipynb')
     assert a.ask(composed) == 'done'
@@ -790,7 +790,7 @@ def test_explicit_research_uses_only_the_request_not_composed_notebook_context()
 
 def test_create_skill_writes_standard_project_skill_without_overwriting():
     host = MemHost_agent()
-    create = next(t for t in tools_for(host, lambda: []) if t.__name__ == 'create_skill')
+    create = next(t for t in tools_for(host, lambda: [], optin=('author',)) if t.__name__ == 'create_skill')
     result = create('notebook-tests', 'How this project tests notebooks', 'Add one red cell, then make it green.')
     path = '/proj/.agents/skills/notebook-tests/SKILL.md'
     assert result.startswith('created ') and path in host.files
@@ -1122,7 +1122,7 @@ def test_workspace_agent_reaches_the_live_kernel_inspector():
     assert [p for p, _ in k.calls] == ['/agent/api/rows', '/agent/api/exec', '/agent/api/exec']
     assert [(a or {}).get('scope') for p, a in k.calls if p == '/agent/api/exec'] == ['overlay', 'overlay']
     names = {t.__name__ for t in ide_tools(ws)}
-    assert {'run_python', 'inspect_python', 'list_vars'} <= names
+    assert {'run_python', 'inspect_python'} <= names and 'list_vars' not in names, '`inspect_python("")` reads the namespace'
 
 
 class _Rows:
@@ -1694,7 +1694,7 @@ def test_run_python_is_offered_before_any_kernel_exists(tmp_path):
     assert ws.inline_ai.host.can('session'), 'declared, not proved by a kernel'
     for surface in (ws.inline_ai, ws.ai):
         tools = {t.__name__ for t in surface.tools}
-        assert {'run_python', 'inspect_python', 'list_vars', 'read_terminal'} <= tools, sorted(tools)
+        assert {'run_python', 'inspect_python', 'read_terminal'} <= tools, sorted(tools)
 
 def test_running_python_starts_the_kernel_it_needs(tmp_path):
     "A person asking to run something means start what it takes, not report that nothing is up."
@@ -2060,7 +2060,7 @@ def test_edit_file_applies_every_edit_or_refuses_with_a_reason():
     assert h.files['/proj/m.py'] == SRC
     _, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "", "newText": "x"}]')
-    assert failed(out) and 'create_file' in out
+    assert failed(out) and 'oldText is empty' in out, 'shalya 0.1.0 names the edit, not another tool'
     _, edit = editor()
     out = edit('/proj/m.py', '[{"oldText": "a + b", "newText": "a + b"}]')
     assert failed(out) and 'changed nothing' in out
@@ -3164,7 +3164,7 @@ def test_a_subagent_gets_inspect_python_and_neither_writes_nor_delegates():
     class Fake:
         def __init__(self, n): self.__name__ = n
     offered = [Fake(n) for n in ('search_code', 'view_file', 'inspect_python', 'run_python',
-                                 'edit_file', 'delegate_search', 'delegate_parallel')]
+                                 'edit_file', 'delegate_search', 'delegate_async')]
     assert rt.delegate(Backend(), 'a question', tools=offered) == 'an answer'
     got = handed['tools']
     assert 'inspect_python' in got, 'the one execution tool that is safe to delegate'

@@ -246,7 +246,7 @@ function decodeResponseEntities(text) {
   return value;
 }
 function editableResponse(raw) {
-  const tools = '(?:run_shell|run_python|inspect_python|grep|search_code|similar_code|list_files|ls|view_file|create_file|edit_file|replace_text|view_cell|edit_cell|add_cell|web_search|read_url|research|delegate_[\\w-]+)';
+  const tools = '(?:run_shell|run_python|inspect_python|grep|search_code|similar_code|ls|view_file|create_file|edit_file|replace_text|view_cell|edit_cell|add_cell|web_search|read_url|research|delegate_[\\w-]+)';
   let text = decodeResponseEntities(raw)
     .replace(/\n?\s*<details>\s*<summary>result<\/summary>[\s\S]*?<\/details>\s*/gi, '\n');
   text = text.split('\n').filter(line =>

@@ -330,7 +330,7 @@ def test_real_dialog_prompt_uses_a_16k_litert_engine(dialog_agent):
     # rishi builds the config when it makes the conversation, so `_conv_kw` no longer carries it.
     cfg = backend.chat._conv_kw.get('constrained_decoding_config') or backend.chat._constrained()
     assert getattr(cfg, 'enable', False)
-    assert {'run_python', 'inspect_python', 'list_vars'} <= {t.__name__ for t in backend.tools}
+    assert {'run_python', 'inspect_python'} <= {t.__name__ for t in backend.tools}
     cell = nb[PROMPT_CELL]
     message = ws.inline_ai.compose(
         cell.source,

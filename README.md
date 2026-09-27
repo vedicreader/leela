@@ -140,7 +140,7 @@ Code goes through [kosha](https://pypi.org/project/koshas/): FTS5, embeddings, a
 and notebook cells, behind `mod+shift+f`. Ripgrep is the fallback. Command-click reaches a
 definition. Prose goes to a [vishalakshi](https://github.com/vedicreader/vishalakshi) vault
 over litesearch. It holds every page read and every research source. The agent recalls one
-with `memory_search`, `memory_tree`, `memory_read` and `memory_topics`, rather than paying to
+with `memory_search`, `memory_read` and `ask_memory`, rather than paying to
 search the live web again.
 
 ### The vault

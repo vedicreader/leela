@@ -202,7 +202,7 @@ def test_agent_git_tools_fetch_track_and_report_failures(repo_git, tmp_path):
     from leela.blocks.agent.ai import GIT_READ_TOOLS
     assert GIT_WRITE_TOOLS <= WRITE_TOOLS and not (set(GIT_READ_TOOLS) & WRITE_TOOLS), \
         'rehearsing a merge is not approving one'
-    assert {'git_divergence', 'git_rebase_preview'} <= set(tools)
+    assert 'git_divergence' in tools and 'git_rebase_preview' not in tools, 'the rehearsal is `git_divergence(against=)`; the old name is the legacy opt-in'
     fetched = tools['git_remote']('fetch')
     assert 'origin/from-agent' in fetched
     checked_out = tools['git_checkout']('origin/from-agent')
@@ -1608,9 +1608,9 @@ def test_the_agent_can_rehearse_a_divergence_without_being_able_to_run_it(repo_g
     assert plan['relation'] == 'diverged' and plan['ahead'] == 1 and plan['behind'] == 1
     assert {o['op'] for o in plan['options']} == {'fast-forward', 'merge', 'rebase', 'reset'}
     assert plan['ours'] and isinstance(plan['ours'][0], str), 'commits arrive short, not whole'
-    preview = json.loads(tools['git_rebase_preview']('origin/main'))
-    assert 'review' not in preview and preview['conflict_likely'] is True
-    assert preview['stops_at']['subject'] == 'ours'
+    against = json.loads(tools['git_divergence'](against='origin/main'))
+    rebase = next(o for o in against['options'] if o['op'] == 'rebase')
+    assert 'review' not in against and rebase['stops_at']['subject'] == 'ours', 'the rebase option carries where it would stop'
     assert set(GIT_READ_TOOLS) & set(tools) == set(GIT_READ_TOOLS)
 
 

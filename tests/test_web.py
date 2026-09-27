@@ -67,7 +67,7 @@ def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
     with TestClient(ide_app(Workspace(roots=[tmp_path], model='sonnet'))) as client:
         vocabulary = client.get('/agent/commands').json()
     assert {'commands', 'tools', 'skills'} <= vocabulary.keys()
-    assert any(x['name'] == 'research' for x in vocabulary['tools'])
+    assert any(x['name'] == 'search_code' for x in vocabulary['tools']) and not any(x['name'] == 'research' for x in vocabulary['tools'])
     assert any(x['name'] == 'notebook-tests' for x in vocabulary['skills'])
 
 

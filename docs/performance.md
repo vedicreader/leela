@@ -158,8 +158,8 @@ In order:
    apply by subject. `rebase_preview` and `divergence` both use it. `_rehearse` stays for merge,
    which is the shape it was always right for. Its `--name-only` output is now parsed to the
    first blank line rather than by string prefix.
-4. **Agent tools over the existing methods.** ~~`git_status`, `git_divergence` and
-   `git_rebase_preview` read-only, and `git_remote`/`git_checkout` through the approvals path
+4. **Agent tools over the existing methods.** ~~`git_status` and `git_divergence` (which rehearses
+   a rebase with `against=`) read-only, and `git_remote`/`git_checkout` through the approvals path
    that gates `GIT_WRITE_TOOLS`~~ are done. Still missing are `git_merge_preview`,
    `git_conflicts`, `git_compare`, and the guarded `git_merge`, `git_rebase`, `git_resolve` and
    `git_operation`. This is the biggest lever per line, because it turns existing JSON into an
