@@ -263,6 +263,8 @@ function agentListen(thread, since, card = null) {
     timeline.seal(); if ('queued_steer' in d) setQueuedSteer(d.queued_steer || '', d.text || '');
   }));
   es.addEventListener('title', dedupe(d => { if (d.title) lee.agentTitle = titleText(d.title); }));
+  // arrives during `_prepare`, before the first chunk: the seeds go above this first turn's card
+  es.addEventListener('warm', dedupe(d => { renderWarmStart(log, d); stickAgentLog(log); }));
   es.addEventListener('watch', dedupe(d => leeWatchRun(d.target, d.target)));
   es.addEventListener('background', dedupe(d => { timeline.seal(); backgroundCard(log, d); }));
   /* Only a stopped run is announced here. `done` still follows and owns the end of the turn, so

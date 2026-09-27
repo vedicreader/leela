@@ -1307,6 +1307,7 @@ async function paintAgentThread(id) {
   dropCodeSurfaces(log);
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
+  renderWarmStart(log, d.warm);
   lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
   trimAgentLog(log);   // a conversation of any length arrives here whole
   // Nothing to set aside: the live pane is what was just painted into the log.
@@ -1412,7 +1413,7 @@ function paintAgentThreads(d) {
       const live = t.id === d.active;
       return `<article class="lee-thread-card${live ? ' active' : ''}${t.state === 'waiting' ? ' wants' : ''}"` +
         ` role="option" aria-selected="${live}" tabindex="0" data-thread="${esc(t.id)}">` +
-        `<header><strong>${esc(threadName(t))}</strong>` +
+        `<header><strong>${esc(threadName(t))}</strong>${t.warm ? '<span class="lee-thread-warm" title="seeded from dhrona\'s rounds">·warm</span>' : ''}` +
         `<span class="lee-thread-state ${esc(t.state)}">${esc(t.state)}</span></header>` +
         `<footer><span>${t.unread ? `${t.unread} new` : (live ? 'on screen' : 'idle')}` +
         `${t.branch && t.branch !== 'main' ? ` · on ${esc(t.branch)}` : ''}` +
@@ -1430,6 +1431,7 @@ function paintAgentThreads(d) {
     $('#agentnotify', list).onchange = e => leeAgentNotifyToggle(e.target.checked);
     bindAgentThreadCards(list);
   }
+  paintAgentWarmToggle();   // the preference arrives with the settings; the button shows it once they have
   paintAgentAttention(d.attention || {}, rows);
 }
 function bindAgentThreadCards(list) {
@@ -1734,10 +1736,59 @@ function notifyAgentAttention(d) {
   }
 }
 window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = agentNotifyEnabled;
+/* Warm starts are opt-in per new conversation: the toggle is a preference, read when `+` is
+   pressed, so a person decides before the first prompt and sees the choice on the button. */
+function agentWarmEnabled() { return prefGet('agent', 'warm', false) === true; }
+function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); }
+function leeAgentWarmToggle() {
+  const on = !agentWarmEnabled(); prefSet('agent', 'warm', on); paintAgentWarmToggle();
+  status(on ? 'the next new conversation starts warm' : 'new conversations start cold', 'ok');
+}
+/* A warm start is one collapsed block above the first turn. Its body is the rounds as they were
+   replayed: the user line, the assistant's words, and every tool call painted with the same step
+   renderer a live call gets, so "seeing the instructions run" reads like the conversation does.
+   The live `warm` event and a repaint from `/agent/thread/turns` both come here with the same JSON. */
+function renderWarmStart(log, rep) {
+  if (!log || !rep) return;
+  $('.lee-agent-warm', log)?.remove();
+  const used = rep.used || [], skipped = rep.skipped || [];
+  const block = document.createElement('details'); block.className = 'lee-agent-warm';
+  const names = used.map(r => r.name).join(', ');
+  const title = used.length ? `Warm start · ${used.length} round${used.length === 1 ? '' : 's'} (${names})`
+              : rep.problem ? 'Warm start · unavailable' : "Warm start · no rounds fit this session's tools";
+  block.innerHTML = `<summary><span class="lee-agent-step-copy">${esc(title)}</span>` +
+    `<span class="lee-agent-step-chevron" aria-hidden="true"></span></summary>`;
+  if (rep.problem) block.insertAdjacentHTML('beforeend', `<div class="lee-dim">${esc(rep.problem)}</div>`);
+  for (const r of used) {
+    const sect = document.createElement('div'); sect.className = 'lee-agent-warm-round';
+    sect.insertAdjacentHTML('beforeend', `<div class="lee-vgroup">${esc(r.name)} · rank ${esc(r.rank)}${r.model ? ' · ' + esc(r.model) : ''}</div>`);
+    const results = new Map((r.messages || []).filter(m => m.role === 'tool').map(m => [m.tool_call_id, m.content]));
+    for (const m of r.messages || []) {
+      if (m.role === 'user') sect.appendChild(userMessage(m.content));
+      else if (m.role === 'assistant') {
+        if (m.content) { const reply = document.createElement('div'); reply.className = 'lee-reply'; renderMarkdown(reply, m.content); sect.appendChild(reply); }
+        for (const tc of m.tool_calls || []) {
+          const row = document.createElement('details');
+          renderAgentStep(row, {tool: tc.name, args: tc.arguments, kind: 'tool', done: true, ok: true,
+                                summary: `${tc.name} (replayed)`, detail: String(results.get(tc.id) ?? '')});
+          sect.appendChild(row);
+        }
+      }
+    }
+    block.appendChild(sect);
+  }
+  if (skipped.length) {
+    const ul = document.createElement('ul'); ul.className = 'lee-agent-warm-skipped';
+    for (const s of skipped) ul.insertAdjacentHTML('beforeend', `<li><code>${esc(s.name)}</code> — ${esc(s.reason)}</li>`);
+    block.insertAdjacentHTML('beforeend', '<div class="lee-vgroup">skipped</div>'); block.appendChild(ul);
+  }
+  const first = $('.lee-agent-turn', log);
+  first ? log.insertBefore(block, first) : log.appendChild(block);
+}
 async function leeAgentNew() {
   rememberAgentThread();
   try {
-    const d = await post('/agent/thread/new', {}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    const d = await post('/agent/thread/new', {warm: agentWarmEnabled()}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
     approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
     if (log) { dropCodeSurfaces(log); log.innerHTML = ''; lee.agentLive = null; lee.agentView = 'live'; } if (input) input.value = '';
     await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
@@ -3382,6 +3433,8 @@ function agentListen(thread, since, card = null) {
     timeline.seal(); if ('queued_steer' in d) setQueuedSteer(d.queued_steer || '', d.text || '');
   }));
   es.addEventListener('title', dedupe(d => { if (d.title) lee.agentTitle = titleText(d.title); }));
+  // arrives during `_prepare`, before the first chunk: the seeds go above this first turn's card
+  es.addEventListener('warm', dedupe(d => { renderWarmStart(log, d); stickAgentLog(log); }));
   es.addEventListener('watch', dedupe(d => leeWatchRun(d.target, d.target)));
   es.addEventListener('background', dedupe(d => { timeline.seal(); backgroundCard(log, d); }));
   /* Only a stopped run is announced here. `done` still follows and owns the end of the turn, so

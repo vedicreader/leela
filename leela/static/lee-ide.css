@@ -1426,6 +1426,18 @@ kbd {
 .lee-compaction-event { margin: 5px 0; border-top: 1px solid var(--lee-aqua); border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-aqua) 4%, transparent); }
 .lee-compaction-event summary { padding: 7px 9px; color: var(--lee-aqua); cursor: pointer; font: 9.5px/1.35 var(--lee-mono); }
 .lee-compaction-event pre { max-height: 240px; margin: 0; padding: 8px 9px; overflow: auto; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); white-space: pre-wrap; font: 9.5px/1.5 var(--lee-mono); }
+/* The warm-start block: dhrona's replayed rounds above the first turn, and the rounds left out. */
+.lee-agent-warm { margin: 5px 0 9px; border-top: 1px solid var(--lee-purple); border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-purple) 4%, transparent); }
+.lee-agent-warm > summary { display: flex; align-items: center; gap: 8px; padding: 7px 9px; color: var(--lee-purple); cursor: pointer; list-style: none; font: 9.5px/1.35 var(--lee-mono); }
+.lee-agent-warm > summary::-webkit-details-marker { display: none; }
+.lee-agent-warm > summary .lee-agent-step-copy { flex: 1; color: inherit; }
+.lee-agent-warm[open] > summary .lee-agent-step-chevron { transform: rotate(225deg) translate(-1px, 1px); }
+.lee-agent-warm-round { display: flex; flex-direction: column; gap: 6px; padding: 4px 8px 8px; border-top: 1px solid var(--lee-border); }
+.lee-agent-warm-skipped { margin: 0; padding: 4px 8px 8px 22px; color: var(--lee-fg4); font: 9.5px/1.5 var(--lee-mono); }
+.lee-agent-warm-skipped code { color: var(--lee-fg2); }
+.lee-agent-warm > .lee-dim { padding: 4px 9px 8px; }
+.lee-thread-warm { color: var(--lee-purple); font: 9px/1.4 var(--lee-mono); }
+#agentwarm[aria-pressed="true"] { color: var(--lee-purple); border-color: color-mix(in srgb, var(--lee-purple) 55%, var(--lee-border)); }
 @media (max-width: 1100px) {
   .lee-agent.timeline-workspace .lee-agent-turn-body { display: block; }
   .lee-agent-state-onboard { grid-template-columns: 1fr 1fr; }

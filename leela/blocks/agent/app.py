@@ -149,10 +149,12 @@ def connect(app, ctx):
         return {'active': active.id, 'threads': ws.threads.dicts(),
                 'attention': ws.threads.attention()}
     @rt('/agent/thread/new')
-    async def agent_thread_new():
-        try: thread = await off_loop(ws.threads.new)
+    async def agent_thread_new(req):
+        "A fresh conversation; `warm` seeds it from dhrona's rounds. An empty body is the old client, and cold."
+        d = await req.json() if int(req.headers.get('content-length') or 0) else {}
+        try: thread = await off_loop(ws.threads.new, None, bool(d.get('warm')))
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'active': thread.id, 'thread': thread.dict()}
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'warm': thread.ai.warm}
     @rt('/agent/thread/switch')
     async def agent_thread_switch(req):
         d = await req.json()
@@ -182,7 +184,9 @@ def connect(app, ctx):
         # `dict` is where a summarised name lives; `title` alone is only what a person typed
         row = t.dict()
         return {'ok': True, 'thread': t.id, 'state': row['state'], 'seq': t.feed.settled_seq,
-                'title': row['title'], 'turns': with_capabilities(t.ai, ws.with_timelines(turns))}
+                'title': row['title'], 'turns': with_capabilities(t.ai, ws.with_timelines(turns)),
+                # the warm-start block repaints from here: what was replayed, and why the rest was not
+                'warm': getattr(t.ai, 'warm_report', None), 'warm_on': bool(getattr(t.ai, 'warm', False))}
     @rt('/agent/thread/title')
     async def agent_thread_title(req):
         d = await req.json()

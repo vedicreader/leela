@@ -101,6 +101,24 @@ def test_no_round_fits_says_so(rounds, tmp_path):
     assert t.ai.warm_report['used'] == [] and len(t.ai.warm_report['skipped']) == 2
 
 
+def test_thread_new_takes_warm_and_turns_reports_the_block(rounds, ws):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    with TestClient(ide_app(ws)) as c:
+        d = c.post('/agent/thread/new', json={'warm': True}).json()
+        assert d['ok'] and d['warm'] is True and d['thread']['warm'] is True
+        install(ws, [Step(text='hello')], token_delay=0); ws.ai.ask('first')
+        turns = c.get('/agent/thread/turns', params={'thread': d['active']}).json()
+        assert turns['warm']['used'][0]['name'] == 'fits' and turns['warm_on'] is True
+        assert [m['role'] for m in turns['warm']['used'][0]['messages']] == ['user', 'assistant', 'tool', 'assistant']
+        cold = c.post('/agent/thread/new', json={}).json()
+        assert cold['warm'] is False and cold['thread']['warm'] is False
+        bare = c.post('/agent/thread/new').json()      # the old client sends no body at all
+        assert bare['ok'] and bare['warm'] is False
+        turns = c.get('/agent/thread/turns', params={'thread': cold['active']}).json()
+        assert turns['warm'] is None and turns['warm_on'] is False
+
+
 def test_the_warm_feed_event_precedes_the_first_chunk(rounds, tmp_path):
     ws = Workspace(roots=[tmp_path]); t = ws.threads.new(warm=True)
     install(ws, [Step(text='hello')], token_delay=0)

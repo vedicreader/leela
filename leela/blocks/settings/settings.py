@@ -66,6 +66,8 @@ DEFAULT_SETTINGS = {
         'configFolder': '',
         # On unless turned off, which is how the filter has always behaved.
         'notify': False, 'reasoning': '', 'historyLeelaOnly': True,
+        # Whether the next new conversation is seeded from dhrona's reviewed rounds.
+        'warm': False,
     },
     #: Whether the inline AI panel keeps a record of what it was asked and whether the answer was
     #: taken. `snippets` decides whether the selection and the suggestion are kept with it.

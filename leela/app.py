@@ -625,6 +625,8 @@ def _agent_panel(ws):
                        onclick='leeAgentThreadsToggle()'),
                 Button('+', id='agentnew', cls='lee-btn', title='new conversation', aria_label='new conversation',
                        onclick='leeAgentNew()'),
+                Button('warm', id='agentwarm', cls='lee-btn', aria_pressed='false',
+                       title="seed the next new conversation with dhrona's reviewed rounds", onclick='leeAgentWarmToggle()'),
                 Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
                        onclick='leeAgentHistory()'),
                 Button('memory', id='agentmemory', cls='lee-btn', title='choose notes for agent, prompt cells, and completion',
