@@ -316,10 +316,28 @@ def newsy(tmp_path):
 
 def named(tools): return {t.__name__ for t in tools}
 
-def test_the_feeds_are_reachable_from_a_turn(tmp_path):
-    "Feed items are on the `news` shelf, and the memory tools read the main one."
-    assert {'news_feeds', 'news_latest', 'news_story', 'news_follow', 'news_unfollow',
-            'news_refresh'} <= named(ide_tools(Workspace(roots=[tmp_path])))
+NEWS = {'news_feeds', 'news_latest', 'news_story', 'news_follow', 'news_unfollow', 'news_refresh'}
+
+def follow(ws, url='https://example.test/feed.xml', title='Example'):
+    "One followed source on `ws`, filed without reading it: the tools follow the list, not the network."
+    from leela.blocks.vault.news import Feed
+    ws.feeds.rows.append(Feed(url=url, title=title)); ws.feeds.save()
+    return ws
+
+def test_the_feeds_are_reachable_from_a_turn_once_a_source_is_followed(tmp_path):
+    "Feed items are on the `news` shelf, and the memory tools read the main one. A workspace following nothing is not offered them."
+    ws = Workspace(roots=[tmp_path])
+    assert not (NEWS & named(ide_tools(ws))) and not (NEWS & named(ws.ai.tools))
+    follow(ws)
+    assert NEWS <= named(ide_tools(ws))
+
+def test_news_tools_follow_the_feeds(tmp_path):
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[tmp_path]); assert not NEWS & named(ws.ai.tools)
+    be = install(ws, [Step(text='ok')] * 2, token_delay=0); ws.ai.ask('x')
+    assert not NEWS & named(be.tools)
+    follow(ws); ws.ai.ask('y')
+    assert 'news_latest' in named(be.tools), 'a source followed from the vault pane reaches the live assistant by the next turn'
 
 def test_the_three_that_write_go_in_front_of_the_user():
     from leela.blocks.agent.ai import WRITE_TOOLS
@@ -349,7 +367,7 @@ def test_asking_for_a_story_that_is_not_there_says_so_rather_than_raising(newsy)
     assert 'no such item' in tools['news_story']('nope').lower()
 
 def test_what_is_followed_is_reported_without_reading_anything(tmp_path):
-    tools = {t.__name__: t for t in ide_tools(Workspace(roots=[tmp_path]))}
+    tools = {t.__name__: t for t in ide_tools(follow(Workspace(roots=[tmp_path])))}
     assert tools['news_feeds']() and 'not following' in tools['news_unfollow']('https://x.test')
 
 def test_the_api_paragraph_says_what_api_access_used_to(tmp_path, kept):

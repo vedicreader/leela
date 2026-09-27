@@ -1374,6 +1374,12 @@ def test_the_shims_are_gone_and_steering_is_never_advertised(tmp_path):
     with TestClient(ide_app(ws)) as client:
         assert 'user_steering' not in {x['name'] for x in client.get('/agent/commands').json()['tools']}
 
+def test_the_default_workspace_offers_the_model_at_most_45_tools(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    briefed = [t.__name__ for t in ws.ai._plain]
+    assert len(briefed) <= 45, sorted(briefed)
+    assert not ({'canvas_read', 'news_feeds', 'edit_file', 'list_files', 'inspect_var', 'search_all', 'api_access', 'user_steering'} & set(briefed))
+
 def test_optin_reaches_the_catalog_from_the_workspace(tmp_path):
     from leela.blocks.agent.ai import ide_tools
     ws = Workspace(roots=[tmp_path]); assert ws.agent_optin == () and 'edit_file' not in {t.__name__ for t in ws.ai.tools}

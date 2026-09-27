@@ -464,7 +464,7 @@ def test_the_canvas_skill_is_leelas_and_reaches_the_agent_only_when_a_canvas_is_
     assert drop(agent, 'canvas') == 1 and '`canvas`' not in agent.system_prompt()
 
 def test_the_canvas_skill_follows_the_open_tab_rather_than_the_turn(tmp_path):
-    "The tools are permanent; the vocabulary is not, because the prompt is rebuilt every turn."
+    "The vocabulary follows the tab as the prompt is rebuilt; the tools follow it at the next turn (`_prepare` re-briefs the backend)."
     from leela.skills import pushed
     from leela.workspace import Workspace
     (tmp_path/'p.canvas.md').write_text('# p\n')
@@ -478,6 +478,19 @@ def test_the_canvas_skill_follows_the_open_tab_rather_than_the_turn(tmp_path):
     ws.open(tmp_path/'p.md')
     ws.ai.system_prompt()
     assert pushed(ws.ai) == set(), 'the vocabulary outstayed the document'
+
+def test_canvas_tools_are_offered_only_while_a_canvas_is_open(tmp_path):
+    from leela.workspace import Workspace
+    from tests.fakemodel import Step, install
+    (tmp_path/'p.canvas.md').write_text('# p\n'); (tmp_path/'p.md').write_text('# plain\n')
+    ws = Workspace(roots=[tmp_path]); be = install(ws, [Step(text='ok')] * 4, token_delay=0)
+    names = lambda ts: {t.__name__ for t in ts}
+    ws.ai.ask('one'); assert 'canvas_read' not in names(be.tools) and 'canvas_read' not in names(ws.ai.tools)
+    ws.open(tmp_path/'p.canvas.md'); ws.ai.ask('two')
+    assert {'canvas_read', 'canvas_insert'} <= names(be.tools) and '`canvas`' in be.sp, 'the live backend was re-briefed at turn start'
+    forgets = []; orig = ws.ai._forget; ws.ai._forget = lambda: forgets.append(1) or orig()
+    ws.ai.ask('still'); assert not forgets, 'no mode change, no rebuild'
+    ws.open(tmp_path/'p.md'); ws.ai.ask('three'); assert 'canvas_read' not in names(be.tools) and '`canvas`' not in be.sp
 
 def test_the_client_bundle_names_every_module_and_serves_them_in_order(client, corpus):
     from leela.blocks.canvas.ui import FILES

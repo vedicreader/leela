@@ -886,6 +886,7 @@ class Assistant(Agent):
         self._writes = leela_writes()
         self.video_jobs = VideoJobs() if video_available() else None
         self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
+        self._built_mode = None            # the `(canvas_open, has_feeds)` the tool list was last built for
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
         self.mark_surface()
         host.model_local = self.model_local     # a local-only api is gated on the turn model
@@ -907,7 +908,23 @@ class Assistant(Agent):
 
     def _prepare(self, prompt):
         if self.approvals is not None and hasattr(self.approvals, 'resume'): self.approvals.resume()
+        self._follow_mode()
         return super()._prepare(self._steered(prompt))
+
+    def _mode(self):
+        "What the tool set follows: `(canvas_open, has_feeds)`."
+        try:
+            from ..canvas.helper import open_canvas
+            canvas = open_canvas(self.host) is not None
+        except Exception: canvas = False
+        feeds = getattr(self.ws, 'feeds', None)
+        return canvas, feeds is not None and any(True for _ in feeds)
+
+    def _follow_mode(self):
+        "Re-brief the live turn backend when a canvas opened or closed, or a feed came or went, since its tool list was built. A turn with no change rebuilds nothing."
+        if self._built_mode is None or self._mode() == self._built_mode: return
+        self._forget()
+        self._be('turn').refresh(self.system_prompt(), self.tools)
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."
@@ -932,12 +949,17 @@ class Assistant(Agent):
 
     @property
     def tools(self):
+        "Leela's own tools on the registry: canvas tools while a canvas is open, news tools while a feed is followed, the rest always."
         if self._tools is None:
+            canvas, feeds = mode = self._mode()
+            want = [*(self._news_toolset if feeds else []), *self._session_toolset, *self._video_toolset,
+                    *(self._canvas_toolset if canvas else [])]
+            stale = {id(f) for f in [*self._news_toolset, *self._canvas_toolset]} - {id(f) for f in want}
+            self.registry.tools[:] = [f for f in self.registry.tools if id(f) not in stale]
             registered = {f.__name__ for f in self.registry.tools}
-            self.registry.tools.extend(f for f in [*self._news_toolset, *self._session_toolset,
-                                                   *self._video_toolset, *self._canvas_toolset]
-                if f.__name__ not in registered)
+            self.registry.tools.extend(f for f in want if f.__name__ not in registered)
             if self._steering_tool not in self.registry.tools: self.registry.tools.append(self._steering_tool)
+            self._built_mode = mode
             if self._note_write not in self.registry.hooks['before_tool']:
                 self.registry.on('before_tool', self._note_write)
             return super().tools
@@ -1089,4 +1111,6 @@ class _PolicyApprovals(Approvals):
 def ide_tools(ws, session=None):
     "Every tool the agent gets, bound to one `Workspace`."
     host = WorkspaceHost(ws, session)
-    return tools_for(host, extra=_news_tools(host) + _session_tools(host), optin=tuple(getattr(ws, 'agent_optin', ()) or ()))
+    feeds = getattr(ws, 'feeds', None)
+    news = _news_tools(host) if feeds is not None and any(True for _ in feeds) else []
+    return tools_for(host, extra=news + _session_tools(host), optin=tuple(getattr(ws, 'agent_optin', ()) or ()))
