@@ -3324,3 +3324,47 @@ def test_a_thread_names_its_profile_and_full_can_be_asked_for(tmp_path):
         assert p['ok'] and ws.agent_profile == 'full'
         assert client.post('/agent/thread/new', json={}).json()['profile'] == 'full', 'the workspace default'
         assert client.post('/agent/profile', json={'profile': 'huge'}).json()['ok'] is False
+
+def test_a_drawing_saved_to_a_path_is_gated_like_a_write():
+    from leela.blocks.agent.ai import Interventions
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', control='guided', timeout=0.2)
+    assert ap.request('generate_image', {'prompt': 'rama'}), 'into media/ only: an acting call runs'
+    a = ap.request('generate_image', {'prompt': 'rama', 'path': 'main.py'})
+    assert not a and 'nothing is listening' in a.note
+    ap.mode, ap.control = 'auto', 'autopilot'; stop = ap.listen()
+    args = {'prompt': 'rama', 'path': 'refs/a.png'}
+    assert ap.request('generate_image', args) and ap.request('generate_image', args)
+    a3 = ap.request('generate_image', args)
+    assert not a3 and 'three times running' in a3.preview
+    stop()
+
+def test_run_policies_and_retry_count_a_drawing_saved_to_a_path_as_a_write(tmp_path):
+    from leela.blocks.agent.ai import Interventions
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', control='guided'); ap.set_run_policy('reads')
+    assert ap._policy_bypasses('generate_image', {}) and not ap._policy_bypasses('generate_image', {'path': 'a.png'})
+    ap.set_run_policy('until_write')
+    assert not ap._policy_bypasses('generate_image', {'path': 'a.png'}) and ap.run_policy is None
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    with TestClient(ide_app(ws)) as c: r = c.post('/agent/retry-tool', json={'tool': 'generate_image', 'args': {'prompt': 'x', 'path': 'a.png'}}).json()
+    assert 'read-only' in json.dumps(r), r
+
+def test_rolling_back_a_drawing_removes_every_picture_it_made(tmp_path):
+    from leela.blocks.agent.ai import Interventions
+    ws = Workspace(roots=[tmp_path], approvals='auto'); ap = ws.ai.approvals
+    ap.control = 'autopilot'
+    a = ap.request('generate_image', {'prompt': 'x', 'n': 2, 'path': 'img.png'})
+    for n in ('img.png', 'img-2.png'): (tmp_path/n).write_bytes(b'\x89PNG\r\n\x1a\n')
+    ap.observe_result(True)
+    assert a.dict()['rollback'] and 'img-2.png' in a.preview
+    ap.rollback(a.id)
+    assert not (tmp_path/'img.png').exists() and not (tmp_path/'img-2.png').exists()
+
+def test_a_read_only_copy_is_recorded_on_the_activity(tmp_path):
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    def read_url(url: str, remember: bool = True) -> str: return f'read {url}'
+    def no_save(url: str) -> str: return read_url(url, False)
+    no_save.__name__ = 'read_url'; read_url.read_only = no_save
+    from shalya.tools import read_only
+    before = len(ws.ai.activity.acts)
+    read_only([ws.ai._record(read_url)])[0]('https://x.test')
+    assert [r.tool for r in ws.ai.activity.acts[before:]] == ['read_url']

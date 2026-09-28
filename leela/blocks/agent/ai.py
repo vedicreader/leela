@@ -16,6 +16,16 @@ from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, LocalH
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
 from ...agent.tools import tools_for, small_tool
+try: from ...agent.tools import PATH_WRITES, path_write, write_targets
+except ImportError:   # ramabana 0.2.3; 0.2.4 has these, drop this once it is pinned
+    PATH_WRITES = frozenset({'generate_image'})
+    def path_write(name, args): return name in PATH_WRITES and bool((args or {}).get('path'))
+    def write_targets(name, args):
+        if not (p := (args or {}).get('path')): return []
+        if name not in PATH_WRITES: return [p]
+        try: n = max(1, min(int(args.get('n') or 1), 4))
+        except (TypeError, ValueError): n = 1
+        return [str(Path(p) if i == 0 else Path(p).with_stem(f'{Path(p).stem}-{i+1}')) for i in range(n)]
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
@@ -153,7 +163,7 @@ class Interventions(Approvals):
         "Capture a write result and end an until-failure run after a failed call."
         a = self.history[-1] if self.history else None
         if a is not None and a.before is not None and a.args.get('path'):
-            a.after = self.host.text_at(a.args['path'])
+            a.after = self._shot(a.tool, a.args)
         with self._state_lock:
             if not ok and self.run_policy and self.run_policy.get('kind') == 'until_failure':
                 self.run_policy, self.pause_next = None, True
@@ -161,11 +171,23 @@ class Interventions(Approvals):
         "Restore one file call only when no later write has changed its resolved output."
         a = first(reversed(self.history), lambda x: x.id == id)
         if a is None or a.before is None or a.after is None: raise ValueError('that call has no file snapshot')
+        if path_write(a.tool, a.args): return self._unsave(a)
         path = a.args.get('path')
         if self.host.text_at(path) != a.after: raise ValueError('the file changed after this call; rollback refused')
         self.host.write(path, a.before)
         return path
-    def _policy_bypasses(self, name):
+    def _shot(self, name, args):
+        "What a rollback compares: a file's text, or for a drawing which of its pictures exist."
+        if path_write(name, args): return {p: self.host.exists(p) for p in write_targets(name, args)}
+        return self.host.text_at(args['path'])
+    def _unsave(self, a):
+        "Remove the pictures a drawing made; one that existed before it cannot be put back."
+        if any(a.before.values()): raise ValueError('this drawing replaced an existing picture; rollback refused')
+        if self._shot(a.tool, a.args) != a.after: raise ValueError('the pictures changed after this call; rollback refused')
+        for p, made in a.after.items():
+            if made: self.host.delete(p)
+        return ', '.join(a.after)
+    def _policy_bypasses(self, name, args=None):
         with self._state_lock:
             if self.pause_next:
                 self.pause_next = False
@@ -177,12 +199,13 @@ class Interventions(Approvals):
                 p['remaining'] -= 1
                 if p['remaining'] <= 0: self.run_policy = None
                 return True
+            writes = name in WRITE_TOOLS or path_write(name, args)
             if kind == 'until_write':
-                if name in WRITE_TOOLS:
+                if writes:
                     self.run_policy = None
                     return False
                 return True
-            if kind == 'reads': return name not in WRITE_TOOLS
+            if kind == 'reads': return not writes
             return kind in {'until_failure', 'completion'}
     def state(self):
         with self._state_lock:
@@ -191,26 +214,27 @@ class Interventions(Approvals):
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
         branch_id='main', parent_action_id=''):
         args = dict(args or {})
-        required = name in self.tools
+        required = name in self.tools or path_write(name, args)   # a drawing saved where the call names is a write
         # ramabana's repeat guard: the DOOM_LOOPth identical gated call is put to the person whatever
         # the mode or run policy says; a read between neither counts nor resets the streak
         loop = (force or required) and self._looping(name, args)
-        bypassed = not force and self._policy_bypasses(name)
+        bypassed = not force and self._policy_bypasses(name, args)
         control_checkpoint = not bypassed and (self.control == 'directed' or
-            (self.control == 'guided' and name in GUIDED_TOOLS))
+            (self.control == 'guided' and (name in GUIDED_TOOLS or path_write(name, args))))
         checkpoint = force or loop or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, args),
             preview=preview_for(name, args, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
+        if path_write(name, args): a.preview = f"saves {', '.join(write_targets(name, args))}\n\n{args.get('prompt', '')}"   # ramabana 0.2.3's preview names only the first
         if loop: a.preview = f'the same call {_times(self._streak)} running -- allow it?\n\n{a.preview}'.strip()
         if action_id: a.id = str(action_id)
         a.revision, a.branch_id, a.parent_action_id = int(revision or 0), branch_id, parent_action_id
-        if self.host is not None and name in {'edit_file', 'create_file', 'replace_text', 'edit_cell'} and args.get('path'):
-            a.before = self.host.text_at(args['path'])
+        if self.host is not None and args.get('path') and (name in {'edit_file', 'create_file', 'replace_text', 'edit_cell'} or path_write(name, args)):
+            a.before = self._shot(name, args)
         self.history.append(a)
         if self.stopping: return a.resolve(False, STOP_NOTE)
         if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
-            if (d := self.decide(name, args, ask=a, loop=loop)) is not None: return d
+            if (d := self.decide(name, args, force=name not in self.tools, ask=a, loop=loop)) is not None: return d   # a path write is not in `tools`
         if not checkpoint: return a.resolve(True)
         if self.listeners < 1:
             why = (f'the same call {_times(self._streak)} running, and nothing is listening to ask about it' if loop
@@ -1145,7 +1169,7 @@ class Assistant(Agent):
     def _record(self, f):
         "Observe results for run-until-failure and deliver queued steering between calls."
         run = super()._record(f)
-        @functools.wraps(f)
+        @functools.wraps(run)
         def wrapper(*args, **kw):
             approvals = self.approvals
             try: out = run(*args, **kw)
@@ -1158,6 +1182,7 @@ class Assistant(Agent):
                 if steer := approvals.consume_steer():
                     out = f'{out}\n\nUser steering for the next decision: {steer}'
             return out
+        if (ro := getattr(f, 'read_only', None)) is not None: wrapper.read_only = self._record(ro)   # what a read-only view is handed
         return wrapper
     def status(self):
         out = super().status()

@@ -1137,10 +1137,10 @@ def connect(app, ctx):
     @rt('/agent/retry-tool')
     async def agent_retry_tool(req):
         "Rerun a completed read-only call; return its result without changing model history."
-        from .ai import WRITE_TOOLS
+        from .ai import WRITE_TOOLS, path_write
         d = await req.json()
         tool, args = (d.get('tool') or '').strip(), d.get('args')
-        if tool in WRITE_TOOLS: return fail('only read-only calls can be retried from a checkpoint')
+        if tool in WRITE_TOOLS or path_write(tool, args if isinstance(args, dict) else {}): return fail('only read-only calls can be retried from a checkpoint')
         try: choices = {c.__name__: c for c in _thread(d.get('thread')).ai.tools}
         except Exception as e: return _thread_error(e)
         if tool not in choices: return fail(f'unknown tool {tool}')

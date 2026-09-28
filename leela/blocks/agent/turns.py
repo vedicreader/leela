@@ -125,7 +125,7 @@ def tool_group(name):
 def tool_schemas(agent):
     "Browser-sized schemas for editable checkpoint forms, over what the model is offered; callable validation remains authoritative."
     import inspect, typing
-    from .ai import WRITE_TOOLS
+    from .ai import WRITE_TOOLS, PATH_WRITES
     out = []
     for tool in agent._plain:
         sig = inspect.signature(tool)
@@ -139,8 +139,8 @@ def tool_schemas(agent):
                            'default': json.dumps(default) if kind == 'json' and default is not None else default,
                            'multiline': kind == 'json' or name in {'code', 'text', 'source', 'command'}})
         out.append({'name': tool.__name__, 'description': (inspect.getdoc(tool) or '').split('\n')[0],
-                    'changes_state': tool.__name__ in WRITE_TOOLS,
-                    'retryable': tool.__name__ not in WRITE_TOOLS,
+                    'changes_state': tool.__name__ in WRITE_TOOLS | PATH_WRITES,   # a drawing may name a path
+                    'retryable': tool.__name__ not in WRITE_TOOLS | PATH_WRITES,
                     'group': tool_group(tool.__name__), 'fields': fields})
     return out
 
