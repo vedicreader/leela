@@ -2,6 +2,12 @@
 
 <!-- do not remove -->
 
+## 0.1.8
+
+- Needs ramabana 0.2.4 (pinned) and shalya 0.1.1: sub-agents can be handed pictures (`delegate_search(images=)`), `generate_image` can draw from reference pictures and save to a chosen path.
+- `generate_image(path=...)` is a write in the agent pane too: approvals gate it in every mode (the repeat guard included), turn rollback removes the pictures it made (all of `n`) and refuses when one existed before or changed since, retry refuses it, and read-only copies are recorded.
+- `create_file` no longer overwrites a picture with text; `memory_search` returns rows again.
+
 ## 0.1.7
 
 Needs ramabana 0.2.3 (pinned) and rishi 0.1.39; shalya, vishalakshi and dhrona as before.

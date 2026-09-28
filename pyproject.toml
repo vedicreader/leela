@@ -27,12 +27,12 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.3",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.0 tool set; 0.2.3 profiles: `auto` briefs a local or small-window model 14 tools plus `small_tool` opt-ins
+    "ramabana[cli]==0.2.4",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.1.0",   # native edits, ls, inspect_python(''), remember(key=), one watch(kind=)
+    "shalya>=0.1.1",   # generate_image(images=, path=) with guarded destinations; memory_search rows
     "gheasy>=0.0.10",  # 0.0.10 opened the six helpers; `blocks/git/seam.py` still takes either
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
