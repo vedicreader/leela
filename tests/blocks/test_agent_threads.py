@@ -1638,6 +1638,28 @@ def test_a_threads_opt_ins_survive_eviction_and_resume(tmp_path, monkeypatch):
     assert 'edit_file' in {f.__name__ for f in again.threads.resume(sid).ai.tools}
 
 
+def test_a_threads_profile_survives_eviction_and_resume(tmp_path, monkeypatch):
+    "Asked for in full on a local model, a conversation comes back in full; the row is the choice, kept only where it differs from the workspace default."
+    from tests.fakemodel import Step, install
+    from leela.blocks.agent.ai import Assistant
+    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
+    t = ws.threads.new(profile='full'); sid = t.id
+    assert t.ai.spec_or_none().local and t.ai.profile == 'full' and 'inspect_python' in {f.__name__ for f in t.ai.tools}
+    install(ws, [Step(text='ok')], token_delay=0); t.ai.ask('first')
+    ws.threads.close(sid); assert sid not in ws.threads._rows
+    monkeypatch.setattr(Assistant, 'set_model', lambda self, name, job='turn': None)   # the scripted model is not in the catalog
+    r = ws.threads.resume(sid)
+    assert r.ai.profile == 'full' and 'inspect_python' in {f.__name__ for f in r.ai.tools} and r.dict()['profile'] == 'full'
+    assert ws.thread_profiles.get(sid) == 'full', 'kept on the workspace'
+    again = Workspace.load(ws._state_path)
+    assert again.thread_profiles.get(sid) == 'full' and again.threads.resume(sid).ai.profile == 'full', 'and in its saved file'
+    assert ws.threads.new(profile='auto').id not in ws.thread_profiles, 'the workspace default needs no row'
+    assert ws.threads.new().dict()['profile'] == 'small', 'a thread naming no profile takes the workspace default'
+    ws.thread_profiles['agent_gone-long-ago'] = 'full'; ws.threads.new(profile='full')
+    assert 'agent_gone-long-ago' not in ws.thread_profiles and sid in ws.thread_profiles, 'pruned like an opt-in row; a logged conversation stays'
+    ws.restore_settings({'thread_profiles': {sid: 'huge'}}); assert ws.thread_profiles == {}, 'a saved profile this ramabana lacks is dropped'
+
+
 def test_opt_in_rows_are_kept_only_for_conversations_that_differ_from_the_default_and_still_exist(tmp_path):
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
     ws.agent_optin = ('research',)

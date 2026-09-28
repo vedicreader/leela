@@ -276,6 +276,7 @@ class Workspace:
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
         self.agent_profile = agent_profile  # how new conversations are briefed: auto | small | full (ramabana's profiles)
         self.thread_optins = {}             # a conversation's own opt-ins, by session id, for `Threads.resume`
+        self.thread_profiles = {}           # …and its own profile choice, the same way
         self.active_root = None
         #: Folders this window closed. Everything else in the saved session belongs to somebody.
         self._closed_roots = set()
@@ -1138,6 +1139,7 @@ class Workspace:
                 'vault_pii': self.vault_pii,
                 'agent_optin': list(self.agent_optin), 'agent_profile': self.agent_profile,
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
+                'thread_profiles': dict(self.thread_profiles),
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
                 'per_folder': True, 'saved': time.time()}
@@ -1158,6 +1160,8 @@ class Workspace:
         self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
         from .agent.core import PROFILES   # a profile this ramabana lacks is `auto`, not a workspace that will not load
         self.agent_profile = d.get('agent_profile') if d.get('agent_profile') in PROFILES else 'auto'
+        prows = d.get('thread_profiles') if isinstance(d.get('thread_profiles'), dict) else {}
+        self.thread_profiles = {str(k): v for k, v in prows.items() if v in PROFILES}
         rows = d.get('thread_optins') if isinstance(d.get('thread_optins'), dict) else {}
         self.thread_optins = {str(k): [x for x in (v or ()) if x in OPTIN] for k, v in rows.items()}
         self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}

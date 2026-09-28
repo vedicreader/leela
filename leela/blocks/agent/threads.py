@@ -226,12 +226,17 @@ class Threads:
             self._room(); thread = Thread(self.workspace, ai=ai, warm=warm, optin=optin, profile=profile)
             self._rows[thread.id] = thread
             if optin is not None: self._remember_optin(thread)
+            if profile is not None: self._remember_profile(thread)
             return self._activate(thread)
     def _remember_optin(self, thread):
-        "A conversation's own opt-ins outlive its eviction: kept on the workspace, keyed by session, read back on resume. Only what differs from the workspace default is a row."
-        ws = self.workspace; rows = ws.__dict__.setdefault('thread_optins', {})
-        own = list(getattr(thread.ai, 'optin', ()) or ())
-        if own != list(getattr(ws, 'agent_optin', ()) or ()): rows[thread.id] = own
+        self._remember('thread_optins', thread, list(getattr(thread.ai, 'optin', ()) or ()), list(getattr(self.workspace, 'agent_optin', ()) or ()))
+    def _remember_profile(self, thread):
+        "The choice (`auto`/`small`/`full`), not what the model resolved it to."
+        self._remember('thread_profiles', thread, getattr(thread.ai, 'profile_choice', 'auto'), getattr(self.workspace, 'agent_profile', 'auto'))
+    def _remember(self, key, thread, own, default):
+        "A conversation's own choice outlives its eviction: kept on the workspace under `key`, by session, read back on resume. Only what differs from the workspace default is a row."
+        ws = self.workspace; rows = ws.__dict__.setdefault(key, {})
+        if own != default: rows[thread.id] = own
         else: rows.pop(thread.id, None)
         self._prune_optins(rows)
         try: ws.save()
@@ -254,9 +259,11 @@ class Threads:
             rows = getattr(self.workspace, 'thread_optins', None) or {}
             optin = rows.get(session)
             if optin is None and rows: self._prune_optins(rows)     # a miss is a cheap moment to forget dead rows
+            profile = (getattr(self.workspace, 'thread_profiles', None) or {}).get(session)
             ai = Assistant(self.workspace, model=self.workspace.model, surface='agent',
                 local_multimodal=self.workspace.local_multimodal, on_compact=self.workspace._compacted,
-                history_name='agent', approvals=approvals, **({} if optin is None else {'optin': tuple(optin)}))
+                history_name='agent', approvals=approvals, **({} if optin is None else {'optin': tuple(optin)}),
+                **({} if profile is None else {'profile': profile}))
             if source is not None:
                 self.workspace.fresh_history(source.ai); ai.history = list(source.ai.history)
             ai.refresh_history()          # another live thread may have written this session
