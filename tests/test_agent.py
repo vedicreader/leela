@@ -230,7 +230,7 @@ def test_backend_refresh_before_start_only_records(spec):
 def test_agent_refresh_rebriefs_a_running_turn_backend():
     "Opening a folder reaches the live conversation: the briefing names it, without a reload."
     host = MemHost_agent({'/proj/a.py': 'def a(): pass\n'})
-    a = Agent(host, extensions=False, subagents=False)
+    a = Agent(host, extensions=False, subagents=False, profile='full')   # the default model is local: `auto` would brief it small, with no skill index
     spec = a.routing.spec('turn')
     be = FakeBackend(spec, sp=a.system_prompt(), tools=a.tools)
     be.start()
@@ -1380,7 +1380,7 @@ def test_running_a_cell_is_a_write_and_the_new_reads_are_not(tmp_path):
 
 def test_the_shims_are_gone_and_steering_is_never_advertised(tmp_path):
     from leela.blocks.agent.turns import tool_schemas
-    ws = Workspace(roots=[tmp_path])
+    ws = Workspace(roots=[tmp_path], agent_profile='full')
     names = {t.__name__ for t in ws.ai.tools}; briefed = {t.__name__ for t in ws.ai._plain}
     assert not ({'inspect_var', 'search_all', 'api_access'} & names)
     assert 'user_steering' in names and 'user_steering' not in briefed, 'dispatchable after a refusal, never offered'
@@ -1401,7 +1401,7 @@ def _git_repo(path):
 def test_git_writes_are_briefed_and_run_shell_points_at_them(tmp_path):
     from leela.blocks.agent.ai import GIT_WRITE_TOOLS
     repo, g = _git_repo(tmp_path/'r')
-    ws = Workspace(roots=[repo], approvals='auto')
+    ws = Workspace(roots=[repo], approvals='auto', agent_profile='full')   # the small profile briefs `git_commit` alone
     briefed = {t.__name__ for t in ws.ai._plain}
     assert GIT_WRITE_TOOLS <= briefed and 'git_commit' in ws.ai.system_prompt()
     assert not (GIT_WRITE_TOOLS & {t.__name__ for t in ws.ai._sub_plain()}), 'a sub-agent still gets no git writes'
@@ -1547,7 +1547,7 @@ def test_a_repeat_refused_by_the_guard_is_one_ask_row_on_the_activity(tmp_path):
 
 def test_a_folder_watch_opened_by_the_tool_is_seen_by_the_harness(tmp_path, monkeypatch):
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1'); monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
-    ws = Workspace(roots=[tmp_path], approvals='auto'); tools = {t.__name__: t for t in ws.ai.tools}
+    ws = Workspace(roots=[tmp_path], approvals='auto', agent_profile='full'); tools = {t.__name__: t for t in ws.ai.tools}
     said = tools['watch'](str(tmp_path), kind='folder', instructions='Review each change.', pattern='*.py')
     assert said.startswith('watching folder'), said
     ws.ai.monitors.sync(); assert [w.folder for w in ws.ai.monitors.all()] == [str(tmp_path)]
@@ -1746,7 +1746,7 @@ def test_httpcore_does_not_reclose_a_generator_during_generator_exit():
 def test_run_python_is_offered_before_any_kernel_exists(tmp_path):
     """`session` was probed, and the probe asks a workspace with no kernel yet."""
     from leela.workspace import Workspace
-    ws = Workspace(roots=[tmp_path])
+    ws = Workspace(roots=[tmp_path], agent_profile='full')   # `inspect_python` and `read_terminal` are full-profile tools
     assert ws.inline_ai.host.can('session'), 'declared, not proved by a kernel'
     for surface in (ws.inline_ai, ws.ai):
         tools = {t.__name__ for t in surface.tools}
@@ -2299,7 +2299,7 @@ def test_edit_cell_previews_as_a_diff_of_the_cell(tmp_path):
 
 def test_tool_schemas_name_list_fields_as_json(tmp_path):
     from leela.blocks.agent.turns import tool_schemas
-    rows = {r['name']: r for r in tool_schemas(Workspace(roots=[tmp_path]).ai)}
+    rows = {r['name']: r for r in tool_schemas(Workspace(roots=[tmp_path], agent_profile='full').ai)}
     f = {x['name']: x for x in rows['replace_text']['fields']}
     assert f['edits']['kind'] == 'json' and f['edits']['multiline'] and f['path']['kind'] == 'string'
     assert {x['name']: x['kind'] for x in rows['set_plan']['fields']}['items'] == 'json'
@@ -3234,3 +3234,93 @@ def test_the_subagent_toolset_is_blocked_at_the_call_site():
     import ramabana.tools as rt
     src = inspect.getsource(rt.delegate)
     assert 'read_only(' in src and 'block=NO_SUB' in src, src
+
+
+# --- the small profile: ramabana 0.2.3 briefs a local or ≤32k model fourteen tools and one screen ---
+
+def test_the_default_local_session_is_small_and_keeps_steering_and_run_cell(tmp_path):
+    "`gemma-e4b` is local, so `auto` is `small`: the fourteen, plus Leela's `run_cell` and the hidden `user_steering`."
+    from leela.agent.core import SMALL_TOOLS
+    a = Workspace(roots=[tmp_path]).ai
+    assert a.spec_or_none().local and a.profile == 'small'
+    names = {t.__name__ for t in a.tools}; briefed = {t.__name__ for t in a._plain}
+    assert names == set(SMALL_TOOLS) | {'user_steering', 'run_cell'}, sorted(names)
+    assert briefed == set(SMALL_TOOLS) | {'run_cell'}, 'steering is dispatchable, never offered'
+    sp = a.system_prompt()
+    assert 'user_steering' not in sp and len(sp) < 3000, len(sp)
+    assert '## APIs loaded' not in sp, 'no spec is loaded, so no API paragraph'
+
+def test_a_refused_call_in_a_small_session_dispatches_user_steering(tmp_path):
+    "The approvals refusal path rewrites a rejected call to `user_steering`; a small catalog that dropped it would make every 'no' an unknown-tool error."
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[tmp_path], approvals='ask'); a = ws.ai; assert a.profile == 'small'
+    be = install(ws, [Step(tool=('replace_text', {'path': str(tmp_path/'a.py'), 'edits': []})), Step(text='ok')], token_delay=0)
+    def answer():
+        for _ in range(300):
+            if (p := ws.approvals.pending) is not None: return ws.approvals.answer(p.id, False, 'leave it')
+            time.sleep(0.01)
+    threading.Thread(target=answer, daemon=True).start()
+    tc = {'function': {'name': 'replace_text', 'arguments': {'path': str(tmp_path/'a.py'), 'edits': []}}}
+    assert ws.approvals.gate(tc) is True and tc['function']['name'] == 'user_steering'
+    by = {t.__name__: t for t in be.tools}
+    assert 'User steering' in by['user_steering'](**tc['function']['arguments'])
+
+def test_opening_a_canvas_adds_its_tools_to_a_small_session_and_re_briefs(tmp_path):
+    from leela.blocks.canvas.helper import TOOLS
+    from tests.fakemodel import Step, install
+    (tmp_path/'p.canvas.md').write_text('# p\n')
+    ws = Workspace(roots=[tmp_path]); be = install(ws, [Step(text='ok')] * 3, token_delay=0)
+    assert ws.ai.profile == 'small'
+    ws.ai.ask('one'); assert not {t.__name__ for t in be.tools} & set(TOOLS)
+    ws.open(tmp_path/'p.canvas.md'); ws.ai.ask('two')
+    assert set(TOOLS) <= {t.__name__ for t in be.tools} and '`canvas`' in be.sp, 'the live backend was re-briefed'
+    assert len(be.sp) < 3500, len(be.sp)
+
+def test_news_tools_reach_a_small_session_only_while_a_feed_is_followed(tmp_path, monkeypatch):
+    from leela.blocks.agent.ai import _news_tools
+    ws = Workspace(roots=[tmp_path]); assert ws.ai.profile == 'small'
+    assert not {t.__name__ for t in ws.ai.tools} & {'news_feeds', 'news_latest'}
+    assert all(getattr(f, 'small', False) for f in _news_tools(ws.ai.host)), 'marked, so the small catalog keeps them when a feed appears'
+    from leela.blocks.agent.video import video_tools
+    assert not any(getattr(f, 'small', False) for f in video_tools(ws.ai.host)), 'video stays a full-profile tool'
+
+def test_a_cloud_session_is_briefed_in_full(tmp_path):
+    ws = Workspace(roots=[tmp_path], model='gpt-4.1'); a = ws.ai
+    assert not a.spec_or_none().local and a.profile == 'full'
+    names = {t.__name__ for t in a.tools}
+    assert {'inspect_python', 'read_terminal', 'set_plan', 'watch', 'git_checkout', 'run_cell', 'user_steering'} <= names
+    assert 'user_steering' not in {t.__name__ for t in a._plain}
+
+def test_a_workspace_can_force_the_full_profile_for_a_local_model(tmp_path):
+    ws = Workspace(roots=[tmp_path], agent_profile='full')
+    assert ws.ai.spec_or_none().local and ws.ai.profile == 'full'
+    assert 'inspect_python' in {t.__name__ for t in ws.ai.tools}
+    ws.save(); assert Workspace.load(ws_path()).agent_profile == 'full'
+    ws.restore_settings({'agent_profile': 'huge'}); assert ws.agent_profile == 'auto', 'an unknown saved profile is `auto`, not a workspace that will not load'
+
+def test_a_small_briefing_stays_compact_whatever_the_state_and_notes_say(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    ws.agent_state_layers['task'] = {'text': 'do this ' * 2000, 'enabled': True, 'source': 'user'}
+    ws.agent_memory_context = lambda surface, max_chars=0: ('note ' * 3000)[:max_chars]
+    a = ws.ai; assert a.profile == 'small'
+    sp = a.system_prompt()
+    assert 'do this' in sp and 'note' in sp and len(sp) < 7000, len(sp)
+    assert len(Workspace(roots=[tmp_path], agent_profile='full').ai.system_prompt()) > len(sp)
+
+def test_a_thread_names_its_profile_and_full_can_be_asked_for(tmp_path):
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        d = client.post('/agent/thread/new', json={'profile': 'full'}).json()
+        assert d['ok'] and d['profile'] == 'full' and d['thread']['profile'] == 'full'
+        assert 'inspect_python' in {t.__name__ for t in ws.ai.tools}
+        assert client.post('/agent/thread/new', json={'profile': 'huge'}).json()['ok'] is False
+        d = client.post('/agent/thread/new', json={}).json(); assert d['profile'] == 'small'
+        assert client.get('/agent/status').json()['profile'] == 'small'
+        m = client.post('/agent/model', json={'target': 'agent', 'model': 'gemma-e4b'}).json()
+        assert m['ok'] and m['note'].endswith('small profile'), m
+        m = client.post('/agent/model', json={'target': 'agent', 'model': 'gpt-4.1'}).json()
+        assert m['note'].endswith('full profile'), m
+        p = client.post('/agent/profile', json={'profile': 'full'}).json()
+        assert p['ok'] and ws.agent_profile == 'full'
+        assert client.post('/agent/thread/new', json={}).json()['profile'] == 'full', 'the workspace default'
+        assert client.post('/agent/profile', json={'profile': 'huge'}).json()['ok'] is False

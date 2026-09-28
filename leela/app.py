@@ -634,6 +634,9 @@ def _agent_panel(ws):
                 Button('exhash', id='agentoptin-exhash', cls='lee-btn', data_optin='exhash',
                        aria_pressed=str('exhash' in ws.agent_optin).lower(),
                        title='give the next new conversation hash-addressed edits (`edit_file`) and the exhash skill', onclick="leeAgentOptinToggle('exhash')"),
+                Button('full', id='agentfull', cls='lee-btn', aria_pressed=str(ws.agent_profile == 'full').lower(),
+                       title='brief the next new conversation in full: every tool and the whole briefing, even on a local or small-window model',
+                       onclick='leeAgentFullToggle()'),
                 Button('history', id='agenthistory', cls='lee-btn', title='toggle conversation history',
                        onclick='leeAgentHistory()'),
                 Button('assess', id='agentassess', cls='lee-btn', title="dhrona's score and findings for this conversation",
@@ -751,6 +754,12 @@ def _agent_panel(ws):
                                     onchange="leeAgentOptin('exhash', this.checked)"), ' hash-addressed edits by default',
                               cls='lee-check-setting',
                               title="New conversations get `edit_file` and the exhash skill (about 3k tokens a turn). A browser's own toggle beside `warm` overrides this default"),
+                        Label('briefing ', Select(*[Option(p, value=p, selected=(p == ws.agent_profile)) for p in ('auto', 'small', 'full')],
+                                     id='agent-profile', data_was=ws.agent_profile, onchange='leeAgentProfile(this.value)'),
+                              cls='lee-check-setting',
+                              title='How new conversations are briefed. auto: a local or small-window model gets the small profile '
+                                    '(14 tools and one screen), a hosted one the full set. full: everything, whatever the model. '
+                                    "A browser's own `full` toggle beside `warm` overrides this default for its next conversation"),
                         Label(Input(type='checkbox', id='legacymodels', checked=True,
                                     onchange='leeLoadModels(this.checked)'), ' show older models',
                               cls='lee-check-setting'),

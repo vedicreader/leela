@@ -115,6 +115,16 @@ async function leeAgentOptin(name, on) {
   } catch (e) { if (box) box.checked = !on; status(String(e.message || e), 'err'); }
 }
 window.leeAgentOptin = leeAgentOptin;
+/* Workspace default for how a new conversation is briefed; the select goes back on a refusal. */
+async function leeAgentProfile(profile) {
+  const sel = $('#agent-profile');
+  try {
+    const d = await post('/agent/profile', {profile});
+    if (d.ok && sel) sel.dataset.was = profile; else if (sel) sel.value = sel.dataset.was || 'auto';
+    status(d.ok ? d.note : (d.error || 'profile setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) { if (sel) sel.value = sel.dataset.was || 'auto'; status(String(e.message || e), 'err'); }
+}
+window.leeAgentProfile = leeAgentProfile;
 async function leeVaultPii(policy) {
   const sel = $('#vault-pii'), was = sel ? sel.dataset.was || 'off' : 'off';
   try {

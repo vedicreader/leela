@@ -161,11 +161,26 @@ def connect(app, ctx):
     async def agent_thread_new(req):
         "A fresh conversation; `warm` seeds it from dhrona's rounds, `optin` names its opt-in tool groups. An empty body is the old client: cold, on the workspace's opt-ins."
         d = await req.json() if int(req.headers.get('content-length') or 0) else {}
-        try: optin = _optin(d.get('optin'))
+        try: optin, profile = _optin(d.get('optin')), _profile(d.get('profile'))
         except ValueError as e: return fail(e)
-        try: thread = await off_loop(ws.threads.new, None, bool(d.get('warm')), optin)
+        try: thread = await off_loop(ws.threads.new, None, bool(d.get('warm')), optin, profile)
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'warm': thread.ai.warm, 'optin': list(thread.ai.optin)}
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'warm': thread.ai.warm, 'optin': list(thread.ai.optin),
+                'profile': thread.ai.profile}
+    def _profile(name):
+        "One of ramabana's profiles, or None for the workspace default."
+        from ...agent.core import PROFILES
+        if name is None or name == '': return None
+        if name not in PROFILES: raise ValueError(f'unknown profile {name!r}; one of {", ".join(PROFILES)}')
+        return name
+    @rt('/agent/profile')
+    async def agent_profile(req):
+        "How a new conversation here is briefed unless it says otherwise: `auto` (small for a local or ≤32k model), `small`, or `full`."
+        d = await req.json()
+        try: ws.agent_profile = _profile(d.get('profile')) or 'auto'
+        except ValueError as e: return fail(e)
+        ws.save()
+        return {'ok': True, 'profile': ws.agent_profile, 'note': f'new conversations are briefed with the {ws.agent_profile} profile'}
     @rt('/agent/optin')
     async def agent_optin(req):
         "Which opt-in tool groups a new conversation here gets unless it says otherwise."
@@ -514,7 +529,8 @@ def connect(app, ctx):
             elif target == 'agent': ws.model = spec.name
             else: ws.job_models[job] = spec.name
             ws.save()
-            return {'ok': True, 'target': target, 'model': spec.name, 'note': model_note(spec)}
+            note = model_note(spec) + (f' · {assistant.profile} profile' if job == 'turn' else '')   # what the turn model resolves `auto` to
+            return {'ok': True, 'target': target, 'model': spec.name, 'note': note}
         except Exception as e: return fail(e)
     @rt('/agent/memory')
     async def agent_memory():

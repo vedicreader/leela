@@ -15,7 +15,7 @@ from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, LocalH
                          SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
-from ...agent.tools import tools_for
+from ...agent.tools import tools_for, small_tool
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
@@ -29,6 +29,7 @@ HIDDEN = frozenset({'user_steering'})
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
+SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
 WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell'})
@@ -692,7 +693,7 @@ def _session_tools(host):
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
-    return [run_cell]
+    return [small_tool(run_cell)]   # the Run button belongs to a small session too
 
 def _canvas_path(host, args):
     "Which file a canvas tool is about to change, named the way the tool itself resolves it."
@@ -714,7 +715,7 @@ def _canvas_toolset(host):
     "The canvas block's tools. Built with the rest, because a backend takes its tool list once."
     try:
         from ..canvas.helper import canvas_tools
-        return canvas_tools(host)
+        return [small_tool(f) for f in canvas_tools(host)]   # gated by an open canvas, whatever the profile
     except Exception: return []
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
@@ -782,7 +783,7 @@ def _news_tools(host, mx=MAX_TOOL_CHARS):
         except Exception as e: return f'news_refresh failed: {errstr(e)}'
         if not out['feeds']: return f'not following {feed!r}. Call news_feeds to see what is followed.'
         return clip(json.dumps(out, default=str), mx)
-    return [news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh]
+    return [small_tool(f) for f in (news_feeds, news_latest, news_story, news_follow, news_unfollow, news_refresh)]   # gated by a followed feed, whatever the profile
 
 def api_context(host):
     "The specs already loaded in this session, as something the model is told rather than finds."
@@ -890,6 +891,7 @@ class Assistant(Agent):
         kwargs.setdefault('subagent_writes', getattr(ws, 'subagent_writes', False))
         kwargs.setdefault('verify', getattr(ws, 'verify', ''))
         kwargs.setdefault('optin', tuple(getattr(ws, 'agent_optin', ()) or ()))
+        kwargs.setdefault('profile', getattr(ws, 'agent_profile', 'auto') or 'auto')   # `auto`: small for a local or ≤32k model
         if approve is not None and kwargs.get('approvals') is None:
             kwargs['approvals'] = _PolicyApprovals(approve)
         self.ws, self.surface = ws, surface
@@ -909,7 +911,7 @@ class Assistant(Agent):
         def user_steering(instruction: str) -> str:
             "Return a user's intervention after a skipped tool call so the agent can redirect its next step."
             return f'User steering after skipping the proposed call: {instruction}'
-        self._steering_tool = user_steering
+        self._steering_tool = small_tool(user_steering)   # the refusal path rewrites a rejected call to it, in every profile
         self.turn_transactions = {}
     def mark_surface(self):
         "Claim the live session for Leela. The CLI shares this log and leaves no such mark."
@@ -1017,10 +1019,15 @@ class Assistant(Agent):
         except Exception: pass
 
     def system_prompt(self):
+        "Ramabana's briefing, then Leela's blocks. A small profile gets the same blocks clipped to `SMALL_BRIEFING`, and one line where a paragraph was."
         self._canvas_mode()
-        base = super().system_prompt() + api_context(self.host)
+        small = self.profile == 'small'
+        base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
+        if small and self._mode()[0]:   # no skill is inlined for a small model; the open canvas still needs naming
+            base += '\n\nA `canvas` document is open: `canvas_read` first, then address bricks by id with the other canvas tools.'
         if (writable := self.host.writable_roots) != self.host.roots:
-            base += ('\n\n## Writable folders\n\nEvery folder above can be read. Edits and new files may only '
+            base += (f'\n\nWritable folders: {", ".join(writable)}. A write anywhere else is refused.' if small else
+                '\n\n## Writable folders\n\nEvery folder above can be read. Edits and new files may only '
                 'land in:\n' + ''.join(f'\n- {r}' for r in writable) + '\n\nA write anywhere else is refused '
                 'until the user turns on workspace repository writes in agent settings.')
         layers = getattr(self.ws, 'agent_state_layers', {})
@@ -1028,9 +1035,9 @@ class Assistant(Agent):
             if row.get('enabled', True) and str(row.get('text', '')).strip()]
         if not enabled and self.session_state: enabled = [('task', self.session_state)]
         if enabled:
-            base += '\n\n## User-owned starting state\n' + ''.join(
-                f'\n### {name.title()} state\n\n{text.strip()}\n' for name, text in enabled)
-        if memory := self.memory_context(self.surface, max_chars=BRIEFING_NOTES):
+            state = ''.join(f'\n### {name.title()} state\n\n{text.strip()}\n' for name, text in enabled)
+            base += '\n\n## User-owned starting state\n' + (clip(state, SMALL_BRIEFING) if small else state)
+        if memory := self.memory_context(self.surface, max_chars=SMALL_BRIEFING if small else BRIEFING_NOTES):
             base += ('\n\n## User-selected memory notes\n'
                 'Treat these as durable user context. If a note conflicts with the current request or code, ask rather than guessing.\n\n' + memory)
         return base

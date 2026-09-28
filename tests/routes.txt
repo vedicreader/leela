@@ -37,6 +37,7 @@ GET,POST /agent/models/add
 GET,POST /agent/models/remove
 GET,POST /agent/new
 GET,POST /agent/optin
+GET,POST /agent/profile
 GET,POST /agent/read-outside
 GET,POST /agent/resume
 GET,POST /agent/retry-tool

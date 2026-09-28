@@ -94,15 +94,16 @@ class TurnError(Exception):
 
 class Thread:
     "One live conversation and every mutable object that belongs only to it."
-    def __init__(self, workspace, ai=None, approvals=None, feed=None, warm=False, optin=None):
+    def __init__(self, workspace, ai=None, approvals=None, feed=None, warm=False, optin=None, profile=None):
         from .ai import Assistant, Interventions, WRITE_TOOLS
         from ..settings.settings import agent_cfg
         self.workspace = workspace
         self.approvals = approvals or Interventions(tools=WRITE_TOOLS, mode=workspace.approvals_mode, rules_path=agent_cfg()/'approvals.json')
-        # `optin=None` takes the workspace default; a tuple, empty included, is this conversation's own
+        # `optin=None` and `profile=None` take the workspace default; a value is this conversation's own
         self.ai = ai or Assistant(workspace, model=workspace.model, surface='agent',
             local_multimodal=workspace.local_multimodal, on_compact=workspace._compacted,
-            history_name='agent', approvals=self.approvals, warm=warm, **({} if optin is None else {'optin': tuple(optin)}))
+            history_name='agent', approvals=self.approvals, warm=warm, **({} if optin is None else {'optin': tuple(optin)}),
+            **({} if profile is None else {'profile': profile}))
         if hasattr(self.ai, 'set_model'): workspace.sync_agent_routing(self.ai)
         if hasattr(self.ai, 'host'): self.approvals.host = self.ai.host
         self.id = getattr(self.ai, 'session_id', '') or f'thread_{uuid.uuid4().hex[:12]}'
@@ -156,6 +157,7 @@ class Thread:
                 'created': self.created, 'touched': self.touched, 'unread': self.unread,
                 'branch': getattr(self.ai, 'current_branch_id', '') or 'main',
                 'warm': bool(getattr(self.ai, 'warm', False)), 'optin': list(getattr(self.ai, 'optin', ()) or ()),
+                'profile': getattr(self.ai, 'profile', 'full'),
                 'muted': bool(meta.get('muted', self.muted)), 'problem': self.mute_problem}
     def close(self):
         "Close every part, and report what refused rather than skipping the rest."
@@ -218,10 +220,10 @@ class Threads:
         if not idle: raise TurnError('no_evictable_thread', 'all six conversations are working or waiting', self.active_id)
         victim = min(idle, key=lambda row: row.touched)
         self._rows.pop(victim.id); victim.close()
-    def new(self, ai=None, warm=False, optin=None):
-        "A fresh conversation; `warm` seeds it from dhrona's rounds, `optin` names its opt-in tool groups (None: the workspace default). `resume` never is: its history is the log's."
+    def new(self, ai=None, warm=False, optin=None, profile=None):
+        "A fresh conversation; `warm` seeds it from dhrona's rounds, `optin` names its opt-in tool groups and `profile` how it is briefed (None: the workspace default). `resume` never is: its history is the log's."
         with self._lock:
-            self._room(); thread = Thread(self.workspace, ai=ai, warm=warm, optin=optin)
+            self._room(); thread = Thread(self.workspace, ai=ai, warm=warm, optin=optin, profile=profile)
             self._rows[thread.id] = thread
             if optin is not None: self._remember_optin(thread)
             return self._activate(thread)

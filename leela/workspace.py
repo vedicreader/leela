@@ -203,6 +203,7 @@ class Workspace:
                  litert_backend='',
                  approvals='ask',
                  agent_scope='overlay',
+                 agent_profile='auto',
                  python=None,
                  transport='direct', gateway=None, cdp_port=9223):
         self.fs = Sandbox(roots)
@@ -273,6 +274,7 @@ class Workspace:
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.vault_pii = 'off'              # what a vault retrieval does about personal information
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
+        self.agent_profile = agent_profile  # how new conversations are briefed: auto | small | full (ramabana's profiles)
         self.thread_optins = {}             # a conversation's own opt-ins, by session id, for `Threads.resume`
         self.active_root = None
         #: Folders this window closed. Everything else in the saved session belongs to somebody.
@@ -1134,7 +1136,7 @@ class Workspace:
                 'agent_read_outside': self.agent_read_outside,
                 'subagent_writes': self.subagent_writes,
                 'vault_pii': self.vault_pii,
-                'agent_optin': list(self.agent_optin),
+                'agent_optin': list(self.agent_optin), 'agent_profile': self.agent_profile,
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
                 'job_models': self.job_models,
                 'active_root': str(self.active_root or ''),
@@ -1154,6 +1156,8 @@ class Workspace:
         except ValueError: self.vault_pii = 'off'
         from shalya.tools import OPTIN     # a group this shalya lacks is dropped, not a workspace that will not load
         self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
+        from .agent.core import PROFILES   # a profile this ramabana lacks is `auto`, not a workspace that will not load
+        self.agent_profile = d.get('agent_profile') if d.get('agent_profile') in PROFILES else 'auto'
         rows = d.get('thread_optins') if isinstance(d.get('thread_optins'), dict) else {}
         self.thread_optins = {str(k): [x for x in (v or ()) if x in OPTIN] for k, v in rows.items()}
         self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
