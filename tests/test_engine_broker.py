@@ -194,3 +194,25 @@ def test_the_key_ignores_options_the_engine_is_not_built_from(monkeypatch):
     s = spec()
     assert eng.engine_key(s, {'sp': 'one'}) == eng.engine_key(s, {'sp': 'two'})
     assert eng.engine_key(s, {'eng_kw': {'max_num_tokens': 1}}) != eng.engine_key(s, {'eng_kw': {'max_num_tokens': 2}})
+
+def test_two_chats_on_one_engine_take_turns_across_threads_and_refuse_on_one():
+    """rishi 0.1.39's engine lock, as Leela relies on it. A shared-engine chat (`lend_model` → `mk_chat`, used by
+    `ask_memory`) runs inside a tool call, where `ChatToolHandler` has let the engine go, so it takes the lock.
+    Only a second chat stepping onto the engine *mid-stream on the turn's own thread* raises `EngineBusy`;
+    Leela has no such path: its one-shots (`Workspace.ask`, titles, compaction) run from other threads or
+    between sends, and other threads wait."""
+    import threading, time
+    from rishi.litert import EngineBusy, _Hold
+    class Chat:
+        def __init__(self, e): self.engine = e
+    e = FakeEngine(); turn, lent = Chat(e), Chat(e)
+    hold = _Hold(turn); hold.take()
+    with pytest.raises(EngineBusy): _Hold(lent).take()      # mid-stream, same thread: refused at once
+    hold.let_go()                                            # what the tool handler does while a tool runs
+    with _Hold(lent): pass                                   # `ask_memory`'s chat, inside the tool call
+    hold.take(); done = []
+    def other():
+        with _Hold(lent): done.append(1)
+    t = threading.Thread(target=other, daemon=True); t.start(); time.sleep(0.05)
+    assert not done, 'another thread waits its turn'
+    hold.let_go(); t.join(2); assert done

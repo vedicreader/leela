@@ -27,7 +27,7 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.2",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.0 tool set; 0.2.2 rewind refuses over a dirty tree or an unreadable HEAD
+    "ramabana[cli]==0.2.3",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.0 tool set; 0.2.3 profiles: `auto` briefs a local or small-window model 14 tools plus `small_tool` opt-ins
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
@@ -99,7 +99,7 @@ ipymini = [] # compatibility extra; ipymini now ships with Leela
 # pane, pinned to the rishi the bundle was frozen with.
 # `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
 # dependency, so naming it here would install nothing and warn.
-local = ["rishi[mlx,llama]==0.1.38"]
+local = ["rishi[mlx,llama]==0.1.39"]
 # The native window and the two freezers, through kavacha, which installs each platform's own
 # bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
 desktop = ["kavacha[window]>=0.0.1"]
@@ -128,14 +128,14 @@ dev = [
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[local]",
     "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
-    "rishi[all]==0.1.38",
+    "rishi[all]==0.1.39",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.38",
+    "rishi==0.1.39",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
