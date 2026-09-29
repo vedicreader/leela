@@ -4,13 +4,13 @@
 
 ## 0.1.9
 
-Needs ramabana 0.2.5 (pinned); shalya, rishi, vishalakshi and dhrona as before.
+Needs ramabana 0.2.6 (pinned); shalya, rishi, vishalakshi and dhrona as before.
 
 - Cloud routing defaults: the turn is `claude-opus-5-5`, the small jobs (oneshot, classify, completion, inline, summary) `gpt-4.1`, sub-agents `claude-sonnet-5`. No local model is on a default or fallback route; without `OPENAI_API_KEY` the gpt-4.1 jobs use claude-sonnet-5 and the chat says so once. A local turn model keeps every job without a model of its own on the machine.
 - A default Leela session is Opus, briefed in full; the small profile is for a local model you choose. A vault spec marked local-only is refused until one is.
 - The agent panel and the model picker name ramabana's turn default before the assistant is built, not `gemma-e4b`. The inline model defaults to `gpt-4.1`, not `gpt-mini`.
 - The picker's job rows apply saved per-job choices with `Routing.set`, so on a local turn a chosen sub-agent shows as chosen rather than as the local model.
-- A sub-agent on the turn's own budget is not handed delegation, watches or the plan tools.
+- A sub-agent on the turn's own budget is not handed delegation, watches or the plan tools; ramabana 0.2.6 (`Agent.ROOT_ONLY`) enforces this on every path, not just Leela's own.
 - The `--model` help and the settings pane's job help describe the new defaults.
 
 ## 0.1.8

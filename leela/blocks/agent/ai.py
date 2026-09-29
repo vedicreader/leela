@@ -15,7 +15,7 @@ from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, LocalH
                          SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
-from ...agent.tools import NO_SUB, PATH_WRITES, path_write, small_tool, tools_for, write_targets
+from ...agent.tools import PATH_WRITES, path_write, small_tool, tools_for, write_targets
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
@@ -26,8 +26,6 @@ from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
 #: are not among them: they are briefed, gated by `Interventions` like any write, and undone by the
 #: turn's rollback (option A of the phase 5 plan).
 HIDDEN = frozenset({'user_steering'})
-#: Ramabana hands a sub-agent on the turn's budget the turn's own full list, plan tools included.
-SUB_PLAN = frozenset(f.__name__ for f in plan_tools(list))
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
@@ -1009,8 +1007,8 @@ class Assistant(Agent):
         return [f for f in super()._plain if f.__name__ not in HIDDEN]
 
     def _sub_plain(self):
-        "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable), delegation, the plan, nor `user_steering`, whichever list upstream hands back. Its own set, not `HIDDEN`."
-        refused = {*GIT_WRITE_TOOLS, *NO_SUB, *SUB_PLAN, 'user_steering'}
+        "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable) nor `user_steering`, on top of `ROOT_ONLY` (delegation, the plan) which ramabana's own `_sub_plain` already drops. Its own set, not `HIDDEN`."
+        refused = {*GIT_WRITE_TOOLS, 'user_steering'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."
