@@ -301,7 +301,7 @@ def connect(app, ctx):
     @rt('/agent/models')
     def agent_models(legacy: bool = True, refresh: bool = False):
         "Every model the picker offers, and which one each routed job is on."
-        from ...agent.core import DFLT_LOCAL, available_models, auth_status, resolve
+        from ...agent.core import DFLT_SMALL, DFLT_TURN, available_models, auth_status, resolve
         from .models import JOB_HELP, catalog, forget_probes, load_models, mark_models, probed, runtimes
         notes = {}
         def _try(what, f, dflt=None):
@@ -325,12 +325,12 @@ def connect(app, ctx):
         rows = [dict(r) for r in rows]      # decorated below with this workspace's own choices
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
                   'source':f"saved · {x['model_id']}",'custom':True} for x in saved]
-        agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_LOCAL
+        agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_TURN
         agent = _name('agent model', lambda: ctx.ai.model.name, agent_dflt) if ws._ai is not None else agent_dflt
-        inline_dflt = ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or 'gpt-mini'
+        inline_dflt = ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or DFLT_SMALL
         inline = (_name('inline model', lambda: ctx.inline_ai.model.name, inline_dflt)
                   if ws._inline_ai is not None else inline_dflt)
-        completion_dflt = ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or 'gpt-4.1'
+        completion_dflt = ws.completion_model or os.environ.get('LEELA_MODEL_COMPLETION') or DFLT_SMALL
         completion = (_name('completion model', lambda: ctx.ai.routing.name_for('completion'), completion_dflt)
                       if ws._ai is not None else completion_dflt)
         for current in (agent, inline, completion):
@@ -352,7 +352,8 @@ def connect(app, ctx):
         # The routed jobs with no field of their own, reported chosen or not.
         from ...agent.core import JOBS, Routing
         routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
-        if ws._ai is None: routing.policy.update(ws.job_models)
+        if ws._ai is None:   # `set`, so a saved choice counts as chosen and a local turn does not hide it
+            for j, n in (ws.job_models or {}).items(): _try(f'{j} model', lambda j=j, n=n: routing.set(n, j))
         # `**jobs` is spread last, and `inline` has a field of its own.
         jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
                 for j in JOBS if j not in ('turn', 'completion', 'inline')}

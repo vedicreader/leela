@@ -29,10 +29,12 @@ def main(argv=None):
                         'ipymini lets inspector/agent execs run concurrently with a busy cell; '
                         'both launchers ship with Leela and can be installed into a project from the picker.')
     p.add_argument('--model', default=None,
-                   help='the agent\'s model: a short name (sonnet, opus, flash, gemma-e2b, ...) '
-                        'or any vendor/model spec. Cheap jobs -- completion, classification, '
-                        'summaries, sub-agents -- stay on the local model whatever this says; '
-                        'override per job with LEELA_MODEL_SUMMARY and friends.')
+                   help='the agent\'s model: a short name (opus, sonnet, flash, gemma-e2b, ...) '
+                        'or any vendor/model spec (default: claude-opus-5-5). Completion, classification '
+                        'and summaries run on gpt-4.1 and sub-agents on claude-sonnet-5; without '
+                        'OPENAI_API_KEY the gpt-4.1 jobs use claude-sonnet-5. A local model keeps every '
+                        'job without a model of its own on the machine. Override per job with '
+                        'LEELA_MODEL_SUMMARY and friends.')
     p.add_argument('--approvals', default='ask', choices=['ask', 'auto', 'off'],
                    help='what happens when the agent wants to write: ask a person (default), '
                         'approve everything, or refuse everything')

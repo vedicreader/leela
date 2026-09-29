@@ -16,18 +16,17 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    # Not `ramabana[all]`: that extra carries `rishi[all]`, whose three local-model backends bring
-    # mlx, cv2, transformers and scipy -- about 400MB into a bundle, for a runtime most people
-    # never select. They are `leela[local]` below, and the settings pane installs them on demand.
-    # The rest of `[all]` is ramabana's own CLI (pyghostty, teleprint) and mcp, none of which Leela
-    # imports; `dhrishti` and `jupyter-client` it depends on directly and are still here.
-    # `[cli]` because `workspace._attachment_context` imports `ramabana.cli` for the media
-    # helpers, and that module needs pyghostty and teleprint. 0.9MB, and the alternative is
-    # media handling that cannot be reached without a terminal UI.
+    # Not `ramabana[all]`: since 0.2.5 that is `[cli]` plus `[serve]` (mcp, agent-client-protocol) and
+    # `[dhrona]`. Leela imports neither server, and names `dhrona` itself. `[all]` no longer carries
+    # `rishi[all]`; the local-model backends (mlx, cv2, transformers, scipy, about 400MB) are
+    # `leela[local]` below, and the settings pane installs them on demand.
+    # `[cli]` is `[search]` (fossick, koshas, litesearch, rgapi, vishalakshi) and `[python]` (dhrishti,
+    # jupyter-client, rich), plus pyghostty, teleprint and fastpylight. `workspace._attachment_context`
+    # imports `ramabana.cli` for the media helpers, and that module needs pyghostty and teleprint.
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.4",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write
+    "ramabana[cli]==0.2.5",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not

@@ -257,10 +257,10 @@ class Workspace:
         self._untitled = 0
         self._ai = self._inline_ai = self._selection_ai = None
         self._completer = self._turn_runner = self._threads = None
-        from .agent.core import env as model_env
+        from .agent.core import DFLT_SMALL, env as model_env
         self.model = model
-        self.inline_model = inline_model or model_env('MODEL_INLINE') or 'gpt-mini'
-        self.completion_model = completion_model or model_env('MODEL_COMPLETION') or 'gpt-4.1'
+        self.inline_model = inline_model or model_env('MODEL_INLINE') or DFLT_SMALL
+        self.completion_model = completion_model or model_env('MODEL_COMPLETION') or DFLT_SMALL
         self.local_multimodal = bool(local_multimodal)
         self.kernels_auto_manage = bool(kernels_auto_manage)
         self.litert_backend = str(litert_backend or '').lower()
@@ -1249,7 +1249,7 @@ class Workspace:
         except Exception: d = {}
         ws = cls(port=port, agent=agent, kernel=kernel, cdp_port=cdp_port,
                  model=ifnone(model, d.get('model')),
-                 inline_model=ifnone(inline_model, d.get('inline_model') or 'gpt-mini'),
+                 inline_model=ifnone(inline_model, d.get('inline_model') or 'gpt-4.1'),
                  completion_model=ifnone(completion_model, d.get('completion_model') or 'gpt-4.1'),
                  local_multimodal=ifnone(local_multimodal, d.get('local_multimodal', False)),
                  kernels_auto_manage=ifnone(kernels_auto_manage, d.get('kernels_auto_manage', False)),

@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
-from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, preview_for
+from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed, one_line as _1, summary)
@@ -15,17 +15,7 @@ from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, LocalH
                          SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
-from ...agent.tools import tools_for, small_tool
-try: from ...agent.tools import PATH_WRITES, path_write, write_targets
-except ImportError:   # ramabana 0.2.3; 0.2.4 has these, drop this once it is pinned
-    PATH_WRITES = frozenset({'generate_image'})
-    def path_write(name, args): return name in PATH_WRITES and bool((args or {}).get('path'))
-    def write_targets(name, args):
-        if not (p := (args or {}).get('path')): return []
-        if name not in PATH_WRITES: return [p]
-        try: n = max(1, min(int(args.get('n') or 1), 4))
-        except (TypeError, ValueError): n = 1
-        return [str(Path(p) if i == 0 else Path(p).with_stem(f'{Path(p).stem}-{i+1}')) for i in range(n)]
+from ...agent.tools import NO_SUB, PATH_WRITES, path_write, small_tool, tools_for, write_targets
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
@@ -36,6 +26,8 @@ from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
 #: are not among them: they are briefed, gated by `Interventions` like any write, and undone by the
 #: turn's rollback (option A of the phase 5 plan).
 HIDDEN = frozenset({'user_steering'})
+#: Ramabana hands a sub-agent on the turn's budget the turn's own full list, plan tools included.
+SUB_PLAN = frozenset(f.__name__ for f in plan_tools(list))
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
@@ -941,7 +933,7 @@ class Assistant(Agent):
         "Claim the live session for Leela. The CLI shares this log and leaves no such mark."
         from .turns import mark_surface
         mark_surface(getattr(self, 'cfg', None), getattr(self, 'session_id', ''), self.surface)
-    def _steered(self, prompt):
+    def _with_steer(self, prompt):
         "Fold in a steer that no tool result consumed."
         if self.approvals is None or not isinstance(prompt, str): return prompt
         steer = self.approvals.consume_steer()
@@ -950,7 +942,7 @@ class Assistant(Agent):
     def _prepare(self, prompt):
         if self.approvals is not None and hasattr(self.approvals, 'resume'): self.approvals.resume()
         self._follow_mode()
-        return super()._prepare(self._steered(prompt))
+        return super()._prepare(self._with_steer(prompt))
 
     def _mode(self):
         "What the tool set follows: `(canvas_open, has_feeds)`."
@@ -1017,8 +1009,8 @@ class Assistant(Agent):
         return [f for f in super()._plain if f.__name__ not in HIDDEN]
 
     def _sub_plain(self):
-        "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable) nor `user_steering`, whichever list upstream hands back. Its own set, not `HIDDEN`."
-        refused = {*GIT_WRITE_TOOLS, 'user_steering'}
+        "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable), delegation, the plan, nor `user_steering`, whichever list upstream hands back. Its own set, not `HIDDEN`."
+        refused = {*GIT_WRITE_TOOLS, *NO_SUB, *SUB_PLAN, 'user_steering'}
         return [f for f in super()._sub_plain() if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."

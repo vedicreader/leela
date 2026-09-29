@@ -13,7 +13,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.39') and not Requirement(s).specifier.contains('0.1.38') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.4') and not deps['ramabana'].specifier.contains('0.2.3')
+    assert deps['ramabana'].specifier.contains('0.2.5') and not deps['ramabana'].specifier.contains('0.2.4')
     assert deps['shalya'].specifier.contains('0.1.1') and not deps['shalya'].specifier.contains('0.1.0')
     assert deps['vishalakshi'].specifier.contains('0.1.17') and not deps['vishalakshi'].specifier.contains('0.1.16')
     assert deps['dhrona'].specifier.contains('0.1.4')
@@ -21,7 +21,7 @@ def test_the_tool_simplification_releases_are_the_floor():
 
 def test_the_installed_set_matches_the_pins():
     import ramabana, shalya, vishalakshi, dhrona, rishi
-    assert Version(ramabana.__version__) >= Version('0.2.4') and Version(shalya.__version__) >= Version('0.1.1')
+    assert Version(ramabana.__version__) >= Version('0.2.5') and Version(shalya.__version__) >= Version('0.1.1')
     assert Version(rishi.__version__) >= Version('0.1.39'), 'the engine lock and `EngineBusy`'
     from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
     assert Version(vishalakshi.__version__) >= Version('0.1.17') and Version(dhrona.__version__) >= Version('0.1.4')

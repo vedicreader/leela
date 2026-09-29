@@ -404,11 +404,24 @@ def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
     assert all(f'value="{mode}"' in html for mode in ('autopilot', 'guided', 'directed'))
 
 
+def test_the_pickers_show_the_model_the_agent_would_run(tmp_path, monkeypatch):
+    "Before the assistant is built the panel names ramabana's turn default, and a saved job choice on a local turn is the choice."
+    from leela.agent.core import DFLT_LOCAL, DFLT_SMALL, DFLT_TURN
+    from leela.app import _agent_panel
+    for k in ('LEELA_MODEL', 'LEELA_MODEL_INLINE', 'LEELA_MODEL_SUBAGENT'): monkeypatch.delenv(k, raising=False)
+    ws = Workspace(roots=[tmp_path], model=DFLT_LOCAL); ws.job_models = {'subagent': 'claude-sonnet-5'}
+    d = TestClient(ide_app(ws)).get('/agent/models').json()   # no lifespan, so no live agent: the display path
+    assert ws._ai is None
+    assert d['jobs']['subagent'] == 'claude-sonnet-5' and d['jobs']['summary'] == DFLT_LOCAL, d['jobs']
+    ws = Workspace(roots=[tmp_path])
+    html = to_xml(_agent_panel(ws))
+    assert DFLT_TURN in html and DFLT_LOCAL not in html and ws.inline_model == DFLT_SMALL
+
 def test_the_agent_panel_streams_steps_approvals_and_usage():
     from leela.app import _agent_panel
     html=str(_agent_panel(Workspace(roots=[])))
     ws = Workspace(roots=[])
-    assert ws.inline_model == 'gpt-mini'
+    assert ws.inline_model == 'gpt-4.1'
     assert ws.completion_model == 'gpt-4.1'
     assert ws.ai.routing.name_for('completion') == 'gpt-4.1'
 
@@ -543,7 +556,8 @@ def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
         safe = client.post('/markdown/render', json={'text': raw, 'allow_raw': False}).json()['html']
         trusted = client.post('/markdown/render', json={'text': raw, 'allow_raw': True}).json()['html']
-    assert '<img' not in safe and '&lt;img src=x onerror=alert(1)&gt;' in safe, safe
+    import re   # fastpylight, which ramabana 0.2.5's `[cli]` brings, highlights the escaped tag into spans
+    assert '<img' not in safe and '&lt;img src=x onerror=alert(1)&gt;' in re.sub(r'<[^>]+>', '', safe), safe
     assert 'language-html' in safe, 'shown as the html it is'
     assert '<img' in trusted and 'onerror' in trusted, 'an explicit `{=html}` block is deliberate'
 

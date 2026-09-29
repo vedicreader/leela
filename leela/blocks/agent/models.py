@@ -14,14 +14,14 @@ __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_mod
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
 JOB_HELP = {
- 'turn': 'Every turn of this conversation and every tool call it makes. The model the agent is.',
+ 'turn': 'Every turn of this conversation and every tool call it makes. The model the agent is. Defaults to claude-opus-5-5.',
  'inline': 'The assistant inside a notebook prompt cell, and the one the inline AI panel asks\n'
            'about a selection. Unset, it falls back to oneshot.',
  'completion': 'Inline code completion as you type, and "AI edit" on an editor selection. Unset, it falls back to oneshot.',
- 'oneshot': 'The fallback for the cheap jobs with no model of their own: classify, completion and inline. Nothing calls it directly, so setting it only moves the jobs you have left unset.',
+ 'oneshot': 'The fallback for the cheap jobs with no model of their own: classify, completion and inline. Nothing calls it directly, so setting it only moves the jobs you have left unset. Defaults to gpt-4.1, or claude-sonnet-5 without OPENAI_API_KEY. On a local turn model, every job without a model of its own stays on the turn model.',
  'classify': 'One-label questions the agent asks itself mid-turn. Unset, it falls back to oneshot.',
- 'summary': 'Context compaction, conversation titles, agent charter drafts, and "summarise selection". Unset, it follows the turn model, so a long conversation is summarised by the model holding it.',
- 'subagent': 'Delegated searches, which run as their own read-only agent. Defaults to gpt-4.1, not to oneshot.'}
+ 'summary': 'Context compaction, conversation titles, agent charter drafts, and "summarise selection". Defaults to gpt-4.1, or claude-sonnet-5 without OPENAI_API_KEY; on a local turn model it stays on the turn model.',
+ 'subagent': 'Delegated searches, which run as their own read-only agent. Defaults to claude-sonnet-5, not to oneshot; on a local turn model it stays on the turn model.'}
 
 def _runtimes():
     from ...agent.core import RUNTIME_NAMES

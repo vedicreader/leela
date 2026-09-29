@@ -167,27 +167,40 @@ def test_a_host_offers_only_the_tools_it_supports():
     assert h.cmds == []
 
 
-def test_cheap_jobs_stay_local_when_the_turn_goes_to_the_cloud(monkeypatch):
-    """Pointing the turn at a frontier model must not move completions."""
+def test_the_default_routes_are_cloud_and_name_no_local_model(monkeypatch):
+    "ramabana 0.2.5: Opus takes the turn, gpt-4.1 the small jobs, Sonnet the sub-agents; no local model on any default route."
+    for j in models.JOBS: monkeypatch.delenv(f'LEELA_MODEL_{j.upper()}', raising=False)
+    monkeypatch.delenv('LEELA_MODEL', raising=False); monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
+    r = models.Routing()
+    assert r.name_for('turn') == models.DFLT_TURN == 'claude-opus-5-5'
+    for job in ('oneshot', 'classify', 'completion', 'inline', 'summary'): assert r.name_for(job) == models.DFLT_SMALL == 'gpt-4.1', job
+    assert r.name_for('subagent') == models.DFLT_SUBAGENT == 'claude-sonnet-5'
+    assert not any(models.is_local(r.name_for(j)) for j in models.JOBS)
+    assert not any(models.is_local(a) for j in models.JOBS for a in r.alternatives(j)), 'nor on a fallback'
+
+def test_without_an_openai_key_the_small_jobs_fall_to_sonnet_and_say_so_once(monkeypatch):
+    for j in models.JOBS: monkeypatch.delenv(f'LEELA_MODEL_{j.upper()}', raising=False)
+    monkeypatch.delenv('LEELA_MODEL', raising=False); monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    r = models.Routing()
+    assert {r.spec(j).name for j in ('summary', 'classify', 'completion')} == {models.DFLT_SUBAGENT}
+    assert r.news == ['gpt-4.1 unavailable (no OPENAI_API_KEY); small jobs use claude-sonnet-5']
+
+def test_an_explicit_local_turn_keeps_every_side_job_local(monkeypatch):
+    for j in models.JOBS: monkeypatch.delenv(f'LEELA_MODEL_{j.upper()}', raising=False)
     monkeypatch.delenv('LEELA_MODEL', raising=False)
     r = models.Routing(turn='gemma-e2b')
     r.set('gemma-12b')
     assert r.spec('turn').name == 'gemma-12b'
-    # `summary` is the exception the policy cannot express: unset, it follows the turn, so a long
-    # conversation is summarised by the model holding it. `JOB_HELP` says so.
-    assert r.spec('summary').name == 'gemma-12b'
-    for job, name in models.DEFAULT_POLICY.items():
-        if job in ('turn', 'summary'): continue
-        assert r.spec(job).name == (name or models.DFLT_LOCAL), job
-        assert r.spec(job).local == (job != 'subagent'), job
-    assert not r.spec('subagent').local, 'and delegation is deliberately not local'
-    assert models.DEFAULT_POLICY['subagent'] == r.spec('subagent').name
+    for job in models.JOBS: assert r.spec(job).name == 'gemma-12b' and r.spec(job).local, job
+    r.set('claude-sonnet-5', 'subagent')
+    assert r.spec('subagent').name == 'claude-sonnet-5', 'a job given its own model leaves the turn'
+    assert r.spec('summary').name == 'gemma-12b', 'and the rest stay'
 
 def test_env_overrides_a_single_job(monkeypatch):
     monkeypatch.setenv('LEELA_MODEL_SUMMARY', 'gemma-12b')
     r = models.Routing(turn='gemma-e2b')
     assert r.spec('summary').name == 'gemma-12b'
-    assert r.spec('classify').name == models.DFLT_LOCAL, 'the other cheap jobs stay put'
+    assert r.spec('classify').name == 'gemma-e2b', 'the other cheap jobs stay on the local turn'
 
 def test_a_model_spec_resolves_or_says_why_not():
     from leela.agent.runtime import FastllmBackend, MAX_STEPS, RishiBackend
@@ -369,17 +382,17 @@ def test_a_steer_no_tool_call_consumed_rides_the_next_turn(tmp_path):
     "Queued while the model was writing its answer, it waited for a tool call that never came."
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.queue_steer('use the notebook, not the script')
-    out = ws.ai._steered('carry on')
+    out = ws.ai._with_steer('carry on')
     assert out == 'carry on\n\nUser steering: use the notebook, not the script'
     assert ws.approvals.state()['queued_steer'] == '', 'and it is not delivered twice'
-    assert ws.ai._steered('carry on') == 'carry on'
+    assert ws.ai._with_steer('carry on') == 'carry on'
 
 def test_a_steer_survives_a_turn_it_cannot_ride(tmp_path):
     "A multimodal prompt keeps the steer queued rather than dropping it."
     ws = Workspace(roots=[tmp_path], approvals='auto')
     ws.approvals.queue_steer('check the fixture first')
     parts = [{'type': 'text', 'text': 'look'}]
-    assert ws.ai._steered(parts) is parts
+    assert ws.ai._with_steer(parts) is parts
     assert ws.approvals.state()['queued_steer'] == 'check the fixture first'
 
 def test_a_steer_lands_on_a_tool_call_that_carries_no_id():
@@ -1552,10 +1565,12 @@ def test_a_folder_watch_opened_by_the_tool_is_seen_by_the_harness(tmp_path, monk
     assert said.startswith('watching folder'), said
     ws.ai.monitors.sync(); assert [w.folder for w in ws.ai.monitors.all()] == [str(tmp_path)]
 
-def test_the_default_workspace_offers_the_model_at_most_45_tools(tmp_path):
+def test_the_default_workspace_offers_the_model_at_most_48_tools(tmp_path):
+    "The default turn is Opus: its window adds the six memory and web tools a 32k local model drops."
     ws = Workspace(roots=[tmp_path])
     briefed = [t.__name__ for t in ws.ai._plain]
-    assert len(briefed) <= 45, sorted(briefed)
+    assert len(briefed) <= 48, sorted(briefed)
+    assert len(Workspace(roots=[tmp_path], model=models.DFLT_LOCAL, agent_profile='full').ai._plain) <= 45
     assert not ({'canvas_read', 'news_feeds', 'edit_file', 'list_files', 'inspect_var', 'search_all', 'api_access', 'user_steering'} & set(briefed))
 
 def test_optin_reaches_the_catalog_from_the_workspace(tmp_path):
@@ -2928,7 +2943,9 @@ def test_what_a_sub_agent_is_given_follows_the_model_it_runs_on(tmp_path):
     assert shared._sub_plain(), 'the shared branch, asked cold, is not empty'
 
     sized = Workspace(roots=[tmp_path], model='gemma-e4b').ai
-    assert sized.subagent_budget != sized.budget, 'a 16k turn model and a cloud sub-agent differ'
+    assert sized.subagent_budget == sized.budget, 'a local turn keeps its sub-agent local'
+    sized.set_model(models.DFLT_SUBAGENT, job='subagent')
+    assert sized.subagent_budget != sized.budget, 'a 16k turn model and a chosen cloud sub-agent differ'
     own = {t.__name__ for t in sized._sub_plain()}
     assert own and own != {t.__name__ for t in sized.tools}, 'so its list is built to its own budget'
     # the sub-agent runs on the larger model, so it is offered what the 16k turn model was denied
@@ -3076,6 +3093,7 @@ def test_an_unreachable_harness_says_what_went_wrong(monkeypatch):
     assert not hasattr(m, 'unavailable_detail') and not hasattr(m, 'HARNESS')
     assert core.runtime_detail('remote') == '', 'only a harness has a module to fail'
     monkeypatch.setitem(core.HARNESS, 'claude', ('leela_no_such_module', 'claude_bin'))
+    monkeypatch.setattr(core, '_claude_available', lambda: False)   # 0.2.5 checks the SDK and the binary without importing
     got = core.runtime_detail('claude')
     assert 'import leela_no_such_module' in got and 'ModuleNotFoundError' in got, got
     assert next(r for r in m.runtimes() if r['value'] == 'claude')['detail'] == got
@@ -3238,13 +3256,20 @@ def test_the_subagent_toolset_is_blocked_at_the_call_site():
 
 # --- the small profile: ramabana 0.2.3 briefs a local or ≤32k model fourteen tools and one screen ---
 
-def test_the_default_local_session_is_small_and_keeps_steering_and_run_cell(tmp_path):
+def test_the_default_session_is_opus_briefed_in_full(tmp_path, monkeypatch):
+    monkeypatch.delenv('LEELA_MODEL', raising=False)
+    a = Workspace(roots=[tmp_path]).ai
+    assert a.model.name == models.DFLT_TURN and not a.spec_or_none().local and a.profile == 'full'
+    assert a.model_local() == (False, models.DFLT_TURN), 'so a local-only api is refused until a local model is chosen'
+
+def test_a_local_session_is_small_and_keeps_steering_and_run_cell(tmp_path):
     "`gemma-e4b` is local, so `auto` is `small`: the fourteen, plus Leela's `run_cell` and the hidden `user_steering`."
     from leela.agent.core import SMALL_TOOLS
-    a = Workspace(roots=[tmp_path]).ai
+    a = Workspace(roots=[tmp_path], model=models.DFLT_LOCAL).ai
     assert a.spec_or_none().local and a.profile == 'small'
     names = {t.__name__ for t in a.tools}; briefed = {t.__name__ for t in a._plain}
-    assert names == set(SMALL_TOOLS) | {'user_steering', 'run_cell'}, sorted(names)
+    quiet = {'status'} if a._quiet else set()   # 0.2.5: a runtime whose text between calls is lost reports by tool
+    assert names == set(SMALL_TOOLS) | {'user_steering', 'run_cell'} | quiet, sorted(names)
     assert briefed == set(SMALL_TOOLS) | {'run_cell'}, 'steering is dispatchable, never offered'
     sp = a.system_prompt()
     assert 'user_steering' not in sp and len(sp) < 3000, len(sp)
@@ -3253,7 +3278,7 @@ def test_the_default_local_session_is_small_and_keeps_steering_and_run_cell(tmp_
 def test_a_refused_call_in_a_small_session_dispatches_user_steering(tmp_path):
     "The approvals refusal path rewrites a rejected call to `user_steering`; a small catalog that dropped it would make every 'no' an unknown-tool error."
     from tests.fakemodel import Step, install
-    ws = Workspace(roots=[tmp_path], approvals='ask'); a = ws.ai; assert a.profile == 'small'
+    ws = Workspace(roots=[tmp_path], approvals='ask', model=models.DFLT_LOCAL); a = ws.ai; assert a.profile == 'small'
     be = install(ws, [Step(tool=('replace_text', {'path': str(tmp_path/'a.py'), 'edits': []})), Step(text='ok')], token_delay=0)
     def answer():
         for _ in range(300):
@@ -3278,7 +3303,7 @@ def test_opening_a_canvas_adds_its_tools_to_a_small_session_and_re_briefs(tmp_pa
 
 def test_news_tools_reach_a_small_session_only_while_a_feed_is_followed(tmp_path, monkeypatch):
     from leela.blocks.agent.ai import _news_tools
-    ws = Workspace(roots=[tmp_path]); assert ws.ai.profile == 'small'
+    ws = Workspace(roots=[tmp_path], model=models.DFLT_LOCAL); assert ws.ai.profile == 'small'
     assert not {t.__name__ for t in ws.ai.tools} & {'news_feeds', 'news_latest'}
     assert all(getattr(f, 'small', False) for f in _news_tools(ws.ai.host)), 'marked, so the small catalog keeps them when a feed appears'
     from leela.blocks.agent.video import video_tools
@@ -3292,23 +3317,23 @@ def test_a_cloud_session_is_briefed_in_full(tmp_path):
     assert 'user_steering' not in {t.__name__ for t in a._plain}
 
 def test_a_workspace_can_force_the_full_profile_for_a_local_model(tmp_path):
-    ws = Workspace(roots=[tmp_path], agent_profile='full')
+    ws = Workspace(roots=[tmp_path], agent_profile='full', model=models.DFLT_LOCAL)
     assert ws.ai.spec_or_none().local and ws.ai.profile == 'full'
     assert 'inspect_python' in {t.__name__ for t in ws.ai.tools}
     ws.save(); assert Workspace.load(ws_path()).agent_profile == 'full'
     ws.restore_settings({'agent_profile': 'huge'}); assert ws.agent_profile == 'auto', 'an unknown saved profile is `auto`, not a workspace that will not load'
 
 def test_a_small_briefing_stays_compact_whatever_the_state_and_notes_say(tmp_path):
-    ws = Workspace(roots=[tmp_path])
+    ws = Workspace(roots=[tmp_path], model=models.DFLT_LOCAL)
     ws.agent_state_layers['task'] = {'text': 'do this ' * 2000, 'enabled': True, 'source': 'user'}
     ws.agent_memory_context = lambda surface, max_chars=0: ('note ' * 3000)[:max_chars]
     a = ws.ai; assert a.profile == 'small'
     sp = a.system_prompt()
     assert 'do this' in sp and 'note' in sp and len(sp) < 7000, len(sp)
-    assert len(Workspace(roots=[tmp_path], agent_profile='full').ai.system_prompt()) > len(sp)
+    assert len(Workspace(roots=[tmp_path], agent_profile='full', model=models.DFLT_LOCAL).ai.system_prompt()) > len(sp)
 
 def test_a_thread_names_its_profile_and_full_can_be_asked_for(tmp_path):
-    ws = Workspace(roots=[tmp_path])
+    ws = Workspace(roots=[tmp_path], model=models.DFLT_LOCAL)
     with TestClient(ide_app(ws)) as client:
         d = client.post('/agent/thread/new', json={'profile': 'full'}).json()
         assert d['ok'] and d['profile'] == 'full' and d['thread']['profile'] == 'full'

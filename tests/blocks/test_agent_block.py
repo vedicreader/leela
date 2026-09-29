@@ -178,7 +178,8 @@ def test_every_routed_job_says_where_its_model_is_spent():
     assert 'falls back to oneshot' in JOB_HELP['classify']
     # nothing calls the oneshot job directly: it is only what the unset cheap jobs fall back to
     assert 'Nothing calls it directly' in JOB_HELP['oneshot']
-    assert 'follows the turn model' in JOB_HELP['summary']
+    assert 'gpt-4.1' in JOB_HELP['summary'] and 'claude-sonnet-5' in JOB_HELP['subagent'], 'ramabana 0.2.5 defaults'
+    assert all('stays on the turn model' in JOB_HELP[j] for j in ('oneshot', 'summary', 'subagent')), 'and a local turn keeps them'
     assert JOB_HELP['turn'] in str(help_mark('turn')) and 'lee-hint' in str(help_mark('turn'))
     assert str(help_mark('nosuchjob'))                 # an unknown job renders, saying nothing
 

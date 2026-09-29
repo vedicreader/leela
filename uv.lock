@@ -14,18 +14,6 @@ resolution-markers = [
 constraints = [{ name = "mcp", specifier = "<2" }]
 
 [[package]]
-name = "agent-client-protocol"
-version = "0.12.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/95/2c28ca34e545ce0282e88272aa3a8abdf8f3f926a0492f567ea11acd071b/agent_client_protocol-0.12.1.tar.gz", hash = "sha256:9963ccb590ed96d7dc542c9c023e90676fc76b1c6562e21a9ee112f4fbcb0095", size = 130605, upload-time = "2026-08-16T14:08:22.545Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/61/0a2186c8ca53cf464767d4c4fb7fd9e23f48ce4547c2fa0d1c83a4d52410/agent_client_protocol-0.12.1-py3-none-any.whl", hash = "sha256:aaf3cc301ed87d9e2c4ccb91adfe1cd58784355f6ce7e513f50e7ca2391862ef", size = 85929, upload-time = "2026-08-16T14:08:21.307Z" },
-]
-
-[[package]]
 name = "aidialog"
 version = "0.0.36"
 source = { registry = "https://pypi.org/simple" }
@@ -1314,6 +1302,18 @@ wheels = [
 ]
 
 [[package]]
+name = "fastpylight"
+version = "0.1.18"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/3a/8977783f6bfd2b0718912e3cb89fd0a175f1cc9491be09c537ea4d6e1599/fastpylight-0.1.18.tar.gz", hash = "sha256:efa244a2ebe7296684658db68c0ddcc97976701e1551861a1c6a1fec0857565a", size = 28945, upload-time = "2026-08-28T23:18:35.4Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/b9/eaa416a602de850785e5122217046d60ee406e08a241ad4fd3aefb7c2f78/fastpylight-0.1.18-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:b8fc43cd7043906e24dd2b8598fa478816abaf9cfb538f3365e943920df6ad62", size = 8340809, upload-time = "2026-08-28T23:18:26.634Z" },
+    { url = "https://files.pythonhosted.org/packages/46/04/884573f207575b150de93cc3b5a49aa65c219fa1457b46b9e36a650ecbca/fastpylight-0.1.18-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:05c15eb36d8ac53902c37913dec6586ad5a59f09795c7827788f1cea12437aeb", size = 8051378, upload-time = "2026-08-28T23:18:28.704Z" },
+    { url = "https://files.pythonhosted.org/packages/68/86/74aabdf9712b65200ac290f5e594f7953b542569aaf8ce22770aae13a3f7/fastpylight-0.1.18-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:53ac9b80592d57e87423dcc8b0bb71846f0424a1779f63298485366a2a202e9a", size = 8340226, upload-time = "2026-08-28T23:18:31.706Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/c0/d38a4df0608a446f7f9c3d36d6399d7f7caccc0eb2922a60b5636d6d419c/fastpylight-0.1.18-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:10c4c7c9ad50d1128f265e1c13dd609b446fde7d449556cfe2dc94e00e5e5da1", size = 8050133, upload-time = "2026-08-28T23:18:33.989Z" },
+]
+
+[[package]]
 name = "fastship"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1334,15 +1334,15 @@ wheels = [
 
 [[package]]
 name = "fastspec"
-version = "0.2.3"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "fasttransport" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/b0/f0d0754328b8a52f40f855570955585236c7c0c23db4fcd5f9d489ab41cb/fastspec-0.2.3.tar.gz", hash = "sha256:86af26ad7becef3d351956676d07e18f4e5a82edde1ccd99f0d30272b665ae25", size = 31868, upload-time = "2026-08-20T09:31:15.141Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/07/5174ddc253295afa771ff9eb05508adf22fda97775e37c3193229ee93d4a/fastspec-0.2.5.tar.gz", hash = "sha256:a5d32aff8a2c9dfd7db333b94b1126f3ff7d0fe0c61ae54da3f2197392af3ffa", size = 30263, upload-time = "2026-09-21T07:09:30.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/18/2185c7f787238b1a09a0d43b87d252ad537553c0f55d7ab5f0187ee1e053/fastspec-0.2.3-py3-none-any.whl", hash = "sha256:c8bf70900f5832ad2c6b4aad542209eeb45fff082300fabd6844c66e474f7029", size = 29163, upload-time = "2026-08-20T09:31:13.713Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/f1/664e8ecc32b009784d0f718b40933d24c40498fb4170d421cc18ef285d8f/fastspec-0.2.5-py3-none-any.whl", hash = "sha256:a08fc9eb30629221392f7df1474dfcd426f61364e7258b238e04b7af06120ce4", size = 27805, upload-time = "2026-09-21T07:09:29.232Z" },
 ]
 
 [[package]]
@@ -1466,15 +1466,16 @@ wheels = [
 
 [[package]]
 name = "ghapi"
-version = "2.1.2"
+version = "2.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "fastspec" },
+    { name = "fasttransport" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d1/4e/7526b6d1e5b530c77da4dcce09a4bcf90d99a0cccee36e6d2548560ecf55/ghapi-2.1.2.tar.gz", hash = "sha256:f78126f1d7841cfdf4064d3937e02153bfed040bc687addf2273f890da398e56", size = 363082, upload-time = "2026-08-13T03:08:47.03Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/87/06f5a2f26567b5d6360fbc74dfb2af49b08c664958e89ce4a1aeaa4999c2/ghapi-2.1.4.tar.gz", hash = "sha256:100893f3ded361b2c063607d85b035ca74ad93e71e1788837c55a3972bdad733", size = 390775, upload-time = "2026-09-20T22:51:49.389Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/59/a138c71968f76117bf660e6468cc4b2ac77132a3bc5620e5a129c8275ff4/ghapi-2.1.2-py3-none-any.whl", hash = "sha256:8707ad8bdeeffeb54eeab6b6c149e16ad8823ca1f89748ea560d7aac4b231010", size = 364081, upload-time = "2026-08-13T03:08:45.577Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/39/fa98108d2ce7a67cdec9d6b1a1d452c41a3caa6879a7ca407422ce37b8b1/ghapi-2.1.4-py3-none-any.whl", hash = "sha256:a2256802663bab9f979cad38da194eb540221cb02e069b554b22ce0a0ddb7ddc", size = 391662, upload-time = "2026-09-20T22:51:47.637Z" },
 ]
 
 [[package]]
@@ -2061,7 +2062,7 @@ wheels = [
 
 [[package]]
 name = "jupyter-client"
-version = "8.9.1"
+version = "8.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jupyter-core" },
@@ -2071,9 +2072,9 @@ dependencies = [
     { name = "traitlets" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/dc/5512503b088997c2250b8bf18258fba9d9ce5ead641183700960d3c9d342/jupyter_client-8.9.1.tar.gz", hash = "sha256:a58f730dd9e728ba16ba1d62ebccf7ffe1ebbdbce4e95cfae941b7321ae1f4fa", size = 359256, upload-time = "2026-06-09T13:15:01.033Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/2a/906772148a06e48885039e0250c340b770a55bbf37b08d6ee0449df369c3/jupyter_client-8.10.0.tar.gz", hash = "sha256:9f7116294dca55f1785be880057d44544db9b1567718d92cb33c58886afb9497", size = 360653, upload-time = "2026-08-28T12:17:10.854Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/6f/56d39bf385c5c27988aebaf0c18a2a17e960575740100973511018bd904e/jupyter_client-8.9.1-py3-none-any.whl", hash = "sha256:0b7a295bc46e8751e9adae84781f726c851c1d911bd793edc4a3bde942e3da81", size = 109828, upload-time = "2026-06-09T13:14:58.835Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/88/7c548de1f6c2ade7c931a3282da73f9274fa6a1531091be682f89c85efb9/jupyter_client-8.10.0-py3-none-any.whl", hash = "sha256:5f73f24f22fa25192cfff6b23c051932a2473a797b05734aff495b392103e14e", size = 110184, upload-time = "2026-08-28T12:17:09.028Z" },
 ]
 
 [[package]]
@@ -2539,7 +2540,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.4" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.5" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
@@ -4713,39 +4714,38 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.4"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "agent-client-protocol" },
-    { name = "dhrishti" },
     { name = "exhash" },
     { name = "fastcore" },
     { name = "fastspec" },
-    { name = "fossick" },
     { name = "gheasy" },
-    { name = "jupyter-client" },
-    { name = "koshas" },
-    { name = "liteparse" },
-    { name = "litesearch" },
-    { name = "mcp" },
     { name = "pobblebonk" },
     { name = "pyyaml" },
-    { name = "rgapi" },
     { name = "rishi" },
     { name = "shalya" },
     { name = "uraiyadal" },
-    { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/0a/fe605c18b2b4e3830ae3f3f9e5b64e05366bbb78c3adad5b6b8e0cdf323e/ramabana-0.2.4.tar.gz", hash = "sha256:443c99167f281d80c8edc6dd4109831115ac412d4065e5d3e360102db458dd53", size = 211008, upload-time = "2026-09-28T05:22:52.655Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/b0/293d0a89e73d5e7ad1d3aad9deb64adc3d86e6fa6dafd64ee2a70e196a69/ramabana-0.2.5.tar.gz", hash = "sha256:b309f1221e29f8d1d15eed96d9feb9397a9038241fd053fa6109fc191066d18f", size = 225764, upload-time = "2026-09-29T08:28:52.091Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/49/a1cde4fc1de233f25bc62716cab5f6b9b788f6e9b74387a59d51888852ba/ramabana-0.2.4-py3-none-any.whl", hash = "sha256:c96a7684c3d685bfc089489d9f76f6ef75f506788ce2474654088e5514b127ae", size = 222565, upload-time = "2026-09-28T05:22:51.352Z" },
+    { url = "https://files.pythonhosted.org/packages/90/ef/2f31b63a23f4f571a2a5754623d34cd57852c869ba0eda187b6b70c18fc7/ramabana-0.2.5-py3-none-any.whl", hash = "sha256:7e7ca008ea7991c16f343d623e96dfadc783af88f1c11d6425c0247d1d22a564", size = 238284, upload-time = "2026-09-29T08:28:50.329Z" },
 ]
 
 [package.optional-dependencies]
 cli = [
+    { name = "dhrishti" },
+    { name = "fastpylight" },
+    { name = "fossick" },
+    { name = "jupyter-client" },
+    { name = "koshas" },
+    { name = "litesearch" },
     { name = "pyghostty" },
+    { name = "rgapi" },
+    { name = "rich" },
     { name = "shalya", extra = ["tmux"] },
     { name = "teleprint" },
+    { name = "vishalakshi" },
 ]
 
 [[package]]
@@ -4969,19 +4969,19 @@ wheels = [
 
 [[package]]
 name = "rgapi"
-version = "0.1.22"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/2d/3a11f2a50cab8ad2a35ae454b6b8c4dacd258d423ee32c13580bab1c71b3/rgapi-0.1.22.tar.gz", hash = "sha256:c50e23f7a81a09a1dd32b0d7ae0d309c7f1c17d6cb116d76921b5ea3a5c90e58", size = 54839, upload-time = "2026-08-21T16:20:33.924Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/8f/f220fbbbeaade3d4d16bb7e735ea805031b1c1ca0fb7caf55a78d5aeeb1a/rgapi-0.2.0.tar.gz", hash = "sha256:26b80b4b12de88c5a37009c4e218b8584cc437c61e2359b98898f4c8a571f669", size = 60754, upload-time = "2026-09-24T19:50:45.153Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/6b/b9e5cece553067d4641add1973547603aafa4ef3bd471eb8e3d8b70ec8a6/rgapi-0.1.22-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:42168d39da117cbc39a05404c5b494283308fab7716b3efa3c69126ad1d9f336", size = 1580345, upload-time = "2026-08-21T16:20:22.454Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/e6/07ddc45ca0db62fb860196dfddfdc4002ea6eda8757b81c80f9c35401b43/rgapi-0.1.22-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:45cdf796f3137d9efbd2eceb9b44dde7c05deefaef13f8f9991f40de6d8fbcbd", size = 1770207, upload-time = "2026-08-21T16:20:24.057Z" },
-    { url = "https://files.pythonhosted.org/packages/e8/e4/80af302cb3448bb695fe09cb09251fd7ea2a20702028d53055c4ac292065/rgapi-0.1.22-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:207b35c57f19948ae49291f947f4eec69ace85882d888acfc380f8c9a292c02c", size = 1762728, upload-time = "2026-08-21T16:20:25.858Z" },
-    { url = "https://files.pythonhosted.org/packages/be/e7/5c55712d99b64ebfaca523a7fd21860a07bb7eb5fc1fb4789d253d863748/rgapi-0.1.22-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:97c9968b4a9800e5a9ccfb9243da0a63139729802b44ac0a927505d7fee3628b", size = 1579049, upload-time = "2026-08-21T16:20:28.268Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/fa/77ac81d155ae9fac0a1bca830408c72cd98ae66cc01354c9f2b7f66aa025/rgapi-0.1.22-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:53b9252ef58bb8e7e3d5b5b3812ef6578c9ee9bfddf9b20ce5e740e2a7fde0f3", size = 1771015, upload-time = "2026-08-21T16:20:30.101Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/2e/88144c0ee80b44a390ea3d4b62199ea9ad2c0a1c24f8fc0bc42bddbd826f/rgapi-0.1.22-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3fd60bac55fdc0587d1215996d5e29a162202214153f97d311514efb7a075599", size = 1762465, upload-time = "2026-08-21T16:20:31.81Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/9e/d31fe704dfcdab1d05ec8edf724104095f540575576e62bf16399e7c1cac/rgapi-0.2.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:dcf43b4aad4c6225cfc2d04c21fda74a98f0f2eb7c8d129b552ac02dd6146a60", size = 1374421, upload-time = "2026-09-24T19:50:34.702Z" },
+    { url = "https://files.pythonhosted.org/packages/17/e0/f2d7015b569ca961ad83fec5d068cbaf87079a23146b1fa4197cb665e01d/rgapi-0.2.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:462be23195e0a2ac992355184e643455df131cfe0fb04caaee350153706fa669", size = 1493120, upload-time = "2026-09-24T19:50:36.675Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/30/fb04ea0d193241b6f3f9b9104c051079e0b1127e8ad3e0dba959855f0aaa/rgapi-0.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d8ef3d8bad311d519d69c79b252de56acbdeed0196e1964dadcb3f7372cbcdb0", size = 1523716, upload-time = "2026-09-24T19:50:38.309Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/e8/93bb4cc4feaa2cfb9454cac8f158f0e4b6126f57153dbd01f9c648c33efc/rgapi-0.2.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:eb596b769c1ccbbdd8b65bd272481f9177d5ca45ec0c42b86b8fe0e8d6e71964", size = 1375110, upload-time = "2026-09-24T19:50:40.407Z" },
+    { url = "https://files.pythonhosted.org/packages/84/bc/3c2b1078ee2539574ce747ce471d238870e5db5cdd71617a913784bdc366/rgapi-0.2.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f63e4258298124eda083f3940b10728517fb6122ab7c8ef7a6d150388712324d", size = 1493170, upload-time = "2026-09-24T19:50:42.235Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/f5/de9b93fd5a1d404c7e99ef3723d0528ce123a4df3f255550b6fece6cb023/rgapi-0.2.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:46a5e6a3be6f7547b3b8578bd4a898c7f14542c8d0670ab9c3456000a7a99a08", size = 1524621, upload-time = "2026-09-24T19:50:43.861Z" },
 ]
 
 [[package]]
@@ -5435,14 +5435,14 @@ wheels = [
 
 [[package]]
 name = "teleprint"
-version = "0.1.1"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "rich" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9b/68/1bd280623d232a0cd639d88c2d7080366ed6277f9f4f3d8dfe1191b17f22/teleprint-0.1.1.tar.gz", hash = "sha256:770cd9b257a0a17b93dd04bd83b92860157d78325ac7c3fe8939f5abed34f915", size = 49437, upload-time = "2026-08-04T11:46:38.326Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/01/9cac9a7dfd6d35522aee26d8dfee66afcbd89823c6c7e6430f5e94aa4af5/teleprint-0.1.3.tar.gz", hash = "sha256:9798823e307e2a0f9d9b17e5650871eaea892e97dd70a0c7e7e886cf36fda93a", size = 49827, upload-time = "2026-08-30T05:15:53.398Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c5/89/7a1220afcf37e0ef54b416455f19ab3dcff3709fb90ad2886a32d4b87a4d/teleprint-0.1.1-py3-none-any.whl", hash = "sha256:609772828367c0e6a0b66db46df70a564d16cc4a15d52e2ae1e9aec615949362", size = 33615, upload-time = "2026-08-04T11:46:36.933Z" },
+    { url = "https://files.pythonhosted.org/packages/64/8f/09dcc2d1edc9346d4fa0bd00751ea344a8ad5f540842844a2859f189af33/teleprint-0.1.3-py3-none-any.whl", hash = "sha256:1f048d079378b49cf298f6516fec27446eff59ae0d32d6d04da5530a94b18a12", size = 33603, upload-time = "2026-08-30T05:15:51.968Z" },
 ]
 
 [[package]]

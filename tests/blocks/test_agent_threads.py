@@ -1642,7 +1642,7 @@ def test_a_threads_profile_survives_eviction_and_resume(tmp_path, monkeypatch):
     "Asked for in full on a local model, a conversation comes back in full; the row is the choice, kept only where it differs from the workspace default."
     from tests.fakemodel import Step, install
     from leela.blocks.agent.ai import Assistant
-    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
+    ws = Workspace(roots=[tmp_path], model='gemma-e4b'); ws._state_path = tmp_path/'workspace.json'
     t = ws.threads.new(profile='full'); sid = t.id
     assert t.ai.spec_or_none().local and t.ai.profile == 'full' and 'inspect_python' in {f.__name__ for f in t.ai.tools}
     install(ws, [Step(text='ok')], token_delay=0); t.ai.ask('first')

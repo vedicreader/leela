@@ -599,10 +599,10 @@ def _state_title(ws):
 
 def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
-    from .agent.core import DFLT_LOCAL, env as _env
-    agent_model = ws.model or _env('MODEL') or DFLT_LOCAL
-    inline_model = ws.inline_model or _env('MODEL_INLINE') or 'gpt-mini'
-    completion_model = ws.completion_model or _env('MODEL_COMPLETION') or 'gpt-4.1'
+    from .agent.core import DFLT_SMALL, DFLT_TURN, env as _env
+    agent_model = ws.model or _env('MODEL') or DFLT_TURN
+    inline_model = ws.inline_model or _env('MODEL_INLINE') or DFLT_SMALL
+    completion_model = ws.completion_model or _env('MODEL_COMPLETION') or DFLT_SMALL
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())
     control = getattr(ws.approvals, 'control', 'guided')
     edits = getattr(ws.approvals, 'mode', '') == 'edits'
@@ -1372,7 +1372,7 @@ def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_
             try: remembered = (leela_cfg/'workspace.json').read_json() if open_ws else {}
             except Exception: remembered = {}
             if model is None: kw['model'] = remembered.get('model')
-            kw['inline_model'] = remembered.get('inline_model') or 'gpt-mini'
+            kw['inline_model'] = remembered.get('inline_model') or 'gpt-4.1'
             kw['completion_model'] = remembered.get('completion_model') or 'gpt-4.1'
             ws = Workspace(**kw).restore_settings(remembered)
         ws.at_exit()
