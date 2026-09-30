@@ -1565,11 +1565,11 @@ def test_a_folder_watch_opened_by_the_tool_is_seen_by_the_harness(tmp_path, monk
     assert said.startswith('watching folder'), said
     ws.ai.monitors.sync(); assert [w.folder for w in ws.ai.monitors.all()] == [str(tmp_path)]
 
-def test_the_default_workspace_offers_the_model_at_most_48_tools(tmp_path):
+def test_the_default_workspace_offers_the_model_at_most_49_tools(tmp_path):
     "The default turn is Opus: its window adds the six memory and web tools a 32k local model drops."
     ws = Workspace(roots=[tmp_path])
     briefed = [t.__name__ for t in ws.ai._plain]
-    assert len(briefed) <= 48, sorted(briefed)
+    assert len(briefed) <= 49, sorted(briefed)
     assert len(Workspace(roots=[tmp_path], model=models.DFLT_LOCAL, agent_profile='full').ai._plain) <= 45
     assert not ({'canvas_read', 'news_feeds', 'edit_file', 'list_files', 'inspect_var', 'search_all', 'api_access', 'user_steering'} & set(briefed))
 

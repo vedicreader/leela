@@ -709,6 +709,51 @@ def _session_tools(host):
         except Exception as e: return f'run_cell failed: {errstr(e)}'
     return [small_tool(run_cell)]   # the Run button belongs to a small session too
 
+def _flow_root(host):
+    "Where a flow canvas cites from and is written under: the repository, as a canvas resolves its snippets."
+    from gheasy.repo import repo_root
+    p = host.project
+    return str(repo_root(Path(p)) or p) if p else ''
+
+def _flow_path(host, args):
+    "The file `flow_canvas` is about to write, by the rule the tool itself writes by."
+    from ..canvas.flow import flow_path
+    try:
+        root = _flow_root(host)
+        return flow_path(root, args.get('entry') or '', args.get('path') or '') if root else ''
+    except (OSError, ValueError): return ''
+
+def _flow_tools(host):
+    "The flow canvas. Offered whatever tab is open, because it makes a canvas rather than needing one."
+    @summary(lambda a: f'Flow of {a.get("entry", "")}' + (f' through {a["test"]}' if a.get('test') else ''))
+    def flow_canvas(entry: str, test: str = '', depth: int = 2, path: str = '') -> str:
+        """Build a canvas that shows how a feature works, when the user asks how something works or wants to follow its flow.
+        `entry` is the function the feature starts at: a dotted path (`pkg.mod.Class.method`) or a unique tail of one (`Class.method`). `test` is a pytest node id that exercises it (`tests/test_x.py::test_y`); give one whenever such a test exists, because the canvas then shows only what really ran beneath `entry`, with each call's arguments, its result and the lines that did not run. Without `test` the canvas is the static call graph `depth` calls deep. Find `entry` and `test` with `search_code` and `grep` first.
+        The canvas cites each function's source rather than copying it, is written to `flows/<entry>.canvas.md` unless `path` says otherwise, and never overwrites a file. Code cells in it run only once the person trusts the document. Explain the flow from the returned outline and the cited source; the person opens the file to follow it.
+        """
+        from ..canvas.flow import flow
+        try:
+            root = _flow_root(host)
+            if not root: return 'no folder is open'
+            k = host.ws.search._kosha(root)
+            if k is None: return f'the code index is unavailable: {getattr(host.ws.search, "_k_note", "") or "kosha did not open"}'
+            py = python_for(Path(root), session=None)
+            r = flow(k.graph, root, entry, python=str(py or ''), test=test, depth=max(1, int(depth)), path=path, k=k,
+                     env=host._env(Path(root)) if py else None)
+        except Exception as e: return f'flow_canvas failed: {errstr(e)}'
+        if not r['ok']: return r['error']
+        out, fs = Path(r['path']), host.ws.fs
+        rel = out.relative_to(root).as_posix() if out.is_relative_to(root) else str(out)
+        try:
+            fs.touch(str(out))   # claims the name atomically: another writer's file there is refused, never replaced
+            fs.write(str(out), r['canvas'].md())
+        except Exception as e:
+            if isinstance(e, FileExistsError) and out.is_file(): return f'{rel} already exists; flow_canvas never overwrites, so name another path or leave `path` empty for the next free one'
+            return f'flow_canvas could not write {out}: {errstr(e)}'
+        how = f'traced through {test}' if r['traced'] else 'static call graph'
+        return clip(f"wrote {rel} ({how}) for {r['node']}" + (f"\nnote: {r['note']}" if r['note'] else '') + f"\n\n{r['tree']}")
+    return [flow_canvas]   # not `small_tool`: a small local model's catalog stays the fixed fourteen
+
 def _canvas_path(host, args):
     "Which file a canvas tool is about to change, named the way the tool itself resolves it."
     from ..canvas.helper import open_canvas
@@ -723,7 +768,7 @@ def leela_writes():
     changes a file that no undo can see. Every Leela tool that writes belongs in here.
     """
     from ..canvas.helper import WRITES as CANVAS_WRITES
-    return {n: _canvas_path for n in CANVAS_WRITES}
+    return {**{n: _canvas_path for n in CANVAS_WRITES}, 'flow_canvas': _flow_path}
 
 def _canvas_toolset(host):
     "The canvas block's tools. Built with the rest, because a backend takes its tool list once."
@@ -912,6 +957,7 @@ class Assistant(Agent):
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
+        self._flow_toolset = _flow_tools(host)
         self._canvas_toolset = _canvas_toolset(host)
         self._writes = leela_writes()
         self.video_jobs = VideoJobs() if video_available() else None
@@ -988,7 +1034,7 @@ class Assistant(Agent):
         "Leela's own tools on the registry: canvas tools while a canvas is open, news tools while a feed is followed, the rest always."
         if self._tools is None:
             canvas, feeds = mode = self._mode()
-            want = [*(self._news_toolset if feeds else []), *self._session_toolset, *self._video_toolset,
+            want = [*(self._news_toolset if feeds else []), *self._session_toolset, *self._flow_toolset, *self._video_toolset,
                     *(self._canvas_toolset if canvas else [])]
             stale = {id(f) for f in [*self._news_toolset, *self._canvas_toolset]} - {id(f) for f in want}
             self.registry.tools[:] = [f for f in self.registry.tools if id(f) not in stale]

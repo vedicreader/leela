@@ -13,7 +13,7 @@ from .doc import Brick, Canvas
 from .export import modules
 
 __all__ = ['Bundle', 'bundles', 'bundle_of', 'coverage', 'state', 'pr', 'review', 'value',
-           'hunks', 'diff_stat', 'place_diff', 'snip', 'STATES']
+           'hunks', 'diff_stat', 'place_diff', 'snip', 'snip_root', 'STATES']
 
 def _list(v): return [x.strip() for x in str(v or '').split(',') if x.strip()]
 
@@ -135,6 +135,12 @@ def snip(brick, root='.'):
         return '\n'.join(rows[max(0, int(a) - 1):int(b or a)])
     if not (sym := brick.attrs.get('symbol')): return text
     return _symbol(text, sym)
+
+def snip_root(path):
+    "Where the snippets in the canvas at `path` start: the repository, else the canvas's folder."
+    from gheasy.repo import repo_root
+    here = Path(path).parent
+    return str(repo_root(here) or here)
 
 import ast
 

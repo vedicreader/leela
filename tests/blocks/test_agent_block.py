@@ -1,7 +1,7 @@
 """The agent block's routes, now that they are its own rather than `ide_app`'s."""
 
 from __future__ import annotations
-import time
+import re, time
 from fastcore.basics import first
 from starlette.testclient import TestClient
 from leela.app import ide_app
@@ -666,5 +666,5 @@ def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
     assert 'folder-monitor' not in JOB_HELP['subagent']
     seam = ROOT/'leela/agent/__init__.py'      # aliases `ramabana.monitor` by name; wires nothing
     users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')
-             if p != seam and 'monitor' in p.read_text(encoding='utf-8')]
+             if p != seam and re.search(r'monitor(?!ing)', p.read_text(encoding='utf-8'))]   # `sys.monitoring` is the tracer, not a folder monitor
     assert users == ['leela/blocks/agent/app.py', 'leela/blocks/vault/jobs.py'], f'monitors reach the UI only through /agent/runs/monitors/log: {users}'

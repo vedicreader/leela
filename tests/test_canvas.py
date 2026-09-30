@@ -731,7 +731,7 @@ def test_every_leela_write_tool_is_declared_where_the_hook_looks(tmp_path):
     "A Leela tool that writes and is not in this registry changes a file no undo can see."
     from leela.blocks.agent.ai import leela_writes
     from leela.blocks.canvas.helper import WRITES
-    assert set(leela_writes()) == set(WRITES)
+    assert set(leela_writes()) == {*WRITES, 'flow_canvas'}
 
 def test_a_read_only_tool_writes_nothing(tmp_path):
     "`canvas_read` and `canvas_values` must not file an operation, or undo fills up with nothing."

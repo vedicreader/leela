@@ -124,6 +124,7 @@ GET,POST /canvas/review
 GET,POST /canvas/run
 GET,POST /canvas/runall
 GET,POST /canvas/save
+GET,POST /canvas/snip
 GET,POST /canvas/state
 GET,POST /canvas/trust
 GET,POST /canvas/value

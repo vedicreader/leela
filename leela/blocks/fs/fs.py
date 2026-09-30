@@ -138,9 +138,8 @@ class Sandbox:
     def touch(self, ref):
         "Create an empty file; refuses to clobber an existing one."
         p = self._check(ref)
-        if p.exists(): raise FileExistsError(str(p))
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.touch()
+        p.touch(exist_ok=False)
         _changed()
         return self.entry(p)
     def mkdir(self, ref):

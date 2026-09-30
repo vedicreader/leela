@@ -130,7 +130,7 @@ function cvPaint(b, i) {
   wrap.appendChild(cvGutter(b));
   wrap.appendChild(({text: cvText, code: cvCode, ask: cvAsk, brick: cvComponent, sim: cvSim,
                      pdf: cvPdf, video: cvVideo, reply: cvProse, note: cvProse, quiz: cvQuiz,
-                     data: cvData}[b.kind] || cvProse)(b));
+                     data: cvData, snippet: cvSnippet}[b.kind] || cvProse)(b));
   wrap.onpointerdown = ev => { if (!ev.target.closest('.cv-gutter')) cvPick(null); };
   return wrap;
 }
@@ -263,6 +263,18 @@ function cvProse(b) {
   el.className = 'cv-prose cv-said';
   el.innerHTML = cvMd(b.body);
   return el;
+}
+
+//: Code a snippet cites. The document keeps no copy, so the source is read from its file each time it draws.
+function cvSnippet(b) {
+  const box = document.createElement('div'); box.className = 'cv-snipbox';
+  const where = [b.attrs?.path, b.attrs?.symbol].filter(Boolean).join(' · ');
+  box.innerHTML = ((b.body || '').trim() ? `<div class="cv-prose cv-said">${cvMd(b.body)}</div>` : '') +
+    `<div class="cv-snip-where">${cvEsc(where)}</div><pre class="cv-snip"><code></code></pre>`;
+  api(`/canvas/snip?path=${encodeURIComponent(cv.path)}&id=${encodeURIComponent(b.id)}`).then(r => {
+    box.querySelector('code').textContent = r.ok ? (r.code || `${where} is not in that file any more`) : r.error;
+  });
+  return box;
 }
 
 //: Prose bound to the namespace. The only brick that redraws itself with no iframe in it.

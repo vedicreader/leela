@@ -6,7 +6,7 @@ from starlette.responses import FileResponse, PlainTextResponse
 from fastcore.all import Path
 from ...core.web import fail, off_loop
 from .bricks import libraries, locate, mount, palette, wire as brick_wire
-from .change import bundles, coverage, place_diff, pr, review, state, value
+from .change import bundles, coverage, place_diff, pr, review, snip, snip_root, state, value
 from .context import SCOPES, Spec, resolve, spec_of, weigh
 from .doc import Canvas
 from .explain import explain
@@ -102,6 +102,17 @@ def connect(app, ctx=None):
     def canvas_pr(path: str, id: str):
         "The pull request one change is worth. It opens nothing."
         try: return pr(_load(ctx_fs(), path), id)
+        except Exception as e: return fail(e)
+    @rt('/canvas/snip')
+    def canvas_snip(path: str, id: str):
+        "The source one `snippet` brick cites, read from its file now, since the document keeps no copy."
+        try:
+            doc = _load(ctx_fs(), path)
+            b, root = doc.by_id(id), _root(doc)
+            if b is None or b.kind != 'snippet': return fail(f'no snippet {id!r} in {Path(path).name}')
+            # The brick names its file, so a document from elsewhere must not read outside the open folders.
+            ctx_fs()._check(str(Path(root)/b.attrs.get('path', '')), must_exist=False)
+            return {'ok': True, 'code': snip(b, root), 'path': b.attrs.get('path', ''), 'symbol': b.attrs.get('symbol', '')}
         except Exception as e: return fail(e)
     @rt('/canvas/page')
     async def canvas_page(path: str, out: str = '', base: str = ''):
@@ -271,10 +282,7 @@ def _load(fs, path):
     return arrange(Canvas.load(canvas_path(fs, path)))
 
 def _root(doc):
-    "Where a `snippet` brick's path starts: the repository, else the document's folder."
-    from gheasy.repo import repo_root
-    here = Path(doc.path).parent
-    return str(repo_root(here) or here)
+    return snip_root(doc.path)
 
 def _diff(doc, base='', paths=(), right=''):
     "The diff a review reads. Git is `gheasy`'s, so this asks it rather than shelling out."
