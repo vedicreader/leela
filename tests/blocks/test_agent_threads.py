@@ -1333,6 +1333,61 @@ def test_a_thread_card_carries_the_name_the_history_picker_shows(tmp_path):
     assert thread.dict()['title'] == 'A name a person chose', 'a chosen name outranks the derived one'
 
 
+def test_history_lists_every_conversation_not_just_the_log_tail(tmp_path, monkeypatch):
+    """The list was grouped from the turns in the log's last 8 MB, and pasted pictures made that about thirty turns."""
+    import json, ramabana.agent as ra
+    from leela.blocks.agent.turns import mark_surface
+    ws = Workspace(roots=[tmp_path])
+    log, pad = history_file(ws), 'x' * 400
+    rows = [{'session': 'agent_old', 'at': 1, 'model': 'gpt-4.1', 'turn_id': 'agent_old:turn_000001', 'prompt': 'the old one', 'reply': 'r'}]
+    rows += [{'session': 'agent_new', 'at': 10 + i, 'model': 'gpt-4.1', 'turn_id': f'agent_new:turn_{i:06d}',
+              'prompt': f'{i} {pad}', 'reply': 'r'} for i in range(20)]
+    rows += [{'session': 'agent_fake', 'at': 5, 'model': 'scripted', 'turn_id': 'agent_fake:turn_000001', 'prompt': 'a test', 'reply': 'r'}]
+    log.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    for sid in ('agent_old', 'agent_new', 'agent_fake'): mark_surface(ws.ai.cfg, sid)
+    monkeypatch.setattr(ra, 'HISTORY_TAIL', 2000)
+    with TestClient(ide_app(ws)) as client:
+        listed = [s['id'] for s in client.get('/agent/history').json()['sessions']]
+        old = client.get('/agent/history/session?id=agent_old').json()
+    assert listed[:2] == ['agent_new', 'agent_old'], 'a conversation older than the tail is missing'
+    assert 'agent_fake' not in listed, 'a scripted conversation is listed, and opens empty'
+    assert [t['prompt'] for t in old['turns']] == ['the old one'] and old['count'] == 1
+
+
+def test_resuming_a_conversation_older_than_the_tail_paints_its_turns(tmp_path, monkeypatch):
+    """`/agent/resume` answered from the log's last 8 MB, so an old conversation came back with no turns and boot drew nothing."""
+    import ramabana.agent as ra
+    ws = Workspace(roots=[tmp_path])
+    rows = [{'session': 'agent_old', 'at': 1, 'model': 'gpt-4.1', 'turn_id': 'agent_old:turn_000001', 'prompt': 'the old one', 'reply': 'r'}]
+    rows += [{'session': 'agent_new', 'at': 10 + i, 'model': 'gpt-4.1', 'turn_id': f'agent_new:turn_{i:06d}',
+              'prompt': f'{i} ' + 'x' * 400, 'reply': 'r'} for i in range(20)]
+    _log(ws, rows)
+    monkeypatch.setattr(ra, 'HISTORY_TAIL', 2000)
+    with TestClient(ide_app(ws)) as client:
+        r = client.post('/agent/resume', json={'session': 'agent_old'}).json()
+    assert r['ok'] and [t['prompt'] for t in r['turns']] == ['the old one']
+    assert all('capabilities' in t for t in r['turns']), 'a resumed turn carries its controls, as an opened one does'
+
+
+def test_a_resumed_conversation_runs_on_the_model_picked_here(tmp_path):
+    """Resuming adopted the model the conversation last ran: a reload put the pane on Opus while the picker named another."""
+    ws = Workspace(roots=[tmp_path], model='gpt-4.1')
+    picked = ws.threads.active.ai.model.name
+    _log(ws, [{'session': 'agent_old', 'at': 1, 'model': 'claude-opus-5-5', 'turn_id': 'agent_old:turn_000001',
+               'prompt': 'from the command line', 'reply': 'r'}])
+    with TestClient(ide_app(ws)) as client:
+        r = client.post('/agent/resume', json={'session': 'agent_old'}).json()
+        assert r['ok'] and r['session'] == 'agent_old'
+        assert ws.ai.model.name == picked, 'the turn runs on the pick, and the picker reads this'
+        assert ws.ai.session_id == 'agent_old', 'on the conversation it resumed'
+        # a model switch after the replay used to carry an empty conversation: right model, no context
+        said = [m.get('content') for m in ws.ai._be('turn').snapshot_hist()]
+        assert said == ['from the command line', 'r'], 'the resumed conversation is in the model context'
+        client.post('/agent/command', json={'line': '/resume agent_old', 'thread': ws.ai.session_id})
+        assert ws.ai.model.name == picked, 'the slash command resumes the same way'
+        assert [m.get('content') for m in ws.ai._be('turn').snapshot_hist()] == said
+
+
 def test_a_card_is_named_by_the_first_thing_said_in_it(tmp_path):
     "The summariser, the sidecar and the log all arrive late or not at all. The prompt is there now."
     ws = Workspace(roots=[tmp_path])

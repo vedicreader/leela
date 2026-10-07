@@ -973,6 +973,9 @@ class Assistant(Agent):
             return f'User steering after skipping the proposed call: {instruction}'
         self._steering_tool = small_tool(user_steering)   # the refusal path rewrites a rejected call to it, in every profile
         self.turn_transactions = {}
+    def resume_session(self, selector='latest', keep_model=True):
+        "Continue a stored conversation on the model picked here, not the one it last ran."
+        return super().resume_session(selector, keep_model=keep_model)
     def mark_surface(self):
         "Claim the live session for Leela. The CLI shares this log and leaves no such mark."
         from .turns import mark_surface

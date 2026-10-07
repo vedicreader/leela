@@ -415,3 +415,52 @@ def test_a_finished_run_stops_its_clock_and_loses_its_stop_button():
     assert set(re.findall(r"'(\w+)'", src[src.index('const TERMINAL'):src.index('function updateAgentRunstrip')])) \
         == {'completed', 'cancelled', 'detached', 'terminated', 'failed'}
     assert 'TERMINAL' in JS, 'and the built bundle carries it'
+
+
+def test_a_new_conversation_lets_go_of_the_turn_it_leaves():
+    """`+` cleared the pane and kept the old turn's stream, which painted its reply into the new conversation."""
+    src = (ROOT/'leela/blocks/agent/live.js').read_text()
+    new = src[src.index('async function leeAgentNew'):src.index('async function leeAgentThreadSwitch')]
+    assert 'lee.agentStream.close()' in new and '++lee.agentStreamGen' in new, 'the old turn still paints here'
+    assert new.index('lee.agentBusy') < new.index("post('/agent/thread/new'"), 'the left turn is read after it is overwritten'
+    assert 'startAgentBusyWatch()' in new, 'nothing watches the turn that was left running'
+    watch = src[src.index('function startAgentBusyWatch'):src.index('function paintAgentAttention')]
+    assert 'paintAgentThreads(' in watch and 'attention?.working' in watch, 'the left conversation reads as working until a reload'
+    # A switch or a new conversation landing during the request owns `lee.agentThread`; the poll's `active` predates it.
+    assert 'gen === lee.agentStreamGen' in watch
+
+
+def test_a_conversation_a_person_chose_is_never_swapped_for_the_newest():
+    """`+` gave an empty pane, the boot or a shell swap read empty as 'resume the newest', and the poll moved the prompt there."""
+    src = (ROOT/'leela/blocks/agent/live.js').read_text()
+    def body(name, nxt): return src[src.index(name):src.index(nxt)]
+    for name, nxt in (('async function leeAgentNew', 'async function leeAgentThreadSwitch'),
+                      ('async function leeAgentThreadSwitch', 'async function leeAgentThreadRename'),
+                      ('async function leeAgentResume', 'function rememberAgentThread')):
+        assert 'pickAgentThread()' in body(name, nxt), f'{name} is not a choice the boot resume yields to'
+    hydrate = body('async function rehydrateAgentLive', 'function paintResumed')
+    assert 'lee.agentPicks' in hydrate[:hydrate.index('lee.agentHydrating = true')], 'an empty chosen conversation is resumed over'
+    latest = body('async function resumeLatestAgent', 'function warmAgentHistory')
+    post = latest.index("post('/agent/resume'")
+    assert 'lee.agentPicks' in latest[:post] and "'/agent/thread/switch'" in latest[post:], 'a click during the boot resume loses'
+    # the switch back waits for the pick to land; before it does, `lee.agentThread` is the conversation `+` replaced
+    assert latest.index('agentPicksSettled()') < latest.index("'/agent/thread/switch'")
+    assert 'loadAgentModels()' in latest[post:], 'a resume with nothing to paint leaves the picker naming another model'
+    for name, nxt in (('async function leeAgentNew', 'async function leeAgentThreadSwitch'),
+                      ('async function leeAgentThreadSwitch', 'async function leeAgentThreadRename'),
+                      ('async function leeAgentResume', 'function rememberAgentThread')):
+        assert 'finally { picked(); }' in body(name, nxt), f'{name} never settles its pick, and the boot resume waits forever'
+    assert 'lee.agentThread = d.session' in body('function paintResumed', 'function pickAgentThread'), 'the pane paints one conversation and prompts another'
+    paint = body('function paintAgentThreads', 'const count')
+    assert 'lee.agentThread = d.active || lee.agentThread' not in paint and 'd.live' in paint, "the poll overrides the pane's own choice"
+    for name, nxt in (('async function leeAgentNew', 'async function leeAgentThreadSwitch'),
+                      ('async function leeAgentThreadSwitch', 'async function leeAgentThreadRename'),
+                      ('function paintResumed', 'function pickAgentThread')):
+        assert 'loadAgentModels()' in body(name, nxt), f'after {name} the picker names a model that is not running'
+
+
+def test_an_agent_head_toggle_shows_it_is_on_and_none_is_out_of_sight():
+    """The opt-ins set `aria-pressed` and nothing drew it; the head scrolled sideways with its scrollbar hidden."""
+    assert '.lee-agent .lee-btn[data-optin][aria-pressed="true"]' in CSS and '#agentfull[aria-pressed="true"]' in CSS
+    head = CSS[CSS.index('.lee-agent-head-actions {'):]
+    assert 'flex-wrap: wrap' in head[:head.index('}')]

@@ -733,11 +733,12 @@ kbd {
 .lee-model-legacy input { margin: 0; accent-color: var(--lee-accent); }
 .lee-agent .lee-phead { overflow-x: auto; scrollbar-width: none; }
 .lee-agent .lee-phead::-webkit-scrollbar { display: none; }
-.lee-agent .lee-btn.active { background: var(--lee-sel); color: var(--lee-fg); }
+.lee-agent .lee-btn.active,
+.lee-agent .lee-btn[data-optin][aria-pressed="true"], .lee-agent #agentfull[aria-pressed="true"] { background: var(--lee-sel); color: var(--lee-fg); }
 .lee-agent-head { min-height: 39px; padding: 5px 9px; background: var(--lee-bg); }
 .lee-agent-heading { display: grid; gap: 2px; min-width: 0; }
 .lee-agent-state-badge { color: var(--lee-fg4); font: 8.5px/1.15 var(--lee-mono); letter-spacing: .02em; }
-.lee-agent-head-actions { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.lee-agent-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; }
 .lee-thread-select { width: min(190px, 24vw); min-width: 92px; color: var(--lee-fg2); text-overflow: ellipsis; }
 .lee-agent-head-actions .lee-btn { min-height: 25px; padding-inline: 7px; border-radius: 4px; color: var(--lee-fg4); }
 .lee-agent-head-actions .lee-btn:hover { color: var(--lee-fg); }
@@ -3310,7 +3311,9 @@ kbd {
 :root[data-density="tight"] .lee-phead .lee-btn { padding: 1px 4px; }
 :root[data-density="tight"] .lee-agent-head { min-height: 28px; padding: 2px 7px; background: var(--lee-bg1); border-bottom: 1px solid color-mix(in srgb, var(--lee-border) 88%, transparent); }
 :root[data-density="tight"] .lee-agent-head-actions .lee-btn { min-height: 20px; padding-inline: 5px; border-radius: 2px; background: transparent; }
-:root[data-density="tight"] .lee-agent .lee-btn.active { background: var(--lee-sel); color: var(--lee-fg); border-color: transparent; }
+:root[data-density="tight"] .lee-agent .lee-btn.active,
+:root[data-density="tight"] .lee-agent .lee-btn[data-optin][aria-pressed="true"],
+:root[data-density="tight"] .lee-agent #agentfull[aria-pressed="true"] { background: var(--lee-sel); color: var(--lee-fg); border-color: transparent; }
 :root[data-density="tight"] .lee-right .lee-agent .lee-agentlog { padding: 8px 10px 14px; }
 :root[data-density="tight"] .lee-empty {
   width: min(480px, calc(100% - 28px)); justify-content: flex-start; padding-top: 28px;

@@ -455,7 +455,8 @@ async function paintAgentThread(id) {
    picks the newest conversation back up, which is what "where was I" means. */
 async function rehydrateAgentLive() {
   const log = $('#agentlog');
-  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating) return;
+  // a conversation a person chose is empty because it is new, not because the pane forgot it
+  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating || lee.agentPicks) return;
   lee.agentHydrating = true;
   try {
     const d = await paintAgentThread(lee.agentThread || '');
@@ -471,17 +472,35 @@ function paintResumed(d) {
     renderTurns(log, d.turns || [], 'resumed conversation');
     stickAgentLog(log, true);
   }
-  lee.agentView = 'live'; lee.agentLive = null;
+  lee.agentView = 'live'; lee.agentLive = null; lee.agentThread = d.session || lee.agentThread;
   $('#agenthistory')?.classList.remove('active');
+  loadAgentModels().catch(() => {});
 }
+/* A pick returns its `done`; until then `lee.agentPicked` is pending, so the boot resume can wait for
+   the pane's own choice to land rather than switch the server back to the conversation it replaced. */
+function pickAgentThread() {
+  lee.agentPicks = (lee.agentPicks || 0) + 1; let done;
+  const p = new Promise(r => done = r); lee.agentPicked = p;
+  return () => { done(); if (lee.agentPicked === p) lee.agentPicked = null; };
+}
+async function agentPicksSettled() { while (lee.agentPicked) await lee.agentPicked; }
 async function resumeLatestAgent() {
   // Nothing saved is the first run, not a failure, so this never speaks up about it.
+  const picks = lee.agentPicks || 0;
   try {
     await agentPrefsReady();   // the saved filter, not the default, decides what boot may open
+    if ((lee.agentPicks || 0) !== picks) return;
     /* Read under the same filter as the history list: a pane that hides the CLI's conversations
        cannot open one of them on boot. With the filter off, `latest` is the log's newest again. */
     const d = await post('/agent/resume', {session: 'latest', everything: !leelaOnly()});
-    if (!(d.turns || []).length) return;
+    // the resume made its conversation the server's active one; a choice made meanwhile wins back
+    const chosen = (lee.agentPicks || 0) !== picks;
+    if (chosen) await agentPicksSettled();
+    if (chosen || !(d.turns || []).length) {
+      // nothing to paint: the server's active conversation goes back to the one this pane shows
+      if (lee.agentThread && lee.agentThread !== d.session) await post('/agent/thread/switch', {thread: lee.agentThread});
+      return loadAgentModels().catch(() => {});
+    }
     paintResumed(d);
     status(`picked up ${titleText(d.title) || d.session}`, 'ok');
   } catch (_) {}
@@ -508,12 +527,14 @@ async function leeAgentHistory() {
 async function leeAgentResume(group) {
   if (!group) return;
   if (lee.agentBusy) return status('the model is already working', 'err');
+  const picked = pickAgentThread();
   try {
     const d = await post('/agent/resume', {session: group.id});
     paintResumed(d);
     $('#agentprompt')?.focus();
     status(d.note || `resumed ${d.session}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
+  finally { picked(); }
 }
 function rememberAgentThread() {
   if (!lee.agentThread) return;
@@ -533,7 +554,9 @@ function threadLabel(t) {
    all acted on whichever one happened to be showing. */
 function paintAgentThreads(d) {
   const rows = d.threads || [];
-  lee.agentThreadRows = rows; lee.agentThread = d.active || lee.agentThread;
+  // the pane's own choice outlives the server's `active`, which a resume elsewhere moves; only a gone one yields
+  const gone = !lee.agentThread || (d.live && !d.live.includes(lee.agentThread));
+  lee.agentThreadRows = rows; if (gone) lee.agentThread = d.active || '';
   const count = $('#agentthreadcount'); if (count) count.textContent = String(rows.length);
   const waiting = (d.attention?.waiting || []).length, unread = d.attention?.unread || 0;
   const toggle = $('#agentthreads');
@@ -797,8 +820,11 @@ function reconcileAgentBusy(attention) {
 function startAgentBusyWatch() {
   if (lee.agentBusyWatch) return;
   lee.agentBusyWatch = setInterval(async () => {
-    if (!lee.agentBusy) { clearInterval(lee.agentBusyWatch); lee.agentBusyWatch = null; return; }
-    try { reconcileAgentBusy((await api('/agent/threads')).attention || {}); } catch (_) {}
+    const gen = lee.agentStreamGen;
+    let d = null; try { await agentPrefsReady(); d = await api('/agent/threads'); } catch (_) {}
+    // a switch or a new conversation that landed meanwhile owns `lee.agentThread`, and this `active` predates it
+    if (d && gen === lee.agentStreamGen) { paintAgentThreads(d); notifyAgentAttention(d); }
+    if (!lee.agentBusy && !d?.attention?.working) { clearInterval(lee.agentBusyWatch); lee.agentBusyWatch = null; }
   }, 5000);
 }
 function paintAgentAttention(attention, rows) {
@@ -985,31 +1011,37 @@ async function leeAgentAccept() {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 async function leeAgentNew() {
-  rememberAgentThread();
+  rememberAgentThread(); const leftBusy = lee.agentBusy, picked = pickAgentThread();
   try {
     const d = await post('/agent/thread/new', {warm: agentWarmEnabled(), optin: agentOptins(), profile: agentFullEnabled() ? 'full' : ''}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    // the turn left behind keeps running on the server; only this pane stops drawing it
+    if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; } ++lee.agentStreamGen;
+    if (leftBusy) startAgentBusyWatch();
     approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
     if (log) { dropCodeSurfaces(log); log.innerHTML = ''; lee.agentLive = null; lee.agentView = 'live'; } if (input) input.value = '';
     await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
+    loadAgentModels().catch(() => {});
   } catch (e) { status(String(e.message || e), 'err'); }
+  finally { picked(); }
 }
 /* A conversation with a turn in flight keeps producing while it is off screen. Switching to it
    paints its finished turns from the server first, then attaches to its feed from the last point
    it settled, so the running turn arrives once and nothing drawn is drawn twice. */
 async function leeAgentThreadSwitch(id) {
-  if (!id || id === lee.agentThread) return; rememberAgentThread();
+  if (!id || id === lee.agentThread) return; rememberAgentThread(); const picked = pickAgentThread();
   try {
     const d = await post('/agent/thread/switch', {thread:id});
-    if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; ++lee.agentStreamGen; }
+    if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; } ++lee.agentStreamGen;
     const running = d.thread.state === 'working' || d.thread.state === 'waiting';
     lee.agentThread = d.active; lee.agentBusy = running; lee.agentTitle = titleText(d.thread.title);
     const input = $('#agentprompt'); if (input) input.value = lee.agentThreadDrafts.get(id) || '';
     const live = await paintAgentThread(d.active);
-    await refreshAgentThreads(); updateAgentRunstrip();
+    await refreshAgentThreads(); updateAgentRunstrip(); loadAgentModels().catch(() => {});
     if (running) { setAgentStatus('working'); agentListen(d.active, live?.seq || 0); }
     else { setAgentStatus('ready'); await rehydrateAgentLive(); }
     input?.focus();
   } catch (e) { status(String(e.message || e), 'err'); await refreshAgentThreads(); }
+  finally { picked(); }
 }
 async function leeAgentThreadRename(id = lee.agentThread) {
   if (!id) return;

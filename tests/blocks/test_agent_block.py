@@ -167,6 +167,13 @@ def test_history_says_which_app_started_each_conversation(tmp_path):
     assert only[0]['app'] == 'ramabana'
     # unmarked history from before this existed reads as the CLI's rather than crashing
     assert all(g['app'] == 'ramabana' for g in history_sessions(turns))
+    # the index lists the whole log; a fallback row has no `first_at`, and a run with no turns comes last
+    from leela.blocks.agent.turns import indexed_sessions
+    rows = [{'id': 'theirs', 'turns': 3, 'at': 9, 'first_at': 5, 'model': 'm'}, {'id': 'mine', 'turns': 1, 'at': 4}]
+    got = indexed_sessions(rows, [{'id': 'mine', 'code': 2}, {'id': 'runs', 'code': 1}], surfaces(tmp_path))
+    assert [(g['id'], g['app'], g['code'], g['count']) for g in got] == \
+        [('theirs', 'ramabana', 0, 3), ('mine', 'leela', 2, 1), ('runs', 'ramabana', 1, 0)]
+    assert got[0]['started'] == 5 and got[1]['started'] == 4 and all(g['turns'] == [] for g in got)
 
 
 def test_every_routed_job_says_where_its_model_is_spent():

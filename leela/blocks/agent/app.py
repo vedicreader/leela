@@ -17,7 +17,7 @@ from ...blocks.memory.memory import pii_gate
 from ...workspace import STEP_RANGE, TOOL_RANGE
 from .threads import TurnError
 from .warm import NoDhrona, accept_round, assess_session, capture_round
-from .turns import (edit_diffs, history_sessions, latest_started_here, project_state_context,
+from .turns import (edit_diffs, indexed_sessions, latest_started_here, project_state_context,
                     surfaces, tool_preview, tool_schemas, with_capabilities)
 
 __all__ = ['CAPS', 'connect']
@@ -63,16 +63,11 @@ def connect(app, ctx):
         if isinstance(e, TurnError): return JSONResponse(e.dict(), status_code=409)
         return fail(e, 400 if isinstance(e, (KeyError, ValueError)) else 500)
     def _grouped_history(ai, execution):
-        "Sessions with their turns, computed once per state of the log."
+        "Every conversation in the log, without turns, computed once per state of the log."
         here = surfaces(getattr(ai, 'cfg', None))
         key = (ws.history_stamp(ai), repr(sorted(r.get('id', '') for r in execution)), len(here))
-        if _history_cache.get('key') != key:
-            turns = ws.with_timelines([r for r in ai.history if r.get('model') != 'scripted'])
-            # the sidecar is where a conversation's name lives, and grouping cannot see it
-            named = {row['id']: row for row in ai.sessions()}
-            _history_cache.update(key=key, groups=[
-                {**g, **{k: v for k, v in (named.get(g['id']) or {}).items() if k in ('title', 'muted')}}
-                for g in history_sessions(turns, execution, here)])
+        # `ai.history` is the log's last 8 MB, a few dozen turns once pictures are pasted; the index covers it all
+        if _history_cache.get('key') != key: _history_cache.update(key=key, groups=indexed_sessions(ai.sessions(), execution, here))
         return _history_cache['groups']
     def _settled_thread(target=''):
         "The conversation a branch operation may act on."
@@ -142,12 +137,15 @@ def connect(app, ctx):
         except Exception as e:
             from .threads import TurnError
             return _thread_error(e) if isinstance(e, TurnError) else fail(e)
-        turns = [t for t in thread.ai.history if t.get('session') == thread.id]
-        return {'ok': True, 'session': thread.id, 'note': thread.ai.note, 'turns': ws.with_timelines(turns)}
+        # `ai.history` is the log's last 8 MB; the index reads this conversation's own byte range
+        turns = [t for t in await off_loop(thread.ai.session_turns, thread.id) if t.get('model') != 'scripted']
+        return {'ok': True, 'session': thread.id, 'note': thread.ai.note,
+                'turns': with_capabilities(thread.ai, ws.with_timelines(turns))}
     @rt('/agent/threads')
     def agent_threads():
         active = ws.threads.active
-        return {'active': active.id, 'threads': ws.threads.dicts(),
+        # `threads` hides an empty conversation, so `live` is what says a pane's own one still exists
+        return {'active': active.id, 'threads': ws.threads.dicts(), 'live': [r.id for r in ws.threads.rows()],
                 'attention': ws.threads.attention()}
     def _optin(names):
         "Opt-in group names as a tuple, checked against what this shalya offers; None stands for the workspace default."
@@ -283,8 +281,7 @@ def connect(app, ctx):
         groups = _grouped_history(ai, execution.get('sessions', []))
         theirs = len([g for g in groups if g.get('app') != 'leela'])
         if not everything: groups = [g for g in groups if g.get('app') == 'leela']
-        sessions = [{**g, 'turns': [], 'count': len(g['turns'])} for g in groups]
-        return {'sessions': sessions, 'model': ai.model.name, 'current': ai.session_id,
+        return {'sessions': groups, 'model': ai.model.name, 'current': ai.session_id,
                 'thread': t.id, 'only_leela': not everything, 'hidden': 0 if everything else theirs}
     @rt('/agent/history/session')
     async def agent_history_session(id: str = '', thread: str = ''):
@@ -296,8 +293,8 @@ def connect(app, ctx):
         group = first(g for g in _grouped_history(t.ai, execution.get('sessions', []))
                       if g['id'] == str(id))
         if group is None: return fail(f'no such conversation {id}', 404)
-        return {'ok': True, 'id': group['id'], 'count': len(group['turns']),
-                **{**group, 'turns': with_capabilities(t.ai, group['turns'])}}
+        turns = ws.with_timelines([r for r in await off_loop(t.ai.session_turns, group['id']) if r.get('model') != 'scripted'])
+        return {'ok': True, **group, 'count': len(turns), 'turns': with_capabilities(t.ai, turns)}
     @rt('/agent/models')
     def agent_models(legacy: bool = True, refresh: bool = False):
         "Every model the picker offers, and which one each routed job is on."

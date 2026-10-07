@@ -11,7 +11,7 @@ from fastcore.xtras import atomic_save
 from ...core.web import diff_payload
 
 __all__ = ['GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
-           'activity_changes', 'history_sessions', 'project_state_context', 'turn_media',
+           'activity_changes', 'history_sessions', 'indexed_sessions', 'project_state_context', 'turn_media',
            'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
 
 SURFACES_FILE = 'agent-surfaces.json'   #: sessions Leela started, beside Ramabana's own metadata
@@ -190,6 +190,17 @@ def history_sessions(turns, execution=(), started_here=None):
                              'context_continues': True, 'code': row.get('code', 0),
                              'app': 'leela' if sid in here else 'ramabana'})
     return list(reversed(groups))
+
+def indexed_sessions(rows, execution=(), started_here=None):
+    "Ramabana's index rows as history groups, in their order, then kernel runs no row names. `started_here` marks Leela's own."
+    here, code = started_here or {}, {r['id']: r.get('code', 0) for r in execution or ()}
+    def group(sid, **kw): return {'id': sid, 'turns': [], 'context_continues': True, 'code': code.get(sid, 0),
+                                  'app': 'leela' if sid in here else 'ramabana', **kw}
+    out = [group(r['id'], started=r.get('first_at') or r.get('at', 0), ended=r.get('at', 0), count=int(r.get('turns', 0)),
+                 models=[r['model']] if r.get('model') else [], title=r.get('title', ''), muted=bool(r.get('muted')))
+           for r in rows if r.get('model') != 'scripted']   # the index keeps only the last model
+    named = {r['id'] for r in rows}
+    return out + [group(sid, started=0, ended=0, count=0, models=[]) for sid in code if sid not in named]
 
 def turn_media(ai):
     "Pictures the turn produced, as data URLs. A tool result is a path, which a browser cannot draw."

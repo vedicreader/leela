@@ -26,7 +26,7 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.6",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools
+    "ramabana[cli]==0.2.7",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not

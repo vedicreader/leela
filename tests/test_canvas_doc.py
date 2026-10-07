@@ -617,11 +617,14 @@ def test_leela_builds_the_literate_page_end_to_end(tmp_path):
     "`page` is the whole assembly: fill the slots, count the files, write the HTML."
     import subprocess
     from leela.blocks.canvas.app import page
-    if subprocess.run(['git', 'rev-parse', '--verify', 'origin/main'], cwd=PKG.parent.parent,
-                      capture_output=True).returncode: pytest.skip('no origin/main to diff against')
+    got = subprocess.run(['git', 'rev-list', '--max-parents=0', 'HEAD'], cwd=PKG.parent.parent, capture_output=True, text=True)
+    if got.returncode: pytest.skip('not a git checkout')
+    # The first commit, not origin/main: on main itself the document's diff is empty and leaves no brick.
+    base = got.stdout.split()[0]
     doc = Canvas.load(PKG.parent.parent/'docs/change.canvas.md')
+    for b in doc.of('diff'): b.attrs['left'] = base
     out = tmp_path/'page.html'
-    r = page(doc, out, 'origin/main')
+    r = page(doc, out, base)
     assert r['diffs'] and out.exists()
     body = out.read_text()
     assert '<div class="diff">' in body or '<details>' in body
