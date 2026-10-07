@@ -513,6 +513,12 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         if loop is None: return None
         try: return asyncio.run_coroutine_threadsafe(self.ws.runtime(), loop).result(120)
         except Exception: return None
+    def restart_kernel(self):
+        "Restart the tab's kernel through the one path the kernel menu uses."
+        if self.session is not None: self.session.layer.clear(); return "cleared the agent's layer; no kernel runs behind this session"
+        if (loop := self._loop()) is None: raise NotImplementedError('kernel restart needs the workspace loop')
+        r = asyncio.run_coroutine_threadsafe(self.ws.restart_kernel(), loop).result(120)
+        return f"restarted the kernel at {r['base']}: every name is gone and saved outputs are stale" if r['base'] else 'no kernel was running; the next run starts a fresh one'
     def _loop(self):
         "The loop that owns the kernels, or None when this call is already on it or it is gone."
         loop = getattr(self.ws, '_loop', None)

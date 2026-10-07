@@ -692,3 +692,22 @@ def test_the_folder_monitor_is_not_advertised_until_it_is_wired():
     users = [p.relative_to(ROOT).as_posix() for p in (ROOT/'leela').rglob('*.py')
              if p != seam and re.search(r'monitor(?!ing)', p.read_text(encoding='utf-8'))]   # `sys.monitoring` is the tracer, not a folder monitor
     assert users == ['leela/blocks/agent/app.py', 'leela/blocks/vault/jobs.py'], f'monitors reach the UI only through /agent/runs/monitors/log: {users}'
+
+
+def test_a_kernel_restart_is_one_path_for_the_menu_and_the_agent(tmp_path):
+    """The agent's `restart_kernel` and the kernel menu reset the same things: outputs turn stale, the agent's name origins go."""
+    from types import SimpleNamespace as NS
+    ws = Workspace(roots=[tmp_path])
+    restarts = []
+    class K:
+        base = 'http://kernel'
+        async def restart(self): restarts.append(1)
+    ws.runtime_peek = lambda tab=None: K()
+    with TestClient(ide_app(ws)) as client:
+        ws.docstore.docs['t'] = NS(cells=[NS(fresh=True)]); ws.origins.record(['x'], 'run_python')
+        assert client.post('/kernel/restart').json() == {'ok': True, 'base': 'http://kernel'}
+        assert ws.docstore.docs['t'].cells[0].fresh is False and not ws.origins.rows
+        ws.docstore.docs['t'].cells[0].fresh = True; ws.origins.record(['y'], 'run_python')
+        said = ws.threads.active.ai.host.restart_kernel()   # off the loop, as a tool call runs
+        assert 'restarted the kernel' in said and len(restarts) == 2
+        assert ws.docstore.docs['t'].cells[0].fresh is False and not ws.origins.rows

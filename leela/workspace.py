@@ -928,6 +928,14 @@ class Workspace:
                 if not result.ok: raise RuntimeError(result.error or f'could not change kernel cwd to {desired}')
                 k.cwd = desired
         return k
+    async def restart_kernel(self):
+        "Restart the running kernel. Saved outputs turn historical, and the agent's name origins go with the namespace."
+        k = self.runtime_peek()
+        if k: await k.restart()
+        if (docs := getattr(self, 'docstore', None)) is not None: docs.mark_all_stale()
+        from .core.session import Origins
+        self.origins = Origins()
+        return {'ok': True, 'base': k.base if k else None}
     def runtime_peek(self, tab=None):
         "The selected runtime without starting a tab kernel."
         return self.watched_kernel() or (self.inspector(tab) if self.env_base else self.kernel_peek(tab))

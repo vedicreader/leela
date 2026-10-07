@@ -2034,6 +2034,7 @@ def test_a_subagent_can_ask_for_the_overlay_scope():
             self.calls.append((code, scope))
             return 'ok'
         def list_vars(self): return 'df: DataFrame'
+        def restart_kernel(self): return "restarted"
         def terminal_text(self, lines=200): return ''
         def run_python(self, code): return 'ok'
     h = H(['/x'])

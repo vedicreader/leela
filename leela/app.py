@@ -913,6 +913,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     app.static_route_exts()
     rt = app.route
     _docstore = DocStore(ws)
+    ws.docstore = _docstore   # `Workspace.restart_kernel` marks its outputs stale, for the route and the agent alike
     _docs: dict[str, Notebook] = _docstore.docs
     _buffers: dict[str, str] = _docstore.buffers
     _buffer_bases: dict[str, str] = _docstore.bases

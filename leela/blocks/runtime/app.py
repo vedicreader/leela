@@ -128,11 +128,7 @@ def connect(app, ctx):
         await k.interrupt()
         return {'ok': True, 'forced': False, 'note': 'interrupt sent'}
     @rt('/kernel/restart')
-    async def k_restart():
-        k = session.runtime_peek()
-        if k: await k.restart()
-        ctx.docs.mark_all_stale()
-        return {'ok': True, 'base': k.base if k else None}
+    async def k_restart(): return await session.restart_kernel()
     @rt('/kernel/info')
     async def k_info():
         "What the kernel pill shows. Never starts one: it reports that there is none."
