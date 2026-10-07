@@ -45,10 +45,12 @@ function updateAgentRunstrip(state = {}) {
   $$('[data-watch-run]', strip).forEach(b => b.onclick = e => { e.stopPropagation(); leeWatchRun(b.dataset.watchRun, b.dataset.title); });
   $$('[data-stop-run]', strip).forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
-    try { const d = await post(`/agent/runs/${encodeURIComponent(btn.dataset.stopRun)}/cancel`, {}); updateAgentRunstrip({runs: (await api('/agent/runs')).runs}); status(d.state, 'ok'); }
+    try { const d = await post(`/agent/runs/${encodeURIComponent(btn.dataset.stopRun)}/cancel${agentThreadQuery()}`, {}); updateAgentRunstrip({runs: (await api(`/agent/runs${agentThreadQuery()}`)).runs}); status(d.state, 'ok'); }
     catch (err) { status(err.message || String(err), 'err'); }
   });
 }
+// a run belongs to the conversation the pane shows; without it the server picks its own active one
+const agentThreadQuery = () => lee.agentThread ? `?thread=${encodeURIComponent(lee.agentThread)}` : '';
 async function pauseAgentAfterCurrent() {
   const d = await post('/agent/run-policy', {policy: 'pause'}); updateAgentRunstrip(d);
   status('agent will pause before the next call', 'ok');
@@ -271,14 +273,16 @@ function paintSubagents(box, d) {
   list.innerHTML = (runs ? `<section class="lee-subagent running"><header><strong>Running now</strong>` +
       `<span>message one and it reads you on its next tool result</span></header>${runs}</section>` : '') +
     (cards || `<p class="lee-dim">No delegated questions in this conversation yet.</p>`);
+  const drawCalls = (host, calls) => { for (const call of calls || []) {
+    const row = document.createElement('details'); renderAgentStep(row, call); host.appendChild(row);
+    // a nested delegation carries its own sub-agent's calls
+    if (call.calls?.length) { const sub = document.createElement('div'); sub.className = 'lee-subagent-calls lee-subagent-nested'; row.appendChild(sub); drawCalls(sub, call.calls); }
+  } };
   for (const x of d.delegations || []) {
-    const host = $(`[data-calls="${CSS.escape(x.id)}"]`, list); if (!host) continue;
-    for (const call of x.calls || []) {
-      const row = document.createElement('details'); renderAgentStep(row, call); host.appendChild(row);
-    }
+    const host = $(`[data-calls="${CSS.escape(x.id)}"]`, list); if (host) drawCalls(host, x.calls);
   }
   $$('[data-stop-run]', list).forEach(b => b.onclick = async () => {
-    try { await post(`/agent/runs/${encodeURIComponent(b.dataset.stopRun)}/cancel`, {}); status('sub-agent stopping', 'ok'); }
+    try { await post(`/agent/runs/${encodeURIComponent(b.dataset.stopRun)}/cancel${agentThreadQuery()}`, {}); status('sub-agent stopping', 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
   $$('[data-steer-run]', list).forEach(b => b.onclick = async () => {

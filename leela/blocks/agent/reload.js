@@ -122,8 +122,8 @@ async function reloadAfterEdits(edits) {
 }
 
 async function stopAgent() {
-  const d = await post('/agent/stop', {});
-  updateAgentRunstrip({runs: (await api('/agent/runs')).runs});
+  const d = await post('/agent/stop', {thread: lee.agentThread || ''});
+  updateAgentRunstrip({runs: (await api(`/agent/runs${agentThreadQuery()}`)).runs});
   status(d.ok ? d.state : d.error, d.ok ? 'ok' : 'err');
 }
 

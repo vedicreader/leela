@@ -976,6 +976,7 @@ kbd {
 .lee-subagent > header span { color: var(--lee-fg4); font-size: 9.5px; }
 .lee-subagent-questions { margin: 6px 9px; padding-left: 18px; color: var(--lee-fg2); font-size: 10.5px; line-height: 1.5; }
 .lee-subagent-calls { display: flex; flex-direction: column; gap: 5px; margin: 6px 9px; }
+.lee-subagent-nested { margin: 4px 0 2px 12px; padding-left: 8px; border-left: 1px solid var(--lee-border); }
 .lee-subagent > .lee-dim { margin: 6px 9px; font-size: 10px; }
 .lee-subagent-answer > summary { padding: 6px 9px; border-top: 1px solid var(--lee-border); color: var(--lee-fg3); cursor: pointer; font: 9.5px/1.35 var(--lee-mono); }
 .lee-subagent-answer > pre { max-height: 260px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--lee-fg2); white-space: pre-wrap; font: 9.5px/1.5 var(--lee-mono); }

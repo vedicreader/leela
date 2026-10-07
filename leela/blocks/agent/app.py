@@ -788,12 +788,16 @@ def connect(app, ctx):
         return {'ok': True, 'thread': t.id, 'note': note, **run.dict()}
     @rt('/agent/subagents')
     def agent_subagents(action_id: str = '', thread: str = '', limit: int = 40):
-        "One delegation: the call that asked, what its sub-agents did, and the runs still going."
+        "One delegation: the call that asked, what its sub-agents did as a tree of nested delegations, and the runs still going."
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
         rows = t.ai.activity.rows()
+        under, delegations = {}, {r.get('id') for r in rows if r.get('kind') == 'delegate'}
+        for r in rows: under.setdefault(r.get('parent_action_id') or '', []).append(r)
+        def tree(d): return {**d, 'calls': [tree(c) if c.get('kind') == 'delegate' else c for c in under.get(d.get('id'), [])]}
+        # a nested delegation is drawn under the one that asked, not again at the top
         wanted = [r for r in rows if r.get('kind') == 'delegate'
-                  and (not action_id or r.get('id') == action_id)]
+                  and (r.get('id') == action_id if action_id else r.get('parent_action_id') not in delegations)]
         # newest first and bounded: recording every sub-agent call makes a session's whole stream
         # far larger than it was, and this is polled while a delegation is running
         wanted = list(reversed(wanted))[:max(1, limit)]
@@ -803,8 +807,7 @@ def connect(app, ctx):
         live = [r for r in flat(t.ai.runs(active=True))
                 if r.get('kind') == 'child' and r.get('state') in ('pending', 'running', 'cancelling')]
         return {'ok': True, 'thread': t.id,
-                'delegations': [{**d, 'calls': [r for r in rows if r.get('parent_action_id') == d.get('id')]}
-                                for d in wanted],
+                'delegations': [tree(d) for d in wanted],
                 'runs': live, 'records_sub_calls': any(r.get('parent_action_id') for r in rows)}
     async def _warm_runtime():
         "Start a kernel for the turn about to run, and let a failure be the tool's to report."

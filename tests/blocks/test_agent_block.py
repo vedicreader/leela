@@ -201,6 +201,23 @@ def test_an_unlinked_delegation_is_not_reported_as_having_done_nothing(tmp_path)
         assert d['delegations'] and d['delegations'][0]['calls'] == []
         assert d['records_sub_calls'] is False
 
+def test_a_nested_delegation_is_drawn_under_the_one_that_asked(tmp_path):
+    """A sub-agent's own delegation came back twice: as a top-level card, and as a bare call with nothing under it."""
+    ws = Workspace(roots=[tmp_path])
+    ai = ws.threads.active.ai
+    outer = ai.activity.start('delegate_search', {'question': 'outer?'})
+    inner = ai.activity.start('delegate_search', {'question': 'inner?'}, parent_action_id=outer.id)
+    leaf = ai.activity.start('grep', {'pattern': 'x'}, parent_action_id=inner.id)
+    for a in (leaf, inner, outer): ai.activity.finish(a, 'ok')
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/subagents').json()
+        assert [x['id'] for x in d['delegations']] == [outer.id], 'the nested one is not a card of its own'
+        nested = d['delegations'][0]['calls'][0]
+        assert nested['id'] == inner.id and [c['tool'] for c in nested['calls']] == ['grep']
+        asked = client.get(f'/agent/subagents?action_id={inner.id}').json()['delegations']
+        assert [x['id'] for x in asked] == [inner.id], 'and it can still be opened by itself'
+
+
 def test_a_delegation_is_inspectable_and_says_when_nothing_was_recorded(tmp_path):
     """A delegated sub-agent's conversation is thrown away when it answers, so its recorded calls are the only account of it."""
     ws = Workspace(roots=[tmp_path])

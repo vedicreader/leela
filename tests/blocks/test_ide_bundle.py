@@ -464,3 +464,13 @@ def test_an_agent_head_toggle_shows_it_is_on_and_none_is_out_of_sight():
     assert '.lee-agent .lee-btn[data-optin][aria-pressed="true"]' in CSS and '#agentfull[aria-pressed="true"]' in CSS
     head = CSS[CSS.index('.lee-agent-head-actions {'):]
     assert 'flex-wrap: wrap' in head[:head.index('}')]
+
+
+def test_stopping_a_run_names_the_conversation_it_belongs_to():
+    """The run-strip and sub-agent stop buttons posted no `thread`, so the server stopped the run in whichever conversation it held active."""
+    steer, reload = (ROOT/'leela/blocks/agent/steer.js').read_text(), (ROOT/'leela/blocks/agent/reload.js').read_text()
+    cancels = re.findall(r"post\(`/agent/runs/\$\{encodeURIComponent\([^)]*\)\}/cancel([^`]*)`", steer)
+    assert len(cancels) == 2 and all('agentThreadQuery()' in c for c in cancels), cancels
+    stop = reload[reload.index('async function stopAgent'):]
+    assert "post('/agent/stop', {thread: lee.agentThread" in stop[:stop.index('}\n')]
+    assert "api('/agent/runs')" not in steer + reload, 'a refresh reads another conversation’s runs'
