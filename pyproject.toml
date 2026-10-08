@@ -22,16 +22,16 @@ dependencies = [
     # `leela[local]` below, and the settings pane installs them on demand.
     # `[cli]` is `[search]` (fossick, koshas, litesearch, rgapi, vishalakshi) and `[python]` (dhrishti,
     # jupyter-client, rich), plus pyghostty, teleprint and fastpylight. `workspace._attachment_context`
-    # imports `ramabana.cli` for the media helpers, and that module needs pyghostty and teleprint.
+    # imports the media helpers, which since ramabana 0.2.9 live in `ramabana.tools`, not the terminal.
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.8",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing; 0.2.8 git per repository, restart_kernel, sub-agent steps/timeout/nesting
+    "ramabana[cli]==0.2.9",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing; 0.2.8 git per repository, restart_kernel, sub-agent steps/timeout/nesting; 0.2.9 tool results carry pictures, attachments without the terminal
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.1.2",   # git_commit(path=), restart_kernel, BrowserHost and the browser opt-in
+    "shalya>=0.1.3",   # git_commit(path=), restart_kernel, BrowserHost, Media results
     "gheasy>=0.0.10",  # 0.0.10 opened the six helpers; `blocks/git/seam.py` still takes either
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not

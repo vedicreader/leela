@@ -487,7 +487,7 @@ def test_what_only_a_lazy_import_reaches_is_still_bundled(mac, win):
 
 def test_the_media_helpers_can_actually_be_imported():
     "The check the bundle cannot do for itself: the module Leela reaches for has what it needs."
-    from ramabana.cli import MEDIA, Attachment, media_note, media_parts   # noqa: F401
+    from ramabana.tools import MEDIA, Attachment, media_note, media_parts   # noqa: F401   # not the terminal module, since 0.2.9
     assert MEDIA, 'the media table is what `_attachment_context` reads'
 
 def test_leela_asks_for_the_ramabana_extra_that_module_needs():

@@ -2717,7 +2717,7 @@ def test_kosha_adds_dynamic_patch_methods_to_runtime_completion(tmp_path):
     assert out['graph'][0]['symbol']=='fastcore.xtras.read_json'
 
 def test_audio_reaches_a_model_that_can_hear_it_and_is_carried_by_path_otherwise(tmp_path, monkeypatch):
-    import ramabana.cli as rcli
+    import ramabana.tools as rcli   # the media helpers live here since ramabana 0.2.9
     sound = tmp_path/'note.wav'
     sound.write_bytes(b'RIFF....WAVE')
     ws = Workspace(roots=[tmp_path])

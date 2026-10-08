@@ -738,7 +738,7 @@ class Workspace:
 
     def _attachment_context(self, refs=(), spec=None, max_file=120_000, max_total=300_000):
         "Workspace files selected with @, as grounded text context and multimodal content parts."
-        from ramabana.cli import MEDIA, Attachment, media_note, media_parts
+        from ramabana.tools import MEDIA, Attachment, media_note, media_parts
         text, images, sound, used = [], [], [], 0
         image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
         audio_exts = {ext for ext, (kind, _) in MEDIA.items() if kind == 'audio'}
