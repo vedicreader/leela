@@ -31,8 +31,8 @@ def main(argv=None):
     p.add_argument('--model', default=None,
                    help='the agent\'s model: a short name (opus, sonnet, flash, gemma-e2b, ...) '
                         'or any vendor/model spec (default: claude-opus-5-5). Completion, classification '
-                        'and summaries run on gpt-4.1 and sub-agents on claude-sonnet-5; without '
-                        'OPENAI_API_KEY the gpt-4.1 jobs use claude-sonnet-5. A local model keeps every '
+                        'and summaries run on gpt-4.1 and sub-agents on claude-sonnet-5-5; without '
+                        'OPENAI_API_KEY the gpt-4.1 jobs use claude-sonnet-5-5. A local model keeps every '
                         'job without a model of its own on the machine. Override per job with '
                         'LEELA_MODEL_SUMMARY and friends.')
     p.add_argument('--approvals', default='ask', choices=['ask', 'auto', 'off'],

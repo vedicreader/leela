@@ -7,7 +7,7 @@ import pytest
 from leela.agent import agent as activity, agent as hitl, agent as fastllm_hitl
 from leela.agent import core as models, runtime as compact, tools as skills
 from leela.agent.runtime import Backend, Usage
-from leela.agent.agent import Agent, prompt_directives, tool_plan
+from leela.agent.agent import Agent, prompt_directives
 from leela.agent.tools import Registry, load
 from leela.agent.tools import NullHost
 #: the capability groups a test host declares, and the error a declared-but-absent index raises
@@ -176,7 +176,7 @@ def test_the_default_routes_are_cloud_and_name_no_local_model(monkeypatch):
     r = models.Routing()
     assert r.name_for('turn') == models.DFLT_TURN == 'claude-opus-5-5'
     for job in ('oneshot', 'classify', 'completion', 'inline', 'summary'): assert r.name_for(job) == models.DFLT_SMALL == 'gpt-4.1', job
-    assert r.name_for('subagent') == models.DFLT_SUBAGENT == 'claude-sonnet-5'
+    assert r.name_for('subagent') == models.DFLT_SUBAGENT == 'claude-sonnet-5-5'
     assert not any(models.is_local(r.name_for(j)) for j in models.JOBS)
     assert not any(models.is_local(a) for j in models.JOBS for a in r.alternatives(j)), 'nor on a fallback'
 
@@ -185,7 +185,7 @@ def test_without_an_openai_key_the_small_jobs_fall_to_sonnet_and_say_so_once(mon
     monkeypatch.delenv('LEELA_MODEL', raising=False); monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     r = models.Routing()
     assert {r.spec(j).name for j in ('summary', 'classify', 'completion')} == {models.DFLT_SUBAGENT}
-    assert r.news == ['gpt-4.1 unavailable (no OPENAI_API_KEY); small jobs use claude-sonnet-5']
+    assert r.news == ['gpt-4.1 unavailable (no OPENAI_API_KEY); small jobs use claude-sonnet-5-5']
 
 def test_an_explicit_local_turn_keeps_every_side_job_local(monkeypatch):
     for j in models.JOBS: monkeypatch.delenv(f'LEELA_MODEL_{j.upper()}', raising=False)
@@ -782,11 +782,6 @@ def test_skills_are_discovered_and_selected_by_the_prompt():
         'add test cells /research nbdev projects then use /nbdev, not /Users/me', [research], [skill])
     assert tools == [('research', 'nbdev projects then use')]
     assert loaded == [skill]
-    assert tool_plan('what default model does leela use?')[0] == 'repo'
-    assert tool_plan('where is approval implemented in this repo?')[0] == 'repo'
-    assert tool_plan('change the code_clusters method to accept a store')[0] == 'repo'
-    assert tool_plan('what do the current pandas release notes say?')[0] == 'web'
-    assert tool_plan('what is 2 + 2?')[0] == 'direct'
     found = {s.name: s for s in skills.discover()}
     assert 'exhash' in found, 'exhash ships the editing reference leela used to paste by hand'
     assert found['exhash'].source == 'pyskill'
@@ -854,10 +849,10 @@ def test_agent_keeps_inspectable_conversation_history():
     host = MemHost_agent({'/proj/models.py': "DFLT_LOCAL = 'gemma-e2b'\n"})
     a, be = fake_agent(host=host, replies=['the answer'])
     assert a.ask('what default model does leela use?') == 'the answer'
-    assert '<preflight-tool name="search_code">' in str(be.sent[-1])
+    assert '<preflight-tool' not in str(be.sent[-1]), 'the model chooses its own tools'
     turn = a.history[-1]
     assert turn['prompt'] == 'what default model does leela use?'
-    assert turn['reply'] == 'the answer' and turn['plan']['route'] == 'repo'
+    assert turn['reply'] == 'the answer' and turn['plan']['route'] == 'model'
     assert turn['model']
 
 def test_the_context_window_keeps_recent_turns_and_the_notebook():
@@ -968,8 +963,8 @@ def test_activity_markdown_folds_results_and_reads_like_prose():
     assert '\n```\n' not in a.md().split('```\n', 1)[1].rsplit('```', 1)[0]
     a, be = fake_agent(replies=['because x'])
     a.ask('why does this break?')
-    assert a.history[-1]['plan']['route'] == 'direct'
-    assert 'Answer directly' in str(be.sent[0])
+    assert a.history[-1]['plan']['route'] == 'model'
+    assert '<tool-plan' not in str(be.sent[0])
 
 
 def test_activity_fires_at_the_start_of_a_call_not_only_at_the_end():
