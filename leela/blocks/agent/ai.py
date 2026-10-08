@@ -11,8 +11,8 @@ from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, p
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed, one_line as _1, summary)
-from shalya.host import (ApiHost, AskHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost, NotebookHost,
-                         SessionHost, ShellHost, WatchHost, WebHost)
+from shalya.host import (ApiHost, AskHost, BrowserHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost,
+                         NotebookHost, SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
 from ...agent.tools import PATH_WRITES, path_write, small_tool, tools_for, write_targets
@@ -283,7 +283,7 @@ class Interventions(Approvals):
                 if row['tool'] == name and row['args'] == dict(args or {}))
             return self._execution_meta.pop(i) if i is not None else {}
 
-class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiHost, ShellHost,
+class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, WatchHost, ApiHost, ShellHost,
                     SessionHost, AskHost, GitHost, Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
@@ -519,6 +519,81 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, MemoryHost, WatchHost, ApiH
         if (loop := self._loop()) is None: raise NotImplementedError('kernel restart needs the workspace loop')
         r = asyncio.run_coroutine_threadsafe(self.ws.restart_kernel(), loop).result(120)
         return f"restarted the kernel at {r['base']}: every name is gone and saved outputs are stale" if r['base'] else 'no kernel was running; the next run starts a fresh one'
+    def _on_loop(self, coro, timeout=60):
+        "Run a browser coroutine on the workspace loop: `Browser.cdp` drops every page and cast when asked from another."
+        if (loop := self._loop()) is None: coro.close(); raise RuntimeError('the browser needs the workspace loop')
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
+    @property
+    def _pages(self): return self.ws.__dict__.setdefault('_agent_pages', [])
+    def _page(self, page=''):
+        "One page the agent opened: `page`, else the latest. A person's page is never one."
+        if not self._pages: raise ValueError('no page is open; call browse(url) first')
+        if not page: return self._pages[-1]
+        if page not in self._pages: raise ValueError(f'{page} is not a page the agent opened; its pages: {", ".join(self._pages)}')
+        return page
+    def _on_page(self, page, f, acting=''):
+        "Run `f(tid)` on an agent page, refusing one that has wandered where `browse` would not go; `acting` also refuses Leela's own."
+        b, tid = self.ws.browser, self._page(page)
+        async def go():
+            url = (await b.state(tid))['url']
+            if acting and b.is_own(url):
+                raise PermissionError(f"{acting} is refused on Leela's own page: it could press its own approvals or call its API; use screenshot or page_text")
+            if not await b.allowed(url):
+                raise PermissionError(f'the page is now at {url}, where browse would not go')
+            return await f(tid)
+        return self._on_loop(go())
+    def browse(self, url):
+        from ..browser.browser import DEFAULT_SIZE
+        b = self.ws.browser
+        url = b.check(url)
+        async def go():
+            tid = self._pages[-1] if self._pages else None
+            if tid:
+                try: await b.goto(tid, url)
+                except Exception: self._pages.remove(tid); tid = None   # the person closed it
+            if tid is None:
+                tid = (await b.open(url)).id
+                self._pages.append(tid)
+                await b.resize(tid, *DEFAULT_SIZE)
+            await b.settle(tid)
+            st = await b.state(tid)
+            if not await b.allowed(st['url']):
+                await (await b.page(tid)).page.navigate(url='about:blank')
+                raise PermissionError(f"{url} went on to {st['url']}, where browse would not go")
+            return f"{tid}  {st['title'] or '(untitled)'}  {st['url']}"
+        return self._on_loop(go())
+    def screenshot(self, page=''):
+        "Save the page as a PNG inside an open folder, where `delegate_search(images=)` can send it, and return its path."
+        png = self._on_page(page, self.ws.browser.screenshot)
+        d = Path(self.ws.cwd_for()).resolve()
+        if not any(d.is_relative_to(Path(r).resolve()) for r in self.roots): d = Path(self.project)
+        (d := d/'.leela-attachments').mkdir(parents=True, exist_ok=True)
+        if not (d/'.gitignore').exists(): (d/'.gitignore').write_text('*\n')
+        (p := d/f'shot-{os.urandom(6).hex()}.png').write_bytes(png)
+        return str(p)
+    def page_text(self, page=''): return self._on_page(page, self.ws.browser.markdown)
+    def page_reload(self, page=''):
+        b = self.ws.browser
+        async def go(tid):
+            await b.reload(tid); await b.settle(tid)
+            return (await b.state(tid))['title'] or '(untitled)'
+        return self._on_page(page, go)
+    def page_click(self, page, x, y):
+        b = self.ws.browser
+        async def click(tid):
+            for kind in ('mousePressed', 'mouseReleased'): await b.mouse(tid, kind, x, y)
+            return f'clicked {x},{y}'
+        return self._on_page(page, click, 'clicking')
+    def page_type(self, page, text):
+        b = self.ws.browser
+        async def type_(tid): await b.insert(tid, text); return f'typed {len(text)} characters'
+        return self._on_page(page, type_, 'typing')
+    def page_eval(self, page, js):
+        b = self.ws.browser
+        async def ev(tid):
+            v = await (await b.page(tid)).eval(js)
+            return v if isinstance(v, str) else json.dumps(v, default=str)
+        return self._on_page(page, ev, 'running script')
     def _loop(self):
         "The loop that owns the kernels, or None when this call is already on it or it is gone."
         loop = getattr(self.ws, '_loop', None)

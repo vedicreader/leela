@@ -110,7 +110,7 @@ function checkpointResult(detail, ok, secs) {
   result.append(summary, pre); return result;
 }
 function showApproval(a, destination = null) {
-  if (!a?.id || approvalCards.has(a.id)) return;
+  if (lee.observer || !a?.id || approvalCards.has(a.id)) return;
   leePane('right', true); leeRight('agent');
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const log = $('#agentlog'); if (!log) return;

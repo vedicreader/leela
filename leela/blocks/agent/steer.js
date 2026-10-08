@@ -142,6 +142,7 @@ async function pollApproval() {
    process the window is drawing in, for something the stream had already said. */
 const APPROVAL_GAP = {hidden: 5000, busy: 2000, idle: 5000};
 async function approvalLoop() {
+  if (lee.observer) return;
   if (!document.hidden) await pollApproval();
   // attention is about the conversations a person is *not* looking at, so it is polled even hidden
   try { await refreshAgentThreads(); } catch (_) {}

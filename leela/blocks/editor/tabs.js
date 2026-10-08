@@ -70,7 +70,7 @@ async function mountTab(expectedPath = '') {
   // and switching inside the delay left that tab dirty with nothing left to save it. The server
   // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveEnabled()) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
+  if (autoSaveEnabled() && !lee.observer) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;

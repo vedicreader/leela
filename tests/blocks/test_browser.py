@@ -775,3 +775,210 @@ def test_the_chrome_leela_starts_really_does_die_when_leela_quits(tmp_path, monk
         if not b.running(): return
         time.sleep(.1)
     pytest.fail(f'Chrome is still answering on the CDP port {port} ten seconds after quit')
+
+# -- the agent's own tab -----------------------------------------------------------------------
+
+OWN = 'http://127.0.0.1:5999'
+
+@pytest.fixture
+def own(monkeypatch):
+    "This process serves Leela at `OWN`, as `serving.json` would say."
+    import os, leela.core.projects as P
+    monkeypatch.setattr(P, 'serving', lambda: {'host': '127.0.0.1', 'port': 5999, 'pid': os.getpid()})
+
+def test_only_leelas_own_origin_is_allowed_among_local_addresses(own, monkeypatch):
+    "Scheme, host and port all match, or fossick's loopback refusal stands, and names the one address that would pass."
+    b = Browser()
+    assert b.check(f'{OWN}/') == f'{OWN}/?observer=1'
+    # any other path collapses to the root: FastHTML routes answer GET, so a path could act on load
+    for path in ('/w/x?a=1&observer=0', '/fs/add_root?path=/', '/tabs/save-all'): assert b.check(OWN + path) == f'{OWN}/?observer=1', path
+    for url in ('http://127.0.0.1:5998/', 'https://127.0.0.1:5999/', 'http://localhost:5999/',
+                'http://10.0.0.1:5999/', '127.0.0.1:5999', 'http://169.254.169.254/'):
+        with pytest.raises(Exception) as e: b.check(url)
+        assert f'Leela itself, {OWN}/' in str(e.value), url
+    import os, leela.core.projects as P
+    monkeypatch.setattr(P, 'serving', lambda: {'host': '127.0.0.1', 'port': 5999, 'pid': os.getpid() + 1})
+    with pytest.raises(Exception): b.check(f'{OWN}/')          # a record another process wrote allows nothing
+
+@pytest.mark.parametrize('url', ['file:///etc/passwd', 'chrome://settings', 'javascript:alert(1)', 'data:text/html,x'])
+def test_no_scheme_but_the_web_opens_even_beside_leelas_own_origin(own, url):
+    with pytest.raises(Exception): Browser().check(url)
+
+class Chrome:
+    "A CDP connection whose targets keep a URL, and the pages over them."
+    is_open, wsconn = True, ''
+    def __init__(self): self.urls, self.loops, self.redirects = {'PERSON': 'https://example.com/'}, [], {}
+    @property
+    async def pages(self): return [{'targetId': t, 'type': 'page', 'url': u} for t, u in self.urls.items()]
+    @property
+    def target(self):
+        cdp = self
+        class T:
+            @staticmethod
+            async def createTarget(url, background=True):
+                cdp.urls[tid := f'AGENT{len(cdp.urls)}'] = cdp.redirects.get(url, url)
+                return tid
+        return T
+
+class Tab:
+    "A `fastcdp.Page` over one `Chrome` target, recording the loop each call ran on."
+    is_open = True
+    def __init__(self, cdp, tid): self.cdp, self.tid, self.calls = cdp, tid, []
+    async def eval(self, expr):
+        self.cdp.loops.append(asyncio.get_running_loop())
+        return 'complete' if 'readyState' in expr else ('Leela' if 'title' in expr else {'n': 1})
+    @staticmethod
+    async def new(tid, cdp): return Tab(cdp, tid)
+    def __getattr__(self, domain):
+        tab = self
+        class D:
+            def __getattr__(_, name):
+                async def f(**kw):
+                    tab.cdp.loops.append(asyncio.get_running_loop()); tab.calls.append((name, kw))
+                    if name == 'captureScreenshot': return base64.b64encode(b'\x89PNG\r\n\x1a\n' + bytes(40)).decode()
+                    if name == 'getNavigationHistory': return {'currentIndex': 0, 'entries': [{'id': 1, 'url': tab.cdp.urls[tab.tid]}]}
+                    if name == 'navigate': tab.cdp.urls[tab.tid] = tab.cdp.redirects.get(kw['url'], kw['url'])
+                    if name == 'getLayoutMetrics': return {}
+                return f
+        return D()
+
+@pytest.fixture
+def agent_tab(ws, monkeypatch, own):
+    "A `WorkspaceHost` whose browser runs on a live workspace loop, with the person's page cast on it."
+    import fastcdp, fossick.cdp
+    from leela.blocks.agent.ai import WorkspaceHost
+    chrome = Chrome()
+    async def connect(**kw): return chrome
+    monkeypatch.setattr(fossick.cdp, 'cdp_connect', connect)
+    monkeypatch.setattr(fastcdp, 'Page', Tab, raising=False)
+    monkeypatch.setattr(ws.browser, 'running', lambda: True)
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True); t.start()
+    ws._loop, cast = loop, object()
+    asyncio.run_coroutine_threadsafe(ws.browser.cdp(), loop).result(5)
+    ws.browser._casts['PERSON'] = cast
+    yield SimpleNamespace(host=WorkspaceHost(ws), chrome=chrome, loop=loop, cast=cast, ws=ws)
+    loop.call_soon_threadsafe(loop.stop); t.join(5)
+
+import base64
+
+def test_every_browser_call_runs_on_the_workspace_loop_and_the_persons_cast_survives(agent_tab):
+    "`Browser.cdp` drops every page and cast when asked from another loop, which is the person's inline page going dark."
+    h, b = agent_tab.host, agent_tab.ws.browser
+    said = h.browse(f'{OWN}/')
+    assert said.startswith('AGENT1') and 'observer=1' in said, said
+    h.screenshot(); h.page_text(); h.page_reload()
+    assert set(agent_tab.chrome.loops) == {agent_tab.loop}
+    assert b._casts.get('PERSON') is agent_tab.cast and b._loop is agent_tab.loop
+
+def test_a_screenshot_lands_inside_the_project_and_git_ignores_it(agent_tab):
+    import subprocess
+    h, root = agent_tab.host, Path(agent_tab.ws.cwd_for()).resolve()
+    subprocess.run(['git', 'init', '-q', str(root)], check=True)
+    h.browse(f'{OWN}/')
+    p = Path(h.screenshot())
+    assert p.resolve().is_relative_to(root) and p.read_bytes().startswith(b'\x89PNG')
+    assert h.check(str(p), must_exist=True)                      # where `delegate_search(images=)` can read it
+    assert subprocess.run(['git', '-C', str(root), 'check-ignore', '-q', str(p)]).returncode == 0
+    assert '.leela-attachments' not in subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '-uall'], capture_output=True, text=True).stdout
+
+def test_a_screenshot_goes_to_the_project_when_the_kernel_cwd_is_outside_the_open_folders(agent_tab, tmp_path_factory, monkeypatch):
+    "`delegate_search(images=)` refuses a path outside the open folders, so the shot must not land there."
+    h, elsewhere = agent_tab.host, tmp_path_factory.mktemp('elsewhere')
+    monkeypatch.setattr(agent_tab.ws, 'cwd_for', lambda *a, **kw: elsewhere)
+    h.browse(f'{OWN}/')
+    p = Path(h.screenshot())
+    assert p.parent == Path(h.project).resolve()/'.leela-attachments' and not list(elsewhere.iterdir())
+
+def test_a_screenshot_is_no_write_the_gate_snapshots_or_rewinds():
+    from leela.agent.tools import path_write
+    from leela.blocks.agent.ai import WRITE_TOOLS
+    assert not path_write('screenshot', {'page': ''}) and 'screenshot' not in WRITE_TOOLS
+    assert {'page_click', 'page_type', 'page_eval'} <= WRITE_TOOLS
+
+def test_clicking_typing_and_script_are_refused_on_leelas_own_page(agent_tab):
+    "The agent could otherwise press its own Approve button, or `fetch()` the API that answers it."
+    h = agent_tab.host
+    h.browse(f'{OWN}/')
+    for call in (lambda: h.page_click('', 10, 10), lambda: h.page_type('', 'x'), lambda: h.page_eval('', 'fetch("/agent/approve")')):
+        with pytest.raises(PermissionError, match="Leela's own page"): call()
+    tab = agent_tab.ws.browser._pages['AGENT1']
+    assert not [c for c in tab.calls if c[0] in ('dispatchMouseEvent', 'insertText')]
+
+def test_off_leela_the_agent_clicks_types_and_evaluates(agent_tab, monkeypatch):
+    import fossick.core
+    monkeypatch.setattr(fossick.core, 'check_url', lambda u: u)   # no DNS in a unit test
+    h = agent_tab.host
+    h.browse('https://example.org/')
+    assert h.page_click('', 3, 4) == 'clicked 3,4' and h.page_type('', 'hi') == 'typed 2 characters'
+    assert h.page_eval('', '({n: 1})') == '{"n": 1}'
+    calls = [c[0] for c in agent_tab.ws.browser._pages['AGENT1'].calls]
+    assert calls.count('dispatchMouseEvent') == 2 and 'insertText' in calls
+
+def _no_loopback(u):
+    if '127.0.0.1' in u: raise ValueError(f'{u} is a private or reserved address')
+    return u
+
+def test_a_redirect_to_a_local_address_is_refused_and_the_tab_left_blank(agent_tab, monkeypatch):
+    "`check` sees only the first URL; Chrome's own debugging port is one redirect away."
+    import fossick.core
+    monkeypatch.setattr(fossick.core, 'check_url', _no_loopback)
+    agent_tab.chrome.redirects['https://example.org/r'] = 'http://127.0.0.1:9223/json'
+    with pytest.raises(PermissionError, match='where browse would not go'): agent_tab.host.browse('https://example.org/r')
+    assert agent_tab.chrome.urls['AGENT1'] == 'about:blank'
+
+def test_a_page_script_sent_somewhere_local_is_no_longer_read(agent_tab, monkeypatch):
+    import fossick.core
+    monkeypatch.setattr(fossick.core, 'check_url', _no_loopback)
+    h = agent_tab.host
+    h.browse('https://example.org/')
+    agent_tab.chrome.urls['AGENT1'] = 'http://127.0.0.1:8000/admin'   # what `location = ...` in page_eval would do
+    for call in (h.page_text, h.screenshot, h.page_reload):
+        with pytest.raises(PermissionError, match='where browse would not go'): call()
+
+def test_acting_fails_closed_when_leela_cannot_say_its_own_origin(agent_tab, monkeypatch):
+    "Another Leela overwrote `serving.json`: the page is still Leela, and loopback is still refused."
+    import os, fossick.core, leela.core.projects as P
+    h = agent_tab.host
+    h.browse(f'{OWN}/')
+    monkeypatch.setattr(P, 'serving', lambda: {'host': '127.0.0.1', 'port': 6001, 'pid': os.getpid() + 1})
+    monkeypatch.setattr(fossick.core, 'check_url', _no_loopback)
+    with pytest.raises(PermissionError): h.page_click('', 1, 1)
+    with pytest.raises(PermissionError): h.page_eval('', '1')
+
+def test_the_agent_cannot_address_a_page_it_did_not_open(agent_tab):
+    h = agent_tab.host
+    with pytest.raises(ValueError, match='browse'): h.screenshot()
+    h.browse(f'{OWN}/')
+    with pytest.raises(ValueError, match='not a page the agent opened'): h.screenshot('PERSON')
+
+def test_the_host_declares_the_browser_group_and_its_tools():
+    from shalya.tools import group_of
+    from leela.agent.tools import tools_for
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.workspace import Workspace
+    h = WorkspaceHost(Workspace(roots=[]))
+    assert 'browser' in h.provides
+    assert {n for n in (t.__name__ for t in tools_for(h)) if group_of(n) == 'browser'} == \
+        {'browse', 'screenshot', 'page_text', 'page_reload', 'page_click', 'page_type', 'page_eval'}
+    with pytest.raises(RuntimeError, match='workspace loop'): h._on_loop(asyncio.sleep(0))
+
+def test_an_observer_boot_resumes_nothing_saves_nothing_and_draws_no_approvals():
+    "The agent's screenshot of Leela must not switch the person's conversation, save their tabs or show its own Approve."
+    import re
+    pkg = Path(__file__).resolve().parents[2]/'leela'
+    src = lambda p: (pkg/p).read_text()
+    assert re.search(r"observer: new URLSearchParams\(location\.search\)\.get\('observer'\) === '1'", src('static/js/core.js'))
+    def body(text, name):
+        m = re.search(rf'^(?:async\s+)?function {name}\([^)]*\)\s*\{{\n(.*?)\n\}}', text, re.M | re.S)
+        assert m, name
+        return m.group(1)
+    for path, name in (('blocks/agent/live.js', 'rehydrateAgentLive'), ('blocks/agent/live.js', 'resumeLatestAgent'),
+                       ('blocks/agent/steer.js', 'approvalLoop'), ('blocks/agent/approvals.js', 'showApproval')):
+        assert 'lee.observer' in body(src(path), name).splitlines()[0], name
+    for path, name in (('blocks/editor/split.js', 'checkProjectRuntime'), ('static/js/core.js', 'restoreDrafts'),
+                       ('static/js/core.js', 'prefSet')):
+        assert 'lee.observer' in body(src(path), name).splitlines()[0], name
+    save = [l for l in body(src('blocks/editor/tabs.js'), 'mountTab').splitlines() if '/tabs/save-all' in l]
+    assert save and all('!lee.observer' in l for l in save)
+    for p in ('lee-core.js', 'lee-agent.js', 'lee-ide.js'): assert 'lee.observer' in (pkg/'static'/p).read_text(), p

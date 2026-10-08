@@ -1,14 +1,15 @@
 "Web pages as tabs, drawn by the CDP Chrome fossick keeps. See `docs/desktop.md`."
 
 from __future__ import annotations
-import asyncio, json, os, shutil
+import asyncio, base64, json, os, shutil
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from fastcore.all import L, Path, atomic_save, ifnone, store_attr
 
 from ... import Dictable, errstr, leela_cfg
 
 __all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'DEFAULT_SIZE', 'MAX_SIZE', 'MAX_SCALE',
-           'SCALE_FLAG']
+           'SCALE_FLAG', 'own_origin', 'origin_of']
 
 #: Viewport sizes are CSS pixels, because that is the unit a click arrives in.
 DEFAULT_SIZE = (1280, 800)
@@ -22,6 +23,19 @@ SCALE_FLAG = f'--force-device-scale-factor={MAX_SCALE}'
 #: Ports whose Chrome this process started, and the connected `Browser`s on each. One Chrome serves
 #: every window on a port, so closing it belongs to the last window out rather than the first.
 _OURS, _LIVE = set(), {}
+
+def own_origin():
+    "The origin this process serves Leela on, from `serving.json`; '' when another process wrote it."
+    from ...core.projects import serving
+    d = serving() or {}
+    if d.get('pid') != os.getpid() or not d.get('host'): return ''
+    return f"http://{str(d['host']).lower()}:{int(d['port'])}"
+
+def origin_of(url):
+    "`scheme://host:port` with the port spelled out, so two spellings of one origin compare equal."
+    try: u = urlparse(url); port = u.port or {'http': 80, 'https': 443}.get(u.scheme)
+    except ValueError: return ''
+    return f'{u.scheme}://{(u.hostname or "").lower()}:{port}' if u.hostname else ''
 
 class BrowserUnavailable(RuntimeError):
     "No CDP Chrome to render into, and Leela could not start one."
@@ -214,13 +228,33 @@ class Browser:
         self._remember(drop=[tid])
         return True
 
+    def is_own(self, url):
+        "Whether `url` is on exactly the origin this Leela serves: scheme, host and port."
+        own = own_origin()
+        return bool(own) and origin_of(url) == origin_of(own)
+
+    def public(self, url):
+        "Whether fossick would fetch `url`: http(s) to a public address."
+        from fossick.core import check_url
+        try: check_url(url); return True
+        except Exception: return False
+
+    async def allowed(self, url):
+        "Whether a page now at `url` may stay there: Leela's own origin, or a public address."
+        return self.is_own(url) or await asyncio.to_thread(self.public, url)
+
     def check(self, url):
-        "Normalise and refuse a URL the browser must not be pointed at."
+        "Normalise and refuse a URL the browser must not be pointed at. Leela's own origin opens at its root, as an observer."
         url = (url or '').strip()
         if not url: raise ValueError('no URL')
         if '://' not in url: url = f'https://{url}'
+        # Only the root: FastHTML routes answer GET, so another path could change state on load.
+        if self.is_own(url): return f'{own_origin()}/?observer=1'
         from fossick.core import check_url
-        return check_url(url)
+        try: return check_url(url)
+        except Exception as e:
+            if own := own_origin(): e.args = (f'{e}; the one local address allowed is Leela itself, {own}/',)
+            raise
 
     async def goto(self, tid, url):
         "Navigate an open page. Returns once Chrome has accepted the navigation, not the load."
@@ -241,6 +275,23 @@ class Browser:
     async def reload(self, tid):
         p = await self.page(tid)
         await p.page.reload()
+
+    async def settle(self, tid, timeout=10):
+        "Wait until the page has loaded, or `timeout` seconds. A navigation answers before its load."
+        p = await self.page(tid)
+        await asyncio.sleep(.3)
+        for _ in range(int(timeout * 10)):
+            try:
+                if await p.eval('document.readyState') == 'complete': return True
+            except Exception: pass
+            await asyncio.sleep(.1)
+        return False
+
+    async def screenshot(self, tid, timeout=20):
+        "The page's viewport as PNG bytes, through `Page.captureScreenshot`."
+        p = await self.page(tid)
+        r = await asyncio.wait_for(p.page.captureScreenshot(format='png'), timeout)
+        return base64.b64decode(r.get('data', '') if isinstance(r, dict) else r)
 
     async def state(self, tid):
         "Where a page is and where it can go: the address bar and the two arrows."

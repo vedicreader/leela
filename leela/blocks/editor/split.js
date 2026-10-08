@@ -99,6 +99,7 @@ async function refreshKernelPill() {
 }
 
 async function checkProjectRuntime() {
+  if (lee.observer) return;
   let d;
   try { d = await api('/runtime/info'); } catch (_) { return; }
   if ((!d.needs_create && !d.needs_support && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;

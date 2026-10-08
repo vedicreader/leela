@@ -12,6 +12,8 @@
 "use strict";
 
 const lee = {
+  // `?observer=1` is the agent looking at this UI from its own tab: it reads, and changes nothing.
+  observer: new URLSearchParams(location.search).get('observer') === '1',
   keys: [], help: {}, scope: 'editor', execScope: 'live',
   editors: new Map(),        // cell id (or 'exec'/'file') -> CodeMirror view
   cells: [], sel: 0, cellSelection: new Set(), cellAnchor: 0, kind: null, path: '',
@@ -114,6 +116,7 @@ function prefGet(section, key, fallback = undefined) {
   return fallback;
 }
 async function prefSet(section, key, value, scope = 'user') {
+  if (lee.observer) return;
   lee.prefs = {...lee.prefs, [section]: {...(lee.prefs?.[section] || {}), [key]: value}};
   localStorage.setItem(`lee-pref:${section}.${key}`, JSON.stringify(value));
   // Never the caller's problem: a preference that could not be written is not a failed action.
@@ -299,6 +302,7 @@ window.addEventListener('beforeunload', e => {
   if ($('.lee-tab.dirty')) { e.preventDefault(); e.returnValue = ''; }
 });
 async function restoreDrafts(st) {
+  if (lee.observer) return false;   // the drafts are the person's, in storage this origin shares
   const documentKey = st.path || st.title || ''; if (!documentKey) return false;
   let rows = [];
   try { rows = await draftsFor(documentKey); } catch (_) { return false; }
@@ -1588,7 +1592,7 @@ async function mountTab(expectedPath = '') {
   // and switching inside the delay left that tab dirty with nothing left to save it. The server
   // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveEnabled()) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
+  if (autoSaveEnabled() && !lee.observer) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;

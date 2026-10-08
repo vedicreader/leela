@@ -1340,6 +1340,7 @@ async function paintAgentThread(id) {
    the app after working in a browser showed an empty pane while the work sat on disk. An empty pane
    picks the newest conversation back up, which is what "where was I" means. */
 async function rehydrateAgentLive() {
+  if (lee.observer) return;
   const log = $('#agentlog');
   // a conversation a person chose is empty because it is new, not because the pane forgot it
   if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating || lee.agentPicks) return;
@@ -1371,6 +1372,7 @@ function pickAgentThread() {
 }
 async function agentPicksSettled() { while (lee.agentPicked) await lee.agentPicked; }
 async function resumeLatestAgent() {
+  if (lee.observer) return;
   // Nothing saved is the first run, not a failure, so this never speaks up about it.
   const picks = lee.agentPicks || 0;
   try {
@@ -2288,7 +2290,7 @@ function checkpointResult(detail, ok, secs) {
   result.append(summary, pre); return result;
 }
 function showApproval(a, destination = null) {
-  if (!a?.id || approvalCards.has(a.id)) return;
+  if (lee.observer || !a?.id || approvalCards.has(a.id)) return;
   leePane('right', true); leeRight('agent');
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const log = $('#agentlog'); if (!log) return;
@@ -2820,6 +2822,7 @@ async function pollApproval() {
    process the window is drawing in, for something the stream had already said. */
 const APPROVAL_GAP = {hidden: 5000, busy: 2000, idle: 5000};
 async function approvalLoop() {
+  if (lee.observer) return;
   if (!document.hidden) await pollApproval();
   // attention is about the conversations a person is *not* looking at, so it is polled even hidden
   try { await refreshAgentThreads(); } catch (_) {}

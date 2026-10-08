@@ -74,6 +74,7 @@ def test_every_tool_the_agent_can_be_given_has_a_family_the_picker_shows():
     assert tool_group('memory_search') == 'Memory' and tool_group('read_skill') == 'Skills'
     assert tool_group('api_call') == 'API' and tool_group('generate_image') == 'Media'
     assert tool_group('run_cell') == 'Runtime' and tool_group('news_feeds') == 'Web'
+    assert tool_group('screenshot') == 'Browser' and tool_group('page_eval') == 'Browser'
     assert tool_group('something_else') == 'Other'
     ungrouped = sorted(n for n in tool_groups() if tool_group(n) == 'Other')
     assert ungrouped == [], f'shalya groups these and Leela does not label them: {ungrouped}'

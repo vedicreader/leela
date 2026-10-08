@@ -150,7 +150,8 @@ def test_a_host_offers_only_the_tools_it_supports():
     # to what every later call may touch, so it is gated like any other write.
     assert {'edit_file', 'replace_text', 'create_file', 'edit_cell', 'add_cell', 'run_python',
             'run_shell', 'run_shell_bg', 'memory_forget', 'create_skill', 'add_root',
-            'cancel_watch', 'cart_add', 'cart_remove'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
+            'cancel_watch', 'cart_add', 'cart_remove', 'restart_kernel', 'page_click', 'page_type',
+            'page_eval'} | GIT_WRITE_TOOLS == set(WRITE_TOOLS)
     a, _ = fake_agent()
     names = {t.__name__ for t in read_only(a.tools)}
     assert not (names & WRITE_TOOLS)
@@ -160,6 +161,7 @@ def test_a_host_offers_only_the_tools_it_supports():
     # probed for it. Probed with no kernel up, the whole group vanished for that assistant's life.
     assert 'session' in h.provides
     assert 'run_python' in {t.__name__ for t in tools_for(h)}
+    assert 'browser' in h.provides and 'browse' not in names                     # declared by `WorkspaceHost`, not by `MemHost`
     with pytest.raises(NotImplementedError): h.run_python('1')   # no loop here to start one on
     assert 'run_shell' not in named(tools_for(NullHost(['/x'])))
     h = MemHost()
@@ -311,7 +313,7 @@ def test_the_briefing_says_what_is_true_of_this_project():
     # folder watch. Naming them here keeps the check on `RULES` rather than on this host's shape.
     real = {t.__name__ for t in tools_for(MemHost())} | {'notebook_cells', 'delegate_search', 'memory_search',
                                                          'web_search', 'run_python', 'read_skill', 'watch',
-                                                         'git_status', 'edit_file'}   # `edit_file` is the exhash opt-in's
+                                                         'git_status', 'edit_file', 'screenshot'}   # `edit_file` is the exhash opt-in's; `screenshot` a browser host's
     assert {tool for tool, _ in RULES if tool} <= real
     h = MemHost({'/proj/AGENTS.md': '# House rules\n\nUse uv, never pip.\n'})
     ctx = project_context(h)

@@ -107,7 +107,7 @@ def tool_preview(agent, tool, args):
 #: shalya's capability groups under the names the checkpoint form shows. Two groups share a label
 #: where the distinction is shalya's and not a person's: reading a file is repository work, and a
 #: shell command is the runtime.
-GROUP_LABELS = {'code': 'Repository', 'file': 'Repository', 'notebook': 'Notebook', 'web': 'Web',
+GROUP_LABELS = {'code': 'Repository', 'file': 'Repository', 'notebook': 'Notebook', 'web': 'Web', 'browser': 'Browser',
                 'memory': 'Memory', 'ask': 'Memory', 'watch': 'Watches', 'api': 'API',
                 'session': 'Runtime', 'shell': 'Runtime', 'git': 'Git', 'skill': 'Skills',
                 'image': 'Media'}

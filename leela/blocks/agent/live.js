@@ -454,6 +454,7 @@ async function paintAgentThread(id) {
    the app after working in a browser showed an empty pane while the work sat on disk. An empty pane
    picks the newest conversation back up, which is what "where was I" means. */
 async function rehydrateAgentLive() {
+  if (lee.observer) return;
   const log = $('#agentlog');
   // a conversation a person chose is empty because it is new, not because the pane forgot it
   if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating || lee.agentPicks) return;
@@ -485,6 +486,7 @@ function pickAgentThread() {
 }
 async function agentPicksSettled() { while (lee.agentPicked) await lee.agentPicked; }
 async function resumeLatestAgent() {
+  if (lee.observer) return;
   // Nothing saved is the first run, not a failure, so this never speaks up about it.
   const picks = lee.agentPicks || 0;
   try {

@@ -186,3 +186,6 @@ leela/_shot.ipynb
 .cursor/
 .ramabana/
 data/cache/
+
+# screenshots and pasted images the agent attaches
+.leela-attachments/
