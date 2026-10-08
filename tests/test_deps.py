@@ -13,7 +13,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.39') and not Requirement(s).specifier.contains('0.1.38') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.9') and not deps['ramabana'].specifier.contains('0.2.8'), 'keep_media, pictures in tool results'
+    assert deps['ramabana'].specifier.contains('0.2.10') and not deps['ramabana'].specifier.contains('0.2.9'), 'an index that does not rescan the log'
     assert deps['shalya'].specifier.contains('0.1.3') and not deps['shalya'].specifier.contains('0.1.2'), 'Media results'
     assert deps['vishalakshi'].specifier.contains('0.1.17') and not deps['vishalakshi'].specifier.contains('0.1.16')
     assert deps['dhrona'].specifier.contains('0.1.4')
