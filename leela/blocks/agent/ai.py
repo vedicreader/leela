@@ -550,18 +550,21 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
             tid = self._pages[-1] if self._pages else None
             if tid:
                 try: await b.goto(tid, url)
-                except Exception: self._pages.remove(tid); tid = None   # the person closed it
+                except Exception:
+                    if tid in {t.id for t in await b.pages()}: raise
+                    self._pages.remove(tid); tid = None   # the person closed it
             if tid is None:
                 tid = (await b.open(url)).id
                 self._pages.append(tid)
                 await b.resize(tid, *DEFAULT_SIZE)
             await b.settle(tid)
             st = await b.state(tid)
+            if st['url'] in ('', 'about:blank'): raise ConnectionError(f'{url} did not load: Chrome left the tab blank')
             if not await b.allowed(st['url']):
                 await (await b.page(tid)).page.navigate(url='about:blank')
                 raise PermissionError(f"{url} went on to {st['url']}, where browse would not go")
             return f"{tid}  {st['title'] or '(untitled)'}  {st['url']}"
-        return self._on_loop(go())
+        return self._on_loop(go(), 90)
     def screenshot(self, page=''):
         "Save the page as a JPEG inside an open folder and return its path; a retaken smaller shot says so in its name."
         shot = self._on_page(page, self.ws.browser.screenshot)

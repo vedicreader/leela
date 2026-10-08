@@ -23,6 +23,8 @@ SCALE_FLAG = f'--force-device-scale-factor={MAX_SCALE}'
 
 #: A screenshot stays under what one vision-API picture may be: bytes, and pixels a side.
 MAX_SHOT_BYTES, MAX_SHOT_SIDE, SHOT_QUALITY = 4_500_000, 7500, 80
+#: Seconds Chrome may wait for a server's first answer before a navigation is given up.
+NAV_TIMEOUT = 30
 
 class Shot(bytes):
     "A screenshot's JPEG bytes and the scale it was retaken at; 1 when it was not."
@@ -215,15 +217,29 @@ class Browser:
         return L(await cdp.pages).map(self._as_page)
 
     async def open(self, url, background=True):
-        "Open `url` as a new target and return it. `background` keeps focus in Leela."
+        "Open `url` as a new target and return it once Chrome has committed it. `background` keeps focus in Leela."
         url = self.check(url)
         cdp = await self.cdp()
-        tid = await cdp.target.createTarget(url=url, background=background)
-        await asyncio.sleep(.05)   # createTarget answers before the load
+        # Blank first: `createTarget(url)` answers before the load, and its empty first document already reads as complete.
+        tid = await cdp.target.createTarget(url='about:blank', background=background)
         self._mine.add(tid)
         self._remember()
-        p = await self.page(tid)
+        try: await self._navigate(p := await self.page(tid), url)
+        except Exception:
+            await self.shut(tid)
+            raise
         return WebPage(id=tid, url=url, title=await self.title(p) or url, attached=True)
+
+    async def _navigate(self, p, url):
+        "Point `p` at `url`, returning once Chrome has committed it, and raise what Chrome said when it would not."
+        try: r = await asyncio.wait_for(p.page.navigate(url=url), NAV_TIMEOUT)
+        except asyncio.TimeoutError:
+            try: await p.page.stopLoading()
+            except Exception: pass
+            raise TimeoutError(f'{url} sent no answer in {NAV_TIMEOUT}s') from None
+        err = r.get('errorText') if isinstance(r, dict) else ''
+        # A navigation another one replaced, or a download, is not a failure of this one.
+        if err and err != 'net::ERR_ABORTED': raise ConnectionError(f'Chrome could not load {url}: {err}')
 
     async def shut(self, tid, mine_only=False):
         "Close one page in Chrome and forget its session. `mine_only` spares one Leela adopted."
@@ -268,7 +284,7 @@ class Browser:
         "Navigate an open page. Returns once Chrome has accepted the navigation, not the load."
         p = await self.page(tid)
         url = self.check(url)
-        await p.page.navigate(url=url)
+        await self._navigate(p, url)
         return url
 
     async def history(self, tid, delta):
@@ -315,8 +331,10 @@ class Browser:
     async def state(self, tid):
         "Where a page is and where it can go: the address bar and the two arrows."
         p = await self.page(tid)
-        try: h = await p.page.getNavigationHistory()
-        except Exception: h = {}
+        h = {}
+        for _ in range(5):   # Chrome refuses the call for a moment at each commit
+            try: h = await p.page.getNavigationHistory(); break
+            except Exception: await asyncio.sleep(.1)
         i, entries = h.get('currentIndex', 0), h.get('entries', [])
         cur = entries[i] if 0 <= i < len(entries) else {}
         return {'id': tid, 'url': cur.get('url', ''), 'title': await self.title(p),

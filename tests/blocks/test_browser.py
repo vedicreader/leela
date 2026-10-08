@@ -263,6 +263,8 @@ class StubPage:
         class D:
             @staticmethod
             async def getLayoutMetrics(): return m
+            @staticmethod
+            async def navigate(url): return {'loaderId': 'L'}
         return D
 
 def wired(cdp, port=4321):
@@ -678,6 +680,36 @@ def _free_port():
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
+@pytest.mark.slow
+def test_a_real_chrome_opens_a_slow_leela_and_names_what_refused_a_dead_one(tmp_path, monkeypatch):
+    "The live root answers after 1.5s; the open must hand back the committed page, and a closed port Chrome's own error."
+    import os, leela.core.projects as P
+    class Slow(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            time.sleep(1.5); body = b'<!doctype html><title>Leela</title><h1>root</h1>'
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.send_header('Content-Length', str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+        def log_message(self, *a): pass
+    srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Slow)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    own = srv.server_address[1]
+    monkeypatch.setattr(P, 'serving', lambda: {'host': '127.0.0.1', 'port': own, 'pid': os.getpid()})
+    port = _free_port()
+    try: asyncio.run(_start_chrome(port, tmp_path/'chrome'))
+    except Exception as e: pytest.skip(f'no Chrome to drive: {e}')
+    async def go():
+        b = Browser(port=port, headless=True, profile=tmp_path/'chrome')
+        try:
+            page = await b.open(f'http://127.0.0.1:{own}/')
+            await b.settle(page.id)
+            st = await b.state(page.id)
+            assert (st['url'], st['title']) == (f'http://127.0.0.1:{own}/?observer=1', 'Leela') and await b.allowed(st['url'])
+            monkeypatch.setenv('FOSSICK_ALLOW_PRIVATE', '1')
+            with pytest.raises(ConnectionError, match='ERR_CONNECTION_REFUSED'): await b.goto(page.id, f'http://127.0.0.1:{_free_port()}/')
+        finally: await _quit(b)
+    try: asyncio.run(go())
+    finally: srv.shutdown()
+
 async def _start_chrome(port, profile, flags=(SCALE_FLAG,)):
     from fossick.cdp import _debug_ready, cdp_setup
     if not _debug_ready(port):
@@ -805,9 +837,9 @@ def test_no_scheme_but_the_web_opens_even_beside_leelas_own_origin(own, url):
     with pytest.raises(Exception): Browser().check(url)
 
 class Chrome:
-    "A CDP connection whose targets keep a URL, and the pages over them."
+    "A CDP connection whose targets keep a URL, and the pages over them. `errors` is Chrome's `errorText` by URL."
     is_open, wsconn = True, ''
-    def __init__(self): self.urls, self.loops, self.redirects, self.shot = {'PERSON': 'https://example.com/'}, [], {}, lambda kw: _jpeg(64, 40)
+    def __init__(self): self.urls, self.loops, self.redirects, self.errors, self.shot = {'PERSON': 'https://example.com/'}, [], {}, {}, lambda kw: _jpeg(64, 40)
     @property
     async def pages(self): return [{'targetId': t, 'type': 'page', 'url': u} for t, u in self.urls.items()]
     @property
@@ -816,8 +848,11 @@ class Chrome:
         class T:
             @staticmethod
             async def createTarget(url, background=True):
-                cdp.urls[tid := f'AGENT{len(cdp.urls)}'] = cdp.redirects.get(url, url)
+                # Chrome answers before the load: until it commits, the target is its empty first document.
+                cdp.urls[tid := f'AGENT{len(cdp.urls)}'] = 'about:blank' if url == 'about:blank' else ''
                 return tid
+            @staticmethod
+            async def closeTarget(targetId): cdp.urls.pop(targetId, None)
         return T
 
 class Tab:
@@ -837,7 +872,10 @@ class Tab:
                     tab.cdp.loops.append(asyncio.get_running_loop()); tab.calls.append((name, kw))
                     if name == 'captureScreenshot': return base64.b64encode(tab.cdp.shot(kw)).decode()
                     if name == 'getNavigationHistory': return {'currentIndex': 0, 'entries': [{'id': 1, 'url': tab.cdp.urls[tab.tid]}]}
-                    if name == 'navigate': tab.cdp.urls[tab.tid] = tab.cdp.redirects.get(kw['url'], kw['url'])
+                    if name == 'navigate':
+                        if err := tab.cdp.errors.get(kw['url']): return {'errorText': err}
+                        tab.cdp.urls[tab.tid] = tab.cdp.redirects.get(kw['url'], kw['url'])
+                        return {'loaderId': 'L'}
                     if name == 'getLayoutMetrics': return {'cssVisualViewport': {'pageX': 0, 'pageY': 0, 'clientWidth': 1280, 'clientHeight': 800}}
                 return f
         return D()
@@ -967,6 +1005,31 @@ def test_acting_fails_closed_when_leela_cannot_say_its_own_origin(agent_tab, mon
     monkeypatch.setattr(fossick.core, 'check_url', _no_loopback)
     with pytest.raises(PermissionError): h.page_click('', 1, 1)
     with pytest.raises(PermissionError): h.page_eval('', '1')
+
+def test_browse_waits_for_a_slow_leela_to_commit_rather_than_reading_the_blank_first_document(agent_tab):
+    "The live root takes over a second; `createTarget(url)` answers at once, and its empty first document reads as complete."
+    h = agent_tab.host
+    said = h.browse(f'{OWN}/')
+    assert said.endswith(f'{OWN}/?observer=1'), said
+    assert agent_tab.chrome.urls['AGENT1'] == f'{OWN}/?observer=1'
+    assert h.screenshot().endswith('.jpg')
+
+@pytest.mark.parametrize('again', [False, True])
+def test_a_page_chrome_will_not_load_says_what_chrome_said_and_leaves_no_tab(agent_tab, monkeypatch, again):
+    import fossick.core
+    monkeypatch.setattr(fossick.core, 'check_url', lambda u: u)
+    h, chrome = agent_tab.host, agent_tab.chrome
+    if again: h.browse('https://example.org/')
+    chrome.errors['https://down.example/'] = 'net::ERR_CONNECTION_REFUSED'
+    with pytest.raises(ConnectionError, match='Chrome could not load https://down.example/: net::ERR_CONNECTION_REFUSED'): h.browse('https://down.example/')
+    assert set(chrome.urls) == ({'PERSON', 'AGENT1'} if again else {'PERSON'})
+    assert h._pages == (['AGENT1'] if again else [])
+
+def test_a_navigation_another_replaced_is_no_error(agent_tab, monkeypatch):
+    import fossick.core
+    monkeypatch.setattr(fossick.core, 'check_url', lambda u: u)
+    agent_tab.chrome.errors['https://example.org/'] = 'net::ERR_ABORTED'
+    with pytest.raises(ConnectionError, match='left the tab blank'): agent_tab.host.browse('https://example.org/')
 
 def test_the_agent_cannot_address_a_page_it_did_not_open(agent_tab):
     h = agent_tab.host
