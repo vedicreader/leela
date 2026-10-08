@@ -308,3 +308,81 @@ def test_a_save_leela_made_is_not_a_change_to_follow(tmp_path, monkeypatch):
     p.write_text('x = 2\n')                      # somebody else, this time
     _freshen(ctx, [str(p)])
     assert str(p) not in docs.docs, 'a change it did not make is still followed'
+
+def _git_repo(root):
+    import subprocess
+    run = lambda *a: subprocess.run(['git', '-C', str(root), *a], check=True, capture_output=True)
+    run('init', '-q'); run('config', 'user.email', 't@t'); run('config', 'user.name', 't')
+    (root/'.gitignore').write_text('data/\n'); (root/'a.py').write_text('a = 1\n')
+    run('add', '.'); run('commit', '-qm', 'one')
+    return run
+
+def test_churn_the_tree_cannot_show_is_not_pushed_and_git_never_sees_ignored_writes(tmp_path, monkeypatch):
+    """An indexer under `.kosha` and logs under an ignored `data/` were pushed once a second, and each one redrew the tree and re-ran git in every open repository."""
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    from leela.core.block import Ctx
+    from leela.blocks.fs.app import _sort_changes
+    root = tmp_path/'repo'; root.mkdir(); _git_repo(root)
+    (root/'data').mkdir(); (root/'.kosha').mkdir(); (root/'.env').write_text('')
+    ws = Workspace(roots=[root]); ws.open(root/'.env')
+    ctx = Ctx(ws, name='fs', caps=('fs',))
+    kosha, log, env, src = (str(root/'.kosha'/'idx'), str(root/'data'/'run.log'), str(root/'.env'), str(root/'a.py'))
+    shown, tracked = _sort_changes(ctx, [kosha, log, env, src])
+    assert kosha not in shown, 'a dot-folder the tree hides is nobody to tell'
+    assert env in shown, 'unless a tab holds it'
+    assert log in shown and log not in tracked, 'an ignored folder is still drawn, but git has nothing to say about it'
+    assert src in tracked
+    assert kosha in _sort_changes(ctx, [kosha], hidden=True)[0], 'with dotfiles shown, they are followed'
+
+def test_the_tree_decoration_is_reused_until_something_under_the_repository_changes(tmp_path, monkeypatch):
+    """Every `/tree` ran `git status` and `git ls-files` in every open repository."""
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    from leela.blocks.fs import ui
+    from leela.blocks.git.git import GitRepo
+    root = tmp_path/'repo'; root.mkdir(); run = _git_repo(root)
+    fs = Workspace(roots=[root]).fs
+    calls = []
+    real = GitRepo.decorations
+    monkeypatch.setattr(GitRepo, 'decorations', lambda self: calls.append(1) or real(self))
+    a = str((root/'a.py').resolve())
+    assert a not in ui.git_tree_state(fs)
+    (root/'a.py').write_text('a = 2\n')
+    assert a not in ui.git_tree_state(fs) and len(calls) == 1, 'nothing said it changed, so git is not asked again'
+    ui.stale_tree([str(root/'a.py')])
+    assert ui.git_tree_state(fs)[a] and len(calls) == 2, 'the watcher seeing the write is what asks again'
+    run('add', 'a.py')
+    assert ui.git_tree_state(fs)[a] and len(calls) == 3, 'a stage touches only .git, which the watcher skips, so the index is watched itself'
+    ui.stale_tree([str(tmp_path/'elsewhere.py')])
+    ui.git_tree_state(fs)
+    assert len(calls) == 3, 'a change outside the repository leaves its decoration alone'
+    (root/'data').mkdir(); (root/'data'/'x.log').write_text('')
+    ui.stale_tree([str(root/'.gitignore')])
+    assert ui.git_ignored(fs, root/'data'/'x.log') and not ui.git_ignored(fs, root/'a.py')
+
+def test_the_event_stream_carries_only_what_the_tree_can_show(tmp_path, monkeypatch):
+    "The route itself, with the watcher's queue fed by hand."
+    import asyncio
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    root = tmp_path/'repo'; root.mkdir(); _git_repo(root)
+    (root/'data').mkdir(); (root/'data'/'run.log').write_text('')
+    ws = Workspace(roots=[root])
+    def subscribe():
+        q = asyncio.Queue()
+        q.put_nowait(([str(root/'.kosha'/'idx')], False))
+        q.put_nowait(([str(root/'data'/'run.log')], False))
+        q.put_nowait(([str(root/'a.py')], False))
+        return q
+    monkeypatch.setattr(ws.fs_watch, 'subscribe', subscribe)
+    route = next(r for r in ide_app(ws).routes if getattr(r, 'path', '') == '/fs/events')
+    async def two():
+        from starlette.requests import Request
+        async def receive(): return {'type': 'http.request', 'body': b'', 'more_body': False}
+        resp = await route.endpoint(Request({'type': 'http', 'method': 'GET', 'path': '/fs/events', 'query_string': b'', 'headers': []}, receive))
+        it, rows = resp.body_iterator, []
+        async for chunk in it:
+            rows.extend(json.loads(l[5:]) for l in chunk.splitlines() if l.startswith('data:'))
+            if len(rows) == 2: break
+        await it.aclose()
+        return rows
+    assert asyncio.run(two()) == [{'paths': [str(root/'data'/'run.log')], 'resync': False, 'git': False},
+                                  {'paths': [str(root/'a.py')], 'resync': False, 'git': True}]

@@ -7,10 +7,10 @@ from fastcore.all import Path, first
 from fasthtml.common import Div
 
 from ... import errstr
-from ...core.web import fail, sse
+from ...core.web import fail, off_loop, sse
 from ...core.text import fuzzy_rank
 from .fs import lang_for
-from .ui import files_panel, git_tree_state, tree_node
+from .ui import files_panel, git_ignored, git_tree_state, stale_tree, tree_node
 from ..tabs.app import disk_version
 from ...core.web import diff_payload
 from ..settings.settings import start_folder
@@ -46,6 +46,19 @@ def _freshen(ctx, paths, resync=False):
         if ctx.docs.versions.get(tab.path) == disk_version(tab.path): continue
         ctx.docs.forget(tab.path)
 
+def _dotted(fs, p):
+    "Whether `p` sits under a dot-folder, or is a dotfile, below the root it is in."
+    root = first(r for r in fs.roots if Path(p).is_relative_to(r))
+    return root is not None and any(s.startswith('.') for s in Path(p).relative_to(root).parts)
+
+def _sort_changes(ctx, paths, hidden=False):
+    """`(shown, tracked)`: what the tree or a tab can show, and of that, what git can see.
+    An indexer writing under `.kosha` or a log under an ignored `data/` redrew the tree and re-ran
+    git in every repository once a second."""
+    tabs = {t.path for t in ctx.session.tabs if t.path}
+    shown = [p for p in paths if p in tabs or hidden or not _dotted(ctx.fs, p)]
+    return shown, [p for p in shown if not git_ignored(ctx.fs, p)]
+
 def _batch(items):
     "What to call a batch in a journal label: the one name, or how many there were."
     if len(items) == 1: return Path(items[0][0] if isinstance(items[0], tuple) else items[0]).name
@@ -71,7 +84,7 @@ def connect(app, ctx):
         "Refresh only the file pane. `open` are the folders the client had expanded, drawn with it."
         return files_panel(ctx.fs, hidden, [p for p in open.split('\n') if p])
     @rt('/fs/events')
-    async def fs_events():
+    async def fs_events(hidden: bool = False):
         "Changes on disk, pushed. Everything else in the tree is the client watching itself."
         from starlette.responses import StreamingResponse
         async def events():
@@ -80,7 +93,9 @@ def connect(app, ctx):
                 while True:
                     paths, resync = await q.get()
                     _freshen(ctx, paths, resync)
-                    yield sse('changed', {'paths': paths, 'resync': resync})
+                    shown, tracked = await off_loop(_sort_changes, ctx, paths, hidden)
+                    stale_tree(tracked)
+                    if shown or resync: yield sse('changed', {'paths': shown, 'resync': resync, 'git': bool(tracked)})
             finally: ctx.fs_watch.unsubscribe(q)
         return StreamingResponse(events(), media_type='text/event-stream',
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})

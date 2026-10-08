@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json, os
+import json, os, threading, time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -10,24 +10,84 @@ from fasthtml.common import Button, Details, Div, Section, Span, Summary
 
 from ...core.ui import action_bar, menu_button
 from ..git.git import GitError, GitRepo
+from ..git.seam import invalidate
 
-__all__ = ['git_tree_state', 'tree_node', 'files_panel']
+__all__ = ['git_tree_state', 'tree_node', 'files_panel', 'stale_tree', 'git_ignored']
+
+#: How long one repository's decoration is reused when nothing under it was seen to change. Every
+#: `/tree` ran `git status` and `git ls-files` in every open repository, forked from a process of a
+#: gigabyte or more, and a folder being written to without pause asked for one a second.
+TREE_TTL = 5
+#: The ignored list changes with a `.gitignore`, which `stale_tree` sees, so it lasts longer.
+IGNORED_TTL = 30
+_TREE, _TREE_LOCK = {}, threading.Lock()
+
+def _git_stamp(repo):
+    "What a stage, commit, checkout or reset changes inside `.git`, which the watcher skips."
+    with _TREE_LOCK: gd = _TREE.get(('gitdir', str(repo.root)))
+    if gd is None:
+        try: gd = Path(repo.run('rev-parse', '--absolute-git-dir').strip())
+        except Exception: gd = Path(repo.root)/'.git'
+        with _TREE_LOCK: _TREE[('gitdir', str(repo.root))] = gd
+    def mt(p):
+        try: return p.stat().st_mtime_ns
+        except OSError: return 0
+    return tuple(mt(gd/n) for n in ('index', 'HEAD', 'logs/HEAD'))
+
+def _memo(key, ttl, stamp, make):
+    "`make()`, reused while younger than `ttl` and `stamp` is unchanged."
+    with _TREE_LOCK: hit = _TREE.get(key)
+    if hit and time.monotonic() - hit[0] < ttl and hit[1] == stamp: return hit[2]
+    value = make()
+    with _TREE_LOCK: _TREE[key] = (time.monotonic(), stamp, value)
+    return value
+
+def _repo_state(repo):
+    "One repository's changed and ignored paths, absolute."
+    def changes():
+        try: return {str((repo.root/c['path']).resolve()): c for c in repo.decorations()}
+        except GitError: return {}
+    out = dict(_memo(('changes', str(repo.root)), TREE_TTL, _git_stamp(repo), changes))
+    for rel in _repo_ignored(repo): out.setdefault(str((repo.root/rel).resolve()), {'path': rel, 'ignored': True})
+    return out
+
+def _repo_ignored(repo):
+    return _memo(('ignored', str(repo.root)), IGNORED_TTL, None, lambda: _ignored_paths(repo))
+
+def _repos(fs):
+    "Each open repository once."
+    seen = {}
+    for root in fs.roots:
+        try: repo = GitRepo.at(root)
+        except GitError: continue
+        seen.setdefault(str(repo.root), repo)
+    return list(seen.values())
 
 def git_tree_state(fs):
     "Absolute changed paths for file-tree decoration, across every open repository."
     out = {}
-    seen = set()
-    for root in fs.roots:
-        try: repo = GitRepo.at(root)
-        except GitError: continue
-        if repo.root in seen: continue
-        seen.add(repo.root)
-        try:
-            for c in repo.decorations(): out[str((repo.root/c['path']).resolve())] = c
-        except GitError: pass
-        for rel in _ignored_paths(repo):
-            out.setdefault(str((repo.root/rel).resolve()), {'path': rel, 'ignored': True})
+    for repo in _repos(fs): out.update(_repo_state(repo))
     return out
+
+def _under(p, root): return p == root or p.startswith(root.rstrip('/') + '/')
+
+def git_ignored(fs, path):
+    "Whether git ignores `path` or a folder above it, from the cached ignored lists."
+    p = os.path.realpath(path)
+    for repo in _repos(fs):
+        if not _under(p, str(repo.root)): continue
+        return any(_under(p, str(repo.root/rel.rstrip('/'))) for rel in _repo_ignored(repo))
+    return False
+
+def stale_tree(paths):
+    "Forget the decoration of each repository a changed path is in, and its ignored list on a `.gitignore`."
+    paths = [os.path.realpath(p) for p in paths]
+    with _TREE_LOCK:
+        for key in [k for k in _TREE if k[0] in ('changes', 'ignored')]:
+            hit = [p for p in paths if _under(p, key[1])]
+            if not hit: continue
+            if key[0] == 'changes': invalidate(key[1])        # gheasy's own short cache, or the old answer comes back
+            if key[0] == 'changes' or any(Path(p).name == '.gitignore' for p in hit): del _TREE[key]
 
 def _ignored_paths(repo):
     "What git is deliberately not tracking here. A failure is no decoration, never no tree."

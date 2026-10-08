@@ -2391,6 +2391,30 @@ def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_the
     assert (tmp_path/'c.py').is_file(), 'the row that was not selected stays put'
 
 
+def test_a_write_the_tree_cannot_show_fetches_no_listing_and_redraws_go_one_at_a_time(tmp_path):
+    """A log written under a listed folder redrew the open root, a `/tree` and git in every repository, once a second, and a burst ran them all at once."""
+    (tmp_path/'data').mkdir(); (tmp_path/'data'/'old.log').write_text('')
+    async def go(pg):
+        await pg.click('.lee-node.lee-dir.lee-root > summary')
+        await pg.wait_for_selector('.lee-node[data-path$="/data"]')
+        return await pg.evaluate("""async (root) => {
+          const real = window.fetch; let live = 0, most = 0, trees = 0;
+          window.fetch = async (...a) => {
+            const tree = String(a[0]).startsWith('/tree');
+            if (tree) { trees++; live++; most = Math.max(most, live); }
+            try { return await real(...a); } finally { if (tree) live--; }
+          };
+          await patchTree([root + '/data/run.log', root + '/data/deep/x.log', root + '/.kosha/idx']);
+          const quiet = trees;
+          await Promise.all([1, 2, 3, 4].map(i => patchTree([root + '/new' + i + '.py'])));
+          window.fetch = real;
+          return {quiet, trees, most};
+        }""", str(tmp_path))
+    got = _run(go, roots=[tmp_path])
+    assert got['quiet'] == 0, 'nothing it lists changed name, so nothing is fetched'
+    assert got['trees'] >= 1 and got['most'] == 1, 'a new file is drawn, one listing at a time'
+
+
 _STRIPE_FIXTURE = r"""async () => {
   const settle = () => new Promise(r => setTimeout(r, 150));
   const pane = document.createElement('div');

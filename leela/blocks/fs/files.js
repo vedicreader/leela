@@ -76,6 +76,7 @@ async function adoptTreeHidden() {
   await prefAdopt('workbench', 'showHiddenFiles', 'lee-tree-hidden', v => v === '1');
   if (treeHidden() === was) return;
   paintHiddenBtn();
+  if (fsEvents) watchFiles();
   await refreshFileTree(undefined, false);
 }
 function paintHiddenBtn() {
@@ -87,6 +88,7 @@ function paintHiddenBtn() {
 }
 async function toggleHidden() {
   await prefSet('workbench', 'showHiddenFiles', !treeHidden());
+  if (fsEvents) watchFiles();
   await refreshFileTree(undefined, false);
   status(treeHidden() ? 'showing dotfiles' : 'hiding dotfiles', 'ok');
 }
@@ -177,8 +179,11 @@ async function patchTreeDir(dir) {
   have.forEach(n => n.remove());
   htmx.process(kids);
 }
-/* A new folder's own path is open nowhere. Redraw the nearest open ancestor. */
-async function patchTree(paths) {
+/* A new folder's own path is open nowhere. Redraw the nearest open ancestor, but only when the
+   change can alter its names: a direct child came or went, or a deeper write names a row it does
+   not have. A file written deep inside a closed folder that is already listed changes nothing it
+   shows, and redrawing for it was a `/tree`, and git in every repository, per batch. */
+function patchTargets(paths) {
   const open = $$('.lee-dir[open]'), want = new Set();
   for (const p of paths) {
     let best = null;
@@ -186,9 +191,31 @@ async function patchTree(paths) {
       const d = n.dataset.path;
       if ((p === d || p.startsWith(d + '/')) && (!best || d.length > best.dataset.path.length)) best = n;
     }
-    if (best) want.add(best);
+    if (!best) continue;
+    const d = best.dataset.path, rest = p.slice(d.length + 1);
+    if (p === d || !rest.includes('/')) { want.add(best); continue; }
+    const name = rest.split('/')[0];
+    if (name.startsWith('.') && !treeHidden()) continue;
+    const kids = best.querySelector(':scope > .lee-kids');
+    if (kids && ![...kids.children].some(n => n.dataset.path === d + '/' + name)) want.add(best);
   }
-  await Promise.all([...want].map(patchTreeDir));
+  return want;
+}
+/* One redraw at a time, and the paths that arrive meanwhile are carried into the next one, as
+   `refreshGitTreeMarks` does for the marks. */
+let patchBusy = null, patchAgain = new Set();
+async function patchTree(paths) {
+  paths.forEach(p => patchAgain.add(p));
+  if (patchBusy) return patchBusy;
+  patchBusy = (async () => {
+    try {
+      while (patchAgain.size) {
+        const now = [...patchAgain]; patchAgain = new Set();
+        await Promise.all([...patchTargets(now)].map(n => patchTreeDir(n).catch(() => {})));
+      }
+    } finally { patchBusy = null; }
+  })();
+  return patchBusy;
 }
 /* `/git/info` is several git subprocesses, and in the packaged app they are forked from the process
    drawing the window. A build writing without pause fired one of these per debounced batch. One at
@@ -216,11 +243,16 @@ function resyncFiles() {
   refreshFileTree(undefined, false).catch(() => {});
   refreshGitTreeMarks(); watchOpenFile();
 }
+/* The server drops what the tree cannot show, dotfiles among them unless they are shown, so the
+   stream is reopened when that toggle changes. `git` is whether any change is one git can see. */
+let fsEvents = null, fsWatchGit = false;
 function watchFiles() {
-  const es = new EventSource('/fs/events');
+  fsEvents?.close();
+  const es = fsEvents = new EventSource('/fs/events' + treeQuery());
   es.addEventListener('changed', e => {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }
     if (d.resync) return resyncFiles();
+    if (d.git !== false) fsWatchGit = true;
     fsWatchSeen.push(...d.paths);
     // A build writes without pause. A timer that only resets never fires.
     if (fsWatchSeen.length > FS_MAX_SEEN) fsWatchSeen = fsWatchSeen.slice(-FS_MAX_SEEN);
@@ -228,15 +260,15 @@ function watchFiles() {
     clearTimeout(fsWatchTimer);
     const wait = Math.max(0, Math.min(FS_DEBOUNCE, fsWatchSince + FS_MAX_WAIT - performance.now()));
     fsWatchTimer = setTimeout(async () => {
-      const all = fsWatchSeen; fsWatchSeen = []; fsWatchSince = 0;
+      const all = fsWatchSeen, git = fsWatchGit; fsWatchSeen = []; fsWatchSince = 0; fsWatchGit = false;
       const theirs = notMine(all);
       // Our own save changed no filenames, only what git thinks of one.
       if (theirs.length) await patchTree(theirs).catch(() => {});
-      await refreshGitTreeMarks();
+      if (git) await refreshGitTreeMarks();
       if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
     }, wait);
   });
-  es.onerror = () => { es.close(); setTimeout(watchFiles, 3000); };
+  es.onerror = () => { es.close(); if (fsEvents === es) setTimeout(watchFiles, 3000); };
   return es;
 }
 window.watchFiles = watchFiles;
