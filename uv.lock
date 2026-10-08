@@ -2540,11 +2540,11 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.10" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.11" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.39" },
+    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.40" },
     { name = "shalya", specifier = ">=0.1.3" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
@@ -2569,8 +2569,8 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.39" },
-    { name = "rishi", extras = ["all"], specifier = "==0.1.39" },
+    { name = "rishi", specifier = "==0.1.40" },
+    { name = "rishi", extras = ["all"], specifier = "==0.1.40" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -4714,7 +4714,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.10"
+version = "0.2.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4727,9 +4727,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/64/70ed29c9163587b329be36eec3b12c571d7b65e2161dfd6d2a219999e0f9/ramabana-0.2.10.tar.gz", hash = "sha256:de4fc76d0d0eb7d5d1c4bdaf4fa146b29fc00325d17715d90f87a1cca4cde860", size = 239521, upload-time = "2026-10-08T02:33:15.729Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/38/42cb18df3ee88119356ad8cc3ef32a54fcebb0d63edf80e9cf0fd7c9dfa5/ramabana-0.2.11.tar.gz", hash = "sha256:cd538e4afbc74887a7303500a5caee2186b9ea3d705ff1f74a028598e744ca49", size = 239538, upload-time = "2026-10-08T07:15:59.095Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/61/5afeda65949ca1d623c7b75f21c684e71dfd28d8af0830b0d87cf5687b62/ramabana-0.2.10-py3-none-any.whl", hash = "sha256:852ea502203e35577fbdfc02f18699ee0721e5eb4f8b879d5c896ca8485ee3dd", size = 243958, upload-time = "2026-10-08T02:33:13.829Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/a4/fb9ab86a557a97d84ee4fa514ffcb90917dca4eb83d3a4ec3e8bccec2726/ramabana-0.2.11-py3-none-any.whl", hash = "sha256:40822278d74e50758134603316b99a70fbe04cc74d0a6979d6d0234ef291f5bb", size = 244020, upload-time = "2026-10-08T07:15:57.443Z" },
 ]
 
 [package.optional-dependencies]
@@ -5012,7 +5012,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.39"
+version = "0.1.40"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5028,9 +5028,9 @@ dependencies = [
     { name = "truststore" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/0c/43a33ce5e18d1e4a1a89d53c2938f11c2653654c2724881a4222fbd90d3a/rishi-0.1.39.tar.gz", hash = "sha256:f28d34086470f368216eca30e38e5b674219312e4067df3e40a43888e7ed73dd", size = 77648, upload-time = "2026-09-28T01:26:49.7Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/48/32f1238b5e054adb928a07313211ae478bb4804e6ef79156d26324175b16/rishi-0.1.40.tar.gz", hash = "sha256:2140fcc8d8b84b9ca48ae059951978965ff28e8e36260776a390ac8fa965a3eb", size = 77665, upload-time = "2026-10-08T07:14:51.446Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/46/364f2291cdca654e298e085a2a209d52d1ef2abe66ec30edbf45aa3cd23f/rishi-0.1.39-py3-none-any.whl", hash = "sha256:863285dc172aa92a10fd0be3890617ee4909c7d27f25d33f0dc2a6eb7b1d8388", size = 86742, upload-time = "2026-09-28T01:26:48.476Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/2a/33f68972146b6d909418b123b3b9ae5a3b2db1aedafcfe2ca08996be6f34/rishi-0.1.40-py3-none-any.whl", hash = "sha256:7efe269ffbb580d533a5b68b637f238494400a57e88c0d80a8570ea60377bbd4", size = 86772, upload-time = "2026-10-08T07:14:49.971Z" },
 ]
 
 [package.optional-dependencies]
