@@ -807,7 +807,7 @@ def test_no_scheme_but_the_web_opens_even_beside_leelas_own_origin(own, url):
 class Chrome:
     "A CDP connection whose targets keep a URL, and the pages over them."
     is_open, wsconn = True, ''
-    def __init__(self): self.urls, self.loops, self.redirects = {'PERSON': 'https://example.com/'}, [], {}
+    def __init__(self): self.urls, self.loops, self.redirects, self.shot = {'PERSON': 'https://example.com/'}, [], {}, lambda kw: _jpeg(64, 40)
     @property
     async def pages(self): return [{'targetId': t, 'type': 'page', 'url': u} for t, u in self.urls.items()]
     @property
@@ -835,10 +835,10 @@ class Tab:
             def __getattr__(_, name):
                 async def f(**kw):
                     tab.cdp.loops.append(asyncio.get_running_loop()); tab.calls.append((name, kw))
-                    if name == 'captureScreenshot': return base64.b64encode(b'\x89PNG\r\n\x1a\n' + bytes(40)).decode()
+                    if name == 'captureScreenshot': return base64.b64encode(tab.cdp.shot(kw)).decode()
                     if name == 'getNavigationHistory': return {'currentIndex': 0, 'entries': [{'id': 1, 'url': tab.cdp.urls[tab.tid]}]}
                     if name == 'navigate': tab.cdp.urls[tab.tid] = tab.cdp.redirects.get(kw['url'], kw['url'])
-                    if name == 'getLayoutMetrics': return {}
+                    if name == 'getLayoutMetrics': return {'cssVisualViewport': {'pageX': 0, 'pageY': 0, 'clientWidth': 1280, 'clientHeight': 800}}
                 return f
         return D()
 
@@ -862,6 +862,13 @@ def agent_tab(ws, monkeypatch, own):
 
 import base64
 
+def _jpeg(w, h):
+    "A real JPEG of `w` x `h`, so its header carries the size the scaling reads."
+    from io import BytesIO
+    from PIL import Image
+    buf = BytesIO(); Image.new('RGB', (w, h), 'white').save(buf, 'JPEG', quality=80)
+    return buf.getvalue()
+
 def test_every_browser_call_runs_on_the_workspace_loop_and_the_persons_cast_survives(agent_tab):
     "`Browser.cdp` drops every page and cast when asked from another loop, which is the person's inline page going dark."
     h, b = agent_tab.host, agent_tab.ws.browser
@@ -877,7 +884,7 @@ def test_a_screenshot_lands_inside_the_project_and_git_ignores_it(agent_tab):
     subprocess.run(['git', 'init', '-q', str(root)], check=True)
     h.browse(f'{OWN}/')
     p = Path(h.screenshot())
-    assert p.resolve().is_relative_to(root) and p.read_bytes().startswith(b'\x89PNG')
+    assert p.resolve().is_relative_to(root) and p.read_bytes().startswith(b'\xff\xd8\xff') and p.suffix == '.jpg'
     assert h.check(str(p), must_exist=True)                      # where `delegate_search(images=)` can read it
     assert subprocess.run(['git', '-C', str(root), 'check-ignore', '-q', str(p)]).returncode == 0
     assert '.leela-attachments' not in subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '-uall'], capture_output=True, text=True).stdout
@@ -889,6 +896,21 @@ def test_a_screenshot_goes_to_the_project_when_the_kernel_cwd_is_outside_the_ope
     h.browse(f'{OWN}/')
     p = Path(h.screenshot())
     assert p.parent == Path(h.project).resolve()/'.leela-attachments' and not list(elsewhere.iterdir())
+
+def test_a_screenshot_is_a_jpeg_retaken_smaller_when_too_big_and_says_so(agent_tab):
+    "A vision API refuses a picture over its byte or side limit, so an oversized shot is retaken at a scale its name states."
+    h, sent = agent_tab.host, []
+    def shot(kw):
+        sent.append(kw)
+        return _jpeg(8000, 100) if 'clip' not in kw else _jpeg(7000, 87)
+    agent_tab.chrome.shot = shot
+    h.browse(f'{OWN}/')
+    p = Path(h.screenshot())
+    assert [k['format'] for k in sent] == ['jpeg', 'jpeg'] and sent[0]['quality'] == 80
+    assert 0 < sent[1]['clip']['scale'] < 7500 / 8000 + .001 and sent[1]['clip']['width'] == 1280
+    assert '-scaled-' in p.name and p.name.endswith('pct.jpg')
+    sent.clear(); agent_tab.chrome.shot = lambda kw: sent.append(kw) or _jpeg(64, 40)
+    assert '-scaled-' not in Path(h.screenshot()).name and len(sent) == 1   # a small shot is taken once
 
 def test_a_screenshot_is_no_write_the_gate_snapshots_or_rewinds():
     from leela.agent.tools import path_write
@@ -995,3 +1017,26 @@ def test_the_browser_is_one_toggle_in_the_agent_head(tmp_path):
         assert 'id="agentoptin-browser"' in c.get('/').text
         tid = c.post('/agent/thread/new', json={'optin': ['browser']}).json()['active']
         assert 'screenshot' in {t.__name__ for t in ws.threads.require(tid).ai.tools}
+
+def test_a_screenshot_reaches_the_turn_model_and_draws_inline(agent_tab):
+    "The agent's own recorded `screenshot` returns its picture: the urai loop sends it to the model, and `turn_media` draws it."
+    from urai import Chat, ChatOpts, Resp, ToolCall, ToolLoopMixin, is_media
+    from leela.blocks.agent.turns import turn_media
+    class Script(ToolLoopMixin, Chat):
+        "A fake turn model whose replies are scripted."
+        _runtime = 'leela-script'
+        def __init__(self, model=None, *, script=(), tools=()):
+            self.script = list(script)
+            self._setup(None, ChatOpts.create(None, tools=tools)); self._set_tools(self.tools)
+        def _model_step(self, **kw): return Resp({'role': 'assistant', **self.script.pop(0)})
+    ai = agent_tab.ws.ai
+    ai.optin, ai._tools = ('browser',), None
+    tools = {t.__name__: t for t in ai.tools}
+    agent_tab.host.browse(f'{OWN}/')
+    c = Script(script=[{'content': '', 'tool_calls': [dict(ToolCall('screenshot', {}))]}, {'content': 'I can see Leela'}], tools=[tools['screenshot']])
+    c('look at the page')
+    assert [m['role'] for m in c.hist] == ['user', 'assistant', 'tool', 'user', 'assistant']
+    assert '.jpg' in c.hist[2]['content'] and [p['type'] for p in c.hist[3]['content']] == ['text', 'image_url']
+    assert c.hist[3]['content'][1]['image_url']['url'].startswith('data:image/jpeg;base64,')
+    shown = turn_media(ai)
+    assert len(shown) == 1 and shown[0]['url'].startswith('data:image/jpeg;base64,')

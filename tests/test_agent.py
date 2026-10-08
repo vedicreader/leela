@@ -2828,6 +2828,16 @@ def test_a_steer_rides_the_next_tool_result(tmp_path):
     assert ws.approvals.state()['queued_steer'] == '', 'and it is not delivered twice'
     assert 'steering' not in str(view(str(tmp_path/'a.py'))).lower()
 
+def test_a_steer_on_a_picture_result_keeps_the_picture(tmp_path):
+    "The steer is appended as text; the picture `view_file` returned must still reach the model and the turn's media."
+    (p := tmp_path/'shot.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(32))
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    view = next(t for t in ws.ai.tools if t.__name__ == 'view_file')
+    ws.approvals.queue_steer('look at the header')
+    out = view(str(p))
+    assert out.endswith('User steering for the next decision: look at the header') and out.media == [str(p.resolve())]
+    assert ws.ai.turn_media[-1]['data'] == p.read_bytes()
+
 
 def test_delegation_never_gets_the_git_write_tools(monkeypatch):
     """Leela's Git writes are kept off the delegation surface."""

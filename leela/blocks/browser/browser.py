@@ -4,11 +4,12 @@ from __future__ import annotations
 import asyncio, base64, json, os, shutil
 from urllib.parse import urlparse
 from dataclasses import dataclass
-from fastcore.all import L, Path, atomic_save, ifnone, store_attr
+from io import BytesIO
+from fastcore.all import L, Path, atomic_save, ifnone, store_attr, image_size
 
 from ... import Dictable, errstr, leela_cfg
 
-__all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'DEFAULT_SIZE', 'MAX_SIZE', 'MAX_SCALE',
+__all__ = ['WebPage', 'Browser', 'BrowserUnavailable', 'Shot', 'DEFAULT_SIZE', 'MAX_SIZE', 'MAX_SCALE', 'MAX_SHOT_BYTES', 'MAX_SHOT_SIDE',
            'SCALE_FLAG', 'own_origin', 'origin_of']
 
 #: Viewport sizes are CSS pixels, because that is the unit a click arrives in.
@@ -19,6 +20,13 @@ MAX_SCALE = 2
 #: How many image pixels a screencast frame carries per CSS pixel. A per-page `deviceScaleFactor`
 #: does not change it, and the browser's own factor is fixed at launch.
 SCALE_FLAG = f'--force-device-scale-factor={MAX_SCALE}'
+
+#: A screenshot stays under what one vision-API picture may be: bytes, and pixels a side.
+MAX_SHOT_BYTES, MAX_SHOT_SIDE, SHOT_QUALITY = 4_500_000, 7500, 80
+
+class Shot(bytes):
+    "A screenshot's JPEG bytes and the scale it was retaken at; 1 when it was not."
+    scale = 1
 
 #: Ports whose Chrome this process started, and the connected `Browser`s on each. One Chrome serves
 #: every window on a port, so closing it belongs to the last window out rather than the first.
@@ -287,11 +295,22 @@ class Browser:
             await asyncio.sleep(.1)
         return False
 
-    async def screenshot(self, tid, timeout=20):
-        "The page's viewport as PNG bytes, through `Page.captureScreenshot`."
+    async def screenshot(self, tid, timeout=20, quality=SHOT_QUALITY):
+        "The page's viewport as JPEG `Shot` bytes, retaken smaller past `MAX_SHOT_BYTES` or `MAX_SHOT_SIDE`; `.scale` says by how much."
         p = await self.page(tid)
-        r = await asyncio.wait_for(p.page.captureScreenshot(format='png'), timeout)
-        return base64.b64decode(r.get('data', '') if isinstance(r, dict) else r)
+        async def take(**kw):
+            r = await asyncio.wait_for(p.page.captureScreenshot(format='jpeg', quality=quality, **kw), timeout)
+            return Shot(base64.b64decode(r.get('data', '') if isinstance(r, dict) else r))
+        data = await take()
+        try: w, h = image_size(BytesIO(data))
+        except Exception: w = h = 0
+        s = min(1, MAX_SHOT_SIDE / max(w, h, 1), .9 * (MAX_SHOT_BYTES / max(len(data), 1)) ** .5)
+        if s >= 1: return data
+        vp = (await p.page.getLayoutMetrics() or {}).get('cssVisualViewport') or {}
+        cw, ch = vp.get('clientWidth') or DEFAULT_SIZE[0], vp.get('clientHeight') or DEFAULT_SIZE[1]
+        out = await take(clip={'x': vp.get('pageX', 0), 'y': vp.get('pageY', 0), 'width': cw, 'height': ch, 'scale': round(s, 3)})
+        out.scale = round(s, 3)
+        return out
 
     async def state(self, tid):
         "Where a page is and where it can go: the address bar and the two arrows."

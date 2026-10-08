@@ -15,7 +15,7 @@ from shalya.host import (ApiHost, AskHost, BrowserHost, CodeHost, DENY, GitHost,
                          NotebookHost, SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
-from ...agent.tools import PATH_WRITES, path_write, small_tool, tools_for, write_targets
+from ...agent.tools import PATH_WRITES, keep_media, path_write, small_tool, tools_for, write_targets
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
@@ -563,13 +563,14 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
             return f"{tid}  {st['title'] or '(untitled)'}  {st['url']}"
         return self._on_loop(go())
     def screenshot(self, page=''):
-        "Save the page as a PNG inside an open folder, where `delegate_search(images=)` can send it, and return its path."
-        png = self._on_page(page, self.ws.browser.screenshot)
+        "Save the page as a JPEG inside an open folder and return its path; a retaken smaller shot says so in its name."
+        shot = self._on_page(page, self.ws.browser.screenshot)
         d = Path(self.ws.cwd_for()).resolve()
         if not any(d.is_relative_to(Path(r).resolve()) for r in self.roots): d = Path(self.project)
         (d := d/'.leela-attachments').mkdir(parents=True, exist_ok=True)
         if not (d/'.gitignore').exists(): (d/'.gitignore').write_text('*\n')
-        (p := d/f'shot-{os.urandom(6).hex()}.png').write_bytes(png)
+        scaled = f'-scaled-{round(shot.scale * 100)}pct' if getattr(shot, 'scale', 1) < 1 else ''
+        (p := d/f'shot-{os.urandom(6).hex()}{scaled}.jpg').write_bytes(shot)
         return str(p)
     def page_text(self, page=''): return self._on_page(page, self.ws.browser.markdown)
     def page_reload(self, page=''):
@@ -1303,7 +1304,7 @@ class Assistant(Agent):
             if approvals is not None:
                 approvals.observe_result(ok)
                 if steer := approvals.consume_steer():
-                    out = f'{out}\n\nUser steering for the next decision: {steer}'
+                    out = keep_media(f'{out}\n\nUser steering for the next decision: {steer}', out)
             return out
         if (ro := getattr(f, 'read_only', None)) is not None: wrapper.read_only = self._record(ro)   # what a read-only view is handed
         return wrapper
