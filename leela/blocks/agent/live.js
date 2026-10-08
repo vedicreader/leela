@@ -821,9 +821,12 @@ function reconcileAgentBusy(attention) {
    and only while a turn is outstanding -- it stops itself as soon as one is not. */
 function startAgentBusyWatch() {
   if (lee.agentBusyWatch) return;
+  let asking = false;   // a reply slower than the interval must not stack a second request behind it
   lee.agentBusyWatch = setInterval(async () => {
+    if (asking) return;
     const gen = lee.agentStreamGen;
-    let d = null; try { await agentPrefsReady(); d = await api('/agent/threads'); } catch (_) {}
+    let d = null; asking = true;
+    try { await agentPrefsReady(); d = await api('/agent/threads'); } catch (_) {} finally { asking = false; }
     // a switch or a new conversation that landed meanwhile owns `lee.agentThread`, and this `active` predates it
     if (d && gen === lee.agentStreamGen) { paintAgentThreads(d); notifyAgentAttention(d); }
     if (!lee.agentBusy && !d?.attention?.working) { clearInterval(lee.agentBusyWatch); lee.agentBusyWatch = null; }

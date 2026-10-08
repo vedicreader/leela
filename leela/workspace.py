@@ -238,7 +238,7 @@ class Workspace:
         self._stop_backups = None
         self._down = False
         self._loop = None
-        self._history_stamps = {}
+        self._history_stamps, self._sessions_cache = {}, {}
         self._timeline_lock = threading.RLock()
         self._timeline_rows, self._timeline_stamp = None, ''
         from .blocks.vault.clip import register_all
@@ -381,6 +381,19 @@ class Workspace:
             p = Path(ai.history_path); st = p.stat()
             return f'{p}:{st.st_mtime_ns}:{st.st_size}'
         except Exception: return ''
+    def sessions_key(self, ai=None):
+        "The log's stamp and the index file's content: what `ai.sessions()` is a function of."
+        ai = ai or self.ai
+        # content, not mtime: a ramabana that rebuilds on every read rewrites the same bytes each time
+        try: return (self.history_stamp(ai), hash(Path(ai.sessions_path).read_bytes()))
+        except Exception: return (self.history_stamp(ai), 0)
+    def logged_sessions(self, ai=None):
+        "`ai.sessions()`, asked again only when the log or its index has changed."
+        ai = ai or self.ai
+        key = self.sessions_key(ai)
+        if not key[0]: return ai.sessions()
+        if self._sessions_cache.get('key') != key: self._sessions_cache.update(key=key, rows=ai.sessions())
+        return [dict(r) for r in self._sessions_cache['rows']]
     def fresh_history(self, ai=None):
         "Reread the conversation log, but only when it has actually changed."
         ai = ai or self.ai

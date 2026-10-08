@@ -65,9 +65,9 @@ def connect(app, ctx):
     def _grouped_history(ai, execution):
         "Every conversation in the log, without turns, computed once per state of the log."
         here = surfaces(getattr(ai, 'cfg', None))
-        key = (ws.history_stamp(ai), repr(sorted(r.get('id', '') for r in execution)), len(here))
+        key = (ws.sessions_key(ai), repr(sorted(r.get('id', '') for r in execution)), len(here))
         # `ai.history` is the log's last 8 MB, a few dozen turns once pictures are pasted; the index covers it all
-        if _history_cache.get('key') != key: _history_cache.update(key=key, groups=indexed_sessions(ai.sessions(), execution, here))
+        if _history_cache.get('key') != key: _history_cache.update(key=key, groups=indexed_sessions(ws.logged_sessions(ai), execution, here))
         return _history_cache['groups']
     def _settled_thread(target=''):
         "The conversation a branch operation may act on."

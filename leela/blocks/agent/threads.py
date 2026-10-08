@@ -144,7 +144,9 @@ class Thread:
         ai = self.ai
         meta = ai.session_meta(self.id) if hasattr(ai, 'session_meta') else {}
         if meta.get('title') or not hasattr(ai, 'sessions'): return meta
-        row = next((r for r in ai.sessions() if r.get('id') == self.id), {})
+        # `/agent/threads` asks this of every live thread on each poll
+        listed = self.workspace.logged_sessions(ai) if hasattr(self.workspace, 'logged_sessions') else ai.sessions()
+        row = next((r for r in listed if r.get('id') == self.id), {})
         return {**meta, 'title': row.get('title', '')}
     def name(self, meta=None):
         "What to call this conversation: a name a person chose, else a summarised or derived one, else the first thing they said."
@@ -243,7 +245,7 @@ class Threads:
         except Exception: pass
     def _prune_optins(self, rows):
         "Drop rows for conversations that are neither live nor in the log."
-        try: logged = {str(r.get('id')) for r in self.workspace.ai.sessions()}
+        try: logged = {str(r.get('id')) for r in self.workspace.logged_sessions()}
         except Exception: logged = set()
         for sid in [s for s in rows if s not in self._rows and s not in logged]: rows.pop(sid)
     def switch(self, thread_id):

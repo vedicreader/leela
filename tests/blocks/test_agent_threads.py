@@ -1740,3 +1740,25 @@ def test_subagent_settings_outlive_the_conversation_that_set_them(tmp_path):
     assert (back.subagent_depth, back.subagent_steps, back.subagent_timeout) == (1, 20, 120), 'and a reload keeps them'
     back.restore_settings({**ws.state(), 'subagent_depth': 'junk'})
     assert back.subagent_depth is None, 'a value that is not a number falls back to the default rather than failing the load'
+
+
+def test_a_threads_poll_reads_the_index_once_until_the_log_or_the_index_changes(tmp_path, monkeypatch):
+    "A thread with no title asked `ai.sessions()` on every 5 s poll, and a title-only row made each one rescan the log."
+    import json
+    ws = Workspace(roots=[tmp_path]); p = history_file(ws)
+    line = lambda i: json.dumps({'at': i, 'session': f's{i % 5}', 'prompt': f'{i} ' + 'q' * 2000, 'reply': 'ok', 'model': 'm'}) + '\n'
+    p.write_text(''.join(map(line, range(2000))))
+    ws.ai.set_title('named before it spoke', sid='never-spoke')
+    calls, orig = [], type(ws.ai).rebuild_index
+    monkeypatch.setattr(type(ws.ai), 'rebuild_index', lambda self, force=False: calls.append(1) or orig(self, force))
+    with TestClient(ide_app(ws)) as client:
+        client.get('/agent/threads'); n = len(calls)
+        for _ in range(3): assert client.get('/agent/threads').status_code == 200
+        assert n and len(calls) == n, f'{len(calls) - n} index reads on polls that changed nothing'
+        ws.ai.set_title('renamed', sid='s1'); n = len(calls)
+        client.get('/agent/threads')
+        assert len(calls) == n + 1, 'a write to the index is noticed'
+        with p.open('a') as f: f.write(line(2000))
+        client.get('/agent/threads')
+        assert len(calls) == n + 2, 'a write to the log is noticed'
+    assert 's1' in {r['id'] for r in ws.logged_sessions()}
