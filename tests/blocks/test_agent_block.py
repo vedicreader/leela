@@ -281,18 +281,39 @@ def test_a_tool_installed_into_a_frozen_app_is_actually_found(tmp_path, monkeypa
     """The Tools row installs into `extras_site`, because the bundle is signed and read-only, and `find_server` looked only on PATH."""
     import leela
     from leela.blocks.lsp import lsp
-    bin_dir = tmp_path/'extras'/'bin'
+    import subprocess
+    site = tmp_path/'extras'
+    bin_dir = site/'bin'
     bin_dir.mkdir(parents=True)
     monkeypatch.setattr(leela, 'extras_bin', lambda: bin_dir)
     monkeypatch.setattr(lsp.shutil, 'which', lambda name: None)
     assert lsp.find_server() == (None, None), 'nothing on PATH and nothing installed'
+    (site/'fakels.py').write_text('import sys\ndef main(): print(sys.argv[1:])\n')
     server = bin_dir/'basedpyright-langserver'
-    server.write_text('#!/bin/sh\nexec cat\n')
+    # What `pip install --target` writes, from an interpreter since deleted: a rebuilt app, say.
+    server.write_text("#!/gone/Leela.app/Contents/MacOS/python\nimport sys\nfrom fakels import main\nif __name__ == '__main__': sys.exit(main())\n")
     assert lsp.find_server() == (None, None), 'a file that cannot be run is not a server'
     server.chmod(0o755)
     name, argv = lsp.find_server()
     assert name == 'basedpyright-langserver'
-    assert argv == [str(server), '--stdio'], 'and it is driven the way that server wants'
+    out = subprocess.run(argv, capture_output=True, text=True, cwd=tmp_path, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "['--stdio']", 'it runs despite its shebang, driven the way that server wants'
+
+def test_an_extras_server_that_is_not_a_python_script_runs_as_itself(tmp_path, monkeypatch):
+    "`pip install --target` puts native binaries such as `ty` and `pyrefly` in the same folder, and runpy cannot run those."
+    import leela, subprocess
+    from leela.blocks.lsp import lsp
+    bin_dir = tmp_path/'extras'/'bin'
+    bin_dir.mkdir(parents=True)
+    monkeypatch.setattr(leela, 'extras_bin', lambda: bin_dir)
+    monkeypatch.setattr(lsp.shutil, 'which', lambda name: None)
+    server = bin_dir/'ty'
+    server.write_text('#!/bin/sh\necho "$@"\n')
+    server.chmod(0o755)
+    name, argv = lsp.find_server()
+    assert (name, argv) == ('ty', [str(server), 'server'])
+    assert subprocess.run(argv, capture_output=True, text=True, timeout=30).stdout.strip() == 'server'
 
 def test_the_tools_row_reports_what_it_would_install_and_what_is_here(monkeypatch):
     "The row is what a person clicks to get a language server, so it has to answer for one."

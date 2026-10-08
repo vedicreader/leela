@@ -3154,7 +3154,7 @@ def test_any_of_the_four_language_servers_will_do():
     for name, args in SERVERS: assert args, f'{name} needs the argv that puts it on stdio'
     found, argv = find_server()
     assert (found is None) == (argv is None)
-    if argv: assert argv[0].endswith(found) and len(argv) >= 1
+    if argv: assert any(a.endswith(found) for a in argv), 'an extras script runs under an interpreter'
 
 def test_the_local_runtime_leela_recommends_is_named_and_offered_first():
     """The setup pane said nothing about which to take."""

@@ -10,13 +10,25 @@ from ...core.langs import servers_for
 #: in `core.langs`; this is Python's.
 SERVERS = servers_for('python')
 
+#: `pip install --target` bakes the installing interpreter into each script's shebang, and that
+#: interpreter may be a deleted build or the other of app and checkout. Native binaries (`ty`, `pyrefly`) run as themselves.
+_RUN_EXTRA = ('import os, runpy, sys; sys.argv[:2] = sys.argv[1:2]; '
+    'sys.path.insert(0, os.path.dirname(os.path.dirname(sys.argv[0]))); runpy.run_path(sys.argv[0], run_name="__main__")')
+
+def _py_script(p):
+    "Whether `p` starts with a Python shebang."
+    with open(p, 'rb') as f: line = f.readline(256)
+    return line.startswith(b'#!') and b'python' in line
+
 def find_server(lang='python'):
     "The first language server for `lang`, as `(name, argv)`, or `(None, None)`."
     from ... import extras_bin
+    from ..runtime.kernels import _runtime_python
     for name, args in servers_for(lang):
         if (found := shutil.which(name)): return name, [found, *args]
         here = extras_bin()/name
-        if here.is_file() and os.access(here, os.X_OK): return name, [str(here), *args]
+        if not (here.is_file() and os.access(here, os.X_OK)): continue
+        return name, [_runtime_python(), '-c', _RUN_EXTRA, str(here), *args] if _py_script(here) else [str(here), *args]
     return None, None
 
 def _why_unavailable(command, root, lang='python'):
