@@ -1725,3 +1725,18 @@ def test_opt_in_rows_are_kept_only_for_conversations_that_differ_from_the_defaul
     ws.threads.new(optin=('exhash',))
     assert 'agent_gone-long-ago' not in ws.thread_optins and own.id in ws.thread_optins, 'a row for a conversation neither live nor in the log is pruned; live ones stay'
     assert 'agent_gone-long-ago' not in Workspace.load(ws._state_path).thread_optins
+
+
+def test_subagent_settings_outlive_the_conversation_that_set_them(tmp_path):
+    """`/subagents nest 1` changed one live assistant; a new conversation and a reload went back to ramabana's defaults."""
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        for line in ('/subagents nest 1', '/subagents steps 20', '/subagents timeout 120'):
+            assert client.post('/agent/command', json={'line': line}).json()['ok'], line
+        assert (ws.subagent_depth, ws.subagent_steps, ws.subagent_timeout) == (1, 20, 120)
+        ai = ws.threads.require(client.post('/agent/thread/new', json={}).json()['active']).ai
+        assert (ai.subagent_depth, ai.subagent_steps, ai.subagent_timeout) == (1, 20, 120), 'a new conversation starts on them'
+    back = Workspace(roots=[tmp_path]); back.restore_settings(ws.state())
+    assert (back.subagent_depth, back.subagent_steps, back.subagent_timeout) == (1, 20, 120), 'and a reload keeps them'
+    back.restore_settings({**ws.state(), 'subagent_depth': 'junk'})
+    assert back.subagent_depth is None, 'a value that is not a number falls back to the default rather than failing the load'

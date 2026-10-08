@@ -525,7 +525,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
     @property
     def _pages(self): return self.ws.__dict__.setdefault('_agent_pages', [])
-    def _page(self, page=''):
+    def _agent_page(self, page=''):
         "One page the agent opened: `page`, else the latest. A person's page is never one."
         if not self._pages: raise ValueError('no page is open; call browse(url) first')
         if not page: return self._pages[-1]
@@ -533,7 +533,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return page
     def _on_page(self, page, f, acting=''):
         "Run `f(tid)` on an agent page, refusing one that has wandered where `browse` would not go; `acting` also refuses Leela's own."
-        b, tid = self.ws.browser, self._page(page)
+        b, tid = self.ws.browser, self._agent_page(page)
         async def go():
             url = (await b.state(tid))['url']
             if acting and b.is_own(url):
@@ -1029,6 +1029,9 @@ class Assistant(Agent):
         kwargs.setdefault('max_tool_calls', getattr(ws, 'tool_budget', 'auto'))
         kwargs.setdefault('max_steps', getattr(ws, 'step_budget', 'auto'))
         kwargs.setdefault('subagent_writes', getattr(ws, 'subagent_writes', False))
+        from ...workspace import SUBAGENT_SETTINGS
+        for k in SUBAGENT_SETTINGS:
+            if (v := getattr(ws, k, None)) is not None: kwargs.setdefault(k, v)
         kwargs.setdefault('verify', getattr(ws, 'verify', ''))
         kwargs.setdefault('optin', tuple(getattr(ws, 'agent_optin', ()) or ()))
         kwargs.setdefault('profile', getattr(ws, 'agent_profile', 'auto') or 'auto')   # `auto`: small for a local or ≤32k model

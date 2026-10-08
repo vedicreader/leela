@@ -1296,6 +1296,20 @@ def connect(app, ctx):
             ws.tool_budget, ws.step_budget = ai.tool_budget, ai.step_budget
             for agent in live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
             ws.save()
+        if line.lstrip('/').split(' ')[0] == 'subagents' and hasattr(ai, 'subagent_depth'):
+            # the conversation that ran it is the source; the workspace and every idle conversation follow it
+            from ...workspace import SUBAGENT_SETTINGS
+            ws.subagent_writes = ai.subagent_writes
+            for k in SUBAGENT_SETTINGS: setattr(ws, k, getattr(ai, k))
+            kept = 0
+            for agent in live_assistants():
+                if agent is ai: continue
+                try:
+                    agent.set_subagent_writes(ws.subagent_writes)
+                    for k in SUBAGENT_SETTINGS: getattr(agent, f'set_{k}')(getattr(ws, k))
+                except RuntimeError: kept += 1
+            ws.save()
+            if kept: out += f'\n{kept} working conversation(s) keep their sub-agent settings until they finish'
         return {'ok': True, 'text': out}
     @rt('/agent/ask')
     async def agent_ask(req):

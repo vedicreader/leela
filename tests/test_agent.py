@@ -1567,11 +1567,12 @@ def test_a_folder_watch_opened_by_the_tool_is_seen_by_the_harness(tmp_path, monk
     assert said.startswith('watching folder'), said
     ws.ai.monitors.sync(); assert [w.folder for w in ws.ai.monitors.all()] == [str(tmp_path)]
 
-def test_the_default_workspace_offers_the_model_at_most_49_tools(tmp_path):
-    "The default turn is Opus: its window adds the six memory and web tools a 32k local model drops."
+def test_the_default_workspace_offers_the_model_at_most_50_tools(tmp_path):
+    "The default turn is Opus: its window adds the six memory and web tools a 32k local model drops. The 50th is `restart_kernel`; the browser is an opt-in."
     ws = Workspace(roots=[tmp_path])
     briefed = [t.__name__ for t in ws.ai._plain]
-    assert len(briefed) <= 49, sorted(briefed)
+    assert len(briefed) <= 50, sorted(briefed)
+    assert 'restart_kernel' in briefed and 'browse' not in briefed
     assert len(Workspace(roots=[tmp_path], model=models.DFLT_LOCAL, agent_profile='full').ai._plain) <= 45
     assert not ({'canvas_read', 'news_feeds', 'edit_file', 'list_files', 'inspect_var', 'search_all', 'api_access', 'user_steering'} & set(briefed))
 
@@ -3249,12 +3250,14 @@ def test_a_subagent_gets_inspect_python_and_neither_writes_nor_delegates():
     assert not (got & NO_SUB), 'a sub-agent must not spawn sub-agents of its own'
     assert got == {'inspect_python', 'search_code', 'view_file'}
 
-def test_the_subagent_toolset_is_blocked_at_the_call_site():
-    "The `block=` that does it. A release that drops it would leave delegation recursive."
-    import inspect
-    import ramabana.tools as rt
-    src = inspect.getsource(rt.delegate)
-    assert 'read_only(' in src and 'block=NO_SUB' in src, src
+def test_a_subagent_gets_no_delegation_unless_nesting_is_on(tmp_path):
+    "Delegation stays one level deep by default. A release that drops the filter would leave it recursive."
+    from ramabana.tools import NO_SUB
+    ai = Workspace(roots=[tmp_path]).ai
+    assert ai.subagent_depth == 0 and not ({t.__name__ for t in ai._sub_tools()} & set(NO_SUB))
+    ai.set_subagent_depth(1)
+    assert 'delegate_search' in {t.__name__ for t in ai._sub_tools()}, 'nesting on: one synchronous delegate tool'
+    assert not ({t.__name__ for t in ai._sub_tools(1)} & set(NO_SUB)), 'and the grandchild gets none'
 
 
 # --- the small profile: ramabana 0.2.3 briefs a local or ≤32k model fourteen tools and one screen ---

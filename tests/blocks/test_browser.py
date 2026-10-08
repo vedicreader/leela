@@ -959,7 +959,8 @@ def test_the_host_declares_the_browser_group_and_its_tools():
     from leela.workspace import Workspace
     h = WorkspaceHost(Workspace(roots=[]))
     assert 'browser' in h.provides
-    assert {n for n in (t.__name__ for t in tools_for(h)) if group_of(n) == 'browser'} == \
+    assert not {n for n in (t.__name__ for t in tools_for(h)) if group_of(n) == 'browser'}, 'an opt-in: nothing unasked'
+    assert {n for n in (t.__name__ for t in tools_for(h, optin=('browser',))) if group_of(n) == 'browser'} == \
         {'browse', 'screenshot', 'page_text', 'page_reload', 'page_click', 'page_type', 'page_eval'}
     with pytest.raises(RuntimeError, match='workspace loop'): h._on_loop(asyncio.sleep(0))
 
@@ -982,3 +983,15 @@ def test_an_observer_boot_resumes_nothing_saves_nothing_and_draws_no_approvals()
     save = [l for l in body(src('blocks/editor/tabs.js'), 'mountTab').splitlines() if '/tabs/save-all' in l]
     assert save and all('!lee.observer' in l for l in save)
     for p in ('lee-core.js', 'lee-agent.js', 'lee-ide.js'): assert 'lee.observer' in (pkg/'static'/p).read_text(), p
+
+
+def test_the_browser_is_one_toggle_in_the_agent_head(tmp_path):
+    """The browser group is an opt-in, so it needs the same control `research` and `exhash` have, and a new conversation started with it gets the tools."""
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as c:
+        assert 'id="agentoptin-browser"' in c.get('/').text
+        tid = c.post('/agent/thread/new', json={'optin': ['browser']}).json()['active']
+        assert 'screenshot' in {t.__name__ for t in ws.threads.require(tid).ai.tools}

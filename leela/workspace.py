@@ -120,6 +120,7 @@ def has_own_window(root, state):
 SESSION_KEYS = ('roots', 'tabs', 'active', 'active_root')
 
 TOOL_RANGE, STEP_RANGE = (20, 400), (8, 80)
+SUBAGENT_SETTINGS = ('subagent_steps', 'subagent_timeout', 'subagent_depth')   #: ramabana's sub-agent knobs a workspace keeps; `/subagents` sets them
 
 def budget_value(v, lo, hi):
     "`auto`, or a number inside `lo..hi`. Anything else is `auto`, never a silent clamp to a bound."
@@ -272,6 +273,7 @@ class Workspace:
         self.origins = Origins()       # which cell or tool last bound each live variable
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
+        self.subagent_steps = self.subagent_timeout = self.subagent_depth = None   # None: ramabana's own default
         self.vault_pii = 'off'              # what a vault retrieval does about personal information
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
         self.agent_profile = agent_profile  # how new conversations are briefed: auto | small | full (ramabana's profiles)
@@ -1143,7 +1145,7 @@ class Workspace:
                 'tool_budget': self.tool_budget, 'step_budget': self.step_budget,
                 'allow_workspace_repo_writes': self.allow_workspace_repo_writes,
                 'agent_read_outside': self.agent_read_outside,
-                'subagent_writes': self.subagent_writes,
+                'subagent_writes': self.subagent_writes, **{k: getattr(self, k) for k in SUBAGENT_SETTINGS},
                 'vault_pii': self.vault_pii,
                 'agent_optin': list(self.agent_optin), 'agent_profile': self.agent_profile,
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
@@ -1161,6 +1163,9 @@ class Workspace:
         self.allow_workspace_repo_writes = bool(d.get('allow_workspace_repo_writes', False))
         self.agent_read_outside = bool(d.get('agent_read_outside', False))
         self.subagent_writes = bool(d.get('subagent_writes', False))
+        for k in SUBAGENT_SETTINGS:
+            try: setattr(self, k, None if d.get(k) is None else int(d[k]))
+            except (TypeError, ValueError): setattr(self, k, None)
         # a saved policy this build no longer knows is `off`, not a workspace that will not load
         try: self.vault_pii = pii_gate(d.get('vault_pii'))
         except ValueError: self.vault_pii = 'off'
