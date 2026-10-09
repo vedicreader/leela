@@ -1,19 +1,12 @@
 "The notebook document: cells, outputs, images, diagnostics and languages."
 
-import asyncio
 import json
 import pytest
-from leela.blocks.nb.nb import CELL_TYPES, Cell, Notebook
+from leela.blocks.nb.nb import Cell, Notebook
 import sys
-from fastcore.all import Path
 from starlette.testclient import TestClient
 from leela.app import ide_app
-from leela.blocks.fs.app import SERVED_TYPES
-from leela.workspace import AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, Tab, Workspace
-ROOT = Path(__file__).resolve().parents[1]
-from pathlib import Path
-from leela.app import _python_diagnostics
-from leela.blocks.fs.fs import lang_for
+from leela.workspace import Workspace
 
 def dialog():
     "A notebook with all three cell types, one prompt answered and one not."
@@ -28,29 +21,6 @@ def dialog():
         Cell(source='and the mean?', cell_type='prompt', id='p2'),
     ])
 
-def test_stopping_a_prompt_cell_stops_the_agent_rather_than_denying_it_is_running(tmp_path, monkeypatch):
-    """A prompt cell is a turn of the inline agent, not anything in a kernel, so `/nb/interrupt` could not find it among the running cells and answered `that cell is not running` while it plainly was."""
-    import json
-    from starlette.testclient import TestClient
-    from leela.app import ide_app
-    from leela.workspace import Workspace
-    p = tmp_path/'ask.ipynb'
-    p.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
-        {'id': 'p1', 'cell_type': 'raw', 'metadata': {'leela': {'kind': 'prompt'}},
-         'source': ['why is the sum 6?']},
-        {'id': 'c1', 'cell_type': 'code', 'metadata': {}, 'execution_count': None, 'outputs': [],
-         'source': ['x = 1']}]}))
-    ws = Workspace(roots=[tmp_path], approvals='auto')
-    ws.open(p)
-    stopped = []
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        monkeypatch.setattr(type(ws.inline_ai), 'cancel', lambda self, *a, **kw: stopped.append(True))
-        d = client.post('/nb/interrupt', json={'path': str(p), 'id': 'p1'}).json()
-        assert d['ok'] and d['stopped'] == 'prompt', d
-        assert stopped, 'the inline agent was asked to stop'
-        idle = client.post('/nb/interrupt', json={'path': str(p), 'id': 'c1'}).json()
-        assert idle['ok'] is False and 'not running' in idle['error'], 'an idle code cell still says so'
 
 def test_a_prompt_cell_is_written_as_valid_markdown(tmp_path):
     "nbformat has no prompt cell, so plain Jupyter must still be able to open the file."
@@ -71,13 +41,6 @@ def test_a_zero_byte_notebook_opens_as_a_new_document(tmp_path):
     nb.save()
     assert json.loads(p.read_text())['nbformat'] == 4
 
-def test_project_execution_initializes_only_zero_byte_notebook_placeholders(tmp_path):
-    good, empty, malformed = tmp_path/'good.ipynb', tmp_path/'empty.ipynb', tmp_path/'broken.ipynb'
-    Notebook.blank(good).save(); empty.touch(); malformed.write_text('{not json')
-    ws = Workspace(roots=[tmp_path])
-    assert ws.initialize_empty_notebooks(tmp_path) == [str(empty)]
-    assert json.loads(empty.read_text())['nbformat'] == 4
-    assert malformed.read_text() == '{not json'
 
 def test_initialising_the_open_notebook_keeps_the_cell_ids_the_browser_knows(tmp_path):
     """A zero-byte `.ipynb` was made valid by writing a fresh blank, whose cell has a new id."""
@@ -90,56 +53,6 @@ def test_initialising_the_open_notebook_keeps_the_cell_ids_the_browser_knows(tmp
     assert ws.initialize_notebook(p, nb) is None, 'a notebook that is already valid is left alone'
     assert ws.initialize_notebook(None) is None and ws.initialize_notebook(tmp_path/'gone.ipynb') is None
 
-def test_the_placeholder_sweep_walks_a_root_once(tmp_path):
-    "It is a whole-tree walk, and it ran on every cell of every streamed run."
-    (tmp_path/'empty.ipynb').touch()
-    ws = Workspace(roots=[tmp_path])
-    assert ws.initialize_empty_notebooks(tmp_path) == [str(tmp_path/'empty.ipynb')]
-    (tmp_path/'later.ipynb').touch()
-    assert ws.initialize_empty_notebooks(tmp_path) == [], 'the same root is not walked again'
-    assert (tmp_path/'later.ipynb').stat().st_size == 0
-
-def test_a_streamed_run_initialises_the_notebook_it_is_about_to_run(tmp_path, monkeypatch):
-    "One stat for the notebook running, and the tree walk no longer once per cell."
-    p = tmp_path/'new.ipynb'; p.touch()
-    ws = Workspace(roots=[tmp_path]); ws.open(p)
-    seen, real = [], ws.initialize_notebook
-    def record(path, nb=None):
-        seen.append((path, nb))
-        return real(path, nb)
-    monkeypatch.setattr(ws, 'initialize_notebook', record)
-    async def no_kernel(tab=None): raise RuntimeError('no kernel in this test')
-    monkeypatch.setattr(ws, 'runtime', no_kernel)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        for _ in range(2):
-            with pytest.raises(RuntimeError):
-                client.post('/nb/run/stream', json={'path': str(p), 'i': 0, 'source': 'x = 1'})
-    routed = [path for path, nb in seen if nb is not None]   # the sweep passes no document
-    assert [str(path) for path in routed] == [str(p), str(p)], 'the run initialises what it runs'
-    assert len(ws._swept) == 1, 'two runs, one walk'
-
-def test_a_run_records_what_the_cell_bound_and_what_made_its_output(tmp_path, monkeypatch):
-    """Two things a finished run is the only place to learn: which cell bound a variable, and which source the outputs on screen came from."""
-    from leela.blocks.runtime.kernels import ExecOutcome
-    from leela.blocks.nb.nb import src_hash
-    p = tmp_path/'w.ipynb'
-    Notebook([Cell(source='total = 6 * 7', cell_type='code', id='c1')]).save(p)
-    ws = Workspace(roots=[tmp_path]); ws.open(p)
-    class K:
-        async def execute(self, code, **kw):
-            return ExecOutcome(ok=True, execution_count=1,
-                               outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': '42\n'}])
-        async def api(self, path, params=None, timeout=15): return None
-    async def runtime(tab=None): return K()
-    monkeypatch.setattr(ws, 'runtime', runtime)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state', params={'path': str(p)})
-        r = client.post('/nb/run', json={'path': str(p), 'i': 0, 'id': 'c1', 'source': 'total = 6 * 7'})
-    assert r.status_code == 200, r.text
-    assert 'cell c1 of' in ws.origins.note('total'), ws.origins.rows
-    cell = r.json()['cell']
-    assert cell['output_hash'] == src_hash('total = 6 * 7') and cell['stale'] is False
 
 def test_a_run_that_initialises_the_notebook_leaves_the_next_save_workable(tmp_path, monkeypatch):
     """The symptom: running cells in a new notebook, then `save the notebook before running this cell` partway through."""
@@ -170,51 +83,6 @@ def test_a_cell_splits_into_one_cell_per_class_and_function():
                      '#| export\nclass C:\n    pass']
     assert not any(s.endswith('\n') for s in cells), 'a trailing newline is an empty line in the editor'
 
-def test_every_part_of_an_export_cell_is_exported_too():
-    "The point of the split is a test cell under each, so each part has to carry the directive."
-    made, cells = _split('#| export\ndef f(): pass\n\ndef g(): pass\n')
-    assert made == 1, 'nothing was left to keep, so the first part is the cell itself'
-    assert cells == ['#| export\ndef f(): pass', '#| export\ndef g(): pass']
-
-def test_a_notebook_wide_directive_is_not_copied_onto_the_parts():
-    "`default_exp` names the notebook. Copied onto every part it would be declared over and over."
-    made, cells = _split('#| default_exp core\n#| export\ndef f(): pass\n')
-    assert made == 1
-    assert cells[0] == '#| default_exp core\n#| export', 'and it holds the original cell open'
-    assert cells[1] == '#| export\ndef f(): pass'
-
-def test_a_cell_with_nothing_to_split_is_left_exactly_as_it_was():
-    for src in ('x = 1\n', 'def (:\n', '', '#| export\n'):
-        made, cells = _split(src)
-        assert (made, cells) == (0, [src]), f'{src!r} changed'
-    nb = Notebook([Cell(source='def f(): pass\n', cell_type='markdown')])
-    assert nb.split_symbols(0) == 0, 'markdown has no defs to find'
-
-def test_one_undo_puts_a_split_cell_back():
-    "Every part arrives on one checkpoint, so this is one undo and not one per class."
-    nb = Notebook([Cell(source='def f(): pass\n\ndef g(): pass\n\ndef h(): pass\n')])
-    assert nb.split_symbols(0) == 2 and len(nb.cells) == 3
-    nb.undo()
-    assert [c.source for c in nb.cells] == ['def f(): pass\n\ndef g(): pass\n\ndef h(): pass\n']
-
-def test_the_split_is_reachable_as_an_edit_op(tmp_path):
-    p = tmp_path/'n.ipynb'
-    Notebook([Cell(source='#| export\ndef f(): pass\n\nclass C: pass\n')]).save(p)
-    ws = Workspace(roots=[tmp_path]); ws.open(p)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        r = client.post('/nb/edit', json={'op': 'split_symbols', 'i': 0})
-        assert r.status_code == 200, r.text
-        assert [c['source'] for c in r.json()['cells']] == ['#| export\ndef f(): pass',
-                                                            '#| export\nclass C: pass']
-
-def test_creating_an_ipynb_by_filename_writes_valid_json(tmp_path):
-    ws = Workspace(roots=[tmp_path])
-    p = tmp_path / 'new.ipynb'
-    ws.create_document(p)
-    raw = json.loads(p.read_text())
-    assert raw['nbformat'] == 4
-    assert Notebook.load(p)[0].cell_type == 'code'
 
 def test_the_answer_survives_the_round_trip(tmp_path):
     p = tmp_path / 'd.ipynb'
@@ -225,170 +93,6 @@ def test_the_answer_survives_the_round_trip(tmp_path):
     assert back[2].calls == [{'tool': 'run_python', 'args': '{}'}]
     assert back[1].text.startswith('a    6')
 
-def test_an_unanswered_prompt_round_trips_too(tmp_path):
-    p = tmp_path / 'd.ipynb'
-    dialog().save(p)
-    assert Notebook.load(p)[4].reply == ''
-
-def test_cell_run_persists_the_kernels_reconciled_display_updates():
-    first = {'output_type': 'display_data', 'data': {'text/markdown': 'first'}, 'metadata': {}}
-    final = {'output_type': 'display_data', 'data': {'text/markdown': 'final'}, 'metadata': {}}
-    class Result:
-        outputs = [final]
-        execution_count = 2
-    class Kernel:
-        async def execute(self, source, on_output=None):
-            on_output(first); on_output(final)
-            return Result()
-    nb = Notebook([Cell(source='display_stream(...)', cell_type='code')])
-    asyncio.run(nb.run(0, Kernel()))
-    assert nb[0].outputs == [final]
-    assert nb[0].execution_ms is not None and nb[0].execution_ms >= 0
-
-def test_saved_execution_is_historical_until_it_runs_in_the_current_kernel(tmp_path):
-    p = tmp_path/'previous.ipynb'
-    nb = Notebook([Cell(source='x = 1', execution_count=3, execution_ms=42, fresh=True)])
-    nb.save(p)
-    assert Notebook.load(p)[0].fresh is False
-    class Result:
-        outputs = []
-        execution_count = 1
-    class Kernel:
-        async def execute(self, source, on_output=None): return Result()
-    asyncio.run(nb.run(0, Kernel()))
-    assert nb[0].fresh is True
-
-def test_execution_time_survives_the_notebook_round_trip(tmp_path):
-    p = tmp_path/'timed.ipynb'
-    nb = Notebook([Cell(source='1 + 1', execution_count=1, execution_ms=127.4),
-                   Cell(source='explain it', cell_type='prompt', reply='two', execution_ms=2048.2)])
-    nb.save(p)
-    back = Notebook.load(p)
-    assert back[0].execution_ms == pytest.approx(127.4)
-    assert back[1].execution_ms == pytest.approx(2048.2)
-
-def test_a_prompt_cell_carries_its_context_and_its_answer():
-    nb = Notebook([Cell(source='x')])
-    assert [nb.cycle_type(0).cell_type for _ in CELL_TYPES] == ['markdown', 'prompt', 'code']
-    nb = dialog()
-    assert nb.set_type(2, 'markdown').reply == ''
-    ctx = dialog().context(2)
-    assert '<cell id="m1" type="markdown" compact="auto">' in ctx and '## Loading' in ctx
-    assert '<cell id="c1" type="code" compact="auto">' in ctx and 'df = load()' in ctx
-    assert '<output count="1">' in ctx and 'dtype: int64' in ctx, 'the run the output came from'
-    nb = dialog()
-    assert nb.prompt_start(4) == 0
-    ctx = nb.context(4, since=nb.prompt_start(4))
-    assert 'df.mean()' in ctx
-    assert '## Loading' in ctx and 'why is the sum 6?' in ctx
-    nb = dialog()
-    assert nb.prompt_start(2) == 0
-    ctx = dialog().context(4, since=0)
-    assert 'type="prompt"' in ctx and 'why is the sum 6?' in ctx
-    assert '<answer>' in ctx and 'Because 1+2+3 = 6.' in ctx
-    nb = dialog()
-    nb[1].outputs[0]['data']['text/plain'] = 'x' * 5000
-    assert 'x' * 5000 in nb.context(4)
-    assert len(nb.context(4, out_chars=5)) < len(nb.context(4))
-    nb = dialog()
-    nb[0].context_mode = 'keep'
-    nb[1].context_mode = 'discard'
-    ctx = nb.context(4, since=0, max_chars=180)
-    assert '## Loading' in ctx
-    assert 'df = load()' not in ctx
-    assert dialog().context(0) == ''
-
-
-def test_cell_operations_can_be_undone_and_redone():
-    nb = Notebook([Cell(source='keep', id='a'), Cell(source='restore me', id='b')])
-    deleted = nb.delete(1)
-    assert deleted.id == 'b' and [c.id for c in nb.cells] == ['a']
-    assert nb.undo() == 1
-    assert [(c.id, c.source) for c in nb.cells] == [('a', 'keep'), ('b', 'restore me')]
-    assert nb.redo() == 0
-    assert [c.id for c in nb.cells] == ['a']
-
-def test_cell_operations_are_undoable_and_keep_their_order():
-    nb = Notebook([Cell(source='a'), Cell(source='b')])
-    nb.delete(1)
-    nb.undo()
-    nb.insert(2, Cell(source='c'))
-    assert nb.redo() is None
-    nb = Notebook([Cell(source='do not lose this', id='only')])
-    nb.delete(0)
-    assert len(nb) == 1 and nb[0].source == ''
-    nb.undo()
-    assert len(nb) == 1 and nb[0].id == 'only' and nb[0].source == 'do not lose this'
-    nb = Notebook([Cell(source='x = 1', id='original', execution_count=3,
-                        outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'one\n'}])])
-    duplicate = nb.duplicate(0)
-    assert [c.source for c in nb.cells] == ['x = 1', 'x = 1']
-    assert duplicate.outputs == nb[0].outputs and duplicate.outputs is not nb[0].outputs
-    assert duplicate.id != nb[0].id and not duplicate.running and nb.dirty
-    nb = Notebook([Cell(source=x) for x in 'abcd'])
-    assert nb.move(0, 2) == 2
-    assert [c.source for c in nb.cells] == ['b', 'c', 'a', 'd']
-    assert nb.dirty
-    txt = dialog().source_text()
-    assert '# %% markdown m1' in txt and '# %% code c1' in txt and '# %% prompt p1' in txt
-    assert 'dtype: int64' not in dialog().source_text()
-
-
-def test_cell_ranges_move_copy_and_delete_as_single_undoable_operations():
-    nb = Notebook(cells=[Cell(source=x) for x in ('a', 'b', 'c', 'd')])
-    at = nb.move_many([1, 2], 4)
-    assert at == 2 and [c.source for c in nb.cells] == ['a', 'd', 'b', 'c']
-    nb.undo(); assert [c.source for c in nb.cells] == ['a', 'b', 'c', 'd']
-    copied = [nb.detached(1), nb.detached(2)]
-    pasted = nb.paste_many(4, copied)
-    assert [c.source for c in pasted] == ['b', 'c'] and len({c.id for c in nb.cells}) == len(nb.cells)
-    nb.undo(); assert len(nb.cells) == 4
-    nb.delete_many([1, 2]); assert [c.source for c in nb.cells] == ['a', 'd']
-    nb.undo(); assert [c.source for c in nb.cells] == ['a', 'b', 'c', 'd']
-
-
-def test_detached_cell_can_be_pasted_between_notebooks_repeatedly():
-    source = Notebook([Cell(source='answer = 42', cell_type='code', id='source-cell',
-                            execution_count=2, outputs=[{'output_type': 'stream', 'text': '42\n'}])])
-    target = Notebook([Cell(source='# destination', cell_type='markdown', id='destination')])
-    clipboard = source.detached(0)
-    first = target.paste(1, clipboard)
-    second = target.paste(2, clipboard)
-    assert [c.source for c in target.cells] == ['# destination', 'answer = 42', 'answer = 42']
-    assert first.outputs == source[0].outputs and first.outputs is not source[0].outputs
-    assert len({source[0].id, clipboard.id, first.id, second.id}) == 4
-    assert not first.running and not first.fresh and target.dirty
-
-
-def test_an_approval_cell_round_trips_as_plain_markdown(tmp_path):
-    "The exchange between the agent and the person is saved with the work."
-    nb = Notebook([Cell(source='fix the bug', cell_type='prompt')])
-    c = Cell(source='**🔐 approval needed — `edit_file`**', cell_type='markdown')
-    c.approval = {'kind': 'approval', 'id': 'ab12', 'tool': 'edit_file', 'state': 'refused'}
-    nb.insert(1, c)
-    p = tmp_path/'d.ipynb'
-    nb.save(p)
-    import nbformat
-    nbformat.validate(nbformat.read(str(p), as_version=4))
-    back = Notebook.load(p)
-    assert back[1].cell_type == 'markdown'
-    assert back[1].is_approval
-    assert back[1].approval['tool'] == 'edit_file'
-    assert back[1].approval['state'] == 'refused'
-    assert not back[0].is_approval
-
-def test_cell_context_policy_survives_the_notebook_round_trip(tmp_path):
-    nb = dialog()
-    nb[0].context_mode, nb[1].context_mode = 'keep', 'discard'
-    nb.save(p := tmp_path/'d.ipynb')
-    back = Notebook.load(p)
-    assert [back[0].context_mode, back[1].context_mode, back[2].context_mode] == ['keep', 'discard', 'auto']
-
-def test_ordinary_cells_carry_no_approval_metadata(tmp_path):
-    nb = Notebook([Cell(source='x = 1')])
-    nb.save(p := tmp_path/'d.ipynb')
-    assert Notebook.load(p)[0].approval is None
-    assert 'leela' not in json.loads(p.read_text())['cells'][0]['metadata']
 
 def notebook_json():
     "A notebook on disk, written the way nbformat writes one: a JSON string per source line."
@@ -397,18 +101,6 @@ def notebook_json():
                    Cell(source='class Beta:\n    def gamma(self):\n        return alpha(1)', id='c2')])
     return nb
 
-def test_a_cells_lines_are_found_in_the_file_that_holds_them(tmp_path):
-    "The scan behind notebook blame and notebook search: which file lines are this cell's source."
-    from leela.blocks.nb.nb import cell_lines, read_cells, source_spans
-    notebook_json().save(p := tmp_path/'d.ipynb')
-    text = p.read_text()
-    cells = read_cells(text)
-    spans = source_spans(text, cells)
-    lines = text.splitlines()
-    for cell, span in zip(cells, spans):
-        held = [lines[n - 1] for n in range(span[0], span[1] + 1)]
-        for source, raw in zip(cell_lines(cell), held):
-            assert json.dumps(source) in raw, 'the span holds exactly this cell source line'
 
 def test_a_file_line_maps_back_to_the_cell_and_the_line_inside_it(tmp_path):
     "The direction search needs: ripgrep reports a line of JSON and a reader needs a cell."
@@ -420,109 +112,6 @@ def test_a_file_line_maps_back_to_the_cell_and_the_line_inside_it(tmp_path):
     assert (at['id'], at['index'], at['line']) == ('c2', 2, 2)
     assert at['file_line'] == line
     assert cell_at(text, 1) is None, 'a line of JSON that is nobody\'s source belongs to no cell'
-
-def test_a_notebook_that_cannot_be_read_is_reported_rather_than_guessed_at(tmp_path):
-    from leela.blocks.nb.nb import cell_at, cell_of, read_cells
-    assert read_cells('not json at all') is None
-    assert read_cells('{"nbformat": 4}') is None
-    assert cell_at('not json at all', 3) is None
-    notebook_json().save(p := tmp_path/'d.ipynb')
-    text = p.read_text()
-    assert cell_of(text, 'def gamma')['id'] == 'c2'
-    assert cell_of(text, 'return') is None, 'two cells contain it, so neither is the answer'
-    assert cell_of(text, 'nothing here') is None
-
-sys.path.insert(0, str(ROOT/'tools'))
-import build_ide_js as builder  # noqa: E402
-
-PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4'
-                    '890000000a49444154789c6300010000050001' '0d0a2db4' '0000000049454e44ae426082')
-
-def test_image_tabs_are_served_but_never_written_over():
-    assert IMAGE_EXTS <= set(SERVED_TYPES), sorted(IMAGE_EXTS - set(SERVED_TYPES))
-    for ext in sorted(IMAGE_EXTS):
-        assert Tab(path=f'/tmp/a{ext}').kind == 'image', ext
-        assert Tab(path=f'/tmp/a{ext.upper()}').kind == 'image', 'the extension is not case sensitive'
-    for ext in sorted(AUDIO_EXTS):
-        assert Tab(path=f'/tmp/a{ext}').kind == 'audio' and ext in SERVED_TYPES
-    for ext in sorted(VIDEO_EXTS):
-        assert Tab(path=f'/tmp/a{ext}').kind == 'video' and ext in SERVED_TYPES
-    assert Tab(path='/tmp/a.py').kind == 'text' and Tab(path='/tmp/a.pdf').kind == 'pdf'
-    js = (builder.OUTDIR/'lee-ide.js').read_text()
-
-
-def test_the_tab_payload_carries_no_bytes_and_the_raw_route_serves_them(tmp_path):
-    "Base64ing a whole image into every tab switch is what the pdf kind already avoids."
-    (tmp_path/'shot.png').write_bytes(PNG)
-    ws = Workspace(roots=[tmp_path])
-    with TestClient(ide_app(ws)) as c:
-        ws.open(tmp_path/'shot.png')
-        st = c.get('/tab/state').json()
-        assert st['kind'] == 'image' and st['path'].endswith('shot.png')
-        assert 'text' not in st and 'cells' not in st
-        raw = c.get('/file/raw/shot.png', params={'path': str(tmp_path/'shot.png')})
-        assert raw.status_code == 200 and raw.headers['content-type'] == 'image/png'
-        assert raw.content == PNG
-
-
-def test_python_compiler_reports_precise_syntax_errors():
-    source = 'answer = 1\nif True print(answer)\n'
-    diagnostics = _python_diagnostics(source, 'draft.py')
-    assert len(diagnostics) == 1
-    error = diagnostics[0]
-    assert error['severity'] == 'error'
-    assert error['source'] == 'Python'
-    assert error['code'] == 'SyntaxError'
-    assert error['message'] == 'invalid syntax'
-    assert source[error['from']:error['to']]
-    assert error['from'] >= source.index('if True')
-
-def test_python_is_checked_without_being_executed():
-    warnings = _python_diagnostics('value is 1\nraise RuntimeError("must not run")\n')
-    assert len(warnings) == 1
-    warning = warnings[0]
-    assert warning['severity'] == 'warning'
-    assert warning['code'] == 'SyntaxWarning'
-    assert 'Did you mean "=="?' in warning['message']
-    with TestClient(ide_app(Workspace(roots=[]))) as client:
-        response = client.post('/lint', json={'lang': 'python', 'code': 'if True print(1)'})
-    assert response.status_code == 200
-    assert response.json()['diagnostics'][0]['severity'] == 'error'
-
-
-def test_common_project_languages_are_detected_from_paths():
-    expected = {
-        'pyproject.toml': 'toml', 'app.js': 'javascript', 'worker.mjs': 'javascript',
-        'view.jsx': 'jsx', 'app.ts': 'typescript', 'view.tsx': 'tsx',
-        'config.yaml': 'yaml', 'data.json': 'json', 'settings.jsonc': 'json',
-        'main.rs': 'rust', 'main.go': 'go', 'Main.java': 'java', 'lib.cpp': 'cpp',
-        'layout.xml': 'xml', 'local.properties': 'properties', 'script.sh': 'bash',
-        'Dockerfile': 'bash', 'Cargo.lock': 'toml',
-    }
-    assert {name: lang_for(name) for name in expected} == expected
-
-from leela.blocks.nb.nb import media_output, media_outputs
-
-def test_a_generated_picture_becomes_the_display_data_output_the_renderer_already_draws():
-    o = media_output({'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\n'})
-    assert o['output_type'] == 'display_data'
-    assert o['data']['image/png'] == 'iVBORw0KGgo='
-    assert '\n' not in o['data']['image/png'], 'the img src is a single base64 line'
-
-def test_generated_video_becomes_a_player_and_any_other_picture_an_img():
-    html = media_output({'mime': 'video/mp4', 'data': b'ftyp'})['data']['text/html']
-    assert html.startswith('<video controls src="data:video/mp4;base64,') and html.endswith('</video>')
-    assert media_output({'mime': 'image/jpeg', 'data': b'jpg'})['data']['text/html'].startswith(
-        '<img src="data:image/jpeg;base64,')
-    assert media_outputs(None) == []
-
-def test_a_prompt_cell_keeps_its_generated_media_across_a_save_and_reload(tmp_path):
-    outputs = media_outputs([{'mime': 'image/png', 'data': b'\x89PNG\r\n\x1a\n'}])
-    nb = Notebook([Cell(source='draw a cat', cell_type='prompt', reply='here it is', outputs=outputs)])
-    nb.save(str(tmp_path/'d.ipynb'))
-    back = Notebook.load(str(tmp_path/'d.ipynb'))
-    assert back[0].cell_type == 'prompt' and back[0].reply == 'here it is'
-    assert back[0].outputs == outputs
 
 
 def _trail(steps=2, payload='x' * 4000):

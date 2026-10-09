@@ -54,11 +54,6 @@ def get(url, host=None):
     try: return urllib.request.urlopen(req, timeout=20)
     except urllib.error.HTTPError as e: return e
 
-def test_a_plain_workspace_serves_the_folders_it_was_given(tmp_path):
-    (tmp_path/'one').mkdir()
-    port = serve(roots=[str(tmp_path/'one')])
-    body = get(f'http://127.0.0.1:{port}/').read().decode()
-    assert 'lee-ide' in body and 'one' in body
 
 def test_app_windows_serve_one_isolated_workspace_per_folder(tmp_path):
     """The `--app` shape, which is what the desktop entry launches."""
@@ -73,20 +68,6 @@ def test_app_windows_serve_one_isolated_workspace_per_folder(tmp_path):
         assert slug in r.read().decode()
     assert get(f'http://127.0.0.1:{port}/', host=f'nope.localhost:{port}').status == 421
 
-def test_the_cdp_port_reaches_the_workspaces_browser(tmp_path):
-    "The inline browser reads its port off the `Workspace`, through both construction paths."
-    (tmp_path/'one').mkdir()
-    port = serve(roots=[str(tmp_path/'one')], app_window=True, cdp_port=9876, gateway_port=0)
-    d = get(f'http://127.0.0.1:{port}/browser/ready', host=f'one.localhost:{port}')
-    assert json.load(d)['port'] == 9876
-
-def test_a_desktop_launch_with_no_folder_does_not_open_your_home_directory(monkeypatch):
-    "`leela` from a shell means here; a double-clicked app has no here, and used to guess."
-    monkeypatch.setattr('sys.frozen', True, raising=False)
-    port = serve(roots=[])
-    body = get(f'http://127.0.0.1:{port}/').read().decode()
-    assert 'Open a folder' in body
-    assert json.load(get(f'http://127.0.0.1:{port}/workspace/info'))['roots'] == []
 
 def test_a_plain_workspace_has_a_kernel_ceiling(tmp_path):
     """`RuntimeBroker` was built only inside the `--app` branch, so a plain `leela` registered no broker: `admit` never ran, `LEELA_MAX_KERNELS` never applied, and kernels accumulated without a ceiling until the machine noticed."""

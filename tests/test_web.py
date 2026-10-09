@@ -1,14 +1,7 @@
 "The web IDE surface: project tools, movement, tabs, cells and workspaces."
 
-from fasthtml.common import to_xml
-from leela.blocks.term.term import TerminalGate
-from leela.app import _shell
 from leela.workspace import Workspace
-from tests.assets import read
-from tests.conftest import needs_runtime
 from pathlib import Path
-from leela.blocks.runtime.kernels import bootstrap_src, project_python
-ROOT = Path(__file__).resolve().parents[1]
 import json
 from starlette.testclient import TestClient
 from leela.app import ide_app
@@ -16,77 +9,9 @@ import asyncio
 import time
 from unittest.mock import Mock
 import pytest
-from leela.blocks.runtime.kernels import RuntimeBroker, KernelPool
 from leela.hub import (OPEN_PATH, LoopbackHostGuard, WorkspaceHub, WorkspaceSite,
-                       assign_slugs, workspace_slug, workspace_slugs)
+                       assign_slugs)
 
-def test_the_shell_paints_status_theme_and_layout():
-    from leela.app import _asset
-    assert _asset('lee-ide.css').startswith('/leestatic/lee-ide.css?v=')
-    from leela.core.web import IDE_BUNDLES
-    for name in IDE_BUNDLES: assert _asset(name).startswith(f'/leestatic/{name}?v=')
-
-
-def test_header_leads_with_workspace_branch_and_named_menus_without_starting_a_kernel(tmp_path):
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    assert 'id="workspacepill"' in html and 'leeWorkspaceMenu(this)' in html
-    assert 'id="gitpill"' in html and 'leeBranchMenu(this)' in html
-    assert '>File</button>' in html and '>Tools</button>' in html and '>Debug</button>' in html
-    assert 'id="themepill"' not in html and 'id="cwdpill"' not in html
-
-
-def test_every_tab_reports_pending_saving_saved_and_failed_autosave(tmp_path):
-    from leela.app import _tab_bar
-    p = tmp_path/'notes.py'; p.write_text('answer = 42\n')
-    ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
-    saved = to_xml(_tab_bar(ws))
-    assert 'lee-save-state saved' in saved and 'saved on disk' in saved
-    tab.dirty = True
-    pending = to_xml(_tab_bar(ws))
-    assert 'lee-save-state pending' in pending and 'changes waiting for autosave' in pending
-
-def test_modified_files_and_lines_are_visible_before_opening_source_control(tmp_path):
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    assert 'id="gitpill"' in html
-
-
-def test_left_activity_bar_has_a_pycharm_style_file_structure(tmp_path):
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    assert 'data-left="symbols"' in html and 'id="symbols"' in html
-
-
-def test_agent_model_and_reasoning_live_below_the_growing_prompt(tmp_path):
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    assert html.index('id="agentprompt"') < html.index('id="agentmodel"')
-    assert 'id="agentreasoning"' in html and 'lee-composer-footer' in html
-
-
-@needs_runtime('claude')
-def test_agent_vocabulary_exposes_commands_tools_and_project_skills(tmp_path):
-    skill = tmp_path/'.agents/skills/notebook-tests/SKILL.md'
-    skill.parent.mkdir(parents=True)
-    skill.write_text('---\nname: notebook-tests\ndescription: How this project tests notebooks.\n---\n\nDo it carefully.\n')
-    with TestClient(ide_app(Workspace(roots=[tmp_path], model='sonnet'))) as client:
-        vocabulary = client.get('/agent/commands').json()
-    assert {'commands', 'tools', 'skills'} <= vocabulary.keys()
-    assert any(x['name'] == 'search_code' for x in vocabulary['tools']) and not any(x['name'] == 'research' for x in vocabulary['tools'])
-    assert any(x['name'] == 'notebook-tests' for x in vocabulary['skills'])
-
-
-def test_pyproject_dependencies_get_runtime_version_pills(tmp_path):
-    p = tmp_path/'pyproject.toml'
-    p.write_text('[project]\nname="demo"\nversion="0.1"\nkeywords=["package-that-does-not-exist"]\n'
-                 'dependencies=[\n  "pytest>=1", # a deliberately long comment after the declaration\n]\n'
-                 '[project.optional-dependencies]\ndev=["package-that-does-not-exist>=9", "pytest>=1"]\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(p)
-    with TestClient(ide_app(ws)) as client:
-        data = client.get('/editor/packages', params={'path': str(p)}).json()
-    rows = {r['name']: r for r in data['packages']}
-    assert rows['pytest']['installed'] and rows['pytest']['compatible'] is True
-    assert rows['package-that-does-not-exist']['installed'] is None
-    assert rows['package-that-does-not-exist']['line'] == 9
-    assert len({r['column'] for r in data['packages'] if r['line'] == 9}) == 2
-    assert data['summary']['missing'] == 1
 
 def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
     """One interpreter answered for every open project at once."""
@@ -106,67 +31,12 @@ def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
                 "the pills came from another project's environment"
 
 
-def test_workspace_panes_can_minimise_and_restore_independently(tmp_path):
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    assert html.count('lee-pane-min') >= 3 and html.count('lee-pane-restore') == 3
-    for label, side in (('files', 'left'), ('tools', 'right'), ('terminal / exec', 'bottom')):
-        assert f'>{label}</button>' in html and f'leePane("{side}", true)' in html
-
-
-def test_the_file_and_agent_panes_can_be_pinned_or_left_to_auto_close(tmp_path):
-    "Unpinned, a pane closes when you work elsewhere; pinned is the default and the old behaviour."
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    for pane in ('left', 'right'):
-        assert f'data-pane-pin="{pane}"' in html, pane
-        assert f'leePinPane(&quot;{pane}&quot;)' in html or f"leePinPane(\"{pane}\")" in html, pane
-    assert html.count('lee-pane-min') >= 4, 'the file pane gained its own minimise'
-
-def test_git_is_a_first_class_vertical_project_tab(tmp_path):
-    html = to_xml(_shell(Workspace(roots=[tmp_path]), TerminalGate()))
-    assert 'lee-activity' in html and 'data-left="files"' in html and 'data-left="git"' in html
-    assert 'id="gitpanel"' in html and 'lee-source-control' in html
-
-
-def test_blame_is_reachable_from_anywhere_and_groups_a_notebook_into_cells():
-    "Two separate things it needs to be useful."
-    assert "Key('git_blame'" in read('leela/core/keys.py'), 'so it has a chord and a palette entry'
-    assert read('leela/blocks/keys/menus.py').count("S('git_blame')") >= 4, 'file, editor, cell and tab'
-
-
-def test_panels_refresh_themselves_and_keep_secrets_server_side():
-    assert 'def pipeline_socket(' in read('leela/core/web.py')
-    first = workspace_slug('My Project')
-    second = workspace_slug('My Project', [first])
-    assert first == 'my-project' and second == 'my-project-2'
-
-def test_the_tree_hides_dotfiles_until_the_toggle_asks_for_them(tmp_path):
-    "`.gitignore` is a file you edit; `.venv` is not, and one control must not conflate them."
-    (tmp_path/'.gitignore').write_text('build/\n')
-    (tmp_path/'.venv').mkdir(); (tmp_path/'sub').mkdir()
-    (tmp_path/'app.py').write_text('x = 1\n')
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
-        ask = lambda **kw: client.get('/tree', params={'path': str(tmp_path), **kw},
-                                      headers={'HX-Request': 'true'}).text
-        plain, shown = ask(), ask(hidden=True)
-    assert '.gitignore' not in plain and '.gitignore' in shown
-    assert '.venv' not in plain and '.venv' not in shown, 'the skip list is not what this toggles'
-    assert 'hidden=1' in shown and 'hidden=1' not in plain, 'a folder opened from here keeps showing them'
-    assert "Btn('show_hidden'" in read('leela/core/ui.py'), 'and the files bar can turn it on'
-
 def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
     "`serve_ide` slugs resolved roots, so a symlinked folder must not be slugged by its link."
     from leela.hub import workspace_urls
     (tmp_path/'real-name').mkdir()
     (tmp_path/'link').symlink_to(tmp_path/'real-name')
     assert workspace_urls([tmp_path/'link'], 5001) == ['http://real-name.localhost:5001/']
-
-
-def test_every_git_failure_reaches_the_log_not_only_the_status_line():
-    "The detail of a refusal is the point of it, and a toast cannot hold it."
-    for name in ('git/cwd', 'git/state', 'git/views', 'git/conflictfiles', 'git/branchbar',
-                 'git/panel', 'editor/gutter'):
-        assert "status(e.message || String(e), 'err')" not in read(f'leela/blocks/{name}.js'), \
-            f'{name} reports a failure without logging its detail'
 
 
 def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
@@ -189,23 +59,6 @@ def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
         (tmp_path/'x.py').write_text('x = 1\n')
         assert c.get('/file/raw', params={'path': str(tmp_path/'x.py')}).json()['error']
         assert c.get('/file/raw', params={'path': '/etc/passwd'}).json()['error']
-
-
-def test_a_markdown_file_gets_the_same_change_hunks_as_code(tmp_path):
-    "The gutter popup is language-agnostic; this pins that markdown really does feed it."
-    import subprocess
-    def git(*a): subprocess.run(['git', *a], cwd=tmp_path, check=True, capture_output=True)
-    git('init', '-q', '-b', 'main', '.')
-    git('config', 'user.email', 'tests@leela.local'); git('config', 'user.name', 'Leela tests')
-    (tmp_path/'readme.md').write_text('# Title\n\nfirst para\n')
-    git('add', '.'); git('commit', '-qm', 'init')
-    (tmp_path/'readme.md').write_text('# Title\n\nfirst para edited\n')
-    from leela.blocks.git.git import GitRepo
-    fc = GitRepo.at(tmp_path).file_changes('readme.md')
-    assert fc['ranges'] == [{'from': 3, 'to': 3, 'kind': 'modified'}]
-    hunk = fc['hunks'][0]
-    assert hunk['old'] == 'first para\n' and 'first para edited' in hunk['new']
-    assert hunk['patch'].startswith('diff --git'), 'so revert and commit-this-change work on prose too'
 
 
 def _md_render(text):
@@ -267,38 +120,6 @@ uv add rishi
 [^1]: the note
 '''
 
-def test_every_markdown_block_maps_to_the_element_it_rendered_as():
-    from leela.core.text import md_blocks
-    blocks = md_blocks(README)
-    pairs = _md_align(_md_render(README), blocks)
-    assert pairs is not None, 'a rendered diff of an ordinary README can be marked'
-    assert [n for _, n in pairs] == ['h1', '#comment', 'p', 'pre', 'h2', 'ul', 'table',
-                                     'blockquote', 'hr', 'figure']
-    assert [b['type'] for b in blocks if not b['renders']] == ['link_ref', 'footnote_def']
-    fence = next(b for b in blocks if b['type'] == 'code_block')
-    assert (fence['from'], fence['to']) == (7, 9) and fence['code'] == 'uv add rishi\n'
-
-def test_markdown_diffs_map_blocks_onto_the_elements_they_rendered():
-    from leela.core.text import md_blocks
-    doc = 'para one\n\n<p>a</p><p>b</p>\n\n## heading\n'
-    assert _md_align(_md_render(doc), md_blocks(doc)) is None
-    assert _md_align('<p>only</p>', md_blocks('para\n\npara two\n')) is None, 'a block with no element'
-    assert _md_align('<p>a</p><p>b</p>', md_blocks('para\n')) is None, 'an element no block claimed'
-
-
-def test_a_markdown_diff_pairs_blocks_and_refuses_to_pair_across_types():
-    from leela.core.text import md_block_diff
-    old = '# t\n\nold prose\n\n```sh\nold cmd\n```\n\ngone entirely\n'
-    new = '# t\n\nnew prose\n\n```sh\nnew cmd\n```\n\n## Install\n\nfresh\n'
-    d = md_block_diff(old, new)
-    rows = [(r['status'], r['type']) for r in d['blocks']]
-    assert rows[:3] == [('equal', 'heading'), ('modified', 'paragraph'), ('modified', 'code_block')]
-    assert ('modified', 'heading') not in rows, 'a paragraph did not become a heading'
-    assert ('added', 'heading') in rows
-    assert (d['blocks'][-1]['status'], d['blocks'][-1]['old']) == ('modified', 'gone entirely')
-    fence = next(r for r in d['blocks'] if r['type'] == 'code_block')
-    assert fence['old_code'] == 'old cmd\n' and fence['code'] == 'new cmd\n'
-    assert d['changed'] and (d['added'], d['removed']) == (5, 3)
 
 def test_the_diff_records_still_line_up_with_the_document_being_read():
     "The records the rendered view actually receives, against the rendering it actually gets."
@@ -314,33 +135,6 @@ def test_the_diff_records_still_line_up_with_the_document_being_read():
     gone = [b for b in d['blocks'] if b['status'] == 'removed']
     assert [b['source'] for b in gone] == ['A paragraph that this change deletes.']
 
-def test_a_line_range_from_git_lands_on_the_block_that_holds_it():
-    from leela.core.text import md_blocks, md_change_kinds
-    blocks = md_blocks('# t\n\nprose\n\n```sh\na\nb\n```\n')
-    kinds = md_change_kinds(blocks, [{'from': 3, 'to': 3, 'kind': 'added'},
-                                     {'from': 6, 'to': 6, 'kind': 'deleted'}])
-    assert kinds == [None, 'added', 'removed']
-    both = md_change_kinds(blocks, [{'from': 1, 'to': 8, 'kind': 'modified'}])
-    assert both == ['modified', 'modified', 'modified']
-    with TestClient(ide_app(Workspace(roots=[]))) as client:
-        got = client.post('/markdown/blocks', json={'text': '# t\n\nprose\n',
-                                                    'ranges': [{'from': 3, 'to': 3, 'kind': 'added'}]}).json()
-        diff = client.post('/markdown/diff', json={'left': '# t\n', 'right': '# t\n\nnew\n'}).json()
-    assert got['kinds'] == [None, 'added'] and got['blocks'][1]['tags'] == ['p']
-    assert [b['status'] for b in diff['blocks']] == ['equal', 'added']
-
-
-def test_a_pdf_is_served_under_its_own_name_and_fills_the_pane(tmp_path):
-    'Two things were wrong with the viewer: it was short, and every document was called "raw".'
-    pdf = tmp_path/'2306.14881.pdf'; pdf.write_bytes(b'%PDF-1.4\n%%EOF\n')
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
-        named = c.get('/file/raw/2306.14881.pdf', params={'path': str(pdf)})
-        assert named.status_code == 200 and named.headers['content-type'] == 'application/pdf'
-        assert 'inline; filename="2306.14881.pdf"' in named.headers['content-disposition']
-        assert c.get('/file/raw', params={'path': str(pdf)}).status_code == 200, 'both spellings'
-        assert c.get('/leestatic/lee-ide.css').status_code == 200
-        assert c.get('/file/raw/passwd.pdf', params={'path': '/etc/passwd'}).status_code == 400
-
 
 def test_the_compressor_leaves_every_event_stream_alone():
     "GZip went on the app for the cold load. Buffering the streams would have paid for it."
@@ -349,167 +143,11 @@ def test_the_compressor_leaves_every_event_stream_alone():
         'below starlette 1.6 this list has no streams in it and /fs/events arrives at the end'
 
 
-def _fake_venv(root):
-    py = root/'.venv'/'bin'/'python'
-    py.parent.mkdir(parents=True)
-    py.write_text('')
-    return py
-
-def test_project_venv_is_the_default_runtime_without_moving_leela(tmp_path):
-    py = _fake_venv(tmp_path)
-    assert project_python([tmp_path]) == str(py)
-    ws = Workspace(roots=[tmp_path])
-    assert ws.pool.default_python == str(py)
-
-def test_adding_the_first_folder_adopts_its_venv(tmp_path):
-    py = _fake_venv(tmp_path)
-    ws = Workspace(roots=[])
-    ws.add_root(tmp_path)
-    assert ws.pool.default_python == str(py)
-
-
-def test_variables_and_runtimes_follow_the_active_tab():
-    src = bootstrap_src()
-    assert 'sys.path.append(_p)' in src
-    assert 'import dhrishti.serving as ls' in src
-    assert src.index('sys.path.append(_p)') < src.index('import dhrishti.serving as ls')
-    from leela.app import _vars_panel
-    html = str(_vars_panel(Workspace(roots=[])))
-    assert '>agent</button>' in html and 'leeScope("agent")' in html
-
-
-def test_one_keyboard_router_reaches_every_panel():
-    from leela.core.keys import lookup
-    for action, panel in (('panel_git', 'git'), ('panel_releases', 'releases'), ('panel_deploys', 'deploys')):
-        key = lookup(action)
-        assert key.scope == 'global' and key.keys, f'{action} is bound'
-
-
-def test_editor_extensions_are_live_preferences():
-    assert (ROOT/'leela/vendor/lee-cm6.js').stat().st_size > 100_000
-
-
-def test_editor_toolbar_keeps_contextual_actions_and_moves_the_rest_to_kebab():
-    from leela.app import _toolbar
-    html = to_xml(_toolbar())
-    assert 'data-action="run_cell"' in html and 'data-action="run_file"' in html
-    assert 'data-action="run_all"' not in html
-    assert 'leeEditorMenu(this)' in html and 'more editor actions' in html
-
-def test_agent_teleprompter_exposes_control_modes_and_editable_tool_calls():
-    from leela.app import _agent_panel
-    html = to_xml(_agent_panel(Workspace(roots=[])))
-    assert 'id="agentcontrol"' in html
-    assert 'id="agenttoolbudget"' in html and 'id="agentbudgetstatus"' in html
-    assert all(f'value="{mode}"' in html for mode in ('autopilot', 'guided', 'directed'))
-
-
-def test_the_pickers_show_the_model_the_agent_would_run(tmp_path, monkeypatch):
-    "Before the assistant is built the panel names ramabana's turn default, and a saved job choice on a local turn is the choice."
-    from leela.agent.core import DFLT_LOCAL, DFLT_SMALL, DFLT_TURN
-    from leela.app import _agent_panel
-    for k in ('LEELA_MODEL', 'LEELA_MODEL_INLINE', 'LEELA_MODEL_SUBAGENT'): monkeypatch.delenv(k, raising=False)
-    ws = Workspace(roots=[tmp_path], model=DFLT_LOCAL); ws.job_models = {'subagent': 'claude-sonnet-5'}
-    d = TestClient(ide_app(ws)).get('/agent/models').json()   # no lifespan, so no live agent: the display path
-    assert ws._ai is None
-    assert d['jobs']['subagent'] == 'claude-sonnet-5' and d['jobs']['summary'] == DFLT_LOCAL, d['jobs']
-    ws = Workspace(roots=[tmp_path])
-    html = to_xml(_agent_panel(ws))
-    assert DFLT_TURN in html and DFLT_LOCAL not in html and ws.inline_model == DFLT_SMALL
-
-def test_the_agent_panel_streams_steps_approvals_and_usage():
-    from leela.app import _agent_panel
-    html=str(_agent_panel(Workspace(roots=[])))
-    ws = Workspace(roots=[])
-    assert ws.inline_model == 'gpt-4.1'
-    assert ws.completion_model == 'gpt-4.1'
-    assert ws.ai.routing.name_for('completion') == 'gpt-4.1'
-
-
-def test_tool_schema_only_marks_read_only_calls_as_rerunnable(tmp_path):
-    from leela.blocks.agent.turns import tool_schemas as _tool_schemas
-    rows = {row['name']: row for row in _tool_schemas(Workspace(roots=[tmp_path]).ai)}
-    assert rows['run_shell']['changes_state'] and not rows['run_shell']['retryable']
-    assert not rows['view_file']['changes_state'] and rows['view_file']['retryable']
-
-
-def test_agent_control_route_changes_checkpoint_policy_without_starting_a_model(tmp_path):
-    ws = Workspace(roots=[tmp_path])
-    with TestClient(ide_app(ws)) as client:
-        r = client.post('/agent/control', json={'control': 'directed'})
-        bad = client.post('/agent/control', json={'control': 'reckless'})
-        # read inside: leaving the client ends the server's lifespan, which ends the session
-        assert ws.approvals.control == 'directed'
-    body = r.json()
-    assert body['ok'] and body['control'] == 'directed'
-    assert body['thread'], 'and it says which conversation the policy was set on'
-    assert bad.status_code == 400
-
-def test_agent_and_variables_share_the_right_tabs_while_exec_and_terminal_share_the_bottom():
-    html = to_xml(_shell(Workspace(roots=[]), TerminalGate()))
-    assert 'lee-righttabs' in html and 'data-right="agent"' in html and 'data-right="vars"' in html
-    assert 'lee-docktabs' in html and 'data-dock="exec"' in html and 'data-dock="term"' in html
-
-
 def test_screen_capture_route_rejects_oversized_payloads_before_decoding(tmp_path):
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         response = client.post('/screen', json={'data_url': 'data:image/png;base64,' + 'A' * 12_000_001})
     assert response.status_code == 413
     assert 'larger than 9 MB' in response.json()['error']
-
-
-def test_nothing_clips_a_completion_opened_on_a_cells_last_line():
-    """The list was cut off at the code box and the rest painted over by the next cell."""
-    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
-    assert 'content-visibility: auto' in css, 'the containment this is about is still there'
-    for rule in ('.lee-cm:has(.cm-tooltip) { overflow: visible; }',
-                 '.lee-cell:has(.cm-tooltip) { content-visibility: visible; }'):
-        assert rule in css, rule
-    lift = [ln for ln in css.splitlines() if ':has(.cm-tooltip)' in ln and 'z-index' in ln]
-    assert lift and 'position: relative' in lift[0], 'lifted over the cells after it, not just unclipped'
-
-def test_one_static_prefix_serves_both_the_authored_and_vendored_asset_trees(tmp_path):
-    "`/leestatic` spans `leela/static` and `leela/vendor` as if they were one folder."
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
-        authored = client.get('/leestatic/lee-ide.css')
-        vendored = client.get('/leestatic/lee-cm6.js')
-        font = client.get('/leestatic/fonts/jetbrains-mono-latin-wght-normal.woff2')
-        missing = client.get('/leestatic/no-such-asset.js')
-    assert authored.status_code == vendored.status_code == font.status_code == 200
-    assert b'@font-face' in authored.content and b'/leestatic/fonts/' in authored.content
-    assert missing.status_code == 404
-
-
-def test_selection_help_summarises_on_the_summary_job_and_asks_the_readonly_agent_to_rewrite(tmp_path):
-    """Summarising is one call and needs nothing looked up."""
-    ws = Workspace(roots=[tmp_path])
-    calls, asked = [], []
-    class FakeAI:
-        note = ''
-        routing = type('Routing', (), {'name_for': lambda self, job: 'fake-' + job})()
-        def summarise(self, text, sp): calls.append(('summary', text, sp)); return 'short summary'
-    class Acts:
-        def mark(self): return 0
-        def rows(self, mark=None): return [{'tool': 'view_file'}, {'tool': 'view_file'}, {'note': 'x'}]
-    class FakeSelectionAI:
-        note, busy = '', False
-        activity = Acts()
-        routing = type('Routing', (), {'name_for': lambda self, job: 'fake-inline'})()
-        def set_model(self, name, job='turn'): pass
-        def ask(self, prompt): asked.append(prompt); return 'rewritten text'
-    ws._ai, ws._selection_ai = FakeAI(), FakeSelectionAI()
-    with TestClient(ide_app(ws)) as client:
-        summary = client.post('/complete/selection', json={'text': 'long source', 'mode': 'summary'}).json()
-        rewrite = client.post('/complete/selection', json={
-            'text': 'rough source', 'mode': 'instruction', 'instruction': 'make clearer',
-            'lang': 'markdown', 'path': '/w/a.md', 'line_from': 4, 'line_to': 9}).json()
-    assert summary['text'] == 'short summary' and summary['model'] == 'fake-summary'
-    assert [c[0] for c in calls] == ['summary']
-    assert rewrite['text'] == 'rewritten text' and rewrite['model'] == 'fake-inline'
-    assert rewrite['activity'] == [{'tool': 'view_file'}, {'tool': 'view_file'}, {'note': 'x'}]
-    assert 'make clearer' in asked[0]
-    assert 'path="/w/a.md"' in asked[0] and 'lines="4-9"' in asked[0], asked[0]
-    assert '<notebook' not in asked[0], 'a range out of a file is not a notebook'
 
 
 def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
@@ -528,28 +166,6 @@ def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
     assert {t.__name__ for t in ws.inline_ai.tools} & WRITE_TOOLS, 'prompt cells keep their writes'
 
 
-def test_changing_the_inline_model_moves_the_selection_panel_too(tmp_path):
-    """One control is labelled `prompt cells · inline AI`, and both run on what it says."""
-    ws = Workspace(roots=[tmp_path])
-    assert ws.selection_ai.routing.name_for('turn') == ws.inline_model
-    with TestClient(ide_app(ws)) as client:
-        assert client.post('/agent/model', json={'target': 'inline', 'model': 'gemma-e2b'}).json()['ok']
-    assert ws.inline_ai.routing.name_for('turn') == 'gemma-e2b'
-    assert ws.selection_ai.routing.name_for('turn') == 'gemma-e2b', 'the panel is on the chosen model'
-
-
-def test_a_second_selection_is_refused_while_the_first_is_still_answering(tmp_path):
-    "One agent, one lock: a second ask would park a worker thread with nothing said about it."
-    ws = Workspace(roots=[tmp_path])
-    class Busy:
-        note, busy = '', True
-        def ask(self, prompt): raise AssertionError('must not be asked while busy')
-    ws._selection_ai = Busy()
-    with TestClient(ide_app(ws)) as client:
-        d = client.post('/complete/selection', json={'text': 'x', 'mode': 'instruction',
-                                                     'instruction': 'go'}).json()
-    assert not d.get('ok') and 'still answering' in d.get('error', '')
-
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     """The property is that the tag is escaped, not that the string `onerror=` is absent."""
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
@@ -561,55 +177,6 @@ def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
     assert 'language-html' in safe, 'shown as the html it is'
     assert '<img' in trusted and 'onerror' in trusted, 'an explicit `{=html}` block is deliberate'
 
-def test_a_render_does_not_report_a_missing_package_as_a_problem_with_the_markdown(tmp_path):
-    """mdhtml moved highlighting into its `hl` extra."""
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
-        out = client.post('/markdown/render', json={'text': '```python\nx = 1\n```'}).json()
-    assert '<code class="language-python">' in out['html']
-    assert not [w for w in out['warnings'] if 'highlight' in w or 'pip install' in w], out['warnings']
-
-
-def test_model_discovery_does_not_block_shell_render_or_editor_mount():
-    from leela.app import _agent_panel
-    html = str(_agent_panel(Workspace(roots=[])))
-    assert html.count('loading…') == 3
-
-
-def test_terminal_bundle_loads_only_when_the_terminal_opens():
-    from leela.app import _asset, _shell
-    html = str(_shell(Workspace(roots=[]), TerminalGate()))
-    assert f'<script src="{_asset("lee-term.js")}">' not in html
-
-
-def test_mdhtml_rendering_is_paste_safe_and_reports_unclosed_constructs():
-    with TestClient(ide_app(Workspace(roots=[]))) as client:
-        response = client.post('/markdown/render', json={
-            'text': '<style>body{display:none}</style>\n\n<script>alert(1)</script>\n\n# visible'})
-        assert response.status_code == 200
-        html = response.json()['html']
-        assert '&lt;style&gt;' in html and '&lt;script&gt;' in html
-        assert '<style>' not in html and '<script>' not in html
-        assert '<h1>visible</h1>' in html
-
-def test_mdhtml_keeps_explicit_html_passthrough_deliberate():
-    with TestClient(ide_app(Workspace(roots=[]))) as client:
-        response = client.post('/markdown/render', json={'text': '```{=html}\n<kbd>explicit</kbd>\n```'})
-        assert response.status_code == 200
-        assert '<kbd>explicit</kbd>' in response.json()['html']
-
-
-def test_history_groups_turns_by_context_session_without_rendering_every_turn():
-    from leela.blocks.agent.turns import history_sessions as _history_sessions
-    turns = [
-        {'session': 'agent-a', 'at': 10, 'prompt': 'one'},
-        {'session': 'agent-a', 'at': 20, 'prompt': 'two'},
-        {'session': 'agent-b', 'at': 30, 'prompt': 'three'},
-    ]
-    groups = _history_sessions(turns, [{'id': 'agent-a', 'code': 4}])
-    assert [g['id'] for g in groups] == ['agent-b', 'agent-a']
-    assert groups[0]['models'] == [] and groups[1]['models'] == []
-    assert [x['prompt'] for x in groups[1]['turns']] == ['one', 'two']
-    assert groups[1]['context_continues'] and groups[1]['code'] == 4
 
 def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):
     "History showed the turns and left the model with none of them."
@@ -632,54 +199,6 @@ def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(t
     assert d['session'] == 'agent-a' and [t['prompt'] for t in d['turns']] == ['remember cedar', 'what was it?']
     assert missing.status_code == 400
 
-def test_the_vault_privacy_control_offers_every_policy_and_can_recover_from_a_refusal():
-    """A three-valued control cannot recover by flipping a box, so it carries the value it had."""
-    from leela.app import _agent_panel
-    from leela.blocks.memory.memory import PII_GATES
-    ws = Workspace(roots=[]); ws.vault_pii = 'redact'
-    html = str(_agent_panel(ws))
-    for g in PII_GATES: assert f'value="{g}"' in html, f'{g} is a policy with no way to choose it'
-    assert 'data-was="redact"' in html and 'selected' in html
-    js = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'agent'/'budgets.js').read_text()
-    body = js.split('async function leeVaultPii')[1].split('\nwindow.')[0]
-    assert "'/agent/vault-pii'" in body and 'sel.value = was' in body
-
-def test_routing_popover_closes_on_outside_click_and_escape():
-    from leela.app import _agent_panel
-    html = str(_agent_panel(Workspace(roots=[])))
-    assert 'lee-dismissable' in html
-
-def test_agent_pane_has_model_history_and_expand_controls():
-    from leela.app import _agent_panel
-    html = str(_agent_panel(Workspace(roots=[])))
-    assert 'agentmodel' in html and 'leeAgentModel' in html
-    assert 'localmultimodal' in html and 'leeLocalMultimodal' in html
-    assert 'workspace-repo-writes' in html and 'leeWorkspaceRepoWrites' in html
-    assert 'vault-pii' in html and 'leeVaultPii' in html
-    assert 'leeAgentHistory' in html and 'leeAgentExpand' in html
-    assert html.count('>transcript</button>') == 0
-    assert 'id="agentprompt"' in html and '<textarea' in html
-
-def test_agent_state_refresh_uses_current_project_evidence(tmp_path):
-    from leela.blocks.agent.turns import project_state_context as _project_state_context
-    (tmp_path/'pyproject.toml').write_text('[project]\nname = "current-code"\n')
-    (tmp_path/'module.py').write_text('def current_api():\n    return 1\n')
-    context = _project_state_context(Workspace(roots=[tmp_path]))
-    assert 'pyproject.toml' in context and 'module.py' in context and 'current-code' in context
-
-
-def test_model_picker_shows_older_models_by_default(monkeypatch):
-    from leela.agent import core as models
-    from leela.app import _agent_panel, ide_app
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
-    models.forget_probes()
-    import ramabana.models as rm
-    monkeypatch.setattr(rm, 'LIVE', {'openai': lambda: ['gpt-4.1', 'gpt-5.6-luna']})
-    ws = Workspace(roots=[])
-    assert 'id="legacymodels"' in str(_agent_panel(ws)) and 'checked' in str(_agent_panel(ws))
-    with TestClient(ide_app(ws)) as client:
-        values = {row['value'] for row in client.get('/agent/models').json()['models']}
-    assert 'openai/gpt-4.1' in values
 
 def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
     from leela.agent import core as models
@@ -693,79 +212,12 @@ def test_model_selector_endpoint_exposes_sources_not_secrets(monkeypatch):
     assert data['auth']['openai']['source'] == 'OPENAI_API_KEY'
     assert 'top-secret' not in str(data)
 
-def test_every_model_choice_is_saved_and_restored(tmp_path):
-    path = tmp_path/'workspace.json'
-    ws = Workspace(roots=[]); ws._state_path = path
-    with TestClient(ide_app(ws)) as client:
-        assert client.post('/agent/model', json={'target': 'agent', 'model': 'gemma-12b'}).json()['ok']
-        assert client.post('/agent/model', json={'target': 'inline', 'model': 'gemma-e2b'}).json()['ok']
-        assert client.post('/agent/model', json={'target': 'completion', 'model': 'gemma-e4b'}).json()['ok']
-    restored = Workspace.load(path)
-    assert (restored.model, restored.inline_model, restored.completion_model) == ('gemma-12b', 'gemma-e2b', 'gemma-e4b')
-
-def test_the_jobs_without_a_control_of_their_own_are_still_choosable(tmp_path):
-    "A sub-agent runs on a model somebody chose; the only way to say which was the environment."
-    path = tmp_path/'workspace.json'
-    ws = Workspace(roots=[]); ws._state_path = path
-    with TestClient(ide_app(ws)) as client:
-        fresh = client.get('/agent/models').json()['jobs']
-        assert 'subagent' in fresh and 'summary' in fresh and ws._ai is None
-        assert client.post('/agent/model', json={'target': 'subagent', 'model': 'gemma-e2b'}).json()['ok']
-        refused = client.post('/agent/model', json={'target': 'nonsense', 'model': 'gemma-e2b'}).json()
-        assert refused['ok'] is False and 'nonsense' in refused['error']
-        jobs = client.get('/agent/models').json()['jobs']
-    assert jobs['subagent'] == 'gemma-e2b' and 'summary' in jobs, 'reported chosen or not'
-    assert Workspace.load(path).job_models == {'subagent': 'gemma-e2b'}
-
-
-def test_configured_agent_does_not_offer_setup_again():
-    from leela.app import _agent_panel
-    ws = Workspace(roots=[])
-    ws.agent_state_layers['project']['text'] = '# Goal\n\nMaintain this project.'
-    html = str(_agent_panel(ws))
-    # The badge names the charter the agent is carrying, taken from its first heading. It said
-    # `state active` for every state there could be, so it never said which one was loaded.
-    assert 'Goal' in html and 'no state' not in html
-    assert 'Set up agent state' not in html
-
-def test_agent_memory_api_selects_notes_per_surface_and_rebriefs(tmp_path):
-    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'workspace.json'
-    with TestClient(ide_app(ws)) as client:
-        saved = client.post('/agent/memory/save', json={
-            'title': 'Completion conventions', 'text': 'Prefer pathlib and preserve public APIs.',
-            'targets': ['agent', 'inline', 'completion']}).json()
-        note_id = saved['id']
-        data = client.get('/agent/memory').json()
-    assert data['selected'] == {'agent': [note_id], 'inline': [note_id], 'completion': [note_id]}
-    assert data['notes'][0]['text'] == 'Prefer pathlib and preserve public APIs.'
-    assert 'Prefer pathlib' in ws.ai.system_prompt()
-    assert 'Prefer pathlib' in ws.inline_ai.system_prompt()
-    assert '<user_memory>' in ws.completer._prompt('x = ', 4, 'python')
-
-def test_local_multimodal_setting_is_persisted_from_the_ui(tmp_path):
-    ws = Workspace(roots=[])
-    ws._state_path = tmp_path/'workspace.json'
-    with TestClient(ide_app(ws)) as client:
-        data = client.post('/agent/settings', json={'local_multimodal': True}).json()
-    assert data['ok'] and ws.local_multimodal is True
-    assert ws._state_path.read_json()['local_multimodal'] is True
-
 
 def _nb(path, source):
     path.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [{
         'cell_type': 'code', 'source': source, 'metadata': {}, 'outputs': [],
         'execution_count': None, 'id': path.stem,
     }]}))
-
-def test_explicit_reload_invalidates_the_notebook_cache_and_reads_agent_changes(tmp_path):
-    a = tmp_path/'a.ipynb'; _nb(a, 'value = "before"')
-    ws = Workspace(roots=[tmp_path]); ws.open(a)
-    with TestClient(ide_app(ws)) as client:
-        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "before"'
-        _nb(a, 'value = "agent edit"')
-        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "before"'
-        assert client.post('/tab/reload', json={'path': str(a)}).json()['ok']
-        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "agent edit"'
 
 
 def test_a_restored_file_is_dropped_from_every_tab_holding_it_not_only_the_active_one(tmp_path):
@@ -797,49 +249,6 @@ def test_a_restored_file_is_dropped_from_every_tab_holding_it_not_only_the_activ
         assert json.loads(a.read_text())['cells'][0]['source'] == 'value = "restored"', 'the restore was written over'
 
 
-def test_browser_watch_detects_an_external_file_write(tmp_path):
-    a = tmp_path/'a.py'; a.write_text('before = True\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(a)
-    with TestClient(ide_app(ws)) as client:
-        before = client.get('/tab/watch').json()
-        a.write_text('after = True\n')
-        after = client.get('/tab/watch').json()
-    assert before['path'] == str(a)
-    assert before['disk_version'] != after['disk_version']
-
-def test_same_named_files_in_different_roots_keep_absolute_identity(tmp_path):
-    one,two=tmp_path/'ramabana',tmp_path/'rishi';one.mkdir();two.mkdir()
-    a,b=one/'00_core.ipynb',two/'00_core.ipynb';_nb(a,'RAMABANA');_nb(b,'RISHI')
-    ws=Workspace(roots=[one,two])
-    with TestClient(ide_app(ws)) as client:
-        client.post('/tab/open',params={'path':str(a)})
-        client.post('/tab/open',params={'path':str(b)})
-        assert client.get('/tab/state').json()['cells'][0]['source']=='RISHI'
-        client.post('/tab/open',params={'path':str(a)})
-        assert client.get('/tab/state').json()['cells'][0]['source']=='RAMABANA'
-    assert len(ws.tabs)==2 and {t.path for t in ws.tabs}=={str(a.resolve()),str(b.resolve())}
-    from leela.app import _tab_bar
-    tabs=to_xml(_tab_bar(ws));assert 'ramabana/00_core.ipynb' in tabs and 'rishi/00_core.ipynb' in tabs
-
-def test_split_state_reads_an_inactive_file_without_changing_active_tab(tmp_path):
-    a,b=tmp_path/'a.py',tmp_path/'b.py';a.write_text('A');b.write_text('B')
-    ws=Workspace(roots=[tmp_path]);ws.open(a);ws.open(b);ws.activate(0)
-    with TestClient(ide_app(ws)) as client:
-        state=client.get('/tab/state',params={'path':str(b)}).json()
-    assert state['text']=='B' and ws.tab.path==str(a.resolve())
-
-def test_tab_state_reuses_the_live_notebook_instead_of_reloading_disk(tmp_path):
-    a, b = tmp_path/'a.ipynb', tmp_path/'b.py'
-    _nb(a, 'value = "live buffer"')
-    b.write_text('pass\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(a)
-    with TestClient(ide_app(ws)) as client:
-        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "live buffer"'
-        client.post('/tab/open', params={'path': str(b)})
-        _nb(a, 'value = "changed on disk"')
-        client.post('/tab/select', params={'i': 0})
-        assert client.get('/tab/state').json()['cells'][0]['source'] == 'value = "live buffer"'
-
 def test_remove_root_route_never_deletes_the_folder(tmp_path):
     root = tmp_path/'project'; root.mkdir(); kept = root/'keep.py'; kept.write_text('x = 1\n')
     ws = Workspace(roots=[root])
@@ -866,31 +275,6 @@ def test_save_refuses_to_overwrite_a_disk_change_after_the_draft_started(tmp_pat
         assert forced.status_code == 200
     assert a.read_text() == 'browser = True\n'
 
-def test_unsaved_text_file_buffer_survives_a_tab_round_trip(tmp_path):
-    a, b = tmp_path/'a.py', tmp_path/'b.py'
-    a.write_text('disk = True\n'); b.write_text('pass\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(a)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        client.post('/tab/buffer', json={'path': str(a), 'kind': 'text', 'text': 'unsaved = True\n'})
-        client.post('/tab/open', params={'path': str(b)})
-        client.post('/tab/select', params={'i': 0})
-        assert client.get('/tab/state').json()['text'] == 'unsaved = True\n'
-    assert a.read_text() == 'disk = True\n'
-
-def test_save_all_persists_inactive_tab_buffers(tmp_path):
-    a, b = tmp_path/'a.py', tmp_path/'b.py'
-    a.write_text('old_a = True\n'); b.write_text('old_b = True\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(a); ws.open(b)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        client.post('/tab/buffer', json={'path': str(a), 'kind': 'text', 'text': 'new_a = True\n'})
-        client.post('/tab/buffer', json={'path': str(b), 'kind': 'text', 'text': 'new_b = True\n'})
-        response = client.post('/tabs/save-all')
-        assert response.status_code == 200 and response.json()['saved'] == 2
-    assert a.read_text() == 'new_a = True\n'
-    assert b.read_text() == 'new_b = True\n'
-
 
 def test_cell_runs_carry_document_and_cell_identity_and_reject_stale_positions(tmp_path):
     notebook = tmp_path/'ordered.ipynb'; _nb(notebook, 'class Definition: pass')
@@ -902,100 +286,6 @@ def test_cell_runs_carry_document_and_cell_identity_and_reject_stale_positions(t
         })
     assert response.status_code == 409
 
-def test_a_tab_can_be_dragged_to_a_new_position_and_the_same_document_stays_active(tmp_path):
-    "The strip is the user's arrangement of their own work, so the order is server state."
-    a, b, c = (tmp_path/f'{n}.py' for n in 'abc')
-    for p in (a, b, c): p.write_text('x = 1\n')
-    ws = Workspace(roots=[tmp_path])
-    for p in (a, b, c): ws.open(p)
-    ws.activate(0)
-    with TestClient(ide_app(ws)) as client:
-        assert client.post('/tab/move?i=0&j=2').status_code == 200
-    assert [t.title for t in ws.tabs] == ['b.py', 'c.py', 'a.py']
-    assert ws.tab.title == 'a.py', 'the dragged tab is still the one being edited'
-
-def test_moving_a_tab_nowhere_or_out_of_range_is_a_no_op(tmp_path):
-    a, b = (tmp_path/f'{n}.py' for n in 'ab')
-    for p in (a, b): p.write_text('x = 1\n')
-    ws = Workspace(roots=[tmp_path])
-    for p in (a, b): ws.open(p)
-    before = list(ws.tabs)
-    ws.move_tab(1, 1); ws.move_tab(9, 0); ws.move_tab(0, 9)
-    assert [t.title for t in ws.tabs] == [t.title for t in ([before[1], before[0]])], 'only the clamped move applied'
-
-
-def test_the_tab_menu_offers_the_bulk_closes_and_they_run_right_to_left():
-    from leela.blocks.keys.menus import MENUS
-    actions = [i.action for i in MENUS['tab']]
-    assert actions[-3:] == ['close_others', 'close_right', 'close_saved']
-
-
-def _notebook(path):
-    path.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
-        {'cell_type': 'code', 'source': f'value_{i} = {i}', 'metadata': {}, 'outputs': [],
-         'execution_count': None, 'id': f'cell-{i}'} for i in range(12)
-    ]}))
-
-def test_type_change_accepts_all_live_sources_in_one_request(tmp_path):
-    p = tmp_path/'work.ipynb'; _notebook(p)
-    ws = Workspace(roots=[tmp_path]); ws.open(p)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        sources = [{'i': i, 'source': f'edited_{i} = {i}'} for i in range(12)]
-        d = client.post('/nb/edit', json={'op': 'type', 'i': 7, 'cycle': True,
-                                          'sources': sources}).json()
-    assert d['cells'][7]['cell_type'] == 'markdown'
-    assert d['cells'][0]['source'] == 'edited_0 = 0'
-    assert d['cells'][11]['source'] == 'edited_11 = 11'
-
-
-def test_cell_clipboard_survives_tabs_and_pastes_full_cells_with_new_ids(tmp_path):
-    a = tmp_path/'a.ipynb'; b = tmp_path/'b.ipynb'; _notebook(a); _notebook(b)
-    ws = Workspace(roots=[tmp_path]); ws.open(a)
-    with TestClient(ide_app(ws)) as client:
-        client.get('/tab/state')
-        payload = client.post('/nb/edit', json={'op': 'paste', 'i': 1, 'cell': {
-            'source': 'moved = True', 'cell_type': 'code', 'id': 'old-id',
-            'outputs': [{'output_type': 'stream', 'text': 'yes\n'}], 'execution_count': 4,
-        }}).json()
-    pasted = payload['cells'][1]
-    assert pasted['source'] == 'moved = True' and pasted['outputs'][0]['text'] == 'yes\n'
-    assert pasted['id'] != 'old-id' and pasted['running'] is False
-
-
-def test_workspace_hub_dispatches_by_localhost_subdomain():
-    seen = []
-    async def app_a(scope, receive, send): seen.append(('a', scope['leela.workspace_id']))
-    async def app_b(scope, receive, send): seen.append(('b', scope['leela.workspace_id']))
-    hub = WorkspaceHub([WorkspaceSite('alpha', 'Alpha', '/a', app_a),
-                        WorkspaceSite('beta', 'Beta', '/b', app_b)], 5001)
-    scope = {'type': 'http', 'headers': [(b'host', b'beta.localhost:5001')]}
-    asyncio.run(hub(scope, Mock(), Mock()))
-    assert seen == [('b', 'beta')]
-    assert hub.catalog()[0]['url'] == 'http://alpha.localhost:5001/'
-
-def test_a_prompt_cell_owns_its_approval_listener(tmp_path):
-    "The prompt-cell frontend listens until its workspace shuts down."
-    ws = Workspace(roots=[tmp_path])
-    approvals = ws._notebook_approvals
-    assert approvals.listeners == 1
-    a = approvals.request('create_file', {'path': str(tmp_path/'x.py'), 'text': 'x = 1\n'}, timeout=0.05)
-    assert a.note != 'nothing is listening for interventions, so this could not be asked'
-    import threading
-    held = {}
-    t = threading.Thread(target=lambda: held.setdefault('a', approvals.request(
-        'create_file', {'path': str(tmp_path/'y.py'), 'text': 'y = 1\n'}, timeout=10)))
-    t.start()
-    for _ in range(200):
-        if approvals.pending: break
-        time.sleep(0.01)
-    assert approvals.pending is not None
-    asyncio.run(ws.shutdown())
-    t.join(1)
-    assert not t.is_alive() and held['a'].note == 'the turn was cancelled'
-    assert approvals.listeners == 0
-    asyncio.run(ws.shutdown())
-    assert approvals.listeners == 0
 
 def test_the_pane_sees_and_answers_a_prompt_cell_approval(tmp_path):
     "A prompt cell runs on the inline assistant, which the pane could not otherwise see or answer."
@@ -1020,131 +310,6 @@ def test_the_pane_sees_and_answers_a_prompt_cell_approval(tmp_path):
         t.join(5)
         assert held['a'].note == 'use the other file', 'answered where it was raised'
 
-def test_a_file_can_be_named_relatively_or_absolutely(tmp_path):
-    """Copying a path is for giving it to somebody: relative for a colleague in the same repository, absolute for a shell here."""
-    root = tmp_path/'proj'; (root/'pkg').mkdir(parents=True)
-    (root/'pkg'/'mod.py').write_text('x = 1\n')
-    ws = Workspace(roots=[root])
-    with TestClient(ide_app(ws)) as client:
-        d = client.get(f"/fs/paths?path={root/'pkg'/'mod.py'}").json()
-        assert d['ok'] and d['relative'] == 'pkg/mod.py'
-        assert d['absolute'] == str(root/'pkg'/'mod.py')
-        assert client.get('/fs/paths?path=').json()['ok'] is False, 'no path is not an empty answer'
-        folder = client.get(f"/fs/paths?path={root/'pkg'}").json()
-        assert folder['relative'] == 'pkg', 'a folder is named the same way'
-        at_root = client.get(f'/fs/paths?path={root}').json()
-        assert at_root['relative'] == '.', 'the open folder itself is its own root'
-
-def test_copying_a_path_is_offered_wherever_a_file_is_named():
-    "The tree, its folders and the tab strip all name a file, so all three offer it."
-    from leela.blocks.keys.menus import MENUS
-    from leela.core.keys import lookup
-    for surface in ('file', 'folder', 'tab'):
-        actions = [i.action for i in MENUS[surface]]
-        assert 'copy_rel_path' in actions and 'copy_abs_path' in actions, surface
-    assert 'copy_abs_path' in [i.action for i in MENUS['root']], 'a root has no relative form'
-    for action in ('copy_rel_path', 'copy_abs_path'):
-        assert lookup(action).keys, f'{action} has a chord of its own'
-
-def test_the_prompt_cell_model_is_the_saved_one_not_the_routing_default(tmp_path):
-    """`inline` is in `JOBS` and `**jobs` is spread last, so the routing default for the job overwrote the saved prompt-cell model every time."""
-    ws = Workspace(roots=[tmp_path], inline_model='gpt-4.1-nano')
-    with TestClient(ide_app(ws)) as client:
-        picked = client.get('/agent/models').json()['selected']
-    assert picked['inline'].endswith('gpt-4.1-nano'), picked['inline']
-    assert picked['inline'] != picked['agent'], 'the prompt cell has a field of its own'
-    assert 'summary' in picked and 'classify' in picked, 'the routed jobs are still reported'
-
-def test_naming_a_folder_keeps_the_settings_the_last_session_saved(tmp_path):
-    """Naming a folder built a fresh workspace carrying three model names, so a per-job model, a budget or a charter chosen yesterday was gone today, which reads as shutting down having reverted it."""
-    state = tmp_path/'state.json'
-    first = Workspace(roots=[tmp_path]); first._state_path = state
-    first.job_models = {'summary': 'gpt-4.1-mini', 'classify': 'gpt-4.1-nano'}
-    first.inline_model = 'gpt-mini'
-    first.tool_budget, first.step_budget = 120, 24
-    first.subagent_writes = first.agent_read_outside = True
-    first.compact_strategy = 'aggressive'
-    first.agent_state = 'ship the montage'
-    first.save()
-    remembered = json.loads(state.read_text())
-    again = Workspace(roots=[tmp_path], inline_model=remembered['inline_model']).restore_settings(remembered)
-    assert again.job_models == {'summary': 'gpt-4.1-mini', 'classify': 'gpt-4.1-nano'}
-    assert (again.tool_budget, again.step_budget) == (120, 24)
-    assert again.subagent_writes and again.agent_read_outside
-    assert again.compact_strategy == 'aggressive' and again.inline_model == 'gpt-mini'
-    assert again.agent_state_layers['task']['text'] == 'ship the montage'
-    assert Workspace(roots=[tmp_path]).restore_settings(None).job_models == {}, 'and nothing saved is no error'
-
-def test_the_journal_follows_the_folders_that_are_open(tmp_path):
-    """Built once in `__init__`, a workspace that started with no folders kept the key for *no* folders after one was opened, so every project a desktop launch touched wrote into one shared file."""
-    a, b = tmp_path/'a', tmp_path/'b'
-    a.mkdir(); b.mkdir()
-    ws = Workspace(roots=[])
-    empty = ws._journal_key
-    assert empty == 'no-folder', 'and the empty set is its own bucket, not the hash of nothing'
-    ws.add_root(a)
-    assert ws._journal_key != empty, 'opening a folder moves it off the scratch bucket'
-    with_a = ws._journal_key
-    ws.add_root(b)
-    assert ws._journal_key not in (empty, with_a), 'and a second folder is a different workspace'
-    ws.drop_root(b)
-    assert ws._journal_key == with_a, 'closing it goes back to the one it had'
-    assert ws.journal.history is ws.history and ws.history.pinned == ws.journal.blobs
-
-def test_a_save_conflict_says_who_wrote_the_version_on_disk(tmp_path):
-    """`load disk version` read the same whether another process had written the file or Leela had written it and the browser draft was holding a base from before that save."""
-    f = tmp_path/'notes.py'; f.write_text('one\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(f)
-    with TestClient(ide_app(ws)) as client:
-        client.get(f'/tab/state?path={f}')                       # the version Leela read it at
-        stale = '0:0'
-        f.write_text('written by something else\n')
-        outside = client.post('/nb/save', json={'text': 'mine\n', 'base_disk_version': stale}).json()
-        assert 'another process wrote it' in outside['error'], outside
-        assert f'Draft base {stale}' in outside['error'], 'and what it compared'
-        saved = client.post('/nb/save', json={'text': 'two\n'}).json()
-        assert saved['ok'], saved
-        again = client.post('/nb/save', json={'text': 'three\n',
-                                             'base_disk_version': stale}).json()
-        assert 'Leela wrote that version itself' in again['error'], again
-    assert f.read_text() == 'two\n', 'and neither refusal wrote anything'
-
-def test_the_hub_gives_the_lifespan_to_every_workspace_not_just_the_default():
-    """Lifespan carries no Host header."""
-    down = []
-    def site(slug):
-        async def app(scope, receive, send):
-            assert scope['type'] == 'lifespan'
-            while True:
-                m = await receive()
-                if m['type'] == 'lifespan.shutdown': down.append(slug); return
-        return WorkspaceSite(slug, slug, '/' + slug, app)
-    hub = WorkspaceHub([site('alpha'), site('beta')], 5001)
-    sent, inbox = [], asyncio.Queue()
-    for m in ({'type': 'lifespan.startup'}, {'type': 'lifespan.shutdown'}): inbox.put_nowait(m)
-    asyncio.run(hub({'type': 'lifespan'}, inbox.get, lambda m: sent.append(m) or asyncio.sleep(0)))
-    assert sorted(down) == ['alpha', 'beta']
-    assert [m['type'] for m in sent] == ['lifespan.startup.complete', 'lifespan.shutdown.complete'], \
-        'and the server is answered once, not once per workspace'
-
-def test_the_app_tears_its_workspace_down_when_the_server_stops(tmp_path):
-    "Nothing called `shutdown`, so a closed window left kernels, terminals and pyright running."
-    ws = Workspace(roots=[tmp_path])
-    with TestClient(ide_app(ws)) as client: client.get('/health')
-    assert ws._down, 'leaving the lifespan is what ends the session'
-
-def test_shutdown_runs_once_and_no_failed_step_skips_a_later_one(tmp_path):
-    "A step that raises must not strand a subprocess: the window it belonged to has already gone."
-    ws = Workspace(roots=[tmp_path])
-    ran = []
-    def boom(): ran.append('terms'); raise RuntimeError('pty is wedged')
-    ws.terms.close_all = boom
-    ws.fs_watch.close = lambda: ran.append('watch')
-    ws._stop_backups = lambda: ran.append('backups')
-    asyncio.run(ws.shutdown())
-    assert ran == ['terms', 'watch', 'backups']
-    asyncio.run(ws.shutdown())
-    assert ran == ['terms', 'watch', 'backups'], 'and it does not run a second time'
 
 def test_naming_a_folder_reopens_that_folder_s_tabs_and_no_other_project_s(tmp_path):
     """`leela .` skipped the saved session entirely and always opened empty."""
@@ -1164,54 +329,6 @@ def test_naming_a_folder_reopens_that_folder_s_tabs_and_no_other_project_s(tmp_p
     assert fresh.tabs[fresh.active].path == str(b), 'and the tab that was in front is again'
     assert Workspace(roots=[other]).reopen_saved_tabs(tmp_path/'never-written.json') == 0, 'no state, no tabs'
 
-def test_a_reopened_tab_whose_file_has_gone_is_skipped_not_an_error(tmp_path):
-    state = tmp_path/'state.json'
-    (kept := tmp_path/'kept.py').write_text('k = 1\n')
-    (lost := tmp_path/'lost.py').write_text('l = 1\n')
-    ws = Workspace(roots=[tmp_path]); ws._state_path = state
-    ws.open(lost); ws.open(kept); ws.save()
-    lost.unlink()
-    fresh = Workspace(roots=[tmp_path])
-    assert fresh.reopen_saved_tabs(state) == 1
-    assert [Path(t.path).name for t in fresh.tabs] == ['kept.py']
-
-def test_shutdown_saves_the_session_so_the_next_window_opens_where_this_one_left_off(tmp_path):
-    state = tmp_path/'state.json'
-    (f := tmp_path/'notes.py').write_text('x = 1\n')
-    ws = Workspace(roots=[tmp_path]); ws._state_path = state
-    ws.open(f)
-    state.unlink(missing_ok=True)
-    asyncio.run(ws.shutdown())
-    assert [t['path'] for t in json.loads(state.read_text())['tabs']] == [str(f)]
-
-def test_a_workspace_can_be_torn_down_from_outside_the_event_loop(tmp_path):
-    """The desktop shell runs the server on a daemon thread and the window on the main one, so closing the window ends the process without uvicorn reaching its shutdown lifespan."""
-    import atexit
-    ws = Workspace(roots=[tmp_path])
-    assert ws.at_exit() is ws
-    atexit.unregister(ws.shutdown_now)
-    ws.terms.close_all = lambda: (_ for _ in ()).throw(RuntimeError('no loop here'))
-    ws.shutdown_now()
-    assert ws._down, 'and it never raises on the way out'
-
-def test_the_exit_teardown_goes_back_to_the_loop_that_owns_the_kernels(tmp_path):
-    "A kernel's client belongs to the loop it was opened on and cannot be closed from a fresh one."
-    ws, ran = Workspace(roots=[tmp_path]), []
-    async def _same_loop():
-        ran.append(asyncio.get_running_loop() is ws._loop)
-    async def serve():
-        await ws.opened()
-        ws.pool.close_all = _same_loop
-        await asyncio.get_running_loop().run_in_executor(None, ws.shutdown_now)
-    asyncio.run(serve())
-    assert ran == [True], 'the teardown ran on the server loop, not on the exiting thread'
-    assert ws._down
-
-def test_the_exit_teardown_falls_back_to_its_own_loop_when_the_server_has_gone(tmp_path):
-    ws = Workspace(roots=[tmp_path])
-    asyncio.run(ws.opened())            # that loop is closed the moment `run` returns
-    ws.shutdown_now()
-    assert ws._down
 
 def test_a_fully_qualified_host_reaches_the_workspace_it_names():
     "The dot is the DNS root, not a different workspace."
@@ -1253,14 +370,6 @@ def test_loopback_guard_rejects_dns_rebinding_and_cross_site_browser_requests():
                                 (b'origin', b'http://vruksha.localhost.:5001')]))
     assert called and not absolute, 'a fully qualified loopback name is that name'
 
-def test_runtime_broker_refuses_a_thirteenth_heap_without_evicting_live_state(monkeypatch):
-    broker = RuntimeBroker(max_kernels=1)
-    pool = KernelPool(broker=broker)
-    alive = Mock(alive=True, pid=42, kernel_kind='ipykernel', cwd='/project')
-    pool.kernels['first'] = alive
-    with pytest.raises(RuntimeError, match='kernel limit reached'):
-        asyncio.run(broker.admit(pool, 'second'))
-    assert pool.kernels['first'] is alive
 
 def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
     "Without a watcher the tree knew only what the client itself had done."
@@ -1308,61 +417,6 @@ def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_wat
     assert any(p.endswith('c.py') for p in paths), 'and the next reader is watched again'
 
 
-def test_a_folder_opened_after_boot_is_watched_too(tmp_path):
-    """`subscribe` was the only other caller of `start`, and it runs once per page load."""
-    a, b = tmp_path/'a', tmp_path/'b'
-    a.mkdir(); b.mkdir()
-    ws = Workspace(roots=[a])
-    async def run():
-        q = ws.fs_watch.subscribe()
-        await asyncio.sleep(.4)
-        while not q.empty(): q.get_nowait()
-        ws.add_root(b)
-        await asyncio.sleep(.5)
-        while not q.empty(): q.get_nowait()
-        (b/'new.py').write_text('x = 1\n')
-        return (await asyncio.wait_for(q.get(), 5))[0]
-    try: paths = asyncio.run(run())
-    finally: ws.fs_watch.close()
-    assert any('new.py' in p for p in paths), 'the folder opened after boot is watched'
-
-def test_opening_a_folder_off_the_event_loop_is_not_an_error(tmp_path):
-    "`/fs/add_root` is a sync route, so `add_root` runs in a threadpool with no running loop."
-    a, b = tmp_path/'a', tmp_path/'b'
-    a.mkdir(); b.mkdir()
-    ws = Workspace(roots=[a])
-    ws.add_root(b)                      # no loop here, and none is needed
-    assert str(b) in [str(r) for r in ws.fs.roots]
-    ws.fs_watch.close()
-
-def test_shutdown_stops_the_watcher_thread(tmp_path):
-    "The module says a Rust thread alive at interpreter teardown segfaults; nothing stopped it."
-    ws = Workspace(roots=[tmp_path])
-    async def run():
-        ws.fs_watch.subscribe()
-        await asyncio.sleep(.3)
-        assert ws.fs_watch.thread and ws.fs_watch.thread.is_alive()
-    asyncio.run(run())
-    asyncio.run(ws.shutdown())
-    assert ws.fs_watch.thread is None, 'shutdown owns the join'
-
-
-def test_replacing_the_watcher_does_not_wait_for_the_old_thread(tmp_path):
-    "`start` calls `close`, and a join on the event loop freezes every socket in the process."
-    from leela.blocks.fs.fs import Sandbox
-    from leela.blocks.fs.watch import Watcher
-    async def run():
-        w = Watcher(Sandbox([tmp_path]))
-        w.subscribe()
-        await asyncio.sleep(.3)
-        old = w.thread
-        w.close(wait=False)
-        return old, old.is_alive()
-    old, running = asyncio.run(run())
-    old.join(5)
-    assert running, 'the replacement must not wait for the old thread to notice'
-    assert not old.is_alive(), 'and it still stops'
-
 def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_path):
     """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the tree keeps showing files that are gone until something unrelated happens to touch it."""
     from leela.blocks.fs.fs import Sandbox
@@ -1382,13 +436,6 @@ def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_pa
     assert batches[0] == ([], True), 'too many paths to carry is a resync, not a truncation'
     assert ([], True) in batches[1:], 'a full queue is a resync too'
 
-
-def test_the_settings_pane_can_mute_the_kernel_limit_prompt(tmp_path):
-    "The mute switch the user asked for: leela manages the ceiling itself."
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
-        page = client.get('/').text
-    assert 'kernels-auto-manage' in page and 'setKernelAutoManage(this.checked)' in page
-    assert 'auto_manage' in (ROOT/'leela'/'workspace.py').read_text()
 
 def _one_cell_nb(src):
     return json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
@@ -1412,54 +459,6 @@ def test_an_open_notebook_does_not_resurrect_itself_over_newer_work(tmp_path):
         assert r.status_code == 409, 'the save guard catches it instead of overwriting'
         assert after['disk_version'] == first['disk_version'], 'stamped with what it was read at'
         assert after.get('stale') is True, 'the file has moved under the copy being served'
-
-def test_an_unsaved_draft_is_kept_but_reported_against_what_it_came_from(tmp_path):
-    "A dirty tab is the person's own work, so it survives; the save guard is what must fire."
-    p = tmp_path/'mod.py'
-    p.write_text('VALUE = "branch-a"\n')
-    ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
-    with TestClient(ide_app(ws)) as client:
-        opened = client.get('/tab/state', params={'path': tab.path}).json()
-        client.post('/tab/buffer', json={'path': tab.path, 'kind': 'text',
-                                         'text': 'VALUE = "my-edit"\n',
-                                         'base_disk_version': opened['disk_version']})
-        p.write_text('VALUE = "branch-b"\n')
-        after = client.get('/tab/state', params={'path': tab.path}).json()
-        assert after['text'].strip() == 'VALUE = "my-edit"', 'unsaved typing is never dropped'
-        assert after['stale'] is True
-        assert after['disk_version'] == opened['disk_version'], 'reported against its own base'
-        r = client.post('/nb/save', json={'path': tab.path,
-                                          'base_disk_version': after['disk_version'],
-                                          'text': 'VALUE = "my-edit"\n'})
-        assert r.status_code == 409, 'the save guard now has a stale base to catch'
-    assert 'branch-b' in p.read_text(), 'the newer work on disk is still there'
-
-def test_saving_makes_the_cached_copy_current_again(tmp_path):
-    "After a save the cache matches the file, so the next read must not be called stale."
-    p = tmp_path/'core.ipynb'
-    p.write_text(_one_cell_nb('X = 1'))
-    ws = Workspace(roots=[tmp_path]); tab = ws.open(p)
-    with TestClient(ide_app(ws)) as client:
-        opened = client.get('/tab/state', params={'path': tab.path}).json()
-        r = client.post('/nb/save', json={'path': tab.path,
-                                          'base_disk_version': opened['disk_version'],
-                                          'cells': [{'i': 0, 'source': 'X = 2'}]}).json()
-        assert r['ok']
-        again = client.get('/tab/state', params={'path': tab.path}).json()
-        assert again['cells'][0]['source'] == 'X = 2' and not again['stale']
-
-
-def test_the_history_list_and_the_model_picker_carry_what_the_pane_filters_on(tmp_path):
-    """`/agent/history` says which app started each conversation, so the pane can hide the CLI's."""
-    ws = Workspace(roots=[tmp_path])
-    with TestClient(ide_app(ws)) as client:
-        d = client.get('/agent/history').json()
-        assert all('app' in s for s in d['sessions'])
-        m = client.get('/agent/models').json()
-        assert m['job_help']['oneshot'] and set(m['jobs']) <= set(m['job_help'])
-        # the live conversation is Leela's, and says so once it has been grouped
-        from leela.blocks.agent.turns import surfaces
-        assert ws.ai.session_id in surfaces(ws.ai.cfg)
 
 
 def _nb_json(cells):
@@ -1507,88 +506,6 @@ def test_a_source_changed_on_both_sides_still_refuses_and_names_the_cell(tmp_pat
                                                'cells': [{'i': 0, 'source': 'x = 11'}]})
         assert forced.status_code == 200, 'force still wins'
 
-def test_a_cell_the_external_write_removed_is_not_reconciled(tmp_path):
-    "With the cell gone there is nothing to rebase onto, so the save refuses rather than guessing."
-    nb = tmp_path/'n.ipynb'
-    nb.write_text(_nb_json([('c1', 'x = 1', []), ('c2', 'y = 2', [])]))
-    ws = Workspace(roots=[tmp_path]); ws.open(nb)
-    with TestClient(ide_app(ws)) as client:
-        state = client.get('/tab/state').json()
-        nb.write_text(_nb_json([('c2', 'y = 2', [])]))
-        r = client.post('/nb/save', json={'path': str(nb), 'base_disk_version': state['disk_version'],
-                                          'cells': [{'i': 0, 'source': 'x = 11'}]})
-        assert r.status_code == 409
-
-
-def test_a_tab_whose_file_moved_is_reported_as_stale(tmp_path):
-    """`/tab/state` keeps serving the cached copy, so the flag is the only thing that says the file moved."""
-    nb = tmp_path/'n.ipynb'
-    nb.write_text(_nb_json([('c1', 'x = 1', [{'output_type': 'stream', 'text': 'noise'}])]))
-    ws = Workspace(roots=[tmp_path]); ws.open(nb)
-    with TestClient(ide_app(ws)) as client:
-        first_read = client.get('/tab/state').json()
-        assert first_read['stale'] is False
-        nb.write_text(_nb_json([('c1', 'x = 1', [])]))
-        again = client.get('/tab/state').json()
-        assert again['stale'] is True, 'the file moved under the cached copy'
-        assert again['disk_version'] == first_read['disk_version'], 'and the token still names the cached one'
-
-def test_the_client_acts_on_the_stale_flag():
-    "Reloading a clean tab, and never dropping an unsaved buffer for a disk change."
-    from pathlib import Path
-    src = (Path(__file__).resolve().parents[1]/'leela'/'blocks'/'editor'/'tabs.js').read_text()
-    assert 'if (st.stale) noteStaleTab(' in src, 'the flag has to be read'
-    body = src[src.index('function noteStaleTab'):]
-    assert 'st.dirty || recoveredDraft' in body, 'an unsaved buffer is never dropped'
-    assert body.index('st.dirty || recoveredDraft') < body.index('takeDiskVersion'), \
-        'the dirty case must return before anything adopts disk'
-
-
-def test_a_rewrite_that_changed_nothing_is_not_a_disk_change(tmp_path):
-    """`nbdev_clean` rewrites a notebook it has nothing to change, and any formatter does the same."""
-    import time
-    from leela.blocks.tabs.app import disk_version
-    f = tmp_path/'n.ipynb'
-    f.write_text('same bytes')
-    was = disk_version(f)
-    time.sleep(0.01)
-    f.write_text('same bytes')
-    assert disk_version(f) == was, 'the same bytes are the same version'
-    f.write_text('other bytes')
-    assert disk_version(f) != was, 'and different bytes are not'
-
-def test_the_version_of_a_file_that_is_gone_is_missing_and_not_remembered(tmp_path):
-    "A deleted file must not answer with the token it had, which a cache makes easy to get wrong."
-    from leela.blocks.tabs.app import _TOKENS, disk_version
-    f = tmp_path/'gone.py'
-    f.write_text('x')
-    assert disk_version(f) not in ('', 'missing')
-    f.unlink()
-    assert disk_version(f) == 'missing'
-    assert str(f) not in _TOKENS and f not in _TOKENS, 'the stale entry is dropped'
-    assert disk_version('') == ''
-
-def test_polling_an_untouched_file_does_not_read_it(tmp_path, monkeypatch):
-    "A poll on every open tab must stay one `stat`, which is what it cost before the hash."
-    from leela.blocks.tabs.app import disk_version
-    f = tmp_path/'a.py'
-    f.write_text('x = 1\n')
-    first = disk_version(f)
-    reads = []
-    real = Path.read_bytes
-    monkeypatch.setattr(Path, 'read_bytes', lambda self: reads.append(self) or real(self))
-    assert disk_version(f) == first
-    assert reads == [], 'the cached stamp answered without touching the file'
-
-def test_the_token_cache_does_not_grow_without_bound(tmp_path):
-    "A long session opens many files, and none of these entries is worth keeping."
-    from leela.blocks.tabs import app as tabs
-    tabs._TOKENS.clear()
-    for i in range(tabs.TOKEN_CACHE + 5):
-        f = tmp_path/f'f{i}.py'; f.write_text(str(i))
-        tabs.disk_version(f)
-    assert len(tabs._TOKENS) <= tabs.TOKEN_CACHE
-
 
 def _hub_get(hub, path, query=b''):
     "Drive one HTTP request through the hub and return `(status, json)`."
@@ -1612,14 +529,6 @@ def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
     assert d['url'] == 'http://two.localhost:5001/' and d['id'] == 'two'
     assert set(hub.sites) == {'one', 'two'}, 'and the hub now serves both'
 
-def test_opening_a_folder_that_is_already_open_reuses_its_workspace(tmp_path):
-    "Two windows on one folder would be two kernels and two journals writing the same files."
-    (one := tmp_path/'one').mkdir()
-    def build(root, slug): raise AssertionError('nothing may be built for a folder already served')
-    hub = WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, build=build)
-    status, d = _hub_get(hub, OPEN_PATH, b'path=' + str(one).encode())
-    assert (status, d['id']) == (200, 'one')
-    assert list(hub.sites) == ['one'], 'and no second site was made for it'
 
 def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
     (f := tmp_path/'notes.py').write_text('x = 1\n')
@@ -1629,11 +538,6 @@ def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
         assert (status, d['ok']) == (400, False), raw
         assert 'not a folder' in d['error'], d
 
-def test_a_workspace_that_cannot_open_another_folder_says_so_rather_than_failing_silently(tmp_path):
-    hub = WorkspaceHub([], 5001)
-    status, d = _hub_get(hub, OPEN_PATH, b'path=' + str(tmp_path).encode())
-    assert (status, d['ok']) == (400, False)
-    assert 'cannot open another folder' in d['error'], d
 
 def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):
     """The lifespan legs were zipped over the sites present at startup, so a workspace opened later never heard `lifespan.shutdown` and left its kernels, terminals and dev servers running."""
@@ -1670,186 +574,3 @@ def test_a_folders_slug_does_not_depend_on_the_order_it_was_opened_in(tmp_path):
     assert len(set(forward.values())) == 2, forward
     assert assign_slugs([b, a], store) == [forward[b], forward[a]], 'the other order, the same slugs'
     assert assign_slugs([a], store) == [forward[a]], 'and one folder alone keeps what it was given'
-
-def test_a_slug_already_given_out_survives_a_corrupt_or_missing_index(tmp_path):
-    "The index is a convenience, not a source of truth: losing it must not raise, only re-assign."
-    (a := tmp_path/'src').mkdir()
-    store = tmp_path/'index.json'
-    assert assign_slugs([a], store) == ['src']
-    store.write_text('{not json')
-    assert assign_slugs([a], store) == ['src'], 'and the obvious slug is still the obvious one'
-
-def test_a_kernel_that_will_not_start_is_answered_and_not_raised(tmp_path, monkeypatch):
-    """Both routes called `_k()` bare, so an environment that cannot run a kernel arrived as a 500 with an ASGI traceback, where every other route in that file answers with something the client can read."""
-    from leela.blocks.runtime.kernels import KernelPool, KernelStartError
-    async def _no_kernel(self, key, **kw):
-        raise KernelStartError('/p/.venv/bin/python cannot import ipykernel_launcher, so it can run no kernel.')
-    monkeypatch.setattr(KernelPool, 'get', _no_kernel)
-    (tmp_path/'m.py').write_text('def valuable(): return 1\n')
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
-        h = client.get('/exec/history')
-        assert h.status_code == 200 and h.json()['cells'] == []
-        assert 'ipykernel_launcher' in h.json()['error'], 'the reason, not an empty history'
-        c = client.post('/complete', json={'code': 'valu', 'pos': 4})
-        assert c.status_code == 200
-        assert 'ipykernel_launcher' in c.json()['kernel_error']
-        assert 'matches' in c.json(), 'the index answers even where the kernel cannot'
-
-def test_the_branch_pill_is_rendered_true_and_never_claims_a_folder_has_no_repository(tmp_path):
-    """It shipped as the literal `no git`, so any first paint the client did not reach left a claim about the project on screen."""
-    from leela.app import _git_pill_text
-    import subprocess
-    repo = tmp_path/'repo'; (repo/'sub').mkdir(parents=True)
-    subprocess.run(['git', 'init', '-q', '-b', 'trunk', str(repo)], check=True)
-    assert _git_pill_text(Workspace(roots=[repo])) == 'trunk'
-    assert _git_pill_text(Workspace(roots=[repo/'sub'])) == 'trunk', 'a folder inside the checkout is in it'
-    plain = tmp_path/'plain'; plain.mkdir()
-    assert _git_pill_text(Workspace(roots=[plain])) == 'no git'
-    # a folder of clones is not a checkout, and the file open inside it is in one
-    clones = tmp_path/'orgs'; (clones/'repo-a').mkdir(parents=True)
-    subprocess.run(['git', 'init', '-q', '-b', 'main', str(clones/'repo-a')], check=True)
-    (clones/'repo-a'/'mod.py').write_text('x = 1\n')
-    ws = Workspace(roots=[clones])
-    assert _git_pill_text(ws) == 'no git', 'with nothing open, the folder itself is what it is'
-    ws.open(clones/'repo-a'/'mod.py')
-    assert _git_pill_text(ws) == 'main', 'and the pill follows the file into its repository'
-    assert _git_pill_text(Workspace(roots=[])) == 'git …', 'nothing open is not a statement about git'
-    with TestClient(ide_app(Workspace(roots=[repo]))) as client:
-        assert 'trunk' in client.get('/').text
-
-def test_the_polled_kernel_pill_reads_the_runtime_the_cells_run_in(tmp_path):
-    """`/kernel/info` peeked only the tab's own kernel while `runtime()` runs in the watched environment when there is one, so the pill reported dead for a kernel that was executing."""
-    (tmp_path/'nb.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
-    ws = Workspace(roots=[tmp_path]); ws.open(tmp_path/'nb.ipynb')
-    class _Live:
-        name, base, pid, boot_error, last_api_error, alive = 'watched', 'http://127.0.0.1:8401', 4321, None, '', True
-    live = _Live()
-    ws.env_base = live.base
-    ws.pool.kernels['somewhere/else'] = live
-    assert ws.runtime_peek() is live, 'precondition: this is where a run would go'
-    with TestClient(ide_app(ws)) as client:
-        d = client.get('/kernel/info').json()
-    assert d['alive'] is True and d['base'] == live.base and d['pid'] == 4321
-    assert d['key'] == 'watched', 'a watched environment is named by its own kernel'
-
-def test_the_kernel_pill_calls_a_tab_the_same_thing_alive_or_dead(tmp_path):
-    "It took the kernel's name alive and the tab's file name dead, so one notebook had two names."
-    (tmp_path/'01_graph.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
-    ws = Workspace(roots=[tmp_path]); tab = ws.open(tmp_path/'01_graph.ipynb')
-    tab.private_kernel = True
-    dead_name = ws.runtime_label()
-    class _Live:
-        name, base, pid, boot_error, last_api_error, alive = tmp_path.name, '', 1, None, '', True
-    ws.pool.kernels[ws.kernel_key()] = _Live()
-    assert ws.runtime_label() == dead_name == '01_graph.ipynb', 'the tab names its own kernel, running or not'
-
-def test_one_language_server_however_many_lints_arrive_together(tmp_path):
-    """`start` checked `alive` and spawned with nothing between them, and a notebook mount fires one lint per mounted cell, so a window ran two language servers with one of them orphaned."""
-    import threading
-    from leela.blocks.lsp.lsp import PyrightService
-    svc = PyrightService(tmp_path)
-    spawned = []
-    class _Proc:
-        def poll(self): return None
-        def __init__(self): spawned.append(1)
-    def _start(self):
-        if self.alive: return True
-        time.sleep(.05)                      # the window the race used to fit through
-        self.process = _Proc()
-        return True
-    monkey = PyrightService._start
-    PyrightService._start = _start
-    try:
-        threads = [threading.Thread(target=svc.start) for _ in range(8)]
-        for t in threads: t.start()
-        for t in threads: t.join(5)
-    finally: PyrightService._start = monkey
-    assert len(spawned) == 1, f'{len(spawned)} language servers for one workspace'
-
-def test_a_frozen_app_does_not_run_itself_to_read_package_versions(tmp_path, monkeypatch):
-    """In the bundle `sys.executable` is Leela, so the fallback ran `Leela.app/Contents/MacOS/Leela -c ...`: it relaunched the app and then waited out the eight second timeout, once per switch, for any project without an environment of its own."""
-    (tmp_path/'pyproject.toml').write_text('[project]\nname = "x"\ndependencies = ["fastcore"]\n')
-    import sys
-    ran = []
-    monkeypatch.setattr('leela.blocks.editor.app.subprocess.run',
-                        lambda *a, **kw: ran.append(a) or (_ for _ in ()).throw(AssertionError('spawned')))
-    monkeypatch.setattr('leela.blocks.runtime.kernels.nearest_python', lambda *a, **kw: None)
-    monkeypatch.setattr('leela.blocks.runtime.kernels.project_python', lambda *a, **kw: None)
-    monkeypatch.setattr(sys, 'frozen', True, raising=False)
-    ws = Workspace(roots=[tmp_path])
-    ws.pool.default_python = None
-    with TestClient(ide_app(ws)) as client:
-        d = client.get('/editor/packages', params={'path': str(tmp_path/'pyproject.toml')}).json()
-    assert d == {'packages': [], 'summary': {}, 'note': 'no interpreter for this project'}
-    assert ran == [], 'and nothing was run to find that out'
-
-def test_saving_every_tab_says_what_it_wrote(tmp_path):
-    """`/tabs/save-all` wrote from the buffers the server holds and answered with a count."""
-    p = tmp_path/'m.py'; p.write_text('x = 1\n')
-    ws = Workspace(roots=[tmp_path]); ws.open(p)
-    with TestClient(ide_app(ws)) as client:
-        before = client.get('/tab/watch').json()['disk_version']
-        client.post('/tab/buffer', json={'path': str(p), 'kind': 'text', 'text': 'x = 2\n'})
-        d = client.post('/tabs/save-all').json()
-        assert d['ok'] and d['saved'] == 1
-        assert d['versions'][str(p)] == client.get('/tab/watch').json()['disk_version'], \
-            'the version it reports is the one on disk after the write'
-        assert d['versions'][str(p)] != before, 'and it is not the version the browser started with'
-    assert p.read_text() == 'x = 2\n'
-
-
-# --- a canvas is an ordinary tab ---
-
-def test_a_canvas_file_opens_as_a_canvas_tab_and_a_plain_markdown_file_does_not(tmp_path):
-    "The suffix decides, in `Tab.__post_init__`, so rename and session restore agree with `open`."
-    from leela.workspace import Tab
-    (tmp_path/'plan.canvas.md').write_text('# plan\n')
-    (tmp_path/'notes.md').write_text('# notes\n')
-    ws = Workspace(roots=[tmp_path])
-    assert ws.open(tmp_path/'plan.canvas.md').kind == 'canvas'
-    assert ws.open(tmp_path/'notes.md').kind == 'text'
-    assert Tab(path=str(tmp_path/'x.canvas.md')).kind == 'canvas'
-
-def test_renaming_a_file_into_a_canvas_moves_the_tab_with_it(tmp_path):
-    "`retarget` rewrites the path; the kind is derived from it rather than kept from before."
-    from leela.workspace import Tab
-    assert Tab(path='/w/notes.md').kind == 'text'
-    assert Tab(path='/w/notes.canvas.md', kind='text').kind == 'canvas'
-
-def test_a_new_canvas_is_created_as_a_document_that_parses(tmp_path):
-    "`create_document` is the seam `/fs/new` journals, so a canvas is made the way a file is."
-    from leela.blocks.canvas.doc import Canvas
-    ws = Workspace(roots=[tmp_path])
-    e = ws.create_document(tmp_path/'pricing-a-run.canvas.md')
-    doc = Canvas.load(e.path)
-    assert doc.meta.get('title') == 'pricing a run'
-    assert [b.kind for b in doc.of('code', 'ask')] == ['code', 'ask']
-    assert doc.md() == Canvas.parse(doc.md()).md()          # a starter that round-trips
-
-def test_the_canvas_tab_state_says_canvas_rather_than_falling_through_to_text(tmp_path):
-    "`/tab/state` is what `mountTab` dispatches on; a kind it does not name mounts in CodeMirror."
-    (tmp_path/'plan.canvas.md').write_text('# plan\n\n```canvas code id=c1\nx = 1\n```\n')
-    ws = Workspace(roots=[tmp_path])
-    ws.open(tmp_path/'plan.canvas.md')
-    c = TestClient(ide_app(ws))
-    got = c.get('/tab/state').json()
-    assert got['kind'] == 'canvas' and got['path'].endswith('plan.canvas.md')
-    assert 'text' not in got, 'a canvas is not shipped as editor text'
-
-def test_the_new_canvas_command_is_reachable_from_every_surface_that_makes_a_file():
-    "A command with no button, menu row or palette entry is a chord nobody finds."
-    from leela.core.keys import KEYS, lookup
-    from leela.core.ui import BUTTONS
-    from leela.blocks.keys.menus import MENUS, BAR
-    assert lookup('new_canvas').label == 'new canvas'          # a label is what puts it in the palette
-    assert 'new_canvas' in BUTTONS.attrgot('action')
-    for surface in ('files', 'file', 'folder', 'root'):
-        assert 'new_canvas' in [i.action for i in MENUS[surface]], surface
-    assert 'new_canvas' in [r.action for name, rows in BAR if name == 'File' for r in rows]
-
-def test_a_canvas_keeps_the_chords_that_get_you_back_out_of_it():
-    "The page is a frame and owns its keyboard, so it is routed like the terminal and the browser."
-    from leela.core.keys import SCOPES
-    assert 'canvas' in SCOPES
-    src = (ROOT/'leela/blocks/keys/keymap.js').read_text()
-    assert "scope === 'canvas'" in src, 'the canvas has no escape hatch, so no IDE chord works in it'

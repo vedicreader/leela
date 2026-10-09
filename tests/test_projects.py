@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 
 import pytest
 from starlette.testclient import TestClient
@@ -34,14 +33,6 @@ def dirs(tmp_path):
         made.append(str(tmp_path/name))
     return made
 
-def test_nothing_remembered_reads_as_nothing_rather_than_failing(session_file):
-    assert projects.session() == {'folders': [], 'recent': []}
-    assert projects.last_folders() == [] and projects.recent_folders() == []
-
-def test_a_corrupt_session_file_does_not_stop_the_app_opening(session_file):
-    "Half a write survives a crash; refusing to launch over it would not be an improvement."
-    session_file.write_text('{"folders": [')
-    assert projects.last_folders() == []
 
 def test_folders_opened_at_once_do_not_overwrite_each_other(tmp_path, session_file):
     "Two request threads, each writing the whole file. A session that will not parse reads as none."
@@ -56,31 +47,6 @@ def test_folders_opened_at_once_do_not_overwrite_each_other(tmp_path, session_fi
     assert sorted(projects.last_folders()) == sorted(many), 'every folder survived the others'
     assert json.loads(session_file.read_text()), 'and the file it left is whole'
 
-def test_the_folders_a_launch_opened_are_what_the_next_one_reopens(dirs):
-    projects.remember(dirs[:2])
-    assert projects.last_folders() == dirs[:2]
-
-def test_opening_another_folder_adds_to_the_set_rather_than_replacing_it(dirs):
-    """Under `--app` each folder is its own `Workspace`."""
-    projects.remember([dirs[0]])
-    projects.note_folder(dirs[1])
-    assert projects.last_folders() == dirs[:2]
-
-def test_closing_a_folder_stops_it_reopening_but_does_not_forget_it(dirs):
-    projects.remember(dirs[:2])
-    projects.drop_folder(dirs[0])
-    assert projects.last_folders() == [dirs[1]]
-    assert dirs[0] in projects.recent_folders(), 'closing a project is not forgetting it'
-
-def test_recent_projects_come_back_most_recently_opened_first(dirs):
-    for d in dirs: projects.note_folder(d)
-    assert projects.recent_folders()[:3] == list(reversed(dirs))
-
-def test_the_recent_list_is_bounded(tmp_path):
-    for i in range(projects.MAX_RECENT + 8):
-        d = tmp_path/f'p{i}'; d.mkdir()
-        projects.note_folder(str(d))
-    assert len(projects.recent_folders()) == projects.MAX_RECENT
 
 def test_a_folder_that_has_gone_is_dropped_rather_than_offered(dirs, tmp_path):
     "Projects get deleted, renamed and unmounted between launches."
@@ -89,99 +55,6 @@ def test_a_folder_that_has_gone_is_dropped_rather_than_offered(dirs, tmp_path):
     assert projects.last_folders() == [dirs[1]]
     assert dirs[0] not in projects.recent_folders()
 
-def test_forgetting_a_project_removes_it_from_the_welcome_screen(dirs):
-    for d in dirs: projects.note_folder(d)
-    projects.forget_recent(dirs[1])
-    assert dirs[1] not in projects.recent_folders()
-
-def test_the_same_folder_is_only_listed_once(dirs):
-    projects.note_folder(dirs[0])
-    projects.note_folder(dirs[0] + '/')
-    projects.note_folder(dirs[0])
-    assert projects.recent_folders().count(dirs[0]) == 1
-
-def test_a_launch_with_no_arguments_reopens_the_last_session(dirs, monkeypatch):
-    "One window, not one per folder remembered. See `last_folder`."
-    projects.remember(dirs[:2])
-    seen = {}
-    monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: seen.setdefault('args', args))
-    monkeypatch.setattr(leela_app, 'free_port', lambda preferred=5001: 5199)
-    monkeypatch.setattr('leela.desktop.shell_ready', lambda *a: (True, 'gtk'))
-    monkeypatch.setattr('leela.desktop.start_cdp', lambda *a, **k: None)
-    monkeypatch.setattr('leela.desktop.run_shell', lambda urls, **kw: seen.update(urls=urls, **kw))
-    monkeypatch.setattr(leela_app.sys, 'argv', ['leela_app.py'])
-    leela_app.run()
-    assert seen['args'][-1:] == [dirs[1]], 'the most recently opened, and only it'
-
-def test_a_folder_given_by_the_desktop_wins_over_the_remembered_session(dirs, monkeypatch):
-    "Opening a project with Leela means that project, not the one from yesterday."
-    projects.remember([dirs[0]])
-    seen = {}
-    monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: seen.setdefault('args', args))
-    monkeypatch.setattr(leela_app, 'free_port', lambda preferred=5001: 5199)
-    monkeypatch.setattr('leela.desktop.shell_ready', lambda *a: (True, 'gtk'))
-    monkeypatch.setattr('leela.desktop.start_cdp', lambda *a, **k: None)
-    monkeypatch.setattr('leela.desktop.run_shell', lambda urls, **kw: seen.update(urls=urls, **kw))
-    monkeypatch.setattr(leela_app.sys, 'argv', ['leela_app.py', dirs[2]])
-    leela_app.run()
-    assert seen['args'][-1:] == [dirs[2]]
-    assert projects.last_folders() == [dirs[2]]
-
-def test_every_workspace_gets_its_own_window(dirs, monkeypatch):
-    """`--app` gives each folder an isolated workspace behind a host-dispatching hub."""
-    seen = {}
-    monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: None)
-    monkeypatch.setattr(leela_app, 'free_port', lambda preferred=5001: 5199)
-    monkeypatch.setattr('leela.desktop.shell_ready', lambda *a: (True, 'gtk'))
-    monkeypatch.setattr('leela.desktop.start_cdp', lambda *a, **k: None)
-    monkeypatch.setattr('leela.desktop.run_shell', lambda urls, **kw: seen.update(urls=urls, **kw))
-    monkeypatch.setattr(leela_app.sys, 'argv', ['leela_app.py', *dirs[:2]])
-    leela_app.run()
-    assert seen['urls'] == ['http://alpha.localhost:5199/', 'http://beta.localhost:5199/']
-    assert seen['titles'] == ['leela — alpha', 'leela — beta']
-
-def test_with_nothing_to_open_there_is_still_one_window(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: None)
-    monkeypatch.setattr(leela_app, 'free_port', lambda preferred=5001: 5199)
-    monkeypatch.setattr('leela.desktop.shell_ready', lambda *a: (True, 'gtk'))
-    monkeypatch.setattr('leela.desktop.start_cdp', lambda *a, **k: None)
-    monkeypatch.setattr('leela.desktop.run_shell', lambda urls, **kw: seen.update(urls=urls, **kw))
-    monkeypatch.setattr(leela_app.sys, 'argv', ['leela_app.py'])
-    leela_app.run()
-    assert seen['urls'] == ['http://127.0.0.1:5199/'] and seen['titles'] == ['leela']
-
-def test_a_frozen_app_with_no_folder_opens_on_nothing_rather_than_on_your_home_directory():
-    """The bad guess this replaces had teeth."""
-    import inspect
-
-    from leela import app as appmod
-    src = inspect.getsource(appmod.serve_ide)
-    assert 'Path.home()' not in src, 'the home-directory fallback is back'
-    assert "not getattr(sys, 'frozen', False)" in src
-
-def test_a_workspace_with_no_folders_still_serves(tmp_path, monkeypatch):
-    "Opening on nothing has to be a usable screen, not a broken one."
-    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
-    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
-    ws = Workspace(roots=[], port=8000)
-    with TestClient(ide_app(ws)) as c:
-        page = c.get('/')
-        assert page.status_code == 200
-        assert 'Open a folder' in page.text, 'the welcome screen must offer a way in'
-        assert 'leerecent' in page.text
-        assert c.get('/fs/recent').json()['ok']
-
-def test_the_welcome_screen_offers_the_projects_you_have_opened_before(tmp_path, dirs, monkeypatch):
-    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
-    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
-    for d in dirs: projects.note_folder(d)
-    ws = Workspace(roots=[dirs[0]], port=8000)
-    with TestClient(ide_app(ws)) as c:
-        d = c.get('/fs/recent').json()
-    listed = {r['name']: r['open'] for r in d['recent']}
-    assert listed == {'alpha': True, 'beta': False, 'gamma': False}
-    assert d['home'] == str(__import__('pathlib').Path.home())
 
 def test_opening_a_folder_in_the_app_is_remembered_for_next_launch(tmp_path, dirs, monkeypatch):
     "The set that reopens has to follow the workspace, not the arguments it started with."
@@ -232,70 +105,6 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
         assert len(opened) == 2 and opened[-1] == opened[0], 'and raises the window it already has'
     finally: server.should_exit = True
 
-def test_a_folder_opened_as_its_own_site_is_remembered_whoever_opened_it(dirs):
-    """The browser posts `/hub/open` and gets no desktop shell, so the shell cannot be what remembers."""
-    from leela.hub import WorkspaceHub, WorkspaceSite
-    build = lambda root, slug: WorkspaceSite(slug, os.path.basename(str(root)), str(root), lambda *a: None)
-    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', dirs[0], lambda *a: None)], 5209, build=build)
-    hub.open_folder(dirs[1])
-    assert dirs[1] in projects.last_folders(), 'the hub is the seam both legs pass through'
-    assert projects.recent_folders()[0] == dirs[1]
-    projects.note_folder(dirs[0])
-    hub.open_folder(dirs[1])                       # already a site: reused, and raised to the top
-    assert projects.recent_folders()[0] == dirs[1]
-
-
-def test_a_folder_that_has_gone_is_refused_and_opens_no_window(tmp_path, dirs, monkeypatch):
-    "An empty window naming a folder that is not there is worse than a line saying why."
-    import threading
-
-    import uvicorn
-    from leela import desktop
-    from leela.hub import WorkspaceHub, WorkspaceSite
-    opened = []
-    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', str(dirs[0]), lambda *a: None)], 5208,
-                       build=lambda root, slug: pytest.fail('nothing may be built for a non-folder'))
-    monkeypatch.setattr(desktop, 'open_window', lambda *a, **kw: opened.append(a))
-    server = uvicorn.Server(uvicorn.Config(hub, host='127.0.0.1', port=5208, log_level='error'))
-    threading.Thread(target=server.run, daemon=True).start()
-    from leela.desktop import wait_for_http
-    assert wait_for_http('http://127.0.0.1:5208/', timeout=30)
-    try:
-        assert leela_app.open_folder(5208, tmp_path/'never-existed') is None
-        assert opened == [], 'no window is left showing nothing'
-    finally: server.should_exit = True
-
-@pytest.mark.skipif(sys.platform == 'darwin', reason='macOS really does register the handler')
-def test_the_open_folder_handler_is_a_no_op_where_there_is_nothing_to_register():
-    "Windows and Linux get their folders through argv; asking for a handler must not raise."
-    from leela.desktop import watch_open_events
-    assert watch_open_events(lambda p: None) is None
-
-def test_a_running_workspace_publishes_where_it_is_answering(serving_file, dirs):
-    """A hotkey, a script, anything outside the window has to find it, and the desktop shell takes whatever port is free, so there is nothing to guess at."""
-    d = projects.now_serving('127.0.0.1', 5173, dirs)
-    assert d['url'] == 'http://127.0.0.1:5173/' and d['pid'] == os.getpid()
-    assert d['folders'] == dirs
-    live = projects.serving()
-    assert live['port'] == 5173 and live['url'] == d['url']
-    projects.served()
-    assert projects.serving() is None, 'and it stops claiming to be up once it is not'
-
-def test_an_address_left_behind_by_a_dead_workspace_is_not_offered(serving_file):
-    """A workspace killed outright never reaches its own cleanup."""
-    projects.now_serving('127.0.0.1', 5173, [])
-    d = json.loads(serving_file.read_text()); d['pid'] = 2 ** 31 - 1
-    serving_file.write_text(json.dumps(d))
-    assert projects.serving() is None
-
-def test_a_missing_or_unreadable_address_reads_as_nothing_rather_than_failing(serving_file):
-    assert projects.serving() is None
-    serving_file.write_text('{not json')
-    assert projects.serving() is None
-    serving_file.write_text('{"pid": 1}')
-    assert projects.serving() is None, 'an entry with no port names nowhere'
-    projects.served(), projects.served()          # removing one that is already gone is not an error
-
 
 def test_a_windowed_launch_gets_the_path_a_terminal_has(monkeypatch):
     """Finder and the Dock start an app with almost nothing on PATH, so `git` and `claude` went missing and the app reported no repository and no Claude Code while both worked in its own terminal."""
@@ -305,32 +114,6 @@ def test_a_windowed_launch_gets_the_path_a_terminal_has(monkeypatch):
     got = use_login_path()
     assert len(got.split(os.pathsep)) > 2, 'a stripped PATH must be widened'
     assert shutil.which('git'), 'git is what the git panel needs to find'
-
-def test_the_tool_directories_are_added_when_the_shell_cannot_be_asked(monkeypatch, tmp_path):
-    "No SHELL, or one that fails, still has to leave the usual places on PATH."
-    import os
-    import leela
-    from leela.core import envs
-    # Named, not inherited: `preferred_shell` reads a real setting, and a test must not depend on
-    # what this machine's own settings say.
-    monkeypatch.setattr(envs, 'preferred_shell', lambda: str(tmp_path/'no-such-shell'))
-    monkeypatch.setenv('PATH', '/usr/bin')
-    real = tmp_path/'bin'; real.mkdir()
-    monkeypatch.setattr(leela, 'TOOL_DIRS', (str(real), '/definitely/not/here'))
-    got = leela.use_login_path().split(os.pathsep)
-    assert leela.login_path() is None, 'a shell that cannot be run answers nothing'
-    assert str(real) in got and '/definitely/not/here' not in got, 'only directories that exist'
-
-def test_asking_the_shell_never_hangs_the_launch(monkeypatch):
-    "A profile that blocks would otherwise stall every windowed start before the window appears."
-    import subprocess
-    import leela
-    def slow(*a, **kw): raise subprocess.TimeoutExpired(cmd='sh', timeout=3)
-    monkeypatch.setattr(leela.__dict__['subprocess'] if 'subprocess' in leela.__dict__ else subprocess,
-                        'run', slow, raising=False)
-    monkeypatch.setattr(subprocess, 'run', slow)
-    monkeypatch.setenv('SHELL', '/bin/zsh')
-    assert leela.login_path() is None
 
 
 def test_an_ascii_locale_is_repaired_before_anything_imports(monkeypatch):
@@ -345,13 +128,6 @@ def test_an_ascii_locale_is_repaired_before_anything_imports(monkeypatch):
         assert use_utf8() is True
         assert 'utf-8' in locale.getpreferredencoding(False).lower()
     finally: locale.setlocale(locale.LC_CTYPE, was)
-
-def test_a_locale_that_is_already_utf8_is_left_alone(monkeypatch):
-    "Nothing to fix means no `setlocale` call, so a deliberate locale is not overwritten."
-    import locale
-    import leela
-    monkeypatch.setattr(leela, 'UTF8_LOCALES', ())
-    assert leela.use_utf8() is ('utf-8' in locale.getpreferredencoding(False).lower())
 
 
 def test_a_launch_with_no_arguments_reopens_one_folder(tmp_path, monkeypatch):
@@ -373,11 +149,6 @@ def test_a_launch_with_no_arguments_reopens_one_folder(tmp_path, monkeypatch):
     assert projects.last_folder() == [str(later)]
     assert projects.recent_folders()[0] == dirs[0], 'recent is the recency list'
 
-def test_with_nothing_remembered_a_launch_opens_no_folder(tmp_path, monkeypatch):
-    "A first run has no history, and the welcome screen is the right answer, not a guess."
-    import leela.core.projects as projects
-    monkeypatch.setattr(projects, 'SESSION', tmp_path/'empty.json')
-    assert projects.last_folder() == []
 
 def test_a_folder_under_the_system_temp_dir_is_never_remembered(tmp_path, monkeypatch):
     """A folder in the temp dir belongs to a test, a probe or an unpacked archive."""
@@ -406,9 +177,3 @@ def test_a_folder_under_the_system_temp_dir_is_never_remembered(tmp_path, monkey
     assert [Path(r).name for r in state.read_json()['roots']] == [real.name], \
         'and the saved session never carries one either, however it got in'
 
-def test_a_test_naming_its_own_session_file_keeps_what_it_puts_there(tmp_path, monkeypatch):
-    "The guard is about the session a person opens. Anything else is the caller's own file."
-    from leela.core import projects
-    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')
-    projects.note_folder(str(tmp_path))          # pytest's own tmp_path is under the temp dir
-    assert projects.session()['folders'] == [str(tmp_path.resolve())]

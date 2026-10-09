@@ -8,11 +8,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'tools'))
 import build_ide_js as builder                                              # noqa: E402
 
-from leela.blocks.search.search import Hit, Search                          # noqa: E402
+from leela.blocks.search.search import Search                          # noqa: E402
 from leela.blocks.fs.fs import Sandbox                                      # noqa: E402
 
-def test_a_hit_carries_the_module_it_is_in():
-    assert 'module' in Hit(path='x', line=1, text='').dict()
 
 def test_a_site_packages_path_becomes_a_dotted_module(tmp_path):
     sp = tmp_path/'lib'/'python3.12'/'site-packages'

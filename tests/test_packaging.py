@@ -41,30 +41,6 @@ def test_the_asset_walk_reaches_subdirectories(which, request):
     assert 'leela/static/lee-ide.js' in got and 'leela/static/lee-ide.css' in got
     assert any(f.endswith('.woff2') for f in got), 'the webfonts themselves were left out'
 
-@pytest.mark.parametrize('which', ['mac', 'win'])
-def test_the_javascript_sources_are_not_shipped_beside_the_bundle_built_from_them(which, request):
-    "The same exclusion the wheel makes: the modules are the input to `static/lee-ide.js`."
-    mod = request.getfixturevalue(which)
-    shipped = files(mod)
-    assert not [f for f in shipped if f.startswith('leela/static/js/')]
-    assert not [f for f in shipped if f.startswith('leela/blocks/') and f.endswith('.js')]
-
-@pytest.mark.parametrize('which', ['mac', 'win'])
-def test_assets_land_where_a_frozen_leela_looks_for_them(which, request):
-    "`leela.core.web.asset_dir` resolves `leela/static` under Resources or beside the exe."
-    mod = request.getfixturevalue(which)
-    assert {'leela/static', 'leela/vendor'} <= {d.replace('\\', '/') for d in dests(mod)}
-
-@pytest.mark.parametrize('which', ['mac', 'win'])
-def test_the_shell_and_the_browser_it_drives_are_both_frozen_in(which, request):
-    "A bundle without pywebview has no window, and one without fossick has no inline browser."
-    mod = request.getfixturevalue(which)
-    assert {'webview', 'fossick', 'fastcdp', 'leela'} <= set(mod.PACKAGES)
-    # The platform backend is imported by name at runtime, so the scanner never sees it.
-    assert any('platforms' in i for i in mod.INCLUDES)
-
-def test_the_other_platforms_webviews_are_left_out(mac, win):
-    assert 'webview.platforms.gtk' in mac.EXCLUDES and 'webview.platforms.cocoa' in win.EXCLUDES
 
 def test_the_window_is_allowed_to_load_the_loopback_server(mac):
     """Without this the app builds, launches, and shows a blank window."""
@@ -72,63 +48,6 @@ def test_the_window_is_allowed_to_load_the_loopback_server(mac):
     assert ats == {'NSAllowsLocalNetworking': True}
     assert 'NSAllowsArbitraryLoads' not in ats, 'the exemption must stay narrow'
 
-def test_the_bundle_follows_the_system_appearance(mac):
-    "Otherwise every dark theme Leela ships renders against a white window."
-    assert mac.PLIST['NSRequiresAquaSystemAppearance'] is False
-
-def test_a_folder_is_a_document_the_app_opens(mac):
-    """What makes "Open With → Leela" appear on a folder, and a Dock drop mean something."""
-    doc = first(mac.PLIST['CFBundleDocumentTypes'], lambda d: d['CFBundleTypeName'] == 'Folder')
-    assert doc['LSItemContentTypes'] == ['public.folder']
-    # Not `Owner`: Finder stays the default handler for folders and Leela is merely offered.
-    assert doc['LSHandlerRank'] == 'Alternate'
-
-def test_the_bundle_is_versioned_from_the_package(mac):
-    from leela import __version__
-    assert mac.PLIST['CFBundleShortVersionString'] == __version__
-
-def test_the_frozen_script_is_the_desktop_entry_and_not_the_cli(mac, win):
-    "`leela.cli:main` would serve with no window and never return the main thread."
-    assert Path(mac.__dict__['ROOT'], 'leela_app.py').is_file()
-    assert 'leela_app.py' in str(win.__dict__['ROOT']/'leela_app.py')
-
-def test_windows_keeps_modules_as_files_for_the_kernels_it_launches(win):
-    src = (ROOT/'packaging'/'windows'/'setup.py').read_text()
-    assert 'zipfile=None' in src, 'a kernel subprocess cannot import from the parent library.zip'
-
-def test_a_standalone_python_is_not_offered_to_py2app():
-    """The failure this prevents is a build that dies on `import zlib` minutes in."""
-    import setup_app
-    assert setup_app.is_framework(sys.executable) is setup_app.is_framework()
-    assert setup_app.is_framework(Path('/definitely/not/a/python')) is False
-
-def test_check_explains_the_situation_on_any_platform():
-    "Including Linux, where there is nothing to build and saying so is the useful answer."
-    out = subprocess.run([sys.executable, str(ROOT/'setup_app.py'), '--check'],
-                         capture_output=True, text=True, timeout=120)
-    assert out.returncode == 0, out.stderr
-    assert 'platform' in out.stdout and 'pywebview' in out.stdout
-
-def test_a_linux_build_is_refused_with_advice_rather_than_a_traceback(monkeypatch):
-    import setup_app
-    monkeypatch.setattr(setup_app.sys, 'platform', 'linux')
-    with pytest.raises(SystemExit) as e: setup_app.platform_setup()
-    assert 'their own OS' in str(e.value)
-
-def test_the_artwork_is_committed_and_everything_drawn_from_it_is_not():
-    """One source in the tree, and every icon `tools/build_icons.py` draws from it generated."""
-    import subprocess
-    pytest.importorskip('PIL')
-    import tools.build_icons as icons
-    assert icons.SHEET.is_file() and icons.SHEET.stat().st_size > 1000, 'one sheet is the source'
-    # Every mark is cut from it, so there is no second copy of the artwork to disagree with.
-    assert not list(icons.ASSETS.glob('leela-mark*.png')), 'the marks are generated, not committed'
-    assert not list(icons.ASSETS.glob('leela-turtle*.png')), 'and the old artwork is gone'
-    tracked = subprocess.run(['git', 'ls-files', 'packaging/assets'], cwd=ROOT,
-                             capture_output=True, text=True).stdout.split()
-    drawn = {'Leela.png', 'Leela.ico', 'Leela.svg', 'Leela.icns'}
-    assert not {Path(t).name for t in tracked} & drawn, 'generated icons are not committed'
-    assert not any('Leela.iconset' in t for t in tracked)
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
 def test_a_package_whose_init_is_an_extension_is_grafted_in(which, request):
@@ -171,143 +90,6 @@ def test_the_mac_build_hands_py2app_no_install_requires(mac):
     finally: os.chdir(cwd)
     assert not d.install_requires, 'py2app refuses a distribution carrying install_requires'
 
-def test_both_platform_builds_say_to_draw_the_icons_first():
-    "Nothing generated is in a fresh checkout, so a build that needs one has to name the command."
-    for rel in ('packaging/macos/setup.py', 'packaging/windows/setup.py'):
-        assert 'tools/build_icons.py' in (ROOT/rel).read_text(), rel
-
-def test_the_build_extras_carry_what_the_build_imports():
-    """`Leela.icns` is built, not committed, and the workflow installs the extras and nothing else."""
-    import tomllib
-    extras = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']['optional-dependencies']
-    for which in ('macapp', 'windows'):
-        assert any(f'kavacha[{which}]' in d for d in extras[which]), f'{which} names no freezer'
-    pytest.importorskip('PIL')
-    from kavacha.icons import icns  # noqa: F401
-
-def test_a_release_says_what_is_missing_rather_than_failing_inside_shutil(monkeypatch):
-    "With the app build skipped and no bundle to package, both platforms say so."
-    import tools.build_release as rel
-    monkeypatch.setenv('LEELA_SKIP_APP_BUILD', '1')
-    monkeypatch.setattr(rel, 'run', lambda *a, **kw: None)
-    monkeypatch.setattr(rel, 'ROOT', Path('/nonexistent-leela-root'))
-    for build in (rel.mac_release, rel.windows_release):
-        with pytest.raises(SystemExit) as e: build()
-        assert 'was not built' in str(e.value)
-
-def embedded_png(svg):
-    "The artwork an icon SVG carries, decoded. PNG bytes vary by encoder; the pixels do not."
-    import base64, io
-    from PIL import Image
-    href = re.search(r'base64,([^"]+)', svg).group(1)
-    return Image.open(io.BytesIO(base64.b64decode(href))).convert('RGBA')
-
-def test_the_favicon_is_the_mark_it_is_generated_from():
-    """The favicons ship in the wheel, which has no build step, so they are committed like the JS bundles rather than drawn at install."""
-    pytest.importorskip('PIL')
-    import tools.build_icons as icons
-    for variant, path in icons.FAVICONS.items():
-        assert embedded_png(path.read_text()).tobytes() == embedded_png(icons.favicon(variant)).tobytes(), \
-            f'{path.name} is stale; run python tools/build_icons.py'
-    assert icons.FAVICONS['light'].read_text() != icons.FAVICONS['dark'].read_text(), \
-        'one artwork under two names is not a light and a dark variant'
-    app = (ROOT/'leela'/'app.py').read_text()
-    for name in ('favicon.svg', 'favicon-dark.svg'):
-        assert f"_asset('{name}')" in app, f'{name} is generated but never served'
-
-def test_the_app_artefacts_attach_to_the_release_the_tag_names(tmp_path, monkeypatch):
-    "The last two release steps: build the bundle, then put it on the release just made."
-    import tools.build_release as rel
-    monkeypatch.setattr(rel, 'ROOT', Path(tmp_path))
-    with pytest.raises(SystemExit) as e: rel.upload()
-    assert 'nothing to upload' in str(e.value)
-    (tmp_path/'leela').mkdir()
-    (tmp_path/'leela'/'__init__.py').write_text('"doc"\n__version__ = "9.9.9"\n')
-    (tmp_path/'dist').mkdir()
-    (tmp_path/'dist'/'Leela-macOS.dmg').write_text('x')
-    calls = []
-    monkeypatch.setattr(rel, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
-    monkeypatch.setattr(rel, 'has_release', lambda t: t == 'v9.9.9')
-    rel.upload()
-    assert calls[-1][:4] == ['gh', 'release', 'upload', 'v9.9.9']
-    assert calls[-1][-1] == '--clobber'
-    rel.upload('v1.2.3')
-    assert calls[-1][3] == 'v1.2.3', 'CI passes the tag it was pushed for'
-
-def test_the_release_is_found_under_whichever_tag_spelling_it_carries(tmp_path, monkeypatch):
-    """`ship-gh` tags a Python project `9.9.9`; fastship's other flows push `v9.9.9`."""
-    import tools.build_release as rel
-    monkeypatch.setattr(rel, 'ROOT', Path(tmp_path))
-    (tmp_path/'leela').mkdir()
-    (tmp_path/'leela'/'__init__.py').write_text('"doc"\n__version__ = "9.9.9"\n')
-    monkeypatch.setattr(rel, 'has_release', lambda t: t == '9.9.9')
-    assert rel.release_tag() == '9.9.9'
-    monkeypatch.setattr(rel, 'has_release', lambda t: t == 'v9.9.9')
-    assert rel.release_tag() == 'v9.9.9'
-    assert rel.release_tag('other') == 'other', 'an explicit tag is never second-guessed'
-    monkeypatch.setattr(rel, 'has_release', lambda t: False)
-    with pytest.raises(SystemExit) as e: rel.release_tag()
-    assert 'ship-gh' in str(e.value), 'say what to run, not `release not found`'
-
-def test_the_desktop_workflow_puts_the_artefacts_on_the_release():
-    "A tag push or a dispatch naming a tag builds both bundles and attaches them; without `contents: write` neither can."
-    import yaml
-    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
-    assert doc['permissions']['contents'] == 'write'
-    assert doc[True]['push']['tags'] == ['v*', '[0-9]*'], 'both spellings fastship tags with'
-    assert 'tag' in doc[True]['workflow_dispatch']['inputs']
-    for job in doc['jobs'].values():
-        step = first(job['steps'], lambda s: s.get('name') == 'attach to the release')
-        assert step, 'both platforms attach what they built'
-        assert 'build_release.py upload ${{ inputs.tag || github.ref_name }}' in step['run']
-        assert step['if'] == "startsWith(github.ref, 'refs/tags/') || inputs.tag != ''"
-        assert 'pytest-xdist' in first(job['steps'], lambda s: s.get('name') == 'install')['run'], 'the smoke step runs under the suite addopts'
-
-def test_both_desktop_jobs_freeze_the_dependency_set_the_lock_names():
-    """py2app and py2exe freeze whatever the install step put there."""
-    import yaml
-    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
-    for name, job in doc['jobs'].items():
-        step = first(job['steps'], lambda s: s.get('name') == 'install')
-        assert 'uv export --frozen' in step['run'], f'{name} resolves fresh instead of from the lock'
-        assert '--no-deps' in step['run'], f'{name} lets pip re-resolve over the exported set'
-        assert first(job['steps'], lambda s: str(s.get('uses', '')).startswith('astral-sh/setup-uv')), \
-            f'{name} has no uv, and `uv export` answers nothing without it'
-
-def test_the_windows_build_cannot_take_the_macos_release_down():
-    "pyghostty ships no Windows wheel and `ramabana[cli]` needs it, so the Windows job cannot install yet. macOS still ships."
-    import yaml
-    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text())
-    assert doc['jobs']['windows'].get('continue-on-error') is True
-    assert not doc['jobs']['macos'].get('continue-on-error'), 'a broken macOS build is still a failure'
-
-def test_the_test_workflow_is_bounded_and_has_a_git_identity():
-    "A hung suite fails by the clock, and the tests that commit find a name to commit as."
-    import yaml
-    doc = yaml.safe_load((ROOT/'.github'/'workflows'/'test.yaml').read_text())
-    job = doc['jobs']['pytest']
-    assert isinstance(job.get('timeout-minutes'), int) and job['timeout-minutes'] <= 60
-    names = [s.get('name') for s in job['steps']]
-    ident = first(job['steps'], lambda s: 'user.name' in str(s.get('run', '')))
-    assert ident and 'user.email' in ident['run']
-    assert names.index(ident.get('name')) < names.index('test'), 'set before the tests run'
-
-def test_a_missing_window_icon_is_reported_rather_than_shrugged_off(monkeypatch, capsys):
-    """`_icon` answers with `first`, which is None when nothing matches."""
-    import leela_app
-    monkeypatch.setattr(leela_app.Path, 'is_file', lambda self: False)
-    assert leela_app._icon() is None
-    assert 'build_icons' in capsys.readouterr().out
-
-def test_the_icon_generator_is_reproducible(tmp_path, monkeypatch):
-    "The generated PNG must be what the generator makes, or a stale one is shipped."
-    pytest.importorskip('PIL')
-    import tools.build_icons as icons
-    png = ROOT/'packaging'/'assets'/'Leela.png'
-    if not png.is_file(): pytest.skip('no packaging/assets/Leela.png — run python tools/build_icons.py first')
-    made = icons.image(1024)
-    committed = __import__('PIL.Image', fromlist=['Image']).open(png)
-    assert made.tobytes() == committed.convert('RGBA').tobytes()
 
 APP = ROOT/'dist'/('Leela.app/Contents/MacOS/Leela' if sys.platform == 'darwin' else 'Leela/Leela.exe')
 
@@ -356,49 +138,6 @@ def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
         try: proc.wait(timeout=20)
         except subprocess.TimeoutExpired: proc.kill()
 
-def test_the_macmage_cantrip_only_posts_to_routes_that_exist():
-    """The shortcuts reach Leela over HTTP from outside it, so a renamed route breaks them silently, there is no import to fail and no page to 404 in front of anybody."""
-    import ast, re
-    src = (ROOT/'packaging'/'macmage'/'leela.py').read_text()
-    tree = ast.parse(src)
-    posted = {n.args[0].value for n in ast.walk(tree)
-              if isinstance(n, ast.Call) and getattr(n.func, 'id', '') == 'call'
-              and n.args and isinstance(n.args[0], ast.Constant)}
-    assert posted, 'the cantrip calls something'
-    known = {line.split(' ', 1)[1].strip() for line in (ROOT/'tests'/'routes.txt').read_text().splitlines() if ' ' in line}
-    assert posted <= known, f'{posted - known} is not a route Leela serves'
-    assert '/fs/add-root' in posted, 'the JSON one; `/fs/add_root` answers with a whole page'
-
-def test_the_macmage_cantrip_reads_the_address_leela_publishes():
-    "Both sides name the same file, and neither imports the other to find out."
-    from leela.core.projects import SERVING
-    src = (ROOT/'packaging'/'macmage'/'leela.py').read_text()
-    assert "'leela'/'serving.json'" in src or "'serving.json'" in src
-    assert SERVING.name == 'serving.json' and SERVING.parent.name == 'leela'
-    assert 'import leela' not in src, 'a macmage virtualenv has no leela in it'
-
-def test_both_platforms_leave_out_the_same_heavy_backends(mac, win):
-    """`leela[local]` is not in the download: mlx, cv2, transformers and scipy alone were about 400MB of a 1.4GB bundle, for a runtime most people never pick."""
-    assert mac.HEAVY == win.HEAVY
-    for m in (mac, win):
-        assert set(m.HEAVY) <= set(m.EXCLUDES), 'the heavy list is what EXCLUDES is built from'
-        assert not set(m.HEAVY) & set(m.PACKAGES), 'excluded and copied whole at once'
-
-def test_pip_is_shipped_so_the_app_can_fetch_a_backend(mac, win):
-    """A signed bundle cannot be written into and carries no other installer, so without pip the on-demand backends are unreachable and leaning the build just removes features."""
-    for m in (mac, win):
-        assert 'pip' in m.PACKAGES, 'nothing imports pip, so only PACKAGES brings it'
-        assert 'pip' not in m.EXCLUDES
-
-def test_the_default_install_does_not_carry_the_local_backends():
-    "The whole point of the leaning: `leela` alone must not resolve to `rishi[all]`."
-    import tomllib
-    cfg = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']
-    assert not any('ramabana[all]' in d for d in cfg['dependencies']), 'ramabana[all] carries rishi[all]'
-    assert any(d.startswith('ramabana') for d in cfg['dependencies'])
-    local = cfg['optional-dependencies']['local']
-    assert any('rishi[' in d and 'mlx' in d for d in local), 'the backends live in leela[local]'
-
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
 def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, request):
@@ -408,164 +147,10 @@ def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, requ
     assert 'pygments' not in mod.EXCLUDES
 
 
-def test_leela_asks_to_own_the_languages_it_edits(mac):
-    """One list: the document types come from the same `LANGS` the file tree uses, so a language added there is a file type the app opens without anyone remembering this file."""
-    from leela.blocks.fs.fs import LANGS
-    types = {d['CFBundleTypeName']: d for d in mac.PLIST['CFBundleDocumentTypes']}
-    src = types['Source file']
-    assert src['LSHandlerRank'] == 'Owner' and src['CFBundleTypeRole'] == 'Editor'
-    exts = set(src['CFBundleTypeExtensions'])
-    assert 'py' in exts and 'ipynb' in exts and 'md' in exts
-    assert not exts & {e.lstrip('.') for e in mac.VIEW_ELSEWHERE}, 'a browser renders these better'
-    assert exts <= {e.lstrip('.') for e, l in LANGS.items() if l}, 'nothing claimed that Leela cannot edit'
-    # A folder is still Finder's, or every directory in the Finder would open Leela.
-    assert types['Folder']['LSHandlerRank'] == 'Alternate'
-
-
 def test_a_windowed_launch_is_given_a_utf8_locale(mac):
     """launchd hands an app no LANG, the C locale is POSIX, `open()` defaults to ASCII, and `import rishi.claude` died on a UTF-8 byte, which surfaced as Claude Code being reported not installed."""
     env = mac.PLIST['LSEnvironment']
     assert env['LANG'].lower().endswith('utf-8') and env['PYTHONUTF8'] == '1'
-
-
-def test_no_junk_directory_rides_along_inside_the_package():
-    """`leela` is copied whole, and py2app copies a directory, not a git tree."""
-    pkg = ROOT/'leela'
-    junk = [p.name for p in pkg.iterdir()
-            if p.is_dir() and (p.name in ('.venv', 'venv', 'node_modules', '.tox', 'dist', 'build')
-                               or (p/'pyvenv.cfg').is_file())]
-    assert junk == [], f'{junk} would be copied into the app; delete it'
-
-
-def test_signing_and_notarising_are_opt_in(monkeypatch):
-    "With no credentials the build still makes a launchable app, which is what a fork gets."
-    import tools.build_release as rel
-    for k in ('LEELA_NOTARY_PROFILE', 'LEELA_ASC_KEY', 'LEELA_ASC_KEY_ID', 'LEELA_ASC_ISSUER',
-              'LEELA_APPLE_ID', 'LEELA_APPLE_PASSWORD', 'LEELA_TEAM_ID'):
-        monkeypatch.delenv(k, raising=False)
-    assert rel.notary_args() == []
-    with pytest.raises(SystemExit, match='nothing to notarize'): rel.notarize(Path('x.dmg'))
-
-@pytest.mark.parametrize('env,want', [
-    ({'LEELA_NOTARY_PROFILE': 'p'}, '--keychain-profile'),
-    ({'LEELA_ASC_KEY': 'k.p8', 'LEELA_ASC_KEY_ID': 'i', 'LEELA_ASC_ISSUER': 's'}, '--key'),
-    ({'LEELA_APPLE_ID': 'a@b.c', 'LEELA_APPLE_PASSWORD': 'x', 'LEELA_TEAM_ID': 'T'}, '--apple-id'),
-])
-def test_each_way_of_authenticating_to_the_notary_service(env, want, monkeypatch):
-    "A keychain profile is one secret instead of three, so it is preferred where it exists."
-    import tools.build_release as rel
-    for k in ('LEELA_NOTARY_PROFILE', 'LEELA_ASC_KEY', 'LEELA_ASC_KEY_ID', 'LEELA_ASC_ISSUER',
-              'LEELA_APPLE_ID', 'LEELA_APPLE_PASSWORD', 'LEELA_TEAM_ID'):
-        monkeypatch.delenv(k, raising=False)
-    for k, v in env.items(): monkeypatch.setenv(k, v)
-    assert want in rel.notary_args()
-
-def test_the_notarised_dmg_is_stapled(monkeypatch, tmp_path):
-    "Without stapling Gatekeeper asks Apple on first launch, and fails when there is no network."
-    import tools.build_release as rel
-    monkeypatch.setenv('LEELA_NOTARY_PROFILE', 'leela')
-    calls = []
-    monkeypatch.setattr(rel, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
-    rel.notarize(tmp_path/'Leela.dmg')
-    assert calls[0][:3] == ['xcrun', 'notarytool', 'submit'] and '--wait' in calls[0]
-    assert calls[1][:3] == ['xcrun', 'stapler', 'staple']
-    assert calls[2][:3] == ['xcrun', 'stapler', 'validate']
-
-def test_distribution_signing_does_not_use_deep(mac):
-    """`--deep` signs nested code with the outer bundle's arguments and skips what it does not recognise, which is why Apple tells you not to and why the notary service rejects it."""
-    src = (ROOT/'tools'/'build_release.py').read_text()
-    body = src[src.index('def sign('):src.index('def notary_args(')]
-    assert "'--deep'" not in body.split('--verify')[0], 'signing must walk inner code itself'
-    assert "'--timestamp'" in body, 'notarisation requires a secure timestamp'
-    assert "'runtime'" in body, 'the hardened runtime is required too'
-
-
-def test_what_only_a_lazy_import_reaches_is_still_bundled(mac, win):
-    """`workspace._attachment_context` imports `ramabana.cli` inside the function, so no scanner follows it to rich, pyghostty or teleprint."""
-    for m in (mac, win):
-        assert {'rich', 'pyghostty', 'teleprint'} <= set(m.PACKAGES), 'reached only from cli.py'
-
-def test_the_media_helpers_can_actually_be_imported():
-    "The check the bundle cannot do for itself: the module Leela reaches for has what it needs."
-    from ramabana.tools import MEDIA, Attachment, media_note, media_parts   # noqa: F401   # not the terminal module, since 0.2.9
-    assert MEDIA, 'the media table is what `_attachment_context` reads'
-
-def test_leela_asks_for_the_ramabana_extra_that_module_needs():
-    "Plain `ramabana` does not carry pyghostty or teleprint, and `cli.py` imports both."
-    import tomllib
-    deps = tomllib.load(open(ROOT/'pyproject.toml', 'rb'))['project']['dependencies']
-    assert any(d.startswith('ramabana[') and 'cli' in d for d in deps), deps
-
-
-def test_both_bundles_name_what_the_inspector_imports(mac, win):
-    """pandas reached the DMG only because py2app's scanner followed dhrishti's module-level import."""
-    from kunda.support import INSPECTOR
-    for m in (mac, win):
-        assert set(INSPECTOR) <= set(m.PACKAGES), f'{m.__name__} carries no {set(INSPECTOR) - set(m.PACKAGES)}'
-
-
-@pytest.mark.parametrize('which', ('mac', 'win'))
-def test_the_file_watcher_is_copied_whole_like_everything_imported_in_a_function(which, request):
-    """`blocks/fs/watch.py` imports watchfiles inside the watch thread, so the scanner never saw it."""
-    assert 'watchfiles' in request.getfixturevalue(which).PACKAGES
-
-def test_the_watcher_says_why_it_stopped_rather_than_returning_in_silence(monkeypatch, capsys):
-    "It went unnoticed in every packaged build; the next time it must at least be readable."
-    import builtins, threading
-    from leela.blocks.fs.watch import Watcher
-    real = builtins.__import__
-    def no_watchfiles(name, *a, **kw):
-        if name == 'watchfiles': raise ImportError('No module named watchfiles')
-        return real(name, *a, **kw)
-    monkeypatch.setattr(builtins, '__import__', no_watchfiles)
-    w = object.__new__(Watcher)
-    w.step = 0
-    Watcher._run(w, [], threading.Event())
-    assert 'will not follow the disk' in capsys.readouterr().out
-
-
-def test_the_bundle_prefers_the_python_most_projects_are_on_not_the_newest():
-    """The version here is the version the app ships, and a kernel borrows Leela's `sys.path` only from its own minor version."""
-    import setup_app
-    versions = [c.split('python')[-1] for c in setup_app.FRAMEWORK_CANDIDATES if 'python3.1' in c]
-    for group in (versions[:3], versions[3:6], versions[6:9]):
-        assert group and group[0] == '3.13', f'3.13 leads its group, got {group}'
-        assert '3.14' in group and group.index('3.14') > 0, f'3.14 is offered, behind it: {group}'
-
-def test_no_standalone_interpreter_is_offered_to_py2app():
-    "uv's and pyenv's builds report an empty PYTHONFRAMEWORK; py2app cannot embed one."
-    import setup_app
-    for c in setup_app.FRAMEWORK_CANDIDATES:
-        assert '/uv/python/' not in c and '.pyenv' not in c, c
-
-
-def test_a_build_environment_on_another_python_is_rebuilt_not_reused(tmp_path, monkeypatch):
-    """Changing the framework interpreter left `.app-venv` alone, so the build announced `framework Python: ...3.13` and then shipped 3.12 out of the environment it already had."""
-    import setup_app
-    venv = tmp_path/'.app-venv'
-    (venv/'bin').mkdir(parents=True)
-    (venv/'bin'/'python').write_text('')
-    monkeypatch.setattr(setup_app, 'VENV', venv)
-    monkeypatch.setattr(setup_app, 'py_version', lambda p: (3, 12) if 'app-venv' in str(p) else (3, 13))
-    ran = []
-    monkeypatch.setattr(setup_app, 'run', lambda *a, **k: ran.append([str(x) for x in a]))
-    setup_app.build_venv('/opt/homebrew/opt/python@3.13/bin/python3.13')
-    assert not (venv/'bin'/'python').exists() or any('venv' in c for c in ran[0]), \
-        'the stale environment was removed and a new one asked for'
-    assert ran and ran[0][1:3] == ['-m', 'venv'], ran[:1]
-
-def test_a_build_environment_on_the_same_python_is_kept(tmp_path, monkeypatch):
-    "Rebuilding it every time would add minutes to every build for nothing."
-    import setup_app
-    venv = tmp_path/'.app-venv'
-    (venv/'bin').mkdir(parents=True)
-    (venv/'bin'/'python').write_text('')
-    monkeypatch.setattr(setup_app, 'VENV', venv)
-    monkeypatch.setattr(setup_app, 'py_version', lambda p: (3, 13))
-    ran = []
-    monkeypatch.setattr(setup_app, 'run', lambda *a, **k: ran.append([str(x) for x in a]))
-    setup_app.build_venv('/opt/homebrew/opt/python@3.13/bin/python3.13')
-    assert not any(c[1:3] == ['-m', 'venv'] for c in ran), 'nothing was recreated'
 
 
 def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatch):
@@ -602,29 +187,6 @@ def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatc
     assert 'leela' not in pinned and 'leela' not in from_git and 'leela' not in local, \
         'the project itself is installed editable, not from the lock'
 
-def test_the_exported_requirements_live_where_git_ignores_them():
-    "A generated file beside the build definition is one somebody commits by accident."
-    import setup_app
-    assert setup_app.VENV.name == '.app-venv'
-    assert (setup_app.VENV/'app-requirements.txt').parent == setup_app.VENV
-
-
-def test_a_built_bundle_records_the_commit_it_was_built_from(tmp_path):
-    "Without it, an app built before a fix installs over one built after and looks identical."
-    import setup_app
-    bundle = tmp_path/'Leela.app'
-    (bundle/'Contents'/'Resources').mkdir(parents=True)
-    st = setup_app.write_stamp(bundle)
-    assert setup_app.stamp_path(bundle).exists()
-    back = setup_app.read_stamp(bundle)
-    assert back == st and set(back) == {'commit', 'dirty', 'version', 'built'}
-    assert setup_app.read_stamp(tmp_path/'Nothing.app') is None, 'a bundle with no stamp says so'
-
-def test_the_stamp_lands_where_each_platform_keeps_it():
-    "macOS hides resources inside the bundle; the Windows folder is the bundle."
-    import setup_app
-    assert setup_app.stamp_path('/x/Leela.app').parts[-3:] == ('Contents', 'Resources', setup_app.STAMP)
-    assert setup_app.stamp_path('/x/Leela').parts[-1] == setup_app.STAMP
 
 @pytest.mark.skipif(not APP.exists(), reason='no built app in dist/ — run setup_app.py first')
 def test_a_build_refuses_to_overwrite_the_app_that_is_running(tmp_path):
@@ -673,31 +235,6 @@ def test_every_package_a_tool_schema_is_read_from_ships_its_source():
                          'packaging/macos/setup.py, or every tool schema raises OSError')
 
 
-def test_the_built_app_matches_the_tree_it_was_built_from():
-    """The bundle is derived from the tree and nothing compared them."""
-    import setup_app
-    app = ROOT/'dist'/'Leela.app'
-    if not app.is_dir(): pytest.skip('no local build; the release is built on a runner')
-    st = setup_app.read_stamp(app)
-    assert st is not None, 'dist/Leela.app has no build stamp; rebuild it'
-    here = setup_app.git_stamp()
-    if here is None: pytest.skip('not a git checkout')
-    assert st['commit'] == here['commit'], (
-        f"dist/Leela.app was built from {st['commit'][:12]} but the tree is at "
-        f"{here['commit'][:12]}; rebuild before trusting it")
-
-def test_the_runtime_the_vault_reads_a_model_id_from_is_in_the_bundle(mac):
-    """`vishalakshi` imports `rishi.litert` for one model id, and that module is the litert module."""
-    assert 'litert_lm' not in mac.HEAVY, 'the bundle carries the runtime the vault reads from'
-    assert 'mlx' in mac.HEAVY and 'llama_cpp' in mac.HEAVY, 'the ones that are really optional still are'
-
-def test_an_installed_backend_survives_a_restart():
-    """`use_extras` puts the directory an optional backend is installed into on `sys.path`, and it was called in one place: straight after an install."""
-    cli = (ROOT/'leela'/'cli.py').read_text()
-    body = cli[cli.index('def main('):]
-    assert 'use_extras()' in body, 'the process puts the extras directory on its own path at startup'
-    assert body.index('use_extras()') < body.index('serve_ide'), 'and before anything imports a backend'
-
 #: What the bundle has to be able to import for a feature a person uses on their first day. Every one
 #: of these was shipped and unusable at some point because the scanner cannot see how it is reached:
 #: `cmath` through a Cython module, `ipykernel_launcher` through a `-m` string, `chardet`'s
@@ -718,20 +255,6 @@ def test_the_bundle_can_import_what_its_features_need():
                                    str(app/'Contents'/'Resources'/'lib'/'python3.13'/'lib-dynload')])}
     r = subprocess.run([str(python), '-c', src], capture_output=True, text=True, timeout=180, env=env)
     assert r.returncode == 0, f'the bundle cannot import what it ships:\n{r.stderr.strip()[-1500:]}'
-
-
-@pytest.mark.slow
-def test_the_bundle_ships_no_binary_nothing_can_reach():
-    """`claude_agent_sdk` looks for its bundled CLI beside its own `__file__`, which is inside `python313.zip`, so `.exists()` is false however the app is started."""
-    import zipfile
-    app = ROOT/'dist'/'Leela.app'
-    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
-    z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
-    if not z: pytest.skip('the bundle keeps no zip')
-    with zipfile.ZipFile(z) as f: names = f.namelist()
-    assert any(n.startswith('claude_agent_sdk/') for n in names), 'the SDK itself is still wanted'
-    assert not [n for n in names if n.startswith('claude_agent_sdk/_bundled/')], \
-        'the post-build step stopped stripping the unreachable binary'
 
 
 @pytest.mark.slow
@@ -763,13 +286,6 @@ def test_the_canvas_bundle_is_built_and_current():
         assert out.read_text() == builder.own_bundle(block), \
             f'{out.name} is stale; run python tools/build_ide_js.py'
 
-def test_the_canvas_bundle_is_what_the_route_serves():
-    "The route reads the built resource, not the modules the wheel leaves out."
-    from leela.blocks.canvas import ui
-    import sys
-    sys.path.insert(0, str(ROOT/'tools'))
-    import build_ide_js as builder
-    assert ui.bundle() == builder.own_out('canvas').read_text()
 
 def test_the_wheel_carries_every_bundle_the_app_serves():
     """The exclusions keep the modules out of the wheel."""

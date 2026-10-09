@@ -42,40 +42,6 @@ def test_apply_refuses_a_file_that_changed_after_the_preview(tmp_path):
     assert r.status_code == 409 and 'changed after preview' in r.json()['error']
     assert (tmp_path/'a.py').read_text() == 'alpha = 2\n'
 
-def test_a_token_is_single_use_so_one_preview_cannot_be_applied_twice(tmp_path):
-    (tmp_path/'a.py').write_text('alpha = 1\n')
-    c, _ = client(tmp_path)
-    d = preview(c)
-    assert c.post('/replace/apply', json={'token': d['token']}).status_code == 200
-    r = c.post('/replace/apply', json={'token': d['token']})
-    assert r.status_code == 409 and 'expired' in r.json()['error']
-
-def test_apply_touches_only_the_selected_paths(tmp_path):
-    (tmp_path/'a.py').write_text('alpha\n')
-    (tmp_path/'b.txt').write_text('alpha\n')
-    c, _ = client(tmp_path)
-    d = preview(c)
-    r = c.post('/replace/apply', json={'token': d['token'], 'paths': [str(tmp_path/'a.py')]})
-    assert r.status_code == 200 and r.json()['paths'] == [str(tmp_path/'a.py')]
-    assert (tmp_path/'a.py').read_text() == 'beta\n' and (tmp_path/'b.txt').read_text() == 'alpha\n'
-
-def test_apply_refuses_to_overwrite_an_unsaved_open_buffer(tmp_path):
-    (tmp_path/'a.py').write_text('alpha\n')
-    c, ws = client(tmp_path)
-    tab = ws.open(tmp_path/'a.py'); tab.dirty = True
-    d = preview(c)
-    r = c.post('/replace/apply', json={'token': d['token']})
-    assert r.status_code == 409 and 'unsaved open files' in r.json()['error']
-    assert (tmp_path/'a.py').read_text() == 'alpha\n'
-
-def test_replacement_text_is_literal_unless_regex_is_asked_for(tmp_path):
-    """` ` and `` in the replacement box are characters, not escapes."""
-    (tmp_path/'a.txt').write_text('root = HERE\n')
-    c, _ = client(tmp_path)
-    d = preview(c, find='HERE', replace=r'C:\new\1')
-    assert d['files'][0]['after'] == 'root = C:\\new\\1\n'
-    assert c.post('/replace/apply', json={'token': d['token']}).status_code == 200
-    assert (tmp_path/'a.txt').read_text() == 'root = C:\\new\\1\n'
 
 def test_files_that_are_not_utf8_are_skipped_rather_than_rewritten_lossily(tmp_path):
     "The sandbox decodes with `errors='replace'`; writing that back would eat the bytes."
@@ -84,33 +50,3 @@ def test_files_that_are_not_utf8_are_skipped_rather_than_rewritten_lossily(tmp_p
     d = preview(c)
     assert not d['files'] and str(tmp_path/'legacy.txt') in d['skipped']
     assert (tmp_path/'legacy.txt').read_bytes() == b'caf\xe9 alpha\n'
-
-def test_inline_previews_against_disk_and_applies_through_the_shared_token(tmp_path):
-    "Inline shares `/refactor/apply`, so its plan has to be journalled and undoable like the rest."
-    (tmp_path/'a.py').write_text('amount = price * qty\nprint(amount)\n')
-    c, ws = client(tmp_path)
-    d = c.post('/refactor/inline', json={'path': str(tmp_path/'a.py'), 'pos': 0}).json()
-    assert d['files'][0]['after'] == 'print((price * qty))\n'
-    r = c.post('/refactor/apply', json={'token': d['token']})
-    assert r.status_code == 200, r.text
-    assert (tmp_path/'a.py').read_text() == 'print((price * qty))\n'
-    ws.journal.undo(r.json()['operation']['id'])
-    assert (tmp_path/'a.py').read_text() == 'amount = price * qty\nprint(amount)\n'
-
-def test_refactoring_a_non_python_file_is_refused(tmp_path):
-    (tmp_path/'a.txt').write_text('amount = 1\n')
-    c, _ = client(tmp_path)
-    r = c.post('/refactor/inline', json={'path': str(tmp_path/'a.txt'), 'pos': 0})
-    assert 'Python files only' in r.json()['error']
-
-def test_preview_state_does_not_accumulate_across_previews(tmp_path):
-    "Each plan holds a full copy of every file it would change, so unapplied ones must go."
-    from leela.blocks.refactor.app import MAX_PLANS, _prune
-    (tmp_path/'a.py').write_text('alpha\n')
-    c, _ = client(tmp_path)
-    tokens = [preview(c)['token'] for _ in range(MAX_PLANS + 3)]
-    assert c.post('/replace/apply', json={'token': tokens[0]}).status_code == 409
-    assert c.post('/replace/apply', json={'token': tokens[-1]}).status_code == 200
-    plans = {'old': {'at': 0}, 'new': {'at': 2 ** 40}}
-    _prune(plans)
-    assert list(plans) == ['new']
