@@ -390,6 +390,11 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
                 sock.send_json({'token': info['token'], 'kind': 'run', 'cwd': str(p), 'cols': 80, 'rows': 24})
                 first = sock.receive()
                 assert 'bytes' in first, f'setup failed instead of attaching: {first}'
+                seen = first['bytes']
+                while b'http://127.0.0.1:8768' not in seen:
+                    frame = sock.receive()
+                    assert 'bytes' in frame, frame
+                    seen += frame['bytes']
                 c.get(f'/dev/stop?path={p}')
                 for _ in range(200):
                     m = sock.receive()

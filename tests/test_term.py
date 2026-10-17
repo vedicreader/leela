@@ -73,9 +73,9 @@ def test_a_second_stream_over_one_pty_is_refused_and_the_first_keeps_reading():
         seen = bytearray()
         async def on_data(b): seen.extend(b)
         task = asyncio.create_task(p.stream(on_data))
-        for _ in range(100):
+        for _ in range(500):
             await asyncio.sleep(.02)
-            if seen: break
+            if b'one' in seen: break
         assert p.attached
         with pytest.raises(RuntimeError): await p.stream(on_data)
         p.write(b'echo two\n')
