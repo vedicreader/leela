@@ -2,6 +2,11 @@
 
 <!-- do not remove -->
 
+## 0.1.10
+
+- The command line and macOS app default to port 5010. The desktop app tries ports 5010 through 5019 before requesting an operating-system-assigned port.
+- Canvas component wiring defaults to port 5010. `BRICK_HOST` still overrides it.
+
 ## 0.1.9
 
 Needs ramabana 0.2.6 (pinned); shalya, rishi, vishalakshi and dhrona as before.

@@ -11,7 +11,7 @@ day; they do not compute one. This document fetches the day and binds it to them
 
 ```canvas code id=td1
 import json, urllib.request
-_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5001/bricks/data/panchanga.day'))
+_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5010/bricks/data/panchanga.day'))
 day = _ports['day']
 day['tithi']['name'], day['nakshatra']['name'], day['masa']
 ```

@@ -1,9 +1,9 @@
 "leela: notebooks, files and live variables in the terminal and the browser."
 
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 
 __all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg', 'extras_site', 'extras_bin', 'use_extras',
-           'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES']
+           'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES', 'PORT']
 
 import sys
 
@@ -11,6 +11,8 @@ from fastcore.xtras import asdict
 from fastcore.xdg import xdg_config_home, xdg_data_home
 
 leela_cfg = xdg_config_home()/'leela'
+#: The web IDE's port when `--port` is not given.
+PORT = 5010
 
 def extras_site():
     "Where an optional backend goes. Not inside the bundle, which is signed and read-only."

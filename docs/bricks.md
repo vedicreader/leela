@@ -146,7 +146,7 @@ document whose interpreter has no `sales_bricks` takes the second wiring instead
 
 ```python
 import json, urllib.request
-_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5001/bricks/data/pipeline.stages'))
+_ports = json.load(urllib.request.urlopen('http://127.0.0.1:5010/bricks/data/pipeline.stages'))
 stages = _ports['stages']
 ```
 

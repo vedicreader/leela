@@ -1,6 +1,7 @@
 "`leela`, the browser IDE entry point."
 
 import argparse, ipaddress, os, sys
+from . import PORT
 
 __all__ = ['main']
 
@@ -15,7 +16,7 @@ def main(argv=None):
                    help='what opens on top of the server: chrome (fossick’s persistent CDP app '
                         'window, the default under --app), webview (the native window the packaged '
                         'app runs), or none. The inline browser uses the CDP Chrome either way.')
-    p.add_argument('--port', type=int, default=5001, help='web IDE port (default: 5001)')
+    p.add_argument('--port', type=int, default=PORT, help=f'web IDE port (default: {PORT})')
     p.add_argument('--host', default='127.0.0.1', help='web IDE host (default: 127.0.0.1)')
     p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
     p.add_argument('--transport', choices=['auto', 'direct', 'gateway'], default='auto',

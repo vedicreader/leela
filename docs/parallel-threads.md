@@ -8,7 +8,7 @@ others in the same repository. Leela has every piece and joins none of them.
 - `GitRepo.worktrees` / `add_worktree` / `remove_worktree` (`blocks/git/git.py`), served by
   `/git/resources`. Nothing creates one from the UI, and the panel only lists them.
 - `Workspace(roots=[...])` is per-folder, and `--app` already gives each folder its own
-  workspace, documents, agent, terminals and kernel pool at `folder.localhost:5001`.
+  workspace, documents, agent, terminals and kernel pool at `folder.localhost:5010`.
 - `RepoSet.overview` is the plural view of which are dirty, behind and unpublished. A thread
   board is that shape pointed at worktrees instead of checkouts.
 - `Jobs` is a queue with a visible state and a SQLite row per job, which is what a thread's

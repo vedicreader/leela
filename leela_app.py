@@ -26,7 +26,8 @@ if getattr(sys, 'frozen', False):
     apply_stored_env()    # last, and winning: what a person typed into Leela beats a wrong shell
 
 #: The ladder a window is served from. Fixed, not OS-assigned: a moving port moves the `http://<slug>.localhost:<port>` origin, and the browser keeps nothing per origin at the new one.
-PORTS = range(5001, 5011)
+from leela import PORT
+PORTS = range(PORT, PORT+10)
 
 def leela_on(port, host=HOST, timeout=.6):
     "Whether `port` holds a Leela that can be attached to, asked through the attach route so a yes means the hub answers, not that something Leela-shaped listens."
@@ -47,7 +48,7 @@ def running_leela(ports=PORTS, host=HOST):
     "The port a Leela is already answering on, or None."
     return first(p for p in ports if not is_port_free(p, host) and leela_on(p, host))
 
-def free_port(preferred=5001, ports=PORTS, host=HOST):
+def free_port(preferred=PORT, ports=PORTS, host=HOST):
     "The first free port on the ladder. Deterministic, so a relaunch lands where the first did; OS-assigned fallback only when the whole ladder is taken."
     rungs = [preferred, *(p for p in ports if p != preferred)]
     return first(p for p in rungs if is_port_free(p, host)) or any_port(host)

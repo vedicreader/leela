@@ -10,7 +10,7 @@ from starlette.routing import WebSocketRoute
 
 from .blocks import BLOCKS
 from .core.inspectors import PROFILES, SORTS
-from . import errstr
+from . import PORT, errstr
 from .blocks.term.app import term_cwd
 from .core.ui import bar as btn_bar
 from .blocks.agent.models import JOB_HELP
@@ -1295,7 +1295,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 catalog=workspace_catalog)
     return app
 
-def serve_ide(roots=(), port=5001, host='127.0.0.1', agent='restricted', kernel_port=8400,
+def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_port=8400,
               open_ws=True, kernel='ipykernel',
               model=None, approvals='ask', agent_scope='overlay', python=None,
               app_window=False, cdp_port=9223, transport='auto', gateway_port=8787,

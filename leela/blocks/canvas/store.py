@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from fastcore.all import Path
+from ... import PORT
 from .doc import Canvas
 from .live import Runtime, runtime_for
 
@@ -18,7 +19,7 @@ class Stale(Exception):
 class Untrusted(Exception):
     "Code in a document nobody has said may run."
 
-def brick_host(): return os.getenv('BRICK_HOST') or 'http://127.0.0.1:5001'
+def brick_host(): return os.getenv('BRICK_HOST') or f'http://127.0.0.1:{PORT}'
 
 @dataclass
 class Open:
