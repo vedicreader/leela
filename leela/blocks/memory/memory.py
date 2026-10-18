@@ -909,32 +909,25 @@ class Memory:
             if len(cs) != 1: raise VaultRefused('an edit is for one change', 'bad_request')
             edits[cs[0].id] = after
         if bad := [i for i in edits if i not in {c.id for c in cs}]: raise VaultRefused('an edit names a change not being accepted', 'bad_request', ids=bad)
-        for i, a in edits.items(): v._proof_t().update(dict(id=i, after=str(a)))  # seam: vishalakshi has no public edit of a change
+        for i, a in edits.items():
+            if not (o := v.edit_change(str(doc), i, a)).get('ok'): raise VaultRefused(o['error'], o['kind'], 409 if o['kind'] == 'stale' else 404, ids=o.get('ids') or [i])
         return dict(v.accept(str(doc), [c.id for c in cs]))
     def reject_changes(self, doc, ids, shelf=None):
         v, cs, _ = self._decided(doc, ids, shelf)
         return dict(rejected=v.reject(str(doc), [c.id for c in cs]))
-    def undo_changes(self, doc, ids, was='proposed', shelf=None):
-        "Undo one decision. A reject goes back to `was`; an accept files the page's text from before it as a new version."
-        from vishalakshi.read import flags
-        if was not in ('proposed', 'doubt'): raise VaultRefused('was is proposed or doubt', 'bad_request')
-        v, cs, cur = self._decided(doc, ids, shelf, ('accepted', 'rejected'))
-        t, undone = v._proof_t(), []  # seam: vishalakshi has no public undo of a decision
-        acc = L(c for c in cs if c.state == 'accepted')
-        hist = {(r.page, r.version): r for r in v.pages(str(doc), history=True)}
-        for pg, g in acc.groupby(lambda c: c.page).items():
-            if cur.get(pg) != g[0].version + 1: raise VaultRefused(f'page {pg + 1} changed again after that accept', 'stale', 409, ids=[c.id for c in g])
-        for c in cs:
-            if c.state == 'rejected': t.update(dict(id=c.id, state=was))
-        for pg, g in acc.groupby(lambda c: c.page).items():
-            txt = hist[(pg, g[0].version)].text
-            v._file_pages(str(doc), [AttrDict(page=pg, text=txt, route='proof', flags=flags(txt), model=None)], None)
-            for c in g: t.update(dict(id=c.id, state='rejected'))
-            undone.append(pg)
-        if undone:
-            d, new = v.doc(str(doc)), {p.page: p for p in v.pages(str(doc))}
-            v.add([(k, new[k].text) for k in sorted(new)], d['title'], source=d['source'], kind=d['kind'], meta=d['meta'], force=True)
-        return dict(undone=len(cs), pages=undone)
+    def undo_changes(self, doc, ids, shelf=None):
+        "Undo one decision. A reject goes back to what it was; an accept files the page's text from before it as a new version and its changes are open again."
+        v, ids = self._doc(doc, shelf), [i for i in ids if i]
+        if not ids: raise VaultRefused('no change chosen', 'bad_request')
+        o = v.undo_decision(str(doc), ids)
+        # a change gone from the queue (proofread again since) is stale to the screen, as `_decided` has it
+        if not o.get('ok'): raise VaultRefused(o['error'], 'stale', 409, ids=o.get('ids') or [])
+        return dict(undone=len(o['undone']), ids=o['undone'], pages=o['pages'])
+    def revert_page(self, doc, page, version, shelf=None):
+        "File an old version of a page as its newest, and re-index."
+        o = self._doc(doc, shelf).revert_page(str(doc), int(page), int(version))
+        if not o.get('ok'): raise VaultRefused(o['error'], o['kind'], 404)
+        return dict(page=o['page'], version=o['version'])
     def proof_md(self, doc, shelf=None): return self._doc(doc, shelf).proof_md(str(doc))
     def save_proof_md(self, doc, shelf=None):
         "PROOFREAD.md beside the file the document was read from."
@@ -951,7 +944,7 @@ class Memory:
         v, ids = self._doc(doc, shelf), [i for i in ids if i]
         if not ids: raise VaultRefused('no finding chosen', 'bad_request')
         out = (v.accept_pii(str(doc), ids) if verdict == 'accept' else v.reject_pii(str(doc), ids, by='person') if verdict == 'reject'
-               else v._judge(str(doc), ids, 'found'))  # seam: vishalakshi has no public way back to `found`
+               else v.reset_pii(str(doc), ids, by='person'))
         if not out.get('ok'): raise VaultRefused(out.get('error') or 'these findings are gone', out.get('kind') or 'stale', 409, ids=out.get('ids') or [])
         return dict(ok=True, privacy=dict(out['privacy']))
     def scan_pii(self, doc, shelf=None): return dict(self._doc(doc, shelf).scan_pii(str(doc)))

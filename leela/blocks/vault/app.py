@@ -617,9 +617,16 @@ def connect(app, ctx):
         try: return await _decide(lambda m: m.reject_changes(doc, _ids(ids), shelf or None), doc, vault, shelf)
         except Exception as e: return _refusal(e)
     @rt('/vault/changes/undo')
-    async def vault_changes_undo(doc: str, ids: str = '', was: str = 'proposed', vault: str = '', shelf: str = ''):
-        "Undo the last decision: a reject goes back to the queue, an accept is reverted as a new version."
-        try: return await _decide(lambda m: m.undo_changes(doc, _ids(ids), was, shelf or None), doc, vault, shelf)
+    async def vault_changes_undo(doc: str, ids: str = '', vault: str = '', shelf: str = ''):
+        "Undo the last decision: a reject goes back to the queue, an accept is reverted as a new version and its changes are open again."
+        try: return await _decide(lambda m: m.undo_changes(doc, _ids(ids), shelf or None), doc, vault, shelf)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/page/revert')
+    async def vault_page_revert(doc: str, page: int = 0, version: int = 0, vault: str = '', shelf: str = ''):
+        "File an old version of a page as its newest; the history stays."
+        try:
+            if version < 1: raise VaultRefused('version is a number from 1', 'bad_request')
+            return await _decide(lambda m: m.revert_page(doc, page, version, shelf or None), doc, vault, shelf)
         except Exception as e: return _refusal(e)
     @rt('/vault/proof.md')
     async def vault_proof_md(req, doc: str, vault: str = '', shelf: str = ''):

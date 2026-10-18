@@ -166,7 +166,7 @@ async function mountVaultPages(host, st, d, q) {
   const acts = {
     reread: () => vaultPageSheet('reparse', st, {pages: String(pageNo(cur())), done: () => mountVault(host, {...st, at: cur()})}),
     proofread: () => vaultPageSheet('proof', st, {pages: ''}),
-    history: () => vaultHistory(st, q, cur()),
+    history: () => vaultHistory(st, q, cur(), () => mountVault(host, {...st, at: cur()})),
     review: () => leeVaultReview(st.doc, st.shelf || '', st.vault || ''),
     find: () => leeVaultFindIn(st),
     ask: () => leeVaultFindIn(st, cur()),
@@ -213,7 +213,7 @@ function leeVaultDoc(act) {
 window.leeVaultPage = leeVaultPage; window.leeVaultFlag = leeVaultFlag; window.leeVaultDoc = leeVaultDoc;
 
 /* Versions of one page: pick any two and see what changed between them. */
-async function vaultHistory(st, q, page) {
+async function vaultHistory(st, q, page, done = null) {
   let rows;
   try { rows = (await api(`/vault/pages?${q}&history=1`)).pages.filter(p => p.page === page); }
   catch (e) { return status(e.message || String(e), 'err'); }
@@ -225,7 +225,8 @@ async function vaultHistory(st, q, page) {
   const m = modal(`<div class="lee-mhead">Page ${pageNo(page)} versions<span class="sub">${rows.length} version${rows.length === 1 ? '' : 's'}</span></div>` +
     `<div class="lee-vault-history" data-vault-history><div class="lee-vault-histpick">` +
     `<select class="lee-input" data-a aria-label="from version">${opt(prev)}</select><span>→</span>` +
-    `<select class="lee-input" data-b aria-label="to version">${opt(last)}</select></div>` +
+    `<select class="lee-input" data-b aria-label="to version">${opt(last)}</select><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-restore title="file the from version again as the newest; no version is lost">restore the from version</button></div>` +
     `<div class="lee-diff" data-diff></div></div>`, null, null, {storageKey: 'vault-history'});
   const paint = async () => {
     const a = $('[data-a]', m).value, b = $('[data-b]', m).value, out = $('[data-diff]', m);
@@ -235,6 +236,13 @@ async function vaultHistory(st, q, page) {
     } catch (e) { out.textContent = e.message || String(e); }
   };
   m.addEventListener('change', paint);
+  $('[data-restore]', m).onclick = async () => {
+    const v = +$('[data-a]', m).value;
+    if (v === last) return status(`v${v} is already the newest`, 'err');
+    const r = await vaultCall('/vault/page/revert', {doc: st.doc, shelf: st.shelf || '', vault: st.vault || '', page, version: v});
+    if (!r.ok) return status(r.error, 'err');
+    m.remove(); status(`page ${pageNo(page)}: v${v} restored as v${r.version}`, 'ok'); done?.();
+  };
   await paint();
   return m;
 }

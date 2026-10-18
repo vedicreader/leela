@@ -1062,8 +1062,9 @@ def test_review_keys_stage_accept_reject_and_undo(review_proj):
         await pg.focus('.lee-vault-review'); await pg.keyboard.press('u')
         await pg.wait_for_function(PAGE.replace('r.json())', 'r.json()).then(p => p.version === 3)'), arg=[doc, shelf])
         out['undone'] = (await pg.evaluate(PAGE, [doc, shelf]))['text']
+        await pg.wait_for_function(count, arg='2')
         await pg.focus('.lee-vault-review'); await pg.keyboard.press('u')
-        await pg.wait_for_function(count, arg='1')
+        await pg.wait_for_function(count, arg='3')
         await pg.focus('.lee-vault-review'); await pg.keyboard.press('d')
         await pg.wait_for_selector('[data-review-doubts]:checked')
         out['doubts'] = await pg.locator('.lee-review-row').count()
@@ -1072,7 +1073,7 @@ def test_review_keys_stage_accept_reject_and_undo(review_proj):
     assert got['before'] == '3' and got['scope'] and 'staged' in got['staged']
     assert 'Limited' not in got['rejected'], 'a staged the first change and moved on; x rejected the doubt it moved to'
     assert 'ACMEX' in got['accepted'] and 'Paymnt' in got['accepted'], 'A applied the page: the staged change and the other proposed one'
-    assert 'ACMEX' not in got['undone'] and 'Paymnt' not in got['undone'], 'u reverted the accept as a new version'
+    assert 'ACMEX' not in got['undone'] and 'Paymnt' not in got['undone'], 'u reverted the accept as a new version, its changes open again'
     assert got['doubts'] == 1, 'the second u put the rejected doubt back'
 
 def test_personal_info_review_a_and_x_change_the_count(review_proj):

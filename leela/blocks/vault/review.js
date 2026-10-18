@@ -207,7 +207,7 @@ async function reviewAct(host, act, n) {
       return reviewLoad(host);
     }
     const url = u.t === 'pii' ? '/vault/pii/findings/undo' : '/vault/changes/undo';
-    const res = await vaultCall(url, {doc: u.doc, shelf: u.shelf, vault: st.vault, ids: u.ids.join(','), was: u.was || 'proposed'});
+    const res = await vaultCall(url, {doc: u.doc, shelf: u.shelf, vault: st.vault, ids: u.ids.join(',')});
     status(res.ok ? 'undone' : res.error, res.ok ? 'ok' : 'err');
     return reviewLoad(host);
   }
@@ -227,7 +227,7 @@ async function reviewAct(host, act, n) {
   }
   if (act === 'reject') {
     if (st.staged.has(r.id)) { st.staged.delete(r.id); }
-    return reviewDecide(host, '/vault/changes/reject', [r], {t: 'reject', was: r.state});
+    return reviewDecide(host, '/vault/changes/reject', [r], {t: 'reject'});
   }
   if (r.stale && act === 'accept') return status('the page was read again since: proofread it again', 'err');
   if (act === 'accept') {

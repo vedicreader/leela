@@ -17,6 +17,7 @@ GET,POST /vault/pii/scan
 GET,POST /vault/proof.md
 GET,POST /vault/proofread
 GET,POST /vault/reparse
+GET,POST /vault/page/revert
 GET /{fname:path}.{ext:static}
 GET,POST /
 GET,POST /agent/approval

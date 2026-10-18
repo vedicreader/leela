@@ -183,9 +183,12 @@ def test_accepting_a_pages_changes_together_applies_both_and_undo_reverts_them_a
         assert u['ok'] and u['pages'] == [0]
         p = _text(c, doc, shelf)
         assert 'ACMEX' not in p['text'] and 'ACME' in p['text'] and p['versions'] == [1, 2, 3], 'the revert is a version, not an erasure'
-        assert {x['state'] for x in _changes(c, doc, shelf, state='rejected')} == {'rejected'}
+        assert p['route'] == 'revert'
+        back = _changes(c, doc, shelf)
+        assert len(back) == 2 and not any(x['stale'] for x in back), 'an undone accept puts its changes back in the queue, against the new version'
+        assert c.post('/vault/changes/undo', json=dict(doc=doc, shelf=shelf, ids=ids)).json()['kind'] == 'stale', 'they are open, not decided'
         md = c.get('/vault/proof.md', params=dict(doc=doc, shelf=shelf))
-        assert md.headers['content-type'].startswith('text/markdown') and '## Not taken' in md.text and 'ACMEX' in md.text
+        assert md.headers['content-type'].startswith('text/markdown') and '## Proposed' in md.text and 'ACMEX' in md.text
         saved = c.post('/vault/proof.md', json=dict(doc=doc, shelf=shelf)).json()
         assert saved['ok'] and (plain.proj/'plain.PROOFREAD.md').read_text().startswith('# Proofread')
 
@@ -196,8 +199,8 @@ def test_reject_undo_and_edit(plain):
         a, b = _changes(c, doc, shelf)
         assert c.post('/vault/changes/reject', json=dict(doc=doc, shelf=shelf, ids=a['id'])).json()['rejected'] == 1
         assert [x['id'] for x in _changes(c, doc, shelf)] == [b['id']]
-        assert c.post('/vault/changes/undo', json=dict(doc=doc, shelf=shelf, ids=a['id'], was=a['state'])).json()['ok']
-        assert len(_changes(c, doc, shelf)) == 2, 'an undone reject is back in the queue'
+        assert c.post('/vault/changes/undo', json=dict(doc=doc, shelf=shelf, ids=a['id'])).json()['ok']
+        assert {x['id']: x['state'] for x in _changes(c, doc, shelf)}[a['id']] == a['state'], 'an undone reject is back in the queue as it was'
         r = c.post('/vault/changes/accept', json=dict(doc=doc, shelf=shelf, ids=b['id'], after='Payments')).json()
         assert r['ok'] and 'Payments' in _text(c, doc, shelf)['text']
         assert c.post('/vault/changes/accept', json=dict(doc=doc, shelf=shelf, ids=f"{a['id']},{b['id']}", after='x')).json()['kind'] in ('bad_request', 'stale')
@@ -293,7 +296,8 @@ ROUTES = [('post', '/vault/reparse', dict(doc='nope', model='local')), ('post', 
           ('get', '/vault/proof.md', dict(doc='nope')), ('post', '/vault/proof.md', dict(doc='nope')),
           ('get', '/vault/pii/findings', dict(doc='nope')), ('post', '/vault/pii/findings/accept', dict(doc='nope', ids='x')),
           ('post', '/vault/pii/scan', dict(doc='nope')), ('get', '/vault/page', dict(doc='nope', view='sent')),
-          ('post', '/vault/send-check', dict(doc='nope', model='local')), ('post', '/jobs/nope/cancel', dict())]
+          ('post', '/vault/send-check', dict(doc='nope', model='local')), ('post', '/jobs/nope/cancel', dict()),
+          ('post', '/vault/page/revert', dict(doc='nope', page=0, version=1)), ('post', '/vault/page/revert', dict(doc='nope'))]
 
 @pytest.mark.parametrize('how,route,args', ROUTES)
 def test_every_new_route_answers_ok_or_a_kind(rws, how, route, args):
@@ -344,3 +348,35 @@ def test_the_vault_tab_has_a_review_view(rws):
         assert '/vault/view/review' in c.get('/vault/workbench').text
         v = c.get('/vault/view/review', params=dict(doc='d1', shelf='main')).text
         assert 'lee-vault-review' in v and 'data-doc="d1"' in v
+
+# ── vishalakshi's public seams, not its private tables ─────────────────────
+
+def test_leela_reaches_no_private_vishalakshi_function():
+    "Edits, undos and the way back to `found` went through `_proof_t`, `_file_pages` and `_judge` before 0.1.24 made them public."
+    import inspect, re
+    import leela.blocks.memory.memory as mm, leela.blocks.vault.app as va
+    src = inspect.getsource(mm) + inspect.getsource(va)
+    assert not re.findall(r'\._(?:proof_t|file_pages|judge|refile|pages_t|findings_t)\(', src)
+
+def test_an_old_version_of_a_page_is_restored_as_its_newest(plain):
+    with TestClient(ide_app(plain)) as c:
+        doc, shelf = _doc(plain, c, 'plain.pdf')
+        _wait(plain, c.post('/vault/reparse', json=dict(doc=doc, shelf=shelf, pages='1', model='hosted')).text)
+        assert _text(c, doc, shelf)['text'] == 'read by hosted'
+        r = c.post('/vault/page/revert', json=dict(doc=doc, shelf=shelf, page=0, version=1)).json()
+        assert r['ok'] and r['version'] == 3
+        p = _text(c, doc, shelf)
+        assert 'ACME' in p['text'] and p['route'] == 'revert' and p['versions'] == [1, 2, 3], 'nothing is erased'
+        assert c.get('/vault/search', params=dict(q='ACME')).json()['hits'], 'the document is re-indexed on the restored text'
+        r = c.post('/vault/page/revert', json=dict(doc=doc, shelf=shelf, page=0, version=9))
+        assert r.status_code == 404 and r.json()['kind'] == 'not_found'
+        assert c.post('/vault/page/revert', json=dict(doc=doc, shelf=shelf, page=0)).json()['kind'] == 'bad_request'
+
+def test_an_edit_to_a_decided_change_is_stale(plain):
+    with TestClient(ide_app(plain)) as c:
+        doc, shelf = _doc(plain, c, 'plain.pdf')
+        _proof(plain, c, doc, shelf)
+        a, b = _changes(c, doc, shelf)
+        c.post('/vault/changes/reject', json=dict(doc=doc, shelf=shelf, ids=a['id']))
+        r = c.post('/vault/changes/accept', json=dict(doc=doc, shelf=shelf, ids=a['id'], after='x'))
+        assert r.status_code == 409 and r.json()['kind'] == 'stale' and r.json()['ids'] == [a['id']]

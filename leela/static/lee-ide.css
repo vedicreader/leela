@@ -3797,3 +3797,4 @@ kbd {
 .lee-agent-sendline { margin-bottom: 5px; }
 .lee-agent-attachment.blocked { border-color: var(--lee-red); color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 12%, transparent); }
 .lee-vault-docbody:has(> .lee-vault-fields:not([hidden])) { grid-template-columns: 150px minmax(0, 1.1fr) minmax(0, 1fr) 260px; }
+.lee-vault-route.proof, .lee-vault-route.revert { color: var(--lee-green); }
