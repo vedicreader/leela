@@ -7091,7 +7091,13 @@ async function reviewClick(host, e) {
   if (t.matches('[data-review-doubts]')) return leeReview('doubts', 0, host);
   if (t.closest('[data-review-apply]')) return reviewCommit(host);
   if (t.closest('[data-review-all]')) { await reviewCommit(host); st.doc = st.shelf = ''; return reviewLoad(host); }
-  if (t.closest('[data-review-export]')) return window.open('/vault/proof.md?' + reviewQ(st), '_blank');
+  if (t.closest('[data-review-export]')) {
+    const r = await fetch('/vault/proof.md?' + reviewQ(st));
+    const md = await r.text();
+    if (!r.ok) return status(md, 'err');
+    return modal(`<div class="lee-mhead">PROOFREAD.md<span class="sub">${esc(st.doc)}</span></div><pre class="lee-vault-sent lee-review-md">${esc(md)}</pre>`,
+                 null, null, {storageKey: 'vault-proofmd'});
+  }
   if (t.closest('[data-review-save]')) {
     const r = await vaultCall('/vault/proof.md', {doc: st.doc, shelf: st.shelf, vault: st.vault});
     return status(r.ok ? `wrote ${r.path}` : r.error, r.ok ? 'ok' : 'err');
