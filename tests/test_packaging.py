@@ -146,6 +146,11 @@ def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, requ
     assert 'pygments' in mod.PACKAGES, 'naming it in INCLUDES would carry the two that are imported'
     assert 'pygments' not in mod.EXCLUDES
 
+@pytest.mark.parametrize('which', ['mac', 'win'])
+def test_fastclaude_is_copied_whole_or_no_claude_code_model_can_run(which, request):
+    """`fastclaude.session` wraps `files('fastclaude')` in `Path` at import, which raises on a `zipfile.Path`, and `rishi.claude` imports it."""
+    assert 'fastclaude' in request.getfixturevalue(which).PACKAGES
+
 
 def test_a_windowed_launch_is_given_a_utf8_locale(mac):
     """launchd hands an app no LANG, the C locale is POSIX, `open()` defaults to ASCII, and `import rishi.claude` died on a UTF-8 byte, which surfaced as Claude Code being reported not installed."""
@@ -239,7 +244,8 @@ def test_every_package_a_tool_schema_is_read_from_ships_its_source():
 #: of these was shipped and unusable at some point because the scanner cannot see how it is reached:
 #: `cmath` through a Cython module, `ipykernel_launcher` through a `-m` string, `chardet`'s
 #: accelerator as a top-level extension, `nbformat`'s schema as a data file beside `__file__`.
-BUNDLED_IMPORTS = ('cmath', 'ipykernel_launcher', 'dhrishti', 'chardet', 'nbformat', 'vishalakshi', 'litert_lm')
+BUNDLED_IMPORTS = ('cmath', 'ipykernel_launcher', 'dhrishti', 'chardet', 'nbformat', 'vishalakshi', 'litert_lm',
+                   'rishi.claude')
 
 @pytest.mark.slow
 def test_the_bundle_can_import_what_its_features_need():

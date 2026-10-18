@@ -29,6 +29,7 @@ PACKAGES = [
     # `OSError: could not get source code` and the app fell back off every model it was asked for.
     # This worked while the toolset lived in `ramabana`, which is copied whole; it is `shalya` now.
     'shalya', 'fastspec', 'urai',
+    'fastclaude',                   # see the macOS definition
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',

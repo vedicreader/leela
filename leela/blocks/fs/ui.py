@@ -115,6 +115,8 @@ def _folder_class(path, git_state):
     for key, change in git_state.items():
         if not (key == prefix or key.startswith(prefix + os.sep)): continue
         c = _git_class(change)
+        # An ignored `__pycache__/` inside says nothing about a tracked folder holding it.
+        if c == 'ignored' and key != prefix: continue
         if c and (not best or GIT_RANK.index(c) > GIT_RANK.index(best)): best = c
         if best == GIT_RANK[-1]: break
     return best

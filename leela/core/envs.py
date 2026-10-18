@@ -96,13 +96,21 @@ def preferred_shell():
     except Exception: pass
     return os.environ.get('SHELL') or '/bin/zsh'
 
+#: Shells whose interactive startup timed out once. A boot asks up to three times, and each would wait again.
+_HUNG = set()
+
 def shell_env(shell=None, timeout=8):
     "What `shell` exports, as `{name: value}`, asked the way a person's terminal is."
     shell = shell or preferred_shell()
     for args in (('-l', '-i', '-c', 'env -0'), ('-l', '-c', 'env -0')):
+        if '-i' in args and shell in _HUNG: continue
         # clean_env: else the shell inherits the bundle's PYTHONHOME and hands it to any Python its startup files run.
         try: r = subprocess.run([shell, *args], capture_output=True, timeout=timeout, env=clean_env())
-        except (OSError, subprocess.SubprocessError): return {}
+        except OSError: return {}
+        # An interactive startup that waits on a prompt or a slow plugin still has a login shell to ask.
+        except subprocess.SubprocessError:
+            if '-i' in args: _HUNG.add(shell)
+            continue
         if r.returncode != 0: continue
         out = {}
         for row in r.stdout.split(b'\0'):
@@ -120,7 +128,7 @@ def import_login_env(shell=None, env=None, timeout=8):
     for k, v in exported.items():
         if k in _SHELL_ONLY: continue
         if k == 'PATH': path = [d for d in v.split(os.pathsep) if d]
-        elif k not in target: target[k], _ = v, added.append(k)
+        elif not target.get(k) and v: target[k], _ = v, added.append(k)   # launchd's empty value is no choice
     # A directory the shell has and this process does not can only add a tool, so it goes on the end.
     extra = [d for d in path if d not in (target.get('PATH') or '').split(os.pathsep)]
     if extra:

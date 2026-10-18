@@ -30,6 +30,10 @@ PACKAGES = [
     # `OSError: could not get source code` and the app fell back off every model it was asked for.
     # This worked while the toolset lived in `ramabana`, which is copied whole; it is `shalya` now.
     'shalya', 'fastspec', 'urai',
+    # `rishi.claude` imports `fastclaude.session`, which runs `Path(files('fastclaude')/'data'/'ant')`
+    # at import. From the zip, `files` is a `zipfile.Path` and `Path` raises `TypeError`, so the
+    # picker listed every Claude Code model and the first turn on one failed.
+    'fastclaude',
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',

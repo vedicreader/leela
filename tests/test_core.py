@@ -2,7 +2,7 @@
 
 import re
 import json
-import subprocess
+import subprocess, time
 import sys
 from pathlib import Path
 import pytest
@@ -502,6 +502,27 @@ def test_the_shell_is_asked_the_way_a_person_uses_it(tmp_path):
     plain.write_text("#!/bin/sh\ncase \"$*\" in *-i*) exit 2;; esac\nprintf 'PATH=/opt/tools\\0'\n")
     plain.chmod(0o755)
     assert shell_env(str(plain)) == {'PATH': '/opt/tools'}, 'a shell that refuses -i is asked without it'
+
+def test_an_empty_inherited_value_takes_the_profiles(tmp_path):
+    """launchd can hand an app `OPENAI_API_KEY=`, and an empty value blocked the shell's real one."""
+    from leela.core.envs import import_login_env
+    shell = tmp_path/'fakeshell'
+    shell.write_text("#!/bin/sh\nprintf 'OPENAI_API_KEY=sk-from-profile\\0EDITOR=\\0'\n")
+    shell.chmod(0o755)
+    env = {'OPENAI_API_KEY': '', 'EDITOR': 'vim'}
+    assert import_login_env(shell=str(shell), env=env) == ['OPENAI_API_KEY']
+    assert env == {'OPENAI_API_KEY': 'sk-from-profile', 'EDITOR': 'vim'}, 'and an empty export erases nothing'
+
+def test_a_hung_interactive_shell_is_asked_again_as_a_login_shell(tmp_path):
+    """A timeout under `-i` returned nothing at all, and every key in the profile went missing."""
+    from leela.core.envs import shell_env
+    shell = tmp_path/'hangs'
+    shell.write_text("#!/bin/sh\ncase \"$*\" in *-i*) exec sleep 30;; esac\nprintf 'OPENAI_API_KEY=sk-login\\0'\n")
+    shell.chmod(0o755)
+    assert shell_env(str(shell), timeout=3) == {'OPENAI_API_KEY': 'sk-login'}
+    t = time.monotonic()
+    assert shell_env(str(shell), timeout=3) == {'OPENAI_API_KEY': 'sk-login'}
+    assert time.monotonic() - t < 3, 'a shell that hung once is not waited on again'
 
 def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_path, monkeypatch):
     """A packaged app hands every child `PYTHONHOME` and `PYTHONPATH` aimed at itself."""

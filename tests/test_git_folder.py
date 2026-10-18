@@ -65,3 +65,17 @@ def test_a_folder_takes_the_strongest_state_under_it(tmp_path):
     d = _crate(tmp_path)
     state = git_tree_state(Workspace(roots=[tmp_path]).fs)
     assert _folder_class(d, state) == 'untracked'
+
+def test_a_tracked_folder_holding_an_ignored_one_is_not_ignored(tmp_path):
+    """Every package with a `__pycache__/` was drawn ignored: an ignored entry under a folder rolled up to it."""
+    repo = _repo(tmp_path)
+    (tmp_path/'.gitignore').write_text('__pycache__/\n')
+    (pkg := tmp_path/'vr').mkdir()
+    (pkg/'core.py').write_text('x = 1\n')
+    subprocess.run(['git', 'add', '-A'], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(['git', 'commit', '-qm', 'vr'], cwd=tmp_path, check=True, capture_output=True)
+    (pkg/'__pycache__').mkdir()
+    (pkg/'__pycache__'/'core.pyc').write_text('')
+    state = git_tree_state(Workspace(roots=[tmp_path]).fs)
+    assert _folder_class(pkg, state) == ''
+    assert _folder_class(pkg/'__pycache__', state) == 'ignored', 'and the ignored folder itself still is'
