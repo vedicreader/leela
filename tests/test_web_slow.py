@@ -878,6 +878,7 @@ def test_a_folder_opens_before_its_git_marks_arrive(tmp_path, monkeypatch):
         if not await pg.evaluate("!!document.querySelector('.lee-node.lee-dir.lee-root[open]')"):
             await pg.click('.lee-node.lee-dir.lee-root > summary')
         await pg.wait_for_selector(pkg, timeout=5000)
+        await pg.wait_for_function("!document.querySelector('#filetree .htmx-request, #filetree .htmx-swapping, #filetree .htmx-settling')")   # a click before htmx binds `click once` opens an empty folder
         ui._TREE.clear()   # the page loaded only once the boot paint had warmed it; the case is a cold one
         t = time.perf_counter()
         await pg.click(pkg + ' > summary')
