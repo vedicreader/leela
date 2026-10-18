@@ -16,7 +16,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     assert deps['ramabana'].specifier.contains('0.2.31') and not deps['ramabana'].specifier.contains('0.2.30'), 'diffs are coloured by ramabana.hl.diff_html'
     assert deps['gheasy'].specifier.contains('0.0.11') and not deps['gheasy'].specifier.contains('0.0.10'), 'info() collects in parallel'
     assert deps['shalya'].specifier.contains('0.1.10') and not deps['shalya'].specifier.contains('0.1.9'), 'Host.read_guard'
-    assert deps['vishalakshi'].specifier.contains('0.1.22') and not deps['vishalakshi'].specifier.contains('0.1.21'), 'levels and send_check'
+    assert deps['vishalakshi'].specifier.contains('0.1.23') and not deps['vishalakshi'].specifier.contains('0.1.22'), 'progress, cancel, boxes, crop'
     assert not deps['rahasya'].specifier.contains('0.0.2') and not deps['varga'].specifier.contains('0.0.5')
     assert deps['dhrona'].specifier.contains('0.1.4')
     assert 'cli' in deps['ramabana'].extras
@@ -26,7 +26,7 @@ def test_the_installed_set_matches_the_pins():
     assert Version(ramabana.__version__) >= Version('0.2.5') and Version(shalya.__version__) >= Version('0.1.1')
     assert Version(rishi.__version__) >= Version('0.1.42'), 'an unreadable Claude tool call is asked for again'
     from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
-    assert Version(vishalakshi.__version__) >= Version('0.1.22') and Version(dhrona.__version__) >= Version('0.1.4')
+    assert Version(vishalakshi.__version__) >= Version('0.1.23') and Version(dhrona.__version__) >= Version('0.1.4')
 
 def test_the_claude_code_runtime_chain_imports():
     "`rishi.claude` → `claude_agent_sdk`; the desktop bundle test (`test_packaging.py:408`) once died on this."

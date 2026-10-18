@@ -68,7 +68,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dhrishti>=0.1.4",
     "watchfiles>=1.0",
-    "vishalakshi>=0.1.22",   # ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check
+    "vishalakshi>=0.1.23",   # ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check; 0.1.23 progress, boxes, crop
     "rahasya>=0.0.3",
     "varga>=0.0.6",
     # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
