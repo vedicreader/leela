@@ -3,7 +3,10 @@
 async function mountVaultWorkbench(host, st) {
   host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>opening the vault</small></div>';
   try {
-    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'library'),
+    // a Find scoped from the document view arrives with its scope, in one load
+    const scoped = (st.view || '') === 'find' && lee.vaultFindNext ? '&' + new URLSearchParams(lee.vaultFindNext) : '';
+    lee.vaultFindNext = null;
+    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'library') + scoped,
                     {target: host, swap: 'innerHTML'});
   } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
@@ -200,3 +203,97 @@ function leeVaultRead() {
   return leeVaultWorkbench('library').then(() => $('[data-vault-add] input')?.focus());
 }
 window.leeVaultRead = leeVaultRead;
+
+/* ---- Find: one box, a scope chip, hits to open and an answer that cites them ---- */
+
+const findForm = el => el.closest('[data-vault-find]');
+const findScope = f => {
+  const scope = f.elements.scope?.value || 'vault';
+  return {doc: scope === 'vault' ? '' : f.elements.doc.value, pages: scope === 'pages' ? f.elements.pages.value : '',
+          shelf: f.elements.shelf.value, vault: f.elements.vault.value, model: f.elements.model?.value || ''};
+};
+
+function leeVaultScope(sel) {
+  const f = findForm(sel); if (!f) return;
+  f.elements.pages.hidden = sel.value !== 'pages';
+  if (sel.value === 'pages') f.elements.pages.focus();
+  vaultFindLine(f);
+}
+window.leeVaultScope = leeVaultScope;
+
+/* Where an answer's sections may go, said before anything is asked, by the route every send line uses. */
+async function vaultFindLine(f) {
+  const line = $('[data-send]', f.closest('.lee-wb-find'));
+  if (!line) return;
+  const d = await vaultCall('/vault/send-check', {ask: true, ...findScope(f)});
+  line.hidden = false;
+  line.textContent = d.ok ? d.why : d.error;
+  line.className = 'lee-vault-sendline' + (d.ok && d.check_ok !== false ? '' : ' blocked');
+  line.dataset.kind = d.kind || '';
+}
+
+async function mountVaultFind(f) {
+  f.dataset.mounted = '1';
+  const sel = document.createElement('select');
+  sel.name = 'model'; sel.className = 'lee-input'; sel.id = 'vaultaskmodel'; sel.setAttribute('aria-label', 'the model that answers');
+  sel.add(new Option('the conversation model', ''));
+  for (const r of await vaultModels()) sel.add(new Option(`${r.label} · ${r.local ? 'on this Mac' : 'hosted: ' + (r.provider || 'remote')}`, r.value));
+  $('[data-find-ask]', f).before(sel);
+  attachModelPicker(sel);
+  sel.addEventListener('change', () => vaultFindLine(f));
+  f.elements.pages.addEventListener('input', () => { clearTimeout(f.__t); f.__t = setTimeout(() => vaultFindLine(f), 300); });
+  vaultFindLine(f);
+}
+const mountVaultFinds = () => $$('[data-vault-find]:not([data-mounted])').forEach(mountVaultFind);
+document.addEventListener('htmx:afterSettle', mountVaultFinds);
+
+async function leeVaultAskFind(btn) {
+  const f = findForm(btn), q = f?.elements.q.value.trim();
+  if (!q) return status('type a question to ask', 'err');
+  const box = f.closest('.lee-wb-find'), out = $('[data-answer]', box), line = $('[data-send]', box), sc = findScope(f);
+  out.hidden = false; out.className = 'lee-wb-answer asking'; out.dataset.kind = '';
+  out.innerHTML = '<div class="lee-wb-answertext" data-answer-text>asking…</div><div class="lee-wb-cites" data-cites></div>';
+  const text = $('[data-answer-text]', out), cites = $('[data-cites]', out);
+  const fail = (msg, kind) => { out.className = 'lee-wb-answer failed'; out.dataset.kind = kind || ''; text.textContent = msg; };
+  const said = (why, ok) => { line.hidden = false; line.textContent = why; line.className = 'lee-vault-sendline' + (ok === false ? ' blocked' : ''); };
+  try {
+    await postEvents('/vault/ask', {q, ...sc}, (ev, d) => {
+      if (ev === 'send') said(d.why, d.check_ok);
+      else if (ev === 'reset') text.textContent = '';
+      else if (ev === 'chunk') text.textContent = d.text;
+      else if (ev === 'error') fail(d.error, d.kind);
+      else if (ev === 'answer') {
+        out.className = 'lee-wb-answer' + (d.refused ? ' failed' : '');
+        renderMarkdown(text, d.answer || '*no answer*');
+        if (d.send?.why) said(d.send.why, d.send.ok);
+        cites.innerHTML = (d.cited || []).map(c => `<button class="lee-wb-cite" data-cite="${c.n}">` +
+          `<b>[${c.n}]</b> ${esc(c.title)}${c.page == null ? '' : ` · p. ${pageNo(c.page)}`}</button>`).join('');
+        $$('[data-cite]', cites).forEach(b => b.onclick = () => {
+          const c = d.cited.find(x => x.n === +b.dataset.cite);
+          leeOpenVaultDoc(c.doc, c.shelf, sc.vault, c.title, {page: c.page, quote: c.quote});
+        });
+      }
+    });
+  } catch (e) {
+    let body = {}; try { body = JSON.parse(e.message); } catch {}
+    fail(body.error || e.message || String(e), body.kind);
+  }
+}
+window.leeVaultAskFind = leeVaultAskFind;
+
+/* Find scoped to the document in the view, or to its current page. */
+async function leeVaultFindIn(st, page = null) {
+  lee.vaultFindNext = {doc: st.doc, shelf: st.shelf || '', vault: st.vault || '', title: st.title || st.doc, scope: page == null ? 'doc' : 'pages',
+                       ...(page == null ? {} : {pages: String(pageNo(page))})};
+  await leeVaultWorkbench('find');
+  $('[data-vault-find] [name=q]')?.focus();
+  if (page != null) status(`ask about page ${pageNo(page)}: type the question, then ask`, 'ok');
+}
+window.leeVaultFindIn = leeVaultFindIn;
+
+async function leeVaultGuessTypes(btn) {
+  const d = await vaultCall('/vault/types/guess', {vault: btn.dataset.vault || ''});
+  status(d.ok ? `${d.typed} typed, ${d.proposed} to decide under Review > Types` : d.error, d.ok ? 'ok' : 'err');
+  if (d.ok) htmx.ajax('GET', '/vault/view/library?' + new URLSearchParams({vault: btn.dataset.vault || ''}), {target: '#vaultwbbody', swap: 'innerHTML'});
+}
+window.leeVaultGuessTypes = leeVaultGuessTypes;

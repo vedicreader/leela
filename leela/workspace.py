@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio, atexit, hashlib, json, os, threading, time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from fastcore.all import Path, L, atomic_save, first, ifnone
+from fastcore.all import AttrDict, Path, L, atomic_save, first, ifnone
 
 from . import Dictable, leela_cfg
 from .agent.agent import Completer
@@ -770,7 +770,7 @@ class Workspace:
                 f'title="{title}"{src}>\n{body}\n</attached-document>')
 
     def _attachment_context(self, refs=(), spec=None, max_file=120_000, max_total=300_000):
-        "Workspace files selected with @, as grounded text context and multimodal content parts. `spec` None is a hosted model."
+        "Workspace files selected with @, as grounded text context and multimodal content parts. `spec` None is a hosted model. A refusal names the attachment it came from."
         from ramabana.tools import MEDIA, Attachment, media_note, media_parts
         text, images, sound, used = [], [], [], 0
         image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
@@ -782,29 +782,33 @@ class Workspace:
             if not key or key in seen: continue
             seen.add(key); items.append(ref)
         for ref in items:
-            if isinstance(ref, dict) and ref.get('kind') == 'selection':
-                text.append(self._selection_context(ref, spec))
-                continue
-            if isinstance(ref, dict) and ref.get('kind') == 'vault':
-                text.append(self._vault_context(ref, spec))
-                continue
-            p = self.fs._check(ref, must_exist=True)
-            if p.is_dir():
-                text.append(self.folder_manifest(p))
-                continue
-            if not p.is_file(): raise ValueError(f'attachment is not a file: {ref}')
-            sfx = p.suffix.lower()
-            chk = self.vault_send(src=p, spec=spec, image=sfx in whole_only)
-            if sfx in image_exts:
-                self.vault_screened(None, chk, p.name)
-                images.append(p.read_bytes())
-                continue
-            if sfx in audio_exts:
-                self.vault_screened(None, chk, p.name)
-                sound.append(Attachment(p))
-                continue
-            raw = p.read_bytes()[:max_file]
-            body = self.vault_screened(raw.decode('utf-8', 'replace'), chk, p.name)
+            try:
+                if isinstance(ref, dict) and ref.get('kind') == 'selection':
+                    text.append(self._selection_context(ref, spec))
+                    continue
+                if isinstance(ref, dict) and ref.get('kind') == 'vault':
+                    text.append(self._vault_context(ref, spec))
+                    continue
+                p = self.fs._check(ref, must_exist=True)
+                if p.is_dir():
+                    text.append(self.folder_manifest(p))
+                    continue
+                if not p.is_file(): raise ValueError(f'attachment is not a file: {ref}')
+                sfx = p.suffix.lower()
+                chk = self.vault_send(src=p, spec=spec, image=sfx in whole_only)
+                if sfx in image_exts:
+                    self.vault_screened(None, chk, p.name)
+                    images.append(p.read_bytes())
+                    continue
+                if sfx in audio_exts:
+                    self.vault_screened(None, chk, p.name)
+                    sound.append(Attachment(p))
+                    continue
+                raw = p.read_bytes()[:max_file]
+                body = self.vault_screened(raw.decode('utf-8', 'replace'), chk, p.name)
+            except PrivacyBlocked as e:
+                e.attachments = [ref]
+                raise
             remaining = max_total - used
             if remaining <= 0: break
             body = body[:remaining]; used += len(body)
@@ -814,6 +818,21 @@ class Workspace:
         if not sound: return '\n\n'.join(text), images
         text.append(media_note(sound, spec).strip())
         return '\n\n'.join(text), images + media_parts(sound, spec)
+    def attachment_check(self, attachments=(), spec=None):
+        "What a turn would send of `attachments` to `spec`, by the reading the turn itself does: the send line, or the refusal it would meet."
+        from vishalakshi.ask import send_line
+        local, name = bool(getattr(spec, 'local', False)), getattr(spec, 'name', '') or 'the turn model'
+        try: self._attachment_context(attachments, spec)
+        except PrivacyBlocked as e: return AttrDict(ok=False, kind=e.kind, why=str(e), local=local, attachments=e.attachments, refs=e.refs)
+        rows = L()
+        for a in attachments or ():
+            vref = (a.get('vault') or '', a.get('shelf') or '', a.get('doc') or '') if isinstance(a, dict) and a.get('kind') == 'vault' else None
+            src = None if vref else a.get('path') if isinstance(a, dict) else a
+            if (c := self.vault_send(src=src, ref=vref, spec=spec)) is not None: rows += c.rows
+        n = len(attachments or ())
+        why = send_line(rows, name, local) if rows else f"{name}, {'on this machine' if local else 'hosted'}. " + \
+              (f"{n} attachment{'' if n == 1 else 's'}, none filed in the vault." if n else 'nothing attached.')
+        return AttrDict(ok=True, kind=None, why=why, local=local, attachments=[], refs=[])
     def _grounding(self, attachments, context, ai=None, context_path=''):
         "`(context, screen, media)` for one prompt-bar turn: pending capture plus @-selected files, each as the vault lets it go to `ai`'s model."
         spec = (ai or self.ai).model

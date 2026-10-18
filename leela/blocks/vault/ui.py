@@ -18,7 +18,7 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
            'tidy_list', 'watch_list', 'workbench', 'browse_view', 'find_view', 'add_view',
            'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan',
            'ops_table', 'call_form', 'call_panel', 'api_result', 'PII_COVERS',
-           'VIEWS', 'SOURCES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings']
+           'VIEWS', 'SOURCES', 'SCOPES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings']
 
 POLL_MS = 1200
 
@@ -172,9 +172,17 @@ def _doc_row(d, vault='', depth=0):
         Button(title, cls='lee-vault-doc', onclick=f'leeOpenVaultDoc({_js(doc, shelf, vault, title)})'),
         *([Button('file', cls='lee-vault-openfile', title=str(d.get('source') or ''),
                   onclick=f'leeOpenVaultFile({_js(doc, shelf, vault)})')] if filed else []),
+        _type_chip(d.get('meta') or {}),
         _ask_button(doc, shelf, vault, title),
         Span(shelf, cls='lee-shelf-count'),
         style=f'--depth:{depth}', cls='lee-vault-docrow')
+
+def _type_chip(m):
+    "The document's type; a proposal waiting on a person is dashed, and an untyped document says so."
+    dt, pr = m.get('doctype'), m.get('doctype_proposed')
+    if dt: return Span(dt.replace('_', ' '), cls='lee-vault-type', title=f"type · {m.get('doctype_by') or ''}")
+    if pr: return Span(pr.replace('_', ' '), cls='lee-vault-type proposed', title='proposed: decide it under Review > Types')
+    return Span('untyped', cls='lee-vault-type none', title='no type yet')
 
 def _hit_row(h, vault=''):
     "A search hit opens the document it is in; the breadcrumb says which part matched."
@@ -376,7 +384,9 @@ def library_view(memory, vault='', shelf='', q='', jobs=None, root='', vaults=No
                        _clip_form('', 'clip_api_spec', 'api spec', 'an OpenAPI url or path (JSON or YAML)'),
                        cls='lee-wb-card'), cls='lee-wb-more')
     settings = Details(Summary('settings'), vault_settings(memory, vaults.dict() if vaults else None), cls='lee-wb-more')
-    return Div(Div(add, more, settings, cls='lee-wb-libhead'), browse_view(memory, vault, shelf=shelf, q=q), cls='lee-wb-library')
+    types = Button('type untyped documents', cls='lee-btn', data_vault=vault, onclick='leeVaultGuessTypes(this)',
+                   title='from their words alone: no model is asked, so nothing leaves this machine')
+    return Div(Div(add, more, settings, types, cls='lee-wb-libhead'), browse_view(memory, vault, shelf=shelf, q=q), cls='lee-wb-library')
 
 def workbench(memory, vaults, view='library', body=None, **kw):
     "The Vault tab: which vault, which section, and the section itself."
@@ -423,17 +433,22 @@ def browse_view(memory, vault='', shelf='', q='', limit=200, **_):
             Div(*docs, cls='lee-vault-docs lee-wb-docs'), cls='lee-wb-main'),
         cls='lee-wb-split')
 
+def _jump(h):
+    "Where opening a hit lands: its page, and words to find on it."
+    return json.dumps(dict(page=h.get('page'), quote=' '.join(str(h.get('snippet') or '').split())[:80]))
+
 def _hit(h, vault, q):
     "One hit, with the legs that ranked it and the two things worth doing with it."
     # Opening wants the document the section is in; attaching wants the section itself.
     node, shelf = str(h.get('node_id') or ''), h.get('shelf', '')
     doc = node.split('#')[0]
     title = h.get('breadcrumb') or h.get('title') or doc
-    legs = [Span(f"kw #{h['fts_rank']}", cls='lee-wb-leg kw') if h.get('fts_rank') else None,
+    legs = [Span(f"p. {h['page'] + 1}", cls='lee-wb-leg') if isinstance(h.get('page'), int) else None,
+            Span(f"kw #{h['fts_rank']}", cls='lee-wb-leg kw') if h.get('fts_rank') else None,
             Span(f"vec #{h['vector_rank']}", cls='lee-wb-leg vec') if h.get('vector_rank') else None,
             Span(f"{float(h.get('score') or 0):.3f}", cls='lee-wb-leg')]
     return Div(Div(Button(title, cls='lee-vault-doc',
-                          onclick=f'leeOpenVaultDoc({_js(doc, shelf, vault, title)})'),
+                          onclick=f'leeOpenVaultDoc({_js(doc, shelf, vault, title)}, {_jump(h)})'),
                    Span(cls='lee-spacer'), *[x for x in legs if x is not None], cls='lee-wb-hithead'),
         Div(*_highlight(h.get('snippet') or '', q), cls='lee-wb-snippet'),
         Div(Span(shelf, cls='lee-shelf-count'), _ask_button(node, shelf, vault, title, 'ask about this'),
@@ -451,24 +466,37 @@ def review_view(vault='', doc='', shelf='', **_):
     "The Review queue: a mount point review.js fills from `/vault/changes` and `/vault/pii/findings`."
     return Div(Div('loading the queue', cls='lee-dim'), cls='lee-vault-review', tabindex='0', data_vault=vault, data_doc=doc, data_shelf=shelf)
 
-def find_view(memory, vault='', q='', shelf='', limit=30, **_):
-    "Search across every shelf and return sections, which is where the evidence actually is."
+SCOPES = (('vault', 'whole vault'), ('doc', 'this document'), ('pages', 'pages'))
+
+def find_view(memory, vault='', q='', shelf='', doc='', title='', pages='', scope='', limit=30, **_):
+    "One box over the whole vault, one document or pages of it: sections to open, and an answer that cites them."
+    from ..memory.memory import VaultRefused, page_list
+    scope = 'vault' if not doc else scope if scope in dict(SCOPES) else 'doc'
+    chip = Select(*[Option(f'{l}: {title or doc}' if k == 'doc' else l, value=k, selected=k == scope) for k, l in SCOPES if doc or k == 'vault'],
+                  name='scope', cls='lee-input lee-wb-scope', aria_label='where to look', data_find_scope='1', onchange='leeVaultScope(this)')
     form = Form(Input(name='q', value=q, cls='lee-input', autocomplete='off', autofocus=True,
-                      placeholder='a phrase, a requirement, a concept…'),
-        Hidden(name='vault', value=vault), Hidden(name='shelf', value=shelf),
+                      placeholder='a phrase, a requirement, a concept, or a question to ask'),
+        chip, Input(name='pages', value=pages, cls='lee-input lee-wb-pages', placeholder='3-9', size='5', aria_label='pages',
+                    hidden=scope != 'pages'),
+        Hidden(name='vault', value=vault), Hidden(name='shelf', value=shelf), Hidden(name='doc', value=doc), Hidden(name='title', value=title),
         Button('search', cls='lee-btn go', type='submit'),
-        hx_get='/vault/view/find', hx_target='#vaultwbbody', hx_swap='innerHTML', cls='lee-wb-search')
+        Button('ask', cls='lee-btn', type='button', data_find_ask='1', title='an answer from these sections, with citations',
+               onclick='leeVaultAskFind(this)'),
+        hx_get='/vault/view/find', hx_target='#vaultwbbody', hx_swap='innerHTML', cls='lee-wb-search', data_vault_find='1')
+    head = (form, Div(cls='lee-vault-sendline', data_send='1', role='status', hidden=True),
+            Div(cls='lee-wb-answer', data_answer='1', aria_live='polite', hidden=True))
     if not q.strip():
-        return Div(form, empty('search the whole vault',
-            'results combine keyword rank and embedding rank. a hit is a section, so you can '
-            'open exactly the part that matched — or attach it to the next question.'), cls='lee-wb-find')
-    hits = memory.search_all(q, limit=limit, shelves=[shelf] if shelf else None)
+        return Div(*head, empty('search the vault, or ask it',
+            'results combine keyword rank and embedding rank. a hit is a section, so you can open exactly the part that matched. '
+            'ask answers from the sections in scope and cites them; a citation opens the page it came from.'), cls='lee-wb-find')
+    try: hits = memory.find(q, limit, doc if scope != 'vault' else None, shelf, page_list(pages) if scope == 'pages' else None)
+    except VaultRefused as e: return Div(*head, Div(str(e), cls='lee-job-error', data_kind=e.kind), cls='lee-wb-find')
     body = ([_hit(h, vault, q) for h in hits] if hits else
-            [empty(f'nothing matched “{q}”', 'try fewer words, or a different shelf.')])
-    scope = Div(Span(memory.note or '', cls='lee-keyscope'), Span(cls='lee-spacer'),
-                Button('attach every hit to the next question', cls='lee-btn',
-                       onclick='leeVaultAskAll(this)'), cls='lee-wb-findfoot') if hits else None
-    return Div(form, scope, Div(*body, cls='lee-wb-hits'), cls='lee-wb-find')
+            [empty(f'nothing matched “{q}”', 'try fewer words, or a wider scope.')])
+    foot = Div(Span(memory.note or '', cls='lee-keyscope'), Span(cls='lee-spacer'),
+               Button('attach every hit to the next question', cls='lee-btn',
+                      onclick='leeVaultAskAll(this)'), cls='lee-wb-findfoot') if hits else None
+    return Div(*head, foot, Div(*body, cls='lee-wb-hits'), cls='lee-wb-find')
 
 def import_plan(plan):
     "What indexing a folder would do, before it does it."

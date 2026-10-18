@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from ... import errstr
 from ...core.web import fail, found, off_loop
 from .search import SETTING_WEIGHTS, Weights
 from .signals import Signals, search_vault_path
@@ -53,6 +54,15 @@ def connect(app, ctx):
             exts=exts, roots=roots)
         return found(ctx.search, hits) | {
             'scope': scope, 'exts': exts, 'searched': searched(roots), 'weights': w.settings()}
+    def vault_rows(q, limit=5):
+        "At most `limit` sections from the active vault, as global search shows them; a vault that will not answer is a note."
+        try:
+            m = ctx.vaults.memory(None)
+            hits = m.search_all(q, limit)
+        except Exception as e: return {'hits': [], 'note': f'vault unavailable ({errstr(e)})'}
+        return {'note': m.note, 'vault': ctx.vaults.active.name, 'hits': [
+            dict(doc=str(h.get('node_id') or '').split('#')[0], shelf=h.get('shelf', ''), page=h.get('page'),
+                 title=h.get('breadcrumb') or h.get('title') or '', snippet=str(h.get('snippet') or '')[:300]) for h in hits[:limit]]}
     @rt('/search/stream')
     async def search_stream(req, q: str = '', regex: bool = False, limit: int = 60,
         exts: str = '', scope: str = 'project'):
@@ -82,6 +92,8 @@ def connect(app, ctx):
             finally:
                 for t in tasks:
                     if not t.done(): t.cancel()
+            # a literal pattern or a file filter is a question about code, which the vault cannot answer
+            if not (regex or exts.strip()) and not await req.is_disconnected(): yield sse('vault', await off_loop(vault_rows, q))
             yield sse('done', {'note': 'every backend reported'})
         return StreamingResponse(events(), media_type='text/event-stream',
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})

@@ -139,12 +139,17 @@ async function sendAgent(force = false) {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
-                       ...lee.vaultRefs.values()];
+  const attachments = agentAttachList();
   const reasoning = $('#agentreasoning')?.value || 'auto';
   let accepted;
   try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread: lee.agentThread || ''}); }
-  catch (e) { el.value = q; return status(e.message || String(e), 'err'); }
+  catch (e) {
+    el.value = q;
+    // a withheld attachment: its chip turns red with the reason, and nothing was sent
+    if (e.body?.attachments) { markAgentBlocked(e.body.attachments, e.body.line || e.message, e.body.kind); paintAgentAttachments(); }
+    return status(e.message || String(e), 'err');
+  }
+  lee.attachBlocked?.clear();
   el.value = ''; el.style.height = '64px';
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();

@@ -267,6 +267,8 @@ DEFAULTS = L(
     Key('vault_history',    'h',             'vault',  'page versions',       'toast'),
     Key('vault_proofread',  'p',             'vault',  'proofread this document', 'toast'),
     Key('vault_as_sent',    'm',             'vault',  'as sent to a hosted model', 'toast'),
+    Key('vault_find_doc',   '/',             'vault',  'find in this document', 'toast'),
+    Key('vault_ask_page',   'a',             'vault',  'ask about this page',  'toast'),
     Key('review_next',      'j',             'review', 'next change',         'footer'),
     Key('review_prev',      'k',             'review', 'previous change',     'footer'),
     Key('review_accept',    'a',             'review', 'accept',              'footer'),

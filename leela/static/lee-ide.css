@@ -3773,3 +3773,27 @@ kbd {
 .lee-canvasdoc { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .lee-canvasframe { flex: 1 1 auto; width: 100%; border: 0; min-height: 0; background: var(--lee-bg, #fff); }
 .lee-canvasnote { padding: 8px 12px; border-top: 1px solid var(--lee-line, #ddd); font-size: 12px; }
+.lee-vault-type { padding: 0 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg3); font: 10px/1.6 var(--lee-mono); white-space: nowrap; }
+.lee-vault-type.proposed { border-style: dashed; color: var(--lee-accent); }
+.lee-vault-type.none { opacity: .5; }
+.lee-wb-scope { width: auto; }
+.lee-wb-pages { width: 6em; }
+.lee-wb-answer { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--lee-border); border-radius: 4px; }
+.lee-wb-answer.asking .lee-wb-answertext { color: var(--lee-fg2); white-space: pre-wrap; }
+.lee-wb-answer.failed { border-color: var(--lee-red); color: var(--lee-red); }
+.lee-wb-cites { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.lee-wb-cite { border: 1px solid var(--lee-border); border-radius: 3px; background: var(--lee-bg2); color: var(--lee-fg2); font: 11px/1.5 var(--lee-mono); cursor: pointer; }
+.lee-wb-cite:hover { border-color: var(--lee-accent); }
+.lee-vault-marked { outline: 2px solid var(--lee-accent); outline-offset: 2px; }
+.lee-vault-fields { width: 260px; overflow: auto; padding: 6px; border-left: 1px solid var(--lee-border); }
+.lee-vault-fieldshead { display: flex; gap: 6px; align-items: baseline; padding-bottom: 6px; }
+.lee-vault-field { display: grid; gap: 2px; width: 100%; margin-bottom: 4px; padding: 4px 6px; border: 1px solid var(--lee-border); border-radius: 3px;
+  background: transparent; color: var(--lee-fg); text-align: left; font: 11px/1.4 var(--lee-mono); cursor: pointer; }
+.lee-vault-field.empty { opacity: .55; }
+.lee-vault-field.warn { border-color: var(--lee-orange); }
+.lee-vault-field q { color: var(--lee-fg3); }
+.lee-vault-field .warn { color: var(--lee-orange); }
+.lee-vault-fieldsform { display: grid; gap: 6px; margin-top: 8px; }
+.lee-agent-sendline { margin-bottom: 5px; }
+.lee-agent-attachment.blocked { border-color: var(--lee-red); color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 12%, transparent); }
+.lee-vault-docbody:has(> .lee-vault-fields:not([hidden])) { grid-template-columns: 150px minmax(0, 1.1fr) minmax(0, 1fr) 260px; }

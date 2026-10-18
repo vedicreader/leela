@@ -13,7 +13,7 @@ except ImportError:
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind', 'source_keys',
            'GLOBAL', 'ACQUIRE', 'PII_GATES', 'PII_LABELS', 'pii_gate', 'PrivacyBlocked', 'withheld_why',
-           'VaultRefused', 'read_chat', 'page_list']
+           'VaultRefused', 'read_chat', 'page_list', 'withhold_local', 'query_refusal']
 
 GLOBAL = 'leela'
 
@@ -28,8 +28,9 @@ def pii_gate(v, default='redact'):
     return g
 
 class PrivacyBlocked(PermissionError):
-    "A send refused for a document's level: `kind` is `pii_blocked` or `local_only`, `refs` what was withheld."
-    def __init__(self, why, kind='pii_blocked', refs=()): super().__init__(why); self.kind, self.refs = kind, list(refs)
+    "A send refused for a document's level: `kind` is `pii_blocked` or `local_only`, `refs` what was withheld, `attachments` the prompt-bar chips it came from."
+    def __init__(self, why, kind='pii_blocked', refs=(), attachments=()):
+        super().__init__(why); self.kind, self.refs, self.attachments = kind, list(refs), list(attachments)
 
 class VaultRefused(Exception):
     "A vault request a screen can answer: `kind` from the screens table, `code` the HTTP status."
@@ -48,6 +49,46 @@ def page_list(spec):
         if not (a.isdigit() and (not b or b.isdigit())) or int(a) < 1: raise VaultRefused(f'{part!r} is not a page or a range like 3-9', 'bad_request')
         out += range(int(a) - 1, int(b or a))
     return sorted(set(out)) or None
+
+def withhold_local(o, v):
+    "`o`, what a retrieval returned, with every Local-only row withheld: what a stored `off` still keeps from a hosted model."
+    from vishalakshi.ask import send_rule
+    from vishalakshi.pii import CTX_ROWS, ROW_KIDS, ROW_LABEL, ROW_TEXT, held, redact
+    @functools.cache
+    def lv(store, did):
+        try: return (v if store in (None, '', v.name) else v.shelf(store)).level(did).level
+        except Exception: return 'open'
+    def fix(r, f, g):
+        if x := r.get(f): r[f] = type(x)(g(str(y)) for y in x) if isinstance(x, (list, tuple)) else g(str(x))
+    def row(r, gone=False):
+        if not isinstance(r, dict): return r
+        did = first(str(x).split('#')[0] for k in ('doc_id', 'node_id', 'id', 'ref') if (x := r.get(k)))
+        gone = gone or (bool(did) and send_rule(lv(r.get('store'), did), False, 'off') == 'withheld')
+        out = type(r)(r)
+        if gone:
+            for f in ROW_TEXT: fix(out, f, lambda s: held({'local': 1}))
+            for f in ROW_LABEL: fix(out, f, lambda s: redact(s, ner=True))
+            out['pii'] = {'local': 1}
+        for f in ROW_KIDS:
+            if isinstance(k := out.get(f), dict): out[f] = row(k, gone)
+            elif isinstance(k, (list, tuple, L)): out[f] = type(k)(row(x, gone) for x in k)
+        return out
+    if isinstance(o, (list, tuple, L)): return type(o)(row(r) for r in o)
+    if not isinstance(o, dict): return o
+    ks = [k for k in CTX_ROWS if isinstance(o.get(k), (list, tuple, L))]
+    if not ks and not isinstance(o.get('doc'), dict): return row(o)
+    out = type(o)(o)
+    for k in ks: out[k] = type(o[k])(row(r) for r in o[k])
+    if isinstance(out.get('doc'), dict): out['doc'] = row(out['doc'])
+    return out
+
+def query_refusal(q):
+    "Why a query may not go to the web, naming the identifying kinds it holds; None when it may."
+    from vishalakshi.pii import pii_report
+    rep = pii_report(str(q or ''), ner=False)
+    if not rep.identifying: return None
+    return (f"the query holds personal information ({', '.join(sorted(rep.identifying))}), and a web search sends it as typed. "
+            'Nothing was searched. Ask again without it.')
 
 def _resolved(src):
     p = Path(str(src)).expanduser()
@@ -574,10 +615,140 @@ class Memory:
     def set_meta(self, doc_id, shelf=None, **kv): return self._shelf(shelf).set_meta(doc_id, **kv)
     def send_check(self, doc_id, shelf=None, local=False, model='', policy='redact', image=False):
         "vishalakshi's `send_check` on one document, for a turn model Leela has already placed on or off this machine."
-        from fastcore.all import AttrDict
+        return self.check([str(doc_id).split('#')[0]], (), shelf, local, model, policy, image)
+    def check(self, refs=(), pages=(), shelf=None, local=False, model='', policy='redact', image=False, allow=False):
+        "vishalakshi's `send_check` over documents or `(doc, page)` pairs on one shelf, for a model Leela has placed on or off this machine."
         # `send_check` places a built chat by its runtime, so Leela's own verdict travels as one
         turn = AttrDict(model=model or 'an unresolved model', runtime='litert' if local else 'hosted')
-        return self._shelf(shelf).send_check(refs=[str(doc_id).split('#')[0]], model=turn, policy=pii_gate(policy), image=image)
+        return self._shelf(shelf).send_check(refs=list(refs) or None, pages=list(pages) or None, model=turn,
+                                             policy=pii_gate(policy), image=image, allow=allow)
+    def doc_id(self, doc, shelf=None):
+        "The id of the document `doc` names exactly: `Vault.doc` would also take a title it merely contains."
+        d = self._shelf(shelf).doc(str(doc or ''))
+        if not d or d['id'] != str(doc): raise VaultRefused(f'no document {doc}', 'not_found', 404)
+        return d['id']
+    def scope(self, doc=None, shelf=None, pages=None):
+        "A chunk-store `WHERE` for one document or pages of it (0-based); None is the whole vault."
+        if not doc:
+            if pages: raise VaultRefused('a page range needs a document', 'bad_request')
+            return None
+        w = "doc_id='{}'".format(self.doc_id(doc, shelf).replace("'", "''"))
+        return w + (f" AND page IN ({','.join(str(int(p)) for p in pages)})" if pages else '')
+    def find(self, q, limit=20, doc=None, shelf=None, pages=None):
+        "Hits from the whole vault, one document, or pages of it."
+        if not doc: return self.search_all(q, limit, [shelf] if shelf else None)
+        w = self.scope(doc, shelf, pages)
+        if not (q or '').strip(): return []
+        return [dict(r, shelf=self._shelf_name(shelf or self.shelf_name)) for r in self._shelf(shelf).search(q, limit=limit, where=w)]
+    def ask_check(self, doc=None, shelf=None, pages=None, local=False, model='', policy='redact'):
+        "Where an answer's sections may go before it is asked: the scope's documents, or pages, at their levels."
+        from vishalakshi.ask import send_line
+        self.scope(doc, shelf, pages)
+        if doc:
+            d = self.doc_id(doc, shelf)
+            return self.check([] if pages else [d], [(d, p) for p in pages or ()], shelf, local, model, policy)
+        rows = L()
+        for n in self._populated():
+            try: rows += self.check([r['id'] for r in self._store(n).sources()], (), n, local, model, policy).rows
+            except Exception: continue
+        wh = rows.filter(lambda i: i.how == 'withheld')
+        return AttrDict(ok=not wh, local=local, model=model, kind=None if not wh else 'local_only' if all(i.level == 'local' for i in wh) else 'pii_blocked',
+                        rows=rows, withheld=wh, masked=rows.filter(lambda i: i.how == 'masked'), send=rows.filter(lambda i: i.how != 'withheld'),
+                        kinds={}, why=send_line(rows, model, local))
+    def ask(self, q, doc=None, shelf=None, pages=None, model=None, mk_chat=None, pii='redact', pii_model=None):
+        "A cited answer from the whole vault, one document or pages of it. Each citation carries its shelf, a 0-based page in scope and a quote."
+        v, w = self._shelf(shelf), self.scope(doc, shelf, pages)
+        kw = dict(where=w, shelves=0, related=0) if w else {}
+        out = v.ask(q, model=model, mk_chat=mk_chat, pii=pii, pii_model=pii_model, code=0, **kw)
+        res, cites = list(out.context.results), []
+        for c in out.cited:
+            r = res[c['n'] - 1] if 0 < c['n'] <= len(res) else {}
+            store, did = r.get('store') or v.name, c.get('doc_id')
+            if not did: continue
+            sv = v if store == v.name else v.shelf(store)
+            wh = "node_id='{}'".format(str(c['node_id']).replace("'", "''")) + (f" AND page IN ({','.join(map(str, pages))})" if pages else '')
+            hit = first(sv.search(q, limit=1, where=wh)) if c.get('node_id') else None
+            pg = hit.get('page') if hit else (r.get('pages') or [None])[0]
+            if pages and pg not in pages: pg = pages[0]
+            cites.append(dict(n=c['n'], doc=did, shelf=self._shelf_name(store), title=c.get('title') or c.get('breadcrumb') or did, page=pg,
+                              quote=' '.join(str((hit or {}).get('snippet') or '').split())[:80]))
+        return dict(answer=out.answer or '', cited=cites, refused=bool(out.get('refused')), level=out.get('level'), model=out.model,
+                    send=dict(why=out.send.why, kind=out.send.kind, ok=out.send.ok) if out.get('send') else None)
+    def typed(self, rows):
+        "Rows with each document's type, proposed type and level, read on the shelf that holds it."
+        def one(r):
+            m = r.get('meta') or {}
+            try: lv = self._store(r.get('shelf') or self.shelf_name).level(str(r.get('doc_id') or r.get('id')))
+            except Exception: lv = {}
+            return dict(r, doctype=m.get('doctype') or lv.get('doctype'), proposed=m.get('doctype_proposed'), level=lv.get('level'))
+        return [one(r) for r in rows]
+    def types(self, shelf=None):
+        "Documents whose type is a guess waiting on a person, surest first."
+        def f(n, v):
+            for r in v.proposed_types():
+                m = r['meta'] or {}
+                yield dict(doc=r['id'], title=r['title'], proposed=m.get('doctype_proposed'), doctype=m.get('doctype'),
+                           score=m.get('doctype_score'), by=m.get('doctype_by'))
+        return self._across([shelf] if shelf else None, lambda n, v: list(f(n, v)), lambda n: f'{n} types to decide')
+    TYPE_KEYS = ('doctype', 'doctype_proposed', 'doctype_by', 'doctype_score')
+    def judge_type(self, doc, verdict, shelf=None, doctype=None, was=None):
+        "`accept` a proposal (or `doctype` instead), `reject` it, or `undo` back to `was`. Answers what it was before, for an undo."
+        from varga import DOCTYPES
+        v = self._shelf(shelf)
+        did = self.doc_id(doc, shelf)
+        m = v.doc(did)['meta']
+        prev = {k: m.get(k) for k in self.TYPE_KEYS}
+        if verdict == 'undo':
+            if not isinstance(was, dict): raise VaultRefused('undo needs what it was', 'bad_request')
+            v.set_meta(did, **{k: was.get(k) for k in self.TYPE_KEYS})
+        elif doctype and doctype not in DOCTYPES and doctype != 'other': raise VaultRefused(f'{doctype} is not a type', 'bad_request')
+        elif not m.get('doctype_proposed') and not (verdict == 'accept' and doctype):
+            raise VaultRefused('nothing is proposed for this document now', 'stale', 409)
+        elif verdict == 'accept': v.accept_type(did, doctype or None)
+        else: v.reject_type(did)
+        return dict(doc=did, was=prev, doctype=v.doc(did)['meta'].get('doctype'))
+    def guess_types(self, shelf=None):
+        "Type every untyped document from its cues alone: no model is asked, so nothing leaves this machine."
+        out = self._across([shelf] if shelf else None, lambda n, v: [dict(r) for r in v.categorize_all(llm='never').results], lambda n: f'{n} typed')
+        return dict(typed=sum(bool(r.get('saved')) for r in out), proposed=sum(bool(r.get('proposed')) for r in out), checked=len(out))
+    def guess_type(self, doc, shelf=None):
+        "Type one document from its cues, unless a type is already there: a person's accept is not overwritten."
+        v = self._shelf(shelf)
+        if (v.doc(str(doc)) or {}).get('meta', {}).get('doctype'): return None
+        return dict(v.categorize(str(doc), llm='never'))
+    @staticmethod
+    def _versions(v, did):
+        "`{page: version}` of a read document; `{}` for one never read page by page."
+        try: return {p['page']: p['version'] for p in v.pages(did)}
+        except Exception: return {}
+    def fields(self, doc, shelf=None):
+        "What was extracted from a document: each field's value, page, block, quote and the warnings `check_fields` gave it."
+        v, did = self._shelf(shelf), self.doc_id(doc, shelf)
+        m = v.doc(did)['meta']
+        if 'extracted' not in m: return dict(extracted=False, schema=None, doctype=m.get('doctype'), fields=[])
+        src, errs = m.get('extracted_src') or {}, m.get('extracted_errors') or []
+        cur, seen = self._versions(v, did), m.get('extracted_versions') or {}
+        def one(f, x):
+            s = src.get(f) or {}
+            return dict(field=f, value=x, page=s.get('page'), block=s.get('block'), quote=s.get('quote'),
+                        stale=s.get('page') is not None and str(s.get('page')) in seen and seen[str(s.get('page'))] != cur.get(s.get('page')),
+                        errors=[e.get('why') for e in errs if e.get('field') == f])
+        return dict(extracted=True, schema=m.get('extracted_as'), doctype=m.get('doctype'), model=m.get('extracted_by'),
+                    at=m.get('extracted_at'), fields=[one(f, x) for f, x in (m.get('extracted') or {}).items()])
+    def extract(self, doc, shelf=None, model=None, chat_kw=None, pii='redact', name=''):
+        "Fields with the page and quote each was read from, saved on the document beside the warnings `check_fields` gave."
+        from varga.schema import SCHEMAS
+        v, did = self._shelf(shelf), self.doc_id(doc, shelf)
+        dt = v.doc(did)['meta'].get('doctype')
+        # with a type, its schema; without one, cues only: a confident model verdict must not overwrite what a person accepted
+        out = v.extract(did, schema=dt if dt in SCHEMAS else None, model=model, chat_kw=chat_kw, save=True, cite=True, pii=pii, llm='never')
+        if out.get('refused'): raise PrivacyBlocked(f"{out.get('title') or did} was not sent to {name or model or 'the model'}: it is "
+                                                    f"{out.get('level') or 'personal'} and that model is hosted", out.get('kind') or 'pii_blocked', [did])
+        if out.get('skipped'): raise VaultRefused(str(out.skipped), 'failed', 422)
+        errs = [dict(field=e['field'], value=str(e.get('value')), why=e['why']) for e in out.get('errors') or []]
+        v.set_meta(did, extracted_errors=errs, extracted_at=time.time(), extracted_by=name or out.get('model'),
+                   extracted_versions={str(k): n for k, n in self._versions(v, did).items()})
+        return dict(doc_id=did, schema=out.schema, fields=len(out.fields or {}), errors=len(errs), level=out.get('level'))
     def pii(self, doc_id, shelf=None, ner=True):
         "The PII report for one document, or why there is none."
         try: return dict(self._shelf(shelf).pii(doc_id, ner=ner))

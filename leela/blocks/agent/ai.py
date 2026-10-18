@@ -19,7 +19,7 @@ from ...agent.tools import PATH_WRITES, keep_media, path_write, small_tool, tool
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
-from ..memory.memory import PrivacyBlocked, source_kind, withheld_why
+from ..memory.memory import PrivacyBlocked, query_refusal, source_kind, withheld_why, withhold_local
 from .video import VideoJobs, video_available, video_tools
 
 from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
@@ -29,6 +29,9 @@ from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
 HIDDEN = frozenset({'user_steering'})
 
 FAILED_PREFIXES = ('edit failed', 'write failed', 'could not')
+VAULT_MARKS = ('\n\nIn vault text, `[EMAIL]`-style placeholders are personal information masked for this model, and `[withheld: …]` '
+               'is text it may not see. Neither is the document\'s content: say what is masked rather than guessing it. Rows carry each '
+               "document's `level` (open, personal, local) and `doctype`.")
 BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a completion asks for less
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
@@ -363,9 +366,12 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     def search_note(self):
         s = self.ws.search
         return f'{s.backend}: {s.note}' if s.note else str(s.backend)
-    def web_search(self, query, n=20): return self.ws.research.search(query, n=n)
+    def web_search(self, query, n=20):
+        if why := query_refusal(query): raise PrivacyBlocked(why, 'pii_blocked')
+        return self.ws.research.search(query, n=n)
     def read_url(self, url, remember=True): return self.ws.research.read(url, remember=remember)
     def research(self, query):
+        if why := query_refusal(query): raise PrivacyBlocked(why, 'pii_blocked')
         _, digest = self.ws.research.dig(query)
         return digest
     @property
@@ -383,12 +389,23 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "What a retrieval does about personal information: a local turn model reads it whole, a hosted one through `vault_pii`."
         if self.model_local is not None and self.model_local()[0]: return 'off'
         return getattr(self.ws, 'vault_pii', 'redact')
-    def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit, pii=self._pii)
-    def memory_tree(self, document=''): return self._vault().toc(document or None, pii=self._pii)
-    def memory_read(self, node_id): return self._vault().read(node_id, pii=self._pii)
+    def _hold(self, o):
+        "A hosted model never gets a Local-only document: a stored `off` passes Personal text whole, and nothing more."
+        if self.model_local is not None and self.model_local()[0]: return o
+        return withhold_local(o, self._vault().vault)
+    def _typed(self, rows):
+        "Rows saying each document's level and type, so a mask or a withheld marker in what follows is explained."
+        return [{k: r.get(k) for k in ('id', 'doc_id', 'title', 'kind', 'shelf', 'source', 'added_at', 'level', 'doctype', 'node_id', 'depth', 'page', 'summary')
+                 if r.get(k) is not None} for r in self._vault().typed(rows)]
+    def memory_search(self, query, limit=8): return self._hold(self._vault().context(query, sections=limit, pii=self._pii))
+    def memory_tree(self, document=''): return self._hold(self._vault().toc(document or None, pii=self._pii))
+    def memory_read(self, node_id): return self._hold(self._vault().read(node_id, pii=self._pii))
     def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
-    def memory_documents(self, limit=50): return self._vault().all_documents(limit)
-    def memory_sections(self, doc_id): return self._vault().sections(doc_id, pii=self._pii)
+    def memory_documents(self, limit=50): return self._hold(self._typed(self._vault().all_documents(limit)))
+    def memory_sections(self, doc_id):
+        rows = self._vault().sections(doc_id, pii=self._pii)
+        lv = first(self._typed([dict(doc_id=str(doc_id).split('#')[0])])) or {}
+        return self._hold([dict(r, doc_id=str(doc_id).split('#')[0], level=lv.get('level'), doctype=lv.get('doctype')) for r in rows])
     def ask(self, question, ref=None, instruction='', **kw):
         "The vault answers with citations, on this session's model. It chooses its own policy: local when a local runtime exists, else redact; `vault_pii` governs retrieval, not this."
         kw.pop('pii', None)
@@ -1207,6 +1224,7 @@ class Assistant(Agent):
         self._canvas_mode()
         small = self.profile == 'small'
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
+        base += VAULT_MARKS
         if small and self._mode()[0]:   # no skill is inlined for a small model; the open canvas still needs naming
             base += '\n\nA `canvas` document is open: `canvas_read` first, then address bricks by id with the other canvas tools.'
         if (writable := self.host.writable_roots) != self.host.roots:

@@ -3099,21 +3099,51 @@ function agentProgress(log) {
 
 // Slash commands and @ files are resolved inline, without sending a half-written token to the
 // model. Selected files stay visible as removable chips until the turn starts.
-function paintAgentAttachments() {
+const attachKey = r => typeof r === 'string' ? r : r?.kind === 'vault' ? `${r.vault || ''}|${r.shelf || ''}|${r.doc}`
+  : `sel|${r?.path || ''}|${r?.from || ''}`;
+function agentAttachList() {
+  return [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref), ...lee.vaultRefs.values()];
+}
+window.agentAttachList = agentAttachList;
+function markAgentBlocked(refs, why, kind) {
+  lee.attachBlocked = new Map((refs || []).map(r => [attachKey(r), why]));
+  const line = $('#agentsendline');
+  if (line && why) { line.hidden = false; line.textContent = why; line.className = 'lee-vault-sendline lee-agent-sendline blocked'; line.dataset.kind = kind || ''; }
+}
+window.markAgentBlocked = markAgentBlocked;
+/* The line above the prompt: where the attachments go for the turn model, from the route every send line uses. */
+let agentSendSeq = 0;
+async function checkAgentSend() {
+  const line = $('#agentsendline'), atts = agentAttachList(), mine = ++agentSendSeq;
+  if (!line) return;
+  if (!atts.length) { line.hidden = true; lee.attachBlocked?.clear(); return; }
+  const d = await vaultCall('/vault/send-check', {attach: JSON.stringify(atts)});
+  if (mine !== agentSendSeq) return;
+  line.hidden = false; line.dataset.kind = d.kind || '';
+  line.textContent = d.ok ? d.why : d.error;
+  line.className = 'lee-vault-sendline lee-agent-sendline' + (d.ok && d.check_ok ? '' : ' blocked');
+  const was = [...(lee.attachBlocked?.keys() || [])].join();
+  lee.attachBlocked = new Map((d.attachments || []).map(r => [attachKey(r), d.why]));
+  if ([...lee.attachBlocked.keys()].join() !== was) paintAgentAttachments(false);
+}
+function paintAgentAttachments(check = true) {
   const host = $('#agentattachments'); if (!host) return;
+  if (check) { clearTimeout(lee.__sendT); lee.__sendT = setTimeout(checkAgentSend, 150); }
+  const bad = k => lee.attachBlocked?.get(k);
+  const chip = (k, cls, title) => `<span class="lee-agent-attachment${cls}${bad(k) ? ' blocked' : ''}" title="${esc(bad(k) || title)}" data-attach-key="${esc(k)}">`;
   const active = lee.path ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
     `<span>active · ${esc(compactPath(lee.path))}</span></span>` : '';
   const states = lee.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
     `title="Preview and attach this remembered starting state">state · ${esc(s.title)}</button>`).join('');
   const sels = lee.agentSelections.map((s, i) =>
-    `<span class="lee-agent-attachment selection" title="${esc(s.path)}"><span>${esc(s.label)}</span>` +
+    `${chip(attachKey(s.ref), ' selection', s.path)}<span>${esc(s.label)}</span>` +
     `<button type="button" data-sel="${i}" aria-label="remove ${esc(s.label)}">remove</button></span>`).join('');
   const vaulted = [...lee.vaultRefs.entries()].map(([key, r]) =>
-    `<span class="lee-agent-attachment vault" title="${esc(r.vault || 'vault')} · ${esc(r.shelf || 'main')}">` +
+    `${chip(attachKey(r), ' vault', `${r.vault || 'vault'} · ${r.shelf || 'main'}`)}` +
     `<span>${esc(r.title)}</span>` +
     `<button type="button" data-vault-ref="${esc(key)}" aria-label="remove ${esc(r.title)}">remove</button></span>`).join('');
   host.innerHTML = active + sels + vaulted + [...lee.agentAttachments.entries()].map(([path, name]) =>
-    `<span class="lee-agent-attachment${name.endsWith('/') ? ' folder' : ''}" title="${esc(path)}"><span>${esc(name)}</span>` +
+    `${chip(path, name.endsWith('/') ? ' folder' : '', path)}<span>${esc(name)}</span>` +
     `<button type="button" data-path="${esc(path)}" aria-label="remove ${esc(name)}">remove</button></span>`).join('') + states;
   $$('.lee-agent-state-suggestion', host).forEach(b => b.onclick = async () => {
     await post('/agent/state/load', {id: b.dataset.stateId, layer: 'task'});
@@ -3456,12 +3486,17 @@ async function sendAgent(force = false) {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = [...lee.agentAttachments.keys(), ...lee.agentSelections.map(s => s.ref),
-                       ...lee.vaultRefs.values()];
+  const attachments = agentAttachList();
   const reasoning = $('#agentreasoning')?.value || 'auto';
   let accepted;
   try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread: lee.agentThread || ''}); }
-  catch (e) { el.value = q; return status(e.message || String(e), 'err'); }
+  catch (e) {
+    el.value = q;
+    // a withheld attachment: its chip turns red with the reason, and nothing was sent
+    if (e.body?.attachments) { markAgentBlocked(e.body.attachments, e.body.line || e.message, e.body.kind); paintAgentAttachments(); }
+    return status(e.message || String(e), 'err');
+  }
+  lee.attachBlocked?.clear();
   el.value = ''; el.style.height = '64px';
   lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
   lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();

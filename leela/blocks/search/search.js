@@ -304,8 +304,8 @@ async function codeSearch() {
     // A package is a file like any other once the path is one this project can open. Its API
     // listing is the second question, so it gets its own button.
     const environment = h.kind.startsWith('env-');
-    open.disabled = !h.path && !(environment && h.package);
-    open.textContent = h.path ? 'Open file' : environment && h.package ? 'Package API' : 'Indexed package';
+    open.disabled = !h.path && !(environment && h.package) && h.kind !== 'vault';
+    open.textContent = h.kind === 'vault' ? 'Open in vault' : h.path ? 'Open file' : environment && h.package ? 'Package API' : 'Indexed package';
     pkgBtn.hidden = !(environment && h.package && h.path);
     preview.innerHTML = '<div class="lee-search-preview-editor"></div>';
     previewView = mountCodeSurface($('.lee-search-preview-editor', preview), h.text || '(no indexed preview)',
@@ -337,9 +337,10 @@ async function codeSearch() {
       const foundBy = (h.sources || [h.kind]).join(' + ');
       return `<button class="lee-search-result${i === sel ? ' sel' : ''}" id="${rowId(i)}" role="option" ` +
         `tabindex="-1" aria-selected="${i === sel}" data-i="${i}">` +
-        `<span class="lee-search-result-kind">${esc(h.kind.startsWith('env-') ? 'PKG' : h.kind === 'file' ? 'FILE' : h.symbol ? 'SYM' : 'TXT')}</span>` +
+        `<span class="lee-search-result-kind">${esc(h.kind === 'vault' ? 'VAULT' : h.kind.startsWith('env-') ? 'PKG' : h.kind === 'file' ? 'FILE' : h.symbol ? 'SYM' : 'TXT')}</span>` +
         `<span><strong>${esc(h.symbol || h.text.split('\n')[0].slice(0, 90))}</strong>` +
-        `<small>${esc(h.package ? h.package + ' · ' : '')}${esc(f)}:${h.line}</small></span>` +
+        `<small>${h.kind === 'vault' ? `vault · ${esc(h.shelf || 'main')}${h.page == null ? '' : ' · p. ' + (h.page + 1)}`
+                                      : `${esc(h.package ? h.package + ' · ' : '')}${esc(f)}:${h.line}`}</small></span>` +
         `<em>${esc(foundBy)}</em></button>`;
     }).join('');
     select(sel);
@@ -363,6 +364,7 @@ async function codeSearch() {
   const go = async () => {
     const h = hits[sel]; if (!h) return;
     signals.open(h, sel);
+    if (h.kind === 'vault') { m.remove(); return leeOpenVaultDoc(h.doc, h.shelf, h.vault, h.symbol, {page: h.page, quote: h.text.slice(0, 80)}); }
     if (h.path) { m.remove(); return openLocation(h); }
     if (!h.package) return status('package source is indexed read-only', 'info');
     await packageApi(h);
@@ -428,6 +430,14 @@ async function codeSearch() {
       // The list grew at the end, so the selection still points at its row.
       if (sel >= hits.length) sel = Math.max(0, hits.length - 1);
       paint();
+    });
+    // the vault answers after the code legs, in a section of its own at the end: at most five sections
+    es.addEventListener('vault', e => {
+      if (seq !== searchSeq) return stop();
+      const d = JSON.parse(e.data);
+      slots.set('vault', (d.hits || []).map(v => ({kind: 'vault', path: '', line: v.page == null ? 0 : v.page + 1, text: v.snippet || '',
+        symbol: v.title || v.doc, doc: v.doc, shelf: v.shelf, vault: d.vault || '', page: v.page, sources: ['vault']})));
+      recount(); paint();
     });
     es.addEventListener('done', e => {
       if (notes.length) backend += ' · ' + notes.slice(0, 2).join('; ');

@@ -843,7 +843,10 @@ def connect(app, ctx):
         try: runner = _thread(d.get('thread')).runner
         except Exception as e: return _thread_error(e)
         try: grounding = await off_loop(ws.prepare_turn, attachments, context, runner.ai, context_path)
-        except Exception as e: return fail(e)
+        except Exception as e:
+            # a withheld attachment names its chip, so the prompt bar paints that one red and keeps the prompt
+            if (at := getattr(e, 'attachments', None)) is not None: return fail(e, attachments=at, line=str(e))
+            return fail(e)
         # Started here, on the loop that owns the kernels, so the first tool call meets a live one.
         if ws.runtime_peek() is None: asyncio.ensure_future(_warm_runtime())
         try: return await off_loop(runner.start, q, attachments, reasoning,

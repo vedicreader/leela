@@ -703,7 +703,9 @@ async function api(url, opts, retried) {
   if (!retried && body && body.kernel_limit && await offerKernelRoom(body)) return api(url, opts, true);
   /* Thread-aware routes answer with `code` and `message`, the rest with `error`. Either is the one
      sentence a person can act on, and `statusText` ("Conflict") never is. */
-  throw new Error((body && (body.error || body.message)) || r.statusText);
+  const err = new Error((body && (body.error || body.message)) || r.statusText);
+  err.body = body;     // a screen that offers something for a `kind` reads it here
+  throw err;
 }
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
@@ -1059,6 +1061,8 @@ const ACTIONS = {
   vault_history: () => leeVaultDoc('history'),
   vault_proofread: () => leeVaultDoc('proofread'),
   vault_as_sent: () => leeVaultDoc('sent'),
+  vault_find_doc: () => leeVaultDoc('find'),
+  vault_ask_page: () => leeVaultDoc('ask'),
   review_next: () => leeReview('step', 1),
   review_prev: () => leeReview('step', -1),
   review_accept: () => leeReview('accept'),

@@ -1101,3 +1101,125 @@ def test_personal_info_review_a_and_x_change_the_count(review_proj):
     assert got['before'] >= 1 and got['after_x'] < got['before']
     assert 'jane.doe@example.com' not in got['preview'] and '•' in got['preview']
     assert got['level'] == 'personal'
+
+
+# ── the vault: one home with scoped find and ask, types, fields, and the prompt bar ──
+
+@pytest.fixture
+def find_proj(tmp_path, monkeypatch):
+    "An Open PDF, an ask chat and an extract chat on this machine, and every read proposing a type for Review > Types."
+    from tests.blocks.test_vault_screens import INVOICE, mkpdf
+    from tests.blocks.test_vault_review import PLAIN
+    from tests.blocks.test_vault_find import AskChat, FieldChat
+    from fastcore.all import AttrDict
+    import leela.blocks.memory.memory as mm, leela.blocks.vault.app as va, vishalakshi.ask as vk
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    (proj := tmp_path/'proj').mkdir()
+    (proj/'plain.pdf').write_bytes(mkpdf([INVOICE, '', PLAIN]))
+    chat = AskChat('local', 'litert', 'It is about the weather [1].')
+    monkeypatch.setattr(va, 'chat_spec', lambda n: AttrDict(name=n or 'local', local=True, model_id='local', runtime='litert', ctx=8000))
+    monkeypatch.setattr(va, 'ask_chat', lambda s: lambda *a, **kw: chat)
+    monkeypatch.setattr(vk, 'CHAT', FieldChat)
+    monkeypatch.setattr(mm.Memory, 'guess_type', lambda self, doc, shelf=None: self.set_meta(doc, shelf, doctype_proposed='receipt', doctype_score=.4))
+    return proj
+
+def test_slash_finds_in_the_document_and_a_citation_opens_its_page_image(find_proj):
+    src = str((find_proj/'plain.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/read', {'src': src}])
+        await pg.evaluate('([d, s]) => leeOpenVaultDoc(d, s, "", "plain")', [j['result']['doc_id'], j['result']['shelf']])
+        await pg.wait_for_function("() => document.querySelector('[data-pagetext]')?.textContent.includes('v1')")
+        await pg.focus('.lee-vault-docview'); await pg.keyboard.press('/')
+        await pg.wait_for_selector('[data-vault-find][data-mounted]')
+        out = {'scope': await pg.evaluate("() => document.querySelector('[data-find-scope]').selectedOptions[0].textContent")}
+        await pg.fill('[data-vault-find] [name=q]', 'weather garden')
+        await pg.wait_for_function("() => document.querySelector('.lee-wb-find [data-send]')?.textContent.includes('on this machine')")
+        await pg.click('[data-find-ask]')
+        await pg.wait_for_selector('[data-answer]:not(.asking)')
+        out['answer'] = await pg.inner_text('[data-answer]')
+        out['cite'] = await pg.inner_text('[data-cite]')
+        await pg.click('[data-cite]')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview')?.dataset.page === '2'")
+        out['img'] = await pg.evaluate("() => new Promise(r => { const i = document.querySelector('[data-pageimg]');"
+                                       " i.complete && i.naturalWidth ? r(i.src) : i.onload = () => r(i.src); })")
+        await pg.wait_for_selector('.lee-vault-marked')
+        out['marked'] = await pg.inner_text('.lee-vault-marked')
+        return out
+    got = _run(go, roots=[find_proj])
+    assert got['scope'] == 'this document: plain'
+    assert 'weather' in got['answer'] and 'p. 3' in got['cite']
+    assert 'page=2' in got['img'] and 'weather' in got['marked']
+
+def test_review_types_a_accepts_and_x_rejects(find_proj):
+    async def go(pg):
+        for name in ('plain.pdf', 'other.pdf'):
+            await pg.evaluate(JOB, ['/vault/read', {'src': str((find_proj/name).resolve())}])
+        await pg.evaluate('() => leeVaultReview()')
+        await pg.wait_for_selector('[data-review-mode="types"]')
+        await pg.click('[data-review-mode="types"]')
+        await pg.wait_for_selector('.lee-review-type')
+        n = "n => document.querySelector('[data-count=\"types\"]').textContent === n"
+        out = {'before': await pg.inner_text('[data-count="types"]')}
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('a')
+        await pg.wait_for_function(n, arg='1')
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('x')
+        await pg.wait_for_function(n, arg='0')
+        out['library'] = await pg.evaluate("() => fetch('/vault/view/library').then(r => r.text())")
+        return out
+    (find_proj/'other.pdf').write_bytes((find_proj/'plain.pdf').read_bytes().replace(b'garden', b'meadow'))
+    got = _run(go, roots=[find_proj])
+    assert got['before'] == '2' and got['library'].count('>receipt<') == 1
+
+def test_a_field_click_lands_on_its_page_in_the_fields_drawer(find_proj):
+    src = str((find_proj/'plain.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/read', {'src': src}])
+        d, s = j['result']['doc_id'], j['result']['shelf']
+        await pg.evaluate(JOB, ['/vault/extract', {'doc': d, 'shelf': s, 'model': 'local'}])
+        await pg.evaluate('([d, s]) => leeOpenVaultDoc(d, s, "", "plain")', [d, s])
+        await pg.wait_for_function("() => document.querySelector('[data-pagetext]')?.textContent.includes('v1')")
+        await pg.focus('.lee-vault-docview'); await pg.keyboard.press('j'); await pg.keyboard.press('j')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '2'")
+        await pg.click('[data-vault-act="fields"]')
+        await pg.wait_for_selector('[data-field]')
+        out = {'warn': await pg.inner_text('.lee-vault-field.warn')}
+        await pg.wait_for_function("() => document.querySelector('[data-extract] [data-send]')?.textContent.length")
+        out['line'] = await pg.inner_text('[data-extract] [data-send]')
+        await pg.click('.lee-vault-field:has-text("number")')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '0'")
+        await pg.wait_for_selector('.lee-vault-marked')
+        out['marked'] = await pg.inner_text('.lee-vault-marked')
+        return out
+    got = _run(go, roots=[find_proj])
+    assert 'calendar date' in got['warn'] and 'on this machine' in got['line']
+    assert 'Invoice number 42' in got['marked']
+
+def test_a_local_only_attachment_turns_its_chip_red_and_the_turn_is_not_sent(tmp_path, monkeypatch):
+    import sys
+    from ramabana.core import ModelSpec
+    from tests.fakemodel import install
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    monkeypatch.setattr(sys.modules[__name__], 'fake_model',
+                        lambda ws: install(ws, [], spec=ModelSpec('hosted-scripted', 'remote', 'scripted/model', ctx=8000)))
+    (proj := tmp_path/'proj').mkdir()
+    (proj/'contact.md').write_text('# Contact\n\nWrite to jane.doe@example.com about the lease.\n')
+    async def go(pg):
+        await pg.evaluate(JOB, ['/clip', {'target': str((proj/'contact.md').resolve()), 'kind': 'clip'}])
+        doc = await pg.evaluate("() => fetch('/vault/documents').then(r => r.json()).then(d => d.documents[0])")
+        await pg.evaluate("d => fetch('/vault/privacy', {method: 'POST', headers: {'Content-Type': 'application/json'},"
+                          " body: JSON.stringify({doc: d.doc_id, shelf: d.shelf, level: 'local'})})", doc)
+        await pg.evaluate("d => { leeRight('agent'); attachVaultRef({doc: d.doc_id, shelf: d.shelf, vault: '', title: 'contact'}); paintAgentAttachments(); }", doc)
+        await pg.wait_for_selector('.lee-agent-attachment.blocked')
+        out = {'line': await pg.inner_text('#agentsendline')}
+        await pg.fill('#agentprompt', 'summarise it')
+        await pg.evaluate('() => sendAgent()')
+        await pg.wait_for_function("() => document.querySelector('#status')?.textContent.includes('Local only')")
+        out['prompt'] = await pg.input_value('#agentprompt')
+        out['cards'] = await pg.locator('#agentlog .lee-agent-turn').count()
+        out['chip'] = await pg.get_attribute('.lee-agent-attachment.blocked', 'title')
+        return out
+    got = _run(go, roots=[proj])
+    assert 'Local only' in got['line'] and 'Nothing was sent' in got['chip']
+    assert got['prompt'] == 'summarise it' and got['cards'] == 0

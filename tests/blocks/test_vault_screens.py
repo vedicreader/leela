@@ -5,6 +5,7 @@ from __future__ import annotations
 import json, time
 
 import pytest
+from fastcore.all import AttrDict
 from starlette.testclient import TestClient
 
 from leela.app import ide_app
@@ -53,6 +54,10 @@ def rws(tmp_path, monkeypatch):
         if name and name not in readers: raise mm.VaultRefused(f'{name} is not available here', 'model_unavailable')
         return name or None
     monkeypatch.setattr(va, 'reader_id', rid)
+    def spec(name):
+        if name not in readers: raise mm.VaultRefused(f'{name} is not available here', 'model_unavailable')
+        return AttrDict(name=name, local=readers[name].runtime == 'litert', model_id=name, runtime=readers[name].runtime, ctx=8000)
+    monkeypatch.setattr(va, 'chat_spec', spec)
     ws = Workspace(roots=[str(proj)]); ws._state_path = tmp_path/'workspace.json'
     ws.readers, ws.proj = readers, proj
     return ws

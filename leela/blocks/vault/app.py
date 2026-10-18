@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import json, re
+import asyncio, json, re
 from collections import Counter
 
-from fastcore.all import L, Path, first
+from fastcore.all import AttrDict, L, Path, first
 from fasthtml.common import Button, Div, Span
 from starlette.responses import Response
 
 from ... import errstr
-from ...core.web import fail, off_loop
-from ..memory.memory import VaultRefused, page_list, source_kind
+from ...core.web import fail, off_loop, sse
+from ..memory.memory import PrivacyBlocked, VaultRefused, page_list, source_kind
 from ..tabs.ui import tab_bar
 from . import ui
 from .ui import PII_COVERS, job_card, pii_badge, vault_browse, vault_panel, vault_tree
 
-__all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel', 'PII_COVERS', 'read_choice', 'reader_id']
+__all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel', 'PII_COVERS', 'read_choice', 'reader_id', 'chat_spec',
+           'ask_chat', 'Streamed']
 
 CAPS = ('fs', 'memory', 'jobs', 'vaults', 'feeds', 'tab')
 
@@ -39,6 +40,33 @@ def reader_id(name):
     except Exception: caps = None
     if caps is not None and 'image' not in caps.inp: raise VaultRefused(f'{name} does not read images', 'model_unavailable')
     return spec.model_id
+
+def chat_spec(name):
+    "The model a text send goes to, placed on or off this machine; `model_unavailable` when it does not resolve. Tests put a stand-in here."
+    from ...agent.core import resolve
+    try: s = resolve(name)
+    except Exception as e: raise VaultRefused(f'{name or "the default model"} is not available here ({errstr(e)})', 'model_unavailable') from e
+    return AttrDict(name=name or s.name, local=bool(s.local), model_id=s.model_id, runtime=s.runtime, ctx=s.ctx)
+
+def ask_chat(spec):
+    "The chat factory Find > Ask builds for `spec`, in `Vault.ask`'s `mk_chat` shape. Tests put a stand-in here."
+    def mk(_model=None, **kw):
+        from rishi import Chat
+        return Chat(spec.model_id, runtime=spec.runtime, ctx_limit=spec.ctx, **kw)
+    return mk
+
+class Streamed:
+    "A chat that hands the text so far to `put` as it streams, and answers with all of it, as `Vault.ask` reads a reply."
+    def __init__(self, ch, put): self.ch, self.put = ch, put
+    def __getattr__(self, k): return getattr(self.ch, k)
+    def __call__(self, prompt, **kw):
+        from urai import resp_text
+        self.put('reset', '')     # a retry with less context asks again from nothing
+        r, text = self.ch(prompt, stream=True, **kw), ''
+        for x in ([r] if isinstance(r, (str, dict)) else r):
+            text += x if isinstance(x, str) else resp_text(x)
+            self.put('chunk', text)
+        return {'role': 'assistant', 'content': text}
 
 def _plain(o): return json.loads(json.dumps(o, default=lambda x: list(x) if isinstance(x, (L, set, tuple)) else str(x)))
 
@@ -82,7 +110,15 @@ def connect(app, ctx):
         out = m.read_file(job.target, p.get('shelf') or None, p.get('parse', 'auto'), p.get('model') or None,
                      p.get('preset', 'generic'), p.get('hint', ''), p.get('pages'), ctx.session.vault_pii, allow, p.get('level') or None,
                      progress=tracker(job, report))
+        try: m.guess_type(out['doc_id'], out.get('shelf'))
+        except Exception: pass
         return result(out, p)
+    def extract_job(job, report):
+        p = dict(job.params)
+        report(progress=0.2, current=f"reading fields with {p.get('name') or 'the default model'}")
+        out = ctx.vaults.memory(p.get('vault') or None).extract(job.target, p.get('shelf') or None, p.get('model'), p.get('chat_kw'),
+                                                                p.get('pii') or 'redact', p.get('name') or '')
+        return out | {'title': p.get('title') or '', 'shelf': p.get('shelf') or '', 'vault': p.get('vault') or ctx.vaults.active.name}
     def reparse_job(job, report):
         p, allow = spend_allow(job, report)
         m = ctx.vaults.memory(p.get('vault') or None)
@@ -98,6 +134,7 @@ def connect(app, ctx):
     ctx.jobs.register('read', read_job)
     ctx.jobs.register('reparse', reparse_job)
     ctx.jobs.register('proof', proof_job)
+    ctx.jobs.register('extract', extract_job)
     try: ctx.jobs.recover()
     except Exception: pass
     @rt('/jobs')
@@ -343,13 +380,36 @@ def connect(app, ctx):
                                            model=r['model'], name=r['name'], hint=hint, pages=page_list(pages),
                                            level=level or None, allow=bool(allow)))
         except Exception as e: return _refusal(e)
+    def _turn_name():
+        "The conversation's model, which a send with no model named goes to."
+        try: return ctx.session.ai.model.name
+        except Exception: return ''
+    def _ask_policy(spec):
+        "What Find > Ask applies: a local model reads whole, a hosted one masks or withholds; a stored `off` does not apply to ask."
+        if spec.local: return dict(pii='local', pii_model=spec.name), 'redact'
+        p = ctx.session.vault_pii if ctx.session.vault_pii in ('redact', 'refuse') else 'redact'
+        return dict(pii=p, pii_model=None), p
+    def _line(chk):
+        return dict(_plain({k: chk.get(k) for k in ('ok', 'kind', 'kinds', 'why', 'local', 'send', 'masked', 'withheld')}), ok=True, check_ok=chk.ok)
     @rt('/vault/send-check')
     async def vault_send_check(refs: str = '', src: str = '', parse: str = 'auto', model: str = '', pages: str = '',
-                               level: str = '', allow: bool = False, vault: str = '', shelf: str = '', doc: str = ''):
-        "Where a send goes and what of it goes how: one answer for every send line. `doc` checks page images of a read document for each reader in `model`."
+                               level: str = '', allow: bool = False, vault: str = '', shelf: str = '', doc: str = '',
+                               ask: bool = False, attach: str = ''):
+        """Where a send goes and what of it goes how: one answer for every send line. `doc` checks page images of a read document for
+        each reader in `model`; `ask` the sections an answer may draw on; `attach` (JSON) the prompt bar's attachments for the turn model."""
         try:
             _check(parse, 'generic', level)
             m = _mem(vault)
+            if attach.strip():
+                atts = json.loads(attach)
+                if not isinstance(atts, list): raise VaultRefused('attach is a JSON list', 'bad_request')
+                spec = chat_spec(model) if model else ctx.session.ai.model
+                chk = await off_loop(ctx.session.attachment_check, atts, spec)
+                return dict(_plain(chk), ok=True, check_ok=chk.ok)
+            if ask:
+                spec = chat_spec(model or _turn_name())
+                chk = await off_loop(m.ask_check, doc or None, shelf or None, page_list(pages), spec.local, spec.name, _ask_policy(spec)[1])
+                return _line(chk)
             if doc.strip():
                 chk = await off_loop(_pages_check, m, doc, shelf, pages, model, allow)
                 return dict(_plain(chk), ok=True, check_ok=chk.ok)
@@ -358,11 +418,85 @@ def connect(app, ctx):
                 return dict(_plain(plan), ok=True, check_ok=plan.ok)
             ids = [x for x in refs.split(',') if x.strip()]
             if not ids: raise VaultRefused('nothing to check', 'bad_request')
-            from ..memory.memory import read_chat
-            r = _model(model)
-            chk = await off_loop(lambda: m._shelf(shelf or None).send_check(
-                refs=ids, model=read_chat(r['model']) or r['model'], policy=ctx.session.vault_pii, allow=allow, level=level or None))
-            return dict(_plain({k: chk[k] for k in ('ok', 'kind', 'kinds', 'why', 'local', 'send', 'masked', 'withheld')}), ok=True, check_ok=chk.ok)
+            spec = chat_spec(model or _turn_name())
+            pol = 'off' if spec.local else ctx.session.vault_pii
+            return _line(await off_loop(m.check, ids, (), shelf or None, spec.local, spec.name, pol, False, allow))
+        except json.JSONDecodeError: return _refusal(VaultRefused('attach is a JSON list', 'bad_request'))
+        except Exception as e: return _refusal(e)
+    @rt('/vault/ask')
+    async def vault_ask(q: str = '', doc: str = '', pages: str = '', model: str = '', vault: str = '', shelf: str = ''):
+        "A cited answer from the whole vault, one document or pages of it, streamed: `send`, `reset`/`chunk` as it is written, `answer`, `done`."
+        try:
+            if not q.strip(): raise VaultRefused('nothing to ask', 'bad_request')
+            m, pg = _mem(vault), page_list(pages)
+            spec = chat_spec(model or _turn_name())
+            pol, line_pol = _ask_policy(spec)
+            chk = await off_loop(m.ask_check, doc or None, shelf or None, pg, spec.local, spec.name, line_pol)
+        except Exception as e: return _refusal(e)
+        from starlette.responses import StreamingResponse
+        from vishalakshi.pii import redact
+        loop, qu = asyncio.get_running_loop(), asyncio.Queue()
+        # the answer is scrubbed once whole; until then what streams is masked whenever the scope holds anything not Open
+        hide = any(r.level != 'open' for r in chk.rows)
+        def put(ev, d):
+            if ev == 'chunk': d = dict(text=redact(d, ner=True) if hide else d)
+            loop.call_soon_threadsafe(qu.put_nowait, (ev, d))
+        def run():
+            try: put('answer', _plain(m.ask(q, doc or None, shelf or None, pg, spec.name, lambda *a, **kw: Streamed(ask_chat(spec)(*a, **kw), put), **pol)))
+            except Exception as e: put('error', dict(error=errstr(e), kind=getattr(e, 'kind', None) or 'failed'))
+            finally: put('end', None)
+        async def events():
+            yield sse('send', dict(why=chk.why, kind=chk.kind, check_ok=chk.ok, model=spec.name, local=spec.local))
+            task = asyncio.ensure_future(off_loop(run))
+            while (got := await qu.get())[0] != 'end': yield sse(*got)
+            await task
+            yield sse('done', {})
+        return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    @rt('/vault/types')
+    async def vault_types(state: str = 'proposed', vault: str = '', shelf: str = ''):
+        "Documents whose type is a guess waiting on a person, and the labels a person may pick instead."
+        try:
+            if state != 'proposed': raise VaultRefused('state is proposed', 'bad_request')
+            from varga import DOCTYPES
+            return {'ok': True, 'types': _plain(await off_loop(_mem(vault).types, shelf or None)), 'labels': sorted(DOCTYPES) + ['other']}
+        except Exception as e: return _refusal(e)
+    @rt('/vault/types/guess')
+    async def vault_types_guess(vault: str = '', shelf: str = ''):
+        "Type every untyped document from its cues; no model is asked."
+        try:
+            _writable(vault)
+            return {'ok': True} | await off_loop(_mem(vault).guess_types, shelf or None)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/types/{verdict}')
+    async def vault_types_judge(verdict: str, doc: str = '', doctype: str = '', was: str = '', vault: str = '', shelf: str = ''):
+        "`accept` a proposed type, or `doctype` instead; `reject` it; `undo` back to `was` (JSON), which the other two answered."
+        try:
+            if verdict not in ('accept', 'reject', 'undo'): raise VaultRefused('accept, reject or undo', 'not_found', 404)
+            _writable(vault)
+            w = json.loads(was) if was.strip() else None
+            return {'ok': True} | _plain(await off_loop(_mem(vault).judge_type, doc, verdict, shelf or None, doctype or None, w))
+        except json.JSONDecodeError: return _refusal(VaultRefused('was is a JSON object', 'bad_request'))
+        except Exception as e: return _refusal(e)
+    @rt('/vault/fields')
+    async def vault_fields(doc: str = '', vault: str = '', shelf: str = ''):
+        "Each extracted field with its page, quote and warnings."
+        try: return {'ok': True} | _plain(await off_loop(_mem(vault).fields, doc, shelf or None))
+        except Exception as e: return _refusal(e)
+    @rt('/vault/extract')
+    async def vault_extract(doc: str = '', model: str = '', vault: str = '', shelf: str = ''):
+        "Read the fields again as a job, after the same check the send line shows."
+        try:
+            m = _mem(vault)
+            _writable(vault)
+            did = await off_loop(m.doc_id, doc, shelf or None)
+            _busy(m, did, shelf or None)
+            spec = chat_spec(model or _turn_name())
+            pol = 'off' if spec.local else ctx.session.vault_pii
+            chk = await off_loop(m.check, [did], (), shelf or None, spec.local, spec.name, pol)
+            if not chk.ok: raise VaultRefused(chk.why, chk.kind, 400, line=chk.why)
+            title = (await off_loop(m.document, did, shelf or None)).get('title') or ''
+            return job_card(ctx.jobs.start('extract', did, vault=vault, shelf=shelf or None, model=spec.model_id,
+                                           chat_kw={'runtime': spec.runtime}, name=spec.name, pii=pol, title=title))
         except Exception as e: return _refusal(e)
     @rt('/vault/pages')
     async def vault_pages(doc: str, vault: str = '', shelf: str = '', history: bool = False):
@@ -405,7 +539,7 @@ def connect(app, ctx):
     def _busy(m, doc, shelf):
         "`busy` while a read, a re-read or a proofread runs on `doc`: a decision now would land on a page about to change."
         src = str(m.document(doc, shelf).get('source') or '')
-        if j := first(j for j in ctx.jobs.all(limit=100) if j.active and j.kind in ('read', 'reparse', 'proof') and j.target in (doc, src)):
+        if j := first(j for j in ctx.jobs.all(limit=100) if j.active and j.kind in ('read', 'reparse', 'proof', 'extract') and j.target in (doc, src)):
             raise VaultRefused(f'a {j.kind} job is running on this document', 'busy', 409, job=j.id)
     def _folder(m, doc, shelf):
         src = Path(str(m.document(doc, shelf).get('source') or ''))
@@ -628,16 +762,17 @@ def connect(app, ctx):
     def _root(): return str(ctx.fs.roots[0]) if ctx.fs.roots else ''
     @rt('/vault/workbench')
     async def workbench(view: str = 'browse', vault: str = '', shelf: str = '', q: str = '',
-                        src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = ''):
+                        src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = '', title: str = '',
+                        pages: str = '', scope: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc, title, pages, scope)
             ctx.session.note_vault_view(view)
             return ui.workbench(_mem(vault), ctx.vaults, view, body=body)
         except Exception as e: return fail(e)
-    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name='', doc=''):
+    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name='', doc='', title='', pages='', scope=''):
         m = _mem(vault)
         if view == 'review': return ui.review_view(vault, doc, shelf)
-        if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf)
+        if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf, doc=doc, title=title, pages=pages, scope=scope)
         if view in ('news', 'sources'): return ui.sources_view(ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed), 'news', vault)
         if view == 'specs': return ui.sources_view(ui.specs_view(m, vault, **_spec_kw(src, match, name)), 'specs', vault)
         if view == 'topics': return ui.sources_view(ui.topics_view(m, vault), 'topics', vault)
@@ -658,9 +793,10 @@ def connect(app, ctx):
         except Exception as e: return dict(kw, error=errstr(e))
     @rt('/vault/view/{view}')
     async def workbench_view(view: str, vault: str = '', shelf: str = '', q: str = '',
-                             src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = ''):
+                             src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = '', title: str = '',
+                             pages: str = '', scope: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc, title, pages, scope)
             ctx.session.note_vault_view(view)     # the swap is the tab moving, and it outlives it
             return body
         except Exception as e: return fail(e)

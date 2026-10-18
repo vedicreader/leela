@@ -1,3 +1,9 @@
+GET,POST /vault/ask
+GET,POST /vault/extract
+GET,POST /vault/fields
+GET,POST /vault/types
+GET,POST /vault/types/guess
+GET,POST /vault/types/{verdict}
 GET,POST /jobs/{jid}/cancel
 GET,POST /vault/changes
 GET,POST /vault/changes/accept
