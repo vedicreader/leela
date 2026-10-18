@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json, re
+from collections import Counter
 
 from fastcore.all import L, Path, first
 from fasthtml.common import Button, Div, Span
@@ -21,8 +22,11 @@ def read_choice(d):
     "A Read sheet choice as it may be remembered, or None. `allow` is never kept: allow once is once."
     from vishalakshi.read import PARSE, PRESETS
     if not isinstance(d, dict) or d.get('parse', 'auto') not in PARSE or d.get('preset', 'generic') not in PRESETS: return None
-    return {'parse': d.get('parse', 'auto'), 'preset': d.get('preset', 'generic'),
-            'model': str(d.get('model') or ''), 'hint': str(d.get('hint') or '')}
+    out = {'parse': d.get('parse', 'auto'), 'preset': d.get('preset', 'generic'),
+           'model': str(d.get('model') or ''), 'hint': str(d.get('hint') or '')}
+    if isinstance(rs := d.get('readers'), list) and rs: out['readers'] = [str(r) for r in rs if r][:4]
+    if isinstance(a := d.get('agree'), int) and a > 0: out['agree'] = a
+    return out
 
 def reader_id(name):
     "A Leela model name as the id vishalakshi reads page images with; `model_unavailable` when it cannot."
@@ -47,17 +51,53 @@ def _refusal(e):
 
 def connect(app, ctx):
     rt = app.route
-    def read_job(job, report):
+    def tracker(job, report):
+        "A vishalakshi `progress` that puts pages done, the route mix and the cost on the card, and stops once the card is cancelled."
+        st = dict(routes=Counter(), cost=0.0)
+        def progress(done, total, page, route, cost):
+            if route: st['routes'][route] += 1
+            st['cost'] += cost or 0
+            mix = ', '.join(f'{k} {n}' for k, n in st['routes'].items())
+            report(progress=.1 + .85 * done / max(1, total), current=f'{done} of {total} pages' + (f' · {mix}' if mix else '') +
+                   (f" · ${st['cost']:.4f}" if st['cost'] else ''))
+            return not ctx.jobs.stopping(job.id)
+        return progress
+    def spend_allow(job, report):
+        "Allow once is spent by the run it was given to: a retry or a resume asks again."
         p = dict(job.params)
         allow = bool(p.pop('allow', False))
-        if allow: report(params=p)    # allow once is spent here: a retry or a resume asks again
+        if allow: report(params=p)
+        return p, allow
+    KEEP = ('doc_id', 'title', 'shelf', 'level', 'routes', 'flagged', 'blocked', 'kind', 'nodes', 'chunks', 'cost', 'model_pages',
+            'cancelled', 'unread', 'pages', 'changed', 'changes', 'proposed')
+    def result(out, p):
+        return {k: out[k] for k in KEEP if k in out} | {'vault': p.get('vault') or ctx.vaults.active.name, 'model': p.get('name') or p.get('model') or ''}
+    def read_job(job, report):
+        p, allow = spend_allow(job, report)
         report(progress=0.1, current=f'reading {Path(job.target).name}')
         m = ctx.vaults.memory(p.get('vault') or None)
+        # a resumed read re-reads only its unread pages: reading the file again would file the text layer over pages a model read
+        if p.get('resume'): return result(m.reparse(p['resume'], p.get('shelf') or None, p.get('pages'), p.get('model'), p.get('preset') or None,
+                                                    p.get('hint') or None, ctx.session.vault_pii, allow, tracker(job, report)), p) | {'doc_id': p['resume']}
         out = m.read_file(job.target, p.get('shelf') or None, p.get('parse', 'auto'), p.get('model') or None,
-                     p.get('preset', 'generic'), p.get('hint', ''), p.get('pages'), ctx.session.vault_pii, allow, p.get('level') or None)
-        return {k: out.get(k) for k in ('doc_id', 'title', 'shelf', 'level', 'routes', 'flagged', 'blocked', 'kind', 'nodes', 'chunks')} | \
-               {'vault': p.get('vault') or ctx.vaults.active.name, 'model': p.get('name') or p.get('model') or ''}
+                     p.get('preset', 'generic'), p.get('hint', ''), p.get('pages'), ctx.session.vault_pii, allow, p.get('level') or None,
+                     progress=tracker(job, report))
+        return result(out, p)
+    def reparse_job(job, report):
+        p, allow = spend_allow(job, report)
+        m = ctx.vaults.memory(p.get('vault') or None)
+        out = m.reparse(job.target, p.get('shelf') or None, p.get('pages'), p.get('model'), p.get('preset') or None, p.get('hint') or None,
+                        ctx.session.vault_pii, allow, tracker(job, report))
+        return result(out, p) | {'title': p.get('title') or ''}
+    def proof_job(job, report):
+        p, allow = spend_allow(job, report)
+        m = ctx.vaults.memory(p.get('vault') or None)
+        out = m.proofread(job.target, p.get('readers') or [], p.get('shelf') or None, p.get('pages'), int(p.get('agree') or 2),
+                          ctx.session.vault_pii, allow, tracker(job, report))
+        return result(out, p) | {'title': p.get('title') or '', 'blocked': out.get('blocked') or []}
     ctx.jobs.register('read', read_job)
+    ctx.jobs.register('reparse', reparse_job)
+    ctx.jobs.register('proof', proof_job)
     try: ctx.jobs.recover()
     except Exception: pass
     @rt('/jobs')
@@ -74,8 +114,17 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/jobs/{jid}/retry')
     def job_retry(jid: str):
-        try: return job_card(ctx.jobs.launch(jid))
+        "A failed job runs again; a cancelled one resumes on the pages it left unread, which are 0-based already."
+        try:
+            j = ctx.jobs.get(jid)
+            if j.status == 'cancelled' and (r := j.result or {}).get('unread'):
+                ctx.jobs.update(jid, params=dict(j.params, pages=r['unread'], **{'resume': r['doc_id']} if j.kind == 'read' and r.get('doc_id') else {}))
+            return job_card(ctx.jobs.launch(jid))
         except Exception as e: return fail(e)
+    @rt('/jobs/{jid}/cancel')
+    def job_cancel(jid: str):
+        try: return job_card(ctx.jobs.cancel(jid))
+        except Exception as e: return fail(e, kind='bad_request')
     @rt('/clip')
     def clip(target: str, kind: str = 'clip', shelf: str = '', origin: str = ''):
         try:
@@ -86,7 +135,7 @@ def connect(app, ctx):
             # page by page, so a scan gets routes and flags; no model, so nothing leaves before a person says where it may go
             if kind == 'clip' and p.is_file() and p.suffix.lower() in ('.pdf', *IMG_EXTS):
                 c = ctx.session.vault_read.get(str(p.resolve().parent)) or {}
-                return job_card(ctx.jobs.start('read', str(p.resolve()), shelf=shelf or None, parse=c.get('parse', 'auto'),
+                return job_card(ctx.jobs.start('read', str(p.resolve()), _cancel=True, shelf=shelf or None, parse=c.get('parse', 'auto'),
                                                preset=c.get('preset', 'generic'), hint=c.get('hint', '')))
             return job_card(ctx.jobs.start(kind, target, shelf=shelf or None, **{'from': origin} if origin else {}))
         except Exception as e: return fail(e)
@@ -290,17 +339,20 @@ def connect(app, ctx):
             r = _model(model)
             ctx.session.vault_read[folder] = read_choice(dict(parse=parse, preset=preset, model=model, hint=hint))
             ctx.session.save()
-            return job_card(ctx.jobs.start('read', plan.src, vault=vault, shelf=shelf or None, parse=parse, preset=preset,
+            return job_card(ctx.jobs.start('read', plan.src, _cancel=True, vault=vault, shelf=shelf or None, parse=parse, preset=preset,
                                            model=r['model'], name=r['name'], hint=hint, pages=page_list(pages),
                                            level=level or None, allow=bool(allow)))
         except Exception as e: return _refusal(e)
     @rt('/vault/send-check')
     async def vault_send_check(refs: str = '', src: str = '', parse: str = 'auto', model: str = '', pages: str = '',
-                               level: str = '', allow: bool = False, vault: str = '', shelf: str = ''):
-        "Where a send goes and what of it goes how: one answer for every send line."
+                               level: str = '', allow: bool = False, vault: str = '', shelf: str = '', doc: str = ''):
+        "Where a send goes and what of it goes how: one answer for every send line. `doc` checks page images of a read document for each reader in `model`."
         try:
             _check(parse, 'generic', level)
             m = _mem(vault)
+            if doc.strip():
+                chk = await off_loop(_pages_check, m, doc, shelf, pages, model, allow)
+                return dict(_plain(chk), ok=True, check_ok=chk.ok)
             if src.strip():
                 plan = await off_loop(_plan, m, src, shelf, parse, model, pages, level, allow)
                 return dict(_plain(plan), ok=True, check_ok=plan.ok)
@@ -322,10 +374,146 @@ def connect(app, ctx):
                     'pages': _plain(await off_loop(m.pages, doc, shelf or None, history))}
         except Exception as e: return _refusal(e)
     @rt('/vault/page')
-    async def vault_page(doc: str, page: int = 0, version: int = 0, vault: str = '', shelf: str = ''):
+    async def vault_page(doc: str, page: int = 0, version: int = 0, view: str = '', vault: str = '', shelf: str = ''):
+        "One page; `view=sent` is its text as a hosted model receives it."
         try:
             m = _mem(vault)
+            if view == 'sent': return dict(_plain(await off_loop(m.as_sent, doc, page, shelf or None, ctx.session.vault_pii)), ok=True, view='sent')
             return dict(_plain(await off_loop(m.page, doc, page, shelf or None, version or None)), ok=True)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/page/diff')
+    async def vault_page_diff(doc: str, page: int = 0, a: int = 0, b: int = 0, vault: str = '', shelf: str = ''):
+        try:
+            if a < 1 or b < 1: raise VaultRefused('a and b are versions, from 1', 'bad_request')
+            return dict(await off_loop(_mem(vault).page_diff, doc, page, a, b, shelf or None), ok=True)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/page/crop')
+    async def vault_page_crop(doc: str, page: int = 0, box: str = '', vault: str = '', shelf: str = ''):
+        try:
+            bx = [float(x) for x in box.split(',')] if box.strip() else None
+            b, mime = await off_loop(_mem(vault).page_crop, doc, page, bx, shelf or None)
+            return Response(b, media_type=mime, headers={'Cache-Control': 'private, max-age=600'})
+        except ValueError as e: return _refusal(VaultRefused(f'box is x0,y0,x1,y1 ({errstr(e)})', 'bad_request'))
+        except Exception as e: return _refusal(e)
+    def _readers(names):
+        "`(id, name)` for each model name, `model_unavailable` for one that cannot read page images."
+        rs = [(reader_id(n), n) for n in dict.fromkeys(x.strip() for x in str(names or '').split(',') if x.strip())]
+        if not rs: raise VaultRefused('choose a model to read the pages', 'model_unavailable')
+        return rs
+    def _pages_check(m, doc, shelf, pages, names, allow):
+        return m.page_check(doc, page_list(pages), _readers(names), shelf or None, ctx.session.vault_pii, allow)
+    def _busy(m, doc, shelf):
+        "`busy` while a read, a re-read or a proofread runs on `doc`: a decision now would land on a page about to change."
+        src = str(m.document(doc, shelf).get('source') or '')
+        if j := first(j for j in ctx.jobs.all(limit=100) if j.active and j.kind in ('read', 'reparse', 'proof') and j.target in (doc, src)):
+            raise VaultRefused(f'a {j.kind} job is running on this document', 'busy', 409, job=j.id)
+    def _folder(m, doc, shelf):
+        src = Path(str(m.document(doc, shelf).get('source') or ''))
+        return str(src.parent) if src.is_absolute() else ''
+    async def _page_job(kind, doc, pages, names, allow, partial, vault, shelf, **kw):
+        "The guards a re-read and a proofread share, then the job."
+        m = _mem(vault)
+        _writable(vault)
+        row = await off_loop(m.document, doc, shelf or None)
+        if not row: raise VaultRefused(f'no document {doc}', 'not_found', 404)
+        _busy(m, doc, shelf or None)
+        rs = _readers(names)
+        chk = await off_loop(lambda: m.page_check(doc, page_list(pages), rs, shelf or None, ctx.session.vault_pii, allow))
+        if not chk.ok and not partial: raise VaultRefused(chk.why, chk.kind, 400, pages=chk.withheld, line=chk.why)
+        return job_card(ctx.jobs.start(kind, doc, _cancel=True, vault=vault, shelf=shelf or None, pages=page_list(pages),
+                                       title=row.get('title') or '', allow=bool(allow), **kw))
+    @rt('/vault/reparse')
+    async def vault_reparse(doc: str, pages: str = '', model: str = '', preset: str = '', hint: str = '', allow: bool = False,
+                            partial: bool = False, vault: str = '', shelf: str = ''):
+        "Read pages of a read document again with another model or preset, as a job; each page gets a new version."
+        try:
+            if preset: _check('auto', preset, '')
+            if ',' in model: raise VaultRefused('a re-read takes one model', 'bad_request')
+            r = _model(model)
+            if not r['model']: raise VaultRefused('a re-read needs a model', 'model_unavailable')
+            return await _page_job('reparse', doc, pages, model, allow, partial, vault, shelf,
+                                   model=r['model'], name=model, preset=preset or None, hint=hint or None)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/proofread')
+    async def vault_proofread(doc: str, readers: str = '', pages: str = '', agree: int = 0, allow: bool = False, partial: bool = False,
+                              estimate: bool = False, vault: str = '', shelf: str = ''):
+        "Readers read the pages again and their word changes are filed for review. `estimate` says where each reader's pages would go."
+        try:
+            m = _mem(vault)
+            folder = await off_loop(_folder, m, doc, shelf or None)
+            mem = ctx.session.vault_read.get(folder) or {}
+            if estimate:
+                out = dict(ok=True, remembered={k: mem[k] for k in ('readers', 'agree') if k in mem}, pages=len(await off_loop(m.pages, doc, shelf or None)))
+                if not readers.strip(): return out
+                chk = await off_loop(_pages_check, m, doc, shelf, pages, readers, allow)
+                return out | _plain(chk) | dict(ok=True, check_ok=chk.ok)
+            rs = _readers(readers)
+            n = max(1, min(len(rs), agree or mem.get('agree') or 2))
+            out = await _page_job('proof', doc, pages, readers, allow, partial, vault, shelf, readers=[i for i, _ in rs], agree=n,
+                                  name=', '.join(nm for _, nm in rs))
+            if folder:
+                ctx.session.vault_read[folder] = read_choice(dict(mem, readers=[nm for _, nm in rs], agree=n))
+                ctx.session.save()
+            return out
+        except Exception as e: return _refusal(e)
+    @rt('/vault/changes')
+    async def vault_changes(doc: str = '', state: str = '', page: int = -1, vault: str = '', shelf: str = ''):
+        "Proofreading changes still to decide, across every paged document or for one."
+        try:
+            if state and state not in ('proposed', 'doubt', 'accepted', 'rejected'): raise VaultRefused('state is proposed, doubt, accepted or rejected', 'bad_request')
+            rows = await off_loop(_mem(vault).changes, doc or None, shelf or None, state or None, None if page < 0 else page)
+            return {'ok': True, 'changes': _plain(rows)}
+        except Exception as e: return _refusal(e)
+    def _ids(ids): return [x for x in str(ids or '').split(',') if x.strip()]
+    async def _decide(f, doc, vault, shelf, *a):
+        m = _mem(vault)
+        _writable(vault)
+        _busy(m, doc, shelf or None)
+        return {'ok': True} | _plain(await off_loop(f, m, *a))
+    @rt('/vault/changes/accept')
+    async def vault_changes_accept(doc: str, ids: str = '', after: str = None, vault: str = '', shelf: str = ''):
+        "Apply changes, one new version per page; `after` edits the one change first. `stale` with the ids that cannot be."
+        try: return await _decide(lambda m: m.accept_changes(doc, _ids(ids), shelf or None, after), doc, vault, shelf)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/changes/reject')
+    async def vault_changes_reject(doc: str, ids: str = '', vault: str = '', shelf: str = ''):
+        try: return await _decide(lambda m: m.reject_changes(doc, _ids(ids), shelf or None), doc, vault, shelf)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/changes/undo')
+    async def vault_changes_undo(doc: str, ids: str = '', was: str = 'proposed', vault: str = '', shelf: str = ''):
+        "Undo the last decision: a reject goes back to the queue, an accept is reverted as a new version."
+        try: return await _decide(lambda m: m.undo_changes(doc, _ids(ids), was, shelf or None), doc, vault, shelf)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/proof.md')
+    async def vault_proof_md(req, doc: str, vault: str = '', shelf: str = ''):
+        "The proofreading record as PROOFREAD.md: a GET downloads it, a POST writes it beside the source file."
+        try:
+            m = _mem(vault)
+            if req.method == 'POST':
+                _writable(vault)
+                return {'ok': True, 'path': await off_loop(m.save_proof_md, doc, shelf or None)}
+            md = await off_loop(m.proof_md, doc, shelf or None)
+            return Response(md, media_type='text/markdown; charset=utf-8', headers={'Content-Disposition': 'attachment; filename="PROOFREAD.md"'})
+        except Exception as e: return _refusal(e)
+    @rt('/vault/pii/findings')
+    async def vault_findings(doc: str = '', state: str = '', page: int = -1, vault: str = '', shelf: str = ''):
+        "Filed personal information, masked previews only, across every paged document or for one."
+        try:
+            if state and state not in ('found', 'accepted', 'rejected'): raise VaultRefused('state is found, accepted or rejected', 'bad_request')
+            rows = await off_loop(_mem(vault).findings, doc or None, shelf or None, state or None, None if page < 0 else page)
+            return {'ok': True, 'findings': _plain(rows)}
+        except Exception as e: return _refusal(e)
+    @rt('/vault/pii/findings/{verdict}')
+    async def vault_findings_judge(verdict: str, doc: str, ids: str = '', vault: str = '', shelf: str = ''):
+        "`accept` is personal, `reject` is not personal, `undo` hands it back to detection. `stale` when the page was read again."
+        try:
+            if verdict not in ('accept', 'reject', 'undo'): raise VaultRefused('accept, reject or undo', 'not_found', 404)
+            return await _decide(lambda m: m.judge_pii(doc, _ids(ids), verdict, shelf or None), doc, vault, shelf)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/pii/scan')
+    async def vault_pii_scan(doc: str, vault: str = '', shelf: str = ''):
+        "File findings for a document read before findings were kept."
+        try: return await _decide(lambda m: m.scan_pii(doc, shelf or None), doc, vault, shelf)
         except Exception as e: return _refusal(e)
     @rt('/vault/page/img')
     async def vault_page_img(doc: str, page: int = 0, w: int = 0, vault: str = '', shelf: str = ''):
@@ -437,14 +625,15 @@ def connect(app, ctx):
     def _root(): return str(ctx.fs.roots[0]) if ctx.fs.roots else ''
     @rt('/vault/workbench')
     async def workbench(view: str = 'browse', vault: str = '', shelf: str = '', q: str = '',
-                        src: str = '', match: str = '', feed: str = '', name: str = ''):
+                        src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc)
             ctx.session.note_vault_view(view)
             return ui.workbench(_mem(vault), ctx.vaults, view, body=body)
         except Exception as e: return fail(e)
-    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name=''):
+    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name='', doc=''):
         m = _mem(vault)
+        if view == 'review': return ui.review_view(vault, doc, shelf)
         if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf)
         if view in ('news', 'sources'): return ui.sources_view(ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed), 'news', vault)
         if view == 'specs': return ui.sources_view(ui.specs_view(m, vault, **_spec_kw(src, match, name)), 'specs', vault)
@@ -466,9 +655,9 @@ def connect(app, ctx):
         except Exception as e: return dict(kw, error=errstr(e))
     @rt('/vault/view/{view}')
     async def workbench_view(view: str, vault: str = '', shelf: str = '', q: str = '',
-                             src: str = '', match: str = '', feed: str = '', name: str = ''):
+                             src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc)
             ctx.session.note_vault_view(view)     # the swap is the tab moving, and it outlives it
             return body
         except Exception as e: return fail(e)

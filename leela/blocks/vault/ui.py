@@ -18,7 +18,7 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
            'tidy_list', 'watch_list', 'workbench', 'browse_view', 'find_view', 'add_view',
            'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan',
            'ops_table', 'call_form', 'call_panel', 'api_result', 'PII_COVERS',
-           'VIEWS', 'SOURCES', 'HOME', 'KINDS', 'library_view', 'sources_view', 'vault_settings']
+           'VIEWS', 'SOURCES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings']
 
 POLL_MS = 1200
 
@@ -26,10 +26,10 @@ PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose ad
               'looked for, so this says what was found, never that there is nothing')
 
 VIEWS = (('library', 'what is in it, and putting more in'), ('find', 'search it'),
-         ('sources', 'feeds, apis and topics'))
+         ('review', 'proofreading and personal information to decide'), ('sources', 'feeds, apis and topics'))
 SOURCES = (('news', 'what the feeds said'), ('specs', 'ask an api'), ('topics', 'what it is about'))
 #: The workbench's old section names, and the tab each now sits under. A saved tab still opens where it was.
-HOME = {'browse': 'library', 'add': 'library', 'library': 'library', 'find': 'find', 'sources': 'sources',
+HOME = {'browse': 'library', 'add': 'library', 'library': 'library', 'find': 'find', 'review': 'review', 'sources': 'sources',
         **{k: 'sources' for k, _ in SOURCES}}
 
 KINDS = {'pdf': '▤', 'web': '◍', 'html': '◍', 'htm': '◍', 'news': '⚑', 'rss': '⚑',
@@ -86,7 +86,10 @@ def job_card(job):
     if active:
         body.append(Progress(value=str(round(d['progress'] or 0, 3)), max='1', cls='lee-job-bar'))
         if d['current']: body.append(Span(d['current'], cls='lee-job-current'))
-        body.append(Span('committed documents are searchable while this runs', cls='lee-job-note'))
+        if (d['params'] or {}).get('_cancel'):
+            body.append(Form(Button('cancel', cls='lee-btn warn', data_job_cancel=d['id']), hx_post=f"/jobs/{d['id']}/cancel",
+                             hx_target='closest .lee-job', hx_swap='outerHTML'))
+        else: body.append(Span('committed documents are searchable while this runs', cls='lee-job-note'))
     if d['error']:
         body.append(Span(d['error'], cls='lee-job-error'))
         body.append(Form(Button('retry', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry",
@@ -95,9 +98,21 @@ def job_card(job):
             hx_target='closest .lee-job', hx_swap='delete'))
     result = d['result'] if isinstance(d['result'], dict) else {}
     if pii := result.get('pii'): body.append(_clip_pii_badge(pii))
-    if d['kind'] == 'read' and result.get('doc_id'):
-        body.append(Button('open', cls='lee-btn go', onclick=f"leeOpenVaultDoc({_js(result['doc_id'], result.get('shelf'), result.get('vault'), result.get('title') or d['target'].rsplit('/', 1)[-1])})"))
-        if result.get('blocked'): body.append(Span(f"{len(result['blocked'])} page(s) kept their text: not sent to {result.get('model') or 'the model'}", cls='lee-job-note'))
+    doc = result.get('doc_id') or (d['target'] if d['kind'] in ('reparse', 'proof') else '')
+    if d['kind'] in ('read', 'reparse', 'proof') and doc and not d['error']:
+        title = result.get('title') or d['target'].rsplit('/', 1)[-1]
+        body.append(Button('open', cls='lee-btn go', onclick=f"leeOpenVaultDoc({_js(doc, result.get('shelf'), result.get('vault'), title)})"))
+        if d['kind'] == 'proof': body.append(Button('review', cls='lee-btn', onclick=f"leeVaultReview({_js(doc, result.get('shelf'), result.get('vault'))})"))
+        if result.get('blocked'): body.append(Span(f"{len(result['blocked'])} page(s) not sent to {result.get('model') or 'the model'}", cls='lee-job-note'))
+        said = [f"{result['model_pages']} page(s) read by model" if result.get('model_pages') else '',
+                f"{result['changes']} change(s) filed, {result.get('proposed', 0)} proposed" if 'changes' in result else '',
+                f"${result['cost']:.4f}" if result.get('cost') else '']
+        if s := ' · '.join(x for x in said if x): body.append(Span(s, cls='lee-job-cost'))
+    if d['status'] == 'cancelled':
+        n = len(result.get('unread') or [])
+        body.append(Span(f"cancelled: the pages read are kept, {n} not read. Pages in flight when it stopped are counted in the cost."
+                         ' Allow once does not carry over to a resume.', cls='lee-job-note'))
+        if n: body.append(Form(Button('resume', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry", hx_target='closest .lee-job', hx_swap='outerHTML'))
     if d['result']: body.append(Details(Summary('details'), Pre(_summarise(d['result']), cls='lee-job-result')))
     return Div(*body, cls=f"lee-job {d['status']}", id=f"job-{d['id']}", data_kind=result.get('kind') or None, **attrs)
 
@@ -431,6 +446,10 @@ def _highlight(text, query):
     if not terms: return [Span(text or '')]
     pat = re.compile('(' + '|'.join(map(re.escape, sorted(terms, key=len, reverse=True))) + ')', re.I)
     return [Mark(part) if pat.fullmatch(part) else Span(part) for part in pat.split(text or '') if part]
+
+def review_view(vault='', doc='', shelf='', **_):
+    "The Review queue: a mount point review.js fills from `/vault/changes` and `/vault/pii/findings`."
+    return Div(Div('loading the queue', cls='lee-dim'), cls='lee-vault-review', tabindex='0', data_vault=vault, data_doc=doc, data_shelf=shelf)
 
 def find_view(memory, vault='', q='', shelf='', limit=30, **_):
     "Search across every shelf and return sections, which is where the evidence actually is."

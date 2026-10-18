@@ -621,7 +621,7 @@ class Memory:
                         src=p, doc=doc, pages=len(rows), need=[r.page for r in need], level=lv0, current=cur,
                         flags={r.page: list(r.flags) for r in rows if r.flags}, routes=dict(Counter(r.route for r in rows)),
                         type=dict(doctype=tp.doctype, preset=tp.preset, level=tp.level, vision=tp.vision, sensitive=tp.sensitive))
-    def read_file(self, src, shelf=None, parse='auto', model=None, preset='generic', hint='', pages=None, pii='redact', allow=False, level=None):
+    def read_file(self, src, shelf=None, parse='auto', model=None, preset='generic', hint='', pages=None, pii='redact', allow=False, level=None, progress=None):
         "Read `src` into the vault page by page. The level the read needs is set before any page image is sent; no model means nothing leaves."
         from vishalakshi.pii import LEVELS
         v, p = self._shelf(shelf), _resolved(src)
@@ -631,7 +631,7 @@ class Memory:
             v.set_level(p, plan.level, reason='set before the read')
         chat = read_chat(model)
         if not model and chat is None: pages = []
-        out = dict(v.read_doc(p, parse=parse, model=model or None, preset=preset, hint=hint, pages=pages, chat=chat, pii=pii, allow=allow))
+        out = dict(v.read_doc(p, parse=parse, model=model or None, preset=preset, hint=hint, pages=pages, chat=chat, pii=pii, allow=allow, progress=progress))
         return dict(out, shelf=self._shelf_name(shelf or self.shelf_name), level=v.level(out['doc_id']).level)
     def pages(self, doc, shelf=None, history=False):
         "A read document's pages, 0-based, latest version each or every version."
@@ -662,6 +662,125 @@ class Memory:
         if not self._shelf(shelf).doc(str(doc)): raise VaultRefused(f'no document {doc}', 'not_found', 404)
         self._shelf(shelf).set_level(str(doc), level or None, reason=reason, by=by)
         return self.level(doc, shelf)
+    def _doc(self, doc, shelf=None):
+        v = self._shelf(shelf)
+        if not v.doc(str(doc)): raise VaultRefused(f'no document {doc}', 'not_found', 404)
+        return v
+    def reparse(self, doc, shelf=None, pages=None, model=None, preset=None, hint=None, pii='redact', allow=False, progress=None):
+        "Read `pages` of a read document again by `model`; each new text is a new version."
+        out = dict(self._doc(doc, shelf).reparse(str(doc), pages=pages, model=model, preset=preset, hint=hint, chat=read_chat(model),
+                                                 pii=pii, allow=allow, progress=progress))
+        return dict(out, shelf=self._shelf_name(shelf or self.shelf_name))
+    def proofread(self, doc, readers, shelf=None, pages=None, agree=2, pii='redact', allow=False, progress=None):
+        "Each reader reads the pages again; their word changes are filed for review."
+        chats = {r: c for r in readers if (c := read_chat(r)) is not None}
+        out = dict(self._doc(doc, shelf).proofread(str(doc), list(readers), pages=pages, agree=agree, chats=chats or None,
+                                                   pii=pii, allow=allow, progress=progress))
+        return dict(out, shelf=self._shelf_name(shelf or self.shelf_name))
+    def page_check(self, doc, pages, readers, shelf=None, pii='redact', allow=False):
+        "Where page images of `doc` go for each reader `(id, name)`, at the document's level, as `reparse` and `proofread` gate them."
+        v = self._doc(doc, shelf)
+        lv = v.level(str(doc)).level
+        pgs = [(str(doc), p) for p in (pages if pages is not None else [r.page for r in v.pages(str(doc))])]
+        lines, wh, kinds, kind = [], set(), Counter(), None
+        for rid, name in readers:
+            c = v.send_check(pages=pgs, model=read_chat(rid) or rid, policy=pii, allow=allow, image=True, level=lv)
+            lines.append(c.why.replace(str(c.model), name, 1) if c.model and name else c.why)
+            wh |= {w.page for w in c.withheld}; kinds.update(c.kinds); kind = kind or c.kind
+        return AttrDict(ok=not wh, kind=kind, why=' '.join(lines), lines=lines, withheld=sorted(wh), kinds=dict(kinds), level=lv,
+                        pages=[p for _, p in pgs])
+    def as_sent(self, doc, page, shelf=None, pii='redact'):
+        "One page's text as a hosted model receives it in an answer or an agent turn: whole, masked through the gate, or withheld."
+        from vishalakshi.ask import send_rule
+        from vishalakshi.pii import gated, held
+        v, r = self._doc(doc, shelf), self.page(doc, page, shelf)
+        lv = v.level(str(doc), page=int(page))
+        how = send_rule(lv.level, False, pii)
+        text = (r['text'] if how == 'whole' else held(lv.kinds or {lv.level: 1}) if how == 'withheld' else
+                gated({'doc_id': str(doc), 'store': v.name, 'text': r['text']}, 'redact', vault=v, ner=True)['text'])
+        return dict(text=text, how=how, level=lv.level, kinds=dict(lv.kinds), version=r['version'])
+    def page_diff(self, doc, page, a, b, shelf=None):
+        "Two versions of one page as diff rows."
+        from ...core.web import diff_payload
+        return diff_payload(self.page(doc, page, shelf, a)['text'], self.page(doc, page, shelf, b)['text'], 'page.md')
+    def page_crop(self, doc, page, box, shelf=None):
+        "The part of a page a change sits in, as PNG; the whole page without a box."
+        from vishalakshi.read import crop
+        b, mime = self.page_image(doc, page, shelf)
+        return (crop(b, box), 'image/png') if box else (b, mime)
+    def _paged(self, f, doc=None, shelf=None):
+        "`f(v, doc_row)` for one document, or for every paged document on every shelf."
+        if doc: return [dict(r, shelf=self._shelf_name(shelf or self.shelf_name)) for r in f(self._doc(doc, shelf), dict(self.document(doc, shelf)))]
+        def each(n, v):
+            return [r for d in v.sources(None) if str(d.get('kind')) in ('pdf', 'image') for r in f(v, dict(d, id=d.get('doc_id') or d.get('id')))]
+        return self._across(None, each, lambda n: f'{n} rows to review')
+    def changes(self, doc=None, shelf=None, state=None, page=None):
+        "Proofreading changes still to decide, or in `state`. `stale` where the page has a newer version than the change was made against."
+        def f(v, d):
+            cur = {p.page: p.version for p in v.pages(d['id'])}
+            rows = v.changes(d['id'], state or None, page)
+            if not state: rows = rows.filter(lambda c: c.state in ('proposed', 'doubt'))
+            return [dict(c, doc=d['id'], title=d.get('title') or '', stale=cur.get(c.page) != c.version) for c in rows]
+        return self._paged(f, doc, shelf)
+    def _decided(self, doc, ids, shelf, states=('proposed', 'doubt')):
+        "The changes `ids` names, refused as `stale` when one is gone, decided already, or made against an older page."
+        v, ids = self._doc(doc, shelf), [i for i in ids if i]
+        if not ids: raise VaultRefused('no change chosen', 'bad_request')
+        cs, cur = {c.id: c for c in v.changes(str(doc))}, {p.page: p.version for p in v.pages(str(doc))}
+        bad = [i for i in ids if i not in cs or cs[i].state not in states or (cs[i].state in ('proposed', 'doubt') and cur.get(cs[i].page) != cs[i].version)]
+        if bad: raise VaultRefused('the page was read or decided again since: proofread it again', 'stale', 409, ids=bad)
+        return v, [cs[i] for i in ids], cur
+    def accept_changes(self, doc, ids, shelf=None, after=None):
+        "Apply changes as one new version per page. `after` replaces the one change's proposed text first."
+        v, cs, _ = self._decided(doc, ids, shelf)
+        if after is not None:
+            if len(cs) != 1: raise VaultRefused('an edit is for one change', 'bad_request')
+            v._proof_t().update(dict(id=cs[0].id, after=str(after)))  # seam: vishalakshi has no public edit of a change
+        return dict(v.accept(str(doc), [c.id for c in cs]))
+    def reject_changes(self, doc, ids, shelf=None):
+        v, cs, _ = self._decided(doc, ids, shelf)
+        return dict(rejected=v.reject(str(doc), [c.id for c in cs]))
+    def undo_changes(self, doc, ids, was='proposed', shelf=None):
+        "Undo one decision. A reject goes back to `was`; an accept files the page's text from before it as a new version."
+        from vishalakshi.read import flags
+        if was not in ('proposed', 'doubt'): raise VaultRefused('was is proposed or doubt', 'bad_request')
+        v, cs, cur = self._decided(doc, ids, shelf, ('accepted', 'rejected'))
+        t, undone = v._proof_t(), []  # seam: vishalakshi has no public undo of a decision
+        acc = L(c for c in cs if c.state == 'accepted')
+        hist = {(r.page, r.version): r for r in v.pages(str(doc), history=True)}
+        for pg, g in acc.groupby(lambda c: c.page).items():
+            if cur.get(pg) != g[0].version + 1: raise VaultRefused(f'page {pg + 1} changed again after that accept', 'stale', 409, ids=[c.id for c in g])
+        for c in cs:
+            if c.state == 'rejected': t.update(dict(id=c.id, state=was))
+        for pg, g in acc.groupby(lambda c: c.page).items():
+            txt = hist[(pg, g[0].version)].text
+            v._file_pages(str(doc), [AttrDict(page=pg, text=txt, route='proof', flags=flags(txt), model=None)], None)
+            for c in g: t.update(dict(id=c.id, state='rejected'))
+            undone.append(pg)
+        if undone:
+            d, new = v.doc(str(doc)), {p.page: p for p in v.pages(str(doc))}
+            v.add([(k, new[k].text) for k in sorted(new)], d['title'], source=d['source'], kind=d['kind'], meta=d['meta'], force=True)
+        return dict(undone=len(cs), pages=undone)
+    def proof_md(self, doc, shelf=None): return self._doc(doc, shelf).proof_md(str(doc))
+    def save_proof_md(self, doc, shelf=None):
+        "PROOFREAD.md beside the file the document was read from."
+        src = Path(str(self.document(doc, shelf).get('source') or ''))
+        if not src.is_file(): raise VaultRefused('this document was not read from a file on this machine', 'not_found', 404)
+        out = src.with_name(f'{src.stem}.PROOFREAD.md')
+        out.write_text(self.proof_md(doc, shelf))
+        return str(out)
+    def findings(self, doc=None, shelf=None, state=None, page=None):
+        "Filed personal-information findings with masked previews, never the values."
+        return self._paged(lambda v, d: [dict(r, doc=d['id'], title=d.get('title') or '') for r in v.findings(d['id'], state or None, page)], doc, shelf)
+    def judge_pii(self, doc, ids, verdict, shelf=None):
+        "`accept` says personal, `reject` says not, `undo` hands the finding back to detection. Each moves every occurrence of the value."
+        v, ids = self._doc(doc, shelf), [i for i in ids if i]
+        if not ids: raise VaultRefused('no finding chosen', 'bad_request')
+        out = (v.accept_pii(str(doc), ids) if verdict == 'accept' else v.reject_pii(str(doc), ids, by='person') if verdict == 'reject'
+               else v._judge(str(doc), ids, 'found'))  # seam: vishalakshi has no public way back to `found`
+        if not out.get('ok'): raise VaultRefused(out.get('error') or 'these findings are gone', out.get('kind') or 'stale', 409, ids=out.get('ids') or [])
+        return dict(ok=True, privacy=dict(out['privacy']))
+    def scan_pii(self, doc, shelf=None): return dict(self._doc(doc, shelf).scan_pii(str(doc)))
     def noisy_candidates(self, shelf=None, k=20, min_score=1.0):
         "Documents the vault thinks are diluting retrieval, ranked, with the features that say so."
         v = self._shelf(shelf)

@@ -9,7 +9,7 @@ from ... import errstr
 __all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL', 'every_seconds', 'cadence']
 
 ACTIVE = ('queued', 'running')
-TERMINAL = ('complete', 'error')
+TERMINAL = ('complete', 'error', 'cancelled')
 
 def every_seconds(spec, default=3600):
     "Seconds from `'30m'`, `'6h'`, or a bare number of hours. `default` when it is not a duration."
@@ -57,7 +57,7 @@ class Jobs:
     def __init__(self, path, memory=None):
         self.path, self.memory = Path(path), memory
         self.note, self._handlers, self._lock = '', {}, threading.Lock()
-        self._ticking = False
+        self._ticking, self._stop = False, set()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
     def _db(self):
@@ -110,6 +110,7 @@ class Jobs:
         if job.status == 'running': raise JobError(f'job {jid} is already running')
         fn = self._handlers.get(job.kind)
         if fn is None: raise JobError(f'unknown job kind {job.kind!r}')
+        self._stop.discard(jid)
         self.update(jid, status='running', started_at=time.time(), progress=0.05, error='')
         threading.Thread(target=self._run, args=(jid, fn), daemon=True, name=f'leela-job-{jid}').start()
         return self.get(jid)
@@ -118,10 +119,22 @@ class Jobs:
     def _run(self, jid, fn):
         try:
             out = fn(self.get(jid), partial(self.update, jid))
-            self.update(jid, status='complete', progress=1.0, result=out, finished_at=time.time())
+            # the result says whether pages went unread: a cancel that lands after the last page is a complete run
+            done = 'cancelled' if isinstance(out, dict) and out.get('cancelled') else 'complete'
+            self.update(jid, status=done, progress=1.0, result=out, finished_at=time.time())
         except Exception as e:
             kind = {'result': dict(kind=e.kind, error=errstr(e))} if getattr(e, 'kind', None) else {}
             self.update(jid, status='error', error=errstr(e)[:900], finished_at=time.time(), **kind)
+        finally: self._stop.discard(jid)
+    def cancel(self, jid):
+        "Ask a running job to stop after the pages in flight; its handler's `progress` sees the flag."
+        job = self.get(jid)
+        if not job.active: raise JobError(f'job {jid} is not running')
+        if not job.params.get('_cancel'): raise JobError(f'a {job.kind} job cannot be cancelled')
+        self._stop.add(jid)
+        self.update(jid, current='cancelling after the pages in flight')
+        return self.get(jid)
+    def stopping(self, jid): return jid in self._stop
     def recover(self):
         out = dict(resumed=[], failed=[])
         for job in self.all(limit=200):
