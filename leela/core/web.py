@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import json
+import asyncio, json
+from contextlib import suppress
 from pathlib import Path
 
 from fastcore.aio import athreaded
@@ -12,7 +13,7 @@ from starlette.staticfiles import StaticFiles
 
 from .. import errstr
 
-__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop',
+__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop', 'unless_gone',
            'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES']
 
 #: Client bundles in execution order. They share one lexical scope, so `lee-core.js` declares the vocabulary and the rest read it.
@@ -61,6 +62,19 @@ def sse(event, data):
 def off_loop(fn, *a, **kw):
     "Run blocking research, indexing and model work on fastcore's worker thread."
     return fn(*a, **kw)
+
+async def unless_gone(req, coro, every=.25):
+    "`coro`'s result, or None once the client behind `req` hangs up; either way `coro` does not outlive the request."
+    task = asyncio.ensure_future(coro)
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=every)
+            if not task.done() and await req.is_disconnected(): return None
+        return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError): await task
 
 def pipeline_socket(app, path, gate, resolve):
     "Register a websocket that shows one pipeline's terminal; `resolve(hello)` names which one."

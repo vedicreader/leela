@@ -1,34 +1,51 @@
 async function quickOpen(searchMode) {
-  const d = await api('/fs/find');
-  let hits = d.hits, sel = 0;
+  let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null;
   const m = modal(
     `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" autofocus>
+     <label><input type="checkbox" id="qoall"> include .venv and dot folders</label>
+     <div class="sub" id="qonote" hidden>hidden folders took over 10 seconds, so this list is incomplete</div>
      <div class="lee-modallist" id="qolist"></div>`,
     (e) => {
-      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.max(0, Math.min(sel + 1, hits.length - 1)); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
-    });
-  const list = m.querySelector('#qolist'), input = m.querySelector('#qo');
+    }, () => { clearTimeout(timer); ctl?.abort(); });
+  const list = m.querySelector('#qolist'), input = m.querySelector('#qo'), all = m.querySelector('#qoall'), note = m.querySelector('#qonote');
   const paint = () => {
     list.innerHTML = hits.slice(0, 300).map((h, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${esc(h.path)}</span></div>`).join('');
+      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(h.path)}</span></div>`).join('');
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  // Each search walks the whole tree. Debounced and sequenced like the folder picker.
-  let seq = 0, timer = null;
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      const mine = ++seq, q = input.value.trim();
-      const found = (await api('/fs/find?q=' + encodeURIComponent(q))).hits;
-      if (mine !== seq) return;
-      hits = found; sel = 0; paint();
-    }, 120);
-  });
-  paint(); setTimeout(() => input.focus(), 0);
+  // Hidden folders and environments take seconds to walk, so they follow the project's files and
+  // only once typing pauses. Aborting a hidden batch stops its walk on the server; `seq` drops an
+  // answer already on its way.
+  const live = mine => mine === seq && m.isConnected;
+  const stop = () => { seq++; ctl?.abort(); };
+  const search = async () => {
+    stop();
+    const mine = seq, q = input.value.trim(), signal = (ctl = new AbortController()).signal;
+    const find = extra => api('/fs/find?' + extra + 'q=' + encodeURIComponent(q), {signal});
+    note.hidden = true;
+    let found;
+    if (q === shown) { hits = hits.filter(h => !h.hidden); sel = Math.min(sel, Math.max(0, hits.length - 1)); paint(); }
+    else {
+      try { found = (await find('')).hits; } catch (e) { if (live(mine)) status(e.message, 'err'); return; }
+      if (!live(mine)) return;
+      hits = found; shown = q; sel = 0; paint();
+    }
+    if (!all.checked || !q) return;
+    await new Promise(r => setTimeout(r, 300));
+    if (!live(mine)) return;
+    try { found = await find('more=1&'); } catch (e) { if (live(mine)) status(e.message, 'err'); return; }
+    if (!live(mine)) return;
+    note.hidden = !found.partial;
+    hits = hits.concat(found.hits.map(h => ({...h, hidden: true}))); paint();
+  };
+  input.addEventListener('input', () => { stop(); clearTimeout(timer); timer = setTimeout(search, 120); });
+  all.addEventListener('change', () => { clearTimeout(timer); input.focus(); search(); });
+  search(); setTimeout(() => input.focus(), 0);
 }
 
 // The modes, in the order Tab walks them. `all` leads and ranks every backend together. A rail

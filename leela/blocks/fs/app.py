@@ -1,13 +1,14 @@
 "Files: the tree, the folder picker, and the four mutations."
 
 from __future__ import annotations
+import os, re
 
 from fastcore.all import Path, first
 
 from fasthtml.common import Div
 
 from ... import errstr
-from ...core.web import fail, off_loop, sse
+from ...core.web import fail, off_loop, sse, unless_gone
 from ...core.text import fuzzy_rank
 from .fs import lang_for
 from .ui import files_panel, git_ignored, git_tree_state, stale_tree, tree_node
@@ -253,17 +254,27 @@ def connect(app, ctx):
     _static = next((i for i, r in enumerate(_routes) if '{ext:static}' in getattr(r, 'path', '')), len(_routes))
     _routes.insert(_static, _named)
     @rt('/fs/find')
-    def fs_find(q: str = '', limit: int = 200, scope: str = '', dirs: bool = False):
-        "Fuzzy match over the open folders, best match first."
+    async def fs_find(req, q: str = '', limit: int = 200, scope: str = '', dirs: bool = False, more: bool = False):
+        "Fuzzy match over the open folders, best match first; `more` searches only what the walk leaves out."
         root = ctx.session.project_root if scope == 'project' else None
-        files = ctx.fs.walk(root)
-        hits = fuzzy_rank(q, files, key=str, limit=limit)
+        answer = lambda rows, partial=False: {'hits': rows, 'scope': str(root) if root else '', 'partial': partial}
+        if not more: return answer(await off_loop(lambda: _ranked(q, ctx.fs.walk(root), root, limit, dirs)))
+        name = q.strip().rsplit('/', 1)[-1]
+        if not name: return answer([])
+        got = await unless_gone(req, ctx.fs.hidden_files(r'(?i)' + r'.*'.join(map(re.escape, name)), root))
+        if got is None: return answer([])
+        return answer(await off_loop(_ranked, q, got[0], root, limit, dirs), got[1])
+    def _ranked(q, files, root, limit, dirs):
+        # Scored from the root's own name down, since letters in the absolute prefix matched every query.
+        tops = [(os.path.join(str(r), ''), len(str(r.parent).rstrip('/')) + 1) for r in ctx.fs.roots]
+        key = lambda p: (s := str(p))[max((n for t, n in tops if s.startswith(t)), default=0):]
+        hits = fuzzy_rank(q, files, key=key, limit=limit)
         rows = [dict(path=str(p), name=p.name, lang=lang_for(p) or '', kind='file') for p in hits]
         if dirs:
             folders = {q for p in files for q in p.parents if root is None or q != root}
-            found = fuzzy_rank(q, sorted(folders), key=str, limit=limit)
+            found = fuzzy_rank(q, sorted(folders), key=key, limit=limit)
             rows = [dict(path=str(p), name=p.name + '/', lang='', kind='folder') for p in found] + rows
-        return {'hits': rows[:limit], 'scope': str(root) if root else ''}
+        return rows[:limit]
     def _on_disk(path):
         "What the file says now, or None when it is not there."
         try: return Path(path).read_text(encoding='utf-8', errors='replace')

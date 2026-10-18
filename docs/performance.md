@@ -77,13 +77,13 @@ would also make the tree correct for changes leela did not make.
 
 ## Quick-open
 
-`/fs/find` (`blocks/fs/app.py:144`) walks the entire tree and fuzzy-ranks every path, per
-request. `blocks/search/search.js`, `codeSearch` fires it on every `input` event with no debounce
-and no sequence guard. Typing `workspace` is nine full walks and nine 668ms ranking passes,
-and the responses can arrive out of order and paint stale hits.
+`/fs/find` (`blocks/fs/app.py`, `fs_find`) ranks the list `Sandbox.walk` returns. The walk is ripgrep's, through `rgapi.fd_iter`. It obeys `.gitignore`, skips dot folders and the environment names in `SKIP_DIRS`, and gives each open root a turn until the 20,000-file cap is reached. Two roots holding 3,500 files walk in 0.13s. `_walked` keeps the list for two seconds, and Leela's own writes bump `_GEN` to drop it sooner.
 
-The folder picker two files away (`blocks/fs/files.js`, `openFolder`) already debounces at 200ms
-and guards with a `seq` counter. Copy it.
+The walk it replaced used fastcore's `globtastic`, which tests `folder_re` against the whole path, so `^[^.]` excluded nothing. Agent worktrees under `.claude` filled the cap, each query took nine seconds, and the second root was never reached.
+
+Ranking scores each path from the root's folder name down. Scored against the absolute path, the letters in `/Users/...` matched nearly every query.
+
+The file opener (`blocks/search/search.js`, `quickOpen`) opens at once and asks again 120ms after typing stops, with a `seq` counter dropping answers a newer query has replaced. Its checkbox adds a second batch, `more=1`, 300ms later. That batch is every file whose name matches in a ripgrep walk with hidden files and ignore rules switched on, minus the capped walk. On the same two roots that walk covers about 850,000 files and takes four to five seconds, so it stops at ten. A response cut short carries `partial`, and the opener says the list is incomplete.
 
 ## Compression and the critical path
 

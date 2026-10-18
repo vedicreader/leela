@@ -522,6 +522,102 @@ def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_the
     assert (tmp_path/'c.py').is_file(), 'the row that was not selected stays put'
 
 
+def test_the_palette_finds_files_as_well_as_commands(tmp_path):
+    """The palette filtered commands only, so finding a file meant knowing a second dialog existed."""
+    (tmp_path/'zqxw_notes.py').write_text('x = 1\n')
+    rows = "() => [...document.querySelectorAll('#cplist .lee-mrow')].map(r => r.textContent)"
+    has_file = "() => [...document.querySelectorAll('#cplist .lee-mrow')].some(r => r.textContent.includes('zqxw_notes.py'))"
+    async def go(pg):
+        await pg.keyboard.press('ControlOrMeta+Shift+P')
+        await pg.wait_for_selector('#cp', timeout=3000)
+        await pg.fill('#cp', 'save')
+        first = (await pg.evaluate(rows))[0]
+        held = lambda url: url.endswith('q=zqxw')
+        async def late(route):
+            if held(route.request.url): await asyncio.sleep(.5)
+            await route.continue_()
+        await pg.route('**/fs/find*', late)
+        async with pg.expect_request(lambda r: held(r.url)): await pg.fill('#cp', 'zqxw')
+        await pg.fill('#cp', 'zqxwk')
+        await pg.wait_for_timeout(800)
+        stale = await pg.evaluate(has_file)
+        await pg.fill('#cp', 'zqxw')
+        await pg.wait_for_function(has_file, timeout=5000)
+        await pg.press('#cp', 'Enter')
+        await pg.wait_for_function("() => (lee.path || '').endsWith('zqxw_notes.py')", timeout=5000)
+        return first, stale, await pg.evaluate("!!document.querySelector('#cp')")
+    first, stale, still_open = _run(go, roots=[tmp_path])
+    assert first.startswith('save'), first
+    assert not stale, 'the answer for an older query painted under the newer one'
+    assert not still_open, 'opening the file closes the palette'
+
+
+def test_the_file_opener_lists_the_project_and_adds_hidden_folders_on_request(tmp_path):
+    """Hidden folders are a second batch behind a checkbox, so the project's own files are never waiting on `.venv`."""
+    (tmp_path/'zqxw_main.py').write_text('x = 1\n')
+    (tmp_path/'.claude').mkdir(); (tmp_path/'.claude'/'zqxw_hidden.py').write_text('x = 1\n')
+    names = "() => [...document.querySelectorAll('#qolist .lee-mrow')].map(r => r.firstChild.textContent)"
+    async def go(pg):
+        await pg.keyboard.press('ControlOrMeta+P')
+        await pg.wait_for_selector('#qo', timeout=3000)
+        await pg.fill('#qo', 'zqxw')
+        await pg.wait_for_function(f"() => ({names})().includes('zqxw_main.py')", timeout=5000)
+        await pg.wait_for_timeout(800)
+        before = await pg.evaluate(names)
+        await pg.check('#qoall')
+        await pg.wait_for_function(f"() => ({names})().includes('zqxw_hidden.py')", timeout=5000)
+        after = await pg.evaluate(names)
+        focused = await pg.evaluate('document.activeElement.id')
+        await pg.route(lambda u: 'more=1' in u, lambda r: r.fulfill(json={'hits': [], 'partial': True}))
+        await pg.fill('#qo', 'zqxw_m')
+        await pg.wait_for_selector('#qonote:not([hidden])', timeout=5000)
+        note = await pg.text_content('#qonote')
+        await pg.uncheck('#qoall')
+        await pg.wait_for_function(f"() => !({names})().includes('zqxw_hidden.py')", timeout=5000)
+        cleared = await pg.evaluate("document.querySelector('#qonote').hidden")
+        return before, after, focused, note, cleared
+    before, after, focused, note, cleared = _run(go, roots=[tmp_path])
+    assert before == ['zqxw_main.py'], before
+    assert after == ['zqxw_main.py', 'zqxw_hidden.py'], 'the project batch first, the hidden one after it'
+    assert focused == 'qo', 'the box hands typing back to the query'
+    assert 'incomplete' in note, 'a hidden search cut off by its time limit says so'
+    assert cleared, 'the next search clears the warning'
+
+
+def test_a_hidden_search_the_opener_moved_past_stops_on_the_server(tmp_path, monkeypatch):
+    """Each hidden walk ran to its ten-second limit after the opener had moved on, and ticking the box refetched the query on screen."""
+    import leela.blocks.fs.fs as fsmod
+    (tmp_path/'zqxw_main.py').write_text('x = 1\n')
+    stopped = []
+    async def endless(*a, **kw):
+        try: await asyncio.Event().wait()
+        except asyncio.CancelledError: stopped.append(1); raise
+    monkeypatch.setattr(fsmod, 'fda', endless)
+    async def until(cond):
+        for _ in range(60):
+            if cond(): return
+            await asyncio.sleep(.1)
+    async def go(pg):
+        mains = []
+        pg.on('request', lambda r: mains.append(r.url) if 'q=zq1' in r.url and 'more=1' not in r.url else None)
+        await pg.keyboard.press('ControlOrMeta+P')
+        await pg.wait_for_selector('#qo', timeout=3000)
+        await pg.fill('#qo', 'zq1')
+        await pg.wait_for_timeout(400)
+        async with pg.expect_request(lambda r: 'more=1' in r.url and 'q=zq1' in r.url): await pg.check('#qoall')
+        await pg.fill('#qo', 'zqxw')
+        await until(lambda: stopped)
+        typed_past = len(stopped)
+        await pg.wait_for_timeout(600)
+        await pg.keyboard.press('Escape')
+        await until(lambda: len(stopped) > typed_past)
+        return len(mains), typed_past, len(stopped)
+    mains, typed_past, closed = _run(go, roots=[tmp_path])
+    assert mains == 1, 'ticking the box fetches only the hidden batch for a query already on screen'
+    assert typed_past == 1, 'typing past a hidden search stops its walk on the server'
+    assert closed == 2, 'closing the opener stops the walk in flight'
+
+
 def test_a_draft_from_a_version_the_file_no_longer_has_is_discarded(tmp_path):
     """Drafts are keyed by path and cell id, and both survive a rewrite by another tool, so a draft left over an older version landed back on the file that replaced it."""
     f = tmp_path/'note.py'; f.write_text('from disk\n')

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 import json
+from pathlib import Path
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.workspace import Workspace
+from leela.blocks.fs.fs import Sandbox
 
 PNG = bytes.fromhex('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489')
 
@@ -93,5 +95,47 @@ def test_creating_refuses_the_names_renaming_refuses(tmp_path, monkeypatch):
                                             'kind': 'dir'}).json()['ok']
     assert (tmp_path/'pkg'/'made.py').is_file() and (tmp_path/'pkg'/'sub').is_dir()
     assert json.loads((tmp_path/'pkg'/'notes.ipynb').read_text())['nbformat'] == 4
+
+
+def test_the_walk_is_the_project_and_the_rest_is_asked_for(tmp_path, monkeypatch):
+    """Dot folders were entered, so agent worktrees under `.claude` filled the 20,000-file cap, took nine seconds and hid the second root."""
+    monkeypatch.setattr('leela.workspace.leela_cfg', tmp_path/'cfg')
+    proj, gone = tmp_path/'proj', tmp_path/'gone'
+    for f in ('src/keys.py', '.claude/wt/keys.py', '.venv/lib/keys.py', 'cache/keys.py', 'src/other.py'):
+        (proj/f).parent.mkdir(parents=True, exist_ok=True); (proj/f).write_text('x = 1\n')
+    (proj/'.gitignore').write_text('cache/\n')
+    gone.mkdir()
+    ws = Workspace(roots=[proj, gone])
+    gone.rmdir()
+    rel = lambda ps: sorted(str(Path(p).relative_to(proj)) for p in ps)
+    assert rel(ws.fs.walk()) == ['src/keys.py', 'src/other.py'], 'a vanished root takes nothing else with it'
+    with TestClient(ide_app(ws)) as client:
+        main = client.get('/fs/find', params={'q': 'keys'}).json()['hits']
+        more = client.get('/fs/find', params={'q': 'keys', 'more': 1}).json()['hits']
+        assert client.get('/fs/find', params={'more': 1}).json()['hits'] == [], 'everything is never listed whole'
+    assert rel(h['path'] for h in main) == ['src/keys.py']
+    assert rel(h['path'] for h in more) == ['.claude/wt/keys.py', '.venv/lib/keys.py', 'cache/keys.py']
+    xy, xylo = tmp_path/'xy'/'z', tmp_path/'xylophone'
+    xy.mkdir(parents=True); xylo.mkdir(); (xylo/'tune.py').write_text('x = 1\n')
+    with TestClient(ide_app(Workspace(roots=[xy, xylo]))) as client:
+        hits = client.get('/fs/find', params={'q': 'xylophone/tune'}).json()['hits']
+    assert [h['name'] for h in hits] == ['tune.py'], 'a root is matched at a separator, not as a prefix of a sibling'
+
+
+def test_every_root_gets_a_share_of_the_cap(tmp_path):
+    """The walk filled its cap from the first root, so a large first root hid every file in the next."""
+    big, small = tmp_path/'big', tmp_path/'small'
+    big.mkdir(); small.mkdir()
+    for i in range(5): (big/f'f{i}.py').write_text('x = 1\n')
+    (small/'only.py').write_text('x = 1\n')
+    walked = Sandbox([big, small]).walk(limit=3)
+    assert len(walked) == 3 and small/'only.py' in walked, walked
+
+
+def test_environments_are_skipped_at_any_depth(tmp_path):
+    """ripgrep matches `skip_dir_re` against the path from the root, so a pattern of bare names only pruned the top level."""
+    for f in ('a.py', 'src/node_modules/y/b.py', 'pkg/__pycache__/c.py', 'deep/my-venv/d.py', 'keep/venvy/e.py'):
+        (tmp_path/f).parent.mkdir(parents=True, exist_ok=True); (tmp_path/f).write_text('x = 1\n')
+    assert sorted(str(p.relative_to(tmp_path)) for p in Sandbox([tmp_path]).walk()) == ['a.py', 'keep/venvy/e.py']
 
 

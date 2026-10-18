@@ -1,9 +1,11 @@
 "Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
-import os, shutil, re
+import asyncio, os, shutil, re
 from dataclasses import dataclass
-from fastcore.all import Path, L, globtastic, atomic_save, mkdir as fc_mkdir
+from itertools import islice, zip_longest
+from fastcore.all import Path, L, atomic_save, mkdir as fc_mkdir
+from rgapi import fda, fd_iter
 from fastcore.shutil import move as fc_move
 from fastcore.xtras import flexicache, time_policy
 
@@ -14,7 +16,8 @@ __all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'San
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
     'site-packages', 'site-python', '.eggs', '.gradle', '.next', '.turbo'}
-_SKIP_RE = (r'^(' + '|'.join(re.escape(d) for d in sorted(SKIP_DIRS))
+# ripgrep matches this against the path from the walk's root, not the folder's name.
+_SKIP_RE = (r'(^|.*/)(' + '|'.join(re.escape(d) for d in sorted(SKIP_DIRS))
             + r'|[^/]*[-_.]venv|venv[-_.][^/]*)$')
 
 LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascript', '.mjs': 'javascript',
@@ -42,12 +45,9 @@ def _changed():
 
 @flexicache(time_policy(2), maxsize=16)
 def _walked(roots, hidden, limit, gen):
-    out = L()
-    for r in roots:
-        out += globtastic(r, skip_folder_re=_SKIP_RE, skip_file_re=None if hidden else r'^\.',
-            folder_re=None if hidden else r'^[^.]', func=Path)
-        if len(out) >= limit: break
-    return out[:limit]
+    # Roots take turns, so a large first root cannot spend the whole cap.
+    turns = zip_longest(*(fd_iter(r, hidden=hidden, skip_dir_re=_SKIP_RE) for r in roots))
+    return L(islice((p for t in turns for p in t if p is not None), limit)).sorted()
 
 def lang_for(p):
     "Language id for a path, including conventional extensionless project files."
@@ -115,10 +115,18 @@ class Sandbox:
         if not p.is_dir(): raise NotADirectoryError(str(p))
         keep = lambda c: (hidden or not c.name.startswith('.')) and (not (skip and c.is_dir() and (c.name in SKIP_DIRS)))
         return L(p.ls()).filter(keep).sorted(key=lambda c: (not c.is_dir(), c.name.lower())).map(self.entry)
-    def walk(self, ref=None, hidden=False, limit=20000):
-        "Every file under `ref` (or all roots), for quick-open, capped at `limit`."
+    def _live(self, ref):
+        "`ref`, or every root still on disk, as the strings ripgrep walks."
         roots = self.roots if ref is None else L([self._check(ref, must_exist=True)])
-        return _walked(tuple(str(r) for r in roots), hidden, limit, _GEN)
+        return tuple(str(r) for r in roots if r.is_dir())
+    def walk(self, ref=None, hidden=False, limit=20000):
+        "Every file under `ref` (or all roots) that git would track, capped at `limit`."
+        return _walked(self._live(ref), hidden, limit, _GEN)
+    async def hidden_files(self, pattern, ref=None, timeout_ms=10000):
+        "Files named like `pattern` that `walk` leaves out, and whether the time limit cut the search short; cancelling stops the walk."
+        found = await fda(list(self._live(ref)), pattern, hidden=True, ignore=False, skip_dir='.git', timeout_ms=timeout_ms)
+        seen = set(await asyncio.to_thread(self.walk, ref))
+        return L(found).filter(lambda p: p not in seen).sorted(), found.stop_reason == 'timeout'
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
         p = self._check(ref, must_exist=True)
