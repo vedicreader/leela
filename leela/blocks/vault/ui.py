@@ -18,15 +18,19 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
            'tidy_list', 'watch_list', 'workbench', 'browse_view', 'find_view', 'add_view',
            'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan',
            'ops_table', 'call_form', 'call_panel', 'api_result', 'PII_COVERS',
-           'VIEWS', 'KINDS']
+           'VIEWS', 'SOURCES', 'HOME', 'KINDS', 'library_view', 'sources_view', 'vault_settings']
 
 POLL_MS = 1200
 
 PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose address is never '
               'looked for, so this says what was found, never that there is nothing')
 
-VIEWS = (('browse', 'what is in it'), ('find', 'search it'), ('add', 'put something in'),
-         ('news', 'what the feeds said'), ('specs', 'ask an api'), ('topics', 'what it is about'))
+VIEWS = (('library', 'what is in it, and putting more in'), ('find', 'search it'),
+         ('sources', 'feeds, apis and topics'))
+SOURCES = (('news', 'what the feeds said'), ('specs', 'ask an api'), ('topics', 'what it is about'))
+#: The workbench's old section names, and the tab each now sits under. A saved tab still opens where it was.
+HOME = {'browse': 'library', 'add': 'library', 'library': 'library', 'find': 'find', 'sources': 'sources',
+        **{k: 'sources' for k, _ in SOURCES}}
 
 KINDS = {'pdf': '▤', 'web': '◍', 'html': '◍', 'htm': '◍', 'news': '⚑', 'rss': '⚑',
          'code': '⌘', 'codebase': '⌘', 'api': '⚙', 'api_spec': '⚙', 'json': '⚙', 'yaml': '⚙',
@@ -91,8 +95,11 @@ def job_card(job):
             hx_target='closest .lee-job', hx_swap='delete'))
     result = d['result'] if isinstance(d['result'], dict) else {}
     if pii := result.get('pii'): body.append(_clip_pii_badge(pii))
+    if d['kind'] == 'read' and result.get('doc_id'):
+        body.append(Button('open', cls='lee-btn go', onclick=f"leeOpenVaultDoc({_js(result['doc_id'], result.get('shelf'), result.get('vault'), result.get('title') or d['target'].rsplit('/', 1)[-1])})"))
+        if result.get('blocked'): body.append(Span(f"{len(result['blocked'])} page(s) kept their text: not sent to {result.get('model') or 'the model'}", cls='lee-job-note'))
     if d['result']: body.append(Details(Summary('details'), Pre(_summarise(d['result']), cls='lee-job-result')))
-    return Div(*body, cls=f"lee-job {d['status']}", id=f"job-{d['id']}", **attrs)
+    return Div(*body, cls=f"lee-job {d['status']}", id=f"job-{d['id']}", data_kind=result.get('kind') or None, **attrs)
 
 def _why(row, n=3):
     feats = sorted(((k, v) for k, v in row.items() if isinstance(v, (int, float)) and k != 'score'),
@@ -256,10 +263,10 @@ def vault_browse(memory, q='', vault='', shelf='', limit=60, open_folders=None, 
             else vault_tree(memory, vault, shelf, open_folders, elid=elid),
         id=elid, cls='lee-vault-browse')
 
-def _clip_form(target, kind, label, hint):
+def _clip_form(target, kind, label, hint, into='#vaultwbjobs'):
     return Form(Input(name='target', cls='lee-input', value=target or '', placeholder=hint, autocomplete='off'),
         Hidden(name='kind', value=kind), Button(label, cls='lee-btn go', type='submit'),
-        cls='lee-clip-form', hx_post='/clip', hx_target='#vaultjobs', hx_swap='afterbegin')
+        cls='lee-clip-form', hx_post='/clip', hx_target=into, hx_swap='afterbegin')
 
 def _vault_row(r):
     name, act = r['name'], ('lee-shelf-name mine' if r['active'] else 'lee-shelf-name')
@@ -285,14 +292,17 @@ def _vault_row(r):
         cls='lee-shelf-row')
 
 def vault_panel(memory, jobs, active_path='', root='', vaults=None):
-    "The rail: which vaults are attached, what is in the open one, and what is being put into it."
+    "The rail is a way to the Vault tab now: everything it held lives in Library. `#vaultjobs` stays for old targets."
     return Section(
-        Div(Span('vault', cls='lee-ptitle'), Span(memory.note or '', cls='lee-keyscope'),
-            Span(cls='lee-spacer'),
-            Button('open workbench', cls='lee-btn go', title='browse, search and fill the vault in a tab',
-                   onclick='leeVaultWorkbench()'),
-            Button('research', cls='lee-btn', title='search the web and keep what you find here',
-                   onclick='leeAct("research")'), cls='lee-phead'),
+        Div(Span('vault', cls='lee-ptitle'), Span(memory.note or '', cls='lee-keyscope'), Span(cls='lee-spacer'),
+            Button('open Vault', cls='lee-btn go', title='browse, read and find in the Vault tab',
+                   onclick='leeVaultWorkbench()'), cls='lee-phead'),
+        Div(*[job_card(j) for j in jobs.all(limit=4)], id='vaultjobs', cls='lee-vault-jobs'),
+        cls='lee-panel lee-vault', id='vaultrail')
+
+def vault_settings(memory, vaults=None):
+    "Library's settings: which vaults are attached, cadence and tidy. The rail's, moved."
+    return Section(
         Div(Span('vaults', cls='lee-vault-legend'),
             *[_vault_row(r) for r in (vaults or {}).get('vaults', [])],
             Form(Input(name='path', cls='lee-input', placeholder='path to a vault.db, or a folder for a new one'),
@@ -304,15 +314,6 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
                    hx_target='#vaultfound', hx_swap='outerHTML'),
             Div(id='vaultfound', cls='lee-vault-found-rows'),
             cls='lee-vault-vaults'),
-        Div(id='vaultbrowse', cls='lee-vault-browse', hx_get='/vault/browse',
-            hx_trigger='load', hx_swap='outerHTML'),
-        Div(Span('clip', cls='lee-vault-legend'),
-            _clip_form(active_path, 'clip', 'document', 'a file or folder of documents'),
-            _clip_form(root, 'clip_codebase', 'codebase', 'a repository root'),
-            _clip_form('', 'clip_api_spec', 'api spec', 'an OpenAPI url or path (JSON or YAML)'),
-            cls='lee-vault-clip'),
-        Div(Span('jobs', cls='lee-vault-legend'), *[job_card(j) for j in jobs.all(limit=8)],
-            id='vaultjobs', cls='lee-vault-jobs'),
         Div(Span('cadence', cls='lee-vault-legend'),
             Form(Input(name='target', cls='lee-input', autocomplete='off', placeholder='a url to re-read, or a reminder'),
                 Select(*[Option(a, value=a) for a in ('url', 'remind', 'web', 'crawl')],
@@ -338,29 +339,51 @@ def _swap(view, vault='', **kw):
 def _metric(label, value): return Div(Strong(f'{value:,}' if isinstance(value, int) else str(value)),
                                       Span(label), cls='lee-wb-metric')
 
-def workbench(memory, vaults, view='browse', body=None, **kw):
-    "The whole surface: which vault, which section, and the section itself."
+def _tabs_js(cls):
+    return {'hx-on::after-request': f"this.parentNode.querySelectorAll('.{cls}')"
+                                    ".forEach(b=>b.classList.remove('active'));this.classList.add('active')"}
+
+def sources_view(body, view='news', vault=''):
+    "News, specs and topics, one tab: each is a source the vault reads from rather than a place it keeps things."
+    view = view if view in dict(SOURCES) else 'news'
+    return Div(Div(*[Button(n, cls='lee-wb-subtab' + (' active' if n == view else ''), title=why, **_swap(n, vault),
+                            **_tabs_js('lee-wb-subtab')) for n, why in SOURCES], cls='lee-wb-subtabs', role='tablist'),
+               body, cls='lee-wb-sources')
+
+def library_view(memory, vault='', shelf='', q='', jobs=None, root='', vaults=None, **_):
+    "What is in the vault, and every way of putting more in: one box that reads a file or fetches an address."
+    add = Form(Input(name='src', cls='lee-input', autocomplete='off', required=True,
+                     placeholder='a PDF or page image to read, a folder, or an address to fetch'),
+               Button('add', cls='lee-btn go', type='submit'), data_vault_add='1', cls='lee-wb-addbox',
+               onsubmit='event.preventDefault();leeVaultAdd(this)')
+    more = Details(Summary('more ways in'), add_view(memory, vault, jobs=jobs, root=root),
+                   Div(_clip_form(root, 'clip_codebase', 'codebase', 'a repository root'),
+                       _clip_form('', 'clip_api_spec', 'api spec', 'an OpenAPI url or path (JSON or YAML)'),
+                       cls='lee-wb-card'), cls='lee-wb-more')
+    settings = Details(Summary('settings'), vault_settings(memory, vaults.dict() if vaults else None), cls='lee-wb-more')
+    return Div(Div(add, more, settings, cls='lee-wb-libhead'), browse_view(memory, vault, shelf=shelf, q=q), cls='lee-wb-library')
+
+def workbench(memory, vaults, view='library', body=None, **kw):
+    "The Vault tab: which vault, which section, and the section itself."
     stats, names = memory.vault_stats(), vaults.dict()
-    active = names.get('active', '')
+    active, home = names.get('active', ''), HOME.get(view, 'library')
     picker = Select(*[Option(r['name'], value=r['name'], selected=r['name'] == active)
                       for r in names.get('vaults', [])], cls='lee-input lee-wb-vault',
                     aria_label='which vault', title=str(memory.path), name='name',
                     hx_post='/vault/activate', hx_vals='{"wb": true}', hx_trigger='change',
                     hx_target='#vaultwb', hx_swap='outerHTML')
-    tabs = [Button(name, cls='lee-wb-tab' + (' active' if name == view else ''), title=why,
-                   **_swap(name, active), **{'hx-on::after-request':
-                       "this.closest('.lee-wb-tabs').querySelectorAll('.lee-wb-tab')"
-                       ".forEach(b=>b.classList.remove('active'));this.classList.add('active')"})
+    tabs = [Button(name, cls='lee-wb-tab' + (' active' if name == home else ''), title=why,
+                   **_swap(name, active), **_tabs_js('lee-wb-tab'))
             for name, why in VIEWS]
     return Div(
-        Div(Span('vault', cls='lee-wb-mark'), picker,
+        Div(Span('Vault', cls='lee-wb-mark'), picker,
             Div(*tabs, cls='lee-wb-tabs', role='tablist', aria_label='vault sections'),
             Span(cls='lee-spacer'),
             Div(_metric('documents', stats['docs']), _metric('sections', stats['nodes']),
                 _metric('chunks', stats['chunks']), _metric('shelves', stats['shelves']),
                 _metric('encoder', stats['encoder']), cls='lee-wb-metrics'),
             cls='lee-wb-head'),
-        Div(body if body is not None else browse_view(memory, active, **kw),
+        Div(body if body is not None else library_view(memory, kw.pop('vault', active), vaults=vaults, **kw),
             id='vaultwbbody', cls='lee-wb-body'),
         id='vaultwb', cls='lee-wb', data_view=view)
 

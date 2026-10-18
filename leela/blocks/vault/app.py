@@ -2,22 +2,62 @@ from __future__ import annotations
 
 import json, re
 
-from fastcore.all import Path
+from fastcore.all import L, Path, first
 from fasthtml.common import Button, Div, Span
+from starlette.responses import Response
 
 from ... import errstr
 from ...core.web import fail, off_loop
-from ..memory.memory import source_kind
+from ..memory.memory import VaultRefused, page_list, source_kind
 from ..tabs.ui import tab_bar
 from . import ui
 from .ui import PII_COVERS, job_card, pii_badge, vault_browse, vault_panel, vault_tree
 
-__all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel', 'PII_COVERS']
+__all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel', 'PII_COVERS', 'read_choice', 'reader_id']
 
 CAPS = ('fs', 'memory', 'jobs', 'vaults', 'feeds', 'tab')
 
+def read_choice(d):
+    "A Read sheet choice as it may be remembered, or None. `allow` is never kept: allow once is once."
+    from vishalakshi.read import PARSE, PRESETS
+    if not isinstance(d, dict) or d.get('parse', 'auto') not in PARSE or d.get('preset', 'generic') not in PRESETS: return None
+    return {'parse': d.get('parse', 'auto'), 'preset': d.get('preset', 'generic'),
+            'model': str(d.get('model') or ''), 'hint': str(d.get('hint') or '')}
+
+def reader_id(name):
+    "A Leela model name as the id vishalakshi reads page images with; `model_unavailable` when it cannot."
+    if not name: return None
+    from ...agent.core import resolve, spec_caps
+    try: spec = resolve(name)
+    except Exception as e: raise VaultRefused(f'{name} is not available here ({errstr(e)})', 'model_unavailable') from e
+    if spec is None: raise VaultRefused(f'{name} is not available here', 'model_unavailable')
+    try: caps = spec_caps(spec)
+    except Exception: caps = None
+    if caps is not None and 'image' not in caps.inp: raise VaultRefused(f'{name} does not read images', 'model_unavailable')
+    return spec.model_id
+
+def _plain(o): return json.loads(json.dumps(o, default=lambda x: list(x) if isinstance(x, (L, set, tuple)) else str(x)))
+
+def _refusal(e):
+    "Any failure as the shared shape: a `VaultRefused` keeps its kind and status."
+    if isinstance(e, VaultRefused): return fail(e, e.code, kind=e.kind, **e.extra)
+    if isinstance(e, PermissionError) and not getattr(e, 'kind', None): return fail(e, 403, kind='read_only')
+    if isinstance(e, (KeyError, FileNotFoundError)): return fail(e, 404, kind='not_found')
+    return fail(e, kind=getattr(e, 'kind', None) or 'failed')
+
 def connect(app, ctx):
     rt = app.route
+    def read_job(job, report):
+        p = dict(job.params)
+        allow = bool(p.pop('allow', False))
+        if allow: report(params=p)    # allow once is spent here: a retry or a resume asks again
+        report(progress=0.1, current=f'reading {Path(job.target).name}')
+        m = ctx.vaults.memory(p.get('vault') or None)
+        out = m.read_file(job.target, p.get('shelf') or None, p.get('parse', 'auto'), p.get('model') or None,
+                     p.get('preset', 'generic'), p.get('hint', ''), p.get('pages'), ctx.session.vault_pii, allow, p.get('level') or None)
+        return {k: out.get(k) for k in ('doc_id', 'title', 'shelf', 'level', 'routes', 'flagged', 'blocked', 'kind', 'nodes', 'chunks')} | \
+               {'vault': p.get('vault') or ctx.vaults.active.name, 'model': p.get('name') or p.get('model') or ''}
+    ctx.jobs.register('read', read_job)
     try: ctx.jobs.recover()
     except Exception: pass
     @rt('/jobs')
@@ -41,6 +81,13 @@ def connect(app, ctx):
         try:
             if kind not in ('clip', 'clip_tree', 'clip_codebase', 'clip_api_spec'):
                 raise ValueError(f'unknown clip kind {kind!r}')
+            from vishalakshi.read import IMG_EXTS
+            p = Path(target).expanduser()
+            # page by page, so a scan gets routes and flags; no model, so nothing leaves before a person says where it may go
+            if kind == 'clip' and p.is_file() and p.suffix.lower() in ('.pdf', *IMG_EXTS):
+                c = ctx.session.vault_read.get(str(p.resolve().parent)) or {}
+                return job_card(ctx.jobs.start('read', str(p.resolve()), shelf=shelf or None, parse=c.get('parse', 'auto'),
+                                               preset=c.get('preset', 'generic'), hint=c.get('hint', '')))
             return job_card(ctx.jobs.start(kind, target, shelf=shelf or None, **{'from': origin} if origin else {}))
         except Exception as e: return fail(e)
     @rt('/vault/panel')
@@ -193,12 +240,108 @@ def connect(app, ctx):
         try:
             m = _mem(vault)
             row = await off_loop(m.document, doc, shelf or None)
-            if not row: return fail('no such document', 404)
+            if not row: return fail('no such document', 404, kind='not_found')
             privacy = await off_loop(m.pii, doc, shelf or None)
             evidence = await off_loop(m.pii_evidence, doc, shelf or None) if privacy.get('has_pii') else []
+            pages = await off_loop(m.pages, row.get('id') or doc, shelf or None)
             return {'doc': row, 'shelf': shelf, 'sections': await off_loop(m.sections, doc, shelf or None),
-                    'privacy': privacy, 'evidence': evidence, 'covers': PII_COVERS, 'note': m.note}
-        except Exception as e: return fail(e)
+                    'privacy': privacy, 'evidence': evidence, 'covers': PII_COVERS, 'note': m.note,
+                    'level': _plain(await off_loop(m.level, row.get('id') or doc, shelf or None)), 'paged': len(pages),
+                    'writable': bool(getattr(ctx.vaults.get(vault or None), 'writable', False))}
+        except Exception as e: return _refusal(e)
+    def _model(model):
+        "The reader for a model name, and the name kept for the line."
+        return dict(model=reader_id(model), name=model) if model else dict(model=None, name='')
+    def _plan(m, src, shelf, parse, model, pages, level, allow):
+        r = _model(model)
+        return m.read_plan(src, shelf or None, parse, r['model'], page_list(pages), ctx.session.vault_pii, allow, level or None, r['name'])
+    def _check(parse, preset, level):
+        from vishalakshi.read import PARSE, PRESETS
+        from vishalakshi.pii import LEVELS
+        if parse not in PARSE: raise VaultRefused(f'parse is one of {", ".join(PARSE)}', 'bad_request')
+        if preset not in PRESETS: raise VaultRefused(f'preset is one of {", ".join(PRESETS)}', 'bad_request')
+        if level and level not in LEVELS: raise VaultRefused(f'level is one of {", ".join(LEVELS)}', 'bad_request')
+    @rt('/vault/read')
+    async def vault_read(src: str = '', parse: str = 'auto', preset: str = 'generic', model: str = '', hint: str = '',
+                         pages: str = '', level: str = '', allow: bool = False, partial: bool = False,
+                         estimate: bool = False, vault: str = '', shelf: str = ''):
+        "The Read sheet: `estimate` says what a read would do and send; otherwise the read starts as a job."
+        try:
+            _check(parse, preset, level)
+            m = _mem(vault)
+            if not src.strip(): raise VaultRefused('nothing to read', 'bad_request')
+            folder = str(Path(src).expanduser().resolve().parent)
+            if estimate:
+                # an estimate with a model nobody has yet still says what the pages are
+                try: plan = await off_loop(_plan, m, src, shelf, parse, model, pages, level, allow)
+                except VaultRefused as e:
+                    if e.kind != 'model_unavailable': raise
+                    plan = dict(await off_loop(_plan, m, src, shelf, parse, '', pages, level, allow), ok=False, kind=e.kind, why=str(e))
+                from vishalakshi.read import PARSE, PRESETS
+                return dict(_plain(plan), ok=True, check_ok=plan['ok'], remembered=ctx.session.vault_read.get(folder),
+                            parses=list(PARSE), presets=list(PRESETS), vault=vault or ctx.vaults.active.name)
+            _writable(vault)
+            if parse == 'llm' and not model: raise VaultRefused('reading every page by model needs a model', 'model_unavailable')
+            plan = await off_loop(_plan, m, src, shelf, parse, model, pages, level, allow)
+            if busy := first(j for j in ctx.jobs.all(kind='read') if j.active and j.target == plan.src):
+                raise VaultRefused(f'{Path(plan.src).name} is already being read', 'busy', 409, job=busy.id)
+            if not plan.ok and not partial:
+                raise VaultRefused(plan.why, plan.kind, 400, pages=[w['page'] for w in plan.withheld], line=plan.why)
+            r = _model(model)
+            ctx.session.vault_read[folder] = read_choice(dict(parse=parse, preset=preset, model=model, hint=hint))
+            ctx.session.save()
+            return job_card(ctx.jobs.start('read', plan.src, vault=vault, shelf=shelf or None, parse=parse, preset=preset,
+                                           model=r['model'], name=r['name'], hint=hint, pages=page_list(pages),
+                                           level=level or None, allow=bool(allow)))
+        except Exception as e: return _refusal(e)
+    @rt('/vault/send-check')
+    async def vault_send_check(refs: str = '', src: str = '', parse: str = 'auto', model: str = '', pages: str = '',
+                               level: str = '', allow: bool = False, vault: str = '', shelf: str = ''):
+        "Where a send goes and what of it goes how: one answer for every send line."
+        try:
+            _check(parse, 'generic', level)
+            m = _mem(vault)
+            if src.strip():
+                plan = await off_loop(_plan, m, src, shelf, parse, model, pages, level, allow)
+                return dict(_plain(plan), ok=True, check_ok=plan.ok)
+            ids = [x for x in refs.split(',') if x.strip()]
+            if not ids: raise VaultRefused('nothing to check', 'bad_request')
+            from ..memory.memory import read_chat
+            r = _model(model)
+            chk = await off_loop(lambda: m._shelf(shelf or None).send_check(
+                refs=ids, model=read_chat(r['model']) or r['model'], policy=ctx.session.vault_pii, allow=allow, level=level or None))
+            return dict(_plain({k: chk[k] for k in ('ok', 'kind', 'kinds', 'why', 'local', 'send', 'masked', 'withheld')}), ok=True, check_ok=chk.ok)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/pages')
+    async def vault_pages(doc: str, vault: str = '', shelf: str = '', history: bool = False):
+        try:
+            m = _mem(vault)
+            row = await off_loop(m.document, doc, shelf or None)
+            if not row: raise VaultRefused(f'no document {doc}', 'not_found', 404)
+            return {'ok': True, 'doc': doc, 'source': row.get('source'), 'kind': row.get('kind'),
+                    'pages': _plain(await off_loop(m.pages, doc, shelf or None, history))}
+        except Exception as e: return _refusal(e)
+    @rt('/vault/page')
+    async def vault_page(doc: str, page: int = 0, version: int = 0, vault: str = '', shelf: str = ''):
+        try:
+            m = _mem(vault)
+            return dict(_plain(await off_loop(m.page, doc, page, shelf or None, version or None)), ok=True)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/page/img')
+    async def vault_page_img(doc: str, page: int = 0, w: int = 0, vault: str = '', shelf: str = ''):
+        try:
+            b, mime = await off_loop(_mem(vault).page_image, doc, page, shelf or None, w)
+            return Response(b, media_type=mime, headers={'Cache-Control': 'private, max-age=600'})
+        except Exception as e: return _refusal(e)
+    @rt('/vault/privacy')
+    async def vault_privacy(req, doc: str, level: str = '', reason: str = '', vault: str = '', shelf: str = ''):
+        "A document's level; a POST is a person setting it, or handing it back to detection with an empty one."
+        try:
+            if req.method != 'POST': return dict(_plain(await off_loop(_mem(vault).level, doc, shelf or None)), ok=True)
+            _check('auto', 'generic', level)
+            _writable(vault)
+            return {'ok': True, 'privacy': _plain(await off_loop(_mem(vault).set_level, doc, level or None, shelf or None, reason))}
+        except Exception as e: return _refusal(e)
     @rt('/vault/section')
     async def vault_section(node: str, vault: str = '', shelf: str = ''):
         try:
@@ -303,11 +446,11 @@ def connect(app, ctx):
     def _view(view, vault='', shelf='', q='', src='', match='', feed='', name=''):
         m = _mem(vault)
         if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf)
-        if view == 'add': return ui.add_view(m, vault, jobs=ctx.jobs, root=_root())
-        if view == 'news': return ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed)
-        if view == 'specs': return ui.specs_view(m, vault, **_spec_kw(src, match, name))
-        if view == 'topics': return ui.topics_view(m, vault)
-        return ui.browse_view(m, vault, shelf=shelf, q=q)
+        if view in ('news', 'sources'): return ui.sources_view(ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed), 'news', vault)
+        if view == 'specs': return ui.sources_view(ui.specs_view(m, vault, **_spec_kw(src, match, name)), 'specs', vault)
+        if view == 'topics': return ui.sources_view(ui.topics_view(m, vault), 'topics', vault)
+        return ui.library_view(m, vault, shelf=shelf, q=q, jobs=ctx.jobs, root=_root(), vaults=ctx.vaults)
+    def _news(vault='', **kw): return ui.sources_view(ui.news_view(_mem(vault), vault, feeds=ctx.feeds, **kw), 'news', vault)
     def _api_host():
         "A host over this workspace: the specs it loads live on the workspace, so the agent has them."
         from ..agent.ai import WorkspaceHost
@@ -378,8 +521,8 @@ def connect(app, ctx):
         from .news import poll_feeds
         m = _mem(vault)
         try: poll_feeds(m, ctx.feeds, only=only)
-        except Exception as e: return ui.news_view(m, vault, feeds=ctx.feeds, error=errstr(e))
-        return ui.news_view(m, vault, feeds=ctx.feeds)
+        except Exception as e: return _news(vault, error=errstr(e))
+        return _news(vault)
     @rt('/vault/apis/creds')
     def apis_creds(name: str, headers: str = '', reach: str = 'cloud'):
         "Keep one spec's headers and who may call it. The values go where leela keeps secrets."
@@ -392,23 +535,23 @@ def connect(app, ctx):
         try:
             f = await off_loop(ctx.feeds.add, url, title, every)
             return await off_loop(_read_now, vault, f.id)
-        except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
+        except Exception as e: return _news(vault, error=errstr(e))
     @rt('/vault/news/pull')
     async def news_pull(fid: str, vault: str = ''):
         try: return await off_loop(_read_now, vault, fid)
-        except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
+        except Exception as e: return _news(vault, error=errstr(e))
     @rt('/vault/news/remove')
     def news_remove(fid: str, vault: str = ''):
         try:
             ctx.feeds.remove(fid)
-            return ui.news_view(_mem(vault), vault, feeds=ctx.feeds)
-        except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
+            return _news(vault)
+        except Exception as e: return _news(vault, error=errstr(e))
     @rt('/vault/news/toggle')
     def news_toggle(fid: str, enabled: bool = None, vault: str = ''):
         try:
             ctx.feeds.toggle(fid, enabled)
-            return ui.news_view(_mem(vault), vault, feeds=ctx.feeds)
-        except Exception as e: return ui.news_view(_mem(vault), vault, feeds=ctx.feeds, error=errstr(e))
+            return _news(vault)
+        except Exception as e: return _news(vault, error=errstr(e))
     @rt('/vault/news/poll')
     def news_poll(force: bool = False):
         try: return job_card(ctx.jobs.start('feeds', force=force))

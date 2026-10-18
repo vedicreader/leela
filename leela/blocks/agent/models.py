@@ -306,6 +306,7 @@ def model_marks(name):
     try: spec = resolve(name)
     except Exception: return {}
     out = {'runtime': rt} if (rt := getattr(spec, 'runtime', None)) else {}   # the pane warns on cursor
+    out['local'] = bool(getattr(spec, 'local', False))   # pickers say "on this Mac" or "hosted"
     try: c = spec_caps(spec)
     except Exception: c = None
     return out if c is None else {**out, 'modalities': c.fmt(), 'gen_image': c.gen_image,

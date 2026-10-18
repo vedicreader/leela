@@ -275,6 +275,7 @@ class Workspace:
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.subagent_steps = self.subagent_timeout = self.subagent_depth = None   # None: ramabana's own default
         self.vault_pii = 'redact'           # what a hosted model gets of a Personal vault document
+        self.vault_read = {}                # folder -> the Read sheet's last choice there: parse, preset, model, hint
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
         self.agent_profile = agent_profile  # how new conversations are briefed: auto | small | full (ramabana's profiles)
         self.thread_optins = {}             # a conversation's own opt-ins, by session id, for `Threads.resume`
@@ -1185,7 +1186,7 @@ class Workspace:
                 'allow_workspace_repo_writes': self.allow_workspace_repo_writes,
                 'agent_read_outside': self.agent_read_outside,
                 'subagent_writes': self.subagent_writes, **{k: getattr(self, k) for k in SUBAGENT_SETTINGS},
-                'vault_pii': self.vault_pii,
+                'vault_pii': self.vault_pii, 'vault_read': self.vault_read,
                 'agent_optin': list(self.agent_optin), 'agent_profile': self.agent_profile,
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
                 'thread_profiles': dict(self.thread_profiles),
@@ -1208,6 +1209,9 @@ class Workspace:
         # a saved policy this build no longer knows is `redact`, not a workspace that will not load
         try: self.vault_pii = pii_gate(d.get('vault_pii'))
         except ValueError: self.vault_pii = 'redact'
+        from .blocks.vault.app import read_choice   # a choice this build cannot read is dropped, not a workspace that will not load
+        rows = d.get('vault_read') if isinstance(d.get('vault_read'), dict) else {}
+        self.vault_read = {str(k): c for k, v in rows.items() if (c := read_choice(v))}
         from shalya.tools import OPTIN     # a group this shalya lacks is dropped, not a workspace that will not load
         self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
         from .agent.core import PROFILES   # a profile this ramabana lacks is `auto`, not a workspace that will not load

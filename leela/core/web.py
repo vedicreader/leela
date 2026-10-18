@@ -47,13 +47,14 @@ class Assets:
         served = first(a for d, a in zip(self.dirs, self.apps) if (d/rel).is_file())
         return await ifnone(served, self.apps[0])(scope, receive, send)
 
-def fail(err, code=400):
-    "The IDE's JSON error shape. `err` is an exception (reported `Type: message`) or a ready string."
+def fail(err, code=400, kind=None, **extra):
+    "The IDE's JSON error shape. `err` is an exception (reported `Type: message`) or a ready string; `kind` is what a screen can offer."
     body = {'ok': False, 'error': errstr(err) if isinstance(err, Exception) else str(err)}
     # The kernel ceiling is the one failure a person can answer, so it travels with what to offer.
     if getattr(err, 'limit', None): body |= {'kernel_limit': err.limit, 'candidate': err.candidate}
     if isinstance(err, Exception) and getattr(err, 'kind', None): body |= {'kind': err.kind, 'refs': list(getattr(err, 'refs', ()))}
-    return JSONResponse(body, status_code=code)
+    if kind: body['kind'] = kind
+    return JSONResponse(body | extra, status_code=code)
 
 def sse(event, data):
     "One server-sent event. Newlines in the payload would end the frame, so it goes as JSON."

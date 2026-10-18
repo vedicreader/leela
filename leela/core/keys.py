@@ -10,7 +10,7 @@ __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
-SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas')
+SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas', 'vault')
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
           'home', 'end', 'pageup', 'pagedown', *[f'f{i}' for i in range(1, 13)]}
@@ -123,7 +123,9 @@ DEFAULTS = L(
     Key('clip_to_vault',    '',              'global', 'clip into the vault'),
     Key('memory_notes',     '',              'global', 'manage memory notes'),
     Key('new_memory_note',  '',              'global', 'create a memory note'),
-    Key('open_vault',       '',              'global', 'open the vault'),
+    Key('open_vault',       'hyper+v',       'global', 'open the vault'),
+    Key('vault_read',       '',              'global', 'read a file into the vault'),
+    Key('vault_find',       '',              'global', 'find in the vault'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
     Key('copy_rel_path',    'alt+y',         'global', 'copy relative path',  'toast'),
     Key('copy_abs_path',    'alt+shift+y',   'global', 'copy absolute path'),
@@ -256,6 +258,10 @@ DEFAULTS = L(
     Key('agent_tools',      'alt+shift+t',   'agent',  'what the agent did'),
     Key('agent_fold_turn',  'alt+shift+j',   'agent',  'fold this turn'),
     Key('agent_fold_all',   'alt+shift+z',   'agent',  'fold every turn'),
+    Key('vault_next_page',  'j',             'vault',  'next page',           'footer'),
+    Key('vault_prev_page',  'k',             'vault',  'previous page',       'footer'),
+    Key('vault_next_flag',  ']',             'vault',  'next flagged page',   'toast'),
+    Key('vault_prev_flag',  '[',             'vault',  'previous flagged page', 'toast'),
     Key('term_new',         'ctrl+shift+`',  'term',   'new terminal',        'toast'),
     Key('term_next',        'ctrl+shift+]',  'term',   'next terminal'),
     Key('term_prev',        'ctrl+shift+[',  'term',   'previous terminal'),
@@ -373,6 +379,7 @@ _SNAPSHOT_MIGRATIONS = {
     'edit_keys': ('', 'hyper+k'),
     'rename_symbol': ('', 'mod+alt+r'), 'replace_workspace': ('', 'mod+shift+h'),
     'workspace_undo': ('', 'hyper+,'), 'workspace_redo': ('', 'hyper+.'),
+    'open_vault': ('', 'hyper+v'),
     'notebook_undo': ('mod+alt+z', 'mod+z'), 'notebook_redo': ('mod+alt+shift+z', 'mod+shift+z'),
 }
 

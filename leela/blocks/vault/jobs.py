@@ -119,7 +119,9 @@ class Jobs:
         try:
             out = fn(self.get(jid), partial(self.update, jid))
             self.update(jid, status='complete', progress=1.0, result=out, finished_at=time.time())
-        except Exception as e: self.update(jid, status='error', error=errstr(e)[:900], finished_at=time.time())
+        except Exception as e:
+            kind = {'result': dict(kind=e.kind, error=errstr(e))} if getattr(e, 'kind', None) else {}
+            self.update(jid, status='error', error=errstr(e)[:900], finished_at=time.time(), **kind)
     def recover(self):
         out = dict(resumed=[], failed=[])
         for job in self.all(limit=200):

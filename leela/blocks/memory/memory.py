@@ -1,8 +1,9 @@
 "Durable prose memory over a vishalakshi vault."
 
 from __future__ import annotations
-import hashlib, os, re, threading, time, uuid
-from fastcore.all import L, Path, first, risinstance
+import functools, hashlib, json, os, re, threading, time, uuid
+from collections import Counter
+from fastcore.all import AttrDict, L, Path, first, risinstance
 
 from ... import errstr
 
@@ -11,7 +12,8 @@ except ImportError:
     def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind', 'source_keys',
-           'GLOBAL', 'ACQUIRE', 'PII_GATES', 'PII_LABELS', 'pii_gate', 'PrivacyBlocked', 'withheld_why']
+           'GLOBAL', 'ACQUIRE', 'PII_GATES', 'PII_LABELS', 'pii_gate', 'PrivacyBlocked', 'withheld_why',
+           'VaultRefused', 'read_chat', 'page_list']
 
 GLOBAL = 'leela'
 
@@ -28,6 +30,43 @@ def pii_gate(v, default='redact'):
 class PrivacyBlocked(PermissionError):
     "A send refused for a document's level: `kind` is `pii_blocked` or `local_only`, `refs` what was withheld."
     def __init__(self, why, kind='pii_blocked', refs=()): super().__init__(why); self.kind, self.refs = kind, list(refs)
+
+class VaultRefused(Exception):
+    "A vault request a screen can answer: `kind` from the screens table, `code` the HTTP status."
+    def __init__(self, why, kind, code=400, **extra): super().__init__(why); self.kind, self.code, self.extra = kind, code, extra
+
+def read_chat(model):
+    "The reader a page read goes through for `model`; None lets vishalakshi build it. Tests put a stand-in here."
+    return None
+
+def page_list(spec):
+    "Pages as a person writes them, 1-based (`'1-3,7'`), as the 0-based list vishalakshi takes. Empty is None: every page."
+    out = []
+    for part in str(spec or '').replace(' ', '').split(','):
+        if not part: continue
+        a, _, b = part.partition('-')
+        if not (a.isdigit() and (not b or b.isdigit())) or int(a) < 1: raise VaultRefused(f'{part!r} is not a page or a range like 3-9', 'bad_request')
+        out += range(int(a) - 1, int(b or a))
+    return sorted(set(out)) or None
+
+def _resolved(src):
+    p = Path(str(src)).expanduser()
+    try: return str(p.resolve())
+    except OSError: return str(p)
+
+_PASSES = {}
+
+@functools.lru_cache(maxsize=256)
+def _render(src, mtime, page, w):
+    "One page as image bytes and their type, held in memory only: a render on disk is a copy no level guards."
+    from vishalakshi.read import IMG_EXTS, render
+    p = Path(src)
+    if p.suffix.lower() in IMG_EXTS:
+        if page: raise IndexError(f'{p.name} is one page')
+        return p.read_bytes(), f"image/{p.suffix.lower().lstrip('.').replace('jpg', 'jpeg')}"
+    if not w: return render(p, page, dpi=110), 'image/png'
+    from pdflite import pdf_doc
+    return pdf_doc(p).render_page_fit(page, w, w * 2, format='png'), 'image/png'
 
 #: The vault readers a person can point at something, each named for what it reads.
 ACQUIRE = ('grab', 'web', 'crawl', 'note', 'harvest', 'github', 'arxiv', 'youtube', 'pdf')
@@ -543,6 +582,86 @@ class Memory:
         "The PII report for one document, or why there is none."
         try: return dict(self._shelf(shelf).pii(doc_id, ner=ner))
         except Exception as e: return dict(note=f'pii unavailable ({errstr(e)})', has_pii=False)
+    def text_pass(self, src, shelf=None, parse='auto'):
+        "Each page of a PDF or page image as `read_doc` has it before any model reads it: text layer, local OCR, route and flags."
+        from vishalakshi.read import IMG_EXTS, read_doc
+        p = Path(_resolved(src))
+        if not p.is_file(): raise VaultRefused(f'no file at {src}', 'not_found', 404)
+        if p.suffix.lower() not in ('.pdf', *IMG_EXTS): raise VaultRefused(f'{p.name} is not a PDF or a page image', 'unsupported')
+        ocr = parse if parse in ('auto', 'ocr') else 'text'
+        key = (str(p), p.stat().st_mtime_ns, ocr)
+        if key not in _PASSES: _PASSES[key] = read_doc(p, ocr, pages=[], out=self._shelf(shelf).assets(p.stem))
+        return _PASSES[key]
+    def read_plan(self, src, shelf=None, parse='auto', model=None, pages=None, pii='redact', allow=False, level=None, name=''):
+        "What a read of `src` sends where, page by page, by `read_doc`'s rules: the line above the Read button."
+        from vishalakshi.ask import model_local, send_line, send_rule
+        from vishalakshi.pii import pii_report, top, type_policy
+        p, v = _resolved(src), self._shelf(shelf)
+        rows, want = self.text_pass(p, shelf, parse), None if pages is None else set(pages)
+        need = [r for r in rows if (want is None or r.page in want) and (parse == 'llm' or (parse == 'auto' and (r.route == 'scanned' or bool(r.flags))))]
+        tp = type_policy(text='\n\n'.join(r.text for r in rows)[:6000])
+        d = v.doc(p)
+        doc = d['id'] if d and d['source'] == p else None
+        cur = v.level(doc).level if doc else v.floor()
+        # a sensitive type raises the level whatever `pii` says: `read_doc` skips that step under `off`
+        lv0, chat = top(cur, level, tp.level), read_chat(model)
+        loc = model_local(chat if chat is not None else model) if model or chat is not None else True
+        items = L()
+        for r in need:
+            rep = pii_report(r.text, ner=True) if r.text.strip() else None
+            lv = top(lv0, 'personal' if rep and rep.has_pii else 'open')
+            how = send_rule(lv, loc, pii, allow, image=True) if model or chat is not None else 'kept'
+            items.append(AttrDict(page=r.page, level=lv, how=how, kinds=dict(rep.identifying) if rep and rep.has_pii else {}))
+        wh, kinds = items.filter(lambda i: i.how == 'withheld'), dict(sum((Counter(i.kinds) for i in items), Counter()))
+        why = (send_line(items, name or str(model), loc) if model or chat is not None else
+               f"No model chosen. {len(rows)} page{'' if len(rows) == 1 else 's'} keep their text layer and local OCR; nothing leaves this machine.")
+        pick = lambda how: [dict(page=i.page, level=i.level) for i in items if i.how == how]
+        return AttrDict(ok=not wh, kind=None if not wh else 'local_only' if all(i.level == 'local' for i in wh) else 'pii_blocked',
+                        why=why, local=loc, model=name or model, kinds=kinds, send=pick('whole') + pick('masked'), withheld=pick('withheld'),
+                        src=p, doc=doc, pages=len(rows), need=[r.page for r in need], level=lv0, current=cur,
+                        flags={r.page: list(r.flags) for r in rows if r.flags}, routes=dict(Counter(r.route for r in rows)),
+                        type=dict(doctype=tp.doctype, preset=tp.preset, level=tp.level, vision=tp.vision, sensitive=tp.sensitive))
+    def read_file(self, src, shelf=None, parse='auto', model=None, preset='generic', hint='', pages=None, pii='redact', allow=False, level=None):
+        "Read `src` into the vault page by page. The level the read needs is set before any page image is sent; no model means nothing leaves."
+        from vishalakshi.pii import LEVELS
+        v, p = self._shelf(shelf), _resolved(src)
+        plan = self.read_plan(p, shelf, parse, model, pages, pii, allow, level)
+        if LEVELS.index(plan.level) > LEVELS.index(plan.current):
+            if not plan.doc: v.read_doc(p, parse='text', pages=[])
+            v.set_level(p, plan.level, reason='set before the read')
+        chat = read_chat(model)
+        if not model and chat is None: pages = []
+        out = dict(v.read_doc(p, parse=parse, model=model or None, preset=preset, hint=hint, pages=pages, chat=chat, pii=pii, allow=allow))
+        return dict(out, shelf=self._shelf_name(shelf or self.shelf_name), level=v.level(out['doc_id']).level)
+    def pages(self, doc, shelf=None, history=False):
+        "A read document's pages, 0-based, latest version each or every version."
+        return [dict(r, flags=r['flags'] if isinstance(r['flags'], list) else json.loads(r['flags'] or '[]'))
+                for r in self._shelf(shelf).pages(str(doc), history=history)]
+    def page(self, doc, page, shelf=None, version=None):
+        "One read page: its text, blocks, route, flags and the versions it has."
+        rows = [r for r in self.pages(doc, shelf, history=True) if r['page'] == int(page)]
+        if not rows: raise VaultRefused(f'page {int(page) + 1} was never read', 'not_found', 404)
+        r = first(x for x in rows if x['version'] == int(version)) if version else rows[-1]
+        if r is None: raise VaultRefused(f'page {int(page) + 1} has no version {version}', 'not_found', 404)
+        return dict(r, blocks=json.loads(r.get('blocks') or 'null'), versions=[x['version'] for x in rows])
+    def page_image(self, doc, page, shelf=None, w=0):
+        "`(bytes, type)` of one page of a document's source, rendered in memory."
+        row = self.document(doc, shelf)
+        if not row: raise VaultRefused(f'no document {doc}', 'not_found', 404)
+        src = Path(str(row.get('source') or ''))
+        try: mtime = src.stat().st_mtime_ns
+        except OSError: raise VaultRefused(f'{src} is no longer on disk', 'render_failed', 422) from None
+        try: return _render(str(src), mtime, int(page), max(0, min(2000, int(w or 0))))
+        except Exception as e: raise VaultRefused(f'page {int(page) + 1} would not render ({errstr(e)})', 'render_failed', 422) from e
+    def level(self, doc, shelf=None):
+        "A document's privacy level, with what decided it."
+        try: return dict(self._shelf(shelf).level(str(doc)))
+        except ValueError as e: raise VaultRefused(str(e), 'not_found', 404) from e
+    def set_level(self, doc, level=None, shelf=None, reason='', by='person'):
+        "Set a document's level, or None to let detection decide. Only a person lowers one."
+        if not self._shelf(shelf).doc(str(doc)): raise VaultRefused(f'no document {doc}', 'not_found', 404)
+        self._shelf(shelf).set_level(str(doc), level or None, reason=reason, by=by)
+        return self.level(doc, shelf)
     def noisy_candidates(self, shelf=None, k=20, min_score=1.0):
         "Documents the vault thinks are diluting retrieval, ranked, with the features that say so."
         v = self._shelf(shelf)
