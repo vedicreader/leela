@@ -154,7 +154,9 @@ markers = ["slow: drives a browser, starts a kernel, or loads a model"]
 # Leela imports no `mcp`; `koshas` brings it and asks only for `>=1.2.0`. 2.x renamed `FastMCP`
 # to `MCPServer`, which `ramabana.mcp` imports, so an unconstrained resolve takes the major and
 # `import ramabana.mcp` stops working. A constraint rather than a dependency: it is not ours.
-constraint-dependencies = ["mcp<2"]
+# `pyjwt` arrives through `mcp[crypto]`. Below 2.15.0 it carries the asymmetric-PEM HS/RS confusion
+# bypass and the other Dependabot alerts against this lock.
+constraint-dependencies = ["mcp<2", "pyjwt>=2.15.0"]
 
 [tool.uv.sources]
 leela = { workspace = true }
