@@ -3010,8 +3010,9 @@ window.leeWatchRun = leeWatchRun; window.leeWatchStop = leeWatchStop;
 /* A delegation that finished while nobody was asking: painted when it lands, and carried into the
    next turn by the agent core itself. */
 function backgroundCard(log, d) {
-  const el = document.createElement('section'); el.className = `lee-agent-background ${esc(d.state || '')}`;
-  el.innerHTML = `<header><strong>Background result</strong><span>${esc(d.id || '')} · ${esc(d.state || '')}</span></header>` +
+  const el = document.createElement('details'); el.className = `lee-agent-background ${esc(d.state || '')}`; el.open = true;
+  el.innerHTML = `<summary><strong>Background result</strong><span>${esc(d.id || '')} · ${esc(d.state || '')}</span>` +
+    `<i class="lee-agent-step-chevron" aria-hidden="true"></i></summary>` +
     `<p>${esc(d.question || '')}</p><pre>${esc(d.answer || '')}</pre>` +
     `<button class="lee-btn" type="button" data-watch-run="${esc(d.id || '')}">Transcript</button>`;
   $('[data-watch-run]', el).onclick = () => leeWatchRun(d.id, d.question || d.id);

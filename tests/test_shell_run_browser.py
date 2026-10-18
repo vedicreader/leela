@@ -31,3 +31,17 @@ def test_a_shell_block_in_an_agent_reply_runs_and_stops(tmp_path):
     counts, first, label = _run(go, roots=[tmp_path])
     assert counts == (2, 0), 'bash and sh in the agent log; not python, not outside it'
     assert first.split() == ['hi', 'exit', '3'] and label == 'run'
+
+
+def test_a_background_result_folds_from_its_header(tmp_path):
+    "A delegation that lands between turns is a disclosure: open on arrival, and its header folds the report away."
+    async def go(pg):
+        await pg.evaluate("() => backgroundCard(null, {id: 'run_8b2dae555865', state: 'completed', question: 'q', answer: 'long report'})")
+        card = pg.locator('#agentlog .lee-agent-background')
+        before = await card.evaluate('el => [el.tagName, el.open, el.querySelector(":scope > summary").textContent]')
+        await card.locator('summary').dispatch_event('click')
+        after = await card.evaluate('el => [el.open, !!el.querySelector(":scope > pre")]')
+        return before, after
+    before, after = _run(go, roots=[tmp_path])
+    assert before == ['DETAILS', True, 'Background resultrun_8b2dae555865 · completed']
+    assert after == [False, True]

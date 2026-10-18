@@ -984,7 +984,11 @@ kbd {
 .lee-subagent-run:first-of-type { border-top: 0; }
 .lee-agent-background { margin: 6px 0; border: 1px solid var(--lee-border); border-left: 3px solid var(--lee-accent); border-radius: 6px; font-size: 11px; }
 .lee-agent-background.failed { border-left-color: var(--lee-red); }
-.lee-agent-background > header { display: flex; gap: 8px; padding: 6px 9px; border-bottom: 1px solid var(--lee-border); }
+.lee-agent-background > summary { display: flex; align-items: center; gap: 8px; padding: 6px 9px; list-style: none; cursor: pointer; }
+.lee-agent-background > summary::-webkit-details-marker { display: none; }
+.lee-agent-background > summary > span { flex: 1; }
+.lee-agent-background[open] > summary { border-bottom: 1px solid var(--lee-border); }
+.lee-agent-background[open] > summary .lee-agent-step-chevron { transform: rotate(225deg) translate(-1px, 1px); }
 .lee-agent-background p, .lee-agent-background pre { margin: 0; padding: 6px 9px; white-space: pre-wrap; }
 .lee-rule-list { display: grid; gap: 4px; padding: 10px 12px; max-height: 60vh; overflow: auto; }
 .lee-rule { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: 1px solid var(--lee-border); border-radius: 4px; font: 400 10.5px/1.4 var(--lee-mono); }
