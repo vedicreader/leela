@@ -74,7 +74,10 @@ function vaultHead(st, d) {
       `<button class="lee-btn" data-vault-act="review">review</button>` +
       `<button class="lee-btn" data-vault-act="sent" title="m: what a hosted model receives">as sent</button>` +
       `<button class="lee-btn" data-vault-act="find" title="/: find in this document">find</button>` +
-      `<button class="lee-btn" data-vault-act="fields" title="the fields read out of it, each with its page">fields</button>` : '') +
+      `<button class="lee-btn" data-vault-act="fields" title="the fields read out of it, each with its page">fields</button>` +
+      (doc.meta?.book ? `<button class="lee-btn" data-vault-act="chapters" title="its chapters and verse numbers, and the problems to check">chapters</button>`
+                      : `<button class="lee-btn" data-vault-act="book" title="read every page by a model as a book of verses">read as a book</button>`) : '') +
+    `<button class="lee-btn" data-vault-sent-log title="what of it went to a hosted model, and when">sent</button>` +
     (VAULT_PAGED.test(src) ? `<button class="lee-btn" data-vault-reread>${d.paged ? 'read the file again' : 'read it page by page'}</button>` : '') +
     (src.startsWith('/') ? `<button class="lee-btn" data-vault-file>open file</button>` : '') + `</header>`;
 }
@@ -89,6 +92,7 @@ function wireVaultHead(host, st, d) {
   const src = String(d.doc?.source || '');
   const rr = $('[data-vault-reread]', host); if (rr) rr.onclick = () => leeVaultReadSheet(src, {vault: st.vault || '', shelf: st.shelf || ''});
   const of = $('[data-vault-file]', host); if (of) of.onclick = () => leeOpenVaultFile(st.doc, st.shelf || '', st.vault || '');
+  const sl = $('[data-vault-sent-log]', host); if (sl) sl.onclick = () => leeVaultSends({doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''});
   const repaint = lv => { $('[data-level-slot]', host).innerHTML = vaultLevelChip(lv, d.writable); wireVaultLevel(host, st, repaint); };
   wireVaultLevel(host, st, repaint);
 }
@@ -120,7 +124,8 @@ async function mountVaultPages(host, st, d, q) {
       `<span class="lee-vault-pno">${pageNo(p.page)}</span><span class="lee-vault-route ${esc(p.route)}">${esc(p.route)}</span>` +
       `${p.flags.map(f => `<i class="lee-vault-flag" title="${esc(f)}"></i>`).join('')}</button>`).join('')}</div></aside>` +
     `<figure class="lee-vault-pageimg"><img data-pageimg alt=""><figcaption data-imgerr hidden></figcaption></figure>` +
-    `<article class="lee-vault-pagetext" data-pagetext></article><aside class="lee-vault-fields" data-fields hidden></aside></div></div>`;
+    `<article class="lee-vault-pagetext" data-pagetext></article><aside class="lee-vault-fields" data-fields hidden></aside>` +
+    `<aside class="lee-vault-fields lee-vault-chapters" data-chapters hidden></aside></div></div>`;
   const view = $('.lee-vault-docview', host), img = $('[data-pageimg]', host), text = $('[data-pagetext]', host);
   let at = -1, seq = 0;
   const show = async i => { const tok = ++seq;
@@ -170,7 +175,9 @@ async function mountVaultPages(host, st, d, q) {
     review: () => leeVaultReview(st.doc, st.shelf || '', st.vault || ''),
     find: () => leeVaultFindIn(st),
     ask: () => leeVaultFindIn(st, cur()),
-    fields: () => vaultFields(st, $('[data-fields]', host), go),
+    fields: () => { $('[data-chapters]', host).hidden = true; vaultFields(st, $('[data-fields]', host), go); },
+    chapters: () => { $('[data-fields]', host).hidden = true; vaultChapters(st, $('[data-chapters]', host), go); },
+    book: () => vaultPageSheet('book', st, {done: () => { lee.vaultChapters = st.doc; mountVault(host, {...st, at: cur()}); }}),
     sent: () => { st.sent = !st.sent; view.classList.toggle('sent', !!st.sent); $$('[data-vault-act="sent"]', host).forEach(b => b.classList.toggle('active', !!st.sent)); show(at); },
   };
   view.addEventListener('click', e => { const b = e.target.closest('[data-vault-act]'); if (b && acts[b.dataset.vaultAct]) acts[b.dataset.vaultAct](); });
@@ -200,6 +207,7 @@ async function mountVaultPages(host, st, d, q) {
   const jump = lee.vaultJump?.doc === st.doc ? lee.vaultJump : null;
   lee.vaultJump = null;
   await go(jump?.page ?? st.at, jump);
+  if (lee.vaultChapters === st.doc && d.doc?.meta?.book) { lee.vaultChapters = null; acts.chapters(); }
   view.focus({preventScroll: true});
 }
 
@@ -249,21 +257,23 @@ async function vaultHistory(st, q, page, done = null) {
 
 /* The Re-read and Proofread sheets: which pages, which models, and the send line above the button. */
 async function vaultPageSheet(kind, st, {pages = '', done = null} = {}) {
-  const proof = kind === 'proof', base = {doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''};
+  const proof = kind === 'proof', isBook = kind === 'book', base = {doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''};
   const est = proof ? await vaultCall('/vault/proofread', {...base, estimate: true}) : {};
   const mem = est.remembered || {};
   const pick = i => `<label>${proof ? `reader ${i + 1}` : 'model'}<select class="lee-input" name="model${i}" aria-label="${proof ? 'proofreader' : 'the model that reads the pages again'}">` +
     `<option value="">${proof && i ? 'none' : 'choose a model'}</option></select></label>`;
-  const m = modal(`<div class="lee-mhead"><span>${proof ? 'Proofread' : 'Re-read pages'}</span><span class="sub">${esc(st.title || st.doc)}</span></div>` +
+  const title = proof ? 'Proofread' : isBook ? 'Read as a book of verses' : 'Re-read pages', goLabel = proof ? 'Proofread' : isBook ? 'Read as a book' : 'Read again';
+  const m = modal(`<div class="lee-mhead"><span>${title}</span><span class="sub">${esc(st.title || st.doc)}</span></div>` +
     `<form class="lee-vault-sheet" data-vault-pagesheet="${kind}">` +
     `<label>pages<input class="lee-input" name="pages" autocomplete="off" value="${esc(pages)}" placeholder="all, or 3-9"></label>` +
     pick(0) + (proof ? pick(1) + `<label>agree<input class="lee-input" name="agree" type="number" min="1" max="2" value="${esc(mem.agree || 2)}"></label>`
-      : `<label>preset<select class="lee-input" name="preset"><option value="">as first read</option>` +
-        ['generic', 'sanskrit', 'tamil', 'tables'].map(p => `<option>${p}</option>`).join('') + `</select></label>` +
+      : `<label>preset<select class="lee-input" name="preset">${isBook ? '' : '<option value="">as first read</option>'}` +
+        (isBook ? VAULT_VERSES : ['generic', 'sanskrit', 'tamil', 'tables']).map(p => `<option>${p}</option>`).join('') + `</select></label>` +
+        (isBook ? `<label>verses per chapter<input class="lee-input" name="counts" autocomplete="off" placeholder="optional, like 47,72,43"></label>` : '') +
         `<label>hint<input class="lee-input" name="hint" autocomplete="off" placeholder="what the pages are, for the model"></label>`) +
     `<div class="lee-vault-sendline" data-send role="status">choose a model to see where the pages go</div>` +
     `<label class="lee-vault-allow" data-allow hidden><input type="checkbox" name="allow"> allow once: send the Personal pages, this run only</label>` +
-    `<div class="lee-vault-sheetfoot"><span class="lee-spacer"></span><button class="lee-btn go" type="submit" data-go>${proof ? 'Proofread' : 'Read again'}</button></div>` +
+    `<div class="lee-vault-sheetfoot"><span class="lee-spacer"></span><button class="lee-btn go" type="submit" data-go>${goLabel}</button></div>` +
     `<div class="lee-vault-jobs" data-job></div></form>`, null, null, {storageKey: 'vault-pages'});
   const f = $('[data-vault-pagesheet]', m), sels = $$('select[name^="model"]', f);
   const models = (await vaultModels()).filter(seesImages);
@@ -282,7 +292,7 @@ async function vaultPageSheet(kind, st, {pages = '', done = null} = {}) {
   const names = () => sels.map(s => s.value).filter(Boolean).join(',');
   const fields = () => ({...base, pages: f.elements.pages.value, allow: f.elements.allow.checked,
     ...(proof ? {readers: names(), agree: +f.elements.agree.value || 2}
-              : {model: names(), preset: f.elements.preset.value, hint: f.elements.hint.value})});
+              : {model: names(), preset: f.elements.preset.value, hint: f.elements.hint.value, ...(isBook ? {counts: f.elements.counts.value} : {})})});
   const check = async () => {
     const line = $('[data-send]', m), go = $('[data-go]', m);
     if (!names()) { last = {}; line.className = 'lee-vault-sendline'; line.textContent = 'choose a model to see where the pages go'; return; }
@@ -294,14 +304,14 @@ async function vaultPageSheet(kind, st, {pages = '', done = null} = {}) {
     line.dataset.kind = last.kind || '';
     $('[data-allow]', m).hidden = last.kind !== 'pii_blocked' && !f.elements.allow.checked;
     go.textContent = last.kind === 'model_unavailable' ? 'pick another model'
-      : blocked ? (proof ? 'Proofread, skipping withheld pages' : 'Read again, skipping withheld pages') : (proof ? 'Proofread' : 'Read again');
+      : blocked ? `${goLabel}, skipping withheld pages` : goLabel;
   };
   f.addEventListener('change', check);
   f.elements.pages.addEventListener('input', () => { clearTimeout(f.__t); f.__t = setTimeout(check, 300); });
   f.addEventListener('submit', async e => {
     e.preventDefault();
     if (!names()) return status('choose a model', 'err');
-    const r = await vaultCall(proof ? '/vault/proofread' : '/vault/reparse', {...fields(), partial: last.check_ok === false});
+    const r = await vaultCall(proof ? '/vault/proofread' : isBook ? '/vault/book' : '/vault/reparse', {...fields(), partial: last.check_ok === false});
     const jobs = $('[data-job]', m);
     if (r.html) {
       jobs.insertAdjacentHTML('afterbegin', r.html);
@@ -310,7 +320,9 @@ async function vaultPageSheet(kind, st, {pages = '', done = null} = {}) {
       if (id) vaultFollow(id, m, kind, j => {
         m.remove();
         if (proof) return leeVaultReview(st.doc, st.shelf || '', st.vault || '');
-        status(j.result?.blocked?.length ? `${j.result.blocked.length} page(s) not sent` : 'read again: a new version of each page', j.result?.blocked?.length ? 'err' : 'ok');
+        status(j.result?.blocked?.length ? `${j.result.blocked.length} page(s) not sent`
+          : isBook ? `${j.result.chapters} chapter(s), ${j.result.verses} verses · ${j.result.problems} problem(s) to check` : 'read again: a new version of each page',
+          j.result?.blocked?.length ? 'err' : 'ok');
         done?.(j);
       });
       return;
@@ -444,3 +456,37 @@ async function leeOpenVaultDoc(doc, shelf = '', vault = '', title = '', jump = n
   return mountTab();
 }
 window.leeOpenVaultDoc = leeOpenVaultDoc;
+
+/* The Chapters drawer: each chapter's verse numbers, a click opens the verse's page on its block; the problems are checked under Review > Verses. */
+async function vaultChapters(st, box, go) {
+  box.hidden = !box.hidden;
+  if (box.hidden) return;
+  const base = {doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''};
+  box.innerHTML = '<div class="lee-dim">gathering the verses…</div>';
+  let b;
+  try { b = await api('/vault/book?' + new URLSearchParams(base)); }
+  catch (e) { box.textContent = e.message || String(e); return; }
+  const open = b.probs.filter(p => p.state === 'open').length;
+  box.innerHTML = `<div class="lee-vault-fieldshead"><strong>Chapters</strong><small>${b.chapters.length} · ${b.verses} verses · ${esc(b.preset)}</small></div>` +
+    `<div class="lee-vault-bookbar"><button class="lee-btn${open ? ' warn' : ''}" data-book-probs>${open} problem${open === 1 ? '' : 's'} to check</button>` +
+    `<button class="lee-btn" data-book-md>BOOK.md</button><button class="lee-btn" data-book-save>save beside the file</button></div>` +
+    (b.changed.length ? `<div class="lee-dim" data-book-changed>pages ${b.changed.map(pageNo).join(', ')} read again since: the chapters follow the pages as they read now</div>` : '') +
+    b.chapters.map((c, i) => `<section class="lee-vault-chapter" data-chapter="${i}"><strong>${esc(c.heading || `Chapter ${i + 1}`)}</strong>` +
+      `<div class="lee-vault-verses">${c.verses.map((v, k) => `<button class="lee-vault-verse" data-verse="${i}.${k}" title="p. ${pageNo(v.page)} · ${esc(v.text.split('\n')[0])}">${esc(v.n)}</button>`).join('')}</div>` +
+      (c.colophon ? `<small>${esc(c.colophon)}</small>` : '') + `</section>`).join('');
+  $$('[data-verse]', box).forEach(el => el.onclick = () => {
+    const [i, k] = el.dataset.verse.split('.').map(Number), v = b.chapters[i].verses[k];
+    $$('.lee-vault-verse.active', box).forEach(x => x.classList.remove('active')); el.classList.add('active');
+    go(v.page, {block: v.block, quote: v.block == null ? v.text.split('\n')[0] : ''});
+  });
+  $('[data-book-probs]', box).onclick = () => leeVaultReview(st.doc, st.shelf || '', st.vault || '', 'book');
+  $('[data-book-md]', box).onclick = async () => {
+    const r = await fetch('/vault/book.md?' + new URLSearchParams(base)), md = await r.text();
+    if (!r.ok) return status(md, 'err');
+    modal(`<div class="lee-mhead">BOOK.md<span class="sub">${esc(b.title)}</span></div><pre class="lee-vault-sent lee-review-md" data-book-preview>${esc(md)}</pre>`, null, null, {storageKey: 'vault-bookmd'});
+  };
+  $('[data-book-save]', box).onclick = async () => {
+    const r = await vaultCall('/vault/book.md', base);
+    status(r.ok ? `wrote ${r.path}` : r.error, r.ok ? 'ok' : 'err');
+  };
+}

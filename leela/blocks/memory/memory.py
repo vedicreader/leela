@@ -50,6 +50,27 @@ def page_list(spec):
         out += range(int(a) - 1, int(b or a))
     return sorted(set(out)) or None
 
+#: The presets a book of verses is read with, and the script each prints in.
+VERSE_SCRIPT = {'sanskrit': 'Devanagari', 'tamil': 'Tamil'}
+
+class _Read:
+    "A vault whose read already ran, for `lekhaka.read_book`: Leela reads with progress, cancel and the privacy gate, and lekhaka assembles."
+    def __init__(self, v, did): self.v, self.did = v, did
+    def read_doc(self, *a, **kw): return dict(doc_id=self.did)
+    def pages(self, did): return self.v.pages(did)
+
+def _prob_page(s):
+    "A lekhaka problem as `(page, text)`: `'12: verse 5 after 3'` and `'chapter 2: … (12)'` name a 0-based page, the rest none."
+    if m := re.match(r'(\d+): (.*)', s, re.S): return int(m[1]), m[2]
+    if m := re.match(r'(.*) \((\d+)\)$', s, re.S): return int(m[2]), m[1]
+    return None, s
+
+def counts_list(spec):
+    "Verses per chapter as a person writes them, `'47, 72 43'`; empty is None."
+    xs = [x for x in re.split(r'[\s,]+', str(spec or '').strip()) if x]
+    if not all(re.fullmatch(r'[1-9]\d*', x) for x in xs): raise VaultRefused('verses per chapter are whole numbers, like 47,72,43', 'bad_request')
+    return [int(x) for x in xs] or None
+
 def withhold_local(o, v):
     "`o`, what a retrieval returned, with every Local-only row withheld: what a stored `off` still keeps from a hosted model."
     from vishalakshi.ask import send_rule
@@ -791,11 +812,14 @@ class Memory:
                         why=why, local=loc, model=name or model, kinds=kinds, send=pick('whole') + pick('masked'), withheld=pick('withheld'),
                         src=p, doc=doc, pages=len(rows), need=[r.page for r in need], level=lv0, current=cur,
                         flags={r.page: list(r.flags) for r in rows if r.flags}, routes=dict(Counter(r.route for r in rows)),
-                        type=dict(doctype=tp.doctype, preset=tp.preset, level=tp.level, vision=tp.vision, sensitive=tp.sensitive))
+                        type=dict(doctype=tp.doctype, preset=tp.preset, level=tp.level, vision=tp.vision, sensitive=tp.sensitive,
+                                  decisive=bool(tp.decisive), score=tp.score))
     def read_file(self, src, shelf=None, parse='auto', model=None, preset='generic', hint='', pages=None, pii='redact', allow=False, level=None, progress=None):
         "Read `src` into the vault page by page. The level the read needs is set before any page image is sent; no model means nothing leaves."
         from vishalakshi.pii import LEVELS
         v, p = self._shelf(shelf), _resolved(src)
+        # a shelf first written here starts at the vault's floor, not below it
+        if LEVELS.index(fl := self.floor()) > LEVELS.index(v.floor()): v.set_floor(fl, by='leela')
         plan = self.read_plan(p, shelf, parse, model, pages, pii, allow, level)
         if LEVELS.index(plan.level) > LEVELS.index(plan.current):
             if not plan.doc: v.read_doc(p, parse='text', pages=[])
@@ -804,6 +828,87 @@ class Memory:
         if not model and chat is None: pages = []
         out = dict(v.read_doc(p, parse=parse, model=model or None, preset=preset, hint=hint, pages=pages, chat=chat, pii=pii, allow=allow, progress=progress))
         return dict(out, shelf=self._shelf_name(shelf or self.shelf_name), level=v.level(out['doc_id']).level)
+    def set_book(self, doc, shelf=None, preset='sanskrit', counts=None):
+        "Mark a read document a book of verses. Only how to assemble it is kept: the chapters are assembled from the pages whenever asked."
+        v, did = self._shelf(shelf), self.doc_id(doc, shelf)
+        old = v.doc(did)['meta'].get('book') or {}
+        v.set_meta(did, book=dict(preset=preset, script=VERSE_SCRIPT[preset], counts=counts, at=time.time(), states=old.get('states') or {},
+                                  versions={str(k): n for k, n in self._versions(v, did).items()}))
+        return self.book(did, shelf)
+    def book(self, doc, shelf=None):
+        "A book's chapters and problems as its pages read now; a problem keeps the state a person gave it, and `changed` names pages read again since."
+        from lekhaka import bad_aksharas, fix_aksharas, read_book, vnum
+        v, did = self._shelf(shelf), self.doc_id(doc, shelf)
+        b = v.doc(did)['meta'].get('book')
+        if not b: raise VaultRefused('this document was not read as a book of verses', 'not_found', 404)
+        o, ps = read_book(None, vault=_Read(v, did), preset=b['preset'], script=b['script'], counts=b.get('counts'), fix=False), v.pages(did)
+        at = {(p.page, vnum(x.get('n'))): i for p in ps for i, x in enumerate(p.blocks or []) if x.get('kind') in ('verse', None)}
+        probs = list(o.probs)
+        for c in o.chapters:
+            for x in c['verses']:
+                x['block'] = at.get((x['page'], x['n']))
+                if b['script'] == 'Devanagari' and (bad := bad_aksharas(x['text'])):
+                    probs.append(f"{x['page']}: verse {x['n']}: {', '.join(bad)}, mended"); x['text'] = fix_aksharas(x['text'])
+        seen, rows = Counter(), []
+        for t in probs:
+            pg, txt = _prob_page(t)
+            pid = hashlib.sha1(f'{t}\0{seen[t]}'.encode()).hexdigest()[:10]; seen[t] += 1
+            rows.append(dict(id=pid, page=pg, text=txt, state=b['states'].get(pid, 'open')))
+        cur = self._versions(v, did)
+        return dict(doc=did, title=v.doc(did)['title'], preset=b['preset'], counts=b.get('counts'), at=b.get('at'), chapters=o.chapters, probs=rows,
+                    verses=sum(len(c['verses']) for c in o.chapters), changed=sorted(k for k, n in cur.items() if b['versions'].get(str(k)) != n))
+    def judge_probs(self, doc, ids, verdict, shelf=None):
+        "`accept` says a problem is checked, `reject` that it is none, `undo` opens it again. `stale` names ids the pages no longer give."
+        v, did = self._shelf(shelf), self.doc_id(doc, shelf)
+        ids = [i for i in ids if i]
+        if not ids: raise VaultRefused('no problem chosen', 'bad_request')
+        have = {r['id'] for r in self.book(did, shelf)['probs']}
+        if bad := [i for i in ids if i not in have]: raise VaultRefused('the pages were read again: these problems are gone', 'stale', 409, ids=bad)
+        b = v.doc(did)['meta']['book']
+        st = dict(b.get('states') or {})
+        for i in ids:
+            if verdict == 'undo': st.pop(i, None)
+            else: st[i] = 'checked' if verdict == 'accept' else 'dismissed'
+        v.set_meta(did, book=dict(b, states=st))
+        return dict(probs=[r for r in self.book(did, shelf)['probs'] if r['id'] in ids])
+    def book_problems(self, doc=None, shelf=None, state='open'):
+        "Problems in `state` in one book, or in every book in the vault."
+        def f(n, v, d):
+            if not (d.get('meta') or {}).get('book'): return []
+            b = self.book(d['id'], n)
+            return [dict(r, doc=d['id'], title=b['title']) for r in b['probs'] if not state or r['state'] == state]
+        if doc: return [dict(r, shelf=self._shelf_name(shelf or self.shelf_name)) for r in f(shelf, self._doc(doc, shelf), dict(self.document(doc, shelf)))]
+        return self._across(None, lambda n, v: [r for d in v.sources(None) for r in f(n, v, dict(d, id=d.get('doc_id') or d.get('id')))],
+                            lambda n: f'{n} problems')
+    def book_md(self, doc, shelf=None):
+        from lekhaka import book_md
+        b = self.book(doc, shelf)
+        return book_md(b['chapters'], b['title'])
+    def save_book_md(self, doc, shelf=None):
+        "The book as markdown beside the file it was read from."
+        src = Path(str(self.document(doc, shelf).get('source') or ''))
+        if not src.is_file(): raise VaultRefused('this document was not read from a file on this machine', 'not_found', 404)
+        out = src.with_name(f'{src.stem}.BOOK.md')
+        out.write_text(self.book_md(doc, shelf))
+        return str(out)
+    def sends(self, doc=None, shelf=None, limit=100):
+        "What left this machine and for which model, newest first, with each document's title: one document, or every shelf."
+        def f(v, rows):
+            titles = {}
+            def t(did): return titles.setdefault(did, (v.doc(did) or {}).get('title') or did)
+            return [dict(r, title=t(r['doc_id'])) for r in rows]
+        if doc:
+            v = self._doc(doc, shelf)
+            return [dict(r, shelf=self._shelf_name(shelf or self.shelf_name)) for r in f(v, v.sends(str(doc), limit))]
+        return sorted(self._across(None, lambda n, v: f(v, v.sends(None, limit)), lambda n: f'{n} sends'), key=lambda r: -r['at'])[:limit]
+    def floor(self):
+        "The vault's privacy floor: the highest any of its shelves holds."
+        from vishalakshi.pii import top
+        return top(*[self._store(n).floor() for n in self._populated()])
+    def set_floor(self, level, by):
+        "Set every shelf's floor. Only a person lowers one."
+        for n in self._populated(): self._store(n).set_floor(level, by=by)
+        return self.floor()
     def pages(self, doc, shelf=None, history=False):
         "A read document's pages, 0-based, latest version each or every version."
         return [dict(r, flags=r['flags'] if isinstance(r['flags'], list) else json.loads(r['flags'] or '[]'))

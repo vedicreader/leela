@@ -4,9 +4,9 @@
    So `a` stages a change, and a page's staged changes are applied together when the cursor leaves the
    page, on `A`, or from the apply bar. */
 
-async function leeVaultReview(doc = '', shelf = '', vault = '') {
+async function leeVaultReview(doc = '', shelf = '', vault = '', mode = '') {
   await leeVaultWorkbench('review');
-  if (doc) await htmx.ajax('GET', '/vault/view/review?' + new URLSearchParams({doc, shelf, vault}), {target: '#vaultwbbody', swap: 'innerHTML'});
+  if (doc || mode) await htmx.ajax('GET', '/vault/view/review?' + new URLSearchParams({doc, shelf, vault, mode}), {target: '#vaultwbbody', swap: 'innerHTML'});
   mountReviews();
   $('.lee-vault-review')?.focus({preventScroll: true});
 }
@@ -22,7 +22,7 @@ const rowQ = (st, r) => new URLSearchParams({doc: r.doc, shelf: r.shelf || '', v
 async function mountReview(host) {
   host.dataset.mounted = '1';
   host.__review = {vault: host.dataset.vault || '', doc: host.dataset.doc || '', shelf: host.dataset.shelf || '',
-                   mode: 'proof', doubts: false, at: 0, rows: [], undo: [], staged: new Map(), counts: {}, types: [], labels: []};
+                   mode: host.dataset.mode || 'proof', doubts: false, at: 0, rows: [], undo: [], staged: new Map(), counts: {}, types: [], labels: []};
   host.addEventListener('click', e => reviewClick(host, e));
   host.addEventListener('mousedown', e => { if (!e.target.closest('input, button, select, a')) setTimeout(() => host.focus({preventScroll: true}), 0); });
   await reviewLoad(host);
@@ -31,34 +31,35 @@ async function mountReview(host) {
 async function reviewLoad(host) {
   const st = host.__review, tok = st.loads = (st.loads || 0) + 1;
   try {
-    const [c, f, t] = await Promise.all([api('/vault/changes?' + reviewQ(st)), api('/vault/pii/findings?' + reviewQ(st, {state: 'found'})),
-                                         api('/vault/types?' + new URLSearchParams({vault: st.vault}))]);
+    const [c, f, t, b] = await Promise.all([api('/vault/changes?' + reviewQ(st)), api('/vault/pii/findings?' + reviewQ(st, {state: 'found'})),
+                                            api('/vault/types?' + new URLSearchParams({vault: st.vault})), api('/vault/book/problems?' + reviewQ(st))]);
     if (tok !== st.loads) return;     // a later load is on its way, and it is the one that counts
-    st.changes = c.changes || []; st.findings = f.findings || [];
+    st.changes = c.changes || []; st.findings = f.findings || []; st.probs = b.problems || [];
     st.types = (t.types || []).filter(r => !st.doc || r.doc === st.doc); st.labels = t.labels || [];
   } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
   reviewPaint(host);
 }
 
 function reviewPaint(host) {
-  const st = host.__review, proof = st.mode === 'proof', types = st.mode === 'types';
-  st.rows = proof ? st.changes.filter(r => !st.doubts || r.state === 'doubt') : types ? st.types : st.findings;
+  const st = host.__review, proof = st.mode === 'proof', types = st.mode === 'types', book = st.mode === 'book';
+  st.rows = proof ? st.changes.filter(r => !st.doubts || r.state === 'doubt') : types ? st.types : book ? st.probs : st.findings;
   if (st.want) { const k = st.rows.findIndex(r => r.id === st.want); if (k >= 0) st.at = k; st.want = null; }
   st.at = Math.max(0, Math.min(st.at, st.rows.length - 1));
-  const n = {proof: st.changes.length, pii: st.findings.length, types: st.types.length, doubt: st.changes.filter(r => r.state === 'doubt').length,
+  const n = {proof: st.changes.length, pii: st.findings.length, types: st.types.length, book: st.probs.length, doubt: st.changes.filter(r => r.state === 'doubt').length,
              stale: st.changes.filter(r => r.stale).length};
   const chip = (mode, label, k) => `<button class="lee-wb-subtab${st.mode === mode ? ' active' : ''}" data-review-mode="${mode}">${label} <span data-count="${mode}">${k}</span></button>`;
-  let html = `<div class="lee-review-head">${chip('proof', 'Proofreading', n.proof)}${chip('pii', 'Personal info', n.pii)}${chip('types', 'Types', n.types)}` +
+  let html = `<div class="lee-review-head">${chip('proof', 'Proofreading', n.proof)}${chip('pii', 'Personal info', n.pii)}${chip('types', 'Types', n.types)}${chip('book', 'Verses', n.book)}` +
     (proof ? `<label class="lee-review-doubts"><input type="checkbox" data-review-doubts${st.doubts ? ' checked' : ''}> doubts only (d) · ${n.doubt}</label>` +
              (n.stale ? `<span class="lee-dim">${n.stale} stale</span>` : '') : '') +
     `<span class="lee-spacer"></span>` +
     (st.doc && proof ? `<button class="lee-btn" data-review-export>PROOFREAD.md</button><button class="lee-btn" data-review-save>save beside the file</button>` : '') +
-    (st.doc && !proof ? `<button class="lee-btn" data-review-scan title="find personal information in pages read before findings were kept">scan again</button>` : '') +
+    (st.doc && st.mode === 'pii' ? `<button class="lee-btn" data-review-scan title="find personal information in pages read before findings were kept">scan again</button>` : '') +
     (st.doc ? `<button class="lee-btn" data-review-all>every document</button>` : '') + `</div>` +
     `<div class="lee-review-staged" data-staged ${st.staged.size ? '' : 'hidden'}>${st.staged.size} staged to accept · ` +
     `<button class="lee-btn go" data-review-apply>apply</button></div>`;
-  if (!st.rows.length) html += `<div class="lee-wb-empty"><strong>${proof ? 'No changes to decide' : types ? 'No types to decide' : 'No personal information to decide'}</strong>` +
-    `<span>${proof ? 'Proofread a document from its view (p) to file changes here.' : types ? 'A type the words cannot settle is proposed here; type untyped documents from Library.' : 'Findings are filed as pages are read.'}</span></div>`;
+  if (!st.rows.length) html += `<div class="lee-wb-empty"><strong>${proof ? 'No changes to decide' : types ? 'No types to decide' : book ? 'No verse problems to check' : 'No personal information to decide'}</strong>` +
+    `<span>${proof ? 'Proofread a document from its view (p) to file changes here.' : types ? 'A type the words cannot settle is proposed here; type untyped documents from Library.'
+      : book ? 'Read a sanskrit or tamil book as a book of verses; missing numbers, doubled verses, mended akṣaras and counts that differ come here.' : 'Findings are filed as pages are read.'}</span></div>`;
   if (types) {
     st.rows.forEach((r, i) => {
       html += `<div class="lee-review-row lee-review-type${i === st.at ? ' active' : ''}" data-i="${i}" data-id="${esc(r.doc)}">` +
@@ -73,8 +74,15 @@ function reviewPaint(host) {
   let lastDoc = null, lastPage = null;
   st.rows.forEach((r, i) => {
     if (r.doc !== lastDoc) { html += `<div class="lee-review-doc">${esc(r.title || r.doc)}</div>`; lastDoc = r.doc; lastPage = null; }
-    if (r.page !== lastPage) { html += `<div class="lee-review-page">page ${pageNo(r.page)}</div>`; lastPage = r.page; }
+    if (r.page !== lastPage) { html += `<div class="lee-review-page">${r.page == null ? 'the whole book' : `page ${pageNo(r.page)}`}</div>`; lastPage = r.page; }
     const q = rowQ(st, r);
+    if (book) {
+      html += `<div class="lee-review-row lee-review-prob${i === st.at ? ' active' : ''}" data-i="${i}" data-id="${esc(r.id)}" data-state="${esc(r.state)}">` +
+        (r.page == null ? '' : `<img class="lee-review-img" loading="lazy" alt="" src="/vault/page/img?${q}&page=${r.page}&w=360">`) +
+        `<div class="lee-review-change"><span data-prob>${esc(r.text)}</span><small>${esc(r.state)}</small>` +
+        (r.page == null ? '' : `<button class="lee-btn" data-review-open="${i}" title="e: open the page to fix it">open page ${pageNo(r.page)}</button>`) + `</div></div>`;
+      return;
+    }
     const img = proof && r.box ? `/vault/page/crop?${q}&page=${r.page}&box=${r.box.join(',')}` : `/vault/page/img?${q}&page=${r.page}&w=360`;
     const staged = st.staged.has(r.id);
     html += `<div class="lee-review-row${i === st.at ? ' active' : ''}${r.stale ? ' stale' : ''}${staged ? ' staged' : ''}" data-i="${i}" data-id="${esc(r.id)}" data-state="${esc(r.state)}">` +
@@ -111,6 +119,7 @@ async function reviewClick(host, e) {
     if (!r.ok) return status(r.error, 'err');
     return reviewLoad(host);
   }
+  if (t.closest('[data-review-open]')) return reviewOpen(st, st.rows[+t.closest('[data-review-open]').dataset.reviewOpen]);
   if (t.closest('[data-review-reproof]')) return reviewReproof(host, st.rows[+t.closest('[data-review-reproof]').dataset.reviewReproof]);
   const row = t.closest('.lee-review-row');
   if (row) return reviewMove(host, +row.dataset.i);
@@ -206,18 +215,25 @@ async function reviewAct(host, act, n) {
       status(res.ok ? 'undone' : res.error, res.ok ? 'ok' : 'err');
       return reviewLoad(host);
     }
-    const url = u.t === 'pii' ? '/vault/pii/findings/undo' : '/vault/changes/undo';
+    const url = u.t === 'pii' ? '/vault/pii/findings/undo' : u.t === 'book' ? '/vault/book/probs/undo' : '/vault/changes/undo';
     const res = await vaultCall(url, {doc: u.doc, shelf: u.shelf, vault: st.vault, ids: u.ids.join(',')});
     status(res.ok ? 'undone' : res.error, res.ok ? 'ok' : 'err');
     return reviewLoad(host);
   }
   if (act === 'edit' && st.mode === 'types') return reviewRetype(host);
+  if (act === 'edit' && st.mode === 'book') return r ? reviewOpen(st, r) : status('nothing to open', 'err');
   if (act === 'edit') return reviewEdit(host);
   if (!r) return status('nothing to decide', 'err');
   if (st.mode === 'types') {
     if (act === 'accept') return reviewType(host, 'accept', r);
     if (act === 'reject') return reviewType(host, 'reject', r);
     return status('types are decided one document at a time', 'err');
+  }
+  if (st.mode === 'book') {
+    if (act === 'accept') return reviewDecide(host, '/vault/book/probs/accept', [r], {t: 'book'});
+    if (act === 'reject') return reviewDecide(host, '/vault/book/probs/reject', [r], {t: 'book'});
+    if (act === 'page') return reviewDecide(host, '/vault/book/probs/accept', onPage(st.rows), {t: 'book'});
+    return status('verse problems are checked one book at a time', 'err');
   }
   if (!proof) {
     if (act === 'accept') return reviewDecide(host, '/vault/pii/findings/accept', [r], {t: 'pii'});
@@ -271,4 +287,11 @@ function reviewRetype(host) {
     if (e.key === 'Escape') { e.preventDefault(); reviewPaint(host); host.focus(); }
     if (e.key === 'Enter') { e.preventDefault(); host.focus(); reviewType(host, 'accept', r, sel.value); }
   };
+}
+
+/* A verse problem is fixed on its page: re-read it, or proofread it. */
+function reviewOpen(st, r) {
+  if (!r) return;
+  if (r.page == null) return leeOpenVaultDoc(r.doc, r.shelf || '', st.vault, r.title);
+  return leeOpenVaultDoc(r.doc, r.shelf || '', st.vault, r.title, {page: r.page});
 }

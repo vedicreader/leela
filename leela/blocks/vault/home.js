@@ -68,6 +68,17 @@ window.vaultCall = vaultCall;
 
 const VAULT_PAGED = /\.(pdf|png|jpe?g|tiff?|webp)$/i;
 const VAULT_LEVELS = [['open', 'Open'], ['personal', 'Personal'], ['local', 'Local only']];
+const VAULT_VERSES = ['sanskrit', 'tamil'];
+
+/* A finished book opens on its chapters. */
+const vaultBookDone = m => j => {
+  m.remove();
+  const r = j.result;
+  status(`${r.chapters} chapter${r.chapters === 1 ? '' : 's'}, ${r.verses} verses · ${r.problems} problem${r.problems === 1 ? '' : 's'} to check`, 'ok');
+  lee.vaultChapters = r.doc_id;
+  return leeOpenVaultDoc(r.doc_id, r.shelf || '', r.vault || '', r.title || '');
+};
+window.vaultBookDone = vaultBookDone;
 
 function leeVaultAdd(form) {
   const src = form.elements.src.value.trim();
@@ -93,12 +104,17 @@ async function leeVaultReadSheet(src, {vault = '', shelf = ''} = {}) {
   const est = await vaultCall('/vault/read', {src, estimate: true, vault, shelf});
   if (!est.ok) return status(est.error || 'could not read that file', 'err');
   const mem = est.remembered || {}, name = src.split('/').pop();
+  // a type the words settle picks the preset; an unsure guess leaves the folder's choice alone
+  const typed = (est.type?.decisive || est.type?.sensitive) && est.type.preset !== 'generic' ? est.type.preset : '';
+  const preset0 = typed || mem.preset || est.type?.preset || 'generic';
   const opts = (xs, cur) => xs.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
   const m = modal(`<div class="lee-mhead"><span>Read into the vault</span><span class="sub">${esc(name)}</span></div>` +
     `<form class="lee-vault-sheet" data-vault-sheet>` +
     `<div class="lee-vault-est" data-est></div>` +
     `<label>parse<select class="lee-input" name="parse">${opts(est.parses.map(p => [p, {auto: 'auto: keep a sound text layer', text: 'text layer only', ocr: 'OCR every page', llm: 'model reads every page'}[p] || p]), mem.parse || 'auto')}</select></label>` +
-    `<label>preset<select class="lee-input" name="preset">${opts(est.presets.map(p => [p, p]), mem.preset || est.type.preset || 'generic')}</select></label>` +
+    `<label>preset<select class="lee-input" name="preset">${opts(est.presets.map(p => [p, p]), preset0)}</select></label>` +
+    `<label class="lee-vault-allow" data-book hidden><input type="checkbox" name="book"${mem.book ? ' checked' : ''}> book of verses: every page by the model, gathered into chapters</label>` +
+    `<label data-counts hidden>verses per chapter<input class="lee-input" name="counts" autocomplete="off" placeholder="optional, like 47,72,43"></label>` +
     `<label>model<select class="lee-input" name="model" id="vaultreadmodel" aria-label="the model that reads page images">` +
     `<option value="">no model: nothing leaves this machine</option></select></label>` +
     `<label>hint<input class="lee-input" name="hint" autocomplete="off" value="${esc(mem.hint || '')}" placeholder="what the pages are, for the model"></label>` +
@@ -127,6 +143,7 @@ async function leeVaultReadSheet(src, {vault = '', shelf = ''} = {}) {
       ` · ${need ? `up to ${need} need${need === 1 ? 's' : ''} the model` : 'none needs a model'}` +
       (Object.keys(d.flags || {}).length ? ` · ${Object.keys(d.flags).length} flagged` : '') +
       (kind ? ` · looks like ${esc(kind.replace(/_/g, ' '))}` : '') +
+      (typed ? ` · preset ${esc(typed)} suggested for it` : '') +
       (d.type?.level === 'local' ? '<br><span class="warn">this kind of document is Local only: only models on this Mac are offered</span>' : '');
     const line = $('[data-send]', m), blocked = d.check_ok === false || d.ok === false;
     line.textContent = d.why || '';
@@ -136,26 +153,32 @@ async function leeVaultReadSheet(src, {vault = '', shelf = ''} = {}) {
     $('[data-read]', m).textContent = d.kind === 'model_unavailable' ? 'pick another model'
       : blocked ? 'Read, keeping withheld pages as text' : 'Read';
   };
-  const fields = () => ({src, vault, shelf, parse: f.elements.parse.value, preset: f.elements.preset.value,
+  const verses = () => VAULT_VERSES.includes(f.elements.preset.value);
+  const book = () => verses() && f.elements.book.checked;
+  const fields = () => ({src, vault, shelf, parse: book() ? 'llm' : f.elements.parse.value, preset: f.elements.preset.value,
     model: pickedModel(), hint: f.elements.hint.value, pages: f.elements.pages.value, level: f.elements.level.value,
     allow: f.elements.allow.checked});
   const check = async () => {
+    $('[data-book]', m).hidden = !verses(); $('[data-counts]', m).hidden = !book();
+    f.elements.parse.disabled = book();
     const d = await vaultCall('/vault/send-check', fields());
     paint(d.ok ? d : {...last, check_ok: false, kind: d.kind, why: d.error});
   };
   paint(est);
-  if (est.kind || pickedModel() !== '') check();
+  $('[data-book]', m).hidden = !verses(); $('[data-counts]', m).hidden = !book();
+  if (est.kind || pickedModel() !== '' || book()) check();
   f.addEventListener('change', check);
   f.addEventListener('submit', async e => {
     e.preventDefault();
     if (last.kind === 'model_unavailable') return $('[data-model-pick]', m)?.click();
-    const r = await vaultCall('/vault/read', {...fields(), partial: last.check_ok === false});
+    const asBook = book();
+    const r = await vaultCall(asBook ? '/vault/book' : '/vault/read', {...fields(), partial: last.check_ok === false, counts: f.elements.counts.value});
     const jobs = $('[data-job]', m);
     if (r.html) {
       jobs.insertAdjacentHTML('afterbegin', r.html);
       htmx.process(jobs);
       const id = (r.html.match(/id="job-([^"]+)"/) || [])[1];
-      if (id) vaultFollow(id, m);
+      if (id) asBook ? vaultFollow(id, m, 'book', vaultBookDone(m)) : vaultFollow(id, m);
       return;
     }
     jobs.insertAdjacentHTML('afterbegin', `<div class="lee-job error" data-kind="${esc(r.kind || '')}">` +
@@ -297,3 +320,35 @@ async function leeVaultGuessTypes(btn) {
   if (d.ok) htmx.ajax('GET', '/vault/view/library?' + new URLSearchParams({vault: btn.dataset.vault || ''}), {target: '#vaultwbbody', swap: 'innerHTML'});
 }
 window.leeVaultGuessTypes = leeVaultGuessTypes;
+
+/* The vault's floor: the level no document in it goes below. Lowering it is said out loud first. */
+async function leeVaultFloor(sel) {
+  const was = sel.dataset.was, rank = v => VAULT_LEVELS.findIndex(([k]) => k === v);
+  if (rank(sel.value) < rank(was) && !await confirmDialog('lower the floor',
+      `Documents in this vault were kept at least ${VAULT_LEVELS[rank(was)][1]}. Lower the floor to ${VAULT_LEVELS[rank(sel.value)][1]}?`, 'lower')) {
+    sel.value = was; return;
+  }
+  const r = await vaultCall('/vault/access', {name: $('.lee-wb-vault')?.value || '', privacy: sel.value});
+  if (!r.ok) { sel.value = was; return status(r.error, 'err'); }
+  sel.dataset.was = r.floor;
+  status(`floor: ${VAULT_LEVELS[rank(r.floor)][1]}`, 'ok');
+}
+window.leeVaultFloor = leeVaultFloor;
+
+/* What left this machine: every send to a hosted model, newest first, for the vault or one document. */
+async function leeVaultSends({doc = '', shelf = '', vault = ''} = {}) {
+  const d = await api('/vault/sends?' + new URLSearchParams({doc, shelf, vault: vault || $('.lee-wb-vault')?.value || ''})).catch(e => ({ok: false, error: e.message}));
+  if (!d.ok) return status(d.error, 'err');
+  const when = t => new Date(t * 1000).toLocaleString();
+  const rows = d.sends.map(r => `<tr><td>${esc(when(r.at))}</td><td><button class="lee-vault-doc" data-send-doc="${esc(r.doc_id)}" data-shelf="${esc(r.shelf || '')}">${esc(r.title || r.doc_id)}</button></td>` +
+    `<td>${esc(r.pages.map(pageNo).join(', ') || 'sections')}</td><td>${esc(r.model)}</td><td>${esc(r.runtime || '')}</td><td>${esc(r.policy || '')}</td>` +
+    `<td>${esc(Object.entries(r.kinds || {}).map(([k, n]) => `${k}×${n}`).join(', '))}</td></tr>`).join('');
+  const m = modal(`<div class="lee-mhead">What left this machine<span class="sub">${doc ? 'this document' : 'the whole vault'} · ${d.sends.length}</span></div>` +
+    `<div class="lee-vault-sends" data-vault-sends>${d.sends.length ? `<table><thead><tr><th>when</th><th>document</th><th>pages</th><th>model</th><th>runtime</th><th>policy</th><th>kinds</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table>` : '<div class="lee-wb-empty"><strong>Nothing was sent to a hosted model</strong></div>'}` +
+    `<small class="lee-dim">Reads, re-reads, proofreads, answers and field reads by a hosted model. Sends to a model on this Mac are not listed. Prompt-bar attachments are not listed yet.</small></div>`,
+    null, null, {storageKey: 'vault-sends'});
+  $$('[data-send-doc]', m).forEach(b => b.onclick = () => { m.remove(); leeOpenVaultDoc(b.dataset.sendDoc, b.dataset.shelf, vault, b.textContent); });
+  return m;
+}
+window.leeVaultSends = leeVaultSends;

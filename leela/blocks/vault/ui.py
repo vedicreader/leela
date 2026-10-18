@@ -4,7 +4,7 @@ import json, re
 from datetime import datetime
 from urllib.parse import urlencode
 
-from fasthtml.common import (Article, Button, Code, Datalist, Details, Div, Form, Hidden, Input,
+from fasthtml.common import (Article, Button, Code, Datalist, Details, Div, Form, Hidden, Input, Label,
                              Mark, Option, Pre, Progress, Section, Select, Small, Span, Strong,
                              Summary, Table, Tbody, Td, Textarea, Th, Thead, Tr)
 
@@ -21,6 +21,7 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
            'VIEWS', 'SOURCES', 'SCOPES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings']
 
 POLL_MS = 1200
+LEVELS = (('open', 'Open'), ('personal', 'Personal'), ('local', 'Local only'))
 
 PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose address is never '
               'looked for, so this says what was found, never that there is nothing')
@@ -98,14 +99,15 @@ def job_card(job):
             hx_target='closest .lee-job', hx_swap='delete'))
     result = d['result'] if isinstance(d['result'], dict) else {}
     if pii := result.get('pii'): body.append(_clip_pii_badge(pii))
-    doc = result.get('doc_id') or (d['target'] if d['kind'] in ('reparse', 'proof') else '')
-    if d['kind'] in ('read', 'reparse', 'proof') and doc and not d['error']:
+    doc = result.get('doc_id') or (d['target'] if d['kind'] in ('reparse', 'proof') or (d['params'] or {}).get('again') else '')
+    if d['kind'] in ('read', 'reparse', 'proof', 'book') and doc and not d['error']:
         title = result.get('title') or d['target'].rsplit('/', 1)[-1]
         body.append(Button('open', cls='lee-btn go', onclick=f"leeOpenVaultDoc({_js(doc, result.get('shelf'), result.get('vault'), title)})"))
         if d['kind'] == 'proof': body.append(Button('review', cls='lee-btn', onclick=f"leeVaultReview({_js(doc, result.get('shelf'), result.get('vault'))})"))
         if result.get('blocked'): body.append(Span(f"{len(result['blocked'])} page(s) not sent to {result.get('model') or 'the model'}", cls='lee-job-note'))
         said = [f"{result['model_pages']} page(s) read by model" if result.get('model_pages') else '',
                 f"{result['changes']} change(s) filed, {result.get('proposed', 0)} proposed" if 'changes' in result else '',
+                f"{result['chapters']} chapter(s), {result.get('verses', 0)} verse(s), {result.get('problems', 0)} problem(s) to check" if 'chapters' in result else '',
                 f"${result['cost']:.4f}" if result.get('cost') else '']
         if s := ' · '.join(x for x in said if x): body.append(Span(s, cls='lee-job-cost'))
     if d['status'] == 'cancelled':
@@ -337,6 +339,13 @@ def vault_settings(memory, vaults=None):
                    hx_target='#vaultfound', hx_swap='outerHTML'),
             Div(id='vaultfound', cls='lee-vault-found-rows'),
             cls='lee-vault-vaults'),
+        Div(Span('privacy', cls='lee-vault-legend'),
+            Label('floor', Select(*[Option(l, value=v, selected=v == memory.floor()) for v, l in LEVELS], name='privacy', cls='lee-input',
+                                  data_vault_floor='1', data_was=memory.floor(), onchange='leeVaultFloor(this)',
+                                  title='the level no document in this vault goes below; only a person lowers it')),
+            Button('what left this machine', cls='lee-btn', onclick='leeVaultSends({})',
+                   title='every page and section sent to a hosted model, which model, and under what policy'),
+            cls='lee-vault-privacy-floor'),
         Div(Span('cadence', cls='lee-vault-legend'),
             Form(Input(name='target', cls='lee-input', autocomplete='off', placeholder='a url to re-read, or a reminder'),
                 Select(*[Option(a, value=a) for a in ('url', 'remind', 'web', 'crawl')],
@@ -462,9 +471,10 @@ def _highlight(text, query):
     pat = re.compile('(' + '|'.join(map(re.escape, sorted(terms, key=len, reverse=True))) + ')', re.I)
     return [Mark(part) if pat.fullmatch(part) else Span(part) for part in pat.split(text or '') if part]
 
-def review_view(vault='', doc='', shelf='', **_):
-    "The Review queue: a mount point review.js fills from `/vault/changes` and `/vault/pii/findings`."
-    return Div(Div('loading the queue', cls='lee-dim'), cls='lee-vault-review', tabindex='0', data_vault=vault, data_doc=doc, data_shelf=shelf)
+def review_view(vault='', doc='', shelf='', mode='', **_):
+    "The Review queue: a mount point review.js fills from `/vault/changes`, `/vault/pii/findings`, `/vault/types` and `/vault/book/problems`."
+    return Div(Div('loading the queue', cls='lee-dim'), cls='lee-vault-review', tabindex='0', data_vault=vault, data_doc=doc, data_shelf=shelf,
+               data_mode=mode if mode in ('proof', 'pii', 'types', 'book') else 'proof')
 
 SCOPES = (('vault', 'whole vault'), ('doc', 'this document'), ('pages', 'pages'))
 

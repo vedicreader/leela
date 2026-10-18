@@ -1,4 +1,9 @@
 GET,POST /vault/ask
+GET,POST /vault/book
+GET,POST /vault/book.md
+GET,POST /vault/book/problems
+GET,POST /vault/book/probs/{verdict}
+GET,POST /vault/sends
 GET,POST /vault/extract
 GET,POST /vault/fields
 GET,POST /vault/types

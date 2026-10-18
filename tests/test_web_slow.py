@@ -960,6 +960,17 @@ def test_the_send_line_turns_red_for_a_personal_page_and_the_read_button_says_wh
     assert got['button'].startswith('Read, keeping') and got['allow']
     assert len(hosted.sent) == 2, 'the open pages went; the personal one stayed home'
 
+def test_a_type_the_words_settle_picks_the_preset_over_the_folders_choice(vault_proj):
+    proj, hosted = vault_proj
+    src = str((proj/'scan.pdf').resolve())
+    async def go(pg):
+        await pg.evaluate(JOB, ['/vault/read', {'src': src, 'preset': 'generic'}])
+        await pg.evaluate('src => leeVaultReadSheet(src)', src)
+        await pg.wait_for_selector('[data-vault-sheet] [data-est]:not(:empty)')
+        return {'preset': await pg.input_value('[data-vault-sheet] [name=preset]'), 'est': await pg.inner_text('[data-est]')}
+    got = _run(go, roots=[proj])
+    assert got['preset'] == 'tables' and 'preset tables suggested' in got['est'], 'an invoice reads as tables though the folder remembers generic'
+
 def test_hyper_v_opens_the_vault_tab(tmp_path, monkeypatch):
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
@@ -1195,6 +1206,96 @@ def test_a_field_click_lands_on_its_page_in_the_fields_drawer(find_proj):
     got = _run(go, roots=[find_proj])
     assert 'calendar date' in got['warn'] and 'on this machine' in got['line']
     assert 'Invoice number 42' in got['marked']
+
+# ── the vault: books of verses and the send log ─────────────────────────────
+
+@pytest.fixture
+def book_proj(tmp_path, monkeypatch):
+    "A two-page book of verses and a hosted vision reader that answers each page's verse blocks."
+    from tests.blocks.test_vault_screens import mkpdf
+    from tests.blocks.test_vault_book import Verses
+    import leela.blocks.memory.memory as mm, leela.blocks.vault.app as va
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    (proj := tmp_path/'proj').mkdir()
+    (proj/'gita.pdf').write_bytes(mkpdf(['Bhagavad Gita chapter one', 'Bhagavad Gita chapter one continued']))
+    vh = Verses('vh', 'hosted', proj/'gita.pdf')
+    monkeypatch.setattr(mm, 'read_chat', lambda m: vh if m == 'vh' else None)
+    monkeypatch.setattr(va, 'reader_id', lambda n: n or None)
+    return proj
+
+def test_the_chapters_drawer_lists_verse_numbers_and_a_verse_opens_its_page(book_proj):
+    src = str((book_proj/'gita.pdf').resolve())
+    async def go(pg):
+        await pg.evaluate('src => leeVaultReadSheet(src)', src)
+        await pg.wait_for_selector('[data-vault-sheet] [data-est]:not(:empty)')
+        out = {'hidden': await pg.is_hidden('[data-book]')}
+        await pg.select_option('[data-vault-sheet] [name=preset]', 'sanskrit')
+        await pg.wait_for_selector('[data-book]:not([hidden])')
+        await pg.keyboard.press('Escape')
+        j = await pg.evaluate(JOB, ['/vault/book', {'src': src, 'model': 'vh', 'counts': '5'}])
+        await pg.evaluate('([d, s]) => leeOpenVaultDoc(d, s, "", "gita")', [j['result']['doc_id'], j['result']['shelf']])
+        await pg.wait_for_selector('[data-vault-act="chapters"]')
+        await pg.click('[data-vault-act="chapters"]')
+        await pg.wait_for_selector('[data-verse]')
+        out['verses'] = await pg.evaluate("() => [...document.querySelectorAll('[data-verse]')].map(b => b.textContent)")
+        out['probs'] = await pg.inner_text('[data-book-probs]')
+        await pg.click('[data-verse="0.2"]')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '1'")
+        await pg.wait_for_selector('.lee-vault-marked')
+        out['marked'] = await pg.inner_text('.lee-vault-marked')
+        await pg.click('[data-book-md]')
+        await pg.wait_for_selector('[data-book-preview]')
+        out['md'] = await pg.inner_text('[data-book-preview]')
+        return out
+    got = _run(go, roots=[book_proj])
+    assert got['hidden'], 'a book of verses is offered for a verse preset only'
+    assert got['verses'] == ['1', '2', '4'] and got['probs'].startswith('3 problems')
+    assert '॥४॥' in got['marked'], 'the verse lands on its block'
+    assert '## अथ प्रथमोऽध्यायः' in got['md']
+
+def test_review_verses_a_and_x_check_problems_and_u_opens_one_again(book_proj):
+    src = str((book_proj/'gita.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/book', {'src': src, 'model': 'vh', 'counts': '5'}])
+        await pg.evaluate('([d, s]) => leeVaultReview(d, s, "", "book")', [j['result']['doc_id'], j['result']['shelf']])
+        await pg.wait_for_selector('.lee-review-prob')
+        n = "n => document.querySelector('[data-count=\"book\"]')?.textContent === n"
+        out = {'before': await pg.inner_text('[data-count="book"]'), 'pages': await pg.evaluate(
+            "() => [...document.querySelectorAll('.lee-review-page')].map(e => e.textContent)")}
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('a')
+        await pg.wait_for_function(n, arg='2')
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('x')
+        await pg.wait_for_function(n, arg='1')
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('u')
+        await pg.wait_for_function(n, arg='2')
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('e')
+        await pg.wait_for_selector('.lee-vault-docview')
+        return out
+    got = _run(go, roots=[book_proj])
+    assert got['before'] == '3' and 'page 2' in got['pages'] and 'the whole book' in got['pages']
+
+def test_the_send_log_shows_what_a_hosted_reader_was_sent(book_proj):
+    src = str((book_proj/'gita.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/book', {'src': src, 'model': 'vh'}])
+        await pg.evaluate("() => leeVaultWorkbench('library')")
+        await pg.wait_for_selector('.lee-wb-library')
+        await pg.evaluate("() => document.querySelectorAll('.lee-wb-more').forEach(d => d.open = true)")
+        out = {'floor': await pg.input_value('[data-vault-floor]')}
+        await pg.click('text=what left this machine')
+        await pg.wait_for_selector('[data-vault-sends] tbody tr')
+        out['row'] = await pg.inner_text('[data-vault-sends] tbody tr')
+        await pg.click('[data-send-doc]')
+        await pg.wait_for_selector('.lee-vault-docview [data-vault-sent-log]')
+        await pg.click('[data-vault-sent-log]')
+        await pg.wait_for_selector('[data-vault-sends] tbody tr')
+        out['doc'] = await pg.inner_text('.lee-mhead')
+        return out
+    got = _run(go, roots=[book_proj])
+    assert got['floor'] == 'open'
+    assert 'gita' in got['row'] and 'vh' in got['row'] and '1, 2' in got['row']
+    assert 'this document' in got['doc']
 
 def test_a_local_only_attachment_turns_its_chip_red_and_the_turn_is_not_sent(tmp_path, monkeypatch):
     import sys

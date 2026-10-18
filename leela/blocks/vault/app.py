@@ -9,7 +9,7 @@ from starlette.responses import Response
 
 from ... import errstr
 from ...core.web import fail, off_loop, sse
-from ..memory.memory import PrivacyBlocked, VaultRefused, page_list, source_kind
+from ..memory.memory import VERSE_SCRIPT, PrivacyBlocked, VaultRefused, counts_list, page_list, source_kind
 from ..tabs.ui import tab_bar
 from . import ui
 from .ui import PII_COVERS, job_card, pii_badge, vault_browse, vault_panel, vault_tree
@@ -27,6 +27,7 @@ def read_choice(d):
            'model': str(d.get('model') or ''), 'hint': str(d.get('hint') or '')}
     if isinstance(rs := d.get('readers'), list) and rs: out['readers'] = [str(r) for r in rs if r][:4]
     if isinstance(a := d.get('agree'), int) and a > 0: out['agree'] = a
+    if d.get('book') is True and out['preset'] in VERSE_SCRIPT: out['book'] = True
     return out
 
 def reader_id(name):
@@ -97,7 +98,7 @@ def connect(app, ctx):
         if allow: report(params=p)
         return p, allow
     KEEP = ('doc_id', 'title', 'shelf', 'level', 'routes', 'flagged', 'blocked', 'kind', 'nodes', 'chunks', 'cost', 'model_pages',
-            'cancelled', 'unread', 'pages', 'changed', 'changes', 'proposed')
+            'cancelled', 'unread', 'pages', 'changed', 'changes', 'proposed', 'chapters', 'verses', 'problems', 'counts')
     def result(out, p):
         return {k: out[k] for k in KEEP if k in out} | {'vault': p.get('vault') or ctx.vaults.active.name, 'model': p.get('name') or p.get('model') or ''}
     def read_job(job, report):
@@ -131,7 +132,20 @@ def connect(app, ctx):
         out = m.proofread(job.target, p.get('readers') or [], p.get('shelf') or None, p.get('pages'), int(p.get('agree') or 2),
                           ctx.session.vault_pii, allow, tracker(job, report))
         return result(out, p) | {'title': p.get('title') or '', 'blocked': out.get('blocked') or []}
+    def book_job(job, report):
+        "Read every page by model, a new file or a filed document again, then assemble the verses; a cancelled read assembles what it read."
+        p, allow = spend_allow(job, report)
+        m, sh, pol = ctx.vaults.memory(p.get('vault') or None), p.get('shelf') or None, ctx.session.vault_pii
+        if did := p.get('resume') or (job.target if p.get('again') else None):
+            out = dict(m.reparse(did, sh, p.get('pages'), p.get('model'), p['preset'], p.get('hint') or None, pol, allow, tracker(job, report)), doc_id=did)
+        else: out = m.read_file(job.target, sh, 'llm', p.get('model'), p['preset'], p.get('hint', ''), p.get('pages'), pol, allow,
+                                p.get('level') or None, progress=tracker(job, report))
+        report(progress=.97, current='gathering the verses')
+        b = m.set_book(out['doc_id'], out.get('shelf') or sh, p['preset'], p.get('counts'))
+        return result(out, p) | dict(doc_id=b['doc'], title=b['title'], shelf=out.get('shelf') or p.get('shelf') or '', chapters=len(b['chapters']),
+                                     verses=b['verses'], problems=sum(r['state'] == 'open' for r in b['probs']))
     ctx.jobs.register('read', read_job)
+    ctx.jobs.register('book', book_job)
     ctx.jobs.register('reparse', reparse_job)
     ctx.jobs.register('proof', proof_job)
     ctx.jobs.register('extract', extract_job)
@@ -155,7 +169,7 @@ def connect(app, ctx):
         try:
             j = ctx.jobs.get(jid)
             if j.status == 'cancelled' and (r := j.result or {}).get('unread'):
-                ctx.jobs.update(jid, params=dict(j.params, pages=r['unread'], **{'resume': r['doc_id']} if j.kind == 'read' and r.get('doc_id') else {}))
+                ctx.jobs.update(jid, params=dict(j.params, pages=r['unread'], **{'resume': r['doc_id']} if j.kind in ('read', 'book') and r.get('doc_id') else {}))
             return job_card(ctx.jobs.launch(jid))
         except Exception as e: return fail(e)
     @rt('/jobs/{jid}/cancel')
@@ -280,14 +294,20 @@ def connect(app, ctx):
             return dict(ref.dict(), note=ctx.vaults.note)
         except Exception as e: return fail(e)
     @rt('/vault/access')
-    def vault_access(name: str, access: str = '', agent: str = ''):
+    async def vault_access(name: str = '', access: str = '', agent: str = '', privacy: str = ''):
+        "Who may write a vault, whether the model may, and its privacy floor: the level no document in it goes below."
         try:
             if access: ctx.vaults.set_access(name, access)
             if agent: ctx.vaults.set_agent(name, agent.lower() in ('1', 'true', 'yes', 'on'))
-            ref = ctx.vaults.get(name)
-            if ref is None: raise KeyError(name)
-            return dict(ref.dict(), note=ctx.vaults.note)
-        except Exception as e: return fail(e)
+            ref = ctx.vaults.get(name or None)
+            if ref is None: raise VaultRefused(f'no vault {name}', 'not_found', 404)
+            m = ctx.vaults.memory(ref.name)
+            if privacy:
+                _check('auto', 'generic', privacy)
+                _writable(ref.name)
+                await off_loop(m.set_floor, privacy, 'person')
+            return dict(ref.dict(), floor=await off_loop(m.floor), note=ctx.vaults.note, ok=True)
+        except Exception as e: return _refusal(e)
     @rt('/vault/documents')
     async def vault_documents(vault: str = '', shelf: str = '', kind: str = '', limit: int = 200):
         try:
@@ -369,7 +389,7 @@ def connect(app, ctx):
             _writable(vault)
             if parse == 'llm' and not model: raise VaultRefused('reading every page by model needs a model', 'model_unavailable')
             plan = await off_loop(_plan, m, src, shelf, parse, model, pages, level, allow)
-            if busy := first(j for j in ctx.jobs.all(kind='read') if j.active and j.target == plan.src):
+            if busy := _src_busy(plan.src, plan.doc):
                 raise VaultRefused(f'{Path(plan.src).name} is already being read', 'busy', 409, job=busy.id)
             if not plan.ok and not partial:
                 raise VaultRefused(plan.why, plan.kind, 400, pages=[w['page'] for w in plan.withheld], line=plan.why)
@@ -536,10 +556,13 @@ def connect(app, ctx):
         return rs
     def _pages_check(m, doc, shelf, pages, names, allow):
         return m.page_check(doc, page_list(pages), _readers(names), shelf or None, ctx.session.vault_pii, allow)
+    PAGED = ('read', 'reparse', 'proof', 'extract', 'book')
+    def _src_busy(*targets):
+        "The job running on the file or the document `targets` name, if one is."
+        return first(j for j in ctx.jobs.all(limit=100) if j.active and j.kind in PAGED and j.target in [t for t in targets if t])
     def _busy(m, doc, shelf):
-        "`busy` while a read, a re-read or a proofread runs on `doc`: a decision now would land on a page about to change."
-        src = str(m.document(doc, shelf).get('source') or '')
-        if j := first(j for j in ctx.jobs.all(limit=100) if j.active and j.kind in ('read', 'reparse', 'proof', 'extract') and j.target in (doc, src)):
+        "`busy` while a read, a re-read, a proofread or a book runs on `doc`: a decision now would land on a page about to change."
+        if j := _src_busy(doc, str(m.document(doc, shelf).get('source') or '')):
             raise VaultRefused(f'a {j.kind} job is running on this document', 'busy', 409, job=j.id)
     def _folder(m, doc, shelf):
         src = Path(str(m.document(doc, shelf).get('source') or ''))
@@ -627,6 +650,63 @@ def connect(app, ctx):
         try:
             if version < 1: raise VaultRefused('version is a number from 1', 'bad_request')
             return await _decide(lambda m: m.revert_page(doc, page, version, shelf or None), doc, vault, shelf)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/book')
+    async def vault_book(req, src: str = '', doc: str = '', preset: str = 'sanskrit', model: str = '', hint: str = '', pages: str = '',
+                         counts: str = '', level: str = '', allow: bool = False, partial: bool = False, vault: str = '', shelf: str = ''):
+        "A GET is the book a document's pages make now. A POST reads a file, or a filed document again, by model as a book of verses: a job."
+        try:
+            m = _mem(vault)
+            if req.method != 'POST': return {'ok': True} | _plain(await off_loop(m.book, doc, shelf or None))
+            if preset not in VERSE_SCRIPT: raise VaultRefused(f'a book of verses is read with {" or ".join(VERSE_SCRIPT)}', 'bad_request')
+            _check('llm', preset, level)
+            cs, r = counts_list(counts), _model(model)
+            if not r['model']: raise VaultRefused('a book is read page by page by a model: choose one', 'model_unavailable')
+            kw = dict(model=r['model'], name=model, preset=preset, hint=hint, counts=cs)
+            if not doc and src.strip():
+                plan = await off_loop(_plan, m, src, shelf, 'llm', model, pages, level, allow)
+                if plan.doc: doc = plan.doc     # read before: read again, so its history and decisions stay
+                else:
+                    _writable(vault)
+                    if busy := _src_busy(plan.src): raise VaultRefused(f'{Path(plan.src).name} is already being read', 'busy', 409, job=busy.id)
+                    if not plan.ok and not partial: raise VaultRefused(plan.why, plan.kind, 400, pages=[w['page'] for w in plan.withheld], line=plan.why)
+                    ctx.session.vault_read[str(Path(plan.src).parent)] = read_choice(dict(parse='llm', preset=preset, model=model, hint=hint, book=True))
+                    ctx.session.save()
+                    return job_card(ctx.jobs.start('book', plan.src, _cancel=True, vault=vault, shelf=shelf or None, pages=page_list(pages),
+                                                   level=level or None, allow=bool(allow), **kw))
+            if not doc: raise VaultRefused('nothing to read', 'bad_request')
+            return await _page_job('book', doc, pages, model, allow, partial, vault, shelf, again=True, **kw)
+        except Exception as e: return _refusal(e)
+    @rt('/vault/book/problems')
+    async def vault_book_problems(doc: str = '', state: str = 'open', vault: str = '', shelf: str = ''):
+        "A book's problems in `state`, or every book's."
+        try:
+            if state not in ('open', 'checked', 'dismissed', ''): raise VaultRefused('state is open, checked or dismissed', 'bad_request')
+            return {'ok': True, 'problems': _plain(await off_loop(_mem(vault).book_problems, doc or None, shelf or None, state))}
+        except Exception as e: return _refusal(e)
+    @rt('/vault/book/probs/{verdict}')
+    async def vault_book_judge(verdict: str, doc: str = '', ids: str = '', vault: str = '', shelf: str = ''):
+        "`accept` a problem as checked, `reject` it as none, `undo` either."
+        try:
+            if verdict not in ('accept', 'reject', 'undo'): raise VaultRefused('accept, reject or undo', 'not_found', 404)
+            _writable(vault)
+            return {'ok': True} | _plain(await off_loop(_mem(vault).judge_probs, doc, _ids(ids), verdict, shelf or None))
+        except Exception as e: return _refusal(e)
+    @rt('/vault/book.md')
+    async def vault_book_md(req, doc: str = '', vault: str = '', shelf: str = ''):
+        "The book as markdown: a GET downloads it, a POST writes it beside the source file."
+        try:
+            m = _mem(vault)
+            if req.method == 'POST':
+                _writable(vault)
+                return {'ok': True, 'path': await off_loop(m.save_book_md, doc, shelf or None)}
+            return Response(await off_loop(m.book_md, doc, shelf or None), media_type='text/markdown; charset=utf-8',
+                            headers={'Content-Disposition': 'attachment; filename="BOOK.md"'})
+        except Exception as e: return _refusal(e)
+    @rt('/vault/sends')
+    async def vault_sends(doc: str = '', vault: str = '', shelf: str = '', limit: int = 100):
+        "What left this machine, for which model, under which policy: one document's, or the vault's."
+        try: return {'ok': True, 'sends': _plain(await off_loop(_mem(vault).sends, doc or None, shelf or None, max(1, min(1000, limit))))}
         except Exception as e: return _refusal(e)
     @rt('/vault/proof.md')
     async def vault_proof_md(req, doc: str, vault: str = '', shelf: str = ''):
@@ -770,15 +850,15 @@ def connect(app, ctx):
     @rt('/vault/workbench')
     async def workbench(view: str = 'browse', vault: str = '', shelf: str = '', q: str = '',
                         src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = '', title: str = '',
-                        pages: str = '', scope: str = ''):
+                        pages: str = '', scope: str = '', mode: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc, title, pages, scope)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc, title, pages, scope, mode)
             ctx.session.note_vault_view(view)
             return ui.workbench(_mem(vault), ctx.vaults, view, body=body)
         except Exception as e: return fail(e)
-    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name='', doc='', title='', pages='', scope=''):
+    def _view(view, vault='', shelf='', q='', src='', match='', feed='', name='', doc='', title='', pages='', scope='', mode=''):
         m = _mem(vault)
-        if view == 'review': return ui.review_view(vault, doc, shelf)
+        if view == 'review': return ui.review_view(vault, doc, shelf, mode)
         if view == 'find': return ui.find_view(m, vault, q=q, shelf=shelf, doc=doc, title=title, pages=pages, scope=scope)
         if view in ('news', 'sources'): return ui.sources_view(ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed), 'news', vault)
         if view == 'specs': return ui.sources_view(ui.specs_view(m, vault, **_spec_kw(src, match, name)), 'specs', vault)
@@ -801,9 +881,9 @@ def connect(app, ctx):
     @rt('/vault/view/{view}')
     async def workbench_view(view: str, vault: str = '', shelf: str = '', q: str = '',
                              src: str = '', match: str = '', feed: str = '', name: str = '', doc: str = '', title: str = '',
-                             pages: str = '', scope: str = ''):
+                             pages: str = '', scope: str = '', mode: str = ''):
         try:
-            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc, title, pages, scope)
+            body = await off_loop(_view, view, vault, shelf, q, src, match, feed, name, doc, title, pages, scope, mode)
             ctx.session.note_vault_view(view)     # the swap is the tab moving, and it outlives it
             return body
         except Exception as e: return fail(e)

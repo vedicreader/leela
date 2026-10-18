@@ -3798,3 +3798,14 @@ kbd {
 .lee-agent-attachment.blocked { border-color: var(--lee-red); color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 12%, transparent); }
 .lee-vault-docbody:has(> .lee-vault-fields:not([hidden])) { grid-template-columns: 150px minmax(0, 1.1fr) minmax(0, 1fr) 260px; }
 .lee-vault-route.proof, .lee-vault-route.revert { color: var(--lee-green); }
+.lee-vault-bookbar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.lee-vault-chapter { display: grid; gap: 3px; margin-bottom: 8px; }
+.lee-vault-chapter small { color: var(--lee-fg3); }
+.lee-vault-verses { display: flex; flex-wrap: wrap; gap: 3px; }
+.lee-vault-verse { min-width: 2.2em; padding: 1px 4px; border: 1px solid var(--lee-border); border-radius: 3px; background: transparent; color: var(--lee-fg2); font: 11px/1.4 var(--lee-mono); cursor: pointer; }
+.lee-vault-verse:hover, .lee-vault-verse.active { border-color: var(--lee-accent); color: var(--lee-fg); }
+.lee-vault-sends { max-height: 60vh; overflow: auto; }
+.lee-vault-sends table { width: 100%; border-collapse: collapse; font: 11px/1.5 var(--lee-mono); }
+.lee-vault-sends th, .lee-vault-sends td { padding: 2px 6px; border-bottom: 1px solid var(--lee-border); text-align: left; }
+.lee-vault-privacy-floor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lee-vault-sheet > [hidden] { display: none; }
