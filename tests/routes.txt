@@ -57,6 +57,7 @@ GET,POST /agent/sessions
 GET,POST /agent/settings
 GET,POST /agent/setup
 GET,POST /agent/setup/dismiss
+POST /agent/shell-run
 GET,POST /agent/shell/{run_id}/stop
 GET,POST /agent/state/activate
 GET,POST /agent/state/bootstrap

@@ -25,7 +25,7 @@ __all__ = ['CAPS', 'connect']
 #: Attachment shapes a turn accepts beside a path. `Workspace._attachment_context` renders these.
 ATTACH_KINDS = ('selection', 'vault')
 
-CAPS = ('fs', 'memory', 'ai', 'inline_ai', 'docs')
+CAPS = ('fs', 'memory', 'ai', 'inline_ai', 'docs', 'gate')
 
 def connect(app, ctx):
     rt = app.route
@@ -130,9 +130,9 @@ def connect(app, ctx):
         "Resume a saved conversation as an isolated live thread."
         d = await req.json()
         session = str(d.get('session') or 'latest')
-        if session == 'latest' and not d.get('everything'):
+        if session == 'latest':
             await off_loop(ws.fresh_history, ws.ai)
-            session = latest_started_here(ws.ai) or 'latest'
+            session = (first((s['id'] for s in ws.ai.sessions()), '') if d.get('everything') else latest_started_here(ws.ai)) or 'latest'
         try: thread = await off_loop(ws.threads.resume, session)
         except Exception as e:
             from .threads import TurnError
@@ -1282,6 +1282,17 @@ def connect(app, ctx):
         except Exception as e: return _thread_error(e)
         try: return {'ok': True, 'thread': t.id, 'run': run_id, 'state': t.ai.host.cmd_stop(run_id)}
         except Exception: return _run_missing(t, run_id)
+    @rt('/agent/shell-run', methods=['POST'])
+    async def agent_shell_run(req):
+        "Start a reply's snippet as a background command the person chose; the model is never told."
+        d = await req.json()
+        try: ctx.gate.check(d.get('token'))
+        except PermissionError as e: return fail(e, 403)
+        if not (command := str(d.get('command') or '').strip()): return fail('no command to run')
+        try: t = _thread(d.get('thread'))
+        except Exception as e: return _thread_error(e)
+        try: return {'ok': True, 'thread': t.id, 'run': t.ai.host.run_cmd_bg(command)}
+        except NotImplementedError as e: return fail(e)
     @rt('/agent/command')
     async def agent_command(req):
         "Run a slash command (`/model`, `/cost`, `/compact`, `/skills`, `/tools`, `/reload`)."

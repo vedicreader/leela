@@ -1871,7 +1871,9 @@ kbd {
   cursor: pointer; font: 10px/1.4 var(--lee-mono); transition: background .16s, color .16s, transform .16s;
 }
 .lee-code-head button:hover { background: var(--lee-bg2); color: var(--lee-fg); }
-.lee-code-head button[data-promote]:hover { color: var(--lee-green); }
+.lee-code-head button[data-promote]:hover, .lee-code-head button[data-shell-run]:hover { color: var(--lee-green); }
+.lee-code-run { margin: 0; max-height: 240px; overflow: auto; padding: 6px 9px; border-top: 1px solid var(--lee-border); background: var(--lee-bg1); color: var(--lee-fg); font: 11px/1.45 var(--lee-mono); white-space: pre-wrap; }
+.lee-code-run.err { box-shadow: inset 2px 0 var(--lee-red); }
 .lee-code-head button:active { transform: translateY(1px); }
 /* Sized by its own content, capped. The height was `lines * 19px`, and wherever the real line
    height was not exactly 19px the box came up a few pixels short of its own text, so every snippet

@@ -370,11 +370,42 @@ async function promoteCodeToNotebook(code, lang = 'python') {
   await nbEdit({op: 'insert', i: at, source: code, cell_type: lang === 'markdown' ? 'markdown' : 'code'});
   focusCell(at); status(`promoted to cell ${at + 1}`, 'ok');
 }
-function mountCodeSurface(host, code, lang = 'python', promote = false) {
+const SNIPPET_LINES = 2000;
+/* Running any command is a terminal's power, so a snippet run takes the terminal's token. */
+async function runSnippet(surface, button, code) {
+  const held = button._leeRun;
+  if (held) return post(`/agent/shell/${encodeURIComponent(held.run)}/stop?thread=${encodeURIComponent(held.thread)}`)
+    .catch(e => status(e.message || String(e), 'err'));
+  let out = surface.querySelector('.lee-code-run');
+  if (!out) { out = document.createElement('pre'); out.className = 'lee-code-run'; surface.appendChild(out); }
+  out.textContent = ''; out.classList.remove('err'); button.disabled = true;
+  let run = null, done = false;
+  try {
+    const term = await api('/term/info');
+    if (!term.token) throw new Error(term.why || 'terminals are off here');
+    run = button._leeRun = await post('/agent/shell-run', {thread: lee.agentThread || '', command: code, token: term.token});
+    button.textContent = 'stop'; button.disabled = false;
+    let since = 0, text = '', away = 0;
+    while (away < 2) {   // a re-render detaches a kept surface for a frame, so one miss is not a teardown
+      const d = await api(`/agent/runs/${encodeURIComponent(run.run)}/log?since=${since}&thread=${encodeURIComponent(run.thread)}`);
+      since = d.since; text = (text + d.text).split('\n').slice(-SNIPPET_LINES).join('\n');
+      out.textContent = d.done ? `${text}${text && !text.endsWith('\n') ? '\n' : ''}${d.state}` : text;
+      if ((done = d.done)) { out.classList.toggle('err', d.state !== 'exit 0'); break; }
+      await new Promise(r => setTimeout(r, 500));
+      away = surface.isConnected ? 0 : away + 1;
+    }
+  } catch (e) { out.textContent += `${out.textContent ? '\n' : ''}${e.message || e}`; out.classList.add('err'); }
+  finally {
+    if (run && !done) post(`/agent/shell/${encodeURIComponent(run.run)}/stop?thread=${encodeURIComponent(run.thread)}`).catch(() => {});
+    button._leeRun = null; button.textContent = 'run'; button.disabled = false;
+  }
+}
+function mountCodeSurface(host, code, lang = 'python', promote = false, run = false) {
   const shell = document.createElement('section'); shell.className = 'lee-code-surface';
   const head = document.createElement('header'); head.className = 'lee-code-head';
   head.innerHTML = `<span>${esc(lang)}</span><span class="lee-spacer"></span>` +
     `<button type="button" data-copy>copy</button>` +
+    (run ? `<button type="button" data-shell-run>run</button>` : '') +
     (promote ? `<button type="button" data-promote>promote to cell</button>` : '');
   const editor = document.createElement('div'); editor.className = 'lee-code-editor';
   shell.append(head, editor); host.appendChild(shell);
@@ -387,6 +418,7 @@ function mountCodeSurface(host, code, lang = 'python', promote = false) {
     navigator.clipboard?.writeText(String(code || '')); status('code copied', 'ok');
   };
   head.querySelector('[data-promote]')?.addEventListener('click', () => promoteCodeToNotebook(String(code || ''), codeLang(lang)));
+  head.querySelector('[data-shell-run]')?.addEventListener('click', e => runSnippet(shell, e.currentTarget, String(code || '')));
   shell._leeView = view;    // `enhanceCodeBlocks` re-parents the shell, and needs its view back
   return view;
 }
@@ -520,7 +552,8 @@ function enhanceCodeBlocks(el) {
       return;
     }
     const view = mountCodeSurface(host, text.replace(/\n$/, ''), lang,
-                                  python && el.classList.contains('lee-reply'));
+                                  python && el.classList.contains('lee-reply'),
+                                  /^(sh|bash|shell|zsh|fish)$/.test(named) && !!el.closest('#agentlog'));
     const built = view && view.dom.closest('.lee-code-surface');
     if (built) kept.set(key, built);
   });
@@ -719,7 +752,7 @@ function status(msg, kind) {
   }, ttl);
 }
 
-const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgentData?.platform || navigator.platform || '');
+const MAC = /mac|iphone|ipad|ipod/i.test(navigator.userAgentData?.platform || navigator.platform || '');
 const displayChord = s => String(s || '').replace(/\bmod\+/g, MAC ? '⌘' : 'ctrl+');
 function paintKeyLabels(root = document) {
   $$('kbd', root).forEach(k => { if (k.textContent.includes('mod+')) k.textContent = displayChord(k.textContent); });

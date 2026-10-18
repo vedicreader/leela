@@ -226,21 +226,26 @@ class Interventions(Approvals):
         if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
             if (d := self.decide(name, args, force=name not in self.tools, ask=a, loop=loop)) is not None: return d   # a path write is not in `tools`
         if not checkpoint: return a.resolve(True)
-        if self.listeners < 1:
+        with self._lock:
+            closing, heard = self.closed, self.listeners > 0 or self.no_listener == 'wait'
+            if not closing and heard: self._asks[a.id], self.current = a, a
+        if closing: return self._decided(a, False, 'the session is closing')
+        if not heard:
             why = (f'the same call {_times(self._streak)} running, and nothing is listening to ask about it' if loop
                    else 'nothing is listening for interventions, so this could not be asked')
             return self._decided(a, False, why)
-        self.current = a
         self._notify('ask', a)
         wait_for = self.timeout if timeout is None else timeout
         if not a.wait(wait_for):
-            a.resolve(False, f'no answer after {wait_for}s')
-            self._notify('answer', a)
+            with self._lock: late = self._asks.pop(a.id, None) is not None and a.pending
+            if late:
+                a.resolve(False, f'no answer after {wait_for}s')
+                self._notify('answer', a)
         return a
     def answer(self, id, ok, note='', session=False, tool=None, args=None):
         "Resolve a checkpoint; only approval may replace the call that will execute."
-        a = self.current
-        if a is None or a.id != id or not a.pending: return None
+        a = self._asks.get(id)
+        if a is None or not a.pending: return None
         if ok:
             if tool: a.tool = str(tool)
             if args is not None: a.args = dict(args)
@@ -754,7 +759,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         import subprocess, tempfile, uuid
         d = self._cwd(cwd)
         log = tempfile.NamedTemporaryFile('w', prefix='leela-bg-', suffix='.log', delete=False)
-        p = subprocess.Popen(str(command), shell=True, cwd=str(d), env=self._env(d),
+        p = subprocess.Popen(str(command), shell=True, cwd=str(d), env=self._env(d), stdin=subprocess.DEVNULL,
                              stdout=log, stderr=subprocess.STDOUT, start_new_session=os.name == 'posix')
         log.close()
         rid = f'cmd_{uuid.uuid4().hex[:8]}'
@@ -1181,6 +1186,12 @@ class Assistant(Agent):
                 '\n\n## Writable folders\n\nEvery folder above can be read. Edits and new files may only '
                 'land in:\n' + ''.join(f'\n- {r}' for r in writable) + '\n\nA write anywhere else is refused '
                 'until the user turns on workspace repository writes in agent settings.')
+        if self.surface == 'agent':
+            base += ('\n\nThe user can run a `bash` fence from your reply with its run button; you never see the output.' if small else
+                '\n\nThe user can run a `bash`, `sh` or `zsh` fence in your reply with its run button. It runs in the project '
+                'folder and reads no input, so it cannot answer a password prompt. Its output is shown to them, not to you. '
+                'When a command should run as the user -- one that relies on their logged-in tools or keys, or one your tools '
+                'refuse -- give it in a `bash` fence, ask them to run it, and ask them to paste back the part of the output you need.')
         layers = getattr(self.ws, 'agent_state_layers', {})
         enabled = [(name, row.get('text', '')) for name, row in layers.items()
             if row.get('enabled', True) and str(row.get('text', '')).strip()]
