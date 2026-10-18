@@ -9,9 +9,11 @@ from fastcore.all import Path, first, is_port_free
 from fastcore.net import free_port as any_port
 
 __all__ = ['free_port', 'running_leela', 'leela_on', 'folders', 'leela_args', 'serve', 'main',
-           'run', 'attach', 'hub_open', 'open_folder', 'titles_for']
+           'run', 'attach', 'hub_open', 'open_folder', 'titles_for', 'HOME_KEY']
 
 HOST = '127.0.0.1'
+#: The window on the bare loopback host. A slug is `[a-z0-9-]+`, so a colon keeps this from ever being a folder's window key.
+HOME_KEY = 'leela:home'
 
 # Only when frozen: a normal install has one environment and installs into it, and an extras
 # directory left over from running the app would then shadow it. See `leela.use_extras`.
@@ -85,12 +87,16 @@ def run():
     from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
     from leela.hub import assign_slugs
     # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer.
-    dirs = remember(folders() or last_folder())
+    want = folders() or last_folder()
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
     ok, why = shell_ready()
     # A second launch is a window, not a second Leela: one server means one origin, so what the
     # first copy saved is what this one reads. It is also the only way two windows share kernels.
-    if ok and dirs and (live := running_leela()) is not None: return attach(live, dirs)
+    live = running_leela() if ok else None
+    # Nothing to open leaves the saved open set alone: `remember([])` would erase it.
+    if live is not None and not want: return attach(live, [])
+    dirs = remember(want)
+    if live is not None: return attach(live, dirs)
     port = free_port()
     if not ok:
         print(f'leela: {why}; opening the workspace in Chrome instead')
@@ -100,7 +106,7 @@ def run():
     warm_cdp(cdp_port)          # a no-op unless `$LEELA_CDP_EAGER` asks for Chrome up front
     # One window per workspace: a single window on the bare loopback host would strand the rest.
     # Slugged here as well as in the server because both read one remembered assignment per folder.
-    slugs = assign_slugs([Path(d).expanduser().resolve() for d in dirs]) if dirs else ['leela']
+    slugs = assign_slugs([Path(d).expanduser().resolve() for d in dirs]) if dirs else [HOME_KEY]
     urls = ([f'http://{s}.localhost:{port}/' for s in slugs] if dirs
             else [f'http://127.0.0.1:{port}/'])
     run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(),
@@ -109,6 +115,9 @@ def run():
 def attach(port, dirs, host=HOST):
     "Windows on the Leela already serving `port`. Opens through its own route so the slug and URL are the ones it assigned; a refused folder is reported and the rest still open."
     from leela.desktop import run_shell
+    if not dirs:
+        return run_shell([f'http://{host}:{port}/'], titles=['leela'], keys=[HOME_KEY], icon=_icon(),
+                         on_open_folder=lambda p: open_folder(port, p))
     rows = []
     for d in dirs:
         got = hub_open(port, d, host)
