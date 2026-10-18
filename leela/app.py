@@ -50,6 +50,10 @@ def _md_highlight():
 
 MD_HIGHLIGHT = _md_highlight()
 
+#: Seconds an idle connection stays open. uvicorn's 5 closed connections WebKit still held, and WebKit
+#: does not retry a POST sent on one: the Markdown renderer showed "Load failed" after a pause.
+KEEP_ALIVE = 75
+
 def _patch_fasttransport():
     "Keep the response context as the sole owner of an SSE iterator's cleanup."
     import fasttransport.core as ft
@@ -1413,5 +1417,5 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
     if not gate.enabled: print(f'  {gate.why}')
     from .hub import LoopbackHostGuard
     now_serving(host, port, [str(r) for r in (roots or ws.fs.roots)])
-    try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning')
+    try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning', timeout_keep_alive=KEEP_ALIVE)
     finally: served()

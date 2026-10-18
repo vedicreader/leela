@@ -76,3 +76,16 @@ def test_a_plain_workspace_has_a_kernel_ceiling(tmp_path):
     out = json.loads(get(f'http://127.0.0.1:{port}/runtime/broker').read())
     assert out['limit'] is not None, 'no broker registered, so nothing caps the kernels'
     assert out['limit'] >= 1
+
+def test_a_post_after_a_pause_reuses_the_connection(tmp_path):
+    """uvicorn's 5s keep-alive closed connections WebKit still held, and a Markdown render sent on one failed with "Load failed"."""
+    import http.client, time
+    port = serve(roots=[tmp_path])
+    c = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+    def render():
+        c.request('POST', '/markdown/render', json.dumps({'text': 'x'}), {'Content-Type': 'application/json'})
+        r = c.getresponse(); r.read()
+        return r.status
+    assert render() == 200
+    time.sleep(6)
+    assert render() == 200, 'the idle connection was still open'

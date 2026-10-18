@@ -648,8 +648,10 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32)
     el._leeMarkdownTimer = 0; el._leeMarkdownBusy = true; el._leeMarkdownDirty = false;
     const sent = el.dataset.markdown;
     try {
-      const r = await fetch('/markdown/render', {method: 'POST',
+      const ask = () => fetch('/markdown/render', {method: 'POST',
         headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: sent, allow_raw: allowRaw})});
+      // A network error, not a refusal: the request never reached the server, and rendering is side-effect free.
+      const r = await ask().catch(e => { if (e instanceof TypeError) return ask(); throw e; });
       if (!r.ok) throw new Error((await r.json()).error || r.statusText);
       const d = await r.json(); if (!el.isConnected) return;
       el.innerHTML = d.html;
