@@ -113,3 +113,16 @@ def test_a_view_that_reconnects_is_owed_only_what_it_missed():
     first, second = asyncio.run(run())
     assert b'one' in first and b'two' not in first
     assert b'two' in second and b'one' not in second, 'the replay starts where the last view stopped'
+
+def test_a_mac_bundle_whose_executable_is_the_helper_has_a_python(tmp_path, monkeypatch):
+    """py2app sets `sys.executable` to `Contents/MacOS/python`, and every terminal in the app failed with `NoPython`."""
+    import pytest
+    from leela.blocks.term.term import NoPython, own_python
+    macos = tmp_path/'Leela.app'/'Contents'/'MacOS'
+    macos.mkdir(parents=True)
+    (macos/'python').write_text('')
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(macos/'python'))
+    assert own_python() == str(macos/'python')
+    monkeypatch.setattr(sys, 'executable', str(tmp_path/'Leela.exe'))
+    with pytest.raises(NoPython): own_python()

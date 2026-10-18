@@ -84,10 +84,11 @@ def gh_auth_argv():
     return [exe, 'auth', 'login']
 
 def own_python():
-    "Python for a child that runs Leela's code or the pty shim: the bundle's helper when frozen, where `sys.executable` is the app launcher."
+    "Python for a child that runs Leela's code or the pty shim: the bundle's helper when frozen."
     from ..runtime.kernels import _runtime_python
     exe = _runtime_python()
-    if getattr(sys, 'frozen', False) and exe == sys.executable:
+    # py2app sets `sys.executable` to the helper itself; py2exe sets it to `Leela.exe`, which runs no `-c`.
+    if getattr(sys, 'frozen', False) and not Path(exe).name.lower().startswith('python'):
         raise NoPython('no Python to start this: the app bundle has no helper interpreter; reinstall Leela')
     return exe
 
