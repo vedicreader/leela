@@ -12,8 +12,9 @@ def test_the_tool_simplification_releases_are_the_floor():
     deps = _deps()
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
-    assert rishis and all(Requirement(s).specifier.contains('0.1.41') and not Requirement(s).specifier.contains('0.1.40') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.20') and not deps['ramabana'].specifier.contains('0.2.19'), 'no local model unless chosen'
+    assert rishis and all(Requirement(s).specifier.contains('0.1.42') and not Requirement(s).specifier.contains('0.1.41') for s in rishis), rishis
+    assert deps['ramabana'].specifier.contains('0.2.30') and not deps['ramabana'].specifier.contains('0.2.29'), 'compaction moves past a failing summary model'
+    assert deps['gheasy'].specifier.contains('0.0.11') and not deps['gheasy'].specifier.contains('0.0.10'), 'info() collects in parallel'
     assert deps['shalya'].specifier.contains('0.1.3') and not deps['shalya'].specifier.contains('0.1.2'), 'Media results'
     assert deps['vishalakshi'].specifier.contains('0.1.17') and not deps['vishalakshi'].specifier.contains('0.1.16')
     assert deps['dhrona'].specifier.contains('0.1.4')
@@ -22,7 +23,7 @@ def test_the_tool_simplification_releases_are_the_floor():
 def test_the_installed_set_matches_the_pins():
     import ramabana, shalya, vishalakshi, dhrona, rishi
     assert Version(ramabana.__version__) >= Version('0.2.5') and Version(shalya.__version__) >= Version('0.1.1')
-    assert Version(rishi.__version__) >= Version('0.1.41'), 'an unreadable Claude tool call is asked for again'
+    assert Version(rishi.__version__) >= Version('0.1.42'), 'an unreadable Claude tool call is asked for again'
     from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
     assert Version(vishalakshi.__version__) >= Version('0.1.17') and Version(dhrona.__version__) >= Version('0.1.4')
 
