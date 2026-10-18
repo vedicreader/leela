@@ -312,3 +312,29 @@ def test_the_wheel_carries_every_bundle_the_app_serves():
         assert f'leela/static/{b}' in names, f'{b} is not in the wheel'
     assert not [n for n in names if n.startswith('leela/static/js/')], 'the sources should stay out'
     assert not [n for n in names if n.startswith('leela/blocks/') and n.endswith('.js')]
+
+def test_signing_reaches_every_executable_and_gives_them_the_entitlements(tmp_path, monkeypatch):
+    """`sign` covered `.so`, `.dylib` and frameworks only, so the helper `python` and Playwright's `node` stayed ad hoc under a Developer ID bundle."""
+    import sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_release
+    app = tmp_path/'Leela.app'
+    macho = b'\xcf\xfa\xed\xfe' + bytes(12)
+    for rel, exe in (('Contents/MacOS/Leela', True), ('Contents/MacOS/python', True), ('Contents/Resources/lib/x.so', False),
+                     ('Contents/Resources/lib/playwright/driver/node', True), ('Contents/Frameworks/Python.framework/Versions/3.13/Python', False)):
+        (p := app/rel).parent.mkdir(parents=True, exist_ok=True); p.write_bytes(macho)
+        if exe: p.chmod(0o755)
+    (app/'Contents'/'Resources'/'notes.txt').write_text('not code')
+    calls = []
+    monkeypatch.setattr(build_release, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
+    build_release.sign(app, 'ID')
+    signed = {c[-1]: c for c in calls if c[0] == 'codesign' and '--verify' not in c}
+    rel = lambda p: str(app/p)
+    for p in ('Contents/MacOS/python', 'Contents/Resources/lib/playwright/driver/node'):
+        assert '--entitlements' in signed[rel(p)], p
+    assert '--entitlements' not in signed[rel('Contents/Resources/lib/x.so')]
+    assert rel('Contents/Resources/notes.txt') not in signed and rel('Contents/MacOS/Leela') not in signed, 'the main executable is signed with the bundle'
+    order = [c[-1] for c in calls if c[0] == 'codesign']
+    assert order.index(rel('Contents/Frameworks/Python.framework')) > order.index(rel('Contents/Frameworks/Python.framework/Versions/3.13/Python'))
+    assert order[-2] == str(app) and '--entitlements' in calls[-2] and '--verify' in calls[-1]
+    assert build_release.ENTITLEMENTS.is_file()
