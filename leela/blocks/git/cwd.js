@@ -1,19 +1,5 @@
-function paintGitTree(d) {
-  const rows = new Map();   // indexed once rather than rescanned per change
-
-  $$('.lee-file').forEach(row => {
-    row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
-    row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
-    rows.set(row.dataset.path, row);
-  });
-  for (const c of (d.changes || [])) {
-    const row = rows.get(d.root + '/' + c.path); if (!row) continue;
-    const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
-    row.classList.add('git-' + state);
-    const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
-    row.appendChild(badge);
-  }
-}
+// The file tree's marks span every open repository and its folders, so `paintTreeGit` owns them.
+function paintGitTree() { paintTreeGit(); }
 async function refreshOpenGitMarks() {
   if (lee.kind === 'notebook') return paintNotebookGitMarks();
   if (lee.kind !== 'text' || !lee.path) return;

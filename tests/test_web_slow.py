@@ -860,3 +860,34 @@ def test_a_git_diff_tab_paints_its_code_in_the_themes_token_colours(tmp_path):
     got = _run(go, roots=[tmp_path])
     assert got['key'] not in (got['mark'], got['text']), got
     assert got['plain'], 'the hunk header is not coloured as code'
+
+
+def test_a_folder_opens_before_its_git_marks_arrive(tmp_path, monkeypatch):
+    """In the Mac app the first expand waited seconds on `git status`; now the rows come first and the marks follow."""
+    import subprocess, time
+    def git(*a): subprocess.run(['git', *a], cwd=tmp_path, check=True, capture_output=True)
+    git('init', '-q', '-b', 'main'); git('config', 'user.email', 'a@b'); git('config', 'user.name', 'c')
+    (tmp_path/'pkg').mkdir(); (tmp_path/'pkg'/'a.py').write_text('x = 1\n'); git('add', '.'); git('commit', '-qm', 'one')
+    (tmp_path/'pkg'/'a.py').write_text('x = 2\n')
+    from leela.blocks.fs import ui
+    real = ui.GitRepo.decorations
+    def slow(self): time.sleep(2); return real(self)   # what `git status` costs inside the Mac app
+    monkeypatch.setattr(ui.GitRepo, 'decorations', slow)
+    async def go(pg):
+        pkg = '#filetree .lee-dir[data-path$="/pkg"]'
+        if not await pg.evaluate("!!document.querySelector('.lee-node.lee-dir.lee-root[open]')"):
+            await pg.click('.lee-node.lee-dir.lee-root > summary')
+        await pg.wait_for_selector(pkg, timeout=5000)
+        ui._TREE.clear()   # the page loaded only once the boot paint had warmed it; the case is a cold one
+        t = time.perf_counter()
+        await pg.click(pkg + ' > summary')
+        await pg.wait_for_selector(f'{pkg} .lee-file[data-path$="a.py"]', timeout=5000)
+        shown = time.perf_counter() - t
+        marked_early = await pg.evaluate(f"!!document.querySelector('{pkg} .lee-file.git-modified')")
+        await pg.wait_for_selector(f'{pkg} .lee-file.git-modified .lee-tree-git', timeout=8000)
+        folder = await pg.evaluate(f"document.querySelector('{pkg}').classList.contains('git-modified')")
+        return shown, marked_early, folder
+    shown, marked_early, folder = _run(go, roots=[tmp_path])
+    assert shown < 1.2, f'the rows waited {shown:.2f}s for git'
+    assert not marked_early, 'the mark came from the delayed request, after the rows'
+    assert folder, 'the folder takes the strongest state under it'

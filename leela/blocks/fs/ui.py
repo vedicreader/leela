@@ -12,7 +12,7 @@ from ...core.ui import action_bar, menu_button
 from ..git.git import GitError, GitRepo
 from ..git.seam import invalidate
 
-__all__ = ['git_tree_state', 'tree_node', 'files_panel', 'stale_tree', 'git_ignored']
+__all__ = ['git_tree_state', 'tree_git', 'tree_node', 'files_panel', 'stale_tree', 'git_ignored']
 
 #: How long one repository's decoration is reused when nothing under it was seen to change. Every
 #: `/tree` ran `git status` and `git ls-files` in every open repository, forked from a process of a
@@ -21,6 +21,8 @@ TREE_TTL = 5
 #: The ignored list changes with a `.gitignore`, which `stale_tree` sees, so it lasts longer.
 IGNORED_TTL = 30
 _TREE, _TREE_LOCK = {}, threading.Lock()
+#: One real look at a time: two tabs asking at once otherwise ran git twice, and the second finds the first's answer.
+_LOOK = threading.Lock()
 
 def _git_stamp(repo):
     "What a stage, commit, checkout or reset changes inside `.git`, which the watcher skips."
@@ -34,40 +36,60 @@ def _git_stamp(repo):
         except OSError: return 0
     return tuple(mt(gd/n) for n in ('index', 'HEAD', 'logs/HEAD'))
 
-def _memo(key, ttl, stamp, make):
-    "`make()`, reused while younger than `ttl` and `stamp` is unchanged."
+def _memo(key, ttl, stamp, make, peek=False):
+    "`make()`, reused while younger than `ttl` and `stamp` is unchanged. `peek` returns what is held, however old, or None, and never calls `make`."
     with _TREE_LOCK: hit = _TREE.get(key)
+    if peek: return hit[2] if hit else None
     if hit and time.monotonic() - hit[0] < ttl and hit[1] == stamp: return hit[2]
     value = make()
     with _TREE_LOCK: _TREE[key] = (time.monotonic(), stamp, value)
     return value
 
-def _repo_state(repo):
-    "One repository's changed and ignored paths, absolute."
+def _repo_state(repo, cached=False):
+    "One repository's changed and ignored paths, absolute. `cached` runs no git: it is what the last look found."
     def changes():
         try: return {str((repo.root/c['path']).resolve()): c for c in repo.decorations()}
         except GitError: return {}
-    out = dict(_memo(('changes', str(repo.root)), TREE_TTL, _git_stamp(repo), changes))
-    for rel in _repo_ignored(repo): out.setdefault(str((repo.root/rel).resolve()), {'path': rel, 'ignored': True})
+    key = ('changes', str(repo.root))
+    out = dict((_memo(key, 0, None, None, peek=True) if cached else _memo(key, TREE_TTL, _git_stamp(repo), changes)) or {})
+    for rel in _repo_ignored(repo, cached) or (): out.setdefault(str((repo.root/rel).resolve()), {'path': rel, 'ignored': True})
     return out
 
-def _repo_ignored(repo):
-    return _memo(('ignored', str(repo.root)), IGNORED_TTL, None, lambda: _ignored_paths(repo))
+def _repo_ignored(repo, cached=False):
+    return _memo(('ignored', str(repo.root)), IGNORED_TTL, None, lambda: _ignored_paths(repo), peek=cached)
 
-def _repos(fs):
-    "Each open repository once."
-    seen = {}
-    for root in fs.roots:
-        try: repo = GitRepo.at(root)
-        except GitError: continue
-        seen.setdefault(str(repo.root), repo)
-    return list(seen.values())
+#: How long the repository each root sits in is trusted. Finding it is a `git rev-parse` per root.
+REPOS_TTL = 60
 
-def git_tree_state(fs):
-    "Absolute changed paths for file-tree decoration, across every open repository."
-    out = {}
-    for repo in _repos(fs): out.update(_repo_state(repo))
-    return out
+def _repos(fs, cached=False):
+    "Each open repository once. `cached` runs no git, and is empty until a real look has found them."
+    def find():
+        seen = {}
+        for root in fs.roots:
+            try: repo = GitRepo.at(root)
+            except GitError: continue
+            seen.setdefault(str(repo.root), repo)
+        return list(seen.values())
+    return _memo(('repos', tuple(str(r) for r in fs.roots)), REPOS_TTL, None, find, peek=cached) or []
+
+def git_tree_state(fs, cached=False):
+    "Absolute changed paths for file-tree decoration, across every open repository. `cached` never runs git."
+    if cached: return {k: v for repo in _repos(fs, True) for k, v in _repo_state(repo, True).items()}
+    with _LOOK:
+        out = {}
+        for repo in _repos(fs): out.update(_repo_state(repo))
+        return out
+
+#: Rows one `/tree/git` answers; a client with more asks in batches.
+TREE_GIT_MAX = 5000
+
+def tree_git(fs, paths):
+    "`{path: state}` for tree rows, keyed as the client sent them: a folder takes the strongest state under it."
+    state = git_tree_state(fs)
+    def one(p):
+        try: return _folder_class(p, state) if os.path.isdir(p) else _git_class(state.get(str(Path(p).resolve())))
+        except Exception: return ''
+    return {p: one(p) for p in list(paths)[:TREE_GIT_MAX]}
 
 def _under(p, root): return p == root or p.startswith(root.rstrip('/') + '/')
 
@@ -147,7 +169,7 @@ def tree_node(e, git_state=None, hidden=False, fs=None, opened=frozenset()):
         onclick=f'leeTreeClick(event,{json.dumps(e.path)})')
 
 def files_panel(fs, hidden=False, opened=()):
-    state = git_tree_state(fs)
+    state = git_tree_state(fs, cached=True)   # the client paints the marks from `/tree/git`
     opened = frozenset(str(p) for p in opened)
     # With nothing open this pane is the only way to start a session, so it offers, not reports.
     body = [tree_node(e, state, hidden, fs, opened) for e in fs.ls(None)] or [

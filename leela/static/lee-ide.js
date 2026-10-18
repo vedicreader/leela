@@ -927,22 +927,8 @@ async function editorSettings(languageScope = null) {
 function leeTheme() { editorSettings(); }
 window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
 
-function paintGitTree(d) {
-  const rows = new Map();   // indexed once rather than rescanned per change
-
-  $$('.lee-file').forEach(row => {
-    row.classList.remove('git-modified', 'git-staged', 'git-untracked', 'git-conflict');
-    row.querySelectorAll('.lee-tree-git').forEach(badge => badge.remove());
-    rows.set(row.dataset.path, row);
-  });
-  for (const c of (d.changes || [])) {
-    const row = rows.get(d.root + '/' + c.path); if (!row) continue;
-    const state = c.conflicted ? 'conflict' : c.untracked ? 'untracked' : c.staged && !c.unstaged ? 'staged' : 'modified';
-    row.classList.add('git-' + state);
-    const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
-    row.appendChild(badge);
-  }
-}
+// The file tree's marks span every open repository and its folders, so `paintTreeGit` owns them.
+function paintGitTree() { paintTreeGit(); }
 async function refreshOpenGitMarks() {
   if (lee.kind === 'notebook') return paintNotebookGitMarks();
   if (lee.kind !== 'text' || !lee.path) return;
@@ -5172,7 +5158,7 @@ async function loadTreeDir(n) {
   if (kids && !kids.children.length) {
     kids.innerHTML = await fetch('/tree?path=' + encodeURIComponent(n.dataset.path) + treeQuery('&'),
                                  {headers: {'HX-Request': 'true'}}).then(r => r.text());
-    htmx.process(kids);
+    htmx.process(kids); paintTreeGit($$('.lee-node', kids));
   }
 }
 async function treeActivate() {
@@ -5208,7 +5194,7 @@ async function refreshFileTree(selectPath = treeSel()?.dataset.path, focus = tru
   const html = await fetch('/files/panel?' + q).then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); });
   const doc = new DOMParser().parseFromString(html, 'text/html'), fresh = doc.querySelector('.lee-files');
   if (!fresh) throw new Error('file tree refresh returned no panel');
-  old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn();
+  old.replaceWith(fresh); htmx.process(fresh); paintHiddenBtn(); paintTreeGit();
   const wanted = $$('.lee-node').find(n => n.dataset.path === selectPath) || visibleTreeNodes()[0];
   selectTreeNode(wanted); if ($('#filetree')) $('#filetree').scrollTop = scrollTop;
   if (focus) setScope('files');
@@ -5227,15 +5213,41 @@ function notMine(paths) {
 }
 window.noteSelfWrite = noteSelfWrite;
 
-const GIT_MARKS = ['git-modified', 'git-staged', 'git-untracked', 'git-conflict'];
-function syncTreeRow(row, fresh) {
-  if (row.classList.contains('lee-dir')) return;
+/* Rows are drawn with the marks the server last saw and never wait on git, which in the packaged
+   app can take seconds. This asks for every row's mark and paints it: one request at a time, and
+   the rows asked for meanwhile go in the one after it. */
+const GIT_MARKS = ['git-ignored', 'git-staged', 'git-modified', 'git-untracked', 'git-conflict'], TREE_GIT_BATCH = 2000;
+let treeGitBusy = null, treeGitAgain = new Set();
+function paintTreeRow(row, state) {
   row.classList.remove(...GIT_MARKS);
-  for (const c of GIT_MARKS) if (fresh.classList.contains(c)) row.classList.add(c);
-  row.querySelectorAll('.lee-tree-git').forEach(b => b.remove());
-  const badge = fresh.querySelector('.lee-tree-git');
-  if (badge) row.appendChild(badge.cloneNode(true));
+  const own = row.classList.contains('lee-dir') ? row.querySelector(':scope > summary') : row;
+  own?.querySelectorAll(':scope > .lee-tree-git').forEach(b => b.remove());
+  if (!state || !own) return;
+  row.classList.add('git-' + state);
+  const badge = document.createElement('span'); badge.className = 'lee-tree-git'; badge.textContent = state[0].toUpperCase();
+  const name = own.querySelector(':scope > .lee-fname');
+  name ? name.after(badge) : own.appendChild(badge);
 }
+function paintTreeGit(rows = $$('#filetree .lee-node')) {
+  rows.forEach(r => r.dataset.path && treeGitAgain.add(r));
+  if (treeGitBusy) return treeGitBusy;
+  treeGitBusy = (async () => {
+    try {
+      while (treeGitAgain.size) {
+        const now = [...treeGitAgain].filter(r => r.isConnected); treeGitAgain = new Set();
+        for (let i = 0; i < now.length; i += TREE_GIT_BATCH) {
+          const part = now.slice(i, i + TREE_GIT_BATCH);
+          const d = await post('/tree/git', {paths: part.map(r => r.dataset.path)});
+          part.forEach(r => { if (r.isConnected && r.dataset.path in d.states) paintTreeRow(r, d.states[r.dataset.path]); });
+        }
+      }
+    } catch (e) { console.warn('Leela tree git marks:', e); }
+    finally { treeGitBusy = null; }
+  })();
+  return treeGitBusy;
+}
+window.paintTreeGit = paintTreeGit;
+document.addEventListener('htmx:afterSwap', e => { if (e.target.closest?.('#filetree')) paintTreeGit($$('.lee-node', e.target)); });
 // Rows that are still there stay where they are, with whatever they had open inside them.
 async function patchTreeDir(dir) {
   const kids = dir.querySelector(':scope > .lee-kids'); if (!kids) return;
@@ -5245,11 +5257,11 @@ async function patchTreeDir(dir) {
   const have = new Map([...kids.children].map(n => [n.dataset.path, n]));
   [...box.children].forEach((fresh, i) => {
     const row = have.get(fresh.dataset.path) || fresh;
-    if (have.has(fresh.dataset.path)) { syncTreeRow(row, fresh); have.delete(fresh.dataset.path); }
+    have.delete(fresh.dataset.path);
     if (kids.children[i] !== row) kids.insertBefore(row, kids.children[i] || null);
   });
   have.forEach(n => n.remove());
-  htmx.process(kids);
+  htmx.process(kids); paintTreeGit($$('.lee-node', kids));
 }
 /* A new folder's own path is open nowhere. Redraw the nearest open ancestor, but only when the
    change can alter its names: a direct child came or went, or a deeper write names a row it does
@@ -5289,23 +5301,10 @@ async function patchTree(paths) {
   })();
   return patchBusy;
 }
-/* `/git/info` is several git subprocesses, and in the packaged app they are forked from the process
-   drawing the window. A build writing without pause fired one of these per debounced batch. One at
-   a time, and at most one more queued behind it: the trailing call always runs, so the marks still
-   settle on the truth, but a hundred batches cost two walks of the repository rather than a
-   hundred. */
-let gitMarksBusy = false, gitMarksAgain = false;
-async function refreshGitTreeMarks() {
-  if (gitMarksBusy) { gitMarksAgain = true; return; }
-  gitMarksBusy = true;
-  try {
-    const d = await gitInfoOrNull(gitUrl('/git/info'));
-    if (d) paintGitTree(d);
-  } finally {
-    gitMarksBusy = false;
-    if (gitMarksAgain) { gitMarksAgain = false; refreshGitTreeMarks(); }
-  }
-}
+/* A change git can see repaints every row's mark, through `paintTreeGit`, which runs one request at
+   a time and folds the rest into the next. A build writing without pause costs two walks of the
+   repository, not one per batch. */
+function refreshGitTreeMarks() { return paintTreeGit(); }
 
 let fsWatchTimer = null, fsWatchSeen = [], fsWatchSince = 0;
 const FS_DEBOUNCE = 250, FS_MAX_WAIT = 1000, FS_MAX_SEEN = 2000;
@@ -6027,6 +6026,7 @@ async function boot() {
   // `refreshProjectPills`. Polling them was 24 requests a minute saying nothing.
   bootStep('run log', runLogLoop);
   bootStep('file watcher', watchFiles);
+  bootStep('file tree marks', () => { paintTreeGit(); });
   status('ready', 'ok');
 }
 
@@ -6040,7 +6040,7 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
   if (id === 'tabbar') { mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
+  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
 });
 function refactorRows(files, selected) {
   return files.map((file, i) => `<label class="lee-mrow"><input type="checkbox" data-refactor-path="${esc(file.path)}"${selected.has(file.path) ? ' checked' : ''}>` +

@@ -11,7 +11,7 @@ from ... import errstr
 from ...core.web import fail, off_loop, sse, unless_gone
 from ...core.text import fuzzy_rank
 from .fs import lang_for
-from .ui import files_panel, git_ignored, git_tree_state, stale_tree, tree_node
+from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
 from ...core.web import diff_payload
 from ..settings.settings import start_folder
@@ -76,10 +76,18 @@ def connect(app, ctx):
     rt = app.route
     @rt('/tree')
     def tree(path: str, hidden: bool = False):
+        "One folder's rows, drawn at once with the marks the last look found; `/tree/git` brings them up to date."
         try:
-            state = git_tree_state(ctx.fs)
+            state = git_tree_state(ctx.fs, cached=True)
             return tuple(tree_node(e, state, hidden) for e in ctx.fs.ls(path, hidden=hidden))
         except Exception as e: return Div(errstr(e), cls='lee-err')
+    @rt('/tree/git', methods=['POST'])
+    async def tree_git_route(req):
+        "Git state for the tree rows the client holds. It may run git, so nothing that draws rows waits on it."
+        paths = [str(p) for p in ((await req.json()) or {}).get('paths') or [] if p]
+        if len(paths) > TREE_GIT_MAX: return fail(f'at most {TREE_GIT_MAX} rows at a time')
+        try: return {'ok': True, 'states': await off_loop(tree_git, ctx.fs, paths)}
+        except Exception as e: return fail(e)
     @rt('/files/panel')
     def files_panel_route(hidden: bool = False, open: str = ''):
         "Refresh only the file pane. `open` are the folders the client had expanded, drawn with it."

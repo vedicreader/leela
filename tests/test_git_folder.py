@@ -79,3 +79,36 @@ def test_a_tracked_folder_holding_an_ignored_one_is_not_ignored(tmp_path):
     state = git_tree_state(Workspace(roots=[tmp_path]).fs)
     assert _folder_class(pkg, state) == ''
     assert _folder_class(pkg/'__pycache__', state) == 'ignored', 'and the ignored folder itself still is'
+
+def test_a_folder_expands_without_waiting_on_git(tmp_path, monkeypatch):
+    """The Mac app waited seconds on `git status` before showing a folder's children; `/tree` now runs no git."""
+    from leela.blocks.fs import ui
+    _repo(tmp_path)
+    (tmp_path/'pkg').mkdir(); (tmp_path/'pkg'/'new.py').write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        assert client.post('/tree/git', json={'paths': [str(tmp_path/'pkg')]}).json()['states'] == {str(tmp_path/'pkg'): 'untracked'}
+        ran = []
+        monkeypatch.setattr(ui.GitRepo, 'at', classmethod(lambda cls, root: ran.append('at') or (_ for _ in ()).throw(AssertionError('git ran'))))
+        monkeypatch.setattr(ui.GitRepo, 'decorations', lambda self: ran.append('status') or [])
+        monkeypatch.setattr(ui, '_git_stamp', lambda repo: ran.append('stamp') or ())
+        r = client.get('/tree', params={'path': str(tmp_path/'pkg')})
+        assert r.status_code == 200 and 'new.py' in r.text
+        top = client.get('/tree', params={'path': str(tmp_path)}).text
+        assert 'git-untracked' in top, 'drawn with the marks the last look found'
+        assert ran == []
+
+def test_tree_git_marks_files_and_folders_by_the_paths_asked(tmp_path):
+    repo = _repo(tmp_path)
+    (tmp_path/'.gitignore').write_text('__pycache__/\n')
+    (pkg := tmp_path/'vr').mkdir(); (pkg/'core.py').write_text('x = 1\n')
+    subprocess.run(['git', 'add', '-A'], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(['git', 'commit', '-qm', 'vr'], cwd=tmp_path, check=True, capture_output=True)
+    (pkg/'__pycache__').mkdir(); (pkg/'__pycache__'/'core.pyc').write_text('')
+    (tmp_path/'README.md').write_text('changed\n')
+    ws = Workspace(roots=[tmp_path])
+    asked = [str(pkg), str(pkg/'__pycache__'), str(pkg/'core.py'), str(tmp_path/'README.md'), str(tmp_path/'nowhere')]
+    with TestClient(ide_app(ws)) as client:
+        got = client.post('/tree/git', json={'paths': asked}).json()['states']
+    assert got == {str(pkg): '', str(pkg/'__pycache__'): 'ignored', str(pkg/'core.py'): '',
+                   str(tmp_path/'README.md'): 'modified', str(tmp_path/'nowhere'): ''}
