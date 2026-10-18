@@ -2533,7 +2533,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.8" },
     { name = "kunda", specifier = ">=0.0.2" },
-    { name = "litesearch", specifier = ">=0.1.34" },
+    { name = "litesearch", specifier = ">=0.1.40" },
     { name = "mdhtml", specifier = ">=0.1.38" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "orjson", specifier = ">=3.9" },
@@ -2640,7 +2640,7 @@ wheels = [
 
 [[package]]
 name = "litesearch"
-version = "0.1.35"
+version = "0.1.40"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chonkie" },
@@ -2653,9 +2653,9 @@ dependencies = [
     { name = "tokenizers" },
     { name = "usearch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/82/09/b3d227d800fdc8a8e8aa16ebc765bba8fa96cbc247fee53ab2f083a2d64c/litesearch-0.1.35.tar.gz", hash = "sha256:eb0708c662fe1a2c3d525feb98c5bad7a99f335a2789c8f27b678ad5f01f29a0", size = 68981, upload-time = "2026-09-21T10:10:24.702Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0a/84/531c4b3db799436a3baa6a627e8e854931cee26ad7a8fedf27a7bace7051/litesearch-0.1.40.tar.gz", hash = "sha256:a4c5671db0f1c81ed49c950db49b0c0a9cb3160947b663266da0d53d0ab5f73b", size = 75226, upload-time = "2026-10-18T05:11:28.72Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/46/274e5a3905d73eb018652b1ff7754376eb62d4de5430972f1562233e3fbd/litesearch-0.1.35-py3-none-any.whl", hash = "sha256:d9e6b6dec62a970d385e5fa667c1380d2846f66b3c5f73f0c29a8f337fd400f6", size = 74347, upload-time = "2026-09-21T10:10:23.087Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/a9/4de4987872c73c5c84a133e3371659f1348c7be584138bf0656b3bde24c0/litesearch-0.1.40-py3-none-any.whl", hash = "sha256:75b3d2d437dcc0588e89165e1a4868d544313df2d68c5107f846b8ffc69909d5", size = 80250, upload-time = "2026-10-18T05:11:27.103Z" },
 ]
 
 [[package]]
