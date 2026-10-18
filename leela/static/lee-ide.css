@@ -2514,6 +2514,10 @@ kbd {
 .lee-patch-line.del { color: var(--lee-red); background: color-mix(in srgb, var(--lee-red) 9%, transparent); }
 .lee-patch-line.hunk { color: var(--lee-aqua); margin: 6px 0 2px; background: var(--lee-bg1); }
 .lee-patch-line.meta { color: var(--lee-fg4); }
+/* Coloured code from `lee-hl.css`: the text between tokens is the editor's, the mark keeps the change's colour. */
+.lee-patch-line.hl { color: var(--lee-fg); }
+.lee-patch-line.add .lee-patch-mark { color: var(--lee-green); }
+.lee-patch-line.del .lee-patch-mark { color: var(--lee-red); }
 @media (max-width: 800px) {
   .lee-project-pill { max-width: 92px; }
   .lee-git-grid { grid-template-columns: 1fr; overflow: auto; }
@@ -2776,6 +2780,9 @@ kbd {
 .lee-drow.del .lee-dtext::before { content: '-'; }
 .lee-drow.ctx .lee-dtext { color: var(--lee-fg2); }
 .lee-drow.ctx .lee-dtext::before { content: ' '; }
+.lee-drow .lee-dtext.hl { color: var(--lee-fg); }
+.lee-drow.add .lee-dtext.hl::before { color: var(--lee-green); }
+.lee-drow.del .lee-dtext.hl::before { color: var(--lee-red); }
 .lee-drow.hunk, .lee-drow.head { color: var(--lee-fg4); background: var(--lee-bg2); }
 .lee-drow.hunk .lee-dtext, .lee-drow.head .lee-dtext { color: var(--lee-aqua); }
 

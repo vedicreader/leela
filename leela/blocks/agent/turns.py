@@ -73,7 +73,7 @@ def tool_preview(agent, tool, args):
     if tool == 'create_file':
         path = args.get('path', '')
         before = agent.host.text_at(path) or ''
-        return {'kind': 'diff', **diff_payload(before, str(args.get('text', '')))}
+        return {'kind': 'diff', **diff_payload(before, str(args.get('text', '')), path)}
     if tool == 'edit_file':
         from shalya.core import cmds
         from exhash import exhash
@@ -91,7 +91,7 @@ def tool_preview(agent, tool, args):
         else:
             before = agent.host.text_at(path)
             if before is None: raise ValueError(f'no such file: {path}')
-        return {'kind': 'diff', **diff_payload(before, apply_edits(before, es))}
+        return {'kind': 'diff', **diff_payload(before, apply_edits(before, es), path)}
     if tool in {'run_python', 'inspect_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
     if tool == 'run_cell':
@@ -155,7 +155,7 @@ def with_capabilities(ai, turns):
 
 def edit_diffs(a):
     "Per-file diffs for what an assistant turn actually wrote."
-    return [{'path': p, **diff_payload(was, now)} for p, (was, now) in a.changes().items()]
+    return [{'path': p, **diff_payload(was, now, p)} for p, (was, now) in a.changes().items()]
 
 def activity_changes(a, versions):
     "Activity rows that moved since the last poll: new calls and in-place transitions."

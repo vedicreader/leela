@@ -38,7 +38,7 @@ def test_the_asset_walk_reaches_subdirectories(which, request):
     got = files(mod)
     assert any(f.startswith('leela/vendor/fonts/') for f in got), 'fonts were left out'
     assert {'leela/vendor/fonts'} <= {d.replace('\\', '/') for d in dests(mod)}
-    assert 'leela/static/lee-ide.js' in got and 'leela/static/lee-ide.css' in got
+    assert 'leela/static/lee-ide.js' in got and 'leela/static/lee-ide.css' in got and 'leela/static/lee-hl.css' in got
     assert any(f.endswith('.woff2') for f in got), 'the webfonts themselves were left out'
 
 
@@ -280,6 +280,13 @@ def test_the_browser_driver_is_a_file_the_app_can_execute():
     with zipfile.ZipFile(z) as f: names = f.namelist()
     assert not [n for n in names if n.split('/')[0] in ('playwright', 'patchright')], \
         'the archive still holds a copy that would shadow the grafted one'
+
+def test_the_token_stylesheet_is_built_and_current():
+    """`lee-hl.css` colours every `hl-*` span; a theme added to `THEMES` without a rebuild would paint nothing."""
+    import sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_hl_css
+    assert build_hl_css.OUT.read_text() == build_hl_css.css(), 'lee-hl.css is stale; run python tools/build_hl_css.py'
 
 def test_the_canvas_bundle_is_built_and_current():
     """`/canvas/js` used to concatenate `leela/blocks/canvas/*.js` at request time, and the wheel excludes exactly those files, so an installed Leela served an empty canvas."""

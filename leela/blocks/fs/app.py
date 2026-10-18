@@ -306,7 +306,7 @@ def connect(app, ctx):
         if row is None: return fail(f'no such version {id}', 404)
         try: text = ctx.session.history.text(str(id))
         except Exception as e: return fail(e, 404)
-        return {'ok': True, **row, 'text': text, **diff_payload(_on_disk(row['path']) or '', text)}
+        return {'ok': True, **row, 'text': text, **diff_payload(_on_disk(row['path']) or '', text, row['path'])}
     @rt('/history/restore')
     async def file_history_restore(req):
         "Put one kept version back. What it replaces is kept first, so a wrong restore is undoable."
@@ -328,7 +328,7 @@ def connect(app, ctx):
                                       [(str(path), before, text)], kind='restore')
         return {'ok': True, 'path': str(path), 'version': row['id'],
                 'operation_id': operation['id'] if operation else '',
-                'disk_version': disk_version(str(path)), **diff_payload(before or '', text)}
+                'disk_version': disk_version(str(path)), **diff_payload(before or '', text, path)}
     @rt('/history/undo')
     async def operation_undo(req):
         try:

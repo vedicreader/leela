@@ -118,10 +118,10 @@ def pipeline_socket(app, path, gate, resolve):
     app.router.routes.append(WebSocketRoute(path, handler))
     return handler
 
-def diff_payload(was, now):
-    "One text-vs-text comparison in the shape every diff surface in the client consumes."
-    from .text import diff_label, diff_rows, udiff
-    return {'label': diff_label(was, now), 'rows': [r.dict() for r in diff_rows(udiff(was, now))]}
+def diff_payload(was, now, path=None):
+    "One text-vs-text comparison in the shape every diff surface in the client consumes; rows carry coloured code when `path` names the language."
+    from .text import diff_label, diff_rows, path_lang, udiff
+    return {'label': diff_label(was, now), 'rows': [r.dict() for r in diff_rows(udiff(was, now), path_lang(path))]}
 
 def found(search, hits):
     "A hit list plus the backend that produced it, so an empty result is never a mystery."

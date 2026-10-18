@@ -15,15 +15,35 @@ try:
 except ImportError:                                  # a broken wheel still ranks, just slower
     def _ratio(a, b): return SequenceMatcher(None, a, b).ratio()
 
-__all__ = ['DiffRow', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
+__all__ = ['DiffRow', 'HL_MAX', 'path_lang', 'hl_lines', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
            'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds']
 
 @dataclass
 class DiffRow(Dictable):
-    "One painted line of a unified diff."
+    "One painted line of a unified diff. `html` is its code coloured, or `''`."
     kind: str
     text: str
     line: int = 0
+    html: str = ''
+
+#: Lines past which a diff is not coloured: a lockfile's diff would hold the response for no reader.
+HL_MAX = 20_000
+
+def path_lang(path, raw=False):
+    "fastpylight's language for diffs of `path`, or None. A notebook's cells read as Python; `raw` is its JSON."
+    if not path: return None
+    try: from ramabana.hl import diff_lang
+    except ImportError: return None
+    p = str(path)
+    return 'json' if raw and p.partition('#')[0].lower().endswith('.ipynb') else diff_lang(p)
+
+def hl_lines(d, lang):
+    "Per line of unified diff `d`, its code as HTML or None, from `ramabana.hl.diff_html`. None when it cannot be coloured."
+    if not d or not lang or d.count('\n') > HL_MAX: return None
+    try:
+        from ramabana.hl import diff_html
+        return diff_html(d, lang)
+    except Exception: return None
 
 def udiff(a, b, names=None, n=3):
     "Unified diff of `a` and `b`, `''` when they match. `names` is an optional `(old, new)` pair."
@@ -31,20 +51,21 @@ def udiff(a, b, names=None, n=3):
 
 _HUNK = re.compile(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
-def diff_rows(d):
-    "A unified diff as rows a frontend can paint, each carrying its line number in the new text."
-    out, n = L(), 0
-    for line in (d or '').split('\n'):
+def diff_rows(d, lang=None):
+    "A unified diff as rows a frontend can paint, each carrying its line number in the new text, and its code coloured when `lang` is given."
+    out, n, hl = L(), 0, hl_lines(d, lang) or []
+    for i, line in enumerate((d or '').split('\n')):
         if not line and not out: continue
+        h = (hl[i] if i < len(hl) else None) or ''
         if line.startswith('@@'):
             m = _HUNK.match(line)
             n = int(m.group(1)) if m else 0
             out.append(DiffRow('hunk', line))
-        elif line.startswith(('---', '+++')): out.append(DiffRow('head', line))
-        elif line.startswith('+'): out.append(DiffRow('add', line[1:], n)); n += 1
-        elif line.startswith('-'): out.append(DiffRow('del', line[1:]))
+        elif line.startswith(('---', '+++')) and not h: out.append(DiffRow('head', line))
+        elif line.startswith('+'): out.append(DiffRow('add', line[1:], n, h)); n += 1
+        elif line.startswith('-'): out.append(DiffRow('del', line[1:], 0, h))
         else:
-            out.append(DiffRow('ctx', line[1:] if line.startswith(' ') else line, n)); n += 1
+            out.append(DiffRow('ctx', line[1:] if line.startswith(' ') else line, n, h)); n += 1
     return out
 
 def diff_stat(a, b):

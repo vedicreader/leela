@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastcore.all import first
 
+from ...core.text import hl_lines, path_lang
 from ...core.web import fail, off_loop
 from gheasy.repo import GitError, clone, clone_target, gateway, repo_root
 from .git import GitRepo
@@ -271,6 +272,12 @@ def _guard_batch(ctx, repo, d, plans):
     # happens to be conflicted by the time Ramabana reads the plan again.
     d['paths'] = wanted
 
+def coloured(d, path, raw=(), cells=()):
+    "`d` with `<field>_hl` beside each patch field: its code per line as HTML, or no key when it cannot be coloured. `raw` fields of a notebook are its JSON, `cells` its decoded sources."
+    for f in (*raw, *cells):
+        if (h := hl_lines(d.get(f) or '', path_lang(path, raw=f in raw))) is not None: d[f'{f}_hl'] = h
+    return d
+
 def _clone_into(fs, url, parent, name=''):
     "The directory a clone is written into, defaulting to the first open root."
     parent = str(parent or '').strip() or (str(fs.roots[0]) if fs.roots else '')
@@ -412,7 +419,9 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/git/commit/file')
     async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3, repo: str = ''):
-        try: return await off_loop(repo_at(repo).commit_file, ref, git_paths([path])[0], context)
+        try:
+            clean = git_paths([path])[0]
+            return await off_loop(lambda: coloured(repo_at(repo).commit_file(ref, clean, context), clean, cells=('patch',)))
         except Exception as e: return fail(e)
     @rt('/git/compare')
     async def git_compare(left: str = 'HEAD', right: str = '', repo: str = ''):
@@ -432,7 +441,7 @@ def connect(app, ctx):
         try:
             if not head: raise GitError('choose a branch to review')
             r, clean = repo_at(repo), git_paths([path])[0]
-            d = await off_loop(r.review_file, base, head, clean, mode, context)
+            d = await off_loop(lambda: coloured(r.review_file(base, head, clean, mode, context), clean, cells=('patch',)))
             if d['can_apply'] and not clean.lower().endswith('.ipynb'):
                 d['worktree'] = r._version(clean, 'worktree')
                 _remember(reviews, (str(r.root), clean), d['worktree'])
@@ -485,7 +494,7 @@ def connect(app, ctx):
     async def git_diff(path: str = '', staged: bool = False, repo: str = ''):
         try:
             clean = git_paths([path])[0]
-            view = await off_loop(lambda: repo_at(repo).diff_view(clean, staged))
+            view = await off_loop(lambda: coloured(repo_at(repo).diff_view(clean, staged), clean, raw=('text',), cells=('content',)))
             return {'path': path, 'staged': staged, **view}
         except Exception as e: return fail(e)
     def repo_of(path):
@@ -538,7 +547,7 @@ def connect(app, ctx):
         "The active editor file's Git state, always in *its own* repository."
         try:
             r, relative = repo_relative(path, 'file')
-            return await off_loop(r.file_changes, relative)
+            return await off_loop(lambda: coloured(r.file_changes(relative), relative, raw=('diff',)))
         except Exception as e: return fail(e)
     @rt('/git/notebook/conflict')
     async def git_notebook_conflict(path: str = ''):

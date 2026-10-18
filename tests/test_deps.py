@@ -13,7 +13,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.42') and not Requirement(s).specifier.contains('0.1.41') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.30') and not deps['ramabana'].specifier.contains('0.2.29'), 'compaction moves past a failing summary model'
+    assert deps['ramabana'].specifier.contains('0.2.31') and not deps['ramabana'].specifier.contains('0.2.30'), 'diffs are coloured by ramabana.hl.diff_html'
     assert deps['gheasy'].specifier.contains('0.0.11') and not deps['gheasy'].specifier.contains('0.0.10'), 'info() collects in parallel'
     assert deps['shalya'].specifier.contains('0.1.3') and not deps['shalya'].specifier.contains('0.1.2'), 'Media results'
     assert deps['vishalakshi'].specifier.contains('0.1.17') and not deps['vishalakshi'].specifier.contains('0.1.16')

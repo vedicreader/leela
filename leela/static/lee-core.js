@@ -1320,7 +1320,7 @@ async function activateGitDiffTab(key) {
     const message = `Replace the working-tree version of ${data.path} with this reviewed result? The file will remain uncommitted.`;
     if (!await confirmDialog('apply split diff result', message, 'apply result')) return;
     const at = data.root ? {repo: data.root} : {};
-    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult, before: data.worktreeBefore ?? null, ...at}), fresh = await api(gitUrl('/git/diff', {path: data.path, staged: false, ...at})); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; data.worktreeBefore = fresh.right || ''; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
+    try { const next = await gitDo('write_worktree', {path: data.path, content: data.mergeResult, before: data.worktreeBefore ?? null, ...at}), fresh = noteHl(await api(gitUrl('/git/diff', {path: data.path, staged: false, ...at}))); data.base = 'index'; data.head = 'worktree'; data.baseLabel = 'index'; data.headLabel = 'working tree'; data.left = fresh.left || ''; data.right = fresh.right || ''; data.patch = fresh.content || fresh.text || ''; data.rawPatch = fresh.text || ''; data.group = 'unstaged'; data.mergeResult = null; data.worktreeBefore = fresh.right || ''; gitUI.review = null; paintGitPill(next); await activateGitDiffTab(key); status(`${data.path} updated in the working tree`, 'ok'); }
     catch (e) { status(e.message || String(e), 'err'); }
   });
   const body = host.querySelector('.lee-diff-document-body');
@@ -3751,7 +3751,7 @@ async function showDocs() {
 
 const diffHtml = (rows) => rows.map(r =>
   `<div class="lee-drow ${r.kind}"><span class="lee-dnum">${r.line || ''}</span>` +
-  `<span class="lee-dtext">${esc(r.text)}</span></div>`).join('');
+  (r.html ? `<span class="lee-dtext hl">${r.html}</span></div>` : `<span class="lee-dtext">${esc(r.text)}</span></div>`)).join('');
 
 function diffModal(title, label, rows) {
   return modal(`<div class="lee-mhead">${esc(title)}<span class="sub">${esc(label)}</span></div>

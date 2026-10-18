@@ -162,10 +162,32 @@ def test_diff_rows_carry_line_numbers_stats_and_serialise():
     assert diff_label(A, B) == '+3 −2'
     assert diff_label('', 'one\ntwo\n') == '+2'
     assert diff_label('one\ntwo\n', '') == '−2'
-    assert diff_rows(udiff(A, B))[0].dict().keys() == {'kind', 'text', 'line'}
+    assert diff_rows(udiff(A, B))[0].dict().keys() == {'kind', 'text', 'line', 'html'}
     assert udiff(A, B, names=('old', 'new')).startswith('--- old\n+++ new\n')
     assert not udiff(A, B).startswith('---')
     assert diff_stat(None, 'x\n') == (1, 0)
+
+
+def test_diff_rows_colour_the_code_when_the_path_names_a_language():
+    """Diffs were green and red text with no syntax colours; `ramabana.hl` colours them now."""
+    from leela.core.web import diff_payload
+    rows = diff_payload('import os\nx = 1\n', 'import os\nx = "a<b"\n', 'm.py')['rows']
+    by = {r['kind']: r for r in rows}
+    assert 'hl-keyword' in by['ctx']['html'] and '&lt;' in by['add']['html'] and '<b' not in by['add']['html']
+    assert by['hunk']['html'] == ''
+    assert all(r['html'] == '' for r in diff_payload('a', 'b')['rows']), 'no path, no colours'
+
+def test_a_deleted_line_that_looks_like_a_header_stays_a_deletion_when_coloured():
+    rows = diff_rows('@@ -1,2 +1 @@\n---x\n y', 'python')
+    assert [r.kind for r in rows] == ['hunk', 'del', 'ctx']
+
+def test_a_diff_that_cannot_be_coloured_still_paints(monkeypatch):
+    import ramabana.hl
+    def boom(*a, **kw): raise RuntimeError('tokenizer down')
+    monkeypatch.setattr(ramabana.hl, 'diff_html', boom)
+    from leela.core.web import diff_payload
+    rows = diff_payload('a\n', 'b\n', 'm.py')['rows']
+    assert [r['kind'] for r in rows] == ['hunk', 'del', 'add'] and all(r['html'] == '' for r in rows)
 
 def test_fuzzy_ranking_orders_by_what_a_person_meant():
     got = did_you_mean("NameError: name 'df2' is not defined", ['df_2', 'ns', 'x'])

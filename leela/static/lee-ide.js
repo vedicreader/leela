@@ -1215,25 +1215,42 @@ async function leeCwd() {
 }
 window.leeCwd = leeCwd;
 
+/* Coloured code per patch line, keyed by the exact patch text it was made for, and by each hunk as
+   `gitPatchParts` cuts it. A patch whose text changed finds nothing, so stale colours never paint. */
+const PATCH_HL = new Map(), PATCH_HL_MAX = 400;
+function noteHl(d) {
+  const keep = (text, hl) => { PATCH_HL.delete(text); PATCH_HL.set(text, hl); while (PATCH_HL.size > PATCH_HL_MAX) PATCH_HL.delete(PATCH_HL.keys().next().value); };
+  for (const f of ['text', 'content', 'patch', 'diff']) {
+    const text = d?.[f], hl = d?.[f + '_hl'];
+    if (typeof text !== 'string' || !Array.isArray(hl) || hl.length !== text.split('\n').length) continue;
+    keep(text, hl);
+    const {hunks, starts} = gitPatchParts(text);
+    hunks.forEach((h, i) => keep(h, [...hl.slice(starts[i], starts[i] + h.split('\n').length - 1), null]));
+  }
+  return d;
+}
 function gitPatchHtml(text) {
   if (!text) return '<div class="lee-git-empty-state"><strong>No patch yet</strong><span>Stage an untracked file to create its first patch.</span></div>';
-  return String(text).split('\n').map(line => {
+  const lines = String(text).split('\n'), hl = PATCH_HL.get(String(text));
+  return lines.map((line, i) => {
     const kind = line.startsWith('@@') ? 'hunk' : line.startsWith('+') && !line.startsWith('+++') ? 'add' :
                  line.startsWith('-') && !line.startsWith('---') ? 'del' : line.startsWith('diff ') || line.startsWith('index ') ? 'meta' : '';
+    if (hl?.[i] != null) return `<div class="lee-patch-line ${kind} hl"><span class="lee-patch-mark">${esc(line.slice(0, 1))}</span>${hl[i]}</div>`;
     return `<div class="lee-patch-line ${kind}">${esc(line) || ' '}</div>`;
   }).join('');
 }
 function gitPatchParts(text) {
   const lines = String(text || '').split('\n'), first = lines.findIndex(x => x.startsWith('@@'));
   if (first < 0) return {header: text, hunks: []};
-  const header = lines.slice(0, first).join('\n') + '\n', hunks = [];
+  const header = lines.slice(0, first).join('\n') + '\n', hunks = [], starts = [];
   let current = [];
-  for (const line of lines.slice(first)) {
+  lines.slice(first).forEach((line, i) => {
     if (line.startsWith('@@') && current.length) { hunks.push(current.join('\n') + '\n'); current = []; }
+    if (!current.length) starts.push(first + i);
     current.push(line);
-  }
+  });
   if (current.length) hunks.push(current.join('\n') + '\n');
-  return {header, hunks};
+  return {header, hunks, starts};
 }
 function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = false, options = {}) {
   const name = String(path || '').split('/').pop(), parts = gitPatchParts(rawPatch || patch);
@@ -1418,7 +1435,7 @@ async function refreshFileChanges(path, fromDisk = false) {
       $$('.lee-tab').find(x => x.title === path)?.classList.remove('dirty');
     }
   }
-  const git = await api('/git/file?path=' + encodeURIComponent(path)).catch(() => null);
+  const git = await api('/git/file?path=' + encodeURIComponent(path)).then(noteHl).catch(() => null);
   if (!git) return;
   lee.fileGit = git; LeeCM.setChangedLines(v, git.ranges || []);
 }
@@ -2578,7 +2595,7 @@ async function loadGitReviewFile(path, asTab = false) {
   if (!gitUI.review) return;
   gitUI.reviewFile = path;
   try {
-    const d = await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path}));
+    const d = noteHl(await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path})));
     gitUI.reviewPatch = d.patch || '';
     if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, root: gitUI.snapshot.root, worktreeBefore: d.worktree ?? null, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
@@ -2683,7 +2700,7 @@ function wireGitPanel(host, d) {
   host.querySelectorAll('.lee-git-change').forEach(row => {
     const path = row.dataset.path, staged = row.dataset.group === 'staged';
     row.querySelector('[data-select-change]').onchange = e => { const key = `${row.dataset.group}:${path}`; if (e.target.checked) gitUI.selectedChanges.add(key); else gitUI.selectedChanges.delete(key); renderGitPanel(d); };
-    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api(gitUrl('/git/diff', {path, staged})); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, binary: !!patch.binary, lfs: patch.lfs || null, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook && !patch.binary}); };
+    row.querySelector('.lee-git-file').onclick = async () => { const patch = noteHl(await api(gitUrl('/git/diff', {path, staged}))); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, binary: !!patch.binary, lfs: patch.lfs || null, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook && !patch.binary}); };
     row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
     row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path, null));
     row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
@@ -2741,7 +2758,7 @@ async function showStagedReview(d) {
     const active = files[at];
     m.querySelector('aside').innerHTML = files.map((f, i) => `<button data-index="${i}" class="${i === at ? 'active' : ''}"><b>${esc(f.index)}</b><span>${esc(f.path)}</span></button>`).join('');
     m.querySelectorAll('[data-index]').forEach(b => b.onclick = () => paint(+b.dataset.index));
-    const detail = await api(gitUrl('/git/diff', {path: active.path, staged: true}));
+    const detail = noteHl(await api(gitUrl('/git/diff', {path: active.path, staged: true})));
     m.querySelector('main').innerHTML = gitPatchHtml(detail.content || detail.text || '');
   };
   m.querySelector('[data-prev]').onclick = () => paint(at - 1);
@@ -2845,7 +2862,7 @@ async function loadGitCommitInspector(ref) {
 }
 async function openGitCommitFile(ref, path) {
   try {
-    const d = await api(gitUrl('/git/commit/file', {ref, path}));
+    const d = noteHl(await api(gitUrl('/git/commit/file', {ref, path})));
     const c = gitUI.selectedCommit;
     return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
   } catch (e) { leeFail('git', 'commit file', e); }

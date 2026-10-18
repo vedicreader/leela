@@ -851,6 +851,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Script(src=_asset('lee-cm6.js'), defer=True),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
+            Link(rel='stylesheet', href=_asset('lee-hl.css')),
             *[Script(src=_asset(b), defer=True) for b in IDE_BUNDLES])
     def _term_cwd(ref=None): return term_cwd(ws, ref)
     def _term_settings(session):
@@ -1028,7 +1029,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             buf = nb.source_text()
         else:
             buf = d.get('text', '')
-        return {'path': t.path, 'title': t.title, **_diff(disk, buf)}
+        return {'path': t.path, 'title': t.title, **_diff(disk, buf, t.path)}
     @rt('/exec')
     async def exec_route(req):
         "Run in the owner kernel or the agent's protected persistent overlay."

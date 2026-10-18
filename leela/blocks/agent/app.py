@@ -1155,7 +1155,7 @@ def connect(app, ctx):
         except Exception as e: return _thread_error(e)
         tx = t.ai.turn_transactions.get(turn_id)
         if tx is None: return fail(f'no transaction for {turn_id}', 404)
-        return {'transaction': {**tx, 'files': [{'path': p, **diff_payload(s['before'], s['after'])}
+        return {'transaction': {**tx, 'files': [{'path': p, **diff_payload(s['before'], s['after'], p)}
                                                 for p, s in tx['files'].items()]}}
     @rt('/agent/rollback-turn')
     async def agent_rollback_turn(req):

@@ -145,7 +145,7 @@ async function refreshFileChanges(path, fromDisk = false) {
       $$('.lee-tab').find(x => x.title === path)?.classList.remove('dirty');
     }
   }
-  const git = await api('/git/file?path=' + encodeURIComponent(path)).catch(() => null);
+  const git = await api('/git/file?path=' + encodeURIComponent(path)).then(noteHl).catch(() => null);
   if (!git) return;
   lee.fileGit = git; LeeCM.setChangedLines(v, git.ranges || []);
 }

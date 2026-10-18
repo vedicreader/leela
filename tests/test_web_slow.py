@@ -840,3 +840,23 @@ def test_a_save_and_a_blur_do_not_race_each_other(tmp_path):
     _run(go, roots=[str(tmp_path)])
     kept = doc.read_text(encoding='utf-8')
     assert 'plus an edit' in kept, kept
+
+
+def test_a_git_diff_tab_paints_its_code_in_the_themes_token_colours(tmp_path):
+    """Diff lines were green and red text; the code in them now takes `lee-hl.css` colours, and the mark keeps the change's."""
+    import subprocess
+    def git(*a): subprocess.run(['git', *a], cwd=tmp_path, check=True, capture_output=True)
+    git('init', '-q', '-b', 'main'); git('config', 'user.email', 'a@b'); git('config', 'user.name', 'c')
+    (tmp_path/'app.py').write_text('value = 1\n'); git('add', '.'); git('commit', '-qm', 'one')
+    (tmp_path/'app.py').write_text('import os\nvalue = "two"\n')
+    async def go(pg):
+        await pg.evaluate("""async () => { const d = noteHl(await api('/git/diff?path=app.py'));
+            await openGitDiffTab({kind: 'changes-unstaged', path: 'app.py', base: 'index', head: 'worktree', baseLabel: 'index',
+              headLabel: 'working tree', left: d.left, right: d.right, patch: d.content || d.text, rawPatch: d.text, group: 'unstaged'}); }""")
+        await pg.wait_for_selector('.lee-patch-line.add.hl .hl-keyword', timeout=5000)
+        return await pg.evaluate("""() => { const line = document.querySelector('.lee-patch-line.add.hl'),
+            key = line.querySelector('.hl-keyword'), mark = line.querySelector('.lee-patch-mark'), c = e => getComputedStyle(e).color;
+            return {key: c(key), mark: c(mark), text: c(line), plain: !!document.querySelector('.lee-patch-line.hunk:not(.hl)')}; }""")
+    got = _run(go, roots=[tmp_path])
+    assert got['key'] not in (got['mark'], got['text']), got
+    assert got['plain'], 'the hunk header is not coloured as code'

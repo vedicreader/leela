@@ -51,7 +51,7 @@ async function loadGitReviewFile(path, asTab = false) {
   if (!gitUI.review) return;
   gitUI.reviewFile = path;
   try {
-    const d = await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path}));
+    const d = noteHl(await api(gitUrl('/git/review/file', {base: gitUI.review.base, head: gitUI.review.head, mode: gitUI.review.mode, path})));
     gitUI.reviewPatch = d.patch || '';
     if (asTab) return openGitDiffTab({...d, path, kind: 'review', baseLabel: gitUI.review.base, headLabel: gitUI.review.head, absolutePath: gitUI.snapshot.root + '/' + path, root: gitUI.snapshot.root, worktreeBefore: d.worktree ?? null, reviewKey: gitReviewKey({...gitUI.review, root: gitUI.snapshot.root}, path), allowWrite: !!d.can_apply && !path.toLowerCase().endsWith('.ipynb')});
     renderGitPanel(gitUI.snapshot);
@@ -156,7 +156,7 @@ function wireGitPanel(host, d) {
   host.querySelectorAll('.lee-git-change').forEach(row => {
     const path = row.dataset.path, staged = row.dataset.group === 'staged';
     row.querySelector('[data-select-change]').onchange = e => { const key = `${row.dataset.group}:${path}`; if (e.target.checked) gitUI.selectedChanges.add(key); else gitUI.selectedChanges.delete(key); renderGitPanel(d); };
-    row.querySelector('.lee-git-file').onclick = async () => { const patch = await api(gitUrl('/git/diff', {path, staged})); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, binary: !!patch.binary, lfs: patch.lfs || null, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook && !patch.binary}); };
+    row.querySelector('.lee-git-file').onclick = async () => { const patch = noteHl(await api(gitUrl('/git/diff', {path, staged}))); openGitDiffTab({kind: 'changes-' + row.dataset.group, path, absolutePath: d.root + '/' + path, base: staged ? 'HEAD' : 'index', head: staged ? 'index' : 'worktree', baseLabel: staged ? 'HEAD' : 'index', headLabel: staged ? 'staged' : 'working tree', left: patch.left || '', right: patch.right || '', patch: patch.content || patch.text || '', rawPatch: patch.text || '', notebook: !!patch.notebook, binary: !!patch.binary, lfs: patch.lfs || null, group: row.dataset.group, allowWrite: row.dataset.group === 'unstaged' && !patch.notebook && !patch.binary}); };
     row.querySelector('[data-open]').onclick = () => leeOpenFile(d.root + '/' + path);
     row.querySelector('[data-blame]')?.addEventListener('click', () => showGitBlame(d.root, path, null));
     row.querySelector('[data-resolve]')?.addEventListener('click', () => showGitConflict(path));
@@ -214,7 +214,7 @@ async function showStagedReview(d) {
     const active = files[at];
     m.querySelector('aside').innerHTML = files.map((f, i) => `<button data-index="${i}" class="${i === at ? 'active' : ''}"><b>${esc(f.index)}</b><span>${esc(f.path)}</span></button>`).join('');
     m.querySelectorAll('[data-index]').forEach(b => b.onclick = () => paint(+b.dataset.index));
-    const detail = await api(gitUrl('/git/diff', {path: active.path, staged: true}));
+    const detail = noteHl(await api(gitUrl('/git/diff', {path: active.path, staged: true})));
     m.querySelector('main').innerHTML = gitPatchHtml(detail.content || detail.text || '');
   };
   m.querySelector('[data-prev]').onclick = () => paint(at - 1);

@@ -286,25 +286,42 @@ async function leeCwd() {
 }
 window.leeCwd = leeCwd;
 
+/* Coloured code per patch line, keyed by the exact patch text it was made for, and by each hunk as
+   `gitPatchParts` cuts it. A patch whose text changed finds nothing, so stale colours never paint. */
+const PATCH_HL = new Map(), PATCH_HL_MAX = 400;
+function noteHl(d) {
+  const keep = (text, hl) => { PATCH_HL.delete(text); PATCH_HL.set(text, hl); while (PATCH_HL.size > PATCH_HL_MAX) PATCH_HL.delete(PATCH_HL.keys().next().value); };
+  for (const f of ['text', 'content', 'patch', 'diff']) {
+    const text = d?.[f], hl = d?.[f + '_hl'];
+    if (typeof text !== 'string' || !Array.isArray(hl) || hl.length !== text.split('\n').length) continue;
+    keep(text, hl);
+    const {hunks, starts} = gitPatchParts(text);
+    hunks.forEach((h, i) => keep(h, [...hl.slice(starts[i], starts[i] + h.split('\n').length - 1), null]));
+  }
+  return d;
+}
 function gitPatchHtml(text) {
   if (!text) return '<div class="lee-git-empty-state"><strong>No patch yet</strong><span>Stage an untracked file to create its first patch.</span></div>';
-  return String(text).split('\n').map(line => {
+  const lines = String(text).split('\n'), hl = PATCH_HL.get(String(text));
+  return lines.map((line, i) => {
     const kind = line.startsWith('@@') ? 'hunk' : line.startsWith('+') && !line.startsWith('+++') ? 'add' :
                  line.startsWith('-') && !line.startsWith('---') ? 'del' : line.startsWith('diff ') || line.startsWith('index ') ? 'meta' : '';
+    if (hl?.[i] != null) return `<div class="lee-patch-line ${kind} hl"><span class="lee-patch-mark">${esc(line.slice(0, 1))}</span>${hl[i]}</div>`;
     return `<div class="lee-patch-line ${kind}">${esc(line) || ' '}</div>`;
   }).join('');
 }
 function gitPatchParts(text) {
   const lines = String(text || '').split('\n'), first = lines.findIndex(x => x.startsWith('@@'));
   if (first < 0) return {header: text, hunks: []};
-  const header = lines.slice(0, first).join('\n') + '\n', hunks = [];
+  const header = lines.slice(0, first).join('\n') + '\n', hunks = [], starts = [];
   let current = [];
-  for (const line of lines.slice(first)) {
+  lines.slice(first).forEach((line, i) => {
     if (line.startsWith('@@') && current.length) { hunks.push(current.join('\n') + '\n'); current = []; }
+    if (!current.length) starts.push(first + i);
     current.push(line);
-  }
+  });
   if (current.length) hunks.push(current.join('\n') + '\n');
-  return {header, hunks};
+  return {header, hunks, starts};
 }
 function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = false, options = {}) {
   const name = String(path || '').split('/').pop(), parts = gitPatchParts(rawPatch || patch);

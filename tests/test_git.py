@@ -649,3 +649,25 @@ def test_choosing_per_cell_writes_a_notebook_and_settles_the_merge(tmp_path):
         assert len({c['id'] for c in book['cells']}) == 3, 'both sides of one cell are two cells with two ids'
         status = client.get('/git/info').json()
         assert not [c for c in status['changes'] if c['conflicted']], 'the merge has nothing left to settle'
+
+def test_a_git_diff_carries_its_code_coloured_line_for_line(repo_git):
+    """The git diff views were green and red text; `/git/diff` now sends `ramabana.hl.diff_html` beside each patch."""
+    (repo_git/'src'/'app.py').write_text('value = "a<b"\n')
+    client, _ = served([repo_git])
+    d = client.get('/git/diff', params={'path': 'src/app.py'}).json()
+    lines = d['text'].split('\n')
+    assert len(d['text_hl']) == len(lines) and len(d['content_hl']) == len(d['content'].split('\n'))
+    added = lines.index('+value = "a<b"')
+    assert 'hl-string' in d['text_hl'][added] and '&lt;' in d['text_hl'][added]
+    assert all(d['text_hl'][i] is None for i, l in enumerate(lines) if l.startswith(('diff ', 'index ', '@@', '---', '+++')))
+
+def test_a_notebook_diff_colours_its_cells_as_python_and_its_json_as_json(repo_git):
+    nb = write_nb(repo_git/'n.ipynb', [{'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'source': 'x = 1', 'outputs': [], 'execution_count': None}])
+    git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', 'nb')
+    write_nb(nb, [{'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'source': 'def f(): return 2', 'outputs': [], 'execution_count': None}])
+    client, _ = served([repo_git])
+    d = client.get('/git/diff', params={'path': 'n.ipynb'}).json()
+    assert d['notebook']
+    assert any(h and 'hl-keyword' in h for h in d['content_hl']), 'the cell source reads as Python'
+    # A hunk of JSON is a fragment, so tree-sitter colours its punctuation and little else.
+    assert any(h and 'hl-punctuation' in h for h in d['text_hl']) and not any(h and 'hl-keyword' in h for h in d['text_hl']), 'the raw notebook reads as JSON'

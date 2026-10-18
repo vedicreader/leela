@@ -1,6 +1,6 @@
 const diffHtml = (rows) => rows.map(r =>
   `<div class="lee-drow ${r.kind}"><span class="lee-dnum">${r.line || ''}</span>` +
-  `<span class="lee-dtext">${esc(r.text)}</span></div>`).join('');
+  (r.html ? `<span class="lee-dtext hl">${r.html}</span></div>` : `<span class="lee-dtext">${esc(r.text)}</span></div>`)).join('');
 
 function diffModal(title, label, rows) {
   return modal(`<div class="lee-mhead">${esc(title)}<span class="sub">${esc(label)}</span></div>

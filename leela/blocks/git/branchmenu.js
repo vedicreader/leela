@@ -43,7 +43,7 @@ async function loadGitCommitInspector(ref) {
 }
 async function openGitCommitFile(ref, path) {
   try {
-    const d = await api(gitUrl('/git/commit/file', {ref, path}));
+    const d = noteHl(await api(gitUrl('/git/commit/file', {ref, path})));
     const c = gitUI.selectedCommit;
     return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
   } catch (e) { leeFail('git', 'commit file', e); }
