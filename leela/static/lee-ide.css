@@ -3516,6 +3516,39 @@ kbd {
 .lee-vault-sendline.blocked { background: color-mix(in srgb, var(--lee-red) 12%, transparent); color: var(--lee-red); }
 .lee-vault-sheet > .lee-vault-allow { flex-direction: row; align-items: center; gap: 6px; }
 .lee-vault-sheetfoot { display: flex; align-items: center; gap: 8px; }
+.lee-vault-dochead .lee-btn.active { color: var(--lee-accent); border-color: var(--lee-accent); }
+.lee-vault-vchip { padding: 0 4px; border: 1px solid var(--lee-border); border-radius: 3px; background: none; color: var(--lee-fg2);
+                   cursor: pointer; font: inherit; }
+.lee-vault-senthead { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.lee-vault-senthead.masked { color: var(--lee-orange); }
+.lee-vault-senthead.withheld { color: var(--lee-red); }
+.lee-vault-senthead small { flex: 0 0 100%; color: var(--lee-fg4); }
+.lee-vault-sent { margin: 0; white-space: pre-wrap; font: 11px/1.5 var(--lee-mono); }
+.lee-vault-history { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px; min-width: min(720px, 90vw); }
+.lee-vault-histpick { display: flex; align-items: center; gap: 8px; }
+.lee-vault-histpick select { width: auto; }
+.lee-job-cost { color: var(--lee-fg2); font: 10px/1.4 var(--lee-mono); }
+
+/* ---- the Review queue ---- */
+.lee-vault-review { display: flex; flex-direction: column; gap: 4px; height: 100%; min-height: 0; overflow: auto; padding: 0 14px 14px; outline: none; }
+.lee-review-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 8px 0; background: var(--lee-bg); }
+.lee-review-doubts { color: var(--lee-fg3); font: 10px/1.4 var(--lee-mono); }
+.lee-review-staged { padding: 4px 8px; border-radius: 4px; background: color-mix(in srgb, var(--lee-accent) 10%, transparent); font: 10px/1.4 var(--lee-mono); }
+.lee-review-doc { margin-top: 8px; color: var(--lee-accent); font: 600 11px/1.4 var(--lee-mono); }
+.lee-review-page { color: var(--lee-fg4); font: 10px/1.4 var(--lee-mono); }
+.lee-review-row { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 10px; align-items: start; padding: 6px;
+                  border: 1px solid var(--lee-border); border-radius: 4px; cursor: pointer; }
+.lee-review-row.active { border-color: var(--lee-accent); box-shadow: 0 0 0 1px var(--lee-accent); }
+.lee-review-row.staged { background: color-mix(in srgb, var(--lee-green) 9%, transparent); }
+.lee-review-row.stale { opacity: .55; }
+.lee-review-row[data-state="doubt"] .lee-review-change small { color: var(--lee-orange); }
+.lee-review-img { display: block; max-width: 180px; max-height: 120px; object-fit: contain; background: #fff; }
+.lee-review-change { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font: 12px/1.5 var(--lee-mono); }
+.lee-review-change del { color: var(--lee-red); }
+.lee-review-change ins { color: var(--lee-green); text-decoration: none; }
+.lee-review-change small { flex: 0 0 100%; color: var(--lee-fg4); font-size: 10px; }
+.lee-review-stalewhy { color: var(--lee-orange); font-size: 10px; }
+.lee-review-edit { width: auto; min-width: 160px; }
 
 /* ---- the Vault tab's home ---- */
 .lee-wb-library { display: flex; flex-direction: column; height: 100%; min-height: 0; }

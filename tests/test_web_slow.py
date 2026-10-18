@@ -969,3 +969,135 @@ def test_hyper_v_opens_the_vault_tab(tmp_path, monkeypatch):
         await pg.wait_for_selector('#vaultwb .lee-wb-tab.active', timeout=15000)
         return await pg.inner_text('#vaultwb .lee-wb-tab.active')
     assert _run(go, roots=[tmp_path]) == 'library'
+
+# ── the vault: fixing a page, and the Review queue ──────────────────────────
+
+@pytest.fixture
+def review_proj(tmp_path, monkeypatch):
+    "An Open PDF and a Personal one, a hosted reader, and proofreaders on this machine that change two words of page 1."
+    from tests.blocks.test_vault_screens import EMAIL, INVOICE, Reader, mkpdf
+    from tests.blocks.test_vault_review import PLAIN, Fixed
+    import leela.blocks.memory.memory as mm, leela.blocks.vault.app as va
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    (proj := tmp_path/'proj').mkdir()
+    (proj/'plain.pdf').write_bytes(mkpdf([INVOICE, '', PLAIN]))
+    (proj/'scan.pdf').write_bytes(mkpdf([INVOICE, '', EMAIL]))
+    two = INVOICE.replace('ACME', 'ACMEX').replace('Payment', 'Paymnt').replace('\n', ' ')
+    readers = {'hosted': Reader('hosted', 'hosted'), 'p1': Fixed('p1', 'litert', two), 'p2': Fixed('p2', 'litert', two),
+               'p3': Fixed('p3', 'litert', INVOICE.replace('Ltd', 'Limited').replace('\n', ' '))}
+    monkeypatch.setattr(mm, 'read_chat', lambda m: readers.get(m))
+    monkeypatch.setattr(va, 'reader_id', lambda n: n or None)
+    return proj, readers
+
+#: Start a job from the page and wait on it, so a test sets the scene through the routes a screen uses.
+JOB = """async ([url, body]) => {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const id = ((await r.text()).match(/id="job-([^"]+)"/) || [])[1];
+  for (let i = 0; i < 400; i++) {
+    await new Promise(res => setTimeout(res, 100));
+    const j = (await (await fetch('/jobs?limit=40')).json()).jobs.find(x => x.id === id);
+    if (j && !j.active) return j;
+  }
+}"""
+PAGE = "([d, s]) => fetch(`/vault/page?doc=${d}&shelf=${s}&page=0`).then(r => r.json())"
+
+def test_r_re_reads_a_page_h_shows_its_versions_and_m_shows_it_as_sent(review_proj):
+    proj, readers = review_proj
+    src = str((proj/'plain.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/read', {'src': src}])
+        await pg.evaluate('([d, s]) => leeOpenVaultDoc(d, s, "", "plain")', [j['result']['doc_id'], j['result']['shelf']])
+        await pg.wait_for_function("() => document.querySelector('[data-pagetext]')?.textContent.includes('v1')")
+        await pg.focus('.lee-vault-docview'); await pg.keyboard.press('r')
+        await pg.wait_for_selector('[data-vault-pagesheet="reparse"]')
+        out = {'pages': await pg.input_value('[data-vault-pagesheet] [name=pages]')}
+        await pg.evaluate("""() => { const f = document.querySelector('[data-vault-pagesheet]'), s = f.elements.model0;
+          s.add(new Option('hosted · hosted: stub', 'hosted')); s.value = 'hosted'; s.dispatchEvent(new Event('change', {bubbles: true})); }""")
+        await pg.wait_for_function("() => document.querySelector('[data-vault-pagesheet] [data-send]').textContent.includes('hosted.')")
+        out['line'] = await pg.inner_text('[data-vault-pagesheet] [data-send]')
+        await pg.click('[data-vault-pagesheet] [data-go]')
+        await pg.wait_for_function("() => !document.querySelector('[data-vault-pagesheet]') && "
+                                   "document.querySelector('[data-pagetext]')?.textContent.includes('read by hosted')", timeout=20000)
+        out['head'] = await pg.inner_text('.lee-vault-pagehead')
+        await pg.focus('.lee-vault-docview'); await pg.keyboard.press('h')
+        await pg.wait_for_selector('[data-vault-history] .lee-drow.add')
+        out['diff'] = await pg.inner_text('[data-vault-history] [data-diff]')
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_function("() => !document.querySelector('[data-vault-history]')")
+        await pg.focus('.lee-vault-docview'); await pg.keyboard.press('j'); await pg.keyboard.press('j')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '2'")
+        await pg.keyboard.press('m')
+        await pg.wait_for_selector('[data-sent]')
+        out['sent'] = await pg.inner_text('.lee-vault-pagetext')
+        return out
+    got = _run(go, roots=[proj])
+    assert got['pages'] == '1' and 'hosted' in got['line'] and '1 page open' in got['line']
+    assert 'v2' in got['head'] and 'model' in got['head']
+    assert 'read by hosted' in got['diff']
+    assert 'as sent' in got['sent'] and 'whole' in got['sent'] and 'weather' in got['sent']
+    assert len(readers['hosted'].sent) == 1
+
+def test_review_keys_stage_accept_reject_and_undo(review_proj):
+    proj, readers = review_proj
+    src = str((proj/'plain.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/read', {'src': src}])
+        doc, shelf = j['result']['doc_id'], j['result']['shelf']
+        await pg.evaluate(JOB, ['/vault/proofread', {'doc': doc, 'shelf': shelf, 'readers': 'p1,p2,p3', 'pages': '1'}])
+        await pg.evaluate('([d, s]) => leeVaultReview(d, s)', [doc, shelf])
+        await pg.wait_for_selector('.lee-review-row')
+        count = "n => document.querySelector('[data-count=\"proof\"]')?.textContent === n"
+        out = {'before': await pg.inner_text('[data-count="proof"]'),
+               'scope': await pg.evaluate("() => { const r = document.querySelector('.lee-vault-review'); r.focus(); return document.activeElement === r; }")}
+        await pg.keyboard.press('a')
+        await pg.wait_for_selector('.lee-review-row.staged')
+        out['staged'] = await pg.inner_text('[data-staged]')
+        await pg.keyboard.press('x')
+        await pg.wait_for_function(count, arg='2')
+        out['rejected'] = await pg.evaluate("() => [...document.querySelectorAll('.lee-review-row ins')].map(e => e.textContent)")
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('A')
+        await pg.wait_for_function(count, arg='0')
+        out['accepted'] = (await pg.evaluate(PAGE, [doc, shelf]))['text']
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('u')
+        await pg.wait_for_function(PAGE.replace('r.json())', 'r.json()).then(p => p.version === 3)'), arg=[doc, shelf])
+        out['undone'] = (await pg.evaluate(PAGE, [doc, shelf]))['text']
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('u')
+        await pg.wait_for_function(count, arg='1')
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('d')
+        await pg.wait_for_selector('[data-review-doubts]:checked')
+        out['doubts'] = await pg.locator('.lee-review-row').count()
+        return out
+    got = _run(go, roots=[proj])
+    assert got['before'] == '3' and got['scope'] and 'staged' in got['staged']
+    assert 'Limited' not in got['rejected'], 'a staged the first change and moved on; x rejected the doubt it moved to'
+    assert 'ACMEX' in got['accepted'] and 'Paymnt' in got['accepted'], 'A applied the page: the staged change and the other proposed one'
+    assert 'ACMEX' not in got['undone'] and 'Paymnt' not in got['undone'], 'u reverted the accept as a new version'
+    assert got['doubts'] == 1, 'the second u put the rejected doubt back'
+
+def test_personal_info_review_a_and_x_change_the_count(review_proj):
+    proj, readers = review_proj
+    src = str((proj/'scan.pdf').resolve())
+    async def go(pg):
+        j = await pg.evaluate(JOB, ['/vault/read', {'src': src}])
+        ds = [j['result']['doc_id'], j['result']['shelf']]
+        await pg.evaluate('([d, s]) => leeVaultReview(d, s)', ds)
+        await pg.wait_for_selector('[data-review-mode="pii"]')
+        await pg.click('[data-review-mode="pii"]')
+        await pg.wait_for_selector('.lee-review-row')
+        n = lambda: pg.evaluate("() => +document.querySelector('[data-count=\"pii\"]').textContent")
+        out = {'before': await n(), 'preview': await pg.inner_text('.lee-review-row.active code')}
+        fewer = "n => +document.querySelector('[data-count=\"pii\"]').textContent < n"
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('x')
+        await pg.wait_for_function(fewer, arg=out['before'])
+        out['after_x'] = await n()
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('u')
+        await pg.wait_for_function("n => +document.querySelector('[data-count=\"pii\"]').textContent === n", arg=out['before'])
+        await pg.focus('.lee-vault-review'); await pg.keyboard.press('a')
+        await pg.wait_for_function(fewer, arg=out['before'])
+        out['level'] = await pg.evaluate("([d, s]) => fetch(`/vault/privacy?doc=${d}&shelf=${s}`).then(r => r.json()).then(r => r.level)", ds)
+        return out
+    got = _run(go, roots=[proj])
+    assert got['before'] >= 1 and got['after_x'] < got['before']
+    assert 'jane.doe@example.com' not in got['preview'] and '•' in got['preview']
+    assert got['level'] == 'personal'

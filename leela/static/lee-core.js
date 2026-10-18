@@ -802,7 +802,8 @@ function eventContext(e) {
   if (inPath('.lee-webview')) return 'web';
   if (inPath('#agentprompt, .lee-agent')) return 'agent';
   if (inPath('#execbox, .lee-exec')) return 'exec';
-  // Before `#editor`, which holds the tab it is mounted in.
+  // Before `#editor`, which holds the tab they are mounted in.
+  if (inPath('.lee-vault-review')) return 'review';
   if (inPath('.lee-vault-docview')) return 'vault';
   if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
   if (inPath('#vars, #varfilter, .lee-varspanel')) return 'vars';
@@ -1053,6 +1054,20 @@ const ACTIONS = {
   vault_prev_page: () => leeVaultPage(-1),
   vault_next_flag: () => leeVaultFlag(1),
   vault_prev_flag: () => leeVaultFlag(-1),
+  vault_review: () => leeVaultReview(),
+  vault_reread: () => leeVaultDoc('reread'),
+  vault_history: () => leeVaultDoc('history'),
+  vault_proofread: () => leeVaultDoc('proofread'),
+  vault_as_sent: () => leeVaultDoc('sent'),
+  review_next: () => leeReview('step', 1),
+  review_prev: () => leeReview('step', -1),
+  review_accept: () => leeReview('accept'),
+  review_reject: () => leeReview('reject'),
+  review_accept_page: () => leeReview('page'),
+  review_accept_doc: () => leeReview('doc'),
+  review_doubts: () => leeReview('doubts'),
+  review_edit: () => leeReview('edit'),
+  review_undo: () => leeReview('undo'),
   indent_more:      () => leeIndent('indentMore'),
   indent_less:      () => leeIndent('indentLess'),
   indent_selection: () => leeIndent('indentSelection'),

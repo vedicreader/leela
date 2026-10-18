@@ -312,3 +312,35 @@ def test_a_read_only_vault_refuses_every_decision(rws, tmp_path):
         for route in ('/vault/changes/accept', '/vault/pii/findings/reject', '/vault/reparse', '/vault/proofread'):
             r = c.post(route, json=dict(doc='x', ids='y', vault='peer', model='local', readers='local'))
             assert r.status_code == 403 and r.json()['kind'] == 'read_only', route
+
+def test_staged_edits_apply_with_the_rest_of_their_page(plain):
+    with TestClient(ide_app(plain)) as c:
+        doc, shelf = _doc(plain, c, 'plain.pdf')
+        _proof(plain, c, doc, shelf)
+        a, b = _changes(c, doc, shelf)
+        r = c.post('/vault/changes/accept', json=dict(doc=doc, shelf=shelf, ids=f"{a['id']},{b['id']}", edits=json.dumps({b['id']: 'Payments'}))).json()
+        assert r['ok'] and r['accepted'] == 2
+        t = _text(c, doc, shelf)['text']
+        assert a['after'] in t and 'Payments' in t
+        assert c.post('/vault/changes/accept', json=dict(doc=doc, shelf=shelf, ids=a['id'], edits='[1]')).json()['ok'] is False
+
+def test_the_review_and_page_keys_have_their_own_scopes():
+    from pathlib import Path
+    from leela.core.keys import DEFAULTS, _dupes, lookup
+    assert _dupes(DEFAULTS) == []
+    want = {'review_next': 'j', 'review_prev': 'k', 'review_accept': 'a', 'review_reject': 'x', 'review_accept_page': 'A',
+            'review_accept_doc': 'alt+a', 'review_doubts': 'd', 'review_edit': 'e', 'review_undo': 'u'}
+    assert {a: lookup(a).key for a in want} == want and {lookup(a).scope for a in want} == {'review'}
+    assert {a: lookup(a).key for a in ('vault_reread', 'vault_history', 'vault_proofread', 'vault_as_sent')} == \
+        {'vault_reread': 'r', 'vault_history': 'h', 'vault_proofread': 'p', 'vault_as_sent': 'm'}
+    assert lookup('vault_review').label, 'the palette lists the review queue'
+    km = (Path(__file__).resolve().parents[2]/'leela/blocks/keys/keymap.js').read_text()
+    assert km.index("'.lee-vault-review'") < km.index("'.lee-vault-docview'") < km.index("'#editor,"), \
+        'review and vault are matched before the editor that holds them'
+
+def test_the_vault_tab_has_a_review_view(rws):
+    rws.open_vault_workbench()
+    with TestClient(ide_app(rws)) as c:
+        assert '/vault/view/review' in c.get('/vault/workbench').text
+        v = c.get('/vault/view/review', params=dict(doc='d1', shelf='main')).text
+        assert 'lee-vault-review' in v and 'data-doc="d1"' in v

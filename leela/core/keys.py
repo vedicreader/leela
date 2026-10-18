@@ -10,7 +10,7 @@ __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
-SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas', 'vault')
+SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'canvas', 'vault', 'review')
 
 _NAMED = {'enter', 'escape', 'tab', 'backspace', 'delete', 'space', 'up', 'down', 'left', 'right',
           'home', 'end', 'pageup', 'pagedown', *[f'f{i}' for i in range(1, 13)]}
@@ -126,6 +126,7 @@ DEFAULTS = L(
     Key('open_vault',       'hyper+v',       'global', 'open the vault'),
     Key('vault_read',       '',              'global', 'read a file into the vault'),
     Key('vault_find',       '',              'global', 'find in the vault'),
+    Key('vault_review',     '',              'global', 'vault review queue'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
     Key('copy_rel_path',    'alt+y',         'global', 'copy relative path',  'toast'),
     Key('copy_abs_path',    'alt+shift+y',   'global', 'copy absolute path'),
@@ -262,6 +263,19 @@ DEFAULTS = L(
     Key('vault_prev_page',  'k',             'vault',  'previous page',       'footer'),
     Key('vault_next_flag',  ']',             'vault',  'next flagged page',   'toast'),
     Key('vault_prev_flag',  '[',             'vault',  'previous flagged page', 'toast'),
+    Key('vault_reread',     'r',             'vault',  're-read pages with another model', 'toast'),
+    Key('vault_history',    'h',             'vault',  'page versions',       'toast'),
+    Key('vault_proofread',  'p',             'vault',  'proofread this document', 'toast'),
+    Key('vault_as_sent',    'm',             'vault',  'as sent to a hosted model', 'toast'),
+    Key('review_next',      'j',             'review', 'next change',         'footer'),
+    Key('review_prev',      'k',             'review', 'previous change',     'footer'),
+    Key('review_accept',    'a',             'review', 'accept',              'footer'),
+    Key('review_reject',    'x',             'review', 'reject',              'footer'),
+    Key('review_accept_page', 'A',           'review', 'accept the page',     'toast'),
+    Key('review_accept_doc', 'alt+a',        'review', 'accept the document', 'toast'),
+    Key('review_doubts',    'd',             'review', 'doubts only',         'toast'),
+    Key('review_edit',      'e',             'review', 'edit, then accept',   'toast'),
+    Key('review_undo',      'u',             'review', 'undo',                'toast'),
     Key('term_new',         'ctrl+shift+`',  'term',   'new terminal',        'toast'),
     Key('term_next',        'ctrl+shift+]',  'term',   'next terminal'),
     Key('term_prev',        'ctrl+shift+[',  'term',   'previous terminal'),

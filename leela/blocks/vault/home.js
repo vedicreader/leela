@@ -165,13 +165,14 @@ async function leeVaultReadSheet(src, {vault = '', shelf = ''} = {}) {
 window.leeVaultReadSheet = leeVaultReadSheet;
 
 /* The card polls itself; this waits on the same job to open what it read. */
-async function vaultFollow(id, m) {
+async function vaultFollow(id, m, kind = 'read', done = null) {
   for (let i = 0; i < 1800 && m.isConnected; i++) {
     await new Promise(res => setTimeout(res, 700));
     let j;
-    try { j = (await api('/jobs?kind=read&limit=20')).jobs.find(x => x.id === id); } catch { continue; }
+    try { j = (await api(`/jobs?kind=${kind}&limit=20`)).jobs.find(x => x.id === id); } catch { continue; }
     if (!j || j.active) continue;
-    if (j.status !== 'complete' || !j.result?.doc_id) return;
+    if (j.status !== 'complete' || !j.result?.doc_id && kind === 'read') return;
+    if (done) return done(j);
     m.remove();
     const r = j.result;
     status(r.blocked?.length ? `${r.blocked.length} page(s) kept their text layer: not sent` : 'read into the vault', r.blocked?.length ? 'err' : 'ok');

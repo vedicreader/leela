@@ -471,9 +471,12 @@ def connect(app, ctx):
         _busy(m, doc, shelf or None)
         return {'ok': True} | _plain(await off_loop(f, m, *a))
     @rt('/vault/changes/accept')
-    async def vault_changes_accept(doc: str, ids: str = '', after: str = None, vault: str = '', shelf: str = ''):
-        "Apply changes, one new version per page; `after` edits the one change first. `stale` with the ids that cannot be."
-        try: return await _decide(lambda m: m.accept_changes(doc, _ids(ids), shelf or None, after), doc, vault, shelf)
+    async def vault_changes_accept(doc: str, ids: str = '', after: str = None, edits: str = '', vault: str = '', shelf: str = ''):
+        "Apply changes, one new version per page; `after` or `edits` (JSON `{id: after}`) edit them first. `stale` with the ids that cannot be."
+        try:
+            ed = json.loads(edits) if edits.strip() else None
+            if ed is not None and not isinstance(ed, dict): raise VaultRefused('edits is a JSON object of id to text', 'bad_request')
+            return await _decide(lambda m: m.accept_changes(doc, _ids(ids), shelf or None, after, ed), doc, vault, shelf)
         except Exception as e: return _refusal(e)
     @rt('/vault/changes/reject')
     async def vault_changes_reject(doc: str, ids: str = '', vault: str = '', shelf: str = ''):

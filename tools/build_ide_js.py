@@ -46,7 +46,7 @@ LAYERS = {
         'blocks/keys/palette.js', 'blocks/fs/files.js', 'blocks/editor/split.js',
         'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/refactor/move.js',
         'blocks/git/conflictfiles.js', 'blocks/git/conflictcells.js',
-        'blocks/vault/home.js', 'blocks/vault/doc.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
+        'blocks/vault/home.js', 'blocks/vault/doc.js', 'blocks/vault/review.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
         'blocks/canvas/tab.js',
         'blocks/workspace/projects.js'
     ],

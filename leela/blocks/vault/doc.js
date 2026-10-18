@@ -68,7 +68,12 @@ function vaultHead(st, d) {
   return `<header class="lee-vault-dochead"><span class="lee-ptitle">${esc(doc.title || st.title)}</span>` +
     `<span class="lee-keyscope">${esc(doc.kind || 'document')} · ${esc(st.shelf || 'store')}</span>` +
     `<span data-level-slot>${vaultLevelChip(d.level || {level: 'open'}, d.writable)}</span><span class="lee-spacer"></span>` +
-    (VAULT_PAGED.test(src) ? `<button class="lee-btn" data-vault-reread>${d.paged ? 'read again' : 'read it page by page'}</button>` : '') +
+    (d.paged ? `<button class="lee-btn" data-vault-act="reread" title="r">re-read</button>` +
+      `<button class="lee-btn" data-vault-act="history" title="h">history</button>` +
+      `<button class="lee-btn" data-vault-act="proofread" title="p">proofread</button>` +
+      `<button class="lee-btn" data-vault-act="review">review</button>` +
+      `<button class="lee-btn" data-vault-act="sent" title="m: what a hosted model receives">as sent</button>` : '') +
+    (VAULT_PAGED.test(src) ? `<button class="lee-btn" data-vault-reread>${d.paged ? 'read the file again' : 'read it page by page'}</button>` : '') +
     (src.startsWith('/') ? `<button class="lee-btn" data-vault-file>open file</button>` : '') + `</header>`;
 }
 
@@ -109,8 +114,8 @@ async function mountVaultPages(host, st, d, q) {
     `<figure class="lee-vault-pageimg"><img data-pageimg alt=""><figcaption data-imgerr hidden></figcaption></figure>` +
     `<article class="lee-vault-pagetext" data-pagetext></article></div></div>`;
   const view = $('.lee-vault-docview', host), img = $('[data-pageimg]', host), text = $('[data-pagetext]', host);
-  let at = -1;
-  const show = async i => {
+  let at = -1, seq = 0;
+  const show = async i => { const tok = ++seq;
     if (i < 0 || i >= pages.length) return;
     at = i;
     const p = pages[i];
@@ -125,16 +130,36 @@ async function mountVaultPages(host, st, d, q) {
       img.hidden = true; err.hidden = false; err.textContent = why;
     };
     try {
+      if (st.sent) {
+        const s = await api(`/vault/page?${q}&page=${p.page}&view=sent`);
+        if (tok !== seq) return;
+        text.innerHTML = `<div class="lee-vault-pagehead lee-vault-senthead ${esc(s.how)}">as sent to a hosted model · page ${pageNo(p.page)} · ` +
+          `${esc(s.how)} · ${esc(s.level)}${Object.keys(s.kinds || {}).length ? ' · ' + esc(Object.keys(s.kinds).join(', ')) : ''}` +
+          `<small>a page image cannot be masked: a re-read or a proofread withholds a Personal page from a hosted model</small></div>` +
+          `<pre class="lee-vault-sent" data-sent>${esc(s.text || '')}</pre>`;
+        return;
+      }
       const r = await api(`/vault/page?${q}&page=${p.page}`);
-      if (at !== i) return;
+      if (tok !== seq) return;
       text.innerHTML = `<div class="lee-vault-pagehead">page ${pageNo(p.page)} · ${esc(r.route)}${r.model ? ' · ' + esc(r.model) : ''}` +
-        ` · v${r.version}${r.flags.length ? ` · <span class="warn">${esc(r.flags.join(', '))}</span>` : ''}</div>`;
+        ` · <button class="lee-vault-vchip" data-vault-act="history" title="h: versions of this page">v${r.version}</button>` +
+        `${r.flags.length ? ` · <span class="warn">${esc(r.flags.join(', '))}</span>` : ''}</div>`;
       if (r.blocks?.length) text.insertAdjacentHTML('beforeend', vaultBlocks(r.blocks));
       else { const a = document.createElement('div'); text.appendChild(a); renderMarkdown(a, r.text || '*no text on this page*'); }
     } catch (e) { text.textContent = e.message || String(e); }
   };
+  const cur = () => pages[at]?.page ?? 0;
+  const acts = {
+    reread: () => vaultPageSheet('reparse', st, {pages: String(pageNo(cur())), done: () => mountVault(host, {...st, at: cur()})}),
+    proofread: () => vaultPageSheet('proof', st, {pages: ''}),
+    history: () => vaultHistory(st, q, cur()),
+    review: () => leeVaultReview(st.doc, st.shelf || '', st.vault || ''),
+    sent: () => { st.sent = !st.sent; view.classList.toggle('sent', !!st.sent); $$('[data-vault-act="sent"]', host).forEach(b => b.classList.toggle('active', !!st.sent)); show(at); },
+  };
+  view.addEventListener('click', e => { const b = e.target.closest('[data-vault-act]'); if (b && acts[b.dataset.vaultAct]) acts[b.dataset.vaultAct](); });
   const visible = () => $$('.lee-vault-thumb', host).filter(b => !b.hidden).map(b => pages.findIndex(p => p.page === +b.dataset.page));
   view.__vault = {
+    ...acts,
     step: n => { const v = visible(), k = v.indexOf(at); show(v[Math.max(0, Math.min(v.length - 1, (k < 0 ? 0 : k + n)))]); },
     flag: n => {
       const f = pages.map((p, i) => p.flags.length ? i : -1).filter(i => i >= 0);
@@ -154,13 +179,123 @@ async function mountVaultPages(host, st, d, q) {
   const sec = $('[data-sections]', host); if (sec) sec.onchange = () => sec.value && show(pages.findIndex(p => p.page === +sec.value));
   view.addEventListener('mousedown', e => { if (!e.target.closest('select, input, button, a')) setTimeout(() => view.focus({preventScroll: true}), 0); });
   wireVaultHead(host, st, d);
-  await show(0);
+  if (st.sent) { view.classList.add('sent'); $$('[data-vault-act="sent"]', host).forEach(b => b.classList.add('active')); }
+  await show(Math.max(0, pages.findIndex(p => p.page === st.at)));
   view.focus({preventScroll: true});
 }
 
 function leeVaultPage(n) { $('.lee-vault-docview')?.__vault?.step(n); }
 function leeVaultFlag(n) { $('.lee-vault-docview')?.__vault?.flag(n); }
-window.leeVaultPage = leeVaultPage; window.leeVaultFlag = leeVaultFlag;
+function leeVaultDoc(act) {
+  const v = $('.lee-vault-docview');
+  if (!v?.__vault) return status('open a read vault document first', 'err');
+  v.__vault[act]?.();
+}
+window.leeVaultPage = leeVaultPage; window.leeVaultFlag = leeVaultFlag; window.leeVaultDoc = leeVaultDoc;
+
+/* Versions of one page: pick any two and see what changed between them. */
+async function vaultHistory(st, q, page) {
+  let rows;
+  try { rows = (await api(`/vault/pages?${q}&history=1`)).pages.filter(p => p.page === page); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  if (!rows.length) return status('this page has no versions yet', 'err');
+  const when = t => t ? new Date(t * 1000).toLocaleString() : '';
+  const opt = (sel) => rows.map(r => `<option value="${r.version}"${r.version === sel ? ' selected' : ''}>v${r.version} · ${esc(r.route)}` +
+    `${r.model ? ' · ' + esc(r.model) : ''} · ${esc(when(r.at))}</option>`).join('');
+  const last = rows.at(-1).version, prev = rows.length > 1 ? rows.at(-2).version : last;
+  const m = modal(`<div class="lee-mhead">Page ${pageNo(page)} versions<span class="sub">${rows.length} version${rows.length === 1 ? '' : 's'}</span></div>` +
+    `<div class="lee-vault-history" data-vault-history><div class="lee-vault-histpick">` +
+    `<select class="lee-input" data-a aria-label="from version">${opt(prev)}</select><span>→</span>` +
+    `<select class="lee-input" data-b aria-label="to version">${opt(last)}</select></div>` +
+    `<div class="lee-diff" data-diff></div></div>`, null, null, {storageKey: 'vault-history'});
+  const paint = async () => {
+    const a = $('[data-a]', m).value, b = $('[data-b]', m).value, out = $('[data-diff]', m);
+    try {
+      const d = await api(`/vault/page/diff?${q}&page=${page}&a=${a}&b=${b}`);
+      out.innerHTML = d.rows.length ? diffHtml(d.rows) : '<div class="lee-dim">these two versions read the same</div>';
+    } catch (e) { out.textContent = e.message || String(e); }
+  };
+  m.addEventListener('change', paint);
+  await paint();
+  return m;
+}
+
+/* The Re-read and Proofread sheets: which pages, which models, and the send line above the button. */
+async function vaultPageSheet(kind, st, {pages = '', done = null} = {}) {
+  const proof = kind === 'proof', base = {doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''};
+  const est = proof ? await vaultCall('/vault/proofread', {...base, estimate: true}) : {};
+  const mem = est.remembered || {};
+  const pick = i => `<label>${proof ? `reader ${i + 1}` : 'model'}<select class="lee-input" name="model${i}" aria-label="${proof ? 'proofreader' : 'the model that reads the pages again'}">` +
+    `<option value="">${proof && i ? 'none' : 'choose a model'}</option></select></label>`;
+  const m = modal(`<div class="lee-mhead"><span>${proof ? 'Proofread' : 'Re-read pages'}</span><span class="sub">${esc(st.title || st.doc)}</span></div>` +
+    `<form class="lee-vault-sheet" data-vault-pagesheet="${kind}">` +
+    `<label>pages<input class="lee-input" name="pages" autocomplete="off" value="${esc(pages)}" placeholder="all, or 3-9"></label>` +
+    pick(0) + (proof ? pick(1) + `<label>agree<input class="lee-input" name="agree" type="number" min="1" max="2" value="${esc(mem.agree || 2)}"></label>`
+      : `<label>preset<select class="lee-input" name="preset"><option value="">as first read</option>` +
+        ['generic', 'sanskrit', 'tamil', 'tables'].map(p => `<option>${p}</option>`).join('') + `</select></label>` +
+        `<label>hint<input class="lee-input" name="hint" autocomplete="off" placeholder="what the pages are, for the model"></label>`) +
+    `<div class="lee-vault-sendline" data-send role="status">choose a model to see where the pages go</div>` +
+    `<label class="lee-vault-allow" data-allow hidden><input type="checkbox" name="allow"> allow once: send the Personal pages, this run only</label>` +
+    `<div class="lee-vault-sheetfoot"><span class="lee-spacer"></span><button class="lee-btn go" type="submit" data-go>${proof ? 'Proofread' : 'Read again'}</button></div>` +
+    `<div class="lee-vault-jobs" data-job></div></form>`, null, null, {storageKey: 'vault-pages'});
+  const f = $('[data-vault-pagesheet]', m), sels = $$('select[name^="model"]', f);
+  const models = (await vaultModels()).filter(seesImages);
+  sels.forEach((sel, i) => {
+    for (const r of models) {
+      const o = document.createElement('option');
+      o.value = r.value; o.textContent = `${r.label} · ${r.local ? 'on this Mac' : 'hosted: ' + (r.provider || 'remote')}`;
+      sel.appendChild(o);
+    }
+    const want = (mem.readers || [])[i];
+    if (want && ![...sel.options].some(o => o.value === want)) sel.add(new Option(want, want));
+    if (want) sel.value = want;
+    attachModelPicker(sel);
+  });
+  let last = {};
+  const names = () => sels.map(s => s.value).filter(Boolean).join(',');
+  const fields = () => ({...base, pages: f.elements.pages.value, allow: f.elements.allow.checked,
+    ...(proof ? {readers: names(), agree: +f.elements.agree.value || 2}
+              : {model: names(), preset: f.elements.preset.value, hint: f.elements.hint.value})});
+  const check = async () => {
+    const line = $('[data-send]', m), go = $('[data-go]', m);
+    if (!names()) { last = {}; line.className = 'lee-vault-sendline'; line.textContent = 'choose a model to see where the pages go'; return; }
+    const d = await vaultCall('/vault/send-check', {...base, pages: f.elements.pages.value, model: names(), allow: f.elements.allow.checked});
+    last = d.ok ? d : {check_ok: false, kind: d.kind, why: d.error};
+    const blocked = last.check_ok === false;
+    line.textContent = last.why || '';
+    line.className = 'lee-vault-sendline' + (blocked ? ' blocked' : '');
+    line.dataset.kind = last.kind || '';
+    $('[data-allow]', m).hidden = last.kind !== 'pii_blocked' && !f.elements.allow.checked;
+    go.textContent = last.kind === 'model_unavailable' ? 'pick another model'
+      : blocked ? (proof ? 'Proofread, skipping withheld pages' : 'Read again, skipping withheld pages') : (proof ? 'Proofread' : 'Read again');
+  };
+  f.addEventListener('change', check);
+  f.elements.pages.addEventListener('input', () => { clearTimeout(f.__t); f.__t = setTimeout(check, 300); });
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!names()) return status('choose a model', 'err');
+    const r = await vaultCall(proof ? '/vault/proofread' : '/vault/reparse', {...fields(), partial: last.check_ok === false});
+    const jobs = $('[data-job]', m);
+    if (r.html) {
+      jobs.insertAdjacentHTML('afterbegin', r.html);
+      htmx.process(jobs);
+      const id = (r.html.match(/id="job-([^"]+)"/) || [])[1];
+      if (id) vaultFollow(id, m, kind, j => {
+        m.remove();
+        if (proof) return leeVaultReview(st.doc, st.shelf || '', st.vault || '');
+        status(j.result?.blocked?.length ? `${j.result.blocked.length} page(s) not sent` : 'read again: a new version of each page', j.result?.blocked?.length ? 'err' : 'ok');
+        done?.(j);
+      });
+      return;
+    }
+    jobs.insertAdjacentHTML('afterbegin', `<div class="lee-job error" data-kind="${esc(r.kind || '')}">` +
+      `<span class="lee-job-error">${esc(r.error || 'it did not start')}</span></div>`);
+  });
+  if (names()) check();
+  setTimeout(() => (names() ? $('[data-go]', m) : sels[0])?.focus(), 0);
+  return m;
+}
+window.vaultPageSheet = vaultPageSheet;
 
 function mountVaultSections(host, st, d) {
   const doc = d.doc || {}, sections = d.sections || [];

@@ -1,3 +1,16 @@
+GET,POST /jobs/{jid}/cancel
+GET,POST /vault/changes
+GET,POST /vault/changes/accept
+GET,POST /vault/changes/reject
+GET,POST /vault/changes/undo
+GET,POST /vault/page/crop
+GET,POST /vault/page/diff
+GET,POST /vault/pii/findings
+GET,POST /vault/pii/findings/{verdict}
+GET,POST /vault/pii/scan
+GET,POST /vault/proof.md
+GET,POST /vault/proofread
+GET,POST /vault/reparse
 GET /{fname:path}.{ext:static}
 GET,POST /
 GET,POST /agent/approval

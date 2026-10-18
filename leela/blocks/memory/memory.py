@@ -730,12 +730,15 @@ class Memory:
         bad = [i for i in ids if i not in cs or cs[i].state not in states or (cs[i].state in ('proposed', 'doubt') and cur.get(cs[i].page) != cs[i].version)]
         if bad: raise VaultRefused('the page was read or decided again since: proofread it again', 'stale', 409, ids=bad)
         return v, [cs[i] for i in ids], cur
-    def accept_changes(self, doc, ids, shelf=None, after=None):
-        "Apply changes as one new version per page. `after` replaces the one change's proposed text first."
+    def accept_changes(self, doc, ids, shelf=None, after=None, edits=None):
+        "Apply changes as one new version per page. `edits` (`{id: after}`), or `after` for a single change, replaces proposed text first."
         v, cs, _ = self._decided(doc, ids, shelf)
+        edits = dict(edits or {})
         if after is not None:
             if len(cs) != 1: raise VaultRefused('an edit is for one change', 'bad_request')
-            v._proof_t().update(dict(id=cs[0].id, after=str(after)))  # seam: vishalakshi has no public edit of a change
+            edits[cs[0].id] = after
+        if bad := [i for i in edits if i not in {c.id for c in cs}]: raise VaultRefused('an edit names a change not being accepted', 'bad_request', ids=bad)
+        for i, a in edits.items(): v._proof_t().update(dict(id=i, after=str(a)))  # seam: vishalakshi has no public edit of a change
         return dict(v.accept(str(doc), [c.id for c in cs]))
     def reject_changes(self, doc, ids, shelf=None):
         v, cs, _ = self._decided(doc, ids, shelf)
