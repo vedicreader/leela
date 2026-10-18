@@ -10,19 +10,24 @@ try: from ramabana.vault import safe_shelf as _safe_shelf
 except ImportError:
     def _safe_shelf(name=None, default='main'): return re.sub(r'[^a-z0-9_]+', '_', str(name or default).lower()).strip('_') or default
 
-__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind',
-           'GLOBAL', 'ACQUIRE', 'PII_GATES', 'pii_gate']
+__all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind', 'source_keys',
+           'GLOBAL', 'ACQUIRE', 'PII_GATES', 'PII_LABELS', 'pii_gate', 'PrivacyBlocked', 'withheld_why']
 
 GLOBAL = 'leela'
 
-#: What a retrieval may do about personal information: nothing, mask it, or withhold the text.
+#: What a hosted model gets of a Personal document: as it is, masked, or withheld.
 PII_GATES = ('off', 'redact', 'refuse')
+PII_LABELS = dict(off='as is (not recommended)', redact='masked', refuse='withheld')
 
-def pii_gate(v):
+def pii_gate(v, default='redact'):
     "A stored or posted policy, refused rather than silently read as `off`."
-    g = str(v or 'off').strip().lower()
+    g = str(v or default).strip().lower()
     if g not in PII_GATES: raise ValueError(f'pii must be one of {", ".join(PII_GATES)}')
     return g
+
+class PrivacyBlocked(PermissionError):
+    "A send refused for a document's level: `kind` is `pii_blocked` or `local_only`, `refs` what was withheld."
+    def __init__(self, why, kind='pii_blocked', refs=()): super().__init__(why); self.kind, self.refs = kind, list(refs)
 
 #: The vault readers a person can point at something, each named for what it reads.
 ACQUIRE = ('grab', 'web', 'crawl', 'note', 'harvest', 'github', 'arxiv', 'youtube', 'pdf')
@@ -34,6 +39,23 @@ def source_kind(source):
     if s.startswith(('/', '~')): return 'file'
     if len(s) > 2 and s[1] == ':' and s[2] in '\\/': return 'file'
     return 'synthetic'
+
+def withheld_why(what, chk):
+    "Why `what` was not sent, in `reach_refusal`'s words."
+    from vishalakshi.pii import LEVEL_LABELS
+    lv = first(chk.withheld).level if chk.withheld else 'personal'
+    fix = 'change its level in the vault' if lv == 'local' else 'change vault privacy in agent settings'
+    return (f'{what} is {LEVEL_LABELS[lv]} in the vault and this conversation runs on {chk.model}, which is not a '
+            f'model on this machine. Nothing was sent. Switch to a local model, or {fix}.')
+
+def source_keys(src):
+    "The spellings a vault may have filed `src` under: as given, expanded and resolved."
+    s = str(src or '')
+    if not s or source_kind(s) == 'url': return [s] if s else []
+    p = Path(s).expanduser()
+    try: r = str(p.resolve())
+    except OSError: r = str(p)
+    return list(dict.fromkeys([s, str(p), r]))
 
 def _added_epoch(at):
     "`added_at` as a timestamp. Unreadable means *unknown*, and unknown must not mean stale."
@@ -107,7 +129,34 @@ class Memory:
         self.shelf_name = shelf or GLOBAL
         self.path, self.encoder = memory_path(path), encoder
         self.offline = _offline() if offline is None else bool(offline)
-        self._stores, self.note = {}, 'vault not opened yet'
+        self._stores, self.note, self._srcs = {}, 'vault not opened yet', (None, {})
+    def sources(self):
+        "`{source: (shelf, doc_id)}` over every shelf, read off the file; cached until the file or its WAL changes."
+        import apsw
+        try: seal = tuple(f.stat().st_mtime_ns if f.exists() else 0 for f in (self.path, Path(f'{self.path}-wal')))
+        except OSError: return {}
+        if not seal[0]: return {}
+        if self._srcs[0] == seal: return self._srcs[1]
+        out = {}
+        # apsw, the SQLite the shelves run on: a second SQLite in the process (stdlib `sqlite3`) drops
+        # their POSIX locks when it closes, and racing a shelf's open on another thread is a bus error
+        with _open_lock(self.path):
+            c = apsw.Connection(str(self.path), flags=apsw.SQLITE_OPEN_READONLY)
+            try:
+                try: names = [r[0] for r in c.execute('select name from store_meta')]
+                except apsw.SQLError: names = []
+                for n in names:
+                    t = 'docs' if n == 'store' else f'{n}_docs'
+                    try: rows = c.execute(f'select source, id from "{t}" order by added_at').fetchall()
+                    except apsw.SQLError: continue
+                    out.update({s: (self._shelf_name(n), d) for s, d in rows if s})
+            finally: c.close()
+        self._srcs = (seal, out)
+        return out
+    def by_source(self, src):
+        "`(shelf, doc_id)` of the document filed from `src`, or None."
+        srcs = self.sources()
+        return first(srcs[k] for k in source_keys(src) if k in srcs)
     def _store(self, name):
         "Open one shelf directly, never via the root vault, which would load another encoder."
         # Under the file's lock: the poll tick runs on its own thread, and two threads opening a
@@ -484,6 +533,12 @@ class Memory:
         if meta is None: return dict(v.note(text, title=title))
         return dict(v.add(text, title, source=f'pointer:{uuid.uuid4().hex[:12]}', meta=dict(meta)))
     def set_meta(self, doc_id, shelf=None, **kv): return self._shelf(shelf).set_meta(doc_id, **kv)
+    def send_check(self, doc_id, shelf=None, local=False, model='', policy='redact', image=False):
+        "vishalakshi's `send_check` on one document, for a turn model Leela has already placed on or off this machine."
+        from fastcore.all import AttrDict
+        # `send_check` places a built chat by its runtime, so Leela's own verdict travels as one
+        turn = AttrDict(model=model or 'an unresolved model', runtime='litert' if local else 'hosted')
+        return self._shelf(shelf).send_check(refs=[str(doc_id).split('#')[0]], model=turn, policy=pii_gate(policy), image=image)
     def pii(self, doc_id, shelf=None, ner=True):
         "The PII report for one document, or why there is none."
         try: return dict(self._shelf(shelf).pii(doc_id, ner=ner))

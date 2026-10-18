@@ -465,14 +465,15 @@ def connect(app, ctx):
                 'note': f'reads outside the open folders {"allowed" if enabled else "refused"}; writes are unchanged'}
     @rt('/agent/vault-pii')
     async def agent_vault_pii(req):
-        "What a vault retrieval hands the model: everything, masked identifiers, or nothing at all."
+        "What a hosted model gets of a Personal vault document: masked identifiers, nothing, or all of it."
         d = await req.json()
+        if not (d or {}).get('pii'): return fail('pii is required')
         try: policy = pii_gate(d.get('pii'))
         except ValueError as e: return fail(e)
         ws.vault_pii = policy; ws.save()
-        said = {'off': 'the model reads the vault as it is',
-                'redact': 'identifiers are masked before the model sees them',
-                'refuse': 'sections holding personal information are withheld from the model'}
+        said = {'off': 'a hosted model reads Personal documents as they are (not recommended)',
+                'redact': 'identifiers are masked before a hosted model sees them',
+                'refuse': 'Personal documents are withheld from a hosted model'}
         return {'ok': True, 'pii': policy, 'note': said[policy]}
     @rt('/agent/compaction')
     async def agent_compaction(req):
@@ -841,7 +842,7 @@ def connect(app, ctx):
         # and a switch in another tab must not move this turn
         try: runner = _thread(d.get('thread')).runner
         except Exception as e: return _thread_error(e)
-        try: grounding = await off_loop(ws.prepare_turn, attachments, context)
+        try: grounding = await off_loop(ws.prepare_turn, attachments, context, runner.ai, context_path)
         except Exception as e: return fail(e)
         # Started here, on the loop that owns the kernels, so the first tool call meets a live one.
         if ws.runtime_peek() is None: asyncio.ensure_future(_warm_runtime())

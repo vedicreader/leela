@@ -2,6 +2,19 @@
 
 <!-- do not remove -->
 
+## Unreleased
+
+Needs vishalakshi 0.1.22, shalya 0.1.10, rahasya 0.0.3 and varga 0.0.6.
+
+- Vault privacy (`vault_pii`) defaults to `redact`, not `off`. A hosted model gets a Personal vault document with its identifiers masked. A stored `off` is kept, and the settings pane labels it "as is (not recommended)". A workspace with no stored choice, or one this build does not know, gets `redact`.
+- A model on this machine reads vault documents whole. `vault_pii` applies to hosted models only. A Local only document never goes to a hosted model, whatever `vault_pii` says.
+- An @-attached vault document or section goes through vishalakshi's `send_check`. A Personal one is masked for a hosted model. A withheld one stops the turn before it starts.
+- A file, picture, sound or selection attached by path takes the level of the vault document filed from that path. So does the open document's context. A picture, sound or PDF cannot be masked, so a hosted model gets it only when its document is Open or `vault_pii` is `off`.
+- `/agent/turn` answers a withheld attachment with `{ok: false, error, kind, refs}`. `kind` is `local_only` or `pii_blocked`.
+- The agent's file tools go through shalya's read guard. A vault source is sent whole, masked or refused for a hosted model by its document's level.
+- `run_shell`, `run_shell_bg`, `run_python` and `inspect_python` refuse, for a hosted model, code or a command that names a vault source whose document may not go whole. The match is on the file name. A glob or a computed path is not caught.
+- `/agent/vault-pii` refuses a request with no `pii`.
+
 ## 0.1.10
 
 - The command line and macOS app default to port 5010. The desktop app tries ports 5010 through 5019 before requesting an operating-system-assigned port.

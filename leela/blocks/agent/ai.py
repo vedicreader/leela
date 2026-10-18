@@ -4,13 +4,13 @@ from __future__ import annotations
 from ..runtime.kernels import python_for, venv_env
 import asyncio, functools, inspect, json, os, re, threading
 from fnmatch import fnmatch
-from fastcore.all import L, Path, delegates, first
+from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
 from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
-                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, clip, failed, one_line as _1, summary)
+                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
 from shalya.host import (ApiHost, AskHost, BrowserHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost,
                          NotebookHost, SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
@@ -19,6 +19,7 @@ from ...agent.tools import PATH_WRITES, keep_media, path_write, small_tool, tool
 from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
+from ..memory.memory import PrivacyBlocked, source_kind, withheld_why
 from .video import VideoJobs, video_available, video_tools
 
 from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
@@ -379,8 +380,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return vaults.memory(ref.name)
     @property
     def _pii(self):
-        "What a retrieval does about personal information here. The workspace's, never the model's."
-        return getattr(self.ws, 'vault_pii', 'off')
+        "What a retrieval does about personal information: a local turn model reads it whole, a hosted one through `vault_pii`."
+        if self.model_local is not None and self.model_local()[0]: return 'off'
+        return getattr(self.ws, 'vault_pii', 'redact')
     def memory_search(self, query, limit=8): return self._vault().context(query, sections=limit, pii=self._pii)
     def memory_tree(self, document=''): return self._vault().toc(document or None, pii=self._pii)
     def memory_read(self, node_id): return self._vault().read(node_id, pii=self._pii)
@@ -440,6 +442,29 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return (f'{name} is marked local-only and this conversation runs on {model}, which is not a '
                 f'model on this machine. Nothing was sent. Switch to a local model, or change the '
                 f'reach of {name} on the vault workbench.')
+    def read_guard(self, chk):
+        "shalya's read guard: a file the vault filed goes to a hosted model as its document's level allows."
+        p = str(chk.path)
+        if source_kind(p) != 'url':
+            q = Path(p).expanduser()
+            p = str(q if q.is_absolute() or not self.project else Path(self.project)/q)
+        img = chk.kind == 'image'
+        sent = self.ws.vault_send(src=p, spec=AttrDict(local=bool(chk.local), name=chk.model or 'an unresolved model'), image=img)
+        how = first(sent.rows).how if sent is not None and sent.rows else 'whole'
+        if how == 'whole': return None
+        if how == 'masked': return self.ws.vault_screened(chk.text or '', sent, Path(p).name)
+        return Refusal(withheld_why(Path(p).name, sent), sent.kind, p)
+    def _exec_gate(self, text):
+        "Refuse code or a command naming a vault document a hosted model may not have whole: its output cannot be masked."
+        local, model = self.model_local() if self.model_local is not None else (False, 'an unresolved model')
+        vaults = getattr(self.ws, 'vaults', None)
+        if local or vaults is None or not str(text or '').strip(): return
+        spec = AttrDict(local=False, name=model)
+        for v, s, shelf, doc in vaults.sources():
+            name = Path(s).name
+            if name not in text or source_kind(s) != 'file' or not re.search(rf'(?<![\w.-]){re.escape(name)}(?![\w-])', text): continue
+            sent = self.ws.vault_send(ref=(v, shelf, doc), spec=spec, image=True)
+            if not sent.ok: raise PrivacyBlocked(withheld_why(Path(s).name, sent) + ' The code was not run.', sent.kind, [doc])
     def _client(self, key, parsed):
         "Cached against the credentials too, so a key set on the page reaches a running host."
         from ..vault.spec import expand
@@ -640,6 +665,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return [n for n in names if n in have]
     def _run(self, code, scope):
         "One execution, reported with whatever it managed before an exception ended it."
+        self._exec_gate(code)
         if self.session is not None:
             before = set(self.session.layer)
             r = self.session.run(code, scope=scope)
@@ -730,6 +756,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "Run one command in the project, the way the user would run it in leela's terminal."
         import signal, subprocess
         if not str(command or '').strip(): return 0, ''
+        self._exec_gate(command)
         d, new_session = self._cwd(cwd), os.name == 'posix'
         # The bundle's interpreter redirection is taken off: a shell command that runs python
         # would otherwise import the app's own standard library.
@@ -757,6 +784,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     def run_cmd_bg(self, command, cwd=None):
         "Start `command` in the project with its output in a log file; returns a run id."
         import subprocess, tempfile, uuid
+        self._exec_gate(command)
         d = self._cwd(cwd)
         log = tempfile.NamedTemporaryFile('w', prefix='leela-bg-', suffix='.log', delete=False)
         p = subprocess.Popen(str(command), shell=True, cwd=str(d), env=self._env(d), stdin=subprocess.DEVNULL,

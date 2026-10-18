@@ -150,6 +150,21 @@ class Vaults:
         out = self._replace(ref, agent=bool(agent))
         self.note = f"agent may {'write to' if out.agent_writable else 'only read'} {out.name}"
         return out
+    def sources(self):
+        "`(vault, source, shelf, doc_id)` for every document a readable attached vault filed."
+        for r in self.rows:
+            if r.name != WORKSPACE and not r.exists: continue
+            try: srcs = self.memory(r.name).sources()
+            except Exception: continue
+            yield from ((r.name, s, *hit) for s, hit in srcs.items())
+    def by_source(self, src):
+        "`(vault, shelf, doc_id)` of the first attached vault that filed `src`, or None."
+        for r in self.rows:
+            if r.name != WORKSPACE and not r.exists: continue
+            # a vault file that cannot be read filed nothing anyone can find, so it is passed over
+            try: hit = self.memory(r.name).by_source(src)
+            except Exception: continue
+            if hit: return (r.name, *hit)
     def _build(self, ref): return Memory(shelf=self.shelf, path=ref.path)
     def memory(self, name=None):
         "The `Memory` over one vault, built once and kept."

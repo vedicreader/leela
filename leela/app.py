@@ -14,7 +14,7 @@ from . import PORT, errstr
 from .blocks.term.app import term_cwd
 from .core.ui import bar as btn_bar
 from .blocks.agent.models import JOB_HELP
-from .blocks.memory.memory import PII_GATES
+from .blocks.memory.memory import PII_GATES, PII_LABELS
 
 def help_mark(job):
     "The `?` beside a model control, saying what that job spends its model on."
@@ -746,13 +746,13 @@ def _agent_panel(ws):
                               cls='lee-check-setting',
                               title='Let the agent read a named path anywhere (a sibling checkout, a library in the venv). Writes stay confined; credential files stay refused'),
                         Label(' vault privacy ',
-                              Select(*[Option(v, value=v, selected=v == ws.vault_pii) for v in PII_GATES],
+                              Select(*[Option(PII_LABELS[v], value=v, selected=v == ws.vault_pii) for v in PII_GATES],
                                      id='vault-pii', data_was=ws.vault_pii,
                                      onchange='leeVaultPii(this.value)'),
                               cls='lee-check-setting',
-                              title='What a vault retrieval hands the model. off: as it is. redact: identifiers '
-                                    'masked. refuse: the section withheld. A document you marked not personal '
-                                    'is never gated; one you marked personal always is'),
+                              title='What a hosted model gets of a Personal vault document: masked identifiers, '
+                                    'nothing, or the document as it is. A model on this machine reads it whole. '
+                                    'A Local only document never goes to a hosted model'),
                         Label(Input(type='checkbox', id='agent-optin-research', checked='research' in ws.agent_optin,
                                     onchange="leeAgentOptin('research', this.checked)"), ' research tool by default',
                               cls='lee-check-setting',

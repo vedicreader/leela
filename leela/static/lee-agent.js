@@ -567,7 +567,7 @@ async function leeAgentProfile(profile) {
 }
 window.leeAgentProfile = leeAgentProfile;
 async function leeVaultPii(policy) {
-  const sel = $('#vault-pii'), was = sel ? sel.dataset.was || 'off' : 'off';
+  const sel = $('#vault-pii'), was = sel ? sel.dataset.was || 'redact' : 'redact';
   try {
     const d = await post('/agent/vault-pii', {pii: policy});
     if (!d.ok && sel) sel.value = was; else if (sel) sel.dataset.was = policy;

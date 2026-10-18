@@ -11,7 +11,7 @@ from .agent.agent import Completer
 from .blocks.agent.ai import Assistant, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
-from .blocks.memory.memory import pii_gate
+from .blocks.memory.memory import PrivacyBlocked, pii_gate, withheld_why
 from .blocks.runtime.kernels import KernelPool
 from .blocks.nb.nb import Notebook, media_outputs, read_cells
 from .blocks.research.research import Research
@@ -274,7 +274,7 @@ class Workspace:
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.subagent_steps = self.subagent_timeout = self.subagent_depth = None   # None: ramabana's own default
-        self.vault_pii = 'off'              # what a vault retrieval does about personal information
+        self.vault_pii = 'redact'           # what a hosted model gets of a Personal vault document
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
         self.agent_profile = agent_profile  # how new conversations are briefed: auto | small | full (ramabana's profiles)
         self.thread_optins = {}             # a conversation's own opt-ins, by session id, for `Threads.resume`
@@ -649,7 +649,7 @@ class Workspace:
         return None if (t is None or not t.path) else self.text_at(t.path)
     def _agent_context(self, nb, i, prompt, agent=None):
         agent = agent or self.ai
-        context = nb.context(i)
+        context = self.screen_path(nb.path, nb.context(i), agent.model) if nb.path else nb.context(i)
         from .agent.runtime import ACTION_NOTICE, prompt_notices
         if ACTION_NOTICE in prompt_notices(prompt):
             try:
@@ -729,13 +729,31 @@ class Workspace:
         more = f'\n  [{shown - limit} more files not listed]' if shown > limit else ''
         return (f'<attached-folder path="{root}" files="{shown}">\n'
                 f'  name\tbytes\tlanguage\n' + '\n'.join(rows) + more + '\n</attached-folder>')
-    def _selection_context(self, sel, max_text=60_000):
+    def vault_send(self, src=None, ref=None, spec=None, image=False):
+        "How a vault document, named by `ref` `(vault, shelf, doc)` or found by its source `src`, may go to `spec`; None when `src` is no vault's."
+        if ref is None and (not src or (ref := self.vaults.by_source(src)) is None): return None
+        vault, shelf, doc = ref
+        return self.vaults.memory(vault or None).send_check(doc, shelf or None, bool(spec and spec.local),
+                                                            getattr(spec, 'name', ''), self.vault_pii, image)
+    def vault_screened(self, text, chk, what):
+        "`text` as `chk` lets it go, whole or masked; a withheld one raises `PrivacyBlocked`."
+        how = first(chk.rows).how if chk is not None and chk.rows else 'whole'
+        if how == 'whole': return text
+        if how == 'masked':
+            from vishalakshi.pii import redact
+            return redact(text, ner=True)
+        raise PrivacyBlocked(withheld_why(what, chk), chk.kind, [r.doc_id for r in chk.withheld])
+    def screen_path(self, path, text, spec, image=False):
+        "`text` read from `path`, as the vault document filed from it may go to `spec`."
+        return self.vault_screened(text, self.vault_send(src=path, spec=spec, image=image), Path(path).name)
+    def _selection_context(self, sel, spec=None, max_text=60_000):
         "One highlighted range, as the editor had it."
         path = str(sel.get('path') or 'untitled')
         a, b = int(sel.get('from') or 1), int(sel.get('to') or 1)
         body = str(sel.get('text') or '')[:max_text]
+        if sel.get('path'): body = self.screen_path(path, body, spec)
         return f'<attached-selection path="{path}" lines="{a}-{b}">\n{body}\n</attached-selection>'
-    def _vault_context(self, ref, max_text=60_000):
+    def _vault_context(self, ref, spec=None, max_text=60_000):
         "One vault document or section, as grounded text the turn can quote and cite."
         doc, shelf, vault = str(ref.get('doc') or ''), str(ref.get('shelf') or ''), str(ref.get('vault') or '')
         m = self.vaults.memory(vault or None)
@@ -743,18 +761,20 @@ class Workspace:
         # that was pointed at.
         row = m.document(doc.split('#')[0], shelf or None)
         title = ref.get('title') or row.get('title') or doc
-        body = m.shelf_text(doc, shelf or None, max_text)
+        chk = self.vault_send(ref=(vault, shelf, doc), spec=spec)
+        body = self.vault_screened(m.shelf_text(doc, shelf or None, max_text), chk, title)
         if not body: raise ValueError(f'{title}: nothing readable in the vault')
         src = f' source="{row.get("source")}"' if row.get('source') else ''
         return (f'<attached-document vault="{vault or self.vaults.active.name}" shelf="{shelf or "main"}" '
                 f'title="{title}"{src}>\n{body}\n</attached-document>')
 
     def _attachment_context(self, refs=(), spec=None, max_file=120_000, max_total=300_000):
-        "Workspace files selected with @, as grounded text context and multimodal content parts."
+        "Workspace files selected with @, as grounded text context and multimodal content parts. `spec` None is a hosted model."
         from ramabana.tools import MEDIA, Attachment, media_note, media_parts
         text, images, sound, used = [], [], [], 0
         image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
         audio_exts = {ext for ext, (kind, _) in MEDIA.items() if kind == 'audio'}
+        whole_only = image_exts | audio_exts | {'.pdf'}    # bytes no redaction reaches
         seen, items = set(), []
         for ref in (refs or ()):
             key = json.dumps(ref, sort_keys=True) if isinstance(ref, dict) else str(ref).strip()
@@ -762,24 +782,28 @@ class Workspace:
             seen.add(key); items.append(ref)
         for ref in items:
             if isinstance(ref, dict) and ref.get('kind') == 'selection':
-                text.append(self._selection_context(ref))
+                text.append(self._selection_context(ref, spec))
                 continue
             if isinstance(ref, dict) and ref.get('kind') == 'vault':
-                text.append(self._vault_context(ref))
+                text.append(self._vault_context(ref, spec))
                 continue
             p = self.fs._check(ref, must_exist=True)
             if p.is_dir():
                 text.append(self.folder_manifest(p))
                 continue
             if not p.is_file(): raise ValueError(f'attachment is not a file: {ref}')
-            if p.suffix.lower() in image_exts:
+            sfx = p.suffix.lower()
+            chk = self.vault_send(src=p, spec=spec, image=sfx in whole_only)
+            if sfx in image_exts:
+                self.vault_screened(None, chk, p.name)
                 images.append(p.read_bytes())
                 continue
-            if p.suffix.lower() in audio_exts:
+            if sfx in audio_exts:
+                self.vault_screened(None, chk, p.name)
                 sound.append(Attachment(p))
                 continue
             raw = p.read_bytes()[:max_file]
-            body = raw.decode('utf-8', 'replace')
+            body = self.vault_screened(raw.decode('utf-8', 'replace'), chk, p.name)
             remaining = max_total - used
             if remaining <= 0: break
             body = body[:remaining]; used += len(body)
@@ -789,28 +813,30 @@ class Workspace:
         if not sound: return '\n\n'.join(text), images
         text.append(media_note(sound, spec).strip())
         return '\n\n'.join(text), images + media_parts(sound, spec)
-    def _grounding(self, attachments, context):
-        "`(context, screen, media)` for one prompt-bar turn: pending capture plus @-selected files."
+    def _grounding(self, attachments, context, ai=None, context_path=''):
+        "`(context, screen, media)` for one prompt-bar turn: pending capture plus @-selected files, each as the vault lets it go to `ai`'s model."
+        spec = (ai or self.ai).model
+        if context and context_path: context = self.screen_path(context_path, context, spec)
+        attached, media = self._attachment_context(attachments, spec)
         png, screen, _ = self.take_screen()
-        attached, media = self._attachment_context(attachments, self.ai.model)
         return ('\n\n'.join(x for x in (context, attached) if x), screen,
                 ([png] if png else []) + media)
     def ask(self, prompt, attachments=(), context='', context_path=''):
         "One turn from a prompt bar, grounded by the open notebook and @-selected files."
         self.sync_agent_routing()
-        context, screen, media = self._grounding(attachments, context)
+        context, screen, media = self._grounding(attachments, context, context_path=context_path)
         return self.ai.ask_with(prompt, context=context, screen=screen, image=media or None,
                                 context_path=context_path)
-    def prepare_turn(self, attachments=(), context=''):
+    def prepare_turn(self, attachments=(), context='', ai=None, context_path=''):
         "Capture and validate one prompt-bar turn before the server accepts it."
-        self.sync_agent_routing()
-        return self._grounding(attachments, context)
+        self.sync_agent_routing(ai)
+        return self._grounding(attachments, context, ai, context_path)
     def ask_stream(self, prompt, attachments=(), reasoning=None, context='', context_path='',
                    grounding=None, on_registered=None, ai=None):
         "The same turn, yielding markdown as it arrives. `ai` pins the conversation, else the active one."
         ai = ai or self.ai
         self.sync_agent_routing(ai)
-        context, screen, media = grounding or self._grounding(attachments, context)
+        context, screen, media = grounding or self._grounding(attachments, context, ai, context_path)
         kw = {'reasoning_effort': reasoning} if reasoning and not ai.model.local else {}
         return ai.stream_with(prompt, context=context, screen=screen, image=media or None,
                               context_path=context_path, on_registered=on_registered, **kw)
@@ -1179,9 +1205,9 @@ class Workspace:
         for k in SUBAGENT_SETTINGS:
             try: setattr(self, k, None if d.get(k) is None else int(d[k]))
             except (TypeError, ValueError): setattr(self, k, None)
-        # a saved policy this build no longer knows is `off`, not a workspace that will not load
+        # a saved policy this build no longer knows is `redact`, not a workspace that will not load
         try: self.vault_pii = pii_gate(d.get('vault_pii'))
-        except ValueError: self.vault_pii = 'off'
+        except ValueError: self.vault_pii = 'redact'
         from shalya.tools import OPTIN     # a group this shalya lacks is dropped, not a workspace that will not load
         self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
         from .agent.core import PROFILES   # a profile this ramabana lacks is `auto`, not a workspace that will not load
