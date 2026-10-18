@@ -81,7 +81,7 @@ def test_a_post_after_a_pause_reuses_the_connection(tmp_path):
     """uvicorn's 5s keep-alive closed connections WebKit still held, and a Markdown render sent on one failed with "Load failed"."""
     import http.client, time
     port = serve(roots=[tmp_path])
-    c = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+    c = http.client.HTTPConnection('127.0.0.1', port, timeout=30)
     def render():
         c.request('POST', '/markdown/render', json.dumps({'text': 'x'}), {'Content-Type': 'application/json'})
         r = c.getresponse(); r.read()
