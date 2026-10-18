@@ -46,6 +46,8 @@ function eventContext(e) {
   if (inPath('.lee-webview')) return 'web';
   if (inPath('#agentprompt, .lee-agent')) return 'agent';
   if (inPath('#execbox, .lee-exec')) return 'exec';
+  // Before `#editor`, which holds the tab it is mounted in.
+  if (inPath('.lee-vault-docview')) return 'vault';
   if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
   if (inPath('#vars, #varfilter, .lee-varspanel')) return 'vars';
   if (inPath('#filetree, .lee-files')) return 'files';

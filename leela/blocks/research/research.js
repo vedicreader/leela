@@ -49,7 +49,11 @@ function researchWorkspace(mode = 'search', value = '') {
     list.innerHTML = '<div class="lee-research-empty">Reading the vault…</div>';
     // `elid`, because the vault panel can be open behind this modal with a fragment of its own,
     // and two elements sharing an id would send every folder toggle to whichever came first.
-    try { await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'}); }
+    try {
+      await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'});
+      list.insertAdjacentHTML('afterbegin', '<button class="lee-btn" data-open-vault>open in Vault</button>');
+      $('[data-open-vault]', list).onclick = () => { m.remove(); leeVaultWorkbench('library'); };
+    }
     catch (e) { list.innerHTML = `<div class="lee-research-error">${esc(e.message || e)}</div>`; }
   };
   const setMode = next => {
@@ -200,15 +204,4 @@ function clipTarget() {
   if (s === 'tab') return $(`.lee-tab[data-i="${lee.menuTab}"]`)?.title || '';
   return treeSel()?.dataset.path || lee.path || '';
 }
-async function leeClipToVault() {
-  const target = clipTarget();
-  if (!target) return status('select a file, a folder or a tab to clip', 'err');
-  leePane('right', true); leeRight('memory'); setMemoryView('vault');
-  // The panel first, because the job card swaps into it. Both are ordinary htmx requests.
-  await htmx.ajax('GET', '/vault/panel', {target: '#memorybody', swap: 'innerHTML'});
-  await htmx.ajax('POST', '/clip?' + new URLSearchParams({target, kind: 'clip', origin: 'menu'}),
-    {target: '#vaultjobs', swap: 'afterbegin'});
-  status(`clipping ${target.split('/').pop() || target} into the vault…`);
-}
-window.leeClipToVault = leeClipToVault;
 window.clipTarget = clipTarget;

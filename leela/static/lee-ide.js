@@ -3248,7 +3248,11 @@ function researchWorkspace(mode = 'search', value = '') {
     list.innerHTML = '<div class="lee-research-empty">Reading the vault…</div>';
     // `elid`, because the vault panel can be open behind this modal with a fragment of its own,
     // and two elements sharing an id would send every folder toggle to whichever came first.
-    try { await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'}); }
+    try {
+      await htmx.ajax('GET', '/vault/browse?elid=researchvault', {target: '#researchsources', swap: 'innerHTML'});
+      list.insertAdjacentHTML('afterbegin', '<button class="lee-btn" data-open-vault>open in Vault</button>');
+      $('[data-open-vault]', list).onclick = () => { m.remove(); leeVaultWorkbench('library'); };
+    }
     catch (e) { list.innerHTML = `<div class="lee-research-error">${esc(e.message || e)}</div>`; }
   };
   const setMode = next => {
@@ -3399,17 +3403,6 @@ function clipTarget() {
   if (s === 'tab') return $(`.lee-tab[data-i="${lee.menuTab}"]`)?.title || '';
   return treeSel()?.dataset.path || lee.path || '';
 }
-async function leeClipToVault() {
-  const target = clipTarget();
-  if (!target) return status('select a file, a folder or a tab to clip', 'err');
-  leePane('right', true); leeRight('memory'); setMemoryView('vault');
-  // The panel first, because the job card swaps into it. Both are ordinary htmx requests.
-  await htmx.ajax('GET', '/vault/panel', {target: '#memorybody', swap: 'innerHTML'});
-  await htmx.ajax('POST', '/clip?' + new URLSearchParams({target, kind: 'clip', origin: 'menu'}),
-    {target: '#vaultjobs', swap: 'afterbegin'});
-  status(`clipping ${target.split('/').pop() || target} into the vault…`);
-}
-window.leeClipToVault = leeClipToVault;
 window.clipTarget = clipTarget;
 function modalViewport() {
   const v = window.visualViewport;
@@ -6451,28 +6444,24 @@ async function showNotebookConflict(path, d) {
   refresh();
 }
 window.showNotebookConflict = showNotebookConflict;
-/* ---- the vault: a document as a tab, and the workbench that browses them all ---- */
+/* ---- the Vault tab: its home, the add box, and the Read sheet ---- */
 
-/* The workbench is server-rendered and swaps its own body, so mounting it is one fetch and
-   htmx owns everything after that. The tab holds only which view was last open. */
 async function mountVaultWorkbench(host, st) {
   host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>opening the vault</small></div>';
   try {
-    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'browse'),
+    await htmx.ajax('GET', '/vault/workbench?view=' + encodeURIComponent(st.view || 'library'),
                     {target: host, swap: 'innerHTML'});
   } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 window.mountVaultWorkbench = mountVaultWorkbench;
 
-async function leeVaultWorkbench(view = 'browse') {
+async function leeVaultWorkbench(view = 'library') {
   await htmx.ajax('POST', '/vault/workbench/open?view=' + encodeURIComponent(view),
                   {target: '#tabbar', swap: 'outerHTML'});
   return mountTab();
 }
 window.leeVaultWorkbench = leeVaultWorkbench;
 
-/* Filtering is client-side because the rows are already here: a shelf of two hundred documents
-   is one payload, and a keystroke that costs a request is a keystroke you feel. */
 function leeVaultFilter(input) {
   const want = input.value.trim().toLowerCase(), wrap = input.closest('.lee-wb-main');
   let shown = 0;
@@ -6484,8 +6473,6 @@ function leeVaultFilter(input) {
   if (count) count.textContent = `${shown} shown`;
 }
 window.leeVaultFilter = leeVaultFilter;
-
-/* ---- attaching a vault document to the next question ---- */
 
 function attachVaultRef({vault = '', shelf = '', doc = '', title = ''}) {
   if (!doc) return null;
@@ -6504,8 +6491,6 @@ function leeVaultAsk(btn) {
 }
 window.leeVaultAsk = leeVaultAsk;
 
-/* Every hit on the find view at once: "what do all of these say about X" is one question,
-   and attaching them one at a time is the same question typed six times. */
 function leeVaultAskAll(btn) {
   const rows = $$('.lee-wb-hit .lee-vault-ask', btn.closest('.lee-wb-find'));
   rows.forEach(b => attachVaultRef(b.dataset));
@@ -6515,6 +6500,155 @@ function leeVaultAskAll(btn) {
 }
 window.leeVaultAskAll = leeVaultAskAll;
 
+/* A vault route answers `{ok: false, error, kind}` with an error status, and the screen needs the
+   kind, so this reads the body whatever the status. A job card comes back as HTML. */
+async function vaultCall(url, data) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data || {})});
+  const ct = r.headers.get('content-type') || '';
+  return ct.includes('json') ? r.json() : {ok: r.ok, html: await r.text()};
+}
+window.vaultCall = vaultCall;
+
+const VAULT_PAGED = /\.(pdf|png|jpe?g|tiff?|webp)$/i;
+const VAULT_LEVELS = [['open', 'Open'], ['personal', 'Personal'], ['local', 'Local only']];
+
+function leeVaultAdd(form) {
+  const src = form.elements.src.value.trim();
+  if (!src) return;
+  if (VAULT_PAGED.test(src) && !/^https?:/.test(src)) return leeVaultReadSheet(src);
+  const into = $('#vaultwbjobs') ? '#vaultwbjobs' : null;
+  if (/^https?:|^\d{4}\.\d{4,5}|^github\.com\//.test(src))
+    return into ? htmx.ajax('POST', '/vault/acquire?' + new URLSearchParams({target: src}), {target: into, swap: 'afterbegin'}) : null;
+  return into ? htmx.ajax('POST', '/clip?' + new URLSearchParams({target: src, kind: 'clip', origin: 'library'}),
+                          {target: into, swap: 'afterbegin'}) : null;
+}
+window.leeVaultAdd = leeVaultAdd;
+
+async function vaultModels() {
+  try { return (await api('/agent/models')).models || []; } catch { return []; }
+}
+const seesImages = m => /\bimage\b/.test(String(m.modalities || '').split(/out:|→/)[0]);
+
+/* The Read sheet. It estimates first, says where every page would go, and remembers what was
+   chosen for the folder, so a second file from the same place is one Enter. */
+async function leeVaultReadSheet(src, {vault = '', shelf = ''} = {}) {
+  if (!src) return status('choose a PDF or a page image to read', 'err');
+  const est = await vaultCall('/vault/read', {src, estimate: true, vault, shelf});
+  if (!est.ok) return status(est.error || 'could not read that file', 'err');
+  const mem = est.remembered || {}, name = src.split('/').pop();
+  const opts = (xs, cur) => xs.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  const m = modal(`<div class="lee-mhead"><span>Read into the vault</span><span class="sub">${esc(name)}</span></div>` +
+    `<form class="lee-vault-sheet" data-vault-sheet>` +
+    `<div class="lee-vault-est" data-est></div>` +
+    `<label>parse<select class="lee-input" name="parse">${opts(est.parses.map(p => [p, {auto: 'auto: keep a sound text layer', text: 'text layer only', ocr: 'OCR every page', llm: 'model reads every page'}[p] || p]), mem.parse || 'auto')}</select></label>` +
+    `<label>preset<select class="lee-input" name="preset">${opts(est.presets.map(p => [p, p]), mem.preset || est.type.preset || 'generic')}</select></label>` +
+    `<label>model<select class="lee-input" name="model" id="vaultreadmodel" aria-label="the model that reads page images">` +
+    `<option value="">no model: nothing leaves this machine</option></select></label>` +
+    `<label>hint<input class="lee-input" name="hint" autocomplete="off" value="${esc(mem.hint || '')}" placeholder="what the pages are, for the model"></label>` +
+    `<label>pages<input class="lee-input" name="pages" autocomplete="off" placeholder="all, or 1-3,7"></label>` +
+    `<label>privacy<select class="lee-input" name="level">${opts(VAULT_LEVELS, est.level)}</select></label>` +
+    `<div class="lee-vault-sendline" data-send role="status"></div>` +
+    `<label class="lee-vault-allow" data-allow hidden><input type="checkbox" name="allow"> allow once: send the Personal pages whole, this read only</label>` +
+    `<div class="lee-vault-sheetfoot"><span class="lee-spacer"></span><button class="lee-btn go" type="submit" data-read>Read</button></div>` +
+    `<div class="lee-vault-jobs" data-job></div></form>`, null, null, {storageKey: 'vault-read'});
+  const f = $('[data-vault-sheet]', m), sel = $('#vaultreadmodel', m);
+  const local = est.type.vision === 'local';
+  const models = (await vaultModels()).filter(r => seesImages(r) && (!local || r.local));
+  for (const r of models) {
+    const o = document.createElement('option');
+    o.value = r.value; o.textContent = `${r.label} · ${r.local ? 'on this Mac' : 'hosted: ' + (r.provider || 'remote')}`;
+    sel.appendChild(o);
+  }
+  if ([...sel.options].some(o => o.value === mem.model)) sel.value = mem.model;
+  attachModelPicker(sel);
+  const pickedModel = () => sel.value;
+  let last = est;
+  const paint = d => {
+    last = d;
+    const need = d.need?.length || 0, kind = d.type?.doctype;
+    $('[data-est]', m).innerHTML = `<strong>${d.pages} page${d.pages === 1 ? '' : 's'}</strong>` +
+      ` · ${need ? `up to ${need} need${need === 1 ? 's' : ''} the model` : 'none needs a model'}` +
+      (Object.keys(d.flags || {}).length ? ` · ${Object.keys(d.flags).length} flagged` : '') +
+      (kind ? ` · looks like ${esc(kind.replace(/_/g, ' '))}` : '') +
+      (d.type?.level === 'local' ? '<br><span class="warn">this kind of document is Local only: only models on this Mac are offered</span>' : '');
+    const line = $('[data-send]', m), blocked = d.check_ok === false || d.ok === false;
+    line.textContent = d.why || '';
+    line.className = 'lee-vault-sendline' + (blocked ? ' blocked' : '');
+    line.dataset.kind = d.kind || '';
+    $('[data-allow]', m).hidden = d.kind !== 'pii_blocked' && !f.elements.allow.checked;
+    $('[data-read]', m).textContent = d.kind === 'model_unavailable' ? 'pick another model'
+      : blocked ? 'Read, keeping withheld pages as text' : 'Read';
+  };
+  const fields = () => ({src, vault, shelf, parse: f.elements.parse.value, preset: f.elements.preset.value,
+    model: pickedModel(), hint: f.elements.hint.value, pages: f.elements.pages.value, level: f.elements.level.value,
+    allow: f.elements.allow.checked});
+  const check = async () => {
+    const d = await vaultCall('/vault/send-check', fields());
+    paint(d.ok ? d : {...last, check_ok: false, kind: d.kind, why: d.error});
+  };
+  paint(est);
+  if (est.kind || pickedModel() !== '') check();
+  f.addEventListener('change', check);
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (last.kind === 'model_unavailable') return $('[data-model-pick]', m)?.click();
+    const r = await vaultCall('/vault/read', {...fields(), partial: last.check_ok === false});
+    const jobs = $('[data-job]', m);
+    if (r.html) {
+      jobs.insertAdjacentHTML('afterbegin', r.html);
+      htmx.process(jobs);
+      const id = (r.html.match(/id="job-([^"]+)"/) || [])[1];
+      if (id) vaultFollow(id, m);
+      return;
+    }
+    jobs.insertAdjacentHTML('afterbegin', `<div class="lee-job error" data-kind="${esc(r.kind || '')}">` +
+      `<span class="lee-job-error">${esc(r.error || 'the read did not start')}</span></div>`);
+    if (r.kind === 'busy' && r.job) $(`#job-${CSS.escape(r.job)}`)?.scrollIntoView({block: 'nearest'});
+  });
+  if (mem.parse) setTimeout(() => $('[data-read]', m)?.focus(), 0);
+  return m;
+}
+window.leeVaultReadSheet = leeVaultReadSheet;
+
+/* The card polls itself; this waits on the same job to open what it read. */
+async function vaultFollow(id, m) {
+  for (let i = 0; i < 1800 && m.isConnected; i++) {
+    await new Promise(res => setTimeout(res, 700));
+    let j;
+    try { j = (await api('/jobs?kind=read&limit=20')).jobs.find(x => x.id === id); } catch { continue; }
+    if (!j || j.active) continue;
+    if (j.status !== 'complete' || !j.result?.doc_id) return;
+    m.remove();
+    const r = j.result;
+    status(r.blocked?.length ? `${r.blocked.length} page(s) kept their text layer: not sent` : 'read into the vault', r.blocked?.length ? 'err' : 'ok');
+    return leeOpenVaultDoc(r.doc_id, r.shelf || '', r.vault || '', r.title || j.target.split('/').pop());
+  }
+}
+
+/* Clipping a PDF or a scan is a read; anything else is clipped as text. Either way it lands in the Vault tab. */
+async function leeClipToVault() {
+  const target = clipTarget();
+  if (!target) return status('select a file, a folder or a tab to clip', 'err');
+  if (VAULT_PAGED.test(target)) return leeVaultReadSheet(target);
+  await leeVaultWorkbench('library');
+  const into = $('#vaultwbjobs');
+  if (!into) return status('the Vault tab did not open', 'err');
+  await htmx.ajax('POST', '/clip?' + new URLSearchParams({target, kind: 'clip', origin: 'menu'}), {target: into, swap: 'afterbegin'});
+  into.closest('details')?.setAttribute('open', '');
+  status(`clipping ${target.split('/').pop() || target} into the vault…`);
+}
+window.leeClipToVault = leeClipToVault;
+
+function leeVaultRead() {
+  const target = clipTarget();
+  if (target && VAULT_PAGED.test(target)) return leeVaultReadSheet(target);
+  return leeVaultWorkbench('library').then(() => $('[data-vault-add] input')?.focus());
+}
+window.leeVaultRead = leeVaultRead;
+/* ---- a vault document as a tab: page strip, page image and page text, or its sections ---- */
+
+/* Pages are 0-based on the wire and 1-based on the screen. This is the one place that says so. */
+const pageNo = i => i + 1;
 
 function vaultSectionRows(sections, active) {
   if (!sections.length) return '<div class="lee-dim">No section structure was extracted.</div>';
@@ -6527,15 +6661,11 @@ function vaultPrivacy(d) {
   const p = d.privacy || {};
   const kinds = Object.entries(p.kinds || {}).map(([k, n]) => `${k}×${n}`).join(', ');
   const cleared = p.override === 'clear', forced = p.override === 'force';
-  // Nothing found and nothing said about it: the scan is the whole story, and the only override
-  // left is the one arithmetic cannot reach.
   if (!p.has_pii && !p.detected && !forced) {
     return `<div class="lee-vault-privacy"><strong>No pattern found</strong>` +
       `<span class="lee-pii clear" title="${esc(d.covers || '')}">no pattern found</span>` +
       `<button data-vault-pii="1">mark personal</button></div>`;
   }
-  // `detected` stays true under an override, so an overridden document says so rather than
-  // claiming the scan found nothing.
   const head = cleared ? 'Marked not personal' : forced ? 'Marked personal' : 'Personal information found';
   return `<div class="lee-vault-privacy${cleared ? '' : ' sensitive'}">` +
     `<strong>${head}</strong>` +
@@ -6547,25 +6677,147 @@ function vaultPrivacy(d) {
     `</div>`;
 }
 
+/* The level chip: what a hosted model may have of this document, and a person's way to change it. */
+function vaultLevelChip(lv, writable) {
+  const opts = VAULT_LEVELS.map(([v, l]) => `<option value="${v}"${v === lv.level ? ' selected' : ''}>${l}</option>`).join('');
+  const why = [lv.override ? `marked ${lv.override}` : `detected ${lv.detected}`, lv.floor !== 'open' ? `floor ${lv.floor}` : '',
+               lv.doctype ? `type ${lv.doctype}` : '', Object.keys(lv.kinds || {}).join(', ')].filter(Boolean).join(' · ');
+  return `<span class="lee-vault-level ${esc(lv.level)}" title="${esc(why)}">` +
+    `<select class="lee-input" data-vault-level aria-label="privacy level"${writable ? '' : ' disabled title="this vault is attached read-only"'}>${opts}</select>` +
+    (lv.override ? `<button class="lee-btn" data-vault-level-reset title="let detection decide again">auto</button>` : '') + `</span>`;
+}
+
+function wireVaultLevel(host, st, repaint) {
+  const set = async level => {
+    const r = await vaultCall('/vault/privacy', {doc: st.doc, shelf: st.shelf || '', vault: st.vault || '', level});
+    if (!r.ok) return status(r.error, 'err');
+    status(`now ${VAULT_LEVELS.find(([v]) => v === r.privacy.level)?.[1] || r.privacy.level}`, 'ok');
+    repaint(r.privacy);
+  };
+  const sel = $('[data-vault-level]', host);
+  if (sel) sel.onchange = () => set(sel.value);
+  const reset = $('[data-vault-level-reset]', host);
+  if (reset) reset.onclick = () => set('');
+}
+
 async function mountVault(host, st) {
   host.innerHTML = '<div class="lee-git-loading"><span></span><span></span><span></span><small>reading the vault</small></div>';
   const q = new URLSearchParams({doc: st.doc, shelf: st.shelf || '', vault: st.vault || ''});
   let d;
   try { d = await api('/vault/doc?' + q); }
   catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
+  return d.paged ? mountVaultPages(host, st, d, q) : mountVaultSections(host, st, d);
+}
+window.mountVault = mountVault;
 
+function vaultHead(st, d) {
+  const doc = d.doc || {}, src = String(doc.source || '');
+  return `<header class="lee-vault-dochead"><span class="lee-ptitle">${esc(doc.title || st.title)}</span>` +
+    `<span class="lee-keyscope">${esc(doc.kind || 'document')} · ${esc(st.shelf || 'store')}</span>` +
+    `<span data-level-slot>${vaultLevelChip(d.level || {level: 'open'}, d.writable)}</span><span class="lee-spacer"></span>` +
+    (VAULT_PAGED.test(src) ? `<button class="lee-btn" data-vault-reread>${d.paged ? 'read again' : 'read it page by page'}</button>` : '') +
+    (src.startsWith('/') ? `<button class="lee-btn" data-vault-file>open file</button>` : '') + `</header>`;
+}
+
+function wireVaultHead(host, st, d) {
+  const src = String(d.doc?.source || '');
+  const rr = $('[data-vault-reread]', host); if (rr) rr.onclick = () => leeVaultReadSheet(src, {vault: st.vault || '', shelf: st.shelf || ''});
+  const of = $('[data-vault-file]', host); if (of) of.onclick = () => leeOpenVaultFile(st.doc, st.shelf || '', st.vault || '');
+  const repaint = lv => { $('[data-level-slot]', host).innerHTML = vaultLevelChip(lv, d.writable); wireVaultLevel(host, st, repaint); };
+  wireVaultLevel(host, st, repaint);
+}
+
+function vaultBlocks(blocks) {
+  return blocks.map((b, i) => {
+    const body = b.rows?.length ? `<table>${b.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table>`
+      : esc(b.text || '').replace(/\n/g, '<br>');
+    return `<div class="lee-vault-block ${esc(b.kind || 'prose')}" data-block="${i}" tabindex="-1">` +
+      (b.n != null ? `<small>${esc(b.n)}</small>` : '') + body + `</div>`;
+  }).join('');
+}
+
+async function mountVaultPages(host, st, d, q) {
+  let pages;
+  try { pages = (await api('/vault/pages?' + q)).pages; }
+  catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
+  const routes = [...new Set(pages.map(p => p.route))];
+  const secs = (d.sections || []).filter(s => s.page);
+  host.innerHTML = `<div class="lee-vault-docview" tabindex="0" data-doc="${esc(st.doc)}">${vaultHead(st, d)}` +
+    `<div class="lee-vault-docbody"><aside class="lee-vault-strip">` +
+    `<select class="lee-input" data-strip-filter aria-label="show pages"><option value="">every page</option>` +
+    `<option value="flagged">flagged</option>${routes.map(r => `<option value="route:${esc(r)}">${esc(r)}</option>`).join('')}</select>` +
+    (secs.length ? `<select class="lee-input" data-sections aria-label="sections"><option value="">sections…</option>` +
+      secs.map(s => `<option value="${s.page - 1}">${esc(s.title)} · p. ${s.page}</option>`).join('') + `</select>` : '') +
+    `<div class="lee-vault-thumbs">${pages.map(p => `<button class="lee-vault-thumb" data-page="${p.page}" data-route="${esc(p.route)}"` +
+      ` data-flagged="${p.flags.length ? 1 : 0}" title="page ${pageNo(p.page)} · ${esc(p.route)}${p.flags.length ? ' · ' + esc(p.flags.join(', ')) : ''}">` +
+      `<img loading="lazy" alt="" src="/vault/page/img?${q}&page=${p.page}&w=120">` +
+      `<span class="lee-vault-pno">${pageNo(p.page)}</span><span class="lee-vault-route ${esc(p.route)}">${esc(p.route)}</span>` +
+      `${p.flags.map(f => `<i class="lee-vault-flag" title="${esc(f)}"></i>`).join('')}</button>`).join('')}</div></aside>` +
+    `<figure class="lee-vault-pageimg"><img data-pageimg alt=""><figcaption data-imgerr hidden></figcaption></figure>` +
+    `<article class="lee-vault-pagetext" data-pagetext></article></div></div>`;
+  const view = $('.lee-vault-docview', host), img = $('[data-pageimg]', host), text = $('[data-pagetext]', host);
+  let at = -1;
+  const show = async i => {
+    if (i < 0 || i >= pages.length) return;
+    at = i;
+    const p = pages[i];
+    view.dataset.page = String(p.page);
+    $$('.lee-vault-thumb', host).forEach(b => b.classList.toggle('active', +b.dataset.page === p.page));
+    $(`.lee-vault-thumb[data-page="${p.page}"]`, host)?.scrollIntoView({block: 'nearest'});
+    const err = $('[data-imgerr]', host); err.hidden = true; img.hidden = false;
+    img.src = `/vault/page/img?${q}&page=${p.page}&w=900`;
+    img.onerror = async () => {
+      let why = 'the page image did not render';
+      try { why = (await (await fetch(img.src)).json()).error || why; } catch {}
+      img.hidden = true; err.hidden = false; err.textContent = why;
+    };
+    try {
+      const r = await api(`/vault/page?${q}&page=${p.page}`);
+      if (at !== i) return;
+      text.innerHTML = `<div class="lee-vault-pagehead">page ${pageNo(p.page)} · ${esc(r.route)}${r.model ? ' · ' + esc(r.model) : ''}` +
+        ` · v${r.version}${r.flags.length ? ` · <span class="warn">${esc(r.flags.join(', '))}</span>` : ''}</div>`;
+      if (r.blocks?.length) text.insertAdjacentHTML('beforeend', vaultBlocks(r.blocks));
+      else { const a = document.createElement('div'); text.appendChild(a); renderMarkdown(a, r.text || '*no text on this page*'); }
+    } catch (e) { text.textContent = e.message || String(e); }
+  };
+  const visible = () => $$('.lee-vault-thumb', host).filter(b => !b.hidden).map(b => pages.findIndex(p => p.page === +b.dataset.page));
+  view.__vault = {
+    step: n => { const v = visible(), k = v.indexOf(at); show(v[Math.max(0, Math.min(v.length - 1, (k < 0 ? 0 : k + n)))]); },
+    flag: n => {
+      const f = pages.map((p, i) => p.flags.length ? i : -1).filter(i => i >= 0);
+      if (!f.length) return status('no page is flagged', 'ok');
+      show(n > 0 ? (f.find(i => i > at) ?? f[0]) : (f.slice().reverse().find(i => i < at) ?? f.at(-1)));
+    }};
+  $$('.lee-vault-thumb', host).forEach(b => b.onclick = () => show(pages.findIndex(p => p.page === +b.dataset.page)));
+  text.addEventListener('click', e => {
+    const b = e.target.closest('.lee-vault-block'); if (!b) return;
+    $$('.lee-vault-block.active', text).forEach(x => x.classList.remove('active')); b.classList.add('active');
+  });
+  $('[data-strip-filter]', host).onchange = e => {
+    const v = e.target.value;
+    $$('.lee-vault-thumb', host).forEach(b => b.hidden = v === 'flagged' ? b.dataset.flagged !== '1'
+      : v.startsWith('route:') ? b.dataset.route !== v.slice(6) : false);
+  };
+  const sec = $('[data-sections]', host); if (sec) sec.onchange = () => sec.value && show(pages.findIndex(p => p.page === +sec.value));
+  view.addEventListener('mousedown', e => { if (!e.target.closest('select, input, button, a')) setTimeout(() => view.focus({preventScroll: true}), 0); });
+  wireVaultHead(host, st, d);
+  await show(0);
+  view.focus({preventScroll: true});
+}
+
+function leeVaultPage(n) { $('.lee-vault-docview')?.__vault?.step(n); }
+function leeVaultFlag(n) { $('.lee-vault-docview')?.__vault?.flag(n); }
+window.leeVaultPage = leeVaultPage; window.leeVaultFlag = leeVaultFlag;
+
+function mountVaultSections(host, st, d) {
   const doc = d.doc || {}, sections = d.sections || [];
   const src = String(doc.source || '');
   const mdBase = /^(https?:|memory:|pointer:)/.test(src) || !src ? '' : src.slice(0, src.lastIndexOf('/'));
-  host.innerHTML = `<div class="lee-vault-reader">` +
-    `<aside class="lee-vault-toc"><div class="lee-phead"><span class="lee-ptitle">${esc(doc.title || st.title)}</span>` +
-    `<span class="lee-keyscope">${esc(doc.kind || 'document')} · ${esc(st.shelf || 'store')}</span></div>` +
-    `<div class="lee-vault-sections">${vaultSectionRows(sections, '')}</div></aside>` +
-    // `data-md-base` is the folder the document was clipped from, so figures written relative
-    // to it resolve. A document that was never a file has no base and keeps its links as written.
+  host.innerHTML = `<div class="lee-vault-reader-wrap">${vaultHead(st, d)}<div class="lee-vault-reader">` +
+    `<aside class="lee-vault-toc"><div class="lee-vault-sections">${vaultSectionRows(sections, '')}</div></aside>` +
     `<div class="lee-vault-body"${mdBase ? ` data-md-base="${esc(mdBase)}"` : ''}>${vaultPrivacy(d)}` +
-    `<article class="lee-vault-text" data-markdown=""></article></div></div>`;
-
+    `<article class="lee-vault-text" data-markdown=""></article></div></div></div>`;
+  wireVaultHead(host, st, d);
   const body = $('.lee-vault-text', host);
   const show = async node => {
     $$('.lee-vault-section', host).forEach(b => b.classList.toggle('active', b.dataset.node === node));
@@ -6576,8 +6828,6 @@ async function mountVault(host, st) {
   };
   $$('.lee-vault-section', host).forEach(b => b.onclick = () => show(b.dataset.node));
   if (sections.length) show(sections[0].node_id);
-  // A document with nothing found has no override button, so this is optional -- assuming it was
-  // there threw on null and took the rest of the mount, including the first section, with it.
   const notpii = $('[data-vault-notpii]', host);
   if (notpii) notpii.onclick = async e => {
     try {
@@ -6595,11 +6845,8 @@ async function mountVault(host, st) {
     } catch (err) { status(err.message || String(err), 'err'); }
   };
 }
-window.mountVault = mountVault;
 
-/* The document in the vault is a copy; this opens the thing it was copied from. Editing happens
-   there, because a file on disk is something leela already knows how to edit, and writing back
-   into the vault would mean deciding what becomes of its nodes, embeddings and content address. */
+/* The document in the vault is a copy; this opens the thing it was copied from. */
 async function leeOpenVaultFile(doc, shelf = '', vault = '') {
   let d;
   try { d = await api('/vault/source?' + new URLSearchParams({doc, shelf, vault})); }
@@ -6607,8 +6854,7 @@ async function leeOpenVaultFile(doc, shelf = '', vault = '') {
   if (d.kind === 'url') return status('this was clipped from the web, not from a file', 'err');
   if (d.kind !== 'file') return status('this document was never a file', 'err');
   if (!d.exists) return status(`${d.path} is no longer there`, 'err');
-  // The fs sandbox refuses paths outside an open folder, and that refusal is the thing every
-  // other path in leela is checked against. So ask rather than reach around it.
+  // The fs sandbox refuses paths outside an open folder, and every other path is checked against that.
   if (!d.inside_workspace) {
     if (!await confirmDialog('open folder', `${d.parent} is not open in this workspace.\n\nAdd it as a folder?`, 'add'))
       return;

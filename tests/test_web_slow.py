@@ -891,3 +891,81 @@ def test_a_folder_opens_before_its_git_marks_arrive(tmp_path, monkeypatch):
     assert shown < 1.2, f'the rows waited {shown:.2f}s for git'
     assert not marked_early, 'the mark came from the delayed request, after the rows'
     assert folder, 'the folder takes the strongest state under it'
+
+
+# ── the vault: the Read sheet, its send line, and the document view ─────────
+
+@pytest.fixture
+def vault_proj(tmp_path, monkeypatch):
+    "A folder holding a 3-page PDF (text, a blank page, an email), and a hosted stub reader that keeps what it was sent."
+    from tests.blocks.test_vault_screens import EMAIL, INVOICE, Reader, mkpdf
+    import leela.blocks.memory.memory as mm, leela.blocks.vault.app as va
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    (proj := tmp_path/'proj').mkdir()
+    (proj/'scan.pdf').write_bytes(mkpdf([INVOICE, '', EMAIL]))
+    hosted = Reader('hosted', 'hosted')
+    monkeypatch.setattr(mm, 'read_chat', lambda m: hosted if m == 'hosted' else None)
+    monkeypatch.setattr(va, 'reader_id', lambda n: n or None)
+    return proj, hosted
+
+def test_a_pdf_read_from_the_sheet_opens_on_its_pages_and_j_k_move_through_them(vault_proj):
+    proj, hosted = vault_proj
+    src = str((proj/'scan.pdf').resolve())
+    async def go(pg):
+        await pg.evaluate('src => leeVaultReadSheet(src)', src)
+        await pg.wait_for_selector('[data-vault-sheet] [data-send]:not(:empty)')
+        out = {'line': await pg.inner_text('[data-send]'), 'est': await pg.inner_text('[data-est]')}
+        await pg.click('[data-read]')
+        await pg.wait_for_selector('.lee-vault-docview .lee-vault-thumb', timeout=20000)
+        await pg.wait_for_function("() => document.querySelector('[data-pagetext]')?.textContent.includes('page 1')")
+        out['thumbs'] = await pg.locator('.lee-vault-thumb').count()
+        out['img'] = await pg.evaluate("() => new Promise(r => { const i = document.querySelector('[data-pageimg]');"
+                                       " i.complete ? r(i.naturalWidth) : i.onload = () => r(i.naturalWidth); })")
+        out['scope'] = await pg.evaluate("() => { const v = document.querySelector('.lee-vault-docview'); v.focus();"
+                                         " return document.activeElement === v; }")
+        await pg.keyboard.press('j')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '1'")
+        await pg.keyboard.press('j'); await pg.keyboard.press('k')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '1'")
+        await pg.keyboard.press('k'); await pg.keyboard.press(']')
+        await pg.wait_for_function("() => document.querySelector('.lee-vault-docview').dataset.page === '1'")
+        out['flag'] = await pg.evaluate("() => document.querySelector('.lee-vault-thumb.active')?.dataset.flagged")
+        out['level'] = await pg.evaluate("() => document.querySelector('[data-vault-level]')?.value")
+        return out
+    got = _run(go, roots=[proj])
+    assert 'nothing leaves this machine' in got['line'] and '3 pages' in got['est']
+    assert got['thumbs'] == 3 and got['img'] > 100 and got['scope']
+    assert got['flag'] == '1', '] lands on the flagged (blank) page'
+    assert got['level'] == 'personal', 'the email on page 3 makes it Personal'
+    assert hosted.sent == []
+
+def test_the_send_line_turns_red_for_a_personal_page_and_the_read_button_says_what_it_will_do(vault_proj):
+    proj, hosted = vault_proj
+    src = str((proj/'scan.pdf').resolve())
+    async def go(pg):
+        await pg.evaluate('src => leeVaultReadSheet(src)', src)
+        await pg.wait_for_selector('[data-vault-sheet] [data-send]:not(:empty)')
+        await pg.evaluate("""() => { const f = document.querySelector('[data-vault-sheet]'), s = f.elements.model;
+          const o = document.createElement('option'); o.value = 'hosted'; o.textContent = 'hosted · hosted: stub'; s.appendChild(o);
+          s.value = 'hosted'; f.elements.parse.value = 'llm'; f.elements.parse.dispatchEvent(new Event('change', {bubbles: true})); }""")
+        await pg.wait_for_selector('[data-send].blocked')
+        out = {'line': await pg.inner_text('[data-send]'), 'button': await pg.inner_text('[data-read]'),
+               'allow': await pg.is_visible('[data-allow]')}
+        await pg.click('[data-read]')
+        await pg.wait_for_selector('.lee-vault-docview .lee-vault-thumb', timeout=20000)
+        return out
+    got = _run(go, roots=[proj])
+    assert 'hosted' in got['line'] and '1 personal page withheld' in got['line']
+    assert got['button'].startswith('Read, keeping') and got['allow']
+    assert len(hosted.sent) == 2, 'the open pages went; the personal one stayed home'
+
+def test_hyper_v_opens_the_vault_tab(tmp_path, monkeypatch):
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    async def go(pg):
+        await pg.evaluate("""() => document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, cancelable: true,
+          key: 'V', code: 'KeyV', ctrlKey: true, altKey: true, shiftKey: true, metaKey: true}))""")
+        await pg.wait_for_selector('#vaultwb .lee-wb-tab.active', timeout=15000)
+        return await pg.inner_text('#vaultwb .lee-wb-tab.active')
+    assert _run(go, roots=[tmp_path]) == 'library'

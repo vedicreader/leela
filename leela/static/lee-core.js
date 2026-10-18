@@ -802,6 +802,8 @@ function eventContext(e) {
   if (inPath('.lee-webview')) return 'web';
   if (inPath('#agentprompt, .lee-agent')) return 'agent';
   if (inPath('#execbox, .lee-exec')) return 'exec';
+  // Before `#editor`, which holds the tab it is mounted in.
+  if (inPath('.lee-vault-docview')) return 'vault';
   if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
   if (inPath('#vars, #varfilter, .lee-varspanel')) return 'vars';
   if (inPath('#filetree, .lee-files')) return 'files';
@@ -1045,6 +1047,12 @@ const ACTIONS = {
   memory_notes: () => leeMemoryNotes(),
   new_memory_note: () => leeNewMemoryNote(),
   open_vault: () => leeVaultWorkbench(),
+  vault_read: () => leeVaultRead(),
+  vault_find: () => leeVaultWorkbench('find'),
+  vault_next_page: () => leeVaultPage(1),
+  vault_prev_page: () => leeVaultPage(-1),
+  vault_next_flag: () => leeVaultFlag(1),
+  vault_prev_flag: () => leeVaultFlag(-1),
   indent_more:      () => leeIndent('indentMore'),
   indent_less:      () => leeIndent('indentLess'),
   indent_selection: () => leeIndent('indentSelection'),
