@@ -6,7 +6,7 @@ from fastcore.all import Path, L, first, store_attr
 from fastcore.xtras import clean_cli_output
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
-           'LazygitMissing', 'default_shell', 'path_prelude', 'shell_argv',
+           'LazygitMissing', 'NoPython', 'own_python', 'bundle_env', 'default_shell', 'path_prelude', 'shell_argv',
            'external_terminal_argv', 'EXTERNAL_TERMINALS']
 
 #: A frame carries everything the ring gathered since the last one, up to this: a websocket frame
@@ -23,6 +23,9 @@ class ToolMissing(Exception):
 
 class LazygitMissing(ToolMissing):
     "Its own type because `/term/info` reports lazygit separately, so the button can be hidden."
+
+class NoPython(ToolMissing):
+    "A frozen app whose bundle has no helper Python."
 
 def default_shell():
     "The user's shell, falling back to bash then sh."
@@ -80,15 +83,31 @@ def gh_auth_argv():
         'the GitHub CLI is not installed or not on PATH — see https://cli.github.com')
     return [exe, 'auth', 'login']
 
+def own_python():
+    "Python for a child that runs Leela's code or the pty shim: the bundle's helper when frozen, where `sys.executable` is the app launcher."
+    from ..runtime.kernels import _runtime_python
+    exe = _runtime_python()
+    if getattr(sys, 'frozen', False) and exe == sys.executable:
+        raise NoPython('no Python to start this: the app bundle has no helper interpreter; reinstall Leela')
+    return exe
+
+def bundle_env():
+    "What the helper needs in its environment to find its standard library, since `-c` runs after startup. Empty outside a bundle."
+    from ..runtime.kernels import _frozen_pythonpath
+    if not (path := _frozen_pythonpath()): return {}
+    return {'PYTHONHOME': str(Path(sys.executable).resolve().parent.parent/'Resources'), 'PYTHONPATH': path}
+
+#: Names in `LEELA_PTY_DROP` are removed before the exec, so the user's shell never inherits the bundle's paths.
 _PTY_BOOT = r'''
 import fcntl, os, sys, termios
 fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+for k in os.environ.pop('LEELA_PTY_DROP', '').split(','): os.environ.pop(k, None)
 os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
 '''
 
 class PtySession:
     "A command on its own pty and process group, read on the loop into a ring a late viewer replays from."
-    def __init__(self, argv, cwd, env, rows, cols, buffer_bytes):
+    def __init__(self, argv, cwd, env, rows, cols, buffer_bytes, keep_bundle=False):
         self.loop = asyncio.get_running_loop()
         self.buf, self.pending = bytearray(), bytearray()
         self.end, self.limit = 0, buffer_bytes
@@ -98,10 +117,10 @@ class PtySession:
         self.escalation = None
         exe = sys.executable
         if getattr(sys, 'frozen', False):
-            from kunda.pythons import find_pythons, strip_bundle
-            exe = first(p['path'] for p in find_pythons([cwd] if cwd else ()) if p['path'] != sys.executable)
-            if not exe: raise RuntimeError('A Python interpreter is required to start a terminal')
-            env = strip_bundle(dict(env))
+            from kunda.pythons import strip_bundle
+            exe, bundle = own_python(), bundle_env()
+            drop = {} if keep_bundle else {'LEELA_PTY_DROP': ','.join(bundle)}
+            env = {**strip_bundle(dict(env)), **bundle, **drop}
         self.fd, slave = pty.openpty()
         try:
             termios.tcsetwinsize(slave, (rows, cols))
@@ -186,7 +205,8 @@ class PtySession:
 
 class Pty:
     "One command on a pseudo-terminal: bytes in, bytes out, and a size."
-    def __init__(self, argv=None, cwd=None, env=None, cols=80, rows=24, prelude=''):
+    def __init__(self, argv=None, cwd=None, env=None, cols=80, rows=24, prelude='', keep_bundle=False):
+        self.keep_bundle = keep_bundle   # a child that runs on the helper itself needs its paths; a shell does not
         self.argv = list(argv) if argv else [default_shell()]
         self.cwd = str(cwd) if cwd else None
         self.env = env
@@ -211,7 +231,7 @@ class Pty:
         env.setdefault('TERM', 'xterm-256color')
         env.pop('PYTHONSTARTUP', None)
         self.sess = PtySession(self.argv, cwd=self.cwd, env=env, rows=self.rows, cols=self.cols,
-                               buffer_bytes=RING)
+                               buffer_bytes=RING, keep_bundle=self.keep_bundle)
         self.pid = self.sess.pid
         self._off = 0
         if self.prelude: self.sess.write(self.prelude.encode() + b'\n')
@@ -295,9 +315,9 @@ class Terminals:
     def open(self, key, argv=None, cwd=None, env=None, cols=80, rows=24, prelude=''):
         "The terminal for `key`, spawning it on first use."
         if (t := self.terms.get(key)) is not None and t.alive: return t
-        t = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows, prelude=prelude)
+        t = Pty(argv=argv, cwd=cwd or self.cwd, env=env, cols=cols, rows=rows, prelude=prelude).start()
         self.terms[key] = t
-        return t.start()
+        return t
     def get(self, key): return self.terms.get(key)
     def all(self): return L(self.terms.values())
     def states(self):
@@ -328,5 +348,5 @@ class TerminalGate:
     def check(self, token):
         "Raise unless this connection may have a pty."
         if not self.enabled: raise PermissionError(self.why)
-        if not token or not secrets.compare_digest(str(token), self.token): raise PermissionError('bad or missing terminal token')
+        if not token or not secrets.compare_digest(str(token).encode(), self.token.encode()): raise PermissionError('bad or missing terminal token')
         return True

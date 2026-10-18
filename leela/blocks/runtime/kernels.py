@@ -12,7 +12,7 @@ from kunda.pythons import find_pythons as _find_pythons, nearest_python
 from kunda.pythons import python_for as _python_for
 from kunda.spec import (ExecOutcome, KernelStartError, bootstrap_src as _bootstrap_src,  # noqa: F401
     installed_kernels, missing_kernel_module, output_text, run_file_src)
-from kunda.spec import _runtime_python  # noqa: F401  four blocks ask which interpreter to spawn
+from kunda.spec import _frozen_pythonpath, _runtime_python  # noqa: F401  blocks ask which interpreter to spawn, and what its bundle needs
 from kunda.spec import _spec as _kunda_spec
 from kunda.spec import installed_spec as _installed_spec, kernelspec_for as _kernelspec_for
 

@@ -22,6 +22,7 @@ ALLOWED = {
     ('kunda.kernel', '_give_up_after'),     # kunda: the start deadline a pool admission uses
     ('kunda.pythons', '_venv_roots'),       # kunda: where to look for a project's environment
     ('kunda.spec', '_runtime_python'),      # kunda: the interpreter to spawn, right inside a bundle
+    ('kunda.spec', '_frozen_pythonpath'),   # kunda: the paths a bundle's helper Python needs, for the terminal
     ('kunda.spec', '_spec'),                # kunda: a kernelspec built from Leela's own languages
     ('pullup.workflows', '_gheasy'),        # pullup: the gheasy core a new fastship workflow needs
 }
