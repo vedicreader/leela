@@ -304,6 +304,72 @@ class TestTheKernelBackedRuntime:
             assert rt.eval_many({'r': 'recovered'})['r']['value'] == 3
 
 
+def test_a_kernel_that_never_starts_costs_one_timeout_not_one_per_cell():
+    "A start that hangs made every cell of `run_all` wait out its own timeout in turn."
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    async def start(): await asyncio.Event().wait()
+    rt = KernelRuntime(start, timeout=1)
+    bricks = [Brick(kind='code', body=f'x{i} = {i}', id=f'c{i}') for i in range(3)]
+    try:
+        t0 = time.time()
+        runs = rt.run_all(bricks)
+        took = time.time() - t0
+    finally: rt.close()
+    assert took < 5, f'{took}s'
+    assert all(not r['ok'] and r['outputs'][0]['ename'] == 'TimeoutError' for r in runs.values()), runs
+
+
+def test_a_start_that_outlasts_the_timeout_serves_the_next_call_once_it_is_up():
+    "A slow start made every call fail for a whole timeout afterwards, even once the kernel it was starting was up."
+    import asyncio
+    from types import SimpleNamespace
+    from leela.blocks.canvas.live import KernelRuntime
+    class K:
+        alive = True
+        async def execute(self, code, timeout=None): return SimpleNamespace(outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'ok'}])
+        async def interrupt(self): pass
+        async def shutdown(self): pass
+    starts = []
+    async def start():
+        starts.append(1)
+        await asyncio.sleep(1.5)
+        return K()
+    rt = KernelRuntime(start, timeout=1)
+    try:
+        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
+        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError', 'a call while the start is still going fails at once'
+        time.sleep(.8)
+        assert rt.exec_cell('x = 1')[0]['text'] == 'ok', 'the start that finished is the kernel the next call uses'
+    finally: rt.close()
+    assert starts == [1], 'one start, not one per call'
+    from concurrent.futures import ThreadPoolExecutor
+    async def quick(): starts.append(2); await asyncio.sleep(.3); return K()
+    rt = KernelRuntime(quick, timeout=1)
+    try:
+        with ThreadPoolExecutor(2) as ex: both = list(ex.map(lambda _: rt.exec_cell('x = 1')[0], range(2)))
+    finally: rt.close()
+    assert [o.get('text') for o in both] == ['ok', 'ok'], 'a call made while another waits on the start joins that wait'
+    assert starts == [1, 2]
+
+
+def test_closing_a_runtime_cancels_the_start_it_left_behind_and_closes_its_loop():
+    "A pool shields its starts, so a timed-out start outlived the runtime on a loop that was stopped and never closed."
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    cancelled = []
+    async def boot():
+        try: await asyncio.Event().wait()
+        except asyncio.CancelledError: cancelled.append(1); raise
+    async def start(): return await asyncio.shield(asyncio.ensure_future(boot()))
+    rt = KernelRuntime(start, timeout=1)
+    assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
+    lp = rt._lp
+    rt.close()
+    assert cancelled == [1], 'the shielded start is cancelled, not stranded'
+    assert lp.is_closed(), 'the loop is closed, not merely stopped'
+
+
 # --- the canvas as tools on the workspace agent ---
 
 def _ws_with_canvas(tmp_path, body='# t\n\n```canvas code id=c1\ncost = 3.6\ncost\n```\n'):

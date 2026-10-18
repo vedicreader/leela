@@ -186,15 +186,17 @@ class KernelRuntime(Dataflow):
         self._start, self._kernel = start, None
         self.timeout, self._boot = timeout, (KERNEL_BOOT + (boot or ''))
         self._own_loop = loop is None
-        self._lp, self._th, self._ready = loop, None, False
+        self._lp, self._th, self._ready, self._pending, self._late = loop, None, False, None, False
+        self._lp_lock = threading.Lock()
 
     def _loop(self):
         "A loop of this runtime's own, so a sync caller never drives the web process's loop."
-        if self._lp is None:
-            self._lp = asyncio.new_event_loop()
-            self._th = threading.Thread(target=self._lp.run_forever, daemon=True, name='canvas-runtime')
-            self._th.start()
-        return self._lp
+        with self._lp_lock:
+            if self._lp is None:
+                self._lp = asyncio.new_event_loop()
+                self._th = threading.Thread(target=self._lp.run_forever, daemon=True, name='canvas-runtime')
+                self._th.start()
+            return self._lp
 
     def _call(self, coro, timeout):
         return asyncio.run_coroutine_threadsafe(coro, self._loop()).result(timeout)
@@ -204,11 +206,21 @@ class KernelRuntime(Dataflow):
         return self._call(coro, timeout if timeout is not None else self.timeout + 15)
 
     async def _kernel_now(self):
-        "The kernel, started on first use and started again after one dies."
+        "The kernel, started on first use and again after one dies. A start that outlasts `timeout` keeps going, and calls fail at once until it is up."
         if self._kernel is None:
-            k = self._start()
-            if asyncio.iscoroutine(k) or asyncio.isfuture(k): k = await k
-            self._kernel, self._ready = k, False
+            if self._late and not self._pending.done(): raise TimeoutError('the kernel is still starting; try again shortly')
+            if self._pending is None:
+                k = self._start()
+                if asyncio.iscoroutine(k) or asyncio.isfuture(k): self._pending = asyncio.ensure_future(k)
+                else: self._kernel, self._ready = k, False
+            if (p := self._pending) is not None:
+                try: k = await asyncio.wait_for(asyncio.shield(p), self.timeout)
+                except BaseException as e:
+                    if p is not self._pending: raise
+                    if p.done(): self._pending, self._late = None, False
+                    elif isinstance(e, TimeoutError): self._late = True
+                    raise
+                if p is self._pending: self._pending, self._late, self._kernel, self._ready = None, False, k, False
         if not self._ready:
             self._ready = True                          # set first, or a failed boot boots again
             await self._bounded(self._kernel, self._boot, self.timeout)
@@ -275,14 +287,26 @@ class KernelRuntime(Dataflow):
     def names(self): return self._json_call('_cv_names()', []) or []
 
     def close(self):
-        k, self._kernel, self._ready = self._kernel, None, False
+        p = self._pending
+        if self._kernel is None and p is not None and p.done() and not p.cancelled() and p.exception() is None: self._kernel = p.result()
+        k, self._kernel, self._ready, self._pending, self._late = self._kernel, None, False, None, False
         self.owned.clear()
         if k is not None and hasattr(k, 'shutdown'):
             try: self._call(k.shutdown(), 10)
             except Exception: pass
-        if self._own_loop and self._lp is not None:
-            self._lp.call_soon_threadsafe(self._lp.stop)
-            self._lp = None
+        with self._lp_lock:
+            lp, th = (self._lp, self._th) if self._own_loop else (None, None)
+            if lp is not None: self._lp = None
+        if lp is not None:
+            async def cancel_rest():
+                rest = asyncio.all_tasks() - {asyncio.current_task()}
+                for t in rest: t.cancel()
+                await asyncio.gather(*rest, return_exceptions=True)
+            try: asyncio.run_coroutine_threadsafe(cancel_rest(), lp).result(10)
+            except Exception: pass
+            lp.call_soon_threadsafe(lp.stop)
+            th.join(10)
+            if not th.is_alive(): lp.close()
 
 def runtime_for(pool=None, key='canvas', cwd=None, timeout=TIMEOUT):
     "A kernel-backed runtime where a pool can give one, and this process's namespace where none can."
