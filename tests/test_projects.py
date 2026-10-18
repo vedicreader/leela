@@ -72,7 +72,7 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
     """The Dock-drop path: macOS delivers the folder to the process already running."""
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
-    import threading
+    import socket, threading
 
     import uvicorn
     from leela import desktop
@@ -84,26 +84,32 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
         built.append(str(root))
         return WorkspaceSite(slug, os.path.basename(str(root)), str(root),
                              ide_app(Workspace(roots=[root])))
-    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', str(dirs[0]), ide_app(ws))], 5207,
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
+    hub = WorkspaceHub([WorkspaceSite('alpha', 'alpha', str(dirs[0]), ide_app(ws))], port,
                        build=build)
     monkeypatch.setattr(desktop, 'open_window',
                         lambda url, title='leela', key=None, **kw: opened.append((url, key)))
-    server = uvicorn.Server(uvicorn.Config(hub, host='127.0.0.1', port=5207, log_level='error'))
-    threading.Thread(target=server.run, daemon=True).start()
+    server = uvicorn.Server(uvicorn.Config(hub, host='127.0.0.1', port=port, log_level='error'))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
     from leela.desktop import wait_for_http
-    assert wait_for_http('http://127.0.0.1:5207/', timeout=30)
+    assert wait_for_http(f'http://127.0.0.1:{port}/', timeout=30)
     try:
-        leela_app.open_folder(5207, dirs[1])
+        leela_app.open_folder(port, dirs[1])
         assert built == [dirs[1]], 'the folder got a workspace of its own'
         assert [str(r) for r in ws.fs.roots] == [dirs[0]], 'and was not added to the one already open'
-        assert opened == [(f'http://{hub.site_at(dirs[1]).slug}.localhost:5207/',
+        assert opened == [(f'http://{hub.site_at(dirs[1]).slug}.localhost:{port}/',
                            hub.site_at(dirs[1]).slug)], 'and a window was pointed at it'
         assert dirs[1] in projects.last_folders() and dirs[0] in projects.last_folders(), \
             'both are open now: the open set is a union, not a replacement'
-        leela_app.open_folder(5207, dirs[1])
+        leela_app.open_folder(port, dirs[1])
         assert built == [dirs[1]], 'opening it again builds nothing'
         assert len(opened) == 2 and opened[-1] == opened[0], 'and raises the window it already has'
-    finally: server.should_exit = True
+    finally:
+        server.should_exit = True
+        thread.join(timeout=3)
 
 
 def test_a_windowed_launch_gets_the_path_a_terminal_has(monkeypatch):

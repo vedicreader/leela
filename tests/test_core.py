@@ -16,6 +16,7 @@ from leela.blocks.fs.fs import Sandbox
 from leela.core.session import OperationJournal
 from leela.blocks.settings.settings import DEFAULT_SETTINGS, Settings
 from tests.conftest import TEST_CONFIG_HOME
+from leela.core import projects
 from fastcore.all import Path
 
 @pytest.fixture(scope='module')
@@ -246,6 +247,8 @@ def test_the_config_dir_stays_inside_the_temp_dir(cfg_home):
     for p in (leela_cfg, memory_path(), user_settings_file(), ws_path()):
         assert str(p).startswith(safe), f'{p} escapes the test config dirs'
     assert str(user_settings_file()).startswith(str(cfg_home)), 'settings move with this test, not the session'
+    for p in (projects.SESSION, projects.DEFAULT_SESSION, projects.SERVING):
+        assert p.parent == cfg_home, f'{p} was fixed at import, so every worker in a run shared it'
     real = Path.home()/'.config'/'leela'
     assert not str(real).startswith(safe)
     assert Path(leela_cfg) != real and real not in Path(leela_cfg).parents

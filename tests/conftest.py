@@ -2,10 +2,12 @@
 
 import os as _os
 import pathlib as _pathlib
+import shutil as _shutil
 import tempfile as _tempfile
 
 TEST_CONFIG_HOME = _os.environ.get('LEELA_TEST_CONFIG_HOME')
-if not TEST_CONFIG_HOME:
+_MADE_HERE = not TEST_CONFIG_HOME
+if _MADE_HERE:
     TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
     _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
@@ -15,6 +17,9 @@ _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
 #: imported before this file ran would still hold the real path, and one truncating write to
 #: `ai.history_path` is then a person's whole conversation log.
 REAL_CONFIG_HOME = _pathlib.Path.home()/'.config'/'leela'
+
+def pytest_sessionfinish(session):
+    if _MADE_HERE: _shutil.rmtree(TEST_CONFIG_HOME, ignore_errors=True)
 
 import asyncio
 import socket as _socket
@@ -76,6 +81,9 @@ def cfg_home(monkeypatch, tmp_path_factory):
         if name.split('.')[0] != 'leela': continue
         if getattr(module, 'leela_cfg', None) is None: continue
         monkeypatch.setattr(module, 'leela_cfg', _pathlib.Path(cfg), raising=False)
+    from leela.core import projects
+    for name, f in (('SESSION', 'desktop.json'), ('DEFAULT_SESSION', 'desktop.json'), ('SERVING', 'serving.json')):
+        monkeypatch.setattr(projects, name, cfg/f)
     import leela
     assert REAL_CONFIG_HOME not in _pathlib.Path(leela.leela_cfg).parents
     assert _pathlib.Path(leela.leela_cfg) != REAL_CONFIG_HOME
