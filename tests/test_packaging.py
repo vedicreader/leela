@@ -338,3 +338,29 @@ def test_signing_reaches_every_executable_and_gives_them_the_entitlements(tmp_pa
     assert order.index(rel('Contents/Frameworks/Python.framework')) > order.index(rel('Contents/Frameworks/Python.framework/Versions/3.13/Python'))
     assert order[-2] == str(app) and '--entitlements' in calls[-2] and '--verify' in calls[-1]
     assert build_release.ENTITLEMENTS.is_file()
+
+def test_liteparse_is_grafted_and_pils_spare_libraries_are_dropped(mac):
+    """`libpdfium.dylib` must sit beside `_liteparse.so`, and no code may stay in the zip, where it cannot be signed."""
+    assert 'liteparse' in mac.GRAFTED and 'PIL/.dylibs/' in mac.UNREACHABLE
+
+@pytest.mark.slow
+def test_the_bundles_zip_holds_no_code_notarisation_would_refuse():
+    """Apple's notary reads inside `python313.zip`, and a Mach-O file there is unsigned: 19 of them made a submission Invalid."""
+    import zipfile
+    z = ROOT/'dist'/'Leela.app'/'Contents'/'Resources'/'lib'/'python313.zip'
+    if not z.is_file(): pytest.skip('dist/Leela.app is not built')
+    with zipfile.ZipFile(z) as f:
+        code = [n for n in f.namelist() if not n.endswith('/') and '.dSYM/' not in n and f.read(n)[:4] in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xce\xfa\xed\xfe')]
+    assert not code, code[:10]
+
+@pytest.mark.slow
+def test_the_bundle_parses_a_pdf(tmp_path):
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
+    from PIL import Image
+    Image.new('RGB', (40, 20), 'white').save(pdf := tmp_path/'one.pdf', 'PDF')
+    res = app/'Contents'/'Resources'
+    src = (f"import sys; sys.path[:] = {[str(res/'lib'/'python313.zip'), str(res/'lib'/'python3.13'), str(res/'lib'/'python3.13'/'lib-dynload')]}\n"
+           f"from liteparse import LiteParse; LiteParse().parse({str(pdf)!r}); print('ok')")
+    r = subprocess.run([str(app/'Contents'/'MacOS'/'python'), '-I', '-S', '-c', src], capture_output=True, text=True, timeout=120)
+    assert r.stdout.strip().endswith('ok'), r.stderr[-1500:]

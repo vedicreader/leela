@@ -88,14 +88,18 @@ HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transform
 #: Packages the freezer's zip cannot hold. `apsw` has the extension module for its own `__init__`,
 #: and a flattened copy loses `apsw.ext` and with it the vault. `playwright` and `patchright` each
 #: carry a Node binary they have to *execute*, and a file inside an archive cannot be executed, so
-#: browser fetching failed in the packaged app and nowhere else.
-GRAFTED = ('apsw', 'playwright', 'patchright')
+#: browser fetching failed in the packaged app and nowhere else. `liteparse` opens `libpdfium.dylib`
+#: from beside its extension module, which py2app split from it: PDF parsing failed in the app alone,
+#: and notarisation refused the unsigned copy left in the zip.
+GRAFTED = ('apsw', 'playwright', 'patchright', 'liteparse')
 
 #: Entries that can never be reached from inside `python313.zip`. `claude_agent_sdk` looks for its
 #: bundled CLI with `Path(__file__).parent.parent.parent/'_bundled'/name` and `.exists()`, which is
 #: always false for a path inside an archive. Leela reaches the real `claude` on PATH, which
 #: `use_login_path` repairs at startup, so the copy is 93MB of a 205MB zip that nothing can open.
-UNREACHABLE = ('claude_agent_sdk/_bundled/',)
+#: `PIL/.dylibs/` is a second copy of what py2app already put in `Contents/Frameworks`, which `PIL`'s
+#: extensions load. Code in a zip cannot be signed, so notarisation refused all eighteen.
+UNREACHABLE = ('claude_agent_sdk/_bundled/', 'PIL/.dylibs/')
 
 #: Better opened somewhere else, whatever Leela can edit: a browser renders these and Leela would
 #: only show their source. Everything else it knows a language for, it asks to own.
