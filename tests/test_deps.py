@@ -20,7 +20,8 @@ def test_the_tool_simplification_releases_are_the_floor():
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
     assert deps['dhrona'].specifier.contains('0.1.9') and not deps['dhrona'].specifier.contains('0.1.8'), 'cut-off runs no longer count as good'
-    for n,lo in dict(kunda='0.0.3', kavacha='0.0.5', litesearch='0.1.43', dhrishti='0.1.5', fossick='0.1.18', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
+    assert deps['litesearch'].specifier.contains('0.1.45') and not deps['litesearch'].specifier.contains('0.1.44'), 'no parse pool for HTML'
+    for n,lo in dict(kunda='0.0.3', kavacha='0.0.5', dhrishti='0.1.5', fossick='0.1.18', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras
     extras = [Requirement(s) for g in ('desktop', 'macapp', 'windows') for s in d['project']['optional-dependencies'][g] if s.startswith('kavacha')]
     assert len(extras) == 3 and not any(r.specifier.contains('0.0.5') for r in extras), 'the window extras take the public kavacha names'

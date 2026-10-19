@@ -15,7 +15,7 @@ Tools > Vault opens one `vaultwb` editor tab.
 
 ![Workbench](screenshots/vault-workbench.png)
 
-Paste a URL, arXiv id, repository, YouTube URL, file path, or note. `detect` selects the reader. Folder imports show shelves, categories, and excluded generated paths before indexing.
+Paste a URL, arXiv id, repository, YouTube URL, file path, or note. `detect` selects the reader. Folder imports show shelves and categories before indexing. They walk the folder as a folder clip does, leaving out dot-folders, tests, build output and symlinked folders.
 
 ![Add](screenshots/vault-add.png)
 

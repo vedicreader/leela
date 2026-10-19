@@ -28,15 +28,18 @@ ATOM = '''<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
 # ── what a thing is, and where a folder of things would land ────────────────
 
 
-def test_generated_paths_are_left_out_and_counted(tmp_path):
+def test_generated_paths_are_left_out_as_a_folder_clip_leaves_them(tmp_path, monkeypatch):
+    "The import plan walked with `rglob` and a skip list of Leela's own, so it took in `tests/` and followed a symlinked folder."
+    monkeypatch.setenv('LEELA_VAULT_SKIP', 'Scratch, a+b')
     (tmp_path/'docs').mkdir()
     (tmp_path/'docs'/'real.md').write_text('# a\n')
-    for junk in ('node_modules', '__pycache__', '.venv'):
-        (tmp_path/junk).mkdir()
+    for junk in ('node_modules', '__pycache__', '.venv', 'tests', 'build', 'scratch', 'a+b', 'venv/lib/site-packages/pkg/docs', 'Site-Packages'):
+        (tmp_path/junk).mkdir(parents=True)
         (tmp_path/junk/'x.md').write_text('# junk\n')
+    (tmp_path/'linked').symlink_to(tmp_path/'.venv', target_is_directory=True)
     plan = plan_tree(tmp_path)
     assert [x.relative for x in plan.files] == ['docs/real.md']
-    assert len(plan.skipped) == 3
+    assert 'left out' in to_xml(ui.import_plan(plan))
 
 
 # ── cadence ─────────────────────────────────────────────────────────────────

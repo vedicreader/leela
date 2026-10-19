@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os, re
 from collections import Counter
 from functools import partial
 from fastcore.all import L, Path, noop
@@ -14,14 +15,22 @@ DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.ht
 
 BATCH = 8
 
+def _batches(xs, n=1):
+    "`(start, batch)` over `xs` in batches of `n`, doubling to `BATCH`, so a cancel early in a clip lands within a file."
+    i = 0
+    while i < len(xs): yield i, xs[i:i + n]; i, n = i + n, min(BATCH, n * 2)
+
 def _files(target, exts=DOC_EXTS):
-    "Documents under `target`, past what litesearch's `dir2files` skips except `docs/` and `examples/`."
+    "Documents under `target`, past what litesearch's `dir2files` skips except `docs/` and `examples/`, and past `venv`, `site-packages` and `LEELA_VAULT_SKIP`'s folders."
     from litesearch import dir2files
     from litesearch.data import skip_folder_re
     p = Path(target).expanduser()
     if p.is_file(): return [p]
     if not p.is_dir(): raise JobError(f'nothing to clip at {target}')
-    fs = dir2files(p, skip_folder_re=skip_folder_re.replace('examples?|docs?|', ''), symlinks=False)
+    more = ['venv', 'site-packages', *[re.escape(x.strip()) for x in os.getenv('LEELA_VAULT_SKIP', '').split(',') if x.strip()]]
+    # without `docs?` in the list, a plain `venv/` would give up every package's docs
+    rx = skip_folder_re.replace('examples?|docs?|', '') + f"|(?i:^(?:{'|'.join(more)})$)"
+    fs = dir2files(p, skip_folder_re=rx, symlinks=False)
     return sorted(fs.filter(lambda f: f.suffix.lower() in exts and f.is_file()))
 
 def clip_docs(memory, job, report, stop=noop):
@@ -35,9 +44,8 @@ def clip_docs(memory, job, report, stop=noop):
     out = dict(files=list(done), skipped=[], shelf=shelf, n=len(files))
     meta = dict(clipped_from=job.params.get('from') or 'file', clip_job=job.id)
     clipped = []
-    for i in range(0, len(pending), BATCH):
+    for i, batch in _batches(pending):
         if stop(): return out | dict(cancelled=True, unread=list(map(str, pending[i:])), pii=_pii_summary(memory, clipped, shelf))
-        batch = pending[i:i + BATCH]
         rows = memory.clip(batch, shelf=shelf, meta=meta)
         for f, r in zip(batch, rows or [{}] * len(batch)):
             out['skipped' if r.get('skipped') else 'files'].append(str(f))
@@ -100,18 +108,19 @@ def clip_tree(memory, job, report, stop=noop):
     from .acquire import plan_tree
     plan = plan_tree(job.target)
     if not plan.files: raise JobError(f'no clippable document under {job.target}')
-    done = set(job.params.get('_resume', {}).get('done', []) if job.resumable else [])
-    out = dict(root=str(plan.root), files=[], skipped=len(plan.skipped), n=len(plan.files),
-        shelves=plan.shelves, categories=plan.categories)
+    names = {str(x.path) for x in plan.files}
+    # a clip resumed from before the walk skipped a folder still lists its files as done
+    done = {d for d in job.params.get('_resume', {}).get('done', []) if d in names} if job.resumable else set()
+    out = dict(root=str(plan.root), files=[], n=len(plan.files), shelves=plan.shelves, categories=plan.categories)
     groups = {}
     for x in plan.files:
         if str(x.path) not in done: groups.setdefault((x.shelf, x.category), []).append(x.path)
-    seen = len(done)
+    seen, n = len(done), 1
     for (shelf, category), paths in groups.items():
         meta = dict(category=category, clipped_from='folder', import_root=str(plan.root), clip_job=job.id)
-        for i in range(0, len(paths), BATCH):
+        for _, batch in _batches(paths, n):
+            n = min(BATCH, max(n, len(batch) * 2))
             if stop(): return out | dict(cancelled=True, unread=[str(x.path) for x in plan.files if str(x.path) not in done])
-            batch = paths[i:i + BATCH]
             rows = memory.clip(batch, shelf=shelf, meta=meta)
             for p, r in zip(batch, rows or [{}] * len(batch)):
                 out['files'].append(dict(path=str(p), shelf=shelf, category=category,

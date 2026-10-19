@@ -88,7 +88,7 @@ def job_card(job):
     if active:
         body.append(Progress(value=str(round(d['progress'] or 0, 3)), max='1', cls='lee-job-bar'))
         if d['current']: body.append(Span(d['current'], cls='lee-job-current'))
-        if (d['params'] or {}).get('_cancel'):
+        if d['cancellable']:
             body.append(Form(Button('cancel', cls='lee-btn warn', data_job_cancel=d['id']), hx_post=f"/jobs/{d['id']}/cancel",
                              hx_target='closest .lee-job', hx_swap='outerHTML'))
         else: body.append(Span('committed documents are searchable while this runs', cls='lee-job-note'))
@@ -114,8 +114,8 @@ def job_card(job):
     if d['status'] == 'cancelled' and d['kind'] in CLIPS:
         n = len(result.get('unread') or [])
         body.append(Span('cancelled: the files clipped are kept and searchable' + (f', {n} not clipped.' if n else '.'), cls='lee-job-note'))
-        if n or (d['params'] or {}).get('_resume'):
-            body.append(Form(Button('resume', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry", hx_target='closest .lee-job', hx_swap='outerHTML'))
+        # a clip cancelled before it resumed after a quit has no `unread`, and resume is its only way on
+        body.append(Form(Button('resume', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry", hx_target='closest .lee-job', hx_swap='outerHTML'))
     elif d['status'] == 'cancelled':
         n = len(result.get('unread') or [])
         body.append(Span(f"cancelled: the pages read are kept, {n} not read. Pages in flight when it stopped are counted in the cost."
@@ -514,9 +514,7 @@ def import_plan(plan):
     sample = Details(Summary(f'files to index ({len(plan.files)})'),
         Div(*[Div(Span(x.relative), Small(f'{x.shelf} · {x.category}')) for x in plan.files[:100]],
             cls='lee-wb-plan-files'))
-    skipped = (Details(Summary(f'generated paths left out ({len(plan.skipped)})'),
-        Div(*[Div(str(p.relative_to(plan.root))) for p in plan.skipped[:100]], cls='lee-wb-plan-files'))
-               if plan.skipped else None)
+    skipped = Small('hidden files, dot-folders, tests, build, dist, venv, site-packages, node_modules, __pycache__ and LEELA_VAULT_SKIP folders are left out')
     run = Form(Hidden(name='kind', value='clip_tree'), Hidden(name='target', value=str(plan.root)),
         Button('index it, onto those shelves', cls='lee-btn go', type='submit'),
         hx_post='/clip', hx_target='#vaultwbjobs', hx_swap='afterbegin')

@@ -139,7 +139,7 @@ def test_a_running_job_is_left_alone_by_a_later_workspace(tmp_path):
     first.register('book', lambda job, report: gate.wait(5) and {})
     first.recover(delay=0)
     later = Jobs(tmp_path/'jobs.db'); later.register('book', lambda job, report: {})
-    assert later.recover(delay=0) == dict(resumed=[], failed=[])
+    assert later.recover(delay=0) == dict(resumed=[], failed=[], cancelled=[])
     assert later.get(job.id).status == 'running'
     gate.set(); assert _finish(first, job.id).status == 'complete'
 
@@ -148,6 +148,69 @@ def test_a_job_cancelled_before_it_resumes_never_starts(tmp_path):
     jobs = Jobs(tmp_path/'jobs.db'); jobs.register('clip', lambda job, report: ran.append(1))
     jobs.recover(delay=.3); jobs.cancel(job.id); time.sleep(.6)
     assert (jobs.get(job.id).status, ran) == ('cancelled', [])
+
+def _gated_mem(started, gate):
+    class Mem:
+        got = []
+        def clip(self, batch, **kw):
+            Mem.got.append(list(map(str, batch))); started.set(); gate.wait(10)
+            return [dict(doc_id=None)] * len(batch)
+    return Mem
+
+def test_a_cancel_from_another_workspace_stops_a_running_clip_started_without_the_flag(tmp_path):
+    "The stop lived in one `Jobs` object's memory, so a cancel from a second workspace on the shared jobs file was lost; a clip from before `_cancel` refused it."
+    import threading
+    from functools import partial
+    from leela.blocks.vault.clip import clip_docs
+    from leela.blocks.vault.ui import job_card
+    from fasthtml.common import to_xml
+    (root := tmp_path/'notes').mkdir()
+    for i in range(5): (root/f'n{i}.md').write_text('words')
+    started, gate = threading.Event(), threading.Event()
+    Mem = _gated_mem(started, gate)
+    db = tmp_path/'jobs'/'no-folder.db'
+    a, b = Jobs(db), Jobs(db)
+    a.register('clip', lambda job, report: clip_docs(Mem(), job, report, partial(a.stopping, job.id)))
+    jid = a.new('clip', str(root)).id
+    assert 'data-job-cancel' in to_xml(job_card(a.get(jid))), 'a clip without `_cancel` offers cancel'
+    a.launch(jid); assert started.wait(10)
+    assert b.cancel(jid).cancel_at and a.stopping(jid)
+    gate.set()
+    j = _finish(a, jid)
+    assert j.status == 'cancelled' and len(Mem.got) == 1 and len(j.result['unread']) == 4, 'stopped after the one file in flight'
+    assert not a.stopping(a.launch(jid).id), 'a retry is a fresh run'
+    assert _finish(a, jid).status == 'complete' and not b.stopping('no-such-job')
+    with pytest.raises(JobError): b.cancel(jid)
+
+def test_a_cancel_then_a_restart_leaves_the_clip_cancelled_not_resumed(tmp_path):
+    job, ran = _interrupted(tmp_path/'jobs.db'), []
+    Jobs(tmp_path/'jobs.db').cancel(job.id)
+    nxt = Jobs(tmp_path/'jobs.db'); nxt.register('clip', lambda job, report: ran.append(1))
+    assert nxt.recover(delay=0)['cancelled'] == [job.id]
+    time.sleep(.2)
+    assert (nxt.get(job.id).status, ran) == ('cancelled', [])
+    from leela.blocks.vault.ui import job_card
+    from fasthtml.common import to_xml
+    assert '/retry' in to_xml(job_card(nxt.get(job.id))), 'a clip cancelled across a quit can still be resumed'
+
+def test_a_cancel_from_another_workspace_lands_on_a_queued_resume(tmp_path):
+    job, ran = _interrupted(tmp_path/'jobs.db'), []
+    a = Jobs(tmp_path/'jobs.db'); a.register('clip', lambda job, report: ran.append(1))
+    a.recover(delay=.3); Jobs(tmp_path/'jobs.db').cancel(job.id); time.sleep(.6)
+    assert (a.get(job.id).status, ran) == ('cancelled', [])
+
+def test_a_jobs_file_from_before_the_cancel_column_migrates_in_place(tmp_path):
+    import json, sqlite3
+    db = tmp_path/'jobs.db'
+    with sqlite3.connect(db) as c:
+        c.execute('''create table jobs(id text primary key, kind text, target text, params text, status text,
+            progress real, current text, result text, error text, created_at real, started_at real, finished_at real)''')
+        c.execute("insert into jobs values('clip-old','clip','x',?,'running',.5,'','','',1,1,null)", (json.dumps({'_resume': {'done': ['a']}}),))
+    jobs, again = Jobs(db), Jobs(db)
+    assert jobs.get('clip-old').cancel_at is None and jobs.get('clip-old').resumable
+    with sqlite3.connect(db) as c: c.execute('alter table jobs add column from_a_later_build text')
+    assert jobs.get('clip-old').id == 'clip-old', 'a column this build does not know is ignored'
+    assert again.cancel('clip-old').cancel_at and jobs.stopping('clip-old')
 
 def test_a_job_whose_pool_the_quit_reaps_stays_resumable(tmp_path):
     "Killing a clip's workers breaks its pool; recorded as an error, the next launch would not resume it."
@@ -201,7 +264,7 @@ def test_a_judgement_round_trips_from_the_row_that_carried_it(ws, proj):
 
 def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_path):
     "A clip of a project folder walked `.aeneas-venv`'s site-packages and every test fixture into the vault; `docs/` and `examples/` are clipped."
-    from leela.blocks.vault.clip import _files, acquire_one, clip_docs
+    from leela.blocks.vault.clip import _files, acquire_one, clip_docs, clip_tree
     from leela.blocks.vault.jobs import Job
     root = tmp_path/'docs'
     for f in ('a.md', 'B.MD', 'sub/c.txt', '.notes.md', '.aeneas-venv/lib/site-packages/pkg/README.md', '.git/x.md',
@@ -216,6 +279,8 @@ def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_
     class Mem:
         def __init__(self): self.got = []
         def clip(self, batch, **kw): self.got += map(str, batch); return [dict(doc_id=None)] * len(batch)
+    m = Mem(); out = clip_tree(m, Job('clip_tree-1', 'clip_tree', str(root)), lambda **kw: None)
+    assert sorted(m.got) == sorted(kept) and out['n'] == 7, 'a folder import walks as a clip does'
     reports = []
     for kind, params, fn in (('clip', {}, clip_docs), ('acquire', dict(action='clip'), acquire_one)):
         m = Mem(); stale = str(root/'build'/'b.md')
@@ -225,7 +290,7 @@ def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_
         assert all(round(r['progress'], 6) <= 0.95 for r in reports) and reports[-1]['current'] == '7 of 7'
 
 @pytest.mark.parametrize('url,data', [('/clip', dict(kind='clip')), ('/clip', dict(kind='clip_tree')), ('/vault/acquire', dict(action='clip'))])
-def test_a_folder_clip_cancels_within_one_batch_keeps_what_it_filed_and_resumes_the_rest(tmp_path, monkeypatch, url, data):
+def test_a_folder_clip_cancels_within_one_file_keeps_what_it_filed_and_resumes_the_rest(tmp_path, monkeypatch, url, data):
     "A folder clip had no stop: `Jobs.cancel` refused it and `clip_docs` never asked."
     import threading
     from leela.blocks.vault.clip import BATCH
@@ -247,14 +312,30 @@ def test_a_folder_clip_cancels_within_one_batch_keeps_what_it_filed_and_resumes_
         assert f'id="job-{jid}"' in card and 'cancelling after the files in flight' in card
         gate.set()
         j = _finish(ws.jobs, jid)
-        assert j.status == 'cancelled' and j.result['cancelled'] and len(calls) == 1, 'stopped after the batch in flight'
-        assert len(j.result['unread']) == BATCH + 3 and ws.memory.search('zqxw0'), 'the batch done stays indexed'
+        assert j.status == 'cancelled' and j.result['cancelled'] and calls == [[str(root/'n00.md')]], 'stopped after the first file'
+        assert len(j.result['unread']) == BATCH * 2 + 2 and ws.memory.search('zqxw0'), 'the batch done stays indexed'
         assert 'resume' in c.get(f'/jobs/{jid}').text and 'not clipped' in c.get(f'/jobs/{jid}').text
         assert f'id="job-{jid}"' in c.post(f'/jobs/{jid}/retry').text
         j = _finish(ws.jobs, jid)
         assert j.status == 'complete' and 'pages' not in j.params
         assert sorted(sum(calls, [])) == sorted(map(str, root.glob('*.md'))), 'the resume clips exactly the rest'
         assert c.post(f'/jobs/{jid}/cancel').json()['kind'] == 'bad_request', 'a finished clip cannot be cancelled'
+
+def test_a_small_clip_cancelled_during_its_first_file_stops_there(tmp_path):
+    "A clip of eight files or fewer was one batch, so a cancel always landed after the last file and it finished complete."
+    from leela.blocks.vault.clip import clip_docs, clip_tree, BATCH
+    from leela.blocks.vault.jobs import Job
+    for i in range(3): (tmp_path/f'n{i}.md').write_text('words')
+    for fn in (clip_docs, clip_tree):
+        got = []
+        class Mem:
+            def clip(self, batch, **kw): got.append(list(batch)); return [{}] * len(batch)
+        out = fn(Mem(), Job('clip-1', 'clip', str(tmp_path)), lambda **kw: None, lambda: bool(got))
+        assert out['cancelled'] and len(got) == 1 and len(got[0]) == 1 and len(out['unread']) == 2, fn.__name__
+    for i in range(3, 20): (tmp_path/f'n{i}.md').write_text('words')
+    got = []
+    clip_docs(Mem(), Job('clip-2', 'clip', str(tmp_path)), lambda **kw: None)
+    assert [len(b) for b in got] == [1, 2, 4, BATCH, 5], 'batches grow to eight'
 
 def test_a_clip_stopped_before_its_first_batch_files_nothing(tmp_path):
     from leela.blocks.vault.clip import clip_docs, clip_tree
