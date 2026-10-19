@@ -11,6 +11,8 @@ if _MADE_HERE:
     TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
     _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
+#: No orphan sweep thread unless a test asks for one with `Jobs.sweep(seconds)`.
+_os.environ['LEELA_JOB_SWEEP'] = '0'
 
 #: Where a person's real conversations, keymap and settings live. No test may resolve to it. The
 #: env var above is not enough on its own: `leela_cfg` is bound at import, so a module that was

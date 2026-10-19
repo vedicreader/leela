@@ -1130,6 +1130,7 @@ class Workspace:
         step(self.save)
         step(self.terms.close_all)
         step(self.fs_watch.close)
+        step(self.jobs.close)
         if self._stop_backups is not None: step(self._stop_backups)
         if self._threads is not None: step(self._threads.shutdown)
         elif self._ai is not None: step(self._ai.close)

@@ -116,6 +116,7 @@ async function reviewClick(host, e) {
     return reviewPaint(host);
   }
   if (t.matches('[data-review-doubts]')) return leeReview('doubts', 0, host);
+  if (t.closest('[data-learned-compact-go]')) return learnedCompact(host);
   if (t.closest('[data-review-apply]')) return reviewCommit(host);
   if (t.closest('[data-review-all]')) { await reviewCommit(host); st.doc = st.shelf = ''; return reviewLoad(host); }
   if (t.closest('[data-review-export]')) {
@@ -315,12 +316,13 @@ function reviewOpen(st, r) {
 
 /* ---- what the agent learned: Dhrona's candidates for the learned folder, one git branch each ---- */
 
-/* `data-learned-compact` beside the size is where a Compact action goes once ramabana proposes one. */
+/* Compact runs one model turn: the button stays pending while this tab's request or any other one runs, as `/agent/learned` says. */
 function learnedPaint(host, html) {
-  const st = host.__review, L = st.learned, near = L.limit && L.chars >= L.limit * 0.9;
+  const st = host.__review, L = st.learned, near = L.limit && L.chars >= L.limit * 0.9, busy = st.lcompact?.busy || L.compacting;
   html += `<div class="lee-review-learned-head"><span class="lee-dim" title="the learned folder">${esc(L.folder || '')}</span>` +
     `<span data-learned-chars class="${near ? 'lee-warn' : 'lee-dim'}">AGENTS.md ${Number(L.chars || 0).toLocaleString()} of ${Number(L.limit || 0).toLocaleString()} characters</span>` +
-    `<span data-learned-compact></span></div>`;
+    `<span data-learned-compact><button class="lee-btn" data-learned-compact-go${busy ? ' disabled' : ''} title="ask Dhrona for a shorter AGENTS.md, proposed as a candidate here">${busy ? 'compacting…' : 'Compact'}</button></span></div>`;
+  if (st.lcompact?.error) html += `<div class="lee-err" data-learned-compact-error>${esc(st.lcompact.error)}</div>`;
   if (L.error) html += `<div class="lee-err" data-learned-error>${esc(L.error)}</div>`;
   if (!st.rows.length && !L.error) html += `<div class="lee-wb-empty"><strong>Nothing the agent learned waits for review</strong>` +
     `<span>Dhrona proposes changes to the learned folder; each waits here until you accept (a) or reject (x) it.</span></div>`;
@@ -335,6 +337,38 @@ function learnedPaint(host, html) {
   host.innerHTML = html;
   $('.lee-review-row.active', host)?.scrollIntoView({block: 'nearest'});
   learnedDiff(host);
+  if (!st.lcompact?.busy) learnedWatch(host);
+}
+
+/* The reply can outlive the request (a webview drops a long one), so a pending compaction is also watched through `/agent/learned`. */
+async function learnedCompact(host) {
+  const st = host.__review;
+  if (st.lcompact?.busy || st.learned.compacting) return;
+  st.lcompact = {busy: true}; reviewPaint(host);
+  try {
+    const d = await post('/agent/learned/compact', {});
+    st.lcompact = {};
+    if (d.id) st.want = d.id;
+    status(d.id ? `compaction proposed as ${d.id}: ${Number(d.before).toLocaleString()} → ${Number(d.after).toLocaleString()} characters` : 'nothing to compact', 'ok');
+  } catch (e) {
+    st.lcompact = e.body ? {error: e.message || String(e)} : {};
+    if (e.body) status(e.message || String(e), 'err');
+  }
+  await learnedLoad(st);
+  if (st.mode === 'learned') reviewPaint(host);
+  learnedWatch(host);
+}
+
+function learnedWatch(host) {
+  const st = host.__review;
+  if (!st.learned.compacting || st.lwatch) return;
+  st.lwatch = setTimeout(async () => {
+    st.lwatch = 0;
+    if (!host.isConnected) return;
+    await learnedLoad(st);
+    if (st.mode === 'learned') reviewPaint(host);
+    learnedWatch(host);
+  }, 3000);
 }
 
 /* j and k fire faster than git answers: only the diff of the row still active is painted. */

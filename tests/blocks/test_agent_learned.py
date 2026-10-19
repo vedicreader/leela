@@ -102,3 +102,53 @@ def test_the_review_tab_has_a_learned_queue_and_a_command_reaches_it(ws):
     assert "if (st.mode === 'learned') return learnedAct(host, act, r);" in src, 'keys in the learned queue never reach the vault routes'
     with TestClient(ide_app(ws)) as c:
         assert 'data-mode="learned"' in c.get('/vault/view/review?mode=learned').text
+
+def test_compact_proposes_a_candidate_off_the_loop_and_it_joins_the_queue(learned, monkeypatch):
+    "Compact runs one blocking model turn: it must not hold the server's loop, and its candidate is reviewed like any other."
+    import threading, ramabana.learned
+    c, f = learned
+    seen = {}
+    def fake(folder, chat=None):
+        seen.update(folder=folder, thread=threading.current_thread() is threading.main_thread())
+        assert c.get('/agent/learned').json()['compacting'], 'a repainted queue shows it pending'
+        candidate(f, C, '# Learned\n', 'compact AGENTS.md (17 → 10 characters)')
+        return dict(ok=True, id=C, before=17, after=10)
+    monkeypatch.setattr(ramabana.learned, 'compact', fake)
+    assert not c.get('/agent/learned').json()['compacting']
+    r = c.post('/agent/learned/compact')
+    assert r.status_code == 200 and r.json() == dict(ok=True, id=C, before=17, after=10)
+    assert seen == dict(folder=f, thread=False)
+    d = c.get('/agent/learned').json()
+    assert [x['id'] for x in d['pending']] == [A, B, C] and not d['compacting']
+    assert c.get('/agent/learned/compact').status_code == 405, 'a model turn only on a POST'
+
+def test_compact_refusals_come_back_verbatim_and_one_runs_at_a_time(learned, monkeypatch):
+    import threading, ramabana.learned
+    c, f = learned
+    real, started, gate = ramabana.learned.compact, threading.Event(), threading.Event()
+    def slow(folder, chat=None): started.set(); gate.wait(5); return dict(ok=False, error='the editor gave no answer: no key')
+    monkeypatch.setattr(ramabana.learned, 'compact', slow)
+    out = {}
+    t = threading.Thread(target=lambda: out.update(r=c.post('/agent/learned/compact'))); t.start()
+    assert started.wait(5)
+    r = c.post('/agent/learned/compact')
+    assert r.status_code == 409 and r.json() == dict(ok=False, error='a compaction is already running')
+    gate.set(); t.join(5)
+    assert out['r'].status_code == 409 and out['r'].json() == dict(ok=False, error='the editor gave no answer: no key')
+    def boom(folder, chat=None): raise OSError('git went away')
+    monkeypatch.setattr(ramabana.learned, 'compact', boom)
+    r = c.post('/agent/learned/compact')
+    assert r.status_code == 409 and r.json() == dict(ok=False, error='OSError: git went away')
+    monkeypatch.setattr(ramabana.learned, 'compact', real)
+    r = c.post('/agent/learned/compact')
+    assert r.status_code == 409 and r.json() == dict(ok=False, error='AGENTS.md holds nothing Dhrona proposed, and a compaction rewrites only that'), 'refused before any model turn'
+    (f/'scratch.md').write_text('by hand')
+    r = c.post('/agent/learned/compact')
+    assert r.status_code == 409 and r.json()['error'] == f'{f} has uncommitted changes; commit or discard them first'
+
+def test_the_compact_button_sits_in_its_slot_and_selects_the_new_candidate():
+    src = (Path(__file__).resolve().parents[2]/'leela'/'blocks'/'vault'/'review.js').read_text()
+    assert '<span data-learned-compact><button class="lee-btn" data-learned-compact-go' in src
+    assert "post('/agent/learned/compact', {})" in src and 'if (d.id) st.want = d.id;' in src
+    assert "if (t.closest('[data-learned-compact-go]')) return learnedCompact(host);" in src
+    assert 'learnedCompact' in (Path(__file__).resolve().parents[2]/'leela'/'static'/'lee-ide.js').read_text(), 'the bundle is rebuilt'

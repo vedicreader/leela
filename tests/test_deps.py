@@ -13,13 +13,13 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.45') and not Requirement(s).specifier.contains('0.1.44') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.39') and not deps['ramabana'].specifier.contains('0.2.38'), 'learned accept caps AGENTS.md'
+    assert deps['ramabana'].specifier.contains('0.2.40') and not deps['ramabana'].specifier.contains('0.2.39'), 'learned.compact'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
     assert deps['shalya'].specifier.contains('0.1.14') and not deps['shalya'].specifier.contains('0.1.13'), 'ramabana 0.2.38 needs it'
-    assert deps['vishalakshi'].specifier.contains('0.1.30') and not deps['vishalakshi'].specifier.contains('0.1.29'), 'stop and progress on the acquire paths'
+    assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
-    assert deps['dhrona'].specifier.contains('0.1.10') and not deps['dhrona'].specifier.contains('0.1.9'), 'with ramabana 0.2.38'
+    assert deps['dhrona'].specifier.contains('0.1.11') and not deps['dhrona'].specifier.contains('0.1.10'), 'what learned.compact needs'
     assert deps['litesearch'].specifier.contains('0.1.46') and not deps['litesearch'].specifier.contains('0.1.45'), 'add_dir(stop=)'
     for n,lo in dict(dockeasy='0.0.9', pullup='0.0.8', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.3', kavacha='0.0.5', dhrishti='0.1.5', fossick='0.1.18', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras
@@ -31,8 +31,8 @@ def test_the_installed_set_matches_the_pins():
     assert Version(ramabana.__version__) >= Version('0.2.5') and Version(shalya.__version__) >= Version('0.1.1')
     assert Version(rishi.__version__) >= Version('0.1.45'), 'cached_model and EngineHold are public'
     from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
-    assert Version(vishalakshi.__version__) >= Version('0.1.30') and Version(dhrona.__version__) >= Version('0.1.10')
-    from ramabana.learned import learned_folder, pending, diff, accept, reject, learned_command  # noqa: F401
+    assert Version(vishalakshi.__version__) >= Version('0.1.31') and Version(dhrona.__version__) >= Version('0.1.11')
+    from ramabana.learned import learned_folder, pending, diff, accept, reject, learned_command, compact  # noqa: F401
     from dockeasy.core import FASTOPS_ENV; from pullup.workflows import gheasy_core  # noqa: F401
 
 def test_the_claude_code_runtime_chain_imports():

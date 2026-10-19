@@ -173,15 +173,16 @@ def test_another_processs_live_job_survives_recover_and_a_dead_ones_is_recovered
 def test_a_stale_heartbeat_is_recovered_and_the_old_run_can_no_longer_write(tmp_path):
     "A live pid with a stale beat is taken over; the original run is told to stop and its writes land nowhere."
     import threading
-    db, started, gate = tmp_path/'jobs.db', threading.Event(), threading.Event()
+    db, started, gate, spoke = tmp_path/'jobs.db', threading.Event(), threading.Event(), threading.Event()
     first, second = Jobs(db, owner='h:1:first', stale=3600), Jobs(db, owner='h:1:second', stale=3600)
     seen = {}
     def slow(job, report):
         started.set(); gate.wait(5)
         seen['stopping'] = first.stopping(job.id)
-        report(current='the old run talking')
+        report(current='the old run talking'); spoke.set()
         return {}
-    first.register('clip', slow); second.register('clip', lambda job, report: gate.wait(5) and {})
+    # the new run outlives the old one's last write, or `stopping` would read a finished row
+    first.register('clip', slow); second.register('clip', lambda job, report: spoke.wait(5) and {})
     jid = first.start('clip', 'x', _resume={'done': []}).id
     assert started.wait(5)
     assert second.recover(delay=0)['resumed'] == [], 'a fresh beat is a live owner'
@@ -189,7 +190,6 @@ def test_a_stale_heartbeat_is_recovered_and_the_old_run_can_no_longer_write(tmp_
     assert second.recover(delay=0)['resumed'] == [jid]
     gate.set()
     j = _finish(second, jid)
-    time.sleep(.2)
     assert seen['stopping'] and j.status == 'complete' and j.owner == second.owner and second.get(jid).current != 'the old run talking'
 
 def test_the_heartbeat_moves_while_a_job_runs_and_stops_with_it(tmp_path):
@@ -216,6 +216,98 @@ def test_a_retry_claims_a_running_row_whose_owner_died(tmp_path):
     live = jobs.new('book', 'y').id; jobs.update(live, status='running')
     with pytest.raises(JobError): jobs.launch(live)
 
+def test_a_dead_owners_job_is_resumed_by_another_processs_sweep_within_one_interval(tmp_path):
+    "`recover` ran only when a workspace opened, so a crashed Leela's job stayed running in a live one until the next folder opened."
+    import socket
+    db, ran = tmp_path/'jobs.db', []
+    first = Jobs(db, owner='h:1:first'); first.register('clip', lambda job, report: None)
+    jid = first.new('clip', 'x', _resume={'done': []}).id
+    first.update(jid, status='running', owner=f'{socket.gethostname()}:{_dead_pid()}:gone')
+    second = Jobs(db, owner='h:1:second'); second.register('clip', lambda job, report: ran.append(job.id) or {})
+    rounds, recover = [], second.recover
+    def counted(**kw): rounds.append(r := recover(**kw)); return r
+    second.recover = counted
+    try:
+        assert second.sweep(.2) == .2 and second.sweep(.2) is None, 'one thread per Jobs'
+        assert _finish(second, jid).status == 'complete' and ran == [jid] and second.get(jid).owner == second.owner
+        assert rounds[0]['resumed'] == [jid], 'taken on the first round, one interval in'
+    finally: second.close()
+
+def test_the_sweep_finishes_a_cancelled_orphan_as_cancelled_without_running_it(tmp_path):
+    job, ran = _interrupted(tmp_path/'jobs.db'), []
+    jobs = Jobs(tmp_path/'jobs.db'); jobs.register('clip', lambda job, report: ran.append(1))
+    jobs.update(job.id, cancel_at=time.time())
+    try:
+        jobs.sweep(.1); time.sleep(.5)
+        assert (jobs.get(job.id).status, ran) == ('cancelled', []) and 'recovered 0, failed 0, cancelled 1' == jobs.note
+    finally: jobs.close()
+
+def test_concurrent_sweeps_take_an_orphan_once(tmp_path):
+    import threading
+    job, ran, lock = _interrupted(tmp_path/'jobs.db'), [], threading.Lock()
+    def once(job, report):
+        with lock: ran.append(job.id)
+        time.sleep(.2); return {}
+    sites = [Jobs(tmp_path/'jobs.db', owner=f'h:1:s{i}') for i in range(4)]
+    for s in sites: s.register('clip', once)
+    try:
+        for s in sites: s.sweep(.05)
+        assert _finish(sites[0], job.id).status == 'complete'
+        time.sleep(.3)
+        assert ran == [job.id]
+    finally:
+        for s in sites: s.close()
+
+def test_a_sweep_never_takes_this_processs_own_run_however_stale_its_beat(tmp_path):
+    "A live run whose beat lapsed (a sleep, a locked file) was taken by its own process's sweep and run twice."
+    import threading
+    gate, ran = threading.Event(), []
+    jobs = Jobs(tmp_path/'jobs.db', stale=3600)
+    jobs.register('clip', lambda job, report: ran.append(1) or gate.wait(5) and {})
+    jid = jobs.start('clip', 'x', _resume={'done': []}).id
+    jobs.update(jid, beat_at=time.time() - 7200)
+    assert jobs.recover(delay=0, handled=True) == dict(resumed=[], failed=[], cancelled=[])
+    gate.set(); assert _finish(jobs, jid).status == 'complete' and ran == [1]
+
+def test_a_sweep_leaves_a_kind_it_has_no_handler_for(tmp_path):
+    job = _interrupted(tmp_path/'jobs.db', kind='book')
+    jobs = Jobs(tmp_path/'jobs.db')
+    assert jobs.recover(delay=0, handled=True) == dict(resumed=[], failed=[], cancelled=[])
+    assert jobs.get(job.id).status == 'running', 'another process may have the handler'
+    assert jobs.recover(delay=0)['failed'] == [job.id], 'a workspace opening still fails it'
+
+def test_the_sweep_stops_on_close_and_on_workspace_shutdown_and_survives_a_failing_recover(tmp_path, monkeypatch):
+    def stopped(t): t.join(5); return not t.is_alive()
+    jobs = Jobs(tmp_path/'jobs.db')
+    calls = []
+    def boom(**kw): calls.append(1); raise RuntimeError('the disk was not there')
+    monkeypatch.setattr(jobs, 'recover', boom)
+    jobs.sweep(.05); t = jobs._sweeper; time.sleep(.3)
+    assert len(calls) > 1 and 'the disk was not there' in jobs.note and t.is_alive() and t.name == 'leela-orphan-sweep'
+    jobs.close()
+    assert stopped(t) and jobs._sweeper is None
+    assert jobs.sweep(.05) and (t := jobs._sweeper).is_alive(), 'a closed Jobs sweeps again when asked'
+    jobs.close(); assert stopped(t)
+    ws = Workspace(roots=[tmp_path])
+    try: ws.jobs.sweep(.05); t = ws.jobs._sweeper; assert t.is_alive()
+    finally: ws.shutdown_now()
+    assert stopped(t)
+
+def test_the_sweep_is_off_in_tests_in_pool_workers_and_while_quitting(tmp_path, monkeypatch):
+    import multiprocessing
+    from leela.blocks.vault import jobs as J
+    assert Jobs(tmp_path/'a.db').sweep() is None, 'conftest sets LEELA_JOB_SWEEP=0'
+    monkeypatch.setenv('LEELA_JOB_SWEEP', 'soon'); j = Jobs(tmp_path/'b.db', stale=10)
+    try: assert j.sweep() == 5, 'bad text falls back to half the stale window'
+    finally: j.close()
+    monkeypatch.delenv('LEELA_JOB_SWEEP')
+    monkeypatch.setattr(multiprocessing, 'parent_process', lambda: object())
+    assert (c := Jobs(tmp_path/'c.db')).sweep(.05) is None and c._sweeper is None
+    monkeypatch.undo()
+    job = _interrupted(tmp_path/'d.db')
+    monkeypatch.setattr(J, 'quitting', lambda: True)
+    assert Jobs(tmp_path/'d.db').recover(delay=0) == dict(resumed=[], failed=[], cancelled=[]), 'a quitting process takes nothing'
+
 def test_a_job_cancelled_before_it_resumes_never_starts(tmp_path):
     job, ran = _interrupted(tmp_path/'jobs.db', _cancel=True), []
     jobs = Jobs(tmp_path/'jobs.db'); jobs.register('clip', lambda job, report: ran.append(1))
@@ -223,11 +315,17 @@ def test_a_job_cancelled_before_it_resumes_never_starts(tmp_path):
     assert (jobs.get(job.id).status, ran) == ('cancelled', [])
 
 def _gated_mem(started, gate):
+    from fastcore.all import L
     class Mem:
+        "Files the first file, waits at `gate`, then asks `stop` before each file as vishalakshi does."
         got = []
-        def clip(self, batch, **kw):
-            Mem.got.append(list(map(str, batch))); started.set(); gate.wait(10)
-            return [dict(doc_id=None)] * len(batch)
+        def clip(self, batch, stop=None, **kw):
+            Mem.got.append(list(map(str, batch))); rows = L()
+            for i, f in enumerate(batch):
+                if i and stop is not None and stop(): break
+                rows.append(dict(doc_id=None))
+                if not i: started.set(); gate.wait(10)
+            rows.cancelled, rows.unread = len(rows) < len(batch), L(batch[len(rows):]); return rows
     return Mem
 
 def test_a_cancel_from_another_workspace_stops_a_running_clip_started_without_the_flag(tmp_path):
@@ -367,18 +465,21 @@ def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_
 
 @pytest.mark.parametrize('url,data', [('/clip', dict(kind='clip')), ('/clip', dict(kind='clip_tree')), ('/vault/acquire', dict(action='clip'))])
 def test_a_folder_clip_cancels_within_one_file_keeps_what_it_filed_and_resumes_the_rest(tmp_path, monkeypatch, url, data):
-    "A folder clip had no stop: `Jobs.cancel` refused it and `clip_docs` never asked."
+    "A folder clip had no stop: `Jobs.cancel` refused it and `clip_docs` never asked. vishalakshi 0.1.31 asks the stop before each file of a batch."
     import threading
     from leela.blocks.vault.clip import BATCH
     (root := tmp_path/'many').mkdir()
     for i in range(BATCH * 2 + 3): (root/f'n{i:02}.md').write_text(f'# Note {i}\n\nzqxw{i} about recall.\n')
     ws = Workspace(roots=[root])
     calls, started, gate, clip = [], threading.Event(), threading.Event(), ws.memory.clip
-    def gated(batch, **kw):
-        # the cancel lands while the first file is in flight: filed, not yet reported
-        calls.append(list(map(str, batch))); out = clip(batch, **kw)
-        if len(calls) == 1: started.set(); gate.wait(10)
-        return out
+    def gated(batch, stop=None, **kw):
+        # vishalakshi asks before the batch, then before each file: the third ask is after the first file is filed
+        calls.append(list(map(str, batch))); n = [0]
+        def held():
+            n[0] += 1
+            if len(calls) == 1 and n[0] == 3: started.set(); gate.wait(10)
+            return stop()
+        return clip(batch, stop=held, **kw)
     monkeypatch.setattr(ws.memory, 'clip', gated)
     with TestClient(ide_app(ws)) as c:
         r = c.post(url, data=dict(data, target=str(root)))
@@ -389,30 +490,38 @@ def test_a_folder_clip_cancels_within_one_file_keeps_what_it_filed_and_resumes_t
         assert f'id="job-{jid}"' in card and 'cancelling after the files in flight' in card
         gate.set()
         j = _finish(ws.jobs, jid)
-        assert j.status == 'cancelled' and j.result['cancelled'] and calls == [[str(root/'n00.md')]], 'stopped after the first file'
-        assert len(j.result['unread']) == BATCH * 2 + 2 and ws.memory.search('zqxw0'), 'the batch done stays indexed'
+        assert j.status == 'cancelled' and j.result['cancelled'] and len(calls) == 1 and len(calls[0]) == BATCH, 'one batch handed over'
+        assert len(j.result['unread']) == BATCH * 2 + 2 and str(root/'n00.md') not in j.result['unread'], 'stopped inside the batch, after its first file'
+        assert ws.memory.search('zqxw0'), 'the file done stays indexed'
         assert 'resume' in c.get(f'/jobs/{jid}').text and 'not clipped' in c.get(f'/jobs/{jid}').text
         assert f'id="job-{jid}"' in c.post(f'/jobs/{jid}/retry').text
         j = _finish(ws.jobs, jid)
         assert j.status == 'complete' and 'pages' not in j.params
-        assert sorted(sum(calls, [])) == sorted(map(str, root.glob('*.md'))), 'the resume clips exactly the rest'
+        assert sorted(sum(calls[1:], [])) == sorted(map(str, root.glob('*.md')))[1:], 'the resume clips exactly the rest'
         assert c.post(f'/jobs/{jid}/cancel').json()['kind'] == 'bad_request', 'a finished clip cannot be cancelled'
 
 def test_a_small_clip_cancelled_during_its_first_file_stops_there(tmp_path):
     "A clip of eight files or fewer was one batch, so a cancel always landed after the last file and it finished complete."
+    from fastcore.all import L
     from leela.blocks.vault.clip import clip_docs, clip_tree, BATCH
     from leela.blocks.vault.jobs import Job
     for i in range(3): (tmp_path/f'n{i}.md').write_text('words')
+    class Mem:
+        "vishalakshi 0.1.31's contract: the stop is asked before each file of the batch."
+        def clip(self, batch, stop=None, **kw):
+            got.append(list(batch)); rows = L()
+            for f in batch:
+                if stop is not None and stop(): break
+                filed.append(f); rows.append({})
+            rows.cancelled, rows.unread = len(rows) < len(batch), L(batch[len(rows):]); return rows
     for fn in (clip_docs, clip_tree):
-        got = []
-        class Mem:
-            def clip(self, batch, **kw): got.append(list(batch)); return [{}] * len(batch)
-        out = fn(Mem(), Job('clip-1', 'clip', str(tmp_path)), lambda **kw: None, lambda: bool(got))
-        assert out['cancelled'] and len(got) == 1 and len(got[0]) == 1 and len(out['unread']) == 2, fn.__name__
+        got, filed = [], []
+        out = fn(Mem(), Job('clip-1', 'clip', str(tmp_path)), lambda **kw: None, lambda: bool(filed))
+        assert out['cancelled'] and len(got) == 1 and len(got[0]) == 3 and len(filed) == 1 and len(out['unread']) == 2, fn.__name__
     for i in range(3, 20): (tmp_path/f'n{i}.md').write_text('words')
-    got = []
+    got, filed = [], []
     clip_docs(Mem(), Job('clip-2', 'clip', str(tmp_path)), lambda **kw: None)
-    assert [len(b) for b in got] == [1, 2, 4, BATCH, 5], 'batches grow to eight'
+    assert [len(b) for b in got] == [BATCH, BATCH, 4], 'batches of eight; the stop lands inside one'
 
 def test_a_clip_stopped_before_its_first_batch_files_nothing(tmp_path):
     from leela.blocks.vault.clip import clip_docs, clip_tree
@@ -449,28 +558,48 @@ def test_a_clip_passes_its_stop_to_vishalakshi_and_keeps_what_a_stop_left(ws, tm
         def clip(self, batch, stop=None, **kw):
             r = L([{}] * (len(batch) - 1)); r.cancelled, r.unread = True, L(batch[-1:]); return r
     out = clip_docs(Mem(), Job('clip-1', 'clip', str(d)), lambda **kw: None, lambda: False)
-    assert out['cancelled'] and out['files'] == [] and out['unread'] == paths, 'the first batch of one was stopped inside'
+    assert out['cancelled'] and out['files'] == paths[:2] and out['unread'] == paths[2:], 'a batch stopped inside keeps the files before the stop'
 
 def test_a_batch_whose_clip_failed_is_retried_not_counted_done(tmp_path):
     from leela.blocks.vault.clip import clip_docs, clip_tree
     from leela.blocks.vault.jobs import Job
-    for i in range(3): (tmp_path/f'n{i}.md').write_text('words')
+    from leela.blocks.vault.clip import BATCH
+    for i in range(BATCH + 2): (tmp_path/f'n{i:02}.md').write_text('words')
+    first = [str(tmp_path/f'n{i:02}.md') for i in range(BATCH)]
     class Mem:
-        def clip(self, batch, **kw): return [] if str(batch[0]).endswith('n0.md') else [{}] * len(batch)
+        def clip(self, batch, **kw): return [] if str(batch[0]).endswith('n00.md') else [{}] * len(batch)
     reports = []
     out = clip_docs(Mem(), Job('clip-1', 'clip', str(tmp_path)), lambda **kw: reports.append(kw))
-    assert out['failed'] == [str(tmp_path/'n0.md')] and str(tmp_path/'n0.md') not in reports[-1]['params']['_resume']['done']
+    assert out['failed'] == first and not set(first) & set(reports[-1]['params']['_resume']['done'])
     out = clip_tree(Mem(), Job('clip-2', 'clip_tree', str(tmp_path)), lambda **kw: None)
-    assert [f['status'] for f in out['files']].count('failed') == 1
+    assert [f['status'] for f in out['files']].count('failed') == BATCH
 
-def test_which_acquisitions_take_a_stop(tmp_path):
+def test_which_acquisitions_take_a_stop():
     from leela.blocks.vault.clip import stoppable
-    (f := tmp_path/'a.md').write_text('x')
-    for a in ('clip', 'web', 'crawl', 'github', 'arxiv', 'youtube'): assert stoppable(a, 'https://example.com'), a
-    for a in ('note', 'harvest', 'pdf'): assert not stoppable(a, 'https://example.com'), a
-    assert stoppable('grab', 'https://example.com/page') and stoppable('grab', str(tmp_path)) and stoppable('grab', 'https://github.com/a/b')
-    assert not stoppable('grab', 'https://example.com/paper.pdf') and not stoppable('grab', str(f))
-    assert not stoppable('grab', 'https://github.com/a/b/blob/main/x.py') and stoppable('grab', 'https://example.com/paper.pdf', crawl=True)
+    for a in ('clip', 'grab', 'web', 'crawl', 'github', 'arxiv', 'youtube', 'pdf'): assert stoppable(a), a
+    for a in ('note', 'harvest'): assert not stoppable(a), a
+
+@pytest.mark.parametrize('target', ['local.md', 'paper.pdf', 'https://github.com/a/b/blob/main/README.md', 'https://github.com/a/b/blob/main/x.py'])
+def test_a_grab_of_a_file_a_pdf_or_a_github_file_cancels_before_it_reads(ws, tmp_path, target):
+    "A grab of a local file, a PDF or a GitHub file URL took no stop, so its job card offered no cancel; vishalakshi 0.1.31 asks it before the read."
+    import threading
+    if '://' not in target: (p := tmp_path/target).write_bytes(b'%PDF-1.4' if target.endswith('.pdf') else b'# Local\n\nqqgrab words'); target = str(p)
+    r = ws.memory.acquire('grab', target, stop=lambda: True)
+    assert r['cancelled'] and r['skipped'] == 'cancelled' and list(map(str, r['unread'])) == [target]
+    gate = threading.Event()
+    real = ws.memory.acquire
+    def held(action, target, **kw): gate.wait(5); return real(action, target, **kw)
+    ws.memory.acquire = held
+    try:
+        with TestClient(ide_app(ws)) as c:
+            card = c.post('/vault/acquire', data=dict(target=target, action='grab')).text
+            jid = card.split('id="job-', 1)[1].split('"', 1)[0]
+            assert 'data-job-cancel' in card and ws.jobs.get(jid).params['_cancel']
+            ws.jobs.cancel(jid); gate.set()
+            j = _finish(ws.jobs, jid)
+    finally: ws.memory.acquire = real
+    assert j.status == 'cancelled' and j.result['unread'] == [target] and j.result['n_unread'] == 1, j.dict()
+    assert not ws.memory.search('qqgrab'), 'nothing filed'
 
 def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_again(tmp_path):
     "A GitHub, arXiv, YouTube or web acquisition was one vishalakshi call with no stop to ask."
@@ -503,7 +632,7 @@ def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_aga
         assert 'run again' in card and 'not filed' in card and 'not clipped' not in card
     jid = jobs.start('acquire', 'https://example.com/p.pdf', action='grab').id
     j = _finish(jobs, jid)
-    assert 'stop' not in seen['grab'] and j.status == 'complete' and not j.cancellable, 'a PDF grab cannot stop and gets no stop'
+    assert 'stop' not in seen['grab'] and j.status == 'complete' and not j.cancellable, 'a grab started before `_cancel` gets no stop'
     started.clear(); gate.clear()
     jid = jobs.start('acquire', 'https://github.com/a/b', action='github', _cancel=True).id
     assert started.wait(5); gate.set()
@@ -513,7 +642,8 @@ def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_aga
 def test_the_acquire_route_offers_cancel_only_where_it_can_stop(ws, monkeypatch):
     monkeypatch.setattr(ws.memory, 'acquire', lambda action, target, shelf=None, **kw: {})   # nothing here reaches the network
     with TestClient(ide_app(ws)) as c:
-        for target, action, can in (('https://github.com/a/b', 'github', True), ('https://example.com/p.pdf', 'grab', False),
+        for target, action, can in (('https://github.com/a/b', 'github', True), ('https://example.com/p.pdf', 'grab', True),
+                                    ('https://github.com/a/b/blob/main/x.py', 'grab', True), ('https://example.com/p.pdf', 'pdf', True),
                                     ('remember this', 'note', False)):
             r = c.post('/vault/acquire', data=dict(target=target, action=action))
             jid = r.text.split('id="job-', 1)[1].split('"', 1)[0]

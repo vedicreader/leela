@@ -607,7 +607,7 @@ class Memory:
         paths = [str(p) for p in ([paths] if isinstance(paths, (str, Path)) else paths)]
         if not paths: return []
         v = self._shelf(shelf)
-        # one batch for vishalakshi, which asks `stop` before it; the caller's batches are the steps
+        # one batch for vishalakshi, which asks `stop` before it and before each file
         cb = dict(stop=stop, batch=len(paths)) if stop is not None else {}
         try: out = v.add_files(paths, meta=dict(meta or {}), force=force, n_workers=index_workers(), **cb)
         except Exception as e:

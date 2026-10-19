@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, os, re, shlex, socket, sqlite3, subprocess, threading, time, uuid
+import atexit, json, multiprocessing, os, re, shlex, socket, sqlite3, subprocess, threading, time, uuid
 from functools import partial
 from fastcore.all import L, Path, ifnone, store_attr
 
@@ -47,6 +47,9 @@ STALE = 120
 #: This process as a job row's owner: host, pid, and a nonce, so a reused pid is not mistaken for it.
 OWNER = f'{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}'
 
+#: `(owner, id)` of rows this process runs or is about to resume: a sweep never takes them, whatever their beat says.
+_live = set()
+
 def owner_alive(owner, beat_at, stale=STALE, now=None):
     "Whether `owner` may still be running its job: it beat within `stale` seconds and, on this host, its pid is alive."
     if not owner or beat_at is None or ifnone(now, time.time()) - beat_at > stale: return False
@@ -57,6 +60,11 @@ def owner_alive(owner, beat_at, stale=STALE, now=None):
     except ProcessLookupError: return False
     except PermissionError: pass   # alive, under another user
     return True
+
+def _sweep_secs(stale):
+    "Seconds between orphan sweeps: `LEELA_JOB_SWEEP`, else half the stale window; 0 turns them off."
+    try: return max(0.0, float(os.getenv('LEELA_JOB_SWEEP') or stale/2))
+    except ValueError: return stale/2
 
 def _stale_secs():
     try: return max(1.0, float(os.getenv('LEELA_JOB_STALE') or STALE))
@@ -119,7 +127,7 @@ class Jobs:
         self.path, self.memory = Path(path), memory
         self.owner, self.stale = owner or OWNER, float(ifnone(stale, _stale_secs()))
         self.note, self._handlers, self._lock = '', {}, threading.Lock()
-        self._ticking = False
+        self._ticking, self._sweeper, self._stop = False, None, threading.Event()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
     def _db(self):
@@ -199,6 +207,7 @@ class Jobs:
                           + ('' if fresh else ' and cancel_at is null'),
                           (now, self.owner, now, str(jid), *((job.owner, job.beat_at) if orphan else ()))).rowcount
         if not n: raise JobError(f'job {jid} is already running' + ('' if fresh else ' or was cancelled'))
+        _live.add((self.owner, jid))
         threading.Thread(target=self._run, args=(jid, fn), daemon=True, name=f'leela-job-{jid}').start()
         return self.get(jid)
     def start(self, kind, target='', **params):
@@ -227,7 +236,7 @@ class Jobs:
                 return
             kind = {'result': dict(kind=e.kind, error=errstr(e))} if getattr(e, 'kind', None) else {}
             own(status='error', error=errstr(e)[:900], finished_at=time.time(), **kind)
-        finally: done.set()
+        finally: done.set(); _live.discard((self.owner, jid))
     def cancel(self, jid):
         "Ask a running job to stop after the pages or files in flight. The row holds the request, so any workspace and the next launch see it."
         job = self.get(jid)
@@ -247,14 +256,18 @@ class Jobs:
         "Whether the run of `jid` this process owns should stop: a cancel was asked for, or another process took the row."
         r = self._flags(jid)
         return bool(r and (r[0] or (r[2] == 'running' and r[1] not in (None, self.owner))))
-    def recover(self, delay=None):
+    def recover(self, delay=None,
+        handled=False):  # leave a kind with no handler here to a process that has one, rather than fail it
         "Resume the active jobs whose process has gone, `delay` seconds from now; fail what cannot resume."
         out = dict(resumed=[], failed=[], cancelled=[])
         # a requeued row is beaten only once it runs, so it must launch inside the stale window
         delay = min(float(ifnone(delay, os.getenv('LEELA_RESUME_DELAY') or RESUME_DELAY)), self.stale/2)
-        for job in self.all(limit=200):
+        with self._db() as c: rows = c.execute("select * from jobs where status in ('queued', 'running') order by created_at").fetchall()
+        for job in map(self._row, rows):
+            # a row a quit is handing back is the next launch's; this process is going
+            if quitting(): break
             # only a row whose process has gone: another process's live run is not this one's to restart or fail
-            if not job.active or self.alive(job): continue
+            if (self.owner, job.id) in _live or self.alive(job) or (handled and job.kind not in self._handlers): continue
             # taken from the owner and beat read above, so two processes recovering at once take it once
             if not self._take(job): continue
             if job.cancel_at:
@@ -263,6 +276,7 @@ class Jobs:
             elif job.resumable and job.kind in self._handlers:
                 self.update(job.id, status='queued', current='resuming after a restart')
                 out['resumed'].append(job.id)
+                _live.add((self.owner, job.id))
                 if delay <= 0: self._resume(job.id)
                 else:
                     t = threading.Timer(delay, self._resume, (job.id,))
@@ -283,8 +297,35 @@ class Jobs:
         "Launch a recovered job unless it was cancelled meanwhile or another workspace already took it."
         try: self.launch(jid, fresh=False)
         except JobError:
+            _live.discard((self.owner, jid))
             r = self._flags(jid)
             if r and r[0] and r[2] == 'queued': self._cancelled(jid)
+    def sweep(self, seconds=None):
+        "Recover orphaned rows every `seconds` on a thread that `close` stops; the interval, or None when off."
+        secs = float(ifnone(seconds, _sweep_secs(self.stale)))
+        # a pool worker, spawned or forked, is not the process that owns the window
+        if secs <= 0 or self._sweeper is not None or multiprocessing.parent_process() is not None: return None
+        stop = self._stop = threading.Event()
+        def loop():
+            last = time.time()
+            while not stop.wait(secs) and not quitting():
+                # just woken from a sleep: every beat is stale until its thread runs, so give them a round
+                woke, last = time.time() - last > 2*secs, time.time()
+                if woke: continue
+                note = self.note
+                try:
+                    if not any(self.recover(delay=0, handled=True).values()): self.note = note
+                except Exception as e: self.note = f'orphan sweep failed ({errstr(e)})'
+        self._sweeper = threading.Thread(target=loop, daemon=True, name='leela-orphan-sweep')
+        self._sweeper.start()
+        atexit.register(self.close)
+        return secs
+    def close(self, timeout=2):
+        "Stop the sweep before the interpreter goes, so no recover starts mid-quit."
+        self._stop.set()
+        atexit.unregister(self.close)
+        t, self._sweeper = self._sweeper, None
+        if t is not None and t is not threading.current_thread(): t.join(timeout)
     def tick(self, seconds=None):
         secs = int(ifnone(seconds, os.getenv('LEELA_POLL_SECONDS') or 0))
         if secs <= 0 or self._ticking: return None

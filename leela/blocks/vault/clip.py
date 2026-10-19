@@ -15,21 +15,14 @@ DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.ht
 
 BATCH = 8
 
-#: Acquisitions vishalakshi can stop: before the fetch or clone, and between the pages, sources or batches it files.
-STOPPABLE = ('web', 'crawl', 'github', 'arxiv', 'youtube')
-#: What `grab` reads with one of those readers; a file, a PDF or a GitHub file takes no `stop`.
-_GRAB_STOPS = ('dir', 'web', 'github', 'arxiv', 'youtube')
+#: Acquisitions vishalakshi can stop: before the read, fetch or clone, and between the pages, sources or files it files.
+STOPPABLE = ('clip', 'grab', 'web', 'crawl', 'github', 'arxiv', 'youtube', 'pdf')
 #: The most unread entries a job's result keeps; `n_unread` has the count.
 MAX_UNREAD = 500
 
-def stoppable(action, target, crawl=False):
-    "Whether an acquisition of `target` by `action` asks a `stop` it is given."
-    if action == 'clip' or action in STOPPABLE: return True
-    if action != 'grab': return False
-    if crawl: return True
-    from fossick import what_is
-    try: return what_is(str(target)) in _GRAB_STOPS
-    except ValueError: return False
+def stoppable(action):
+    "Whether an acquisition by `action` asks a `stop` it is given; a note or a harvest is one call that does not."
+    return action in STOPPABLE
 
 def _filed(batch, rows):
     "`(file, row)` pairs for the files `memory.clip` filed, and the files of `batch` it did not reach."
@@ -37,10 +30,9 @@ def _filed(batch, rows):
     rows = list(rows)
     return list(zip(batch, rows)), list(batch[len(rows):])
 
-def _batches(xs, n=1):
-    "`(start, batch)` over `xs` in batches of `n`, doubling to `BATCH`, so a cancel early in a clip lands within a file."
-    i = 0
-    while i < len(xs): yield i, xs[i:i + n]; i, n = i + n, min(BATCH, n * 2)
+def _batches(xs):
+    "`(start, batch)` over `xs` in batches of `BATCH`; vishalakshi asks the stop before each file, so a cancel lands inside one."
+    for i in range(0, len(xs), BATCH): yield i, xs[i:i + BATCH]
 
 def _files(target, exts=DOC_EXTS):
     "Documents under `target`, past what litesearch's `dir2files` skips except `docs/` and `examples/`, and past `venv`, `site-packages` and `LEELA_VAULT_SKIP`'s folders."
@@ -74,6 +66,8 @@ def clip_docs(memory, job, report, stop=noop):
             out['skipped' if r.get('skipped') else 'files'].append(str(f))
             if r.get('doc_id'): clipped.append(r['doc_id'])
         if left and getattr(rows, 'cancelled', False):
+            # stopped inside the batch: the files before the stop are done, so a resume leaves them
+            report(result=out, params=dict(job.params, _resume=dict(done=out['files'] + out['skipped'])))
             return out | dict(cancelled=True, unread=list(map(str, left + pending[i + len(batch):])), pii=_pii_summary(memory, clipped, shelf))
         # a batch whose clip failed is neither done nor skipped, so a retry clips it again
         if left: out.setdefault('failed', []).extend(map(str, left))
@@ -142,11 +136,10 @@ def clip_tree(memory, job, report, stop=noop):
     groups = {}
     for x in plan.files:
         if str(x.path) not in done: groups.setdefault((x.shelf, x.category), []).append(x.path)
-    seen, n = len(done), 1
+    seen = len(done)
     for (shelf, category), paths in groups.items():
         meta = dict(category=category, clipped_from='folder', import_root=str(plan.root), clip_job=job.id)
-        for _, batch in _batches(paths, n):
-            n = min(BATCH, max(n, len(batch) * 2))
+        for _, batch in _batches(paths):
             if stop(): return out | dict(cancelled=True, unread=[str(x.path) for x in plan.files if str(x.path) not in done])
             rows = memory.clip(batch, shelf=shelf, meta=meta, stop=stop)
             filed, left = _filed(batch, rows)
@@ -155,6 +148,7 @@ def clip_tree(memory, job, report, stop=noop):
                     doc_id=r.get('doc_id') or r.get('id'), status='skipped' if r.get('skipped') else 'clipped'))
                 done.add(str(p))
             if left and getattr(rows, 'cancelled', False):
+                report(result=out, params=dict(job.params, _resume=dict(done=sorted(done))))
                 return out | dict(cancelled=True, unread=[str(x.path) for x in plan.files if str(x.path) not in done])
             for p in left: out['files'].append(dict(path=str(p), shelf=shelf, category=category, doc_id=None, status='failed'))
             seen += len(batch)
@@ -180,7 +174,7 @@ def acquire_one(memory, job, report, stop=noop):
     if action == 'clip': return clip_docs(memory, job, report, stop)
     report(current=f'{action} {job.target}', progress=0.2)
     kw = {k: v for k, v in job.params.items() if k not in ('action', 'shelf', '_resume', 'from', '_cancel')}
-    if job.cancellable and stoppable(action, job.target, kw.get('crawl')): kw |= dict(stop=stop, progress=_progress(report))
+    if job.cancellable and stoppable(action): kw |= dict(stop=stop, progress=_progress(report))
     out = dict(memory.acquire(action, job.target, shelf=job.params.get('shelf'), **kw), action=action)
     unread = [str(u) for u in L(out.pop('unread', None) or [])]
     if unread and (out.get('cancelled') or stop()): out |= dict(cancelled=True, unread=unread[:MAX_UNREAD], n_unread=len(unread))

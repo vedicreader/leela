@@ -152,6 +152,7 @@ def connect(app, ctx):
     ctx.jobs.register('extract', extract_job)
     try: ctx.jobs.recover()
     except Exception: pass
+    ctx.jobs.sweep()
     @rt('/jobs')
     def jobs_list(kind: str = '', limit: int = 40):
         try: return dict(jobs=[j.dict() for j in ctx.jobs.all(limit=limit, kind=kind or None)], note=ctx.jobs.note)
@@ -920,9 +921,9 @@ def connect(app, ctx):
             if not target.strip(): raise ValueError('nothing to bring in')
             act = action or detect(target)
             kind = 'clip' if act == 'clip' else 'acquire'
-            # a note, a harvest, or a grab of a file or a PDF is one vishalakshi call with no stop to ask
+            # a note or a harvest is one vishalakshi call with no stop to ask
             from .clip import stoppable
-            return job_card(ctx.jobs.start(kind, target, action=act, shelf=shelf or None, **{'_cancel': True} if stoppable(act, target) else {}))
+            return job_card(ctx.jobs.start(kind, target, action=act, shelf=shelf or None, **{'_cancel': True} if stoppable(act) else {}))
         except Exception as e: return fail(e)
     @rt('/vault/note')
     async def vault_note(text: str, title: str = '', shelf: str = '', vault: str = ''):
