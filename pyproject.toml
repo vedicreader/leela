@@ -38,7 +38,7 @@ dependencies = [
     # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
     # bundle and probe halves need nothing but fastcore. `kunda` is the kernels and the interpreter
     # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
-    "kavacha>=0.0.4",
+    "kavacha>=0.0.5",
     "kunda>=0.0.2",
     "pullup>=0.0.6",
     "exhash>=0.4.10",
