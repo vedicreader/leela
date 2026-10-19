@@ -33,6 +33,22 @@ LEARNED_LESSONS = 20
 LEARNED_DIFF_MAX = 200_000
 #: Held while a compaction's model turn runs; `/agent/learned` reports it, so a repainted queue shows it pending.
 _compacting = threading.Lock()
+#: Reply tokens a compaction asks for: a whole `AGENTS.md` within `LEARNED_MAX` characters, with room.
+COMPACT_TOKENS = 1024
+
+def compact_chat(ai):
+    "Dhrona's `chat(prompt)` on `ai`'s `summary` route, in-process: a failure raises `RuntimeError` with the route's reason."
+    def chat(p):
+        small = []
+        def fits(b):   # a backend cuts an oversized prompt to its tail, and the compaction would drop the head of `AGENTS.md`
+            if not b.spec.ctx or b.count_tokens(p) + COMPACT_TOKENS <= b.spec.ctx: return True
+            small.append(b.spec.name); return False
+        if (out := ai.oneshot(p, '', 'summary', COMPACT_TOKENS, fits=fits)): return out
+        if small: raise RuntimeError(f'the window of {small[0]} is too small for this compaction')
+        b = ai._be_or_none('summary')
+        if b is not None and b.lock.locked(): raise RuntimeError(f'{b.spec.name} is busy with another turn; compact when it ends')
+        raise RuntimeError((b.note if b is not None else '') or ai.routing.notes.get('summary') or 'the summary model answered nothing')
+    return chat
 
 def connect(app, ctx):
     rt = app.route
@@ -302,17 +318,17 @@ def connect(app, ctx):
             r['truncated'] = len(text) > LEARNED_DIFF_MAX
             r['rows'] = [x.dict() for x in diff_rows(text[:LEARNED_DIFF_MAX], path_lang(m[1] if m else 'AGENTS.md'))]
         return _learned_reply(r)
-    def _compact():
+    def _compact(ai):
         from ramabana.learned import compact
         # one model turn: a second press while it runs would only wait on the learned lock and then refuse
         if not _compacting.acquire(blocking=False): return dict(ok=False, error='a compaction is already running')
-        try: return compact(_learned_folder())
+        try: return compact(_learned_folder(), chat=compact_chat(ai))
         except Exception as e: return dict(ok=False, error=errstr(e))
         finally: _compacting.release()
     @rt('/agent/learned/compact', methods=['POST'])
     async def agent_learned_compact():
         "Ask Dhrona for a shorter `AGENTS.md` as a new pending candidate: `{ok, id, before, after}` in characters. One model turn, off the loop."
-        return _learned_reply(await off_loop(_compact))
+        return _learned_reply(await off_loop(_compact, ctx.ai))
     @rt('/agent/learned/accept')
     async def agent_learned_accept(req):
         "Move one candidate onto the learned folder's HEAD, which the next briefing reads: `{ok, id, commit}`, `commit` None when HEAD held it already."

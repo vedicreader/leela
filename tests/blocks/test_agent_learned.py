@@ -152,3 +152,59 @@ def test_the_compact_button_sits_in_its_slot_and_selects_the_new_candidate():
     assert "post('/agent/learned/compact', {})" in src and 'if (d.id) st.want = d.id;' in src
     assert "if (t.closest('[data-learned-compact-go]')) return learnedCompact(host);" in src
     assert 'learnedCompact' in (Path(__file__).resolve().parents[2]/'leela'/'static'/'lee-ide.js').read_text(), 'the bundle is rebuilt'
+
+class Backend:
+    "A started `summary` backend: its window, its lock and its note, as `compact_chat` reads them."
+    def __init__(self, ctx=128_000, note=''):
+        import threading
+        self.spec, self.lock, self.note = type('Spec', (), dict(name='m', ctx=ctx))(), threading.Lock(), note
+    def count_tokens(self, s): return len(s)//4
+
+class Summary:
+    "The agent pane's assistant on its `summary` route, recording each oneshot."
+    def __init__(self, reply='', be=None, note=''): self.reply, self.be, self.calls, self.routing = reply, be or Backend(), [], type('R', (), dict(notes={}))()
+    def oneshot(self, p, sp='', job='oneshot', max_tokens=None, fits=None):
+        self.calls.append(dict(p=p, job=job, max_tokens=max_tokens))
+        if fits is not None and not fits(self.be): return ''
+        return self.reply
+    def _be_or_none(self, job='turn'): return self.be
+
+@pytest.fixture
+def dhronas(learned, monkeypatch):
+    "`learned` with HEAD's last paragraph committed as Dhrona, so a compaction has something to rewrite; no `ramabana` executable may run."
+    import dhrona.improve as di
+    c, f = learned
+    (f/'AGENTS.md').write_text('# Learned\n\n- one\n\n- run the tests before reporting, every time, whatever the change\n')
+    git(f, 'add', '.'); subprocess.run(['git', '-C', str(f), *di._AS_DHRONA, 'commit', '-qm', f'{di.LESSON} run the tests'], check=True, capture_output=True)
+    real = subprocess.run
+    def run(cmd, *a, **k):
+        assert Path(str(cmd[0])).name != 'ramabana', f'a headless ramabana ran: {cmd}'
+        return real(cmd, *a, **k)
+    monkeypatch.setattr(di.subprocess, 'run', run)
+    return c, f
+
+def test_compact_asks_leelas_summary_route_in_process(dhronas, ws, monkeypatch):
+    "The frozen app has no `ramabana` console script beside its Python: the editor is Leela's own `summary` route, never a subprocess."
+    import dhrona.improve as di
+    c, f = dhronas
+    ai = Summary('[kept 1]\n\n[kept 2]\n\n- run the tests before reporting\n')
+    monkeypatch.setattr(type(ws), 'ai', property(lambda s: ai))
+    monkeypatch.setattr(di, '_editor', lambda *a, **k: pytest.fail('the headless editor was built'))
+    r = c.post('/agent/learned/compact')
+    assert r.status_code == 200 and r.json()['ok'], r.json()
+    assert [x['job'] for x in ai.calls] == ['summary'] and ai.calls[0]['max_tokens'] == 1024
+    assert ai.calls[0]['p'] == di.compaction_prompt((f/'AGENTS.md').read_text(), di._paragraphs(f), di.COMPACT_TARGET), 'the scrubbed prompt'
+    assert r.json()['id'] in [x['id'] for x in c.get('/agent/learned').json()['pending']]
+
+def test_compact_chat_failures_come_back_verbatim(dhronas, ws, monkeypatch):
+    c, f = dhronas
+    for ai, err in [(Summary(be=Backend(note='m: no API key')), 'm: no API key'),
+                    (Summary(be=Backend(ctx=200)), 'the window of m is too small for this compaction'),
+                    (Summary(), 'the summary model answered nothing')]:
+        monkeypatch.setattr(type(ws), 'ai', property(lambda s, ai=ai: ai))
+        r = c.post('/agent/learned/compact')
+        assert r.status_code == 409 and r.json() == dict(ok=False, error=err), err
+    busy = Summary(); busy.be.lock.acquire()
+    monkeypatch.setattr(type(ws), 'ai', property(lambda s: busy))
+    assert c.post('/agent/learned/compact').json() == dict(ok=False, error='m is busy with another turn; compact when it ends')
+    assert c.get('/agent/learned').json()['pending'][-1]['id'] == B, 'nothing was proposed'
