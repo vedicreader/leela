@@ -26,28 +26,28 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.31",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing; 0.2.8 git per repository, restart_kernel, sub-agent steps/timeout/nesting; 0.2.9 tool results carry pictures, attachments without the terminal; 0.2.10 the index reads only what the log grew by; 0.2.11 claude-haiku-5-5, the Claude Code picker discovers what an Anthropic key lists; 0.2.12 no keyword routing or preflight, a briefing for current models, Claude at high effort with a 1M window, sonnet/haiku track 5-5, warm start opt-in, uraiyadal 0.0.11 batches independent calls; 0.2.13 library output stays off the TUI, the pane keeps the model's notes; 0.2.14 one note per message; 0.2.15 background rows open in the pane; 0.2.16 sub-agents report back (step floor, budget notice, rishi 0.1.41 reads Claude's invoke dialect); 0.2.17 a lost terminal exits cleanly, background commands log instead of opening panes; 0.2.18 steer with attachments, enter steers the queued line; 0.2.19 model tiers (haiku small jobs, gpt-6.1-luna medium), sub-agents write behind approvals; 0.2.20 no local model unless chosen; 0.2.31 `hl.diff_html`, the diff views' colours
+    "ramabana[cli]==0.2.35",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing; 0.2.8 git per repository, restart_kernel, sub-agent steps/timeout/nesting; 0.2.9 tool results carry pictures, attachments without the terminal; 0.2.10 the index reads only what the log grew by; 0.2.11 claude-haiku-5-5, the Claude Code picker discovers what an Anthropic key lists; 0.2.12 no keyword routing or preflight, a briefing for current models, Claude at high effort with a 1M window, sonnet/haiku track 5-5, warm start opt-in, uraiyadal 0.0.11 batches independent calls; 0.2.13 library output stays off the TUI, the pane keeps the model's notes; 0.2.14 one note per message; 0.2.15 background rows open in the pane; 0.2.16 sub-agents report back (step floor, budget notice, rishi 0.1.41 reads Claude's invoke dialect); 0.2.17 a lost terminal exits cleanly, background commands log instead of opening panes; 0.2.18 steer with attachments, enter steers the queued line; 0.2.19 model tiers (haiku small jobs, gpt-6.1-luna medium), sub-agents write behind approvals; 0.2.20 no local model unless chosen; 0.2.31 `hl.diff_html`, the diff views' colours; 0.2.35 rishi 0.1.43, a Claude reply stops at its first tool call
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
     # a dependency worth keeping.
-    "shalya>=0.1.10",   # git_commit(path=), restart_kernel, BrowserHost, Media results; 0.1.10 Host.read_guard
-    "gheasy>=0.0.11",  # 0.0.10 opened the six helpers; `blocks/git/seam.py` still takes either
+    "shalya>=0.1.11",   # git_commit(path=), restart_kernel, BrowserHost, Media results; 0.1.10 Host.read_guard; 0.1.11 cmd_stop reports stopped, inspect_python copies
+    "gheasy>=0.0.13",  # 0.0.10 opened the six helpers; 0.0.12 org repos in the org; `blocks/git/seam.py` still takes either
     "fastcore>=1.7.0",
     # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
     # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
     # bundle and probe halves need nothing but fastcore. `kunda` is the kernels and the interpreter
     # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
     "kavacha>=0.0.5",
-    "kunda>=0.0.2",
-    "pullup>=0.0.6",
+    "kunda>=0.0.3",   # 0.0.3 a stopped loop holds no pool slot (canvas runtime)
+    "pullup>=0.0.7",   # 0.0.7 nbdev_job runs nbdev-test and nbdev-clean
     "exhash>=0.4.10",
-    "fossick>=0.1.17",   # caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release
+    "fossick>=0.1.18",   # caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release; 0.1.18 url2nb works again
     "ipykernel>=7.3.0",        # launched, not imported: leela's own venv is a kernel target
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
-    "koshas>=0.1.8",
-    "litesearch>=0.1.40",   # rank_fts, correct, fts_or, fts_phrases, fts_vocab, roman_fold(doubles=); onnx, onnxruntime and flashrank are extras, on both rerank paths
+    "koshas>=0.1.11",
+    "litesearch>=0.1.43",   # 0.1.43 onnxruntime 1.31 model loading, pre('***'); rank_fts, correct, fts_or, fts_phrases, fts_vocab, roman_fold(doubles=); onnx, onnxruntime and flashrank are extras, on both rerank paths
     "mdhtml>=0.1.38",   # `md2dom(...).to_html()`, which `blocks/canvas/lit.py` renders through
     # The ripgrep flags and its event stream, in one place rather than a command line built here.
     # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.
@@ -66,20 +66,20 @@ dependencies = [
     # module imports rich, which ramabana declares nowhere. Ours to name while that is true.
     "rich>=13.0",
     "pyyaml>=6.0",
-    "dhrishti>=0.1.4",
+    "dhrishti>=0.1.6",
     "watchfiles>=1.0",
-    "vishalakshi>=0.1.26",   # 0.1.26 titles, headings and sources under the send rule; ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check; 0.1.23 progress, boxes, crop; 0.1.24 edit_change, revert_page, undo_decision, reset_pii
-    "rahasya>=0.0.3",
-    "varga>=0.0.6",
+    "vishalakshi>=0.1.27",   # 0.1.27 MCP results gated; 0.1.26 titles, headings and sources under the send rule; ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check; 0.1.23 progress, boxes, crop; 0.1.24 edit_change, revert_page, undo_decision, reset_pii
+    "rahasya>=0.0.4",   # 0.0.4 findings past MAX_SCAN at their real offset
+    "varga>=0.0.7",
     "lekhaka>=0.0.4",
     # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
     # hover paths, the pull request a branch belongs to, the workflow editor, and the kernels the
     # gateway serves -- so they are dependencies. The guards below them stay: they still have a
     # partial install and a capped version to report.
     "pyright>=1.1.400",
-    "dockeasy>=0.0.5",
-    "vpseasy>=0.0.18",
-    "cfeasy>=0.0.4",
+    "dockeasy>=0.0.8",
+    "vpseasy>=0.0.22",   # 0.0.22 a failed rsync stops the deploy
+    "cfeasy>=0.0.5",
     "python-dotenv>=1.0.0",
     "keyring>=25.0.0",
     "jupygate>=0.0.1",
@@ -101,7 +101,7 @@ ipymini = [] # compatibility extra; ipymini now ships with Leela
 # pane, pinned to the rishi the bundle was frozen with.
 # `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
 # dependency, so naming it here would install nothing and warn.
-local = ["rishi[mlx,llama]==0.1.42"]
+local = ["rishi[mlx,llama]==0.1.44"]
 # The native window and the two freezers, through kavacha, which installs each platform's own
 # bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
 desktop = ["kavacha[window]>=0.0.1"]
@@ -130,14 +130,14 @@ dev = [
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[local]",
     "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
-    "rishi[all]==0.1.42",
+    "rishi[all]==0.1.44",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.42",
+    "rishi==0.1.44",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
