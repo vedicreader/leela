@@ -522,35 +522,37 @@ def test_the_tree_selects_more_than_one_row_and_the_clipboard_acts_on_all_of_the
     assert (tmp_path/'c.py').is_file(), 'the row that was not selected stays put'
 
 
-def test_the_palette_finds_files_as_well_as_commands(tmp_path):
-    """The palette filtered commands only, so finding a file meant knowing a second dialog existed."""
+def test_the_palette_lists_commands_and_hands_a_file_query_to_the_opener(tmp_path):
+    """Twenty file rows under the matching commands flooded the palette; one row now hands the query to ⌘P."""
     (tmp_path/'zqxw_notes.py').write_text('x = 1\n')
     rows = "() => [...document.querySelectorAll('#cplist .lee-mrow')].map(r => r.textContent)"
-    has_file = "() => [...document.querySelectorAll('#cplist .lee-mrow')].some(r => r.textContent.includes('zqxw_notes.py'))"
     async def go(pg):
+        finds = []
+        pg.on('request', lambda r: finds.append(r.url) if '/fs/find' in r.url else None)
         await pg.keyboard.press('ControlOrMeta+Shift+P')
         await pg.wait_for_selector('#cp', timeout=3000)
         await pg.fill('#cp', 'save')
-        first = (await pg.evaluate(rows))[0]
-        held = lambda url: url.endswith('q=zqxw')
-        async def late(route):
-            if held(route.request.url): await asyncio.sleep(.5)
-            await route.continue_()
-        await pg.route('**/fs/find*', late)
-        async with pg.expect_request(lambda r: held(r.url)): await pg.fill('#cp', 'zqxw')
-        await pg.fill('#cp', 'zqxwk')
-        await pg.wait_for_timeout(800)
-        stale = await pg.evaluate(has_file)
+        saved = await pg.evaluate(rows)
         await pg.fill('#cp', 'zqxw')
-        await pg.wait_for_function(has_file, timeout=5000)
+        await pg.wait_for_timeout(400)
+        only = await pg.evaluate(rows)
+        asked = list(finds)
+        await pg.fill('#cp', '')
+        empty = await pg.evaluate(rows)
+        await pg.fill('#cp', 'zqxw')
         await pg.press('#cp', 'Enter')
+        await pg.wait_for_function("() => [...document.querySelectorAll('#qolist .lee-mrow')].some(r => r.textContent.includes('zqxw_notes.py'))", timeout=5000)
+        prefilled, focused = await pg.evaluate("[document.querySelector('#qo').value, document.activeElement?.id]")
+        await pg.press('#qo', 'Enter')
         await pg.wait_for_function("() => (lee.path || '').endsWith('zqxw_notes.py')", timeout=5000)
-        return first, stale, await pg.evaluate("!!document.querySelector('#cp')")
-    first, stale, still_open = _run(go, roots=[tmp_path])
-    assert first.startswith('save'), first
-    assert not stale, 'the answer for an older query painted under the newer one'
-    assert not still_open, 'opening the file closes the palette'
-
+        return saved, only, asked, empty, prefilled, focused, await pg.evaluate("!!document.querySelector('#cp, #qo')")
+    saved, only, asked, empty, prefilled, focused, still_open = _run(go, roots=[tmp_path])
+    assert saved[0].startswith('save') and saved[-1].startswith('Open file matching “save”'), saved
+    assert not any('zqxw_notes.py' in r for r in only) and len(only) == 1, only
+    assert not asked, 'the palette searched files itself'
+    assert not any(r.startswith('Open file') for r in empty), 'an empty query offers no hand-off'
+    assert (prefilled, focused) == ('zqxw', 'qo')
+    assert not still_open, 'opening the file closes both'
 
 def test_the_file_opener_lists_the_project_and_adds_hidden_folders_on_request(tmp_path):
     """Hidden folders are a second batch behind a checkbox, so the project's own files are never waiting on `.venv`."""

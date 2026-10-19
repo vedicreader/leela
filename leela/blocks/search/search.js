@@ -1,4 +1,4 @@
-async function quickOpen(searchMode) {
+async function quickOpen(searchMode, q = '') {
   let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null;
   const m = modal(
     `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" autofocus>
@@ -11,6 +11,7 @@ async function quickOpen(searchMode) {
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
     }, () => { clearTimeout(timer); ctl?.abort(); });
   const list = m.querySelector('#qolist'), input = m.querySelector('#qo'), all = m.querySelector('#qoall'), note = m.querySelector('#qonote');
+  input.value = q;
   const paint = () => {
     list.innerHTML = hits.slice(0, 300).map((h, i) =>
       `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(h.path)}</span></div>`).join('');

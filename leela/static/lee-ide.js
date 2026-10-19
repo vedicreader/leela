@@ -3808,7 +3808,7 @@ function showHelp() {
   m.querySelector('#gokeys').onclick = () => { m.remove(); editKeys(); };
 }
 
-async function quickOpen(searchMode) {
+async function quickOpen(searchMode, q = '') {
   let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null;
   const m = modal(
     `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" autofocus>
@@ -3821,6 +3821,7 @@ async function quickOpen(searchMode) {
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
     }, () => { clearTimeout(timer); ctl?.abort(); });
   const list = m.querySelector('#qolist'), input = m.querySelector('#qo'), all = m.querySelector('#qoall'), note = m.querySelector('#qonote');
+  input.value = q;
   const paint = () => {
     list.innerHTML = hits.slice(0, 300).map((h, i) =>
       `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(h.path)}</span></div>`).join('');
@@ -5023,38 +5024,33 @@ function palette() {
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
-  let hits = cmds, sel = 0, seq = 0, timer = null;
-  const m = modal(`<input class="lee-input" id="cp" placeholder="command or file…" autofocus>
+  let hits = cmds, sel = 0;
+  const m = modal(`<input class="lee-input" id="cp" placeholder="command…" autofocus>
                    <div class="lee-modallist" id="cplist"></div>`,
     (e) => {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
       else if (e.key === 'Enter') { e.preventDefault(); go(); }
-    }, () => clearTimeout(timer));
+    });
   const list = m.querySelector('#cplist'), input = m.querySelector('#cp');
   const paint = () => {
     list.innerHTML = hits.slice(0, 200).map((h, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${h.path ? 'file · ' + esc(h.path) : esc(h.scope) + ' · ' + esc(displayChord(h.key))}</span></div>`).join('');
+      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${esc(h.scope)} · ${esc(displayChord(h.key))}</span></div>`).join('');
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
   const go = () => {
     const h = hits[sel]; if (!h) return;
     m.remove();
-    if (h.path) leeOpenFile(h.path); else h.run ? h.run() : leeAct(h.action);
+    h.run ? h.run() : leeAct(h.action);
   };
   list.addEventListener('click', e => { const r = e.target.closest('.lee-mrow'); if (r) { sel = +r.dataset.i; go(); } });
-  // Files arrive after the commands, so a late answer for an older query must not paint.
+  // Files are ⌘P's: one row hands the query over rather than twenty crowding the commands.
   input.addEventListener('input', () => {
-    const q = input.value.toLowerCase(), mine = ++seq;
-    hits = cmds.filter(c => c.name.toLowerCase().includes(q) || (c.action || '').includes(q)); sel = 0; paint();
-    clearTimeout(timer);
-    if (!q.trim()) return;
-    timer = setTimeout(async () => {
-      let files;
-      try { files = (await api('/fs/find?limit=20&q=' + encodeURIComponent(q.trim()))).hits; } catch { return; }
-      if (mine !== seq || !m.isConnected) return;
-      hits = hits.concat(files.map(f => ({name: f.name, path: f.path}))); paint();
-    }, 120);
+    const q = input.value.toLowerCase(), raw = input.value.trim();
+    hits = cmds.filter(c => c.name.toLowerCase().includes(q) || (c.action || '').includes(q));
+    if (raw) hits = hits.concat({name: `Open file matching “${raw}”…`, scope: 'files', key: lee.keys.find(k => k.action === 'quick_open')?.key || '',
+                                 run: () => quickOpen(false, raw)});
+    sel = 0; paint();
   });
   paint(); setTimeout(() => input.focus(), 0);
 }
