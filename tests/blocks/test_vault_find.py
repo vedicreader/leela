@@ -190,6 +190,40 @@ def test_a_stored_off_still_withholds_a_local_only_document_from_a_hosted_model(
     assert [r['level'] for r in rows] == ['local'] and 'Write to' not in json.dumps(rows)
     assert all(r.get('level') == 'local' for r in hosted.memory_sections(doc))
 
+TITLED = '# Invoice for ada@example.com\n\nInvoice 4471, card 4111 1111 1111 1111, due on Monday.\n'
+PASSPORT = '# Passport for Ada Lovelace\n\nThe renewal form went in on Monday.\n'
+
+def _stub(runtime, sent):
+    "A chat that records each prompt it is sent."
+    def mk(model=None, **kw):
+        class C:
+            use, hist = None, []
+            def __init__(s): s.runtime, s.model = runtime, f'{runtime}/stub'
+            def __call__(s, prompt, **k): sent.append(prompt); return {'role': 'assistant', 'content': 'It went in on a weekday [1].'}
+        return C()
+    return mk
+
+def test_a_personal_or_local_only_title_does_not_reach_a_hosted_model_through_the_vault(pws, monkeypatch):
+    "A heading carried a Local only document's title, and a Personal one's email, past the gate on find, read and ask."
+    import vishalakshi.ask as vk
+    _, _, inv = _filed(pws, 'invoice.md', TITLED)
+    _, _, pp = _filed(pws, 'passport.md', PASSPORT, level='local')
+    hosted, local = _host(pws), _host(pws, local=True)
+    leaks = lambda o: [s for s in ('ada@example.com', 'Ada Lovelace') if s in json.dumps(o, default=str)]
+    for o in (hosted.memory_search('invoice passport renewal form'), hosted.memory_read(f'{pp}#1'), hosted.memory_read(f'{inv}#1'),
+              hosted.memory_tree(), hosted.memory_tree(pp), hosted.memory_documents(), hosted.memory_sections(pp)):
+        assert leaks(o) == [], o
+    assert 'Ada Lovelace' in json.dumps(local.memory_search('passport renewal form'), default=str), 'a model on this machine reads it whole'
+    sent = []
+    monkeypatch.setattr(vk, 'LOCAL_OK', False)   # no local runtime: the vault asks the hosted chat, masked
+    for ref in (None, pp, inv):
+        out = hosted.ask('when did the form go in?', ref=ref, mk_chat=_stub('remote', sent))
+        assert leaks(sent) == [] and leaks(dict(answer=out.answer, cited=out.cited)) == [], (ref, sent[-1:], out.cited)
+    monkeypatch.setattr(vk, 'LOCAL_OK', True); sent.clear()   # a local runtime reads it whole; the hosted turn reads the result
+    out = hosted.ask('when did the passport form go in?', ref=pp, mk_chat=_stub('litert', sent))
+    assert 'Ada Lovelace' in sent[-1]
+    assert leaks(dict(out)) == [], out.cited
+
 def test_a_web_query_holding_an_email_is_refused_and_names_the_kind(pws):
     from leela.blocks.memory.memory import PrivacyBlocked, query_refusal
     with pytest.raises(PrivacyBlocked, match='email'): _host(pws).web_search('who is jane.doe@example.com')

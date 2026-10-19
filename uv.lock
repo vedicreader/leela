@@ -2557,7 +2557,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "varga", specifier = ">=0.0.6" },
-    { name = "vishalakshi", specifier = ">=0.1.24" },
+    { name = "vishalakshi", specifier = ">=0.1.26" },
     { name = "vpseasy", specifier = ">=0.0.18" },
     { name = "watchfiles", specifier = ">=1.0" },
 ]
@@ -5890,7 +5890,7 @@ wheels = [
 
 [[package]]
 name = "vishalakshi"
-version = "0.1.24"
+version = "0.1.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -5910,9 +5910,9 @@ dependencies = [
     { name = "varga" },
     { name = "vruksha" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/90/7c4cc00688cba4287584beb310a2973969cd2f85ed84486d29f866f24c3d/vishalakshi-0.1.24.tar.gz", hash = "sha256:597123b571f3ab42aeb188660a533187573843c36045f74d4b3978ec4161ddd1", size = 97154, upload-time = "2026-10-18T16:35:47.041Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/3a/3e54c0fa503793de9f5463aeb538fcce2e1c01b89ac9f0d38199a11c7ade/vishalakshi-0.1.26.tar.gz", hash = "sha256:be9c284801d392d91fc4b5ec1504c66f2b28b98ab942eb54e0a43f8dc66d1226", size = 112516, upload-time = "2026-10-19T05:38:35.244Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/e0/e6cd1b7c969159cb7df3956c9f645476e7d3cbddfde96c9dd0c3d2f7e7d1/vishalakshi-0.1.24-py3-none-any.whl", hash = "sha256:a990e1e7e136da0122838a17857c62a9155d9c4659236e0ca6fc4b7b665629c1", size = 106473, upload-time = "2026-10-18T16:35:45.811Z" },
+    { url = "https://files.pythonhosted.org/packages/27/9f/089af751402fd20437a82b2e6bd668ba33b10a7de926e413b334194a27da/vishalakshi-0.1.26-py3-none-any.whl", hash = "sha256:2465a1175892721df753da87579651959ed53951f70fd890a114990f5fb411e2", size = 112800, upload-time = "2026-10-19T05:38:33.887Z" },
 ]
 
 [[package]]

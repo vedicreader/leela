@@ -74,7 +74,7 @@ def counts_list(spec):
 def withhold_local(o, v):
     "`o`, what a retrieval returned, with every Local-only row withheld: what a stored `off` still keeps from a hosted model."
     from vishalakshi.ask import send_rule
-    from vishalakshi.pii import CTX_ROWS, ROW_KIDS, ROW_LABEL, ROW_TEXT, held, redact
+    from vishalakshi.pii import CTX_ROWS, ROW_KIDS, ROW_LABEL, ROW_META, ROW_TEXT, held
     @functools.cache
     def lv(store, did):
         try: return (v if store in (None, '', v.name) else v.shelf(store)).level(did).level
@@ -87,8 +87,8 @@ def withhold_local(o, v):
         gone = gone or (bool(did) and send_rule(lv(r.get('store'), did), False, 'off') == 'withheld')
         out = type(r)(r)
         if gone:
-            for f in ROW_TEXT: fix(out, f, lambda s: held({'local': 1}))
-            for f in ROW_LABEL: fix(out, f, lambda s: redact(s, ner=True))
+            # a name the detector cannot see rides in a title as easily as in the text
+            for f in (*ROW_TEXT, *ROW_LABEL, *ROW_META): fix(out, f, lambda s: held({'local': 1}))
             out['pii'] = {'local': 1}
         for f in ROW_KIDS:
             if isinstance(k := out.get(f), dict): out[f] = row(k, gone)

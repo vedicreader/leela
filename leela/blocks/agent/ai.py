@@ -401,7 +401,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     def memory_tree(self, document=''): return self._hold(self._vault().toc(document or None, pii=self._pii))
     def memory_read(self, node_id): return self._hold(self._vault().read(node_id, pii=self._pii))
     def memory_forget(self, doc_id): return self._vault(write=True).forget(doc_id)
-    def memory_documents(self, limit=50): return self._hold(self._typed(self._vault().all_documents(limit)))
+    def memory_documents(self, limit=50):
+        from vishalakshi.pii import gated
+        return self._hold(gated(self._typed(self._vault().all_documents(limit)), self._pii, self._vault().vault))
     def memory_sections(self, doc_id):
         rows = self._vault().sections(doc_id, pii=self._pii)
         lv = first(self._typed([dict(doc_id=str(doc_id).split('#')[0])])) or {}
@@ -410,7 +412,12 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "The vault answers with citations, on this session's model. It chooses its own policy: local when a local runtime exists, else redact; `vault_pii` governs retrieval, not this."
         kw.pop('pii', None)
         if self.mk_chat is not None: kw.setdefault('mk_chat', self.mk_chat)
-        return self._vault().vault.ask(question, ref=ref, instruction=str(instruction or ''), **kw)
+        v = self._vault().vault
+        out = v.ask(question, ref=ref, instruction=str(instruction or ''), **kw)
+        if self.model_local is not None and self.model_local()[0]: return out
+        from vishalakshi.pii import gated
+        # the turn model reads the citations, and under `local` they name what only the local model was shown
+        return AttrDict(out, cited=self._hold(gated(L(out.cited), self._pii, v)), context=None, prompt=None)
     def remember(self, text, title=None, tags=(), key=''):
         "File a note; `key` upserts the same note later."
         return self._vault(write=True)._open().note(str(text), title=title, tags=list(tags or []), key=key)
