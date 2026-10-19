@@ -1,6 +1,7 @@
 """Build the distributable: a signed-local macOS app + DMG, or a zipped Windows folder."""
 from __future__ import annotations
 import os, re, shutil, subprocess, sys, tempfile
+import kavacha
 from fastcore.all import Path, first
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,30 +57,11 @@ def windows_release():
     print(f'Created {out}.zip')
 
 
-#: Mach-O headers: 64- and 32-bit, either byte order, and universal.
-MACHO = {b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'}
 ENTITLEMENTS = ROOT/'packaging'/'macos'/'entitlements.plist'
 
-def is_macho(p):
-    "Whether `p` is a Mach-O binary, by its first four bytes."
-    try:
-        with open(p, 'rb') as f: return f.read(4) in MACHO
-    except OSError: return False
-
 def sign(app, identity):
-    "Every Mach-O file deepest first, then each framework, then the bundle: timestamped and hardened. Never `--deep`: notarisation rejects it."
-    # A pass over `.so` and `.dylib` alone left the helper `python` and Playwright's `node` ad hoc.
-    app = Path(app)
-    hard = ('codesign', '--force', '--timestamp', '--options', 'runtime')
-    main = app/'Contents'/'MacOS'/app.stem
-    files = [p for p in app.rglob('*') if p.is_file() and not p.is_symlink() and p != main and is_macho(p)]
-    for p in sorted(files, key=lambda p: len(p.parts), reverse=True):
-        exe = p.stat().st_mode & 0o111 and p.suffix not in ('.so', '.dylib')
-        run(*hard, *(['--entitlements', ENTITLEMENTS] if exe else []), '--sign', identity, p)
-    for p in sorted((p for p in app.rglob('*.framework') if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
-        run(*hard, '--sign', identity, p)
-    run(*hard, '--entitlements', ENTITLEMENTS, '--sign', identity, app)
-    run('codesign', '--verify', '--deep', '--strict', '--verbose=2', app)
+    "Every Mach-O file once per inode, deepest first, then frameworks, then the bundle; never `--deep`."
+    kavacha.sign(app, identity, ENTITLEMENTS, run=run)
 
 
 def notary_args():

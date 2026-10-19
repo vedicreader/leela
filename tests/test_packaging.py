@@ -339,6 +339,22 @@ def test_signing_reaches_every_executable_and_gives_them_the_entitlements(tmp_pa
     assert order[-2] == str(app) and '--entitlements' in calls[-2] and '--verify' in calls[-1]
     assert build_release.ENTITLEMENTS.is_file()
 
+def test_signing_signs_a_hardlinked_driver_once_and_keeps_it_one_file(tmp_path, monkeypatch):
+    """`codesign --force` on each path split the `link_duplicates` hardlink, so the bundle carried the same 121MB `node` twice."""
+    import os, sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_release
+    app = tmp_path/'Leela.app'
+    lib = app/'Contents'/'Resources'/'lib'
+    for n in ('playwright', 'patchright'): (lib/n/'driver').mkdir(parents=True)
+    (a := lib/'playwright'/'driver'/'node').write_bytes(b'\xcf\xfa\xed\xfe' + bytes(28)); a.chmod(0o755)
+    os.link(a, b := lib/'patchright'/'driver'/'node')
+    calls = []
+    monkeypatch.setattr(build_release, 'run', lambda *a, **kw: calls.append([str(x) for x in a]))
+    build_release.sign(app, 'ID')
+    assert len([c for c in calls if c[-1] in (str(a), str(b))]) == 1
+    assert os.stat(a).st_ino == os.stat(b).st_ino
+
 def test_liteparse_is_grafted_and_pils_spare_libraries_are_dropped(mac):
     """`libpdfium.dylib` must sit beside `_liteparse.so`, and no code may stay in the zip, where it cannot be signed."""
     assert 'liteparse' in mac.GRAFTED and 'PIL/.dylibs/' in mac.UNREACHABLE

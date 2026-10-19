@@ -150,4 +150,6 @@ if __name__ == '__main__':
         for name in GRAFTED: print(f'  grafted {name} -> {got[name]}')
         if got['stripped_mb']: print(f"  dropped {got['stripped_mb']}MB of unreachable archive entries")
         if got['linked_mb']: print(f"  linked {got['linked_mb']}MB of duplicate grafted files")
+        for name, paths in got['clashes'].items(): print(f"  {name} has {len(paths)} sources: {', '.join(paths)}")
+        for name, src in got['mended'].items(): print(f'  mended Frameworks/{name} from {src}' if src else f'  could not mend Frameworks/{name}: no clean copy found')
         if got['modern_icon']: print(f'  Icon Composer icon installed in {built}')
