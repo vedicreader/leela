@@ -831,6 +831,7 @@ def _warm_probes():
 
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
+    from .blocks.settings.settings import theme_backgrounds
     gate = gate or TerminalGate()
     _runstate = RunState()
     running_cells = _runstate.cells
@@ -842,15 +843,19 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
                  media='(prefers-color-scheme: dark)'),
             Script(src=_asset('htmx.min.js'), defer=True),
             # The saved theme is rendered in as the fallback rather than left to the cache alone:
-            # the cache is per origin.
+            # the cache is per origin. A family this build does not draw, or a cache from a newer one,
+            # would leave the page unstyled, so it reads as `parseTheme` in prefs.js does.
             Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
-const saved = """ + json.dumps(_saved_theme(ws)) + """;
+const families = """ + json.dumps(sorted(theme_backgrounds())) + """, saved = """ + json.dumps(_saved_theme(ws)) + """;
 const stored = localStorage.getItem('lee-theme') || saved || 'cursor:light:tight';
-const [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
+let [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
+if (!families.includes(family)) family = 'cursor';
+if (!['system', 'dark', 'light'].includes(mode)) mode = 'light';
+if (!['tight', 'relaxed'].includes(density)) density = family === 'cursor' ? 'tight' : 'relaxed';
 const resolved = mode === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
 document.documentElement.dataset.theme = family;
 document.documentElement.dataset.mode = resolved;
-document.documentElement.dataset.density = density || (family === 'cursor' ? 'tight' : 'relaxed');
+document.documentElement.dataset.density = density;
 document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Script(src=_asset('lee-cm6.js'), defer=True),
             Link(rel='stylesheet', href=_asset('lee-term.css')),

@@ -198,3 +198,17 @@ def test_the_dock_delegate_reaps_and_runs_atexit_on_quit():
     from kavacha.window import dock_delegates, quit_cleanly
     _, App = dock_delegates()
     assert 'applicationWillTerminate_' in App.__dict__
+
+def test_the_shell_opens_on_the_saved_themes_background(monkeypatch):
+    "Every launch route goes through `leela.desktop.run_shell`, so windows open on the theme, not kavacha's dark default."
+    import leela.desktop as d
+    from leela.blocks.settings.settings import Settings
+    got = []
+    monkeypatch.setattr(d, 'quit_cleanly', lambda: None)
+    monkeypatch.setattr(d, '_run_shell', lambda urls, titles, **kw: got.append(kw.get('background')))
+    Settings().save('user', 'appearance', {'theme': 'ember:light:relaxed'}, language='')
+    try:
+        d.run_shell(['http://127.0.0.1:1/'])
+        d.run_shell(['http://127.0.0.1:1/'], background='#123456')
+    finally: Settings().save('user', 'appearance', {'theme': ''}, language='')
+    assert got == ['#efe6d6', '#123456']

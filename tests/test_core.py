@@ -87,15 +87,15 @@ _CODE = ('red', 'green', 'purple', 'blue', 'orange', 'yellow', 'aqua', 'fg4', 'a
 def test_new_themes_keep_body_text_and_code_tokens_at_wcag_aa(fam, mode):
     "Body text and every syntax colour the editor draws reach 4.5:1 on the editor and the panels."
     v = {k.removeprefix('--lee-'): c for k, c in _css_themes()[fam][mode].items()}
-    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    css = ''.join((ROOT/'leela'/'static'/f).read_text() for f in ('lee-ide.css', 'lee-hl.css'))
     over = re.search(rf':root\[data-theme="{fam}"\]\[data-mode="{mode}"\] \.cm-line span[^{{]*\{{([^}}]*)\}}', css)
     tokens = {**v, **{k.removeprefix('--lee-'): c for k, c in re.findall(r'(--lee-[\w-]+):\s*([^;]+);', over[1])}} if over else v
     for bg in ('bg', 'bg1'):
         for k in ('fg', 'fg2', 'output'): assert _contrast(v[k], v[bg]) >= 4.5, (k, bg, _contrast(v[k], v[bg]))
         for k in _CODE: assert _contrast(tokens[k], v[bg]) >= 4.5 or (k, bg) == ('fg4', 'bg1'), (k, bg, _contrast(tokens[k], v[bg]))
     assert _contrast(v['selection-fg'], v['sel']) >= 4.5
-    if fam == 'github': assert over, 'GitHub draws strings, numbers, functions and types in their own colours'
-    else:
+    assert over, f'{fam} draws code in colours of its own, not the semantic palette'
+    if fam != 'github':
         assert {v['bg'], v['fg']}.isdisjoint({'#000000', '#ffffff'}), 'a night theme has no pure black or white'
         assert _contrast(v['fg'], v['bg']) <= 10, 'a night theme is gentle, not glaring'
 
@@ -714,14 +714,62 @@ def test_writing_a_notebook_back_through_the_host_keeps_it_a_notebook(tmp_path):
         assert json.loads(nb.read_text())['cells'][0]['outputs']
     finally: ws.threads.shutdown()
 
-@pytest.mark.parametrize('fam', ['github', 'ember', 'dusk'])
-def test_the_token_sheet_for_a_new_theme_reads_on_its_background(fam):
-    "Diffs and Markdown code take fastpylight's colours, which were drawn for another background. GitHub's are its own; no dim light fastpylight theme reaches AA on ember's or dusk's paper, so those hold AA for large text."
-    import sys, fastpylight
+def _build_hl():
     sys.path.insert(0, str(ROOT/'tools'))
     import build_hl_css
-    for mode, hl in zip(('dark', 'light'), build_hl_css.THEMES[fam]):
-        bg, c = _css_themes()[fam][mode]['--lee-bg'], fastpylight.theme_colors(hl)
-        floor = 4.5 if fam == 'github' else 3
-        for k in ('keyword', 'string', 'function', 'number', 'type', 'variable'):
-            assert _contrast(c[k]['fg'], bg) >= floor, (mode, hl, k, _contrast(c[k]['fg'], bg))
+    return build_hl_css
+
+@pytest.mark.parametrize('fam', ['github', 'ember', 'dusk'])
+def test_the_token_sheet_for_a_new_theme_reads_on_its_background(fam):
+    "Diffs and Markdown code reach 4.5:1 on the page and the panels. Ember and dusk carry palettes of their own because no fastpylight theme does on their paper."
+    hl = _build_hl()
+    for mode, theme in zip(('dark', 'light'), hl.THEMES[fam]):
+        c, v = hl.colors(theme), _css_themes()[fam][mode]
+        keys = ('keyword', 'string', 'function', 'number', 'type', 'variable') + (('comment', 'operator', 'variable-parameter') if fam != 'github' else ())
+        for bg in ('--lee-bg',) + (('--lee-bg1',) if fam != 'github' else ()):
+            for k in keys: assert _contrast(c[k], v[bg]) >= 4.5, (mode, k, bg, _contrast(c[k], v[bg]))
+
+def _hue_chroma(h):
+    import colorsys
+    c = [int(h.lstrip('#')[i:i+2], 16)/255 for i in (0, 2, 4)]
+    return colorsys.rgb_to_hls(*c)[0]*360, max(c) - min(c)
+
+@pytest.mark.parametrize('fam,hues', [('ember', lambda h: h <= 120 or h >= 320), ('dusk', lambda h: 100 <= h <= 300)])
+def test_ember_codes_warm_and_dusk_cool_and_neither_is_github(fam, hues):
+    "The editor and the token sheet share one palette per variant: warm for ember, cool for dusk, muted in both."
+    hl, css = _build_hl(), (ROOT/'leela'/'static'/'lee-hl.css').read_text()
+    gh = {'#a5d6ff', '#79c0ff', '#d2a8ff', '#ffa657', '#ff7b72', '#0a3069', '#0550ae', '#8250df', '#953800', '#cf222e'}
+    for mode, p in hl.PALETTES[fam].items():
+        code = {r: p[r] for r in hl.EDITOR.values()}
+        assert not gh & set(code.values()), (mode, gh & set(code.values()))
+        for r, c in code.items():
+            h, chroma = _hue_chroma(c)
+            assert hues(h) and chroma <= .45, (mode, r, c, round(h), round(chroma, 2))
+        sel = f':root[data-theme="{fam}"][data-mode="{mode}"] .cm-line span'
+        assert all(f'--lee-{v}: {p[r]};' in css.split(sel, 1)[1].split('}', 1)[0] for v, r in hl.EDITOR.items())
+
+def test_every_scope_fastpylight_names_has_a_rule_in_a_palette():
+    "A palette rule matches every class that starts with its prefix; a scope matching none would be drawn in the parent's colour."
+    import fastpylight
+    hl, u = _build_hl(), set()
+    for t in fastpylight.themes(): u |= set(re.findall(r'\.hl-([\w-]+)', fastpylight.theme_css(t, selector='X')))
+    assert not {c for c in u if not any(c.startswith(k) for k in hl.SCOPES)} - {'highlighted'}
+    p = hl.PALETTES['ember']['dark']
+    role = lambda c: p[hl.SCOPES[max((k for k in hl.SCOPES if c.startswith(k)), key=len)][0]]
+    assert [role(c) for c in ('keyword-import', 'string-special-url', 'variable-member-python', 'markup-heading-1', 'function-builtin')] == \
+        [p['keyword'], p['operator'], p['operator'], p['function'], p['function']]
+
+@pytest.mark.parametrize('theme,want', [('ember:dark:tight', '#221d18'), ('dusk:system:relaxed', ('#e6eaf0', '#252a33')),
+                                        ('retired:dark:tight', '#141414'), ('cursor:bogus:x', '#fbfbfb'), ('dark', '#0d1117'), ('', '#fbfbfb')])
+def test_the_native_window_opens_on_the_saved_themes_background(theme, want):
+    "The stylesheet is the family list, a family this build lacks is the default's, and a theme that follows the system gives both."
+    from leela.blocks.settings.settings import theme_background, theme_backgrounds
+    assert set(theme_backgrounds()) == set(_picker_themes())
+    assert theme_background(theme) == want
+
+def test_the_first_paint_script_knows_every_family_and_falls_back(client):
+    "A cached family this build does not draw would leave `data-theme` naming nothing and the page unstyled."
+    html = client.get('/').text
+    fams = json.loads(re.search(r'const families = (\[[^\]]*\])', html)[1])
+    assert set(fams) == set(_picker_themes())
+    assert "if (!families.includes(family)) family = 'cursor';" in html

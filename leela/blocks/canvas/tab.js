@@ -18,7 +18,7 @@ function forwardCanvasKeys(win) {
 
 function mountCanvas(host, st) {
   const url = `/canvas?embed=1&path=${encodeURIComponent(st.path || '')}` +
-              `&theme=${encodeURIComponent(lee.theme || 'light')}`;
+              `&theme=${themeMode(lee.theme?.mode || 'light')}`;   // the canvas draws only light and dark
   host.innerHTML = `<div class="lee-doc lee-canvasdoc">` +
     `<iframe class="lee-canvasframe" src="${esc(url)}" title="${esc(st.title || 'canvas')}"></iframe>` +
     `<div class="lee-canvasnote lee-dim" hidden></div></div>`;

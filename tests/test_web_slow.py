@@ -373,6 +373,69 @@ def test_a_new_theme_is_picked_from_every_route_painted_everywhere_and_kept(proj
             assert page.evaluate(painted) == bg
             page.evaluate(_NO_SAVED_THEME)
 
+def test_a_canvas_tab_follows_the_theme_and_repaints_when_it_changes(proj_web_th):
+    """The tab put the theme object on the frame's URL as `theme=[object Object]`, so a canvas stayed light whatever the IDE wore."""
+    doc = proj_web_th/'t.canvas.md'
+    doc.write_text('---\ntitle: t\n---\n# T\n\nA paragraph.\n', encoding='utf-8')
+    ws = Workspace(roots=[proj_web_th])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.evaluate("applyTheme('ember:dark:tight')")
+            page.evaluate("p => leeOpenFile(p)", str(doc))
+            page.wait_for_selector('#editor iframe.lee-canvasframe')
+            src = page.evaluate("canvasFrame().src")
+            assert 'theme=dark' in src and 'object' not in src, src
+            body = "canvasWindow()?.document?.body?.dataset.theme"
+            page.wait_for_function(f"{body} === 'dark' && !!canvasWindow().document.querySelector('#cv-doc .cv-brick')", timeout=15000)
+            page.evaluate("applyTheme('dusk:light:relaxed')")
+            page.wait_for_function(f"{body} === 'light'", timeout=5000)
+            page.emulate_media(color_scheme='dark')
+            page.evaluate("applyTheme('nord:system:relaxed')")
+            page.wait_for_function(f"{body} === 'dark'", timeout=5000)
+            page.emulate_media(color_scheme='light')       # following the system follows it now
+            page.wait_for_function(f"{body} === 'light'", timeout=5000)
+
+def test_the_native_window_takes_the_theme_background_from_every_paint(proj_web_th):
+    """The desktop window kept kavacha's fixed dark colour, which showed on open and on resize; every paint now sends `--lee-bg` over the bridge."""
+    ws = Workspace(roots=[proj_web_th])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _launch_sync(pw).new_page()
+            # pywebview injects `window.pywebview.api` after load and then fires `pywebviewready`.
+            page.add_init_script("window.__bg = []; setTimeout(() => { window.pywebview = {api: {set_background: c => (window.__bg.push(c), Promise.resolve(true))}};"
+                                 " window.dispatchEvent(new Event('pywebviewready')); }, 300);")
+            page.goto(url, wait_until='load')
+            painted = "getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()"
+            page.wait_for_function("window.__bg.length > 0", timeout=15000)
+            assert page.evaluate("window.__bg.at(-1)") == page.evaluate(painted), 'the first paint, once the bridge is up'
+            page.evaluate("applyTheme('ember:dark:tight')")
+            assert page.evaluate("window.__bg.at(-1)") == '#221d18'
+            page.emulate_media(color_scheme='dark')
+            page.evaluate("applyTheme('dusk:system:relaxed')")
+            assert page.evaluate("window.__bg.at(-1)") == '#252a33'
+            page.emulate_media(color_scheme='light')
+            page.wait_for_function("window.__bg.at(-1) === '#e6eaf0'", timeout=5000)
+
+@pytest.mark.parametrize('cached,want', [('retired:dark:tight', ['cursor', 'dark', 'tight']), ('cursor:bogus:x', ['cursor', 'light', 'tight']),
+                                         ('ember', ['cursor', 'light', 'tight']), ('dark', ['leela', 'dark', 'relaxed'])])
+def test_a_cached_theme_this_build_does_not_draw_paints_the_default(proj_web_th, cached, want):
+    """`lee-theme` from a newer build, or a hand edit, named a family no stylesheet rule draws, and the first paint was unstyled."""
+    ws = Workspace(roots=[proj_web_th])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _launch_sync(pw).new_page()
+            page.add_init_script(f"if (!sessionStorage.seeded) {{ localStorage.setItem('lee-theme', {cached!r}); sessionStorage.seeded = 1; }}")
+            # Read before the bundles run, which would repaint whatever the first paint got wrong.
+            page.route('**/lee-ide.js*', lambda r: r.abort())
+            page.goto(url, wait_until='domcontentloaded')
+            d = page.evaluate("Object.values(({theme, mode, density} = document.documentElement.dataset, {theme, mode, density}))")
+            assert d == want
+            assert page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()")
+
 HANDLER_ATTRS = ('onclick', 'oninput', 'onchange', 'onkeydown', 'onsubmit')
 
 def test_every_name_the_painted_page_reaches_for_resolves_in_the_shared_scope():

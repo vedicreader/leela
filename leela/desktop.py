@@ -54,6 +54,11 @@ def run_shell(urls, titles=(), **kw):
     bar, lookup = _table()
     for k, v in dict(bar=bar, lookup=lookup, on_action=_act, on_recent=recent_folders).items():
         kw.setdefault(k, v)
+    # The page repaints the native background on every theme change; this is the colour before it loads.
+    if 'background' not in kw:
+        from .blocks.settings.settings import theme_background
+        try: kw['background'] = theme_background()
+        except Exception: pass
     # Off the Dock delegate a quit returns here; reap before finalisation joins a pool that may never finish.
     try: return _run_shell(urls, titles, **kw)
     finally: quit_cleanly()

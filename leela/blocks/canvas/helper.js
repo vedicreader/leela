@@ -87,13 +87,14 @@ function cvTheme(next) {
 async function cvBoot() {
   const q = new URLSearchParams(location.search);
   const want = q.get('path');
+  //: The theme comes on the URL; a store of the frame's own would disagree with the IDE's. Set before
+  //: the document loads, so the IDE repainting it mid-load is not undone.
+  cvTheme(q.get('theme') || 'light');
   if (!want) return cvStatus('no document named', 'bad');
   await cvOpen(want, q.get('fresh'));
   $$('#cv-runall').onclick = cvRunAll;
   $$('#cv-save').onclick = cvSave;
   $$('#cv-trust-run').onclick = cvTrust;
   $$('#cv-theme').onclick = () => cvTheme();
-  //: The theme comes on the URL; a store of the frame's own would disagree with the IDE's.
-  cvTheme(q.get('theme') || 'light');
 }
 document.addEventListener('DOMContentLoaded', cvBoot);

@@ -9,7 +9,8 @@ from ... import leela_cfg
 from ...core.backups import ENTRIES as BACKUP_ENTRIES, PRECIOUS
 
 __all__ = ['DEFAULT_SETTINGS', 'Settings', 'user_settings_file', 'WORKSPACE_SETTINGS_FILE',
-           'CODE_FOLDER', 'agent_cfg', 'start_folder']
+           'CODE_FOLDER', 'agent_cfg', 'start_folder', 'THEME_DEFAULT', 'theme_backgrounds', 'parse_theme',
+           'theme_background']
 
 #: Where the folder picker starts when nothing else names a folder. Home is mostly not projects.
 CODE_FOLDER = '~/code'
@@ -267,3 +268,34 @@ def start_folder(root=None, settings=None):
     for want in (str(values.get('projectFolder') or '').strip(), CODE_FOLDER):
         if want and (p := Path(want).expanduser()).is_dir(): return p
     return Path.home()
+
+#: `prefs.js` `THEME_DEFAULT`, and what a value naming nothing this build draws falls back to.
+THEME_DEFAULT = 'cursor:light:tight'
+_LEGACY_THEMES = {'system': 'leela:system:relaxed', 'dark': 'leela:dark:relaxed', 'light': 'leela:light:relaxed',
+                  'cursor': THEME_DEFAULT}
+
+def theme_backgrounds():
+    "family -> {mode: --lee-bg}, for every family `lee-ide.css` draws. The stylesheet is the list."
+    import re
+    from ...core.web import asset_dir
+    css = (asset_dir('static')/'lee-ide.css').read_text()
+    out = {}
+    for fam, mode, body in re.findall(r':root\[data-theme="(\w+)"\]\[data-mode="(dark|light)"\]\s*\{([^}]*)\}', css):
+        if (m := re.search(r'--lee-bg:\s*(#[0-9a-fA-F]{6})', body)): out.setdefault(fam, {})[mode] = m[1]
+    return out
+
+def parse_theme(theme, families=None):
+    "`(family, mode, density)` as `prefs.js` `parseTheme` reads `theme`: a family this build lacks is the default's."
+    theme = str(theme or '')
+    fam, mode, density = ((theme if ':' in theme else _LEGACY_THEMES.get(theme, THEME_DEFAULT)).split(':') + ['', ''])[:3]
+    fam = fam if fam in (families or theme_backgrounds()) else 'cursor'
+    return fam, mode if mode in ('system', 'dark', 'light') else 'light', density if density in ('tight', 'relaxed') else ('tight' if fam == 'cursor' else 'relaxed')
+
+def theme_background(theme=None):
+    "The saved theme's page background for the native window: one colour, or `(light, dark)` where it follows the system."
+    bgs = theme_backgrounds()
+    if theme is None:
+        try: theme = (Settings().effective().get('appearance') or {}).get('theme')
+        except Exception: theme = ''
+    fam, mode, _ = parse_theme(theme, bgs)
+    return (bgs[fam]['light'], bgs[fam]['dark']) if mode == 'system' else bgs[fam][mode]

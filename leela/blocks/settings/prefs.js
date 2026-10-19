@@ -59,6 +59,16 @@ function paintTheme() {
   root.style.colorScheme = resolved;
   const pill = $('#themepill'); if (pill) pill.textContent = mode === 'system' ? `${family} · auto` : `${family} · ${mode}`;
   for (const t of lee.terms.values()) t.view.retheme();
+  try { canvasWindow()?.cvTheme?.(resolved); } catch (_) {}   // a frame still loading has no cvTheme yet
+  nativeBackground(getComputedStyle(root).getPropertyValue('--lee-bg').trim());
+}
+/* The desktop window's own background shows while it opens and while it grows faster than the page
+   redraws. pywebview injects its bridge after load, so the first paint waits for `pywebviewready`. */
+function nativeBackground(colour) {
+  const send = () => window.pywebview?.api?.set_background?.(colour)?.catch?.(() => {});
+  if (window.pywebview?.api?.set_background) return send();
+  window.removeEventListener('pywebviewready', lee.nativeBackgroundWait);
+  window.addEventListener('pywebviewready', lee.nativeBackgroundWait = send, {once: true});
 }
 function applyTheme(theme) {
   lee.theme = parseTheme(theme);

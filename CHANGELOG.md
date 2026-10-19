@@ -4,7 +4,7 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.6, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.43 and rishi 0.1.45.
+Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.43 and rishi 0.1.45.
 
 - Leela without Claude Code works. The default agent model, `claude-opus-5-5`, runs through Claude Code, and without `claude` on PATH building the assistant and opening the history failed. The agent panel now opens with a notice naming what is missing, how to install it, and a model that runs on this machine. A turn on that model fails with the same sentence, and the model picker marks it unavailable. Leela does not switch models by itself.
 - In the Review tab's Learned queue, a candidate that no longer applies to the learned folder shows why on its row, and accepting it returns that reason word for word. After an accept, the status line says how many candidates moved onto it and which no longer apply.
@@ -29,6 +29,10 @@ Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 
 - Known: the vault and search do not load on macOS 14. numkong 7.5 and later, which usearch needs, link `___sme_memset` from macOS 15 while their wheels claim macOS 11.
 - Leela imports no private name from kunda, kavacha, fossick, rishi, pullup or dockeasy. The six kunda seams, fossick's `debug_ready`, pullup's `gheasy_core` and dockeasy's `FASTOPS_ENV` are public upstream.
 - Three theme families: **github**, Primer's dark and light as on github.com, with GitHub's code colours in the editor, its green primary buttons and its orange active-tab underline; **ember**, a warm dim sepia; and **dusk**, a cool soft slate. Ember and dusk have no pure black or white and keep body text and code at 4.5:1 or better without glare. Each has a dark and a light variant, follows the system with "follow system", and is picked on the Appearance page of settings (`⌘,`, the palette's "settings", or the app menu).
+- Ember and dusk draw code in palettes of their own, in the editor, in diffs and in Markdown code blocks. Ember's is warm and muted: terracotta keywords, sand functions, olive strings, sage types. Dusk's is cool and muted: slate-blue keywords, frost functions, sage strings, lilac numbers. Every code colour reaches 4.5:1 on the page and the panels in both variants, where diff and Markdown code in the light variants reached 3:1.
+- A canvas tab follows the theme's dark or light variant, and repaints when the theme changes, including when the system's mode changes under "follow system". The tab used to send the theme as `[object Object]`, so a canvas was always light.
+- The desktop window takes the theme's background. It opens on the saved theme's colour and changes with the theme, so opening or resizing a window no longer flashes kavacha's fixed dark grey.
+- A theme cached by a newer build, or naming a family this build does not have, paints the default family on first load instead of an unstyled page. An unknown variant or density falls back the same way.
 - A Local only document's title, headings and source do not reach a hosted model through the vault, and the vault's document list is gated the same way.
 
 - Vault privacy (`vault_pii`) defaults to `redact`, not `off`. A hosted model gets a Personal vault document with its identifiers masked. A stored `off` is kept, and the settings pane labels it "as is (not recommended)". A workspace with no stored choice, or one this build does not know, gets `redact`.
