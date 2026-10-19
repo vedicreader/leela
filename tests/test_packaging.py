@@ -258,8 +258,10 @@ def test_the_bundle_can_import_what_its_features_need():
     env = {'PYTHONHOME': str(app/'Contents'/'Resources'),
            'PYTHONPATH': ':'.join([str(app/'Contents'/'Resources'/'lib'/'python313.zip'),
                                    str(app/'Contents'/'Resources'/'lib'/'python3.13'),
-                                   str(app/'Contents'/'Resources'/'lib'/'python3.13'/'lib-dynload')])}
-    r = subprocess.run([str(python), '-c', src], capture_output=True, text=True, timeout=180, env=env)
+                                   str(app/'Contents'/'Resources'/'lib'/'python3.13'/'lib-dynload'),
+                                   str(_pyskills())])}
+    # `-B` and the pyskills dir, as the app has them: a `.pyc` or `pyskills.pth` written here unseals the bundle.
+    r = subprocess.run([str(python), '-B', '-c', src], capture_output=True, text=True, timeout=180, env=env)
     assert r.returncode == 0, f'the bundle cannot import what it ships:\n{r.stderr.strip()[-1500:]}'
 
 
@@ -378,5 +380,66 @@ def test_the_bundle_parses_a_pdf(tmp_path):
     res = app/'Contents'/'Resources'
     src = (f"import sys; sys.path[:] = {[str(res/'lib'/'python313.zip'), str(res/'lib'/'python3.13'), str(res/'lib'/'python3.13'/'lib-dynload')]}\n"
            f"from liteparse import LiteParse; LiteParse().parse({str(pdf)!r}); print('ok')")
-    r = subprocess.run([str(app/'Contents'/'MacOS'/'python'), '-I', '-S', '-c', src], capture_output=True, text=True, timeout=120)
+    r = subprocess.run([str(app/'Contents'/'MacOS'/'python'), '-I', '-S', '-B', '-c', src], capture_output=True, text=True, timeout=120)
     assert r.stdout.strip().endswith('ok'), r.stderr[-1500:]
+
+def _pyskills():
+    from leela import pyskills_home
+    return pyskills_home()
+
+def _unsealed(app):
+    "Files under `app` that `codesign` did not seal: added since signing, or touched after it."
+    seal, main = app/'Contents'/'_CodeSignature'/'CodeResources', app/'Contents'/'MacOS'/app.stem
+    # The main executable takes its signature after `CodeResources` is written.
+    return sorted(str(p.relative_to(app)) for p in app.rglob('*')
+                  if p.is_file() and not p.is_symlink() and p != main and p.stat().st_mtime > seal.stat().st_mtime)
+
+def _bundle_pids(app):
+    out = subprocess.run(['ps', '-Ao', 'pid=,command='], capture_output=True, text=True).stdout
+    return [l.strip() for l in out.splitlines() if str(app) in l.split(None, 1)[-1].split(' -')[0]]
+
+@pytest.mark.slow
+@pytest.mark.skipif(sys.platform != 'darwin' or not APP.exists(), reason='no built Leela.app in dist/')
+def test_running_the_signed_app_leaves_it_sealed_and_leaves_no_process_behind(tmp_path):
+    """A signed bundle that writes into itself fails `codesign --verify` and Gatekeeper. Each of `.pyc`
+    in a grafted package, `.sesskey` and `pyskills.pth` did. A forked pool also outlived the quit."""
+    import json, os, time, urllib.request
+    src = APP.parents[2]
+    def verify(app): return subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], capture_output=True, text=True)
+    if not (src/'Contents'/'_CodeSignature'/'CodeResources').exists(): pytest.skip('the build is not signed')
+    app = tmp_path/'Leela.app'
+    subprocess.run(['ditto', str(src), str(app)], check=True, timeout=600)
+    assert verify(app).returncode == 0, f'already unsealed; rebuild:\n{verify(app).stderr[-1500:]}\n{_unsealed(app)[:20]}'
+    before = {p: p.stat().st_mtime_ns for p in app.rglob('*') if p.is_file()}
+    work = tmp_path/'work'; work.mkdir()
+    for i in range(30): (work/f'm{i}.py').write_text(f'def f{i}(x): return x+{i}\n')
+    env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path/'config'), 'XDG_DATA_HOME': str(tmp_path/'data'),
+           'LEELA_WINDOW_SIZE': '900x600', 'PYTHONUNBUFFERED': '1'}
+    log = tmp_path/'app.log'
+    with log.open('w') as out:
+        proc = subprocess.Popen([str(app/'Contents'/'MacOS'/'Leela'), str(work)], env=env, stdout=out, stderr=subprocess.STDOUT)
+    serving, deadline = tmp_path/'config'/'leela'/'serving.json', time.time() + 120
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None: pytest.fail(f'the app exited with {proc.returncode}:\n{log.read_text()[-3000:]}')
+            try: port = json.loads(serving.read_text())['port']; break
+            except Exception: time.sleep(.5)
+        else: pytest.fail(f'the app never began serving:\n{log.read_text()[-3000:]}')
+        urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=30).read()
+        req = urllib.request.Request(f'http://127.0.0.1:{port}/exec', data=json.dumps({'code': 'print(6*7)'}).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        assert '42' in urllib.request.urlopen(req, timeout=240).read().decode()
+        time.sleep(15)   # long enough for the startup indexers to run and write, if anything does
+    finally:
+        proc.terminate()   # SIGTERM quits through Cocoa, as Cmd+Q does
+        try: proc.wait(timeout=30)
+        except subprocess.TimeoutExpired: proc.kill(); pytest.fail(f'SIGTERM did not quit the app:\n{log.read_text()[-3000:]}')
+    for _ in range(20):
+        if not (left := _bundle_pids(app)): break
+        time.sleep(.5)
+    assert not left, f'processes outlived the app:\n' + '\n'.join(left)
+    after = {p: p.stat().st_mtime_ns for p in app.rglob('*') if p.is_file()}
+    assert after == before, f'the app wrote into itself: {sorted(str(p.relative_to(app)) for p in after.keys() ^ before.keys() or [k for k in after if after[k] != before.get(k)])}'
+    assert not _unsealed(app)
+    assert (r := verify(app)).returncode == 0, r.stderr[-1500:]
+    assert (tmp_path/'data'/'leela'/'.sesskey').exists(), 'the session key went to the data dir'

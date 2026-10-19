@@ -3,7 +3,7 @@
 __version__ = "0.1.10"
 
 __all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg', 'extras_site', 'extras_bin', 'use_extras',
-           'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES', 'PORT']
+           'pyskills_home', 'seal_bundle', 'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES', 'PORT']
 
 import sys
 
@@ -29,6 +29,26 @@ def use_extras():
     if not p.is_dir(): return False
     sys.path.insert(0, str(p))
     return True
+
+def pyskills_home():
+    "`pyskills.core.pyskills_dir`, asked without importing pyskills, whose import writes a `.pth`."
+    return xdg_data_home()/'pyskills'
+
+def seal_bundle():
+    "Keep a frozen app from writing into its signed bundle, and return the directory it now runs in."
+    import os
+    from pathlib import Path
+    sys.dont_write_bytecode = True
+    # py2app starts in `Contents/Resources`, where FastHTML writes `.sesskey` and a kernel would start.
+    for d in (xdg_data_home()/'leela', Path.home()):
+        try: d.mkdir(parents=True, exist_ok=True); os.chdir(d); break
+        except OSError: continue
+    # `ensure_pyskills_dir` writes `pyskills.pth` into the bundle's site-packages unless this is on `sys.path`.
+    sk = pyskills_home()
+    try: sk.mkdir(parents=True, exist_ok=True)
+    except OSError: pass
+    if str(sk) not in sys.path: sys.path.append(str(sk))
+    return os.getcwd()
 
 #: Where user tools live when `launchd` hands an app a PATH with none of them on it.
 TOOL_DIRS = ('/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '~/.local/bin', '~/.cargo/bin')

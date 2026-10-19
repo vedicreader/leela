@@ -2231,14 +2231,14 @@ wheels = [
 
 [[package]]
 name = "kavacha"
-version = "0.0.3"
+version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/69/4f5c4f4414528113a3255930b39a5d26cd0545eff70e1a115399cc5f3ce7/kavacha-0.0.3.tar.gz", hash = "sha256:25b78fab91b1279844401a2048e5c7258fc965e6f24b026c3ed18fd06ed9b562", size = 26813, upload-time = "2026-10-19T01:10:20.312Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/64/99ccc9527812864a4877be7bb2709d2db27702f5295250de8956d32cf7c9/kavacha-0.0.4.tar.gz", hash = "sha256:e7121d5ec2d88ab1547ef2e740d9bdc2c5db4099943dde2eddc16bb057478b6d", size = 27622, upload-time = "2026-10-19T03:15:58.787Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/6a/b670fa8a2f38dc0e11b36b9f79a1c67ae75e7f5ffe6f6236f03beae9f062/kavacha-0.0.3-py3-none-any.whl", hash = "sha256:41379cf9ac329fd6bbe5bf23d1fb6f7118baeb62c4f8f88f7004fe572e44452f", size = 30652, upload-time = "2026-10-19T01:10:19.119Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/9c/9254b5e7d8274df675fe18acd86781e4190c7117d7286ca63ee4b204bfa1/kavacha-0.0.4-py3-none-any.whl", hash = "sha256:1c89f5e9846ec8875232483cada095234fe66ef0533f672bf953ba7dc71a07f5", size = 31430, upload-time = "2026-10-19T03:15:57.684Z" },
 ]
 
 [package.optional-dependencies]
@@ -2527,7 +2527,7 @@ requires-dist = [
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
-    { name = "kavacha", specifier = ">=0.0.3" },
+    { name = "kavacha", specifier = ">=0.0.4" },
     { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.1" },
     { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.1" },
     { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.1" },

@@ -18,7 +18,8 @@ HOME_KEY = 'leela:home'
 # Only when frozen: a normal install has one environment and installs into it, and an extras
 # directory left over from running the app would then shadow it. See `leela.use_extras`.
 if getattr(sys, 'frozen', False):
-    from leela import use_extras, use_login_path, use_utf8
+    from leela import seal_bundle, use_extras, use_login_path, use_utf8
+    seal_bundle()         # first: nothing may write into the signed bundle, and pyskills writes at import
     from leela.core.envs import apply_stored_env, import_login_env
     use_extras()
     use_utf8()            # no LANG means an ASCII default, and importing rishi.claude then raises

@@ -107,3 +107,94 @@ def test_with_no_native_shell_a_launch_does_not_look_for_a_running_leela(monkeyp
     got = _launch(monkeypatch, live=5010, ok=False)
     app.run()
     assert got['served'] == 1 and got['windows'] == []
+
+def test_the_frozen_entry_seals_the_bundle_before_anything_else():
+    "pyskills writes its `.pth` at import, so the seal has to come before any import that reaches it."
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1]/'leela_app.py').read_text()
+    frozen = src[src.index("if getattr(sys, 'frozen'"):src.index('def free_port')]
+    first = frozen.index('seal_bundle()')
+    assert all(first < frozen.index(s) for s in ('leela.core.envs', 'use_extras()', 'use_login_path()', 'import_login_env()'))
+
+def test_sealing_moves_the_cwd_out_puts_pyskills_on_the_path_and_stops_bytecode(monkeypatch, tmp_path):
+    import os, sys, leela
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    monkeypatch.setattr(sys, 'dont_write_bytecode', False)
+    assert leela.seal_bundle() == os.getcwd() == str((tmp_path/'data'/'leela').resolve())
+    sk = tmp_path/'data'/'pyskills'
+    assert sk.is_dir() and str(sk) in sys.path and sys.dont_write_bytecode
+    leela.seal_bundle()
+    assert sys.path.count(str(sk)) == 1, 'twice is harmless'
+
+def test_sealing_falls_back_to_home_when_the_data_dir_cannot_be_made(monkeypatch, tmp_path):
+    import os, sys, leela
+    (tmp_path/'file').write_text('')
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'file'))
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.chdir(tmp_path/'..')
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    monkeypatch.setattr(sys, 'dont_write_bytecode', sys.dont_write_bytecode)
+    assert leela.seal_bundle() == str(tmp_path.resolve())
+
+_SEALED = r'''
+import os, site, sys
+site.getsitepackages = lambda: [sys.argv[1]]
+site.getusersitepackages = lambda: sys.argv[1]
+import leela
+assert 'pyskills' not in sys.modules, 'importing leela reaches pyskills'
+if sys.argv[2] == 'seal': leela.seal_bundle()
+import pyskills.core
+assert pyskills.core.pyskills_dir() == leela.pyskills_home()
+from fasthtml.common import FastHTML
+FastHTML()
+'''
+
+def test_a_sealed_start_writes_no_pth_or_session_key_where_it_started(tmp_path):
+    "The bundle's `Contents/Resources` is both the cwd py2app starts in and the site-packages pyskills writes to."
+    import os, subprocess, sys
+    def run(how):
+        res, sp = tmp_path/how/'Resources', tmp_path/how/'site-packages'
+        res.mkdir(parents=True); sp.mkdir()
+        env = {**os.environ, 'XDG_DATA_HOME': str(tmp_path/how/'data')}
+        subprocess.run([sys.executable, '-B', '-c', _SEALED, str(sp), how], cwd=res, env=env, check=True, timeout=120)
+        return res, sp, tmp_path/how/'data'
+    res, sp, _ = run('open')
+    assert (res/'.sesskey').exists() and (sp/'pyskills.pth').exists(), 'unsealed, both land in the bundle'
+    res, sp, data = run('seal')
+    assert not list(res.iterdir()) and not list(sp.iterdir())
+    assert (data/'leela'/'.sesskey').exists()
+
+def test_a_kernel_started_from_the_bundle_inherits_the_pyskills_dir(monkeypatch, tmp_path):
+    "A kernel on the bundle's interpreter imports pyskills too, and its `sys.path` is the app's."
+    import sys, leela
+    from kunda.spec import _frozen_pythonpath
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    monkeypatch.setattr(sys, 'dont_write_bytecode', sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, 'frozen', 'macosx_app', raising=False)
+    leela.seal_bundle()
+    assert str(tmp_path/'pyskills') in _frozen_pythonpath().split(':')
+
+def test_closing_the_shell_reaps_worker_processes_however_it_ends(monkeypatch):
+    "A quit that returns from the window loop instead of through the Dock delegate still stops forked pools."
+    import pytest, leela.desktop as d
+    calls = []
+    monkeypatch.setattr(d, 'quit_cleanly', lambda: calls.append('reaped'))
+    monkeypatch.setattr(d, '_run_shell', lambda urls, titles, **kw: calls.append('shell'))
+    d.run_shell(['http://127.0.0.1:1/'])
+    assert calls == ['shell', 'reaped']
+    def boom(*a, **k): raise RuntimeError('no window')
+    monkeypatch.setattr(d, '_run_shell', boom)
+    with pytest.raises(RuntimeError): d.run_shell(['http://127.0.0.1:1/'])
+    assert calls[-1] == 'reaped'
+
+def test_the_dock_delegate_reaps_and_runs_atexit_on_quit():
+    "Cmd+Q is NSApp `terminate:`, whose C `exit()` skips Python's atexit and leaves forked pools alive."
+    import pytest, sys
+    if sys.platform != 'darwin': pytest.skip('Cocoa only')
+    from kavacha.window import _dock_delegates, quit_cleanly
+    _, App = _dock_delegates()
+    assert 'applicationWillTerminate_' in App.__dict__

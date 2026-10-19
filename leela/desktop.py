@@ -5,7 +5,7 @@ from __future__ import annotations
 from kavacha.window import (ALT, CMD, CTRL, DEFAULT_SIZE, DOCK_RECENT, MIN_SIZE, NO_SUBSTITUTION,
     SHIFT, BACKENDS, ShellApi, backend, eval_js, install_menu_patch, keep_running_in_dock,  # noqa: F401
     mac_key, make_window, off_main_thread, open_window, quiet_text_substitution, shell_api,
-    shell_ready, splash, start_cdp, use_app, wait_for_http, warm_cdp, watch_open_events,
+    quit_cleanly, shell_ready, splash, start_cdp, use_app, wait_for_http, warm_cdp, watch_open_events,
     window_size, _OpenHandler, _RecentTarget, _hidden, _windows)
 from kavacha.window import dock_menu as _dock_menu, menu_bar as _menu_bar
 from kavacha.window import menu_chord as _menu_chord, menus as _menus, run_shell as _run_shell
@@ -54,4 +54,6 @@ def run_shell(urls, titles=(), **kw):
     bar, lookup = _table()
     for k, v in dict(bar=bar, lookup=lookup, on_action=_act, on_recent=recent_folders).items():
         kw.setdefault(k, v)
-    return _run_shell(urls, titles, **kw)
+    # Off the Dock delegate a quit returns here; reap before finalisation joins a pool that may never finish.
+    try: return _run_shell(urls, titles, **kw)
+    finally: quit_cleanly()
