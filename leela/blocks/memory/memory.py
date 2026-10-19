@@ -602,12 +602,14 @@ class Memory:
                 out.append({'kind': kind, 'value': value, 'page': (row.get('page') or 0) + 1,
                             'node_id': row.get('node_id'), 'start': start, 'end': end})
         return out
-    def clip(self, paths, shelf=None, meta=None, force=False):
-        "Ingest files into a shelf as prose. Returns one row per file, skips included."
+    def clip(self, paths, shelf=None, meta=None, force=False, stop=None):
+        "Ingest files into a shelf as prose: one row per file filed, skips included; given `stop`, `cancelled` and `unread` say what it left."
         paths = [str(p) for p in ([paths] if isinstance(paths, (str, Path)) else paths)]
         if not paths: return []
         v = self._shelf(shelf)
-        try: out = v.add_files(paths, meta=dict(meta or {}), force=force, n_workers=index_workers())
+        # one batch for vishalakshi, which asks `stop` before it; the caller's batches are the steps
+        cb = dict(stop=stop, batch=len(paths)) if stop is not None else {}
+        try: out = v.add_files(paths, meta=dict(meta or {}), force=force, n_workers=index_workers(), **cb)
         except Exception as e:
             from ..vault.jobs import quitting
             # Swallowed, the batch would be recorded as clipped and never resumed.
@@ -615,7 +617,9 @@ class Memory:
             self.note = f'clip failed ({errstr(e)})'
             return []
         self.note = f'clipped {len(paths)} file(s) into {v.name}'
-        return [dict(r) for r in (out or [])]
+        rows = L(dict(r) for r in (out or []))
+        rows.cancelled, rows.unread = bool(getattr(out, 'cancelled', False)), L(getattr(out, 'unread', None) or [])
+        return rows
     def acquire(self, action, target, shelf=None, **params):
         "Bring one source in, through whichever vault reader can actually read it."
         if action not in ACQUIRE: raise ValueError(f'unknown acquisition {action!r}')
@@ -623,7 +627,9 @@ class Memory:
         if action == 'github': params.setdefault('n_workers', index_workers())
         out = getattr(v, action)(target, **params)
         self.note = f'{action}: {target}'
-        return dict(out) if isinstance(out, dict) else {'documents': [dict(r) for r in L(out)]}
+        if isinstance(out, dict): return dict(out)
+        # a crawl's `L` carries what a stop left unfiled on the list itself
+        return {'documents': [dict(r) for r in L(out)], **{k: getattr(out, k) for k in ('cancelled', 'unread') if hasattr(out, k)}}
     def file_news(self, text, title, source, shelf='news', meta=None):
         "One feed item as an ordinary document, which is what makes it searched and cited like the rest."
         return dict(self._shelf(shelf).add(text, title, source=source, kind='news', meta=dict(meta or {})))

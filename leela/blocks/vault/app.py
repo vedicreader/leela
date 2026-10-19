@@ -920,8 +920,9 @@ def connect(app, ctx):
             if not target.strip(): raise ValueError('nothing to bring in')
             act = action or detect(target)
             kind = 'clip' if act == 'clip' else 'acquire'
-            # anything but a clip is one vishalakshi call with no stop to ask
-            return job_card(ctx.jobs.start(kind, target, action=act, shelf=shelf or None, **{'_cancel': True} if act == 'clip' else {}))
+            # a note, a harvest, or a grab of a file or a PDF is one vishalakshi call with no stop to ask
+            from .clip import stoppable
+            return job_card(ctx.jobs.start(kind, target, action=act, shelf=shelf or None, **{'_cancel': True} if stoppable(act, target) else {}))
         except Exception as e: return fail(e)
     @rt('/vault/note')
     async def vault_note(text: str, title: str = '', shelf: str = '', vault: str = ''):

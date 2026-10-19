@@ -375,9 +375,10 @@ def test_a_folder_clip_cancels_within_one_file_keeps_what_it_filed_and_resumes_t
     ws = Workspace(roots=[root])
     calls, started, gate, clip = [], threading.Event(), threading.Event(), ws.memory.clip
     def gated(batch, **kw):
-        calls.append(list(map(str, batch)))
+        # the cancel lands while the first file is in flight: filed, not yet reported
+        calls.append(list(map(str, batch))); out = clip(batch, **kw)
         if len(calls) == 1: started.set(); gate.wait(10)
-        return clip(batch, **kw)
+        return out
     monkeypatch.setattr(ws.memory, 'clip', gated)
     with TestClient(ide_app(ws)) as c:
         r = c.post(url, data=dict(data, target=str(root)))
@@ -431,3 +432,90 @@ def test_codebase_spec_and_web_acquisitions_offer_no_cancel_they_cannot_honour(w
         jid = r.text.split('id="job-', 1)[1].split('"', 1)[0]
         assert not ws.jobs.get(jid).params.get('_cancel')
         _finish(ws.jobs, jid)
+
+def test_a_clip_passes_its_stop_to_vishalakshi_and_keeps_what_a_stop_left(ws, tmp_path):
+    "A stop inside `memory.clip` left no rows, and `rows or [{}] * len(batch)` recorded the whole batch as clipped."
+    from leela.blocks.vault.clip import clip_docs
+    from leela.blocks.vault.jobs import Job
+    (d := tmp_path/'three').mkdir()
+    for i in range(3): (d/f'n{i}.md').write_text(f'# N{i}\n\nqqzv{i} words')
+    paths = sorted(map(str, d.glob('*.md')))
+    rows = ws.memory.clip(paths, stop=lambda: True)
+    assert not rows and rows.cancelled and list(map(str, rows.unread)) == paths and not ws.memory.search('qqzv0')
+    rows = ws.memory.clip(paths[:1], stop=lambda: False)
+    assert len(rows) == 1 and not rows.cancelled and not rows.unread
+    from fastcore.all import L
+    class Mem:
+        def clip(self, batch, stop=None, **kw):
+            r = L([{}] * (len(batch) - 1)); r.cancelled, r.unread = True, L(batch[-1:]); return r
+    out = clip_docs(Mem(), Job('clip-1', 'clip', str(d)), lambda **kw: None, lambda: False)
+    assert out['cancelled'] and out['files'] == [] and out['unread'] == paths, 'the first batch of one was stopped inside'
+
+def test_a_batch_whose_clip_failed_is_retried_not_counted_done(tmp_path):
+    from leela.blocks.vault.clip import clip_docs, clip_tree
+    from leela.blocks.vault.jobs import Job
+    for i in range(3): (tmp_path/f'n{i}.md').write_text('words')
+    class Mem:
+        def clip(self, batch, **kw): return [] if str(batch[0]).endswith('n0.md') else [{}] * len(batch)
+    reports = []
+    out = clip_docs(Mem(), Job('clip-1', 'clip', str(tmp_path)), lambda **kw: reports.append(kw))
+    assert out['failed'] == [str(tmp_path/'n0.md')] and str(tmp_path/'n0.md') not in reports[-1]['params']['_resume']['done']
+    out = clip_tree(Mem(), Job('clip-2', 'clip_tree', str(tmp_path)), lambda **kw: None)
+    assert [f['status'] for f in out['files']].count('failed') == 1
+
+def test_which_acquisitions_take_a_stop(tmp_path):
+    from leela.blocks.vault.clip import stoppable
+    (f := tmp_path/'a.md').write_text('x')
+    for a in ('clip', 'web', 'crawl', 'github', 'arxiv', 'youtube'): assert stoppable(a, 'https://example.com'), a
+    for a in ('note', 'harvest', 'pdf'): assert not stoppable(a, 'https://example.com'), a
+    assert stoppable('grab', 'https://example.com/page') and stoppable('grab', str(tmp_path)) and stoppable('grab', 'https://github.com/a/b')
+    assert not stoppable('grab', 'https://example.com/paper.pdf') and not stoppable('grab', str(f))
+    assert not stoppable('grab', 'https://github.com/a/b/blob/main/x.py') and stoppable('grab', 'https://example.com/paper.pdf', crawl=True)
+
+def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_again(tmp_path):
+    "A GitHub, arXiv, YouTube or web acquisition was one vishalakshi call with no stop to ask."
+    import threading
+    from fastcore.all import AttrDict, L, Path
+    from fasthtml.common import to_xml
+    from leela.blocks.vault.clip import acquire_one
+    from leela.blocks.vault.ui import job_card
+    jobs, started, gate, seen = Jobs(tmp_path/'jobs.db'), threading.Event(), threading.Event(), {}
+    class Mem:
+        def acquire(self, action, target, shelf=None, **kw):
+            seen[action] = kw
+            if 'stop' not in kw: return dict(documents=[])
+            kw['progress'](1, 3, [('u', 'md')]); started.set(); gate.wait(5)
+            if action == 'crawl':
+                r = L([dict(id='d1', path=Path('/x'))]); r.cancelled, r.unread = kw['stop'](), L(['u2', 'u3'])
+                return dict(documents=list(r), cancelled=r.cancelled, unread=r.unread)
+            return AttrDict(docs=L([AttrDict(id='d1')]), cancelled=kw['stop'](), unread=L([Path('/r/b.md'), Path('/r/c.md')]))
+    jobs.register('acquire', lambda job, report: acquire_one(Mem(), job, report, __import__('functools').partial(jobs.stopping, job.id)))
+    for action in ('github', 'crawl'):
+        started.clear(); gate.clear()
+        jid = jobs.start('acquire', 'https://github.com/a/b', action=action, _cancel=True).id
+        assert started.wait(5) and 'data-job-cancel' in to_xml(job_card(jobs.get(jid)))
+        assert jobs.get(jid).current == '1 of 3', 'progress reaches the card'
+        jobs.cancel(jid); gate.set()
+        j = _finish(jobs, jid)
+        assert j.status == 'cancelled', j.error
+        assert j.result['n_unread'] == 2 and len(j.result['unread']) == 2, action
+        card = to_xml(job_card(j))
+        assert 'run again' in card and 'not filed' in card and 'not clipped' not in card
+    jid = jobs.start('acquire', 'https://example.com/p.pdf', action='grab').id
+    j = _finish(jobs, jid)
+    assert 'stop' not in seen['grab'] and j.status == 'complete' and not j.cancellable, 'a PDF grab cannot stop and gets no stop'
+    started.clear(); gate.clear()
+    jid = jobs.start('acquire', 'https://github.com/a/b', action='github', _cancel=True).id
+    assert started.wait(5); gate.set()
+    j = _finish(jobs, jid)
+    assert j.status == 'complete' and 'cancelled' not in j.result and 'unread' not in j.result and j.current == '', 'not stopped: unread is not news'
+
+def test_the_acquire_route_offers_cancel_only_where_it_can_stop(ws, monkeypatch):
+    monkeypatch.setattr(ws.memory, 'acquire', lambda action, target, shelf=None, **kw: {})   # nothing here reaches the network
+    with TestClient(ide_app(ws)) as c:
+        for target, action, can in (('https://github.com/a/b', 'github', True), ('https://example.com/p.pdf', 'grab', False),
+                                    ('remember this', 'note', False)):
+            r = c.post('/vault/acquire', data=dict(target=target, action=action))
+            jid = r.text.split('id="job-', 1)[1].split('"', 1)[0]
+            assert bool(ws.jobs.get(jid).params.get('_cancel')) == can, action
+            assert _finish(ws.jobs, jid).status == 'complete'

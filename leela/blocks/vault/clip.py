@@ -8,12 +8,34 @@ from fastcore.all import L, Path, noop
 from ... import errstr
 from .jobs import JobError, run_script
 
-__all__ = ['DOC_EXTS', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'clip_tree', 'acquire_one',
+__all__ = ['DOC_EXTS', 'STOPPABLE', 'stoppable', 'clip_docs', 'clip_codebase', 'clip_api_spec', 'clip_tree', 'acquire_one',
            'connect_graph', 'register_all']
 
 DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.html', '.htm'})
 
 BATCH = 8
+
+#: Acquisitions vishalakshi can stop: before the fetch or clone, and between the pages, sources or batches it files.
+STOPPABLE = ('web', 'crawl', 'github', 'arxiv', 'youtube')
+#: What `grab` reads with one of those readers; a file, a PDF or a GitHub file takes no `stop`.
+_GRAB_STOPS = ('dir', 'web', 'github', 'arxiv', 'youtube')
+#: The most unread entries a job's result keeps; `n_unread` has the count.
+MAX_UNREAD = 500
+
+def stoppable(action, target, crawl=False):
+    "Whether an acquisition of `target` by `action` asks a `stop` it is given."
+    if action == 'clip' or action in STOPPABLE: return True
+    if action != 'grab': return False
+    if crawl: return True
+    from fossick import what_is
+    try: return what_is(str(target)) in _GRAB_STOPS
+    except ValueError: return False
+
+def _filed(batch, rows):
+    "`(file, row)` pairs for the files `memory.clip` filed, and the files of `batch` it did not reach."
+    if rows is None: rows = [{}] * len(batch)   # a memory that reports nothing filed everything it was given
+    rows = list(rows)
+    return list(zip(batch, rows)), list(batch[len(rows):])
 
 def _batches(xs, n=1):
     "`(start, batch)` over `xs` in batches of `n`, doubling to `BATCH`, so a cancel early in a clip lands within a file."
@@ -46,10 +68,15 @@ def clip_docs(memory, job, report, stop=noop):
     clipped = []
     for i, batch in _batches(pending):
         if stop(): return out | dict(cancelled=True, unread=list(map(str, pending[i:])), pii=_pii_summary(memory, clipped, shelf))
-        rows = memory.clip(batch, shelf=shelf, meta=meta)
-        for f, r in zip(batch, rows or [{}] * len(batch)):
+        rows = memory.clip(batch, shelf=shelf, meta=meta, stop=stop)
+        filed, left = _filed(batch, rows)
+        for f, r in filed:
             out['skipped' if r.get('skipped') else 'files'].append(str(f))
             if r.get('doc_id'): clipped.append(r['doc_id'])
+        if left and getattr(rows, 'cancelled', False):
+            return out | dict(cancelled=True, unread=list(map(str, left + pending[i + len(batch):])), pii=_pii_summary(memory, clipped, shelf))
+        # a batch whose clip failed is neither done nor skipped, so a retry clips it again
+        if left: out.setdefault('failed', []).extend(map(str, left))
         seen = out['files'] + out['skipped']
         report(progress=0.05 + 0.9 * len(seen) / len(files), current=f'{len(seen)} of {len(files)}' + (' · cancelling' if stop() else ''),
             result=out, params=dict(job.params, _resume=dict(done=seen)))
@@ -121,23 +148,44 @@ def clip_tree(memory, job, report, stop=noop):
         for _, batch in _batches(paths, n):
             n = min(BATCH, max(n, len(batch) * 2))
             if stop(): return out | dict(cancelled=True, unread=[str(x.path) for x in plan.files if str(x.path) not in done])
-            rows = memory.clip(batch, shelf=shelf, meta=meta)
-            for p, r in zip(batch, rows or [{}] * len(batch)):
+            rows = memory.clip(batch, shelf=shelf, meta=meta, stop=stop)
+            filed, left = _filed(batch, rows)
+            for p, r in filed:
                 out['files'].append(dict(path=str(p), shelf=shelf, category=category,
                     doc_id=r.get('doc_id') or r.get('id'), status='skipped' if r.get('skipped') else 'clipped'))
                 done.add(str(p))
+            if left and getattr(rows, 'cancelled', False):
+                return out | dict(cancelled=True, unread=[str(x.path) for x in plan.files if str(x.path) not in done])
+            for p in left: out['files'].append(dict(path=str(p), shelf=shelf, category=category, doc_id=None, status='failed'))
             seen += len(batch)
             report(progress=0.05 + 0.9 * seen / len(plan.files), current=f'{shelf} · {seen} of {len(plan.files)}' + (' · cancelling' if stop() else ''),
                 result=out, params=dict(job.params, _resume=dict(done=sorted(done))))
     return out
 
+def _progress(report, every=0.5):
+    "vishalakshi's `progress(done, total, step)` as job progress: never backwards, at most one write per `every` seconds."
+    import time
+    st = dict(at=0.05, t=0.0)
+    def f(done, total, step):
+        frac = 0.05 + 0.9 * min(1.0, done / max(1, total))
+        if frac <= st['at'] or time.time() - st['t'] < every: return
+        st.update(at=frac, t=time.time())
+        report(progress=frac, current=f'{done} of {total}')
+    return f
+
 def acquire_one(memory, job, report, stop=noop):
+    "One acquisition; one vishalakshi can stop is given `stop` and reports its progress, and a stopped one ends with `cancelled` and `unread`."
     from .acquire import detect
     action = job.params.get('action') or detect(job.target)
     if action == 'clip': return clip_docs(memory, job, report, stop)
     report(current=f'{action} {job.target}', progress=0.2)
     kw = {k: v for k, v in job.params.items() if k not in ('action', 'shelf', '_resume', 'from', '_cancel')}
-    return dict(memory.acquire(action, job.target, shelf=job.params.get('shelf'), **kw), action=action)
+    if job.cancellable and stoppable(action, job.target, kw.get('crawl')): kw |= dict(stop=stop, progress=_progress(report))
+    out = dict(memory.acquire(action, job.target, shelf=job.params.get('shelf'), **kw), action=action)
+    unread = [str(u) for u in L(out.pop('unread', None) or [])]
+    if unread and (out.get('cancelled') or stop()): out |= dict(cancelled=True, unread=unread[:MAX_UNREAD], n_unread=len(unread))
+    else: out.pop('cancelled', None)
+    return out
 
 def connect_graph(memory, job, report):
     out, names = {}, memory._populated()

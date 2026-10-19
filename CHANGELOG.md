@@ -4,16 +4,18 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.30, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.45, kunda 0.0.4, kavacha 0.0.6, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.10, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.39 and rishi 0.1.45.
+Needs vishalakshi 0.1.30, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.6, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.10, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.39 and rishi 0.1.45.
 
 - A folder clip walks the folder with litesearch's `dir2files`, as vishalakshi's own folder reader does. It skips dot-folders (virtualenvs such as `.aeneas-venv` among them), `build`, `dist`, `node_modules`, `__pycache__` and `tests`, and dotfiles. It keeps `docs` and `examples`, which `dir2files` skips by default. A file named outright is clipped wherever it lives. A clip resumed from before this change drops the skipped files from its count.
-- A folder clip can be cancelled from its job card. It keeps what it clipped, and resume clips the rest. A GitHub, arXiv, YouTube or web acquisition still cannot be cancelled.
+- A folder clip can be cancelled from its job card. It keeps what it clipped, and resume clips the rest.
+- A GitHub, arXiv, YouTube, web or crawl acquisition, and a grab of a web page, a folder or one of those, can be cancelled from its job card. It stops before the fetch or clone and between the pages, sources or batches it files; a fetch in flight finishes. What it filed is kept, its card counts what it did not file, and "run again" starts it over. Its progress shows on the card. A note, a harvest, and a grab of a file or a PDF still cannot be cancelled.
+- A clip hands its stop to vishalakshi, so a cancel that lands after a batch is handed over and before vishalakshi starts it files nothing more. A batch whose clip failed is listed as `failed`, not counted as clipped, and a retry clips it again.
 - A clip files its first file alone, then batches of 2, 4 and 8, so a cancel early in a clip lands after one file. A clip of 8 files or fewer was one batch and always finished `complete`.
 - A cancel is stored in the job's row, in a new `cancel_at` column. A cancel from another workspace stops the clip, and a job cancelled before a quit stays cancelled at the next launch instead of resuming. A jobs file from an earlier build gains the column when it is opened, and a column from a later build is ignored. A build from before this change cannot read a jobs file this one has opened.
 - Every `clip` and `clip_tree` job can be cancelled, including one started before `_cancel` existed.
 - A second Leela no longer fails, cancels or restarts a job the first one is running. A job row names its owning process and carries a heartbeat; opening a workspace recovers only a job whose process has gone or has not beaten for 2 minutes (`LEELA_JOB_STALE` seconds). A job taken over after a stale heartbeat stops in its old process, which can no longer write to its row. A jobs file from an earlier build gains the `owner` and `beat_at` columns when it is opened.
 - A folder import (`clip_tree` and its plan) walks the folder as a folder clip does: no `tests/`, hidden files, dot-folders, build output or symlinked folders. Both also leave out `venv` and `site-packages`, and the folders `LEELA_VAULT_SKIP` names, in any case. The plan no longer lists the paths it leaves out; it names the folders it skips.
-- litesearch 0.1.45 starts no process pool for a batch of HTML files.
+- litesearch 0.1.45 starts no process pool for a batch of HTML files. litesearch 0.1.46 takes a `stop` in `add_dir`, asked before each file.
 - Leela imports no private name from kunda, kavacha, fossick, rishi, pullup or dockeasy. The six kunda seams, fossick's `debug_ready`, pullup's `gheasy_core` and dockeasy's `FASTOPS_ENV` are public upstream.
 - A Local only document's title, headings and source do not reach a hosted model through the vault, and the vault's document list is gated the same way.
 

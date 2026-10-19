@@ -111,7 +111,12 @@ def job_card(job):
                 f"{result['chapters']} chapter(s), {result.get('verses', 0)} verse(s), {result.get('problems', 0)} problem(s) to check" if 'chapters' in result else '',
                 f"${result['cost']:.4f}" if result.get('cost') else '']
         if s := ' · '.join(x for x in said if x): body.append(Span(s, cls='lee-job-cost'))
-    if d['status'] == 'cancelled' and d['kind'] in CLIPS:
+    if d['status'] == 'cancelled' and d['kind'] == 'acquire' and (d['params'] or {}).get('action') not in (None, 'clip'):
+        n = result.get('n_unread') or len(result.get('unread') or [])
+        body.append(Span('cancelled: what was filed is kept and searchable' + (f', {n} not filed.' if n else '.'), cls='lee-job-note'))
+        # an acquisition keeps no resume list: running it again starts from the beginning, and what was filed is skipped
+        body.append(Form(Button('run again', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry", hx_target='closest .lee-job', hx_swap='outerHTML'))
+    elif d['status'] == 'cancelled' and d['kind'] in CLIPS:
         n = len(result.get('unread') or [])
         body.append(Span('cancelled: the files clipped are kept and searchable' + (f', {n} not clipped.' if n else '.'), cls='lee-job-note'))
         # a clip cancelled before it resumed after a quit has no `unread`, and resume is its only way on
