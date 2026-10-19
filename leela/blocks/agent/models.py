@@ -119,10 +119,10 @@ def _installer(target):
     if not getattr(sys, 'frozen', False) and (uv := shutil.which('uv')):
         return [uv, 'pip', 'install', '--python', sys.executable, *into]
     if importlib.util.find_spec('pip') is not None:
-        # `_runtime_python`: in a bundle `sys.executable` is the app, and installing a backend would
+        # `runtime_python`: in a bundle `sys.executable` is the app, and installing a backend would
         # launch a second Leela rather than a pip.
-        from ..runtime.kernels import _runtime_python
-        return [_runtime_python(), '-m', 'pip', 'install', '--upgrade', *into]
+        from ..runtime.kernels import runtime_python
+        return [runtime_python(), '-m', 'pip', 'install', '--upgrade', *into]
     raise RuntimeError('neither uv nor pip is here, so nothing can be installed for you')
 
 def _run_install(runtime, cmd):

@@ -4,7 +4,7 @@ import asyncio, hashlib, json, os, re, shutil
 from pathlib import Path
 from fastcore.xdg import xdg_data_home
 
-from .kernels import ExecOutcome, KernelStartError, _Inspector
+from .kernels import ExecOutcome, InspectorClient, KernelStartError
 
 __all__ = ['Runner', 'CargoRunner', 'NodeRunner', 'RUNNERS', 'runner_for', 'scratch_root',
            'rust_chunks', 'rust_source']
@@ -23,7 +23,7 @@ def _error(ename, evalue, tb=()): return {'output_type': 'error', 'ename': str(e
 def _result(text, count): return {'output_type': 'execute_result', 'execution_count': count,
     'metadata': {}, 'data': {'text/plain': str(text)}}
 
-class Runner(_Inspector):
+class Runner(InspectorClient):
     "The `Kernel` surface for a language with no kernel: the same execute, no namespace to inspect."
     lang, tool, inspect, base, boot_error, evicted = '', '', False, None, None, None
     wants_key = True   # no connection file to be found by, so `KernelPool` hands it its key

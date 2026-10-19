@@ -12,6 +12,7 @@ from ...core.web import fail, off_loop, sse
 from ..memory.memory import VERSE_SCRIPT, PrivacyBlocked, VaultRefused, counts_list, page_list, source_kind
 from ..tabs.ui import tab_bar
 from . import ui
+from .jobs import CLIPS
 from .ui import PII_COVERS, job_card, pii_badge, vault_browse, vault_panel, vault_tree
 
 __all__ = ['CAPS', 'connect', 'job_card', 'pii_badge', 'vault_panel', 'PII_COVERS', 'read_choice', 'reader_id', 'chat_spec',
@@ -165,10 +166,10 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/jobs/{jid}/retry')
     def job_retry(jid: str):
-        "A failed job runs again; a cancelled one resumes on the pages it left unread, which are 0-based already."
+        "A failed job runs again; a cancelled page job resumes on the pages it left unread, which are 0-based already, and a clip on the files it had not clipped."
         try:
             j = ctx.jobs.get(jid)
-            if j.status == 'cancelled' and (r := j.result or {}).get('unread'):
+            if j.status == 'cancelled' and j.kind not in CLIPS and (r := j.result or {}).get('unread'):
                 ctx.jobs.update(jid, params=dict(j.params, pages=r['unread'], **{'resume': r['doc_id']} if j.kind in ('read', 'book') and r.get('doc_id') else {}))
             return job_card(ctx.jobs.launch(jid))
         except Exception as e: return fail(e)
@@ -181,6 +182,7 @@ def connect(app, ctx):
         try:
             if kind not in ('clip', 'clip_tree', 'clip_codebase', 'clip_api_spec'):
                 raise ValueError(f'unknown clip kind {kind!r}')
+            cancel = {'_cancel': True} if kind in CLIPS else {}
             from vishalakshi.read import IMG_EXTS
             p = Path(target).expanduser()
             # page by page, so a scan gets routes and flags; no model, so nothing leaves before a person says where it may go
@@ -188,7 +190,7 @@ def connect(app, ctx):
                 c = ctx.session.vault_read.get(str(p.resolve().parent)) or {}
                 return job_card(ctx.jobs.start('read', str(p.resolve()), _cancel=True, shelf=shelf or None, parse=c.get('parse', 'auto'),
                                                preset=c.get('preset', 'generic'), hint=c.get('hint', '')))
-            return job_card(ctx.jobs.start(kind, target, shelf=shelf or None, **{'from': origin} if origin else {}))
+            return job_card(ctx.jobs.start(kind, target, shelf=shelf or None, **cancel, **{'from': origin} if origin else {}))
         except Exception as e: return fail(e)
     @rt('/vault/panel')
     def panel():
@@ -918,7 +920,8 @@ def connect(app, ctx):
             if not target.strip(): raise ValueError('nothing to bring in')
             act = action or detect(target)
             kind = 'clip' if act == 'clip' else 'acquire'
-            return job_card(ctx.jobs.start(kind, target, action=act, shelf=shelf or None))
+            # anything but a clip is one vishalakshi call with no stop to ask
+            return job_card(ctx.jobs.start(kind, target, action=act, shelf=shelf or None, **{'_cancel': True} if act == 'clip' else {}))
         except Exception as e: return fail(e)
     @rt('/vault/note')
     async def vault_note(text: str, title: str = '', shelf: str = '', vault: str = ''):

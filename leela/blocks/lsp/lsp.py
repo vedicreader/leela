@@ -23,12 +23,12 @@ def _py_script(p):
 def find_server(lang='python'):
     "The first language server for `lang`, as `(name, argv)`, or `(None, None)`."
     from ... import extras_bin
-    from ..runtime.kernels import _runtime_python
+    from ..runtime.kernels import runtime_python
     for name, args in servers_for(lang):
         if (found := shutil.which(name)): return name, [found, *args]
         here = extras_bin()/name
         if not (here.is_file() and os.access(here, os.X_OK)): continue
-        return name, [_runtime_python(), '-c', _RUN_EXTRA, str(here), *args] if _py_script(here) else [str(here), *args]
+        return name, [runtime_python(), '-c', _RUN_EXTRA, str(here), *args] if _py_script(here) else [str(here), *args]
     return None, None
 
 def _why_unavailable(command, root, lang='python'):

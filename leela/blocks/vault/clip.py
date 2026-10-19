@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from fastcore.all import L, Path
+from functools import partial
+from fastcore.all import L, Path, noop
 
 from ... import errstr
 from .jobs import JobError, run_script
@@ -14,14 +15,16 @@ DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.ht
 BATCH = 8
 
 def _files(target, exts=DOC_EXTS):
-    "Documents under `target`, past what litesearch's `dir2files` skips: dot-folders and virtualenvs, build output, tests."
+    "Documents under `target`, past what litesearch's `dir2files` skips except `docs/` and `examples/`."
     from litesearch import dir2files
+    from litesearch.data import skip_folder_re
     p = Path(target).expanduser()
     if p.is_file(): return [p]
     if not p.is_dir(): raise JobError(f'nothing to clip at {target}')
-    return sorted(dir2files(p, symlinks=False).filter(lambda f: f.suffix.lower() in exts and f.is_file()))
+    fs = dir2files(p, skip_folder_re=skip_folder_re.replace('examples?|docs?|', ''), symlinks=False)
+    return sorted(fs.filter(lambda f: f.suffix.lower() in exts and f.is_file()))
 
-def clip_docs(memory, job, report):
+def clip_docs(memory, job, report, stop=noop):
     shelf, files = job.params.get('shelf'), _files(job.target)
     if not files: raise JobError(f'no clippable document under {job.target}')
     names = set(map(str, files))
@@ -33,13 +36,14 @@ def clip_docs(memory, job, report):
     meta = dict(clipped_from=job.params.get('from') or 'file', clip_job=job.id)
     clipped = []
     for i in range(0, len(pending), BATCH):
+        if stop(): return out | dict(cancelled=True, unread=list(map(str, pending[i:])), pii=_pii_summary(memory, clipped, shelf))
         batch = pending[i:i + BATCH]
         rows = memory.clip(batch, shelf=shelf, meta=meta)
         for f, r in zip(batch, rows or [{}] * len(batch)):
             out['skipped' if r.get('skipped') else 'files'].append(str(f))
             if r.get('doc_id'): clipped.append(r['doc_id'])
         seen = out['files'] + out['skipped']
-        report(progress=0.05 + 0.9 * len(seen) / len(files), current=f'{len(seen)} of {len(files)}',
+        report(progress=0.05 + 0.9 * len(seen) / len(files), current=f'{len(seen)} of {len(files)}' + (' · cancelling' if stop() else ''),
             result=out, params=dict(job.params, _resume=dict(done=seen)))
     out['pii'] = _pii_summary(memory, clipped, shelf)
     return out
@@ -92,7 +96,7 @@ def clip_api_spec(memory, job, report):
     return dict(source=src, title=title, operations=len(ops), pointer=doc,
         groups=sorted({o['group'] for o in ops if o.get('group')}))
 
-def clip_tree(memory, job, report):
+def clip_tree(memory, job, report, stop=noop):
     from .acquire import plan_tree
     plan = plan_tree(job.target)
     if not plan.files: raise JobError(f'no clippable document under {job.target}')
@@ -106,6 +110,7 @@ def clip_tree(memory, job, report):
     for (shelf, category), paths in groups.items():
         meta = dict(category=category, clipped_from='folder', import_root=str(plan.root), clip_job=job.id)
         for i in range(0, len(paths), BATCH):
+            if stop(): return out | dict(cancelled=True, unread=[str(x.path) for x in plan.files if str(x.path) not in done])
             batch = paths[i:i + BATCH]
             rows = memory.clip(batch, shelf=shelf, meta=meta)
             for p, r in zip(batch, rows or [{}] * len(batch)):
@@ -113,16 +118,16 @@ def clip_tree(memory, job, report):
                     doc_id=r.get('doc_id') or r.get('id'), status='skipped' if r.get('skipped') else 'clipped'))
                 done.add(str(p))
             seen += len(batch)
-            report(progress=0.05 + 0.9 * seen / len(plan.files), current=f'{shelf} · {seen} of {len(plan.files)}',
+            report(progress=0.05 + 0.9 * seen / len(plan.files), current=f'{shelf} · {seen} of {len(plan.files)}' + (' · cancelling' if stop() else ''),
                 result=out, params=dict(job.params, _resume=dict(done=sorted(done))))
     return out
 
-def acquire_one(memory, job, report):
+def acquire_one(memory, job, report, stop=noop):
     from .acquire import detect
     action = job.params.get('action') or detect(job.target)
-    if action == 'clip': return clip_docs(memory, job, report)
+    if action == 'clip': return clip_docs(memory, job, report, stop)
     report(current=f'{action} {job.target}', progress=0.2)
-    kw = {k: v for k, v in job.params.items() if k not in ('action', 'shelf', '_resume', 'from')}
+    kw = {k: v for k, v in job.params.items() if k not in ('action', 'shelf', '_resume', 'from', '_cancel')}
     return dict(memory.acquire(action, job.target, shelf=job.params.get('shelf'), **kw), action=action)
 
 def connect_graph(memory, job, report):
@@ -134,9 +139,9 @@ def connect_graph(memory, job, report):
     return dict(shelves=out, topics=len(memory.clusters().get('clusters') or []))
 
 def register_all(jobs, memory, search=None, cwd=None, feeds=None):
-    jobs.register('clip', lambda job, report: clip_docs(memory, job, report))
-    jobs.register('clip_tree', lambda job, report: clip_tree(memory, job, report))
-    jobs.register('acquire', lambda job, report: acquire_one(memory, job, report))
+    jobs.register('clip', lambda job, report: clip_docs(memory, job, report, partial(jobs.stopping, job.id)))
+    jobs.register('clip_tree', lambda job, report: clip_tree(memory, job, report, partial(jobs.stopping, job.id)))
+    jobs.register('acquire', lambda job, report: acquire_one(memory, job, report, partial(jobs.stopping, job.id)))
     jobs.register('connect', lambda job, report: connect_graph(memory, job, report))
     jobs.register('clip_codebase', lambda job, report: clip_codebase(memory, search, job, report))
     jobs.register('clip_api_spec', lambda job, report: clip_api_spec(memory, job, report))

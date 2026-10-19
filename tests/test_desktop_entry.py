@@ -169,14 +169,14 @@ def test_a_sealed_start_writes_no_pth_or_session_key_where_it_started(tmp_path):
 def test_a_kernel_started_from_the_bundle_inherits_the_pyskills_dir(monkeypatch, tmp_path):
     "A kernel on the bundle's interpreter imports pyskills too, and its `sys.path` is the app's."
     import sys, leela
-    from kunda.spec import _frozen_pythonpath
+    from kunda.spec import frozen_pythonpath
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, 'path', list(sys.path))
     monkeypatch.setattr(sys, 'dont_write_bytecode', sys.dont_write_bytecode)
     monkeypatch.setattr(sys, 'frozen', 'macosx_app', raising=False)
     leela.seal_bundle()
-    assert str(tmp_path/'pyskills') in _frozen_pythonpath().split(':')
+    assert str(tmp_path/'pyskills') in frozen_pythonpath().split(':')
 
 def test_closing_the_shell_reaps_worker_processes_however_it_ends(monkeypatch):
     "A quit that returns from the window loop instead of through the Dock delegate still stops forked pools."
@@ -195,6 +195,6 @@ def test_the_dock_delegate_reaps_and_runs_atexit_on_quit():
     "Cmd+Q is NSApp `terminate:`, whose C `exit()` skips Python's atexit and leaves forked pools alive."
     import pytest, sys
     if sys.platform != 'darwin': pytest.skip('Cocoa only')
-    from kavacha.window import _dock_delegates, quit_cleanly
-    _, App = _dock_delegates()
+    from kavacha.window import dock_delegates, quit_cleanly
+    _, App = dock_delegates()
     assert 'applicationWillTerminate_' in App.__dict__

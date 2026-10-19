@@ -11,7 +11,7 @@ from fasthtml.common import (Article, Button, Code, Datalist, Details, Div, Form
 from ..memory.memory import source_kind
 from ..memory.vaults import ACCESS
 from .acquire import ACTIONS
-from .jobs import cadence
+from .jobs import CLIPS, cadence
 from .news import news_rows
 
 __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs', 'vault_tree',
@@ -111,7 +111,12 @@ def job_card(job):
                 f"{result['chapters']} chapter(s), {result.get('verses', 0)} verse(s), {result.get('problems', 0)} problem(s) to check" if 'chapters' in result else '',
                 f"${result['cost']:.4f}" if result.get('cost') else '']
         if s := ' · '.join(x for x in said if x): body.append(Span(s, cls='lee-job-cost'))
-    if d['status'] == 'cancelled':
+    if d['status'] == 'cancelled' and d['kind'] in CLIPS:
+        n = len(result.get('unread') or [])
+        body.append(Span('cancelled: the files clipped are kept and searchable' + (f', {n} not clipped.' if n else '.'), cls='lee-job-note'))
+        if n or (d['params'] or {}).get('_resume'):
+            body.append(Form(Button('resume', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/retry", hx_target='closest .lee-job', hx_swap='outerHTML'))
+    elif d['status'] == 'cancelled':
         n = len(result.get('unread') or [])
         body.append(Span(f"cancelled: the pages read are kept, {n} not read. Pages in flight when it stopped are counted in the cost."
                          ' Allow once does not carry over to a resume.', cls='lee-job-note'))

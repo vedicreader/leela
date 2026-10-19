@@ -10,6 +10,8 @@ __all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL', 'BULK', 'every_secon
 
 ACTIVE = ('queued', 'running')
 TERMINAL = ('complete', 'error', 'cancelled')
+#: Kinds that file whole files in batches: a cancel keeps the files done and a resume clips the rest.
+CLIPS = ('clip', 'clip_tree', 'acquire')
 
 def every_seconds(spec, default=3600):
     "Seconds from `'30m'`, `'6h'`, or a bare number of hours. `default` when it is not a duration."
@@ -167,12 +169,12 @@ class Jobs:
             self.update(jid, status='error', error=errstr(e)[:900], finished_at=time.time(), **kind)
         finally: self._stop.discard(jid); _live.discard((str(self.path), jid))
     def cancel(self, jid):
-        "Ask a running job to stop after the pages in flight; its handler's `progress` sees the flag."
+        "Ask a running job to stop after the pages or files in flight; its handler sees the flag through `stopping`."
         job = self.get(jid)
         if not job.active: raise JobError(f'job {jid} is not running')
         if not job.params.get('_cancel'): raise JobError(f'a {job.kind} job cannot be cancelled')
         self._stop.add(jid)
-        self.update(jid, current='cancelling after the pages in flight')
+        self.update(jid, current=f"cancelling after the {'files' if job.kind in CLIPS else 'pages'} in flight")
         return self.get(jid)
     def stopping(self, jid): return jid in self._stop
     def recover(self, delay=None):

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ...core.web import fail, off_loop
 from kunda.pythons import clean_env
-from ..runtime.kernels import venv_env, _runtime_python
+from ..runtime.kernels import venv_env, runtime_python
 
 __all__ = ['CAPS', 'connect', 'project_package_rows']
 
@@ -107,9 +107,9 @@ def connect(app, ctx):
                 from ..runtime.kernels import python_for
                 # ruff finds `pyproject.toml` from `cwd`, so it must be the folder the *file* is in.
                 cwd = _format_cwd(ctx, d.get('path'))
-                # The formatter comes from that folder's own environment. `_runtime_python` rather
+                # The formatter comes from that folder's own environment. `runtime_python` rather
                 # than `sys.executable`: in the bundle that name is the app itself.
-                python = python_for(cwd, session=ctx) or _runtime_python()
+                python = python_for(cwd, session=ctx) or runtime_python()
                 def format_python():
                     "ruff first, then black, whichever the project has."
                     failures = []

@@ -200,15 +200,16 @@ def test_a_judgement_round_trips_from_the_row_that_carried_it(ws, proj):
         assert badge.status_code == 200 and 'lee-pii' in badge.text
 
 def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_path):
-    "A clip of a project folder walked `.aeneas-venv`'s site-packages and every test fixture into the vault."
+    "A clip of a project folder walked `.aeneas-venv`'s site-packages and every test fixture into the vault; `docs/` and `examples/` are clipped."
     from leela.blocks.vault.clip import _files, acquire_one, clip_docs
     from leela.blocks.vault.jobs import Job
     root = tmp_path/'docs'
     for f in ('a.md', 'B.MD', 'sub/c.txt', '.notes.md', '.aeneas-venv/lib/site-packages/pkg/README.md', '.git/x.md',
-              'build/b.md', 'dist/d.md', 'tests/t.md', 'node_modules/n/r.md', '__pycache__/p.md', 'sub/m.py'):
+              'build/b.md', 'dist/d.md', 'tests/t.md', 'test/t.md', 'node_modules/n/r.md', '__pycache__/p.md', 'sub/m.py',
+              'docs/guide.md', 'sub/doc/d.rst', 'examples/ex.md', 'sub/example/e.txt'):
         (root/f).parent.mkdir(parents=True, exist_ok=True); (root/f).write_text('words')
     (root/'sub'/'venv-link').symlink_to(root/'.aeneas-venv', target_is_directory=True)
-    kept = [str(root/f) for f in ('B.MD', 'a.md', 'sub/c.txt')]
+    kept = [str(root/f) for f in ('B.MD', 'a.md', 'docs/guide.md', 'examples/ex.md', 'sub/c.txt', 'sub/doc/d.rst', 'sub/example/e.txt')]
     assert [str(f) for f in _files(root)] == kept, 'a root named docs is still walked'
     lone = root/'.aeneas-venv'/'lib'/'site-packages'/'pkg'/'README.md'
     assert _files(lone) == [lone], 'a file named outright is clipped wherever it lives'
@@ -220,5 +221,56 @@ def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_
         m = Mem(); stale = str(root/'build'/'b.md')
         job = Job(f'{kind}-1', kind, str(root), params=dict(params, _resume=dict(done=[kept[0], stale])))
         out = fn(m, job, lambda **kw: reports.append(kw))
-        assert m.got == kept[1:] and out['n'] == 3 and out['files'] == kept[:1] + kept[1:], kind
-        assert all(round(r['progress'], 6) <= 0.95 for r in reports) and reports[-1]['current'] == '3 of 3'
+        assert m.got == kept[1:] and out['n'] == 7 and out['files'] == kept[:1] + kept[1:], kind
+        assert all(round(r['progress'], 6) <= 0.95 for r in reports) and reports[-1]['current'] == '7 of 7'
+
+@pytest.mark.parametrize('url,data', [('/clip', dict(kind='clip')), ('/clip', dict(kind='clip_tree')), ('/vault/acquire', dict(action='clip'))])
+def test_a_folder_clip_cancels_within_one_batch_keeps_what_it_filed_and_resumes_the_rest(tmp_path, monkeypatch, url, data):
+    "A folder clip had no stop: `Jobs.cancel` refused it and `clip_docs` never asked."
+    import threading
+    from leela.blocks.vault.clip import BATCH
+    (root := tmp_path/'many').mkdir()
+    for i in range(BATCH * 2 + 3): (root/f'n{i:02}.md').write_text(f'# Note {i}\n\nzqxw{i} about recall.\n')
+    ws = Workspace(roots=[root])
+    calls, started, gate, clip = [], threading.Event(), threading.Event(), ws.memory.clip
+    def gated(batch, **kw):
+        calls.append(list(map(str, batch)))
+        if len(calls) == 1: started.set(); gate.wait(10)
+        return clip(batch, **kw)
+    monkeypatch.setattr(ws.memory, 'clip', gated)
+    with TestClient(ide_app(ws)) as c:
+        r = c.post(url, data=dict(data, target=str(root)))
+        assert 'data-job-cancel' in r.text, 'a folder clip offers cancel'
+        jid = r.text.split('id="job-', 1)[1].split('"', 1)[0]
+        assert started.wait(10)
+        card = c.post(f'/jobs/{jid}/cancel').text
+        assert f'id="job-{jid}"' in card and 'cancelling after the files in flight' in card
+        gate.set()
+        j = _finish(ws.jobs, jid)
+        assert j.status == 'cancelled' and j.result['cancelled'] and len(calls) == 1, 'stopped after the batch in flight'
+        assert len(j.result['unread']) == BATCH + 3 and ws.memory.search('zqxw0'), 'the batch done stays indexed'
+        assert 'resume' in c.get(f'/jobs/{jid}').text and 'not clipped' in c.get(f'/jobs/{jid}').text
+        assert f'id="job-{jid}"' in c.post(f'/jobs/{jid}/retry').text
+        j = _finish(ws.jobs, jid)
+        assert j.status == 'complete' and 'pages' not in j.params
+        assert sorted(sum(calls, [])) == sorted(map(str, root.glob('*.md'))), 'the resume clips exactly the rest'
+        assert c.post(f'/jobs/{jid}/cancel').json()['kind'] == 'bad_request', 'a finished clip cannot be cancelled'
+
+def test_a_clip_stopped_before_its_first_batch_files_nothing(tmp_path):
+    from leela.blocks.vault.clip import clip_docs, clip_tree
+    from leela.blocks.vault.jobs import Job
+    (tmp_path/'a.md').write_text('words'); (tmp_path/'b.md').write_text('words')
+    class Mem:
+        got = []
+        def clip(self, batch, **kw): self.got += batch; return []
+    for fn in (clip_docs, clip_tree):
+        out = fn(Mem(), Job('clip-1', 'clip', str(tmp_path)), lambda **kw: None, lambda: True)
+        assert out['cancelled'] and len(out['unread']) == 2 and Mem.got == [], fn.__name__
+
+def test_codebase_spec_and_web_acquisitions_offer_no_cancel_they_cannot_honour(ws, proj):
+    with TestClient(ide_app(ws)) as c:
+        r = c.post('/clip', data=dict(kind='clip_codebase', target=str(proj)))
+        assert 'data-job-cancel' not in r.text
+        jid = r.text.split('id="job-', 1)[1].split('"', 1)[0]
+        assert not ws.jobs.get(jid).params.get('_cancel')
+        _finish(ws.jobs, jid)

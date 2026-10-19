@@ -17,13 +17,6 @@ ALIASES = ('agent.tools', 'agent')
 #: cannot widen any of these from here, so each one is a decision recorded rather than an accident,
 #: and a release that drops one fails this suite rather than the feature that needed it.
 ALLOWED = {
-    ('fossick.cdp', '_debug_ready'),        # fossick: the inline browser waits on CDP being up
-    ('kunda.kernel', '_Inspector'),         # kunda: `runtime.runners.Runner` is one
-    ('kunda.kernel', '_give_up_after'),     # kunda: the start deadline a pool admission uses
-    ('kunda.pythons', '_venv_roots'),       # kunda: where to look for a project's environment
-    ('kunda.spec', '_runtime_python'),      # kunda: the interpreter to spawn, right inside a bundle
-    ('kunda.spec', '_frozen_pythonpath'),   # kunda: the paths a bundle's helper Python needs, for the terminal
-    ('kunda.spec', '_spec'),                # kunda: a kernelspec built from Leela's own languages
     ('pullup.workflows', '_gheasy'),        # pullup: the gheasy core a new fastship workflow needs
 }
 

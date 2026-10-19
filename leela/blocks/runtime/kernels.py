@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from kunda.kernel import (GATEWAY_DEPS, KERNELS, SHUTDOWN_WAIT, GatewayKernel,  # noqa: F401
-    GatewayService, Kernel, _Inspector, _give_up_after, check_gateway_deps, ipymini_available)
+    GatewayService, InspectorClient, Kernel, check_gateway_deps, give_up_after, ipymini_available)
 from kunda.pool import (IDLE_SECONDS, SWEEP_SECONDS, KernelLimit,  # noqa: F401
     KernelPool as _KernelPool, RuntimeBroker)
 from kunda.pythons import (VENV_BINS, VENV_DIRS, VENV_PYTHONS,  # noqa: F401
-    _venv_roots, project_python, use_app, venv_env)
+    project_python, use_app, venv_env, venv_roots)
 from kunda.pythons import find_pythons as _find_pythons, nearest_python
 from kunda.pythons import python_for as _python_for
 from kunda.spec import (ExecOutcome, KernelStartError, bootstrap_src as _bootstrap_src,  # noqa: F401
     installed_kernels, missing_kernel_module, output_text, run_file_src)
-from kunda.spec import _frozen_pythonpath, _runtime_python  # noqa: F401  blocks ask which interpreter to spawn, and what its bundle needs
-from kunda.spec import _spec as _kunda_spec
+from kunda.spec import frozen_pythonpath, runtime_python  # noqa: F401  blocks ask which interpreter to spawn, and what its bundle needs
+from kunda.spec import kernel_spec
 from kunda.spec import installed_spec as _installed_spec, kernelspec_for as _kernelspec_for
 
 from .support import LEELA_PY
@@ -77,7 +77,7 @@ def installed_spec(lang):
 
 def _spec(python=None, name='python3', kernel='ipykernel', lang='python'):
     "A kernelspec pinned to a specific interpreter, so the kernel runs in *this* venv."
-    return _kunda_spec(python, name, kernel, lang, _known(lang), _install_for(lang))
+    return kernel_spec(python, name, kernel, lang, _known(lang), _install_for(lang))
 
 class KernelPool(_KernelPool):
     "The IDE's kernels: Leela's language registry, and its own runners where no kernel is installed."
@@ -89,4 +89,4 @@ class KernelPool(_KernelPool):
     async def close_all(self):
         "Leaving waits for nothing still coming up: a kernel that has not answered yet is cancelled, and the rest is given a deadline."
         for task in list(self._starting.values()): task.cancel()
-        await _give_up_after(super().close_all(), SHUTDOWN_WAIT * 3)
+        await give_up_after(super().close_all(), SHUTDOWN_WAIT * 3)

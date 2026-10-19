@@ -4,9 +4,11 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.27, shalya 0.1.11, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.43, kunda 0.0.3, dhrishti 0.1.6, fossick 0.1.18, koshas 0.1.11, gheasy 0.0.13 and pullup 0.0.7. Pins ramabana 0.2.35 and rishi 0.1.44.
+Needs vishalakshi 0.1.28, shalya 0.1.12, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.44, kunda 0.0.4, kavacha 0.0.6, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.9, gheasy 0.0.13 and pullup 0.0.7. Pins ramabana 0.2.37 and rishi 0.1.45.
 
-- A folder clip walks the folder with litesearch's `dir2files`, as vishalakshi's own folder reader does. It skips dot-folders (virtualenvs such as `.aeneas-venv` among them), `build`, `dist`, `node_modules`, `__pycache__`, `tests`, `docs` and `examples`, and dotfiles. A file named outright is clipped wherever it lives. A clip resumed from before this change drops the skipped files from its count.
+- A folder clip walks the folder with litesearch's `dir2files`, as vishalakshi's own folder reader does. It skips dot-folders (virtualenvs such as `.aeneas-venv` among them), `build`, `dist`, `node_modules`, `__pycache__` and `tests`, and dotfiles. It keeps `docs` and `examples`, which `dir2files` skips by default. A file named outright is clipped wherever it lives. A clip resumed from before this change drops the skipped files from its count.
+- A folder clip can be cancelled from its job card. It stops after the batch of files in flight, keeps what it clipped, and resume clips the rest. A GitHub, arXiv, YouTube or web acquisition still cannot be cancelled.
+- Leela imports no private name from kunda, kavacha, fossick or rishi. The six kunda seams and fossick's `debug_ready` are public upstream.
 - A Local only document's title, headings and source do not reach a hosted model through the vault, and the vault's document list is gated the same way.
 
 - Vault privacy (`vault_pii`) defaults to `redact`, not `off`. A hosted model gets a Personal vault document with its identifiers masked. A stored `off` is kept, and the settings pane labels it "as is (not recommended)". A workspace with no stored choice, or one this build does not know, gets `redact`.

@@ -108,8 +108,8 @@ DIALOG = REPO/'tests'/'fixtures'/'dialog.ipynb'
 PROMPT_CELL = 2
 
 def _model_available():
-    from rishi.litert import _cached_model
-    return bool(_cached_model(MODEL_ID))
+    from rishi.litert import cached_model
+    return bool(cached_model(MODEL_ID))
 
 #: What one LiteRT engine for this model costs, measured rather than guessed: resident size climbs
 #: from 123MB to 12.2GB as the fixture builds it, and a run that reached 13.4GB was OOM-killed with

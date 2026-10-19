@@ -76,17 +76,17 @@ def test_two_chats_on_one_engine_take_turns_across_threads_and_refuse_on_one():
     Leela has no such path: its one-shots (`Workspace.ask`, titles, compaction) run from other threads or
     between sends, and other threads wait."""
     import threading, time
-    from rishi.litert import EngineBusy, _Hold
+    from rishi.litert import EngineBusy, EngineHold
     class Chat:
         def __init__(self, e): self.engine = e
     e = FakeEngine(); turn, lent = Chat(e), Chat(e)
-    hold = _Hold(turn); hold.take()
-    with pytest.raises(EngineBusy): _Hold(lent).take()      # mid-stream, same thread: refused at once
+    hold = EngineHold(turn); hold.take()
+    with pytest.raises(EngineBusy): EngineHold(lent).take()      # mid-stream, same thread: refused at once
     hold.let_go()                                            # what the tool handler does while a tool runs
-    with _Hold(lent): pass                                   # `ask_memory`'s chat, inside the tool call
+    with EngineHold(lent): pass                                   # `ask_memory`'s chat, inside the tool call
     hold.take(); done = []
     def other():
-        with _Hold(lent): done.append(1)
+        with EngineHold(lent): done.append(1)
     t = threading.Thread(target=other, daemon=True); t.start(); time.sleep(0.05)
     assert not done, 'another thread waits its turn'
     hold.let_go(); t.join(2); assert done

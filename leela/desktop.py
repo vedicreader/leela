@@ -6,7 +6,7 @@ from kavacha.window import (ALT, CMD, CTRL, DEFAULT_SIZE, DOCK_RECENT, MIN_SIZE,
     SHIFT, BACKENDS, ShellApi, backend, eval_js, install_menu_patch, keep_running_in_dock,  # noqa: F401
     mac_key, make_window, off_main_thread, open_window, quiet_text_substitution, shell_api,
     quit_cleanly, shell_ready, splash, start_cdp, use_app, wait_for_http, warm_cdp, watch_open_events,
-    window_size, _OpenHandler, _RecentTarget, _hidden, _windows)
+    window_size, OpenHandler, RecentTarget, hidden_windows, keyed_windows)
 from kavacha.window import dock_menu as _dock_menu, menu_bar as _menu_bar
 from kavacha.window import menu_chord as _menu_chord, menus as _menus, run_shell as _run_shell
 

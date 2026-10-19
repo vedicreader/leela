@@ -621,4 +621,4 @@ Only `__pycache__` is skipped by name. `node_modules`, `dist` and a virtualenv a
 The units table is `ramabana.monitor.secs`, which is pobblebonk's, which is the one parser for the family. What is Leela's is what a person types into this field: a bare number means hours, a floor of a minute because zero would poll continuously, and a cadence nobody can read is the default rather than an error nobody can act on.
 
 ## `leela/blocks/browser/browser.py` `Browser.running`
-`fossick.cdp._debug_ready` is the last private import Leela makes, and `tests/test_seams.py` allows exactly this one. Whether Chrome is *up* is not whether the port is open, and fossick's is the only implementation of that distinction, so asking fossick for a public name is the fix and copying its four lines here is not.
+Whether Chrome is *up* is not whether the port is open, and fossick's `fossick.cdp.debug_ready` is the only implementation of that distinction. It was the last private import Leela made from fossick. Asking fossick for a public name was the fix, which 0.1.19 shipped, and copying its four lines here was not.

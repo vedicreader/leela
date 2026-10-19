@@ -85,8 +85,8 @@ def gh_auth_argv():
 
 def own_python():
     "Python for a child that runs Leela's code or the pty shim: the bundle's helper when frozen."
-    from ..runtime.kernels import _runtime_python
-    exe = _runtime_python()
+    from ..runtime.kernels import runtime_python
+    exe = runtime_python()
     # py2app sets `sys.executable` to the helper itself; py2exe sets it to `Leela.exe`, which runs no `-c`.
     if getattr(sys, 'frozen', False) and not Path(exe).name.lower().startswith('python'):
         raise NoPython('no Python to start this: the app bundle has no helper interpreter; reinstall Leela')
@@ -94,8 +94,8 @@ def own_python():
 
 def bundle_env():
     "What the helper needs in its environment to find its standard library, since `-c` runs after startup. Empty outside a bundle."
-    from ..runtime.kernels import _frozen_pythonpath
-    if not (path := _frozen_pythonpath()): return {}
+    from ..runtime.kernels import frozen_pythonpath
+    if not (path := frozen_pythonpath()): return {}
     return {'PYTHONHOME': str(Path(sys.executable).resolve().parent.parent/'Resources'), 'PYTHONPATH': path}
 
 #: Names in `LEELA_PTY_DROP` are removed before the exec, so the user's shell never inherits the bundle's paths.

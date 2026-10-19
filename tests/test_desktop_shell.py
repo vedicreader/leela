@@ -68,10 +68,10 @@ def test_the_shell_opens_a_window_and_loads_the_workspace_into_it(tmp_path):
 def test_the_open_folder_handler_can_be_constructed():
     """It is an Objective-C subclass, so `super().init()` finds nothing and registration raised `'super' object has no attribute 'init'` on every launch."""
     pytest.importorskip('objc')
-    from leela.desktop import _OpenHandler
-    assert _OpenHandler is not None, 'the class itself failed to define'
+    from leela.desktop import OpenHandler
+    assert OpenHandler is not None, 'the class itself failed to define'
     seen = []
-    h = _OpenHandler.alloc().init_with(lambda e, r: seen.append((e, r)))
+    h = OpenHandler.alloc().init_with(lambda e, r: seen.append((e, r)))
     assert h is not None, 'init_with returned None, so alloc/init did not chain'
     h.handleEvent_reply_('event', 'reply')
     assert seen == [('event', 'reply')], 'the selector must reach the python callback'
@@ -110,7 +110,7 @@ def test_reopening_brings_back_one_window_and_not_every_one_you_closed():
         wd = BrowserView.WindowDelegate.alloc().init()
         ad = BrowserView.AppDelegate.alloc().init()
         import leela.desktop as dk
-        dk._hidden.clear()
+        dk.hidden_windows.clear()
         ws = [FakeWindow(i) for i in range(4)]
         for w in ws: assert wd.windowShouldClose_(w) == 0, 'closing must be refused'
         assert all(w.hidden for w in ws), 'every window is hidden, not closed'

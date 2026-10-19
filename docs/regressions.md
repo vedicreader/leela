@@ -188,10 +188,10 @@ launchd hands a windowed app no `LANG`. The C locale was `POSIX`, `open()` defau
 ## `leela/__init__.py` `use_login_path`
 Finder and the Dock start an app with almost nothing on `PATH`. `git` was off it, so the git panel reported no repository, and `git-lfs` with it. `/git/info` was answering its own error through `fail`, which is a 400 with the message in the body, so the route looked broken instead. Fixed by asking the login shell for its PATH.
 
-## `leela/desktop.py` `_OpenHandler`
+## `leela/desktop.py` `OpenHandler`
 An Objective-C subclass used `super().init()`, which has no `init` to find. Registration raised on every launch and nothing opened a folder dropped on the Dock or chosen through Open With. Fixed with `objc.super`.
 
-## `leela/desktop.py` `_dock_delegates`
+## `leela/desktop.py` `dock_delegates`
 Building the delegate subclasses twice raised `overriding existing Objective-C class`, because a class name is global to the runtime. The caller caught it, printed a warning and reported success, so quit-on-close came back silently. Fixed by building them once and reading module state.
 
 ## `leela/desktop.py` `dock_menu`
@@ -1110,6 +1110,11 @@ The default ignore list was passed to ripgrep as `--glob '!{...}/**'`, which anc
 
 ## `leela/blocks/vault/clip.py` `_files`
 A folder clip walked the folder with `rglob`, so a clip of a projects folder took in every virtualenv's `site-packages`, build output and test fixture: one clip of `vedicreader` counted 4,955 files. Fixed by walking with litesearch's `dir2files`, the walk vishalakshi's `add_dir` and folder acquisitions use, rather than a skip list of Leela's own.
+
+`dir2files` also skips `docs/` and `examples/`, which hold the prose a folder clip is for. `_files` passes litesearch's own `skip_folder_re` with those two names taken out, so virtualenvs, dot-folders, build output and tests stay skipped and the list stays litesearch's.
+
+## `leela/blocks/vault/clip.py` `clip_docs`
+A folder clip could not be cancelled. It started without `_cancel`, so `Jobs.cancel` refused it, and `clip_docs` never asked whether to stop. Fixed by starting `clip` and `clip_tree` jobs, and a folder brought in through `/vault/acquire`, with `_cancel`, and by checking `Jobs.stopping` before each batch of eight. A cancel lands after the batch in flight. The files clipped stay indexed, the job ends `cancelled` with the rest as `unread`, and resume clips only the rest from `_resume`. A GitHub, arXiv, YouTube or web acquisition is one vishalakshi call with no stop to ask, so its card offers no cancel.
 
 ## `tests/test_packaging.py` `test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker`
 The test clipped 48 HTML files and waited for a pool, and none was ever seen. A pool was forked for every batch of eight. litesearch's `_parse_doc` only reads an HTML file's text in the worker, though, so each pool lived a few milliseconds. Converting, chunking and embedding run in the app's own process, and that is where a clip's CPU goes. Fixed by clipping PDFs, which the workers do parse, so the pool stays up for seconds.

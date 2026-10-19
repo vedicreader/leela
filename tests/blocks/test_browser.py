@@ -310,8 +310,8 @@ def test_a_real_chrome_opens_a_slow_leela_and_names_what_refused_a_dead_one(tmp_
     finally: srv.shutdown()
 
 async def _start_chrome(port, profile, flags=(SCALE_FLAG,)):
-    from fossick.cdp import _debug_ready, cdp_setup
-    if not _debug_ready(port):
+    from fossick.cdp import cdp_setup, debug_ready
+    if not debug_ready(port):
         await cdp_setup(port=port, user_data_dir=profile, headless=True, timeout=60,
                         extra_flags=list(flags))
 
