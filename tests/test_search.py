@@ -240,6 +240,28 @@ def test_a_store_reached_through_the_handle_keeps_its_methods_and_the_lock():
     assert guarded.clashes == 0, 'calling the store itself is guarded too'
 
 
+def test_serial_kosha_legs_on_worker_threads_load_their_indexes(tmp_path):
+    "`Kosha.context` runs its legs on worker threads while `_Serial` holds `db_lock`; on litesearch 0.1.47 and 0.1.48 a leg's first `get_index` waited on that lock forever."
+    import numpy as np
+    from litesearch import database
+    from leela.blocks.search.search import _Serial
+    vs = {c: np.eye(4, dtype=np.float16)[i] for i, c in enumerate('ABC')}
+    def db(name):
+        database(tmp_path/name).get_store('st', hash=True, ann=True).sync([dict(content=c) for c in 'ABC'], emb_fn=lambda ts: [vs[t] for t in ts])
+        return database(tmp_path/name)   # a fresh connection: no index loaded, no SQL functions yet
+    class Legs:
+        def __init__(self): self.codedb, self.envdb = db('code.db'), db('env.db')
+        def context(self):
+            out = []
+            def leg(d): out.append((d.get_index('st').size, len(d.t['st'].vec_search(vs['A'].tobytes(), limit=2))))
+            ts = [threading.Thread(target=leg, args=(d,), daemon=True) for d in (self.codedb, self.envdb)]
+            for t in ts: t.start()
+            for t in ts: t.join(30)
+            assert not any(t.is_alive() for t in ts), 'a leg waited on the lock its caller holds'
+            return out
+    assert _Serial(Legs()).context() == [(3, 2)]*2
+
+
 def test_a_literal_search_stays_literal_and_a_regex_search_does_not(tmp_path):
     "rgapi has no fixed-strings flag, so a literal pattern is escaped rather than passed through."
     (tmp_path/'a.py').write_text('needle here\n')

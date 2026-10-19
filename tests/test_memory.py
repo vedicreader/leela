@@ -316,12 +316,6 @@ assert hits and len(offs) == 1 and '_nk_capabilities' in offs[0], (hits, offs)
 print('ok')
 '''
 
-def _litesearch_at_least(v):
-    from importlib.metadata import version
-    return tuple(map(int, version('litesearch').split('.')[:3])) >= v
-
-# 0.1.48 has the fallback and deadlocks agent code search, so the lock keeps 0.1.46 until the release after it.
-@pytest.mark.skipif(not _litesearch_at_least((0, 1, 48)), reason='litesearch before 0.1.48 imports usearch unguarded')
 def test_the_vault_files_and_finds_when_usearch_does_not_import(tmp_path):
     "On macOS 14 `import usearch` raises, and litesearch 0.1.46 raised it from `database()`, so no vault opened."
     import os, subprocess, sys

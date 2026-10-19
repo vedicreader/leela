@@ -20,7 +20,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
     assert deps['dhrona'].specifier.contains('0.1.13') and not deps['dhrona'].specifier.contains('0.1.12'), 'a folded-in candidate keeps its id'
-    assert deps['litesearch'].specifier.contains('0.1.46') and not deps['litesearch'].specifier.contains('0.1.45'), 'add_dir(stop=)'
+    assert deps['litesearch'].specifier.contains('0.1.49') and not deps['litesearch'].specifier.contains('0.1.48'), 'no db_lock deadlock; numpy without usearch'
     for n,lo in dict(dockeasy='0.0.9', pullup='0.0.8', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.3', kavacha='0.0.5', dhrishti='0.1.5', fossick='0.1.18', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras
     extras = [Requirement(s) for g in ('desktop', 'macapp', 'windows') for s in d['project']['optional-dependencies'][g] if s.startswith('kavacha')]
