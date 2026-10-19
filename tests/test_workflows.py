@@ -198,3 +198,27 @@ def test_a_judgement_round_trips_from_the_row_that_carried_it(ws, proj):
         assert ws.memory._open().marks(did).get('noisy') == 0, 'keep must clear, not set'
         badge = c.get('/vault/pii/badge', params=dict(doc=did))
         assert badge.status_code == 200 and 'lee-pii' in badge.text
+
+def test_a_folder_clip_skips_virtualenvs_dot_folders_build_output_and_tests(tmp_path):
+    "A clip of a project folder walked `.aeneas-venv`'s site-packages and every test fixture into the vault."
+    from leela.blocks.vault.clip import _files, acquire_one, clip_docs
+    from leela.blocks.vault.jobs import Job
+    root = tmp_path/'docs'
+    for f in ('a.md', 'B.MD', 'sub/c.txt', '.notes.md', '.aeneas-venv/lib/site-packages/pkg/README.md', '.git/x.md',
+              'build/b.md', 'dist/d.md', 'tests/t.md', 'node_modules/n/r.md', '__pycache__/p.md', 'sub/m.py'):
+        (root/f).parent.mkdir(parents=True, exist_ok=True); (root/f).write_text('words')
+    (root/'sub'/'venv-link').symlink_to(root/'.aeneas-venv', target_is_directory=True)
+    kept = [str(root/f) for f in ('B.MD', 'a.md', 'sub/c.txt')]
+    assert [str(f) for f in _files(root)] == kept, 'a root named docs is still walked'
+    lone = root/'.aeneas-venv'/'lib'/'site-packages'/'pkg'/'README.md'
+    assert _files(lone) == [lone], 'a file named outright is clipped wherever it lives'
+    class Mem:
+        def __init__(self): self.got = []
+        def clip(self, batch, **kw): self.got += map(str, batch); return [dict(doc_id=None)] * len(batch)
+    reports = []
+    for kind, params, fn in (('clip', {}, clip_docs), ('acquire', dict(action='clip'), acquire_one)):
+        m = Mem(); stale = str(root/'build'/'b.md')
+        job = Job(f'{kind}-1', kind, str(root), params=dict(params, _resume=dict(done=[kept[0], stale])))
+        out = fn(m, job, lambda **kw: reports.append(kw))
+        assert m.got == kept[1:] and out['n'] == 3 and out['files'] == kept[:1] + kept[1:], kind
+        assert all(round(r['progress'], 6) <= 0.95 for r in reports) and reports[-1]['current'] == '3 of 3'

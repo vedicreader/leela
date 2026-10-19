@@ -1107,3 +1107,7 @@ The probe directory was briefly a module constant, which froze it at import. `le
 
 ## `leela/blocks/search/search.py` `_rg`
 The default ignore list was passed to ripgrep as `--glob '!{...}/**'`, which anchors to the working directory rather than to the searched root. For any root that was not the process's own directory it excluded nothing, and the noise weights in `relevance` were what actually demoted a hit in `node_modules`. Moving to `rgapi` made the skipping real, which silently deleted the demotion. Fixed by skipping only `__pycache__` by name and leaving the rest to `.gitignore` and the weights: a person searching for a vendored symbol wants it last, not missing.
+
+## `leela/blocks/vault/clip.py` `_files`
+A folder clip walked the folder with `rglob`, so a clip of a projects folder took in every virtualenv's `site-packages`, build output and test fixture: one clip of `vedicreader` counted 4,955 files. Fixed by walking with litesearch's `dir2files`, the walk vishalakshi's `add_dir` and folder acquisitions use, rather than a skip list of Leela's own.
+

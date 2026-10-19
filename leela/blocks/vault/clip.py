@@ -14,15 +14,19 @@ DOC_EXTS = frozenset({'.md', '.markdown', '.txt', '.rst', '.pdf', '.ipynb', '.ht
 BATCH = 8
 
 def _files(target, exts=DOC_EXTS):
-    p = Path(target)
+    "Documents under `target`, past what litesearch's `dir2files` skips: dot-folders and virtualenvs, build output, tests."
+    from litesearch import dir2files
+    p = Path(target).expanduser()
     if p.is_file(): return [p]
     if not p.is_dir(): raise JobError(f'nothing to clip at {target}')
-    return sorted(f for f in p.rglob('*') if f.is_file() and f.suffix.lower() in exts)
+    return sorted(dir2files(p, symlinks=False).filter(lambda f: f.suffix.lower() in exts and f.is_file()))
 
 def clip_docs(memory, job, report):
     shelf, files = job.params.get('shelf'), _files(job.target)
     if not files: raise JobError(f'no clippable document under {job.target}')
-    done = job.params.get('_resume', {}).get('done', []) if job.resumable else []
+    names = set(map(str, files))
+    # a clip resumed from before the walk skipped a folder still lists its files as done
+    done = [d for d in job.params.get('_resume', {}).get('done', []) if d in names] if job.resumable else []
     already = set(done)
     pending = [f for f in files if str(f) not in already]
     out = dict(files=list(done), skipped=[], shelf=shelf, n=len(files))
