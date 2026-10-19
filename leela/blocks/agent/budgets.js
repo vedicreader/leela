@@ -151,6 +151,22 @@ async function leeSubagentWrites(enabled) {
 }
 window.leeSubagentWrites = leeSubagentWrites;
 
+/* Learning is ramabana's, in the agent's config folder: `/learned on|off` and the Review tab say the same thing. */
+async function leeAgentLearning(enabled) {
+  const box = $('#agent-learning');
+  try {
+    const d = await post('/agent/learning', {enabled: !!enabled});
+    if (box) box.checked = d.ok ? !!d.enabled : !enabled;
+    status(d.ok ? d.note : (d.error || 'learning setting failed'), d.ok ? 'ok' : 'err');
+  } catch (e) {
+    if (box) box.checked = !enabled;
+    status(String(e.message || e), 'err');
+  }
+}
+window.leeAgentLearning = leeAgentLearning;
+function leeLearningShown(on) { const box = $('#agent-learning'); if (box && typeof on === 'boolean') box.checked = on; }
+window.leeLearningShown = leeLearningShown;
+
 function leeAgentExpand() { leeRight('agent'); leeExpandPane('right'); }
 window.leeAgentExpand = leeAgentExpand;
 

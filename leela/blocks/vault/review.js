@@ -31,7 +31,7 @@ async function mountReview(host) {
 
 /* The learned queue is the agent's, not the vault's: fetched on its own, so a failure shows in its mode and leaves the rest. */
 async function learnedLoad(st) {
-  try { st.learned = {...await api('/agent/learned'), error: ''}; }
+  try { st.learned = {...await api('/agent/learned'), error: ''}; window.leeLearningShown?.(st.learned.learning); }
   catch (e) { st.learned = {pending: [], lessons: [], chars: 0, limit: 0, ...(e.body || {}), error: e.message || String(e)}; }
   st.ldiff = null;
 }
@@ -58,7 +58,7 @@ function reviewPaint(host) {
   const n = {proof: st.changes.length, pii: st.findings.length, types: st.types.length, book: st.probs.length, doubt: st.changes.filter(r => r.state === 'doubt').length,
              stale: st.changes.filter(r => r.stale).length, learned: st.learned.pending.length};
   const chip = (mode, label, k) => `<button class="lee-wb-subtab${st.mode === mode ? ' active' : ''}" data-review-mode="${mode}">${label} <span data-count="${mode}">${k}</span></button>`;
-  let html = `<div class="lee-review-head">${chip('proof', 'Proofreading', n.proof)}${chip('pii', 'Personal info', n.pii)}${chip('types', 'Types', n.types)}${chip('book', 'Verses', n.book)}${chip('learned', 'Learned', n.learned)}` +
+  let html = `<div class="lee-review-head">${chip('proof', 'Proofreading', n.proof)}${chip('pii', 'Personal info', n.pii)}${chip('types', 'Types', n.types)}${chip('book', 'Verses', n.book)}${chip('learned', st.learned.learning === false ? 'Learned · off' : 'Learned', n.learned)}` +
     (proof ? `<label class="lee-review-doubts"><input type="checkbox" data-review-doubts${st.doubts ? ' checked' : ''}> doubts only (d) · ${n.doubt}</label>` +
              (n.stale ? `<span class="lee-dim">${n.stale} stale</span>` : '') : '') +
     `<span class="lee-spacer"></span>` +
@@ -324,6 +324,8 @@ function learnedPaint(host, html) {
   html += `<div class="lee-review-learned-head"><span class="lee-dim" title="the learned folder">${esc(L.folder || '')}</span>` +
     `<span data-learned-chars class="${near ? 'lee-warn' : 'lee-dim'}">AGENTS.md ${Number(L.chars || 0).toLocaleString()} of ${Number(L.limit || 0).toLocaleString()} characters</span>` +
     `<span data-learned-compact><button class="lee-btn" data-learned-compact-go${busy ? ' disabled' : ''} title="ask Dhrona for a shorter AGENTS.md, proposed as a candidate here">${busy ? 'compacting…' : 'Compact'}</button></span></div>`;
+  if (L.learning === false) html += `<div class="lee-dim" data-learning-off>learning is off: briefings leave the learned folder out, Dhrona proposes nothing new and no lessons are kept. ` +
+    `What waits here can still be accepted or rejected. Turn it on under the agent's settings › learning, or with <code>/learned on</code>.</div>`;
   if (st.lcompact?.error) html += `<div class="lee-err" data-learned-compact-error>${esc(st.lcompact.error)}</div>`;
   if (L.error) html += `<div class="lee-err" data-learned-error>${esc(L.error)}</div>`;
   /* A refusal stays on screen until the next decision. One for size offers to fold the candidate into a compaction. */

@@ -745,6 +745,11 @@ def _agent_panel(ws):
                                     onchange='leeSubagentWrites(this.checked)'), ' sub-agents may write',
                               cls='lee-check-setting',
                               title='Delegated sub-agents get the write tools as well as the read ones. Edits, commands and Python, each recorded and put through the same approval prompts. Off, they can only report what they found'),
+                        Label(Input(type='checkbox', id='agent-learning', checked=_learning(),
+                                    onchange='leeAgentLearning(this.checked)'), ' learning',
+                              cls='lee-check-setting',
+                              title='Brief every conversation from the learned folder and let Dhrona propose lessons for it. '
+                                    'Off, briefings leave it out; what waits in Review › Learned can still be decided'),
                         Label(Input(type='checkbox', id='agent-read-outside', checked=ws.agent_read_outside,
                                     onchange='leeAgentReadOutside(this.checked)'), ' read outside the open folders',
                               cls='lee-check-setting',
@@ -785,6 +790,12 @@ def _agent_panel(ws):
                 cls='lee-composer-footer'),
             cls='lee-promptbar lee-agent-composer'),
         cls='lee-panel lee-agent')
+
+def _learning():
+    "Whether ramabana's `learning` is on in the agent's config folder."
+    from ramabana.learned import enabled
+    from .blocks.settings.settings import agent_cfg
+    return enabled(agent_cfg())
 
 def _footer():
     "Always-visible keys plus status."

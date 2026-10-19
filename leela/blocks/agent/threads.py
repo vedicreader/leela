@@ -4,6 +4,7 @@ import asyncio, threading, time, uuid
 from collections import deque
 
 from ... import errstr
+from ...agent import agent_err
 from .turns import edit_diffs, tool_schemas, turn_media
 
 TERMINAL_CANCEL = ('cancelled', 'detached', 'terminated')
@@ -417,7 +418,7 @@ class TurnRunner:
             if not ready['accepted']:
                 ready['error'] = e; ready['event'].set()
             else:
-                self.feed.emit('error', {'message': errstr(e), 'run': run_id})
+                self.feed.emit('error', {'message': agent_err(e), 'run': run_id})
                 self.feed.emit('done', self._done(ai, run_id, ok=False))
                 self._retain(ai, run_id, before)
                 self._settled(ai, run_id)
@@ -530,7 +531,7 @@ class TurnRunner:
             with self._lock: self._pending.pop(ident, None)
             ready['gate'].set()
             if isinstance(ready['error'], TurnError): raise ready['error']
-            raise TurnError('turn_conflict', errstr(ready['error']), thread)
+            raise TurnError('turn_conflict', agent_err(ready['error']), thread)
         if not run_id:
             with self._lock: self._pending.pop(ident, None)
             ready['gate'].set(); self._release(ai)

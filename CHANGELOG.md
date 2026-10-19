@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.43 and rishi 0.1.45.
+Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.44 and rishi 0.1.45.
+
+- Learning can be turned off. The agent settings have a **learning** box, and `/learned on|off` in the agent pane is the same switch. Off, every live conversation is re-briefed at once without the learned folder, no lessons are kept and Dhrona proposes nothing new. The Review tab's Learned chip reads "Learned · off", and what waits there can still be accepted or rejected. The setting is ramabana's `learning`, kept in the agent's config folder's `settings.json` beside Leela's settings, which resetting Leela's settings keeps. A `settings.json` that is not valid JSON is refused rather than replaced.
+- A turn too large for the model's window after compaction and trimming says so in plain words in the agent pane (ramabana 0.2.44's `ContextFull`), not as a raw `ValueError`. ramabana now trims the oldest tool results and then pictures before compacting, and keeps the window guard right after a compaction or a resume.
+- A pasted or attached picture is logged as `[image]` in the conversation log, not as its bytes.
 
 - Leela without Claude Code works. The default agent model, `claude-opus-5-5`, runs through Claude Code, and without `claude` on PATH building the assistant and opening the history failed. The agent panel now opens with a notice naming what is missing, how to install it, and a model that runs on this machine. A turn on that model fails with the same sentence, and the model picker marks it unavailable. Leela does not switch models by itself.
 - In the Review tab's Learned queue, a candidate that no longer applies to the learned folder shows why on its row, and accepting it returns that reason word for word. After an accept, the status line says how many candidates moved onto it and which no longer apply.

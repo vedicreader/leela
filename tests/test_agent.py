@@ -969,3 +969,45 @@ def test_rolling_back_a_drawing_removes_every_picture_it_made(tmp_path):
     ap.rollback(a.id)
     assert not (tmp_path/'img.png').exists() and not (tmp_path/'img-2.png').exists()
 
+
+
+def _turn(c, **body):
+    acc = c.post('/agent/turn', json=body).json()
+    with c.stream('GET', '/agent/stream', params={'since': acc['seq']}) as r: return acc, ''.join(r.iter_text())
+
+def test_a_pasted_picture_is_image_in_the_log_and_the_timeline_not_its_bytes(tmp_path):
+    "ramabana 0.2.44 logs `[image]`; Leela's attachments and retained timelines must not bring the bytes back."
+    from tests.fakemodel import Step, install, WIDE
+    (tmp_path/'pic.png').write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00'*64)
+    ws = Workspace(roots=[]); ws.add_root(str(tmp_path))
+    install(ws, [Step(text='a picture')], token_delay=0, spec=WIDE)
+    with TestClient(ide_app(ws)) as c: acc, body = _turn(c, prompt='look', attachments=[str(tmp_path/'pic.png')])
+    assert 'event: done' in body
+    row = [json.loads(l) for l in Path(ws.ai.history_path).read_text().splitlines() if acc['thread'] in l][-1]
+    assert row['prompt'].startswith('[image]') and 'look' in row['prompt']
+    for p in (ws.ai.history_path, ws._timeline_path): assert 'PNG' not in Path(p).read_text() and "b'" not in Path(p).read_text(), p
+
+def test_a_turn_past_the_window_says_so_in_plain_words():
+    "ramabana 0.2.44 raises `ContextFull` once compaction and trimming cannot fit a turn; the pane shows its message, not a ValueError."
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[])
+    install(ws, [Step(text='never')], token_delay=0, spec=models.ModelSpec('scripted', 'scripted', 'scripted/model', ctx=2000))
+    with TestClient(ide_app(ws)) as c: acc, body = _turn(c, prompt='word '*20000)
+    assert 'does not fit scripted' in body and 'ValueError' not in body and 'ContextFull:' not in body
+    row = [json.loads(l) for l in Path(ws.ai.history_path).read_text().splitlines() if acc['thread'] in l][-1]
+    assert row['error'].startswith('this conversation does not fit scripted')
+
+def test_a_context_full_that_escapes_the_stream_is_its_message_alone(monkeypatch):
+    from ramabana.core import ContextFull
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[])
+    install(ws, [Step(text='never')], token_delay=0)
+    real = ws.ask_stream
+    def ask_stream(*a, **k):
+        yield next(iter(real(*a, **k)))     # registered, so the turn is accepted
+        raise ContextFull('this conversation does not fit scripted')
+    monkeypatch.setattr(ws, 'ask_stream', ask_stream)
+    with TestClient(ide_app(ws)) as c:
+        acc, body = _turn(c, prompt='hi')
+    errs = [json.loads(l[6:]) for l in body.splitlines() if l.startswith('data: ') and '"message"' in l]
+    assert errs and errs[0]['message'] == 'this conversation does not fit scripted', body

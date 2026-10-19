@@ -13,7 +13,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.45') and not Requirement(s).specifier.contains('0.1.44') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.43') and not deps['ramabana'].specifier.contains('0.2.42'), 'a missing runtime is a failed turn, not a raise'
+    assert deps['ramabana'].specifier.contains('0.2.44') and not deps['ramabana'].specifier.contains('0.2.43'), 'ContextFull, [image] in history, learned.set_enabled'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
     assert deps['shalya'].specifier.contains('0.1.14') and not deps['shalya'].specifier.contains('0.1.13'), 'ramabana 0.2.38 needs it'
     assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'
@@ -32,7 +32,8 @@ def test_the_installed_set_matches_the_pins():
     assert Version(rishi.__version__) >= Version('0.1.45'), 'cached_model and EngineHold are public'
     from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
     assert Version(vishalakshi.__version__) >= Version('0.1.31') and Version(dhrona.__version__) >= Version('0.1.11')
-    from ramabana.learned import learned_folder, pending, diff, accept, reject, learned_command, compact  # noqa: F401
+    from ramabana.learned import learned_folder, pending, diff, accept, reject, learned_command, compact, enabled, set_enabled  # noqa: F401
+    from ramabana.core import ContextFull, agent_err  # noqa: F401
     from dockeasy.core import FASTOPS_ENV; from pullup.workflows import gheasy_core  # noqa: F401
 
 def test_the_claude_code_runtime_chain_imports():

@@ -239,3 +239,81 @@ def test_the_queue_shows_stale_rows_what_an_accept_moved_and_offers_the_folding_
     assert 'data-learned-compact-with="${esc(ref.id)}"' in src and 'Compact with this candidate' in src
     assert "return learnedCompact(host, fold.dataset.learnedCompactWith);" in src and "post('/agent/learned/compact', id ? {id} : {})" in src
     assert 'learnedAccepted' in (root/'static'/'lee-ide.js').read_text(), 'the bundle is rebuilt'
+
+@pytest.fixture
+def live(ws, tmp_path, monkeypatch):
+    "A real assistant briefed from `<cfg>/learned/AGENTS.md`, with Leela's own settings in the same `settings.json`."
+    from leela.blocks.settings import settings
+    import json
+    cfg = tmp_path/'cfg'; (cfg/'learned').mkdir(parents=True)
+    (cfg/'learned'/'AGENTS.md').write_text('# Learned\n\n- always say LESSON-MARK\n')
+    (cfg/'settings.json').write_text(json.dumps({'editor': {'tabSize': 2}}))
+    monkeypatch.setattr(settings, 'agent_cfg', lambda *a, **k: cfg)
+    with TestClient(ide_app(ws)) as c: yield c, ws.ai, cfg
+
+def test_the_learning_switch_persists_and_reaches_the_live_agent_at_once(live):
+    import json
+    c, ai, cfg = live
+    assert ai.learning and 'LESSON-MARK' in ai.system_prompt()
+    r = c.post('/agent/learning', json={'enabled': False}).json()
+    assert r == dict(ok=True, enabled=False, cfg=str(cfg), note=r['note']) and 'can still be reviewed' in r['note']
+    assert json.loads((cfg/'settings.json').read_text()) == {'editor': {'tabSize': 2}, 'learning': 'off'}, "Leela's settings are kept"
+    assert not ai.learning and 'LESSON-MARK' not in ai.system_prompt(), 'no restart'
+    d = c.get('/agent/learned').json()
+    assert d['ok'] and d['learning'] is False, 'the Review tab reads the state'
+    r = c.post('/agent/learning', json={'enabled': True}).json()
+    assert r['ok'] and r['enabled'] and ai.learning and 'LESSON-MARK' in ai.system_prompt()
+    assert c.get('/agent/learned').json()['learning'] is True
+
+def test_learned_off_typed_in_the_pane_is_the_same_switch(live, ws):
+    c, ai, cfg = live
+    other = ws.inline_ai
+    r = c.post('/agent/command', json={'line': '/learned off'}).json()
+    assert r['ok'] and r['enabled'] is False and r['cfg'] == str(cfg) and r['text'] == 'learning is off'
+    assert not ai.learning and not other.learning and 'LESSON-MARK' not in other.system_prompt(), 'every conversation on the folder follows'
+    r = c.post('/agent/command', json={'line': '/learned status'}).json()
+    assert r['ok'] and r['enabled'] is False
+    assert 'enabled' not in c.post('/agent/command', json={'line': '/learned'}).json(), 'a list is not the switch'
+
+def test_learning_refusals_are_structured_and_touch_nothing(live):
+    c, ai, cfg = live
+    r = c.post('/agent/learning', json={'enabled': 'no'})
+    assert r.status_code == 400 and r.json() == dict(ok=False, error='enabled must be true or false')
+    (cfg/'settings.json').write_text('{not json')
+    for r in (c.post('/agent/learning', json={'enabled': False}), c.post('/agent/command', json={'line': '/learned off'})):
+        assert r.status_code == 400 and not r.json()['ok'] and 'is not a JSON object' in r.json()['error']
+    assert (cfg/'settings.json').read_text() == '{not json' and ai.learning, "ramabana would have rewritten Leela's settings as {}"
+
+def test_learning_without_a_built_assistant(ws, tmp_path, monkeypatch):
+    from leela.blocks.settings import settings
+    from ramabana.learned import enabled
+    monkeypatch.setattr(settings, 'agent_cfg', lambda *a, **k: tmp_path/'cfg')
+    monkeypatch.setattr(ws, '_ai', None)
+    with TestClient(ide_app(ws)) as c:
+        assert c.post('/agent/learning', json={'enabled': False}).json()['enabled'] is False
+        assert ws._ai is None and not enabled(tmp_path/'cfg')
+
+def test_leela_settings_writes_keep_learning(tmp_path):
+    import json
+    from leela.blocks.settings.settings import Settings
+    p = tmp_path/'settings.json'; p.write_text(json.dumps({'learning': 'off'}))
+    s = Settings(user_path=p)
+    s.save('user', 'editor', {'tabSize': 4}); assert json.loads(p.read_text())['learning'] == 'off'
+    s.reset('user'); assert json.loads(p.read_text()) == {'learning': 'off'}, 'reset is Leela settings only'
+
+def test_the_settings_pane_and_the_review_tab_show_learning():
+    root = Path(__file__).resolve().parents[2]/'leela'
+    src = (root/'blocks'/'vault'/'review.js').read_text()
+    assert "chip('learned', st.learned.learning === false ? 'Learned · off' : 'Learned', n.learned)" in src
+    assert 'if (L.learning === false) html += `<div class="lee-dim" data-learning-off>learning is off' in src
+    assert "post('/agent/learning', {enabled: !!enabled})" in (root/'blocks'/'agent'/'budgets.js').read_text()
+    assert "if ('enabled' in d) window.leeLearningShown?.(d.enabled);" in (root/'blocks'/'agent'/'steer.js').read_text()
+    assert "id='agent-learning'" in (root/'app.py').read_text() and 'leeAgentLearning' in (root/'static'/'lee-agent.js').read_text()
+
+def test_the_settings_pane_renders_the_learning_box(live):
+    import re
+    c, ai, cfg = live
+    box = lambda: re.search(r'<input[^>]*id="agent-learning"[^>]*>', c.get('/').text)[0]
+    assert re.search(r'\schecked[\s>]', box()) and 'leeAgentLearning(this.checked)' in box()
+    c.post('/agent/learning', json={'enabled': False})
+    assert not re.search(r'\schecked[\s>]', box())

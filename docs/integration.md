@@ -64,6 +64,12 @@ A candidate that no longer applies to HEAD carries `stale`, ramabana's reason, a
 
 `/agent/learned/compact` takes a POST only, since it spends a model turn, and an optional `{id}` of a candidate to fold in. It answers `{ok: true, id, before, after}`, sizes in characters, or `{ok: false, error}`, with the same 200 and 409. The turn runs on a worker thread, so the server's loop stays free, and a process-wide lock lets one compaction run at a time; a second press gets `a compaction is already running`. `/agent/learned` reports `compacting` while the lock is held, and the tab polls it every 3 seconds while it is true, so a request the webview dropped, or a compaction started from another tab, still clears the pending state. A compaction from the CLI or another Leela holds Dhrona's learned lock, not this one, so the button does not show it; pressing then returns Dhrona's refusal for a running batch.
 
+## Learning on and off
+
+Learning is ramabana's switch, `learning` in `<cfg>/settings.json` (`ramabana.learned.enabled` and `set_enabled`). Off, a briefing leaves out the learned folder and its skills, no lessons are kept, and Dhrona's batch proposes nothing; the queue can still be decided. Leela has three ways to it: the **learning** box in the agent settings, `/learned on|off|status` typed in the agent pane, and the Review tab, which reads it. `cfg` is the one `_learned_folder` resolves, and by default it is Leela's own config folder, so the key sits beside Leela's settings in one file. `Settings.save` and `Settings.reset` keep a top-level key that is not one of Leela's sections.
+
+`POST /agent/learning` takes `{enabled}` and the command route takes `/learned on|off`. Both write the setting once, through the first live conversation on that folder (`/learned on|off`, which re-briefs it), and re-brief every other live conversation on it, so the change applies without a restart. Both answer with `enabled` and `cfg`; the settings route adds `note`, and the command route the command's own `text`. A `settings.json` that is not a JSON object is refused with `{ok: false, error}` and left as it is, since ramabana would replace it with `{}`. `/agent/learned` carries `learning`, the Learned chip reads "Learned · off" when it is false, and the queue's head says what off means. ramabana's own schedule skips Dhrona's batch while learning is off. Leela's warm start, assess and capture (`warm.py`) are not gated by it.
+
 ## Adding to the host
 
 1. Declare the group by inheriting shalya's class for it, and implement every method it names.

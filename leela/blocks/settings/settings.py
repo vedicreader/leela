@@ -250,7 +250,7 @@ class Settings:
         target = (current.get('languages') or {}).get(language, {}) if language else current
         if section: target.pop(section, None)
         elif language: (current.get('languages') or {}).pop(language, None)
-        else: current = {}
+        else: current = {k: v for k, v in current.items() if k not in DEFAULT_SETTINGS and k != 'languages'}   # ramabana's `learning` shares the user file
         _write(path, current)
         return self.describe(language)
 

@@ -57,6 +57,7 @@ GET,POST /agent/learned/accept
 POST /agent/learned/compact
 GET,POST /agent/learned/diff
 GET,POST /agent/learned/reject
+POST /agent/learning
 GET,POST /agent/memory
 GET,POST /agent/memory/delete
 GET,POST /agent/memory/save

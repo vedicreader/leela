@@ -288,6 +288,35 @@ def connect(app, ctx):
         from ..settings import settings
         return learned_folder(first(a.cfg for a in live_assistants() if getattr(a, 'cfg', None)) or settings.agent_cfg())
     def _learned_reply(r): return JSONResponse(r, status_code=200 if r.get('ok') else 409)
+    def _learning_cfg():
+        "The config folder learning is set in; a `settings.json` there that is not a JSON object is refused, since ramabana would rewrite it as `{}`."
+        cfg = _learned_folder().parent
+        try: s = json.loads((cfg/'settings.json').read_text())
+        except FileNotFoundError: return cfg
+        except ValueError: s = None
+        if not isinstance(s, dict): raise ValueError(f'{cfg/"settings.json"} is not a JSON object; fix it before turning learning on or off')
+        return cfg
+    def _same_cfg(a, cfg): return getattr(a, 'cfg', None) is not None and Path(a.cfg).expanduser().resolve() == cfg.resolve()
+    def _set_learning(on, ran=None):
+        "Learning on or off in the agent's config folder, every live conversation on that folder re-briefed: `{ok, enabled, cfg, note}`."
+        from ramabana.learned import enabled, set_enabled
+        cfg, arg = _learning_cfg(), 'on' if on else 'off'
+        live = [a for a in live_assistants() if _same_cfg(a, cfg)]
+        if ran is None and live: live[0].command(f'/learned {arg}'); ran = live[0]   # persists, and re-briefs that one
+        elif ran is None: set_enabled(cfg, on)
+        for a in live:
+            if a is not ran: a.refresh()
+        return _learning_state(cfg, enabled(cfg))
+    def _learning_state(cfg, on):
+        return dict(ok=True, enabled=on, cfg=str(cfg), note=f'learning is {"on" if on else "off"}' +
+                    ('' if on else '; the learned folder stays out of every briefing and its queue can still be reviewed'))
+    @rt('/agent/learning', methods=['POST'])
+    async def agent_learning(req):
+        "Learning on or off: ramabana's `learning` in `<cfg>/settings.json`, applied to live conversations at once."
+        d = await req.json(); on = d.get('enabled')
+        if not isinstance(on, bool): return fail('enabled must be true or false')
+        try: return await off_loop(_set_learning, on)
+        except Exception as e: return fail(e)
     def _learned_call(act, id):
         "One `ramabana.learned` call as the dict it returns; a git failure becomes the same `{ok: False, id, error}`."
         try: return act(_learned_folder(), id)
@@ -301,8 +330,9 @@ def connect(app, ctx):
         try: lessons = list(ai.lessons(LEARNED_LESSONS)) if ai is not None else []
         except Exception: lessons = []      # a vault search that fails leaves the queue readable
         md = f/'AGENTS.md'
+        from ramabana.learned import enabled
         return dict(ok=not err, folder=str(f), pending=rows, lessons=lessons, chars=len(md.read_text(errors='replace')) if md.is_file() else 0,
-                    limit=LEARNED_MAX, compacting=_compacting.locked(), **({'error': err} if err else {}))
+                    limit=LEARNED_MAX, compacting=_compacting.locked(), learning=enabled(f.parent), **({'error': err} if err else {}))
     @rt('/agent/learned')
     async def agent_learned():
         "What Dhrona proposed for the learned folder, oldest first; the live agent's recent lessons; `AGENTS.md`'s size against its limit."
@@ -1389,8 +1419,19 @@ def connect(app, ctx):
         try: ai = _thread(d.get('thread')).ai
         except Exception as e: return _thread_error(e)
         if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ai.commands())}
-        out = await off_loop(ai.command, line)
+        name, _, arg = line.lstrip('/').partition(' ')
+        act = arg.strip().partition(' ')[0] if name == 'learned' else ''
+        try:
+            if act in ('on', 'off'): _learning_cfg()
+            out = await off_loop(ai.command, line)
+            # `/learned on|off` is the same switch as Settings: every live conversation on the folder follows, and the reply says where it stands
+            if act in ('on', 'off'): r = await off_loop(_set_learning, act == 'on', ai)
+            elif act == 'status':
+                from ramabana.learned import enabled
+                r = _learning_state(cfg := _learned_folder().parent, enabled(cfg))
+        except Exception as e: return fail(e)
         if out is None: return fail(f'unknown command {line.split()[0]}')
+        if act in ('on', 'off', 'status'): return {'ok': True, 'text': out, 'enabled': r['enabled'], 'cfg': r['cfg']}
         if line.lstrip('/').split(' ')[0] in ('tool-budget', 'steps'):
             ws.tool_budget, ws.step_budget = ai.tool_budget, ai.step_budget
             for agent in live_assistants(): agent.tool_budget, agent.step_budget = ws.tool_budget, ws.step_budget
