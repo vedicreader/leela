@@ -7,7 +7,7 @@ LEELA = Path(__file__).resolve().parent.parent/'leela'
 #: The packages Leela composes and must only reach through their public names.
 COMPOSED = ('ramabana', 'shalya', 'gheasy', 'rishi', 'dhrishti', 'vishalakshi', 'litesearch',
             'koshas', 'kosha', 'fossick', 'exhash', 'mdhtml', 'ipymini', 'rgapi',
-            'kunda', 'pullup')
+            'kunda', 'pullup', 'dockeasy')
 
 #: Leela modules that are another package under one of Leela's names, so a relative import
 #: through them reaches a composed library without naming it.
@@ -16,9 +16,7 @@ ALIASES = ('agent.tools', 'agent')
 #: The seam requests still outstanding, each with the library that would have to open it. Leela
 #: cannot widen any of these from here, so each one is a decision recorded rather than an accident,
 #: and a release that drops one fails this suite rather than the feature that needed it.
-ALLOWED = {
-    ('pullup.workflows', '_gheasy'),        # pullup: the gheasy core a new fastship workflow needs
-}
+ALLOWED = set()
 
 
 def _private_imports():

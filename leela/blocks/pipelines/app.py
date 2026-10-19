@@ -85,8 +85,8 @@ def fastship_run(session, op, target='', part=None):
 
 def fastship_new(session, name, target='', description='A Python package'):
     "A new fastship package beside the project the panel is about, scaffolded by gheasy."
-    from ..workflows.workflows import _gheasy
-    core = _gheasy()
+    from ..workflows.workflows import gheasy_core
+    core = gheasy_core()
     slug = str(name or '').strip()
     if not slug or slug.startswith('.') or {'/', '\\'} & set(slug):
         raise PipelineError(f'not a package name: {name}')
