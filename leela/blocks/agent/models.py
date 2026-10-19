@@ -9,7 +9,7 @@ __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_mod
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
            'install_runtime', 'probe_dir', 'probe_path', 'probed', 'catalog', 'forget_probes',
            'warm_probes', 'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed',
-           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates']
+           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates', 'unavailable']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
@@ -22,6 +22,13 @@ JOB_HELP = {
  'classify': 'One-label questions the agent asks itself mid-turn. Unset, it falls back to oneshot.',
  'summary': 'Context compaction, conversation titles, agent charter drafts, and "summarise selection". Defaults to gpt-4.1, or claude-sonnet-5 without OPENAI_API_KEY; on a local turn model it stays on the turn model.',
  'subagent': 'Delegated searches, which run as their own read-only agent. Defaults to claude-sonnet-5, not to oneshot; on a local turn model it stays on the turn model.'}
+
+def unavailable(model):
+    "Why `model`, a name or a spec, cannot run here and which model does; '' when it can."
+    from ...agent.core import missing_runtime, reachable_hint, resolve
+    try: spec = resolve(model) if isinstance(model, str) else model
+    except Exception: return ''
+    return f'{m}. {reachable_hint()}' if (m := missing_runtime(spec)) else ''
 
 def _runtimes():
     from ...agent.core import RUNTIME_NAMES

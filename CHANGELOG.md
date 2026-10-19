@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.6, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.11, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.40 and rishi 0.1.45.
+Needs vishalakshi 0.1.31, shalya 0.1.14, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.46, kunda 0.0.4, kavacha 0.0.6, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.43 and rishi 0.1.45.
+
+- Leela without Claude Code works. The default agent model, `claude-opus-5-5`, runs through Claude Code, and without `claude` on PATH building the assistant and opening the history failed. The agent panel now opens with a notice naming what is missing, how to install it, and a model that runs on this machine. A turn on that model fails with the same sentence, and the model picker marks it unavailable. Leela does not switch models by itself.
+- In the Review tab's Learned queue, a candidate that no longer applies to the learned folder shows why on its row, and accepting it returns that reason word for word. After an accept, the status line says how many candidates moved onto it and which no longer apply.
+- An accept refused because `AGENTS.md` would pass 2,000 characters stays on screen with a **Compact with this candidate** button. It asks Dhrona for a shorter `AGENTS.md` that includes the candidate, and accepting the result accepts the candidate too.
 
 - A folder clip walks the folder with litesearch's `dir2files`, as vishalakshi's own folder reader does. It skips dot-folders (virtualenvs such as `.aeneas-venv` among them), `build`, `dist`, `node_modules`, `__pycache__` and `tests`, and dotfiles. It keeps `docs` and `examples`, which `dir2files` skips by default. A file named outright is clipped wherever it lives. A clip resumed from before this change drops the skipped files from its count.
 - A folder clip can be cancelled from its job card. It keeps what it clipped, and resume clips the rest.

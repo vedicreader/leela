@@ -241,6 +241,6 @@ def _asks_time_out_quickly(monkeypatch):
 @pytest.fixture(autouse=True)
 def _claude_on_path(request, monkeypatch):
     "Resolve the default turn model as if Claude Code were installed, so a fast test runs the same with or without it; a launch still needs the real binary."
-    if request.node.get_closest_marker('slow'): return
+    if request.node.get_closest_marker('slow') or request.node.get_closest_marker('no_claude'): return
     import ramabana.core as rc
     monkeypatch.setattr(rc, '_claude_available', lambda: True)

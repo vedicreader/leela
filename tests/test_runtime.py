@@ -102,6 +102,30 @@ def test_the_default_turn_model_resolves_without_claude_code_on_path(tmp_path, m
     assert shutil.which('claude') is None
     assert Workspace(roots=[tmp_path]).ai.model.name == DFLT_TURN
 
+@pytest.mark.no_claude
+def test_without_claude_code_the_agent_panel_says_why_rather_than_failing(tmp_path, monkeypatch):
+    "ramabana's `resolve` raised for `claude-opus-5-5` without `claude` on PATH, so the assistant, `/agent/history` and a turn raised."
+    from leela.agent.core import DFLT_SMALL, DFLT_TURN
+    monkeypatch.setenv('PATH', str(tmp_path))
+    for k in ('LEELA_MODEL', 'RAMABANA_MODEL', 'LEELA_MODEL_INLINE', 'RAMABANA_MODEL_INLINE'): monkeypatch.delenv(k, raising=False)
+    assert shutil.which('claude') is None
+    ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
+    assert ws.ai.model.name == DFLT_TURN and '`claude` is not on PATH' in ws.ai.model.missing
+    with TestClient(ide_app(ws)) as c:
+        r = c.get('/agent/history')
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d['model'] == DFLT_TURN and '`claude` is not on PATH' in d['unavailable'] and 'install Claude Code' in d['unavailable'], d
+        assert 'runs here' in d['unavailable'] or 'no model runs' in d['unavailable']
+        r = c.post('/agent/ask', json={'prompt': 'hello'})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert not d['ok'] and '`claude` is not on PATH' in d['text'] and d['model'] == DFLT_TURN, d
+        m = c.get('/agent/models').json()
+        assert any(r.get('unavailable') and r['value'] == DFLT_TURN and 'not on PATH' in r['source'] for r in m['models']), m
+        assert f'{DFLT_TURN} cannot run here' in c.get('/').text
+    assert ws.inline_ai.model.name == DFLT_SMALL and '`claude` is not on PATH' in ws.inline_ai.ask('hello')
+
 def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
     """ramabana reads $LEELA_LITERT_BACKEND when it builds an engine."""
     monkeypatch.setenv('LEELA_LITERT_BACKEND', 'cpu')

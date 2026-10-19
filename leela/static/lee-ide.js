@@ -7425,6 +7425,8 @@ async function reviewClick(host, e) {
   }
   if (t.matches('[data-review-doubts]')) return leeReview('doubts', 0, host);
   if (t.closest('[data-learned-compact-go]')) return learnedCompact(host);
+  const fold = t.closest('[data-learned-compact-with]');
+  if (fold) return learnedCompact(host, fold.dataset.learnedCompactWith);
   if (t.closest('[data-review-apply]')) return reviewCommit(host);
   if (t.closest('[data-review-all]')) { await reviewCommit(host); st.doc = st.shelf = ''; return reviewLoad(host); }
   if (t.closest('[data-review-export]')) {
@@ -7632,12 +7634,17 @@ function learnedPaint(host, html) {
     `<span data-learned-compact><button class="lee-btn" data-learned-compact-go${busy ? ' disabled' : ''} title="ask Dhrona for a shorter AGENTS.md, proposed as a candidate here">${busy ? 'compacting…' : 'Compact'}</button></span></div>`;
   if (st.lcompact?.error) html += `<div class="lee-err" data-learned-compact-error>${esc(st.lcompact.error)}</div>`;
   if (L.error) html += `<div class="lee-err" data-learned-error>${esc(L.error)}</div>`;
+  /* A refusal stays on screen until the next decision. One for size offers to fold the candidate into a compaction. */
+  const ref = st.lrefused;
+  if (ref) html += `<div class="lee-err" data-learned-refused>${esc(ref.error)}` +
+    (ref.length ? ` <button class="lee-btn" data-learned-compact-with="${esc(ref.id)}"${busy ? ' disabled' : ''}>Compact with this candidate</button>` : '') + `</div>`;
   if (!st.rows.length && !L.error) html += `<div class="lee-wb-empty"><strong>Nothing the agent learned waits for review</strong>` +
     `<span>Dhrona proposes changes to the learned folder; each waits here until you accept (a) or reject (x) it.</span></div>`;
   st.rows.forEach((r, i) => {
     html += `<div class="lee-review-row lee-review-learned${i === st.at ? ' active' : ''}" data-i="${i}" data-id="${esc(r.id)}">` +
       `<div class="lee-review-change"><span data-subject>${esc(r.subject || r.id)}</span>` +
-      `<small>${esc((r.files || []).join(', '))} · ${esc(new Date(r.at * 1000).toLocaleString())}</small></div></div>`;
+      `<small>${esc((r.files || []).join(', '))} · ${esc(new Date(r.at * 1000).toLocaleString())}</small>` +
+      (r.stale ? `<small class="lee-review-stalewhy" data-learned-stale>stale: ${esc(r.stale)}</small>` : '') + `</div></div>`;
   });
   html += `<div class="lee-diff lee-review-learned-diff" data-learned-diff></div><div class="lee-review-doc">Recent lessons</div>` +
     (L.lessons?.length ? `<ul class="lee-review-lessons">${L.lessons.map(l => `<li>${esc(l.lesson)}${l.cue ? ` <small>${esc(l.cue)}</small>` : ''}</li>`).join('')}</ul>`
@@ -7649,12 +7656,12 @@ function learnedPaint(host, html) {
 }
 
 /* The reply can outlive the request (a webview drops a long one), so a pending compaction is also watched through `/agent/learned`. */
-async function learnedCompact(host) {
+async function learnedCompact(host, id = '') {
   const st = host.__review;
   if (st.lcompact?.busy || st.learned.compacting) return;
-  st.lcompact = {busy: true}; reviewPaint(host);
+  st.lcompact = {busy: true}; st.lrefused = null; reviewPaint(host);
   try {
-    const d = await post('/agent/learned/compact', {});
+    const d = await post('/agent/learned/compact', id ? {id} : {});
     st.lcompact = {};
     if (d.id) st.want = d.id;
     status(d.id ? `compaction proposed as ${d.id}: ${Number(d.before).toLocaleString()} → ${Number(d.after).toLocaleString()} characters` : 'nothing to compact', 'ok');
@@ -7697,16 +7704,27 @@ async function learnedDiff(host) {
   const b = $('[data-learned-diff]', host); if (b) b.innerHTML = html;
 }
 
+/* An accept restacks the rest: say how many moved onto the new HEAD and which no longer apply. */
+function learnedAccepted(d) {
+  const head = d.commit ? `accepted ${d.id} as ${d.commit}` : `accepted ${d.id}: the learned folder already held it`;
+  const moved = (d.moved || []).length, stale = d.stale || [];
+  return head + (moved ? ` · ${moved} candidate${moved === 1 ? '' : 's'} moved onto it` : '') + (stale.length ? ` · stale now: ${stale.join(', ')}` : '');
+}
+
 /* Accepted and rejected at once: a candidate is its own commit, so there is nothing to stage, and git keeps no undo here. */
 async function learnedAct(host, act, r) {
   const st = host.__review;
   if (act !== 'accept' && act !== 'reject')
     return status(act === 'undo' ? 'an accept or a reject of what the agent learned is not undone here' : 'what the agent learned is decided one candidate at a time', 'err');
   if (!r) return status('nothing to decide', 'err');
+  st.lrefused = null;
   try {
     const d = await post(`/agent/learned/${act}`, {id: r.id});
-    status(act === 'reject' ? `rejected ${d.id}` : d.commit ? `accepted ${d.id} as ${d.commit}` : `accepted ${d.id}: the learned folder already held it`, 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
+    status(act === 'reject' ? `rejected ${d.id}` : learnedAccepted(d), 'ok');
+  } catch (e) {
+    status(e.message || String(e), 'err');
+    if (act === 'accept' && e.body) st.lrefused = {id: r.id, error: e.message || String(e), length: e.body.length || 0};
+  }
   await learnedLoad(st);
   reviewPaint(host);
 }

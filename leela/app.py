@@ -610,11 +610,14 @@ def _agent_panel(ws):
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())
     control = getattr(ws.approvals, 'control', 'guided')
     edits = getattr(ws.approvals, 'mode', '') == 'edits'
-    welcome = None if has_state else Div(
+    from .blocks.agent.models import unavailable
+    gone = unavailable(agent_model)
+    notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1')) if gone else ()
+    setup = () if has_state else (
         Strong('Set up this workspace agent'),
         Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),
-        Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()'),
-        cls='lee-agent-welcome')
+        Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()'))
+    welcome = Div(*notice, *setup, cls='lee-agent-welcome', role='status' if gone else None) if notice or setup else None
     return Section(
         Div(Div(Span('agent', cls='lee-ptitle'),
                 Span(Span(cls='lee-agent-status-dot'), 'ready', id='agentstatus', cls='lee-agent-status ready', title='agent ready'),

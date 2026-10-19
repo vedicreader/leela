@@ -13,13 +13,13 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.45') and not Requirement(s).specifier.contains('0.1.44') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.40') and not deps['ramabana'].specifier.contains('0.2.39'), 'learned.compact'
+    assert deps['ramabana'].specifier.contains('0.2.43') and not deps['ramabana'].specifier.contains('0.2.42'), 'a missing runtime is a failed turn, not a raise'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
     assert deps['shalya'].specifier.contains('0.1.14') and not deps['shalya'].specifier.contains('0.1.13'), 'ramabana 0.2.38 needs it'
     assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
-    assert deps['dhrona'].specifier.contains('0.1.11') and not deps['dhrona'].specifier.contains('0.1.10'), 'what learned.compact needs'
+    assert deps['dhrona'].specifier.contains('0.1.13') and not deps['dhrona'].specifier.contains('0.1.12'), 'a folded-in candidate keeps its id'
     assert deps['litesearch'].specifier.contains('0.1.46') and not deps['litesearch'].specifier.contains('0.1.45'), 'add_dir(stop=)'
     for n,lo in dict(dockeasy='0.0.9', pullup='0.0.8', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.3', kavacha='0.0.5', dhrishti='0.1.5', fossick='0.1.18', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras

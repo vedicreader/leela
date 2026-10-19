@@ -318,20 +318,22 @@ def connect(app, ctx):
             r['truncated'] = len(text) > LEARNED_DIFF_MAX
             r['rows'] = [x.dict() for x in diff_rows(text[:LEARNED_DIFF_MAX], path_lang(m[1] if m else 'AGENTS.md'))]
         return _learned_reply(r)
-    def _compact(ai):
+    def _compact(ai, id=None):
         from ramabana.learned import compact
         # one model turn: a second press while it runs would only wait on the learned lock and then refuse
         if not _compacting.acquire(blocking=False): return dict(ok=False, error='a compaction is already running')
-        try: return compact(_learned_folder(), chat=compact_chat(ai))
+        try: return compact(_learned_folder(), id=id, chat=compact_chat(ai))
         except Exception as e: return dict(ok=False, error=errstr(e))
         finally: _compacting.release()
     @rt('/agent/learned/compact', methods=['POST'])
-    async def agent_learned_compact():
-        "Ask Dhrona for a shorter `AGENTS.md` as a new pending candidate: `{ok, id, before, after}` in characters. One model turn, off the loop."
-        return _learned_reply(await off_loop(_compact, ctx.ai))
+    async def agent_learned_compact(req):
+        "Ask Dhrona for a shorter `AGENTS.md` as a new pending candidate: `{ok, id, before, after}` in characters. `{id}` folds that candidate in. One model turn, off the loop."
+        try: d = await req.json()
+        except Exception: d = {}
+        return _learned_reply(await off_loop(_compact, ctx.ai, str(d.get('id') or '') or None))
     @rt('/agent/learned/accept')
     async def agent_learned_accept(req):
-        "Move one candidate onto the learned folder's HEAD, which the next briefing reads: `{ok, id, commit}`, `commit` None when HEAD held it already."
+        "Move one candidate onto the learned folder's HEAD, which the next briefing reads: `{ok, id, commit, moved, stale}`, `commit` None when HEAD held it already; a size refusal carries `length`."
         from ramabana.learned import accept
         return _learned_reply(await off_loop(_learned_call, accept, (await req.json()).get('id')))
     @rt('/agent/learned/reject')
@@ -361,7 +363,8 @@ def connect(app, ctx):
         groups = _grouped_history(ai, execution.get('sessions', []))
         theirs = len([g for g in groups if g.get('app') != 'leela'])
         if not everything: groups = [g for g in groups if g.get('app') == 'leela']
-        return {'sessions': groups, 'model': ai.model.name, 'current': ai.session_id,
+        from .models import unavailable
+        return {'sessions': groups, 'model': ai.model.name, 'unavailable': unavailable(ai.model), 'current': ai.session_id,
                 'thread': t.id, 'only_leela': not everything, 'hidden': 0 if everything else theirs}
     @rt('/agent/history/session')
     async def agent_history_session(id: str = '', thread: str = ''):
@@ -412,8 +415,8 @@ def connect(app, ctx):
                       if ws._ai is not None else completion_dflt)
         for current in (agent, inline, completion):
             spec = _spec(current)
-            if spec is None:
-                why = f'unavailable ({notes.get(current, "")})'
+            if spec is None or spec.missing:
+                why = f'unavailable ({spec.missing if spec else notes.get(current, "")})'
                 row = first(r for r in rows if r['value'] == current)
                 if row is None: rows.append(row := {'value': current, 'label': current})
                 row.update(provider='unavailable', source=why, unavailable=True)
@@ -609,7 +612,8 @@ def connect(app, ctx):
             else: ws.job_models[job] = spec.name
             ws.save()
             note = model_note(spec) + (f' · {assistant.profile} profile' if job == 'turn' else '')   # what the turn model resolves `auto` to
-            return {'ok': True, 'target': target, 'model': spec.name, 'note': note}
+            from .models import unavailable
+            return {'ok': True, 'target': target, 'model': spec.name, 'note': note, 'unavailable': unavailable(spec)}
         except Exception as e: return fail(e)
     @rt('/agent/memory')
     async def agent_memory():
