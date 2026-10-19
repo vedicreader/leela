@@ -282,7 +282,11 @@ def test_the_sweep_stops_on_close_and_on_workspace_shutdown_and_survives_a_faili
     calls = []
     def boom(**kw): calls.append(1); raise RuntimeError('the disk was not there')
     monkeypatch.setattr(jobs, 'recover', boom)
-    jobs.sweep(.05); t = jobs._sweeper; time.sleep(.3)
+    # A round woken past twice its interval counts as a sleep and is skipped; a loaded runner oversleeps 50ms, so wait on rounds, not the clock.
+    jobs.sweep(.2); t = jobs._sweeper
+    for _ in range(100):
+        if len(calls) > 1: break
+        time.sleep(.05)
     assert len(calls) > 1 and 'the disk was not there' in jobs.note and t.is_alive() and t.name == 'leela-orphan-sweep'
     jobs.close()
     assert stopped(t) and jobs._sweeper is None

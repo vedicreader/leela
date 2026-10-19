@@ -1161,3 +1161,6 @@ The test got its small profile from `DFLT_LOCAL`, which is `qwen-4b` on mlx. mlx
 
 ## `.github/workflows/test.yaml` macOS runner
 On macos-14, 103 tests failed and 2 errored with `symbol not found in flat namespace '_nk_capabilities'` from `usearch.compiled`. usearch loads numkong's extension first and drops the `ImportError` it raises there. On macOS 14 that error is `Symbol not found: ___sme_memset`: every numkong wheel from 7.5 to 7.8.5 links it, and only macOS 15's libSystem has it, though the wheels are tagged `macosx_11_0`. usearch 2.26 needs numkong 7.5 or later, so no pin avoids it. The job runs on macos-15. Leela's vault and search stay broken on macOS 14 until numkong ships a wheel built for it.
+
+## `tests/test_workflows.py` `test_the_sweep_stops_on_close_and_on_workspace_shutdown_and_survives_a_failing_recover`
+The test swept every 50ms and counted recover calls after a fixed 300ms. `Jobs.sweep` skips a round that wakes more than twice its interval late, taking it for a machine waking from sleep. A loaded macOS runner oversleeps by 50ms, so every round was skipped and the count was 0. Fixed by sweeping every 200ms and waiting up to 5 seconds for two calls.
