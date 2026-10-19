@@ -10,7 +10,7 @@ import time
 from unittest.mock import Mock
 import pytest
 from leela.hub import (OPEN_PATH, LoopbackHostGuard, WorkspaceHub, WorkspaceSite,
-                       assign_slugs)
+                       assign_slugs, cfg_mark)
 
 
 def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
@@ -528,6 +528,7 @@ def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
     assert (status, d['ok']) == (200, True), d
     assert d['url'] == 'http://two.localhost:5001/' and d['id'] == 'two'
     assert set(hub.sites) == {'one', 'two'}, 'and the hub now serves both'
+    assert d['config'] == cfg_mark()
 
 
 def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
@@ -537,6 +538,7 @@ def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
         status, d = _hub_get(hub, OPEN_PATH, b'path=' + raw.encode())
         assert (status, d['ok']) == (400, False), raw
         assert 'not a folder' in d['error'], d
+        assert d['config'] == cfg_mark(), 'a second launch tells its own Leela from one on another config dir by this'
 
 
 def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):

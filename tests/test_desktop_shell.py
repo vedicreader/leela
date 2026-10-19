@@ -201,7 +201,8 @@ def _stub_server(handler_body, status=400):
 def test_only_a_leela_that_could_answer_an_attach_is_taken_for_one():
     """The probe asks through the route an attach would use."""
     import json
-    hub, hub_port = _stub_server(json.dumps({'ok': False, 'error': 'not a folder: '}).encode(), 400)
+    from leela.hub import cfg_mark
+    hub, hub_port = _stub_server(json.dumps({'ok': False, 'error': 'not a folder: ', 'config': cfg_mark()}).encode(), 400)
     plain, plain_port = _stub_server(b'404 Not Found', 404)
     other, other_port = _stub_server(json.dumps({'ok': False, 'error': 'nope'}).encode(), 400)
     try:
@@ -213,5 +214,47 @@ def test_only_a_leela_that_could_answer_an_attach_is_taken_for_one():
         assert leela_app.running_leela(ports=[plain_port]) is None
     finally:
         for s in (hub, plain, other): s.shutdown()
+
+
+def test_a_leela_on_another_config_dir_is_not_attached_to(monkeypatch, tmp_path):
+    """A packaging test's app, on a temp `XDG_CONFIG_HOME`, attached to the person's running Leela and never served."""
+    import json, leela
+    from leela.hub import cfg_mark
+    body = lambda **kw: json.dumps({'ok': False, 'error': 'not a folder: ', **kw}).encode()
+    mine, mine_port = _stub_server(body(config=cfg_mark()))
+    theirs, theirs_port = _stub_server(body(config=cfg_mark(tmp_path/'elsewhere')))
+    old, old_port = _stub_server(body())
+    try:
+        assert leela_app.leela_on(mine_port) is True
+        assert leela_app.leela_on(theirs_port) is False
+        assert leela_app.leela_on(old_port) is False, 'a Leela with no mark serves the default dir, which this is not'
+        assert leela_app.running_leela(ports=[theirs_port, old_port, mine_port]) == mine_port
+        monkeypatch.setattr(leela, 'leela_cfg', leela_app.Path.home()/'.config'/'leela')
+        assert leela_app.leela_on(old_port) is True, 'an upgraded app on the default dir still attaches to an older copy'
+        assert leela_app.leela_on(theirs_port) is False
+    finally:
+        for s in (mine, theirs, old): s.shutdown()
+
+
+def test_a_launch_beside_a_leela_on_another_config_dir_serves_its_own(monkeypatch, tmp_path):
+    import json
+    import leela.desktop
+    from leela.hub import cfg_mark
+    theirs, port = _stub_server(json.dumps({'ok': False, 'error': 'not a folder: ', 'config': cfg_mark(tmp_path/'x')}).encode())
+    served, windows = [], []
+    monkeypatch.setattr(leela.desktop, 'shell_ready', lambda: (True, 'stub'))
+    monkeypatch.setattr(leela.desktop, 'last_folder', lambda: [])
+    monkeypatch.setattr(leela.desktop, 'remember', lambda f: list(f))
+    monkeypatch.setattr(leela.desktop, 'warm_cdp', lambda p: None)
+    monkeypatch.setattr(leela.desktop, 'run_shell', lambda urls, **kw: windows.append(urls))
+    monkeypatch.setattr(leela_app, 'folders', lambda a=None: [])
+    monkeypatch.setattr(leela_app, 'free_port', lambda *a, **k: 5099)
+    monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: served.append(args))
+    real = leela_app.running_leela
+    monkeypatch.setattr(leela_app, 'running_leela', lambda *a, **k: real(ports=[port]))
+    try: leela_app.run()
+    finally: theirs.shutdown()
+    assert served and served[0][:3] == ['--app', '--port', '5099'], served
+    assert windows == [['http://127.0.0.1:5099/']]
 
 

@@ -49,6 +49,11 @@ def test_the_window_is_allowed_to_load_the_loopback_server(mac):
     assert 'NSAllowsArbitraryLoads' not in ats, 'the exemption must stay narrow'
 
 
+def test_the_bundle_claims_the_oldest_macos_it_was_tested_on(mac):
+    """kavacha's default claimed macOS 11, and Leela had never run below 14."""
+    assert mac.PLIST['LSMinimumSystemVersion'] == '14.0'
+
+
 @pytest.mark.parametrize('which', ['mac', 'win'])
 def test_a_package_whose_init_is_an_extension_is_grafted_in(which, request):
     """A freezer flattens such a package to the single `.so` and every Python submodule beside it goes missing, silently, until something imports one."""
@@ -98,9 +103,10 @@ APP = ROOT/'dist'/('Leela.app/Contents/MacOS/Leela' if sys.platform == 'darwin' 
 def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
     """What a successful build does not prove: that the bundle can import what it needs."""
     import json, os, time, urllib.request
-
-    env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path/'config'),
-           'LEELA_WINDOW_SIZE': '900x600', 'PYTHONUNBUFFERED': '1'}
+    from fastcore.net import free_port
+    # Its own config dir is what keeps it from attaching to a Leela the person has open; its own data dir and CDP port keep it off theirs.
+    env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path/'config'), 'XDG_DATA_HOME': str(tmp_path/'data'),
+           'LEELA_CDP_PORT': str(free_port()), 'LEELA_WINDOW_SIZE': '900x600', 'PYTHONUNBUFFERED': '1'}
     log = tmp_path/'app.log'
     with log.open('w') as out:
         proc = subprocess.Popen([str(APP), str(tmp_path/'work')], env=env,

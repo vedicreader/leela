@@ -47,7 +47,7 @@ dependencies = [
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
     "koshas>=0.1.11",
-    "litesearch>=0.1.46",   # 0.1.46 add_dir(stop=); 0.1.45 no parse pool for HTML; 0.1.44 dir2files skip settings; 0.1.43 onnxruntime 1.31 model loading, pre('***'); rank_fts, correct, fts_or, fts_phrases, fts_vocab, roman_fold(doubles=); onnx, onnxruntime and flashrank are extras, on both rerank paths
+    "litesearch>=0.1.48",   # 0.1.48 numpy when usearch does not import (macOS 14), frozen apps too; 0.1.46 add_dir(stop=); 0.1.45 no parse pool for HTML; 0.1.44 dir2files skip settings; 0.1.43 onnxruntime 1.31 model loading, pre('***'); rank_fts, correct, fts_or, fts_phrases, fts_vocab, roman_fold(doubles=); onnx, onnxruntime and flashrank are extras, on both rerank paths
     "mdhtml>=0.1.38",   # `md2dom(...).to_html()`, which `blocks/canvas/lit.py` renders through
     # The ripgrep flags and its event stream, in one place rather than a command line built here.
     # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.

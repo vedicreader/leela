@@ -300,3 +300,28 @@ def test_a_clip_parses_on_a_small_pool_and_a_quit_is_not_swallowed(tmp_path, mon
         with pytest.raises(RuntimeError): mem.clip([tmp_path/'a.pdf'])
     finally: quitting.clear()
     assert mem.clip([tmp_path/'a.pdf']) == [dict(doc_id='d')]
+
+
+_BROKEN_USEARCH = '''
+import warnings
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter('always')
+    from leela.blocks.memory.memory import Memory
+    from leela.blocks.research.research import Doc
+    mem = Memory(shelf='proj', path=%r, offline=True)
+    mem.remember(Doc(title='Notes', url='https://example.com/n', kind='page', text='# Memory\\n\\nRecall accuracy matters for every agent.'))
+    hits = mem.search('recall accuracy')
+offs = [str(x.message) for x in w if ' is off ' in str(x.message)]
+assert hits and len(offs) == 1 and '_nk_capabilities' in offs[0], (hits, offs)
+print('ok')
+'''
+
+def test_the_vault_files_and_finds_when_usearch_does_not_import(tmp_path):
+    "On macOS 14 `import usearch` raises, and litesearch 0.1.46 raised it from `database()`, so no vault opened."
+    import os, subprocess, sys
+    (fake := tmp_path/'fake'/'usearch').mkdir(parents=True)
+    (fake/'__init__.py').write_text("raise ImportError(\"dlopen(compiled.so): symbol not found in flat namespace '_nk_capabilities'\")")
+    env = {k: v for k, v in os.environ.items() if k != 'LITESEARCH_USEARCH'}
+    env.update(PYTHONPATH=os.pathsep.join([str(fake.parent), os.getcwd()]), LITESEARCH_CACHE=str(tmp_path/'cache'))
+    r = subprocess.run([sys.executable, '-c', _BROKEN_USEARCH % str(tmp_path/'vault.db')], capture_output=True, text=True, env=env, timeout=300)
+    assert r.stdout.strip().endswith('ok'), r.stdout[-2000:] + r.stderr[-3000:]

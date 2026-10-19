@@ -131,6 +131,8 @@ APP = App(
     plist      = {'NSHumanReadableCopyright': 'Apache-2.0'},
     doc_types  = _doc_types(),
     extras     = ['gateway', 'macapp'],
+    # The oldest macOS the suite runs on (a macos-14 runner). numpy's wheel for a macOS 14 build needs 14. Leela never ran on kavacha's default, 11.0.
+    min_macos  = '14.0',
 )
 
 OPTIONS = APP.py2app_options()

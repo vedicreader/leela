@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'OPEN_PATH', 'workspace_slug',
-           'workspace_slugs', 'assign_slugs', 'slug_map', 'save_slug_map', 'workspace_urls']
+           'workspace_slugs', 'assign_slugs', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 #: Where a running Leela is asked for another workspace. On the hub, which the new site joins, not on any one workspace.
@@ -24,6 +24,11 @@ def workspace_slug(value, used=()):
 
 def _pathmark(root):
     return hashlib.blake2b(str(root).encode(), digest_size=3).hexdigest()
+
+def cfg_mark(cfg=None):
+    "Which config dir a Leela serves from, as `/hub/open` reports it: a second launch attaches only to its own."
+    from . import leela_cfg
+    return _pathmark(Path(cfg or leela_cfg).expanduser().resolve())
 
 def slug_store():
     from . import leela_cfg
@@ -186,12 +191,12 @@ class WorkspaceHub:
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
         if root is None or not root.is_dir():
-            return await _json(send, {'ok': False, 'error': f'not a folder: {raw}'}, 400)
+            return await _json(send, {'ok': False, 'error': f'not a folder: {raw}', 'config': cfg_mark()}, 400)
         # Building one starts a kernel pool, which would stall every open window on the loop.
         try: site = await asyncio.to_thread(self.open_folder, root)
-        except Exception as e: return await _json(send, {'ok': False, 'error': str(e)}, 400)
+        except Exception as e: return await _json(send, {'ok': False, 'error': str(e), 'config': cfg_mark()}, 400)
         await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root,
-                           'url': self.url_for(site.slug)})
+                           'url': self.url_for(site.slug), 'config': cfg_mark()})
     async def _lifespan(self, scope, receive, send):
         "One startup and one shutdown, fanned out to every site and answered once."
         self._loop, self._scope = asyncio.get_running_loop(), dict(scope)

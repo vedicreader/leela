@@ -33,9 +33,9 @@ from leela import PORT
 PORTS = range(PORT, PORT+10)
 
 def leela_on(port, host=HOST, timeout=.6):
-    "Whether `port` holds a Leela that can be attached to, asked through the attach route so a yes means the hub answers, not that something Leela-shaped listens."
+    "Whether `port` holds a Leela on this config dir that can be attached to, asked through the attach route so a yes means the hub answers, not that something Leela-shaped listens."
     import json, urllib.error, urllib.request
-    from leela.hub import OPEN_PATH
+    from leela.hub import OPEN_PATH, cfg_mark
     try:
         with urllib.request.urlopen(f'http://{host}:{port}{OPEN_PATH}', timeout=timeout) as r:
             body = r.read()
@@ -45,7 +45,9 @@ def leela_on(port, host=HOST, timeout=.6):
     except Exception: return False
     try: d = json.loads(body)
     except ValueError: return False
-    return isinstance(d, dict) and d.get('ok') is False and 'not a folder' in str(d.get('error', ''))
+    if not (isinstance(d, dict) and d.get('ok') is False and 'not a folder' in str(d.get('error', ''))): return False
+    # A Leela from before the mark serves the default dir, as nearly every running copy does.
+    return d.get('config', cfg_mark(Path.home()/'.config'/'leela')) == cfg_mark()
 
 def running_leela(ports=PORTS, host=HOST):
     "The port a Leela is already answering on, or None."
