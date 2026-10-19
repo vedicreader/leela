@@ -3383,20 +3383,11 @@ kbd {
 .lee-vault-legend { display: block; padding: 4px 0 1px; color: var(--lee-fg4); font: 600 9px/1 var(--lee-mono);
                     text-transform: uppercase; letter-spacing: .06em; }
 .lee-vault-empty { padding: 4px 2px; color: var(--lee-fg4); font: 10px/1.4 var(--lee-mono); }
-.lee-vault .lee-clip-form { margin: 1px 0; }
 .lee-vault .lee-phead .lee-btn { font: 9px/1 var(--lee-mono); padding: 3px 7px; }
-.lee-vault-find { align-self: flex-start; font: 9px/1 var(--lee-mono); padding: 3px 7px; }
-.lee-vault-found-rows:not(:empty) { gap: 2px; padding: 2px 0; }
-.lee-vault-found { border: 1px solid var(--lee-border); background: var(--lee-bg1); color: var(--lee-fg2);
-  cursor: pointer; padding: 3px 7px; text-align: left; font: 10px/1.3 var(--lee-mono); }
-.lee-vault-found:hover { color: var(--lee-accent); border-color: var(--lee-accent); }
 /* A shelf is the division the vault has; it reads heavier than the folders inside it. */
 .lee-vault-folder.shelf { color: var(--lee-fg); font-weight: 600; }
 .lee-vault-folder.shelf .lee-shelf-count { margin-left: auto; }
-.lee-shelf-row, .lee-watch-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px;
-                                 border-bottom: 1px solid var(--lee-border); }
-.lee-shelf-name { flex: 1; color: var(--lee-fg2); font: 10px/1.3 var(--lee-mono); }
-.lee-shelf-name.mine { color: var(--lee-accent); font-weight: 600; }
+.lee-watch-row { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--lee-border); }
 .lee-shelf-count, .lee-watch-every { color: var(--lee-fg4); font: 9px/1 var(--lee-mono); }
 .lee-watch-action { color: var(--lee-accent); font: 600 9px/1 var(--lee-mono); }
 .lee-watch-target { flex: 1; overflow: hidden; color: var(--lee-fg3); font: 10px/1.3 var(--lee-mono);
@@ -3562,6 +3553,21 @@ kbd {
 .lee-wb-subtab { padding: 3px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--lee-fg3); cursor: pointer;
                  font: 10px/1.4 var(--lee-mono); }
 .lee-wb-subtab.active { background: var(--lee-bg2); color: var(--lee-accent); font-weight: 600; }
+/* Settings: two columns of sections, one when the tab is narrow. */
+.lee-wb-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(320px, calc(50% - 14px)), 1fr));
+                   gap: 18px 28px; align-items: start; padding: 16px 18px; }
+.lee-wb-set { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.lee-wb-set > .lee-clip-form, .lee-wb-set > .lee-vault-watches, .lee-wb-set > .lee-vault-tidyrows { align-self: stretch; }
+.lee-wb-setrow, .lee-vault-found-rows { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lee-wb-setrow label { display: flex; align-items: center; gap: 6px; color: var(--lee-fg3); font: 10px/1 var(--lee-mono); }
+.lee-wb-settings .lee-input { width: auto; }
+.lee-wb-settings .lee-clip-form select.lee-input { flex: none; }
+.lee-wb-settings .lee-btn:not(.go) { border-color: var(--lee-border); background: var(--lee-bg1); }
+.lee-vault-row { display: flex; align-items: center; gap: 8px; }
+.lee-vault-row .lee-btn, .lee-vault-row .lee-input { font-size: 10px; }
+.lee-vault-active, .lee-vault-row .lee-vault-use { width: 22px; text-align: center; color: var(--lee-accent); }
+.lee-vault-name { min-width: 9ch; color: var(--lee-fg2); font: 11px/1.3 var(--lee-mono); }
+.lee-vault-name.mine { color: var(--lee-accent); font-weight: 600; }
 
 /* ---- the vault workbench: the rail's contents, given a whole tab to be legible in ---- */
 .lee-wb { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--lee-bg); }
@@ -3807,5 +3813,4 @@ kbd {
 .lee-vault-sends { max-height: 60vh; overflow: auto; }
 .lee-vault-sends table { width: 100%; border-collapse: collapse; font: 11px/1.5 var(--lee-mono); }
 .lee-vault-sends th, .lee-vault-sends td { padding: 2px 6px; border-bottom: 1px solid var(--lee-border); text-align: left; }
-.lee-vault-privacy-floor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .lee-vault-sheet > [hidden] { display: none; }

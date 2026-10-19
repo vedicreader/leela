@@ -317,9 +317,19 @@ window.leeVaultFindIn = leeVaultFindIn;
 async function leeVaultGuessTypes(btn) {
   const d = await vaultCall('/vault/types/guess', {vault: btn.dataset.vault || ''});
   status(d.ok ? `${d.typed} typed, ${d.proposed} to decide under Review > Types` : d.error, d.ok ? 'ok' : 'err');
-  if (d.ok) htmx.ajax('GET', '/vault/view/library?' + new URLSearchParams({vault: btn.dataset.vault || ''}), {target: '#vaultwbbody', swap: 'innerHTML'});
 }
 window.leeVaultGuessTypes = leeVaultGuessTypes;
+
+/* A vault attached, created, detached, activated or re-permissioned: Settings and the picker re-render. A refusal keeps what was typed. */
+function leeVaultSettled(ev) {
+  const x = ev.detail.xhr;
+  if (!ev.detail.successful) {
+    let e; try { e = JSON.parse(x.responseText).error; } catch { e = x.statusText || 'the vault did not answer'; }
+    return status(e, 'err');
+  }
+  htmx.ajax('GET', '/vault/workbench?view=settings', {target: '#vaultwb', swap: 'outerHTML'});
+}
+window.leeVaultSettled = leeVaultSettled;
 
 /* The vault's floor: the level no document in it goes below. Lowering it is said out loud first. */
 async function leeVaultFloor(sel) {

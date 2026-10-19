@@ -27,11 +27,12 @@ PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose ad
               'looked for, so this says what was found, never that there is nothing')
 
 VIEWS = (('library', 'what is in it, and putting more in'), ('find', 'search it'),
-         ('review', 'proofreading and personal information to decide'), ('sources', 'feeds, apis and topics'))
+         ('review', 'proofreading and personal information to decide'), ('sources', 'feeds, apis and topics'),
+         ('settings', 'which vaults, the privacy floor, cadence and tidy'))
 SOURCES = (('news', 'what the feeds said'), ('specs', 'ask an api'), ('topics', 'what it is about'))
 #: The workbench's old section names, and the tab each now sits under. A saved tab still opens where it was.
 HOME = {'browse': 'library', 'add': 'library', 'library': 'library', 'find': 'find', 'review': 'review', 'sources': 'sources',
-        **{k: 'sources' for k, _ in SOURCES}}
+        'settings': 'settings', **{k: 'sources' for k, _ in SOURCES}}
 
 KINDS = {'pdf': '▤', 'web': '◍', 'html': '◍', 'htm': '◍', 'news': '⚑', 'rss': '⚑',
          'code': '⌘', 'codebase': '⌘', 'api': '⚙', 'api_spec': '⚙', 'json': '⚙', 'yaml': '⚙',
@@ -293,28 +294,23 @@ def _clip_form(target, kind, label, hint, into='#vaultwbjobs'):
         Hidden(name='kind', value=kind), Button(label, cls='lee-btn go', type='submit'),
         cls='lee-clip-form', hx_post='/clip', hx_target=into, hx_swap='afterbegin')
 
+#: A vault change re-renders Settings, and a refusal says why. `hx-on` is not inherited, so each control carries it.
+SETTLED = {'hx-on::after-request': 'leeVaultSettled(event)'}
+
+def _vault_form(url, *c, **kw): return Form(*c, hx_post=url, hx_target='#vaultpanel', hx_swap='none', **SETTLED, **kw)
+
 def _vault_row(r):
-    name, act = r['name'], ('lee-shelf-name mine' if r['active'] else 'lee-shelf-name')
-    hid = Hidden(name='name', value=name)
-    return Div(Button(name, cls=act + ' lee-vault-open', title=f"{r['path']} — browse this vault",
-            hx_get='/vault/browse', hx_vals=json.dumps({'vault': name}),
-            hx_target='#vaultbrowse', hx_swap='outerHTML'),
-        Span('●', cls='lee-shelf-count lee-vault-active', title='the active vault') if r['active'] else
-        Form(hid, Button('○', cls='lee-btn lee-vault-use', type='submit',
-                         title='make this the active vault'),
-             hx_post='/vault/activate', hx_target='#vaultpanel', hx_swap='none'),
-        Form(Hidden(name='name', value=name),
-             Select(*[Option(a, value=a, selected=a == r['access']) for a in ACCESS],
-                    name='access', cls='lee-input', onchange='this.form.requestSubmit()'),
-             hx_post='/vault/access', hx_target='closest .lee-shelf-row', hx_swap='none'),
-        Form(Hidden(name='name', value=name), Hidden(name='agent', value=str(not r['agent']).lower()),
-             Button('agent ' + ('on' if r['agent_writable'] else 'off'),
-                    cls='lee-btn' + (' go' if r['agent_writable'] else ''), type='submit',
-                    title='whether the model may write here'),
-             hx_post='/vault/access', hx_target='#vaultpanel', hx_swap='none'),
-        *([] if r['reserved'] else [Form(hid, Button('detach', cls='lee-btn warn', type='submit'),
-             hx_post='/vault/detach', hx_target='#vaultpanel', hx_swap='none')]),
-        cls='lee-shelf-row')
+    name, hid = r['name'], Hidden(name='name', value=r['name'])
+    return Div(Span('●', cls='lee-vault-active', title='the active vault') if r['active'] else
+        _vault_form('/vault/activate', hid, Button('○', cls='lee-btn lee-vault-use', type='submit', title='make this the active vault')),
+        Span(name, cls='lee-vault-name' + (' mine' if r['active'] else ''), title=r['path']),
+        _vault_form('/vault/access', hid, Select(*[Option(a, value=a, selected=a == r['access']) for a in ACCESS],
+                                                name='access', cls='lee-input', onchange='this.form.requestSubmit()')),
+        _vault_form('/vault/access', hid, Hidden(name='agent', value=str(not r['agent']).lower()),
+                    Button('agent ' + ('on' if r['agent_writable'] else 'off'), cls='lee-btn' + (' go' if r['agent_writable'] else ''),
+                           type='submit', title='whether the model may write here')),
+        *([] if r['reserved'] else [_vault_form('/vault/detach', hid, Button('detach', cls='lee-btn warn', type='submit'))]),
+        cls='lee-vault-row')
 
 def vault_panel(memory, jobs, active_path='', root='', vaults=None):
     "The rail is a way to the Vault tab now: everything it held lives in Library. `#vaultjobs` stays for old targets."
@@ -325,44 +321,43 @@ def vault_panel(memory, jobs, active_path='', root='', vaults=None):
         Div(*[job_card(j) for j in jobs.all(limit=4)], id='vaultjobs', cls='lee-vault-jobs'),
         cls='lee-panel lee-vault', id='vaultrail')
 
-def vault_settings(memory, vaults=None):
-    "Library's settings: which vaults are attached, cadence and tidy. The rail's, moved."
-    return Section(
-        Div(Span('vaults', cls='lee-vault-legend'),
+def vault_settings(memory, vault='', vaults=None, **_):
+    "The Settings tab: which vaults are attached, the privacy floor, cadence and tidy."
+    floor = memory.floor()
+    return Div(
+        Section(Span('vaults', cls='lee-vault-legend'),
             *[_vault_row(r) for r in (vaults or {}).get('vaults', [])],
-            Form(Input(name='path', cls='lee-input', placeholder='path to a vault.db, or a folder for a new one'),
+            _vault_form('/vault/attach', Input(name='path', cls='lee-input', placeholder='path to a vault.db, or a folder for a new one'),
                 Input(name='name', cls='lee-input lee-every', placeholder='name', size='6'),
-                Button('attach', cls='lee-btn', type='submit', formaction='/vault/attach'),
-                Button('create', cls='lee-btn go', type='submit', formaction='/vault/create'),
-                cls='lee-clip-form', hx_post='/vault/attach', hx_target='#vaultpanel', hx_swap='none'),
-            Button('find vaults', cls='lee-btn lee-vault-find', hx_get='/vault/find',
-                   hx_target='#vaultfound', hx_swap='outerHTML'),
-            Div(id='vaultfound', cls='lee-vault-found-rows'),
-            cls='lee-vault-vaults'),
-        Div(Span('privacy', cls='lee-vault-legend'),
-            Label('floor', Select(*[Option(l, value=v, selected=v == memory.floor()) for v, l in LEVELS], name='privacy', cls='lee-input',
-                                  data_vault_floor='1', data_was=memory.floor(), onchange='leeVaultFloor(this)',
-                                  title='the level no document in this vault goes below; only a person lowers it')),
-            Button('what left this machine', cls='lee-btn', onclick='leeVaultSends({})',
-                   title='every page and section sent to a hosted model, which model, and under what policy'),
-            cls='lee-vault-privacy-floor'),
-        Div(Span('cadence', cls='lee-vault-legend'),
+                Button('attach', cls='lee-btn', type='submit'),
+                Button('create', cls='lee-btn go', type='button', hx_post='/vault/create', hx_target='#vaultpanel', hx_swap='none'),
+                cls='lee-clip-form'),
+            Div(Button('find vaults', cls='lee-btn', hx_get='/vault/find', hx_target='#vaultfound', hx_swap='outerHTML')),
+            Div(id='vaultfound', cls='lee-vault-found-rows'), cls='lee-wb-set', data_set='vaults'),
+        Section(Span('privacy', cls='lee-vault-legend'),
+            Div(Label('floor', Select(*[Option(l, value=v, selected=v == floor) for v, l in LEVELS], name='privacy', cls='lee-input',
+                                      data_vault_floor='1', data_was=floor, onchange='leeVaultFloor(this)',
+                                      title='the level no document in this vault goes below; only a person lowers it')),
+                Button('what left this machine', cls='lee-btn', onclick='leeVaultSends({})',
+                       title='every page and section sent to a hosted model, which model, and under what policy'),
+                cls='lee-wb-setrow'), cls='lee-wb-set', data_set='privacy'),
+        Section(Span('cadence', cls='lee-vault-legend'),
             Form(Input(name='target', cls='lee-input', autocomplete='off', placeholder='a url to re-read, or a reminder'),
-                Select(*[Option(a, value=a) for a in ('url', 'remind', 'web', 'crawl')],
-                    name='action', cls='lee-input'),
+                Select(*[Option(a, value=a) for a in ('url', 'remind', 'web', 'crawl')], name='action', cls='lee-input'),
                 Input(name='every', cls='lee-input lee-every', value='1d', size='4'),
                 Button('watch', cls='lee-btn go', type='submit'),
                 cls='lee-clip-form', hx_post='/vault/watch', hx_target='#vaultwatches', hx_swap='outerHTML'),
-            watch_list(memory.watches()),
-            cls='lee-vault-cadence'),
-        Div(Span('tidy', cls='lee-vault-legend'),
-            Button('review', cls='lee-btn', title='what the vault thinks dilutes search',
-                hx_get='/vault/tidy/list', hx_target='#vaulttidy', hx_swap='outerHTML'),
-            Button('re-index changed', cls='lee-btn', title='re-read clipped files that changed on disk',
-                hx_post='/vault/reindex', hx_target='#vaulttidy', hx_swap='outerHTML'),
-            Div(id='vaulttidy', cls='lee-vault-tidyrows'),
-            cls='lee-vault-tidy'),
-        cls='lee-panel lee-vault', id='vaultpanel')
+            watch_list(memory.watches()), cls='lee-wb-set', data_set='cadence'),
+        Section(Span('tidy', cls='lee-vault-legend'),
+            Div(Button('what dilutes search', cls='lee-btn', title='what the vault thinks dilutes search',
+                       hx_get='/vault/tidy/list', hx_target='#vaulttidy', hx_swap='outerHTML'),
+                Button('re-index changed', cls='lee-btn', title='re-read clipped files that changed on disk',
+                       hx_post='/vault/reindex', hx_target='#vaulttidy', hx_swap='outerHTML'),
+                Button('type untyped documents', cls='lee-btn', data_vault=vault, onclick='leeVaultGuessTypes(this)',
+                       title='from their words alone: no model is asked, so nothing leaves this machine'),
+                cls='lee-wb-setrow'),
+            Div(id='vaulttidy', cls='lee-vault-tidyrows'), cls='lee-wb-set', data_set='tidy'),
+        id='vaultpanel', cls='lee-wb-settings')
 
 def _swap(view, vault='', **kw):
     return dict(hx_get='/vault/view/' + view + (('?' + q) if (q := _q(vault=vault, **kw)) else ''),
@@ -382,7 +377,7 @@ def sources_view(body, view='news', vault=''):
                             **_tabs_js('lee-wb-subtab')) for n, why in SOURCES], cls='lee-wb-subtabs', role='tablist'),
                body, cls='lee-wb-sources')
 
-def library_view(memory, vault='', shelf='', q='', jobs=None, root='', vaults=None, **_):
+def library_view(memory, vault='', shelf='', q='', jobs=None, root='', **_):
     "What is in the vault, and every way of putting more in: one box that reads a file or fetches an address."
     add = Form(Input(name='src', cls='lee-input', autocomplete='off', required=True,
                      placeholder='a PDF or page image to read, a folder, or an address to fetch'),
@@ -392,10 +387,7 @@ def library_view(memory, vault='', shelf='', q='', jobs=None, root='', vaults=No
                    Div(_clip_form(root, 'clip_codebase', 'codebase', 'a repository root'),
                        _clip_form('', 'clip_api_spec', 'api spec', 'an OpenAPI url or path (JSON or YAML)'),
                        cls='lee-wb-card'), cls='lee-wb-more')
-    settings = Details(Summary('settings'), vault_settings(memory, vaults.dict() if vaults else None), cls='lee-wb-more')
-    types = Button('type untyped documents', cls='lee-btn', data_vault=vault, onclick='leeVaultGuessTypes(this)',
-                   title='from their words alone: no model is asked, so nothing leaves this machine')
-    return Div(Div(add, more, settings, types, cls='lee-wb-libhead'), browse_view(memory, vault, shelf=shelf, q=q), cls='lee-wb-library')
+    return Div(Div(add, more, cls='lee-wb-libhead'), browse_view(memory, vault, shelf=shelf, q=q), cls='lee-wb-library')
 
 def workbench(memory, vaults, view='library', body=None, **kw):
     "The Vault tab: which vault, which section, and the section itself."

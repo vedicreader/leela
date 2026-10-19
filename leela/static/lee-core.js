@@ -1052,6 +1052,7 @@ const ACTIONS = {
   open_vault: () => leeVaultWorkbench(),
   vault_read: () => leeVaultRead(),
   vault_find: () => leeVaultWorkbench('find'),
+  vault_settings: () => leeVaultWorkbench('settings'),
   vault_next_page: () => leeVaultPage(1),
   vault_prev_page: () => leeVaultPage(-1),
   vault_next_flag: () => leeVaultFlag(1),

@@ -205,7 +205,7 @@ def test_the_floor_raises_every_document_and_only_a_person_lowers_it(bws):
         assert c.post('/vault/access', json=dict(name='workspace', privacy='open')).json()['floor'] == 'open', 'the route is a person'
         assert c.post('/vault/access', json=dict(name='workspace', privacy='secret')).json()['kind'] == 'bad_request'
         assert c.post('/vault/access', json=dict(name='nope')).json()['kind'] == 'not_found'
-        assert 'data-vault-floor' in c.get('/vault/view/library').text
+        assert 'data-vault-floor' in c.get('/vault/view/settings').text
 
 def test_a_read_only_vault_keeps_its_floor(bws, tmp_path):
     from leela.blocks.memory.memory import Memory

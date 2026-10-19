@@ -249,15 +249,56 @@ def test_the_vault_tab_has_one_home_and_the_old_view_names_still_open(rws):
     rws.open_vault_workbench()
     with TestClient(ide_app(rws)) as c:
         home = c.get('/vault/workbench').text
-        for tab in ('library', 'find', 'sources'): assert f'/vault/view/{tab}' in home
-        assert 'data-vault-add' in home and 'id="vaultpanel"' in home, 'adding and the settings live in Library'
-        for old in ('browse', 'add', 'news', 'specs', 'topics'):
+        for tab in ('library', 'find', 'sources', 'settings'): assert f'/vault/view/{tab}' in home
+        assert 'data-vault-add' in home and 'id="vaultpanel"' not in home, 'adding lives in Library, settings in their own tab'
+        for old in ('browse', 'add', 'news', 'specs', 'topics', 'settings'):
             assert c.get(f'/vault/view/{old}').status_code == 200, old
         assert 'lee-wb-subtab' in c.get('/vault/view/news').text, 'news, specs and topics sit under Sources'
         rail = c.get('/vault/panel').text
         assert 'open Vault' in rail and 'id="vaultjobs"' in rail and 'vaultbrowse' not in rail
 
+def test_settings_is_its_own_tab_and_library_no_longer_folds_it(rws):
+    from leela.blocks.vault.ui import HOME
+    assert HOME['settings'] == 'settings' and HOME['browse'] == HOME['add'] == 'library'
+    rws.open_vault_workbench()
+    with TestClient(ide_app(rws)) as c:
+        lib, s = c.get('/vault/view/library').text, c.get('/vault/view/settings').text
+        for sect in ('vaults', 'privacy', 'cadence', 'tidy'): assert f'data-set="{sect}"' in s, sect
+        for el in ('id="vaultpanel"', 'id="vaultfound"', 'id="vaultwatches"', 'id="vaulttidy"', 'data-vault-floor',
+                   'what left this machine', 'type untyped documents', 'what dilutes search'):
+            assert el in s, el
+            assert el not in lib, el
+        assert '>review<' not in s, 'the tidy list no longer shares the Review tab name'
+        assert 'hx-post="/vault/create"' in s and 'formaction' not in s, 'create posts to create, not attach'
+        assert s.count('leeVaultSettled(event)') >= 3, 'role, agent and attach: every vault mutation re-renders Settings or says why not'
+        assert 'data-view="settings"' in c.get('/vault/workbench?view=settings').text
+        assert rws.tabs[rws.active].ref == 'settings', 'a reopened tab lands on Settings'
+
+def test_every_route_a_settings_control_swaps_into_still_hits_the_settings_tab(rws):
+    import re
+    rws.open_vault_workbench('settings')
+    with TestClient(ide_app(rws)) as c:
+        ids = set(re.findall(r'id="([^"]+)"', c.get('/vault/view/settings').text))
+        assert 'id="vaultwatches"' in c.post('/vault/watch', data={'target': 'https://example.com/a', 'every': '1d'}).text
+        w = rws.vaults.memory().watches()[0]
+        assert 'id="vaultwatches"' in c.post('/vault/unwatch', data={'watch_id': w['id']}).text
+        assert 'id="vaulttidy"' in c.get('/vault/tidy/list').text
+        assert 'id="vaulttidy"' in c.post('/vault/reindex').text
+        assert 'id="vaultfound"' in c.get('/vault/find').text
+        assert {'vaultwatches', 'vaulttidy', 'vaultfound', 'vaultpanel'} <= ids
+        wb = c.post('/vault/activate', data={'name': rws.vaults.active.name, 'wb': 'true'}).text
+        assert 'data-view="settings"' in wb and 'id="vaultpanel"' in wb, 'switching vault on Settings stays on Settings'
+        bad = c.post('/vault/attach', data={'path': str(rws.proj/'nope'/'x.db')})
+        assert bad.status_code >= 400 and bad.json()['error'], 'a refused attach carries the error leeVaultSettled shows'
+
 # ── keys ────────────────────────────────────────────────────────────────────
+
+def test_vault_settings_is_a_palette_command_without_a_shortcut():
+    from leela.core.keys import DEFAULTS, _dupes, lookup
+    from leela.blocks.keys.menus import BAR
+    k = lookup('vault_settings')
+    assert k.label and not k.key and _dupes(DEFAULTS) == []
+    assert 'vault_settings' in {getattr(i, 'action', None) for _, rows in BAR for i in rows}
 
 def test_hyper_v_opens_the_vault_and_the_document_view_has_its_own_scope():
     from leela.core.keys import DEFAULTS, _dupes, lookup

@@ -984,6 +984,36 @@ def test_hyper_v_opens_the_vault_tab(tmp_path, monkeypatch):
         return await pg.inner_text('#vaultwb .lee-wb-tab.active')
     assert _run(go, roots=[tmp_path]) == 'library'
 
+def test_vault_settings_is_a_left_aligned_tab_and_library_starts_with_its_documents(tmp_path, monkeypatch):
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    box = "s => { const r = document.querySelector(s).getBoundingClientRect(); return {x: r.x, w: r.width, y: r.y, b: r.bottom}; }"
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1400, 'height': 900})
+        await pg.evaluate("() => leeVaultWorkbench('library')")
+        await pg.wait_for_selector('.lee-wb-library .lee-wb-docs')
+        out = {'docs': await pg.evaluate(box, '.lee-wb-docs'), 'tall': await pg.evaluate('() => innerHeight'),
+               'folded': await pg.locator('.lee-wb-library [data-vault-floor]').count()}
+        await pg.click('#vaultwb .lee-wb-tab:has-text("settings")')
+        await pg.wait_for_selector('.lee-wb-settings [data-vault-floor]')
+        out |= {k: await pg.evaluate(box, s) for k, s in (('body', '#vaultwbbody'), ('floor', '[data-vault-floor]'),
+                ('row', '.lee-vault-row'), ('vaults', '[data-set="vaults"]'), ('privacy', '[data-set="privacy"]'))}
+        out['visible'] = await pg.locator('[data-vault-floor]').is_visible() and await pg.locator('.lee-vault-row').first.is_visible()
+        await pg.fill('[data-set="vaults"] [name=path]', str(tmp_path/'missing'/'x.db'))
+        await pg.click('[data-set="vaults"] button:has-text("attach")')
+        await pg.wait_for_selector('#status.lee-status.err', timeout=5000)
+        out['said'] = await pg.inner_text('#status')
+        out['kept'] = await pg.input_value('[data-set="vaults"] [name=path]')
+        return out
+    got = _run(go, roots=[tmp_path])
+    assert got['folded'] == 0 and got['docs']['y'] < got['tall'] / 2, 'the documents start in the top half of Library'
+    assert got['visible']
+    assert got['row']['w'] < got['body']['w'] / 2, 'a vault row is compact, not a full-width bar'
+    assert got['row']['x'] - got['body']['x'] < 40, 'the vault row sits at the left edge'
+    assert got['floor']['x'] - got['privacy']['x'] < 60, 'the floor select sits at the left of its section'
+    assert got['privacy']['x'] > got['vaults']['x'] + 200 and abs(got['privacy']['y'] - got['vaults']['y']) < 4, 'privacy is the second column'
+    assert got['said'] and got['kept'].endswith('x.db'), 'a refused attach says why and keeps what was typed'
+
 # ── the vault: fixing a page, and the Review queue ──────────────────────────
 
 @pytest.fixture
@@ -1282,9 +1312,8 @@ def test_the_send_log_shows_what_a_hosted_reader_was_sent(book_proj):
     src = str((book_proj/'gita.pdf').resolve())
     async def go(pg):
         j = await pg.evaluate(JOB, ['/vault/book', {'src': src, 'model': 'vh'}])
-        await pg.evaluate("() => leeVaultWorkbench('library')")
-        await pg.wait_for_selector('.lee-wb-library')
-        await pg.evaluate("() => document.querySelectorAll('.lee-wb-more').forEach(d => d.open = true)")
+        await pg.evaluate("() => leeVaultWorkbench('settings')")
+        await pg.wait_for_selector('.lee-wb-settings')
         out = {'floor': await pg.input_value('[data-vault-floor]')}
         await pg.click('text=what left this machine')
         await pg.wait_for_selector('[data-vault-sends] tbody tr')

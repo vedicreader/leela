@@ -290,7 +290,9 @@ def connect(app, ctx):
     def vault_activate(name: str, wb: bool = False):
         try:
             ref = ctx.vaults.activate(name)
-            if wb: return ui.workbench(_mem(ref.name), ctx.vaults, 'browse', vault=ref.name)
+            if wb:
+                view = getattr(first(t for t in ctx.session.tabs if t.kind == 'vaultwb'), 'ref', '') or 'library'
+                return ui.workbench(_mem(ref.name), ctx.vaults, view, body=_view(view, ref.name))
             return dict(ref.dict(), note=ctx.vaults.note)
         except Exception as e: return fail(e)
     @rt('/vault/access')
@@ -817,9 +819,9 @@ def connect(app, ctx):
                     if str(p) in seen or not p.is_file(): continue
                     found.append({'path': str(p), 'name': p.parent.name if p.name == 'vault.db' else p.stem,
                                   'bytes': p.stat().st_size})
-            return Div(*([Button(f"{f['name']} · {round(f['bytes'] / 1024)}kb", cls='lee-vault-found',
+            return Div(*([Button(f"{f['name']} · {round(f['bytes'] / 1024)}kb", cls='lee-btn',
                                  title=f['path'], hx_post='/vault/attach', hx_target='#vaultpanel',
-                                 hx_swap='none', hx_vals=json.dumps({'path': f['path'], 'name': f['name']}))
+                                 hx_swap='none', hx_vals=json.dumps({'path': f['path'], 'name': f['name']}), **ui.SETTLED)
                           for f in found] or [Span('no unattached vaults found', cls='lee-dim')]),
                        id='vaultfound', cls='lee-vault-found-rows')
         except Exception as e: return fail(e)
@@ -863,7 +865,8 @@ def connect(app, ctx):
         if view in ('news', 'sources'): return ui.sources_view(ui.news_view(m, vault, feeds=ctx.feeds, q=q, feed=feed), 'news', vault)
         if view == 'specs': return ui.sources_view(ui.specs_view(m, vault, **_spec_kw(src, match, name)), 'specs', vault)
         if view == 'topics': return ui.sources_view(ui.topics_view(m, vault), 'topics', vault)
-        return ui.library_view(m, vault, shelf=shelf, q=q, jobs=ctx.jobs, root=_root(), vaults=ctx.vaults)
+        if view == 'settings': return ui.vault_settings(m, vault, ctx.vaults.dict())
+        return ui.library_view(m, vault, shelf=shelf, q=q, jobs=ctx.jobs, root=_root())
     def _news(vault='', **kw): return ui.sources_view(ui.news_view(_mem(vault), vault, feeds=ctx.feeds, **kw), 'news', vault)
     def _api_host():
         "A host over this workspace: the specs it loads live on the workspace, so the agent has them."
