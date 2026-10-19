@@ -607,6 +607,9 @@ const THEMES = {
   gruvbox: {blurb: 'warm retro groove', dark: ['#282828', '#32302f', '#83a598'], light: ['#fbf1c7', '#f2e5bc', '#076678']},
   nord: {blurb: 'arctic bluish', dark: ['#2e3440', '#333b48', '#88c0d0'], light: ['#eceff4', '#e5e9f0', '#5e81ac']},
   dracula: {blurb: 'the famous fangs', dark: ['#282a36', '#21222c', '#bd93f9'], light: ['#faf9f2', '#f2f1e8', '#7b48c8']},
+  github: {blurb: 'Primer, as on github.com', dark: ['#0d1117', '#161b22', '#4493f8'], light: ['#ffffff', '#f6f8fa', '#0969da']},
+  ember: {blurb: 'warm and dim, for late nights', dark: ['#221d18', '#29231d', '#d0a76c'], light: ['#efe6d6', '#e8dece', '#87582a']},
+  dusk: {blurb: 'soft slate, low glare', dark: ['#252a33', '#2b313b', '#8eaacb'], light: ['#e6eaf0', '#dde2e9', '#3b628c']},
 };
 const THEME_MODES = ['system', 'dark', 'light'];
 // Density is its own axis, so the tight chrome can be had with another family's colours.

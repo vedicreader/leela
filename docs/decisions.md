@@ -622,3 +622,9 @@ The units table is `ramabana.monitor.secs`, which is pobblebonk's, which is the 
 
 ## `leela/blocks/browser/browser.py` `Browser.running`
 Whether Chrome is *up* is not whether the port is open, and fossick's `fossick.cdp.debug_ready` is the only implementation of that distinction. It was the last private import Leela made from fossick. Asking fossick for a public name was the fix, which 0.1.19 shipped, and copying its four lines here was not.
+
+## `leela/static/lee-ide.css` the github editor override
+GitHub draws strings, numbers, functions and types in colours apart from its success green and done purple, and the editor's highlight style names only the shared tokens. The editor bundle cannot be rebuilt without node, so the github variants redefine `--lee-green`, `--lee-purple`, `--lee-blue` and `--lee-yellow` on unclassed spans inside `.cm-line`, which are CodeMirror's highlight spans. Decoration spans carry a `cm-` or `lee-` class and keep the semantic colours, but one nested inside a token span inherits the override. Code outside `.cm-line`, such as a tooltip, keeps the semantic palette. The github chrome rules sit at the end of the file: they tie on specificity with the tight-density button rules and win by coming last.
+
+## `tools/build_hl_css.py` ember and dusk
+fastpylight has no dim light theme that reaches 4.5:1 on ember's or dusk's paper, so their light variants take `gruvbox_material_light` and `github_light`, and the test holds diff and Markdown code in those two at 3:1. The editor, which draws most code, is held at 4.5:1.

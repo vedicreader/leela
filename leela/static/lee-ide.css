@@ -22,7 +22,7 @@
 }
 /* ---- theme families ------------------------------------------------------------
    `data-theme` names the family, `data-mode` the resolved dark/light. Every variant
-   below sets all 24 colour tokens: a partially defined variant does not fail, it
+   below sets all 25 colour tokens: a partially defined variant does not fail, it
    quietly inherits whatever the previous rule left behind and looks subtly wrong.
    `:root` alone is the pre-paint fallback for the instant before the inline script
    in app.py writes data-mode, and for a browser with JS off. */
@@ -186,6 +186,66 @@
   --lee-output: #1f1f28; --lee-warning: #8a7400; --lee-log: #cb3a2a;
   --lee-active-line: rgba(31,31,40,.035); --lee-bracket: rgba(123,72,200,.22);
   --lee-guide: rgba(108,106,134,.22); --lee-space-mark: rgba(31,31,40,.62);
+}
+:root[data-theme="github"][data-mode="dark"] {
+  --lee-bg: #0d1117; --lee-bg1: #161b22; --lee-bg2: #21262d; --lee-bg3: #30363d;
+  --lee-fg: #e6edf3; --lee-fg2: #c9d1d9; --lee-fg4: #8b949e;
+  --lee-border: #30363d; --lee-accent: #4493f8; --lee-sel: #1e4273; --lee-selection-fg: #f0f6fc;
+  --lee-red: #ff7b72; --lee-green: #3fb950; --lee-yellow: #d29922; --lee-orange: #ffa657;
+  --lee-blue: #58a6ff; --lee-purple: #d2a8ff; --lee-aqua: #79c0ff;
+  --lee-output: #e6edf3; --lee-warning: #d29922; --lee-log: #ff7b72;
+  --lee-active-line: rgba(110,118,129,.1); --lee-bracket: rgba(68,147,248,.3);
+  --lee-guide: rgba(139,148,158,.2); --lee-space-mark: rgba(230,237,243,.72);
+}
+:root[data-theme="github"][data-mode="light"] {
+  --lee-bg: #ffffff; --lee-bg1: #f6f8fa; --lee-bg2: #eff2f5; --lee-bg3: #d0d7de;
+  --lee-fg: #1f2328; --lee-fg2: #424a53; --lee-fg4: #59636e;
+  --lee-border: #d0d7de; --lee-accent: #0969da; --lee-sel: #b6d7ff; --lee-selection-fg: #1f2328;
+  --lee-red: #cf222e; --lee-green: #1a7f37; --lee-yellow: #9a6700; --lee-orange: #953800;
+  --lee-blue: #0969da; --lee-purple: #8250df; --lee-aqua: #0550ae;
+  --lee-output: #1f2328; --lee-warning: #9a6700; --lee-log: #cf222e;
+  --lee-active-line: rgba(234,238,242,.5); --lee-bracket: rgba(9,105,218,.2);
+  --lee-guide: rgba(31,35,40,.14); --lee-space-mark: rgba(31,35,40,.62);
+}
+:root[data-theme="ember"][data-mode="dark"] {
+  --lee-bg: #221d18; --lee-bg1: #29231d; --lee-bg2: #322b24; --lee-bg3: #3d342b;
+  --lee-fg: #c9bba4; --lee-fg2: #b8aa93; --lee-fg4: #958670;
+  --lee-border: #3a3129; --lee-accent: #d0a76c; --lee-sel: #4a3c2d; --lee-selection-fg: #efe3cf;
+  --lee-red: #e08a6e; --lee-green: #a9b86e; --lee-yellow: #dfba68; --lee-orange: #e39d5f;
+  --lee-blue: #8db2c8; --lee-purple: #c99bbd; --lee-aqua: #8ebfa8;
+  --lee-output: #dccfb9; --lee-warning: #d8b872; --lee-log: #d98e76;
+  --lee-active-line: rgba(239,227,207,.035); --lee-bracket: rgba(208,167,108,.26);
+  --lee-guide: rgba(149,134,112,.2); --lee-space-mark: rgba(207,193,170,.7);
+}
+:root[data-theme="ember"][data-mode="light"] {
+  --lee-bg: #efe6d6; --lee-bg1: #e8dece; --lee-bg2: #e0d5c3; --lee-bg3: #d3c6b1;
+  --lee-fg: #4a3f33; --lee-fg2: #5b4f42; --lee-fg4: #6e6152;
+  --lee-border: #d6c9b4; --lee-accent: #87582a; --lee-sel: #dccab0; --lee-selection-fg: #3a3027;
+  --lee-red: #9c4430; --lee-green: #56622a; --lee-yellow: #7a5a16; --lee-orange: #91501f;
+  --lee-blue: #3b5a70; --lee-purple: #784c66; --lee-aqua: #38645a;
+  --lee-output: #3f352b; --lee-warning: #7a5a16; --lee-log: #9c4430;
+  --lee-active-line: rgba(74,63,51,.04); --lee-bracket: rgba(135,88,42,.2);
+  --lee-guide: rgba(110,97,82,.2); --lee-space-mark: rgba(74,63,51,.58);
+}
+:root[data-theme="dusk"][data-mode="dark"] {
+  --lee-bg: #252a33; --lee-bg1: #2b313b; --lee-bg2: #333a45; --lee-bg3: #3e4653;
+  --lee-fg: #c4ccd7; --lee-fg2: #adb6c3; --lee-fg4: #8a93a3;
+  --lee-border: #39414d; --lee-accent: #8eaacb; --lee-sel: #3b4a5f; --lee-selection-fg: #e2e7ee;
+  --lee-red: #d49297; --lee-green: #a3c19f; --lee-yellow: #d6c393; --lee-orange: #d6a684;
+  --lee-blue: #93b3d8; --lee-purple: #b8a5d2; --lee-aqua: #90c2c2;
+  --lee-output: #d4dbe5; --lee-warning: #d6c393; --lee-log: #d49297;
+  --lee-active-line: rgba(226,231,238,.035); --lee-bracket: rgba(142,170,203,.26);
+  --lee-guide: rgba(135,144,160,.2); --lee-space-mark: rgba(196,204,215,.7);
+}
+:root[data-theme="dusk"][data-mode="light"] {
+  --lee-bg: #e6eaf0; --lee-bg1: #dde2e9; --lee-bg2: #d4dae3; --lee-bg3: #c6ced9;
+  --lee-fg: #2f3b4a; --lee-fg2: #3f4c5d; --lee-fg4: #5a6676;
+  --lee-border: #cad1dc; --lee-accent: #3b628c; --lee-sel: #c4d0e0; --lee-selection-fg: #243040;
+  --lee-red: #94404a; --lee-green: #3f6440; --lee-yellow: #6f5a1f; --lee-orange: #8a4f2b;
+  --lee-blue: #2d5a88; --lee-purple: #66508a; --lee-aqua: #2a6767;
+  --lee-output: #283443; --lee-warning: #6f5a1f; --lee-log: #94404a;
+  --lee-active-line: rgba(47,59,74,.04); --lee-bracket: rgba(59,98,140,.2);
+  --lee-guide: rgba(90,102,118,.2); --lee-space-mark: rgba(47,59,74,.58);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-mode]) {
@@ -3819,3 +3879,24 @@ kbd {
 .lee-vault-sends table { width: 100%; border-collapse: collapse; font: 11px/1.5 var(--lee-mono); }
 .lee-vault-sends th, .lee-vault-sends td { padding: 2px 6px; border-bottom: 1px solid var(--lee-border); text-align: left; }
 .lee-vault-sheet > [hidden] { display: none; }
+
+/* ---- github: Primer's chrome beyond the 24 tokens ---- */
+:root[data-theme="github"][data-mode] .lee-tab.active { box-shadow: inset 0 -2px 0 var(--lee-gh-tab); }
+:root[data-theme="github"][data-mode] .lee-righttab.active { border-bottom-color: var(--lee-gh-tab); }
+:root[data-theme="github"][data-mode] .lee-btn.go:not(:disabled),
+:root[data-theme="github"][data-mode] .lee-sc-commit button:not(:disabled) {
+  background: var(--lee-gh-go); border-color: rgba(240,246,252,.1); color: #ffffff;
+}
+:root[data-theme="github"][data-mode] .lee-btn.go:not(:disabled):hover,
+:root[data-theme="github"][data-mode] .lee-sc-commit button:not(:disabled):hover { background: var(--lee-gh-go-hover); color: #ffffff; filter: none; }
+/* GitHub colours strings, numbers, functions and types apart from its success green and done purple,
+   and the editor names only the shared tokens, so its highlight spans get their own. Decoration spans
+   (`cm-changedText`, `cm-searchMatch`, `cm-lee-*`) keep the semantic colours. */
+:root[data-theme="github"][data-mode="dark"] { --lee-gh-tab: #f78166; --lee-gh-go: #238636; --lee-gh-go-hover: #2ea043; }
+:root[data-theme="github"][data-mode="light"] { --lee-gh-tab: #fd8c73; --lee-gh-go: #1f883d; --lee-gh-go-hover: #1c8139; }
+:root[data-theme="github"][data-mode="dark"] .cm-line span:not([class*="cm-"]):not([class*="lee-"]) {
+  --lee-green: #a5d6ff; --lee-purple: #79c0ff; --lee-blue: #d2a8ff; --lee-yellow: #ffa657;
+}
+:root[data-theme="github"][data-mode="light"] .cm-line span:not([class*="cm-"]):not([class*="lee-"]) {
+  --lee-green: #0a3069; --lee-purple: #0550ae; --lee-blue: #8250df; --lee-yellow: #953800;
+}

@@ -335,6 +335,44 @@ def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
             page.evaluate(_NO_SAVED_THEME)
 
 
+_OPEN_SETTINGS = {
+    'palette': lambda page: (page.keyboard.press('ControlOrMeta+Shift+P'), page.wait_for_selector('#cp'),
+                             page.fill('#cp', 'settings'),
+                             page.locator('#cplist .lee-mrow', has_text=__import__('re').compile(r'^settings')).first.click()),
+    'key': lambda page: page.keyboard.press('ControlOrMeta+Comma'),
+    'menu': lambda page: page.evaluate("leeAct('settings')"),
+}
+
+@pytest.mark.parametrize('fam,mode,bg,route', [('github', 'dark', '#0d1117', 'palette'), ('github', 'light', '#ffffff', 'key'),
+                                               ('ember', 'dark', '#221d18', 'menu'), ('dusk', 'light', '#e6eaf0', 'palette')])
+def test_a_new_theme_is_picked_from_every_route_painted_everywhere_and_kept(proj_web_th, fam, mode, bg, route):
+    """The settings modal is the one picker, reached from the palette, its key and the app menu; the choice paints the chrome, the terminal and the first paint after a reload."""
+    ws = Workspace(roots=[proj_web_th])
+    with serve(ws) as url:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            page = _open(pw, url)
+            page.evaluate(_NO_SAVED_THEME)
+            page.evaluate("leeAct('terminal')")
+            page.wait_for_function("lee.terms.size > 0", timeout=10000)
+            _OPEN_SETTINGS[route](page)
+            page.wait_for_selector('.lee-settings-modal')
+            page.click('[data-settings-page="appearance"]')
+            page.click(f'.lee-theme-mode[data-theme-mode="{mode}"]')
+            page.click(f'.lee-theme-choice[data-theme="{fam}"]')
+            painted = "getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()"
+            assert page.evaluate(painted) == bg, 'the choice previews before it is saved'
+            assert page.evaluate("[...lee.terms.values()][0].view.term.options.theme.background") == bg
+            page.click('[data-save]')
+            page.wait_for_function("!document.querySelector('.lee-settings-modal')")
+            assert page.evaluate("() => api('/settings')")['effective']['appearance']['theme'].startswith(f'{fam}:{mode}:')
+            page.evaluate("localStorage.removeItem('lee-theme')")
+            page.reload(wait_until='networkidle')
+            if page.locator('.lee-modal').count(): page.keyboard.press('Escape')
+            assert page.evaluate("[document.documentElement.dataset.theme, document.documentElement.dataset.mode]") == [fam, mode]
+            assert page.evaluate(painted) == bg
+            page.evaluate(_NO_SAVED_THEME)
+
 HANDLER_ATTRS = ('onclick', 'oninput', 'onchange', 'onkeydown', 'onsubmit')
 
 def test_every_name_the_painted_page_reaches_for_resolves_in_the_shared_scope():

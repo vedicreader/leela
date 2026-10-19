@@ -34,12 +34,70 @@ def test_a_keymap_posted_as_every_chord_is_stored_as_the_ones_that_differ(client
     try: assert r['ok'] and json.loads(p.read_text())['keys'] == {'run_cell': 'ctrl+y'}
     finally: keymap.reload(tmp_path/'gone.json')   # `KEYS` is global and the save just rebuilt it
 
-def test_a_theme_saved_to_a_language_scope_is_still_the_theme_for_every_language(tmp_path):
+@pytest.mark.parametrize('theme', ['nord:dark:tight', 'github:light:relaxed', 'ember:dark:tight', 'dusk:system:relaxed'])
+def test_a_theme_saved_to_a_language_scope_is_still_the_theme_for_every_language(tmp_path, theme):
     "The panel saves the theme with no language. A `languages.python` theme would shadow it."
     s = Settings(root=tmp_path, user_path=tmp_path/'user.json')
-    s.save('user', 'appearance', {'theme': 'nord:dark:tight'}, language='')
+    s.save('user', 'appearance', {'theme': theme}, language='')
     assert 'languages' not in s.raw('user')
-    assert s.effective(language='python')['appearance']['theme'] == 'nord:dark:tight'
+    assert s.effective(language='python')['appearance']['theme'] == theme
+    assert Settings(root=tmp_path, user_path=tmp_path/'user.json').effective()['appearance']['theme'] == theme
+
+def _css_themes():
+    "family -> mode -> {token: value}, merged over every rule whose selector is exactly that variant."
+    css, out = (ROOT/'leela'/'static'/'lee-ide.css').read_text(), {}
+    for fam, mode, body in re.findall(r':root\[data-theme="(\w+)"\]\[data-mode="(\w+)"\]\s*\{([^}]*)\}', css):
+        out.setdefault(fam, {}).setdefault(mode, {}).update(re.findall(r'(--lee-[\w-]+):\s*([^;]+);', body))
+    return out
+
+def _picker_themes():
+    "The families `prefs.js` offers, with their [bg, bg1, accent] swatch per mode."
+    js = (ROOT/'leela'/'blocks'/'settings'/'prefs.js').read_text()
+    rows = re.findall(r"^  (\w+): \{blurb: '[^']*', dark: \[([^\]]*)\], light: \[([^\]]*)\]\},$", js, re.M)
+    return {f: {'dark': re.findall(r"#\w+", d), 'light': re.findall(r"#\w+", l)} for f, d, l in rows}
+
+def test_every_theme_family_is_complete_on_every_surface():
+    "A variant missing a token inherits the previous rule's colour; a family missing from the picker, the CSS or the token sheet is half a theme."
+    import sys
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_hl_css
+    css, picker = _css_themes(), _picker_themes()
+    ref = set(css['leela']['dark'])
+    assert {'github', 'ember', 'dusk'} <= set(picker), sorted(picker)
+    assert set(picker) == set(build_hl_css.THEMES), 'lee-hl.css colours a family the picker does not offer, or misses one it does'
+    for fam, modes in picker.items():
+        for mode in ('dark', 'light'):
+            got = css.get(fam, {}).get(mode, {})
+            assert not ref - set(got), f'{fam}:{mode} does not set {sorted(ref - set(got))}'
+            assert modes[mode] == [got['--lee-bg'], got['--lee-bg1'], got['--lee-accent']], f'the {fam}:{mode} swatch drifted from its CSS'
+
+def _contrast(a, b):
+    def lum(h):
+        c = [int(h.lstrip('#')[i:i+2], 16)/255 for i in (0, 2, 4)]
+        r, g, b = [x/12.92 if x <= .03928 else ((x+.055)/1.055)**2.4 for x in c]
+        return .2126*r + .7152*g + .0722*b
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi+.05)/(lo+.05)
+
+#: The editor's keyword, string, number, function, definition, class, operator and comment, and the terminal's blue.
+_CODE = ('red', 'green', 'purple', 'blue', 'orange', 'yellow', 'aqua', 'fg4', 'accent')
+
+@pytest.mark.parametrize('fam', ['github', 'ember', 'dusk'])
+@pytest.mark.parametrize('mode', ['dark', 'light'])
+def test_new_themes_keep_body_text_and_code_tokens_at_wcag_aa(fam, mode):
+    "Body text and every syntax colour the editor draws reach 4.5:1 on the editor and the panels."
+    v = {k.removeprefix('--lee-'): c for k, c in _css_themes()[fam][mode].items()}
+    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    over = re.search(rf':root\[data-theme="{fam}"\]\[data-mode="{mode}"\] \.cm-line span[^{{]*\{{([^}}]*)\}}', css)
+    tokens = {**v, **{k.removeprefix('--lee-'): c for k, c in re.findall(r'(--lee-[\w-]+):\s*([^;]+);', over[1])}} if over else v
+    for bg in ('bg', 'bg1'):
+        for k in ('fg', 'fg2', 'output'): assert _contrast(v[k], v[bg]) >= 4.5, (k, bg, _contrast(v[k], v[bg]))
+        for k in _CODE: assert _contrast(tokens[k], v[bg]) >= 4.5 or (k, bg) == ('fg4', 'bg1'), (k, bg, _contrast(tokens[k], v[bg]))
+    assert _contrast(v['selection-fg'], v['sel']) >= 4.5
+    if fam == 'github': assert over, 'GitHub draws strings, numbers, functions and types in their own colours'
+    else:
+        assert {v['bg'], v['fg']}.isdisjoint({'#000000', '#ffffff'}), 'a night theme has no pure black or white'
+        assert _contrast(v['fg'], v['bg']) <= 10, 'a night theme is gentle, not glaring'
 
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../outside', 'a/../../b'])
 def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
@@ -655,3 +713,15 @@ def test_writing_a_notebook_back_through_the_host_keeps_it_a_notebook(tmp_path):
         host.write(str(nb), nb.read_text())              # real notebook JSON is still written as-is
         assert json.loads(nb.read_text())['cells'][0]['outputs']
     finally: ws.threads.shutdown()
+
+@pytest.mark.parametrize('fam', ['github', 'ember', 'dusk'])
+def test_the_token_sheet_for_a_new_theme_reads_on_its_background(fam):
+    "Diffs and Markdown code take fastpylight's colours, which were drawn for another background. GitHub's are its own; no dim light fastpylight theme reaches AA on ember's or dusk's paper, so those hold AA for large text."
+    import sys, fastpylight
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_hl_css
+    for mode, hl in zip(('dark', 'light'), build_hl_css.THEMES[fam]):
+        bg, c = _css_themes()[fam][mode]['--lee-bg'], fastpylight.theme_colors(hl)
+        floor = 4.5 if fam == 'github' else 3
+        for k in ('keyword', 'string', 'function', 'number', 'type', 'variable'):
+            assert _contrast(c[k]['fg'], bg) >= floor, (mode, hl, k, _contrast(c[k]['fg'], bg))

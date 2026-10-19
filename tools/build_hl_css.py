@@ -15,7 +15,9 @@ OUT = Path(__file__).resolve().parent.parent/'leela'/'static'/'lee-hl.css'
 THEMES = {'leela': ('github_dark', 'github_light'), 'cursor': ('github_dark', 'github_light'),
           'vscode': ('vscode_dark', 'vscode_light'), 'jetbrains': ('onedark', 'onelight'),
           'solarized': ('solarized_osaka_dark', 'solarized_osaka_light'), 'gruvbox': ('gruvbox_dark', 'gruvbox_light'),
-          'nord': ('nord', 'onenord_light'), 'dracula': ('dracula', 'github_light')}
+          'nord': ('nord', 'onenord_light'), 'dracula': ('dracula', 'github_light'),
+          'github': ('github_dark', 'github_light'), 'ember': ('melange_dark', 'gruvbox_material_light'),
+          'dusk': ('github_dark_dimmed', 'github_light')}
 
 def css():
     "The stylesheet. Rules come sorted, so a longer scope follows its prefix and wins where a theme names both."
