@@ -1139,3 +1139,9 @@ A folder import walked with `rglob` and Leela's own `SKIP` list, so it clipped `
 
 ## `tests/test_packaging.py` `test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker`
 The test clipped 48 HTML files and waited for a pool, and none was ever seen. A pool was forked for every batch of eight. litesearch's `_parse_doc` only reads an HTML file's text in the worker, though, so each pool lived a few milliseconds. Converting, chunking and embedding run in the app's own process, and that is where a clip's CPU goes. Fixed by clipping PDFs, which the workers do parse, so the pool stays up for seconds.
+
+## `tests/conftest.py` `_claude_on_path`
+The default turn model is `claude-opus-5-5`, and ramabana's `resolve` raises when `claude` is not on PATH. CI has no `claude`, so 41 tests that run on `tests.fakemodel` failed on GitHub before the scripted backend answered: building a thread, reading `ai.model` and `/agent/history` all resolve the default first. On a Mac with Claude Code the same tests passed. Fixed by an autouse fixture that reports Claude Code as installed to every fast test. A test that launches it still needs the real binary. `test_the_default_turn_model_resolves_without_claude_code_on_path` holds it. A Leela without Claude Code is still broken the same way: `Assistant.__init__` and `/agent/history` raise rather than reporting the missing runtime.
+
+## `.github/workflows/test.yaml` checkout
+`actions/checkout` clones one commit by default, which makes HEAD the first commit. `test_leela_builds_the_literate_page_end_to_end` diffs from the first commit, so its diff was empty and it failed with `assert []`. Fixed with `fetch-depth: 0`. The test now fails on a shallow clone with a message that names the cause.

@@ -95,6 +95,13 @@ def test_the_runtime_list_is_asked_of_ramabana_not_duplicated(tmp_path):
         assert avail is bool(runtime_available(name)), f'{name} must report what rishi says'
     assert got['remote'] is True
 
+def test_the_default_turn_model_resolves_without_claude_code_on_path(tmp_path, monkeypatch):
+    "CI has no `claude`; 41 scripted-backend tests failed there resolving `claude-opus-5-5` before any fake answered."
+    from leela.agent.core import DFLT_TURN
+    monkeypatch.setenv('PATH', str(tmp_path))
+    assert shutil.which('claude') is None
+    assert Workspace(roots=[tmp_path]).ai.model.name == DFLT_TURN
+
 def test_choosing_the_litert_accelerator_is_remembered_and_exported(tmp_path, monkeypatch):
     """ramabana reads $LEELA_LITERT_BACKEND when it builds an engine."""
     monkeypatch.setenv('LEELA_LITERT_BACKEND', 'cpu')

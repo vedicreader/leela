@@ -213,6 +213,8 @@ def test_leela_builds_the_literate_page_end_to_end(tmp_path):
     from leela.blocks.canvas.app import page
     got = subprocess.run(['git', 'rev-list', '--max-parents=0', 'HEAD'], cwd=PKG.parent.parent, capture_output=True, text=True)
     if got.returncode: pytest.skip('not a git checkout')
+    shallow = subprocess.run(['git', 'rev-parse', '--is-shallow-repository'], cwd=PKG.parent.parent, capture_output=True, text=True)
+    assert shallow.stdout.strip() != 'true', 'a shallow clone has no first commit to diff from; check out with `fetch-depth: 0`'
     # The first commit, not origin/main: on main itself the document's diff is empty and leaves no brick.
     base = got.stdout.split()[0]
     doc = Canvas.load(PKG.parent.parent/'docs/change.canvas.md')

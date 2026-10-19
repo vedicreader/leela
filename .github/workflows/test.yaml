@@ -14,7 +14,10 @@ jobs:
     # A hung kernel or socket fails by the clock rather than holding the runner for six hours.
     timeout-minutes: 45
     steps:
+      # Full history: the literate-page test diffs from the first commit, which a shallow clone makes HEAD.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.12
       # Into uv's own environment, not `--system`: the runner's `/usr` is externally managed and
