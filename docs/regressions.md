@@ -1158,3 +1158,6 @@ The default turn model is `claude-opus-5-5`, and ramabana's `resolve` raises whe
 
 ## `tests/test_agent.py` `test_a_refused_call_in_a_small_session_dispatches_user_steering`
 The test got its small profile from `DFLT_LOCAL`, which is `qwen-4b` on mlx. mlx runs only on macOS, so on Linux the workspace failed to build before the test reached the refusal. Fixed by taking the small profile from the scripted model's 8k window, as `test_opening_a_canvas_adds_its_tools_to_a_small_session_and_re_briefs` does.
+
+## `.github/workflows/test.yaml` macOS runner
+On macos-14, 103 tests failed and 2 errored with `symbol not found in flat namespace '_nk_capabilities'` from `usearch.compiled`. usearch loads numkong's extension first and drops the `ImportError` it raises there. On macOS 14 that error is `Symbol not found: ___sme_memset`: every numkong wheel from 7.5 to 7.8.5 links it, and only macOS 15's libSystem has it, though the wheels are tagged `macosx_11_0`. usearch 2.26 needs numkong 7.5 or later, so no pin avoids it. The job runs on macos-15. Leela's vault and search stay broken on macOS 14 until numkong ships a wheel built for it.
