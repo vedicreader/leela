@@ -1,7 +1,7 @@
 "Workflow jobs and the clips and judgements they store."
 
 import pytest
-import time
+import os, time
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.vault.jobs import JobError, Jobs
@@ -95,7 +95,7 @@ def test_a_job_row_survives_a_restart_a_failure_and_an_L(tmp_path):
     jobs.register('oneshot', lambda job, report: dict(ok=True))
     jobs.register('flaky', flaky)
     a, b = jobs.new('resumable', 'x', _resume={'done': ['one']}), jobs.new('oneshot', 'y')
-    for j in (a, b): jobs.update(j.id, status='running')
+    for j in (a, b): jobs.update(j.id, status='running', owner=None)   # a quit left them, and their process with them
     fresh = Jobs(tmp_path/'jobs.db')
     fresh._handlers = dict(jobs._handlers)
     got = fresh.recover(delay=0)
@@ -112,11 +112,11 @@ def test_a_job_row_survives_a_restart_a_failure_and_an_L(tmp_path):
 
 
 def _interrupted(path, kind='clip', **params):
-    "A resumable row a quit left running, in a jobs file of its own."
+    "A resumable row a quit left running, in a jobs file of its own; the process that owned it is gone."
     jobs = Jobs(path)
     jobs.register(kind, lambda job, report: None)
     job = jobs.new(kind, 'x', _resume={'done': ['one']}, **params)
-    jobs.update(job.id, status='running')
+    jobs.update(job.id, status='running', owner=None)
     return job
 
 def test_a_resumed_job_waits_out_the_launch_and_runs_once_however_many_workspaces_recover_it(tmp_path):
@@ -142,6 +142,79 @@ def test_a_running_job_is_left_alone_by_a_later_workspace(tmp_path):
     assert later.recover(delay=0) == dict(resumed=[], failed=[], cancelled=[])
     assert later.get(job.id).status == 'running'
     gate.set(); assert _finish(first, job.id).status == 'complete'
+
+def _dead_pid():
+    import subprocess, sys
+    p = subprocess.Popen([sys.executable, '-c', 'pass']); p.wait()
+    return p.pid
+
+def test_another_processs_live_job_survives_recover_and_a_dead_ones_is_recovered(tmp_path):
+    "Every folderless workspace shares `jobs/no-folder.db`; a second Leela's `recover` failed or cancelled what the first was running."
+    import socket, threading
+    from leela.blocks.vault.jobs import owner_alive
+    db, gate, host = tmp_path/'jobs.db', threading.Event(), socket.gethostname()
+    first = Jobs(db, owner=f'{host}:{os.getpid()}:first')
+    second = Jobs(db, owner=f'{host}:{os.getpid()}:second')
+    for j in (first, second): j.register('book', lambda job, report: gate.wait(5) and {})
+    live = first.start('book', 'x')
+    queued = first.new('book', 'y')            # not yet launched: owned from `new`, so not an orphan either
+    dead = first.new('book', 'z', _resume={'done': []})
+    first.update(dead.id, status='running', owner=f'{host}:{_dead_pid()}:gone')
+    got = second.recover(delay=0)
+    assert got['resumed'] == [dead.id] and not got['failed'] and not got['cancelled']
+    assert first.get(live.id).status == 'running' and first.get(live.id).owner == first.owner
+    assert first.get(queued.id).status == 'queued'
+    assert first.get(dead.id).owner == second.owner
+    gate.set()
+    assert _finish(first, live.id).status == 'complete' and _finish(second, dead.id).status == 'complete'
+    assert not owner_alive(None, time.time()) and owner_alive(f'{host}:{os.getpid()}:x', time.time())
+    assert owner_alive('elsewhere:1:x', time.time()) and not owner_alive('elsewhere:1:x', time.time() - 999), 'another host: the beat alone'
+
+def test_a_stale_heartbeat_is_recovered_and_the_old_run_can_no_longer_write(tmp_path):
+    "A live pid with a stale beat is taken over; the original run is told to stop and its writes land nowhere."
+    import threading
+    db, started, gate = tmp_path/'jobs.db', threading.Event(), threading.Event()
+    first, second = Jobs(db, owner='h:1:first', stale=3600), Jobs(db, owner='h:1:second', stale=3600)
+    seen = {}
+    def slow(job, report):
+        started.set(); gate.wait(5)
+        seen['stopping'] = first.stopping(job.id)
+        report(current='the old run talking')
+        return {}
+    first.register('clip', slow); second.register('clip', lambda job, report: gate.wait(5) and {})
+    jid = first.start('clip', 'x', _resume={'done': []}).id
+    assert started.wait(5)
+    assert second.recover(delay=0)['resumed'] == [], 'a fresh beat is a live owner'
+    first.update(jid, beat_at=time.time() - 7200)
+    assert second.recover(delay=0)['resumed'] == [jid]
+    gate.set()
+    j = _finish(second, jid)
+    time.sleep(.2)
+    assert seen['stopping'] and j.status == 'complete' and j.owner == second.owner and second.get(jid).current != 'the old run talking'
+
+def test_the_heartbeat_moves_while_a_job_runs_and_stops_with_it(tmp_path):
+    import threading
+    gate = threading.Event()
+    jobs = Jobs(tmp_path/'jobs.db', stale=0.2); jobs.register('book', lambda job, report: gate.wait(5) and {})
+    jid = jobs.start('book', 'x').id
+    b0 = jobs.get(jid).beat_at; time.sleep(.3)
+    assert jobs.get(jid).beat_at > b0 and jobs.alive(jobs.get(jid))
+    gate.set(); _finish(jobs, jid); time.sleep(.15)
+    assert not [t for t in threading.enumerate() if t.name == f'leela-job-beat-{jid}']
+
+def test_the_stale_window_comes_from_the_environment(tmp_path, monkeypatch):
+    from leela.blocks.vault.jobs import STALE
+    monkeypatch.setenv('LEELA_JOB_STALE', '30'); assert Jobs(tmp_path/'a.db').stale == 30
+    monkeypatch.setenv('LEELA_JOB_STALE', 'soon'); assert Jobs(tmp_path/'b.db').stale == STALE
+    monkeypatch.delenv('LEELA_JOB_STALE'); assert Jobs(tmp_path/'c.db', stale=5).stale == 5
+
+def test_a_retry_claims_a_running_row_whose_owner_died(tmp_path):
+    jobs = Jobs(tmp_path/'jobs.db'); jobs.register('book', lambda job, report: {})
+    jid = jobs.new('book', 'x').id
+    jobs.update(jid, status='running', owner=f'{__import__("socket").gethostname()}:{_dead_pid()}:gone')
+    assert _finish(jobs, jobs.launch(jid).id).status == 'complete'
+    live = jobs.new('book', 'y').id; jobs.update(live, status='running')
+    with pytest.raises(JobError): jobs.launch(live)
 
 def test_a_job_cancelled_before_it_resumes_never_starts(tmp_path):
     job, ran = _interrupted(tmp_path/'jobs.db', _cancel=True), []
@@ -208,9 +281,12 @@ def test_a_jobs_file_from_before_the_cancel_column_migrates_in_place(tmp_path):
         c.execute("insert into jobs values('clip-old','clip','x',?,'running',.5,'','','',1,1,null)", (json.dumps({'_resume': {'done': ['a']}}),))
     jobs, again = Jobs(db), Jobs(db)
     assert jobs.get('clip-old').cancel_at is None and jobs.get('clip-old').resumable
+    assert jobs.get('clip-old').owner is None, 'a row from before owners has none'
     with sqlite3.connect(db) as c: c.execute('alter table jobs add column from_a_later_build text')
     assert jobs.get('clip-old').id == 'clip-old', 'a column this build does not know is ignored'
     assert again.cancel('clip-old').cancel_at and jobs.stopping('clip-old')
+    nxt = Jobs(db); nxt.register('clip', lambda job, report: {})
+    assert nxt.recover(delay=0)['cancelled'] == ['clip-old'], 'and is an orphan to the next recover'
 
 def test_a_job_whose_pool_the_quit_reaps_stays_resumable(tmp_path):
     "Killing a clip's workers breaks its pool; recorded as an error, the next launch would not resume it."
