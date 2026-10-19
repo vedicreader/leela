@@ -6,7 +6,7 @@ from fastcore.all import L, Path, ifnone, store_attr
 
 from ... import errstr
 
-__all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL', 'every_seconds', 'cadence']
+__all__ = ['Job', 'Jobs', 'JobError', 'ACTIVE', 'TERMINAL', 'BULK', 'every_seconds', 'cadence', 'background', 'quitting']
 
 ACTIVE = ('queued', 'running')
 TERMINAL = ('complete', 'error', 'cancelled')
@@ -30,6 +30,38 @@ def cadence(seconds):
 SCRIPT_TIMEOUT = 900
 
 REINDEX_SECONDS = 300
+
+#: Seconds a resumed job waits after launch, so the first paint does not compete with it.
+RESUME_DELAY = 30
+
+#: Kinds that grind through many files or pages; they run at background priority.
+BULK = frozenset({'clip', 'clip_tree', 'acquire', 'connect', 'feeds', 'poll', 'tidy'})
+
+_bg_fork = False
+#: `(jobs file, job id)` running in this process, which a second workspace's `recover` must leave alone.
+_live = set()
+
+def background():
+    "Put this thread at macOS background priority: its CPU and disk I/O yield to the window. False elsewhere."
+    if not hasattr(os, 'PRIO_DARWIN_BG'): return False
+    os.setpriority(os.PRIO_DARWIN_THREAD, 0, os.PRIO_DARWIN_BG)
+    return True
+
+def _note_bg():
+    global _bg_fork
+    _bg_fork = bool(os.getpriority(os.PRIO_DARWIN_THREAD, 0))
+
+def _child_bg():
+    # A thread's background priority is not inherited by fork, so a pool forked from a job thread would run at full speed.
+    if _bg_fork: os.setpriority(os.PRIO_DARWIN_PROCESS, 0, os.PRIO_DARWIN_BG)
+
+if hasattr(os, 'PRIO_DARWIN_BG'): os.register_at_fork(before=_note_bg, after_in_child=_child_bg)
+
+def quitting():
+    "Whether the desktop shell is reaping this process, when a job's pool breaks under it."
+    try: from kavacha.window import quitting
+    except ImportError: return False
+    return quitting.is_set()
 
 class JobError(RuntimeError):
     pass
@@ -107,25 +139,33 @@ class Jobs:
         return job
     def launch(self, jid):
         job = self.get(jid)
-        if job.status == 'running': raise JobError(f'job {jid} is already running')
         fn = self._handlers.get(job.kind)
         if fn is None: raise JobError(f'unknown job kind {job.kind!r}')
+        # One claim per row: several workspaces share a jobs file, and each resumes what it finds.
+        with self._db() as c:
+            n = c.execute("update jobs set status='running', started_at=?, progress=0.05, error='' where id=? and status!='running'",
+                          (time.time(), str(jid))).rowcount
+        if not n: raise JobError(f'job {jid} is already running')
         self._stop.discard(jid)
-        self.update(jid, status='running', started_at=time.time(), progress=0.05, error='')
+        _live.add((str(self.path), jid))
         threading.Thread(target=self._run, args=(jid, fn), daemon=True, name=f'leela-job-{jid}').start()
         return self.get(jid)
     def start(self, kind, target='', **params):
         return self.launch(self.new(kind, target, **params).id)
     def _run(self, jid, fn):
         try:
-            out = fn(self.get(jid), partial(self.update, jid))
+            job = self.get(jid)
+            if job.kind in BULK: background()
+            out = fn(job, partial(self.update, jid))
             # the result says whether pages went unread: a cancel that lands after the last page is a complete run
             done = 'cancelled' if isinstance(out, dict) and out.get('cancelled') else 'complete'
             self.update(jid, status=done, progress=1.0, result=out, finished_at=time.time())
         except Exception as e:
+            # A pool reaped by the quit is not a failure: the row stays running and resumes next launch.
+            if quitting(): return
             kind = {'result': dict(kind=e.kind, error=errstr(e))} if getattr(e, 'kind', None) else {}
             self.update(jid, status='error', error=errstr(e)[:900], finished_at=time.time(), **kind)
-        finally: self._stop.discard(jid)
+        finally: self._stop.discard(jid); _live.discard((str(self.path), jid))
     def cancel(self, jid):
         "Ask a running job to stop after the pages in flight; its handler's `progress` sees the flag."
         job = self.get(jid)
@@ -135,20 +175,32 @@ class Jobs:
         self.update(jid, current='cancelling after the pages in flight')
         return self.get(jid)
     def stopping(self, jid): return jid in self._stop
-    def recover(self):
+    def recover(self, delay=None):
+        "Resume what a restart interrupted, `delay` seconds from now; fail what cannot resume."
         out = dict(resumed=[], failed=[])
+        delay = float(ifnone(delay, os.getenv('LEELA_RESUME_DELAY') or RESUME_DELAY))
         for job in self.all(limit=200):
-            if not job.active: continue
+            if not job.active or (str(self.path), job.id) in _live: continue
             if job.resumable and job.kind in self._handlers:
                 self.update(job.id, status='queued', current='resuming after a restart')
                 out['resumed'].append(job.id)
-                self.launch(job.id)
+                if delay <= 0: self._resume(job.id)
+                else:
+                    t = threading.Timer(delay, self._resume, (job.id,))
+                    t.daemon = True; t.start()
             else:
                 self.update(job.id, status='error', finished_at=time.time(),
                     error='interrupted by an application restart')
                 out['failed'].append(job.id)
         self.note = f"recovered {len(out['resumed'])}, failed {len(out['failed'])}"
         return out
+    def _resume(self, jid):
+        "Launch a recovered job unless it was cancelled meanwhile or another workspace already took it."
+        if jid in self._stop:
+            self._stop.discard(jid)
+            return self.update(jid, status='cancelled', finished_at=time.time(), current='cancelled before it resumed')
+        try: self.launch(jid)
+        except JobError: pass
     def tick(self, seconds=None):
         secs = int(ifnone(seconds, os.getenv('LEELA_POLL_SECONDS') or 0))
         if secs <= 0 or self._ticking: return None

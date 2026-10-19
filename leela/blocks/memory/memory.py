@@ -13,7 +13,7 @@ except ImportError:
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind', 'source_keys',
            'GLOBAL', 'ACQUIRE', 'PII_GATES', 'PII_LABELS', 'pii_gate', 'PrivacyBlocked', 'withheld_why',
-           'VaultRefused', 'read_chat', 'page_list', 'withhold_local', 'query_refusal']
+           'VaultRefused', 'read_chat', 'page_list', 'withhold_local', 'query_refusal', 'index_workers']
 
 GLOBAL = 'leela'
 
@@ -181,6 +181,11 @@ def memory_shelf(root=None):
     if root is None: return 'main'
     name = safe_shelf(Path(root).resolve().name)
     return 'main' if name == GLOBAL else name
+
+def index_workers():
+    "Parse workers for one clip: `$LEELA_INDEX_WORKERS`, else at most two, so a resumed clip cannot fork a pool per core."
+    v = os.getenv('LEELA_INDEX_WORKERS', '').strip()
+    return int(v) if v.isdigit() else min(2, (os.cpu_count() or 1)//4)
 
 def _offline(): return os.getenv('LEELA_MEMORY_OFFLINE', '').lower() in ('1', 'true', 'yes')
 
@@ -602,8 +607,11 @@ class Memory:
         paths = [str(p) for p in ([paths] if isinstance(paths, (str, Path)) else paths)]
         if not paths: return []
         v = self._shelf(shelf)
-        try: out = v.add_files(paths, meta=dict(meta or {}), force=force)
+        try: out = v.add_files(paths, meta=dict(meta or {}), force=force, n_workers=index_workers())
         except Exception as e:
+            from ..vault.jobs import quitting
+            # Swallowed, the batch would be recorded as clipped and never resumed.
+            if quitting(): raise
             self.note = f'clip failed ({errstr(e)})'
             return []
         self.note = f'clipped {len(paths)} file(s) into {v.name}'
@@ -612,6 +620,7 @@ class Memory:
         "Bring one source in, through whichever vault reader can actually read it."
         if action not in ACQUIRE: raise ValueError(f'unknown acquisition {action!r}')
         v = self._shelf(shelf)
+        if action == 'github': params.setdefault('n_workers', index_workers())
         out = getattr(v, action)(target, **params)
         self.note = f'{action}: {target}'
         return dict(out) if isinstance(out, dict) else {'documents': [dict(r) for r in L(out)]}

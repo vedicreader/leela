@@ -276,3 +276,27 @@ def test_every_shelf_shares_one_encoder(tmp_path):
     assert len({id(v.enc.model) for v in m._stores.values()}) == 1
 
 
+
+def test_a_clip_parses_on_a_small_pool_and_a_quit_is_not_swallowed(tmp_path, monkeypatch):
+    "litesearch picks a pool per core for any 8-file batch with four PDFs; a launch-time resume forked 14 workers per batch."
+    from leela.blocks.memory.memory import index_workers
+    from kavacha.window import quitting
+    got, mem = [], _mem(tmp_path)
+    class Shelf:
+        name = 'proj'
+        def add_files(self, paths, **kw):
+            got.append(kw['n_workers'])
+            if quitting.is_set(): raise RuntimeError('pool broken')
+            return [dict(doc_id='d')]
+    monkeypatch.setattr(mem, '_shelf', lambda shelf=None: Shelf())
+    monkeypatch.delenv('LEELA_INDEX_WORKERS', raising=False)
+    mem.clip([tmp_path/'a.pdf'])
+    assert got[-1] == index_workers() <= 2
+    monkeypatch.setenv('LEELA_INDEX_WORKERS', '0'); mem.clip([tmp_path/'a.pdf'])
+    assert got[-1] == 0
+    monkeypatch.setenv('LEELA_INDEX_WORKERS', 'lots'); assert index_workers() <= 2
+    quitting.set()
+    try:
+        with pytest.raises(RuntimeError): mem.clip([tmp_path/'a.pdf'])
+    finally: quitting.clear()
+    assert mem.clip([tmp_path/'a.pdf']) == [dict(doc_id='d')]

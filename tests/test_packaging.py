@@ -443,3 +443,40 @@ def test_running_the_signed_app_leaves_it_sealed_and_leaves_no_process_behind(tm
     assert not _unsealed(app)
     assert (r := verify(app)).returncode == 0, r.stderr[-1500:]
     assert (tmp_path/'data'/'leela'/'.sesskey').exists(), 'the session key went to the data dir'
+
+@pytest.mark.slow
+@pytest.mark.skipif(sys.platform != 'darwin' or not APP.exists(), reason='no built Leela.app in dist/')
+def test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker(tmp_path):
+    """Forked workers inherited the no-op SIGTERM handler, so the quit waited two seconds on each of 14
+    and a Force Quit left the rest idle for good."""
+    import json, os, time, urllib.parse, urllib.request
+    docs = tmp_path/'docs'; docs.mkdir()
+    page = '<html><body>' + ''.join(f'<h2>Section {i}</h2><p>{"words about recall " * 400}</p>' for i in range(200)) + '</body></html>'
+    for i in range(48): (docs/f'p{i}.html').write_text(page)
+    env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path/'config'), 'XDG_DATA_HOME': str(tmp_path/'data'),
+           'VISHALAKSHI_VAULT': str(tmp_path/'vault'/'vault.db'), 'LEELA_INDEX_WORKERS': '6',
+           'LEELA_WINDOW_SIZE': '900x600', 'PYTHONUNBUFFERED': '1'}
+    log = tmp_path/'app.log'
+    with log.open('w') as out:
+        proc = subprocess.Popen([str(APP), str(docs)], env=env, stdout=out, stderr=subprocess.STDOUT)
+    serving, deadline = tmp_path/'config'/'leela'/'serving.json', time.time() + 120
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None: pytest.fail(f'the app exited with {proc.returncode}:\n{log.read_text()[-3000:]}')
+            try: port = json.loads(serving.read_text())['port']; break
+            except Exception: time.sleep(.5)
+        else: pytest.fail(f'the app never began serving:\n{log.read_text()[-3000:]}')
+        q = urllib.parse.urlencode(dict(target=str(docs), kind='clip'))
+        urllib.request.urlopen(f'http://127.0.0.1:{port}/clip?{q}', timeout=60).read()
+        end = time.time() + 120
+        while len(_bundle_pids(APP.parents[2])) < 4 and time.time() < end: time.sleep(.2)
+        assert len(_bundle_pids(APP.parents[2])) >= 4, f'no pool was forked:\n{log.read_text()[-3000:]}'
+    finally:
+        t0 = time.time(); proc.terminate()   # through Cocoa, as Cmd+Q and Dock Quit are
+        try: proc.wait(timeout=30)
+        except subprocess.TimeoutExpired: proc.kill(); pytest.fail(f'SIGTERM did not quit the app:\n{log.read_text()[-3000:]}')
+    assert time.time() - t0 < 8, f'the quit took {time.time() - t0:.1f}s; six workers at two seconds each is the old fault'
+    for _ in range(20):
+        if not (left := _bundle_pids(APP.parents[2])): break
+        time.sleep(.5)
+    assert not left, 'processes outlived the app:\n' + '\n'.join(left)
