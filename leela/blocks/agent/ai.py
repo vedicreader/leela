@@ -1049,6 +1049,8 @@ def _n_approvals(nb, i):
         n += 1
     return n
 
+FRESH_HINT = 'Start a new conversation with + at the top of the agent panel; this one stays in the agent history.'   #: what a turn too large for any window says in Leela
+
 class Assistant(Agent):
     "The IDE's agent, built over a `Workspace`."
     LITERT_BACKENDS = ('cpu', 'gpu')
@@ -1094,6 +1096,7 @@ class Assistant(Agent):
         for k in SUBAGENT_SETTINGS:
             if (v := getattr(ws, k, None)) is not None: kwargs.setdefault(k, v)
         kwargs.setdefault('verify', getattr(ws, 'verify', ''))
+        kwargs.setdefault('fresh_hint', FRESH_HINT)
         kwargs.setdefault('optin', tuple(getattr(ws, 'agent_optin', ()) or ()))
         kwargs.setdefault('profile', getattr(ws, 'agent_profile', 'auto') or 'auto')   # `auto`: small for a local or ≤32k model
         if approve is not None and kwargs.get('approvals') is None:

@@ -988,14 +988,32 @@ def test_a_pasted_picture_is_image_in_the_log_and_the_timeline_not_its_bytes(tmp
     for p in (ws.ai.history_path, ws._timeline_path): assert 'PNG' not in Path(p).read_text() and "b'" not in Path(p).read_text(), p
 
 def test_a_turn_past_the_window_says_so_in_plain_words():
-    "ramabana 0.2.44 raises `ContextFull` once compaction and trimming cannot fit a turn; the pane shows its message, not a ValueError."
+    "ramabana 0.2.45 leaves `ContextFull` for a briefing that alone overflows the window; the pane shows its message with Leela's advice, never the terminal's."
+    from leela.blocks.agent.ai import FRESH_HINT
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[])
-    install(ws, [Step(text='never')], token_delay=0, spec=models.ModelSpec('scripted', 'scripted', 'scripted/model', ctx=2000))
-    with TestClient(ide_app(ws)) as c: acc, body = _turn(c, prompt='word '*20000)
+    be = install(ws, [Step(text='never')], token_delay=0, spec=models.ModelSpec('scripted', 'scripted', 'scripted/model', ctx=2000))
+    be.sp, be.token_count = 'brief ' * 4000, 0   # a briefing past the window, counted as a hosted chat counts one before its first step
+    assert ws.ai.fresh_hint == FRESH_HINT
+    with TestClient(ide_app(ws)) as c: acc, body = _turn(c, prompt='hi')
     assert 'does not fit scripted' in body and 'ValueError' not in body and 'ContextFull:' not in body
+    assert FRESH_HINT in body and 'ramabana --resume' not in body and 'Quit' not in body
     row = [json.loads(l) for l in Path(ws.ai.history_path).read_text().splitlines() if acc['thread'] in l][-1]
     assert row['error'].startswith('this conversation does not fit scripted')
+
+def test_a_paste_past_the_window_goes_out_as_an_excerpt_kept_whole():
+    "ramabana 0.2.45 cuts a message too large for the window to its head and end, and keeps the whole in the session's run folder."
+    import re
+    from tests.fakemodel import Step, install
+    ws = Workspace(roots=[])
+    be = install(ws, [Step(text='excerpted')], token_delay=0, spec=models.ModelSpec('scripted', 'scripted', 'scripted/model', ctx=64_000))
+    be.token_count = 0
+    paste = 'START ' + 'word ' * 200_000 + 'END'
+    with TestClient(ide_app(ws)) as c: acc, body = _turn(c, prompt=paste)
+    assert 'excerpted' in body and 'does not fit' not in body, body[-1500:]
+    sent = str(be.sent[0])
+    path = Path(re.search(r'full text at (\S+?\.txt)', sent).group(1))
+    assert paste in path.read_text() and 'characters omitted' in sent
 
 def test_a_context_full_that_escapes_the_stream_is_its_message_alone(monkeypatch):
     from ramabana.core import ContextFull

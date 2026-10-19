@@ -289,13 +289,13 @@ def connect(app, ctx):
         return learned_folder(first(a.cfg for a in live_assistants() if getattr(a, 'cfg', None)) or settings.agent_cfg())
     def _learned_reply(r): return JSONResponse(r, status_code=200 if r.get('ok') else 409)
     def _learning_cfg():
-        "The config folder learning is set in; a `settings.json` there that is not a JSON object is refused, since ramabana would rewrite it as `{}`."
-        cfg = _learned_folder().parent
-        try: s = json.loads((cfg/'settings.json').read_text())
-        except FileNotFoundError: return cfg
-        except ValueError: s = None
-        if not isinstance(s, dict): raise ValueError(f'{cfg/"settings.json"} is not a JSON object; fix it before turning learning on or off')
-        return cfg
+        "The agent's config folder. Learning is `learning` in ramabana's config.toml, one per machine; a config.toml that is not TOML is refused before anything runs, since ramabana never rewrites it."
+        import tomllib
+        from ramabana.setup import config_path
+        try: tomllib.loads((p := config_path()).read_text())
+        except FileNotFoundError: pass
+        except (UnicodeError, tomllib.TOMLDecodeError) as e: raise ValueError(f'{p} is not valid TOML ({e}); fix it before turning learning on or off') from None
+        return _learned_folder().parent
     def _same_cfg(a, cfg): return getattr(a, 'cfg', None) is not None and Path(a.cfg).expanduser().resolve() == cfg.resolve()
     def _set_learning(on, ran=None):
         "Learning on or off in the agent's config folder, every live conversation on that folder re-briefed: `{ok, enabled, cfg, note}`."
@@ -312,7 +312,7 @@ def connect(app, ctx):
                     ('' if on else '; the learned folder stays out of every briefing and its queue can still be reviewed'))
     @rt('/agent/learning', methods=['POST'])
     async def agent_learning(req):
-        "Learning on or off: ramabana's `learning` in `<cfg>/settings.json`, applied to live conversations at once."
+        "Learning on or off: ramabana's `learning` in this machine's config.toml, applied to live conversations at once."
         d = await req.json(); on = d.get('enabled')
         if not isinstance(on, bool): return fail('enabled must be true or false')
         try: return await off_loop(_set_learning, on)

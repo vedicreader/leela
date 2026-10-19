@@ -257,7 +257,9 @@ def test_the_learning_switch_persists_and_reaches_the_live_agent_at_once(live):
     assert ai.learning and 'LESSON-MARK' in ai.system_prompt()
     r = c.post('/agent/learning', json={'enabled': False}).json()
     assert r == dict(ok=True, enabled=False, cfg=str(cfg), note=r['note']) and 'can still be reviewed' in r['note']
-    assert json.loads((cfg/'settings.json').read_text()) == {'editor': {'tabSize': 2}, 'learning': 'off'}, "Leela's settings are kept"
+    from ramabana.setup import config_path
+    assert json.loads((cfg/'settings.json').read_text()) == {'editor': {'tabSize': 2}}, "Leela's settings are never written"
+    assert '\nlearning = false\n' in config_path().read_text(), "learning is ramabana's config.toml"
     assert not ai.learning and 'LESSON-MARK' not in ai.system_prompt(), 'no restart'
     d = c.get('/agent/learned').json()
     assert d['ok'] and d['learning'] is False, 'the Review tab reads the state'
@@ -276,13 +278,26 @@ def test_learned_off_typed_in_the_pane_is_the_same_switch(live, ws):
     assert 'enabled' not in c.post('/agent/command', json={'line': '/learned'}).json(), 'a list is not the switch'
 
 def test_learning_refusals_are_structured_and_touch_nothing(live):
+    from ramabana.setup import config_path
     c, ai, cfg = live
     r = c.post('/agent/learning', json={'enabled': 'no'})
     assert r.status_code == 400 and r.json() == dict(ok=False, error='enabled must be true or false')
-    (cfg/'settings.json').write_text('{not json')
+    config_path().write_text('# mine\nlearning = [')
     for r in (c.post('/agent/learning', json={'enabled': False}), c.post('/agent/command', json={'line': '/learned off'})):
-        assert r.status_code == 400 and not r.json()['ok'] and 'is not a JSON object' in r.json()['error']
-    assert (cfg/'settings.json').read_text() == '{not json' and ai.learning, "ramabana would have rewritten Leela's settings as {}"
+        assert r.status_code == 400 and not r.json()['ok'] and 'is not valid TOML' in r.json()['error']
+    assert config_path().read_text() == '# mine\nlearning = [' and ai.learning, 'a config.toml that is not TOML is never rewritten'
+
+def test_a_learning_choice_made_under_0_2_44_survives(live):
+    "0.2.44 kept `learning` in Leela's settings.json; the checkbox reads it, and the next write lands in config.toml, settings.json untouched."
+    import json
+    from leela.app import _learning
+    from ramabana.setup import config_path
+    c, ai, cfg = live
+    (cfg/'settings.json').write_text(json.dumps({'editor': {'tabSize': 2}, 'learning': 'off'}))
+    assert _learning() is False and c.get('/agent/learned').json()['learning'] is False
+    assert 'learning = false' in config_path().read_text(), 'moved on first read'
+    assert c.post('/agent/learning', json={'enabled': True}).json()['enabled'] is True and _learning() is True
+    assert json.loads((cfg/'settings.json').read_text()) == {'editor': {'tabSize': 2}, 'learning': 'off'}
 
 def test_learning_without_a_built_assistant(ws, tmp_path, monkeypatch):
     from leela.blocks.settings import settings

@@ -79,6 +79,7 @@ def cfg_home(monkeypatch, tmp_path_factory):
     # libraries Leela composes read it once at import, so moving it mid-session only makes Leela
     # and dhrishti disagree about a path neither of them is at risk of writing to.
     monkeypatch.setenv('LEELA_KEYMAP', str(cfg/'keys.json'))
+    monkeypatch.setenv('RAMABANA_CONFIG', str(cfg.parent/'ramabana-config.toml'))   # ramabana's one file per machine
     for name, module in list(_sys.modules.items()):
         if name.split('.')[0] != 'leela': continue
         if getattr(module, 'leela_cfg', None) is None: continue

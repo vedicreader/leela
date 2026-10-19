@@ -13,7 +13,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.45') and not Requirement(s).specifier.contains('0.1.44') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.44') and not deps['ramabana'].specifier.contains('0.2.43'), 'ContextFull, [image] in history, learned.set_enabled'
+    assert deps['ramabana'].specifier.contains('0.2.45') and not deps['ramabana'].specifier.contains('0.2.44'), 'excerpts instead of ContextFull, Agent(fresh_hint=), config.toml'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
     assert deps['shalya'].specifier.contains('0.1.14') and not deps['shalya'].specifier.contains('0.1.13'), 'ramabana 0.2.38 needs it'
     assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'

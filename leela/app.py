@@ -792,7 +792,7 @@ def _agent_panel(ws):
         cls='lee-panel lee-agent')
 
 def _learning():
-    "Whether ramabana's `learning` is on in the agent's config folder."
+    "Whether ramabana's `learning` is on: this machine's config.toml, or a value 0.2.44 left in the agent's config folder."
     from ramabana.learned import enabled
     from .blocks.settings.settings import agent_cfg
     return enabled(agent_cfg())
