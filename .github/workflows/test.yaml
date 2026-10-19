@@ -10,7 +10,12 @@ on: [workflow_dispatch, pull_request, push]
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    # macOS runs the fast suite plus what Linux skips by platform: the Cocoa shell and Apple Events.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     # A hung kernel or socket fails by the clock rather than holding the runner for six hours.
     timeout-minutes: 45
     steps:
