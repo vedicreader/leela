@@ -1111,3 +1111,5 @@ The default ignore list was passed to ripgrep as `--glob '!{...}/**'`, which anc
 ## `leela/blocks/vault/clip.py` `_files`
 A folder clip walked the folder with `rglob`, so a clip of a projects folder took in every virtualenv's `site-packages`, build output and test fixture: one clip of `vedicreader` counted 4,955 files. Fixed by walking with litesearch's `dir2files`, the walk vishalakshi's `add_dir` and folder acquisitions use, rather than a skip list of Leela's own.
 
+## `tests/test_packaging.py` `test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker`
+The test clipped 48 HTML files and waited for a pool, and none was ever seen. A pool was forked for every batch of eight. litesearch's `_parse_doc` only reads an HTML file's text in the worker, though, so each pool lived a few milliseconds. Converting, chunking and embedding run in the app's own process, and that is where a clip's CPU goes. Fixed by clipping PDFs, which the workers do parse, so the pool stays up for seconds.

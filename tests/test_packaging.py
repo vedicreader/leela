@@ -449,10 +449,12 @@ def test_running_the_signed_app_leaves_it_sealed_and_leaves_no_process_behind(tm
 def test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker(tmp_path):
     """Forked workers inherited the no-op SIGTERM handler, so the quit waited two seconds on each of 14
     and a Force Quit left the rest idle for good."""
-    import json, os, time, urllib.parse, urllib.request
+    import json, os, time, urllib.error, urllib.parse, urllib.request
+    from pdf_oxide import Pdf
     docs = tmp_path/'docs'; docs.mkdir()
-    page = '<html><body>' + ''.join(f'<h2>Section {i}</h2><p>{"words about recall " * 400}</p>' for i in range(200)) + '</body></html>'
-    for i in range(48): (docs/f'p{i}.html').write_text(page)
+    # PDFs, not HTML: a worker only reads an HTML file's text and exits within milliseconds, so no poll sees it
+    text = '\n\n'.join(f'Section {i}\n' + 'words about recall and the long memory of pages. ' * 40 for i in range(2000))
+    for i in range(48): Pdf.from_text(text).save(str(docs/f'p{i}.pdf'))
     env = {**os.environ, 'XDG_CONFIG_HOME': str(tmp_path/'config'), 'XDG_DATA_HOME': str(tmp_path/'data'),
            'VISHALAKSHI_VAULT': str(tmp_path/'vault'/'vault.db'), 'LEELA_INDEX_WORKERS': '6',
            'LEELA_WINDOW_SIZE': '900x600', 'PYTHONUNBUFFERED': '1'}
@@ -467,10 +469,15 @@ def test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker(tmp_path):
             except Exception: time.sleep(.5)
         else: pytest.fail(f'the app never began serving:\n{log.read_text()[-3000:]}')
         q = urllib.parse.urlencode(dict(target=str(docs), kind='clip'))
-        urllib.request.urlopen(f'http://127.0.0.1:{port}/clip?{q}', timeout=60).read()
-        end = time.time() + 120
-        while len(_bundle_pids(APP.parents[2])) < 4 and time.time() < end: time.sleep(.2)
-        assert len(_bundle_pids(APP.parents[2])) >= 4, f'no pool was forked:\n{log.read_text()[-3000:]}'
+        end = time.time() + 60   # serving.json can name the port a moment before it listens
+        while True:
+            try: urllib.request.urlopen(f'http://127.0.0.1:{port}/clip?{q}', timeout=60).read(); break
+            except urllib.error.URLError:
+                if time.time() > end: raise
+                time.sleep(.5)
+        end, seen = time.time() + 120, []   # a pool lives for one batch; quit while it is up
+        while len(seen) < 4 and time.time() < end: seen = _bundle_pids(APP.parents[2]); time.sleep(.1)
+        assert len(seen) >= 4, f'no pool was forked:\n{log.read_text()[-3000:]}'
     finally:
         t0 = time.time(); proc.terminate()   # through Cocoa, as Cmd+Q and Dock Quit are
         try: proc.wait(timeout=30)
