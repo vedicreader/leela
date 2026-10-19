@@ -1145,3 +1145,6 @@ The default turn model is `claude-opus-5-5`, and ramabana's `resolve` raises whe
 
 ## `.github/workflows/test.yaml` checkout
 `actions/checkout` clones one commit by default, which makes HEAD the first commit. `test_leela_builds_the_literate_page_end_to_end` diffs from the first commit, so its diff was empty and it failed with `assert []`. Fixed with `fetch-depth: 0`. The test now fails on a shallow clone with a message that names the cause.
+
+## `tests/test_agent.py` `test_a_refused_call_in_a_small_session_dispatches_user_steering`
+The test got its small profile from `DFLT_LOCAL`, which is `qwen-4b` on mlx. mlx runs only on macOS, so on Linux the workspace failed to build before the test reached the refusal. Fixed by taking the small profile from the scripted model's 8k window, as `test_opening_a_canvas_adds_its_tools_to_a_small_session_and_re_briefs` does.

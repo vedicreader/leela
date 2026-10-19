@@ -932,8 +932,10 @@ def test_the_update_check_survives_being_asked_twice(monkeypatch):
 def test_a_refused_call_in_a_small_session_dispatches_user_steering(tmp_path):
     "The approvals refusal path rewrites a rejected call to `user_steering`; a small catalog that dropped it would make every 'no' an unknown-tool error."
     from tests.fakemodel import Step, install
-    ws = Workspace(roots=[tmp_path], approvals='ask', model=models.DFLT_LOCAL); a = ws.ai; assert a.profile == 'small'
+    # Small from the scripted model's 8k window: `DFLT_LOCAL` is an mlx model, and mlx runs only on macOS.
+    ws = Workspace(roots=[tmp_path], approvals='ask')
     be = install(ws, [Step(tool=('replace_text', {'path': str(tmp_path/'a.py'), 'edits': []})), Step(text='ok')], token_delay=0)
+    assert ws.ai.profile == 'small'
     def answer():
         for _ in range(300):
             if (p := ws.approvals.pending) is not None: return ws.approvals.answer(p.id, False, 'leave it')
