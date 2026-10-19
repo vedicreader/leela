@@ -52,6 +52,14 @@ takes only a notebook under that folder -- writes the compiled `<name>.json` bes
 installing a copy into `~/.config/dhrona/rounds`. The folder is the workspace's, so `/tab/open`
 reaches it; it holds working material, and a project may want it in `.gitignore`.
 
+## The learned review queue
+
+What Dhrona proposes for `<cfg>/learned` waits on a `pending/<id>` branch of that folder's git repository until a person accepts or rejects it. The queue is ramabana's (`ramabana.learned`: `pending`, `diff`, `accept`, `reject`), and Leela's part is the Review tab's fifth queue, **Learned**, beside Proofreading, Personal info, Types and Verses. The palette command "review what the agent learned" (`learned_review`, Tools menu) opens it. The folder is `learned_folder(cfg)`, with `cfg` the live assistant's config or `agent_cfg()` when none is built, so the queue is reviewed whether or not the agent briefs from the folder. `Agent.learned_dir` is None when it does not.
+
+The queue keeps the Review tab's keys: `j` and `k` step, `a` accepts and `x` rejects. A candidate is its own commit, so an accept is applied at once rather than staged, and neither an accept nor a reject is undone from the tab. The active candidate's diff is painted below the list, with the newest only, so a fast `j` cannot paint a stale one. The live agent's recent lessons (`Agent.lessons`) are listed read-only below it, and the head shows `AGENTS.md`'s size against `LEARNED_MAX`; `data-learned-compact` beside it is where a Compact action goes once ramabana proposes compacted text as a candidate.
+
+`/agent/learned` lists the queue, and `/agent/learned/diff`, `/accept` and `/reject` take `{id}`. Each returns ramabana's dict as it is: `{ok: true, id, ...}` with HTTP 200, or `{ok: false, id, error}` with HTTP 409, and the tab shows `error` word for word. A git command ramabana does not expect to fail, such as a diff of a root commit, raises in ramabana, and the route returns it in the same shape. The learned queue is fetched apart from the vault's four, so a failure shows in its own mode and leaves the others.
+
 ## Adding to the host
 
 1. Declare the group by inheriting shalya's class for it, and implement every method it names.

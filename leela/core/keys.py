@@ -127,6 +127,7 @@ DEFAULTS = L(
     Key('vault_read',       '',              'global', 'read a file into the vault'),
     Key('vault_find',       '',              'global', 'find in the vault'),
     Key('vault_review',     '',              'global', 'vault review queue'),
+    Key('learned_review',   '',              'global', 'review what the agent learned'),
     Key('vault_settings',   '',              'global', 'vault settings: vaults, privacy, cadence, tidy'),
     Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
     Key('copy_rel_path',    'alt+y',         'global', 'copy relative path',  'toast'),

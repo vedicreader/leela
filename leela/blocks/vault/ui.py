@@ -27,7 +27,7 @@ PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose ad
               'looked for, so this says what was found, never that there is nothing')
 
 VIEWS = (('library', 'what is in it, and putting more in'), ('find', 'search it'),
-         ('review', 'proofreading and personal information to decide'), ('sources', 'feeds, apis and topics'),
+         ('review', 'proofreading, personal information and what the agent learned, to decide'), ('sources', 'feeds, apis and topics'),
          ('settings', 'which vaults, the privacy floor, cadence and tidy'))
 SOURCES = (('news', 'what the feeds said'), ('specs', 'ask an api'), ('topics', 'what it is about'))
 #: The workbench's old section names, and the tab each now sits under. A saved tab still opens where it was.
@@ -474,9 +474,12 @@ def _highlight(text, query):
     return [Mark(part) if pat.fullmatch(part) else Span(part) for part in pat.split(text or '') if part]
 
 def review_view(vault='', doc='', shelf='', mode='', **_):
-    "The Review queue: a mount point review.js fills from `/vault/changes`, `/vault/pii/findings`, `/vault/types` and `/vault/book/problems`."
+    "The Review queue: a mount point review.js fills from `/vault/changes`, `/vault/pii/findings`, `/vault/types`, `/vault/book/problems` and `/agent/learned`."
     return Div(Div('loading the queue', cls='lee-dim'), cls='lee-vault-review', tabindex='0', data_vault=vault, data_doc=doc, data_shelf=shelf,
-               data_mode=mode if mode in ('proof', 'pii', 'types', 'book') else 'proof')
+               data_mode=mode if mode in REVIEW_MODES else 'proof')
+
+#: The Review tab's queues: proofreading, personal information, types, verse problems, and what the agent learned.
+REVIEW_MODES = ('proof', 'pii', 'types', 'book', 'learned')
 
 SCOPES = (('vault', 'whole vault'), ('doc', 'this document'), ('pages', 'pages'))
 

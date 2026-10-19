@@ -52,6 +52,10 @@ GET,POST /agent/history/apply
 GET,POST /agent/history/preview
 GET,POST /agent/history/session
 GET,POST /agent/info
+GET,POST /agent/learned
+GET,POST /agent/learned/accept
+GET,POST /agent/learned/diff
+GET,POST /agent/learned/reject
 GET,POST /agent/memory
 GET,POST /agent/memory/delete
 GET,POST /agent/memory/save

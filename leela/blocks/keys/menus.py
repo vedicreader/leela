@@ -102,7 +102,7 @@ BAR = (
                   S('browse_url'), S('browse_tabs'), S(),
                   S('agent_selection'), Js('Inline Completions…', 'showCompletions()'),
                   S('capture'), S(),
-                  S('open_vault'), S('vault_read'), S('vault_find'), S('vault_review'), S('vault_settings'), S('memory_notes'), S('new_memory_note'), S('clip_to_vault'))),
+                  S('open_vault'), S('vault_read'), S('vault_find'), S('vault_review'), S('learned_review'), S('vault_settings'), S('memory_notes'), S('new_memory_note'), S('clip_to_vault'))),
     ('Debug',   L(Js('Debug This File', 'leeDebugFile()'), S('run_app'), S('edit_runs'), S(),
                   Js('Continue', "leeDebugControl('continue')"),
                   Js('Step Over', "leeDebugControl('next')"),

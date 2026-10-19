@@ -7306,7 +7306,7 @@ async function vaultChapters(st, box, go) {
     status(r.ok ? `wrote ${r.path}` : r.error, r.ok ? 'ok' : 'err');
   };
 }
-/* ---- the Review queue: proofreading changes and personal information, decided from the keyboard ---- */
+/* ---- the Review queue: proofreading changes, personal information, types, verses and what the agent learned, decided from the keyboard ---- */
 
 /* An accept files a new version of its page, which would make every other change on that page stale.
    So `a` stages a change, and a page's staged changes are applied together when the cursor leaves the
@@ -7330,14 +7330,22 @@ const rowQ = (st, r) => new URLSearchParams({doc: r.doc, shelf: r.shelf || '', v
 async function mountReview(host) {
   host.dataset.mounted = '1';
   host.__review = {vault: host.dataset.vault || '', doc: host.dataset.doc || '', shelf: host.dataset.shelf || '',
-                   mode: host.dataset.mode || 'proof', doubts: false, at: 0, rows: [], undo: [], staged: new Map(), counts: {}, types: [], labels: []};
+                   mode: host.dataset.mode || 'proof', doubts: false, at: 0, rows: [], undo: [], staged: new Map(), counts: {}, types: [], labels: [],
+                   learned: {pending: [], lessons: [], chars: 0, limit: 0, error: ''}, ldiff: null};
   host.addEventListener('click', e => reviewClick(host, e));
   host.addEventListener('mousedown', e => { if (!e.target.closest('input, button, select, a')) setTimeout(() => host.focus({preventScroll: true}), 0); });
   await reviewLoad(host);
 }
 
+/* The learned queue is the agent's, not the vault's: fetched on its own, so a failure shows in its mode and leaves the rest. */
+async function learnedLoad(st) {
+  try { st.learned = {...await api('/agent/learned'), error: ''}; }
+  catch (e) { st.learned = {pending: [], lessons: [], chars: 0, limit: 0, ...(e.body || {}), error: e.message || String(e)}; }
+  st.ldiff = null;
+}
+
 async function reviewLoad(host) {
-  const st = host.__review, tok = st.loads = (st.loads || 0) + 1;
+  const st = host.__review, tok = st.loads = (st.loads || 0) + 1, learned = learnedLoad(st);
   try {
     const [c, f, t, b] = await Promise.all([api('/vault/changes?' + reviewQ(st)), api('/vault/pii/findings?' + reviewQ(st, {state: 'found'})),
                                             api('/vault/types?' + new URLSearchParams({vault: st.vault})), api('/vault/book/problems?' + reviewQ(st))]);
@@ -7345,18 +7353,20 @@ async function reviewLoad(host) {
     st.changes = c.changes || []; st.findings = f.findings || []; st.probs = b.problems || [];
     st.types = (t.types || []).filter(r => !st.doc || r.doc === st.doc); st.labels = t.labels || [];
   } catch (e) { host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; return; }
+  await learned;
+  if (tok !== st.loads) return;
   reviewPaint(host);
 }
 
 function reviewPaint(host) {
-  const st = host.__review, proof = st.mode === 'proof', types = st.mode === 'types', book = st.mode === 'book';
-  st.rows = proof ? st.changes.filter(r => !st.doubts || r.state === 'doubt') : types ? st.types : book ? st.probs : st.findings;
+  const st = host.__review, proof = st.mode === 'proof', types = st.mode === 'types', book = st.mode === 'book', learned = st.mode === 'learned';
+  st.rows = proof ? st.changes.filter(r => !st.doubts || r.state === 'doubt') : types ? st.types : book ? st.probs : learned ? st.learned.pending : st.findings;
   if (st.want) { const k = st.rows.findIndex(r => r.id === st.want); if (k >= 0) st.at = k; st.want = null; }
   st.at = Math.max(0, Math.min(st.at, st.rows.length - 1));
   const n = {proof: st.changes.length, pii: st.findings.length, types: st.types.length, book: st.probs.length, doubt: st.changes.filter(r => r.state === 'doubt').length,
-             stale: st.changes.filter(r => r.stale).length};
+             stale: st.changes.filter(r => r.stale).length, learned: st.learned.pending.length};
   const chip = (mode, label, k) => `<button class="lee-wb-subtab${st.mode === mode ? ' active' : ''}" data-review-mode="${mode}">${label} <span data-count="${mode}">${k}</span></button>`;
-  let html = `<div class="lee-review-head">${chip('proof', 'Proofreading', n.proof)}${chip('pii', 'Personal info', n.pii)}${chip('types', 'Types', n.types)}${chip('book', 'Verses', n.book)}` +
+  let html = `<div class="lee-review-head">${chip('proof', 'Proofreading', n.proof)}${chip('pii', 'Personal info', n.pii)}${chip('types', 'Types', n.types)}${chip('book', 'Verses', n.book)}${chip('learned', 'Learned', n.learned)}` +
     (proof ? `<label class="lee-review-doubts"><input type="checkbox" data-review-doubts${st.doubts ? ' checked' : ''}> doubts only (d) · ${n.doubt}</label>` +
              (n.stale ? `<span class="lee-dim">${n.stale} stale</span>` : '') : '') +
     `<span class="lee-spacer"></span>` +
@@ -7365,6 +7375,7 @@ function reviewPaint(host) {
     (st.doc ? `<button class="lee-btn" data-review-all>every document</button>` : '') + `</div>` +
     `<div class="lee-review-staged" data-staged ${st.staged.size ? '' : 'hidden'}>${st.staged.size} staged to accept · ` +
     `<button class="lee-btn go" data-review-apply>apply</button></div>`;
+  if (learned) return learnedPaint(host, html);
   if (!st.rows.length) html += `<div class="lee-wb-empty"><strong>${proof ? 'No changes to decide' : types ? 'No types to decide' : book ? 'No verse problems to check' : 'No personal information to decide'}</strong>` +
     `<span>${proof ? 'Proofread a document from its view (p) to file changes here.' : types ? 'A type the words cannot settle is proposed here; type untyped documents from Library.'
       : book ? 'Read a sanskrit or tamil book as a book of verses; missing numbers, doubled verses, mended akṣaras and counts that differ come here.' : 'Findings are filed as pages are read.'}</span></div>`;
@@ -7407,7 +7418,11 @@ function reviewPaint(host) {
 
 async function reviewClick(host, e) {
   const st = host.__review, t = e.target;
-  if (t.closest('[data-review-mode]')) { await reviewCommit(host); st.mode = t.closest('[data-review-mode]').dataset.reviewMode; st.at = 0; return reviewPaint(host); }
+  if (t.closest('[data-review-mode]')) {
+    await reviewCommit(host); st.mode = t.closest('[data-review-mode]').dataset.reviewMode; st.at = 0;
+    if (st.mode === 'learned') await learnedLoad(st);    // a Dhrona batch may have proposed more since the tab opened
+    return reviewPaint(host);
+  }
   if (t.matches('[data-review-doubts]')) return leeReview('doubts', 0, host);
   if (t.closest('[data-review-apply]')) return reviewCommit(host);
   if (t.closest('[data-review-all]')) { await reviewCommit(host); st.doc = st.shelf = ''; return reviewLoad(host); }
@@ -7437,6 +7452,7 @@ async function reviewMove(host, i) {
   const st = host.__review, from = st.rows[st.at], to = st.rows[i];
   if (!to) return;
   st.at = i; st.want = to.id;
+  if (st.mode === 'learned') { st.want = null; $$('.lee-review-row', host).forEach(r => r.classList.toggle('active', +r.dataset.i === i)); return learnedDiff(host); }
   if (from && rowKey(from) !== rowKey(to) && [...st.staged.values()].some(s => rowKey(s.row) === rowKey(from))) return reviewCommit(host, rowKey(from));
   $$('.lee-review-row', host).forEach(r => r.classList.toggle('active', +r.dataset.i === i));
   $('.lee-review-row.active', host)?.scrollIntoView({block: 'nearest'});
@@ -7513,6 +7529,7 @@ async function reviewAct(host, act, n) {
   const st = host.__review, r = st.rows[st.at], proof = st.mode === 'proof';
   const onPage = rows => rows.filter(x => r && rowKey(x) === rowKey(r));
   if (act === 'step') return reviewMove(host, Math.max(0, Math.min(st.rows.length - 1, st.at + n)));
+  if (st.mode === 'learned') return learnedAct(host, act, r);
   if (act === 'doubts') { if (!proof) return; await reviewCommit(host); st.doubts = !st.doubts; st.at = 0; return reviewPaint(host); }
   if (act === 'undo') {
     const u = st.undo.pop();
@@ -7602,6 +7619,62 @@ function reviewOpen(st, r) {
   if (!r) return;
   if (r.page == null) return leeOpenVaultDoc(r.doc, r.shelf || '', st.vault, r.title);
   return leeOpenVaultDoc(r.doc, r.shelf || '', st.vault, r.title, {page: r.page});
+}
+
+/* ---- what the agent learned: Dhrona's candidates for the learned folder, one git branch each ---- */
+
+/* `data-learned-compact` beside the size is where a Compact action goes once ramabana proposes one. */
+function learnedPaint(host, html) {
+  const st = host.__review, L = st.learned, near = L.limit && L.chars >= L.limit * 0.9;
+  html += `<div class="lee-review-learned-head"><span class="lee-dim" title="the learned folder">${esc(L.folder || '')}</span>` +
+    `<span data-learned-chars class="${near ? 'lee-warn' : 'lee-dim'}">AGENTS.md ${Number(L.chars || 0).toLocaleString()} of ${Number(L.limit || 0).toLocaleString()} characters</span>` +
+    `<span data-learned-compact></span></div>`;
+  if (L.error) html += `<div class="lee-err" data-learned-error>${esc(L.error)}</div>`;
+  if (!st.rows.length && !L.error) html += `<div class="lee-wb-empty"><strong>Nothing the agent learned waits for review</strong>` +
+    `<span>Dhrona proposes changes to the learned folder; each waits here until you accept (a) or reject (x) it.</span></div>`;
+  st.rows.forEach((r, i) => {
+    html += `<div class="lee-review-row lee-review-learned${i === st.at ? ' active' : ''}" data-i="${i}" data-id="${esc(r.id)}">` +
+      `<div class="lee-review-change"><span data-subject>${esc(r.subject || r.id)}</span>` +
+      `<small>${esc((r.files || []).join(', '))} · ${esc(new Date(r.at * 1000).toLocaleString())}</small></div></div>`;
+  });
+  html += `<div class="lee-diff lee-review-learned-diff" data-learned-diff></div><div class="lee-review-doc">Recent lessons</div>` +
+    (L.lessons?.length ? `<ul class="lee-review-lessons">${L.lessons.map(l => `<li>${esc(l.lesson)}${l.cue ? ` <small>${esc(l.cue)}</small>` : ''}</li>`).join('')}</ul>`
+                       : '<div class="lee-dim">no lessons kept yet</div>');
+  host.innerHTML = html;
+  $('.lee-review-row.active', host)?.scrollIntoView({block: 'nearest'});
+  learnedDiff(host);
+}
+
+/* j and k fire faster than git answers: only the diff of the row still active is painted. */
+async function learnedDiff(host) {
+  const st = host.__review, r = st.rows[st.at], box = $('[data-learned-diff]', host);
+  if (!box) return;
+  if (!r) { box.innerHTML = ''; return; }
+  if (st.ldiff?.id === r.id) { box.innerHTML = st.ldiff.html; return; }
+  const tok = st.ldiffTok = (st.ldiffTok || 0) + 1;
+  box.innerHTML = '<div class="lee-dim">reading the diff</div>';
+  let html;
+  try {
+    const d = await post('/agent/learned/diff', {id: r.id});
+    html = (d.rows?.length ? diffHtml(d.rows) : '<div class="lee-dim">no change</div>') + (d.truncated ? '<div class="lee-dim">the diff is cut short here</div>' : '');
+  } catch (e) { html = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  if (tok !== st.ldiffTok) return;
+  st.ldiff = {id: r.id, html};
+  const b = $('[data-learned-diff]', host); if (b) b.innerHTML = html;
+}
+
+/* Accepted and rejected at once: a candidate is its own commit, so there is nothing to stage, and git keeps no undo here. */
+async function learnedAct(host, act, r) {
+  const st = host.__review;
+  if (act !== 'accept' && act !== 'reject')
+    return status(act === 'undo' ? 'an accept or a reject of what the agent learned is not undone here' : 'what the agent learned is decided one candidate at a time', 'err');
+  if (!r) return status('nothing to decide', 'err');
+  try {
+    const d = await post(`/agent/learned/${act}`, {id: r.id});
+    status(act === 'reject' ? `rejected ${d.id}` : d.commit ? `accepted ${d.id} as ${d.commit}` : `accepted ${d.id}: the learned folder already held it`, 'ok');
+  } catch (e) { status(e.message || String(e), 'err'); }
+  await learnedLoad(st);
+  reviewPaint(host);
 }
 /* The branch pill as a real Git control, and the three remote gestures beside it.
  *

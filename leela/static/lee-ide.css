@@ -3539,6 +3539,11 @@ kbd {
 .lee-review-change ins { color: var(--lee-green); text-decoration: none; }
 .lee-review-change small { flex: 0 0 100%; color: var(--lee-fg4); font-size: 10px; }
 .lee-review-stalewhy { color: var(--lee-orange); font-size: 10px; }
+.lee-review-learned-head { display: flex; align-items: center; gap: 8px; padding: 4px 0; font: 10px/1.4 var(--lee-mono); }
+.lee-review-learned-head .lee-warn { color: var(--lee-orange); }
+.lee-review-learned-diff { margin: 8px 0; max-height: 50vh; overflow: auto; }
+.lee-review-lessons { margin: 4px 0; padding-left: 18px; font-size: 12px; }
+.lee-review-lessons small { color: var(--lee-fg3); }
 .lee-review-edit { width: auto; min-width: 160px; }
 .lee-review-md { max-height: 70vh; min-width: min(640px, 90vw); padding: 10px 14px; overflow: auto; }
 

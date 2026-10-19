@@ -27,6 +27,11 @@ ATTACH_KINDS = ('selection', 'vault')
 
 CAPS = ('fs', 'memory', 'ai', 'inline_ai', 'docs', 'gate')
 
+#: Lessons the learned review shows, newest last.
+LEARNED_LESSONS = 20
+#: Characters of a candidate's diff the review paints.
+LEARNED_DIFF_MAX = 200_000
+
 def connect(app, ctx):
     rt = app.route
     ws = ctx.session
@@ -259,6 +264,52 @@ def connect(app, ctx):
         except NoDhrona as e: return fail(e, 501)
         except (ValueError, FileNotFoundError) as e: return fail(e, 400)
         return {'ok': True, 'installed': path}
+    def _learned_folder():
+        "`<cfg>/learned` for the agent's config, read without building an assistant, and whether the agent briefs from it or not."
+        from ramabana.learned import learned_folder
+        from ..settings import settings
+        return learned_folder(first(a.cfg for a in live_assistants() if getattr(a, 'cfg', None)) or settings.agent_cfg())
+    def _learned_reply(r): return JSONResponse(r, status_code=200 if r.get('ok') else 409)
+    def _learned_call(act, id):
+        "One `ramabana.learned` call as the dict it returns; a git failure becomes the same `{ok: False, id, error}`."
+        try: return act(_learned_folder(), id)
+        except Exception as e: return dict(ok=False, id=id, error=errstr(e))
+    def _learned_rows():
+        from ramabana.learned import LEARNED_MAX, pending
+        f = _learned_folder()
+        try: rows, err = pending(f), ''
+        except Exception as e: rows, err = [], errstr(e)
+        ai = first(live_assistants())
+        try: lessons = list(ai.lessons(LEARNED_LESSONS)) if ai is not None else []
+        except Exception: lessons = []      # a vault search that fails leaves the queue readable
+        md = f/'AGENTS.md'
+        return dict(ok=not err, folder=str(f), pending=rows, lessons=lessons, chars=len(md.read_text(errors='replace')) if md.is_file() else 0,
+                    limit=LEARNED_MAX, **({'error': err} if err else {}))
+    @rt('/agent/learned')
+    async def agent_learned():
+        "What Dhrona proposed for the learned folder, oldest first; the live agent's recent lessons; `AGENTS.md`'s size against its limit."
+        return _learned_reply(await off_loop(_learned_rows))
+    @rt('/agent/learned/diff')
+    async def agent_learned_diff(req):
+        "What accepting one candidate would change: ramabana's `{ok, id, diff}`, plus rows the diff views paint."
+        from ramabana.learned import diff
+        from ...core.text import diff_rows, path_lang
+        d = await req.json(); r = await off_loop(_learned_call, diff, d.get('id'))
+        if r.get('ok'):
+            text, m = r['diff'] or '', re.search(r'^\+\+\+ b/(\S+)', r['diff'] or '', re.M)
+            r['truncated'] = len(text) > LEARNED_DIFF_MAX
+            r['rows'] = [x.dict() for x in diff_rows(text[:LEARNED_DIFF_MAX], path_lang(m[1] if m else 'AGENTS.md'))]
+        return _learned_reply(r)
+    @rt('/agent/learned/accept')
+    async def agent_learned_accept(req):
+        "Move one candidate onto the learned folder's HEAD, which the next briefing reads: `{ok, id, commit}`, `commit` None when HEAD held it already."
+        from ramabana.learned import accept
+        return _learned_reply(await off_loop(_learned_call, accept, (await req.json()).get('id')))
+    @rt('/agent/learned/reject')
+    async def agent_learned_reject(req):
+        "Drop one candidate: `{ok, id}`."
+        from ramabana.learned import reject
+        return _learned_reply(await off_loop(_learned_call, reject, (await req.json()).get('id')))
     @rt('/agent/thread/title')
     async def agent_thread_title(req):
         d = await req.json()
