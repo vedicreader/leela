@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.18, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.58 and rishi 0.1.51.
+Needs vishalakshi 0.1.31, shalya 0.1.18, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.58 and rishi 0.1.52.
+
+- A Gemini model chosen as `gemini/<model>` answers instead of returning 404. A Claude Code session that fails while connecting is tried once more, with a note in the session (rishi 0.1.52).
 
 - The terminal agent no longer freezes and then closes its tmux session on the next key when a process that shared the terminal left it non-blocking. An exception in a key handler or a background notice shows as an error and the session carries on (ramabana 0.2.58).
 

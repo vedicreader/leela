@@ -12,7 +12,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     deps = _deps()
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
-    assert rishis and all(Requirement(s).specifier.contains('0.1.51') and not Requirement(s).specifier.contains('0.1.50') for s in rishis), rishis
+    assert rishis and all(Requirement(s).specifier.contains('0.1.52') and not Requirement(s).specifier.contains('0.1.51') for s in rishis), rishis
     assert deps['ramabana'].specifier.contains('0.2.58') and not deps['ramabana'].specifier.contains('0.2.57'), 'a non-blocking terminal no longer freezes the session and quits it on the next key'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
     assert deps['shalya'].specifier.contains('0.1.18') and not deps['shalya'].specifier.contains('0.1.17'), 'docments on every tool parameter, what ramabana 0.2.57 needs'
