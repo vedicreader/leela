@@ -26,7 +26,7 @@ dependencies = [
     # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
     # change for, and a floor would take them on the next sync without a word. Raise these
     # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.55",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing; 0.2.8 git per repository, restart_kernel, sub-agent steps/timeout/nesting; 0.2.9 tool results carry pictures, attachments without the terminal; 0.2.10 the index reads only what the log grew by; 0.2.11 claude-haiku-5-5, the Claude Code picker discovers what an Anthropic key lists; 0.2.12 no keyword routing or preflight, a briefing for current models, Claude at high effort with a 1M window, sonnet/haiku track 5-5, warm start opt-in, uraiyadal 0.0.11 batches independent calls; 0.2.13 library output stays off the TUI, the pane keeps the model's notes; 0.2.14 one note per message; 0.2.15 background rows open in the pane; 0.2.16 sub-agents report back (step floor, budget notice, rishi 0.1.41 reads Claude's invoke dialect); 0.2.17 a lost terminal exits cleanly, background commands log instead of opening panes; 0.2.18 steer with attachments, enter steers the queued line; 0.2.19 model tiers (haiku small jobs, gpt-6.1-luna medium), sub-agents write behind approvals; 0.2.20 no local model unless chosen; 0.2.31 `hl.diff_html`, the diff views' colours; 0.2.35 rishi 0.1.43, a Claude reply stops at its first tool call; 0.2.36 shalya 0.1.12; 0.2.37 rishi's public `get_model`; 0.2.38 `ramabana.learned`, the learned review queue; 0.2.39 accept refuses an AGENTS.md past 2,000 characters, `learned_command`; 0.2.40 `learned.compact`; 0.2.44 `ContextFull`, `[image]` in history, `learned.set_enabled`; 0.2.45 an oversized message goes out as an excerpt kept in a file, `Agent(fresh_hint=)`, learning in `~/.config/ramabana/config.toml`; 0.2.46 Azure OpenAI, config.toml model definitions, `sync_models`, `use_aliases`, `remote_models`; 0.2.47 no provider chosen for you, `PROVIDERS`, `needs_setup`, `setup_guide`, the image job; 0.2.48 the video job, `video_route`; 0.2.49 media with no session saves in the host folder; 0.2.50 steering survives a result at the cap, `delegate_search(writes=False)`, `submit_result` in the small profile; 0.2.51 rishi 0.1.48 and uraiyadal 0.0.15, a stray `<parameter>` element is stripped from the reply; 0.2.52 the installed beat runs on the installing shell's PATH; 0.2.53 a silent Claude Code turn is retried once with a status note, `timeout` per model in config.toml, `@` completes files and folders and `@folder` attaches its listing; 0.2.54 the bundled `debugging` skill; 0.2.55 the beat warns on a short PATH, flags a stale launcher, reads keys from beat.env and stops itself after --limit
+    "ramabana[cli]==0.2.56",   # 0.2.x: Agent(warm=, optin=), git through the git tools, shalya 0.1.x tool set; 0.2.3 profiles; 0.2.4 sub-agents see pictures, generate_image(path=) is a gated write; 0.2.5 cloud routing defaults (Opus turn, gpt-4.1 small jobs, Sonnet sub-agents), no local route unless named; 0.2.6 sub-agents never get root-only tools; 0.2.7 resume_session(keep_model=), a resumed history survives set_model, uraiyadal 0.0.9 tool-call parsing; 0.2.8 git per repository, restart_kernel, sub-agent steps/timeout/nesting; 0.2.9 tool results carry pictures, attachments without the terminal; 0.2.10 the index reads only what the log grew by; 0.2.11 claude-haiku-5-5, the Claude Code picker discovers what an Anthropic key lists; 0.2.12 no keyword routing or preflight, a briefing for current models, Claude at high effort with a 1M window, sonnet/haiku track 5-5, warm start opt-in, uraiyadal 0.0.11 batches independent calls; 0.2.13 library output stays off the TUI, the pane keeps the model's notes; 0.2.14 one note per message; 0.2.15 background rows open in the pane; 0.2.16 sub-agents report back (step floor, budget notice, rishi 0.1.41 reads Claude's invoke dialect); 0.2.17 a lost terminal exits cleanly, background commands log instead of opening panes; 0.2.18 steer with attachments, enter steers the queued line; 0.2.19 model tiers (haiku small jobs, gpt-6.1-luna medium), sub-agents write behind approvals; 0.2.20 no local model unless chosen; 0.2.31 `hl.diff_html`, the diff views' colours; 0.2.35 rishi 0.1.43, a Claude reply stops at its first tool call; 0.2.36 shalya 0.1.12; 0.2.37 rishi's public `get_model`; 0.2.38 `ramabana.learned`, the learned review queue; 0.2.39 accept refuses an AGENTS.md past 2,000 characters, `learned_command`; 0.2.40 `learned.compact`; 0.2.44 `ContextFull`, `[image]` in history, `learned.set_enabled`; 0.2.45 an oversized message goes out as an excerpt kept in a file, `Agent(fresh_hint=)`, learning in `~/.config/ramabana/config.toml`; 0.2.46 Azure OpenAI, config.toml model definitions, `sync_models`, `use_aliases`, `remote_models`; 0.2.47 no provider chosen for you, `PROVIDERS`, `needs_setup`, `setup_guide`, the image job; 0.2.48 the video job, `video_route`; 0.2.49 media with no session saves in the host folder; 0.2.50 steering survives a result at the cap, `delegate_search(writes=False)`, `submit_result` in the small profile; 0.2.51 rishi 0.1.48 and uraiyadal 0.0.15, a stray `<parameter>` element is stripped from the reply; 0.2.52 the installed beat runs on the installing shell's PATH; 0.2.53 a silent Claude Code turn is retried once with a status note, `timeout` per model in config.toml, `@` completes files and folders and `@folder` attaches its listing; 0.2.54 the bundled `debugging` skill; 0.2.55 the beat warns on a short PATH, flags a stale launcher, reads keys from beat.env and stops itself after --limit; 0.2.56 delegate_search read-only by default, sub-agents take 80 steps, Claude thinking tokens in usage
     # The toolset and the git plumbing are their own packages now, and Leela names them itself
     # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
     # re-export seams stay for a release; a second package's spelling of the same object is not
@@ -91,7 +91,7 @@ dependencies = [
     # Warm starts, assess, capture and accept in the agent pane (`blocks/agent/warm.py`). 0.1.4 is
     # the first with `fit_rounds` reporting skips, `Finding.turn`, `install_round` returning its
     # path, and floors that leave the stack below alone.
-    "dhrona>=0.1.13",   # 0.1.13 a folded-in candidate keeps its id; 0.1.12 compact_learned(onto=); 0.1.11 what `ramabana.learned.compact` needs; 0.1.10 the version ramabana 0.2.38 is built against; 0.1.9 cut-off runs no longer count as good, resolved start.json paths, BatchBusy
+    "dhrona>=0.1.14",   # 0.1.14 the nightly retry and its error text; 0.1.13 a folded-in candidate keeps its id; 0.1.12 compact_learned(onto=); 0.1.11 what `ramabana.learned.compact` needs; 0.1.10 the version ramabana 0.2.38 is built against; 0.1.9 cut-off runs no longer count as good, resolved start.json paths, BatchBusy
 ]
 
 [project.optional-dependencies]
@@ -101,7 +101,7 @@ ipymini = [] # compatibility extra; ipymini now ships with Leela
 # pane, pinned to the rishi the bundle was frozen with.
 # `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
 # dependency, so naming it here would install nothing and warn.
-local = ["rishi[mlx,llama]==0.1.49"]
+local = ["rishi[mlx,llama]==0.1.50"]
 # The native window and the two freezers, through kavacha, which installs each platform's own
 # bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
 desktop = ["kavacha[window]>=0.0.7"]
@@ -130,14 +130,14 @@ dev = [
     "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
     "leela[local]",
     "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
-    "rishi[all]==0.1.49",
+    "rishi[all]==0.1.50",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.49",
+    "rishi==0.1.50",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
