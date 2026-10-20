@@ -1032,19 +1032,20 @@ wheels = [
 
 [[package]]
 name = "dhrona"
-version = "0.1.14"
+version = "0.1.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
     { name = "fastcore" },
     { name = "llmsurgery" },
     { name = "rahasya" },
+    { name = "ramabana" },
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/a8/cb3d0358a41a2217fc64defaa8b00f6c3a56dd0093f0d96205c968d55567/dhrona-0.1.14.tar.gz", hash = "sha256:67d0761215a7a28bf600dd8cbd31e51af537b7efc99a7ca45a9ff24d193fe76d", size = 45513, upload-time = "2026-10-20T06:04:40.145Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/86/40dcb7b66de4b725f1cd5adcfbd4a0428412e12a69b9881c5ad591f949ad/dhrona-0.1.15.tar.gz", hash = "sha256:b05e50f9961de76b9fece11068910480cfa77c838be198da74e1d1c9c3ad3ca9", size = 45601, upload-time = "2026-10-20T08:43:38.441Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/76/aeb071e5c90813e4bbadb4a50e50d013646d9855770dc7d99d56cee64916/dhrona-0.1.14-py3-none-any.whl", hash = "sha256:0bb6fdf208be8e9d3749f43a03696179733fa3c4a3f53219061e60801011a03e", size = 51255, upload-time = "2026-10-20T06:04:38.756Z" },
+    { url = "https://files.pythonhosted.org/packages/32/bc/fd2edf1f19b099ac835bb07688a5791322eb09f7dadf132145e02129bd43/dhrona-0.1.15-py3-none-any.whl", hash = "sha256:140747e30419225d0b228f880b07dd5bd823e6b5f0a50ffbecc7a32fe78cfd2c", size = 51314, upload-time = "2026-10-20T08:43:37.265Z" },
 ]
 
 [[package]]
@@ -1416,7 +1417,7 @@ wheels = [
 
 [[package]]
 name = "fossick"
-version = "0.1.19"
+version = "0.1.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -1433,9 +1434,9 @@ dependencies = [
     { name = "scrapling", extra = ["fetchers"] },
     { name = "yt-dlp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/b4/42672e9714bdf7b0e590c3d5eabac744b10ad48889ad2378d506a7f862f6/fossick-0.1.19.tar.gz", hash = "sha256:1d6c34abc6caafdb85ce78903d629289636916aca2e53dd84471814540acb5f7", size = 99609, upload-time = "2026-10-19T06:54:14.707Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/f7/db22dc78458d173a18fe2ddafccaa4311653002b14f706b0007957f4637f/fossick-0.1.20.tar.gz", hash = "sha256:8abbb5b982c6f5a685963922966a4bcdd3f945eaada784dbbc9a2b85b2355a12", size = 99724, upload-time = "2026-10-20T08:37:36.95Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/b3/d90e88b6fe73f30a4582de040a4d23fe6db3109e4aad16545e7ee8fb2447/fossick-0.1.19-py3-none-any.whl", hash = "sha256:be14c1a5d66097b852f3f16c48f0ce7280569cbcdba66f0aed99385c2e5ee94b", size = 99995, upload-time = "2026-10-19T06:54:13.226Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/13/6d1137b54ed59c57373c9e5016164acf794a537d9160db611b1040592bf0/fossick-0.1.20-py3-none-any.whl", hash = "sha256:2f9974969ab0898dfd6150e0c3c62692fd8d77917402b8babce379ef02c2cbd3", size = 100128, upload-time = "2026-10-20T08:37:35.661Z" },
 ]
 
 [[package]]
@@ -1486,7 +1487,7 @@ wheels = [
 
 [[package]]
 name = "gheasy"
-version = "0.0.13"
+version = "0.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cyclopts" },
@@ -1495,9 +1496,9 @@ dependencies = [
     { name = "ruamel-yaml" },
     { name = "tomlkit" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/62/f4/c2d4de5b3a8c245f0a83312cbfaa3d680788fad5dc874f14d38789c1523c/gheasy-0.0.13.tar.gz", hash = "sha256:720f3b3aa88a8d6fd8abd1cc5331efde2ba4c360dc006ce8bb85d78200d765fe", size = 63687, upload-time = "2026-10-19T06:09:55.765Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/e6/0ca4e4705465bf57230c9337f0f096c4c9c24fcab5de4d805fec5c918b1b/gheasy-0.0.14.tar.gz", hash = "sha256:be62fab11df2540e91f501ce2537025875c80d5cc2afef5e4f836fd8bc681402", size = 63744, upload-time = "2026-10-20T08:36:38.605Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/68/6e1692b6eabd33792041f9ddd447883f14a95c5219845d367b04304f2600/gheasy-0.0.13-py3-none-any.whl", hash = "sha256:5a51884b41faee462988bc88acccdcab75bff20040e1734a1960ff6d89a50881", size = 65907, upload-time = "2026-10-19T06:09:54.402Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/2c/fd8c45d2ab288891ed8e80b2301d6c969e3388a7ee14d00f7e2f323177b5/gheasy-0.0.14-py3-none-any.whl", hash = "sha256:b1ba36ffaeb1366210b2b30b0d35b7194594fae647a073f56531d26e145ba1e2", size = 65979, upload-time = "2026-10-20T08:36:37.252Z" },
 ]
 
 [[package]]
@@ -2406,7 +2407,7 @@ wheels = [
 
 [[package]]
 name = "kunda"
-version = "0.0.4"
+version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -2418,9 +2419,9 @@ dependencies = [
     { name = "jupyter-client" },
     { name = "jupywire" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/3f/0e360c9743df7a48091b14f6997e5dd31e4617b25e8c7ec72dc3030507d7/kunda-0.0.4.tar.gz", hash = "sha256:e5964d4ee5829478116cc3b93f0afb30781473e9ec59179af41ed9db0d2036ea", size = 37182, upload-time = "2026-10-19T06:54:13.872Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/1b/b78b1fc279a172a9d6e7e6dc9a23398e3980763058df4bfed6f1e6e3520e/kunda-0.0.5.tar.gz", hash = "sha256:9efacaee4656ba2f0cdf8ced9f21e5c8aaa465785066425a5c0c1d885045120a", size = 37269, upload-time = "2026-10-20T08:37:15.35Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/23/47cc9cef68bf3d090876f19f51a51eef7245160afbbd0985708828d52e76/kunda-0.0.4-py3-none-any.whl", hash = "sha256:d008c5ea1ea5a01cf47bc05c35dc77ef3f35f5e32254411da76b412c375d8769", size = 30240, upload-time = "2026-10-19T06:54:12.792Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/df/18d940ef0742d531223c8ffcbff73cd0903f61d9c84f7a85440fabd68759/kunda-0.0.5-py3-none-any.whl", hash = "sha256:69ccfe3d9fe6d790e645b5f2afcc06216767132f1d2ecbea1af3d5164740f4e1", size = 30273, upload-time = "2026-10-20T08:37:14.179Z" },
 ]
 
 [[package]]
@@ -2517,12 +2518,12 @@ dev = [
 requires-dist = [
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.6" },
-    { name = "dhrona", specifier = ">=0.1.14" },
+    { name = "dhrona", specifier = ">=0.1.15" },
     { name = "dockeasy", specifier = ">=0.0.10" },
     { name = "exhash", specifier = ">=0.4.10" },
     { name = "fastcore", specifier = ">=1.7.0" },
-    { name = "fossick", specifier = ">=0.1.19" },
-    { name = "gheasy", specifier = ">=0.0.13" },
+    { name = "fossick", specifier = ">=0.1.20" },
+    { name = "gheasy", specifier = ">=0.0.14" },
     { name = "httpx2", specifier = ">=2.10.0" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "ipymini", specifier = ">=0.0.1" },
@@ -2538,7 +2539,7 @@ requires-dist = [
     { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.7" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.11" },
-    { name = "kunda", specifier = ">=0.0.4" },
+    { name = "kunda", specifier = ">=0.0.5" },
     { name = "lekhaka", specifier = ">=0.0.4" },
     { name = "litesearch", specifier = ">=0.1.49" },
     { name = "mdhtml", specifier = ">=0.1.38" },
@@ -2551,11 +2552,11 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.59" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.60" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.52" },
+    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.53" },
     { name = "shalya", specifier = ">=0.1.19" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
@@ -2581,8 +2582,8 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.52" },
-    { name = "rishi", extras = ["all"], specifier = "==0.1.52" },
+    { name = "rishi", specifier = "==0.1.53" },
+    { name = "rishi", extras = ["all"], specifier = "==0.1.53" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -4739,7 +4740,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.59"
+version = "0.2.60"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4753,9 +4754,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/65/8a/d1ae8a99df570bc15fc4fb9ff74641cea77248bc3e6ef692b984e45f38c4/ramabana-0.2.59.tar.gz", hash = "sha256:eae66be65ad3af93258ab8187506124521a3f8de439023ce813b994cf81ba5de", size = 324006, upload-time = "2026-10-20T08:14:01.729Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6c/d1/79da211090a92921063de1723d2b318ff4a3f1aaba2a465435de027c536b/ramabana-0.2.60.tar.gz", hash = "sha256:20c39b3e5b3e74e0ee8dd852e596045d412cc20a4ec8fa501a2722bf6e66b1d3", size = 324177, upload-time = "2026-10-20T08:40:55.375Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/85/5f35682163c0881e29cffbfc9c70d2eea4c42cb619221e2adb14b3fc5511/ramabana-0.2.59-py3-none-any.whl", hash = "sha256:d0f2e6791c32b977bb4da0fe230aa30959c24dd587b40c0e10ad20acf5ea8be0", size = 324283, upload-time = "2026-10-20T08:14:00.177Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/ae/acd405d0cdca21456b86f9b8c9cec8469ad5176c023336deeb9c006f9f4c/ramabana-0.2.60-py3-none-any.whl", hash = "sha256:17c375b7d842f3a9821a6570e618d85c9f7d3df0f714dec9ac9bc80d2af690c3", size = 324335, upload-time = "2026-10-20T08:40:53.949Z" },
 ]
 
 [package.optional-dependencies]
@@ -5038,7 +5039,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.52"
+version = "0.1.53"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5054,9 +5055,9 @@ dependencies = [
     { name = "truststore" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/2f/e99d81da2f9f5444682f94e3b2d1084895ddb9166d692006da98dc0be60a/rishi-0.1.52.tar.gz", hash = "sha256:93e50e859baa7aafcdc3519f88771587d1210dd5bc85a7130582f0422715e39f", size = 85350, upload-time = "2026-10-20T08:00:06.561Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/b7/65a59066bf716f44cc7628f11092bb25ab519fba5477b4c8128d3f42e878/rishi-0.1.53.tar.gz", hash = "sha256:e259baaa91683d043ac4300ee2e1d3ee9394d5c77d0bdda98ab4726fc1d4736f", size = 85371, upload-time = "2026-10-20T08:37:56.661Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/da/64a327e3d1b6bbdf153b3d60c66fd1b0d771caa9c16999233df0e4eb8a73/rishi-0.1.52-py3-none-any.whl", hash = "sha256:f7b7051697817759c12127209ab9b83414446c83f2b5d131e28a82dcc4b0daf6", size = 94541, upload-time = "2026-10-20T08:00:05.054Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/3e/722224f246facae140a7b50c0b5424877aabd6290dfa4b1a578dbf0d3d63/rishi-0.1.53-py3-none-any.whl", hash = "sha256:79e40bc958db7056a589e4fc0a91783e8e05fc6ae8ad8b997b0a6a6be7e0ae1a", size = 94565, upload-time = "2026-10-20T08:37:55.42Z" },
 ]
 
 [package.optional-dependencies]
