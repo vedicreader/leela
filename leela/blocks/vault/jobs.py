@@ -15,6 +15,8 @@ TERMINAL = ('complete', 'error', 'cancelled')
 CLIPS = ('clip', 'clip_tree', 'acquire')
 #: Kinds that stop between files whatever their params say: a job started before `_cancel` lacks the flag.
 STOPS = ('clip', 'clip_tree')
+#: The clock a resume's delay runs on; a test holds it and fires it.
+Timer = threading.Timer
 
 def every_seconds(spec, default=3600):
     "Seconds from `'30m'`, `'6h'`, or a bare number of hours. `default` when it is not a duration."
@@ -279,7 +281,7 @@ class Jobs:
                 _live.add((self.owner, job.id))
                 if delay <= 0: self._resume(job.id)
                 else:
-                    t = threading.Timer(delay, self._resume, (job.id,))
+                    t = Timer(delay, self._resume, (job.id,))
                     t.daemon = True; t.start()
             else:
                 self.update(job.id, status='error', finished_at=time.time(),

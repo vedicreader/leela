@@ -2,6 +2,7 @@
 
 import pytest
 import os, time
+from fastcore.all import first
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.vault.jobs import JobError, Jobs
@@ -44,14 +45,42 @@ def proj(tmp_path):
 @pytest.fixture
 def ws(proj): return Workspace(roots=[proj])
 
-def _finish(jobs, jid, tries=200):
-    for _ in range(tries):
-        j = jobs.get(jid)
-        if not j.active: return j
+#: Seconds a condition may take: a cold clip on a loaded runner took over 10. Only a failure waits this long.
+WAIT = 60
+
+def _until(cond, secs=WAIT):
+    "Wait on `cond`, not the clock: a loaded runner oversleeps any fixed pause."
+    end = time.monotonic() + secs
+    while time.monotonic() < end:
+        if (got := cond()): return got
         time.sleep(0.05)
+    return cond()
+
+def _finish(jobs, jid):
+    if (j := _until(lambda: first(j for j in [jobs.get(jid)] if not j.active))): return j
     raise AssertionError(f'job {jid} never finished: {jobs.get(jid).dict()}')
 
 def _run(ws, kind, target=''): return _finish(ws.jobs, ws.jobs.start(kind, target).id)
+
+def _joined(prefix):
+    "Whether every thread named `prefix`… ends; `_finish` returns before a run's `finally` does."
+    import threading
+    for t in [t for t in threading.enumerate() if t.name.startswith(prefix)]: t.join(WAIT)
+    return not [t for t in threading.enumerate() if t.name.startswith(prefix) and t.is_alive()]
+
+@pytest.fixture
+def held(monkeypatch):
+    "Resume delays the test fires itself, so no assertion races a timer."
+    from leela.blocks.vault import jobs as J
+    class Got(list):
+        def fire(self):
+            while self: (t := self.pop(0)).fn(*t.args)
+    got = Got()
+    class Held:
+        def __init__(self, delay, fn, args=()): self.fn, self.args, self.daemon = fn, args, False
+        def start(self): got.append(self)
+    monkeypatch.setattr(J, 'Timer', Held)
+    return got
 
 def test_the_three_clip_kinds_each_store_the_shape_that_suits_them(ws, proj):
     "A document is prose, a codebase is a pointer, a spec is one section per operation."
@@ -119,24 +148,25 @@ def _interrupted(path, kind='clip', **params):
     jobs.update(job.id, status='running', owner=None)
     return job
 
-def test_a_resumed_job_waits_out_the_launch_and_runs_once_however_many_workspaces_recover_it(tmp_path):
+def test_a_resumed_job_waits_out_the_launch_and_runs_once_however_many_workspaces_recover_it(tmp_path, held):
     "Every workspace shares one jobs file and calls `recover`; a resumed clip forked a pool per core before the first paint."
-    import threading
     job, ran = _interrupted(tmp_path/'jobs.db'), []
     def slow(job, report): ran.append(job.id); time.sleep(.3); return {}
     sites = [Jobs(tmp_path/'jobs.db') for _ in range(3)]
     for s in sites: s.register('clip', slow)
     for s in sites: assert s.recover(delay=.4)['resumed'] in ([job.id], [])
     assert sites[0].get(job.id).status == 'queued' and not ran, 'nothing starts before the delay'
+    assert len(held) == 1, 'one claim per row'
+    held.fire()
     assert _finish(sites[0], job.id).status == 'complete'
-    assert ran == [job.id], 'one claim per row'
-    assert not any(t.name.startswith('leela-job') for t in threading.enumerate() if t.is_alive())
+    assert ran == [job.id], 'one run per row'
+    assert _joined('leela-job')
 
 def test_a_running_job_is_left_alone_by_a_later_workspace(tmp_path):
     "Opening a folder rebuilds a workspace, and its `recover` must neither restart nor fail what this process runs."
     job = _interrupted(tmp_path/'jobs.db', kind='book')
     first = Jobs(tmp_path/'jobs.db'); gate = __import__('threading').Event()
-    first.register('book', lambda job, report: gate.wait(5) and {})
+    first.register('book', lambda job, report: gate.wait(WAIT) and {})
     first.recover(delay=0)
     later = Jobs(tmp_path/'jobs.db'); later.register('book', lambda job, report: {})
     assert later.recover(delay=0) == dict(resumed=[], failed=[], cancelled=[])
@@ -155,7 +185,7 @@ def test_another_processs_live_job_survives_recover_and_a_dead_ones_is_recovered
     db, gate, host = tmp_path/'jobs.db', threading.Event(), socket.gethostname()
     first = Jobs(db, owner=f'{host}:{os.getpid()}:first')
     second = Jobs(db, owner=f'{host}:{os.getpid()}:second')
-    for j in (first, second): j.register('book', lambda job, report: gate.wait(5) and {})
+    for j in (first, second): j.register('book', lambda job, report: gate.wait(WAIT) and {})
     live = first.start('book', 'x')
     queued = first.new('book', 'y')            # not yet launched: owned from `new`, so not an orphan either
     dead = first.new('book', 'z', _resume={'done': []})
@@ -177,14 +207,14 @@ def test_a_stale_heartbeat_is_recovered_and_the_old_run_can_no_longer_write(tmp_
     first, second = Jobs(db, owner='h:1:first', stale=3600), Jobs(db, owner='h:1:second', stale=3600)
     seen = {}
     def slow(job, report):
-        started.set(); gate.wait(5)
+        started.set(); gate.wait(WAIT)
         seen['stopping'] = first.stopping(job.id)
         report(current='the old run talking'); spoke.set()
         return {}
     # the new run outlives the old one's last write, or `stopping` would read a finished row
-    first.register('clip', slow); second.register('clip', lambda job, report: spoke.wait(5) and {})
+    first.register('clip', slow); second.register('clip', lambda job, report: spoke.wait(WAIT) and {})
     jid = first.start('clip', 'x', _resume={'done': []}).id
-    assert started.wait(5)
+    assert started.wait(WAIT)
     assert second.recover(delay=0)['resumed'] == [], 'a fresh beat is a live owner'
     first.update(jid, beat_at=time.time() - 7200)
     assert second.recover(delay=0)['resumed'] == [jid]
@@ -195,12 +225,13 @@ def test_a_stale_heartbeat_is_recovered_and_the_old_run_can_no_longer_write(tmp_
 def test_the_heartbeat_moves_while_a_job_runs_and_stops_with_it(tmp_path):
     import threading
     gate = threading.Event()
-    jobs = Jobs(tmp_path/'jobs.db', stale=0.2); jobs.register('book', lambda job, report: gate.wait(5) and {})
+    jobs = Jobs(tmp_path/'jobs.db', stale=0.2); jobs.register('book', lambda job, report: gate.wait(WAIT) and {})
     jid = jobs.start('book', 'x').id
-    b0 = jobs.get(jid).beat_at; time.sleep(.3)
-    assert jobs.get(jid).beat_at > b0 and jobs.alive(jobs.get(jid))
-    gate.set(); _finish(jobs, jid); time.sleep(.15)
-    assert not [t for t in threading.enumerate() if t.name == f'leela-job-beat-{jid}']
+    b0 = jobs.get(jid).beat_at
+    # a starved beat thread can lapse past `stale` on a loaded runner, so wait for a read that is both moved and fresh
+    assert _until(lambda: (j := jobs.get(jid)).beat_at > b0 and jobs.alive(j))
+    gate.set(); _finish(jobs, jid)
+    assert _joined(f'leela-job-beat-{jid}')
 
 def test_the_stale_window_comes_from_the_environment(tmp_path, monkeypatch):
     from leela.blocks.vault.jobs import STALE
@@ -238,8 +269,10 @@ def test_the_sweep_finishes_a_cancelled_orphan_as_cancelled_without_running_it(t
     jobs = Jobs(tmp_path/'jobs.db'); jobs.register('clip', lambda job, report: ran.append(1))
     jobs.update(job.id, cancel_at=time.time())
     try:
-        jobs.sweep(.1); time.sleep(.5)
-        assert (jobs.get(job.id).status, ran) == ('cancelled', []) and 'recovered 0, failed 0, cancelled 1' == jobs.note
+        # a round woken past twice its interval is skipped, and the note lands after the row, so wait on both
+        jobs.sweep(.1)
+        assert _until(lambda: jobs.get(job.id).status == 'cancelled' and jobs.note == 'recovered 0, failed 0, cancelled 1'), (jobs.get(job.id).status, jobs.note)
+        assert ran == []
     finally: jobs.close()
 
 def test_concurrent_sweeps_take_an_orphan_once(tmp_path):
@@ -248,12 +281,17 @@ def test_concurrent_sweeps_take_an_orphan_once(tmp_path):
     def once(job, report):
         with lock: ran.append(job.id)
         time.sleep(.2); return {}
-    sites = [Jobs(tmp_path/'jobs.db', owner=f'h:1:s{i}') for i in range(4)]
-    for s in sites: s.register('clip', once)
+    sites, rounds = [Jobs(tmp_path/'jobs.db', owner=f'h:1:s{i}') for i in range(4)], [0]*4
+    for i, s in enumerate(sites):
+        s.register('clip', once)
+        def counted(i=i, recover=s.recover, **kw): rounds[i] += 1; return recover(**kw)
+        s.recover = counted
     try:
         for s in sites: s.sweep(.05)
         assert _finish(sites[0], job.id).status == 'complete'
-        time.sleep(.3)
+        seen = list(rounds)
+        # every site sweeps twice more after the run, rather than a fixed pause that a loaded runner may sleep through
+        assert _until(lambda: all(r >= n + 2 for r, n in zip(rounds, seen))), rounds
         assert ran == [job.id]
     finally:
         for s in sites: s.close()
@@ -263,7 +301,7 @@ def test_a_sweep_never_takes_this_processs_own_run_however_stale_its_beat(tmp_pa
     import threading
     gate, ran = threading.Event(), []
     jobs = Jobs(tmp_path/'jobs.db', stale=3600)
-    jobs.register('clip', lambda job, report: ran.append(1) or gate.wait(5) and {})
+    jobs.register('clip', lambda job, report: ran.append(1) or gate.wait(WAIT) and {})
     jid = jobs.start('clip', 'x', _resume={'done': []}).id
     jobs.update(jid, beat_at=time.time() - 7200)
     assert jobs.recover(delay=0, handled=True) == dict(resumed=[], failed=[], cancelled=[])
@@ -277,17 +315,14 @@ def test_a_sweep_leaves_a_kind_it_has_no_handler_for(tmp_path):
     assert jobs.recover(delay=0)['failed'] == [job.id], 'a workspace opening still fails it'
 
 def test_the_sweep_stops_on_close_and_on_workspace_shutdown_and_survives_a_failing_recover(tmp_path, monkeypatch):
-    def stopped(t): t.join(5); return not t.is_alive()
+    def stopped(t): t.join(WAIT); return not t.is_alive()
     jobs = Jobs(tmp_path/'jobs.db')
     calls = []
     def boom(**kw): calls.append(1); raise RuntimeError('the disk was not there')
     monkeypatch.setattr(jobs, 'recover', boom)
     # A round woken past twice its interval counts as a sleep and is skipped; a loaded runner oversleeps 50ms, so wait on rounds, not the clock.
     jobs.sweep(.2); t = jobs._sweeper
-    for _ in range(100):
-        if len(calls) > 1: break
-        time.sleep(.05)
-    assert len(calls) > 1 and 'the disk was not there' in jobs.note and t.is_alive() and t.name == 'leela-orphan-sweep'
+    assert _until(lambda: len(calls) > 1) and 'the disk was not there' in jobs.note and t.is_alive() and t.name == 'leela-orphan-sweep'
     jobs.close()
     assert stopped(t) and jobs._sweeper is None
     assert jobs.sweep(.05) and (t := jobs._sweeper).is_alive(), 'a closed Jobs sweeps again when asked'
@@ -312,10 +347,10 @@ def test_the_sweep_is_off_in_tests_in_pool_workers_and_while_quitting(tmp_path, 
     monkeypatch.setattr(J, 'quitting', lambda: True)
     assert Jobs(tmp_path/'d.db').recover(delay=0) == dict(resumed=[], failed=[], cancelled=[]), 'a quitting process takes nothing'
 
-def test_a_job_cancelled_before_it_resumes_never_starts(tmp_path):
+def test_a_job_cancelled_before_it_resumes_never_starts(tmp_path, held):
     job, ran = _interrupted(tmp_path/'jobs.db', _cancel=True), []
     jobs = Jobs(tmp_path/'jobs.db'); jobs.register('clip', lambda job, report: ran.append(1))
-    jobs.recover(delay=.3); jobs.cancel(job.id); time.sleep(.6)
+    jobs.recover(delay=.3); jobs.cancel(job.id); held.fire()
     assert (jobs.get(job.id).status, ran) == ('cancelled', [])
 
 def _gated_mem(started, gate):
@@ -328,7 +363,7 @@ def _gated_mem(started, gate):
             for i, f in enumerate(batch):
                 if i and stop is not None and stop(): break
                 rows.append(dict(doc_id=None))
-                if not i: started.set(); gate.wait(10)
+                if not i: started.set(); gate.wait(WAIT)
             rows.cancelled, rows.unread = len(rows) < len(batch), L(batch[len(rows):]); return rows
     return Mem
 
@@ -348,7 +383,7 @@ def test_a_cancel_from_another_workspace_stops_a_running_clip_started_without_th
     a.register('clip', lambda job, report: clip_docs(Mem(), job, report, partial(a.stopping, job.id)))
     jid = a.new('clip', str(root)).id
     assert 'data-job-cancel' in to_xml(job_card(a.get(jid))), 'a clip without `_cancel` offers cancel'
-    a.launch(jid); assert started.wait(10)
+    a.launch(jid); assert started.wait(WAIT)
     assert b.cancel(jid).cancel_at and a.stopping(jid)
     gate.set()
     j = _finish(a, jid)
@@ -362,16 +397,15 @@ def test_a_cancel_then_a_restart_leaves_the_clip_cancelled_not_resumed(tmp_path)
     Jobs(tmp_path/'jobs.db').cancel(job.id)
     nxt = Jobs(tmp_path/'jobs.db'); nxt.register('clip', lambda job, report: ran.append(1))
     assert nxt.recover(delay=0)['cancelled'] == [job.id]
-    time.sleep(.2)
     assert (nxt.get(job.id).status, ran) == ('cancelled', [])
     from leela.blocks.vault.ui import job_card
     from fasthtml.common import to_xml
     assert '/retry' in to_xml(job_card(nxt.get(job.id))), 'a clip cancelled across a quit can still be resumed'
 
-def test_a_cancel_from_another_workspace_lands_on_a_queued_resume(tmp_path):
+def test_a_cancel_from_another_workspace_lands_on_a_queued_resume(tmp_path, held):
     job, ran = _interrupted(tmp_path/'jobs.db'), []
     a = Jobs(tmp_path/'jobs.db'); a.register('clip', lambda job, report: ran.append(1))
-    a.recover(delay=.3); Jobs(tmp_path/'jobs.db').cancel(job.id); time.sleep(.6)
+    a.recover(delay=.3); Jobs(tmp_path/'jobs.db').cancel(job.id); held.fire()
     assert (a.get(job.id).status, ran) == ('cancelled', [])
 
 def test_a_jobs_file_from_before_the_cancel_column_migrates_in_place(tmp_path):
@@ -390,7 +424,7 @@ def test_a_jobs_file_from_before_the_cancel_column_migrates_in_place(tmp_path):
     nxt = Jobs(db); nxt.register('clip', lambda job, report: {})
     assert nxt.recover(delay=0)['cancelled'] == ['clip-old'], 'and is an orphan to the next recover'
 
-def test_a_job_whose_pool_the_quit_reaps_stays_resumable(tmp_path):
+def test_a_job_whose_pool_the_quit_reaps_stays_resumable(tmp_path, held):
     "Killing a clip's workers breaks its pool; recorded as an error, the next launch would not resume it."
     from kavacha.window import quitting
     jobs = Jobs(tmp_path/'jobs.db')
@@ -400,9 +434,7 @@ def test_a_job_whose_pool_the_quit_reaps_stays_resumable(tmp_path):
     jobs.register('clip', broken)
     try:
         jid = jobs.start('clip', 'x').id
-        for _ in range(100):
-            if quitting.is_set() and not [t for t in __import__('threading').enumerate() if t.name == f'leela-job-{jid}']: break
-            time.sleep(.05)
+        assert _until(quitting.is_set) and _joined(f'leela-job-{jid}')
         j = jobs.get(jid)
         assert (j.status, j.resumable, j.error) == ('running', True, '')
     finally: quitting.clear()
@@ -481,7 +513,7 @@ def test_a_folder_clip_cancels_within_one_file_keeps_what_it_filed_and_resumes_t
         calls.append(list(map(str, batch))); n = [0]
         def held():
             n[0] += 1
-            if len(calls) == 1 and n[0] == 3: started.set(); gate.wait(10)
+            if len(calls) == 1 and n[0] == 3: started.set(); gate.wait(WAIT)
             return stop()
         return clip(batch, stop=held, **kw)
     monkeypatch.setattr(ws.memory, 'clip', gated)
@@ -489,7 +521,7 @@ def test_a_folder_clip_cancels_within_one_file_keeps_what_it_filed_and_resumes_t
         r = c.post(url, data=dict(data, target=str(root)))
         assert 'data-job-cancel' in r.text, 'a folder clip offers cancel'
         jid = r.text.split('id="job-', 1)[1].split('"', 1)[0]
-        assert started.wait(10)
+        assert started.wait(WAIT)
         card = c.post(f'/jobs/{jid}/cancel').text
         assert f'id="job-{jid}"' in card and 'cancelling after the files in flight' in card
         gate.set()
@@ -592,7 +624,7 @@ def test_a_grab_of_a_file_a_pdf_or_a_github_file_cancels_before_it_reads(ws, tmp
     assert r['cancelled'] and r['skipped'] == 'cancelled' and list(map(str, r['unread'])) == [target]
     gate = threading.Event()
     real = ws.memory.acquire
-    def held(action, target, **kw): gate.wait(5); return real(action, target, **kw)
+    def held(action, target, **kw): gate.wait(WAIT); return real(action, target, **kw)
     ws.memory.acquire = held
     try:
         with TestClient(ide_app(ws)) as c:
@@ -617,7 +649,7 @@ def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_aga
         def acquire(self, action, target, shelf=None, **kw):
             seen[action] = kw
             if 'stop' not in kw: return dict(documents=[])
-            kw['progress'](1, 3, [('u', 'md')]); started.set(); gate.wait(5)
+            kw['progress'](1, 3, [('u', 'md')]); started.set(); gate.wait(WAIT)
             if action == 'crawl':
                 r = L([dict(id='d1', path=Path('/x'))]); r.cancelled, r.unread = kw['stop'](), L(['u2', 'u3'])
                 return dict(documents=list(r), cancelled=r.cancelled, unread=r.unread)
@@ -626,7 +658,7 @@ def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_aga
     for action in ('github', 'crawl'):
         started.clear(); gate.clear()
         jid = jobs.start('acquire', 'https://github.com/a/b', action=action, _cancel=True).id
-        assert started.wait(5) and 'data-job-cancel' in to_xml(job_card(jobs.get(jid)))
+        assert started.wait(WAIT) and 'data-job-cancel' in to_xml(job_card(jobs.get(jid)))
         assert jobs.get(jid).current == '1 of 3', 'progress reaches the card'
         jobs.cancel(jid); gate.set()
         j = _finish(jobs, jid)
@@ -639,7 +671,7 @@ def test_an_acquisition_is_cancelled_between_what_it_files_and_offers_to_run_aga
     assert 'stop' not in seen['grab'] and j.status == 'complete' and not j.cancellable, 'a grab started before `_cancel` gets no stop'
     started.clear(); gate.clear()
     jid = jobs.start('acquire', 'https://github.com/a/b', action='github', _cancel=True).id
-    assert started.wait(5); gate.set()
+    assert started.wait(WAIT); gate.set()
     j = _finish(jobs, jid)
     assert j.status == 'complete' and 'cancelled' not in j.result and 'unread' not in j.result and j.current == '', 'not stopped: unread is not news'
 
