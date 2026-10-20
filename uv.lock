@@ -2551,7 +2551,7 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.51" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.52" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
@@ -4739,7 +4739,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.51"
+version = "0.2.52"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4752,9 +4752,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/32/a1a735251a1cf603a5fd82006026ba08b50bb10e19dab791b1b7348c605d/ramabana-0.2.51.tar.gz", hash = "sha256:19f45c214e9316da9554ebf9a560841c6a80ef0bfdf6a80bfb90a969c5e18283", size = 303575, upload-time = "2026-10-20T04:46:38.413Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/2d/41c1e6fa70a630756d8564e95fa780f38ac84470f0da3a313b1b525a62f5/ramabana-0.2.52.tar.gz", hash = "sha256:8150aad6888d4fc1b34b977934ea7ef580e856180abd11a996984d166c367c4c", size = 303681, upload-time = "2026-10-20T05:03:51.962Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/d0/a0c037f1f8973df55757407c8b9d1a14ab2598a1c8f5a0b1b8de18aff22d/ramabana-0.2.51-py3-none-any.whl", hash = "sha256:8e263aeccd194fd4d19666c75dcf36298aed97d0ee662c7c128db937aac576af", size = 304499, upload-time = "2026-10-20T04:46:36.748Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/da/909aaa9309d430dc08715bb2afa046ef0652377703753d5629392459660f/ramabana-0.2.52-py3-none-any.whl", hash = "sha256:031f49569fd69dbfdb66749bd59a5b96e0a7e837455df045e17080891156970b", size = 304612, upload-time = "2026-10-20T05:03:50.202Z" },
 ]
 
 [package.optional-dependencies]

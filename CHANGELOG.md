@@ -4,8 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.51 and rishi 0.1.48.
+Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.52 and rishi 0.1.48.
 
+- Dhrona's nightly batch finds `claude` and `git-lfs` (ramabana 0.2.52). The beat `ramabana-tick --install` schedules ran on launchd's `/usr/bin:/bin`, so a round on Claude Code could not start and a repository using Git LFS could not be checked out. Run `ramabana-tick --install` again to take the fix.
 - A `<parameter>` element a model leaves outside any tool call is stripped from the agent's reply instead of shown (ramabana 0.2.51, rishi 0.1.48, uraiyadal 0.0.15).
 
 - A line sent to the agent while a tool result fills its size cap reaches the model (ramabana 0.2.50). The line rode at the end of the result and the backend cut it off unread. Ramabana sub-agents asked with `delegate_search(writes=False)` run at once, and `grep` with a folder as `path_filter` finds what is in it (shalya 0.1.17).
