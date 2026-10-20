@@ -45,6 +45,7 @@ PACKAGES = [
     # `ramabana.cli` is imported inside a function, so the scanner follows it to none of these.
     'rich', 'pyghostty', 'teleprint',
     'pygments',  # see the macOS definition: styles and lexers are imported by name, so none are found
+    'fastaudit', 'safepyrun',   # see the macOS definition
     'pip',       # see the macOS definition: the on-demand backends have no other way in
 ]
 

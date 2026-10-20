@@ -920,7 +920,10 @@ class Workspace:
         if t is not None and t.path:
             try:
                 root = self.fs.root_of(t.path)
-                if t.kind == 'notebook': return Path(t.path).parent
+                if t.kind == 'notebook':
+                    from .blocks.runtime.kernels import AGENT_SESSIONS, SESSIONS
+                    d = Path(t.path).parent   # a transcript runs where it was written from, or its kernel's transcripts nest inside it
+                    return d.parent if d.name in (SESSIONS, AGENT_SESSIONS) else d
                 from .blocks.git.git import repo_root
                 return repo_root(Path(t.path).parent) or root
             except Unsafe: pass
@@ -992,9 +995,9 @@ class Workspace:
                 if not result.ok: raise RuntimeError(result.error or f'could not change kernel cwd to {desired}')
                 k.cwd = desired
         return k
-    async def restart_kernel(self):
-        "Restart the running kernel. Saved outputs turn historical, and the agent's name origins go with the namespace."
-        k = self.runtime_peek()
+    async def restart_kernel(self, k=None):
+        "Restart `k`, else the running kernel. Saved outputs turn historical, and the agent's name origins go with the namespace."
+        k = k or self.runtime_peek()
         if k: await k.restart()
         if (docs := getattr(self, 'docstore', None)) is not None: docs.mark_all_stale()
         from .core.session import Origins

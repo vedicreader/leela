@@ -298,7 +298,23 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
     # Leela serves the inspector from inside the kernel process, so this holds for ipykernel too.
     concurrent = True
-    def __init__(self, ws, session=None): self.ws, self.session, self._bg = ws, session, {}
+    #: The kernel this turn's Python runs in, and who the last call ran in: a tab the person clicks mid-turn moves neither.
+    _pin = _seen = None
+    def __init__(self, ws, session=None): self.ws, self.session, self._bg, self._cells = ws, session, {}, {}
+    def new_turn(self):
+        "A turn takes the kernel of the tab in front of the person when it first needs one, and keeps it to the end."
+        self._pin = None
+    @staticmethod
+    def _ident(k):
+        "Which process answers: the object, then its inspector and pid, which a restart replaces."
+        return (None if getattr(k, 'kernel_kind', '') == 'env' else id(k), getattr(k, 'base', None), getattr(k, 'pid', None))
+    def _moved(self, k):
+        "The line that says this call's kernel is not the last call's, so nothing bound there is here."
+        was, self._seen = self._seen, self._ident(k)
+        if was is None or was == self._seen: return ''
+        if was[0] is not None and was[0] == self._seen[0]: return '[the kernel restarted since your last call: every name you bound is gone]\n'
+        return (f"[this ran in the {getattr(k, 'name', '') or 'selected'} kernel, not the one your last call ran in "
+                '(the person switched tabs or runtimes, or that kernel closed): every name you bound is gone]\n')
     #: Every group above is declared by inheritance rather than probed.
     @property
     def roots(self): return [str(r) for r in self.ws.fs.roots]
@@ -525,6 +541,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     def nb_run_cell(self, path, cell_id, timeout=120):
         "Run one cell in the kernel its notebook's tab runs in, the way the Run button does."
         from ..nb.nb import Notebook
+        from ...workspace import Tab
         p = self.check(path, must_exist=True)
         nb = Notebook.load(p)
         i = first(i for i, c in enumerate(nb.cells) if c.id == cell_id)
@@ -532,24 +549,28 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         if nb[i].cell_type != 'code': return f'cell {cell_id} is a {nb[i].cell_type} cell; only code cells run'
         loop = self._loop()
         if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
+        # an unopened notebook gets the private kernel its tab would have, never the kernel of the tab in front
+        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p)) or Tab(path=str(p), kind='notebook')
         try: k = asyncio.run_coroutine_threadsafe(self.ws.runtime(tab), loop).result(120)
         except Exception as e: return f'could not start the kernel for {path}: {errstr(e)}'
-        before = self._var_snapshot()
+        was, self._cells[str(p)] = self._cells.get(str(p)), self._ident(k)
+        note = ('' if was in (None, self._cells[str(p)]) else
+                "[this notebook's kernel is not the one your last run_cell here used (it restarted, or closed and started again): names from earlier cells are gone]\n")
+        before = self._var_snapshot(k)
         try: c = asyncio.run_coroutine_threadsafe(nb.run(i, k), loop).result(max(1, int(timeout)))
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
         if (origins := getattr(self.ws, 'origins', None)) is not None: origins.cell(c, path)
-        return self._cell_report(path, c, before)
-    def _var_snapshot(self):
-        "Name to value for every visible variable, or None when no inspector will say."
-        try: return {r['name']: r['value'] for r in self._var_rows()}
+        return note + self._cell_report(path, c, before, k)
+    def _var_snapshot(self, k=None):
+        "Name to value for every variable `k` (else the agent's kernel) shows, or None when no inspector will say."
+        try: return {r['name']: r['value'] for r in self._var_rows(k)}
         except Exception: return None
-    def _cell_report(self, path, c, before):
+    def _cell_report(self, path, c, before, k=None):
         "What one run did: its outputs, whether it raised, its execution count, and what moved."
         head = f'ran cell {c.id} of {path}  [In[{c.execution_count}]'
         if c.execution_ms is not None: head += f', {c.execution_ms:.0f} ms'
-        after = self._var_snapshot()
+        after = self._var_snapshot(k)
         changed = ([] if before is None or after is None
                    else sorted(n for n, v in after.items() if before.get(n) != v))
         body = [head + ']', c.text.rstrip() or '(no output)']
@@ -557,9 +578,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         body.append('bindings changed: ' + (', '.join(changed) if changed else 'none'))
         return '\n'.join(body)
     def _kernel(self):
-        k = self.ws.runtime_peek() or self._start_kernel()
+        k = (self._pin if getattr(self._pin, 'alive', False) else None) or self.ws.runtime_peek() or self._start_kernel()
         if k is None or not getattr(k, 'base', None) or not hasattr(k, 'api_sync'):
             raise NotImplementedError('no live kernel inspector')
+        self._pin = k
         return k
     def _start_kernel(self):
         "Start the tab's kernel for a tool that needs one. `None` where there is no loop to start it on."
@@ -571,7 +593,8 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "Restart the tab's kernel through the one path the kernel menu uses."
         if self.session is not None: self.session.layer.clear(); return "cleared the agent's layer; no kernel runs behind this session"
         if (loop := self._loop()) is None: raise NotImplementedError('kernel restart needs the workspace loop')
-        r = asyncio.run_coroutine_threadsafe(self.ws.restart_kernel(), loop).result(120)
+        r = asyncio.run_coroutine_threadsafe(self.ws.restart_kernel(self._pin if getattr(self._pin, 'alive', False) else None), loop).result(120)
+        self._seen = None   # asked for, so the next call has nothing to warn about
         return f"restarted the kernel at {r['base']}: every name is gone and saved outputs are stale" if r['base'] else 'no kernel was running; the next run starts a fresh one'
     def _on_loop(self, coro, timeout=60):
         "Run a browser coroutine on the workspace loop: `Browser.cdp` drops every page and cast when asked from another."
@@ -696,11 +719,13 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
             bound = sorted(set(self.session.layer) - before)
             self._note_origin(bound, scope, ok=not r.error)
             return self._session_text(r, bound)
-        r = self._kernel().api_sync('/agent/api/exec', {'code': code, 'scope': scope})
+        k = self._kernel()
+        note = self._moved(k)
+        r = k.api_sync('/agent/api/exec', {'code': code, 'scope': scope})
         failed = bool((r or {}).get('error'))
         bound = self._bound_after(code) if failed and scope == 'overlay' else ()
         self._note_origin(bound if failed else _assigned(code), scope, ok=not failed)
-        return self._exec_text(r, bound)
+        return note + self._exec_text(r, bound)
     def _note_origin(self, names, scope, ok=True):
         "Attribute what the overlay bound. `isolated` discards its writes, so it binds nothing."
         origins = getattr(self.ws, 'origins', None)
@@ -720,17 +745,17 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return ('isolated',) if s == 'isolated' else ('isolated', 'overlay')
     @property
     def kernel_kind(self): return getattr(self.ws, 'kernel_kind', 'ipykernel')
-    def _rows(self, path):
-        r = self._kernel().api_sync(path, {'profile': 'minimal', 'sort': 'name'})
+    def _rows(self, path, k=None):
+        r = (k or self._kernel()).api_sync(path, {'profile': 'minimal', 'sort': 'name'})
         return None if r is None else [v for g in r.get('groups', []) for v in g.get('nodes', [])]
-    def _var_rows(self):
+    def _var_rows(self, k=None):
         "The merged view `DhrishtiHost` reads: what the user has, plus what this agent has bound."
-        if self.session is not None:
+        if self.session is not None and k is None:
             return [{'name': v.name, 'type': v.type, 'value': v.value}
                     for _, vs in self.session.view('minimal') for v in vs]
         # an `agent='off'` inspector refuses the merged route, and owner-only beats nothing at all
-        rows = self._rows('/agent/api/rows')
-        if rows is None: rows = self._rows('/api/rows') or []
+        rows = self._rows('/agent/api/rows', k)
+        if rows is None: rows = self._rows('/api/rows', k) or []
         return [{'name': v.get('name'), 'type': v.get('type'), 'value': v.get('value')} for v in rows]
     def list_vars(self):
         "Every visible variable, and what last bound it: a value alone does not say where it came from."
@@ -828,7 +853,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         import shutil, sys
         proj = self.project
         lines = [f'this process: {sys.executable}; inspect_python honours {", ".join(self.scopes)}',
-                 f'project python: {python_for(proj, session=None) if proj else "no folder is open"}']
+                 f'project python: {python_for(proj, session=None) if proj else "no folder is open"}',
+                 # kunda's bootstrap: dhrishti, and so the inspector, needs this process's packages in the kernel
+                 f'kernels on Python {sys.version_info.major}.{sys.version_info.minor} also import from this process\'s library path, after the project\'s own packages: '
+                 'a package that imports in a kernel can still be missing from the project environment, so check the project interpreter before relying on one']
         lines += [f"runtime: {e['name']} ({e['kind']}, pid {e.get('pid')}){' current' if e.get('current') else ''}" for e in self.ws.envs()]
         lines += [f'{c}: {shutil.which(c) or "not on PATH"}' for c in ('python', 'uv', 'git', 'rg', 'ffmpeg')]
         return '\n'.join(lines)
@@ -1137,6 +1165,7 @@ class Assistant(Agent):
         return f'{prompt}\n\nUser steering: {steer}'.strip() if steer else prompt
 
     def _prepare(self, prompt):
+        self.host.new_turn()
         if self.approvals is not None and hasattr(self.approvals, 'resume'): self.approvals.resume()
         self._follow_mode()
         return super()._prepare(self._with_steer(prompt))

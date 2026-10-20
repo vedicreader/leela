@@ -106,3 +106,4 @@ def test_the_host_runs_commands_in_the_background(tmp_path):
     host.close()
     assert host._bg == {} and p.poll() is not None and not log.exists()
     assert 'project python' in host.environment() and 'python:' in host.environment()
+    assert 'missing from the project environment' in host.environment(), 'a kernel borrowing the app\'s packages is said'

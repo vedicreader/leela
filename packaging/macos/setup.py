@@ -59,6 +59,10 @@ PACKAGES = [
     # Shipped so the app can install `leela[local]` into `leela.extras_site()`. Nothing imports it,
     # so the scanner would never find it, and without it the on-demand backends cannot be fetched
     # at all: a signed bundle has no other way to add a package. ~16MB against the ~400MB it saves.
+    # `inspect_python`'s isolated scope runs in safepyrun, which loads fastaudit's hooks from entry points
+    # at call time. No scanner reads `entry_points.txt`, so the zip had `fastaudit` without `fastaudit.hooks`
+    # and every isolated inspection failed in the app alone with `No module named 'fastaudit.hooks'`.
+    'fastaudit', 'safepyrun',
     'pip',
 ]
 

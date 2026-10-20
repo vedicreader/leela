@@ -153,6 +153,15 @@ def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, requ
     assert 'pygments' not in mod.EXCLUDES
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
+def test_a_module_fastaudit_loads_by_entry_point_is_copied_whole(which, request):
+    """safepyrun loads `fastaudit.hooks:lxml_monitor` from `entry_points.txt`, which no scanner reads, so the bundle had the entry point and not the module: every isolated `inspect_python` died on `No module named 'fastaudit.hooks'`."""
+    from importlib.metadata import entry_points
+    tops = {ep.value.split(':')[0].split('.')[0] for g in ('fastaudit_monitor_hook', 'fastaudit_audit_hook')
+            for ep in entry_points(group=g) if ':' in ep.value}
+    assert tops, 'fastaudit declares its hooks by entry point'
+    assert tops <= set(request.getfixturevalue(which).PACKAGES), tops
+
+@pytest.mark.parametrize('which', ['mac', 'win'])
 def test_fastclaude_is_copied_whole_or_no_claude_code_model_can_run(which, request):
     """`fastclaude.session` wraps `files('fastclaude')` in `Path` at import, which raises on a `zipfile.Path`, and `rishi.claude` imports it."""
     assert 'fastclaude' in request.getfixturevalue(which).PACKAGES

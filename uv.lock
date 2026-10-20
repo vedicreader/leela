@@ -1015,7 +1015,7 @@ wheels = [
 
 [[package]]
 name = "dhrishti"
-version = "0.1.6"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -1025,9 +1025,9 @@ dependencies = [
     { name = "python-fasthtml" },
     { name = "safepyrun" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/83/74d9696dca9714b82cec587009c4b5d94354ca31a80d2bebdf11dd9778ef/dhrishti-0.1.6.tar.gz", hash = "sha256:803cefd4884e9d2bff88791c7fce4fade7c5741f2764437db36c94c2d5fdaf89", size = 31807, upload-time = "2026-10-19T05:47:06.325Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/1e/5408116ae08a78c3b9848c74ab5b203cf3e293419e97865331fe2b331075/dhrishti-0.1.7.tar.gz", hash = "sha256:ddd48310d3a42a8cc26231dc2de63a7093483dc484ffd4130bd50c418c36e00c", size = 31927, upload-time = "2026-10-20T09:10:35.938Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/47/9d9b44e37f3fa530f2d3e6c5ea272b112e1918048de7eac6a514840ffd14/dhrishti-0.1.6-py3-none-any.whl", hash = "sha256:4a69a2b57fc1d44390639f4f004afe0b7a5e53e9deab74a49924517cf9b5eeb6", size = 35290, upload-time = "2026-10-19T05:47:04.797Z" },
+    { url = "https://files.pythonhosted.org/packages/41/31/89e2d3f835ce76b9f74aade7af66acc18b1b0ef51a2c14b9866e8e1be829/dhrishti-0.1.7-py3-none-any.whl", hash = "sha256:2633d266fd498837712d3dbf9eccf7ba3e010a08b049186e8f59562efc27c19c", size = 35424, upload-time = "2026-10-20T09:10:34.598Z" },
 ]
 
 [[package]]
@@ -2517,7 +2517,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cfeasy", specifier = ">=0.0.6" },
-    { name = "dhrishti", specifier = ">=0.1.6" },
+    { name = "dhrishti", specifier = ">=0.1.7" },
     { name = "dhrona", specifier = ">=0.1.15" },
     { name = "dockeasy", specifier = ">=0.0.10" },
     { name = "exhash", specifier = ">=0.4.10" },

@@ -492,6 +492,67 @@ def test_run_python_cannot_touch_what_the_user_made(tmp_path):
     asyncio.run(go())
 
 
+def _nb(path, src):
+    "A one-cell notebook on disk, the cell id `c1`."
+    import json as _j
+    path.write_text(_j.dumps({'cells': [{'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'source': src, 'outputs': [],
+        'execution_count': None}], 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    return path
+
+def test_run_python_keeps_its_kernel_for_the_turn_and_says_when_it_moves(tmp_path):
+    """The person clicked tabs mid-turn and each click moved `run_python` to that tab's kernel: the agent's names vanished between two calls, with nothing said."""
+    from leela.workspace import Workspace
+    a, b = _nb(tmp_path/'a.ipynb', ''), _nb(tmp_path/'b.ipynb', '')
+    ws = Workspace(roots=[tmp_path], port=8320)
+    async def go():
+        await ws.opened()
+        host, loop = ws.inline_ai.host, asyncio.get_running_loop()
+        async def run(code): return str(await loop.run_in_executor(None, lambda: host.run_python(code)))
+        ws.open(a); await ws.runtime()
+        assert 'error' not in (await run('pinned = 6 * 7')).lower()
+        ws.open(b); kb = await ws.runtime()
+        held = await run('print(pinned)')
+        assert '42' in held and '[' not in held, f'a click mid-turn moves nothing: {held}'
+        host.new_turn()
+        moved = await run('print(1)')
+        assert 'not the one your last call ran in' in moved, f'a new turn in another tab says so: {moved}'
+        assert host._kernel() is kb
+        await kb.restart()
+        assert 'restarted' in await run('print(2)'), 'a restart is said, never silent'
+        assert '[' not in await run('print(3)'), 'and said once'
+        await ws.shutdown()
+    asyncio.run(go())
+
+def test_run_cell_on_an_unopened_notebook_uses_that_notebooks_kernel(tmp_path):
+    """With no tab for the notebook, `run_cell` ran in the kernel of the tab in front: the person opening it later got a fresh kernel at In[1], and the binding diff compared two kernels (`bindings changed: open`)."""
+    from leela.workspace import Workspace
+    a, c = _nb(tmp_path/'a.ipynb', ''), _nb(tmp_path/'c.ipynb', "zz = 'mine' in globals()\nprint(zz)")
+    ws = Workspace(roots=[tmp_path], port=8340)
+    async def go():
+        await ws.opened()
+        host, loop = ws.inline_ai.host, asyncio.get_running_loop()
+        ws.open(a); ka = await ws.runtime()
+        await ka.execute('mine = 5')
+        out = await loop.run_in_executor(None, lambda: host.nb_run_cell(str(c), 'c1', 60))
+        assert 'False' in out, f"the tab in front's names are not the notebook's: {out}"
+        assert 'bindings changed: zz' in out, f'the diff reads the kernel the cell ran in: {out}'
+        ws.open(c)
+        assert ws.kernel_peek() is not None and ws.kernel_peek() is not ka, 'opening it finds the kernel the cell ran in'
+        assert 'True' in str(await ws.kernel_peek().execute("print('zz' in globals())"))
+        await ws.kernel_peek().restart()
+        again = await loop.run_in_executor(None, lambda: host.nb_run_cell(str(c), 'c1', 60))
+        assert "this notebook's kernel is not the one" in again, again
+        await ws.shutdown()
+    asyncio.run(go())
+
+def test_a_transcript_notebook_runs_where_it_was_written_from(tmp_path):
+    "A kernel started for a transcript tab ran inside `_leela_agent_sessions`, and wrote its own transcripts one folder deeper."
+    from leela.workspace import Tab, Workspace
+    t = _nb((tmp_path/'_leela_agent_sessions').mkdir() or tmp_path/'_leela_agent_sessions'/'agent_1.ipynb', '')
+    ws = Workspace(roots=[tmp_path])
+    assert Path(ws.cwd_for(Tab(path=str(t), kind='notebook'))).resolve() == tmp_path.resolve()
+
+
 def test_a_tool_on_the_loop_itself_does_not_wait_for_the_loop(tmp_path):
     "Called from the loop that owns the kernels there is nothing to wait for, and blocking deadlocks."
     from leela.workspace import Workspace
