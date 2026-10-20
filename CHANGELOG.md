@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.33, shalya 0.1.19, uraiyadal 0.0.16, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.51, kunda 0.0.5, kavacha 0.0.7, dhrishti 0.1.7, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.61 and rishi 0.1.54.
+Needs vishalakshi 0.1.33, shalya 0.1.19, uraiyadal 0.0.16, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.51, kunda 0.0.5, kavacha 0.0.7, dhrishti 0.1.7, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.62 and rishi 0.1.54.
+
+- The `ramabana` terminal runs on teleprint 0.1.4. Ctrl+z hands the terminal back to the shell with extended keys, mouse reports and bracketed paste off, and takes it again on `fg`. Quitting from the transcript view leaves the alternate screen.
 
 - A hosted model's tool call cut off at the output limit, or with arguments that are not JSON, goes back to the model once, at a raised output cap when cut off. A second failure fails the turn or the background delegation with `ToolCallError` and the reason, such as "openai/gpt-5.6's tool call was cut off at its 16384-token output limit". It failed with a bare `JSONDecodeError: Unterminated string`. A reply cut off while the model was still thinking is handled the same way.
 - A hosted model with no `max_output_tokens` in config.toml gets its own maximum output, or 16,000 tokens for a model fastllm does not know. It got 4096, which a reasoning model's thinking could use up before it finished a tool call.
