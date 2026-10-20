@@ -97,6 +97,15 @@ def test_a_gemini_job_polls_with_the_key_and_downloads_without_handing_it_on(net
     last = net.sent[-1]
     assert last['url'] == 'https://storage.example.com/v.mp4' and not last.get('headers'), 'the key stays with Google'
 
+def test_a_gemini_id_written_with_models_gets_one_models_in_the_url(net, tmp_path, monkeypatch):
+    monkeypatch.setenv('GEMINI_API_KEY', 'gk')
+    config_path().write_text('[jobs]\nvideo = "gemini/models/veo-3.0-generate-001"\n')
+    G = 'https://generativelanguage.googleapis.com/v1beta'
+    net.answers[('POST', f'{G}/models/veo-3.0-generate-001:predictLongRunning')] = 200, {'name': 'models/veo/operations/op1'}
+    gen, _, _ = _tools(tmp_path)
+    assert 'started on' in gen('a kettle'), net.sent
+    assert net.sent[0]['url'] == f'{G}/models/veo-3.0-generate-001:predictLongRunning'
+
 def test_a_job_whose_route_went_away_stays_running(net, tmp_path, monkeypatch):
     "A key unset or config.toml edited after a job started: the job cannot be checked, which is not a failure."
     monkeypatch.setenv('GEMINI_API_KEY', 'gk')

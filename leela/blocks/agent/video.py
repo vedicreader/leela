@@ -61,7 +61,7 @@ def _start(r, prompt, seconds):
     "Ask route `r` for a video; returns the id of the job to poll."
     import httpx
     if r['api'] == 'gemini':
-        res = httpx.post(f"{r['base_url']}/models/{r['model']}:predictLongRunning", timeout=60, headers=_hdrs(r),
+        res = httpx.post(f"{r['base_url']}/models/{r['model'].removeprefix('models/')}:predictLongRunning", timeout=60, headers=_hdrs(r),
                          json={'instances': [{'prompt': prompt}], 'parameters': {'durationSeconds': seconds}})
     else: res = httpx.post(f"{r['base_url']}/videos", timeout=60, headers=_hdrs(r),
                            files={'model': (None, r['model']), 'prompt': (None, prompt), 'seconds': (None, str(seconds))})
