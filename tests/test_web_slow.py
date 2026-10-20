@@ -1552,3 +1552,38 @@ def test_add_model_opens_at_once_whatever_the_model_list_does(fault):
     assert got['runtimes'] == ['remote']
     if fault != 'slow': assert 'Internal Server Error' in got['state'] and got['picker'] == 1
     else: assert 'loading' in got['state']
+
+
+def test_the_palette_opens_the_sub_agent_and_tool_call_controls_in_settings(tmp_path):
+    """Sub-agent model, effort and tool calls, and the turn's tool calls, each have a palette row that opens settings on its control, and a change there is the server's."""
+    rows = "() => [...document.querySelectorAll('#cplist .lee-mrow')].map(r => r.textContent)"
+    async def pick(pg, q):
+        await pg.keyboard.press('ControlOrMeta+Shift+P')
+        await pg.wait_for_selector('#cp', timeout=3000)
+        await pg.fill('#cp', q)
+        await pg.press('#cp', 'Enter')
+        await pg.wait_for_function("() => document.querySelector('.lee-agent-settings')?.open && !document.querySelector('#cp')", timeout=3000)
+        return await pg.evaluate("() => document.activeElement?.id || document.activeElement?.dataset?.modelPick")
+    async def go(pg):
+        await pg.wait_for_selector('#subeffort', state='attached')
+        await pg.keyboard.press('ControlOrMeta+Shift+P')
+        await pg.wait_for_selector('#cp', timeout=3000)
+        await pg.fill('#cp', 'Agent: ')
+        listed = await pg.evaluate(rows)
+        await pg.keyboard.press('Escape')
+        out = {'listed': listed, 'effort': await pick(pg, 'sub-agent effort')}
+        await pg.select_option('#subeffort', 'xhigh')
+        await pg.wait_for_function("async () => (await (await fetch('/agent/subagent-settings')).json()).effort === 'xhigh'", timeout=5000)
+        out['tools'] = await pick(pg, 'Agent: tool calls native')
+        await pg.select_option('#toolmode', 'text')
+        await pg.wait_for_function("async () => (await (await fetch('/agent/tool-mode')).json()).tools === 'text'", timeout=5000)
+        out['subtools'] = await pick(pg, 'sub-agent tool calls')
+        out['reasoning'] = await pg.eval_on_selector_all('#agentreasoning option', 'os => os.map(o => o.value)')
+        out['models'] = await pg.locator('#jobmodels [data-job="subagent"]').count()
+        return out
+    got = _run(go, roots=[tmp_path])
+    for name in ('sub-agent model', 'sub-agent effort', 'sub-agent tool calls native or text', 'tool calls native or text'):
+        assert any(r.startswith(f'Agent: {name}') for r in got['listed']), (name, got['listed'])
+    assert (got['effort'], got['tools'], got['subtools']) == ('subeffort', 'toolmode', 'subtools')
+    assert got['reasoning'] == ['auto', 'low', 'medium', 'high', 'xhigh', 'max']
+    assert got['models'] == 1, 'the routed-jobs row is the sub-agent model control'

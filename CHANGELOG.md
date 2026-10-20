@@ -6,6 +6,8 @@
 
 Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.56 and rishi 0.1.50.
 
+- The agent settings set the sub-agent model, the sub-agent effort (`low` to `max`), and whether sub-agents and turns get native tool calls or schemas as text (ramabana 0.2.57, rishi 0.1.51, shalya 0.1.18). The palette opens each control. The workspace keeps the values, and every live and new conversation takes them. `/agent/subagent-settings`, `/agent/tool-mode`, `/subagents model|effort|tools` and `/model tools` are the routes. A model that is not set up is refused with `ok: false` and its setup message on every route. The reasoning select adds `xhigh` and `max`, and Claude turns receive the level as `effort`.
+
 - The agent's `delegate_search` gives its sub-agents read tools unless it asks for `writes=True`, so several questions run at once. A sub-agent takes up to 80 steps, and a delegation that asks for fewer gets at least 20. Sub-agents are told that a tool result contradicting what they just saw is likely a harness fault to confirm and report, and the briefing points at the `debugging` skill. A Claude Code turn's usage counts its thinking tokens (ramabana 0.2.56, rishi 0.1.50).
 
 - Dhrona's nightly retries and reports its errors (dhrona 0.1.14).

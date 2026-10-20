@@ -576,6 +576,60 @@ def connect(app, ctx):
         return {'ok': True, 'enabled': enabled,
                 'note': ('sub-agents may write, run commands and run Python. Every call is recorded and approved'
                          if enabled else 'sub-agents read only again')}
+    def _keep_subs(ai, d, model=None, effort=None, tools=None):
+        "Keep a sub-agent change that took in the workspace and copy it to every other live conversation."
+        if not d.get('ok') or (model, effort, tools) == (None, None, None): return d
+        if model is not None:
+            if str(model).strip().lower() in ('', 'default', 'auto'): ws.job_models.pop('subagent', None)
+            else: ws.job_models['subagent'] = d['model']
+        if effort is not None: ws.subagent_effort = ai.sub_effort
+        if tools is not None: ws.subagent_tools = ai.sub_channel
+        for a in live_assistants():
+            if a is not ai: a.subagent_settings(model=model, effort=effort, tools=tools)
+        ws.save()
+        return d
+    def _keep_turn_tools(ai, before):
+        "Keep `ai`'s new turn tool channel and copy it to every idle conversation; returns how many working ones kept theirs."
+        if ai.turn_channel == before: return 0
+        ws.tool_channel, kept = ai.turn_channel, 0
+        for a in live_assistants():
+            if a is ai or a.turn_channel == ai.turn_channel: continue
+            try: a.set_tool_channel(ai.turn_channel or 'auto')
+            except RuntimeError: kept += 1
+        ws.save()
+        return kept
+    async def _settings_req(req):
+        "`(body, assistant, None)` for a settings request, or `(None, None, error response)`."
+        d = {}
+        if req.method == 'POST':
+            try: d = await req.json()
+            except Exception: return None, None, fail('settings body must be JSON')
+            if not isinstance(d, dict): return None, None, fail('settings body must be a JSON object')
+        try: return d, _thread(d.get('thread') or req.query_params.get('thread', '')).ai, None
+        except Exception as e: return None, None, _thread_error(e)
+    @rt('/agent/subagent-settings')
+    async def agent_subagent_settings(req):
+        "GET shows, POST `{model?, effort?, tools?, save?}` sets; `Agent.subagent_settings`'s dict unchanged."
+        d, ai, err = await _settings_req(req)
+        if err is not None: return err
+        kw = {k: d[k] for k in ('model', 'effort', 'tools') if d.get(k) is not None}
+        return _keep_subs(ai, await off_loop(ai.subagent_settings, save=bool(d.get('save')), **kw), **kw)
+    @rt('/agent/tool-mode')
+    async def agent_tool_mode(req):
+        "GET shows the turn's tool channel; POST `{tools: native|text|auto, save?}` sets it for every live conversation."
+        from ...agent.agent import SHOWN_CHANNEL
+        from ...agent.core import tool_channel
+        d, ai, err = await _settings_req(req)
+        if err is not None: return err
+        out = dict(ok=True, tools='', now='', note='', error='')
+        if d.get('tools') is not None:
+            before = ai.turn_channel
+            try: out['note'] = await off_loop(ai.set_tool_channel, str(d['tools']), save=bool(d.get('save')))
+            except (RuntimeError, ValueError, OSError) as e: out.update(ok=False, error=str(e))
+            if kept := _keep_turn_tools(ai, before): out['note'] += f'\n{kept} working conversation(s) kept their tool mode'
+        spec = ai.spec_or_none()
+        return out | {'tools': SHOWN_CHANNEL[ai.turn_channel],
+                      'now': SHOWN_CHANNEL[tool_channel(spec, session=ai.turn_channel)] if spec is not None else ''}
     @rt('/agent/read-outside')
     async def agent_read_outside(req):
         "Reads outside the open folders. Writes are unaffected, and credentials stay refused."
@@ -641,6 +695,9 @@ def connect(app, ctx):
             target = d.get('target', 'agent')
             if target not in ('agent', 'inline') and target not in JOBS:
                 return fail(f'unknown model target {target!r}')
+            if target == 'subagent':   # the same dict as `/agent/subagent-settings`
+                m = str(d.get('model') or '').strip() or 'default'
+                return {**_keep_subs(ctx.ai, await off_loop(ctx.ai.subagent_settings, model=m), model=m), 'target': target}
             assistant = ctx.inline_ai if target == 'inline' else ctx.ai
             job = 'turn' if target in ('agent', 'inline') else target
             spec = assistant.set_model((d.get('model') or '').strip(), job=job)
@@ -843,10 +900,12 @@ def connect(app, ctx):
         "Slash-command metadata for the prompt's inline command picker."
         help_by_name = {name: help for name, (_, help) in ctx.ai.registry.commands.items()}
         builtins = {
-            'model': 'show or change the model', 'cost': 'show token and cost totals',
+            'model': 'show or change the model; tools native|text|auto sets how tool calls travel', 'cost': 'show token and cost totals',
             'compact': 'compact the current context', 'skills': 'list available skills',
             'skill': 'read one skill', 'tools': 'list tools available to the agent',
             'extensions': 'show loaded tool extensions', 'reload': 'reload tools, skills and extensions',
+            'models': 'list the models here: provider, native tool calls, effort; `all` adds older ones',
+            'subagents': 'sub-agent settings: on|off, steps N, timeout S, nest N, model NAME|default, effort LEVEL|default, tools native|text|auto; --save keeps the last three',
         }
         describe = lambda item: (getattr(item, '__doc__', '') or '').strip().split('\n')[0]
         return {
@@ -954,8 +1013,8 @@ def connect(app, ctx):
             return fail(f'an attachment is a path, or an object whose kind is one of {", ".join(ATTACH_KINDS)}')
         if not isinstance(d.get('reasoning', ''), str): return fail('reasoning must be text')
         reasoning = (d.get('reasoning') or '').lower()
-        if reasoning not in ('', 'auto', 'low', 'medium', 'high'):
-            return fail('reasoning must be auto, low, medium or high')
+        from ...agent.core import EFFORTS
+        if reasoning not in ('', 'auto', *EFFORTS): return fail(f'reasoning must be auto, {", ".join(EFFORTS[:-1])} or {EFFORTS[-1]}')
         reasoning = None if reasoning in ('', 'auto') else reasoning
         nb = _doc()
         context = nb.context(len(nb)) if nb is not None else ''
@@ -1429,9 +1488,15 @@ def connect(app, ctx):
         if not line: return {'ok': True, 'text': 'commands: ' + ', '.join('/' + c for c in ai.commands())}
         name, _, arg = line.lstrip('/').partition(' ')
         act = arg.strip().partition(' ')[0] if name == 'learned' else ''
+        settings, before = None, getattr(ai, 'turn_channel', '')
         try:
             if act in ('on', 'off'): _learning_cfg()
-            out = await off_loop(ai.command, line)
+            if name == 'subagents' and hasattr(ai, 'subagents_command'):
+                w = [x for x in arg.split() if x != '--save']
+                kw = {w[0].lower(): w[1]} if len(w) == 2 and w[0].lower() in ('model', 'effort', 'tools') else {}
+                settings = _keep_subs(ai, await off_loop(ai.subagents_command, arg), **kw)
+                out = settings['error'] or settings['note']
+            else: out = await off_loop(ai.command, line)
             # `/learned on|off` is the same switch as Settings: every live conversation on the folder follows, and the reply says where it stands
             if act in ('on', 'off'): r = await off_loop(_set_learning, act == 'on', ai)
             elif act == 'status':
@@ -1458,6 +1523,9 @@ def connect(app, ctx):
                 except RuntimeError: kept += 1
             ws.save()
             if kept: out += f'\n{kept} working conversation(s) keep their sub-agent settings until they finish'
+        if name == 'model' and arg.split()[:1] == ['tools'] and (kept := _keep_turn_tools(ai, before)):
+            out += f'\n{kept} working conversation(s) kept their tool mode'
+        if settings is not None: return {'ok': settings['ok'], 'text': out, 'settings': settings}
         return {'ok': True, 'text': out}
     @rt('/agent/ask')
     async def agent_ask(req):

@@ -1113,6 +1113,8 @@ class Assistant(Agent):
         self._built_mode = None            # the `(canvas_open, has_feeds)` the tool list was last built for
         self._briefed_mode = None          # …and the one the live turn backend was last briefed with
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
+        from ...workspace import AGENT_CHANNELS
+        for k, attr in AGENT_CHANNELS.items(): setattr(self, attr, getattr(ws, k, '') or '')
         self.mark_surface()
         host.model_local = self.model_local     # a local-only api is gated on the turn model
         self.lend_model()   # so the vault's `ask` uses this session's engine, not a second one

@@ -151,6 +151,49 @@ async function leeSubagentWrites(enabled) {
 }
 window.leeSubagentWrites = leeSubagentWrites;
 
+/* The sub-agent model, effort and tool channel come back as one dict from every route that sets
+   them, a refusal included (`ok: false`, the setup message in `error`), so one painter serves all. */
+function paintSubagentSettings(d) {
+  if (!d) return;
+  const effort = $('#subeffort'), tools = $('#subtools'), model = $('#jobmodels [data-job="subagent"]');
+  if (effort) effort.value = d.effort || 'default';
+  if (tools && d.tools) tools.value = d.tools;
+  if (model && [...model.options].some(o => o.value === d.model)) { model.value = d.model; window.leeModelPickers?.(); }
+}
+async function leeSubagentSettings(change) {
+  let d;
+  try { d = await post('/agent/subagent-settings', change || {}); }
+  catch (e) { d = {ok: false, error: String(e.message || e)}; }
+  status(d.ok ? (d.note || '').split('\n')[0] || 'sub-agent settings saved' : (d.error || 'sub-agent setting failed'), d.ok ? 'ok' : 'err');
+  // a refusal still carries what is in force; only a failed request does not
+  paintSubagentSettings('effort' in d ? d : await api('/agent/subagent-settings').catch(() => null));
+  return d;
+}
+async function leeToolMode(tools) {
+  let d;
+  try { d = await post('/agent/tool-mode', {tools}); } catch (e) { d = {ok: false, error: String(e.message || e)}; }
+  status(d.ok ? (d.note || `tool calls ${d.tools}`) : (d.error || 'tool mode failed'), d.ok ? 'ok' : 'err');
+  if (!d.ok) d = await api('/agent/tool-mode').catch(() => null);
+  if (d && $('#toolmode')) $('#toolmode').value = d.tools;
+}
+async function loadAgentSettings() {
+  paintSubagentSettings(await api('/agent/subagent-settings').catch(() => null));
+  const t = await api('/agent/tool-mode').catch(() => null);
+  if (t && $('#toolmode')) $('#toolmode').value = t.tools;
+}
+/* The palette's way to a setting: the agent pane, its settings open, the control focused. */
+function leeOpenSetting(sel) {
+  leePane('right', true); leeRight('agent'); setScope('agent');
+  const d = $('details.lee-agent-settings'); if (d) d.open = true;
+  const el = $(sel); if (!el) return;
+  (el.hidden && el.previousElementSibling?.dataset.modelPick !== undefined ? el.previousElementSibling : el).focus();
+}
+window.leeSubagentSettings = leeSubagentSettings;
+window.leeToolMode = leeToolMode;
+window.leeLoadAgentSettings = loadAgentSettings;
+window.leePaintSubagentSettings = paintSubagentSettings;
+window.leeOpenSetting = leeOpenSetting;
+
 /* Learning is ramabana's, in the agent's config folder: `/learned on|off` and the Review tab say the same thing. */
 async function leeAgentLearning(enabled) {
   const box = $('#agent-learning');

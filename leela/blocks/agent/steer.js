@@ -657,6 +657,8 @@ async function sendAgentCommand(line) {
     const d = await post('/agent/command', {line, thread: lee.agentThread || ''});
     if (/^\/reload(?:\s|$)/.test(line)) lee.agentVocabulary = null;
     if ('enabled' in d) window.leeLearningShown?.(d.enabled);
+    if (d.settings) window.leePaintSubagentSettings?.(d.settings);
+    if (/^\/model\s+tools(?:\s|$)/.test(line)) window.leeLoadAgentSettings?.();
     const out = document.createElement('div'); out.className = 'lee-reply lee-agent-reply'; body.appendChild(out);
     renderMarkdown(out, d.text || ''); log.scrollTop = log.scrollHeight;
     status('command finished', 'ok');

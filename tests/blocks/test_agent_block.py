@@ -227,3 +227,102 @@ def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
     assert "origins?.agent?.[key]" in _pane_js(), 'the pane decides from origins, not from the value'
 
 
+
+
+SUB_KEYS = {'ok', 'model', 'effort', 'tools', 'note', 'unavailable', 'error'}
+
+def test_subagent_settings_reach_every_conversation_and_the_next_one(tmp_path):
+    """The sub-agent effort and tool channel are the workspace's, as `subagent_writes` is: a POST reaches every live conversation, a new one inherits them, and a restart keeps them."""
+    ws = Workspace(roots=[tmp_path])
+    a, b = ws.threads.active.ai, ws.threads.new().ai
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/subagent-settings').json()
+        assert set(d) == SUB_KEYS and d['ok'] and d['tools'] == 'auto' and d['effort'] == ''
+        r = client.post('/agent/subagent-settings', json={'effort': 'xhigh', 'tools': 'native'})
+        d = r.json()
+        assert r.status_code == 200 and set(d) == SUB_KEYS and d['ok'], d
+        assert (d['effort'], d['tools']) == ('xhigh', 'native') and 'sub-agent effort xhigh' in d['note']
+        assert [(x.sub_effort, x.sub_channel) for x in (a, b)] == [('xhigh', 'native')] * 2
+        assert (ws.subagent_effort, ws.subagent_tools) == ('xhigh', 'native')
+        assert (ws.threads.new().ai.sub_effort, ws.threads.active.ai.sub_channel) == ('xhigh', 'native'), 'a new conversation starts on them'
+        assert client.get('/agent/subagent-settings').json()['effort'] == 'xhigh'
+        again = Workspace(roots=[tmp_path]); again.restore_settings(ws.state())
+        assert (again.subagent_effort, again.subagent_tools) == ('xhigh', 'native'), 'a restart forgot them'
+        d = client.post('/agent/subagent-settings', json={'effort': 'default', 'tools': 'text'}).json()
+        assert d['ok'] and d['effort'] == '' and d['tools'] == 'text' and b.sub_channel == 'tags' and ws.subagent_effort == ''
+        # the command answers with the same dict, and is kept the same way
+        out = client.post('/agent/command', json={'line': '/subagents effort max'}).json()
+        assert out['ok'] and set(out['settings']) == SUB_KEYS and out['settings']['effort'] == 'max'
+        assert out['text'] == out['settings']['note'] and b.sub_effort == 'max' and ws.subagent_effort == 'max'
+    bad = Workspace(roots=[tmp_path]); bad.restore_settings({'subagent_effort': 'ludicrous', 'tool_channel': 'smoke'})
+    assert (bad.subagent_effort, bad.tool_channel) == ('', ''), 'a value this ramabana cannot read is dropped'
+
+
+def test_a_sub_agent_model_that_is_not_set_up_answers_the_same_on_every_route(tmp_path):
+    """Settings, `/subagents model` and the routed-jobs row all refuse an unknown model with one shape: HTTP 200, `ok: false`, the setup message, nothing applied."""
+    ws = Workspace(roots=[tmp_path])
+    ai = ws.threads.active.ai
+    before = ai.routing.name_for('subagent')
+    with TestClient(ide_app(ws)) as client:
+        rs = [client.post('/agent/subagent-settings', json={'model': 'no-such-model-xyz'}),
+              client.post('/agent/command', json={'line': '/subagents model no-such-model-xyz'}),
+              client.post('/agent/model', json={'target': 'subagent', 'model': 'no-such-model-xyz'})]
+        assert [r.status_code for r in rs] == [200] * 3
+        setting, command, routed = (r.json() for r in rs)
+        assert set(setting) == SUB_KEYS and not setting['ok'] and setting['error']
+        assert command['settings'] == setting and command['ok'] is False and command['text'] == setting['error']
+        assert routed == {**setting, 'target': 'subagent'}, 'the routed-jobs row answers the same dict'
+        assert ai.routing.name_for('subagent') == before and 'subagent' not in ws.job_models, 'a refused model was applied'
+        assert client.post('/agent/subagent-settings', json={'effort': 'ludicrous'}).json()['ok'] is False
+        assert client.post('/agent/subagent-settings', content=b'not json').status_code == 400
+
+
+def test_the_turn_tool_mode_route_sets_every_conversation_and_is_kept(tmp_path):
+    """`/agent/tool-mode` and `/model tools` set the turn's channel for every idle conversation; a refusal is `ok: false` with the mode unchanged."""
+    ws = Workspace(roots=[tmp_path])
+    a, b = ws.threads.active.ai, ws.threads.new().ai
+    with TestClient(ide_app(ws)) as client:
+        d = client.get('/agent/tool-mode').json()
+        assert d['ok'] and d['tools'] == 'auto' and set(d) == {'ok', 'tools', 'now', 'note', 'error'}
+        d = client.post('/agent/tool-mode', json={'tools': 'text'}).json()
+        assert d['ok'] and d['tools'] == 'text' and d['note'].startswith('turn tools text'), d
+        assert (a.turn_channel, b.turn_channel, ws.tool_channel) == ('tags', 'tags', 'tags')
+        assert ws.threads.new().ai.turn_channel == 'tags', 'a new conversation starts on it'
+        r = client.post('/agent/tool-mode', json={'tools': 'sideways'})
+        assert r.status_code == 200 and r.json()['ok'] is False and r.json()['error'] and r.json()['tools'] == 'text'
+        client.post('/agent/command', json={'line': '/model tools native'})
+        assert (a.turn_channel, b.turn_channel, ws.tool_channel) == ('native',) * 3
+        assert client.post('/agent/tool-mode', json={'tools': 'auto'}).json()['tools'] == 'auto' and ws.tool_channel == ''
+
+
+def test_a_turn_accepts_every_effort_level(tmp_path, monkeypatch):
+    """The reasoning select offers xhigh and max, so the turn route takes them; anything else is refused before a turn starts."""
+    from leela.blocks.agent.threads import TurnRunner
+    seen = []
+    monkeypatch.setattr(TurnRunner, 'start', lambda self, q, att, reasoning, *a: seen.append(reasoning) or {'ok': True})
+    ws = Workspace(roots=[tmp_path])
+    with TestClient(ide_app(ws)) as client:
+        for level in ('xhigh', 'max', 'auto'): assert client.post('/agent/turn', json={'prompt': 'hi', 'reasoning': level}).json()['ok']
+        r = client.post('/agent/turn', json={'prompt': 'hi', 'reasoning': 'ludicrous'})
+        assert r.status_code == 400 and 'xhigh' in r.json()['error'] and 'max' in r.json()['error']
+    assert seen == ['xhigh', 'max', None]
+    from tests.assets import read
+    html = read('leela/app.py')
+    assert "Option(f'{e} reasoning', value=e) for e in EFFORTS" in html
+
+
+def test_the_palette_and_settings_reach_the_sub_agent_and_tool_controls():
+    """Each new control has a palette row that opens it, and `/agent/commands` describes the commands that set them."""
+    from tests.assets import read
+    pal, js = read('leela/blocks/keys/palette.js'), read('leela/blocks/agent/budgets.js')
+    for name, sel in (('sub-agent model', '#jobmodels [data-job="subagent"]'), ('sub-agent effort', '#subeffort'),
+                      ('tool calls native or text', '#toolmode'), ('sub-agent tool calls native or text', '#subtools')):
+        assert f"name: 'Agent: {name}', scope: 'agent', run: () => leeOpenSetting('{sel}')" in pal
+    assert "post('/agent/subagent-settings'" in js and "post('/agent/tool-mode'" in js
+    ws = Workspace(roots=[ROOT/'tests'/'fixtures'])
+    with TestClient(ide_app(ws)) as client:
+        html = client.get('/').text
+        for id_ in ('subeffort', 'subtools', 'toolmode', 'jobmodels'): assert f'id="{id_}"' in html
+        assert 'value="xhigh"' in html and 'value="max"' in html
+        helps = {c['name']: c['help'] for c in client.get('/agent/commands').json()['commands']}
+        assert 'effort' in helps['subagents'] and 'native' in helps['subagents'] and 'effort' in helps['models']

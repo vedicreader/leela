@@ -105,6 +105,7 @@ GET,POST /agent/status
 GET,POST /agent/steer
 GET,POST /agent/stop
 GET,POST /agent/stream
+GET,POST /agent/subagent-settings
 GET,POST /agent/subagent-writes
 GET,POST /agent/subagents
 GET,POST /agent/thread/assess
@@ -116,6 +117,7 @@ GET,POST /agent/thread/switch
 GET,POST /agent/thread/title
 GET,POST /agent/thread/turns
 GET,POST /agent/threads
+GET,POST /agent/tool-mode
 GET,POST /agent/tool-preview
 GET,POST /agent/transcript
 GET,POST /agent/turn

@@ -603,7 +603,8 @@ def _state_title(ws):
 
 def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
-    from .agent.core import DFLT_SMALL, DFLT_TURN, env as _env
+    from .agent.core import DFLT_SMALL, DFLT_TURN, EFFORTS, env as _env
+    from .agent.agent import SHOWN_CHANNEL
     from .blocks.agent.models import default_model
     agent_model = ws.model or default_model('turn') or DFLT_TURN
     inline_model = ws.inline_model or _env('MODEL_INLINE') or DFLT_SMALL
@@ -698,8 +699,7 @@ def _agent_panel(ws):
                            id='agentcontrol', cls='lee-select lee-composer-control',
                            onchange='leeAgentControl(this.value)', aria_label='agent mode',
                            title='autopilot: writes pause · guided: writes and network pause · directed: every tool pauses · edits: file and notebook edits run, the rest pause'),
-                    Select(Option('automatic reasoning', value='auto'), Option('low reasoning', value='low'),
-                           Option('medium reasoning', value='medium'), Option('high reasoning', value='high'),
+                    Select(Option('automatic reasoning', value='auto'), *[Option(f'{e} reasoning', value=e) for e in EFFORTS],
                            id='agentreasoning', cls='lee-select lee-composer-reasoning',
                            title='reasoning effort for cloud models'),
                     Select(*[Option(v, value=v, selected=str(ws.tool_budget) == v)
@@ -717,6 +717,18 @@ def _agent_panel(ws):
                               Select(Option('loading…', value=completion_model), id='completionmodel',
                               cls='lee-select', onchange='leeAgentModel("completion", this.value)')),
                         Div(id='jobmodels'),   # the harness's other jobs, drawn from /agent/models
+                        Label(Span('sub-agent effort', cls='lee-routing-name'),
+                              Select(*[Option(e or 'default', value=e or 'default', selected=ws.subagent_effort == e) for e in ('', *EFFORTS)],
+                                     id='subeffort', cls='lee-select', onchange='leeSubagentSettings({effort: this.value})'),
+                              title="The effort level a delegated sub-agent asks for. default takes config.toml's, else its model's own"),
+                        Label(Span('sub-agent tool calls', cls='lee-routing-name'),
+                              Select(*[Option(v, value=v, selected=SHOWN_CHANNEL[ws.subagent_tools] == v) for v in ('auto', 'native', 'text')],
+                                     id='subtools', cls='lee-select', onchange='leeSubagentSettings({tools: this.value})'),
+                              title='How a sub-agent is given its tools: native tool calls, or schemas as text in the prompt. auto takes config.toml, then the runtime'),
+                        Label(Span('tool calls', cls='lee-routing-name'),
+                              Select(*[Option(v, value=v, selected=SHOWN_CHANNEL[ws.tool_channel] == v) for v in ('auto', 'native', 'text')],
+                                     id='toolmode', cls='lee-select', onchange='leeToolMode(this.value)'),
+                              title="How this workspace's conversations are given their tools: native tool calls, or schemas as text in the prompt. auto takes config.toml, then the runtime"),
                         Label(Input(type='checkbox', id='autocompact', checked=ws.compact_auto,
                                     onchange='leeAgentCompaction()'), ' compact automatically',
                               cls='lee-check-setting', title='rewrite old context before it reaches the model limit'),

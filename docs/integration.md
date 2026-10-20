@@ -86,6 +86,20 @@ names to check an implementation against. One provider was ever registered per p
 named `leela`, and the swap it existed to permit never happened once. `tests/test_core.py` holds
 the test that keeps it retired.
 
+## Sub-agent model, effort and tool calls
+
+The agent settings hold four controls for how a turn and its sub-agents run. The **subagent** row under the routed jobs is the sub-agent model. **sub-agent effort** is `default`, `low`, `medium`, `high`, `xhigh` or `max`. **sub-agent tool calls** and **tool calls** are `auto`, `native` or `text`; `text` puts the tool schemas in the prompt. **tool calls** applies to the conversation's own turns. The palette opens each control with **Agent: sub-agent model**, **Agent: sub-agent effort**, **Agent: sub-agent tool calls native or text** and **Agent: tool calls native or text**. No shortcut is bound to them.
+
+The values belong to the workspace. A change reaches every live conversation, and a new conversation starts with it. The workspace keeps the sub-agent model in `job_models`, and the other three in `subagent_effort`, `subagent_tools` and `tool_channel`. An empty value takes `~/.config/ramabana/config.toml`, then the runtime's default.
+
+`GET /agent/subagent-settings` shows the sub-agent settings. `POST` takes `{model?, effort?, tools?, save?}`. A key left out is unchanged, and `default` resets that key to config.toml's value. `save: true` also writes the values to config.toml. The route returns `Agent.subagent_settings`'s dict without changes: `{ok, model, effort, tools, note, unavailable, error}`. `/agent/command` with `/subagents ...` returns `{ok, text, settings}`, and `settings` is the same dict. `/agent/model` with `target: subagent` returns the same dict with `target` added. `/agent/subagents` stays the list of delegations and running sub-agents.
+
+A refusal is HTTP 200 with `ok: false`. This covers a model that is unknown or not set up, an effort level or tool mode that does not exist, and a write to config.toml that fails. `error` holds Ramabana's setup message, and the other keys hold the settings still in force. A refused change is not applied and not kept. HTTP 400 is only for a request body that is not a JSON object. `/agent/model` for the turn models still returns 200 with `unavailable`.
+
+`GET /agent/tool-mode` returns `{ok, tools, now, note, error}`. `tools` is the conversation's choice, and `now` is the channel the current model gets. `POST` takes `{tools, save?}`, and `save: true` writes `runtime.tool_channel`. `/model tools native|text|auto` typed in the agent pane does the same, and the workspace keeps it the same way. A conversation that is working when the mode changes keeps its mode, and `note` counts those conversations.
+
+The reasoning select beside the model offers `low` to `max`, and `/agent/turn` accepts the same levels. Ramabana passes the level to Claude as `effort`. Sub-agents do not inherit the turn's reasoning level. Notebook prompt cells run without a reasoning level.
+
 ## Providers, Azure OpenAI and AWS Bedrock
 
 The model route is Ramabana's, so Leela and the `ramabana` CLI agree on it: both read `~/.config/ramabana/config.toml` (or `$RAMABANA_CONFIG`) and the same env vars. Nothing chooses a provider for a person. When the agent's model cannot run here, a missing runtime or a missing key, the agent pane says why and lists every provider Ramabana can use, what it needs and whether it is set up (`providers()`, from Ramabana's `PROVIDERS`), with a **+ model** button. The first-run modal counts any configured hosted model whose key is set as set up (`setup_plan`); a credential with no model named is not one.

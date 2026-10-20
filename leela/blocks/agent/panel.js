@@ -201,6 +201,7 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   paintModelPickers();
   const notes = Object.values(d.auth || {}).map(x => x.note).filter(Boolean);
   if (notes.length) selects.agent.title = notes.join(' · ');
+  window.leeLoadAgentSettings?.();
 }
 
 /* What each routed job spends its model on comes from the server, which is the same copy the

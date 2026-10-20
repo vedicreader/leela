@@ -121,6 +121,8 @@ SESSION_KEYS = ('roots', 'tabs', 'active', 'active_root')
 
 TOOL_RANGE, STEP_RANGE = (20, 400), (8, 80)
 SUBAGENT_SETTINGS = ('subagent_steps', 'subagent_timeout', 'subagent_depth')   #: ramabana's sub-agent knobs a workspace keeps; `/subagents` sets them
+#: workspace field -> the `Agent` attribute it seeds: sub-agent effort, sub-agent tool channel, the turn's tool channel; '' takes config.toml's
+AGENT_CHANNELS = {'subagent_effort': 'sub_effort', 'subagent_tools': 'sub_channel', 'tool_channel': 'turn_channel'}
 
 def budget_value(v, lo, hi):
     "`auto`, or a number inside `lo..hi`. Anything else is `auto`, never a silent clamp to a bound."
@@ -274,6 +276,7 @@ class Workspace:
         self.agent_read_outside = False     # reads may leave the open folders; writes never do
         self.subagent_writes = False        # delegated sub-agents may only read unless this is on
         self.subagent_steps = self.subagent_timeout = self.subagent_depth = None   # None: ramabana's own default
+        self.subagent_effort = self.subagent_tools = self.tool_channel = ''
         self.vault_pii = 'redact'           # what a hosted model gets of a Personal vault document
         self.vault_read = {}                # folder -> the Read sheet's last choice there: parse, preset, model, hint
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
@@ -1205,7 +1208,7 @@ class Workspace:
                 'tool_budget': self.tool_budget, 'step_budget': self.step_budget,
                 'allow_workspace_repo_writes': self.allow_workspace_repo_writes,
                 'agent_read_outside': self.agent_read_outside,
-                'subagent_writes': self.subagent_writes, **{k: getattr(self, k) for k in SUBAGENT_SETTINGS},
+                'subagent_writes': self.subagent_writes, **{k: getattr(self, k) for k in (*SUBAGENT_SETTINGS, *AGENT_CHANNELS)},
                 'vault_pii': self.vault_pii, 'vault_read': self.vault_read,
                 'agent_optin': list(self.agent_optin), 'agent_profile': self.agent_profile,
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
@@ -1226,6 +1229,10 @@ class Workspace:
         for k in SUBAGENT_SETTINGS:
             try: setattr(self, k, None if d.get(k) is None else int(d[k]))
             except (TypeError, ValueError): setattr(self, k, None)
+        from .agent.core import norm_channel, norm_effort   # a value this ramabana cannot read is '', not a workspace that will not load
+        for k in AGENT_CHANNELS:
+            try: setattr(self, k, (norm_effort if k == 'subagent_effort' else norm_channel)(d.get(k)))
+            except ValueError: setattr(self, k, '')
         # a saved policy this build no longer knows is `redact`, not a workspace that will not load
         try: self.vault_pii = pii_gate(d.get('vault_pii'))
         except ValueError: self.vault_pii = 'redact'
