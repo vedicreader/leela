@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.53 and rishi 0.1.49.
+Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.54 and rishi 0.1.49.
+
+- Leela's agent has a `debugging` skill: find a failure's root cause from the raw error, treat a tool that contradicts what the agent has seen as a harness fault to report, and know where Ramabana keeps its config, run logs, beat launcher, scheduler entry and Dhrona's nightly summaries (ramabana 0.2.54).
 
 - A Claude Code turn that sends nothing for 240 seconds is ended and tried once more, with a note that says so, instead of waiting 600 seconds and failing (ramabana 0.2.53, rishi 0.1.49). Text already shown is not repeated. Set the limit per model with `timeout` under `[model."NAME"]` in `~/.config/ramabana/config.toml`; a second silence fails with an error that names it.
 - In Ramabana's terminal, `tab` after `@` completes files and folders, and `@folder` attaches the folder's listing (ramabana 0.2.53).
