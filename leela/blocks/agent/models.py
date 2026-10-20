@@ -9,12 +9,13 @@ __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_mod
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
            'install_runtime', 'probe_dir', 'probe_path', 'probed', 'catalog', 'forget_probes',
            'warm_probes', 'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed',
-           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates', 'unavailable']
+           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates', 'unavailable', 'default_model', 'settled']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
 JOB_HELP = {
- 'turn': 'Every turn of this conversation and every tool call it makes. The model the agent is. Defaults to claude-opus-5-5.',
+ 'turn': 'Every turn of this conversation and every tool call it makes. The model the agent is. Defaults to claude-opus-5-5,\n'
+         'or, without Claude Code, to a hosted model configured here such as an Azure OpenAI deployment.',
  'inline': 'The assistant inside a notebook prompt cell, and the one the inline AI panel asks\n'
            'about a selection. Unset, it falls back to oneshot.',
  'completion': 'Inline code completion as you type, and "AI edit" on an editor selection. Unset, it falls back to oneshot.',
@@ -29,6 +30,23 @@ def unavailable(model):
     try: spec = resolve(model) if isinstance(model, str) else model
     except Exception: return ''
     return f'{m}. {reachable_hint()}' if (m := missing_runtime(spec)) else ''
+
+def default_model(job='turn'):
+    "The model Ramabana's routing gives `job` when nobody chose one, so this pane and the CLI agree: config.toml's `[jobs]`, then the defaults, moved to a hosted model configured here when they cannot run."
+    from ...agent.core import Routing, use_aliases
+    use_aliases(model_path())
+    try: return Routing().name_for(job)
+    except Exception: return None
+
+def settled(name, job):
+    "`name`, unless it is a stock default that cannot run here and a hosted model is configured, in which case `default_model(job)`."
+    from ...agent.core import DFLT_SMALL, DFLT_TURN, missing_key, missing_runtime, remote_models, resolve, use_aliases
+    if name not in (DFLT_TURN, DFLT_SMALL, 'gpt-4.1'): return name
+    use_aliases(model_path())
+    if not remote_models(): return name
+    try: spec = resolve(name)
+    except Exception: return name
+    return name if not (missing_runtime(spec) or missing_key(spec)) else default_model(job) or name
 
 def _runtimes():
     from ...agent.core import RUNTIME_NAMES
@@ -181,7 +199,8 @@ RECOMMENDED = 'llama'
 #: The first-run wording for an account runtime. `runtime_remedy` is the terser picker version.
 ACCOUNTS = (
  ('claude', 'Claude Code', 'Sign in once with `claude /login` and Leela drives it. No key to manage.'),
- ('remote', 'An API key', 'Set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY and its models appear.'),
+ ('remote', 'An API key', 'Set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY and its models appear. For Azure OpenAI, '
+            'set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENTS. A model config.toml defines counts too.'),
  ('ollama', 'Ollama', 'Runs its own daemon, so the weights are on your machine and Leela adds nothing.'),
  ('copilot', 'GitHub Copilot', 'Sign in to Copilot in an editor and its models appear here.'))
 
@@ -270,7 +289,7 @@ def updates(check=True):
 
 def setup_plan():
     "The first-run choice. Accounts cost nothing, so they lead; the offline half is rishi's markers."
-    from ...agent.core import auth_status
+    from ...agent.core import auth_status, remote_models
     rows = {r['value']: r for r in runtimes()}
     auth = {}
     # Asking every account whether it is signed in is over a second cold, and this is the first
@@ -281,7 +300,10 @@ def setup_plan():
         # `runtime_available` says the CLI is installed; being signed in is what `auth_status` knows.
         if v == 'claude': return bool(auth.get('claude', {}).get('available'))
         if v == 'copilot': return bool(auth.get('copilot', {}).get('available'))
-        if v == 'remote': return any(auth.get(k, {}).get('available') for k in ('anthropic', 'openai', 'gemini', 'codex'))
+        if v == 'remote':
+            if any(auth.get(k, {}).get('available') for k in ('anthropic', 'openai', 'gemini', 'codex', 'azure')): return True
+            try: return bool(remote_models())   # config.toml's definitions and saved aliases with their key set
+            except Exception: return False
         return bool(rows.get(v, {}).get('available'))
     accounts = [{'value': v, 'label': label, 'blurb': blurb, 'ready': ready(v),
                  'why': rows.get(v, {}).get('why', ''),
@@ -336,7 +358,8 @@ def model_path(path=None):
 
 def load_models(path=None):
     "Register saved aliases with Ramabana and return the rows that took."
-    from ...agent.core import load_models as load
+    from ...agent.core import load_models as load, use_aliases
+    if path is None: use_aliases(model_path())   # Ramabana's own loads read Leela's file, never the CLI's
     return load(path=model_path(path))
 
 def save_model(row, path=None):

@@ -85,3 +85,32 @@ Protocols with a provider registry, an environment override and a hand-kept tabl
 names to check an implementation against. One provider was ever registered per port, all three
 named `leela`, and the swap it existed to permit never happened once. `tests/test_core.py` holds
 the test that keeps it retired.
+
+## Azure OpenAI and models config.toml defines
+
+The route is Ramabana's, so Leela and the `ramabana` CLI agree on it: both read `~/.config/ramabana/config.toml` (or `$RAMABANA_CONFIG`) and the same env vars. With only Azure OpenAI, set three env vars in the shell that starts Leela:
+
+```sh
+export AZURE_OPENAI_ENDPOINT=https://NAME.openai.azure.com
+export AZURE_OPENAI_API_KEY=...
+export AZURE_OPENAI_DEPLOYMENTS=gpt-5.4,gpt-5.4-mini
+```
+
+With no Claude Code and no Codex login, every job that would have gone to them goes to these deployments: the first runs the turn, a `mini` or `nano` runs the cheap jobs. The agent pane notes the move once. `azure/<deployment>` names a deployment in the model picker, `/model` and `[jobs]`:
+
+```toml
+[azure]
+endpoint = "https://NAME.openai.azure.com"   # instead of $AZURE_OPENAI_ENDPOINT
+deployments = ["gpt-5.4", "gpt-5.4-mini"]
+
+[jobs]
+turn = "azure/gpt-5.4"
+completion = "azure/gpt-5.4-mini"
+
+[model."az-big"]                              # a model of your own name, OpenAI-compatible
+model_id = "gpt-5.4"
+base_url = "https://NAME.openai.azure.com/openai/v1"
+api_key_env = "AZURE_OPENAI_API_KEY"
+```
+
+The key stays in the environment; config.toml only names the env var. Leela counts Azure, and a config.toml model whose key is set, as set up in the first-run modal (`setup_plan`). The agent pane's default model, and the inline and completion models of a workspace still on a stock default that cannot run here, come from `Routing` (`default_model`, `settled`), so they are the models the CLI would use. A model saved in the settings pane goes to Leela's own `~/.config/leela/models.json`, which `use_aliases` makes the file Ramabana loads inside Leela; a name config.toml defines wins over a saved one, and saving that name is refused. Under WSL or Linux, start Leela from a shell that has the env vars, and give a scheduled Dhrona batch the key in its own environment.

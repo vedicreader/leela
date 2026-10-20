@@ -35,7 +35,8 @@ def main(argv=None):
                         'run on claude-haiku-5-5, oneshot and summaries on gpt-6.1-luna, sub-agents on '
                         'claude-sonnet-5-5; without OPENAI_API_KEY the gpt jobs use the turn model. A local model keeps every '
                         'job without a model of its own on the machine. Override per job with '
-                        'LEELA_MODEL_SUMMARY and friends.')
+                        'LEELA_MODEL_SUMMARY and friends. With no Claude Code and no Codex, every job goes to a '
+                        'hosted model configured here, such as the deployments in AZURE_OPENAI_DEPLOYMENTS.')
     p.add_argument('--approvals', default='ask', choices=['ask', 'auto', 'off'],
                    help='what happens when the agent wants to write: ask a person (default), '
                         'approve everything, or refuse everything')

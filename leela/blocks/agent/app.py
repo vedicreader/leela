@@ -418,7 +418,7 @@ def connect(app, ctx):
                     'jobs': {}, 'job_help': {}, 'selected': {}, 'ready': False}
     def _models(legacy, refresh):
         from ...agent.core import DFLT_SMALL, DFLT_TURN, auth_status, resolve
-        from .models import JOB_HELP, catalog, forget_probes, load_models, mark_models, probed, runtimes
+        from .models import JOB_HELP, catalog, default_model, forget_probes, load_models, mark_models, probed, runtimes
         notes = {}
         def _try(what, f, dflt=None):
             "`f()`, or `dflt` and a note saying why: no one failure may blank the picker."
@@ -441,7 +441,7 @@ def connect(app, ctx):
         rows = [dict(r) for r in rows]      # decorated below with this workspace's own choices
         rows += [{'value':x['name'],'label':x['name'],'provider':x['runtime'],
                   'source':f"saved · {x['model_id']}",'custom':True} for x in saved]
-        agent_dflt = ws.model or os.environ.get('LEELA_MODEL') or DFLT_TURN
+        agent_dflt = ws.model or default_model('turn') or DFLT_TURN
         agent = _name('agent model', lambda: ctx.ai.model.name, agent_dflt) if ws._ai is not None else agent_dflt
         inline_dflt = ws.inline_model or os.environ.get('LEELA_MODEL_INLINE') or DFLT_SMALL
         inline = (_name('inline model', lambda: ctx.inline_ai.model.name, inline_dflt)

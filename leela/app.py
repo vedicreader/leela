@@ -604,7 +604,8 @@ def _state_title(ws):
 def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
     from .agent.core import DFLT_SMALL, DFLT_TURN, env as _env
-    agent_model = ws.model or _env('MODEL') or DFLT_TURN
+    from .blocks.agent.models import default_model
+    agent_model = ws.model or default_model('turn') or DFLT_TURN
     inline_model = ws.inline_model or _env('MODEL_INLINE') or DFLT_SMALL
     completion_model = ws.completion_model or _env('MODEL_COMPLETION') or DFLT_SMALL
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())

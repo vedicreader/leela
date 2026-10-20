@@ -113,6 +113,9 @@ answer in the notebook cell, as markdown that Jupyter can still read. The charte
 state layers context by organization, project, task and branch, then puts it in the
 briefing. Skills come from `pyskills` entry points and `SKILL.md` directories. The harness is
 [ramabana](https://github.com/vedicreader/ramabana), which `leela.agent` aliases.
+With only Azure OpenAI, set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY` and
+`AZURE_OPENAI_DEPLOYMENTS`, and every job runs on those deployments; see
+[docs/integration.md](docs/integration.md#azure-openai-and-models-configtoml-defines).
 
 ### The canvas
 
