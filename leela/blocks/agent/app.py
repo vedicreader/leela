@@ -410,8 +410,14 @@ def connect(app, ctx):
         return {'ok': True, **group, 'count': len(turns), 'turns': with_capabilities(t.ai, turns)}
     @rt('/agent/models')
     def agent_models(legacy: bool = True, refresh: bool = False):
-        "Every model the picker offers, and which one each routed job is on."
-        from ...agent.core import DFLT_SMALL, DFLT_TURN, available_models, auth_status, resolve
+        "Every model the picker offers, and which one each routed job is on. Never a 500: `+ model` draws from it."
+        try: return _models(legacy, refresh)
+        except Exception as e:
+            return {'ok': False, 'error': errstr(e), 'models': [], 'saved': [], 'notes': {}, 'auth': {},
+                    'runtimes': [{'value': 'remote', 'label': 'hosted API / FastLLM', 'available': True}],
+                    'jobs': {}, 'job_help': {}, 'selected': {}, 'ready': False}
+    def _models(legacy, refresh):
+        from ...agent.core import DFLT_SMALL, DFLT_TURN, auth_status, resolve
         from .models import JOB_HELP, catalog, forget_probes, load_models, mark_models, probed, runtimes
         notes = {}
         def _try(what, f, dflt=None):
@@ -461,15 +467,17 @@ def connect(app, ctx):
             return current if spec is None else by_id.get(spec.model_id, current)
         # The routed jobs with no field of their own, reported chosen or not.
         from ...agent.core import JOBS, Routing
-        routing = ctx.ai.routing if ws._ai is not None else Routing(turn=agent)
-        if ws._ai is None:   # `set`, so a saved choice counts as chosen and a local turn does not hide it
+        routing = _try('routing', lambda: ctx.ai.routing if ws._ai is not None else Routing(turn=agent))
+        if routing is not None and ws._ai is None:   # `set`, so a saved choice counts as chosen and a local turn does not hide it
             for j, n in (ws.job_models or {}).items(): _try(f'{j} model', lambda j=j, n=n: routing.set(n, j))
         # `**jobs` is spread last, and `inline` has a field of its own.
-        jobs = {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
-                for j in JOBS if j not in ('turn', 'completion', 'inline')}
+        jobs = {} if routing is None else {j: _name(f'{j} model', lambda j=j: routing.name_for(j), '')
+                                           for j in JOBS if j not in ('turn', 'completion', 'inline')}
+        models = _try('model marks', lambda: mark_models(rows), rows)
         # The catalog's rows are marked already; only the saved aliases and the rows added for
         # an unavailable choice still need it.
-        return {'models': mark_models(rows), 'saved':saved, 'notes': notes,
+        return {'ok': True, 'models': models, 'saved':saved, 'notes': notes,
+                'ready': any(not m.get('unavailable') for m in models),
                 # Asking every account whether it is signed in is the other slow half.
                 'auth': _try('auth', lambda: probed('auth', auth_status), {}) or {},
                 # What is installed here, which is a second cold and another machine-wide answer.

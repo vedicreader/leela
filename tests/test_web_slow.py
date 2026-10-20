@@ -1458,3 +1458,94 @@ def test_a_local_only_attachment_turns_its_chip_red_and_the_turn_is_not_sent(tmp
     got = _run(go, roots=[proj])
     assert 'Local only' in got['line'] and 'Nothing was sent' in got['chip']
     assert got['prompt'] == 'summarise it' and got['cards'] == 0
+
+def _bare_machine(monkeypatch, tmp_path):
+    "No Claude Code, no Codex, no local backend, no key, and an empty alias file: a fresh Linux box under WSL."
+    import ramabana.core as rc, leela.blocks.agent.models as lm
+    monkeypatch.setattr(rc, 'runtime_available', lambda r: r == 'remote')
+    monkeypatch.setattr(rc, '_claude_login', lambda: False)
+    monkeypatch.setattr(rc, '_codex_login', lambda: False)
+    monkeypatch.setattr(lm, 'leela_cfg', tmp_path)
+    lm.forget_probes(disk=True)
+
+OPEN_SETTINGS = """async () => {
+  leeRight('agent');
+  const d = document.querySelector('.lee-agent-settings'); d.querySelector(':scope > summary').click();
+  await new Promise(r => setTimeout(r, 100));
+  const pop = d.querySelector('.lee-routing-popover'), r = pop.getBoundingClientRect();
+  pop.scrollTop = 0;
+  const first = document.querySelector('#inlinemodel').closest('label').getBoundingClientRect();
+  const hit = document.elementFromPoint(first.left + first.width / 2, first.top + first.height / 2);
+  return {open: d.open, top: r.top, bottom: r.bottom, vh: innerHeight, first: first.top, hit: pop.contains(hit)};
+}"""
+
+def test_model_settings_open_from_every_route_on_a_machine_with_nothing_set_up(monkeypatch, tmp_path):
+    "Short window, nothing installed, no key: settings, + model, the picker and the palette all open, and an Azure model can be added."
+    _bare_machine(monkeypatch, tmp_path)
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1280, 'height': 600})
+        await pg.wait_for_selector('[data-model-pick="agentmodel"]')
+        out = {'settings': await pg.evaluate(OPEN_SETTINGS)}
+        await pg.click('.lee-routing-popover button:has-text("+ model")')
+        await pg.wait_for_selector('.lee-modal #modelalias')
+        await pg.wait_for_selector('.lee-modal [data-model-state]:not(:empty)')
+        out['state'] = await pg.inner_text('.lee-modal [data-model-state]')
+        out['runtimes'] = await pg.eval_on_selector_all('#modelruntime option:not([disabled])', 'os => os.map(o => o.value)')
+        await pg.fill('#modelalias', 'Azure GPT'); await pg.fill('#modelid', 'gpt-4.1')
+        await pg.click('#modelsave')
+        await pg.wait_for_function("() => document.querySelector('.lee-modal [data-model-state]')?.classList.contains('warn')")
+        out['refused'] = await pg.inner_text('.lee-modal [data-model-state]')
+        await pg.fill('#modelalias', 'azure-gpt')
+        await pg.select_option('#modelruntime', 'remote')
+        await pg.click('.lee-modal details > summary')
+        await pg.fill('#modelbase', 'https://myres.openai.azure.com/openai/v1')
+        await pg.fill('#modelkeyenv', 'AZURE_OPENAI_API_KEY')
+        await pg.fill('#modelvendor', 'openai'); await pg.fill('#modelapi', 'openai')
+        await pg.click('#modelsave')
+        await pg.wait_for_function("() => !document.querySelector('#modelalias') && document.querySelector('#agentmodel option[value=\"azure-gpt\"]')")
+        await pg.click('[data-model-pick="agentmodel"]')
+        await pg.wait_for_selector('.lee-model-menu')
+        out['picker'] = await pg.eval_on_selector_all('.lee-model-row', 'bs => bs.map(b => b.dataset.value)')
+        await pg.keyboard.press('Escape')
+        await pg.evaluate("() => leeAct('setup_models')")
+        await pg.wait_for_selector('.lee-setup-modal .lee-mhead')
+        out['setup'] = await pg.inner_text('.lee-setup-modal .lee-mhead')
+        await pg.click('#setupadd')
+        await pg.wait_for_function("() => document.querySelectorAll('.lee-modal').length === 2 && !document.querySelector('.lee-modal #savedmodels').textContent.includes('loading')")
+        out['saved'] = await pg.inner_text('.lee-modal #savedmodels')
+        return out
+    got = _run(go, real_models=True)
+    s = got['settings']
+    assert s['open'] and s['top'] >= 0 and s['bottom'] <= s['vh'] and s['first'] >= 0 and s['hit']
+    assert 'no model is set up here' in got['state']
+    assert 'name must use letters' in got['refused']
+    assert got['runtimes'] == ['remote']
+    assert 'azure-gpt' in got['picker']
+    assert 'Set up a model' in got['setup'] and 'azure-gpt' in got['saved']
+
+@pytest.mark.parametrize('fault', ['500', 'notok', 'slow'])
+def test_add_model_opens_at_once_whatever_the_model_list_does(fault):
+    "A model list that fails or never answers used to leave `+ model` drawing nothing at all."
+    held = []
+    async def go(pg):
+        async def handle(route):
+            if fault == '500': await route.fulfill(status=500, body='Internal Server Error')
+            elif fault == 'notok': await route.fulfill(status=200, content_type='application/json',
+                                                       body='{"ok": false, "error": "Internal Server Error", "runtimes": []}')
+            else: held.append(route)   # never answered
+        await pg.route('**/agent/models*', handle)
+        await pg.evaluate("() => { leeAddModel(); }")
+        await pg.wait_for_selector('.lee-modal #modelalias', timeout=2000)
+        out = {'runtimes': await pg.eval_on_selector_all('#modelruntime option:not([disabled])', 'os => os.map(o => o.value)')}
+        if fault != 'slow':
+            await pg.wait_for_function("() => document.querySelector('.lee-modal [data-model-state]')?.textContent.includes('Internal Server Error')")
+            # As at a boot whose model list failed: the select never got its picker.
+            await pg.evaluate("() => { document.querySelector('[data-model-pick=\"agentmodel\"]').remove(); delete document.querySelector('#agentmodel').dataset.leePicked; leeLoadModels(); }")
+            await pg.wait_for_function("() => document.querySelector('#status')?.textContent.includes('Internal Server Error')")
+            out['picker'] = await pg.locator('[data-model-pick="agentmodel"]').count()
+        out['state'] = await pg.inner_text('.lee-modal [data-model-state]')
+        return out
+    got = _run(go)
+    assert got['runtimes'] == ['remote']
+    if fault != 'slow': assert 'Internal Server Error' in got['state'] and got['picker'] == 1
+    else: assert 'loading' in got['state']

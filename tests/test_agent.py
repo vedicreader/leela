@@ -618,6 +618,75 @@ def test_one_unresolvable_model_does_not_blank_the_whole_picker(monkeypatch):
     assert row['unavailable'] and 'TokenError' in row['source']
     assert all('TokenError' not in (m.get('source') or '') for m in d['models'] if m['value'] != broken)
 
+def _bare_machine(monkeypatch):
+    "A Linux box with no Claude Code, no Codex, no local backend and no key: only hosted APIs can be added."
+    import ramabana.core as rc
+    from leela.blocks.agent.models import forget_probes
+    monkeypatch.setattr(rc, 'runtime_available', lambda r: r == 'remote')
+    monkeypatch.setattr(rc, '_claude_login', lambda: False)
+    monkeypatch.setattr(rc, '_codex_login', lambda: False)
+    forget_probes(disk=True)
+
+MODEL_KEYS = {'ok', 'models', 'saved', 'notes', 'auth', 'runtimes', 'jobs', 'job_help', 'selected', 'ready'}
+
+@pytest.mark.no_claude
+def test_the_model_list_answers_on_a_machine_with_nothing_set_up(monkeypatch):
+    "Nothing installed and no key: every row unavailable, `ready` false, and the hosted runtime offered to add one."
+    _bare_machine(monkeypatch)
+    with TestClient(ide_app(Workspace(roots=[]))) as c: r = c.get('/agent/models')
+    assert r.status_code == 200
+    d = r.json()
+    assert MODEL_KEYS <= set(d) and d['ok'] and not d['ready']
+    assert all(m.get('unavailable') for m in d['models'])
+    assert [x['value'] for x in d['runtimes'] if x['available']] == ['remote']
+
+@pytest.mark.no_claude
+@pytest.mark.parametrize('step', ['mark_models', 'Routing'])
+def test_one_failing_step_of_the_model_list_is_a_note_not_a_500(monkeypatch, step):
+    "The steps outside the per-row guards used to raise straight through, and `+ model` then drew nothing."
+    import leela.blocks.agent.models as lm, ramabana.core as rc
+    _bare_machine(monkeypatch)
+    def boom(*a, **kw): raise RuntimeError('injected')
+    monkeypatch.setattr(lm if step == 'mark_models' else rc, step, boom)
+    with TestClient(ide_app(Workspace(roots=[]))) as c: r = c.get('/agent/models')
+    assert r.status_code == 200
+    d = r.json()
+    assert MODEL_KEYS <= set(d) and d['ok']
+    assert any('injected' in v for v in d['notes'].values())
+    assert [x['value'] for x in d['runtimes'] if x['available']] == ['remote']
+
+@pytest.mark.no_claude
+def test_a_model_list_that_fails_outright_answers_in_the_same_shape(monkeypatch):
+    "Whatever escapes the per-step guards is `ok: False` with the error, and the hosted runtime still offered."
+    _bare_machine(monkeypatch)
+    class Broken(dict):
+        def items(self): raise RuntimeError('injected')
+    ws = Workspace(roots=[])
+    ws.job_models = Broken(x='y')
+    with TestClient(ide_app(ws)) as c: r = c.get('/agent/models')
+    assert r.status_code == 200
+    d = r.json()
+    assert MODEL_KEYS <= set(d) and not d['ok'] and 'injected' in d['error']
+    assert [x['value'] for x in d['runtimes']] == ['remote']
+
+@pytest.mark.no_claude
+def test_a_hosted_model_is_saved_and_listed_on_a_machine_with_nothing_set_up(monkeypatch, tmp_path):
+    "An Azure OpenAI deployment added from the form: base URL, key variable, vendor and transport, no key set."
+    import leela
+    _bare_machine(monkeypatch)
+    monkeypatch.setattr(leela.blocks.agent.models, 'leela_cfg', tmp_path)
+    row = {'name': 'azure-gpt', 'model_id': 'gpt-4.1', 'runtime': 'remote', 'ctx': 128000,
+           'base_url': 'https://myres.openai.azure.com/openai/v1', 'api_key_env': 'AZURE_OPENAI_API_KEY',
+           'vendor_name': 'openai', 'api_name': 'openai'}
+    try:
+        with TestClient(ide_app(Workspace(roots=[]))) as c:
+            r = c.post('/agent/models/add', json=row)
+            assert r.json()['ok'] and r.json()['model']['base_url'] == row['base_url']
+            d = c.get('/agent/models').json()
+    finally: models.delete_model('azure-gpt', path=tmp_path/'models.json')
+    assert d['ok'] and [x['name'] for x in d['saved']] == ['azure-gpt']
+    assert any(m['value'] == 'azure-gpt' and m.get('custom') for m in d['models'])
+
 
 @pytest.fixture
 def project(tmp_path):

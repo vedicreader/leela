@@ -14,6 +14,14 @@ document.addEventListener('keydown', e => {
   open.querySelector(':scope > summary')?.focus();
 }, true);
 window.addEventListener('blur', () => closeDismissableDisclosures());
+/* The settings popover opens upward from the composer and is taller than a short window (a Windows
+   browser at 150% is about 600px), so its top rows, the model choices, sat above the screen. */
+function fitRoutingPopover(d) {
+  const pop = d.querySelector(':scope > .lee-routing-popover'); if (!pop) return;
+  pop.style.maxHeight = d.open ? `${Math.max(120, d.querySelector(':scope > summary').getBoundingClientRect().top - 15)}px` : '';
+}
+document.addEventListener('toggle', e => { if (e.target.matches?.('details.lee-routing')) fitRoutingPopover(e.target); }, true);
+window.addEventListener('resize', () => $$('details.lee-routing[open]').forEach(fitRoutingPopover));
 
 // A model that draws or films says so in the picker itself; the rest of what it takes is the tooltip.
 const modelMark = (m) => (m.gen_image ? ' · draws' : '') + (m.gen_video ? ' · films' : '');
@@ -169,8 +177,12 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   const selects = {agent: $('#agentmodel'), inline: $('#inlinemodel'), completion: $('#completionmodel')};
   if (!selects.agent || !selects.inline || !selects.completion) return;
   const previous = Object.fromEntries(Object.entries(selects).map(([k, s]) => [k, s.value]));
-  const d = await api('/agent/models?legacy=' + (legacy ? 'true' : 'false'));
-  for (const [target, select] of Object.entries(selects)) {
+  let d;
+  try { d = await api('/agent/models?legacy=' + (legacy ? 'true' : 'false')); }
+  catch (e) { d = {ok: false, error: String(e.message || e)}; }
+  if (d.ok === false) status(`could not list models: ${d.error}`, 'err');
+  // A failed list keeps what the selects hold, and the pickers still attach over it.
+  if ((d.models || []).length) for (const [target, select] of Object.entries(selects)) {
     select.innerHTML = '';
     for (const m of (d.models || [])) {
       const option = document.createElement('option');
@@ -240,7 +252,8 @@ function renderBackends(m, rows) {
   host.innerHTML = mine.map(backendRow).join('');
   host.querySelectorAll('[data-bk]').forEach(row => row.querySelector('[data-bk-get]')?.addEventListener('click', async () => {
     const runtime = row.dataset.bk;
-    const r = await post('/agent/runtimes/install', {runtime});
+    let r;
+    try { r = await post('/agent/runtimes/install', {runtime}); } catch (e) { r = {ok: false, error: String(e.message || e)}; }
     if (!r.ok) return status(r.error || `could not install ${runtime}`, 'err');
     status(`installing ${runtime}… this downloads a lot and keeps going if you close this`, 'busy');
     pollBackends(m);
@@ -258,41 +271,72 @@ async function pollBackends(m) {
   if (done.length) { status(`${done.map(r => r.value).join(', ')} installed`, 'ok'); loadAgentModels(); }
 }
 
+/* The form opens before the model list answers: it is the whole catalog and two machine-wide probes,
+   and a list that failed or hung used to leave `+ model` drawing nothing at all. A hosted API model
+   needs none of it, so `remote` is offered from the start and saving never waits on the list. */
+const REMOTE_RUNTIME = {value: 'remote', label: 'hosted API / FastLLM', available: true};
+const MODELS_WAIT = 15000;
+async function apiWithin(url, ms) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+  try { return await api(url, {signal: ctl.signal}); }
+  catch (e) { throw e.name === 'AbortError' ? new Error(`no answer in ${ms / 1000}s`) : e; }
+  finally { clearTimeout(t); }
+}
+async function postOr(url, data) {
+  try { return await post(url, data); } catch (e) { return {ok: false, error: String(e.message || e)}; }
+}
+function paintRuntimes(m, rows) {
+  /* The runtimes ramabana will accept, and which of them rishi can load here. The list, the
+     label and the remedy all come from the server: kept here they drifted twice, offering MLX
+     after it was dropped and telling you to pip install Cursor. Unavailable stays visible. */
+  const rtsel = $('#modelruntime', m), was = rtsel.value;
+  rtsel.innerHTML = (rows.length ? rows : [REMOTE_RUNTIME]).map(r =>
+    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
+    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
+  const keep = rtsel.querySelector(`option[value="${CSS.escape(was || '')}"]:not([disabled])`);
+  const firstrt = keep || rtsel.querySelector('option:not([disabled])');
+  if (firstrt) rtsel.value = firstrt.value;
+}
+function modelState(m, text, bad = false) {
+  const el = $('[data-model-state]', m); if (!el) return;
+  el.textContent = text; el.classList.toggle('warn', bad);
+}
 async function leeAddModel() {
-  const d = await api('/agent/models');
-  const saved = (d.saved || []).map(x => `<div class="lee-setup-row"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('');
+  closeDismissableDisclosures();
   const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
+    <div class="lee-model-state" data-model-state role="status">loading the models this machine has…</div>
     <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
     <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/litert-community/… or openai/model-id"></label>
     <label>runtime<select class="lee-select" id="modelruntime"></select></label>
     <label>context tokens<input class="lee-input" id="modelctx" type="number" value="128000" min="1024"></label>
-    <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
+    <details><summary>hosted API settings</summary><label>base URL<input class="lee-input" id="modelbase" placeholder="https://api.example.com/v1 · Azure: https://NAME.openai.azure.com/openai/v1"></label><label>API key environment variable<input class="lee-input" id="modelkeyenv" placeholder="OPENAI_API_KEY"></label><label>FastLLM vendor<input class="lee-input" id="modelvendor" placeholder="openai"></label><label>FastLLM API transport<input class="lee-input" id="modelapi" placeholder="openai"></label></details>
     <button class="lee-btn go" id="modelsave">save model</button>
-    <h4>on-device backends</h4><div class="lee-modallist" id="backends"></div>
-    <h4>saved models</h4><div class="lee-modallist">${saved || '<div class="lee-dim">none yet</div>'}</div>`);
-  /* The runtimes ramabana will accept, and which of them rishi can load here. The list, the
-     label and the remedy all come from `d.runtimes`: kept here they drifted twice, offering MLX
-     after it was dropped and telling you to pip install Cursor. Unavailable stays visible. */
-  const rtsel = m.querySelector('#modelruntime');
-  rtsel.innerHTML = (d.runtimes || [{value: 'remote', label: 'hosted API / FastLLM', available: true}]).map(r =>
-    `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
-    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
-  const firstrt = rtsel.querySelector('option:not([disabled])');
-  if (firstrt) rtsel.value = firstrt.value;
-  renderBackends(m, d.runtimes || []);
-
+    <h4>on-device backends</h4><div class="lee-modallist" id="backends"><div class="lee-dim">loading…</div></div>
+    <h4>saved models</h4><div class="lee-modallist" id="savedmodels"><div class="lee-dim">loading…</div></div>`);
+  paintRuntimes(m, []);
   $('#modelsave', m).onclick = async () => {
     status('validating and saving model…');
-    const r = await post('/agent/models/add', {name: $('#modelalias',m).value.trim(), model_id: $('#modelid',m).value.trim(), runtime: $('#modelruntime',m).value, ctx: Number($('#modelctx',m).value), base_url: $('#modelbase',m).value.trim(), api_key_env: $('#modelkeyenv',m).value.trim(), vendor_name: $('#modelvendor',m).value.trim(), api_name: $('#modelapi',m).value.trim()});
-    if (!r.ok) return status(r.error || 'could not save model','err');
-    m.remove(); await loadAgentModels(); status(`saved ${r.model.name} · ${r.model.runtime} · ${r.model.model_id}`,'ok');
+    const r = await postOr('/agent/models/add', {name: $('#modelalias',m).value.trim(), model_id: $('#modelid',m).value.trim(), runtime: $('#modelruntime',m).value, ctx: Number($('#modelctx',m).value), base_url: $('#modelbase',m).value.trim(), api_key_env: $('#modelkeyenv',m).value.trim(), vendor_name: $('#modelvendor',m).value.trim(), api_name: $('#modelapi',m).value.trim()});
+    if (!r.ok) { modelState(m, r.error || 'could not save model', true); return status(r.error || 'could not save model', 'err'); }
+    m.remove(); status(`saved ${r.model.name} · ${r.model.runtime} · ${r.model.model_id}`, 'ok');
+    await loadAgentModels();
   };
-  $$('[data-remove]',m).forEach(b => b.onclick = async () => {
-    const name=b.dataset.remove; const r=await post('/agent/models/remove',{name});
-    if (!r.ok) return status(r.error || 'could not remove model','err');
-    m.remove(); await loadAgentModels(); status(`removed ${name}`,'ok');
-  });
   $('#modelalias',m)?.focus();
+  let d;
+  try { d = await apiWithin('/agent/models', MODELS_WAIT); } catch (e) { d = {ok: false, error: String(e.message || e)}; }
+  if (!m.isConnected) return;
+  modelState(m, d.ok === false ? `could not list this machine's models (${d.error}); a hosted API model can still be added`
+    : d.ready ? '' : 'no model is set up here: add one. A hosted API (OpenAI, Azure OpenAI or any OpenAI-compatible URL) ' +
+      'reads its key from the environment variable you name, on the machine Leela runs on', d.ok === false);
+  paintRuntimes(m, d.runtimes || []);
+  renderBackends(m, d.runtimes || []);
+  $('#savedmodels', m).innerHTML = (d.saved || []).map(x => `<div class="lee-setup-row"><span><strong>${esc(x.name)}</strong> · ${esc(x.runtime)}<br><small>${esc(x.model_id)}</small></span><button class="lee-btn warn" data-remove="${esc(x.name)}">remove</button></div>`).join('')
+    || '<div class="lee-dim">none yet</div>';
+  $$('[data-remove]',m).forEach(b => b.onclick = async () => {
+    const name=b.dataset.remove; const r=await postOr('/agent/models/remove',{name});
+    if (!r.ok) { modelState(m, r.error || 'could not remove model', true); return status(r.error || 'could not remove model','err'); }
+    m.remove(); status(`removed ${name}`,'ok'); await loadAgentModels();
+  });
 }
 window.leeAddModel = leeAddModel;
 
@@ -410,6 +454,7 @@ async function leeSetupModal(known) {
     `<span class="sub">${d.done ? 'what is installed here, and what is newer' : 'the agent has nothing to answer with yet'}</span></div>` +
     `<div class="lee-setup-body"></div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="setupreset">start over</button>` +
+    `<button class="lee-btn" id="setupadd">+ model</button>` +
     `<span class="lee-spacer"></span><button class="lee-btn go" id="setupdone" autofocus>done</button></div>`,
     null, null, {className: 'lee-setup-modal', storageKey: 'agent-setup'});
   const box = $('.lee-modalbox', m);
@@ -421,6 +466,7 @@ async function leeSetupModal(known) {
     leeSetupPane();
     leeSetupModal();
   };
+  $('#setupadd', box).onclick = () => leeAddModel();
   $('#setupdone', box).onclick = async () => {
     await post('/agent/setup/dismiss', {dismissed: true});
     m.remove();

@@ -2078,7 +2078,10 @@ kbd {
 .lee-routing[open] > summary { color: var(--lee-accent); }
 .lee-routing-popover { position: absolute; right: 0; bottom: calc(100% + 7px); z-index: 22; width: min(300px, calc(100vw - 24px));
   display: grid; gap: 8px; padding: 11px; border: 1px solid var(--lee-border); border-radius: 7px;
-  background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.32); }
+  background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.32); overflow-y: auto; overscroll-behavior: contain; }
+.lee-model-state { color: var(--lee-fg4); font-size: 11px; line-height: 1.5; }
+.lee-model-state:empty { display: none; }
+.lee-model-state.warn { color: var(--lee-red); }
 .lee-routing-popover label { display: grid; grid-template-columns: 82px minmax(0,1fr); align-items: center; gap: 7px;
   color: var(--lee-fg4); font-size: 10px; }
 .lee-routing-popover label.lee-check-setting { display: flex; grid-column: 1 / -1; }
