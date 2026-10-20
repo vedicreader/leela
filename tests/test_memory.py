@@ -40,6 +40,13 @@ Measure recall accuracy and latency for every agent memory design.
     assert refreshed['nodes'] >= 2 and mem.status()['documents'] == 1
 
 
+def test_by_source_finds_a_copy_filed_under_another_source(tmp_path):
+    mem, txt = _mem(tmp_path), '# Mirror\n\nThe same bytes served from two hosts.'
+    a = mem.remember(Doc(title='Mirror', url='https://a.test/m', kind='page', text=txt))
+    b = mem.remember(Doc(title='Mirror', url='https://b.test/m', kind='page', text=txt))
+    assert b['doc_id'] == a['doc_id'] and mem.status()['documents'] == 1
+    assert mem.by_source('https://b.test/m')[1] == a['doc_id']
+
 @pytest.fixture
 def mem_vault(tmp_path, monkeypatch):
     monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')

@@ -4,8 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.19, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.5, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.60 and rishi 0.1.53.
+Needs vishalakshi 0.1.33, shalya 0.1.19, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.51, kunda 0.0.5, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.60 and rishi 0.1.53.
 
+- The vault stores one text once. A file added by a relative path, an absolute path, a symlink or a copy is one document, and a file edited since it was added replaces its old chunks (litesearch 0.1.50). litesearch's usearch probe no longer shares the terminal (litesearch 0.1.51). `Memory.by_source` finds a document by any source it is filed under, and a Local only document's list of sources is withheld with its source (vishalakshi 0.1.33).
 - Nothing Leela starts itself shares the terminal any more. The login-shell environment probe, `run_cmd`, scripts and jobs, installs, nbdev and fastship steps, the Rust cell runner, pytest flows, interpreter and debugpy probes, and the repository scan get `/dev/null` as standard input. A prompt in any of them now fails at once instead of waiting until the timeout. LSP, debugpy, the Node driver, formatters and the IDE terminal keep their pipes and pty.
 - The login-shell probe, installs, and nbdev and fastship steps run in their own session, so an interactive shell or a credential prompt cannot open `/dev/tty` either. A browser that `BROWSER` names, or Linux's `xdg-open`, gets `/dev/null` as standard input; macOS still opens through `osascript`.
 - Nothing the agent's libraries start shares the terminal any more. `claude --version`, `ollama serve`, git through gheasy, interpreter probes, Chrome, and ramabana's own git calls get `/dev/null` as standard input (rishi 0.1.53, gheasy 0.0.14, kunda 0.0.5, fossick 0.1.20, ramabana 0.2.60).

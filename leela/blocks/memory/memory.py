@@ -252,9 +252,12 @@ class Memory:
                 try: names = [r[0] for r in c.execute('select name from store_meta')]
                 except apsw.SQLError: names = []
                 for n in names:
-                    t = 'docs' if n == 'store' else f'{n}_docs'
-                    try: rows = c.execute(f'select source, id from "{t}" order by added_at').fetchall()
+                    p = '' if n == 'store' else f'{n}_'
+                    try: rows = c.execute(f'select source, id from "{p}docs" order by added_at').fetchall()
                     except apsw.SQLError: continue
+                    # litesearch 0.1.50 files a copy of stored text as a row in `sources`, not in `docs`
+                    try: rows += c.execute(f'select source, doc_id from "{p}sources" order by added_at').fetchall()
+                    except apsw.SQLError: pass
                     out.update({s: (self._shelf_name(n), d) for s, d in rows if s})
             finally: c.close()
         self._srcs = (seal, out)

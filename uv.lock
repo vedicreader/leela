@@ -2541,7 +2541,7 @@ requires-dist = [
     { name = "koshas", specifier = ">=0.1.11" },
     { name = "kunda", specifier = ">=0.0.5" },
     { name = "lekhaka", specifier = ">=0.0.4" },
-    { name = "litesearch", specifier = ">=0.1.49" },
+    { name = "litesearch", specifier = ">=0.1.51" },
     { name = "mdhtml", specifier = ">=0.1.38" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "orjson", specifier = ">=3.9" },
@@ -2561,7 +2561,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "varga", specifier = ">=0.0.7" },
-    { name = "vishalakshi", specifier = ">=0.1.31" },
+    { name = "vishalakshi", specifier = ">=0.1.33" },
     { name = "vpseasy", specifier = ">=0.0.24" },
     { name = "watchfiles", specifier = ">=1.0" },
 ]
@@ -2663,7 +2663,7 @@ wheels = [
 
 [[package]]
 name = "litesearch"
-version = "0.1.49"
+version = "0.1.51"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chonkie" },
@@ -2676,9 +2676,9 @@ dependencies = [
     { name = "tokenizers" },
     { name = "usearch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/3e/8f36f7e2cdf7172d7c68f056760e9a259e99e3dfdfbac3f9be8853ec4fa6/litesearch-0.1.49.tar.gz", hash = "sha256:63cb75ceb050238b58b345e12f980bbb4c9d69f91ecaea972ad38f4ab0667730", size = 85180, upload-time = "2026-10-19T11:18:43.515Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1d/bf/fc701d9042b7cda75ab20f7e10044dc0add876335fd522f8e728dd3c88d2/litesearch-0.1.51.tar.gz", hash = "sha256:db20ff23ccb2e15a1a99a5397be158bf4b1c35f5b56f115739b9b31c36bbcf35", size = 89257, upload-time = "2026-10-20T09:31:19.43Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/72/ee89282fb92e21d849e9ccac551a0f9892c14830a344c6a74d2aa45a197a/litesearch-0.1.49-py3-none-any.whl", hash = "sha256:8f9a08e96b9b1f5a39b0bdd087c35a3294333b0c1aee3457bbd8e14581cb5020", size = 91105, upload-time = "2026-10-19T11:18:40.804Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/87/d593eacd2e0137752775b391bf5f199dab05d62893496094f1340ecc31cb/litesearch-0.1.51-py3-none-any.whl", hash = "sha256:4c81513159fedd558f2e1c5f926fdc83a8c3892c0b806f984ece835bb3bed48c", size = 95161, upload-time = "2026-10-20T09:31:18.1Z" },
 ]
 
 [[package]]
@@ -5895,7 +5895,7 @@ wheels = [
 
 [[package]]
 name = "vishalakshi"
-version = "0.1.31"
+version = "0.1.33"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -5915,9 +5915,9 @@ dependencies = [
     { name = "varga" },
     { name = "vruksha" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/0c/afd82b488c7810f5a6ff714fa9f7d999a25a7b690bc95a40da43f1551483/vishalakshi-0.1.31.tar.gz", hash = "sha256:c88eccd1d47f40663c3ee540177f07d55ba32dea52bf672d674c3b69d47ac346", size = 114829, upload-time = "2026-10-19T08:36:10.077Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/07/4e5d3180fff5b07024aa3ba2e0ec7dd771ec11091ddc2cb88a5cca5010eb/vishalakshi-0.1.33.tar.gz", hash = "sha256:6fdc02ce547eddc9265744fe00896e89c6b7321f47782f814bc53a58ea83c979", size = 115338, upload-time = "2026-10-20T09:06:52.218Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/1c/43c392a393937127d100e0ada47f4d6da360335d3cdd4d4a761380741081/vishalakshi-0.1.31-py3-none-any.whl", hash = "sha256:c43891cf31cf8e46a9e354e704b334346d0dd14c5ce8777ac8ac7c5604526afb", size = 115210, upload-time = "2026-10-19T08:36:08.814Z" },
+    { url = "https://files.pythonhosted.org/packages/21/84/62c6a2840b7e63af3cbc3bf88709b03b7e83fd18d640fe7c15969ff0e09d/vishalakshi-0.1.33-py3-none-any.whl", hash = "sha256:8b5bfbb4efabcae652c2a3ce8235a6ccac5bd876d4827acc73ec03e6b0ef4f5f", size = 115705, upload-time = "2026-10-20T09:06:50.573Z" },
 ]
 
 [[package]]

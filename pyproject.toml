@@ -47,7 +47,7 @@ dependencies = [
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
     "koshas>=0.1.11",
-    "litesearch>=0.1.49",   # 0.1.49 `get_index` and `usearch_sql` no longer wait on the `db_lock` `_Serial` holds (0.1.47 and 0.1.48 deadlocked agent code search); 0.1.48 numpy when usearch does not import (macOS 14); 0.1.46 add_dir(stop=); 0.1.45 no parse pool for HTML; 0.1.44 dir2files skip settings; 0.1.43 onnxruntime 1.31 model loading, pre('***'); rank_fts, correct, fts_or, fts_phrases, fts_vocab, roman_fold(doubles=); onnx, onnxruntime and flashrank are extras, on both rerank paths
+    "litesearch>=0.1.51",   # 0.1.51 the usearch probe, otool and sysctl get /dev/null as stdin; 0.1.50 one text stored once: resolved-path sources, a `sources` table, an edited file replaces its chunks; 0.1.49 `get_index` and `usearch_sql` no longer wait on the `db_lock` `_Serial` holds (0.1.47 and 0.1.48 deadlocked agent code search); 0.1.48 numpy when usearch does not import (macOS 14); 0.1.46 add_dir(stop=); 0.1.45 no parse pool for HTML; 0.1.44 dir2files skip settings; 0.1.43 onnxruntime 1.31 model loading, pre('***'); rank_fts, correct, fts_or, fts_phrases, fts_vocab, roman_fold(doubles=); onnx, onnxruntime and flashrank are extras, on both rerank paths
     "mdhtml>=0.1.38",   # `md2dom(...).to_html()`, which `blocks/canvas/lit.py` renders through
     # The ripgrep flags and its event stream, in one place rather than a command line built here.
     # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.
@@ -68,7 +68,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dhrishti>=0.1.6",
     "watchfiles>=1.0",
-    "vishalakshi>=0.1.31",   # 0.1.31 stop and progress on add_file, pdf and gh_file, and a stop inside a batch; 0.1.30 stop and progress on add_files, add_tree and the acquire paths; 0.1.28 public litesearch and rahasya names; 0.1.27 MCP results gated; 0.1.26 titles, headings and sources under the send rule; ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check; 0.1.23 progress, boxes, crop; 0.1.24 edit_change, revert_page, undo_decision, reset_pii
+    "vishalakshi>=0.1.33",   # 0.1.33 follows litesearch 0.1.50, withholds a Local only document's `sources`; 0.1.31 stop and progress on add_file, pdf and gh_file, and a stop inside a batch; 0.1.30 stop and progress on add_files, add_tree and the acquire paths; 0.1.28 public litesearch and rahasya names; 0.1.27 MCP results gated; 0.1.26 titles, headings and sources under the send rule; ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check; 0.1.23 progress, boxes, crop; 0.1.24 edit_change, revert_page, undo_decision, reset_pii
     "rahasya>=0.0.4",   # 0.0.4 findings past MAX_SCAN at their real offset
     "varga>=0.0.7",
     "lekhaka>=0.0.4",

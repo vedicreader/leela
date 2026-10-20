@@ -16,11 +16,11 @@ def test_the_tool_simplification_releases_are_the_floor():
     assert deps['ramabana'].specifier.contains('0.2.60') and not deps['ramabana'].specifier.contains('0.2.59'), 'git, claude --version and Chrome get /dev/null as stdin'
     assert deps['gheasy'].specifier.contains('0.0.14') and not deps['gheasy'].specifier.contains('0.0.13'), 'git gets /dev/null as stdin'
     assert deps['shalya'].specifier.contains('0.1.19') and not deps['shalya'].specifier.contains('0.1.18'), 'commands get /dev/null as stdin, what ramabana 0.2.59 needs'
-    assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'
+    assert deps['vishalakshi'].specifier.contains('0.1.33') and not deps['vishalakshi'].specifier.contains('0.1.32'), "a Local only document's sources are withheld"
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
     assert deps['dhrona'].specifier.contains('0.1.15') and not deps['dhrona'].specifier.contains('0.1.14'), 'read_history gives long tool results back whole'
-    assert deps['litesearch'].specifier.contains('0.1.49') and not deps['litesearch'].specifier.contains('0.1.48'), 'no db_lock deadlock; numpy without usearch'
+    assert deps['litesearch'].specifier.contains('0.1.51') and not deps['litesearch'].specifier.contains('0.1.50'), 'one text stored once; probe children get /dev/null as stdin'
     for n,lo in dict(dockeasy='0.0.9', pullup='0.0.8', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.4', kavacha='0.0.5', dhrishti='0.1.5', fossick='0.1.19', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras
     extras = [Requirement(s) for g in ('desktop', 'macapp', 'windows') for s in d['project']['optional-dependencies'][g] if s.startswith('kavacha')]
@@ -31,7 +31,7 @@ def test_the_installed_set_matches_the_pins():
     assert Version(ramabana.__version__) >= Version('0.2.5') and Version(shalya.__version__) >= Version('0.1.1')
     assert Version(rishi.__version__) >= Version('0.1.46'), 'Azure chat completions take max_completion_tokens'
     from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
-    assert Version(vishalakshi.__version__) >= Version('0.1.31') and Version(dhrona.__version__) >= Version('0.1.11')
+    assert Version(vishalakshi.__version__) >= Version('0.1.33') and Version(dhrona.__version__) >= Version('0.1.11')
     from ramabana.learned import learned_folder, pending, diff, accept, reject, learned_command, compact, enabled, set_enabled  # noqa: F401
     from ramabana.core import ContextFull, agent_err, remote_models, use_aliases, PROVIDERS, provider_ready, needs_setup  # noqa: F401
     from dockeasy.core import FASTOPS_ENV; from pullup.workflows import gheasy_core  # noqa: F401
