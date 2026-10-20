@@ -16,7 +16,8 @@ __all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell
            'is_secret', 'KNOWN_KEYS']
 
 #: The names the agent's model backends read, offered whether or not anything has set them.
-KNOWN_KEYS = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY')
+KNOWN_KEYS = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT',
+              'AWS_BEARER_TOKEN_BEDROCK', 'OPENROUTER_API_KEY')
 
 #: A value under one of these names is never sent to a browser.
 _SECRETISH = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASSWD', 'CREDENTIAL')

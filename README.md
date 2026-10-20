@@ -22,10 +22,35 @@ that are not specific to an IDE are their own packages, and Leela imports them b
 
 ## Install
 
+Leela is not on PyPI: the `leela` package there is an unrelated 2015 project. Install it from this
+repository, which needs a GitHub sign-in that can read it (`gh auth login`):
+
 ```sh
-pip install leela                # everything Leela imports, the gateway and the GitHub half included
-pip install "leela[local]"       # + on-device inference (mlx, llama). Large, and installable later
+uv tool install git+https://github.com/vedicreader/leela                      # the `leela` command
+uv tool install "leela[local] @ git+https://github.com/vedicreader/leela"     # + on-device inference (mlx, llama). Large
 ```
+
+To work on it, clone it and run it from the checkout:
+
+```sh
+git clone https://github.com/vedicreader/leela && cd leela
+uv sync
+uv run leela .
+```
+
+### Windows (WSL)
+
+Run Leela inside WSL, not in Windows itself. Install it in the WSL shell as above and start it with
+no window of its own:
+
+```sh
+leela --shell none .
+```
+
+Open the URL it prints, `http://localhost:5010` by default, in a Windows browser; WSL forwards
+`localhost`. Export model keys, such as `AZURE_OPENAI_API_KEY` or `OPENAI_API_KEY`, in the WSL shell
+that starts Leela (for example in `~/.bashrc`), not in Windows: Leela and its agent only see the
+Linux environment. The same goes for `ramabana` and for a scheduled Dhrona batch.
 
 The desktop application is a separate download. Each release attaches `Leela-macOS.dmg` and
 `Leela-Windows.zip`, built by `.github/workflows/desktop-artifacts.yml` on the tag. Take them
@@ -113,9 +138,10 @@ answer in the notebook cell, as markdown that Jupyter can still read. The charte
 state layers context by organization, project, task and branch, then puts it in the
 briefing. Skills come from `pyskills` entry points and `SKILL.md` directories. The harness is
 [ramabana](https://github.com/vedicreader/ramabana), which `leela.agent` aliases.
-With only Azure OpenAI, set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY` and
-`AZURE_OPENAI_DEPLOYMENTS`, and every job runs on those deployments; see
-[docs/integration.md](docs/integration.md#azure-openai-and-models-configtoml-defines).
+Nothing chooses a provider for you. When the agent's model cannot run, the agent pane lists the
+providers it can use (OpenAI, Azure OpenAI, AWS Bedrock, Anthropic, Gemini, OpenRouter, Claude
+Code, Codex, a local model) and what each needs, and **+ model** adds one; see
+[docs/integration.md](docs/integration.md#providers-azure-openai-and-aws-bedrock).
 
 ### The canvas
 

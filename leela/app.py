@@ -611,9 +611,13 @@ def _agent_panel(ws):
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())
     control = getattr(ws.approvals, 'control', 'guided')
     edits = getattr(ws.approvals, 'mode', '') == 'edits'
-    from .blocks.agent.models import unavailable
+    from .blocks.agent.models import providers, unavailable
     gone = unavailable(agent_model)
-    notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1')) if gone else ()
+    # Nothing is chosen for the person: each provider, what it needs, and the form that adds one.
+    guide = (Ul(*[Li(Strong(p['label']), ' · ', 'ready' if p['ready'] else f"needs {p['needs']}", data_provider=p['key'])
+                  for p in providers()], cls='lee-provider-list', data_providers='1'),
+             Button('+ model', cls='lee-btn go', type='button', onclick='leeAddModel()')) if gone else ()
+    notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1'), *guide) if gone else ()
     setup = () if has_state else (
         Strong('Set up this workspace agent'),
         Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),

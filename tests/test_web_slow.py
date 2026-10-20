@@ -1495,9 +1495,11 @@ def test_model_settings_open_from_every_route_on_a_machine_with_nothing_set_up(m
         await pg.click('#modelsave')
         await pg.wait_for_function("() => document.querySelector('.lee-modal [data-model-state]')?.classList.contains('warn')")
         out['refused'] = await pg.inner_text('.lee-modal [data-model-state]')
+        await pg.select_option('#modelprovider', 'bedrock')   # a provider fills the hosted fields and chooses no model
+        out['bedrock'] = await pg.evaluate("() => [modelkeyenv.value, modelapi.value, modelbase.placeholder, modelruntime.value, document.querySelector('.lee-modal details').open, modelid.value]")
+        await pg.select_option('#modelprovider', 'azure')
         await pg.fill('#modelalias', 'azure-gpt')
         await pg.select_option('#modelruntime', 'remote')
-        await pg.click('.lee-modal details > summary')
         await pg.fill('#modelbase', 'https://myres.openai.azure.com/openai/v1')
         await pg.fill('#modelkeyenv', 'AZURE_OPENAI_API_KEY')
         await pg.fill('#modelvendor', 'openai'); await pg.fill('#modelapi', 'openai')
@@ -1520,6 +1522,7 @@ def test_model_settings_open_from_every_route_on_a_machine_with_nothing_set_up(m
     assert 'no model is set up here' in got['state']
     assert 'name must use letters' in got['refused']
     assert got['runtimes'] == ['remote']
+    assert got['bedrock'] == ['AWS_BEARER_TOKEN_BEDROCK', 'openai', 'https://bedrock-mantle.us-east-1.api.aws/v1', 'remote', True, 'gpt-4.1'], got['bedrock']
     assert 'azure-gpt' in got['picker']
     assert 'Set up a model' in got['setup'] and 'azure-gpt' in got['saved']
 

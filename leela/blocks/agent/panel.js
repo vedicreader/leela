@@ -297,6 +297,28 @@ function paintRuntimes(m, rows) {
   const firstrt = keep || rtsel.querySelector('option:not([disabled])');
   if (firstrt) rtsel.value = firstrt.value;
 }
+/* What the provider choice fills in. Nothing is chosen for the person: picking a provider only sets
+   the runtime and the hosted API fields, and the key itself stays in the environment variable named. */
+const PROVIDER_FORM = {
+  openai: {id: 'gpt-5.4', base: '', key: 'OPENAI_API_KEY', api: '', note: 'OpenAI API: the key goes in OPENAI_API_KEY'},
+  azure: {id: 'your deployment name, such as gpt-5.4', base: 'https://NAME.openai.azure.com/openai/v1', key: 'AZURE_OPENAI_API_KEY', api: 'openai',
+          note: 'Azure OpenAI v1 API: the deployment name is the model ID; no api-version is needed'},
+  bedrock: {id: 'openai.gpt-5.4', base: 'https://bedrock-mantle.us-east-1.api.aws/v1', key: 'AWS_BEARER_TOKEN_BEDROCK', api: 'openai',
+            note: "AWS Bedrock's OpenAI-compatible Mantle endpoint, with a Bedrock API key; Claude on Bedrock is not supported yet"},
+  openrouter: {id: 'openrouter/openai/gpt-5.4', base: '', key: 'OPENROUTER_API_KEY', api: '', note: 'OpenRouter: the key goes in OPENROUTER_API_KEY'},
+  anthropic: {id: 'anthropic/<model>', base: '', key: 'ANTHROPIC_API_KEY', api: '', note: 'Anthropic API: the key goes in ANTHROPIC_API_KEY'},
+  gemini: {id: 'gemini/<model>', base: '', key: 'GEMINI_API_KEY', api: '', note: 'Gemini API: the key goes in GEMINI_API_KEY'},
+  compatible: {id: 'the model ID the server expects', base: 'https://host/v1', key: 'MY_API_KEY', api: 'openai_chat',
+               note: 'any OpenAI-compatible server: openai_chat for chat completions, openai for the Responses API'},
+};
+function pickProvider(m, key) {
+  const f = PROVIDER_FORM[key]; if (!f) return;
+  const rt = $('#modelruntime', m); if (rt.querySelector('option[value="remote"]:not([disabled])')) rt.value = 'remote';
+  $('#modelid', m).placeholder = f.id; $('#modelbase', m).placeholder = f.base || 'none: the provider is known by its prefix';
+  $('#modelkeyenv', m).value = f.key; $('#modelapi', m).value = f.api;
+  m.querySelector('details').open = true;
+  modelState(m, f.note);
+}
 function modelState(m, text, bad = false) {
   const el = $('[data-model-state]', m); if (!el) return;
   el.textContent = text; el.classList.toggle('warn', bad);
@@ -305,6 +327,7 @@ async function leeAddModel() {
   closeDismissableDisclosures();
   const m = modal(`<div class="lee-mhead">Add model<span class="sub">saved in Leela · API keys stay in environment variables</span></div>
     <div class="lee-model-state" data-model-state role="status">loading the models this machine has…</div>
+    <label>provider<select class="lee-select" id="modelprovider"><option value="">on this machine, or fill in below</option><option value="openai">OpenAI API</option><option value="azure">Azure OpenAI</option><option value="bedrock">AWS Bedrock (Mantle)</option><option value="openrouter">OpenRouter</option><option value="anthropic">Anthropic API</option><option value="gemini">Gemini API</option><option value="compatible">any OpenAI-compatible server</option></select></label>
     <label>name<input class="lee-input" id="modelalias" placeholder="ornith-test"></label>
     <label>model ID or Hugging Face URL<input class="lee-input" id="modelid" placeholder="https://huggingface.co/litert-community/… or openai/model-id"></label>
     <label>runtime<select class="lee-select" id="modelruntime"></select></label>
@@ -314,6 +337,7 @@ async function leeAddModel() {
     <h4>on-device backends</h4><div class="lee-modallist" id="backends"><div class="lee-dim">loading…</div></div>
     <h4>saved models</h4><div class="lee-modallist" id="savedmodels"><div class="lee-dim">loading…</div></div>`);
   paintRuntimes(m, []);
+  $('#modelprovider', m).onchange = e => pickProvider(m, e.target.value);
   $('#modelsave', m).onclick = async () => {
     status('validating and saving model…');
     const r = await postOr('/agent/models/add', {name: $('#modelalias',m).value.trim(), model_id: $('#modelid',m).value.trim(), runtime: $('#modelruntime',m).value, ctx: Number($('#modelctx',m).value), base_url: $('#modelbase',m).value.trim(), api_key_env: $('#modelkeyenv',m).value.trim(), vendor_name: $('#modelvendor',m).value.trim(), api_name: $('#modelapi',m).value.trim()});
@@ -326,7 +350,7 @@ async function leeAddModel() {
   try { d = await apiWithin('/agent/models', MODELS_WAIT); } catch (e) { d = {ok: false, error: String(e.message || e)}; }
   if (!m.isConnected) return;
   modelState(m, d.ok === false ? `could not list this machine's models (${d.error}); a hosted API model can still be added`
-    : d.ready ? '' : 'no model is set up here: add one. A hosted API (OpenAI, Azure OpenAI or any OpenAI-compatible URL) ' +
+    : d.ready ? '' : 'no model is set up here, and none is chosen for you: pick a provider above. A hosted API (OpenAI, Azure OpenAI, AWS Bedrock or any OpenAI-compatible URL) ' +
       'reads its key from the environment variable you name, on the machine Leela runs on', d.ok === false);
   paintRuntimes(m, d.runtimes || []);
   renderBackends(m, d.runtimes || []);

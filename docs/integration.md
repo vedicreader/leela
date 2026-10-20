@@ -86,31 +86,27 @@ names to check an implementation against. One provider was ever registered per p
 named `leela`, and the swap it existed to permit never happened once. `tests/test_core.py` holds
 the test that keeps it retired.
 
-## Azure OpenAI and models config.toml defines
+## Providers, Azure OpenAI and AWS Bedrock
 
-The route is Ramabana's, so Leela and the `ramabana` CLI agree on it: both read `~/.config/ramabana/config.toml` (or `$RAMABANA_CONFIG`) and the same env vars. With only Azure OpenAI, set three env vars in the shell that starts Leela:
+The model route is Ramabana's, so Leela and the `ramabana` CLI agree on it: both read `~/.config/ramabana/config.toml` (or `$RAMABANA_CONFIG`) and the same env vars. Nothing chooses a provider for a person. When the agent's model cannot run here, a missing runtime or a missing key, the agent pane says why and lists every provider Ramabana can use, what it needs and whether it is set up (`providers()`, from Ramabana's `PROVIDERS`), with a **+ model** button. The first-run modal counts any configured hosted model whose key is set as set up (`setup_plan`); a credential with no model named is not one.
 
-```sh
-export AZURE_OPENAI_ENDPOINT=https://NAME.openai.azure.com
-export AZURE_OPENAI_API_KEY=...
-export AZURE_OPENAI_DEPLOYMENTS=gpt-5.4,gpt-5.4-mini
-```
+**+ model** starts with a provider choice. Picking one sets the runtime to the hosted API and fills the base URL hint, the key's env var and the API transport: OpenAI, Azure OpenAI (`https://NAME.openai.azure.com/openai/v1`, the deployment name as the model ID, Responses), AWS Bedrock (the Mantle endpoint `https://bedrock-mantle.<region>.api.aws/v1`, `AWS_BEARER_TOKEN_BEDROCK`), OpenRouter, Anthropic, Gemini, or any OpenAI-compatible server. The model is saved in Leela's `~/.config/leela/models.json`, and the key stays in the environment. The env panel offers `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AWS_BEARER_TOKEN_BEDROCK` and `OPENROUTER_API_KEY` beside the other keys.
 
-With no Claude Code and no Codex login, every job that would have gone to them goes to these deployments: the first runs the turn, a `mini` or `nano` runs the cheap jobs. The agent pane notes the move once. `azure/<deployment>` names a deployment in the model picker, `/model` and `[jobs]`:
+The same in config.toml, which the CLI's `ramabana setup` writes:
 
 ```toml
 [azure]
-endpoint = "https://NAME.openai.azure.com"   # instead of $AZURE_OPENAI_ENDPOINT
-deployments = ["gpt-5.4", "gpt-5.4-mini"]
+endpoint = "https://NAME.openai.azure.com"   # or $AZURE_OPENAI_ENDPOINT; the key stays in $AZURE_OPENAI_API_KEY
+
+[model."bedrock-gpt"]
+model_id = "openai.gpt-5.4"
+base_url = "https://bedrock-mantle.us-east-1.api.aws/v1"
+api_key_env = "AWS_BEARER_TOKEN_BEDROCK"
+api_name = "openai"
 
 [jobs]
-turn = "azure/gpt-5.4"
-completion = "azure/gpt-5.4-mini"
-
-[model."az-big"]                              # a model of your own name, OpenAI-compatible
-model_id = "gpt-5.4"
-base_url = "https://NAME.openai.azure.com/openai/v1"
-api_key_env = "AZURE_OPENAI_API_KEY"
+turn = "azure/gpt-5.4"                        # an Azure deployment, by name
+summary = "bedrock-gpt"
 ```
 
-The key stays in the environment; config.toml only names the env var. Leela counts Azure, and a config.toml model whose key is set, as set up in the first-run modal (`setup_plan`). The agent pane's default model, and the inline and completion models of a workspace still on a stock default that cannot run here, come from `Routing` (`default_model`, `settled`), so they are the models the CLI would use. A model saved in the settings pane goes to Leela's own `~/.config/leela/models.json`, which `use_aliases` makes the file Ramabana loads inside Leela; a name config.toml defines wins over a saved one, and saving that name is refused. Under WSL or Linux, start Leela from a shell that has the env vars, and give a scheduled Dhrona batch the key in its own environment.
+Claude on Bedrock, and anything that needs Bedrock's native Converse API, AWS profiles or SigV4 signing, is not supported: fastllm, which makes the requests, implements none of them. The agent pane's default model comes from Ramabana's routing (`default_model`), so `[jobs] turn` reaches it unless the workspace saved a model of its own. A model saved in the settings pane wins over nothing in config.toml; a name config.toml defines wins over a saved one, and saving that name is refused. `leela/blocks/agent/video.py` still asks Gemini for video by name; it is not routed yet.

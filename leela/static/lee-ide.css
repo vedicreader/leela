@@ -1489,6 +1489,7 @@ kbd {
 .lee-agent-welcome { display: grid; gap: 9px; max-width: 34rem; margin: 22px auto; padding: 16px; border-left: 2px solid var(--lee-aqua); background: color-mix(in srgb, var(--lee-aqua) 4%, var(--lee-bg)); }
 .lee-agent-welcome strong { color: var(--lee-fg); font-size: 12px; letter-spacing: -.01em; }.lee-agent-welcome span { max-width: 46ch; color: var(--lee-fg4); font-size: 10.5px; line-height: 1.55; }
 .lee-agent-welcome .lee-btn { justify-self: start; margin-top: 2px; }
+.lee-provider-list { margin: 0; padding-left: 14px; color: var(--lee-fg4); font-size: 10.5px; line-height: 1.6; }
 .lee-compaction-event { margin: 5px 0; border-top: 1px solid var(--lee-aqua); border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-aqua) 4%, transparent); }
 .lee-compaction-event summary { padding: 7px 9px; color: var(--lee-aqua); cursor: pointer; font: 9.5px/1.35 var(--lee-mono); }
 .lee-compaction-event pre { max-height: 240px; margin: 0; padding: 8px 9px; overflow: auto; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); white-space: pre-wrap; font: 9.5px/1.5 var(--lee-mono); }

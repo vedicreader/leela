@@ -259,10 +259,9 @@ class Workspace:
         self._ai = self._inline_ai = self._selection_ai = None
         self._completer = self._turn_runner = self._threads = None
         from .agent.core import DFLT_SMALL, env as model_env
-        from .blocks.agent.models import settled
         self.model = model
-        self.inline_model = settled(inline_model or model_env('MODEL_INLINE') or DFLT_SMALL, 'inline')
-        self.completion_model = settled(completion_model or model_env('MODEL_COMPLETION') or DFLT_SMALL, 'completion')
+        self.inline_model = inline_model or model_env('MODEL_INLINE') or DFLT_SMALL
+        self.completion_model = completion_model or model_env('MODEL_COMPLETION') or DFLT_SMALL
         self.local_multimodal = bool(local_multimodal)
         self.kernels_auto_manage = bool(kernels_auto_manage)
         self.litert_backend = str(litert_backend or '').lower()
