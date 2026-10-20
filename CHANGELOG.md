@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.18, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.57 and rishi 0.1.51.
+Needs vishalakshi 0.1.31, shalya 0.1.18, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.58 and rishi 0.1.51.
+
+- The terminal agent no longer freezes and then closes its tmux session on the next key when a process that shared the terminal left it non-blocking. An exception in a key handler or a background notice shows as an error and the session carries on (ramabana 0.2.58).
 
 - The agent's `delegate_search` and `delegate_async` take `model=` and `effort=`, one for every question or one per question. Read-only sub-agents on different models and providers run at once. A model that is not set up returns its setup message for that question and is never replaced by another. Effort maps to Claude Code's effort and OpenAI, Azure and Gemini reasoning effort; a local model runs without it and the answer says so. Tool parameters carry descriptions, and on this machine Claude Code refuses in-process MCP servers, so Claude's tool calls stay as text (ramabana 0.2.57, rishi 0.1.51, shalya 0.1.18).
 
