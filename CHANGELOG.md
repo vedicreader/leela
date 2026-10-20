@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.52 and rishi 0.1.48.
+Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.53 and rishi 0.1.49.
+
+- A Claude Code turn that sends nothing for 240 seconds is ended and tried once more, with a note that says so, instead of waiting 600 seconds and failing (ramabana 0.2.53, rishi 0.1.49). Text already shown is not repeated. Set the limit per model with `timeout` under `[model."NAME"]` in `~/.config/ramabana/config.toml`; a second silence fails with an error that names it.
+- In Ramabana's terminal, `tab` after `@` completes files and folders, and `@folder` attaches the folder's listing (ramabana 0.2.53).
 
 - Dhrona's nightly batch finds `claude` and `git-lfs` (ramabana 0.2.52). The beat `ramabana-tick --install` schedules ran on launchd's `/usr/bin:/bin`, so a round on Claude Code could not start and a repository using Git LFS could not be checked out. Run `ramabana-tick --install` again to take the fix.
 - A `<parameter>` element a model leaves outside any tool call is stripped from the agent's reply instead of shown (ramabana 0.2.51, rishi 0.1.48, uraiyadal 0.0.15).
