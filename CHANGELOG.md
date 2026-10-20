@@ -4,7 +4,9 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.54 and rishi 0.1.49.
+Needs vishalakshi 0.1.31, shalya 0.1.17, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.13, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.55 and rishi 0.1.49.
+
+- The scheduled beat that runs Dhrona's nightly says when it was installed from a short `PATH`, and a session's first beat note says when the installed launcher predates the `PATH` fix or no longer finds `claude`, `git` or `git-lfs`, with the command to re-run (ramabana 0.2.55). `ramabana-tick --check` prints the same. The beat reads keys from a `chmod 600` `~/.config/ramabana/beat.env`, never from the launcher, and stops itself after `--limit` seconds so a hung run cannot block every schedule.
 
 - Leela's agent has a `debugging` skill: find a failure's root cause from the raw error, treat a tool that contradicts what the agent has seen as a harness fault to report, and know where Ramabana keeps its config, run logs, beat launcher, scheduler entry and Dhrona's nightly summaries (ramabana 0.2.54).
 

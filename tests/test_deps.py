@@ -13,7 +13,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.49') and not Requirement(s).specifier.contains('0.1.48') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.54') and not deps['ramabana'].specifier.contains('0.2.53'), 'the bundled debugging skill'
+    assert deps['ramabana'].specifier.contains('0.2.55') and not deps['ramabana'].specifier.contains('0.2.54'), 'the beat flags a stale launcher and stops itself'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
     assert deps['shalya'].specifier.contains('0.1.17') and not deps['shalya'].specifier.contains('0.1.16'), 'grep path_filter finds folders, what ramabana 0.2.50 needs'
     assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'

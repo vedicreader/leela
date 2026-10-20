@@ -2551,7 +2551,7 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.54" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.55" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
@@ -3892,15 +3892,15 @@ wheels = [
 
 [[package]]
 name = "pobblebonk"
-version = "0.0.3"
+version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "honker" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/53/cb204ec42a3f18ea2baacd029f1ff37905ac4b577c703a465f06b8a41e8b/pobblebonk-0.0.3.tar.gz", hash = "sha256:c2a8ce7adfc362bd963bda7c73d9e34577a89b01d2e74d133ea64b15ae4aa10a", size = 14325, upload-time = "2026-08-30T03:34:08.912Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/6c/751023bf7bc650360fb2f4827d94d4c1aac72147cfd1dd90948827876780/pobblebonk-0.0.5.tar.gz", hash = "sha256:61b96f40f5259338b94230512822846f45764adffddef3c404768cb5d43eac16", size = 15581, upload-time = "2026-10-20T05:33:18.02Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/a0/344f24f60313425e8b3a6de608899971b338aa351edd324e6d3fed770f6f/pobblebonk-0.0.3-py3-none-any.whl", hash = "sha256:1cc57a0f9531cfd9e124f56abb0c5d9c7fc38549680a38e0e9ec14c6fbdc1da7", size = 16045, upload-time = "2026-08-30T03:34:07.812Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/bf/64e804e61a57dcabaf0d7988e7668144addb1b7cd29f48ec0f9abe69ded7/pobblebonk-0.0.5-py3-none-any.whl", hash = "sha256:93e30ae142a627acf4a94b82d965682ff7a96ad4b4531697a885a7db4882bb92", size = 17175, upload-time = "2026-10-20T05:33:16.667Z" },
 ]
 
 [[package]]
@@ -4739,7 +4739,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.54"
+version = "0.2.55"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4747,14 +4747,15 @@ dependencies = [
     { name = "fastspec" },
     { name = "gheasy" },
     { name = "pobblebonk" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rishi" },
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/32/bdc18279395f42336f184f823a85ed6a9c34c67c3383effce2e6ef69bba1/ramabana-0.2.54.tar.gz", hash = "sha256:d890cf5249b3c2a2cc7796bad29f2c7a284a86e14b1d2729518904f46854af32", size = 308538, upload-time = "2026-10-20T05:36:30.522Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/33/9eef54cfade5660d07b0e2de48b76825b2ccd8bfe0d3854cf5e037f9f076/ramabana-0.2.55.tar.gz", hash = "sha256:b181c4ed438aeeb143011ce386370fa63e34a9389651eb1d60e6def4a88975c2", size = 310898, upload-time = "2026-10-20T05:47:55.349Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/16/ac713a7b195a2459085cf52a59845aa7bf2cd3810a06052ea96a3621a162/ramabana-0.2.54-py3-none-any.whl", hash = "sha256:0883ab4a19e6c240f49905d5052dfbcbc612e739e4413bb8f05873e88d4a42d8", size = 309894, upload-time = "2026-10-20T05:36:28.918Z" },
+    { url = "https://files.pythonhosted.org/packages/67/95/26d0adcf7babd89bb6d08559cdc3c2faf8824beb3ebc947b1fed08c9c366/ramabana-0.2.55-py3-none-any.whl", hash = "sha256:eae18374f4952d5832668d3beb67c5f2309cdd9856988adeb2926fcb36d8dbaa", size = 312241, upload-time = "2026-10-20T05:47:53.874Z" },
 ]
 
 [package.optional-dependencies]
