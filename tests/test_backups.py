@@ -90,3 +90,13 @@ def test_a_live_database_is_copied_through_sqlite_not_as_three_files(tmp_path, m
 
 
 def _stem(name): return name.split('.tar')[0]
+
+
+def test_long_tool_results_are_backed_up_with_the_log_that_points_at_them(tmp_path):
+    "Since ramabana 0.2.59 the log keeps 600 characters of a long result and `agent-details/` the rest; a restore without it keeps only the clips."
+    cfg = _cfg(tmp_path)
+    (cfg/'agent-details').mkdir(); (cfg/'agent-details'/'a.jsonl').write_text('{"turn_id":"t","details":{}}\n')
+    assert 'agent-details' in B.PRECIOUS and 'agent-details' in B.AGENT_ENTRIES
+    made = B.create_backup(cfg, B.backup_dir(cfg), include=B.PRECIOUS)
+    (cfg/'agent-details'/'a.jsonl').unlink()
+    assert 'agent-details' in B.restore(made.name, cfg)['restored'] and (cfg/'agent-details'/'a.jsonl').exists()

@@ -30,6 +30,7 @@ ENTRIES = {
     'feeds.json': 'feeds',
     'desktop.json': 'desktop layout',
     'agent-plans': 'plans',
+    'agent-details': 'long tool results',
     'timelines': 'timelines',
     'journals': 'journals',
     'memory': 'block memory',
@@ -57,7 +58,7 @@ def _top(name): return str(name).split('/')[0]
 def backup_dir(cfg=None): return Path(cfg or leela_cfg)/BACKUP_DIR
 
 #: Entries Ramabana writes, which `agent.configFolder` can move out of Leela's config dir; copying the old location backs up an empty log.
-AGENT_ENTRIES = ('agent-history.jsonl', 'agent-sessions.json', 'agent-branches.json', 'agent-plans')
+AGENT_ENTRIES = ('agent-history.jsonl', 'agent-sessions.json', 'agent-branches.json', 'agent-plans', 'agent-details')
 
 def agent_source(cfg=None):
     "Where the agent's own files are: `agent.configFolder` where it is set, else Leela's config dir."

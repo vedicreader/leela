@@ -576,3 +576,23 @@ def test_a_folders_slug_does_not_depend_on_the_order_it_was_opened_in(tmp_path):
     assert len(set(forward.values())) == 2, forward
     assert assign_slugs([b, a], store) == [forward[b], forward[a]], 'the other order, the same slugs'
     assert assign_slugs([a], store) == [forward[a]], 'and one folder alone keeps what it was given'
+
+
+def test_a_conversations_turns_carry_the_tool_results_the_log_keeps_elsewhere(tmp_path):
+    "The log keeps 600 characters of a long tool result; the thread's turns put the rest back from `agent-details/`."
+    import json as _json
+    from tests.conftest import history_file
+    ws = Workspace(roots=[tmp_path])
+    whole = 'x' * 3000
+    act = {'id': 'act1', 'tool': 'run_shell', 'args': {'command': 'ls'}, 'ok': True, 'done': True}
+    row = {'session': 'agent-a', 'at': 1, 'model': ws.ai.model.name, 'prompt': 'list', 'reply': 'listed', 'turn_id': 't1',
+           'activity': [act | {'detail': whole[:600] + '\n…[2400 more chars]'}], 'details': 'agent-details/agent-a.jsonl'}
+    path = history_file(ws)
+    path.write_text(_json.dumps(row) + '\n')
+    (path.parent/'agent-details').mkdir()
+    (path.parent/'agent-details'/'agent-a.jsonl').write_text(_json.dumps({'turn_id': 't1', 'details': {'act1': whole}}) + '\n')
+    with TestClient(ide_app(ws)) as client:
+        resumed = client.post('/agent/resume', json={'session': 'agent-a'}).json()
+        turns = client.get('/agent/thread/turns', params={'thread': resumed['session']}).json()
+    assert resumed['turns'][0]['activity'][0]['detail'] == whole
+    assert turns['ok'] and turns['turns'][0]['activity'][0]['detail'] == whole, turns

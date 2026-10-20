@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-Needs vishalakshi 0.1.31, shalya 0.1.18, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.58 and rishi 0.1.52.
+Needs vishalakshi 0.1.31, shalya 0.1.19, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.4, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.19, koshas 0.1.11, dhrona 0.1.14, gheasy 0.0.13, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.59 and rishi 0.1.52.
+
+- A command the agent runs can no longer read the terminal or set it non-blocking; it gets `/dev/null` as standard input (shalya 0.1.19).
+- The conversation log no longer keeps long tool results. Each goes whole to `agent-details/` in the agent's config folder, and the log keeps its first 600 characters (ramabana 0.2.59). A conversation's turns, and a reopened one, read only that conversation's rows and show its tool results whole. Backups include `agent-details` as "long tool results".
 
 - A video model written as `gemini/models/<model>` starts its job instead of requesting `models/models/…`.
 

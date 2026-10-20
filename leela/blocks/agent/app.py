@@ -235,7 +235,8 @@ def connect(app, ctx):
         try: t = _thread(thread)
         except Exception as e: return _thread_error(e)
         await off_loop(ws.fresh_history, t.ai)
-        turns = [r for r in t.ai.history if r.get('session') == t.id]
+        # the log keeps 600 characters of a long tool result; `session_turns` reads this conversation's rows and puts them back whole
+        turns = await off_loop(t.ai.session_turns, t.id)
         # `dict` is where a summarised name lives; `title` alone is only what a person typed
         row = t.dict()
         return {'ok': True, 'thread': t.id, 'state': row['state'], 'seq': t.feed.settled_seq,
