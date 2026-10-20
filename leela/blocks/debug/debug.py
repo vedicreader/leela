@@ -13,7 +13,7 @@ DAP_COMMANDS = {'continue': 'continue', 'next': 'next', 'stepIn': 'stepIn',
 
 def debugpy_available(python):
     try:
-        return subprocess.run([str(python), '-c', 'import debugpy'], capture_output=True, env=clean_env(),
+        return subprocess.run([str(python), '-c', 'import debugpy'], stdin=subprocess.DEVNULL, capture_output=True, env=clean_env(),
                               timeout=5).returncode == 0
     except Exception: return False
 

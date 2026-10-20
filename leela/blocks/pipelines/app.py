@@ -40,7 +40,7 @@ def nbdev_prepare(session, target=''):
         f'no nbdev-prepare in {root.name}: nbdev is not installed in the environment it uses')
     # Through `venv_env`, like the pty steps: a child that keeps the bundle's `PYTHONPATH` imports
     # its standard library, and `nbdev-test` died inside `linecache` before reporting a notebook.
-    r = subprocess.run(argv, cwd=str(root), capture_output=True, text=True, timeout=900,
+    r = subprocess.run(argv, cwd=str(root), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900,
                        env=venv_env(python_for(root, session)))
     if r.returncode: raise PipelineError((r.stderr or r.stdout or 'nbdev prepare failed').strip()[-4000:])
     return dict(ok=True, root=str(root), nbs_path=Path(cfg.nbs_path).name,
@@ -58,7 +58,7 @@ def _ship(root, session, argv, timeout=900):
     resolved = resolve_script(argv, python_for(root, session))
     if resolved[0] == argv[0]:
         raise PipelineError(f'fastship is not installed in {root.name} — add it to the dev dependencies')
-    r = subprocess.run(resolved, cwd=str(root), capture_output=True, text=True, timeout=timeout,
+    r = subprocess.run(resolved, cwd=str(root), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
                        env=venv_env(python_for(root, session)))
     if r.returncode: raise PipelineError((r.stderr or r.stdout or f'{argv[0]} failed').strip()[-4000:])
     return (r.stdout or '')[-2000:]

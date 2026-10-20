@@ -47,7 +47,7 @@ def is_framework(python=None):
     probe = ('import json,sysconfig,sys;'
              "print(json.dumps([sysconfig.get_config_var('PYTHONFRAMEWORK') or '', "
              'list(sys.version_info[:2])]))')
-    try: out = subprocess.run([str(python), '-c', probe], capture_output=True, text=True, timeout=30)
+    try: out = subprocess.run([str(python), '-c', probe], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError): return False
     if out.returncode: return False
     try: name, version = json.loads(out.stdout.strip() or 'null')
@@ -60,7 +60,7 @@ def framework_python():
 
 def py_version(python):
     "The `(major, minor)` of `python`, or None when it will not say."
-    try: out = subprocess.run([str(python), '-c', 'import sys;print(*sys.version_info[:2])'],
+    try: out = subprocess.run([str(python), '-c', 'import sys;print(*sys.version_info[:2])'], stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError): return None
     try: return tuple(int(n) for n in out.stdout.split())
@@ -69,7 +69,7 @@ def py_version(python):
 def git_stamp():
     "The commit the tree is on and whether it is dirty, or `None` outside a checkout."
     def git(*a):
-        r = subprocess.run(['git', *a], cwd=ROOT, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(['git', *a], cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         return r.stdout.strip() if not r.returncode else None
     try: sha = git('rev-parse', 'HEAD')
     except (OSError, subprocess.SubprocessError): return None
@@ -138,7 +138,7 @@ def lock_requirements(extras=APP_EXTRAS):
     args = ['uv', 'export', '--frozen', '--no-dev', '--no-hashes', '--no-emit-project',
             '--format', 'requirements-txt']
     for e in extras: args += ['--extra', e]
-    try: out = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=300)
+    try: out = subprocess.run(args, cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
     except (OSError, subprocess.SubprocessError): return None
     if out.returncode or not out.stdout.strip():
         print(f'· uv export failed; falling back to resolving from pyproject: {out.stderr.strip()[:200]}')
@@ -175,7 +175,7 @@ def check():
 def running_from(bundle):
     "Pids running out of `bundle`, so a build does not overwrite a live app. Replacing `python313.zip` under a live process breaks its next import with a bare `ZipImportError`."
     target = str(Path(bundle).resolve())
-    try: out = subprocess.run(['ps', '-Ao', 'pid,command'], capture_output=True, text=True, timeout=10).stdout
+    try: out = subprocess.run(['ps', '-Ao', 'pid,command'], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError): return []
     pids = []
     for line in out.splitlines()[1:]:

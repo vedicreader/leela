@@ -191,7 +191,7 @@ def trace(
         base.update(PYTHONPATH=os.pathsep.join(x for x in (d, base.get('PYTHONPATH', '')) if x), FLOW_OUT=str(out), FLOW_ROOT=str(root))
         # `-o addopts=` drops a configured `-n auto`: xdist workers would record into files nobody reads.
         cmd = [str(python), '-m', 'pytest', '-q', '-p', '_leela_flow', '-p', 'no:cacheprovider', '-o', 'addopts=', str(test)]
-        try: p = subprocess.run(cmd, cwd=str(root), env=base, capture_output=True, text=True, errors='replace', timeout=timeout)
+        try: p = subprocess.run(cmd, cwd=str(root), env=base, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors='replace', timeout=timeout)
         except subprocess.TimeoutExpired: return dict(ok=False, calls=[], error=f'the test ran past {timeout}s')
         except OSError as e: return dict(ok=False, calls=[], error=f'could not start {python}: {e}')
         tail = f'{p.stdout or ""}{p.stderr or ""}'[-2000:]

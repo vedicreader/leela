@@ -44,7 +44,7 @@ def connect(app, ctx):
             uv = shutil.which('uv')
             cmd = ([uv, 'pip', 'install', '--python', str(python), 'debugpy'] if uv else
                    [str(python), '-m', 'pip', 'install', 'debugpy'])
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180, env=clean_env())
+            result = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180, env=clean_env())
             if result.returncode: raise RuntimeError(result.stderr or result.stdout)
         try: await off_loop(install); return {'ok': True, 'python': str(python)}
         except Exception as e: return fail(e)

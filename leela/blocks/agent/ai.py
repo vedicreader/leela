@@ -785,7 +785,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         # The bundle's interpreter redirection is taken off: a shell command that runs python
         # would otherwise import the app's own standard library.
         p = subprocess.Popen(str(command), shell=True, cwd=str(d), text=True, errors='replace', env=self._env(d),
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=new_session)
         try:
             out, _ = p.communicate(timeout=max(1, int(timeout)))

@@ -664,7 +664,7 @@ class Search:
         self._stdlib = L()
         if py := project_python(self.fs.roots):
             try:
-                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'], env=clean_env(),
+                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'], env=clean_env(), stdin=subprocess.DEVNULL,
                                    capture_output=True, text=True, timeout=10)
                 if (d := Path(r.stdout.strip() or '.')).is_dir(): self._stdlib = L(d)
             except Exception: pass

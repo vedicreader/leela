@@ -6,6 +6,7 @@
 
 Needs vishalakshi 0.1.31, shalya 0.1.19, uraiyadal 0.0.15, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.49, kunda 0.0.5, kavacha 0.0.7, dhrishti 0.1.6, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.9, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.60 and rishi 0.1.53.
 
+- Nothing Leela starts itself shares the terminal any more. The login-shell environment probe, `run_cmd`, scripts and jobs, installs, nbdev and fastship steps, the Rust cell runner, pytest flows, interpreter and debugpy probes, and the repository scan get `/dev/null` as standard input. A prompt in any of them now fails at once instead of waiting until the timeout. LSP, debugpy, the Node driver, formatters and the IDE terminal keep their pipes and pty.
 - Nothing the agent's libraries start shares the terminal any more. `claude --version`, `ollama serve`, git through gheasy, interpreter probes, Chrome, and ramabana's own git calls get `/dev/null` as standard input (rishi 0.1.53, gheasy 0.0.14, kunda 0.0.5, fossick 0.1.20, ramabana 0.2.60).
 - Dhrona's assessments and nightly rounds see long tool results whole again, read back from `agent-details/` (dhrona 0.1.15).
 - A command the agent runs can no longer read the terminal or set it non-blocking; it gets `/dev/null` as standard input (shalya 0.1.19).

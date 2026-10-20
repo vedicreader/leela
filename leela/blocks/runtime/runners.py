@@ -224,14 +224,14 @@ class CargoRunner(Runner):
             return 'cargo: the build produced no binary'
         return first_error
     async def _capture(self, argv):
-        p = await asyncio.create_subprocess_exec(*argv, cwd=str(self.dir),
+        p = await asyncio.create_subprocess_exec(*argv, cwd=str(self.dir), stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         out, _ = await p.communicate()
         return out.decode('utf-8', 'replace')
     async def _exec(self, emit, timeout=None):
         "Run the compiled cell, streaming its output. A non-zero exit is the cell's error."
         p = await asyncio.create_subprocess_exec(str(self.dir/'target'/'debug'/'leela_cell'),
-            cwd=self.cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            cwd=self.cwd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         async def pump(reader, name):
             while (chunk := await reader.read(4096)): emit(_stream(name, chunk.decode('utf-8', 'replace')))
         try: await asyncio.wait_for(asyncio.gather(pump(p.stdout, 'stdout'), pump(p.stderr, 'stderr')), timeout)

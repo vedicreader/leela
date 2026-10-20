@@ -42,7 +42,7 @@ def run(body):
     env = dict(os.environ, XDG_CONFIG_HOME=tempfile.mkdtemp())
     src = PRELUDE.format(root=str(ROOT), cfg=tempfile.mkdtemp(),
                          vault=tempfile.mkdtemp() + '/vault.db') + textwrap.dedent(body)
-    out = subprocess.run([PY, '-c', src], capture_output=True, text=True, timeout=600, env=env)
+    out = subprocess.run([PY, '-c', src], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600, env=env)
     line = next((l for l in reversed(out.stdout.splitlines()) if l.startswith('{')), None)
     if line is None: raise SystemExit(f'measurement failed:\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}')
     return json.loads(line)
@@ -155,10 +155,10 @@ import subprocess
 def chrome_rss(port):
     "RSS and process count for the Chrome on `port`, children included."
     try:
-        root = int(subprocess.run(['pgrep', '-f', f'remote-debugging-port={{port}}'],
+        root = int(subprocess.run(['pgrep', '-f', f'remote-debugging-port={{port}}'], stdin=subprocess.DEVNULL,
                                   capture_output=True, text=True).stdout.split()[0])
     except (IndexError, ValueError, OSError): return 0, 0
-    rows = [l.split() for l in subprocess.run(['ps', '-eo', 'pid,ppid,rss'],
+    rows = [l.split() for l in subprocess.run(['ps', '-eo', 'pid,ppid,rss'], stdin=subprocess.DEVNULL,
             capture_output=True, text=True).stdout.splitlines()[1:]]
     kids, rss = {{}}, {{}}
     for r in rows:

@@ -36,7 +36,7 @@ def make_project():
     root = Path(tempfile.mkdtemp())
     (root/'pkg').mkdir()
     (root/'pkg'/'mod.py').write_text('x = 1\n' * 40)
-    git = lambda *a: subprocess.run(['git', *a], cwd=str(root), capture_output=True, text=True)
+    git = lambda *a: subprocess.run(['git', *a], cwd=str(root), stdin=subprocess.DEVNULL, capture_output=True, text=True)
     git('init', '-q'); git('config', 'user.email', 'a@b.c'); git('config', 'user.name', 'a')
     git('add', '-A'); git('commit', '-qm', 'init')
     return root

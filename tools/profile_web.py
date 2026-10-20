@@ -19,7 +19,7 @@ def make_project(dirs, per, dirty):
         p = root/f'pkg{d//10:02d}'/f'mod{d:03d}'
         p.mkdir(parents=True, exist_ok=True)
         for f in range(per): (p/f'file_{f:02d}.py').write_text(f'x = {f}\n' * 30)
-    git = lambda *a: subprocess.run(['git', *a], cwd=str(root), capture_output=True, text=True)
+    git = lambda *a: subprocess.run(['git', *a], cwd=str(root), stdin=subprocess.DEVNULL, capture_output=True, text=True)
     git('init', '-q'); git('config', 'user.email', 'a@b.c'); git('config', 'user.name', 'a')
     git('add', '-A'); git('commit', '-qm', 'init')
     for f in sorted(root.rglob('*.py'))[:dirty]: f.write_text('changed = 1\n')

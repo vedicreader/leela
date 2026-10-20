@@ -34,7 +34,7 @@ def _installed_versions(names, python):
     if not names: return {}
     try:
         proc = subprocess.run([str(python), '-c', _VERSIONS_SCRIPT, json.dumps(names)],
-                              capture_output=True, text=True, timeout=8, check=True, env=clean_env())
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=8, check=True, env=clean_env())
         return json.loads(proc.stdout)
     except Exception: return {n: None for n in names}
 

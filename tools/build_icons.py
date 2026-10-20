@@ -110,7 +110,7 @@ def main():
     image(256).save(ASSETS/'Leela.ico', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
     import shutil, subprocess
     if shutil.which('iconutil'):
-        subprocess.run(['iconutil', '-c', 'icns', str(iconset), '-o', str(ASSETS/'Leela.icns')], check=True)
+        subprocess.run(['iconutil', '-c', 'icns', str(iconset), '-o', str(ASSETS/'Leela.icns')], check=True, stdin=subprocess.DEVNULL)
         print(ASSETS/'Leela.icns')
     print(ASSETS/'Leela.ico')
 

@@ -1310,7 +1310,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         with tempfile.NamedTemporaryFile(suffix='.png') as f:
             # `-x` is no shutter sound; the picture is the whole display, which is what the browser
             # path grabs once a person has picked one.
-            r = subprocess.run([exe, '-x', f.name], capture_output=True, text=True, timeout=30)
+            r = subprocess.run([exe, '-x', f.name], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
             if r.returncode: return _fail((r.stderr or 'screencapture failed').strip())
             png = Path(f.name).read_bytes()
         if not png: return _fail('the capture came back empty')

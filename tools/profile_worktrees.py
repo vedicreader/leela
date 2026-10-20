@@ -32,7 +32,7 @@ def make_repo(dirs, per):
         q = root/f'pkg{d//10:02d}'/f'mod{d:03d}'
         q.mkdir(parents=True, exist_ok=True)
         for f in range(per): (q/f'file_{f:02d}.py').write_text(f'x = {f}\n' * 30)
-    g = lambda *a: subprocess.run(['git', *a], cwd=str(root), capture_output=True, text=True)
+    g = lambda *a: subprocess.run(['git', *a], cwd=str(root), stdin=subprocess.DEVNULL, capture_output=True, text=True)
     g('init', '-q', '-b', 'main'); g('config', 'user.email', 'a@b.c'); g('config', 'user.name', 'a')
     g('add', '-A'); g('commit', '-qm', 'init')
     return root

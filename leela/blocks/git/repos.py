@@ -210,7 +210,7 @@ def find_repos(base, query='', limit=60, depth=6):
                 for g in ('-g', f'!**/{d}')],
             str(base)]
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20)
             for line in (p.stdout or '').splitlines():
                 hit = Path(line)
                 repo = hit.parent.parent if hit.name == 'HEAD' else hit.parent

@@ -98,7 +98,7 @@ def version():
 
 def has_release(tag):
     "Whether a GitHub release exists for `tag`."
-    return subprocess.run(['gh', 'release', 'view', str(tag)],
+    return subprocess.run(['gh', 'release', 'view', str(tag)], stdin=subprocess.DEVNULL,
                           capture_output=True, text=True).returncode == 0
 
 

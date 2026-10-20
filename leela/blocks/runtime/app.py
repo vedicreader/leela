@@ -110,7 +110,7 @@ def connect(app, ctx):
         if target.exists(): return fail(f'{target} already exists')
         def create():
             import subprocess, venv
-            if uv := shutil.which('uv'): subprocess.run([uv, 'venv', str(target)], check=True, env=os.environ.copy())
+            if uv := shutil.which('uv'): subprocess.run([uv, 'venv', str(target)], check=True, stdin=subprocess.DEVNULL, env=os.environ.copy())
             else: venv.EnvBuilder(with_pip=True).create(target)
             py = target/('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
             from kunda.support import install_kernel_support

@@ -78,7 +78,7 @@ def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, na
     if not (display := os.environ.get('DISPLAY')):
         display = ':97'
         argv = ['xvfb-run', '-n', '97', f'--server-args=-screen 0 {w + 160}x{h + 160}x24'] + argv
-    app = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+    app = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
                            env={**os.environ, 'DISPLAY': display})
     try:
         # The client mounts the editor only after `/tab/state`, so the first paint is not
@@ -88,7 +88,7 @@ def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, na
         x0, y0, x1, y1 = _window_box(display) or (0, 0, w + 160, h + 160)
         grab = subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'x11grab',
                                '-video_size', f'{x1 - x0}x{y1 - y0}', '-i', f'{display}+{x0},{y0}',
-                               '-frames:v', '1', str(out)], capture_output=True, text=True)
+                               '-frames:v', '1', str(out)], stdin=subprocess.DEVNULL, capture_output=True, text=True)
         if grab.returncode: raise SystemExit(f'ffmpeg failed: {grab.stderr.strip()}')
     finally:
         app.terminate()
@@ -99,7 +99,7 @@ def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, na
 
 def _x(display, *args, timeout=20):
     "stdout of an X client run against `display`."
-    return subprocess.run([str(a) for a in args], capture_output=True, text=True, timeout=timeout,
+    return subprocess.run([str(a) for a in args], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
                           env={**os.environ, 'DISPLAY': display}).stdout
 
 def _window_box(display, name='leela'):

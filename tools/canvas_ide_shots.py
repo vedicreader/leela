@@ -149,7 +149,7 @@ def main():
         shutil.rmtree(root, ignore_errors=True)
         root.mkdir(parents=True)
         (root/'README.md').write_text('# demo project\n')
-        subprocess.run(['git', 'init', '-q', str(root)], check=False)
+        subprocess.run(['git', 'init', '-q', str(root)], check=False, stdin=subprocess.DEVNULL)
     #: `auto`: the approval card renders in the agent pane, not the canvas margin, so a
     #: guided turn would stall out of sight of the person who asked it.
     ws = Workspace(roots=[str(root)], model=a.model, approvals='auto')

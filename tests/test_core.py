@@ -617,6 +617,48 @@ def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_pa
                                              'PYTHONPATH': '/Leela.app/python313.zip'})
     assert envs.shell_env(str(shell)) == {'GITHUB_TOKEN': 'ghp-from-the-profile'}
 
+_TTY_PROBE = '''import os, select, sys
+from leela.core.envs import shell_env
+from leela.blocks.vault.jobs import run_script
+from leela.blocks.agent.ai import WorkspaceHost
+from leela.workspace import Workspace
+root = sys.argv[1]
+print(shell_env(root + '/shell')['TTY'])
+nb = 'import fcntl, os; print(os.isatty(0)); fcntl.fcntl(0, fcntl.F_SETFL, os.O_NONBLOCK)'
+print(run_script([sys.executable, '-c', nb])['stdout'].strip())
+print(WorkspaceHost(Workspace(roots=[root])).run_cmd('[ -t 0 ] && echo True || echo False; head -c 2 >/dev/null')[1].strip())
+import fcntl; print(bool(fcntl.fcntl(0, fcntl.F_GETFL) & os.O_NONBLOCK))
+print(os.read(0, 9) if select.select([0], [], [], 1)[0] else b'', flush=True)
+os._exit(0)
+'''
+
+def test_no_child_leela_spawns_shares_the_terminal(tmp_path):
+    """A child holding the terminal as stdin can set it non-blocking and freeze the TUI that started Leela."""
+    import os, pty
+    shell = tmp_path/'shell'
+    shell.write_text("#!/bin/sh\n[ -t 0 ] && t=True || t=False\nprintf \"TTY=$t\\0\"\n")
+    shell.chmod(0o755)
+    m, s = pty.openpty(); os.write(m, b'x\n')  # a line waiting on the terminal, which only the parent may read
+    try: got = subprocess.run([sys.executable, '-c', _TTY_PROBE, str(tmp_path)], stdin=s, capture_output=True,
+                              text=True, timeout=60)
+    finally: os.close(s); os.close(m)
+    assert got.stdout.split()[-5:] == ['False', 'False', 'False', 'False', "b'x\\n'"], got.stderr[-2000:]
+
+_SPAWNS = {'run', 'Popen', 'call', 'check_call', 'check_output', 'create_subprocess_exec', 'create_subprocess_shell'}
+
+def test_every_spawn_says_what_its_stdin_is():
+    "A spawn with no `stdin=` or `input=` inherits the terminal. The two build scripts' `run` are foreground steps a person watches."
+    import ast
+    bad = []
+    for f in [*(ROOT/'leela').rglob('*.py'), *(ROOT/'tools').glob('*.py'), ROOT/'setup_app.py']:
+        for n in ast.walk(ast.parse(f.read_text())):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _SPAWNS
+                    and isinstance(n.func.value, ast.Name) and (n.func.value.id == 'subprocess' or
+                    n.func.value.id == 'asyncio' and n.func.attr.startswith('create_'))): continue
+            kw = {k.arg for k in n.keywords}
+            if not kw & {'stdin', 'input'} and None not in kw: bad.append(f'{f.relative_to(ROOT)}:{n.lineno}')
+    assert not bad, bad
+
 def test_a_secrets_value_never_leaves_the_server(tmp_path, monkeypatch):
     "The panel says a key is set. What it is set to is not something a browser needs."
     import leela
