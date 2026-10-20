@@ -20,7 +20,7 @@ from ...agent.spec import MAX_OPS, SpecHost
 from ...core.session import assigned_names as _assigned
 from ..vault.jobs import cadence
 from ..memory.memory import PrivacyBlocked, query_refusal, source_kind, withheld_why, withhold_local
-from .video import VideoJobs, video_available, video_tools
+from .video import VideoJobs, video_tools
 
 from shalya.core import GIT_READ_TOOLS, GIT_TOOLS, GIT_WRITE_TOOLS
 #: Tools the backend can dispatch that no briefing, warm fit, form or picker names. The git writes
@@ -1108,8 +1108,8 @@ class Assistant(Agent):
         self._flow_toolset = _flow_tools(host)
         self._canvas_toolset = _canvas_toolset(host)
         self._writes = leela_writes()
-        self.video_jobs = VideoJobs() if video_available() else None
-        self._video_toolset = video_tools(host, jobs=self.video_jobs) if self.video_jobs else []
+        self.video_jobs = VideoJobs()   # offered with no video model too, so asking for one says how to add it
+        self._video_toolset = video_tools(host, jobs=self.video_jobs)
         self._built_mode = None            # the `(canvas_open, has_feeds)` the tool list was last built for
         self._briefed_mode = None          # …and the one the live turn backend was last briefed with
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
