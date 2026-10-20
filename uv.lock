@@ -2551,12 +2551,12 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.56" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.57" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.50" },
-    { name = "shalya", specifier = ">=0.1.17" },
+    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.51" },
+    { name = "shalya", specifier = ">=0.1.18" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "varga", specifier = ">=0.0.7" },
@@ -2581,8 +2581,8 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.50" },
-    { name = "rishi", extras = ["all"], specifier = "==0.1.50" },
+    { name = "rishi", specifier = "==0.1.51" },
+    { name = "rishi", extras = ["all"], specifier = "==0.1.51" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -4739,7 +4739,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.56"
+version = "0.2.57"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4753,9 +4753,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/49/fd3cdd4e96ca4e8d06653a7673d99f7c309163061ae8f9d44673575db200/ramabana-0.2.56.tar.gz", hash = "sha256:6dfc624f123dfdb166bc16608e92f1eb000159353f822b1a0880e9835faf0fe8", size = 311561, upload-time = "2026-10-20T06:33:01.506Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/d9/c5353e42c290e01874c49b6b70a8a4cb3dc98e4bfc14922c2fb346ea57a9/ramabana-0.2.57.tar.gz", hash = "sha256:045186d94f30c61d9364a6b011361dc86f7fb80c5921e9ec3e71a03a929dd959", size = 322291, upload-time = "2026-10-20T07:44:51.044Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/c7/89347b4aaf6781a6eb137f41a5fb77bba73cae8170d3b7c1e8941fa0c104/ramabana-0.2.56-py3-none-any.whl", hash = "sha256:c97f18d58de96fae2d4108397610e78abfd599cff2157ac31ae161c61bbad312", size = 312938, upload-time = "2026-10-20T06:32:59.56Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/5f/62830388eee638c326c47a3eb235b15a0f405c7c880731772cd8701f6ade/ramabana-0.2.57-py3-none-any.whl", hash = "sha256:5d484922dae5db22c7ffb80a0034b7e958871807d895f95b24fe435d427b4608", size = 322531, upload-time = "2026-10-20T07:44:49.239Z" },
 ]
 
 [package.optional-dependencies]
@@ -5038,7 +5038,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.50"
+version = "0.1.51"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5054,9 +5054,9 @@ dependencies = [
     { name = "truststore" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/b3/45a9e34b288c3da499816f65692824cd0538c67fd0b894c5b9654d766b03/rishi-0.1.50.tar.gz", hash = "sha256:d3e43b6aad81abe901e06dbb6877d8cb3c57488fb5aa9212f433641bcb4f62ff", size = 81304, upload-time = "2026-10-20T06:22:06.802Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/e0/37ec3dc283bcd1eb27242eda76ad2cac486161dd2910c1bf8659e337fee6/rishi-0.1.51.tar.gz", hash = "sha256:b2788f7e26f82eb7e34230f8fd1cfcf61d83f07fc1ccb5ec148b82f48feebf27", size = 84720, upload-time = "2026-10-20T07:15:16.526Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/6d/2361814740ea0218c07bd0d9383b0d7cf7ab28bc5dd3905d09664197a474/rishi-0.1.50-py3-none-any.whl", hash = "sha256:5993c3360f4298b921d7310158027f116f4df3e77806d595a434fa7e98589d9e", size = 90441, upload-time = "2026-10-20T06:22:05.353Z" },
+    { url = "https://files.pythonhosted.org/packages/80/2c/bea447b106ffcf78aaf377dc20a646f34cccd36e06781eea312d05e48c40/rishi-0.1.51-py3-none-any.whl", hash = "sha256:450c61e287e1dc032dfb68cf557224ddcd01b852089da705a2ef9def65f94d1d", size = 93897, upload-time = "2026-10-20T07:15:15.23Z" },
 ]
 
 [package.optional-dependencies]
@@ -5326,7 +5326,7 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.1.17"
+version = "0.1.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -5339,9 +5339,9 @@ dependencies = [
     { name = "litesearch" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/7b/9c5a2dd34b0f3d28b38b3e4b344e4d5c7b71460e7530b289b105d02d0a8d/shalya-0.1.17.tar.gz", hash = "sha256:072b381039122364d26c02264540e429e07fdb988875c043666284ab4fd18572", size = 61870, upload-time = "2026-10-20T04:03:00.196Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/3d/394aa77c776fc82aba5f53840327a13386b803f205c50dd0914b15dc0277/shalya-0.1.18.tar.gz", hash = "sha256:92f6d33d93cb4206986b3a81eb8976cbef8277f9c6e876d40aaf17be0ff7db48", size = 63066, upload-time = "2026-10-20T07:16:08.73Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/37/5f688797dc4a7cec58df6b4c3da83cc5e6afa6d6a77088cd057d4a6953b5/shalya-0.1.17-py3-none-any.whl", hash = "sha256:7cc563dad5a7e619817e0a7571a57a2b9d4055101bd875f42db5c42506ffdbd7", size = 65433, upload-time = "2026-10-20T04:02:58.708Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/4f/146f5f85609e3dffb5b8388e0293410c225faaedde22b9afa2c6b9d4d0eb/shalya-0.1.18-py3-none-any.whl", hash = "sha256:150561b2c198a1a6f000552d4399fbdd56ce1f70f0da6eebf6a1203df89ce715", size = 66714, upload-time = "2026-10-20T07:16:07.29Z" },
 ]
 
 [package.optional-dependencies]

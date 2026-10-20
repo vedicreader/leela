@@ -12,10 +12,10 @@ def test_the_tool_simplification_releases_are_the_floor():
     deps = _deps()
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
-    assert rishis and all(Requirement(s).specifier.contains('0.1.50') and not Requirement(s).specifier.contains('0.1.49') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.56') and not deps['ramabana'].specifier.contains('0.2.55'), 'read-only delegate_search, 80 sub-agent steps, Claude thinking tokens'
+    assert rishis and all(Requirement(s).specifier.contains('0.1.51') and not Requirement(s).specifier.contains('0.1.50') for s in rishis), rishis
+    assert deps['ramabana'].specifier.contains('0.2.57') and not deps['ramabana'].specifier.contains('0.2.56'), 'a model and effort per delegation, subagent_settings, the tool-call mode'
     assert deps['gheasy'].specifier.contains('0.0.13') and not deps['gheasy'].specifier.contains('0.0.12'), 'dependabot labels kept with assignees'
-    assert deps['shalya'].specifier.contains('0.1.17') and not deps['shalya'].specifier.contains('0.1.16'), 'grep path_filter finds folders, what ramabana 0.2.50 needs'
+    assert deps['shalya'].specifier.contains('0.1.18') and not deps['shalya'].specifier.contains('0.1.17'), 'docments on every tool parameter, what ramabana 0.2.57 needs'
     assert deps['vishalakshi'].specifier.contains('0.1.31') and not deps['vishalakshi'].specifier.contains('0.1.30'), 'a stop inside a batch, and on a file, a PDF and a GitHub file'
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
