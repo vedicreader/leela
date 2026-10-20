@@ -617,17 +617,23 @@ def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_pa
                                              'PYTHONPATH': '/Leela.app/python313.zip'})
     assert envs.shell_env(str(shell)) == {'GITHUB_TOKEN': 'ghp-from-the-profile'}
 
-_TTY_PROBE = '''import os, select, sys
+_TTY_PROBE = '''import fcntl, os, select, sys, termios
+from pathlib import Path
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 from leela.core.envs import shell_env
 from leela.blocks.vault.jobs import run_script
 from leela.blocks.agent.ai import WorkspaceHost
 from leela.workspace import Workspace
 root = sys.argv[1]
-print(shell_env(root + '/shell')['TTY'])
+os.environ['BROWSER'] = root + '/browser'
+from leela.blocks.browser.app import open_tab
+got = shell_env(root + '/shell')
+print(got['TTY'], got['CTTY'])
+print(open_tab('http://example.invalid/'), Path(root, 'opened').read_text().strip())
 nb = 'import fcntl, os; print(os.isatty(0)); fcntl.fcntl(0, fcntl.F_SETFL, os.O_NONBLOCK)'
 print(run_script([sys.executable, '-c', nb])['stdout'].strip())
 print(WorkspaceHost(Workspace(roots=[root])).run_cmd('[ -t 0 ] && echo True || echo False; head -c 2 >/dev/null')[1].strip())
-import fcntl; print(bool(fcntl.fcntl(0, fcntl.F_GETFL) & os.O_NONBLOCK))
+print(bool(fcntl.fcntl(0, fcntl.F_GETFL) & os.O_NONBLOCK))
 print(os.read(0, 9) if select.select([0], [], [], 1)[0] else b'', flush=True)
 os._exit(0)
 '''
@@ -636,13 +642,31 @@ def test_no_child_leela_spawns_shares_the_terminal(tmp_path):
     """A child holding the terminal as stdin can set it non-blocking and freeze the TUI that started Leela."""
     import os, pty
     shell = tmp_path/'shell'
-    shell.write_text("#!/bin/sh\n[ -t 0 ] && t=True || t=False\nprintf \"TTY=$t\\0\"\n")
-    shell.chmod(0o755)
-    m, s = pty.openpty(); os.write(m, b'x\n')  # a line waiting on the terminal, which only the parent may read
-    try: got = subprocess.run([sys.executable, '-c', _TTY_PROBE, str(tmp_path)], stdin=s, capture_output=True,
-                              text=True, timeout=60)
+    # `/dev/tty` opens for anything still in the session whose controlling terminal the pty is, as `zsh -i` does
+    shell.write_text("#!/bin/sh\n[ -t 0 ] && t=True || t=False\n(: </dev/tty) 2>/dev/null && c=True || c=False\n"
+                     "printf \"TTY=$t\\0CTTY=$c\\0\"\n")
+    browser = tmp_path/'browser'
+    browser.write_text(f"#!/bin/sh\n[ -t 0 ] && t=True || t=False\necho $t > {tmp_path/'opened'}\n")
+    for f in (shell, browser): f.chmod(0o755)
+    import termios
+    m, s = pty.openpty()
+    # no echo: a session leader exits only once its terminal's output drains, and nothing reads `m`
+    a = termios.tcgetattr(s); a[3] &= ~termios.ECHO; termios.tcsetattr(s, termios.TCSANOW, a)
+    os.write(m, b'x\n')  # a line waiting on the terminal, which only the parent may read
+    try: got = subprocess.run([sys.executable, '-c', _TTY_PROBE, str(tmp_path)], stdin=s, capture_output=True, text=True,
+                              timeout=60, start_new_session=True)  # the probe's own session, the pty its terminal
     finally: os.close(s); os.close(m)
-    assert got.stdout.split()[-5:] == ['False', 'False', 'False', 'False', "b'x\\n'"], got.stderr[-2000:]
+    assert got.stdout.split()[-8:] == ['False', 'False', 'True', 'False', 'False', 'False', 'False', "b'x\\n'"], got.stderr[-2000:]
+
+def test_a_browser_webbrowser_drives_itself_is_still_its_to_open(monkeypatch):
+    "macOS's `osascript` path, and any browser with a remote protocol, is left to `webbrowser`."
+    import webbrowser
+    from leela.blocks.browser.app import open_tab
+    class Mac(webbrowser.BaseBrowser):
+        def open(self, url, new=0, autoraise=True): self.got = (url, new); return True
+    b = Mac('safari')
+    monkeypatch.setattr(webbrowser, 'get', lambda *a: b)
+    assert open_tab('https://example.com/') and b.got == ('https://example.com/', 2)
 
 _SPAWNS = {'run', 'Popen', 'call', 'check_call', 'check_output', 'create_subprocess_exec', 'create_subprocess_shell'}
 

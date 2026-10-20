@@ -106,7 +106,7 @@ def shell_env(shell=None, timeout=8):
     for args in (('-l', '-i', '-c', 'env -0'), ('-l', '-c', 'env -0')):
         if '-i' in args and shell in _HUNG: continue
         # clean_env: else the shell inherits the bundle's PYTHONHOME and hands it to any Python its startup files run.
-        try: r = subprocess.run([shell, *args], stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, env=clean_env())
+        try: r = subprocess.run([shell, *args], stdin=subprocess.DEVNULL, start_new_session=True, capture_output=True, timeout=timeout, env=clean_env())
         except OSError: return {}
         # An interactive startup that waits on a prompt or a slow plugin still has a login shell to ask.
         except subprocess.SubprocessError:

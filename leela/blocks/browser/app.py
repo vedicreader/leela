@@ -1,7 +1,7 @@
 "The inline browser's surface. `/browser/ws` pairs a Leela tab with one CDP target."
 
 from __future__ import annotations
-import asyncio, base64, json, webbrowser
+import asyncio, base64, json, subprocess, sys, webbrowser
 from urllib.parse import urlparse
 
 from fasthtml.common import Div
@@ -15,6 +15,16 @@ from .browser import BrowserUnavailable
 __all__ = ['CAPS', 'connect']
 
 CAPS = ('memory', 'browser')
+
+def open_tab(url):
+    "`webbrowser.open_new_tab`, but a browser it would start as a bare command gets `/dev/null` as stdin."
+    b = webbrowser.get()
+    if sys.platform == 'win32' or not isinstance(b, webbrowser.GenericBrowser): return b.open_new_tab(url)
+    bg = isinstance(b, webbrowser.BackgroundBrowser)
+    try: p = subprocess.Popen([b.name, *[a.replace('%s', url) for a in b.args]], stdin=subprocess.DEVNULL,
+                              close_fds=True, start_new_session=bg)
+    except OSError: return webbrowser.open_new_tab(url)
+    return (p.poll() is None if bg else not p.wait()) or webbrowser.open_new_tab(url)
 
 def connect(app, ctx):
     rt = app.route
@@ -32,7 +42,7 @@ def connect(app, ctx):
         try:
             if urlparse(url).scheme not in ('http', 'https'):
                 raise ValueError(f'{url[:80]!r} is not an http address')
-            if not webbrowser.open_new_tab(url): raise RuntimeError('no browser answered')
+            if not open_tab(url): raise RuntimeError('no browser answered')
             return {'ok': True, 'url': url}
         except Exception as e: return fail(e)
 

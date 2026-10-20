@@ -151,7 +151,7 @@ def _installer(target):
 def _run_install(runtime, cmd):
     "The subprocess, on its own thread. Output is kept whole: a resolver error is the useful part."
     try:
-        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3600, env=clean_env())
+        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, start_new_session=True, capture_output=True, text=True, timeout=3600, env=clean_env())
         ok, log = p.returncode == 0, (p.stdout or '') + (p.stderr or '')
     except Exception as e:
         from ... import errstr
