@@ -21,7 +21,7 @@ def test_the_tool_simplification_releases_are_the_floor():
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
     assert deps['dhrona'].specifier.contains('0.1.15') and not deps['dhrona'].specifier.contains('0.1.14'), 'read_history gives long tool results back whole'
     assert deps['litesearch'].specifier.contains('0.1.51') and not deps['litesearch'].specifier.contains('0.1.50'), 'one text stored once; probe children get /dev/null as stdin'
-    for n,lo in dict(dockeasy='0.0.9', pullup='0.0.8', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.4', kavacha='0.0.5', dhrishti='0.1.6', fossick='0.1.19', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
+    for n,lo in dict(dockeasy='0.0.9', pullup='0.0.10', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.4', kavacha='0.0.7', dhrishti='0.1.7', fossick='0.1.19', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras
     extras = [Requirement(s) for g in ('desktop', 'macapp', 'windows') for s in d['project']['optional-dependencies'][g] if s.startswith('kavacha')]
     assert len(extras) == 3 and not any(r.specifier.contains('0.0.5') for r in extras), 'the window extras take the public kavacha names'

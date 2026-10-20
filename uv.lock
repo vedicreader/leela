@@ -390,15 +390,15 @@ wheels = [
 
 [[package]]
 name = "cfeasy"
-version = "0.0.6"
+version = "0.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cloudflare" },
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/e4/e344ce90991057c8cd72cb4a8f69e97e27a8bd208861c23a385fe96d4bb5/cfeasy-0.0.6.tar.gz", hash = "sha256:42db8caf57f4d24f775ad27eef3ec8ab4ccbc984b87d60a0da7647b06eedf9a7", size = 14583, upload-time = "2026-10-19T06:32:31.835Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/17/f4a2ffcd1ce5c9ac54d04e61d04545592c5bf7cf83b820c2efa4084a76f9/cfeasy-0.0.9.tar.gz", hash = "sha256:5c7b3b6b57a99345dbfc0153189c045b76adba5c2cb556bd7a5fa03ca84f53a5", size = 15257, upload-time = "2026-10-19T08:49:42.44Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/ed/232b2d7265a13b933218c0458eb7f8e79e002883a8ccef474cc595b0cf39/cfeasy-0.0.6-py3-none-any.whl", hash = "sha256:5d89c141486c42ad8a30e592c17a1abb6edf1c91c929db2ff74d570414b2a9bc", size = 15542, upload-time = "2026-10-19T06:32:29.949Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/4e/e3721efaa0289ef0a820d4304dbd74dcaa85fe821d0f261e18773b97b334/cfeasy-0.0.9-py3-none-any.whl", hash = "sha256:8229208e40dda8de33c0f98fbe6221fcf05738232db99ff868ab9293dcb5fad5", size = 16220, upload-time = "2026-10-19T08:49:41.055Z" },
 ]
 
 [[package]]
@@ -1015,7 +1015,7 @@ wheels = [
 
 [[package]]
 name = "dhrishti"
-version = "0.1.7"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -1025,9 +1025,9 @@ dependencies = [
     { name = "python-fasthtml" },
     { name = "safepyrun" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/1e/5408116ae08a78c3b9848c74ab5b203cf3e293419e97865331fe2b331075/dhrishti-0.1.7.tar.gz", hash = "sha256:ddd48310d3a42a8cc26231dc2de63a7093483dc484ffd4130bd50c418c36e00c", size = 31927, upload-time = "2026-10-20T09:10:35.938Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/a9/84d62ce44ea7420f26918e26fcf4d1ae9f097e4218814a5fabbaf9d514dd/dhrishti-0.1.8.tar.gz", hash = "sha256:616c108045e4451497eef92c83ea25bdb213f6c0b766cbd26124dacdec423704", size = 31978, upload-time = "2026-10-20T10:22:24.172Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/31/89e2d3f835ce76b9f74aade7af66acc18b1b0ef51a2c14b9866e8e1be829/dhrishti-0.1.7-py3-none-any.whl", hash = "sha256:2633d266fd498837712d3dbf9eccf7ba3e010a08b049186e8f59562efc27c19c", size = 35424, upload-time = "2026-10-20T09:10:34.598Z" },
+    { url = "https://files.pythonhosted.org/packages/70/7b/b6c063c681c593b7558cb72b107f7c959eb5a182cc29f577ad4b3f3a8b18/dhrishti-0.1.8-py3-none-any.whl", hash = "sha256:08333663117fa608611e42e56de1dc0057b5b470e71883185c1bf300a9c2f3ce", size = 35435, upload-time = "2026-10-20T10:22:22.658Z" },
 ]
 
 [[package]]
@@ -1068,7 +1068,7 @@ wheels = [
 
 [[package]]
 name = "dockeasy"
-version = "0.0.10"
+version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -1077,9 +1077,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e7/ef/9636340cc52933d2413498accf9bce816c0cd9e6afbf28caa93c9b62eade/dockeasy-0.0.10.tar.gz", hash = "sha256:a36a95e83f27f0cf877f4f6af80bc62ca0c5475b0038ef23f4310f47e49ec87f", size = 28665, upload-time = "2026-10-19T07:15:09.987Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/c1/6bf0b5d5aacac112de0e81d54a9d2fd205bbe591e46ea95f90328a1c536e/dockeasy-0.0.11.tar.gz", hash = "sha256:a1ae029f803a4571abab525dad3833b0599ca05713860b360203a49188362e60", size = 28847, upload-time = "2026-10-19T08:34:15.491Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/e7/f7538ccf1d3dc694d4a70fc89f0fc3421a4616502f259c37e928e7beac2c/dockeasy-0.0.10-py3-none-any.whl", hash = "sha256:e60525e6fce5804e6a57a58225fe863b320ea18af7cfdeaeea3ca6d314cd03cc", size = 30045, upload-time = "2026-10-19T07:15:08.847Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/d9/9155b3ff86636672e361d2eadc2b1958f233035b4f67b209d6604cb2b745/dockeasy-0.0.11-py3-none-any.whl", hash = "sha256:1b2ebdaea4e2aee08526007923599a0eac1631992539ba07d2b988b1415dd262", size = 30230, upload-time = "2026-10-19T08:34:14.157Z" },
 ]
 
 [[package]]
@@ -2235,14 +2235,14 @@ wheels = [
 
 [[package]]
 name = "kavacha"
-version = "0.0.7"
+version = "0.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/80/b7b02a8e0f639ba7becb7e6e32f1ddef1e52fed916e6afdf8e5f798a1e79/kavacha-0.0.7.tar.gz", hash = "sha256:aa3f0e4ebe79a8e691d9bee9ca5d0a014e621c756133584d008a76ce3d8f9301", size = 31505, upload-time = "2026-10-19T09:58:39.552Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/0e/e978355d1a54b901ce6c2b6673ec4694f24a1f098d6336d2ff2ff0959822/kavacha-0.0.8.tar.gz", hash = "sha256:58f311909e650de7f1493ecb4b2be9a98b5fe8ac5131fc93f701a0984bdbbd36", size = 31535, upload-time = "2026-10-20T10:22:02.891Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e9/3e/38cdd30ecb6b89c17e4288779e5b8a47fe67c307b0a7db730454310475de/kavacha-0.0.7-py3-none-any.whl", hash = "sha256:0a4ccecda86bedda2e5ff14cd18675fafa2f396efe9d129ef860ad573e2e9c3d", size = 35366, upload-time = "2026-10-19T09:58:38.409Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/03/d392987a553fc7d336515f47dff3ba3c5d19f84bd61e8d0b175745031bf9/kavacha-0.0.8-py3-none-any.whl", hash = "sha256:4b33c4285b7f162002a6fd9a47ceb5869c0545357fe703c9c413f2c7bd6f11f5", size = 35431, upload-time = "2026-10-20T10:22:01.748Z" },
 ]
 
 [package.optional-dependencies]
@@ -2517,7 +2517,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cfeasy", specifier = ">=0.0.6" },
-    { name = "dhrishti", specifier = ">=0.1.7" },
+    { name = "dhrishti", specifier = ">=0.1.8" },
     { name = "dhrona", specifier = ">=0.1.15" },
     { name = "dockeasy", specifier = ">=0.0.10" },
     { name = "exhash", specifier = ">=0.4.10" },
@@ -2531,12 +2531,12 @@ requires-dist = [
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
-    { name = "kavacha", specifier = ">=0.0.7" },
-    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.7" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.7" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.7" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.7" },
-    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.7" },
+    { name = "kavacha", specifier = ">=0.0.8" },
+    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.8" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.8" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.8" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.8" },
+    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.8" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.11" },
     { name = "kunda", specifier = ">=0.0.5" },
@@ -2546,7 +2546,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "orjson", specifier = ">=3.9" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "pullup", specifier = ">=0.0.9" },
+    { name = "pullup", specifier = ">=0.0.11" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
@@ -4042,7 +4042,7 @@ wheels = [
 
 [[package]]
 name = "pullup"
-version = "0.0.9"
+version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfeasy" },
@@ -4055,9 +4055,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "vpseasy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/cb/4ae26822779d76551f4df95f9860367e5ea309986fa20a8eaefbf51a70b5/pullup-0.0.9.tar.gz", hash = "sha256:5f826a62e45201fbe8bbc4a1c5c25216b710fbeced837e00b0a7836ce41d5e8b", size = 41081, upload-time = "2026-10-19T07:25:49.233Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/65/4b4845fe1bd2468070853d041cff976849bb2bc7ddeb71a300d5ef9266db/pullup-0.0.11.tar.gz", hash = "sha256:3011a651858181baa0d0e467a006d3e49e84bc4a074d0b0d941b928a90cb8637", size = 41126, upload-time = "2026-10-20T10:22:13.228Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/0b/078724406ad5874fb23f9ee23493cc76d13e03bdaf4a3bf3f70f1b09a2a9/pullup-0.0.9-py3-none-any.whl", hash = "sha256:9e2b164ccfe1fa34285714f8c40a3efa76b2903c13181541666e57ad574abf20", size = 46879, upload-time = "2026-10-19T07:25:48.075Z" },
+    { url = "https://files.pythonhosted.org/packages/64/b1/e328be91bedee2d8ef06ad6763acac9d43295edfa39459b880b9cf3c0309/pullup-0.0.11-py3-none-any.whl", hash = "sha256:9d488ea17170504cfc20e73653fe17c55505c377661979d6c9b2b5adc6e7a05a", size = 46940, upload-time = "2026-10-20T10:22:11.613Z" },
 ]
 
 [[package]]
@@ -5922,7 +5922,7 @@ wheels = [
 
 [[package]]
 name = "vpseasy"
-version = "0.0.24"
+version = "0.0.26"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dockeasy" },
@@ -5930,10 +5930,11 @@ dependencies = [
     { name = "fastcore" },
     { name = "hcloud" },
     { name = "pyyaml" },
+    { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/87/fbda3c9e05aa4b6eb7116030409945bc06738caa487daa0e65e3d9cb2ec0/vpseasy-0.0.24.tar.gz", hash = "sha256:f55b07043d65e513004d0ec62ee4b555b381f725bf9c12006ebb73eb62c127e6", size = 33030, upload-time = "2026-10-19T07:11:20.024Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/a8/b60fd2bf5e8e936b0fd950846c3bd6d4324ac91031de243cd534ef08f643/vpseasy-0.0.26.tar.gz", hash = "sha256:0106d061ec6c44df8ecb78ba8a9c7cb280e1e4ba1e0ad77e2ddbd40ad2acf931", size = 33763, upload-time = "2026-10-19T08:31:50.387Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/e8/d8522d444e365fbbe57408b33a924e111cef87d3826e06f1d51ca7a0b829/vpseasy-0.0.24-py3-none-any.whl", hash = "sha256:37c9a7f068975617b9937b04f664379101e8b714e5f5b06fc8d2044c90903865", size = 34065, upload-time = "2026-10-19T07:11:18.896Z" },
+    { url = "https://files.pythonhosted.org/packages/db/9b/2ace749f791f6f7aed755947b228ee00124b955b6cdf8bcf448da96b216d/vpseasy-0.0.26-py3-none-any.whl", hash = "sha256:7044dbf5f60b55dddb3bf70a3b656304c7e2f98567fbe05c286166095c4758be", size = 34825, upload-time = "2026-10-19T08:31:48.9Z" },
 ]
 
 [[package]]

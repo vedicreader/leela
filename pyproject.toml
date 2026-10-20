@@ -38,9 +38,9 @@ dependencies = [
     # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
     # bundle and probe halves need nothing but fastcore. `kunda` is the kernels and the interpreter
     # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
-    "kavacha>=0.0.7",   # 0.0.6 OpenHandler, RecentTarget, hidden_windows, keyed_windows, dock_delegates public; 0.0.7 ShellApi.set_background, run_shell(background=)
+    "kavacha>=0.0.8",   # 0.0.8 child processes get /dev/null as stdin; 0.0.6 OpenHandler, RecentTarget, hidden_windows, keyed_windows, dock_delegates public; 0.0.7 ShellApi.set_background, run_shell(background=)
     "kunda>=0.0.5",   # 0.0.5 interpreter probes get /dev/null as stdin; 0.0.3 a stopped loop holds no pool slot (canvas runtime); 0.0.4 InspectorClient, give_up_after, venv_roots, runtime_python, frozen_pythonpath, kernel_spec public
-    "pullup>=0.0.9",   # 0.0.7 nbdev_job runs nbdev-test and nbdev-clean; 0.0.9 public `gheasy_core`
+    "pullup>=0.0.11",   # 0.0.7 nbdev_job runs nbdev-test and nbdev-clean; 0.0.9 public `gheasy_core`; 0.0.11 gh gets /dev/null as stdin
     "exhash>=0.4.10",
     "fossick>=0.1.20",   # 0.1.20 Chrome and gh_clone git get /dev/null as stdin; caches JSON, not pickle: GHSA-w8v5-vhqr-4h9v has no fixed release; 0.1.18 url2nb works again; 0.1.19 debug_ready public
     "ipykernel>=7.3.0",        # launched, not imported: leela's own venv is a kernel target
@@ -66,7 +66,7 @@ dependencies = [
     # module imports rich, which ramabana declares nowhere. Ours to name while that is true.
     "rich>=13.0",
     "pyyaml>=6.0",
-    "dhrishti>=0.1.7",
+    "dhrishti>=0.1.8",
     "watchfiles>=1.0",
     "vishalakshi>=0.1.33",   # 0.1.33 follows litesearch 0.1.50, withholds a Local only document's `sources`; 0.1.31 stop and progress on add_file, pdf and gh_file, and a stop inside a batch; 0.1.30 stop and progress on add_files, add_tree and the acquire paths; 0.1.28 public litesearch and rahasya names; 0.1.27 MCP results gated; 0.1.26 titles, headings and sources under the send rule; ask policy local-else-redact; note(key=); age/stale rows; 0.1.22 levels, send_check; 0.1.23 progress, boxes, crop; 0.1.24 edit_change, revert_page, undo_decision, reset_pii
     "rahasya>=0.0.4",   # 0.0.4 findings past MAX_SCAN at their real offset
@@ -104,9 +104,9 @@ ipymini = [] # compatibility extra; ipymini now ships with Leela
 local = ["rishi[mlx,llama]==0.1.54"]
 # The native window and the two freezers, through kavacha, which installs each platform's own
 # bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
-desktop = ["kavacha[window]>=0.0.7"]
-macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.7"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.7"]
+desktop = ["kavacha[window]>=0.0.8"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.8"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.8"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
