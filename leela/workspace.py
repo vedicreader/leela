@@ -249,7 +249,7 @@ class Workspace:
         self.feeds = Feeds()
         self.jobs = Jobs(leela_cfg/'jobs'/f'{self._journal_key}.db', memory=self.memory)
         register_all(self.jobs, self.memory, search=self.search, cwd=root, feeds=self.feeds)
-        self._lsps = {}
+        self._lsps, self._lsp_lock, self._lsp_stop, self._reaper = {}, threading.Lock(), threading.Event(), None
         self.env_base = None
         self.terms = Terminals(cwd=first(self.fs.roots))
         self.agent = agent
@@ -1112,15 +1112,37 @@ class Workspace:
             src = self.text_at(t.path)
             if src is None: return None, f'could not read {Path(t.path).name}'
         return run_file_src(t.path, src, cwd=self.cwd_for(t)), Path(t.path).name
-    def lsp_for(self, lang='python'):
-        "The language server for `lang` in the checkout being worked in, started on first use."
+    def lsp_for(self, lang='python', touch=True):
+        "The language server for `lang` in the checkout being worked in, started on first use; `touch=False` asks without counting as use."
+        from .blocks.lsp.lsp import LspService
         lang = lang or 'python'
         root = self.project_repo or first(self.fs.roots)
         key = (lang, str(root or ''))
-        if key not in self._lsps:
-            from .blocks.lsp.lsp import LspService
-            self._lsps[key] = LspService(root, lang)
-        return self._lsps[key]
+        with self._lsp_lock:
+            stale = self._stale_lsps(time.monotonic(), keep=key)
+            if (svc := self._lsps.get(key)) is None:
+                # after shutdown a caller gets a server that is never there, rather than one nothing stops
+                svc = LspService(None if self._down else root, lang)
+                if not self._down: self._lsps[key] = svc; self._start_reaper()
+            if touch: svc.used = time.monotonic()
+        for s in stale: s.close()
+        return svc
+    def _stale_lsps(self, now, keep=None):
+        "Take out every server that has gone unused for `LSP_IDLE`; the caller holds `_lsp_lock` and closes them after."
+        gone = [k for k, s in self._lsps.items() if k != keep and s.idle(now)]
+        return [self._lsps.pop(k) for k in gone]
+    def reap_lsps(self, now=None):
+        "Close the language servers nobody has used for `LSP_IDLE` seconds, and return them."
+        with self._lsp_lock: stale = self._stale_lsps(time.monotonic() if now is None else now)
+        for s in stale: s.close()
+        return stale
+    def _start_reaper(self):
+        "One daemon thread per workspace that reaps idle servers each minute until shutdown."
+        if self._reaper is not None: return
+        def loop():
+            while not self._lsp_stop.wait(60): self.reap_lsps()
+        self._reaper = threading.Thread(target=loop, daemon=True, name='leela-lsp-reaper')
+        self._reaper.start()
     @property
     def lsp(self):
         "Python's language server. What every caller meant while Python was the only language."
@@ -1143,7 +1165,9 @@ class Workspace:
         step(self._notebook_approvals.cancel_all)
         step(self._stop_notebook_approvals)
         if self._inline_ai is not None: step(self._inline_ai.close)
-        for service in list(self._lsps.values()): step(service.close)
+        self._lsp_stop.set()
+        with self._lsp_lock: services, self._lsps = list(self._lsps.values()), {}
+        for service in services: step(service.close)
         for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit()):
             try: await coro
             except Exception: pass

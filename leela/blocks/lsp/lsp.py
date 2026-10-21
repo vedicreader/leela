@@ -1,6 +1,7 @@
 "Small managed Language Server Protocol client, one service per language."
 from __future__ import annotations
 import json, os, queue, shutil, subprocess, threading, time
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -9,6 +10,8 @@ from ...core.langs import servers_for
 #: Servers Leela will drive for Python, in the order they are tried. Every language's list lives
 #: in `core.langs`; this is Python's.
 SERVERS = servers_for('python')
+#: Seconds a server may go unused before the workspace closes it. A return after that starts it again.
+LSP_IDLE = 600
 
 #: `pip install --target` bakes the installing interpreter into each script's shebang, and that
 #: interpreter may be a deleted build or the other of app and checkout. Native binaries (`ty`, `pyrefly`) run as themselves.
@@ -46,6 +49,7 @@ class LspService:
         self.server, self.argv = find_server(self.lang) if self.root else (None, None)
         self.command = self.argv[0] if self.argv else None
         self.process, self._seq = None, 0
+        self.used, self.busy = time.monotonic(), 0
         self._pending, self._diagnostics, self._versions = {}, {}, {}
         self._lock = threading.Lock()
         #: Held across the spawn and the handshake. `_lock` is the one that guards writes, and
@@ -57,6 +61,15 @@ class LspService:
     @property
     def alive(self): return bool(self.process and self.process.poll() is None)
     def _uri(self, path): return 'file://' + quote(str(Path(path).resolve()))
+    def idle(self, now):
+        "Unused for longer than `LSP_IDLE` and serving no request."
+        return not self.busy and now - self.used > LSP_IDLE
+    @contextmanager
+    def _using(self):
+        with self._lock: self.busy += 1
+        try: yield
+        finally:
+            with self._lock: self.busy -= 1; self.used = time.monotonic()
     def start(self):
         # The handshake is inside the lock: the second caller waits for the first server rather
         # than starting a second.
@@ -125,6 +138,8 @@ class LspService:
                 {'textDocument': {'uri': uri, 'version': version}, 'contentChanges': [{'text': text}]})
         return uri
     def request(self, method, path, text, line=0, character=0, extra=None, timeout=5):
+        with self._using(): return self._ask(method, path, text, line, character, extra, timeout)
+    def _ask(self, method, path, text, line, character, extra, timeout):
         uri = self.sync(path, text)
         if not uri: raise RuntimeError(self.note)
         params = {'textDocument': {'uri': uri}}
@@ -132,6 +147,8 @@ class LspService:
         params.update(extra or {})
         return self._request(method, params, timeout)
     def diagnostics(self, path, text, timeout=2.5):
+        with self._using(): return self._diagnose(path, text, timeout)
+    def _diagnose(self, path, text, timeout):
         started, uri = time.time(), self.sync(path, text)
         if not uri: return [], self.note
         while time.time() - started < timeout:
@@ -140,12 +157,18 @@ class LspService:
             time.sleep(.025)
         return self._diagnostics.get(uri, (0, []))[1], f'{self.server} diagnostics timed out; showing the latest result'
     def close(self):
-        if self.process:
+        "Stop the server and forget what it was told, so a later start opens every document afresh."
+        if (p := self.process):
             try: self._notify('exit', {})
             except Exception: pass
-            try: self.process.terminate()
+            try: p.terminate(); p.wait(2)
+            except subprocess.TimeoutExpired: p.kill()
             except Exception: pass
         self.process = None
+        for q in list(self._pending.values()):
+            try: q.put_nowait({'error': f'{self.server} closed'})
+            except queue.Full: pass
+        self._pending.clear(); self._versions.clear(); self._diagnostics.clear()
 
 #: The name this was called when Python was the only language it served.
 PyrightService = LspService

@@ -108,6 +108,12 @@ def _sessions_off_the_repo(tmp_path_factory):
     set_logging(dir=root/'_leela_sessions', agent_dir=root/'_leela_agent_sessions')
 
 @pytest.fixture(autouse=True)
+def _no_lsp_reaper(monkeypatch):
+    """No test leaves a language-server reaper thread behind; the reaper's own test starts one."""
+    from leela.workspace import Workspace
+    monkeypatch.setattr(Workspace, '_start_reaper', lambda self: None)
+
+@pytest.fixture(autouse=True)
 def _no_warm_probes(monkeypatch):
     """No test asks the machine what it holds behind its own back."""
     from leela import app

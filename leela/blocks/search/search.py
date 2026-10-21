@@ -721,16 +721,24 @@ class Search:
                     if (a.asname or a.name) == name:
                         return a.name if n.level else f'{n.module or ""}.{a.name}'
         return ''
+    def _code_cells(self, text):
+        "A notebook's code cells as source strings; nbformat stores a source as a list of lines or as one string."
+        return [''.join(cell_lines(c)) for c in (read_cells(text) or []) if str(c.get('cell_type') or 'code') == 'code']
     def _tree(self, path):
-        "A file's syntax tree, a notebook's from its cells joined, or None."
+        "A file's syntax tree; a notebook's is its code cells parsed one by one, so a `%magic` costs only its own cell."
         if not path: return None
         try: text = self.fs.read(path)
         except Exception: return None
-        if _is_nb(path):
-            try: text = '\n'.join(str(c.get('source') or '') for c in read_cells(text))
-            except Exception: return None
-        try: return ast.parse(text)
-        except SyntaxError: return None
+        if not _is_nb(path):
+            try: return ast.parse(text)
+            except SyntaxError: return None
+        try: cells = self._code_cells(text)
+        except Exception: return None
+        body = []
+        for src in cells:
+            try: body += ast.parse(src).body
+            except SyntaxError: pass
+        return ast.Module(body=body, type_ignores=[])
     def absolute_source(self, name, path):
         "The module an absolute `from M import name` in the file names, else ''."
         if not name or (tree := self._tree(path)) is None: return ''
@@ -751,7 +759,7 @@ class Search:
         try: text = self.fs.read(path)
         except Exception: return ''
         if _is_nb(path):
-            try: text = '\n'.join(str(c.get('source') or '') for c in read_cells(text))
+            try: text = '\n'.join(self._code_cells(text))
             except Exception: return ''
         word = re.escape(name)
         if m := re.search(rf'^\s*from\s+([\w.]+)\s+import\s+[^#\n]*\b{word}\b', text, re.M):
@@ -807,21 +815,35 @@ class Search:
         except Exception as e:
             self.note = f'Kosha environment lookup failed ({errstr(e)}); scanning site-packages'
             return L()
-        out, roots = L(), self.env_roots()
+        out, roots, seen = L(), self.env_roots(), set()
         for row in rows:
             m = _meta(row)
+            mn, line = str(m.get('mod_name') or ''), int(m.get('lineno') or 1)
             place = self._here(str(m.get('path') or ''))
-            if not place: continue
+            # a row indexed from a source checkout or another machine names the copy this project installed
+            if not (place and self.env_module(place, roots)) and mn and (got := self._installed_copy(mn, name, roots, line)):
+                place, line = got
+            if not place or (place, line) in seen: continue
+            seen.add((place, line))
             mod = self.env_module(place, roots)
             # a method's mod_name has its class between the module and the name
-            mn = str(m.get('mod_name') or '')
-            nested = bool(mn) and mn.removesuffix(f'.{name}') not in (mod, f'{mod}.__init__')
-            out.append(Hit(path=place, line=int(m.get('lineno') or 1),
+            nested = bool(mn and mod) and mn.removesuffix(f'.{name}') not in (mod, f'{mod}.__init__')
+            out.append(Hit(path=place, line=line,
                 text=(row.get('content') or '').strip().split('\n')[0][:200], kind='env-definition',
                 symbol=name, score=4.0 if nested else 0.0,
                 package=str(row.get('package') or m.get('package') or ''), module=mod))
         if out: self.backend, self.note = 'kosha', f'Kosha environment metadata · {len(out)} packages searched'
         return out
+    def _installed_copy(self, mod_name, name, roots, line):
+        "The file in `roots` an indexed `mod_name` lives in, with the line `name` is defined on there nearest `line`, or None."
+        parts = [p for p in mod_name.split('.') if p != '__init__'][:-1]
+        for i in range(len(parts), 0, -1):
+            for r in roots:
+                base = Path(r).joinpath(*parts[:i])
+                if (f := first(c for c in (base.with_suffix('.py'), base/'__init__.py') if c.is_file())) is None: continue
+                lines = [h.line for h in self.symbols(f) if h.symbol == name]
+                return str(f), (min(lines, key=lambda n: abs(n - line)) if lines else line)
+        return None
     def _env_ranked(self, hits, name, path):
         "The module the file imported from, its package, a package it star-imports, then real code, then the shallowest module."
         src, wanted, stars = self.absolute_source(name, path), self.import_package(name, path), self.star_packages(path)

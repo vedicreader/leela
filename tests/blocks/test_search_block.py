@@ -87,6 +87,28 @@ def test_an_indexed_top_level_definition_beats_a_method_of_the_same_name(ws, tmp
     hits = ws.search.env_definitions('L')
     assert [(h.package, h.line, h.score) for h in hits] == [('fastcore', 1, 0.0), ('python-fasthtml', 2, 4.0)]
 
+def test_a_notebook_import_picks_the_installed_package_over_a_source_checkout(ws, tmp_path, monkeypatch):
+    "In karma's `session1.ipynb`, `Index` jumped to usearch: the cells' list-of-lines sources were read as one `str(list)`, and litesearch's row named a source checkout, so it had no module and ranked as a method."
+    import json
+    from types import SimpleNamespace
+    from leela.blocks.search.search import Search
+    site = _venv(tmp_path, {'litesearch/api.py': '"doc"\nimport os\nclass Index:\n    pass\n',
+                            'usearch/index.py': 'class Index:\n    pass\n'})
+    src = tmp_path/'elsewhere'/'litesearch'/'litesearch'/'api.py'; src.parent.mkdir(parents=True); src.write_text('\n'*18 + 'class Index: pass\n')
+    nb = tmp_path/'session1.ipynb'
+    nb.write_text(json.dumps({'nbformat': 4, 'nbformat_minor': 5, 'metadata': {}, 'cells': [
+        {'cell_type': 'code', 'id': 'a', 'metadata': {}, 'outputs': [], 'execution_count': None, 'source': ['%time 1\n']},
+        {'cell_type': 'code', 'id': 'b', 'metadata': {}, 'outputs': [], 'execution_count': None,
+         'source': ['import os\n', 'from litesearch import Index\n']}]}))
+    row = lambda pkg, p, mn, ln: dict(content='class Index', package=pkg, metadata=json.dumps(dict(path=str(p), mod_name=mn, lineno=ln)))
+    rows = [row('usearch', site/'usearch'/'index.py', 'usearch.index.Index', 1), row('litesearch', src, 'litesearch.api.Index', 19)]
+    k = SimpleNamespace(env_st=SimpleNamespace(rows_where=lambda *a, **kw: rows))
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: k)
+    s = ws.search
+    assert s.absolute_source('Index', str(nb)) == 'litesearch', 'a %magic cell costs only its own imports'
+    kind, out = s.declaration_or_usages('Index', str(nb), 2)
+    assert (out[0].path, out[0].line, out[0].module, out[0].score) == (str(site/'litesearch'/'api.py'), 3, 'litesearch.api', 0.0)
+
 def test_an_index_miss_scans_only_the_packages_the_file_names(ws, tmp_path, monkeypatch):
     "A name nothing defines cost 2.7 s here: ripgrep over all of site-packages after the index had answered."
     from types import SimpleNamespace

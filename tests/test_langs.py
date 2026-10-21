@@ -79,6 +79,74 @@ def test_a_language_server_is_rooted_in_the_checkout_being_worked_in(tmp_path):
     assert ws.lsp_for('python') is first_service, 'and coming back reuses the first, not a third'
 
 
+_real_reaper = Workspace._start_reaper
+
+def _two_repos(tmp_path):
+    import subprocess
+    a, b = tmp_path/'orgs'/'repo-a', tmp_path/'orgs'/'repo-b'
+    for d in (a, b):
+        d.mkdir(parents=True); subprocess.run(['git', 'init', '-q', str(d)], check=True); (d/'main.py').write_text('x = 1\n')
+    return Workspace(roots=[tmp_path/'orgs']), a, b
+
+def test_a_language_server_nobody_has_used_for_a_while_is_closed(tmp_path):
+    "Working in many repos left one basedpyright running per repo until Leela quit."
+    from leela.blocks.lsp.lsp import LSP_IDLE
+    ws, a, b = _two_repos(tmp_path)
+    ws.open(a/'main.py'); sa = ws.lsp_for('python')
+    ws.open(b/'main.py'); sb = ws.lsp_for('python')
+    closed = []
+    sa.close = lambda: closed.append('a')
+    sa.used -= LSP_IDLE + 1
+    ws.open(b/'main.py'); assert ws.lsp_for('python') is sb
+    assert closed == ['a'] and list(ws._lsps.values()) == [sb], 'the next request anywhere closes it'
+    ws.open(a/'main.py')
+    assert ws.lsp_for('python') is not sa, 'and coming back starts a fresh one'
+
+def test_a_server_in_use_or_used_recently_is_kept(tmp_path):
+    from leela.blocks.lsp.lsp import LSP_IDLE
+    import time
+    ws, a, b = _two_repos(tmp_path)
+    ws.open(a/'main.py'); sa = ws.lsp_for('python')
+    ws.open(b/'main.py'); sb = ws.lsp_for('python')
+    now = time.monotonic()
+    sa.used, sa.busy = now - LSP_IDLE - 1, 1
+    assert ws.reap_lsps(now) == [], 'a request still running is never cut off'
+    sa.busy = 0
+    sb.used = now - LSP_IDLE + 60
+    assert ws.reap_lsps(now) == [sa], 'only the one unused past the limit goes'
+
+def test_asking_for_status_does_not_count_as_use(tmp_path):
+    "The settings panel asks for status; that must not keep an idle server alive."
+    from starlette.testclient import TestClient
+    ws, a, _ = _two_repos(tmp_path)
+    ws.open(a/'main.py'); sa = ws.lsp_for('python'); sa.used = 1.0
+    with TestClient(ide_app(ws)) as c: c.get('/lsp/status')
+    assert sa.used == 1.0
+
+def test_a_closed_server_forgets_its_documents_and_answers_waiting_requests(tmp_path):
+    "A server started again after a close is sent `didOpen`, not `didChange` for a file it never saw."
+    import queue
+    from leela.blocks.lsp.lsp import LspService
+    s = LspService(tmp_path)
+    s._versions['file:///x.py'] = 3
+    waiting = s._pending[7] = queue.Queue(1)
+    s.close()
+    assert s._versions == {} and s._pending == {}
+    assert 'error' in waiting.get_nowait()
+
+def test_after_shutdown_no_server_is_started_and_the_reaper_stops(tmp_path):
+    import asyncio
+    ws, a, _ = _two_repos(tmp_path)
+    _real_reaper(ws)
+    ws.open(a/'main.py'); sa = ws.lsp_for('python')
+    closed = []; sa.close = lambda: closed.append(1)
+    asyncio.run(ws.shutdown())
+    ws._reaper.join(2)
+    assert not ws._reaper.is_alive() and closed == [1], 'shutdown wakes the reaper and closes every server'
+    late = ws.lsp_for('python')
+    assert not late.available and ws._lsps == {}, 'a request after shutdown gets nothing to leak'
+
+
 
 # how a Rust cell is split ----------------------------------------------------------------------
 

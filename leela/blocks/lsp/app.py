@@ -44,7 +44,8 @@ def connect(app, ctx):
     def lsp_status(path: str = '', lang: str = ''):
         from ..fs.fs import lang_for
         name = lang or lang_for(path or '') or 'python'
-        lsp = ctx.lsp_for(name if lang_named(name) else 'python')
+        # the settings panel asking is not use: it must not keep an idle server alive
+        lsp = ctx.lsp_for(name if lang_named(name) else 'python', touch=False)
         return {'provider': lsp.server or '', 'lang': lsp.lang, 'available': lsp.available,
                 'alive': lsp.alive, 'note': lsp.note}
     @rt('/lsp/symbols')
