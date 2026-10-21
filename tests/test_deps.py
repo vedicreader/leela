@@ -13,14 +13,15 @@ def test_the_tool_simplification_releases_are_the_floor():
     d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
     rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
     assert rishis and all(Requirement(s).specifier.contains('0.1.54') and not Requirement(s).specifier.contains('0.1.53') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.62') and not deps['ramabana'].specifier.contains('0.2.61'), 'the terminal runs on teleprint 0.1.4'
+    assert deps['ramabana'].specifier.contains('0.2.66') and not deps['ramabana'].specifier.contains('0.2.65'), '/learned completes pending ids'
     assert deps['gheasy'].specifier.contains('0.0.14') and not deps['gheasy'].specifier.contains('0.0.13'), 'git gets /dev/null as stdin'
     assert deps['shalya'].specifier.contains('0.1.19') and not deps['shalya'].specifier.contains('0.1.18'), 'commands get /dev/null as stdin, what ramabana 0.2.59 needs'
     assert deps['vishalakshi'].specifier.contains('0.1.33') and not deps['vishalakshi'].specifier.contains('0.1.32'), "a Local only document's sources are withheld"
     assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
     assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
-    assert deps['dhrona'].specifier.contains('0.1.15') and not deps['dhrona'].specifier.contains('0.1.14'), 'read_history gives long tool results back whole'
-    assert deps['litesearch'].specifier.contains('0.1.51') and not deps['litesearch'].specifier.contains('0.1.50'), 'one text stored once; probe children get /dev/null as stdin'
+    assert deps['dhrona'].specifier.contains('0.1.16') and not deps['dhrona'].specifier.contains('0.1.15'), 'the review hint names a command that works'
+    assert deps['litesearch'].specifier.contains('0.1.52') and not deps['litesearch'].specifier.contains('0.1.51'), 'a moved chunk keeps its new line; a torn HNSW sidecar is rebuilt'
+    assert deps['koshas'].specifier.contains('0.1.12') and not deps['koshas'].specifier.contains('0.1.11'), 'name-indexed stores; one unreadable file no longer stops a sync'
     for n,lo in dict(dockeasy='0.0.9', pullup='0.0.10', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.4', kavacha='0.0.7', dhrishti='0.1.7', fossick='0.1.19', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
     assert 'cli' in deps['ramabana'].extras
     extras = [Requirement(s) for g in ('desktop', 'macapp', 'windows') for s in d['project']['optional-dependencies'][g] if s.startswith('kavacha')]

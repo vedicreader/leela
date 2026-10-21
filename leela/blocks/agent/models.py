@@ -26,11 +26,11 @@ JOB_HELP = {
 
 def unavailable(model):
     "Why `model`, a name or a spec, cannot run here, a missing runtime or a missing key, and how to add a provider; '' when it can."
-    from ...agent.core import missing_key, missing_runtime, needs, reachable_hint, resolve
+    from ...agent.core import SETUP_HINT, missing_key, missing_runtime, needs, reachable_hint, resolve
     try: spec = resolve(model) if isinstance(model, str) else model
     except Exception: return ''
     m = missing_runtime(spec) or ((k := missing_key(spec)) and needs(k))
-    return f'{m}. {reachable_hint().replace("`ramabana setup` lists the providers and adds one", "+ model adds a provider")}' if m else ''
+    return f'{m}. {reachable_hint().replace(SETUP_HINT, "+ model adds a provider")}' if m else ''
 
 def providers():
     "Each provider Ramabana can use, what it needs, and whether it is set up here; nothing is chosen by it."
