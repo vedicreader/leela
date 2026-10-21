@@ -1234,10 +1234,10 @@ class Assistant(Agent):
         "What the model is offered: everything but `user_steering`, which is dispatchable after a refusal and never advertised."
         return [f for f in super()._plain if f.__name__ not in HIDDEN]
 
-    def _sub_plain(self):
+    def _sub_plain(self, spec=None):
         "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable) nor `user_steering`, on top of `ROOT_ONLY` (delegation, the plan) which ramabana's own `_sub_plain` already drops. Its own set, not `HIDDEN`."
         refused = {*GIT_WRITE_TOOLS, 'user_steering'}
-        return [f for f in super()._sub_plain() if f.__name__ not in refused]
+        return [f for f in super()._sub_plain(spec) if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."
         spec = self.spec_or_none()

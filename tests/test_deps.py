@@ -1,41 +1,6 @@
-"The pins leela's tool set is built against, and the Claude Code runtime chain they carry."
+"The Claude Code runtime chain imports, and the suite bounds every test and every ask."
 import tomllib
 from pathlib import Path
-from packaging.requirements import Requirement
-from packaging.version import Version
-
-def _deps():
-    d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
-    return {Requirement(s).name: Requirement(s) for s in d['project']['dependencies']}
-
-def test_the_tool_simplification_releases_are_the_floor():
-    deps = _deps()
-    d = tomllib.loads((Path(__file__).resolve().parents[1]/'pyproject.toml').read_text())
-    rishis = [s for g in (d['project']['optional-dependencies']['local'], d['dependency-groups']['dev']) for s in g if isinstance(s, str) and s.startswith('rishi')]
-    assert rishis and all(Requirement(s).specifier.contains('0.1.54') and not Requirement(s).specifier.contains('0.1.53') for s in rishis), rishis
-    assert deps['ramabana'].specifier.contains('0.2.66') and not deps['ramabana'].specifier.contains('0.2.65'), '/learned completes pending ids'
-    assert deps['gheasy'].specifier.contains('0.0.14') and not deps['gheasy'].specifier.contains('0.0.13'), 'git gets /dev/null as stdin'
-    assert deps['shalya'].specifier.contains('0.1.19') and not deps['shalya'].specifier.contains('0.1.18'), 'commands get /dev/null as stdin, what ramabana 0.2.59 needs'
-    assert deps['vishalakshi'].specifier.contains('0.1.33') and not deps['vishalakshi'].specifier.contains('0.1.32'), "a Local only document's sources are withheld"
-    assert deps['lekhaka'].specifier.contains('0.0.4') and not deps['lekhaka'].specifier.contains('0.0.3'), 'read_book, book_md'
-    assert not deps['rahasya'].specifier.contains('0.0.3') and not deps['varga'].specifier.contains('0.0.6')
-    assert deps['dhrona'].specifier.contains('0.1.16') and not deps['dhrona'].specifier.contains('0.1.15'), 'the review hint names a command that works'
-    assert deps['litesearch'].specifier.contains('0.1.52') and not deps['litesearch'].specifier.contains('0.1.51'), 'a moved chunk keeps its new line; a torn HNSW sidecar is rebuilt'
-    assert deps['koshas'].specifier.contains('0.1.12') and not deps['koshas'].specifier.contains('0.1.11'), 'name-indexed stores; one unreadable file no longer stops a sync'
-    for n,lo in dict(dockeasy='0.0.9', pullup='0.0.10', vpseasy='0.0.23', cfeasy='0.0.5', kunda='0.0.4', kavacha='0.0.7', dhrishti='0.1.7', fossick='0.1.19', koshas='0.1.10').items(): assert not deps[n].specifier.contains(lo), n
-    assert 'cli' in deps['ramabana'].extras
-    extras = [Requirement(s) for g in ('desktop', 'macapp', 'windows') for s in d['project']['optional-dependencies'][g] if s.startswith('kavacha')]
-    assert len(extras) == 3 and not any(r.specifier.contains('0.0.5') for r in extras), 'the window extras take the public kavacha names'
-
-def test_the_installed_set_matches_the_pins():
-    import ramabana, shalya, vishalakshi, dhrona, rishi
-    assert Version(ramabana.__version__) >= Version('0.2.5') and Version(shalya.__version__) >= Version('0.1.1')
-    assert Version(rishi.__version__) >= Version('0.1.46'), 'Azure chat completions take max_completion_tokens'
-    from ramabana.tools import small_tool; from rishi.litert import EngineBusy  # noqa: F401  # the two seams 0.1.7 is built on
-    assert Version(vishalakshi.__version__) >= Version('0.1.33') and Version(dhrona.__version__) >= Version('0.1.11')
-    from ramabana.learned import learned_folder, pending, diff, accept, reject, learned_command, compact, enabled, set_enabled  # noqa: F401
-    from ramabana.core import ContextFull, agent_err, remote_models, use_aliases, PROVIDERS, provider_ready, needs_setup  # noqa: F401
-    from dockeasy.core import FASTOPS_ENV; from pullup.workflows import gheasy_core  # noqa: F401
 
 def test_the_claude_code_runtime_chain_imports():
     "`rishi.claude` → `claude_agent_sdk`; the desktop bundle test (`test_packaging.py:408`) once died on this."

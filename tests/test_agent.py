@@ -949,15 +949,28 @@ def test_delegation_never_gets_the_git_write_tools(monkeypatch):
                 [git_push, git_checkout, git_status, user_steering],   # the recorded wrappers a writer is given
                 [])
     for branch in branches:
-        monkeypatch.setattr(Agent, '_sub_plain', lambda self, b=branch: list(b))
+        monkeypatch.setattr(Agent, '_sub_plain', lambda self, spec=None, b=branch: list(b))
         names = {f.__name__ for f in a._sub_plain()}
         assert not (names & GIT_WRITE_TOOLS), f'git writes reached delegation via {branch}'
         assert 'user_steering' not in names, f'main-agent steering reached delegation via {branch}'
         assert names == {f.__name__ for f in branch} - GIT_WRITE_TOOLS - {'user_steering'}, 'and nothing else was taken'
 
     # Reading git is not writing git, and must survive.
-    monkeypatch.setattr(Agent, '_sub_plain', lambda self: [git_status, view_file])
+    monkeypatch.setattr(Agent, '_sub_plain', lambda self, spec=None: [git_status, view_file])
     assert {f.__name__ for f in a._sub_plain()} == {'git_status', 'view_file'}
+
+
+def test_a_delegation_to_a_named_model_reaches_leelas_refusals(tmp_path):
+    "Ramabana 0.2.67 sizes a delegation's tools for the model it names, through `_sub_plain(spec)`; the override took no `spec`, so every delegation raised."
+    from leela.blocks.agent.ai import GIT_WRITE_TOOLS
+    from leela.agent.core import ModelSpec
+    from leela.agent.agent import Agent as Base
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    small, big = ModelSpec('tiny-sub', 'remote', 'openai/tiny-sub', 16_000), ModelSpec('big-sub', 'remote', 'openai/big-sub', 200_000)
+    for spec in (small, big):
+        names = {f.__name__ for f in ws.ai._sub_tools(spec=spec)}
+        assert not (names & GIT_WRITE_TOOLS) and 'user_steering' not in names, names
+        assert names >= {f.__name__ for f in Base._sub_plain(ws.ai, spec)} - GIT_WRITE_TOOLS - {'user_steering'}, 'and it is sized for that model'
 
 
 def test_a_cancelled_turn_refuses_the_calls_still_to_come(tmp_path):
