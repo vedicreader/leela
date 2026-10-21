@@ -62,6 +62,66 @@ def test_the_package_the_file_imports_from_is_the_one_offered_first(ws, tmp_path
     assert s.import_package('patch', str(tmp_path/'missing.py')) == '', 'and a file that is not there is not an error'
 
 
+def test_a_star_import_names_the_package_a_name_comes_from(ws, tmp_path, no_index):
+    "`L` resolved to python-fasthtml's when the file had `from fastcore.utils import *`: the shorter path won."
+    _venv(tmp_path, {'fastcore/basics.py': 'class L:\n    pass\n', 'fasthtml/core.py': 'class L:\n    pass\n'})
+    (tmp_path/'mine.py').write_text('from fastcore.utils import *\nL()\n')
+    s = ws.search
+    assert s.star_packages(str(tmp_path/'mine.py')) == ['fastcore']
+    assert s.env_definitions('L', path=str(tmp_path/'mine.py'))[0].package == 'fastcore'
+    assert s.env_definitions('L')[0].package == 'fasthtml', 'with no import to go on, the old order stands'
+
+def test_an_indexed_top_level_definition_beats_a_method_of_the_same_name(ws, tmp_path, monkeypatch):
+    "Kosha indexes methods by name too, so fasthtml's `PathFT.L(self, x, y)` came before fastcore's `class L`."
+    import json
+    from types import SimpleNamespace
+    from leela.blocks.search.search import Search
+    site = _venv(tmp_path, {'fastcore/foundation.py': 'class L:\n    pass\n',
+                            'fasthtml/svg.py': 'class PathFT:\n    def L(self, x, y): pass\n'})
+    row = lambda pkg, rel, mn, ln: dict(content='L', package=pkg,
+        metadata=json.dumps(dict(path=str(site/rel), mod_name=mn, lineno=ln)))
+    rows = [row('python-fasthtml', 'fasthtml/svg.py', 'fasthtml.svg.PathFT.L', 2),
+            row('fastcore', 'fastcore/foundation.py', 'fastcore.foundation.L', 1)]
+    k = SimpleNamespace(env_st=SimpleNamespace(rows_where=lambda *a, **kw: rows))
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: k)
+    hits = ws.search.env_definitions('L')
+    assert [(h.package, h.line, h.score) for h in hits] == [('fastcore', 1, 0.0), ('python-fasthtml', 2, 4.0)]
+
+def test_an_index_miss_scans_only_the_packages_the_file_names(ws, tmp_path, monkeypatch):
+    "A name nothing defines cost 2.7 s here: ripgrep over all of site-packages after the index had answered."
+    from types import SimpleNamespace
+    from leela.blocks.search.search import Search
+    site = _venv(tmp_path, {'fastcore/basics.py': 'def unindexed(): pass\n', 'rich/x.py': 'def unindexed(): pass\n'})
+    k = SimpleNamespace(env_st=SimpleNamespace(rows_where=lambda *a, **kw: []))
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: k)
+    scanned, real = [], Search._rg
+    monkeypatch.setattr(Search, '_rg', lambda self, *a, roots=None, **kw: scanned.append(roots) or real(self, *a, roots=roots, **kw))
+    (tmp_path/'none.py').write_text('x = 1\n'); (tmp_path/'use.py').write_text('from fastcore.basics import unindexed\n')
+    assert ws.search.env_definitions('unindexed', path=str(tmp_path/'none.py')) == [] and scanned == []
+    hits = ws.search.env_definitions('unindexed', path=str(tmp_path/'use.py'))
+    assert [(h.package, h.module) for h in hits] == [('fastcore', 'fastcore.basics')]
+    assert [str(r) for r in scanned[0]] == [str(site/'fastcore')]
+
+def test_an_imported_name_beats_a_project_definition_of_the_same_name(ws, tmp_path, no_index):
+    "The file imports `store_attr` from fastcore, so the project's own `store_attr` is not the one clicked."
+    _venv(tmp_path, {'fastcore/basics.py': 'def store_attr(names=None):\n    pass\n'})
+    (tmp_path/'helpers.py').write_text('def store_attr():\n    pass\n')
+    (tmp_path/'use.py').write_text('from fastcore.basics import (\n    store_attr)\nstore_attr()\n')
+    kind, out = ws.search.declaration_or_usages('store_attr', str(tmp_path/'use.py'), 3)
+    assert kind == 'definition' and out[0].package == 'fastcore' and out[0].path.endswith('fastcore/basics.py')
+    (tmp_path/'other.py').write_text('store_attr()\n')
+    kind, out = ws.search.declaration_or_usages('store_attr', str(tmp_path/'other.py'), 1)
+    assert out[0].path.endswith('helpers.py'), 'a file that imports nothing still gets the project one'
+
+def test_a_submodule_imported_by_name_is_the_module(ws, tmp_path, no_index):
+    "`from fastcore import test` binds a module, whatever `def test` another package has."
+    site = _venv(tmp_path, {'fastcore/__init__.py': '', 'fastcore/test.py': 'def test_eq(a, b): pass\n',
+                            'rich/style.py': 'def test():\n    pass\n'})
+    (tmp_path/'use.py').write_text('from fastcore import test\n')
+    kind, out = ws.search.declaration_or_usages('test', str(tmp_path/'use.py'), 1)
+    assert kind == 'definition' and out[0].path == str(site/'fastcore'/'test.py')
+
+
 def test_the_jump_route_carries_the_dotted_chain(ws, tmp_path, no_index):
     "The chain is what says `fastcore.test` is a module, so the route has to pass it through."
     from starlette.testclient import TestClient

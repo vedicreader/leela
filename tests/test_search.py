@@ -48,6 +48,49 @@ def test_the_index_read_is_the_one_belonging_to_the_repo_being_worked_in(monkeyp
     assert s.kosha_root() == orgs, 'outside every checkout, the open folder is the answer'
 
 
+def test_a_stray_index_inside_a_checkout_never_answers_for_it(tmp_path):
+    "A two-month-old `leela/leela/.kosha` answered every jump from a file in the package, with old line numbers."
+    orgs = tmp_path/'orgs'; repo = _repo(orgs/'leela'); (repo/'pkg').mkdir(); (repo/'pkg'/'.kosha').mkdir()
+    (repo/'pkg'/'a.py').write_text('x = 1\n')
+    plain = orgs/'notes'; (plain/'.kosha').mkdir(parents=True); (plain/'x.py').write_text('y = 1\n')
+    s = Search(Sandbox([orgs]), prefer_kosha=False)
+    assert s.kosha_root(repo/'pkg'/'a.py') == repo
+    assert s.kosha_root(repo/'nbs') == repo, 'so a package file and a notebook share one handle'
+    assert s.kosha_root(plain/'x.py') == plain, 'a folder outside every checkout still answers for itself'
+
+
+def test_a_package_lookup_reads_the_index_of_the_file_clicked_in(monkeypatch, tmp_path):
+    "`env_symbols` asked for the focused checkout's index, so a click in another checkout reopened it mid-jump."
+    asked = []
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: asked.append(path))
+    p = tmp_path/'use.py'; p.write_text('x = 1\n')
+    Search(Sandbox([tmp_path])).env_definitions('thing', path=str(p))
+    assert str(p) in asked
+
+
+def test_the_definition_fallback_parses_only_the_files_that_could_define_it(monkeypatch, tmp_path):
+    "With no index it parsed every file in the project, about a second on this checkout."
+    (tmp_path/'target.py').write_text('class original:\n    pass\n')
+    (tmp_path/'other.py').write_text('x = original\n')
+    s = Search(Sandbox([tmp_path]), prefer_kosha=False)
+    def no_walk(*a, **k): raise AssertionError('walked the whole project')
+    monkeypatch.setattr(s.fs, 'walk', no_walk)
+    read = []
+    real = s.symbols
+    monkeypatch.setattr(s, 'symbols', lambda p: read.append(Path(p).name) or real(p))
+    assert [(Path(h.path).name, h.line) for h in s.definitions('original')] == [('target.py', 1)]
+    assert read == ['target.py']
+
+
+def test_an_empty_notebook_does_not_fail_the_index_sync(monkeypatch, tmp_path):
+    "`tests/test.ipynb` was an empty file, and every sync of this checkout failed on it, so the index went stale."
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg'))
+    repo = _repo(tmp_path/'repo', indexed=False); (repo/'empty.ipynb').write_text('')
+    res = Search(Sandbox([repo]))._sync(True, False)
+    assert res['ok'], res
+    assert res['status']['files'] >= 1
+
+
 def test_project_scope_is_the_checkout_not_the_folder_of_clones(tmp_path):
     """With `orgs` open as one folder the two scopes named the same thing, and the indexed legs answered from one repo while ripgrep answered from all of them."""
     import subprocess

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from kunda.pythons import clean_env
-import ast, json, re, subprocess
+import ast, json, re, subprocess, threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import wraps
@@ -172,6 +172,7 @@ class Search:
         self._k_tried = False
         self._k_root = None
         self._k_note = 'kosha not tried yet'
+        self._k_lock = threading.RLock()
         self.backend = 'scan'
         self.note = ''
         self._completion_cache = {}
@@ -189,32 +190,41 @@ class Search:
         try: p = Path(here).resolve() if here else None
         except OSError: p = None
         stop = first(r for r in roots if p is not None and (Path(r) == p or Path(r) in p.parents))
-        # `.kosha` first: a folder someone has already indexed answers for itself, checkout or not.
-        found = nearest_marked(p, ('.kosha', *PROJECT_MARKERS), stop)[0] if p is not None else None
-        return found or stop or first(roots)
+        if p is None: return stop or first(roots)
+        # The checkout answers, through the nearest `.kosha` at or above it; one below it, such as a
+        # stray index in the package folder, never does. A folder outside every checkout answers for itself.
+        c = nearest_marked(p, PROJECT_MARKERS, stop)[0]
+        return nearest_marked(c or p, ('.kosha',), stop)[0] or c or stop or first(roots)
     def _make_kosha(self, root=None):
         "A fresh Kosha handle: separate SQLite connections for readers and the sync writer."
         from kosha import Kosha
-        k=Kosha(dir=root or self.kosha_root(),install_skill=False,busy_timeout=30000)
-        k.status(pyproject=False)
-        return _Serial(k)
+        return _Serial(Kosha(dir=root or self.kosha_root(),install_skill=False,busy_timeout=30000))
     def _kosha(self, path=None):
         "The kosha handle for the checkout in hand, or None."
         root = self.kosha_root(path)
-        if self._k_root is not None and root != self._k_root: self._k, self._k_tried = None, False
-        if self._k_tried: return self._k
-        self._k_tried, self._k_root = True, root
-        if not self.prefer_kosha:
-            self._k_note = 'kosha disabled'
-            return None
-        try:
-            k=self._make_kosha(root)
-            self._k = k
-            self.backend, self.note = 'kosha', f'{Path(root).name} + installed packages' if root else 'repo + installed packages'
-        except Exception as e:
-            self._k_note = f'kosha unavailable ({errstr(e)})'
-            self.note = self._k_note + '; literal scan'
-        return self._k
+        with self._k_lock:
+            if self._k_root is not None and root != self._k_root: self._k, self._k_tried = None, False
+            if self._k_tried: return self._k
+            self._k_tried, self._k_root = True, root
+            if not self.prefer_kosha:
+                self._k_note = 'kosha disabled'
+                return None
+            try:
+                self._k = self._make_kosha(root)
+                self.backend, self.note = 'kosha', f'{Path(root).name} + installed packages' if root else 'repo + installed packages'
+            except Exception as e:
+                self._k_note = f'kosha unavailable ({errstr(e)})'
+                self.note = self._k_note + '; literal scan'
+            return self._k
+    @threaded(daemon=True)
+    def warm(self):
+        "Open an index that already exists before the first jump, and re-parse the files changed since."
+        root = self.kosha_root()
+        if not self.prefer_kosha or not root or not (Path(root)/'.kosha').is_dir(): return
+        if (k := self._kosha()) is None: return
+        try: st = k.status(pyproject=False)
+        except Exception: return
+        if st.get('stale_files') or st.get('new_files'): return self._sync(True, False)
     def _covers(self, path):
         "Whether the sandbox can open an indexed path. Kosha may index a wider checkout."
         try: return bool(path) and self.fs.covers(Path(path).resolve())
@@ -629,7 +639,9 @@ class Search:
                 out = self._indexed_hits(rows, 'definition')
             except Exception as e: self.note = f'Kosha definition lookup failed ({errstr(e)}); scanning files'
         if not out:
-            for p in self.fs.walk().filter(lambda p: p.suffix.lower() in _CODE_SUFFIXES):
+            # ripgrep picks the files that could define it, notebooks' JSON included; only those are parsed
+            found = self._rg(rf'(?:def|class)\s+{re.escape(name)}\b', 2000, regex=True, cased=True)
+            for p in L(list(dict.fromkeys(h.path for h in found))).map(Path).filter(lambda p: p.suffix.lower() in _CODE_SUFFIXES):
                 for hit in self.symbols(p):
                     if hit.symbol == name: out.append(hit)
                     if len(out) >= limit: break
@@ -642,7 +654,7 @@ class Search:
             out = L(dict(((h.path, h.line, h.symbol), h) for h in reversed(merged)).values())[::-1]
         here = str(Path(path).resolve()) if path else ''
         if not alias: out = out.sorted(key=lambda h: (str(Path(h.path).resolve()) != here, h.line))
-        self.backend, self.note = ('kosha', 'exact symbol metadata + code graph') if out else ('scan', 'no definition found')
+        self.backend, self.note = ('kosha', 'exact symbol metadata') if out else ('scan', 'no definition found')
         return self._place(out[:limit])
     def usages(self, name, limit=200):
         "Exact on-disk token occurrences; unlike the index this includes unsaved-to-index files."
@@ -698,14 +710,7 @@ class Search:
         "The dotted module a file's own imports bind `name` to, when that names a file."
         # `import json` makes `json` a module here whatever `def json` a package has, and the
         # file's imports are the only thing that can say so: a bare cursor carries no dot.
-        if not path or not name: return ''
-        try: text = self.fs.read(path)
-        except Exception: return ''
-        if _is_nb(path):
-            try: text = '\n'.join(str(c.get('source') or '') for c in read_cells(text))
-            except Exception: return ''
-        try: tree = ast.parse(text)
-        except SyntaxError: return ''
+        if not name or (tree := self._tree(path)) is None: return ''
         for n in ast.walk(tree):
             if isinstance(n, ast.Import):
                 for a in n.names:
@@ -716,6 +721,30 @@ class Search:
                     if (a.asname or a.name) == name:
                         return a.name if n.level else f'{n.module or ""}.{a.name}'
         return ''
+    def _tree(self, path):
+        "A file's syntax tree, a notebook's from its cells joined, or None."
+        if not path: return None
+        try: text = self.fs.read(path)
+        except Exception: return None
+        if _is_nb(path):
+            try: text = '\n'.join(str(c.get('source') or '') for c in read_cells(text))
+            except Exception: return None
+        try: return ast.parse(text)
+        except SyntaxError: return None
+    def absolute_source(self, name, path):
+        "The module an absolute `from M import name` in the file names, else ''."
+        if not name or (tree := self._tree(path)) is None: return ''
+        return first(n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and not n.level and n.module
+                     and any((a.asname or a.name) == name for a in n.names)) or ''
+    def star_packages(self, path):
+        "Top-level packages the file star-imports, in order: where a name it never imports by name comes from."
+        if (tree := self._tree(path)) is None: return []
+        return list(dict.fromkeys(n.module.split('.')[0] for n in ast.walk(tree)
+            if isinstance(n, ast.ImportFrom) and not n.level and n.module and any(a.name == '*' for a in n.names)))
+    def installed(self, module):
+        "Whether a module's top-level package, namespace packages included, is in the project's `site-packages`."
+        top = (module or '').split('.')[0]
+        return bool(top) and any((Path(r)/top).is_dir() or (Path(r)/f'{top}.py').is_file() for r in self.env_roots())
     def import_package(self, name, path):
         "The package a file says `name` comes from, so a lookup goes to the one that was imported."
         if not path or not name: return ''
@@ -735,12 +764,17 @@ class Search:
         "Where an installed package defines `name`: Kosha's environment index, else ripgrep."
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
-        if indexed := self.env_symbols(name, limit): return self._env_ranked(indexed, name, path)
-        roots = self.env_roots()
+        if indexed := self.env_symbols(name, limit, path): return self._env_ranked(indexed, name, path)
+        roots = scan = self.env_roots()
         if not roots: return L()
+        if self._kosha(path or None) is not None:
+            # the index holds methods too, so a miss is scanned for only in the packages the file names
+            tops = [t for t in dict.fromkeys([self.absolute_source(name, path).split('.')[0],
+                self.import_package(name, path), *self.star_packages(path)]) if t]
+            if not (scan := L(Path(r)/t for r in roots for t in tops if (Path(r)/t).is_dir())): return L()
         word = re.escape(name)
         def hits(pattern):
-            return self._rg(pattern, limit, regex=True, exts=('.py', '.pyi'), roots=roots,
+            return self._rg(pattern, limit, regex=True, exts=('.py', '.pyi'), roots=scan,
                             no_ignore=True, cased=True)
         # column zero first. `def patch(self, ...)` in twelve packages is a method called patch, not
         # the thing that was clicked. An indented definition answers only when nothing else does.
@@ -763,9 +797,9 @@ class Search:
             if parts and parts[-1] == '__init__': parts = parts[:-1]
             return '.'.join(parts)
         return ''
-    def env_symbols(self, name, limit=12):
+    def env_symbols(self, name, limit=12, path=''):
         "Kosha's environment store, which knows the package and the line without guessing."
-        k = self._kosha()
+        k = self._kosha(path or None)
         if k is None: return L()
         try:
             rows = list(k.env_st.rows_where("json_extract(metadata, '$.name') = ?", [name],
@@ -778,17 +812,24 @@ class Search:
             m = _meta(row)
             place = self._here(str(m.get('path') or ''))
             if not place: continue
+            mod = self.env_module(place, roots)
+            # a method's mod_name has its class between the module and the name
+            mn = str(m.get('mod_name') or '')
+            nested = bool(mn) and mn.removesuffix(f'.{name}') not in (mod, f'{mod}.__init__')
             out.append(Hit(path=place, line=int(m.get('lineno') or 1),
                 text=(row.get('content') or '').strip().split('\n')[0][:200], kind='env-definition',
-                symbol=name, package=str(row.get('package') or m.get('package') or ''),
-                module=self.env_module(place, roots)))
+                symbol=name, score=4.0 if nested else 0.0,
+                package=str(row.get('package') or m.get('package') or ''), module=mod))
         if out: self.backend, self.note = 'kosha', f'Kosha environment metadata · {len(out)} packages searched'
         return out
     def _env_ranked(self, hits, name, path):
-        "The package the file imported from, then real code, then the shallowest module."
-        wanted = self.import_package(name, path)
+        "The module the file imported from, its package, a package it star-imports, then real code, then the shallowest module."
+        src, wanted, stars = self.absolute_source(name, path), self.import_package(name, path), self.star_packages(path)
         def rank(h):
-            return (bool(wanted) and h.package != wanted,
+            pk = {h.package, (h.module or '').split('.')[0]}
+            return (bool(src) and h.module != src,
+                    bool(wanted) and wanted not in pk,
+                    bool(stars) and not pk & set(stars), h.score > 0,
                     any(x in str(h.path) for x in self.VENDORED),
                     str(h.path).endswith('.pyi'), Path(h.path).name.startswith('_'), len(str(h.path)))
         return hits.sorted(key=rank)
@@ -807,6 +848,14 @@ class Search:
         if '.' in (dotted or '') and (m := self.module_hit(dotted, path or '')):
             self.backend, self.note = 'module', f'{dotted} is a module'
             return 'definition', L(m)
+        # an absolute import of an installed package says which `name` this is, whatever the project defines
+        if (src := self.absolute_source(name, path or '')) and self.installed(src):
+            if m := self.module_hit(f'{src}.{name}', path or ''):
+                self.backend, self.note = 'module', f'{src}.{name} is a module'
+                return 'definition', L(m)
+            if env := self.env_definitions(name, path=path or ''):
+                self.note = f'defined in {env[0].package}, not in this project'
+                return 'definition', env
         defs = self.definitions(name, path, limit)
         if defs and not self.at_definition(defs, path, line, cell_index): return 'definition', defs
         if not defs and (m := self.module_hit(self.imported_module(name, path or ''), path or '')):
@@ -840,8 +889,10 @@ class Search:
             exts = code_exts + (',.ipynb' if notebooks else '')
             if notebooks: k.update_repo(dir=k.root, exts=exts, verbose=False, embed=True)
             else: k.sync(dir=k.root, pyproject=False, sync_graph=graph, verbose=False)
-            indexed = sum(len(file_parse(Path(p))) for p in self.fs.walk()
-                if notebooks and p.suffix.lower() == '.ipynb')
+            def cells(p):
+                try: return len(file_parse(Path(p)))
+                except Exception: return 0
+            indexed = sum(cells(p) for p in self.fs.walk() if notebooks and p.suffix.lower() == '.ipynb')
             if graph and notebooks:
                 try: k.graph.sync(dir=k.root, pkgs=[], force=False)
                 except Exception: pass

@@ -1148,8 +1148,9 @@ class Workspace:
             try: await coro
             except Exception: pass
     async def opened(self):
-        "Remember the loop the kernels, terminals and sockets belong to."
+        "Remember the loop the kernels, terminals and sockets belong to, and open the code index."
         self._loop = asyncio.get_running_loop()
+        self.search.warm()
     def shutdown_now(self, timeout=10):
         "The same teardown from outside the loop, for process exit."
         # Back on the server's loop where there is one: a kernel's client cannot close from another.
