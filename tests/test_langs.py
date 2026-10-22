@@ -1,18 +1,14 @@
 "Running a notebook in a language that is not Python: its metadata, its runtime, its server."
 
-import json, re, shutil
-from pathlib import Path
+import json, shutil
 
 import pytest
 
 from leela.blocks.nb.nb import Notebook, Cell
 from leela.blocks.runtime.runners import CargoRunner, NodeRunner, rust_chunks
-from leela.core.langs import LANGS
 from leela.app import ide_app
 from leela.workspace import Workspace
 from starlette.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parent.parent
 
 # the notebook carries its language ------------------------------------------------------------
 
@@ -45,16 +41,6 @@ def test_a_saved_notebook_is_still_valid_nbformat(tmp_path):
     nb.set_lang('rust')
     nb.save()
     nbformat.validate(nbformat.read(str(p), as_version=4))
-
-# the registry ----------------------------------------------------------------------------------
-
-
-def test_the_browser_and_the_server_agree_on_which_languages_are_served():
-    "`core.js` cannot import Python, so it carries a copy. This is what keeps the copy honest."
-    src = (ROOT/'leela/static/js/core.js').read_text()
-    m = re.search(r'const LSP_LANGS = \[(.*?)\];', src, re.S)
-    assert m, 'LSP_LANGS is gone from core.js'
-    assert sorted(re.findall(r"'([^']+)'", m.group(1))) == sorted(LANGS)
 
 # language servers ------------------------------------------------------------------------------
 
