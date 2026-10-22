@@ -338,6 +338,15 @@ async function restoreDrafts(st) {
 }
 window.lee = lee;
 
+/* A read about the tab on screen (language server, lint, git marks, outline) ends with that tab: each one
+   holds a connection of the browser's six per host, and a slow one left the next `/tab/select` queued. */
+const TAB_READS = /^\/(lsp\/(symbols|inlay-hints|hover)|lint|git\/file|outline|editor\/packages)(\?|$)/;
+lee.tabReads = new AbortController();
+const pageFetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => !opts.signal && typeof url === 'string' && TAB_READS.test(url)
+  ? pageFetch(url, {...opts, signal: lee.tabReads.signal}) : pageFetch(url, opts);
+function dropTabReads() { lee.tabReads.abort(); lee.tabReads = new AbortController(); }
+
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>

@@ -28,3 +28,55 @@ def test_pyright_is_optional_and_reports_status(tmp_path, monkeypatch):
     assert not service.available and not service.start()
     rows, note = service.diagnostics(tmp_path/'a.py', 'x: int = "bad"')
     assert rows == [] and note
+
+
+FAKE_SERVER = r'''
+import sys, json
+def read():
+    h = {}
+    while True:
+        l = sys.stdin.buffer.readline()
+        if not l: sys.exit()
+        if l in (b'\r\n', b'\n'): break
+        k, _, v = l.decode().partition(':'); h[k.lower()] = v.strip()
+    return json.loads(sys.stdin.buffer.read(int(h['content-length'])))
+def send(m):
+    raw = json.dumps(m).encode()
+    sys.stdout.buffer.write(b'Content-Length: %d\r\n\r\n' % len(raw) + raw); sys.stdout.buffer.flush()
+mode, configured, waiting = sys.argv[1], False, None
+while True:
+    m = read(); method = m.get('method')
+    if method == 'initialize': send({'jsonrpc': '2.0', 'id': m['id'], 'result': {'capabilities': {}}})
+    elif method == 'initialized' and mode == 'config':
+        send({'jsonrpc': '2.0', 'id': 1, 'method': 'workspace/configuration', 'params': {'items': [{'section': 'a'}, {'section': 'b'}]}})
+    elif method is None and 'id' in m:
+        configured = m['result'] == [None, None]
+        if configured and waiting: send({'jsonrpc': '2.0', 'id': waiting, 'result': [{'name': 'f'}]})
+    elif method == 'textDocument/documentSymbol' and mode == 'config':
+        if configured: send({'jsonrpc': '2.0', 'id': m['id'], 'result': [{'name': 'f'}]})
+        else: waiting = m['id']
+'''
+
+def _fake_service(tmp_path, mode):
+    import sys
+    from leela.blocks.lsp.lsp import LspService
+    script = tmp_path/'fake_lsp.py'; script.write_text(FAKE_SERVER)
+    s = LspService(tmp_path)
+    s.server, s.argv = 'fake', [sys.executable, str(script), mode]; s.command = sys.executable
+    return s
+
+def test_a_request_the_server_makes_is_answered_and_a_silent_server_is_not_waited_on_twice(tmp_path):
+    """basedpyright asks `workspace/configuration` first and answers nothing until it is replied to; its request id also collides with ours."""
+    import time
+    f = tmp_path/'a.py'; f.write_text('def f(): pass\n')
+    s = _fake_service(tmp_path, 'config')
+    try: assert s.request('textDocument/documentSymbol', f, f.read_text(), None) == [{'name': 'f'}]
+    finally: s.close()
+    s = _fake_service(tmp_path, 'mute')
+    try:
+        for method, extra in [('textDocument/documentSymbol', None), ('textDocument/inlayHint', {'range': {}})]:
+            assert s.request(method, f, f.read_text(), None, 0, extra) is None
+            t = time.monotonic()
+            assert s.request(method, f, f.read_text(), None, 0, extra) is None
+            assert time.monotonic() - t < .1, 'a method that just timed out is answered empty at once'
+    finally: s.close()

@@ -52,7 +52,7 @@ def connect(app, ctx):
     async def lsp_symbols(req):
         d = await req.json()
         try:
-            rows = await ask(d, 'textDocument/documentSymbol', d.get('text', ''), None, 0, None, 8)
+            rows = await ask(d, 'textDocument/documentSymbol', d.get('text', ''), None, 0, None)
             return {'symbols': rows or []}
         except Exception as e: return fail(e)
     @rt('/lsp/hover')
@@ -68,7 +68,7 @@ def connect(app, ctx):
         end = {'line': max(0, len(lines)-1), 'character': len(lines[-1]) if lines else 0}
         try:
             rows = await ask(d, 'textDocument/inlayHint', text, None, 0,
-                             {'range': {'start': {'line': 0, 'character': 0}, 'end': end}}, 8)
+                             {'range': {'start': {'line': 0, 'character': 0}, 'end': end}})
             return {'hints': rows or []}
         except Exception as e: return fail(e)
     @rt('/lsp/rename')

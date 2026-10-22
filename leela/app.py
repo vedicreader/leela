@@ -1040,7 +1040,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 versions[key] = _doc_versions[key]
                 saved += 1
             except Exception as e: errors.append(f'{t.title}: {errstr(e)}')
-        ws.save()
+        if saved: ws.save()
         if errors: return _fail('; '.join(errors))
         # What was written, and what it now says on disk, so the next read is not another process
         # having written the file.

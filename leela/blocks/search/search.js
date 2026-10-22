@@ -765,7 +765,7 @@ async function leeSymbols() {
                     cell_index: +row.dataset.cellIndex, cell_line: +row.dataset.cellLine});
       if (matchMedia('(max-width: 1100px)').matches) leePane('left', false);
     });
-  } catch (e) { if (path === lee.path) host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
+  } catch (e) { if (e.name !== 'AbortError' && path === lee.path) host.innerHTML = `<div class="lee-err">${esc(e.message || e)}</div>`; }
 }
 window.leeSymbols = leeSymbols;
 

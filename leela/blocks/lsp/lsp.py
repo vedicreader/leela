@@ -12,6 +12,10 @@ from ...core.langs import servers_for
 SERVERS = servers_for('python')
 #: Seconds a server may go unused before the workspace closes it. A return after that starts it again.
 LSP_IDLE = 600
+#: Questions asked on every mount, which a server still indexing may not answer. They wait `SOFT_WAIT`
+#: seconds, and after one timeout are answered empty at once for `SOFT_COOL` seconds.
+SOFT = ('textDocument/documentSymbol', 'textDocument/inlayHint')
+SOFT_WAIT, SOFT_COOL = 1.5, 30
 
 #: `pip install --target` bakes the installing interpreter into each script's shebang, and that
 #: interpreter may be a deleted build or the other of app and checkout. Native binaries (`ty`, `pyrefly`) run as themselves.
@@ -50,7 +54,7 @@ class LspService:
         self.command = self.argv[0] if self.argv else None
         self.process, self._seq = None, 0
         self.used, self.busy = time.monotonic(), 0
-        self._pending, self._diagnostics, self._versions = {}, {}, {}
+        self._pending, self._diagnostics, self._versions, self._cool = {}, {}, {}, {}
         self._lock = threading.Lock()
         #: Held across the spawn and the handshake. `_lock` is the one that guards writes, and
         #: `start` writes, so this cannot be the same one.
@@ -104,10 +108,16 @@ class LspService:
         ident, answer = self._seq, queue.Queue(1)
         self._pending[ident] = answer
         self._send({'jsonrpc': '2.0', 'id': ident, 'method': method, 'params': params})
-        row = answer.get(timeout=timeout)
+        try: row = answer.get(timeout=timeout)
+        finally: self._pending.pop(ident, None)
         if 'error' in row: raise RuntimeError(row['error'])
         return row.get('result')
     def _notify(self, method, params): self._send({'jsonrpc': '2.0', 'method': method, 'params': params})
+    def _answer(self, msg):
+        "Reply to a request the server made of us: a server that is not answered never answers back."
+        items = (msg.get('params') or {}).get('items') or []
+        result = [None] * len(items) if msg['method'] == 'workspace/configuration' else None
+        self._send({'jsonrpc': '2.0', 'id': msg['id'], 'result': result})
     def _read(self):
         stream = self.process.stdout
         while self.alive:
@@ -121,7 +131,8 @@ class LspService:
                     headers[key.lower()] = value.strip()
                 body = stream.read(int(headers.get('content-length', '0')))
                 msg = json.loads(body)
-                if 'id' in msg and msg['id'] in self._pending: self._pending.pop(msg['id']).put(msg)
+                if 'id' in msg and 'method' in msg: self._answer(msg)
+                elif 'id' in msg and msg['id'] in self._pending: self._pending.pop(msg['id']).put(msg)
                 elif msg.get('method') == 'textDocument/publishDiagnostics':
                     p = msg.get('params', {})
                     self._diagnostics[p.get('uri', '')] = (time.time(), p.get('diagnostics', []))
@@ -138,7 +149,13 @@ class LspService:
                 {'textDocument': {'uri': uri, 'version': version}, 'contentChanges': [{'text': text}]})
         return uri
     def request(self, method, path, text, line=0, character=0, extra=None, timeout=5):
-        with self._using(): return self._ask(method, path, text, line, character, extra, timeout)
+        soft = method in SOFT
+        if soft and time.monotonic() < self._cool.get(method, 0): return None
+        with self._using():
+            try: return self._ask(method, path, text, line, character, extra, SOFT_WAIT if soft else timeout)
+            except queue.Empty:
+                if not soft: raise
+                self._cool[method] = time.monotonic() + SOFT_COOL
     def _ask(self, method, path, text, line, character, extra, timeout):
         uri = self.sync(path, text)
         if not uri: raise RuntimeError(self.note)

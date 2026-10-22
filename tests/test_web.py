@@ -248,6 +248,21 @@ def test_a_restored_file_is_dropped_from_every_tab_holding_it_not_only_the_activ
         assert json.loads(a.read_text())['cells'][0]['source'] == 'value = "restored"', 'the restore was written over'
 
 
+def test_save_all_rewrites_the_workspace_only_when_it_saved_something(tmp_path):
+    """Every tab switch posted `/tabs/save-all`, and each answer rewrote `workspace.json` with nothing changed."""
+    a = tmp_path/'a.py'; a.write_text('x = 1\n')
+    ws = Workspace(roots=[tmp_path]); ws.open(a)
+    saves = []; real = ws.save
+    ws.save = lambda *x, **k: (saves.append(1), real(*x, **k))[1]
+    with TestClient(ide_app(ws)) as client:
+        client.post('/tab/open', params={'path': str(a)})
+        n = len(saves)
+        assert client.post('/tabs/save-all').json()['saved'] == 0 and len(saves) == n, 'a clean save-all wrote the workspace'
+        client.post('/tab/buffer', json={'path': str(a), 'kind': 'text', 'text': 'x = 2\n'})
+        assert client.post('/tabs/save-all').json()['saved'] == 1 and len(saves) == n + 1
+        assert a.read_text() == 'x = 2\n'
+
+
 def test_remove_root_route_never_deletes_the_folder(tmp_path):
     root = tmp_path/'project'; root.mkdir(); kept = root/'keep.py'; kept.write_text('x = 1\n')
     ws = Workspace(roots=[root])

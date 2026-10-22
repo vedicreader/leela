@@ -124,10 +124,22 @@ const whenVisible = fn => () => { if (!document.hidden) fn(); };
 
 document.addEventListener('DOMContentLoaded', boot);
 
+document.addEventListener('htmx:beforeRequest', e => {
+  if (/^\/tab\/(select|close)\b/.test(e.detail.pathInfo?.requestPath || '')) dropTabReads();
+});
+
+// The pills describe the folder the active tab is in, so a switch inside one folder has nothing new to say.
+let pillsFolder = null;
+function refreshPillsForTab() {
+  const folder = ($('.lee-tab.active')?.title || '').replace(/\/[^/]*$/, '');
+  if (folder === pillsFolder) return;
+  pillsFolder = folder; refreshProjectPills();
+}
+
 document.addEventListener('htmx:afterSwap', (e) => {
   const id = e.target.id || '';
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
-  if (id === 'tabbar') { mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
+  if (id === 'tabbar') { mountTab().then(leeVars); refreshPillsForTab(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
   else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
 });

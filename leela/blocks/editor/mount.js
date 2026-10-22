@@ -50,6 +50,40 @@ async function adoptMdView() {
   await prefAdopt('workbench', 'markdownView', 'lee-md-view', v => MD_PREFS[v] || 'split');
 }
 
+const lspAnswers = new Map();
+function paintCrumbSymbols(d) {
+  const el = $('#editorcrumbs'); if (!el) return;
+  const names = (d.symbols || []).slice(0, 40).map(s => `<button data-line="${(s.range?.start?.line || 0) + 1}">${esc(s.name)}</button>`).join('');
+  el.insertAdjacentHTML('beforeend', `<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);
+  el.onclick = e => { const b = e.target.closest('[data-line]'); if (b) jumpToLine(b.dataset.line); };
+}
+// The server answers a mount's two questions slowly or not at all, so they are asked once the tab has
+// painted and is still the one on screen, and a clean file's answer is kept for its disk version.
+function lspExtras(v, st, crumbMode, mine, dirty) {
+  if (!servedLang(st.lang) || !st.path) return;
+  const asks = [];
+  if (lee.editorPrefs.inlayHints) asks.push(['/lsp/inlay-hints', d => LeeCM.setInlayHints?.(v, d.hints || [])]);
+  if (['symbols', 'pathAndSymbols'].includes(crumbMode)) asks.push(['/lsp/symbols', paintCrumbSymbols]);
+  if (!asks.length) return;
+  const live = () => mine === fileExtrasVersion && lee.editors.get('file') === v;
+  requestAnimationFrame(() => setTimeout(() => {
+    if (!live()) return;
+    const text = LeeCM.getDoc(v);
+    for (const [url, paint] of asks) {
+      const key = `${url} ${st.path} ${st.disk_version}`, known = !dirty && lspAnswers.get(key);
+      if (known) { paint(known); continue; }
+      api(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: st.path, text})})
+        .then(d => {
+          if (!live()) return;
+          if (!dirty && st.disk_version && (d.hints || d.symbols || []).length) {
+            lspAnswers.set(key, d); if (lspAnswers.size > 60) lspAnswers.delete(lspAnswers.keys().next().value);
+          }
+          paint(d);
+        }).catch(() => {});
+    }
+  }, 300));
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
@@ -114,11 +148,10 @@ async function mountFile(host, st) {
       if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
     };
   }
-  if(servedLang(st.lang)&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
-  if(servedLang(st.lang)&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
+  const mine = ++fileExtrasVersion;
+  lspExtras(v, st, crumbMode, mine, lee.dirtyBuffers.has(key));
   if (packages) paintPackageVersions(v, packages);
   if (st.path) {
-    const mine = ++fileExtrasVersion;
     api('/git/file?path=' + encodeURIComponent(st.path)).then(d => {
       if (mine !== fileExtrasVersion || !d) return;
       lee.fileGit = d;
