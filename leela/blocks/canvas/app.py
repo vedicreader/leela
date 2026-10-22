@@ -27,6 +27,13 @@ def _settle(o, touched_names, skip=()):
 def _ports(o):
     return {b.id: o.runtime.bindings(b) for b in o.canvas if b.binds}
 
+async def _down(o):
+    "A failure response when this document's kernel will not come up, else None."
+    rt = o.runtime
+    if await off_loop(rt.ready): return None
+    e = rt.down or {}
+    return fail(f"the kernel did not start: {e.get('evalue') or 'no reason given'}", 503)
+
 def _payload(o):
     return {'ok': True, 'canvas': o.canvas.dict(), 'ports': _ports(o),
             'names': o.runtime.names(), 'trusted': o.trusted, 'rev': o.rev}
@@ -161,12 +168,13 @@ def connect(app, ctx=None):
         return JSONResponse(got) if got.get('ok') else fail(got.get('error', 'no wiring'))
 
     @rt('/canvas/open')
-    def canvas_open(path: str, fresh: str = ''):
+    async def canvas_open(path: str, fresh: str = ''):
         try: p = canvas_path(ctx_fs(), path)
         except FileNotFoundError: return fail(f'no canvas at {path}')
         except Exception as e: return fail(e)
         o = store().reopen(p) if fresh else store().get(p)
-        return JSONResponse({**_payload(o), 'runs': {}, 'host': brick_host()})
+        if (bad := await _down(o)): return bad
+        return JSONResponse({**await off_loop(_payload, o), 'runs': {}, 'host': brick_host()})
 
     @rt('/canvas/trust')
     async def canvas_trust(req):
@@ -174,6 +182,7 @@ def connect(app, ctx=None):
         d = await req.json()
         try: o = store().get(canvas_path(ctx_fs(), d['path']))
         except Exception as e: return fail(e)
+        if (bad := await _down(o)): return bad
         runs = await off_loop(o.allow)
         return JSONResponse({'ok': True, 'trusted': True, 'runs': runs, 'ports': _ports(o)})
 
@@ -185,6 +194,7 @@ def connect(app, ctx=None):
         if runs_code(d['op']):
             try: o.must_trust()
             except Untrusted as e: return fail(f'{e}; trust it first', 403)
+            if (bad := await _down(o)): return bad
         r = await off_loop(apply_op, o.canvas, o.runtime, d['op'])
         if not r.get('ok'): return fail(r.get('error', 'op failed'))
         o.bump()
@@ -198,6 +208,7 @@ def connect(app, ctx=None):
         except Exception as e: return fail(e)
         try: o.must_trust()
         except Untrusted as e: return fail(f'{e}; trust it first', 403)
+        if (bad := await _down(o)): return bad
         for id, src in (d.get('sources') or {}).items():
             b = o.canvas.by_id(id)
             if b is not None and b.runs: b.body = src
@@ -213,6 +224,7 @@ def connect(app, ctx=None):
         if b is None or not b.runs: return fail('not a code brick')
         try: o.must_trust()
         except Untrusted as e: return fail(f'{e}; trust it first', 403)
+        if (bad := await _down(o)): return bad
         if 'source' in d: b.body = d['source']
         r = await off_loop(o.runtime.run, b)
         #: Only the bindings that moved. Handing back every port would post props to every frame,
@@ -228,6 +240,7 @@ def connect(app, ctx=None):
         except Exception as e: return fail(e)
         try: o.must_trust()
         except Untrusted as e: return fail(f'{e}; trust it first', 403)
+        if (bad := await _down(o)): return bad
         await off_loop(o.runtime.set, d['name'], d['value'])
         #: A list: `react` tests `skip` for membership.
         settled = await off_loop(_settle, o, [d['name']], [f] if (f := d.get('from', '')) else [])

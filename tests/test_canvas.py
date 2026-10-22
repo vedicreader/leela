@@ -322,49 +322,126 @@ def test_a_kernel_that_never_starts_costs_one_timeout_not_one_per_cell():
     assert all(not r['ok'] and r['outputs'][0]['ename'] == 'TimeoutError' for r in runs.values()), runs
 
 
-def test_ready_waits_out_a_start_that_outlasts_the_timeout():
-    "A call racing a slow kernel start got 'still starting' and read an empty namespace; `ready` is the signal that the start finished."
-    import asyncio
+def _fake_kernel(shut=None):
     from types import SimpleNamespace
-    from leela.blocks.canvas.live import KernelRuntime
     class K:
         alive = True
         async def execute(self, code, timeout=None): return SimpleNamespace(outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'ok'}])
         async def interrupt(self): pass
-        async def shutdown(self): pass
-    async def start():
-        await asyncio.sleep(1.5)
+        async def shutdown(self):
+            if shut is not None: shut.append(1)
+    return K
+
+def test_ready_waits_for_a_slow_start_and_says_why_a_hung_one_is_down():
+    "`ready` is the signal that the start finished, and when it did not, `down` is the reason."
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    K = _fake_kernel()
+    async def slow():
+        await asyncio.sleep(.6)
         return K()
-    rt = KernelRuntime(start, timeout=1)
+    rt = KernelRuntime(slow, timeout=3)
     try:
-        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
-        assert rt.ready(10)
+        assert rt.ready(10) and rt.down is None
         assert rt.exec_cell('x = 1')[0]['text'] == 'ok'
     finally: rt.close()
+    async def hung(): await asyncio.Event().wait()
+    rt = KernelRuntime(hung, timeout=1)
+    try:
+        assert not rt.ready(10)
+        assert rt.down['ename'] == 'TimeoutError' and 'did not start' in rt.down['evalue'], rt.down
+    finally: rt.close()
 
-def test_a_start_that_outlasts_the_timeout_serves_the_next_call_once_it_is_up():
-    "A slow start made every call fail for a whole timeout afterwards, even once the kernel it was starting was up."
+def test_a_call_during_a_slow_start_waits_for_it_and_succeeds():
+    "A call made while the kernel was still starting failed at once with 'try again shortly', and the route still said ok."
     import asyncio
-    from types import SimpleNamespace
     from leela.blocks.canvas.live import KernelRuntime
-    class K:
-        alive = True
-        async def execute(self, code, timeout=None): return SimpleNamespace(outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'ok'}])
-        async def interrupt(self): pass
-        async def shutdown(self): pass
+    K = _fake_kernel()
     starts = []
     async def start():
         starts.append(1)
-        await asyncio.sleep(1.5)
+        if len(starts) == 1: await asyncio.Event().wait()
+        await asyncio.sleep(.6)
         return K()
     rt = KernelRuntime(start, timeout=1)
     try:
         assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
-        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError', 'a call while the start is still going fails at once'
-        time.sleep(.8)
-        assert rt.exec_cell('x = 1')[0]['text'] == 'ok', 'the start that finished is the kernel the next call uses'
+        t0 = time.time()
+        out = rt.exec_cell('x = 1')[0]
+        took = time.time() - t0
+        assert out.get('text') == 'ok', out
+        assert took > .4, f'{took}s: returned without waiting for the start'
     finally: rt.close()
-    assert starts == [1], 'one start, not one per call'
+    assert starts == [1, 1]
+
+def test_a_hung_start_is_abandoned_and_the_next_call_starts_a_new_kernel():
+    "A pending start was held forever, so one hung start broke the document for good."
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    K = _fake_kernel()
+    starts = []
+    async def start():
+        starts.append(1)
+        if len(starts) == 1: await asyncio.Event().wait()
+        return K()
+    rt = KernelRuntime(start, timeout=1)
+    try:
+        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
+        assert rt.exec_cell('x = 1')[0].get('text') == 'ok', 'the next call starts afresh and runs'
+    finally: rt.close()
+    assert starts == [1, 1]
+
+def test_a_kernel_that_comes_up_after_its_start_was_abandoned_is_shut_down():
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    shut = []
+    K = _fake_kernel(shut)
+    async def start():
+        try: await asyncio.sleep(1.5)
+        except asyncio.CancelledError: pass     # a start that does not stop when told to
+        return K()
+    rt = KernelRuntime(start, timeout=1)
+    try:
+        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
+        time.sleep(.5)
+    finally: rt.close()
+    assert shut == [1]
+
+def test_a_dead_kernel_fails_the_first_cell_of_run_all_not_every_one():
+    from leela.blocks.canvas.live import KernelRuntime
+    async def start(): raise RuntimeError('no interpreter')
+    rt = KernelRuntime(start, timeout=1)
+    bricks = [Brick(kind='code', body=f'x{i} = {i}', id=f'c{i}') for i in range(3)]
+    try: runs = rt.run_all(bricks)
+    finally: rt.close()
+    assert all(not r['ok'] and 'no interpreter' in r['outputs'][0]['evalue'] for r in runs.values()), runs
+
+def test_trust_says_not_ok_when_the_kernel_will_not_start(client, corpus, ws):
+    "`/canvas/trust` swallowed a timed-out start and answered ok, and the page showed an empty document."
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    p = opened(client, corpus, 'a-sales-funnel.canvas.md', trust=False)
+    o = store_for(ws.fs).get(p)
+    async def hung(): await asyncio.Event().wait()
+    o.runtime.close()
+    o.runtime = KernelRuntime(hung, timeout=1)
+    try:
+        r = client.post('/canvas/trust', json={'path': p})
+        assert r.status_code == 503 and r.json()['ok'] is False, r.text
+        assert 'did not start' in r.json()['error'], r.json()
+        assert not o.trusted, 'a document whose code did not run is not trusted'
+        for route, body in (('/canvas/open', None), ('/canvas/runall', {}), ('/canvas/run', {'id': 'sf3'}),
+                            ('/canvas/emit', {'name': 'stages', 'value': []}), ('/canvas/op', {'op': {'op': 'values'}})):
+            o.trusted = True
+            r = client.get(route, params={'path': p}) if body is None else client.post(route, json={'path': p, **body})
+            assert r.json()['ok'] is False and 'did not start' in r.json()['error'], (route, r.text)
+    finally: store_for(ws.fs).reopen(p)
+
+def test_concurrent_calls_join_one_start():
+    import asyncio
+    from leela.blocks.canvas.live import KernelRuntime
+    K = _fake_kernel()
+    starts = []
     from concurrent.futures import ThreadPoolExecutor
     async def quick(): starts.append(2); await asyncio.sleep(.3); return K()
     rt = KernelRuntime(quick, timeout=1)
@@ -372,7 +449,7 @@ def test_a_start_that_outlasts_the_timeout_serves_the_next_call_once_it_is_up():
         with ThreadPoolExecutor(2) as ex: both = list(ex.map(lambda _: rt.exec_cell('x = 1')[0], range(2)))
     finally: rt.close()
     assert [o.get('text') for o in both] == ['ok', 'ok'], 'a call made while another waits on the start joins that wait'
-    assert starts == [1, 2]
+    assert starts == [2], 'one start for both calls'
 
 
 def test_closing_a_runtime_cancels_the_start_it_left_behind_and_closes_its_loop():

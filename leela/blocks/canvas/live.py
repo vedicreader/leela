@@ -96,6 +96,7 @@ class Dataflow:
             if b.binds: ports[b.id] = self.bindings(b)
         return dict(runs=runs, ports=ports)
 
+    down = None
     def close(self): pass
 
 class Runtime(Dataflow):
@@ -187,7 +188,7 @@ class KernelRuntime(Dataflow):
         self._start, self._kernel = start, None
         self.timeout, self._boot = timeout, (KERNEL_BOOT + (boot or ''))
         self._own_loop = loop is None
-        self._lp, self._th, self._ready, self._pending, self._late = loop, None, False, None, False
+        self._lp, self._th, self._ready, self._pending, self.down = loop, None, False, None, None
         self._lp_lock = threading.Lock()
 
     def _loop(self):
@@ -206,35 +207,61 @@ class KernelRuntime(Dataflow):
         "Run `coro` on this runtime's loop and wait for it."
         return self._call(coro, timeout if timeout is not None else self.timeout + 15)
 
+    async def _starting(self):
+        "One start, bounded: a start that outlasts `timeout` is cancelled, and a kernel it still produces is shut down."
+        k = self._start()
+        if not (asyncio.iscoroutine(k) or asyncio.isfuture(k)): return k
+        t = asyncio.ensure_future(k)
+        try: return await asyncio.wait_for(asyncio.shield(t), self.timeout)
+        except TimeoutError:
+            t.cancel()
+            t.add_done_callback(self._reap)
+            raise TimeoutError(f'the kernel did not start in {self.timeout}s')
+
+    @staticmethod
+    def _reap(t):
+        if t.cancelled() or t.exception() is not None or not hasattr(k := t.result(), 'shutdown'): return
+        asyncio.ensure_future(k.shutdown())
+
     async def _kernel_now(self):
-        "The kernel, started on first use and again after one dies. A start that outlasts `timeout` keeps going, and calls fail at once until it is up."
+        "The kernel, started on first use and again after one dies. Calls during a start wait for it; a start that outlasts `timeout` is dropped and the next call starts afresh."
+        try: k = await self._up()
+        except Exception as e:
+            self.down = _err(type(e).__name__, str(e))
+            raise
+        self.down = None
+        return k
+
+    async def _up(self):
         if self._kernel is None:
-            if self._late and not self._pending.done(): raise TimeoutError('the kernel is still starting; try again shortly')
-            if self._pending is None:
-                k = self._start()
-                if asyncio.iscoroutine(k) or asyncio.isfuture(k): self._pending = asyncio.ensure_future(k)
-                else: self._kernel, self._ready = k, False
-            if (p := self._pending) is not None:
-                try: k = await asyncio.wait_for(asyncio.shield(p), self.timeout)
-                except BaseException as e:
-                    if p is not self._pending: raise
-                    if p.done(): self._pending, self._late = None, False
-                    elif isinstance(e, TimeoutError): self._late = True
-                    raise
-                if p is self._pending: self._pending, self._late, self._kernel, self._ready = None, False, k, False
+            if self._pending is None: self._pending = asyncio.ensure_future(self._starting())
+            p = self._pending
+            try: k = await asyncio.shield(p)
+            except BaseException:
+                if p is self._pending and p.done(): self._pending = None
+                raise
+            if p is self._pending: self._pending, self._kernel, self._ready = None, k, False
         if not self._ready:
             self._ready = True                          # set first, or a failed boot boots again
             await self._bounded(self._kernel, self._boot, self.timeout)
         return self._kernel
 
     def ready(self, timeout=None):
-        "Wait for the kernel to be up, however long a start that outlasted `timeout` takes. False if it did not come up."
-        async def up():
-            if (p := self._pending) is not None and not p.done(): await asyncio.wait({p})
-            await self._kernel_now()
-        try: self._call(up(), timeout)
-        except Exception: return False
+        "Wait for the kernel to be up. False if it did not, and `down` says why."
+        try: self._call(self._kernel_now(), timeout)
+        except Exception as e:
+            if self.down is None: self.down = _err(type(e).__name__, str(e) or 'no answer')
+            return False
         return True
+
+    def run_all(self, bricks):
+        "A kernel that is down fails the first cell; the rest are not each made to wait out the same start."
+        out = {}
+        for b in order(bricks):
+            if out and self.down is not None:
+                out[b.id] = dict(outputs=[self.down], ms=0, count=self.count, defs=list(b.defs), ok=False)
+            else: out[b.id] = self.run(b)
+        return out
 
     async def _bounded(self, k, code, timeout):
         "Run `code`, and stop it when it outstays `timeout`."
@@ -299,7 +326,7 @@ class KernelRuntime(Dataflow):
     def close(self):
         p = self._pending
         if self._kernel is None and p is not None and p.done() and not p.cancelled() and p.exception() is None: self._kernel = p.result()
-        k, self._kernel, self._ready, self._pending, self._late = self._kernel, None, False, None, False
+        k, self._kernel, self._ready, self._pending, self.down = self._kernel, None, False, None, None
         self.owned.clear()
         if k is not None and hasattr(k, 'shutdown'):
             try: self._call(k.shutdown(), 10)
