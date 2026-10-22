@@ -1,15 +1,8 @@
 """Where a jump hit says it is."""
 
 from __future__ import annotations
-import re, sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT/'tools'))
-import build_ide_js as builder                                              # noqa: E402
-
-from leela.blocks.search.search import Search                          # noqa: E402
-from leela.blocks.fs.fs import Sandbox                                      # noqa: E402
+from leela.blocks.search.search import Search
+from leela.blocks.fs.fs import Sandbox
 
 
 def test_a_site_packages_path_becomes_a_dotted_module(tmp_path):

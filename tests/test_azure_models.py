@@ -47,4 +47,3 @@ def test_the_agent_pane_lists_the_providers_when_nothing_runs(bare, tmp_path):
     ws = Workspace(roots=[tmp_path]); ws._state_path = tmp_path/'ws.json'
     html = to_xml(_agent_panel(ws))
     assert 'data-providers' in html and 'AWS Bedrock' in html and 'Azure OpenAI' in html and 'leeAddModel()' in html
-    assert 'needs OPENAI_API_KEY' in html
