@@ -1,7 +1,7 @@
 "The notebook document: cells, outputs, the .ipynb on disk, and source spans."
 
 from __future__ import annotations
-import ast, hashlib, re, time, uuid
+import ast, asyncio, hashlib, re, time, uuid
 from base64 import b64encode
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -635,10 +635,13 @@ def inline_values(source, groups, outputs=(), result_info=None):
         except (SyntaxError, IndexError): pass
     return out
 
-async def cell_extras(k, cell):
-    "Inspector rows and the rich last result for a finished cell, or `(None, None)`."
+async def cell_extras(k, cell, wait=5):
+    "Inspector rows and the rich last result for a finished cell, or `(None, None)` if the inspector is silent for `wait` seconds."
     if not k or cell.has_error: return None, None
-    rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
-    has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
-    latest = await k.api('/api/result', timeout=2) if has_result else None
-    return rows, (latest or {}).get('result')
+    async def ask():
+        rows = await k.api('/api/rows', {'profile': 'full', 'sort': 'name'}, timeout=2)
+        has_result = any(o.get('output_type') == 'execute_result' for o in cell.outputs)
+        latest = await k.api('/api/result', timeout=2) if has_result else None
+        return rows, (latest or {}).get('result')
+    try: return await asyncio.wait_for(ask(), wait)
+    except TimeoutError: return None, None

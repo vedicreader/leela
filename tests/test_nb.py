@@ -1,6 +1,6 @@
 "The notebook document: cells, outputs, images, diagnostics and languages."
 
-import json
+import asyncio, json
 import pytest
 from leela.blocks.nb.nb import Cell, Notebook
 import sys
@@ -169,6 +169,30 @@ def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
             return time.perf_counter() - began
         took = min(five() for _ in range(3))
     assert took < .5, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'
+
+
+def test_a_hanging_inspector_does_not_hold_back_the_done_event(tmp_path, monkeypatch):
+    """`done` waited on `cell_extras`, so an inspector that never answered left a cell spinning under its finished output."""
+    import threading, time
+    from conftest import FakeKernel
+    stop = threading.Event()
+    class Wedged(FakeKernel):
+        async def api(self, path, params=None, timeout=15):
+            while not stop.is_set(): await asyncio.sleep(.05)
+    p = tmp_path/'wedged.ipynb'
+    p.write_text(json.dumps({'cells': [{'cell_type': 'code', 'source': ['total'], 'metadata': {}, 'outputs': [], 'execution_count': None}],
+                             'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    ws = Workspace(roots=[tmp_path], approvals='auto'); ws.open(p)
+    async def wedged(tab=None): return Wedged()
+    monkeypatch.setattr(ws, 'runtime', wedged)
+    lines = []
+    with TestClient(ide_app(ws)) as client:
+        path = client.get('/tab/state').json()['path']
+        def stream():
+            with client.stream('POST', '/nb/run/stream', json={'i': 0, 'id': None, 'source': 'total', 'path': path}) as r: lines.extend(r.iter_lines())
+        t = threading.Thread(target=stream, daemon=True); began = time.perf_counter(); t.start(); t.join(12)
+        took = time.perf_counter() - began; stop.set(); t.join(5)
+    assert any('event: done' in l for l in lines) and took < 8, f'the stream had no done after {took:.1f}s'
 
 
 def test_read_cells_parses_notebooks_that_orjson_alone_rejects():
