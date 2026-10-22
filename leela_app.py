@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-import asyncio, os, sys, threading
+import asyncio, os, sys, threading, time
 
 from fastcore.all import Path, first, is_port_free
 from fastcore.net import free_port as any_port
 
-__all__ = ['free_port', 'running_leela', 'leela_on', 'folders', 'leela_args', 'serve', 'main',
-           'run', 'attach', 'hub_open', 'open_folder', 'titles_for', 'HOME_KEY']
+__all__ = ['free_port', 'running_leela', 'leela_on', 'folders', 'files', 'leela_args', 'serve', 'main',
+           'run', 'attach', 'hub_open', 'open_folder', 'open_file', 'titles_for', 'HOME_KEY']
 
 HOST = '127.0.0.1'
 #: The window on the bare loopback host. A slug is `[a-z0-9-]+`, so a colon keeps this from ever being a folder's window key.
@@ -62,6 +62,10 @@ def folders(argv=None):
     "Directory arguments passed to the app; a Finder/Explorer launch supplies none."
     return [a for a in (sys.argv[1:] if argv is None else argv) if os.path.isdir(a)]
 
+def files(argv=None):
+    "File arguments passed to the app: `open -a Leela --args f`, or a path on the command line."
+    return [os.path.abspath(a) for a in (sys.argv[1:] if argv is None else argv) if os.path.isfile(a)]
+
 def leela_args(port, dirs=(), extra=()):
     "The `leela` command line a desktop launch is. `--gateway-port 0`: several copies may run."
     return ['--app', '--port', str(port), '--gateway-port', '0', *extra, *dirs]
@@ -87,10 +91,14 @@ def main():
 
 def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
+    from leela.core.projects import workspace_for
     from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
     from leela.hub import assign_slugs
+    # A file names its workspace. One that has none is told so rather than dropped.
+    given = {f: workspace_for(f) for f in files()}
+    for f in [f for f, d in given.items() if d is None]: _refuse_loose(f); del given[f]
     # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer.
-    want = folders() or last_folder()
+    want = list(dict.fromkeys([*folders(), *given.values()])) or last_folder()
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
     ok, why = shell_ready()
     # A second launch is a window, not a second Leela: one server means one origin, so what the
@@ -99,7 +107,7 @@ def run():
     # Nothing to open leaves the saved open set alone: `remember([])` would erase it.
     if live is not None and not want: return attach(live, [])
     dirs = remember(want)
-    if live is not None: return attach(live, dirs)
+    if live is not None: return attach(live, dirs, files=list(given))
     port = free_port()
     if not ok:
         print(f'leela: {why}; opening the workspace in Chrome instead')
@@ -112,15 +120,14 @@ def run():
     slugs = assign_slugs([Path(d).expanduser().resolve() for d in dirs]) if dirs else [HOME_KEY]
     urls = ([f'http://{s}.localhost:{port}/' for s in slugs] if dirs
             else [f'http://127.0.0.1:{port}/'])
-    run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(),
-              on_open_folder=lambda p: open_folder(port, p))
+    run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(), **_hooks(port, list(given)))
 
-def attach(port, dirs, host=HOST):
+def attach(port, dirs, host=HOST, files=()):
     "Windows on the Leela already serving `port`. Opens through its own route so the slug and URL are the ones it assigned; a refused folder is reported and the rest still open."
     from leela.desktop import run_shell
     if not dirs:
         return run_shell([f'http://{host}:{port}/'], titles=['leela'], keys=[HOME_KEY], icon=_icon(),
-                         on_open_folder=lambda p: open_folder(port, p))
+                         **_hooks(port, files))
     rows = []
     for d in dirs:
         got = hub_open(port, d, host)
@@ -128,22 +135,28 @@ def attach(port, dirs, host=HOST):
         else: print(f"  could not open {d}: {got.get('error')}")
     if not rows: return print('leela: the running copy opened none of these folders')
     urls, titles = [r['url'] for r in rows], [f"leela — {r['name']}" for r in rows]
-    run_shell(urls, titles=titles, keys=[r['id'] for r in rows], icon=_icon(),
-              on_open_folder=lambda p: open_folder(port, p))
+    run_shell(urls, titles=titles, keys=[r['id'] for r in rows], icon=_icon(), **_hooks(port, files))
+
+def _hooks(port, files=()):
+    "What `run_shell` needs to take a folder or a file from Finder, and to open the files named on the command line once the windows are up."
+    kw = dict(on_open_folder=lambda p: open_folder(port, p), on_open_file=lambda p: open_file(port, p))
+    if files: kw['on_ready'] = lambda: [open_file(port, f) for f in files]
+    return kw
 
 def titles_for(dirs):
     "One window title per workspace, named after its folder."
     return [f'leela — {Path(d).name}' for d in dirs] or ['leela']
 
-def hub_open(port, path, host=HOST, timeout=60):
-    "Ask the server on `port` to serve `path` as a workspace. Returns its row, or the reason not."
+def hub_open(port, path, host=HOST, timeout=60, file=''):
+    "Ask the server on `port` to serve `path` as a workspace, and with `file` to open it there. Returns its row, or the reason not; `down` marks a server that did not answer."
     import json, urllib.error, urllib.parse, urllib.request
     from leela.hub import OPEN_PATH
     url = f'http://{host}:{port}{OPEN_PATH}?path=' + urllib.parse.quote(str(path), safe='')
+    if file: url += '&file=' + urllib.parse.quote(str(file), safe='')
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r: return json.loads(r.read())
     except urllib.error.HTTPError as e: return {'ok': False, 'error': _why(e)}
-    except Exception as e: return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+    except Exception as e: return {'ok': False, 'down': True, 'error': f'{type(e).__name__}: {e}'}
 
 def open_folder(port, path, host=HOST):
     "Give a folder a workspace and a window of its own, through the running server\'s own route."
@@ -151,6 +164,28 @@ def open_folder(port, path, host=HOST):
     d = hub_open(port, path, host)
     if not d.get('ok'): return print(f"  could not open {path}: {d.get('error')}")
     return open_window(d['url'], f"leela — {d['name']}", key=d['id'])
+
+def open_file(port, path, host=HOST, wait=60, every=.5):
+    "Open one file Finder or the command line handed over, in the workspace it belongs to. A server still starting is waited for, up to `wait` seconds."
+    from leela.core.projects import workspace_for
+    from leela.desktop import open_window
+    if (d := workspace_for(path)) is None: return _refuse_loose(path)
+    end = time.monotonic() + wait
+    while (got := hub_open(port, d, host, file=path)).get('down') and time.monotonic() < end: time.sleep(every)
+    if not got.get('ok'): return _tell(f"Leela could not open {path}: {got.get('error')}")
+    return open_window(got['url'], f"leela — {got['name']}", key=got['id'])
+
+def _refuse_loose(path):
+    "A file directly in the home folder or the root has no workspace, and the home folder is never made one."
+    return _tell(f"Leela will not open {Path(path).name} by itself: {Path(path).parent} is not a project folder. Move it into a folder, or open that folder in Leela first.")
+
+def _tell(msg):
+    "Say `msg` in a native dialog when a window can show one, and on the terminal either way."
+    print(f'  {msg}')
+    try:
+        import webview
+        webview.windows[0].create_confirmation_dialog('Leela', msg)
+    except Exception: pass
 
 def _why(e):
     "What a refusal said, which is the point of it. A 4xx still carries its body."

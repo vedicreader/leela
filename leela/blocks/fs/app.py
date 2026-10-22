@@ -100,7 +100,9 @@ def connect(app, ctx):
             q = ctx.fs_watch.subscribe()   # a client that never iterates this never runs the finally
             try:
                 while True:
-                    paths, resync = await q.get()
+                    got = await q.get()
+                    if isinstance(got, str): yield sse('opened', {'path': got}); continue
+                    paths, resync = got
                     _freshen(ctx, paths, resync)
                     shown, tracked = await off_loop(_sort_changes, ctx, paths, hidden)
                     stale_tree(tracked)

@@ -47,6 +47,7 @@ def _launch(monkeypatch, *, live=5010, argv=(), last=(), ok=True):
     monkeypatch.setattr(leela.desktop, 'warm_cdp', lambda p: None)
     monkeypatch.setattr(app, 'running_leela', lambda *a, **k: live)
     monkeypatch.setattr(app, 'folders', lambda a=None, _v=list(argv): _v)
+    monkeypatch.setattr(app, 'files', lambda a=None: [])
     monkeypatch.setattr(app, 'serve', lambda *a, **k: got.__setitem__('served', got['served'] + 1))
     monkeypatch.setattr(app, 'hub_open', lambda port, path, host='127.0.0.1', timeout=60:
                         got['opened'].append((port, str(path))) or dict(ok=True, id='proj', name='proj', url=f'http://proj.localhost:{port}/'))
@@ -94,6 +95,50 @@ def test_a_folder_launch_still_opens_through_the_hub_route(monkeypatch, tmp_path
     assert got['remembered'] == [[str(tmp_path)]]
     [(urls, titles, kw)] = got['windows']
     assert urls == ['http://proj.localhost:5010/'] and kw['keys'] == ['proj']
+
+def test_a_file_that_arrives_before_the_server_answers_waits_for_it(monkeypatch, tmp_path):
+    """A cold launch from Finder gets the file event while the server is still starting, and the file was dropped."""
+    import leela.desktop, leela_app as app
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (f := proj/'a.md').write_text('')
+    calls, opened, told = [], [], []
+    def hub(port, path, host='127.0.0.1', timeout=60, file=''):
+        calls.append((path, file))
+        return {'ok': False, 'down': True, 'error': 'refused'} if len(calls) < 3 else dict(ok=True, id='proj', name='proj', url='http://proj.localhost:5010/')
+    monkeypatch.setattr(app, 'hub_open', hub)
+    monkeypatch.setattr(app, '_tell', told.append)
+    monkeypatch.setattr(leela.desktop, 'open_window', lambda url, title='leela', key=None, **kw: opened.append((url, key)))
+    app.open_file(5010, f, every=0)
+    assert calls == [(proj.resolve(), f)] * 3 and opened == [('http://proj.localhost:5010/', 'proj')]
+    monkeypatch.setattr(app, 'hub_open', lambda *a, **k: {'ok': False, 'down': True, 'error': 'refused'})
+    app.open_file(5010, f, wait=0)
+    assert len(opened) == 1 and 'refused' in told[0], 'a server that never answers is said, not swallowed'
+    assert app.files([str(f), str(proj), 'nope']) == [str(f)]
+
+
+def test_a_file_directly_in_home_is_refused_aloud_and_asks_the_server_for_nothing(monkeypatch, tmp_path):
+    import pytest, leela_app as app
+    monkeypatch.setenv('HOME', str(tmp_path))
+    (f := tmp_path/'x.md').write_text('')
+    told = []
+    monkeypatch.setattr(app, '_tell', told.append)
+    monkeypatch.setattr(app, 'hub_open', lambda *a, **k: pytest.fail('home must never become a workspace'))
+    app.open_file(5010, f)
+    assert 'x.md' in told[0] and 'not a project folder' in told[0]
+
+
+def test_a_file_argument_opens_its_workspace_window_and_then_the_file(monkeypatch, tmp_path):
+    import leela_app as app
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (f := proj/'a.md').write_text('')
+    got = _launch(monkeypatch)
+    opened = []
+    monkeypatch.setattr(app, 'files', lambda a=None: [str(f)])
+    monkeypatch.setattr(app, 'open_file', lambda port, path, **k: opened.append((port, path)))
+    app.run()
+    assert got['opened'] == [(5010, str(proj.resolve()))], 'the file chose its workspace; no unrelated last folder'
+    [(urls, titles, kw)] = got['windows']
+    kw['on_ready'](); kw['on_open_file']('/elsewhere/b.md')
+    assert opened == [(5010, str(f)), (5010, '/elsewhere/b.md')], 'the command-line file, then one Finder sends later'
+
 
 def test_the_bare_window_key_cannot_be_a_folders_slug():
     "`open_window` raises the window it finds under a key, so a folder named `leela` must not share the bare window's."

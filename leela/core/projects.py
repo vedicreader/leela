@@ -9,7 +9,7 @@ from kunda.pythons import nearest_marked
 
 from .. import leela_cfg
 
-__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marked', 'project_dir',
+__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marked', 'project_dir', 'workspace_for',
            'session', 'remember', 'note_folder', 'drop_folder',
            'last_folders', 'last_folder', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
 
@@ -19,6 +19,14 @@ PROJECT_MARKERS = ('.git', 'pyproject.toml', 'setup.py', 'settings.ini')
 def project_dir(start, stop=None):
     "The nearest checkout at or above `start`, not searched past `stop`. See `nearest_marked`."
     return nearest_marked(start, PROJECT_MARKERS, stop)[0]
+
+def workspace_for(file, home=None):
+    "The folder a single file opens in: its checkout, else its own folder. Never `home` or the root; None when that leaves nothing."
+    f, home = Path(file).expanduser().resolve(), Path(home or Path.home()).resolve()
+    barred = {home, Path(f.anchor)}
+    d = nearest_marked(f, PROJECT_MARKERS, home)[0]
+    if d is not None and d not in barred: return d
+    return None if f.parent in barred else f.parent
 
 #: The session a person opens. A test points `SESSION` at its own file; the guard below is about this one.
 DEFAULT_SESSION = SESSION = leela_cfg/'desktop.json'

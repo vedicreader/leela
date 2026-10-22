@@ -5355,6 +5355,11 @@ function watchFiles() {
       if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
     }, wait);
   });
+  // Opened by the desktop shell (Finder, Open With), not by this page: show it without a reload.
+  es.addEventListener('opened', e => {
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+    if (d.path) leeOpenFile(d.path).catch(err => leeFail('open', d.path, err));
+  });
   es.onerror = () => { es.close(); if (fsEvents === es) setTimeout(watchFiles, 3000); };
   return es;
 }

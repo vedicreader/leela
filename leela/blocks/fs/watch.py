@@ -69,6 +69,14 @@ class Watcher:
         # A batch is a delta, so one lost is lost for good. Too many to carry is a redraw instead.
         if len(paths) > MAX_BATCH: paths, resync = [], True
         for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer, q, paths, resync)
+    def announce(self, path):
+        "Tell every subscriber a tab was opened on `path` by something other than the page. From any thread."
+        if self.loop is None: return
+        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer_open, q, str(path))
+    @classmethod
+    def _offer_open(cls, q, path):
+        if q.full(): cls._offer(q, [], False)
+        q.put_nowait(path)
     @staticmethod
     def _offer(q, paths, resync=False):
         if q.full():

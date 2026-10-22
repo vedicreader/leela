@@ -19,7 +19,7 @@ from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
 from .blocks.term.term import Terminals
 
-__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window']
+__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window', 'openable']
 
 class _EnvClient:
     "Read-only access to some *other* process's inspector, in the shape `Kernel.api` has."
@@ -158,6 +158,10 @@ What should this document work out?
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
+
+def openable(p):
+    "Whether a tab can show this file: text, a notebook, a PDF or an image."
+    return is_texty(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
 
 #: What the inline panel promises, said to the model that keeps it. The tools are gone, so this describes the situation, not a rule.
 SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
@@ -548,8 +552,7 @@ class Workspace:
     def open(self, path, kind=None):
         "Open a file, focusing it if it is already open. Refuses anything outside the open folders."
         p = self.fs._check(path, must_exist=True)
-        if not is_texty(p) and p.suffix.lower() not in ('.ipynb', '.pdf', *IMAGE_EXTS):
-            raise Unsafe(f'{p.name} is not a text file')
+        if not openable(p): raise Unsafe(f'{p.name} is not a text file')
         try: self.active_root = self.fs.root_of(p)
         except Unsafe: pass
         if (i := self.find(p)) is not None:
@@ -559,6 +562,12 @@ class Workspace:
         return self._add_tab(Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
                                                                 'pdf' if p.suffix.lower() == '.pdf' else
                                                                 'image' if p.suffix.lower() in IMAGE_EXTS else 'text')))
+    def open_external(self, path):
+        "Open a file another process handed over: focus it, keep the tab strip, and tell any page showing this workspace."
+        t = self.open(path)
+        self.save()
+        self.fs_watch.announce(t.path)
+        return t
     def open_vault_doc(self, doc_id, shelf='', vault='', title=''):
         "Open a vault document as a tab. It has no path: the client reads it back through `/vault/doc`."
         ref = f'{vault or self.vaults.active.name}|{shelf}|{doc_id}'

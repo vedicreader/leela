@@ -112,6 +112,20 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
         thread.join(timeout=3)
 
 
+def test_a_file_opens_in_its_checkout_else_its_folder_and_never_in_home(tmp_path):
+    base = tmp_path.resolve()
+    home = base/'home'
+    (src := home/'code'/'repo'/'src').mkdir(parents=True); (src.parent/'.git').mkdir()
+    (notes := home/'notes').mkdir(); (loose := home/'x.md').write_text('')
+    assert projects.workspace_for(src/'a.py', home) == src.parent, 'its checkout'
+    assert projects.workspace_for(notes/'n.md', home) == notes, 'no marker: its own folder'
+    assert projects.workspace_for(loose, home) is None, 'directly in home: no workspace'
+    (home/'.git').mkdir()
+    assert projects.workspace_for(notes/'n.md', home) == notes, 'a dotfiles repo makes home a checkout, which is never a workspace'
+    assert projects.workspace_for(loose, home) is None
+    assert projects.workspace_for('/x.md', home) is None, 'nor is the root'
+
+
 def test_a_windowed_launch_gets_the_path_a_terminal_has(monkeypatch):
     """Finder and the Dock start an app with almost nothing on PATH, so `git` and `claude` went missing and the app reported no repository and no Claude Code while both worked in its own terminal."""
     import os, shutil

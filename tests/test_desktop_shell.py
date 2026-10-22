@@ -248,6 +248,7 @@ def test_a_launch_beside_a_leela_on_another_config_dir_serves_its_own(monkeypatc
     monkeypatch.setattr(leela.desktop, 'warm_cdp', lambda p: None)
     monkeypatch.setattr(leela.desktop, 'run_shell', lambda urls, **kw: windows.append(urls))
     monkeypatch.setattr(leela_app, 'folders', lambda a=None: [])
+    monkeypatch.setattr(leela_app, 'files', lambda a=None: [])
     monkeypatch.setattr(leela_app, 'free_port', lambda *a, **k: 5099)
     monkeypatch.setattr(leela_app, 'serve', lambda args, background=False: served.append(args))
     real = leela_app.running_leela

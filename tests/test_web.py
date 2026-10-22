@@ -541,6 +541,62 @@ def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
         assert d['config'] == cfg_mark(), 'a second launch tells its own Leela from one on another config dir by this'
 
 
+def _real_hub(tmp_path):
+    "A hub whose workspaces are real and each saves to its own state file."
+    made = {}
+    def build(root, slug):
+        ws = made[slug] = Workspace(roots=[root])
+        ws._state_path = tmp_path/f'{slug}.json'
+        return WorkspaceSite(slug, Path(root).name, str(root), lambda *a: None, ws.open_external)
+    return WorkspaceHub([], 5001, build=build), made
+
+
+def test_a_file_handed_to_the_hub_opens_as_the_active_tab_and_is_saved(tmp_path):
+    """Finder hands Leela a file, and `/hub/open` took only folders, so double-clicking a file opened nothing."""
+    (proj := tmp_path/'proj').mkdir()
+    (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
+    hub, made = _real_hub(tmp_path)
+    for f in (a, b):
+        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
+        assert (status, d['ok']) == (200, True), d
+    assert d['url'] == 'http://proj.localhost:5001/' and list(hub.sites) == ['proj'], 'both files, one workspace'
+    ws = made['proj']
+    assert [t.path for t in ws.tabs] == [str(a.resolve()), str(b.resolve())] and ws.tab.path == str(b.resolve())
+    again = Workspace(roots=[proj]); again._state_path = tmp_path/'proj.json'
+    assert again.reopen_saved_tabs() == 2 and again.tab.path == str(b.resolve()), 'the tab outlives the workspace'
+
+
+def test_a_file_the_workspace_cannot_show_is_refused_before_anything_is_built(tmp_path):
+    from leela.core import projects
+    (proj := tmp_path/'proj').mkdir(); (other := tmp_path/'other').mkdir()
+    (outside := other/'x.md').write_text('x\n'); (packed := proj/'a.zip').write_bytes(b'PK')
+    hub, made = _real_hub(tmp_path)
+    for f in (outside, packed, proj/'gone.md'):
+        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
+        assert (status, d['ok']) == (400, False), f
+    assert not hub.sites and not made and not projects.recent_folders(), 'a refusal leaves no workspace, no recent entry'
+    status, d = _hub_get(hub, OPEN_PATH)
+    assert status == 400 and 'not a folder' in d['error'], 'the probe `leela_on` relies on still answers'
+
+
+def test_a_tab_opened_by_the_shell_is_pushed_to_the_page_that_is_listening(tmp_path):
+    """The page learns of a server-opened tab over `/fs/events`, which it already holds open."""
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        try:
+            await asyncio.sleep(.3)
+            while not q.empty(): q.get_nowait()
+            await asyncio.to_thread(w.announce, tmp_path/'a.md')
+            return await asyncio.wait_for(q.get(), 2)
+        finally: w.close()
+    assert asyncio.run(run()) == str(tmp_path/'a.md')
+    js = (Path(__file__).resolve().parents[1]/'leela'/'static'/'lee-ide.js').read_text()
+    assert "addEventListener('opened'" in js, 'and the built bundle listens for it'
+
+
 def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):
     """The lifespan legs were zipped over the sites present at startup, so a workspace opened later never heard `lifespan.shutdown` and left its kernels, terminals and dev servers running."""
     (late := tmp_path/'late').mkdir()

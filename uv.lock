@@ -2235,14 +2235,14 @@ wheels = [
 
 [[package]]
 name = "kavacha"
-version = "0.0.8"
+version = "0.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/0e/e978355d1a54b901ce6c2b6673ec4694f24a1f098d6336d2ff2ff0959822/kavacha-0.0.8.tar.gz", hash = "sha256:58f311909e650de7f1493ecb4b2be9a98b5fe8ac5131fc93f701a0984bdbbd36", size = 31535, upload-time = "2026-10-20T10:22:02.891Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/80/b69394c7d466bce3c9905d9faf3468030e1048ebb97fe00be79b011d06fa/kavacha-0.0.9.tar.gz", hash = "sha256:8a0bb717916636662003623ccf127b46aede31b929f0dc56c614f8e83e5579c2", size = 32119, upload-time = "2026-10-22T01:31:24.923Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/03/d392987a553fc7d336515f47dff3ba3c5d19f84bd61e8d0b175745031bf9/kavacha-0.0.8-py3-none-any.whl", hash = "sha256:4b33c4285b7f162002a6fd9a47ceb5869c0545357fe703c9c413f2c7bd6f11f5", size = 35431, upload-time = "2026-10-20T10:22:01.748Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/0f/65ffe4acdd52dd4076c9929595c0ef121aa5b46534b9bd51c4d6d6c2e13d/kavacha-0.0.9-py3-none-any.whl", hash = "sha256:1f019d62732877e7a21b21c85dcebcd238933c14607009d7362fae65ecf3594d", size = 35944, upload-time = "2026-10-22T01:31:23.78Z" },
 ]
 
 [package.optional-dependencies]
@@ -2531,12 +2531,12 @@ requires-dist = [
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
-    { name = "kavacha", specifier = ">=0.0.8" },
-    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.8" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.8" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.8" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.8" },
-    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.8" },
+    { name = "kavacha", specifier = ">=0.0.9" },
+    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.9" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.9" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.9" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.9" },
+    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.9" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.12" },
     { name = "kunda", specifier = ">=0.0.5" },
@@ -2552,7 +2552,7 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.67" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.68" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
@@ -4740,7 +4740,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.67"
+version = "0.2.68"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4754,9 +4754,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/ba/50f071c3c78fb16523639a539be2ca70d0dbf8599195e513af72bfd7f91e/ramabana-0.2.67.tar.gz", hash = "sha256:99b9238d11dd6b49e7855da66eeb55444ab2ca4d20a6389c2d2710abec46dbd6", size = 333999, upload-time = "2026-10-21T23:05:34.955Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/fc/6eb30e1b6df424f8a17b4d2fec86ccd4c65cfe0eb3fbc5148fbc8611fda0/ramabana-0.2.68.tar.gz", hash = "sha256:53f4cf4ca0caed1a1f318f7245220964a03f7413f3e1a72f2f1e99d47f1f5f3c", size = 334246, upload-time = "2026-10-22T01:03:31.498Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/5c/65882790e60815cd7a9e0d04f223a3f786915cd4315ef8ea0cbe2d8c57fa/ramabana-0.2.67-py3-none-any.whl", hash = "sha256:dfa702819f22c3f26898399725542037cb47b203c1e845083d2bf8c72cc56ffe", size = 333415, upload-time = "2026-10-21T23:05:33.223Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/fb/5d31153aeca689e9c97fde6101d56cedcf3688343388c61d800bc8d38a59/ramabana-0.2.68-py3-none-any.whl", hash = "sha256:e5403e314bd1bc5d6c736477bf41fb26947b8e63d5b7283ae53a4b5c43ebb964", size = 333668, upload-time = "2026-10-22T01:03:29.667Z" },
 ]
 
 [package.optional-dependencies]

@@ -1389,7 +1389,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
         if hub is not None:
             now_serving(host, port, [s.root for s in hub.sites.values()] + [str(root)])
         return WorkspaceSite(slug, root.name, str(root),
-                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()))
+                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()), ws.open_external)
     if app_window and roots:
         sites = [site_for_root(r, s) for r, s in zip(roots, assign_slugs(roots))]
         app = hub = WorkspaceHub(sites, port, build=site_for_root)
@@ -1437,7 +1437,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
             r0 = first(ws.fs.roots)
             app = hub = WorkspaceHub(
                 [WorkspaceSite(assign_slugs([r0])[0] if r0 else 'leela',
-                               r0.name if r0 else 'leela', str(r0 or ''), app)],
+                               r0.name if r0 else 'leela', str(r0 or ''), app, ws.open_external)],
                 port, build=site_for_root)
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
         print(f'leela  http://{host}:{port}   folders: '

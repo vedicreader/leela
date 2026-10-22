@@ -16,54 +16,30 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    # Not `ramabana[all]`: since 0.2.5 that is `[cli]` plus `[serve]` (mcp, agent-client-protocol) and
-    # `[dhrona]`. Leela imports neither server, and names `dhrona` itself. `[all]` no longer carries
-    # `rishi[all]`; the local-model backends (mlx, cv2, transformers, scipy, about 400MB) are
-    # `leela[local]` below, and the settings pane installs them on demand.
-    # `[cli]` is `[search]` (fossick, koshas, litesearch, rgapi, vishalakshi) and `[python]` (dhrishti,
-    # jupyter-client, rich), plus pyghostty, teleprint and fastpylight. `workspace._attachment_context`
-    # imports the media helpers, which since ramabana 0.2.9 live in `ramabana.tools`, not the terminal.
-    # Pinned, not floored: the next ramabana and the next rishi both land behaviour Leela has to
-    # change for, and a floor would take them on the next sync without a word. Raise these
-    # deliberately, with the Leela side of the change in the same commit.
-    "ramabana[cli]==0.2.67",
-    # The toolset and the git plumbing are their own packages now, and Leela names them itself
-    # rather than reaching through `ramabana.tools` and `ramabana.git` for what they hold. The
-    # re-export seams stay for a release; a second package's spelling of the same object is not
-    # a dependency worth keeping.
+    "ramabana[cli]==0.2.68",
     "shalya>=0.1.19",
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",
-    # The three packages Leela's own code was lifted into. `kavacha` is a base dependency and not
-    # a desktop extra: `blocks/keys/menus.py` takes the menu vocabulary from it, and its spec,
-    # bundle and probe halves need nothing but fastcore. `kunda` is the kernels and the interpreter
-    # discovery; `pullup` the project, the release pipeline, the deploys and the workflows.
-    "kavacha>=0.0.8",
+    "kavacha>=0.0.9",
     "kunda>=0.0.5",
     "pullup>=0.0.11",
     "exhash>=0.4.10",
     "fossick>=0.1.20",
-    "ipykernel>=7.3.0",        # launched, not imported: leela's own venv is a kernel target
+    "ipykernel>=7.3.0",
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
     "koshas>=0.1.12",
     "litesearch>=0.1.52",
-    "mdhtml>=0.1.38",   # `md2dom(...).to_html()`, which `blocks/canvas/lit.py` renders through
-    # The ripgrep flags and its event stream, in one place rather than a command line built here.
-    # `koshas` and `fossick` both bring it; Leela calls it directly, so Leela names it.
+    "mdhtml>=0.1.38",
     "rgapi>=0.1.22",
     "python-fasthtml>=0.14.9",
-    "starlette>=1.6.0",        # 1.6.0 excludes text/event-stream from GZip; below it every stream buffers
+    "starlette>=1.6.0",
     "uvicorn>=0.30.0",
     "httpx2>=2.10.0",
     "numpy>=1.26",
-    # rapidfuzz backs the quick-open ranker (`core.text._fuzzy_score`), orjson the .ipynb parse in
-    # `blocks/nb`. Both are import-guarded with a stdlib fallback, so a partial install still runs.
     "rapidfuzz>=3.0",
     "orjson>=3.9",
     "packaging>=24.0",
-    # `workspace._attachment_context` imports `ramabana.cli` for the media helpers, and that
-    # module imports rich, which ramabana declares nowhere. Ours to name while that is true.
     "rich>=13.0",
     "pyyaml>=6.0",
     "dhrishti>=0.1.8",
@@ -72,10 +48,6 @@ dependencies = [
     "rahasya>=0.0.4",
     "varga>=0.0.7",
     "lekhaka>=0.0.4",
-    # Was `[lsp]`, `[github]` and `[gateway]`. Leela's own code reaches all three -- the rename and
-    # hover paths, the pull request a branch belongs to, the workflow editor, and the kernels the
-    # gateway serves -- so they are dependencies. The guards below them stay: they still have a
-    # partial install and a capped version to report.
     "pyright>=1.1.400",
     "dockeasy>=0.0.10",
     "vpseasy>=0.0.24",
@@ -83,28 +55,17 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "keyring>=25.0.0",
     "jupygate>=0.0.1",
-    # Capped, not excluded: 0.2.8 made something the gateway `async for`s a coroutine, and by
-    # 0.2.14 `run` is a bare async generator where `GatewayKernel` wants the `Run` it reads
-    # `.reply` off. An unpinned resolve took the latter and every cell came back 500.
-    "jupyasyncclient>=0.2.1,<0.2.8",
+    "jupyasyncclient>=0.2.1,<0.2.8",   # 0.2.8+ returns a bare async generator where GatewayKernel reads `.reply`: every cell 500s
     "jupywire>=0.1.1",
-    # Warm starts, assess, capture and accept in the agent pane (`blocks/agent/warm.py`).
     "dhrona>=0.1.16",
 ]
 
 [project.optional-dependencies]
-ipymini = [] # compatibility extra; ipymini now ships with Leela
-# On-device inference. Kept out of the default install and out of the desktop bundle because it is
-# the heaviest thing Leela can depend on; `RUNTIME_EXTRAS` installs one of these from the settings
-# pane, pinned to the rishi the bundle was frozen with.
-# `litert` is not an extra any more: rishi 0.1.32 took litert-lm-api on as a base
-# dependency, so naming it here would install nothing and warn.
+ipymini = []
 local = ["rishi[mlx,llama]==0.1.54"]
-# The native window and the two freezers, through kavacha, which installs each platform's own
-# bindings and nothing else. `pillow` arrives with `kavacha[icons]`, which both build extras carry.
-desktop = ["kavacha[window]>=0.0.8"]
-macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.8"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.8"]
+desktop = ["kavacha[window]>=0.0.9"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.9"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.9"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
@@ -125,9 +86,9 @@ path = "leela/__init__.py"
 [dependency-groups]
 dev = [
     "fastaistyle>=0.0.17",
-    "fastship>=0.1.2",     # Leela's own release pipeline; a project's `ship-*` runs in its venv
+    "fastship>=0.1.2",
     "leela[local]",
-    "leela-bricks",   # the canvas example bricks; tests resolve every embed against it
+    "leela-bricks",
     "rishi[all]==0.1.54",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
@@ -144,25 +105,15 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# `loadgroup` is `load` plus one rule: tests marked `xdist_group` stay on one worker. Modules whose
-# fixtures are module-scoped and expensive declare a group rather than being rebuilt per worker.
 addopts = "-m 'not slow' -n auto --dist loadgroup"
-# A hung kernel, browser or approval fails by name rather than stalling the run (pytest-timeout).
 timeout = 300
 markers = ["slow: drives a browser, starts a kernel, or loads a model", "no_claude: runs as a machine without Claude Code, so `_claude_on_path` steps aside"]
 
 [tool.uv]
-# Leela imports no `mcp`; `koshas` brings it and asks only for `>=1.2.0`. 2.x renamed `FastMCP`
-# to `MCPServer`, which `ramabana.mcp` imports, so an unconstrained resolve takes the major and
-# `import ramabana.mcp` stops working. A constraint rather than a dependency: it is not ours.
-# `pyjwt` arrives through `mcp[crypto]`. Below 2.15.0 it carries the asymmetric-PEM HS/RS confusion
-# bypass and the other Dependabot alerts against this lock.
+# mcp 2 renamed FastMCP, which ramabana.mcp imports; pyjwt below 2.15.0 has the HS/RS key-confusion bypass
 constraint-dependencies = ["mcp<2", "pyjwt>=2.15.0"]
 
 [tool.uv.sources]
+# PyPI, not sibling checkouts: the app bundle installs from this lock, and an editable path breaks it
 leela = { workspace = true }
 leela-bricks = { path = "extensions/bricks", editable = true }
-# The six packages Leela's own code was lifted into are taken from PyPI, not from the checkouts
-# beside this one. `setup_app.lock_requirements` exports this lock as the app's requirements, and
-# an editable path there builds a bundle that depends on directories only this machine has.
-# Add `name = { path = "../name", editable = true }` back while working across two of them.

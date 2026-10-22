@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, hashlib, json, re
+import asyncio, hashlib, json, re, threading
 from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,6 +76,16 @@ def workspace_urls(roots, port, store=None):
     roots = [Path(r).expanduser().resolve() for r in roots]
     return [f'http://{s}.localhost:{port}/' for s in assign_slugs(roots, store)]
 
+def _unopenable(file, root):
+    "Why `file` cannot be opened as a tab in the workspace at `root`, or None."
+    from .workspace import openable
+    try: f = Path(file).expanduser().resolve()
+    except (OSError, ValueError): return f'not a file: {file}'
+    if not f.is_file(): return f'not a file: {file}'
+    if not f.is_relative_to(root): return f'{f} is outside {root}'
+    if not openable(f): return f'{f.name} is not a text file'
+    return None
+
 async def _json(send, body, status=200):
     raw = json.dumps(body).encode()
     await send({'type': 'http.response.start', 'status': status,
@@ -106,6 +116,8 @@ class WorkspaceSite:
     name: str
     root: str
     app: object
+    #: `open_file(path)` shows a file as this workspace's active tab. Absent, the hub cannot open files in it.
+    open_file: object = None
 
 class LoopbackHostGuard:
     "Reject DNS-rebinding and forwarded Host headers before they reach executable routes."
@@ -133,6 +145,8 @@ class WorkspaceHub:
         self.build = build
         self._loop = self._scope = None
         self._queues, self._legs = {}, []
+        # Two files for one checkout arrive together on a cold launch: one site, not two.
+        self._opening = threading.Lock()
     def url_for(self, slug): return f'http://{slug}.localhost:{self.port}/'
     def catalog(self):
         "Every workspace and the `*.localhost` URL that reaches it."
@@ -156,12 +170,13 @@ class WorkspaceHub:
         return self.url_for(site.slug)
     def open_folder(self, root):
         "The site serving `root`, building and registering one when nothing does yet."
-        if (s := self.site_at(root)) is not None: return self._noted(root, s)
-        if self.build is None: raise RuntimeError('this workspace cannot open another folder')
-        s = self.build(root, assign_slugs([root])[0])
-        if s is None: raise RuntimeError(f'no workspace could be built for {root}')
-        self.add_site(s)
-        return self._noted(root, s)
+        with self._opening:
+            if (s := self.site_at(root)) is not None: return self._noted(root, s)
+            if self.build is None: raise RuntimeError('this workspace cannot open another folder')
+            s = self.build(root, assign_slugs([root])[0])
+            if s is None: raise RuntimeError(f'no workspace could be built for {root}')
+            self.add_site(s)
+            return self._noted(root, s)
     def _noted(self, root, site):
         "Remember the folder here, where both callers pass, rather than in the desktop one."
         from .core.projects import note_folder
@@ -186,14 +201,22 @@ class WorkspaceHub:
         scope['leela.workspace_id'] = site.slug
         await site.app(scope, receive, send)
     async def _open(self, scope, send):
-        "Serve a folder as its own workspace. The desktop shell then points a new window at it."
-        raw = (parse_qs(scope.get('query_string', b'').decode()).get('path') or [''])[0]
+        "Serve a folder as its own workspace, and with `file`, open that file in it. The desktop shell then points a window at the row."
+        q = parse_qs(scope.get('query_string', b'').decode())
+        raw, file = (q.get('path') or [''])[0], (q.get('file') or [''])[0]
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
         if root is None or not root.is_dir():
             return await _json(send, {'ok': False, 'error': f'not a folder: {raw}', 'config': cfg_mark()}, 400)
+        # Refused before anything is built, so a bad file leaves no workspace, recent entry or window behind.
+        if file and (why := _unopenable(file, root)):
+            return await _json(send, {'ok': False, 'error': why, 'config': cfg_mark()}, 400)
         # Building one starts a kernel pool, which would stall every open window on the loop.
-        try: site = await asyncio.to_thread(self.open_folder, root)
+        try:
+            site = await asyncio.to_thread(self.open_folder, root)
+            if file:
+                if site.open_file is None: raise RuntimeError('this workspace cannot open a file')
+                await asyncio.to_thread(site.open_file, Path(file).expanduser().resolve())
         except Exception as e: return await _json(send, {'ok': False, 'error': str(e), 'config': cfg_mark()}, 400)
         await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root,
                            'url': self.url_for(site.slug), 'config': cfg_mark()})
