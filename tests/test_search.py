@@ -315,3 +315,19 @@ def test_a_literal_search_stays_literal_and_a_regex_search_does_not(tmp_path):
     assert {Path(h.path).name for h in s._rg('nee.le', 20, regex=True)} == {'a.py', 'b.py'}
 
 
+def test_a_symbol_hit_in_another_checkouts_venv_opens_this_projects_copy(tmp_path):
+    "The symbols leg named kosha's own `.venv` copy of `fastcore/xtras.py`, outside the open folders, so selecting the hit was refused."
+    mine = tmp_path/'proj'/'.venv'/'lib'/'python3.13'/'site-packages'; (mine/'fastcore').mkdir(parents=True)
+    (mine/'fastcore'/'xtras.py').write_text('def atomic_save(): pass\n')
+    theirs = tmp_path/'other'/'.venv'/'lib'/'python3.13'/'site-packages'/'fastcore'/'xtras.py'
+    row = {'content': 'def atomic_save(): pass', 'package': 'fastcore',
+           'metadata': {'path': str(theirs), 'lineno': 1, 'name': 'atomic_save', 'mod_name': 'fastcore.xtras.atomic_save'}}
+    store = SimpleNamespace(rows_where=lambda q, *a, select='', **k: [row] if select.endswith('package') and not q.startswith('NOT') else [])
+    s = Search(Sandbox([tmp_path/'proj']), prefer_kosha=False)
+    s._kosha = lambda path=None: SimpleNamespace(code_st=store, env_st=store, pkgs=SimpleNamespace(count=1))
+    s.env_roots = lambda: [mine]
+    hit, = s._symbols('atomic_save', 10)
+    assert hit.path == str(mine/'fastcore'/'xtras.py'), 'the hit names a file this window cannot open'
+    s.fs.read(hit.path)
+
+

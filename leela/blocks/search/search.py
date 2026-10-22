@@ -488,7 +488,8 @@ class Search:
         out = L()
         for row, env in [*((r, False) for r in rr), *((r, True) for r in er)]:
             m = _meta(row)
-            out.append(Hit(path=str(m.get('path') or row.get('path') or ''),
+            raw = str(m.get('path') or row.get('path') or '')
+            out.append(Hit(path=self._here(raw) or raw,
                 line=int(m.get('lineno') or 1), text=(row.get('content') or '').strip(),
                 kind='env-symbol' if env else 'symbol',
                 symbol=str(m.get('mod_name') or m.get('name') or ''),
