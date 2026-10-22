@@ -172,6 +172,7 @@ def test_an_untrusted_canvas_executes_nothing(client, corpus, route, body):
 
 def test_a_component_writing_a_name_reruns_the_document(client, corpus, ws):
     p = opened(client, corpus, 'a-sales-funnel.canvas.md')
+    assert store_for(ws.fs).get(p).runtime.ready(120), 'the kernel never came up'
     stages = [{'name': 'Leads', 'value': 1000}, {'name': 'Won', 'value': 500}]
     r = client.post('/canvas/emit', json={'path': p, 'name': 'stages', 'value': stages}).json()
     assert r['ok'] and 'sf3' in r['runs']
@@ -181,6 +182,7 @@ def test_a_name_a_cell_stops_defining_is_dropped(client, corpus, ws):
     """The namespace kept every name a cell had ever defined."""
     p = opened(client, corpus, 'pricing-a-run.canvas.md')
     o = store_for(ws.fs).get(p)
+    assert o.runtime.ready(120), 'the kernel never came up'
     ins = client.post('/canvas/op', json={'path': p, 'op': {
         'op': 'insert', 'kind': 'code', 'body': 'doomed = 41'}}).json()
     bid = ins['brick']['id']
@@ -319,6 +321,26 @@ def test_a_kernel_that_never_starts_costs_one_timeout_not_one_per_cell():
     assert took < 5, f'{took}s'
     assert all(not r['ok'] and r['outputs'][0]['ename'] == 'TimeoutError' for r in runs.values()), runs
 
+
+def test_ready_waits_out_a_start_that_outlasts_the_timeout():
+    "A call racing a slow kernel start got 'still starting' and read an empty namespace; `ready` is the signal that the start finished."
+    import asyncio
+    from types import SimpleNamespace
+    from leela.blocks.canvas.live import KernelRuntime
+    class K:
+        alive = True
+        async def execute(self, code, timeout=None): return SimpleNamespace(outputs=[{'output_type': 'stream', 'name': 'stdout', 'text': 'ok'}])
+        async def interrupt(self): pass
+        async def shutdown(self): pass
+    async def start():
+        await asyncio.sleep(1.5)
+        return K()
+    rt = KernelRuntime(start, timeout=1)
+    try:
+        assert rt.exec_cell('x = 1')[0]['ename'] == 'TimeoutError'
+        assert rt.ready(10)
+        assert rt.exec_cell('x = 1')[0]['text'] == 'ok'
+    finally: rt.close()
 
 def test_a_start_that_outlasts_the_timeout_serves_the_next_call_once_it_is_up():
     "A slow start made every call fail for a whole timeout afterwards, even once the kernel it was starting was up."

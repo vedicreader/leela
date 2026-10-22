@@ -133,6 +133,7 @@ class Runtime(Dataflow):
             except Exception as e: out[key] = dict(ok=False, error=f'{type(e).__name__}: {e}')
         return out
 
+    def ready(self, timeout=None): return True
     def assign(self, name, value): self.ns[name] = value
     set = assign
     def drop(self, names):
@@ -225,6 +226,15 @@ class KernelRuntime(Dataflow):
             self._ready = True                          # set first, or a failed boot boots again
             await self._bounded(self._kernel, self._boot, self.timeout)
         return self._kernel
+
+    def ready(self, timeout=None):
+        "Wait for the kernel to be up, however long a start that outlasted `timeout` takes. False if it did not come up."
+        async def up():
+            if (p := self._pending) is not None and not p.done(): await asyncio.wait({p})
+            await self._kernel_now()
+        try: self._call(up(), timeout)
+        except Exception: return False
+        return True
 
     async def _bounded(self, k, code, timeout):
         "Run `code`, and stop it when it outstays `timeout`."
