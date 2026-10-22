@@ -1368,7 +1368,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
             print(f'  gateway unavailable; using direct kernel transport: {errstr(e)}')
     from .blocks.runtime.kernels import RuntimeBroker
     broker = RuntimeBroker()   # every shape gets the ceiling
-    from .core.projects import now_serving, served
+    from .core.projects import loose_root, now_serving, served
     hub = None
     pool_ports = count(kernel_port, 100)
     def site_for_root(root, slug):
@@ -1382,14 +1382,14 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
         ws._state_path = state
         broker.register(ws.pool)
         if ws.kernels_auto_manage: broker.auto_manage = True
-        if root not in ws.fs.roots: ws.add_root(root)
+        if root not in ws.fs.roots: ws.add_root(root, loose=root == loose_root())
         if ws.restore_remembered_agent_state(): ws.save()
         ws.jobs.tick()
         # Only for a folder opened at runtime: at launch the whole set is written below.
         if hub is not None:
             now_serving(host, port, [s.root for s in hub.sites.values()] + [str(root)])
         return WorkspaceSite(slug, root.name, str(root),
-                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()), ws.open_external)
+                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()), ws.open_external, ws.release)
     if app_window and roots:
         sites = [site_for_root(r, s) for r, s in zip(roots, assign_slugs(roots))]
         app = hub = WorkspaceHub(sites, port, build=site_for_root)

@@ -20,7 +20,7 @@ dependencies = [
     "shalya>=0.1.19",
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",
-    "kavacha>=0.0.9",
+    "kavacha>=0.0.10",
     "kunda>=0.0.5",
     "pullup>=0.0.11",
     "exhash>=0.4.10",
@@ -63,9 +63,9 @@ dependencies = [
 [project.optional-dependencies]
 ipymini = []
 local = ["rishi[mlx,llama]==0.1.54"]
-desktop = ["kavacha[window]>=0.0.9"]
-macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.9"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.9"]
+desktop = ["kavacha[window]>=0.0.10"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.10"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.10"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"

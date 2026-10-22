@@ -91,21 +91,19 @@ def main():
 
 def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
-    from leela.core.projects import workspace_for
+    from leela.core.projects import loose_root, workspace_for
     from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
     from leela.hub import assign_slugs
-    # A file names its workspace. One that has none is told so rather than dropped.
-    given = {f: workspace_for(f) for f in files()}
-    for f in [f for f, d in given.items() if d is None]: _refuse_loose(f); del given[f]
-    # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer.
-    want = list(dict.fromkeys([*folders(), *given.values()])) or last_folder()
+    given = {f: workspace_for(f) or loose_root() for f in files()}
+    # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer. The loose window opens with its file, never at launch.
+    want = list(dict.fromkeys([*folders(), *(d for d in given.values() if Path(d) != loose_root())])) or last_folder()
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
     ok, why = shell_ready()
     # A second launch is a window, not a second Leela: one server means one origin, so what the
     # first copy saved is what this one reads. It is also the only way two windows share kernels.
     live = running_leela() if ok else None
     # Nothing to open leaves the saved open set alone: `remember([])` would erase it.
-    if live is not None and not want: return attach(live, [])
+    if live is not None and not want: return attach(live, [], files=list(given))
     dirs = remember(want)
     if live is not None: return attach(live, dirs, files=list(given))
     port = free_port()
@@ -167,17 +165,13 @@ def open_folder(port, path, host=HOST):
 
 def open_file(port, path, host=HOST, wait=60, every=.5):
     "Open one file Finder or the command line handed over, in the workspace it belongs to. A server still starting is waited for, up to `wait` seconds."
-    from leela.core.projects import workspace_for
+    from leela.core.projects import loose_root, workspace_for
     from leela.desktop import open_window
-    if (d := workspace_for(path)) is None: return _refuse_loose(path)
+    d = workspace_for(path) or loose_root()
     end = time.monotonic() + wait
     while (got := hub_open(port, d, host, file=path)).get('down') and time.monotonic() < end: time.sleep(every)
     if not got.get('ok'): return _tell(f"Leela could not open {path}: {got.get('error')}")
-    return open_window(got['url'], f"leela — {got['name']}", key=got['id'])
-
-def _refuse_loose(path):
-    "A file directly in the home folder or the root has no workspace, and the home folder is never made one."
-    return _tell(f"Leela will not open {Path(path).name} by itself: {Path(path).parent} is not a project folder. Move it into a folder, or open that folder in Leela first.")
+    return open_window(got['url'], f"leela — {Path(path).name if Path(d) == loose_root() else got['name']}", key=got['id'])
 
 def _tell(msg):
     "Say `msg` in a native dialog when a window can show one, and on the terminal either way."

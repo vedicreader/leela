@@ -483,8 +483,8 @@ class Workspace:
         tab.path = str(Path(new)/rest) if rest is not None else str(new)
         tab.title = Path(tab.path).name or tab.title
         return tab
-    def add_root(self, p):
-        r = self.fs.add_root(p)
+    def add_root(self, p, loose=False):
+        r = self.fs.add_root(p, loose=loose)
         self._owns_session = True
         self.rebind_journal()
         if not self.pool.kernels and self.pool.default_python is None:
@@ -532,7 +532,7 @@ class Workspace:
         "The checkout a project surface acts on: the nearest one at or above the folder in hand."
         from .core.projects import project_dir
         root = self.project_root
-        if root is None: return None
+        if root is None or root == self.fs.loose: return root
         if project_dir(root, root) is not None: return root
         cwd = self.cwd_for()
         return (project_dir(cwd, root) if cwd else None) or root
@@ -550,7 +550,8 @@ class Workspace:
         self.watch_env(None)
         return t
     def open(self, path, kind=None):
-        "Open a file, focusing it if it is already open. Refuses anything outside the open folders."
+        "Open a file, focusing it if it is already open. Refuses anything outside the open folders, unless this is the loose-files window."
+        if self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()): self.fs.admit(a)
         p = self.fs._check(path, must_exist=True)
         if not openable(p): raise Unsafe(f'{p.name} is not a text file')
         try: self.active_root = self.fs.root_of(p)
@@ -620,9 +621,13 @@ class Workspace:
         i = self.active if i is None else i
         if not (0 <= i < len(self.tabs)): return None
         t = self.tabs.pop(i)
+        if t.path and self.fs.admitted: self.fs.revoke(t.path)
         self.active = max(0, min(self.active if i > self.active else self.active-1, len(self.tabs)-1))
         self.watch_env(None)
         return t
+    def release(self, path):
+        "Close the tab on `path` when a folder has taken that file over."
+        if (i := self.find(path)) is not None: self.close(i); self.save()
     def move_tab(self, i, j):
         "Drag a tab to a new position, keeping the same document active afterwards."
         if not (0 <= i < len(self.tabs)): return self.tab
@@ -929,6 +934,7 @@ class Workspace:
         if t is not None and t.path:
             try:
                 root = self.fs.root_of(t.path)
+                if root == self.fs.loose: return root
                 if t.kind == 'notebook':
                     from .blocks.runtime.kernels import AGENT_SESSIONS, SESSIONS
                     d = Path(t.path).parent   # a transcript runs where it was written from, or its kernel's transcripts nest inside it
@@ -938,7 +944,7 @@ class Workspace:
             except Unsafe: pass
         if (root := self.project_root) is not None:
             from .blocks.git.git import repo_root
-            return repo_root(root) or root
+            return root if root == self.fs.loose else repo_root(root) or root
         return None
     def set_cwd(self, path=None, tab=None):
         "Set a per-tab cwd, or clear it with an empty path to return to auto mode."
@@ -1313,7 +1319,7 @@ class Workspace:
         for t in saved:
             place = str(t.get('path') or '')
             try:
-                if not place or not self.fs.covers(Path(place).resolve()): continue
+                if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve())): continue
                 tab = self.open(place)
                 if int(d.get('version', 0)) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
@@ -1387,9 +1393,10 @@ class Workspace:
         # Reconciled away is closed, as far as the merge in `save` is concerned. Without this the
         # next save reads the folders back out of the file it just healed.
         ws._closed_roots.update(stale)
+        from .core.projects import loose_root
         for r in saved_roots:
             if r in stale: continue
-            try: ws.add_root(r)
+            try: ws.add_root(r, loose=Path(r).resolve() == loose_root())
             except Exception: pass
         for t in d.get('tabs', []):
             try:

@@ -3,15 +3,17 @@
 from __future__ import annotations
 import asyncio, os, shutil, re
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from itertools import islice, zip_longest
 from fastcore.all import Path, L, atomic_save, mkdir as fc_mkdir
 from rgapi import fda, fd_iter
+from shalya.host import DENY
 from fastcore.shutil import move as fc_move
 from fastcore.xtras import flexicache, time_policy
 
 from ... import Dictable
 
-__all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'Sandbox']
+__all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'loose_refusal', 'Sandbox']
 
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
@@ -58,6 +60,20 @@ def is_texty(p):
     "Whether this can be opened in a text editor at all."
     return Path(p).suffix.lower() not in _BINARY
 
+def loose_refusal(p):
+    "Why a file outside every open folder may not be admitted as a loose tab, or None."
+    p = Path(p)
+    if not p.is_file(): return f'not a file: {p}'
+    if p.stat().st_size > MAX_EDIT_BYTES: return f'{p.name} is too large to edit'
+    if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} may hold credentials'
+    return None
+
+def _same(a, b):
+    "Whether two paths name one file, case-blind where the disk is."
+    if a == b: return True
+    try: return os.path.samefile(a, b)
+    except OSError: return False
+
 @dataclass
 class Entry(Dictable):
     "One row in the file tree."
@@ -72,20 +88,41 @@ class Entry(Dictable):
 class Sandbox:
     "The open folders, and every filesystem operation the IDE is allowed to perform inside them."
     def __init__(self, roots=()):
-        self.roots = L()
+        self.roots, self.admitted, self.loose = L(), L(), None
         for r in roots: self.add_root(r)
+    def _admits(self, p):
+        "Whether `p` is an admitted loose file. A path that resolved elsewhere since it was admitted is not."
+        return any(a == p or (_same(a, p) and a.resolve() == a) for a in self.admitted)
     def covers(self, p):
-        "Whether `p` is inside an open root, or is one of them."
-        return any(p.is_relative_to(r) for r in self.roots)
-    def add_root(self, p):
-        "Open a folder. Returns its resolved path; adding a folder already covered is a no-op."
+        "Whether `p` is inside an open root, or is one of them, or is an admitted loose file."
+        return any(p.is_relative_to(r) for r in self.roots) or self._admits(p)
+    def admit(self, p):
+        "Allow one file outside every root, for as long as its tab stays open. Needs the loose root among the roots."
+        if self.loose is None: raise Unsafe('no loose-file workspace is open')
+        p = Path(p).expanduser().resolve()
+        if self.covers(p): return p
+        if why := loose_refusal(p): raise Unsafe(why)
+        self.admitted = self.admitted + [p]
+        return p
+    def revoke(self, p):
+        "Withdraw the access `admit` gave `p`."
+        p = Path(p).expanduser().resolve()
+        self.admitted = self.admitted.filter(lambda a: not _same(a, p))
+        return p
+    def _fixed(self, p, what):
+        "Refuse to `what` an admitted file: it was opened alone, and nothing around it is ours."
+        if self._admits(p): raise Unsafe(f'{p.name} was opened on its own, so it cannot be {what}')
+    def add_root(self, p, loose=False):
+        "Open a folder. Returns its resolved path; adding a folder already covered is a no-op. `loose` marks the folder that stands for loose files."
         p = Path(p).expanduser().resolve()
         if not p.is_dir(): raise Unsafe(f'not a directory: {p}')
+        if loose: self.loose = p
         if self.covers(p): return p
         self.roots = L([r for r in self.roots if p not in r.parents]) + [p]
         return p
     def drop_root(self, p):
         p = Path(p).expanduser().resolve()
+        if p == self.loose: self.loose, self.admitted = None, L()
         self.roots = self.roots.filter(lambda r: r != p)
         return p
     def _check(self, ref, must_exist=False):
@@ -100,7 +137,8 @@ class Sandbox:
     def root_of(self, ref):
         "The open root containing `ref` (the deepest one, if roots nest)."
         p = self._check(ref)
-        return max((r for r in self.roots if p.is_relative_to(r)), key=lambda r: len(r.parts))
+        inside = [r for r in self.roots if p.is_relative_to(r)]
+        return max(inside, key=lambda r: len(r.parts)) if inside else self.loose
     def entry(self, p, is_root=False):
         p = Path(p)
         try: st = p.stat()
@@ -140,7 +178,10 @@ class Sandbox:
     def write(self, ref, text):
         "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
-        with atomic_save(p, mode='w', encoding='utf-8') as f: f.write(text)
+        mode = p.stat().st_mode & 0o7777 if p.exists() else None
+        with atomic_save(p, mode='w', encoding='utf-8') as f:
+            f.write(text)
+            if mode is not None: os.chmod(f.name, mode)
         _changed()
         return self.entry(p)
     def touch(self, ref):
@@ -165,6 +206,7 @@ class Sandbox:
     def rename(self, ref, name):
         "Rename in place. `name` is a bare filename, as `under` requires."
         p = self._check(ref, must_exist=True)
+        self._fixed(p, 'renamed')
         dst = self.under(p.parent, name)
         if dst.exists(): raise FileExistsError(str(dst))
         p.rename(dst)
@@ -173,6 +215,7 @@ class Sandbox:
     def move(self, ref, dest_dir):
         "Move into another directory; both ends are checked."
         p = self._check(ref, must_exist=True)
+        self._fixed(p, 'moved')
         d = self._check(dest_dir, must_exist=True)
         if not d.is_dir(): raise NotADirectoryError(str(d))
         if p == d or p in d.parents: raise Unsafe('cannot move a directory into itself')
@@ -184,6 +227,7 @@ class Sandbox:
     def copy(self, ref, dest_dir, name=None):
         "Copy into `dest_dir` under `name`, checking both ends. Never overwrites: the caller picks a free name."
         p = self._check(ref, must_exist=True)
+        self._fixed(p, 'copied out')
         d = self._check(dest_dir, must_exist=True)
         if not d.is_dir(): raise NotADirectoryError(str(d))
         if p.is_dir() and (p == d or p in d.parents): raise Unsafe('cannot copy a directory into itself')
@@ -205,6 +249,7 @@ class Sandbox:
         "Delete a file, or a directory and its contents. Refuses to delete an open root."
         p = self._check(ref, must_exist=True)
         if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
+        self._fixed(p, 'deleted')
         p.delete()
         _changed()
         return str(p)
@@ -212,6 +257,7 @@ class Sandbox:
         "Move `ref` into `trash` whole, and return the key that brings it back."
         p = self._check(ref, must_exist=True)
         if p in self.roots: raise Unsafe('close the folder instead of deleting an open root')
+        self._fixed(p, 'deleted')
         key = trash.keep(p)
         _changed()
         return key

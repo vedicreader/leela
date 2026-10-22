@@ -72,6 +72,18 @@ def test_the_mac_build_hands_py2app_no_install_requires(mac):
     finally: os.chdir(cwd)
     assert not d.install_requires, 'py2app refuses a distribution carrying install_requires'
 
+def test_every_mac_build_carries_a_bundle_version_above_the_last(mac):
+    """Launch Services opens the highest `CFBundleVersion` of the registered copies, and every build used to carry the bare version, so it picked an arbitrary one."""
+    from packaging.version import Version
+    plist = mac.PLIST
+    assert plist['CFBundleShortVersionString'] == mac.__version__
+    assert Version(plist['CFBundleVersion']) > Version(mac.__version__)
+    assert re.fullmatch(r'\d+(\.\d+)*', plist['CFBundleVersion'])
+    t = 1_800_000_000
+    older, newer = mac.build_stamp(now=t), mac.build_stamp(now=t + 60)
+    assert Version(newer) > Version(older) > Version(mac.__version__)
+    assert tuple(map(int, newer.split('.'))) > tuple(map(int, older.split('.')))
+
 
 APP = ROOT/'dist'/('Leela.app/Contents/MacOS/Leela' if sys.platform == 'darwin' else 'Leela/Leela.exe')
 
@@ -363,13 +375,38 @@ def _unsealed(app):
     return sorted(str(p.relative_to(app)) for p in app.rglob('*')
                   if p.is_file() and not p.is_symlink() and p != main and p.stat().st_mtime > seal.stat().st_mtime)
 
+LSREGISTER = Path('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister')
+
+def _unregister(app):
+    "Drop a copied bundle from Launch Services, which keeps every launched copy registered for good."
+    if sys.platform == 'darwin' and LSREGISTER.is_file(): subprocess.run([str(LSREGISTER), '-u', str(app)], capture_output=True)
+
+def _registered(app):
+    return str(app) in subprocess.run([str(LSREGISTER), '-dump'], capture_output=True, text=True).stdout
+
+@pytest.mark.skipif(sys.platform != 'darwin' or not LSREGISTER.is_file(), reason='Launch Services is macOS')
+def test_unregistering_a_copied_bundle_removes_it_from_launch_services(tmp_path):
+    """A launched copy in `tmp_path` stayed registered after pytest deleted it: 29 stale copies had piled up."""
+    import plistlib
+    app = tmp_path/'Stale.app'
+    (app/'Contents'/'MacOS').mkdir(parents=True)
+    (app/'Contents'/'Info.plist').write_bytes(plistlib.dumps({'CFBundleName': 'Stale', 'CFBundleExecutable': 'Stale', 'CFBundlePackageType': 'APPL',
+                                                              'CFBundleIdentifier': 'org.vedicreader.leela-test-stale', 'CFBundleVersion': '1'}))
+    (x := app/'Contents'/'MacOS'/'Stale').write_text('#!/bin/sh\n'); x.chmod(0o755)
+    subprocess.run([str(LSREGISTER), '-f', str(app)], check=True, capture_output=True)
+    try:
+        assert _registered(app), 'the fixture did not register'
+        _unregister(app)
+        assert not _registered(app)
+    finally: _unregister(app)
+
 def _bundle_pids(app):
     out = subprocess.run(['ps', '-Ao', 'pid=,command='], capture_output=True, text=True).stdout
     return [l.strip() for l in out.splitlines() if str(app) in l.split(None, 1)[-1].split(' -')[0]]
 
 @pytest.mark.slow
 @pytest.mark.skipif(sys.platform != 'darwin' or not APP.exists(), reason='no built Leela.app in dist/')
-def test_running_the_signed_app_leaves_it_sealed_and_leaves_no_process_behind(tmp_path):
+def test_running_the_signed_app_leaves_it_sealed_and_leaves_no_process_behind(tmp_path, request):
     """A signed bundle that writes into itself fails `codesign --verify` and Gatekeeper. Each of `.pyc`
     in a grafted package, `.sesskey` and `pyskills.pth` did. A forked pool also outlived the quit."""
     import json, os, time, urllib.request
@@ -377,6 +414,7 @@ def test_running_the_signed_app_leaves_it_sealed_and_leaves_no_process_behind(tm
     def verify(app): return subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], capture_output=True, text=True)
     if not (src/'Contents'/'_CodeSignature'/'CodeResources').exists(): pytest.skip('the build is not signed')
     app = tmp_path/'Leela.app'
+    request.addfinalizer(lambda: _unregister(app))
     subprocess.run(['ditto', str(src), str(app)], check=True, timeout=600)
     assert verify(app).returncode == 0, f'already unsealed; rebuild:\n{verify(app).stderr[-1500:]}\n{_unsealed(app)[:20]}'
     before = {p: p.stat().st_mtime_ns for p in app.rglob('*') if p.is_file()}

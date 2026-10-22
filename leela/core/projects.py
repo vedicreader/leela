@@ -9,7 +9,7 @@ from kunda.pythons import nearest_marked
 
 from .. import leela_cfg
 
-__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marked', 'project_dir', 'workspace_for',
+__all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marked', 'project_dir', 'workspace_for', 'loose_root',
            'session', 'remember', 'note_folder', 'drop_folder',
            'last_folders', 'last_folder', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
 
@@ -27,6 +27,11 @@ def workspace_for(file, home=None):
     d = nearest_marked(f, PROJECT_MARKERS, home)[0]
     if d is not None and d not in barred: return d
     return None if f.parent in barred else f.parent
+
+def loose_root():
+    "The empty folder Leela owns that stands for files opened outside any folder."
+    (d := Path(leela_cfg)/'loose').mkdir(parents=True, exist_ok=True)
+    return d.resolve()
 
 #: The session a person opens. A test points `SESSION` at its own file; the guard below is about this one.
 DEFAULT_SESSION = SESSION = leela_cfg/'desktop.json'
@@ -48,8 +53,9 @@ def _dir(p):
     return str(p) if p.is_dir() else None
 
 def _lasting(paths):
-    "`paths` without the temporary ones, when this is the session a person actually opens."
-    if Path(SESSION) != DEFAULT_SESSION: return list(paths)
+    "`paths` without the loose root, and without the temporary ones when this is the session a person actually opens."
+    paths = [p for p in paths if Path(p) != loose_root()]
+    if Path(SESSION) != DEFAULT_SESSION: return paths
     return [p for p in paths if not _temporary(Path(p))]
 
 def _clean(paths):

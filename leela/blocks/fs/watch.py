@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, threading
+import asyncio, os, threading
 from pathlib import Path
 
 from fastcore.all import store_attr
@@ -16,9 +16,15 @@ MAX_BATCH = 200
 RUST_TIMEOUT = 500      # how long the watcher can take to notice it was stopped
 WAIT = 3
 
+def _sig(p):
+    "What an edit changes, rename-over included: a new inode. None once the file is gone."
+    try: st = os.stat(p)
+    except OSError: return None
+    return st.st_mtime_ns, st.st_size, st.st_ino
+
 class Watcher:
     "One watchfiles thread over the open roots. Subscribers get debounced batches of paths."
-    def __init__(self, fs, step=200):
+    def __init__(self, fs, step=200, poll=1):
         store_attr()
         self.subs, self.stop, self.thread, self.loop, self.roots = set(), None, None, None, ()
     def subscribe(self):
@@ -45,6 +51,7 @@ class Watcher:
         self.thread = threading.Thread(target=self._run, args=(roots, self.stop), daemon=True,
                                        name='leela-fs-watch')
         self.thread.start()
+        threading.Thread(target=self._poll, args=(self.stop,), daemon=True, name='leela-loose-poll').start()
     def close(self, wait=True):
         # The notify thread is Rust: one alive at interpreter teardown segfaults. Teardown joins.
         # A replacement does not, and the two overlap until the old one notices `stop`.
@@ -65,6 +72,15 @@ class Watcher:
             if stop.is_set(): return
             try: self._push(sorted({p for _change, p in batch}))
             except RuntimeError: return                      # the loop closed under us
+    def _poll(self, stop):
+        "Admitted files sit outside every watched root, so they are statted."
+        seen = {}
+        while not stop.wait(self.poll):
+            now = {p: _sig(p) for p in self.fs.admitted}
+            if hit := sorted(str(p) for p, s in now.items() if p in seen and seen[p] != s):
+                try: self._push(hit)
+                except RuntimeError: return
+            seen = now
     def _push(self, paths, resync=False):
         # A batch is a delta, so one lost is lost for good. Too many to carry is a redraw instead.
         if len(paths) > MAX_BATCH: paths, resync = [], True

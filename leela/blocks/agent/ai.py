@@ -317,12 +317,14 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
                 '(the person switched tabs or runtimes, or that kernel closed): every name you bound is gone]\n')
     #: Every group above is declared by inheritance rather than probed.
     @property
-    def roots(self): return [str(r) for r in self.ws.fs.roots]
+    def roots(self): return [str(r) for r in self.ws.fs.roots if r != self.ws.fs.loose]
+    @property
+    def loose_files(self): return [str(p) for p in self.ws.fs.admitted]
     @property
     def project(self):
         "The folder the agent's commands run in: the chosen one, else the first open."
         root = self.ws.project_root
-        return str(root) if root else (self.roots[0] if self.roots else '')
+        return str(root) if root and root != self.ws.fs.loose else (self.roots[0] if self.roots else '')
     @property
     def writable_roots(self):
         "The open folders a write may land in, which is not every folder the agent may read."
@@ -369,7 +371,8 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         except Exception: return False
     def delete(self, path):
         "Remove one file inside the writable roots (a `/rewind` of a created file); one already gone is not an error."
-        self.check_write(path).unlink(missing_ok=True)
+        self.ws.fs._fixed(p := self.check_write(path), 'deleted')
+        p.unlink(missing_ok=True)
     def text_at(self, path): return self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):
@@ -1266,6 +1269,8 @@ class Assistant(Agent):
         small = self.profile == 'small'
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
         base += VAULT_MARKS
+        if loose := getattr(self.host, 'loose_files', ()):
+            base += f'\n\nLoose files: {", ".join(loose)}. Each was opened on its own: read and edit it, but nothing beside it is yours to touch.'
         if small and self._mode()[0]:   # no skill is inlined for a small model; the open canvas still needs naming
             base += '\n\nA `canvas` document is open: `canvas_read` first, then address bricks by id with the other canvas tools.'
         if (writable := self.host.writable_roots) != self.host.roots:

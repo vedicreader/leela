@@ -1,6 +1,6 @@
 "py2app definition for `dist/Leela.app`. Run it through `setup_app.py`."
 from __future__ import annotations
-import sys
+import sys, time
 from fastcore.all import Path
 from setuptools import setup
 
@@ -11,6 +11,10 @@ ASSETS = ROOT/'packaging'/'assets'
 sys.path.insert(0, str(ROOT))
 
 from leela import __version__  # noqa: E402
+
+def build_stamp(version=__version__, now=None):
+    "A CFBundleVersion that grows by one every minute and compares above `version` itself."
+    return f'{version}.{int(now or time.time())//60}'
 
 # The modules under `blocks/*/*.js` and `static/js/` build the `static/lee-*.js` bundles;
 # shipping both doubles ~680KB, as the wheel notes.
@@ -118,6 +122,7 @@ APP = App(
     name       = 'Leela',
     entry      = str(ROOT/'leela_app.py'),
     version    = __version__,
+    build      = build_stamp(),
     icon       = str(ASSETS/'Leela.icns'),
     modern_icon= str(ASSETS/'Leela.icon'),
     identifier = 'org.vedicreader.leela',

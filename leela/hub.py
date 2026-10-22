@@ -78,11 +78,15 @@ def workspace_urls(roots, port, store=None):
 
 def _unopenable(file, root):
     "Why `file` cannot be opened as a tab in the workspace at `root`, or None."
+    from .blocks.fs.fs import loose_refusal
+    from .core.projects import loose_root
     from .workspace import openable
     try: f = Path(file).expanduser().resolve()
     except (OSError, ValueError): return f'not a file: {file}'
     if not f.is_file(): return f'not a file: {file}'
-    if not f.is_relative_to(root): return f'{f} is outside {root}'
+    if root == loose_root():
+        if why := loose_refusal(f): return why
+    elif not f.is_relative_to(root): return f'{f} is outside {root}'
     if not openable(f): return f'{f.name} is not a text file'
     return None
 
@@ -118,6 +122,8 @@ class WorkspaceSite:
     app: object
     #: `open_file(path)` shows a file as this workspace's active tab. Absent, the hub cannot open files in it.
     open_file: object = None
+    #: `release(path)` closes that tab. Only the loose-files workspace gives one up when a folder takes the file.
+    release: object = None
 
 class LoopbackHostGuard:
     "Reject DNS-rebinding and forwarded Host headers before they reach executable routes."
@@ -179,7 +185,8 @@ class WorkspaceHub:
             return self._noted(root, s)
     def _noted(self, root, site):
         "Remember the folder here, where both callers pass, rather than in the desktop one."
-        from .core.projects import note_folder
+        from .core.projects import loose_root, note_folder
+        if Path(root) == loose_root(): return site
         try: note_folder(str(root))
         except Exception: pass
         return site
@@ -202,6 +209,7 @@ class WorkspaceHub:
         await site.app(scope, receive, send)
     async def _open(self, scope, send):
         "Serve a folder as its own workspace, and with `file`, open that file in it. The desktop shell then points a window at the row."
+        from .core.projects import loose_root
         q = parse_qs(scope.get('query_string', b'').decode())
         raw, file = (q.get('path') or [''])[0], (q.get('file') or [''])[0]
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
@@ -216,7 +224,9 @@ class WorkspaceHub:
             site = await asyncio.to_thread(self.open_folder, root)
             if file:
                 if site.open_file is None: raise RuntimeError('this workspace cannot open a file')
-                await asyncio.to_thread(site.open_file, Path(file).expanduser().resolve())
+                f = Path(file).expanduser().resolve()
+                await asyncio.to_thread(site.open_file, f)
+                if root != loose_root() and (ls := self.site_at(loose_root())) and ls.release: await asyncio.to_thread(ls.release, f)
         except Exception as e: return await _json(send, {'ok': False, 'error': str(e), 'config': cfg_mark()}, 400)
         await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root,
                            'url': self.url_for(site.slug), 'config': cfg_mark()})

@@ -579,6 +579,49 @@ def test_a_file_the_workspace_cannot_show_is_refused_before_anything_is_built(tm
     assert status == 400 and 'not a folder' in d['error'], 'the probe `leela_on` relies on still answers'
 
 
+def _loose_hub(tmp_path):
+    "A hub whose workspaces are real; the one rooted at the loose root is a loose-files workspace."
+    from leela.core.projects import loose_root
+    made = {}
+    def build(root, slug):
+        ws = made[slug] = Workspace(); ws.add_root(root, loose=Path(root) == loose_root())
+        ws._state_path = tmp_path/f'{slug}.json'
+        return WorkspaceSite(slug, Path(root).name, str(root), lambda *a: None, ws.open_external, ws.release)
+    return WorkspaceHub([], 5001, build=build), made
+
+
+def test_finder_open_with_a_loose_file_opens_it_and_refuses_what_it_should(tmp_path, monkeypatch):
+    """A dotfile in the home folder has no workspace, so Open With opened nothing."""
+    from leela.core import projects
+    noted = []
+    monkeypatch.setattr(projects, 'note_folder', noted.append)
+    home = tmp_path/'home'; (ssh := tmp_path/'.ssh').mkdir(); home.mkdir()
+    (rc := home/'.zshrc').write_text('x\n'); (packed := home/'a.zip').write_bytes(b'PK')
+    (key := ssh/'id_ed25519').write_text('k')
+    hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
+    for f in (home, packed, key, home/'gone'):
+        status, d = _hub_get(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())
+        assert (status, d['ok']) == (400, False), f
+    assert not hub.sites and not made, 'a refusal builds nothing'
+    status, d = _hub_get(hub, OPEN_PATH, f'path={loose}&file={rc}'.encode())
+    assert (status, d['ok']) == (200, True), d
+    ws = made[d['id']]
+    assert [t.path for t in ws.tabs] == [str(rc.resolve())] and ws.fs.covers(rc.resolve())
+    assert not noted and not projects.recent_folders() and not projects.last_folders(), 'the loose folder is never remembered'
+
+
+def test_opening_a_loose_file_in_a_checkout_drops_its_loose_tab(tmp_path):
+    from leela.core import projects
+    (proj := tmp_path/'proj').mkdir(); (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
+    hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
+    for f in (a, b): assert _hub_get(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())[1]['ok']
+    lws = made[hub.site_at(loose).slug]
+    assert len(lws.tabs) == 2
+    assert _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}'.encode())[1]['ok']
+    assert [t.path for t in lws.tabs] == [str(b.resolve())] and not lws.fs.covers(a.resolve())
+    assert [t.path for t in made['proj'].tabs] == [str(a.resolve())]
+
+
 def test_a_tab_opened_by_the_shell_is_pushed_to_the_page_that_is_listening(tmp_path):
     """The page learns of a server-opened tab over `/fs/events`, which it already holds open."""
     from leela.blocks.fs.fs import Sandbox

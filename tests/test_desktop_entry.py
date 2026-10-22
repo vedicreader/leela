@@ -115,15 +115,24 @@ def test_a_file_that_arrives_before_the_server_answers_waits_for_it(monkeypatch,
     assert app.files([str(f), str(proj), 'nope']) == [str(f)]
 
 
-def test_a_file_directly_in_home_is_refused_aloud_and_asks_the_server_for_nothing(monkeypatch, tmp_path):
-    import pytest, leela_app as app
+def test_a_file_directly_in_home_opens_in_the_loose_window_named_for_it(monkeypatch, tmp_path):
+    """Open With on `~/.zshrc` was refused aloud, because the home folder is never a workspace."""
+    import leela.desktop, leela_app as app
+    from leela.core.projects import loose_root
     monkeypatch.setenv('HOME', str(tmp_path))
-    (f := tmp_path/'x.md').write_text('')
-    told = []
-    monkeypatch.setattr(app, '_tell', told.append)
-    monkeypatch.setattr(app, 'hub_open', lambda *a, **k: pytest.fail('home must never become a workspace'))
+    (f := tmp_path/'.zshrc').write_text('')
+    calls, opened = [], []
+    monkeypatch.setattr(app, 'hub_open', lambda port, path, host='127.0.0.1', timeout=60, file='':
+                        calls.append((path, file)) or dict(ok=True, id='loose', name='loose', url='http://loose.localhost:5010/'))
+    monkeypatch.setattr(leela.desktop, 'open_window', lambda url, title='leela', key=None, **kw: opened.append((title, key)))
     app.open_file(5010, f)
-    assert 'x.md' in told[0] and 'not a project folder' in told[0]
+    assert calls == [(loose_root(), f)] and opened == [('leela — .zshrc', 'loose')]
+    got = _launch(monkeypatch)
+    monkeypatch.setattr(app, 'files', lambda a=None: [str(f)])
+    app.run()
+    assert got['remembered'] == [] and got['opened'] == [], 'the loose window is opened with its file, never at launch'
+    [(urls, titles, kw)] = got['windows']
+    assert urls == [BARE] and 'on_ready' in kw
 
 
 def test_a_file_argument_opens_its_workspace_window_and_then_the_file(monkeypatch, tmp_path):
