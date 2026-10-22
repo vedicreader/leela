@@ -2476,6 +2476,7 @@ function mountCell(c, i) {
     doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
     placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place` : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
+    lintPath: lee.path || 'scratch.ipynb',
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
     breakpoints: lee.breakpoints.get(c.id) || [],
     // Line numbers relative to this cell. A cell mounted after the marks arrived would otherwise
@@ -2668,6 +2669,21 @@ function outputTone(o) {
   if (o.output_type === 'execute_result' || o.output_type === 'display_data') return 'result';
   return 'output';
 }
+const PLOTLY_JS = 'https://cdn.plot.ly/plotly-4.1.1.min.js';
+const PLOTLY_MIME = 'application/vnd.plotly.v1+json';
+function sandboxFrame(d, srcdoc, height) {
+  const f = document.createElement('iframe'); f.className = 'lee-out-frame';
+  f.setAttribute('sandbox', 'allow-scripts'); f.srcdoc = srcdoc;
+  f.style.cssText = `width:100%;height:${height}px;border:0;resize:vertical;overflow:auto;display:block`;
+  d.appendChild(f); return d;
+}
+function plotlyFrame(d, fig) {
+  const json = JSON.stringify({data: fig.data || [], layout: fig.layout || {}, config: fig.config || {}}).replace(/</g, '\\u003c');
+  const h = +(fig.layout && fig.layout.height) || 450;
+  return sandboxFrame(d, `<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="p" style="width:100%;height:100vh"></div>` +
+    `<script src="${PLOTLY_JS}"><\/script><script>const f = ${json};` +
+    `Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
+}
 function outputEl(o) {
   const d = document.createElement('div');
   const tone = outputTone(o);
@@ -2678,6 +2694,7 @@ function outputEl(o) {
     return d;
   }
   const data = o.data || {};
+  if (data[PLOTLY_MIME] != null) return plotlyFrame(d, data[PLOTLY_MIME]);
   if (data['image/png']) {
     const i = document.createElement('img');
     i.src = 'data:image/png;base64,' + data['image/png'];
@@ -2687,6 +2704,7 @@ function outputEl(o) {
   // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
   // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
   const rich = data['text/html'] ?? data['image/svg+xml'];
+  if (typeof data['text/html'] === 'string' && /<script[\s>]/i.test(data['text/html'])) return sandboxFrame(d, data['text/html'], 450);
   if (rich != null) {
     // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
     // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large

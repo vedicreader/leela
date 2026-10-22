@@ -13,7 +13,7 @@ from fastcore.parallel import threaded
 
 from ... import Dictable, errstr
 from ..fs.fs import LANGS
-from ..nb.nb import cell_at, cell_lines, cell_of, read_cells, source_spans
+from ..nb.nb import cell_at, cell_lines, cell_of, parse_cell, read_cells, source_spans
 
 __all__ = ['Hit', 'Cluster', 'Search', 'Weights', 'DEMOTED', 'SETTING_WEIGHTS']
 
@@ -726,7 +726,7 @@ class Search:
         "The relative `from` imports spanning `line`; in a notebook, only the clicked cell's."
         try:
             if not _is_nb(path): tree = self._tree(path)
-            else: tree = ast.parse(''.join(cell_lines(read_cells(self.fs.read(path))[cell_index]))) if cell_index >= 0 else None
+            else: tree = parse_cell(''.join(cell_lines(read_cells(self.fs.read(path))[cell_index]))) if cell_index >= 0 else None
         except Exception: return []
         return [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level and n.lineno <= line <= n.end_lineno] if tree else []
     def relative_target(self, name, path, line, cell_index=-1):
@@ -780,7 +780,7 @@ class Search:
         except Exception: return None
         body = []
         for src in cells:
-            try: body += ast.parse(src).body
+            try: body += parse_cell(src).body
             except SyntaxError: pass
         return ast.Module(body=body, type_ignores=[])
     def absolute_source(self, name, path):

@@ -18,7 +18,8 @@ MAX_BODY = 2_000_000
 def assigned_names(code):
     "Top-level names `code` binds, so what ran can be attributed without diffing the namespace."
     import ast
-    try: tree = ast.parse(code)
+    from ..blocks.nb.nb import parse_cell
+    try: tree = parse_cell(code)
     except SyntaxError: return []
     out = []
     for n in tree.body:

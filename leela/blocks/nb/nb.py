@@ -569,9 +569,46 @@ def cell_of(text, snippet, cells=None, spans=None):
     i, n = found[0]
     return _at(cells, spans, i, n)
 
+def parse_cell(source):
+    "A cell's syntax tree as IPython runs it: `!cmd` and `%magic` lines become calls, one line each."
+    from IPython.core.inputtransformer2 import TransformerManager
+    return ast.parse(TransformerManager().transform_cell(source or ''))
+
+PYTHON_CELL_MAGICS = {'time', 'timeit', 'capture', 'prun', 'debug', 'python', 'python3'}
+
+def mask_ipython(source):
+    "`source` with its IPython-only syntax overwritten by same-length Python, so every other offset still lines up."
+    from IPython.core.inputtransformer2 import (TransformerManager, TokenTransformBase, MagicAssign, SystemAssign,
+                                                HelpEnd, find_end_of_continued_line, make_tokens_by_line)
+    finders = TransformerManager().token_transformers
+    lines = (source or '').splitlines(keepends=True)
+    if not lines: return source or ''
+    added = not lines[-1].endswith(('\n', '\r'))
+    if added: lines[-1] += '\n'
+    def blank(first, col, last, fill):
+        for i in range(first, last + 1):
+            body = lines[i].rstrip('\r\n'); end = lines[i][len(body):]
+            head, keep = (body[:col], len(body) - col) if i == first else ('', len(body))
+            lines[i] = head + (fill if i == first else '').ljust(keep) + end
+    start = first((i for i, l in enumerate(lines) if l.strip()), 0)
+    if lines[start].startswith('%%'):
+        magic = lines[start][2:].split(None, 1)[0] if lines[start][2:].strip() else ''
+        if magic not in PYTHON_CELL_MAGICS: blank(0, 0, len(lines) - 1, '')
+        else: blank(start, 0, start, '')
+    for _ in range(len(lines) * 2 + 1):
+        found = [t for c in finders if (t := c.find(make_tokens_by_line(lines)))]
+        if not found: break
+        t = min(found, key=TokenTransformBase.sortby)
+        last = find_end_of_continued_line(lines, t.start_line) if not isinstance(t, HelpEnd) else t.start_line
+        width = len(lines[t.start_line].rstrip('\r\n')) - t.start_col
+        value = isinstance(t, (MagicAssign, SystemAssign))
+        blank(t.start_line, t.start_col, last, ('None' if value else 'pass') if width >= 4 else '0' if width else '')
+    out = ''.join(lines)
+    return out[:-1] if added else out
+
 def assigned_lines(source):
     "Top-level bindings made by Python source, as ``[(line, name)]``."
-    try: tree = ast.parse(source or '')
+    try: tree = parse_cell(source)
     except SyntaxError: return []
     found = []
     def target(node, line=None):
@@ -619,7 +656,7 @@ def inline_values(source, groups, outputs=(), result_info=None):
     output_result = first(o for o in reversed(outputs or ()) if o.get('output_type') == 'execute_result')
     if output_result:
         try:
-            expr = ast.parse(source or '').body[-1]
+            expr = parse_cell(source).body[-1]
             if isinstance(expr, ast.Expr):
                 root = expr.value
                 while isinstance(root, (ast.Attribute, ast.Subscript, ast.Call)):

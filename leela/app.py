@@ -1126,6 +1126,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         from .core.langs import lang_named
         d = await req.json(); lang, code = d.get('lang'), str(d.get('code') or '')
         path = str(d.get('path') or '')
+        if lang == 'python' and path.endswith('.ipynb'):
+            from .blocks.nb.nb import mask_ipython
+            code = mask_ipython(code)
         if lang_named(lang):
             # Python's own parse comes first and needs no server; every language's server comes
             # second and needs a real file on disk to anchor its diagnostics to.
