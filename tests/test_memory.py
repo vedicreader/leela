@@ -212,7 +212,7 @@ def test_an_attached_vault_is_read_only_until_you_say_otherwise(ws, tmp_path):
                            ('/vault/not-pii', {'doc': 'd1'})):
             refused = c.post(path, data={**data, 'vault': 'peer'})
             assert refused.status_code == 403, f'{path}: a refusal is not a malformed request'
-        assert c.post('/vault/access', data={'name': 'peer', 'agent': 'true'}).status_code == 400, \
+        assert c.post('/vault/access', data={'name': 'peer', 'agent': 'true'}).status_code == 403, \
             'the agent cannot be given write access a person does not have'
         c.post('/vault/access', data={'name': 'peer', 'access': 'admin'})
         assert c.post('/vault/access', data={'name': 'peer', 'agent': 'true'}).json()['agent_writable']

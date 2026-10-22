@@ -146,7 +146,7 @@ class Vaults:
         ref = self.get(name)
         if ref is None: raise KeyError(name)
         if agent and not ref.writable:
-            raise ValueError(f'{ref.name} is read-only; make it admin before giving the agent write access')
+            raise PermissionError(f'{ref.name} is read-only; make it admin before giving the agent write access')
         out = self._replace(ref, agent=bool(agent))
         self.note = f"agent may {'write to' if out.agent_writable else 'only read'} {out.name}"
         return out
