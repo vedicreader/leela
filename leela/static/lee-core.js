@@ -338,6 +338,15 @@ async function restoreDrafts(st) {
 }
 window.lee = lee;
 
+/* A read about the tab on screen (language server, lint, git marks, outline) ends with that tab: each one
+   holds a connection of the browser's six per host, and a slow one left the next `/tab/select` queued. */
+const TAB_READS = /^\/(lsp\/(symbols|inlay-hints|hover)|lint|git\/file|outline|editor\/packages)(\?|$)/;
+lee.tabReads = new AbortController();
+const pageFetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => !opts.signal && typeof url === 'string' && TAB_READS.test(url)
+  ? pageFetch(url, {...opts, signal: lee.tabReads.signal}) : pageFetch(url, opts);
+function dropTabReads() { lee.tabReads.abort(); lee.tabReads = new AbortController(); }
+
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -842,6 +851,11 @@ function chordMatches(c, e) {
   return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
 
+//: Cell actions whose first chord is also a CodeMirror line command (copy, cut, copy line, toggle
+//: comment). While a cell's editor has focus CodeMirror gets that chord; the cell action answers it
+//: in command mode, and on its other chords everywhere.
+const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
+const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 function findBinding(e, scope) {
   if (scope === 'overlay') return null;
@@ -855,13 +869,9 @@ function findBinding(e, scope) {
     if (!allowed(k)) continue;
     const chord = k.chords.find(c => chordMatches(c, e));
     if (!chord || (guard && !firesInTextEntry(chord))) continue;
-    // Copy and Cut become whole-cell operations only when a notebook cell has no text selection.
-    if (['cell_copy', 'cell_cut'].includes(k.action)) {
-      if (lee.kind !== 'notebook') continue;
-      const inEditor = e.composedPath?.().some(n => n instanceof Element && n.matches('.cm-editor'));
-      const selection = curEditor() ? LeeCM.selection(curEditor()) : null;
-      if (inEditor && selection?.from !== selection?.to) continue;
-    }
+    if (['cell_copy', 'cell_cut'].includes(k.action) && lee.kind !== 'notebook') continue;
+    if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
+    if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own
@@ -1008,6 +1018,8 @@ const ACTIONS = {
     focusCell(at); status(`split into ${made + 1} cells`, 'ok');
   },
   cell_collapse: () => setCellCollapsed(lee.sel),
+  cell_edit:    () => editMarkdownCell(lee.sel),
+  cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
   cell_duplicate: async () => {
     const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
     focusCell(at + 1); status('cell duplicated', 'ok');
@@ -1032,6 +1044,7 @@ const ACTIONS = {
     await nbEdit({op: 'clear'}); focusCell(lee.sel); status('all outputs cleared', 'ok');
   },
   comment:      () => toggleComment(),
+  cell_comment: () => toggleComment(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
   ask_ai:       () => askSelection('[data-ask]'),
@@ -1644,6 +1657,7 @@ function restoreTabLocation(st, skip = false) {
 }
 async function mountTab(expectedPath = '') {
   saveTabLocation();
+  dropTabReads();
   const hadPendingLocation = Boolean(lee.pendingLocation);
   const mountVersion=++mountTabVersion;
   lee.activeGitTab = '';
@@ -1653,7 +1667,7 @@ async function mountTab(expectedPath = '') {
   // and switching inside the delay left that tab dirty with nothing left to save it. The server
   // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveEnabled() && !lee.observer) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
+  if (autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty') || lee.bufferTimers.size)) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
@@ -1843,6 +1857,40 @@ async function adoptMdView() {
   await prefAdopt('workbench', 'markdownView', 'lee-md-view', v => MD_PREFS[v] || 'split');
 }
 
+const lspAnswers = new Map();
+function paintCrumbSymbols(d) {
+  const el = $('#editorcrumbs'); if (!el) return;
+  const names = (d.symbols || []).slice(0, 40).map(s => `<button data-line="${(s.range?.start?.line || 0) + 1}">${esc(s.name)}</button>`).join('');
+  el.insertAdjacentHTML('beforeend', `<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);
+  el.onclick = e => { const b = e.target.closest('[data-line]'); if (b) jumpToLine(b.dataset.line); };
+}
+// The server answers a mount's two questions slowly or not at all, so they are asked once the tab has
+// painted and is still the one on screen, and a clean file's answer is kept for its disk version.
+function lspExtras(v, st, crumbMode, mine, dirty) {
+  if (!servedLang(st.lang) || !st.path) return;
+  const asks = [];
+  if (lee.editorPrefs.inlayHints) asks.push(['/lsp/inlay-hints', d => LeeCM.setInlayHints?.(v, d.hints || [])]);
+  if (['symbols', 'pathAndSymbols'].includes(crumbMode)) asks.push(['/lsp/symbols', paintCrumbSymbols]);
+  if (!asks.length) return;
+  const live = () => mine === fileExtrasVersion && lee.editors.get('file') === v;
+  requestAnimationFrame(() => setTimeout(() => {
+    if (!live()) return;
+    const text = LeeCM.getDoc(v);
+    for (const [url, paint] of asks) {
+      const key = `${url} ${st.path} ${st.disk_version}`, known = !dirty && lspAnswers.get(key);
+      if (known) { paint(known); continue; }
+      api(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: st.path, text})})
+        .then(d => {
+          if (!live()) return;
+          if (!dirty && st.disk_version && (d.hints || d.symbols || []).length) {
+            lspAnswers.set(key, d); if (lspAnswers.size > 60) lspAnswers.delete(lspAnswers.keys().next().value);
+          }
+          paint(d);
+        }).catch(() => {});
+    }
+  }, 300));
+}
+
 async function mountFile(host, st) {
   const isProject = st.path?.endsWith('/pyproject.toml') || st.title === 'pyproject.toml';
   const crumbMode=lee.workbenchPrefs.breadcrumbs||'pathAndSymbols',crumb=crumbMode==='off'?'':`<nav class="lee-breadcrumbs" id="editorcrumbs" aria-label="File and symbol path"><span>${esc(compactPath(st.path||st.title||''))}</span></nav>`;
@@ -1907,11 +1955,10 @@ async function mountFile(host, st) {
       if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
     };
   }
-  if(servedLang(st.lang)&&st.path&&lee.editorPrefs.inlayHints)api('/lsp/inlay-hints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>LeeCM.setInlayHints?.(v,d.hints||[])).catch(()=>{});
-  if(servedLang(st.lang)&&st.path&&['symbols','pathAndSymbols'].includes(crumbMode))api('/lsp/symbols',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:st.path,text:LeeCM.getDoc(v)})}).then(d=>{const el=$('#editorcrumbs');if(el){const names=(d.symbols||[]).slice(0,40).map(s=>`<button data-line="${(s.range?.start?.line||0)+1}">${esc(s.name)}</button>`).join('');el.insertAdjacentHTML('beforeend',`<i>›</i><span class="lee-breadcrumb-symbols">${names}</span>`);el.onclick=e=>{const b=e.target.closest('[data-line]');if(b)jumpToLine(b.dataset.line);};}}).catch(()=>{});
+  const mine = ++fileExtrasVersion;
+  lspExtras(v, st, crumbMode, mine, lee.dirtyBuffers.has(key));
   if (packages) paintPackageVersions(v, packages);
   if (st.path) {
-    const mine = ++fileExtrasVersion;
     api('/git/file?path=' + encodeURIComponent(st.path)).then(d => {
       if (mine !== fileExtrasVersion || !d) return;
       lee.fileGit = d;
@@ -2328,7 +2375,11 @@ function cellEl(c, i) {
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
-    `<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+    `${c.cell_type === 'markdown' ? mdCellHost(c) : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+  if (c.cell_type === 'markdown') {
+    d.tabIndex = -1; paintMarkdownCell(d, c);
+    d.querySelector('.lee-md-cell').addEventListener('dblclick', () => editMarkdownCell(+d.dataset.i));
+  }
   d.addEventListener('mousedown', e => { selectCell(+d.dataset.i, e.shiftKey); setScope('editor'); });
   d.querySelector('.lee-cell-fold').onclick = e => { e.stopPropagation(); setCellCollapsed(+d.dataset.i); };
   const gutter = d.querySelector('.lee-gutter');
@@ -2457,6 +2508,50 @@ function mountCell(c, i) {
     }
   }
 }
+
+/* A markdown cell is read rendered and edited on demand. Its editor stays mounted and hidden, so the
+   buffer, undo and save are the ones every other cell has. `data-md-edit` marks the editing ones. */
+const mdEditing = new Set();
+const mdSource = c => { const v = lee.editors.get(c.id); return v ? LeeCM.getDoc(v) : String(c.source || ''); };
+const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
+const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
+function paintMarkdownCell(el, c, now = false) {
+  const host = $('.lee-md-cell', el); if (!host) return;
+  const src = mdSource(c);
+  el.toggleAttribute('data-md-edit', mdEditing.has(c.id));
+  host.classList.toggle('empty', !src.trim());
+  if (now) { host.dataset.markdown = src; flushMarkdown(host, true); } else renderMarkdown(host, src, true);
+}
+function editMarkdownCell(i) {
+  const c = lee.cells[i], el = mdCellOf(i); if (c?.cell_type !== 'markdown' || !el) return;
+  mdEditing.add(c.id); el.setAttribute('data-md-edit', '');
+  const v = ensureCellMounted(i);
+  requestAnimationFrame(() => { v.dispatch({selection: {anchor: v.state.doc.length}}); LeeCM.focus(v); v.requestMeasure(); });
+}
+function showRenderedMarkdown(c, refocus = false) {
+  if (c?.cell_type !== 'markdown') return;
+  const el = $(`.lee-cell[data-id="${c.id}"]`); if (!el) return;
+  const hadFocus = el.contains(document.activeElement);
+  mdEditing.delete(c.id); paintMarkdownCell(el, c, true);
+  if (hadFocus || refocus) el.focus({preventScroll: true});
+}
+function leaveOtherMarkdownEdits(keep) {
+  const stay = lee.cells[keep]?.id;
+  for (const id of [...mdEditing]) if (id !== stay) showRenderedMarkdown(lee.cells.find(c => c.id === id));
+}
+// A cell with nothing in it starts in the editor, which is how a new markdown cell arrives.
+function focusRenderedMarkdown(i) {
+  const c = lee.cells[i]; if (c?.cell_type !== 'markdown') return false;
+  if (!mdSource(c).trim() && !mdEditing.has(c.id)) editMarkdownCell(i);
+  if (mdEditing.has(c.id)) return false;
+  mdCellOf(i)?.focus({preventScroll: true}); return true;
+}
+const MD_KEYS = {
+  cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
+    return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(e.target) && !e.target.closest('button, a, summary'); },
+  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown');
+    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel'); },
+};
 
 function renderOutputs(c) {
   const box = $('#out-' + c.id); if (!box) return;
@@ -2588,9 +2683,6 @@ function outputEl(o) {
     i.src = 'data:image/png;base64,' + data['image/png'];
     d.appendChild(i); return d;
   }
-  if (data['text/markdown'] != null) {
-    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
-  }
   // Presence, not truthiness. Clearing a rich display is publishing an empty one of the same type:
   // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
   // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
@@ -2607,6 +2699,11 @@ function outputEl(o) {
       folded.onclick = show; d.appendChild(folded);
     } else show();
     return d;
+  }
+  // After the rich types, as Jupyter ranks them: a FastHTML object sends its markup as `text/html` and
+  // again as a fenced `text/markdown` block, and the fence is source, not the thing to draw.
+  if (data['text/markdown'] != null) {
+    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
   }
   outputText(d, data['text/plain'] || '');
   return d;
@@ -2625,7 +2722,7 @@ function selectCell(i, extend = false) {
     const lo = Math.min(lee.cellAnchor, lee.sel), hi = Math.max(lee.cellAnchor, lee.sel);
     lee.cellSelection = new Set(Array.from({length: hi - lo + 1}, (_, n) => lo + n));
   } else { lee.cellAnchor = lee.sel; lee.cellSelection = new Set([lee.sel]); }
-  paintSel();
+  paintSel(); leaveOtherMarkdownEdits(lee.sel);
 }
 /* Bring a cell into view with room around it.
 
@@ -2646,12 +2743,12 @@ function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
   // Mounted first: an unmounted cell is a shell whose height is a guess, and the reveal measures it.
-  const v = ensureCellMounted(lee.sel);
+  const v = ensureCellMounted(lee.sel), rendered = focusRenderedMarkdown(lee.sel);
   const reveal = () => revealCell($(`.lee-cell[data-i="${lee.sel}"]`));
   reveal();
   // CodeMirror focuses its own scroller and reveals the caret minimally, which spends the margin
   // again, so the reveal is repeated after it and after the layout mounting just caused.
-  requestAnimationFrame(() => { if (v) LeeCM.focus(v); reveal(); });
+  requestAnimationFrame(() => { if (v && !rendered) LeeCM.focus(v); reveal(); });
 }
 function focusCellPage(direction) {
   if (!lee.cells.length) return;
@@ -2793,15 +2890,8 @@ async function runCell(i, advance) {
   const v = ensureCellMounted(i);
   const src = v ? LeeCM.getDoc(v) : c.source;
   const el = $(`.lee-cell[data-i="${i}"]`);
-  if (c.cell_type === 'markdown') {
-    // Rendering must not make the source editor disappear permanently. The preview is evidence of
-    // Run, and the source stays one click away.
-    const out = $('#out-' + c.id);
-    if (out) {
-      out.innerHTML = '<div class="lee-md"></div>';
-      renderMarkdown(out.querySelector('.lee-md'), src, true);
-    }
-  } else if (c.cell_type === 'prompt') {
+  if (c.cell_type === 'markdown') showRenderedMarkdown(c, true);
+  else if (c.cell_type === 'prompt') {
     c.running = true;
     try { await askCell(i, src, el); }
     finally { c.running = false; }

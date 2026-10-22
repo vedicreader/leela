@@ -84,6 +84,11 @@ function chordMatches(c, e) {
   return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
 
+//: Cell actions whose first chord is also a CodeMirror line command (copy, cut, copy line, toggle
+//: comment). While a cell's editor has focus CodeMirror gets that chord; the cell action answers it
+//: in command mode, and on its other chords everywhere.
+const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
+const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 function findBinding(e, scope) {
   if (scope === 'overlay') return null;
@@ -97,13 +102,9 @@ function findBinding(e, scope) {
     if (!allowed(k)) continue;
     const chord = k.chords.find(c => chordMatches(c, e));
     if (!chord || (guard && !firesInTextEntry(chord))) continue;
-    // Copy and Cut become whole-cell operations only when a notebook cell has no text selection.
-    if (['cell_copy', 'cell_cut'].includes(k.action)) {
-      if (lee.kind !== 'notebook') continue;
-      const inEditor = e.composedPath?.().some(n => n instanceof Element && n.matches('.cm-editor'));
-      const selection = curEditor() ? LeeCM.selection(curEditor()) : null;
-      if (inEditor && selection?.from !== selection?.to) continue;
-    }
+    if (['cell_copy', 'cell_cut'].includes(k.action) && lee.kind !== 'notebook') continue;
+    if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
+    if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own

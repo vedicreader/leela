@@ -63,15 +63,8 @@ async function runCell(i, advance) {
   const v = ensureCellMounted(i);
   const src = v ? LeeCM.getDoc(v) : c.source;
   const el = $(`.lee-cell[data-i="${i}"]`);
-  if (c.cell_type === 'markdown') {
-    // Rendering must not make the source editor disappear permanently. The preview is evidence of
-    // Run, and the source stays one click away.
-    const out = $('#out-' + c.id);
-    if (out) {
-      out.innerHTML = '<div class="lee-md"></div>';
-      renderMarkdown(out.querySelector('.lee-md'), src, true);
-    }
-  } else if (c.cell_type === 'prompt') {
+  if (c.cell_type === 'markdown') showRenderedMarkdown(c, true);
+  else if (c.cell_type === 'prompt') {
     c.running = true;
     try { await askCell(i, src, el); }
     finally { c.running = false; }

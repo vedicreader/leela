@@ -2018,6 +2018,13 @@ kbd {
   font: 10px/1.45 var(--lee-mono); white-space: normal; }
 .lee-md { padding: 4px 8px; color: var(--lee-fg); }
 .lee-md h1, .lee-md h2, .lee-md h3 { margin: .4em 0 .2em; }
+.lee-cell.markdown:not([data-md-edit]) > .lee-cellmain > .lee-cm { display: none; }
+.lee-cell.markdown[data-md-edit] > .lee-cellmain > .lee-md-cell { display: none; }
+.lee-cell.markdown { outline: none; }
+.lee-md-cell { padding: 6px 12px; min-height: 1.6em; cursor: text; overflow-wrap: anywhere; }
+.lee-md-cell > :first-child { margin-top: 0; }
+.lee-md-cell > :last-child { margin-bottom: 0; }
+.lee-md-cell.empty::before { content: 'double-click to edit'; color: var(--lee-fg4); font-style: italic; opacity: .7; }
 .lee-md code { font-family: var(--lee-mono); background: var(--lee-bg2); padding: 1px 4px; border-radius: 3px; }
 
 /* ---- exec + agent ---- */

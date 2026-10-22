@@ -97,7 +97,11 @@ function cellEl(c, i) {
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
-    `<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+    `${c.cell_type === 'markdown' ? mdCellHost(c) : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+  if (c.cell_type === 'markdown') {
+    d.tabIndex = -1; paintMarkdownCell(d, c);
+    d.querySelector('.lee-md-cell').addEventListener('dblclick', () => editMarkdownCell(+d.dataset.i));
+  }
   d.addEventListener('mousedown', e => { selectCell(+d.dataset.i, e.shiftKey); setScope('editor'); });
   d.querySelector('.lee-cell-fold').onclick = e => { e.stopPropagation(); setCellCollapsed(+d.dataset.i); };
   const gutter = d.querySelector('.lee-gutter');
@@ -226,6 +230,50 @@ function mountCell(c, i) {
     }
   }
 }
+
+/* A markdown cell is read rendered and edited on demand. Its editor stays mounted and hidden, so the
+   buffer, undo and save are the ones every other cell has. `data-md-edit` marks the editing ones. */
+const mdEditing = new Set();
+const mdSource = c => { const v = lee.editors.get(c.id); return v ? LeeCM.getDoc(v) : String(c.source || ''); };
+const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
+const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
+function paintMarkdownCell(el, c, now = false) {
+  const host = $('.lee-md-cell', el); if (!host) return;
+  const src = mdSource(c);
+  el.toggleAttribute('data-md-edit', mdEditing.has(c.id));
+  host.classList.toggle('empty', !src.trim());
+  if (now) { host.dataset.markdown = src; flushMarkdown(host, true); } else renderMarkdown(host, src, true);
+}
+function editMarkdownCell(i) {
+  const c = lee.cells[i], el = mdCellOf(i); if (c?.cell_type !== 'markdown' || !el) return;
+  mdEditing.add(c.id); el.setAttribute('data-md-edit', '');
+  const v = ensureCellMounted(i);
+  requestAnimationFrame(() => { v.dispatch({selection: {anchor: v.state.doc.length}}); LeeCM.focus(v); v.requestMeasure(); });
+}
+function showRenderedMarkdown(c, refocus = false) {
+  if (c?.cell_type !== 'markdown') return;
+  const el = $(`.lee-cell[data-id="${c.id}"]`); if (!el) return;
+  const hadFocus = el.contains(document.activeElement);
+  mdEditing.delete(c.id); paintMarkdownCell(el, c, true);
+  if (hadFocus || refocus) el.focus({preventScroll: true});
+}
+function leaveOtherMarkdownEdits(keep) {
+  const stay = lee.cells[keep]?.id;
+  for (const id of [...mdEditing]) if (id !== stay) showRenderedMarkdown(lee.cells.find(c => c.id === id));
+}
+// A cell with nothing in it starts in the editor, which is how a new markdown cell arrives.
+function focusRenderedMarkdown(i) {
+  const c = lee.cells[i]; if (c?.cell_type !== 'markdown') return false;
+  if (!mdSource(c).trim() && !mdEditing.has(c.id)) editMarkdownCell(i);
+  if (mdEditing.has(c.id)) return false;
+  mdCellOf(i)?.focus({preventScroll: true}); return true;
+}
+const MD_KEYS = {
+  cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
+    return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(e.target) && !e.target.closest('button, a, summary'); },
+  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown');
+    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel'); },
+};
 
 function renderOutputs(c) {
   const box = $('#out-' + c.id); if (!box) return;
@@ -357,9 +405,6 @@ function outputEl(o) {
     i.src = 'data:image/png;base64,' + data['image/png'];
     d.appendChild(i); return d;
   }
-  if (data['text/markdown'] != null) {
-    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
-  }
   // Presence, not truthiness. Clearing a rich display is publishing an empty one of the same type:
   // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
   // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
@@ -376,6 +421,11 @@ function outputEl(o) {
       folded.onclick = show; d.appendChild(folded);
     } else show();
     return d;
+  }
+  // After the rich types, as Jupyter ranks them: a FastHTML object sends its markup as `text/html` and
+  // again as a fenced `text/markdown` block, and the fence is source, not the thing to draw.
+  if (data['text/markdown'] != null) {
+    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
   }
   outputText(d, data['text/plain'] || '');
   return d;
@@ -394,7 +444,7 @@ function selectCell(i, extend = false) {
     const lo = Math.min(lee.cellAnchor, lee.sel), hi = Math.max(lee.cellAnchor, lee.sel);
     lee.cellSelection = new Set(Array.from({length: hi - lo + 1}, (_, n) => lo + n));
   } else { lee.cellAnchor = lee.sel; lee.cellSelection = new Set([lee.sel]); }
-  paintSel();
+  paintSel(); leaveOtherMarkdownEdits(lee.sel);
 }
 /* Bring a cell into view with room around it.
 
@@ -415,12 +465,12 @@ function focusCell(i) {
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
   // Mounted first: an unmounted cell is a shell whose height is a guess, and the reveal measures it.
-  const v = ensureCellMounted(lee.sel);
+  const v = ensureCellMounted(lee.sel), rendered = focusRenderedMarkdown(lee.sel);
   const reveal = () => revealCell($(`.lee-cell[data-i="${lee.sel}"]`));
   reveal();
   // CodeMirror focuses its own scroller and reveals the caret minimally, which spends the margin
   // again, so the reveal is repeated after it and after the layout mounting just caused.
-  requestAnimationFrame(() => { if (v) LeeCM.focus(v); reveal(); });
+  requestAnimationFrame(() => { if (v && !rendered) LeeCM.focus(v); reveal(); });
 }
 function focusCellPage(direction) {
   if (!lee.cells.length) return;

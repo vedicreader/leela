@@ -171,6 +171,33 @@ def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
     assert took < .5, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'
 
 
+UPDATING = '''from IPython.display import display, HTML
+import time
+h = display(HTML('<progress max="3" value="0"></progress>'), display_id=True)
+for i in range(1, 4):
+    time.sleep(.05)
+    h.update(HTML(f'<progress max="3" value="{i}"></progress>'))
+'''
+
+def test_an_updated_display_is_one_output_holding_its_final_value_in_the_stream_and_the_file(tmp_path):
+    """`update_display_data` replaces the display with that id; fastprogress draws its bars this way."""
+    p = tmp_path/'bars.ipynb'
+    p.write_text(json.dumps({'cells': [{'cell_type': 'code', 'source': [UPDATING], 'metadata': {}, 'outputs': [], 'execution_count': None}],
+                             'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable); ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        path = client.get('/tab/state').json()['path']
+        with client.stream('POST', '/nb/run/stream', json={'i': 0, 'id': None, 'source': UPDATING, 'path': path}) as r:
+            events = [json.loads(l[6:]) for l in r.iter_lines() if l.startswith('data: ')]
+        assert client.post('/nb/save', json={'path': path}).json()['ok']
+    outs = [e['outputs'] for e in events if 'outputs' in e and 'cell' not in e]
+    assert outs
+    for o in outs: assert len(o) == 1, o
+    assert 'value="3"' in outs[-1][0]['data']['text/html']
+    saved = json.loads(p.read_text())['cells'][0]['outputs']
+    assert len(saved) == 1 and 'value="3"' in ''.join(saved[0]['data']['text/html'])
+
+
 def test_a_hanging_inspector_does_not_hold_back_the_done_event(tmp_path, monkeypatch):
     """`done` waited on `cell_extras`, so an inspector that never answered left a cell spinning under its finished output."""
     import threading, time

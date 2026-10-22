@@ -34,7 +34,7 @@ MENUS = {
               S('cell_select_above'), S('cell_select_below'), S('cell_move_up'),
               S('cell_move_down'), S('cell_above'), S('cell_below'), S('cell_duplicate'), S(),
               S('cell_copy'), S('cell_cut'), S('cell_paste_above'), S('cell_paste_below'), S(),
-              S('cell_merge_above'), S('cell_merge_below'), S('cell_type'), S('cell_split'),
+              S('cell_merge_above'), S('cell_merge_below'), S('cell_type'), S('cell_edit'), S('cell_render'), S('cell_split'), S('cell_comment'),
               S('cell_split_symbols'),
               S(), S('clear_cell_output'), S('clear_all_outputs'), S(), S('show_docs'),
               S('find_similar'), S('git_blame'), S('run_selection'), S('agent_selection'),

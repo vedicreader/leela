@@ -97,6 +97,8 @@ const ACTIONS = {
     focusCell(at); status(`split into ${made + 1} cells`, 'ok');
   },
   cell_collapse: () => setCellCollapsed(lee.sel),
+  cell_edit:    () => editMarkdownCell(lee.sel),
+  cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
   cell_duplicate: async () => {
     const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
     focusCell(at + 1); status('cell duplicated', 'ok');
@@ -121,6 +123,7 @@ const ACTIONS = {
     await nbEdit({op: 'clear'}); focusCell(lee.sel); status('all outputs cleared', 'ok');
   },
   comment:      () => toggleComment(),
+  cell_comment: () => toggleComment(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
   ask_ai:       () => askSelection('[data-ask]'),
