@@ -158,13 +158,6 @@ applyEditorPrefs(lee.editorPrefs);
    `leela/desktop.py:quiet_text_substitution` turns the same thing off one layer down. */
 const TYPING_ATTRS = {spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off',
                       'data-gramm': 'false', writingsuggestions: 'false'};
-/* WKWebView refreshes the DOM selection lazily after CodeMirror rewrites a line, and resolves the
-   next keystroke against the value it has not refreshed yet: the caret is drawn from state at the
-   end of the line, and the character typed after a completion lands at the start of it. Reading the
-   selection is what forces the refresh, which is why the fault disappeared the moment a
-   `selectionchange` reader was attached by hand in the inspector. One reader for the window rather
-   than one per view: a notebook is one of these per cell. */
-document.addEventListener('selectionchange', () => { const s = document.getSelection(); if (s) void s.anchorOffset; });
 function quietTyping(view) {
   try { for (const [k, v] of Object.entries(TYPING_ATTRS)) view.contentDOM.setAttribute(k, v); }
   catch (_) { /* a view torn down before it was ever drawn */ }

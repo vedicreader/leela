@@ -158,13 +158,6 @@ applyEditorPrefs(lee.editorPrefs);
    `leela/desktop.py:quiet_text_substitution` turns the same thing off one layer down. */
 const TYPING_ATTRS = {spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off',
                       'data-gramm': 'false', writingsuggestions: 'false'};
-/* WKWebView refreshes the DOM selection lazily after CodeMirror rewrites a line, and resolves the
-   next keystroke against the value it has not refreshed yet: the caret is drawn from state at the
-   end of the line, and the character typed after a completion lands at the start of it. Reading the
-   selection is what forces the refresh, which is why the fault disappeared the moment a
-   `selectionchange` reader was attached by hand in the inspector. One reader for the window rather
-   than one per view: a notebook is one of these per cell. */
-document.addEventListener('selectionchange', () => { const s = document.getSelection(); if (s) void s.anchorOffset; });
 function quietTyping(view) {
   try { for (const [k, v] of Object.entries(TYPING_ATTRS)) view.contentDOM.setAttribute(k, v); }
   catch (_) { /* a view torn down before it was ever drawn */ }
@@ -2675,14 +2668,14 @@ function sandboxFrame(d, srcdoc, height) {
   const f = document.createElement('iframe'); f.className = 'lee-out-frame';
   f.setAttribute('sandbox', 'allow-scripts'); f.srcdoc = srcdoc;
   f.style.cssText = `width:100%;height:${height}px;border:0;resize:vertical;overflow:auto;display:block`;
-  d.appendChild(f); return d;
+  d.classList.add('lee-out-media'); d.appendChild(f); return d;
 }
 function plotlyFrame(d, fig) {
   const json = JSON.stringify({data: fig.data || [], layout: fig.layout || {}, config: fig.config || {}}).replace(/</g, '\\u003c');
   const h = +(fig.layout && fig.layout.height) || 450;
   return sandboxFrame(d, `<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="p" style="width:100%;height:100vh"></div>` +
     `<script src="${PLOTLY_JS}"><\/script><script>const f = ${json};` +
-    `Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
+    `Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, width: undefined, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
 }
 function outputEl(o) {
   const d = document.createElement('div');
@@ -2696,21 +2689,26 @@ function outputEl(o) {
   const data = o.data || {};
   if (data[PLOTLY_MIME] != null) return plotlyFrame(d, data[PLOTLY_MIME]);
   if (data['image/png']) {
-    const i = document.createElement('img');
+    const i = document.createElement('img'), m = o.metadata?.['image/png'] || {};
     i.src = 'data:image/png;base64,' + data['image/png'];
-    d.appendChild(i); return d;
+    // A retina figure's width and height are half its pixels.
+    if (m.width) i.width = m.width;
+    if (m.height) i.height = m.height;
+    d.classList.add('lee-out-media'); d.appendChild(i); return d;
   }
   // Presence, not truthiness. Clearing a rich display is publishing an empty one of the same type:
   // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
   // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
   const rich = data['text/html'] ?? data['image/svg+xml'];
   if (typeof data['text/html'] === 'string' && /<script[\s>]/i.test(data['text/html'])) return sandboxFrame(d, data['text/html'], 450);
+  const svg = data['text/html'] == null && data['image/svg+xml'] != null;
+  if (svg) d.classList.add('lee-out-media');
   if (rich != null) {
     // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
     // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large
     // HTML stays unparsed until requested, because parsing a multi-megabyte table on the main
     // thread triggers Chrome's hang dialog.
-    const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = rich; };
+    const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = (svg ? '<style>svg{display:block;max-width:100%;height:auto}</style>' : '') + rich; };
     if (rich.length > MAX_OUTPUT_CHARS) {
       const folded = document.createElement('button'); folded.className = 'lee-output-fold';
       folded.textContent = `render large rich output (${Math.round(rich.length / 1024).toLocaleString()}kb)`;
