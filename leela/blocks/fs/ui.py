@@ -145,7 +145,7 @@ def _folder_class(path, git_state):
 
 def _kids(fs, path, git_state, hidden, opened):
     # A remembered folder can be gone, or outside the roots, by the time this draws.
-    try: return [tree_node(e, git_state, hidden, fs, opened) for e in fs.ls(path, hidden=hidden)]
+    try: return [tree_node(e, git_state, hidden, fs, opened) for e in fs.ls(path, hidden=hidden, skip=not hidden)]
     except Exception: return []
 
 def tree_node(e, git_state=None, hidden=False, fs=None, opened=frozenset()):

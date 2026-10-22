@@ -112,3 +112,12 @@ def test_tree_git_marks_files_and_folders_by_the_paths_asked(tmp_path):
         got = client.post('/tree/git', json={'paths': asked}).json()['states']
     assert got == {str(pkg): '', str(pkg/'__pycache__'): 'ignored', str(pkg/'core.py'): '',
                    str(tmp_path/'README.md'): 'modified', str(tmp_path/'nowhere'): ''}
+
+def test_show_hidden_files_lists_the_virtualenv_in_the_tree(tmp_path):
+    "With hidden files shown, `.venv` stayed out of the tree: the listing pruned it as search and the watcher do."
+    (tmp_path/'.venv'/'lib').mkdir(parents=True); (tmp_path/'a.py').write_text('x = 1\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
+        shown = client.get('/tree', params={'path': str(tmp_path), 'hidden': 'true'}).text
+        assert '.venv' in shown and 'a.py' in shown
+        assert 'lib' in client.get('/tree', params={'path': str(tmp_path/'.venv'), 'hidden': 'true'}).text
+        assert '.venv' not in client.get('/tree', params={'path': str(tmp_path)}).text, 'hidden files off still hides it'

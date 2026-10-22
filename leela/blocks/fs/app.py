@@ -79,7 +79,7 @@ def connect(app, ctx):
         "One folder's rows, drawn at once with the marks the last look found; `/tree/git` brings them up to date."
         try:
             state = git_tree_state(ctx.fs, cached=True)
-            return tuple(tree_node(e, state, hidden) for e in ctx.fs.ls(path, hidden=hidden))
+            return tuple(tree_node(e, state, hidden) for e in ctx.fs.ls(path, hidden=hidden, skip=not hidden))
         except Exception as e: return Div(errstr(e), cls='lee-err')
     @rt('/tree/git', methods=['POST'])
     async def tree_git_route(req):
