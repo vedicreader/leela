@@ -688,9 +688,11 @@ class Search:
                  *self.stdlib_root(), *self.fs.roots)
     def module_file(self, dotted, path=''):
         "The file a dotted module name names, as a module or as a package's `__init__`."
-        parts = (dotted or '').split('.')
-        if not parts or not all(re.match(r'^[_A-Za-z]\w*$', p) for p in parts): return None
-        for root in self.module_roots(path):
+        dotted = dotted or ''
+        up = len(dotted) - len(dotted.lstrip('.'))
+        parts = dotted[up:].split('.')
+        if not all(re.match(r'^[_A-Za-z]\w*$', p) for p in parts) or (up and not path): return None
+        for root in ([self._rel_base(path, up)] if up else self.module_roots(path)):
             base = Path(root).joinpath(*parts)
             for cand in (base.with_suffix('.py'), base/'__init__.py'):
                 if cand.is_file(): return cand
@@ -699,13 +701,53 @@ class Search:
         "A dotted module name as a jump target: its file, opened at the top."
         # Nothing declares a module, so a symbol lookup on `test` finds somebody else's `def test`.
         f = self.module_file(dotted, path)
-        if f is None: return None
+        return None if f is None else self._file_hit(f, dotted)
+    def _file_hit(self, f, dotted, line=1, symbol=''):
+        "A file as a jump target; one in `site-packages` carries its package and dotted module."
         env = first(r for r in self.env_roots() if str(f).startswith(str(r)))
-        try: head = first(l for l in f.read_text(errors='ignore').split('\n') if l.strip()) or ''
-        except Exception: head = ''
-        return Hit(str(f), 1, head.strip()[:200], 'env-definition' if env else 'definition',
-                   symbol=dotted, package=dotted.split('.')[0] if env else '',
-                   module=self.env_module(f) or (dotted if env else ''))
+        try:
+            lines = f.read_text(errors='ignore').split('\n')
+            text = lines[line - 1] if line > 1 else first(l for l in lines if l.strip()) or ''
+        except Exception: text = ''
+        mod = self.env_module(f)
+        return Hit(str(f), line, text.strip()[:200], 'env-definition' if env else 'definition',
+                   symbol=symbol or dotted, package=(mod or dotted).split('.')[0] if env else '',
+                   module=mod or (dotted if env else ''))
+    def _rel_base(self, path, level):
+        "The folder a `level`-dot relative import starts from."
+        base = Path(path).parent
+        for _ in range(level - 1): base = base.parent
+        return base
+    def _rel_file(self, base, parts):
+        d = base.joinpath(*parts)
+        return first(c for c in (d.with_suffix('.py'), d/'__init__.py') if c.is_file())
+    def _imports_at(self, path, line, cell_index):
+        "The relative `from` imports spanning `line`; in a notebook, only the clicked cell's."
+        try:
+            if not _is_nb(path): tree = self._tree(path)
+            else: tree = ast.parse(''.join(cell_lines(read_cells(self.fs.read(path))[cell_index]))) if cell_index >= 0 else None
+        except Exception: return []
+        return [n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level and n.lineno <= line <= n.end_lineno] if tree else []
+    def relative_target(self, name, path, line, cell_index=-1):
+        "The file a relative import under the cursor names, else None; an empty list is a directory with nothing to open."
+        if not (path and name and int(line or 0) > 0): return None
+        for n in self._imports_at(path, int(line), cell_index):
+            base, parts = self._rel_base(path, n.level), (n.module or '').split('.') if n.module else []
+            if name in parts:
+                parts = parts[:parts.index(name) + 1]
+                if (f := self._rel_file(base, parts)) is None:
+                    d = base.joinpath(*parts)
+                    if not d.is_dir(): continue
+                    if (f := first(sorted(d.glob('*.py')))) is None: return L()
+                return L(self._file_hit(f, self.env_module(f) or f.stem))
+            if (a := first(a for a in n.names if name in (a.name, a.asname) and a.name != '*')) is None: continue
+            if not parts:
+                if f := self._rel_file(base, [a.name]): return L(self._file_hit(f, self.env_module(f) or f.stem))
+            elif f := self._rel_file(base, parts):
+                if h := first(h for h in self.symbols(f) if h.symbol == a.name and h.score == 0):
+                    return L(self._file_hit(f, self.env_module(f) or f.stem, h.line, a.name))
+                if f.name == '__init__.py' and (g := self._rel_file(f.parent, [a.name])): return L(self._file_hit(g, self.env_module(g) or g.stem))
+        return None
     def imported_module(self, name, path):
         "The dotted module a file's own imports bind `name` to, when that names a file."
         # `import json` makes `json` a module here whatever `def json` a package has, and the
@@ -716,10 +758,11 @@ class Search:
                 for a in n.names:
                     if a.asname == name: return a.name
                     if not a.asname and a.name.split('.')[0] == name: return name
-            elif isinstance(n, ast.ImportFrom) and n.level < 2:
+            elif isinstance(n, ast.ImportFrom):
                 for a in n.names:
                     if (a.asname or a.name) == name:
-                        return a.name if n.level else f'{n.module or ""}.{a.name}'
+                        pre = '.' * n.level + (n.module or '')
+                        return pre + ('' if pre.endswith('.') else '.') + a.name
         return ''
     def _code_cells(self, text):
         "A notebook's code cells as source strings; nbformat stores a source as a list of lines or as one string."
@@ -849,8 +892,10 @@ class Search:
         f = self.module_file(pkg, path)
         if f is None or f.name != '__init__.py' or (tree := self._tree(f)) is None: return ''
         for n in ast.walk(tree):
-            if not (isinstance(n, ast.ImportFrom) and n.module and n.level < 2 and any(a.name in ('*', name) for a in n.names)): continue
-            mod = f'{pkg}.{n.module}' if n.level else n.module
+            if not (isinstance(n, ast.ImportFrom) and n.level < 2 and any(a.name in ('*', name) for a in n.names)): continue
+            if n.module: mod = f'{pkg}.{n.module}' if n.level else n.module
+            elif n.level and any(a.name == name for a in n.names): mod = f'{pkg}.{name}'
+            else: continue
             if (g := self.module_file(mod, path)) and any(h.symbol == name and h.score == 0 for h in self.symbols(g)): return mod
         return ''
     def _env_ranked(self, hits, name, path):
@@ -877,6 +922,9 @@ class Search:
         return False
     def declaration_or_usages(self, name, path=None, line=0, cell_index=-1, limit=30, dotted=''):
         "Where `name` is declared, or who uses it when the cursor is already there. `cell_index` locates a notebook hit; `dotted` is the chain the cursor ends."
+        if (hits := self.relative_target(name, path, line, cell_index)) is not None:
+            self.backend, self.note = 'module', f'{name} is a relative import'
+            return 'definition', hits
         if '.' in (dotted or '') and (m := self.module_hit(dotted, path or '')):
             self.backend, self.note = 'module', f'{dotted} is a module'
             return 'definition', L(m)

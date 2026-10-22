@@ -1,6 +1,7 @@
 "Search block: Kosha/litesearch façade over a workspace folder."
 
 import pytest
+from fastcore.all import Path
 
 
 
@@ -192,6 +193,55 @@ def test_an_indexed_package_path_is_remapped_to_this_project_copy(ws, tmp_path, 
     assert s._here(str(tmp_path/'readme.md')) == str(tmp_path/'readme.md'), 'a project file is already here'
     assert s._here('') == ''
 
+
+_FOSSICK = {'fossick/__init__.py': '"doc"\nfrom .search import *\nfrom .core import *\nfrom .quality import *\n',
+            'fossick/core.py': 'import os\n', 'fossick/search.py': 'def web(q): pass\n', 'fossick/quality.py': 'import re\n',
+            'other/core.py': 'def core(): pass\n', 'other/search.py': 'def search(): pass\n'}
+
+def test_a_relative_import_names_the_sibling_in_an_installed_package(ws, tmp_path, no_index):
+    "`.core` is `fossick.core`, not the `core` of whichever package defines one."
+    site = _venv(tmp_path, _FOSSICK)
+    init = str(site/'fossick'/'__init__.py')
+    kind, out = ws.search.declaration_or_usages('core', init, 3)
+    assert kind == 'definition' and [h.path for h in out] == [str(site/'fossick'/'core.py')]
+    assert (out[0].package, out[0].module) == ('fossick', 'fossick.core')
+    kind, out = ws.search.declaration_or_usages('search', init, 2, dotted='search')
+    assert [h.path for h in out] == [str(site/'fossick'/'search.py')]
+
+def test_a_relative_import_names_the_sibling_in_a_checkout(ws, tmp_path, no_index):
+    _venv(tmp_path, {'other/core.py': 'def core(): pass\n'})
+    for rel, text in _FOSSICK.items():
+        if rel.startswith('fossick'): (tmp_path/rel).parent.mkdir(exist_ok=True); (tmp_path/rel).write_text(text)
+    kind, out = ws.search.declaration_or_usages('core', str(tmp_path/'fossick'/'__init__.py'), 3)
+    assert kind == 'definition' and [h.path for h in out] == [str(tmp_path/'fossick'/'core.py')]
+
+def test_a_relative_import_climbs_levels_and_finds_names_and_packages(ws, tmp_path, no_index):
+    _venv(tmp_path, {'other/x.py': 'def x(): pass\ndef y(): pass\n', 'other/sub.py': 'def sub(): pass\ndef z(): pass\n'})
+    pkg = tmp_path/'pkg'; (pkg/'sub').mkdir(parents=True)
+    (pkg/'__init__.py').write_text('def w(): pass\n'); (pkg/'x.py').write_text('import os\n\n\ndef y(): pass\n')
+    (pkg/'sub'/'__init__.py').write_text('import os\ndef z(): pass\n')
+    mod = pkg/'sub'/'mod.py'; mod.write_text('from ..x import y\ny()\n')
+    jump = lambda name, f, line: [(Path(h.path), h.line) for h in ws.search.declaration_or_usages(name, str(f), line)[1]]
+    assert jump('x', mod, 1) == [(pkg/'x.py', 1)] and jump('y', mod, 1) == [(pkg/'x.py', 4)]
+    use = pkg/'use.py'; use.write_text('from . import x\nfrom .sub import z\nfrom . import w\n')
+    assert jump('x', use, 1) == [(pkg/'x.py', 1)]
+    assert jump('sub', use, 2) == [(pkg/'sub'/'__init__.py', 1)] and jump('z', use, 2) == [(pkg/'sub'/'__init__.py', 2)]
+    assert jump('w', use, 3) == [(pkg/'__init__.py', 1)], 'a name, not a module, falls through to the definition'
+    s = ws.search
+    assert s.imported_module('y', str(mod)) == '..x.y' and s.module_file('..x', str(mod)) == pkg/'x.py'
+    assert s.imported_module('z', str(use)) == '.sub.z' and s.imported_module('x', str(use)) == '.x'
+
+def test_a_relative_import_of_nothing_falls_through(ws, tmp_path, no_index):
+    _venv(tmp_path, {'other/q.py': 'def missing(): pass\n'})
+    (tmp_path/'helpers.py').write_text('def q(): pass\n'); use = tmp_path/'use.py'; use.write_text('from .missing import q\n')
+    kind, out = ws.search.declaration_or_usages('q', str(use), 1)
+    assert kind == 'definition' and out[0].path.endswith('helpers.py')
+    kind, out = ws.search.declaration_or_usages('missing', str(use), 1)
+    assert out[0].path.endswith('other/q.py'), 'no such sibling, so the lookup is the old one'
+
+def test_a_package_that_imports_a_sibling_by_name_reexports_it(ws, tmp_path, no_index):
+    _venv(tmp_path, {'pkg/__init__.py': 'from . import x\n', 'pkg/x.py': 'def x(): pass\n'})
+    assert ws.search.reexported_from('pkg', 'x', str(tmp_path/'use.py')) == 'pkg.x'
 
 def _client(ws):
     from starlette.testclient import TestClient
