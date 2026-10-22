@@ -47,7 +47,6 @@ LAYERS = {
         'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/refactor/move.js',
         'blocks/git/conflictfiles.js', 'blocks/git/conflictcells.js',
         'blocks/vault/home.js', 'blocks/vault/doc.js', 'blocks/vault/review.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
-        'blocks/canvas/tab.js',
         'blocks/workspace/projects.js'
     ],
 }
@@ -72,42 +71,24 @@ def missing():
     "Modules the order names but the tree does not have."
     return [p for p in modules() if not p.is_file()]
 
-#: Blocks that serve a page of their own rather than a panel in the IDE, and so ship their own
-#: bundle from their own route. Their modules are deliberately outside `LAYERS`: the IDE's three
-#: bundles share one lexical scope, and a separate document has no reason to enter it. Each one is
-#: still built and committed, because the wheel excludes the modules it is built from.
-OWN_BUNDLE = ('canvas',)
-
-def own_order(block):
-    "The block's own load order, read from the block rather than repeated here."
-    mod = __import__(f'leela.blocks.{block}.ui', fromlist=['FILES'])
-    return [PKG/'blocks'/block/f for f in mod.FILES]
-
-def own_bundle(block): return ''.join(_text(p) for p in own_order(block))
-
-def own_out(block): return OUTDIR/f'lee-{block}.js'
-
 def orphans():
     "Modules the tree has but the order does not name, which would silently never load."
     named = {p.resolve() for p in modules()}
-    found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))
-             if p.parent.name not in OWN_BUNDLE}
+    found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))}
     return sorted(found - named)
 
 def build(check=False):
     if gone := missing(): raise SystemExit(f'named but absent: {[p.name for p in gone]}')
     if extra := orphans(): raise SystemExit(f'present but unnamed: {[str(p.relative_to(PKG)) for p in extra]}')
     plan = [(name, bundle(name), OUTDIR/name) for name in LAYERS]
-    plan += [(own_out(b).name, own_bundle(b), own_out(b)) for b in OWN_BUNDLE]
     for name, text, out in plan:
         if check:
             if not out.is_file(): raise SystemExit(f'{name} has never been built')
             if out.read_text() != text: raise SystemExit(f'{name} is stale; run python tools/build_ide_js.py')
         else: out.write_text(text)
-    n = len(modules()) + sum(len(own_order(b)) for b in OWN_BUNDLE)
+    n = len(modules())
     verb = 'match' if check else 'built from'
     print(f'{len(plan)} bundle(s) {verb} {n} modules: ' +
-          ', '.join(f'{k} ({len(v)})' for k, v in LAYERS.items()) +
-          ''.join(f', {own_out(b).name} ({len(own_order(b))})' for b in OWN_BUNDLE))
+          ', '.join(f'{k} ({len(v)})' for k, v in LAYERS.items()))
 
 if __name__ == '__main__': build(check='--check' in sys.argv)

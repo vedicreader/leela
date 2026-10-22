@@ -292,6 +292,18 @@ def test_a_rootless_save_does_not_blank_the_folders_and_tabs_beside_it(tmp_path)
     assert [t['path'] for t in held['tabs']] == [str(proj/'a.py')]
     assert held['model'] == 'gemma-12b' and Workspace.load(state).model == 'gemma-12b'
 
+def test_a_saved_canvas_tab_is_dropped_and_the_active_tab_stays_the_one_it_was(tmp_path):
+    "A session saved while the canvas feature existed lists a canvas tab: the rest reopens, and the saved active index is read among the tabs that survive."
+    (proj := (tmp_path/'proj').resolve()).mkdir()
+    for n in ('a.py', 'b.py', 'p.canvas.md'): (proj/n).write_text('x = 1')
+    state = tmp_path/'workspace.json'
+    state.write_text(json.dumps({'version': 2, 'roots': [str(proj)], 'active': 1, 'tabs': [
+        {'path': str(proj/n), 'kind': k} for n, k in (('p.canvas.md', 'canvas'), ('a.py', 'text'), ('b.py', 'text'))]}))
+    ws = Workspace.load(state)
+    assert [t.path for t in ws.tabs] == [str(proj/'a.py'), str(proj/'b.py')] and ws.tab.path == str(proj/'a.py')
+    again = Workspace(roots=[proj])
+    assert again.reopen_saved_tabs(state) == 2 and again.tab.path == str(proj/'a.py')
+
 def test_a_workspace_saved_before_one_folder_was_one_window_heals_when_it_loads(tmp_path):
     "Folders piled into one file under the old model reopened all of them, and pointed git at the wrong one."
     folders = tmp_path/'workspaces'; folders.mkdir()

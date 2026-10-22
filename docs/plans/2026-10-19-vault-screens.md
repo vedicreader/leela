@@ -12,7 +12,7 @@ Entry points today:
 - Document tab `vault` (sections plus text, PII): `reader.js:94-145`, `workspace.py:558`.
 - Research modal, vault mode: `research/research.js:48-62,120`.
 - Agent: `@` mentions `/vault/mentions` (`agent/steer.js:518-529`), ask buttons (`reader.js:44-63`), tools `memory_*` and `ask` (`agent/ai.py:372-409`).
-- Canvas refs `vault:` (`canvas/context.py:16`). The palette lists keymap labels only (`keys/palette.js:16`).
+- The palette lists keymap labels only (`keys/palette.js:16`).
 - Routes: 47 under `/vault/*` and `/jobs/*`, all in `vault/app.py:19-419`, listed in `tests/routes.txt:348-395`.
 
 Reuse:

@@ -424,30 +424,6 @@ def test_a_new_theme_is_picked_from_every_route_painted_everywhere_and_kept(proj
             assert page.evaluate(painted) == bg
             page.evaluate(_NO_SAVED_THEME)
 
-def test_a_canvas_tab_follows_the_theme_and_repaints_when_it_changes(proj_web_th):
-    """The tab put the theme object on the frame's URL as `theme=[object Object]`, so a canvas stayed light whatever the IDE wore."""
-    doc = proj_web_th/'t.canvas.md'
-    doc.write_text('---\ntitle: t\n---\n# T\n\nA paragraph.\n', encoding='utf-8')
-    ws = Workspace(roots=[proj_web_th])
-    with serve(ws) as url:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            page = _open(pw, url)
-            page.evaluate("applyTheme('ember:dark:tight')")
-            page.evaluate("p => leeOpenFile(p)", str(doc))
-            page.wait_for_selector('#editor iframe.lee-canvasframe')
-            src = page.evaluate("canvasFrame().src")
-            assert 'theme=dark' in src and 'object' not in src, src
-            body = "canvasWindow()?.document?.body?.dataset.theme"
-            page.wait_for_function(f"{body} === 'dark' && !!canvasWindow().document.querySelector('#cv-doc .cv-brick')", timeout=15000)
-            page.evaluate("applyTheme('dusk:light:relaxed')")
-            page.wait_for_function(f"{body} === 'light'", timeout=5000)
-            page.emulate_media(color_scheme='dark')
-            page.evaluate("applyTheme('nord:system:relaxed')")
-            page.wait_for_function(f"{body} === 'dark'", timeout=5000)
-            page.emulate_media(color_scheme='light')       # following the system follows it now
-            page.wait_for_function(f"{body} === 'light'", timeout=5000)
-
 def test_the_native_window_takes_the_theme_background_from_every_paint(proj_web_th):
     """The desktop window kept kavacha's fixed dark colour, which showed on open and on resize; every paint now sends `--lee-bg` over the bridge."""
     ws = Workspace(roots=[proj_web_th])
@@ -898,102 +874,6 @@ def test_a_conflicted_notebook_is_merged_cell_by_cell_in_the_browser(tmp_path):
         ['x = 2', 'y = 2', 'y = 3', 'z = 1', 'theirs_only = 1'], book['cells']
     assert book['metadata']['kernelspec']['name'] == 'python3', 'the notebook keeps its own metadata'
     assert not [c for c in info['changes'] if c['conflicted']], 'the merge has nothing left to settle'
-
-
-def test_typing_in_a_code_brick_survives_the_insert_that_follows_it(tmp_path):
-    """A `cvSync` keeps the element and hands it a new brick object, so a write to the captured one was gone at the next flush: the code you typed ran as an empty cell."""
-    doc = tmp_path/'t.canvas.md'
-    doc.write_text('---\ntitle: t\n---\n# T\n\nA paragraph to hang a gutter on.\n', encoding='utf-8')
-    async def go(pg):
-        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
-        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
-        a = pg.locator('.cv-brick').last
-        await a.hover(); await a.locator('.cv-gadd').click()
-        await pg.wait_for_selector('.cv-item')
-        await pg.keyboard.type('code'); await pg.keyboard.press('Enter')
-        await pg.wait_for_selector('.cv-brick[data-kind=code] textarea')
-        await pg.keyboard.type('x = 41 + 1')
-        code = pg.locator('.cv-brick[data-kind=code]').first
-        await code.hover(); await code.locator('.cv-gadd').click()      # the op that flushes
-        await pg.wait_for_selector('.cv-item')
-        await pg.keyboard.press('Escape')
-        return await pg.evaluate("() => cv.canvas.bricks.filter(b => b.kind == 'code').map(b => b.body)")
-    assert _run(go, roots=[str(tmp_path)]) == ['x = 41 + 1']
-
-
-CANVAS_WITH_TABLE = '''---
-title: t
----
-# T
-
-| word | means |
-|---|---|
-| brick | one part of the document |
-| prose | ordinary markdown between bricks |
-
-A paragraph after the table.
-
-```canvas code id=c1
-total = 6 * 7
-```
-'''
-
-def test_opening_a_canvas_runs_nothing_until_it_is_trusted(tmp_path):
-    """A canvas is markdown, so it arrives from a clone or a paste."""
-    doc = tmp_path/'t.canvas.md'
-    doc.write_text(CANVAS_WITH_TABLE, encoding='utf-8')
-    async def go(pg):
-        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
-        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
-        before = await pg.evaluate('''() => ({trusted: cv.trusted, names: cv.names.length,
-                                             bar: !$$("#cv-trust").hidden,
-                                             says: $$("#cv-trust-count").textContent})''')
-        await pg.locator('#cv-trust-run').click()
-        await pg.wait_for_function('() => cv.trusted === true')
-        after = await pg.evaluate('() => ({trusted: cv.trusted, hidden: $$("#cv-trust").hidden})')
-        return before, after
-    #: The kernels are fakes here, so nothing the cell defines comes back. What this holds is the
-    #: gate: untrusted on open, one click to trust, and the bar gone after it.
-    before, after = _run(go, roots=[str(tmp_path)])
-    assert before == {'trusted': False, 'names': 0, 'bar': True, 'says': '1'}
-    assert after == {'trusted': True, 'hidden': True}
-
-def test_prose_nobody_edited_is_not_rewritten_by_a_blur(tmp_path):
-    """Blur converted the rendered DOM back to markdown every time, and `cvMd` cannot draw a table, so focusing a table and leaving it flattened the table into its own text."""
-    doc = tmp_path/'t.canvas.md'
-    doc.write_text(CANVAS_WITH_TABLE, encoding='utf-8')
-    async def go(pg):
-        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
-        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
-        table = pg.locator('.cv-brick[data-kind=text]').first
-        await table.click()                       # focus it, change nothing
-        await pg.locator('#cv-doc').click()       # and blur it
-        await pg.wait_for_timeout(300)
-        await pg.evaluate('() => cvSave()')
-        await pg.wait_for_function('() => cv.dirty === false')
-        return None
-    _run(go, roots=[str(tmp_path)])
-    kept = doc.read_text(encoding='utf-8')
-    assert '| word | means |' in kept and '|---|---|' in kept, kept
-    assert '| brick | one part of the document |' in kept
-
-def test_a_save_and_a_blur_do_not_race_each_other(tmp_path):
-    "Clicking Save blurs the brick being edited, and the blur used to post alongside the save."
-    doc = tmp_path/'t.canvas.md'
-    doc.write_text('---\ntitle: t\n---\n# T\n\noriginal words here.\n', encoding='utf-8')
-    async def go(pg):
-        await pg.goto(f'{pg.url.rstrip("/")}/canvas?path={doc}', wait_until='networkidle')
-        await pg.wait_for_function('typeof cv != "undefined" && !!cv.canvas')
-        para = pg.locator('.cv-brick[data-kind=text] .cv-prose').last
-        await para.click()
-        await pg.keyboard.press('End')
-        await pg.keyboard.type(' plus an edit')
-        await pg.locator('#cv-save').click()       # blurs the paragraph as it saves
-        await pg.wait_for_function('() => cv.dirty === false')
-        return None
-    _run(go, roots=[str(tmp_path)])
-    kept = doc.read_text(encoding='utf-8')
-    assert 'plus an edit' in kept, kept
 
 
 def test_a_git_diff_tab_paints_its_code_in_the_themes_token_colours(tmp_path):
@@ -1638,3 +1518,45 @@ def test_the_palette_opens_the_sub_agent_and_tool_call_controls_in_settings(tmp_
     assert (got['effort'], got['tools'], got['subtools']) == ('subeffort', 'toolmode', 'subtools')
     assert got['reasoning'] == ['auto', 'low', 'medium', 'high', 'xhigh', 'max']
     assert got['models'] == 1, 'the routed-jobs row is the sub-agent model control'
+
+
+def test_a_refresh_that_changes_one_variable_leaves_an_expanded_row_open_and_filled(monkeypatch):
+    """A poll that finds nothing new repaints nothing, and one that finds a sibling changed patches that row in place: the expanded row keeps its element and its children instead of emptying while they are fetched again."""
+    tick = [0]
+    def node(name, value, container=False):
+        return {'name': name, 'type': 'Response' if container else 'int', 'value': value, 'shape': None,
+                'is_container': container, 'is_grid': False, 'accessor': [name]}
+    class K(FakeKernel):
+        async def api(self, path, params=None, timeout=15):
+            if path.endswith('/api/rows'):
+                return {'groups': [{'label': '', 'nodes': [node('tick', str(tick[0])), node('res', '<Response [200 OK]>', True), node('x', '1')]}]}
+            if path.endswith('/api/expand'):
+                await asyncio.sleep(.2)
+                return [dict(node(f'attr{i}', 'v'), accessor=['res', f'attr{i}']) for i in range(35)]
+            return await super().api(path, params, timeout)
+    monkeypatch.setitem(globals(), 'FakeKernel', K)
+    watch = """() => {
+      const box = document.querySelector('#vars'); window._m = {replaced: 0, emptied: 0};
+      new MutationObserver(() => window._m.replaced++).observe(box, {childList: true});
+      window._kids = document.querySelector('#vars .lee-vkids:not(:empty)');
+      setInterval(() => { if (!window._kids.children.length) window._m.emptied++; }, 5);
+    }"""
+    async def go(pg):
+        await pg.wait_for_selector('#vars .lee-vrow', state='attached')
+        await pg.evaluate("() => { leePane('right', true); leeRight('vars'); }")
+        await pg.evaluate("() => document.querySelector('#vars .lee-vrow[data-name=res]').click()")
+        await pg.wait_for_selector('#vars .lee-vkids .lee-vrow')
+        await pg.evaluate(watch)
+        for _ in range(3): await pg.evaluate('() => leeVars()')
+        idle = await pg.evaluate('() => window._m.replaced')
+        tick[0] += 1
+        await pg.evaluate('() => leeVars()')
+        await pg.wait_for_function("() => document.querySelector('#vars .lee-vrow[data-name=tick] .lee-vval').textContent === '1'")
+        await pg.wait_for_timeout(400)
+        return {'idle': idle, 'm': await pg.evaluate('() => window._m'),
+                'same': await pg.evaluate("() => window._kids === document.getElementById('k-' + encodeURIComponent(JSON.stringify(['res'])))"),
+                'kids': await pg.evaluate("() => window._kids.querySelectorAll('.lee-vrow').length")}
+    got = _run(go)
+    assert got['idle'] == 0, 'an unchanged poll must not touch the panel'
+    assert got['m']['emptied'] == 0, 'the expanded row emptied while its children were fetched again'
+    assert got['same'] and got['kids'] == 35

@@ -275,27 +275,14 @@ def test_the_token_stylesheet_is_built_and_current():
     import build_hl_css
     assert build_hl_css.OUT.read_text() == build_hl_css.css(), 'lee-hl.css is stale; run python tools/build_hl_css.py'
 
-def test_the_canvas_bundle_is_built_and_current():
-    """`/canvas/js` used to concatenate `leela/blocks/canvas/*.js` at request time, and the wheel excludes exactly those files, so an installed Leela served an empty canvas."""
-    import sys
-    sys.path.insert(0, str(ROOT/'tools'))
-    import build_ide_js as builder
-    for block in builder.OWN_BUNDLE:
-        out = builder.own_out(block)
-        assert out.is_file(), f'{out.name} has never been built'
-        assert out.read_text() == builder.own_bundle(block), \
-            f'{out.name} is stale; run python tools/build_ide_js.py'
-
-
 def test_the_wheel_carries_every_bundle_the_app_serves():
     """The exclusions keep the modules out of the wheel."""
     import zipfile
     from leela.core.web import IDE_BUNDLES
-    from leela.blocks.canvas import ui
     wheels = sorted((ROOT/'dist').glob('leela-*.whl'))
     if not wheels: pytest.skip('no wheel in dist/ — run python -m build --wheel first')
     with zipfile.ZipFile(wheels[-1]) as z: names = set(z.namelist())
-    for b in (*IDE_BUNDLES, ui.BUNDLE):
+    for b in IDE_BUNDLES:
         assert f'leela/static/{b}' in names, f'{b} is not in the wheel'
     assert not [n for n in names if n.startswith('leela/static/js/')], 'the sources should stay out'
     assert not [n for n in names if n.startswith('leela/blocks/') and n.endswith('.js')]

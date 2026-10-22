@@ -6,6 +6,8 @@
 
 Needs vishalakshi 0.1.33, shalya 0.1.19, uraiyadal 0.0.16, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.51, kunda 0.0.5, kavacha 0.0.8, dhrishti 0.1.8, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.11, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.62 and rishi 0.1.54.
 
+- The canvas is removed: the `canvas` block and its `*.canvas.md` documents, the `+canvas` button and `hyper+j` shortcut, the `canvas_*` and `flow_canvas` agent tools, the canvas skill, and the `leela-bricks` development dependency. A saved session that lists a canvas tab opens without it.
+
 - kavacha's interpreter probes and build steps, pullup's `gh auth status` and dhrishti's `ps` get `/dev/null` as stdin, like Leela's own child processes (kavacha 0.0.8, pullup 0.0.11, dhrishti 0.1.8).
 
 - The `ramabana` terminal runs on teleprint 0.1.4. Ctrl+z hands the terminal back to the shell with extended keys, mouse reports and bracketed paste off, and takes it again on `fg`. Quitting from the transcript view leaves the alternate screen.

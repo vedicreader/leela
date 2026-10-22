@@ -59,7 +59,6 @@ function paintTheme() {
   root.style.colorScheme = resolved;
   const pill = $('#themepill'); if (pill) pill.textContent = mode === 'system' ? `${family} · auto` : `${family} · ${mode}`;
   for (const t of lee.terms.values()) t.view.retheme();
-  try { canvasWindow()?.cvTheme?.(resolved); } catch (_) {}   // a frame still loading has no cvTheme yet
   nativeBackground(getComputedStyle(root).getPropertyValue('--lee-bg').trim());
 }
 /* The desktop window's own background shows while it opens and while it grows faster than the page

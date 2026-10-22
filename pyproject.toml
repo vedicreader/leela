@@ -88,7 +88,6 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",
     "leela[local]",
-    "leela-bricks",
     "rishi[all]==0.1.54",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
@@ -116,4 +115,3 @@ constraint-dependencies = ["mcp<2", "pyjwt>=2.15.0"]
 [tool.uv.sources]
 # PyPI, not sibling checkouts: the app bundle installs from this lock, and an editable path breaks it
 leela = { workspace = true }
-leela-bricks = { path = "extensions/bricks", editable = true }

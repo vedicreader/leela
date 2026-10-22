@@ -16,19 +16,15 @@ def test_the_frozen_entry_seals_the_bundle_first_and_takes_the_login_environment
     runpy.run_path(entry, run_name='leela_app_frozen')
     assert calls[0] == 'seal_bundle' and 'import_login_env' not in calls and 'use_login_path' in calls, calls
 
-def test_leela_serves_on_5010_and_the_canvas_wires_to_the_same_port(monkeypatch):
-    "`leela` with no `--port`, `serve_ide` and the canvas's component host name one port; the canvas once said 5001 whatever Leela served on."
+def test_leela_serves_on_5010_with_no_port_given(monkeypatch):
     import leela, leela.app, leela.cli, leela.core.envs
-    from leela.blocks.canvas.store import brick_host
     got = {}
     monkeypatch.setattr(leela.app, 'serve_ide', lambda roots, **kw: got.update(kw))
     monkeypatch.setattr(leela.core.envs, 'apply_stored_env', lambda: None)
     monkeypatch.setattr(leela, 'use_extras', lambda: None)
     monkeypatch.delenv('LEELA_SHELL_ENV', raising=False)
-    monkeypatch.delenv('BRICK_HOST', raising=False)
     leela.cli.main([])
     assert got['port'] == 5010
-    assert brick_host() == 'http://127.0.0.1:5010'
 
 def test_desktop_port_ladder_starts_at_5010(monkeypatch):
     import leela_app as app

@@ -333,25 +333,6 @@ async function newEntry(kind) {
   await refreshFileTree(r.entry.path);
   if (kind === 'file') leeOpenFile(r.entry.path);
 }
-/* Created through `/fs/new`, not a route of its own: that is the seam that writes the starter
-   document, files the undo entry and refreshes the tree, so a canvas is made the way a file is. */
-async function newCanvas() {
-  const sel = treeSel();
-  const parent = sel ? (sel.classList.contains('lee-dir') ? sel.dataset.path
-                                                          : sel.dataset.path.replace(/\/[^/]+$/, ''))
-                     : (lee.activeRoot || lee.roots?.[0] || '');
-  if (!parent) return status('open a folder first', 'err');
-  let name = await inputDialog('new canvas', 'name', '', 'plan.canvas.md');
-  if (!name) return;
-  if (!name.endsWith('.canvas.md')) name = name.replace(/\.(md|canvas)$/, '') + '.canvas.md';
-  const r = await post('/fs/new', {parent, name, kind: 'file'});
-  noteSelfWrite(r.entry.path);
-  status('created ' + name, 'ok');
-  await refreshFileTree(r.entry.path);
-  leeOpenFile(r.entry.path);
-}
-window.newCanvas = newCanvas;
-
 async function renameEntry() {
   const sel = treeSel(); if (!sel) return status('select a file or folder first');
   const old = sel.dataset.path.split('/').pop();

@@ -35,11 +35,6 @@ def connect(app, ctx):
     def git_info(): return ui.info(ctx.fs)
 ```
 
-A block that serves its own page, rather than a panel in the IDE, ships its own bundle from its
-own route. `build_ide_js.OWN_BUNDLE` names that bundle. Such a block keeps its modules out of
-`LAYERS` on purpose, because the IDE's three bundles share one lexical scope. `canvas` is the
-only block that does this today, and it serves `/canvas/js`.
-
 `CAPS` limits the services `Ctx` exposes. It must name exactly what `app.py` and `ui.py` read as
 `ctx.<name>`. Over-declaring grants reach nobody asked for, and under-declaring raises an
 `AttributeError` on a route nobody exercised. Both faults stay silent until then, and

@@ -1079,18 +1079,6 @@ def test_a_refused_call_in_a_small_session_dispatches_user_steering(tmp_path):
     by = {t.__name__: t for t in be.tools}
     assert 'User steering' in by['user_steering'](**tc['function']['arguments'])
 
-def test_opening_a_canvas_adds_its_tools_to_a_small_session_and_re_briefs(tmp_path):
-    from leela.blocks.canvas.helper import TOOLS
-    from tests.fakemodel import Step, install
-    (tmp_path/'p.canvas.md').write_text('# p\n')
-    ws = Workspace(roots=[tmp_path]); be = install(ws, [Step(text='ok')] * 3, token_delay=0)
-    assert ws.ai.profile == 'small'
-    ws.ai.ask('one'); assert not {t.__name__ for t in be.tools} & set(TOOLS)
-    ws.open(tmp_path/'p.canvas.md'); ws.ai.ask('two')
-    assert set(TOOLS) <= {t.__name__ for t in be.tools} and '`canvas`' in be.sp, 'the live backend was re-briefed'
-    assert len(be.sp) < 3500, len(be.sp)
-
-
 def test_rolling_back_a_drawing_removes_every_picture_it_made(tmp_path):
     from leela.blocks.agent.ai import Interventions
     ws = Workspace(roots=[tmp_path], approvals='auto'); ap = ws.ai.approvals

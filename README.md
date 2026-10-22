@@ -143,26 +143,6 @@ providers it can use (OpenAI, Azure OpenAI, AWS Bedrock, Anthropic, Gemini, Open
 Code, Codex, a local model) and what each needs, and **+ model** adds one; see
 [docs/integration.md](docs/integration.md#providers-azure-openai-and-aws-bedrock).
 
-### The canvas
-
-One markdown file holds prose, code cells, components embedded
-from a package, sketches written in the file, PDFs and video. Each brick recomputes when a name it
-reads changes. Cells run in dependency order rather than document order. Clicking inside an
-embedded component writes a name into the namespace, which makes a component an input as much as
-an output. You reach the helper from the margin, from an `ask` brick, and from `mod+k` on any
-selection. It edits the document through eight tools and no others. Leela owns a skill covering
-what the helper knows about a canvas, and pushes that skill onto the agent while a canvas is open.
-
-The editor holds what every document of this shape holds. A gutter appears on hover, with a drag
-grip and an insert button. `/` opens a filtered block menu. A format bar appears on a selection,
-with Ask AI in it. `Enter` splits a block at the caret. Both themes ship.
-
-Six canvases ship in `examples/canvas/`, over sales, astrology, quantum tunnelling, cell biology and
-two on building software. Open one with `+canvas` in the files strip, or `new canvas` in the command
-palette. See [the canvas](docs/canvas.md).
-
-![A canvas](docs/screenshots/canvas-funnel.png)
-
 ### Search and memory
 
 Code goes through [kosha](https://pypi.org/project/koshas/): FTS5, embeddings, a call graph

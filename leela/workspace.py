@@ -132,29 +132,6 @@ def budget_value(v, lo, hi):
     except (TypeError, ValueError): return 'auto'
     return n if lo <= n <= hi else 'auto'
 
-#: Named here, not imported: `Tab` must not drag the canvas block in.
-CANVAS_SUFFIX = '.canvas.md'
-#: What a new one opens as, rather than an empty file and a syntax to guess.
-CANVAS_STARTER = '''---
-title: {title}
-mode: make
----
-
-# {title}
-
-Write here. Prose is prose; everything else is a brick.
-
-```canvas code id={cid}
-tokens = 1200
-cost = tokens / 1e6 * 3.0
-cost
-```
-
-```canvas ask id={aid}
-What should this document work out?
-```
-'''
-
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
 AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
@@ -173,6 +150,11 @@ code and applies it themselves, or discards it.
 Return only the proposed replacement text. No preamble, no markdown fence, no commentary outside
 the replacement. Preserve the source language and its formatting unless asked otherwise."""
 
+def _saved_tabs(d):
+    "The saved tabs to reopen without the removed canvas kind, and the active index among them."
+    tabs, act = d.get('tabs') or [], int(d.get('active', 0))
+    return [t for t in tabs if t.get('kind') != 'canvas'], act - sum(t.get('kind') == 'canvas' for t in tabs[:act])
+
 @dataclass
 class Tab(Dictable):
     "One open editor tab."
@@ -190,7 +172,6 @@ class Tab(Dictable):
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
         if self.path.endswith('.ipynb'): self.kind = 'notebook'
-        elif self.path.endswith(CANVAS_SUFFIX): self.kind = 'canvas'
         elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
         elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
         elif Path(self.path).suffix.lower() in AUDIO_EXTS: self.kind = 'audio'
@@ -611,11 +592,6 @@ class Workspace:
         if p.suffix.lower() == '.ipynb':
             Notebook.blank(p).save(p, sandbox=self.fs)
             return self.fs.entry(p)
-        if str(p).endswith(CANVAS_SUFFIX):
-            from uuid import uuid4
-            title = p.name[:-len(CANVAS_SUFFIX)].replace('-', ' ').replace('_', ' ').strip() or 'untitled'
-            body = CANVAS_STARTER.format(title=title, cid=uuid4().hex[:8], aid=uuid4().hex[:8])
-            return self.fs.write(p, body)
         return self.fs.touch(p)
     def close(self, i=None):
         i = self.active if i is None else i
@@ -1315,7 +1291,7 @@ class Workspace:
         try: d = Path(path or getattr(self, '_state_path', None) or ws_path()).read_json()
         except Exception: return 0
         self._owns_session = True
-        saved, opened = d.get('tabs') or [], 0
+        (saved, active), opened = _saved_tabs(d), 0
         for t in saved:
             place = str(t.get('path') or '')
             try:
@@ -1327,7 +1303,7 @@ class Workspace:
                 opened += 1
             except Exception: continue
         if opened:
-            was = saved[min(max(int(d.get('active', 0)), 0), len(saved) - 1)] or {}
+            was = saved[min(max(active, 0), len(saved) - 1)] or {}
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
                                        if t.path == str(was.get('path') or '')), 0)
         return opened
@@ -1398,14 +1374,15 @@ class Workspace:
             if r in stale: continue
             try: ws.add_root(r, loose=Path(r).resolve() == loose_root())
             except Exception: pass
-        for t in d.get('tabs', []):
+        saved, active = _saved_tabs(d)
+        for t in saved:
             try:
                 tab = ws.open(t['path'])
                 if d.get('version', 0) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
                 tab.cwd = str(t.get('cwd') or '')
             except Exception: pass
-        ws.active = min(d.get('active', 0), max(0, len(ws.tabs)-1))
+        ws.active = min(active, max(0, len(ws.tabs)-1))
         ws.active_root = None
         if saved_root := str(d.get('active_root') or ''):
             try: ws.activate_root(saved_root)

@@ -3844,10 +3844,6 @@ kbd {
 .lee-split-cell pre { margin: 2px 0 0; white-space: pre-wrap; font: 12px/1.5 var(--lee-mono); }
 .lee-split-cell.markdown { border-left-color: var(--lee-fg4); }
 
-/* A canvas tab. The page is a frame of its own, so it fills the pane and keeps its own scroll. */
-.lee-canvasdoc { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.lee-canvasframe { flex: 1 1 auto; width: 100%; border: 0; min-height: 0; background: var(--lee-bg, #fff); }
-.lee-canvasnote { padding: 8px 12px; border-top: 1px solid var(--lee-line, #ddd); font-size: 12px; }
 .lee-vault-type { padding: 0 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg3); font: 10px/1.6 var(--lee-mono); white-space: nowrap; }
 .lee-vault-type.proposed { border-style: dashed; color: var(--lee-accent); }
 .lee-vault-type.none { opacity: .5; }

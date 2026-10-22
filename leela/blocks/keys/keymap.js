@@ -89,9 +89,7 @@ function findBinding(e, scope) {
   if (scope === 'overlay') return null;
   // `term` and `web` hand the keyboard to something that is not Leela, keeping only the chords
   // that get you back out.
-  // A canvas is a frame with its own keyboard, so it is routed like the terminal and the browser:
-  // only the chords that get you back out are taken from it.
-  const allowed = (scope === 'term' || scope === 'web' || scope === 'canvas')
+  const allowed = (scope === 'term' || scope === 'web')
     ? k => k.scope === scope || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
     : k => k.scope === scope || k.scope === 'global';
   const guard = !EDITING_SCOPES.has(scope) && isTextEntry(e.target);

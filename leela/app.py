@@ -459,7 +459,6 @@ def _empty_editor():
         Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
             Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
-            Button('New canvas', cls='lee-btn', onclick='leeAct("new_canvas")'),
             Button('Open the vault', cls='lee-btn', onclick='leeVaultWorkbench()'),
             Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
             Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),

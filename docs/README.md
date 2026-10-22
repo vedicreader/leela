@@ -9,17 +9,10 @@ Design rationale and reference, kept out of the source. The README is the produc
 - [languages.md](languages.md): Rust and JavaScript notebooks, and what stays Python.
 - [search.md](search.md): the code search dialog, its modes and its keys.
 - [vault.md](vault.md): shelves, imports, feeds and the workbench.
-- [canvas.md](canvas.md): the living document. Prose, code, embedded components and simulations in one markdown file, the dataflow between them, and the skill Leela pushes to the agent when one is open.
 
 ## Building on Leela
 
-- [change.canvas.md](change.canvas.md): the canvas block itself, written as a canvas document. `python tools/make_change_page.py` renders it to `media/canvas-change.html`.
-- [session.canvas.md](session.canvas.md): one working session reviewed in the format it built. The same tool renders it to `media/canvas-session.html`.
-- [branch.canvas.md](branch.canvas.md): one branch reviewed. A `Words` table first, then the core logic as snippets, then one `diff` slot naming the two files that carry the change. `make_change_page.py --src docs/branch.canvas.md --out media/canvas-branch.html` renders it.
-- [dynamic-documents.md](dynamic-documents.md): the design the canvas grew from. The `*.canvas.md` format, the context rule a question carries, and what the two halves cost to merge. Built; read it for why, and `canvas.md` for what.
-
 - [blocks.md](blocks.md): the block contract. `CAPS`, `connect(app, ctx)`, wiring order, and where a block's JavaScript goes.
-- [bricks.md](bricks.md): where a canvas component comes from. The resolver, what a library has to be, and the record of extracting the bricks package.
 - [integration.md](integration.md): the capability groups `WorkspaceHost` declares, and the block backing each one.
 - [decisions.md](decisions.md): why a symbol has the shape it has. Read the entry before rewriting the symbol.
 - [regressions.md](regressions.md): a fault the code still guards against, and the fix that holds it off. Read the entry before touching the guard.
