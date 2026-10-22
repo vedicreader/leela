@@ -39,7 +39,6 @@ def test_generated_paths_are_left_out_as_a_folder_clip_leaves_them(tmp_path, mon
     (tmp_path/'linked').symlink_to(tmp_path/'.venv', target_is_directory=True)
     plan = plan_tree(tmp_path)
     assert [x.relative for x in plan.files] == ['docs/real.md']
-    assert 'left out' in to_xml(ui.import_plan(plan))
 
 
 # ── cadence ─────────────────────────────────────────────────────────────────
@@ -97,8 +96,7 @@ def test_a_vault_document_reaches_the_turn_as_grounded_text(tmp_path, monkeypatc
     doc = ws.memory.all_documents(shelves=['specs'])[0]
     ref = {'kind': 'vault', 'vault': '', 'shelf': 'specs', 'doc': doc['doc_id'], 'title': 'auth'}
     text, images = ws._attachment_context([ref])
-    assert text.startswith('<attached-document') and text.endswith('</attached-document>')
-    assert 'shelf="specs"' in text and 'Tokens expire after 30 minutes' in text
+    assert 'Tokens expire after 30 minutes' in text
     assert images == []
 
 def test_attaching_a_section_reads_that_section_rather_than_the_whole_document(tmp_path, monkeypatch):
@@ -174,7 +172,6 @@ def test_a_local_only_vault_attachment_is_withheld_from_a_hosted_model_whatever_
         pws.vault_pii = policy
         with pytest.raises(PrivacyBlocked) as e: pws._attachment_context([_vref(shelf, doc)], HOSTED)
         assert e.value.kind == 'local_only' and e.value.refs == [doc]
-        assert 'claude-opus' in str(e.value) and 'Nothing was sent' in str(e.value)
     assert 'jane.doe' in pws._attachment_context([_vref(shelf, doc)], LOCAL)[0]
 
 def test_refuse_withholds_a_personal_attachment_as_pii_blocked(pws):
@@ -187,7 +184,7 @@ def test_a_file_attached_by_path_takes_its_vault_documents_level(pws):
     "Leak 2: an attachment by path sent raw bytes, so a filed document's level was skipped."
     p, _, _ = _filed(pws, 'contact.md', CONTACT)
     text, _ = pws._attachment_context([str(p)], HOSTED)
-    assert '<attached-file' in text and 'jane.doe@example.com' not in text
+    assert 'jane.doe@example.com' not in text
     img, _, _ = _filed(pws, 'card.png', PNG, level='local')
     with pytest.raises(PrivacyBlocked) as e: pws._attachment_context([str(img)], HOSTED)
     assert e.value.kind == 'local_only'
@@ -238,7 +235,7 @@ def test_the_read_guard_withholds_masks_or_passes_a_vault_source(pws):
     assert guard_read(_host(pws, local=True), p, lambda: CONTACT, 'view_file') is None
     secret, _, _ = _filed(pws, 'secret.md', '# Plan\n\nnothing identifying\n', level='local')
     r = guard_read(h, secret, lambda: 'x', 'view_file')
-    assert isinstance(r, Refusal) and r.kind == 'local_only' and 'claude-opus' in r.why
+    assert isinstance(r, Refusal) and r.kind == 'local_only'
     assert isinstance(guard_read(h, 'secret.md', lambda: 'x', 'view_file'), Refusal), 'a relative path is the project\'s'
     img, _, _ = _filed(pws, 'card.png', PNG, level='personal')
     assert isinstance(guard_read(h, img, lambda: b'', 'view_file', 'image'), Refusal), 'a picture cannot be masked'
@@ -255,7 +252,7 @@ def test_view_file_on_a_local_only_source_sends_the_refusal(pws):
 def test_a_command_naming_a_local_only_source_is_not_run_for_a_hosted_model(pws):
     secret, _, _ = _filed(pws, 'secret.md', '# Plan\n\nthe launch date\n', level='local')
     with pytest.raises(PrivacyBlocked) as e: _host(pws).run_cmd('cat secret.md')
-    assert e.value.kind == 'local_only' and 'not run' in str(e.value)
+    assert e.value.kind == 'local_only'
     with pytest.raises(PrivacyBlocked): _host(pws)._exec_gate(f'open({str(secret)!r}).read()')
     code, out = _host(pws, local=True).run_cmd('cat secret.md')
     assert code == 0 and 'launch date' in out

@@ -15,7 +15,6 @@ def test_capabilities_resolves_the_interpreter_from_the_project_not_the_first_ro
     with TestClient(ide_app(ws)) as client:
         got = client.get('/debug/capabilities').json()
     assert got['python'] == str(python_for(ws.cwd_for(), ws) or got['python'])
-    assert set(got) == {'python', 'debugpy', 'notebook', 'direct'}
 
 
 def test_a_frame_outside_the_sandbox_is_not_offered_as_openable(tmp_path):

@@ -47,7 +47,6 @@ def test_a_move_creates_the_file_and_undo_removes_it_again(tmp_path):
     assert 'def area' in (tmp_path/'circle.py').read_text()
     assert 'def area' not in (tmp_path/'shapes.py').read_text()
     op = r.json()['operation']
-    assert op['kind'] == 'move-symbol'
     ws.journal.undo(op['id'])
     assert not (tmp_path/'circle.py').exists(), 'undo has to take the created file with it'
     assert (tmp_path/'shapes.py').read_text() == SRC

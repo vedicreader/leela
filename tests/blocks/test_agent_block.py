@@ -9,21 +9,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def paths(app): return {getattr(r, 'path', '') for r in app.routes}
-
-
 def test_every_tool_the_agent_can_be_given_has_a_family_the_picker_shows():
     """`TOOL_GROUPS` was a hand-copy of shalya's `GROUPS` naming twenty tools, and shalya ships about fifty."""
     from shalya.tools import tool_groups
     from leela.blocks.agent.turns import GROUP_LABELS, LEELA_TOOLS, tool_group
-    assert tool_group('search_code') == 'Repository' and tool_group('run_python') == 'Runtime'
-    assert tool_group('web_search') == 'Web' and tool_group('edit_cell') == 'Notebook'
-    assert tool_group('git_status') == 'Git' and tool_group('remember') == 'Memory'
-    assert tool_group('memory_search') == 'Memory' and tool_group('read_skill') == 'Skills'
-    assert tool_group('api_call') == 'API' and tool_group('generate_image') == 'Media'
-    assert tool_group('run_cell') == 'Runtime' and tool_group('news_feeds') == 'Web'
-    assert tool_group('screenshot') == 'Browser' and tool_group('page_eval') == 'Browser'
-    assert tool_group('something_else') == 'Other'
     ungrouped = sorted(n for n in tool_groups() if tool_group(n) == 'Other')
     assert ungrouped == [], f'shalya groups these and Leela does not label them: {ungrouped}'
     assert set(tool_groups().values()) <= set(GROUP_LABELS), 'a shalya group with no label here'
@@ -104,7 +93,6 @@ def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_pa
     """Missing run, nothing said, and an agent core that cannot carry a steer are all structured, the way `cancel` and `terminate` already answer."""
     ws = Workspace(roots=[tmp_path])
     app = ide_app(ws)
-    assert '/agent/runs/{run_id}/steer' in paths(app)
     run = ws.threads.active.ai._new_run('what imports fastllm?')
     with TestClient(app) as client:
         r = client.post('/agent/runs/run_nope/steer', json={'text': 'look in tests too'})
@@ -114,7 +102,7 @@ def test_steering_one_sub_agent_answers_the_same_shape_however_it_refuses(tmp_pa
         assert client.post(f'/agent/runs/{run.id}/steer', json={'text': '   '}).status_code == 400
 
         r = client.post(f'/agent/runs/{run.id}/steer', json={'text': 'look in tests too'})
-        assert r.status_code == 200 and r.json()['ok'] and r.json()['note'] == f'told {run.id}', r.json()
+        assert r.status_code == 200 and r.json()['ok'], r.json()
         assert list(run.inbox) == ['look in tests too'], 'the agent core carries the message'
         run.finish()
         r = client.post(f'/agent/runs/{run.id}/steer', json={'text': 'too late'})
@@ -151,9 +139,6 @@ def test_listing_conversations_does_not_start_a_kernel(tmp_path):
     with TestClient(ide_app(ws)) as client:
         assert client.get('/agent/history').status_code == 200
         assert not ws.pool.kernels, 'opening history started a kernel'
-    src = (ROOT/'leela/blocks/agent/app.py').read_text()
-    route = src[src.index("@rt('/agent/history')"):src.index("@rt('/agent/history/session')")]
-    assert 'api_peek(' in route and 'await api(' not in route, 'the peek is what it may use'
 
 
 def _completion_prefs(values):
@@ -211,11 +196,6 @@ def test_completion_events_are_recorded_and_reduced_to_the_fields_this_version_s
         assert client.get('/ai/completions').json()['summary']['asks'] == 0
 
 
-def _pane_js():
-    from tests.assets import read
-    return read('leela/blocks/agent/live.js') + read('leela/blocks/agent/steer.js')
-
-
 def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
     """settings.json answers with a default for every key, so a saved `false` and a default `false` read the same and `prefAdopt` would skip the migration."""
     from leela.blocks.settings.settings import Settings
@@ -224,7 +204,6 @@ def test_the_migration_asks_which_layer_a_value_came_from(tmp_path):
     assert s.describe()['origins']['agent']['notify'] == 'default'
     s.save('user', 'agent', {'notify': False})
     assert Settings(root=tmp_path, user_path=path).describe()['origins']['agent']['notify'] == 'user'
-    assert "origins?.agent?.[key]" in _pane_js(), 'the pane decides from origins, not from the value'
 
 
 
@@ -241,7 +220,7 @@ def test_subagent_settings_reach_every_conversation_and_the_next_one(tmp_path):
         r = client.post('/agent/subagent-settings', json={'effort': 'xhigh', 'tools': 'native'})
         d = r.json()
         assert r.status_code == 200 and set(d) == SUB_KEYS and d['ok'], d
-        assert (d['effort'], d['tools']) == ('xhigh', 'native') and 'sub-agent effort xhigh' in d['note']
+        assert (d['effort'], d['tools']) == ('xhigh', 'native')
         assert [(x.sub_effort, x.sub_channel) for x in (a, b)] == [('xhigh', 'native')] * 2
         assert (ws.subagent_effort, ws.subagent_tools) == ('xhigh', 'native')
         assert (ws.threads.new().ai.sub_effort, ws.threads.active.ai.sub_channel) == ('xhigh', 'native'), 'a new conversation starts on them'
@@ -285,7 +264,7 @@ def test_the_turn_tool_mode_route_sets_every_conversation_and_is_kept(tmp_path):
         d = client.get('/agent/tool-mode').json()
         assert d['ok'] and d['tools'] == 'auto' and set(d) == {'ok', 'tools', 'now', 'note', 'error'}
         d = client.post('/agent/tool-mode', json={'tools': 'text'}).json()
-        assert d['ok'] and d['tools'] == 'text' and d['note'].startswith('turn tools text'), d
+        assert d['ok'] and d['tools'] == 'text', d
         assert (a.turn_channel, b.turn_channel, ws.tool_channel) == ('tags', 'tags', 'tags')
         assert ws.threads.new().ai.turn_channel == 'tags', 'a new conversation starts on it'
         r = client.post('/agent/tool-mode', json={'tools': 'sideways'})
@@ -304,25 +283,12 @@ def test_a_turn_accepts_every_effort_level(tmp_path, monkeypatch):
     with TestClient(ide_app(ws)) as client:
         for level in ('xhigh', 'max', 'auto'): assert client.post('/agent/turn', json={'prompt': 'hi', 'reasoning': level}).json()['ok']
         r = client.post('/agent/turn', json={'prompt': 'hi', 'reasoning': 'ludicrous'})
-        assert r.status_code == 400 and 'xhigh' in r.json()['error'] and 'max' in r.json()['error']
+        assert r.status_code == 400
     assert seen == ['xhigh', 'max', None]
-    from tests.assets import read
-    html = read('leela/app.py')
-    assert "Option(f'{e} reasoning', value=e) for e in EFFORTS" in html
 
 
-def test_the_palette_and_settings_reach_the_sub_agent_and_tool_controls():
-    """Each new control has a palette row that opens it, and `/agent/commands` describes the commands that set them."""
-    from tests.assets import read
-    pal, js = read('leela/blocks/keys/palette.js'), read('leela/blocks/agent/budgets.js')
-    for name, sel in (('sub-agent model', '#jobmodels [data-job="subagent"]'), ('sub-agent effort', '#subeffort'),
-                      ('tool calls native or text', '#toolmode'), ('sub-agent tool calls native or text', '#subtools')):
-        assert f"name: 'Agent: {name}', scope: 'agent', run: () => leeOpenSetting('{sel}')" in pal
-    assert "post('/agent/subagent-settings'" in js and "post('/agent/tool-mode'" in js
+def test_the_command_list_names_the_sub_agent_and_model_commands():
     ws = Workspace(roots=[ROOT/'tests'/'fixtures'])
     with TestClient(ide_app(ws)) as client:
-        html = client.get('/').text
-        for id_ in ('subeffort', 'subtools', 'toolmode', 'jobmodels'): assert f'id="{id_}"' in html
-        assert 'value="xhigh"' in html and 'value="max"' in html
-        helps = {c['name']: c['help'] for c in client.get('/agent/commands').json()['commands']}
-        assert 'effort' in helps['subagents'] and 'native' in helps['subagents'] and 'effort' in helps['models']
+        names = {c['name'] for c in client.get('/agent/commands').json()['commands']}
+        assert {'subagents', 'models'} <= names

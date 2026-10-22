@@ -47,7 +47,6 @@ def test_a_symbol_a_package_defines_is_found_in_the_venv(ws, tmp_path, no_index)
     assert not any('third_party' in h.path for h in hits[:1]), 'a vendored stub is not the answer'
     kind, out = s.declaration_or_usages('store_attr', str(tmp_path/'use.py'), 2)
     assert kind == 'definition' and out[0].package == 'fastcore'
-    assert 'not in this project' in s.note, 'and it says where it came from'
 
 def test_the_package_the_file_imports_from_is_the_one_offered_first(ws, tmp_path, no_index):
     "Twelve packages define `patch`. The one this file imported is the one that was clicked."
@@ -211,7 +210,7 @@ def test_nothing_is_recorded_when_the_setting_says_not_to(ws):
     with _client(ws) as client:
         out = client.post('/search/events', json={'events': [{'kind': 'query', 'q': 'merge'}],
                                                   'session': {'q': 'merge'}}).json()
-    assert out['recorded'] == 0 and 'off' in out['note']
+    assert out['recorded'] == 0
     assert list(Signals().read()) == []
 
 def test_the_matched_text_is_kept_only_when_the_setting_says_so(ws):

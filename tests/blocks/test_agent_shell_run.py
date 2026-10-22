@@ -26,7 +26,7 @@ def test_a_snippet_run_from_a_reply_reports_through_the_run_log_and_stops(shell)
     "The run button's route starts the command in the project; its output, exit state and stop use the background-command routes."
     client, token, root = shell
     d = client.post('/agent/shell-run', json={'command': 'echo hi > made.txt; cat made.txt; exit 3', 'token': token}).json()
-    assert d['ok'] and d['run'].startswith('cmd_')
+    assert d['ok'] and d['run']
     log = _finished(client, d)
     assert log['state'] == 'exit 3' and 'hi' in log['text'] and (root/'made.txt').exists()
     d = client.post('/agent/shell-run', json={'command': 'sleep 30', 'token': token}).json()

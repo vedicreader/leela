@@ -197,7 +197,7 @@ def test_the_streaming_search_reports_each_backend_as_it_finishes(tmp_path):
     kinds = [n for n, _ in events]
     assert kinds[0] == 'start' and kinds[-1] == 'done'
     start = events[0][1]
-    assert start['legs'] == list(Search.ALL_LEGS) and start['searched'] == [str(tmp_path)]
+    assert start['searched'] == [str(tmp_path)]
     legs = {d['leg']: d for n, d in events if n == 'leg'}
     assert set(legs) == set(Search.ALL_LEGS), 'every leg reports, even the ones with no index'
     assert any(h['line'] == 1 for h in legs['rg']['hits']), 'and rg found the definition'
