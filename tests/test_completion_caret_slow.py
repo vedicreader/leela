@@ -23,14 +23,19 @@ def _nb(path, source):
     meta = {'kernelspec': {'name': 'python3', 'display_name': 'Python 3', 'language': 'python'}}
     path.write_text(json.dumps({'cells': [cell], 'metadata': meta, 'nbformat': 4, 'nbformat_minor': 5}))
 
-async def _real_page(fn, root):
+async def _browser(pw, name):
+    if name == 'chromium': return await _launch(pw)
+    try: return await pw.webkit.launch()
+    except Exception as e: pytest.skip(f'no webkit for playwright: {e}')
+
+async def _real_page(fn, root, browser='chromium'):
     (root/'.venv').symlink_to(Path(sys.prefix))
     ws = Workspace(roots=[str(root)], approvals='auto')
     fake_model(ws)
     port = _free_port(); srv = _serve(ws, port); await _started(srv)
     try:
         async with async_playwright() as pw:
-            b = await _launch(pw)
+            b = await _browser(pw, browser)
             try:
                 pg = await b.new_page()
                 await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
@@ -50,6 +55,7 @@ async def _accept_then_type(pg, path, line, how, typed, name):
     if how == 'enter':
         while name not in await pg.eval_on_selector('.cm-tooltip-autocomplete li[aria-selected=true]', 'e => e.textContent'):
             await pg.keyboard.press('ArrowDown')
+        await pg.wait_for_timeout(100)   # CodeMirror ignores Enter for 75ms after the list opens
         await pg.keyboard.press('Enter')
     else: await pg.locator('.cm-tooltip-autocomplete li', has_text=name).first.click()
     await pg.keyboard.type('(')
@@ -57,14 +63,15 @@ async def _accept_then_type(pg, path, line, how, typed, name):
     return await pg.evaluate(f"""() => {{ {VIEW} const s = v.state, h = s.selection.main.head, ln = s.doc.lineAt(h);
       return {{head: h, line: ln.number, col: h - ln.from, text: ln.text}}; }}""")
 
+@pytest.mark.parametrize('browser', ['chromium', 'webkit'])
 @pytest.mark.parametrize('how', ['enter', 'click'])
 @pytest.mark.parametrize('kind', ['multi', 'single', 'py'])
-def test_next_keystroke_after_accepting_a_completion_lands_at_the_caret(tmp_path, kind, how):
+def test_next_keystroke_after_accepting_a_completion_lands_at_the_caret(tmp_path, kind, how, browser):
     src, line = ('', 1) if kind == 'single' else (HEAD + '\n' + TAIL, 4)
     typed, name = ('prin', 'print') if kind == 'single' else ('down', 'download_url')
     path = tmp_path / ('t.py' if kind == 'py' else 't.ipynb')
     if kind == 'py': path.write_text(src)
     else: _nb(path, src)
-    out = asyncio.run(_real_page(lambda pg: _accept_then_type(pg, path, line, how, typed, name), tmp_path))
+    out = asyncio.run(_real_page(lambda pg: _accept_then_type(pg, path, line, how, typed, name), tmp_path, browser))
     assert out['text'].startswith(name + '('), out
     assert out['line'] == line and out['col'] == len(name + '('), out

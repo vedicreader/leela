@@ -1620,6 +1620,8 @@ kbd {
    was painted over by the next one. While a tooltip is up, neither clips and this cell is on top. */
 .lee-cm:has(.cm-tooltip) { overflow: visible; }
 .lee-cell:has(.cm-tooltip) { content-visibility: visible; }
+/* WebKit moves the caret to the line start when containment returns around the focused editor. */
+.lee-cell:focus-within { content-visibility: visible; }
 .lee-cell:has(.cm-tooltip), .lee-cm:has(.cm-tooltip) { position: relative; z-index: 20; }
 /* Markdown: a rendered pane beside the source. The editor is only ever *hidden*, never
    unmounted, so blame, the change gutter and saving keep working in every view. */
