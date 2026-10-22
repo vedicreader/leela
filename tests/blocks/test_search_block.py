@@ -143,6 +143,31 @@ def test_a_submodule_imported_by_name_is_the_module(ws, tmp_path, no_index):
     kind, out = ws.search.declaration_or_usages('test', str(tmp_path/'use.py'), 1)
     assert kind == 'definition' and out[0].path == str(site/'fastcore'/'test.py')
 
+def test_a_submodule_the_package_rebinds_to_its_function_is_the_function(ws, tmp_path, no_index):
+    "`from fossick import search`: `__init__` does `from .search import *`, so Python binds `fossick.search.search`, not the module."
+    site = _venv(tmp_path, {'pkg/__init__.py': 'from .search import *\n', 'pkg/search.py': '"doc"\n\n\ndef search(q): pass\n',
+                            'pkg/cli.py': 'def search(): pass\n'})
+    (tmp_path/'use.py').write_text('from pkg import search\nsearch("x")\n')
+    s = ws.search
+    assert s.reexported_from('pkg', 'search', str(tmp_path/'use.py')) == 'pkg.search'
+    assert s.reexported_from('pkg', 'cli', str(tmp_path/'use.py')) == ''
+    kind, out = s.declaration_or_usages('search', str(tmp_path/'use.py'), 2)
+    assert kind == 'definition' and (out[0].path, out[0].line) == (str(site/'pkg'/'search.py'), 4)
+    assert out[1:] == [] or out[1].path.endswith('cli.py')
+
+def test_the_index_is_ranked_before_it_is_cut(ws, tmp_path, monkeypatch):
+    "Twelve rows of other packages came back first, so the package the file imported never reached the ranking."
+    import json
+    from types import SimpleNamespace
+    from leela.blocks.search.search import Search
+    site = _venv(tmp_path, {'right/mod.py': 'def X(): pass\n', 'other/mod.py': 'def X(): pass\n'})
+    row = lambda pkg: dict(content='def X', package=pkg, metadata=json.dumps(dict(path=str(site/pkg/'mod.py'), mod_name=f'{pkg}.mod.X', lineno=1)))
+    rows = [row('other') for _ in range(30)] + [row('right')]
+    k = SimpleNamespace(env_st=SimpleNamespace(rows_where=lambda *a, limit=None, **kw: rows[:limit]))
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: k)
+    (tmp_path/'use.py').write_text('from right.mod import X\n')
+    assert ws.search.env_symbols('X', path=str(tmp_path/'use.py'))[0].package == 'right'
+
 
 def test_the_jump_route_carries_the_dotted_chain(ws, tmp_path, no_index):
     "The chain is what says `fastcore.test` is a module, so the route has to pass it through."

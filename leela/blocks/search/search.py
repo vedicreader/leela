@@ -772,7 +772,7 @@ class Search:
         "Where an installed package defines `name`: Kosha's environment index, else ripgrep."
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
-        if indexed := self.env_symbols(name, limit, path): return self._env_ranked(indexed, name, path)
+        if indexed := self.env_symbols(name, limit, path): return indexed
         roots = scan = self.env_roots()
         if not roots: return L()
         if self._kosha(path or None) is not None:
@@ -806,12 +806,12 @@ class Search:
             return '.'.join(parts)
         return ''
     def env_symbols(self, name, limit=12, path=''):
-        "Kosha's environment store, which knows the package and the line without guessing."
+        "Kosha's environment store, which knows the package and the line without guessing; ranked before it is cut to `limit`."
         k = self._kosha(path or None)
         if k is None: return L()
         try:
             rows = list(k.env_st.rows_where("json_extract(metadata, '$.name') = ?", [name],
-                select='content, metadata, package', limit=limit))
+                select='content, metadata, package', limit=400))
         except Exception as e:
             self.note = f'Kosha environment lookup failed ({errstr(e)}); scanning site-packages'
             return L()
@@ -833,7 +833,7 @@ class Search:
                 symbol=name, score=4.0 if nested else 0.0,
                 package=str(row.get('package') or m.get('package') or ''), module=mod))
         if out: self.backend, self.note = 'kosha', f'Kosha environment metadata · {len(out)} packages searched'
-        return out
+        return self._env_ranked(out, name, path)[:limit]
     def _installed_copy(self, mod_name, name, roots, line):
         "The file in `roots` an indexed `mod_name` lives in, with the line `name` is defined on there nearest `line`, or None."
         parts = [p for p in mod_name.split('.') if p != '__init__'][:-1]
@@ -844,13 +844,23 @@ class Search:
                 lines = [h.line for h in self.symbols(f) if h.symbol == name]
                 return str(f), (min(lines, key=lambda n: abs(n - line)) if lines else line)
         return None
+    def reexported_from(self, pkg, name, path=''):
+        "The module a package's `__init__` star-imports or imports `name` from, when that module defines it at top level, else ''."
+        f = self.module_file(pkg, path)
+        if f is None or f.name != '__init__.py' or (tree := self._tree(f)) is None: return ''
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.ImportFrom) and n.module and n.level < 2 and any(a.name in ('*', name) for a in n.names)): continue
+            mod = f'{pkg}.{n.module}' if n.level else n.module
+            if (g := self.module_file(mod, path)) and any(h.symbol == name and h.score == 0 for h in self.symbols(g)): return mod
+        return ''
     def _env_ranked(self, hits, name, path):
-        "The module the file imported from, its package, a package it star-imports, then real code, then the shallowest module."
+        "The module the file imported from, its package and the module that package re-exports it from, a package it star-imports, then real code, then the shallowest module."
         src, wanted, stars = self.absolute_source(name, path), self.import_package(name, path), self.star_packages(path)
+        reexp = self.reexported_from(src, name, path) if src else ''
         def rank(h):
             pk = {h.package, (h.module or '').split('.')[0]}
             return (bool(src) and h.module != src,
-                    bool(wanted) and wanted not in pk,
+                    bool(wanted) and wanted not in pk, bool(reexp) and h.module != reexp,
                     bool(stars) and not pk & set(stars), h.score > 0,
                     any(x in str(h.path) for x in self.VENDORED),
                     str(h.path).endswith('.pyi'), Path(h.path).name.startswith('_'), len(str(h.path)))
@@ -872,7 +882,7 @@ class Search:
             return 'definition', L(m)
         # an absolute import of an installed package says which `name` this is, whatever the project defines
         if (src := self.absolute_source(name, path or '')) and self.installed(src):
-            if m := self.module_hit(f'{src}.{name}', path or ''):
+            if (m := self.module_hit(f'{src}.{name}', path or '')) and not self.reexported_from(src, name, path or ''):
                 self.backend, self.note = 'module', f'{src}.{name} is a module'
                 return 'definition', L(m)
             if env := self.env_definitions(name, path=path or ''):
