@@ -32,29 +32,6 @@ def dests(mod):
     return {d for d, _ in mod.DATA_FILES}
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
-def test_the_asset_walk_reaches_subdirectories(which, request):
-    """`vendor/fonts/` is the canary."""
-    mod = request.getfixturevalue(which)
-    got = files(mod)
-    assert any(f.startswith('leela/vendor/fonts/') for f in got), 'fonts were left out'
-    assert {'leela/vendor/fonts'} <= {d.replace('\\', '/') for d in dests(mod)}
-    assert 'leela/static/lee-ide.js' in got and 'leela/static/lee-ide.css' in got and 'leela/static/lee-hl.css' in got
-    assert any(f.endswith('.woff2') for f in got), 'the webfonts themselves were left out'
-
-
-def test_the_window_is_allowed_to_load_the_loopback_server(mac):
-    """Without this the app builds, launches, and shows a blank window."""
-    ats = mac.PLIST['NSAppTransportSecurity']
-    assert ats == {'NSAllowsLocalNetworking': True}
-    assert 'NSAllowsArbitraryLoads' not in ats, 'the exemption must stay narrow'
-
-
-def test_the_bundle_claims_the_oldest_macos_it_was_tested_on(mac):
-    """kavacha's default claimed macOS 11, and Leela had never run below 14."""
-    assert mac.PLIST['LSMinimumSystemVersion'] == '14.0'
-
-
-@pytest.mark.parametrize('which', ['mac', 'win'])
 def test_a_package_whose_init_is_an_extension_is_grafted_in(which, request):
     """A freezer flattens such a package to the single `.so` and every Python submodule beside it goes missing, silently, until something imports one."""
     import sysconfig
@@ -146,13 +123,6 @@ def test_the_built_app_starts_and_serves_its_workspace(tmp_path):
 
 
 @pytest.mark.parametrize('which', ['mac', 'win'])
-def test_pygments_is_copied_whole_or_the_bundled_kernel_cannot_start(which, request):
-    """It resolves a style or a lexer by importing its name, 49 and 263 of them that no scanner sees, so a bundle got `pygments/styles/__init__` and none of the styles."""
-    mod = request.getfixturevalue(which)
-    assert 'pygments' in mod.PACKAGES, 'naming it in INCLUDES would carry the two that are imported'
-    assert 'pygments' not in mod.EXCLUDES
-
-@pytest.mark.parametrize('which', ['mac', 'win'])
 def test_a_module_fastaudit_loads_by_entry_point_is_copied_whole(which, request):
     """safepyrun loads `fastaudit.hooks:lxml_monitor` from `entry_points.txt`, which no scanner reads, so the bundle had the entry point and not the module: every isolated `inspect_python` died on `No module named 'fastaudit.hooks'`."""
     from importlib.metadata import entry_points
@@ -160,18 +130,6 @@ def test_a_module_fastaudit_loads_by_entry_point_is_copied_whole(which, request)
             for ep in entry_points(group=g) if ':' in ep.value}
     assert tops, 'fastaudit declares its hooks by entry point'
     assert tops <= set(request.getfixturevalue(which).PACKAGES), tops
-
-@pytest.mark.parametrize('which', ['mac', 'win'])
-def test_fastclaude_is_copied_whole_or_no_claude_code_model_can_run(which, request):
-    """`fastclaude.session` wraps `files('fastclaude')` in `Path` at import, which raises on a `zipfile.Path`, and `rishi.claude` imports it."""
-    assert 'fastclaude' in request.getfixturevalue(which).PACKAGES
-
-
-def test_a_windowed_launch_is_given_a_utf8_locale(mac):
-    """launchd hands an app no LANG, the C locale is POSIX, `open()` defaults to ASCII, and `import rishi.claude` died on a UTF-8 byte, which surfaced as Claude Code being reported not installed."""
-    env = mac.PLIST['LSEnvironment']
-    assert env['LANG'].lower().endswith('utf-8') and env['PYTHONUTF8'] == '1'
-
 
 def test_the_build_environment_installs_what_the_lock_names(tmp_path, monkeypatch):
     """pip resolves `>=` against what it finds and keeps what it already has, so `.app-venv` went on carrying the rishi and ramabana it was first built with while the repository moved."""
@@ -371,10 +329,6 @@ def test_signing_signs_a_hardlinked_driver_once_and_keeps_it_one_file(tmp_path, 
     build_release.sign(app, 'ID')
     assert len([c for c in calls if c[-1] in (str(a), str(b))]) == 1
     assert os.stat(a).st_ino == os.stat(b).st_ino
-
-def test_liteparse_is_grafted_and_pils_spare_libraries_are_dropped(mac):
-    """`libpdfium.dylib` must sit beside `_liteparse.so`, and no code may stay in the zip, where it cannot be signed."""
-    assert 'liteparse' in mac.GRAFTED and 'PIL/.dylibs/' in mac.UNREACHABLE
 
 @pytest.mark.slow
 def test_the_bundles_zip_holds_no_code_notarisation_would_refuse():

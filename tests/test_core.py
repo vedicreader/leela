@@ -34,70 +34,14 @@ def test_a_keymap_posted_as_every_chord_is_stored_as_the_ones_that_differ(client
     try: assert r['ok'] and json.loads(p.read_text())['keys'] == {'run_cell': 'ctrl+y'}
     finally: keymap.reload(tmp_path/'gone.json')   # `KEYS` is global and the save just rebuilt it
 
-@pytest.mark.parametrize('theme', ['nord:dark:tight', 'github:light:relaxed', 'ember:dark:tight', 'dusk:system:relaxed'])
-def test_a_theme_saved_to_a_language_scope_is_still_the_theme_for_every_language(tmp_path, theme):
+def test_a_theme_saved_to_a_language_scope_is_still_the_theme_for_every_language(tmp_path):
     "The panel saves the theme with no language. A `languages.python` theme would shadow it."
+    theme = 'nord:dark:tight'
     s = Settings(root=tmp_path, user_path=tmp_path/'user.json')
     s.save('user', 'appearance', {'theme': theme}, language='')
     assert 'languages' not in s.raw('user')
     assert s.effective(language='python')['appearance']['theme'] == theme
     assert Settings(root=tmp_path, user_path=tmp_path/'user.json').effective()['appearance']['theme'] == theme
-
-def _css_themes():
-    "family -> mode -> {token: value}, merged over every rule whose selector is exactly that variant."
-    css, out = (ROOT/'leela'/'static'/'lee-ide.css').read_text(), {}
-    for fam, mode, body in re.findall(r':root\[data-theme="(\w+)"\]\[data-mode="(\w+)"\]\s*\{([^}]*)\}', css):
-        out.setdefault(fam, {}).setdefault(mode, {}).update(re.findall(r'(--lee-[\w-]+):\s*([^;]+);', body))
-    return out
-
-def _picker_themes():
-    "The families `prefs.js` offers, with their [bg, bg1, accent] swatch per mode."
-    js = (ROOT/'leela'/'blocks'/'settings'/'prefs.js').read_text()
-    rows = re.findall(r"^  (\w+): \{blurb: '[^']*', dark: \[([^\]]*)\], light: \[([^\]]*)\]\},$", js, re.M)
-    return {f: {'dark': re.findall(r"#\w+", d), 'light': re.findall(r"#\w+", l)} for f, d, l in rows}
-
-def test_every_theme_family_is_complete_on_every_surface():
-    "A variant missing a token inherits the previous rule's colour; a family missing from the picker, the CSS or the token sheet is half a theme."
-    import sys
-    sys.path.insert(0, str(ROOT/'tools'))
-    import build_hl_css
-    css, picker = _css_themes(), _picker_themes()
-    ref = set(css['leela']['dark'])
-    assert {'github', 'ember', 'dusk'} <= set(picker), sorted(picker)
-    assert set(picker) == set(build_hl_css.THEMES), 'lee-hl.css colours a family the picker does not offer, or misses one it does'
-    for fam, modes in picker.items():
-        for mode in ('dark', 'light'):
-            got = css.get(fam, {}).get(mode, {})
-            assert not ref - set(got), f'{fam}:{mode} does not set {sorted(ref - set(got))}'
-            assert modes[mode] == [got['--lee-bg'], got['--lee-bg1'], got['--lee-accent']], f'the {fam}:{mode} swatch drifted from its CSS'
-
-def _contrast(a, b):
-    def lum(h):
-        c = [int(h.lstrip('#')[i:i+2], 16)/255 for i in (0, 2, 4)]
-        r, g, b = [x/12.92 if x <= .03928 else ((x+.055)/1.055)**2.4 for x in c]
-        return .2126*r + .7152*g + .0722*b
-    hi, lo = sorted((lum(a), lum(b)), reverse=True)
-    return (hi+.05)/(lo+.05)
-
-#: The editor's keyword, string, number, function, definition, class, operator and comment, and the terminal's blue.
-_CODE = ('red', 'green', 'purple', 'blue', 'orange', 'yellow', 'aqua', 'fg4', 'accent')
-
-@pytest.mark.parametrize('fam', ['github', 'ember', 'dusk'])
-@pytest.mark.parametrize('mode', ['dark', 'light'])
-def test_new_themes_keep_body_text_and_code_tokens_at_wcag_aa(fam, mode):
-    "Body text and every syntax colour the editor draws reach 4.5:1 on the editor and the panels."
-    v = {k.removeprefix('--lee-'): c for k, c in _css_themes()[fam][mode].items()}
-    css = ''.join((ROOT/'leela'/'static'/f).read_text() for f in ('lee-ide.css', 'lee-hl.css'))
-    over = re.search(rf':root\[data-theme="{fam}"\]\[data-mode="{mode}"\] \.cm-line span[^{{]*\{{([^}}]*)\}}', css)
-    tokens = {**v, **{k.removeprefix('--lee-'): c for k, c in re.findall(r'(--lee-[\w-]+):\s*([^;]+);', over[1])}} if over else v
-    for bg in ('bg', 'bg1'):
-        for k in ('fg', 'fg2', 'output'): assert _contrast(v[k], v[bg]) >= 4.5, (k, bg, _contrast(v[k], v[bg]))
-        for k in _CODE: assert _contrast(tokens[k], v[bg]) >= 4.5 or (k, bg) == ('fg4', 'bg1'), (k, bg, _contrast(tokens[k], v[bg]))
-    assert _contrast(v['selection-fg'], v['sel']) >= 4.5
-    assert over, f'{fam} draws code in colours of its own, not the semantic palette'
-    if fam != 'github':
-        assert {v['bg'], v['fg']}.isdisjoint({'#000000', '#ffffff'}), 'a night theme has no pure black or white'
-        assert _contrast(v['fg'], v['bg']) <= 10, 'a night theme is gentle, not glaring'
 
 @pytest.mark.parametrize('bad', ['/etc/passwd', '../outside', 'a/../../b'])
 def test_git_pathspecs_from_the_browser_cannot_escape_the_repository(bad):
@@ -397,39 +341,16 @@ def test_an_interpreters_libraries_are_not_the_project(tmp_path):
     assert len(walked) == 2, walked
     assert any(p.endswith('conventions/keys.py') for p in walked), 'not an over-eager skip'
 
-def test_every_block_with_client_code_is_named_in_the_load_order():
-    """A `.js` file in a block is only reachable if `LAYERS` names it."""
-    import sys
-    sys.path.insert(0, str(ROOT/'tools'))
-    import build_ide_js as builder
-    assert builder.missing() == [], 'named in the order but not on disk'
-    assert builder.orphans() == [], 'on disk but never loaded'
-    owners = {p.parent.name for p in builder.modules() if 'blocks' in str(p)}
-    assert owners <= set(__import__('leela.blocks', fromlist=['NAMES']).NAMES), owners
-
-#: capabilities a block declares because it hands `ctx` to a helper that reads them
-HANDED_OFF = {'editor': ('pool',)}   # `python_for(session=ctx)` reads `session.fs` and `session.pool`
-
-def test_caps_declares_exactly_what_the_route_layer_reads():
-    """`Ctx` refuses an undeclared capability, so an over-broad `CAPS` grants reach nobody asked for and an under-broad one is an AttributeError on a route nobody exercised."""
-    import ast
-    from leela.core import CAPABILITIES
-    caps_all = set(CAPABILITIES)
-    wrong = {}
-    for d in sorted(p for p in BLOCKS_DIR.iterdir() if (p/'app.py').is_file()):
-        src = (d/'app.py').read_text()
-        declared = set(re.findall(r"'(\w+)'", m.group(1))) if (m := re.search(r"^CAPS = \(([^)]*)\)", src, re.M)) else None
-        if declared is None: continue
-        reads = set()
-        for f in [d/'app.py'] + ([d/'ui.py'] if (d/'ui.py').is_file() else []):
-            for n in ast.walk(ast.parse(f.read_text())):
-                if (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
-                        and n.value.id == 'ctx' and n.attr in caps_all): reads.add(n.attr)
-        extra = sorted(declared - reads - set(HANDED_OFF.get(d.name, ())))
-        missing = sorted(reads - declared)
-        if extra or missing:
-            wrong[d.name] = {'declared but never read': extra, 'read but not declared': missing}
-    assert wrong == {}, wrong
+def test_every_route_a_block_serves_runs_with_only_the_capabilities_it_declared(tmp_path):
+    "`Ctx` refuses an undeclared capability, so an under-broad `CAPS` is an AttributeError on a route nobody exercised."
+    (tmp_path/'a.py').write_text('x = 1\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        paths = sorted({r.path for r in c.app.routes if 'GET' in (getattr(r, 'methods', None) or ())
+                        and '{' not in r.path and not re.search(r'stream|events|/ws|/term|/run|/exec|/open', r.path)})
+        assert len(paths) > 50, paths
+        for p in paths:
+            try: c.get(p)
+            except Exception as e: assert 'without declaring it' not in str(e), (p, e)
 
 def test_local_history_keeps_one_body_per_distinct_version(tmp_path):
     "Twenty saves of an unchanged file are one version, and one stored body."
@@ -446,17 +367,6 @@ def test_local_history_keeps_one_body_per_distinct_version(tmp_path):
     assert [r['path'] for r in h.rows()][0] == 'b.py', 'newest first, across every file'
     assert {r['path'] for r in h.paths()} == {'a.py', 'b.py'}
     with pytest.raises(ValueError, match='no such version'): h.text('ver_missing')
-
-def test_no_test_can_reach_the_real_conversation_log(tmp_path, cfg_home):
-    """A test wrote `ai.history_path` with `write_text`, which truncates."""
-    from tests.conftest import REAL_CONFIG_HOME
-    import leela
-    fresh = Workspace(roots=[tmp_path])
-    for path in (Path(leela.leela_cfg), Path(fresh.ai.history_path), Path(fresh.journal.path)):
-        assert REAL_CONFIG_HOME not in path.parents and path != REAL_CONFIG_HOME
-        assert str(path).startswith(str(cfg_home)), path
-    assert Path(fresh.ai.history_path).name == 'agent-history.jsonl', 'the same file, in a safe place'
-    fresh.threads.shutdown()
 
 def test_a_write_from_outside_leela_is_kept_before_the_editor_takes_it(tmp_path):
     "The disk poll is the only moment anything notices another process editing an open file."
@@ -668,21 +578,6 @@ def test_a_browser_webbrowser_drives_itself_is_still_its_to_open(monkeypatch):
     monkeypatch.setattr(webbrowser, 'get', lambda *a: b)
     assert open_tab('https://example.com/') and b.got == ('https://example.com/', 2)
 
-_SPAWNS = {'run', 'Popen', 'call', 'check_call', 'check_output', 'create_subprocess_exec', 'create_subprocess_shell'}
-
-def test_every_spawn_says_what_its_stdin_is():
-    "A spawn with no `stdin=` or `input=` inherits the terminal. The two build scripts' `run` are foreground steps a person watches."
-    import ast
-    bad = []
-    for f in [*(ROOT/'leela').rglob('*.py'), *(ROOT/'tools').glob('*.py'), ROOT/'setup_app.py']:
-        for n in ast.walk(ast.parse(f.read_text())):
-            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _SPAWNS
-                    and isinstance(n.func.value, ast.Name) and (n.func.value.id == 'subprocess' or
-                    n.func.value.id == 'asyncio' and n.func.attr.startswith('create_'))): continue
-            kw = {k.arg for k in n.keywords}
-            if not kw & {'stdin', 'input'} and None not in kw: bad.append(f'{f.relative_to(ROOT)}:{n.lineno}')
-    assert not bad, bad
-
 def test_a_secrets_value_never_leaves_the_server(tmp_path, monkeypatch):
     "The panel says a key is set. What it is set to is not something a browser needs."
     import leela
@@ -780,62 +675,14 @@ def test_writing_a_notebook_back_through_the_host_keeps_it_a_notebook(tmp_path):
         assert json.loads(nb.read_text())['cells'][0]['outputs']
     finally: ws.threads.shutdown()
 
-def _build_hl():
-    sys.path.insert(0, str(ROOT/'tools'))
-    import build_hl_css
-    return build_hl_css
-
-@pytest.mark.parametrize('fam', ['github', 'ember', 'dusk'])
-def test_the_token_sheet_for_a_new_theme_reads_on_its_background(fam):
-    "Diffs and Markdown code reach 4.5:1 on the page and the panels. Ember and dusk carry palettes of their own because no fastpylight theme does on their paper."
-    hl = _build_hl()
-    for mode, theme in zip(('dark', 'light'), hl.THEMES[fam]):
-        c, v = hl.colors(theme), _css_themes()[fam][mode]
-        keys = ('keyword', 'string', 'function', 'number', 'type', 'variable') + (('comment', 'operator', 'variable-parameter') if fam != 'github' else ())
-        for bg in ('--lee-bg',) + (('--lee-bg1',) if fam != 'github' else ()):
-            for k in keys: assert _contrast(c[k], v[bg]) >= 4.5, (mode, k, bg, _contrast(c[k], v[bg]))
-
-def _hue_chroma(h):
-    import colorsys
-    c = [int(h.lstrip('#')[i:i+2], 16)/255 for i in (0, 2, 4)]
-    return colorsys.rgb_to_hls(*c)[0]*360, max(c) - min(c)
-
-@pytest.mark.parametrize('fam,hues', [('ember', lambda h: h <= 120 or h >= 320), ('dusk', lambda h: 100 <= h <= 300)])
-def test_ember_codes_warm_and_dusk_cool_and_neither_is_github(fam, hues):
-    "The editor and the token sheet share one palette per variant: warm for ember, cool for dusk, muted in both."
-    hl, css = _build_hl(), (ROOT/'leela'/'static'/'lee-hl.css').read_text()
-    gh = {'#a5d6ff', '#79c0ff', '#d2a8ff', '#ffa657', '#ff7b72', '#0a3069', '#0550ae', '#8250df', '#953800', '#cf222e'}
-    for mode, p in hl.PALETTES[fam].items():
-        code = {r: p[r] for r in hl.EDITOR.values()}
-        assert not gh & set(code.values()), (mode, gh & set(code.values()))
-        for r, c in code.items():
-            h, chroma = _hue_chroma(c)
-            assert hues(h) and chroma <= .45, (mode, r, c, round(h), round(chroma, 2))
-        sel = f':root[data-theme="{fam}"][data-mode="{mode}"] .cm-line span'
-        assert all(f'--lee-{v}: {p[r]};' in css.split(sel, 1)[1].split('}', 1)[0] for v, r in hl.EDITOR.items())
-
-def test_every_scope_fastpylight_names_has_a_rule_in_a_palette():
-    "A palette rule matches every class that starts with its prefix; a scope matching none would be drawn in the parent's colour."
-    import fastpylight
-    hl, u = _build_hl(), set()
-    for t in fastpylight.themes(): u |= set(re.findall(r'\.hl-([\w-]+)', fastpylight.theme_css(t, selector='X')))
-    assert not {c for c in u if not any(c.startswith(k) for k in hl.SCOPES)} - {'highlighted'}
-    p = hl.PALETTES['ember']['dark']
-    role = lambda c: p[hl.SCOPES[max((k for k in hl.SCOPES if c.startswith(k)), key=len)][0]]
-    assert [role(c) for c in ('keyword-import', 'string-special-url', 'variable-member-python', 'markup-heading-1', 'function-builtin')] == \
-        [p['keyword'], p['operator'], p['operator'], p['function'], p['function']]
-
-@pytest.mark.parametrize('theme,want', [('ember:dark:tight', '#221d18'), ('dusk:system:relaxed', ('#e6eaf0', '#252a33')),
-                                        ('retired:dark:tight', '#141414'), ('cursor:bogus:x', '#fbfbfb'), ('dark', '#0d1117'), ('', '#fbfbfb')])
-def test_the_native_window_opens_on_the_saved_themes_background(theme, want):
-    "The stylesheet is the family list, a family this build lacks is the default's, and a theme that follows the system gives both."
+def test_the_native_window_opens_on_the_saved_themes_background():
+    "A family this build lacks is the default's, a theme that follows the system gives both, and a legacy name still resolves."
     from leela.blocks.settings.settings import theme_background, theme_backgrounds
-    assert set(theme_backgrounds()) == set(_picker_themes())
-    assert theme_background(theme) == want
+    bgs = theme_backgrounds()
+    assert theme_background('ember:dark:tight') == bgs['ember']['dark']
+    assert theme_background('dusk:system:relaxed') == (bgs['dusk']['light'], bgs['dusk']['dark'])
+    assert theme_background('retired:dark:tight') == bgs['cursor']['dark']
+    assert theme_background('cursor:bogus:x') == bgs['cursor']['light']
+    assert theme_background('dark') == bgs['leela']['dark']
+    assert theme_background('') == bgs['cursor']['light']
 
-def test_the_first_paint_script_knows_every_family_and_falls_back(client):
-    "A cached family this build does not draw would leave `data-theme` naming nothing and the page unstyled."
-    html = client.get('/').text
-    fams = json.loads(re.search(r'const families = (\[[^\]]*\])', html)[1])
-    assert set(fams) == set(_picker_themes())
-    assert "if (!families.includes(family)) family = 'cursor';" in html

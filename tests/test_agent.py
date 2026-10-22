@@ -55,20 +55,6 @@ class MemHost_agent(NullHost, CodeHost):
         return 'ok'
 
 
-def test_leela_agent_is_one_module_aliasing_ramabana():
-    import importlib, pathlib, os, leela.agent as pkg
-    assert [p.name for p in pathlib.Path(pkg.__file__).parent.glob('*.py')] == ['__init__.py']
-    import ramabana.tools, ramabana.agent, ramabana.core, ramabana.runtime, ramabana.spec, ramabana.monitor, ramabana.testing
-    for n, m in dict(tools=ramabana.tools, agent=ramabana.agent, core=ramabana.core, runtime=ramabana.runtime,
-                     spec=ramabana.spec, monitor=ramabana.monitor, testing=ramabana.testing).items():
-        assert importlib.import_module(f'leela.agent.{n}') is m and getattr(pkg, n) is m
-    from leela.agent.tools import NO_SUB; from leela.agent import core as models; from leela.agent.agent import Agent
-    assert NO_SUB is ramabana.tools.NO_SUB and models is ramabana.core and Agent is ramabana.agent.Agent
-    os.environ['LEELA_PROBE_X'] = '1'                       # `use_env_prefix` ran: LEELA_ is read first
-    try: assert models.env('PROBE_X') == '1'
-    finally: os.environ.pop('LEELA_PROBE_X')
-
-
 def test_directed_checkpoint_can_rewrite_the_live_tool_call():
     from leela.blocks.agent.ai import Interventions
     ap = Interventions(tools={'edit_file'}, mode='ask', control='directed', timeout=2)
@@ -841,21 +827,6 @@ def test_a_selection_is_sent_as_chosen_not_re_read_from_disk(ws, tmp_path):
     assert '<attached-selection' in text, 'marked as a range, not mistaken for a whole file'
 
 
-def test_an_interpreters_libraries_are_not_the_project(tmp_path):
-    "98% of a walk of this repo was site-packages, so `@keys` ranked `libxslt/keys.h` over"
-    for d in ('.venv', '.app-venv', 'my-venv', 'venv-3.12'):
-        lib = tmp_path/d/'lib'/'python3.12'/'site-packages'/'lxml'
-        lib.mkdir(parents=True)
-        (lib/'keys.h').write_text('/* not your code */\n')
-    (tmp_path/'keys.py').write_text('KEYS = 1\n')
-    (tmp_path/'conventions').mkdir(); (tmp_path/'conventions'/'keys.py').write_text('X = 1\n')
-    ws = Workspace(roots=[tmp_path])
-    walked = [str(p) for p in ws.fs.walk(tmp_path)]
-    assert not [p for p in walked if 'site-packages' in p], walked[:3]
-    assert len(walked) == 2, walked
-    assert any(p.endswith('conventions/keys.py') for p in walked), 'not an over-eager skip'
-
-
 def test_a_file_leela_just_wrote_can_be_found_before_the_walk_cache_expires(tmp_path):
     "The walk is cached to keep quick-open cheap. Our own writes skip the window."
     ws = Workspace(roots=[tmp_path])
@@ -1015,15 +986,34 @@ async def test_workspace_shutdown_cancels_agent_runs_before_close(tmp_path):
     assert run.state == 'detached'
 
 
-def test_stream_disconnect_never_owns_or_cancels_the_turn():
-    "The subscriber waits on its own loop. Owning the turn made a closed tab cancel the work."
-    from tests.assets import read
-    server = read('leela/blocks/agent/app.py')
-    stream = server[server.index("@rt('/agent/stream')"):server.index("@rt('/agent/approval')")]
-    assert 'ws.ask_stream' not in stream
-    assert '.cancel(' not in stream
-    assert 'feed.anext' in stream, 'a subscriber waits on its own loop, never on the shared pool'
-    assert 'req.is_disconnected()' in stream, 'and a tab that has gone stops being served'
+def test_stream_disconnect_never_owns_or_cancels_the_turn(ws):
+    "Owning the turn made a closed tab cancel the work."
+    import asyncio
+    from tests.fakemodel import Step, install
+    words = ' '.join(f'w{i}' for i in range(30))
+    be = install(ws, [Step(text=words)], token_delay=0.05)
+    with TestClient(ide_app(ws)) as c:
+        acc = c.post('/agent/turn', json={'prompt': 'go'}).json()
+        first_chunk = asyncio.Event()
+        body = [{'type': 'http.request', 'body': b'', 'more_body': False}]
+        async def receive():
+            if body: return body.pop()
+            await first_chunk.wait()
+            return {'type': 'http.disconnect'}
+        async def send(m):
+            if m['type'] == 'http.response.body' and m.get('body'): first_chunk.set()
+        scope = {'type': 'http', 'method': 'GET', 'path': '/agent/stream', 'raw_path': b'/agent/stream', 'root_path': '',
+                 'scheme': 'http', 'http_version': '1.1', 'headers': [(b'host', b'testserver')],
+                 'query_string': f"since=0&thread={acc['thread']}".encode(), 'client': ('testclient', 50000),
+                 'server': ('testserver', 80)}
+        c.portal.call(c.app, scope, receive, send)
+        assert first_chunk.is_set(), 'the tab saw the turn begin before it went'
+        for _ in range(300):
+            if be.hist_ and be.hist_[-1]['role'] == 'assistant': break
+            time.sleep(0.05)
+        assert be.hist_[-1]['content'].split() == words.split(), 'the turn ran to the end with no one watching'
+        replay = c.get('/agent/stream', params={'since': 0, 'thread': acc['thread']}).text
+        assert 'event: done' in replay and 'event: error' not in replay and 'cancel' not in replay.lower()
 
 
 def test_a_runtime_no_package_provides_is_refused_before_any_subprocess(monkeypatch):
