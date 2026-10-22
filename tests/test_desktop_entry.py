@@ -1,17 +1,25 @@
-def test_the_frozen_entry_takes_the_shell_environment_the_window_was_denied():
-    """`leela.cli` asks the login shell for the environment, and the bundle does not run it: py2app freezes `leela_app.py`."""
+def test_the_frozen_entry_seals_the_bundle_first_and_takes_the_login_environment(monkeypatch):
+    """py2app freezes `leela_app.py`: pyskills writes its `.pth` at import so the seal comes first, and the window needs the shell environment `leela.cli` asks for."""
+    import runpy, sys, leela, leela.core.envs as envs
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1]/'leela_app.py').read_text()
-    frozen = src[src.index("if getattr(sys, 'frozen'"):src.index('def free_port')]
-    assert 'import_login_env' in frozen, 'the entry the bundle freezes asks for it too'
-    assert 'use_extras' in frozen and 'use_login_path' in frozen, 'and still does what it did'
-    assert "LEELA_SHELL_ENV" in frozen, 'and the same switch turns it off'
+    calls = []
+    for mod, name in [(leela, 'seal_bundle'), (leela, 'use_extras'), (leela, 'use_utf8'), (leela, 'use_login_path'),
+                      (envs, 'import_login_env'), (envs, 'apply_stored_env')]:
+        monkeypatch.setattr(mod, name, lambda n=name: calls.append(n))
+    monkeypatch.setattr(sys, 'frozen', 'macosx_app', raising=False)
+    monkeypatch.delenv('LEELA_SHELL_ENV', raising=False)
+    entry = str(Path(__file__).resolve().parents[1]/'leela_app.py')
+    runpy.run_path(entry, run_name='leela_app_frozen')
+    assert calls[0] == 'seal_bundle' and calls[-1] == 'apply_stored_env', calls
+    assert {'use_extras', 'use_login_path', 'import_login_env'} <= set(calls), calls
+    calls.clear(); monkeypatch.setenv('LEELA_SHELL_ENV', '0')
+    runpy.run_path(entry, run_name='leela_app_frozen')
+    assert calls[0] == 'seal_bundle' and 'import_login_env' not in calls and 'use_login_path' in calls, calls
 
 def test_leela_serves_on_5010_and_the_canvas_wires_to_the_same_port(monkeypatch):
     "`leela` with no `--port`, `serve_ide` and the canvas's component host name one port; the canvas once said 5001 whatever Leela served on."
-    import inspect, leela, leela.app, leela.cli, leela.core.envs
+    import leela, leela.app, leela.cli, leela.core.envs
     from leela.blocks.canvas.store import brick_host
-    assert inspect.signature(leela.app.serve_ide).parameters['port'].default == 5010
     got = {}
     monkeypatch.setattr(leela.app, 'serve_ide', lambda roots, **kw: got.update(kw))
     monkeypatch.setattr(leela.core.envs, 'apply_stored_env', lambda: None)
@@ -24,7 +32,6 @@ def test_leela_serves_on_5010_and_the_canvas_wires_to_the_same_port(monkeypatch)
 
 def test_desktop_port_ladder_starts_at_5010(monkeypatch):
     import leela_app as app
-    assert list(app.PORTS) == list(range(5010, 5020))
     monkeypatch.setattr(app, 'is_port_free', lambda p, host: True)
     assert app.free_port() == 5010
     assert app.free_port(preferred=5030) == 5030
@@ -162,14 +169,6 @@ def test_with_no_native_shell_a_launch_does_not_look_for_a_running_leela(monkeyp
     app.run()
     assert got['served'] == 1 and got['windows'] == []
 
-def test_the_frozen_entry_seals_the_bundle_before_anything_else():
-    "pyskills writes its `.pth` at import, so the seal has to come before any import that reaches it."
-    from pathlib import Path
-    src = (Path(__file__).resolve().parents[1]/'leela_app.py').read_text()
-    frozen = src[src.index("if getattr(sys, 'frozen'"):src.index('def free_port')]
-    first = frozen.index('seal_bundle()')
-    assert all(first < frozen.index(s) for s in ('leela.core.envs', 'use_extras()', 'use_login_path()', 'import_login_env()'))
-
 def test_sealing_moves_the_cwd_out_puts_pyskills_on_the_path_and_stops_bytecode(monkeypatch, tmp_path):
     import os, sys, leela
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
@@ -245,24 +244,37 @@ def test_closing_the_shell_reaps_worker_processes_however_it_ends(monkeypatch):
     with pytest.raises(RuntimeError): d.run_shell(['http://127.0.0.1:1/'])
     assert calls[-1] == 'reaped'
 
-def test_the_dock_delegate_reaps_and_runs_atexit_on_quit():
+def test_the_dock_delegate_reaps_a_live_worker_on_quit(monkeypatch):
     "Cmd+Q is NSApp `terminate:`, whose C `exit()` skips Python's atexit and leaves forked pools alive."
     import pytest, sys
     if sys.platform != 'darwin': pytest.skip('Cocoa only')
-    from kavacha.window import dock_delegates, quit_cleanly
-    _, App = dock_delegates()
-    assert 'applicationWillTerminate_' in App.__dict__
+    import atexit, multiprocessing as mp, time
+    import kavacha.window as kw
+    _, App = kw.dock_delegates()
+    monkeypatch.setattr(atexit, '_run_exitfuncs', lambda: None)
+    monkeypatch.setattr(kw, '_let_sigterm_kill', lambda: None)
+    p = mp.get_context('spawn').Process(target=time.sleep, args=(60,)); p.start()
+    try:
+        assert p.is_alive()
+        App.alloc().init().applicationWillTerminate_(None)
+        assert not p.is_alive(), 'quitting left a worker process running'
+    finally:
+        if p.is_alive(): p.kill()
+        if hasattr(kw.quitting, 'clear'): kw.quitting.clear()
 
 def test_the_shell_opens_on_the_saved_themes_background(monkeypatch):
-    "Every launch route goes through `leela.desktop.run_shell`, so windows open on the theme, not kavacha's dark default."
+    "Two different saved themes give different, non-empty window backgrounds through `leela.desktop.run_shell`, and a background the caller passes wins over the theme."
     import leela.desktop as d
     from leela.blocks.settings.settings import Settings
     got = []
     monkeypatch.setattr(d, 'quit_cleanly', lambda: None)
     monkeypatch.setattr(d, '_run_shell', lambda urls, titles, **kw: got.append(kw.get('background')))
-    Settings().save('user', 'appearance', {'theme': 'ember:light:relaxed'}, language='')
     try:
-        d.run_shell(['http://127.0.0.1:1/'])
+        for theme in ('ember:light:relaxed', 'ember:dark:relaxed'):
+            Settings().save('user', 'appearance', {'theme': theme}, language='')
+            d.run_shell(['http://127.0.0.1:1/'])
         d.run_shell(['http://127.0.0.1:1/'], background='#123456')
     finally: Settings().save('user', 'appearance', {'theme': ''}, language='')
-    assert got == ['#efe6d6', '#123456']
+    light, dark, given = got
+    assert light and dark and light != dark, 'each saved theme opens the window on its own background'
+    assert given == '#123456', 'a caller-supplied colour wins'

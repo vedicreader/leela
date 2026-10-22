@@ -248,6 +248,57 @@ def test_the_keymap_answers_every_chord_it_claims_in_one_browser_session():
     assert 'files' in got['fileScope']
 
 
+def test_every_keymap_action_and_menu_row_has_a_handler_on_the_loaded_page():
+    """`leeAct` answers `no handler for ...` for a name absent from `ACTIONS`, and a native menu's JS row calls a global."""
+    from leela.core.keys import KEYS
+    from leela.blocks.keys.menus import BAR, Js, MenuItem
+    keyed = sorted({k.action for k in KEYS})
+    rows = [r for _, rs in BAR for r in rs]
+    barred = sorted({r.action for r in rows if not isinstance(r, Js) and isinstance(r, MenuItem) and r.action})
+    exprs = sorted({r.expr for r in rows if isinstance(r, Js)})
+    assert keyed and barred and exprs
+    async def go(pg):
+        return await pg.evaluate("""([keyed, barred, exprs]) => ({
+          keyed: keyed.filter(a => typeof ACTIONS[a] !== 'function'),
+          barred: barred.filter(a => typeof ACTIONS[a] !== 'function'),
+          exprs: exprs.filter(e => typeof window[e.split('(')[0]] !== 'function')})""", [keyed, barred, exprs])
+    got = _run(go)
+    assert got == {'keyed': [], 'barred': [], 'exprs': []}, got
+
+
+def test_a_link_in_the_desktop_shell_goes_to_the_system_browser_and_never_through_window_open():
+    """A scripted `window.open` is `WKNavigationTypeOther`, so in the packaged app it opens nothing and returns null."""
+    async def go(pg):
+        posted = []
+        async def fulfil(route):
+            posted.append(route.request.post_data)
+            await route.fulfill(status=200, content_type='application/json', body='{}')
+        await pg.route('**/browser/external', lambda route: asyncio.ensure_future(fulfil(route)))
+        async def settled(n):
+            for _ in range(100):
+                if len(posted) >= n: break
+                await pg.wait_for_timeout(30)
+        await pg.evaluate("""() => {
+          window._opened = []; window.open = (...a) => { window._opened.push(a[0]); return null; };
+          lee.inShell = true;
+          const d = document.createElement('div'); d.innerHTML = '<a id="lka" href="https://example.com/a">a</a>';
+          document.body.appendChild(d); routeMarkdownLinks(d);
+        }""")
+        await pg.evaluate("() => document.getElementById('lka').click()")
+        await settled(1)
+        out = {'shell_opened': await pg.evaluate('window._opened'), 'shell_posted': list(posted)}
+        await pg.evaluate("() => { lee.inShell = false; window._opened.length = 0; }")
+        await pg.evaluate("() => openExternal('https://example.com/b')")
+        await settled(2)
+        out |= {'page_opened': await pg.evaluate('window._opened'), 'page_posted': list(posted)}
+        return out
+    got = _run(go)
+    assert got['shell_opened'] == [], 'the shell must not script a window it cannot open'
+    assert len(got['shell_posted']) == 1 and 'example.com/a' in got['shell_posted'][0], got['shell_posted']
+    assert got['page_opened'] == ['https://example.com/b'], 'a plain page still tries window.open first'
+    assert len(got['page_posted']) == 2 and 'example.com/b' in got['page_posted'][1], 'and falls back to the route when it returns null'
+
+
 def test_every_editor_refuses_the_systems_own_autocorrect():
     """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged app curled quotes, corrected identifiers, and offered inline predictions under CodeMirror."""
     async def go(pg):

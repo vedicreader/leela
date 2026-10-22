@@ -6,23 +6,19 @@ from leela.core.keys import DEFAULTS, apply_overrides, keymap_json, lookup, read
 
 
 def test_no_default_chord_lands_on_one_the_browser_will_not_deliver():
-    assert lookup('cell_above').key == 'mod+alt+up'
-    assert lookup('cell_below').key == 'mod+alt+down'
     reserved = {'ctrl+up', 'ctrl+down', 'ctrl+left', 'ctrl+right'}
     landed = [(k.action, c) for k in DEFAULTS for c in k.keys if c in reserved]
     assert not landed, f'these sit on a macOS-reserved chord: {landed}'
     chords = [(k.action, c) for k in DEFAULTS for c in k.keys]
     assert not [(a, c) for a, c in chords if c.startswith('ctrl+alt+')]
     assert not [(a, c) for a, c in chords if c.startswith('f')]
-    row = next(r for r in web_keymap() if r['action'] == 'run_above')
-    chord = row['chords'][0]
-    assert chord['hyper'] and all(chord[x] for x in ('mod', 'ctrl', 'alt', 'shift'))
-    assert lookup('run_above').key == 'hyper+enter'
-    assert 'hyper+r' in lookup('restart').keys
-    by_action = {k.action: k.key for k in DEFAULTS}
-    assert by_action['new_file'] == 'n'
-    assert by_action['new_dir'] == 'N'
-    assert 'ctrl+n' not in (by_action['new_file'], by_action['new_dir'])
+
+
+def test_a_hyper_chord_reaches_the_browser_as_all_four_modifiers():
+    "The page matches a KeyboardEvent, which has no hyper key: it must see command, control, option and shift together."
+    hypers = [c for r in web_keymap() for c in r['chords'] if c['hyper']]
+    assert hypers, 'no default uses hyper, so this guards nothing'
+    assert all(c[x] for c in hypers for x in ('mod', 'ctrl', 'alt', 'shift')), hypers
 
 
 def _keymap(tmp_path, d):

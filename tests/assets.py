@@ -3,8 +3,7 @@
 from functools import cache
 from pathlib import Path
 
-__all__ = ['ROOT', 'JS', 'CSS', 'EDITOR', 'TERM', 'SERVER', 'AGENT', 'read', 'tree_text',
-           'cm_exports']
+__all__ = ['ROOT', 'JS', 'CSS', 'EDITOR', 'TERM', 'SERVER', 'AGENT', 'read', 'tree_text']
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -49,10 +48,3 @@ def __getattr__(name):
     v = globals()[name] = _CORPORA[name]()
     return v
 
-@cache
-def cm_exports():
-    """The names `leela/vendor/lee-cm6.js` exports, read from the map itself."""
-    import re
-    b = read('leela/vendor/lee-cm6.js')
-    i = b.index('undo:()=>')
-    return set(re.findall(r'(\w+)\s*:\s*\(\)\s*=>', b[b.rfind('{', 0, i):b.index('}', i)]))

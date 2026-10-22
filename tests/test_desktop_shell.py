@@ -7,7 +7,6 @@ import importlib.util, os, shutil, subprocess, sys, threading
 import pytest
 
 import leela_app
-from tests.assets import read
 from leela import desktop
 
 
@@ -135,30 +134,6 @@ def test_a_folder_is_never_opened_on_the_thread_running_the_gui():
     assert where != 'MainThread' and where == 'leela-open-folder', where
 
 
-def test_the_menu_bar_names_only_actions_the_client_can_dispatch():
-    """`leeAct` answers `no handler for …` for anything absent from its table, so being in the keymap is necessary and not sufficient."""
-    from leela.blocks.keys.menus import BAR, MenuItem
-    # Two ways in: the table in `actions.js`, and `ACTIONS.name =` from a block that owns the action.
-    js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + \
-        read('leela/static/lee-agent.js')
-    named = lambda a: f'  {a}:' in js or f'ACTIONS.{a} =' in js or f'ACTIONS.{a}=' in js
-    missing = sorted({r.action for _, rows in BAR for r in rows
-                      if isinstance(r, MenuItem) and r.action and not named(r.action)})
-    assert missing == [], missing
-
-def test_the_debug_menu_calls_functions_that_are_really_on_the_page():
-    "`evaluate_js` runs in global scope, so a module-scope name is not reachable from a menu."
-    from leela.blocks.keys.menus import BAR, Js
-    from leela.core.web import IDE_BUNDLES
-    # every bundle the page loads, not two of the three: all of them run in the same global scope,
-    # so a menu row naming something in `lee-agent.js` was failing a check about reachability
-    bundle = ''.join(read(f'leela/static/{b}') for b in IDE_BUNDLES)
-    for _, rows in BAR:
-        for r in rows:
-            if not isinstance(r, Js): continue
-            name = r.expr.split('(')[0]
-            assert f'window.{name} =' in bundle or f'window.{name}=' in bundle, r.expr
-
 @pytest.mark.parametrize('chord,want', [
     ('mod+shift+p', ('p', desktop.CMD | desktop.SHIFT)),
     ('mod+,',       (',', desktop.CMD)),
@@ -172,16 +147,6 @@ def test_the_debug_menu_calls_functions_that_are_really_on_the_page():
 ])
 def test_a_leela_chord_becomes_the_key_equivalent_appkit_spells(chord, want):
     assert desktop.mac_key(chord) == want
-
-
-def test_nothing_opens_a_window_the_app_cannot_open():
-    """A scripted `window.open` is `WKNavigationTypeOther`, and pywebview's delegate only acts on a link activation, so in the packaged app it opens nothing and returns null."""
-    js = read('leela/static/lee-core.js') + read('leela/static/lee-ide.js') + read('leela/static/lee-agent.js')
-    calls = [l.strip() for l in js.splitlines() if 'window.open(' in l]
-    assert calls, 'the guarded form went missing rather than the guard'
-    for line in calls:
-        assert 'inDesktopShell()' in line or 'openExternal(' in line, \
-            f'a window this app cannot open: {line[:120]}'
 
 
 def _stub_server(handler_body, status=400):
