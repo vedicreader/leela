@@ -84,12 +84,21 @@ async function refreshVars(box) {
   const scroll = lee.varRestore ? lee.varRestore.scroll : box.scrollTop;
   const selName = lee.varRestore ? lee.varRestore.selected : selVar()?.dataset.name;
   lee.varRestore = null;
-  const cur = {};
-  const html = (d.groups || []).map(g => {
-    const rows = (g.nodes || []).map(n => { cur[n.name] = n.value; return varRow(n); }).join('');
-    return g.label ? `<div class="lee-vgroup">${esc(g.label)}</div>${rows}` : rows;
-  }).join('');
-  box.innerHTML = html || '<div class="lee-dim">(no variables yet)</div>';
+  const cur = {}, tpl = document.createElement('template'), frag = document.createDocumentFragment();
+  const old = new Map([...box.querySelectorAll(':scope > .lee-vrow')].map(r => [r.dataset.key, [r, r.nextElementSibling]]));
+  for (const g of d.groups || []) {
+    if (g.label) frag.append(Object.assign(document.createElement('div'), {className: 'lee-vgroup', textContent: g.label}));
+    for (const n of g.nodes || []) {
+      cur[n.name] = n.value;
+      const key = `${g.label || ''}\0${n.name}`, html = varRow(n), prev = old.get(key);
+      if (prev && prev[0].dataset.sig === html) { frag.append(...prev); continue; }
+      tpl.innerHTML = html;
+      const [row, kids] = tpl.content.children;
+      Object.assign(row.dataset, {key, sig: html});
+      frag.append(row, prev && prev[1].id === kids.id ? prev[1] : kids);
+    }
+  }
+  box.replaceChildren(frag.childElementCount ? frag : Object.assign(document.createElement('div'), {className: 'lee-dim', textContent: '(no variables yet)'}));
   lee.varPrev = cur; lee.varSeen = true;
   await Promise.all([...lee.varOpen].map(acc => fillKids(acc)));
   if (selName) $$(`#vars .lee-vrow`).find(r => r.dataset.name === selName)?.classList.add('sel');
@@ -127,8 +136,9 @@ async function fillKids(acc) {
     const kids = accessor[0] === 'debug'
       ? (await api(`/nb/debug/variables?reference=${Number(accessor[1])}`)).variables.map(debugVar)
       : await api(`/vars/expand?accessor=${acc}&scope=${lee.execScope}`);
-    box.innerHTML = kids.map(k => varRow(k, 1)).join('');
-  } catch (e) { lee.varOpen.delete(acc); box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; }
+    const html = kids.map(k => varRow(k, 1)).join('');
+    if (box.dataset.sig !== html) { box.innerHTML = html; box.dataset.sig = html; }
+  } catch (e) { lee.varOpen.delete(acc); delete box.dataset.sig; box.innerHTML = `<div class="lee-err">${esc(e.message)}</div>`; }
 }
 
 function selectVar(el) {
@@ -143,7 +153,7 @@ async function leeVarClick(el) {
   const acc = el.dataset.acc;
   const box = document.getElementById('k-' + acc);
   if (!box) return;
-  if (lee.varOpen.has(acc)) { lee.varOpen.delete(acc); box.innerHTML = ''; return; }
+  if (lee.varOpen.has(acc)) { lee.varOpen.delete(acc); box.innerHTML = ''; delete box.dataset.sig; return; }
   lee.varOpen.add(acc);
   await fillKids(acc);
 }
