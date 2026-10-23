@@ -3323,12 +3323,13 @@ function presentFit(p) {
    into `cells`. `src` reads a cell's text, so unsaved edits are what gets presented. */
 function presentSlides(cells, src = c => String(c.source || '')) {
   const kind = c => c.extra?.slideshow?.slide_type;
-  const typed = cells.some(c => kind(c) != null);
+  // only a slide boundary makes unmarked cells continue a slide; a skip or notes mark alone does not
+  const typed = cells.some(c => kind(c) === 'slide' || kind(c) === 'subslide');
   const deck = []; let stack = null, slide = null;
   const open = sub => { slide = {items: [], notes: [], frag: -1}; if (!sub || !stack) deck.push(stack = []); stack.push(slide); };
   cells.forEach((c, i) => {
     if (c.approval) return;
-    const t = typed ? (kind(c) || '-') : 'slide';
+    const t = kind(c) || (typed ? '-' : 'slide');
     if (t === 'skip') return;
     const empty = !src(c).trim() && !(c.outputs || []).length && !c.reply;
     if (t === 'slide' || t === 'subslide') open(t === 'subslide');

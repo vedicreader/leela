@@ -53,6 +53,13 @@ def test_cells_group_into_slides_the_way_rise_groups_them():
     assert got['nothing'] == []
     assert got['live_text'] == [[{'items': [0], 'notes': []}]], 'the text read is the editor text, not the saved source'
 
+def test_a_skip_or_notes_mark_alone_leaves_every_other_cell_its_own_slide():
+    "Skipping one cell in a notebook with no slide boundaries made every other cell continue one slide, which then scrolled."
+    cells = [_cell(None, 'a'), _cell('skip', 's'), _cell(None, 'b'), _cell('notes', 'n'), _cell(None, 'c'),
+             _cell('fragment', 'f'), _cell('-', 'd')]
+    got = _js(f'presentSlides({json.dumps(cells)}).map(s => s.map(x => ({{items: x.items.map(y => y.i), notes: x.notes}})))')
+    assert got == [[{'items': [0], 'notes': []}], [{'items': [2], 'notes': [3]}], [{'items': [4, 5, 6], 'notes': []}]], got
+
 def test_rise_settings_reach_reveal_by_name_and_nothing_else_does():
     got = _js('[riseConfig({theme: "black", transition: "linear", width: "100%", height: 768, controls: false,'
               ' progress: true, slideNumber: "c/t", center: false, header: "<b>h</b>", footer: "  ", overlay: "o",'
