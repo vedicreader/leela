@@ -10,6 +10,30 @@ const SLIDE_NUMBERS = new Set(['h.v', 'h/v', 'c', 'c/t']);
 const NAV_CMDS = new Set(['next', 'prev', 'left', 'right', 'up', 'down']);
 const PRESENT_NOT_NOTEBOOK = 'only a notebook can be presented as slides';
 const PRESENT_NOTHING = 'this notebook has nothing to present: every cell is empty or skipped';
+//: Below this a slide scrolls rather than shrink past reading.
+const PRESENT_MIN_ZOOM = .35;
+
+//: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
+const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
+const presentKey = () => `lee-present-text:${lee.path || lee.tabKey}`;
+function presentStored() {
+  try { const s = +localStorage.getItem(presentKey()); return s >= .5 && s <= 2.5 ? s : 1; } catch { return 1; }
+}
+
+//: Zoom each slide reveal has laid out (far ones are `display: none`) until its content fits the slide's height.
+function presentFit(p) {
+  const h = p.reveal.getComputedSlideSize().height, scale = p.reveal.getScale() || 1;
+  for (const s of $$('.slides section:not(.stack)', p.root)) {
+    if (getComputedStyle(s).display === 'none') continue;
+    s.style.zoom = s.style.maxHeight = s.style.overflowY = '';
+    const tall = () => s.getBoundingClientRect().height/scale;
+    let need = tall(), z = 1;
+    for (let k = 0; k < 4 && need > h + 1 && z > PRESENT_MIN_ZOOM; k++) {
+      z = Math.max(PRESENT_MIN_ZOOM, z*h/need); s.style.zoom = z; need = tall();
+    }
+    if (need > h + 1) { s.style.maxHeight = `${h/z}px`; s.style.overflowY = 'auto'; }
+  }
+}
 
 /* `[[slide, ...subslides], ...]`, each slide `{items: [{i, frag}], notes: [i]}` with `i` an index
    into `cells`. `src` reads a cell's text, so unsaved edits are what gets presented. */
@@ -115,7 +139,7 @@ async function presentRun(host, id) {
   button.disabled = false; host.classList.remove('running'); host.classList.toggle('failed', !r.ok);
   say.textContent = r.ok ? '' : presentError(r.error);
   const c = lee.cells.find(x => x.id === id); if (c) presentOutputs($('.lee-present-out', host), c.outputs);
-  lee.present?.reveal?.layout();
+  lee.present?.fit?.();
 }
 
 function presentTitle(cells, slide) {
@@ -142,11 +166,13 @@ async function presentNotebook(start = '') {
   root.className = 'lee-present'; root.tabIndex = -1; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'slides');
   root.innerHTML = '<div class="reveal"><div class="slides"></div></div>' +
     '<div class="lee-present-header"></div><div class="lee-present-footer"></div><div class="lee-present-overlay"></div>' +
-    '<div class="lee-present-bar"><button type="button" data-notes title="open the speaker notes in your browser">notes</button>' +
+    '<div class="lee-present-bar"><button type="button" data-smaller title="smaller text" aria-label="smaller text">A−</button>' +
+    '<button type="button" data-bigger title="larger text" aria-label="larger text">A+</button>' +
+    '<button type="button" data-notes title="open the speaker notes in your browser">notes</button>' +
     '<button type="button" data-full title="fill the screen">⛶</button>' +
     '<button type="button" data-close title="stop presenting (escape)" aria-label="stop presenting">×</button></div>' +
     '<div class="lee-present-msg" role="status" hidden></div>';
-  const p = lee.present = {root, reveal: null, fsExit: 0};
+  const p = lee.present = {root, reveal: null, fsExit: 0, text: presentStored(), base: 0};
   closeInlinePopover(); document.body.appendChild(root); root.focus({preventScroll: true});
   const slidesEl = $('.slides', root), flat = [];
   deck.forEach((stack, h) => {
@@ -162,7 +188,22 @@ async function presentNotebook(start = '') {
     });
   });
   for (const k of ['header', 'footer', 'overlay']) if (cfg[k]) renderMarkdown($(`.lee-present-${k}`, root), cfg[k], true);
-  const layout = () => requestAnimationFrame(() => p.reveal?.layout());
+  let fitting = false;
+  const layout = p.fit = () => requestAnimationFrame(() => {
+    if (!p.reveal || fitting) return;
+    fitting = true;
+    try { presentFit(p); p.reveal.layout(); } finally { fitting = false; }
+  });
+  const sized = () => { if (p.base) root.style.setProperty('--r-main-font-size', `${p.base*p.text}px`); };
+  const resize = d => {
+    p.text = presentStep(p.text, d);
+    try { localStorage.setItem(presentKey(), String(p.text)); } catch {}
+    sized(); layout(); presentSay(`text ${Math.round(p.text*100)}%`);
+  };
+  $('[data-smaller]', root).onclick = () => resize(-1);
+  $('[data-bigger]', root).onclick = () => resize(1);
+  // a bar button left focused would take reveal's Space and arrows
+  $('.lee-present-bar', root).addEventListener('click', () => root.focus({preventScroll: true}));
   root.addEventListener('lee-markdown-rendered', e => { $$('.lee-reply-actions', e.target).forEach(x => x.remove()); layout(); });
   root.addEventListener('load', layout, true);
   root.addEventListener('click', e => { if (e.target.closest('.lee-output-fold')) layout(); });
@@ -187,6 +228,7 @@ async function presentNotebook(start = '') {
     const [R] = await Promise.all([loadReveal(), presentCss('/leestatic/reveal/reveal.css'),
                                    presentCss(`/leestatic/reveal/theme/${cfg.theme}.css`)]);
     if (lee.present !== p) return;
+    p.base = parseFloat(getComputedStyle(root).getPropertyValue('--r-main-font-size')) || 40; sized();
     p.reveal = new R($('.reveal', root), {embedded: true, hash: false, history: false, respondToHashChanges: false,
       fragmentInURL: false, help: false, scrollActivationWidth: null,
       keyboardCondition: () => lee.present === p && !$('.lee-modal'), ...cfg.reveal});
@@ -198,6 +240,7 @@ async function presentNotebook(start = '') {
   }
   const at = (start || cfg.start) === 'selected' ? presentAt(deck, lee.sel) : {h: 0, v: 0, f: -1};
   p.reveal.slide(at.h, at.v, at.f);
+  p.reveal.on('slidechanged', layout); p.reveal.on('resize', layout); layout();
   const index = () => { const s = p.reveal.getIndices(); return Math.max(0, flat.findIndex(x => x.h === s.h && x.v === (s.v || 0))); };
   p.reveal.on('slidechanged', () => presentSync({op: 'move', index: index()}));
   await presentSync({op: 'start', title: (lee.path || lee.tabKey).split('/').pop(), slides: flat, index: index()});

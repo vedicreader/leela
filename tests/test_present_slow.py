@@ -151,6 +151,66 @@ def test_a_notebook_presents_as_slides_and_leaves_the_ide_as_it_found_it(tmp_pat
     assert any('/present/notes' in d for d in out['opened']), out['opened']
 
 
+LONG = '# Long\n\n' + '\n\n'.join(f'line {i} of a slide written far longer than one page holds' for i in range(20))
+FITS = r"""() => { const box = document.querySelector('.lee-present .slides').getBoundingClientRect();
+  const s = lee.present.reveal.getCurrentSlide(), r = s.getBoundingClientRect(), o = getComputedStyle(s).overflowY;
+  return {inside: r.top >= box.top - 1 && r.bottom <= box.bottom + 1, scrolls: o === 'auto' || o === 'scroll'}; }"""
+TEXT = "() => parseFloat(getComputedStyle(lee.present.reveal.getCurrentSlide().querySelector('p')).fontSize)"
+
+@pytest.mark.parametrize('browser', ['chromium', 'webkit'])
+def test_a_long_slide_fits_its_page_and_the_text_size_is_the_presenters(tmp_path, browser):
+    "A slide longer than the page scrolled inside the deck, and nothing set the text size."
+    cells = [md(LONG, 'slide', 'l0'), md('# Short\n\nsmall text', 'slide', 's1')]
+    (tmp_path/'deck.ipynb').write_text(json.dumps({'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        out = {}
+        await pg.route('**/browser/external', lambda r: asyncio.ensure_future(
+            r.fulfill(status=200, content_type='application/json', body='{"ok": true}')))
+        await pg.evaluate('p => leeOpenFile(p)', str(tmp_path/'deck.ipynb'))
+        await pg.wait_for_function('() => document.querySelectorAll(".lee-cell").length === 2')
+        await pg.evaluate('() => { selectCell(0); focusCell(0); }')
+        await pg.keyboard.press('Alt+KeyR')
+        await pg.wait_for_function(READY, timeout=20000)
+        await pg.wait_for_function('() => document.querySelector(".lee-present .slides").textContent.includes("line 19")')
+        await pg.wait_for_timeout(400)
+        out['long'] = await pg.evaluate(FITS)
+        await pg.keyboard.press('ArrowRight')
+        await pg.wait_for_function(f'() => ({AT})()[0] === 1')
+        await pg.wait_for_timeout(300)
+        out['short'] = [await pg.evaluate(TEXT)]
+        await pg.click('.lee-present-bar [data-bigger]'); await pg.click('.lee-present-bar [data-bigger]')
+        await pg.wait_for_timeout(200)
+        out['short'].append(await pg.evaluate(TEXT))
+        out['msg'] = await pg.evaluate('() => document.querySelector(".lee-present-msg").textContent')
+        await pg.keyboard.press('ArrowLeft')
+        await pg.wait_for_function(f'() => ({AT})()[0] === 0')
+        await pg.wait_for_timeout(400)
+        out['long_bigger'] = await pg.evaluate(FITS)
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_function('() => !document.querySelector(".lee-present")')
+        await pg.evaluate('() => presentNotebook("beginning")')
+        await pg.wait_for_function(READY, timeout=20000)
+        await pg.evaluate('() => lee.present.reveal.slide(1, 0)')
+        await pg.wait_for_timeout(300)
+        out['reopened'] = await pg.evaluate(TEXT)
+        for _ in range(30): await pg.click('.lee-present-bar [data-smaller]')
+        out['floor'] = await pg.evaluate('() => document.querySelector(".lee-present-msg").textContent')
+        for _ in range(30): await pg.click('.lee-present-bar [data-bigger]')
+        out['ceiling'] = await pg.evaluate('() => document.querySelector(".lee-present-msg").textContent')
+        await pg.keyboard.press('ArrowLeft')
+        await pg.wait_for_function(f'() => ({AT})()[0] === 0')
+        out['keys_after_click'] = True
+        return out
+    out = asyncio.run(_real_page(go, tmp_path, browser))
+    assert out['long'] == {'inside': True, 'scrolls': False}, out['long']
+    small, big = out['short']
+    assert abs(big/small - 1.2) < .02, out['short']
+    assert out['msg'] == 'text 120%', out['msg']
+    assert out['long_bigger'] == {'inside': True, 'scrolls': False}, out['long_bigger']
+    assert abs(out['reopened'] - big) < .5, 'the size is remembered for this notebook'
+    assert (out['floor'], out['ceiling']) == ('text 50%', 'text 250%')
+
+
 def test_an_external_link_opens_one_tab_in_a_browser(tmp_path):
     "`window.open(..., 'noopener')` returns null even when the tab opened, so a browser also asked the server to open it: two tabs, the notes page among them."
     async def go(pg):

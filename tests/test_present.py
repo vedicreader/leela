@@ -67,6 +67,10 @@ def test_rise_settings_reach_reveal_by_name_and_nothing_else_does():
     for e in empty + [bad]: assert (e['reveal'], e['theme'], e['start']) == ({}, 'simple', 'selected'), e
     assert digits['reveal'] == {'width': 1280}
 
+def test_the_text_size_moves_in_tenths_between_half_and_two_and_a_half():
+    assert _js('[presentStep(1, 1), presentStep(1, -1), presentStep(1.2, 1), presentStep(.5, -1), presentStep(2.5, 1), presentStep(.7000001, 1)]') \
+        == [1.1, .9, 1.3, .5, 2.5, .8]
+
 def _nb(path, meta, cells=None):
     cells = cells or [{'cell_type': 'markdown', 'id': 'm1', 'metadata': {'slideshow': {'slide_type': 'slide'}}, 'source': '# hi'}]
     path.write_text(json.dumps({'cells': cells, 'metadata': meta, 'nbformat': 4, 'nbformat_minor': 5}))
