@@ -99,6 +99,12 @@ def _no_backup_threads(monkeypatch):
     monkeypatch.setattr(backups, 'schedule_backups', lambda *a, **k: (lambda: None))
 
 @pytest.fixture(autouse=True)
+def _no_cpu_watchdog(monkeypatch):
+    """`serve_ide` starts no CPU watchdog; `test_watchdog` holds the real `watch_cpu`."""
+    from leela.core import watchdog
+    monkeypatch.setattr(watchdog, 'watch_cpu', lambda *a, **k: None)
+
+@pytest.fixture(autouse=True)
 def _sessions_off_the_repo(tmp_path_factory):
     """No test writes an agent transcript into the checked-out repository."""
     from dhrishti.runtime import set_logging

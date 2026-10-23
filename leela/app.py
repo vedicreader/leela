@@ -1456,6 +1456,9 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
             threading.Thread(target=open_window, daemon=True, name='leela-cdp-open').start()
     if not gate.enabled: print(f'  {gate.why}')
     from .hub import LoopbackHostGuard
+    # a diagnostics failure must never stop the server
+    try: from .core.watchdog import watch_cpu; watch_cpu()
+    except Exception as e: print(f'  cpu watchdog off: {e}')
     now_serving(host, port, [str(r) for r in (roots or ws.fs.roots)])
     try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning', timeout_keep_alive=KEEP_ALIVE)
     finally: served()

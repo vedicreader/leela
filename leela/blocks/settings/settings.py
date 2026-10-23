@@ -88,6 +88,8 @@ DEFAULT_SETTINGS = {
         'loginShell': True,
         'external': '',
     },
+    #: Off stops `core.watchdog.watch_cpu` at the next launch.
+    'diagnostics': {'cpu_watchdog': True},
 }
 
 _ENUMS = {
