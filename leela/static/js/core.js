@@ -17,6 +17,7 @@ const lee = {
   keys: [], help: {}, scope: 'editor', execScope: 'live',
   editors: new Map(),        // cell id (or 'exec'/'file') -> CodeMirror view
   cells: [], sel: 0, cellSelection: new Set(), cellAnchor: 0, kind: null, path: '',
+  rise: {}, present: null,   // the notebook's RISE settings, and the open slide deck
   hist: [], histIdx: 0,
   varOpen: new Set(), varPrev: {}, varStates: new Map(), varFingerprints: new Map(), varRuntime: '',
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
@@ -403,7 +404,8 @@ async function runSnippet(surface, button, code) {
   }
 }
 function mountCodeSurface(host, code, lang = 'python', promote = false, run = false) {
-  const shell = document.createElement('section'); shell.className = 'lee-code-surface';
+  // Not a `section`: reveal.js reads any section inside a slide as a stack of slides.
+  const shell = document.createElement('div'); shell.className = 'lee-code-surface';
   const head = document.createElement('header'); head.className = 'lee-code-head';
   head.innerHTML = `<span>${esc(lang)}</span><span class="lee-spacer"></span>` +
     `<button type="button" data-copy>copy</button>` +
@@ -604,10 +606,13 @@ function resolveMarkdownImages(el) {
    a `window.open` that comes back null is itself the answer, because WKWebView refuses a scripted
    one. Getting this wrong navigated the whole app window to the site, with no way back. */
 const inDesktopShell = () => Boolean(window.pywebview || lee.inShell);
+/* `window.open` with `noopener` returns null even when the tab opened, so a null meant "blocked" only
+   without it: the opener is cut by hand instead, and the server is asked only when the browser refused. */
+function openTab(url) { const w = window.open(url, '_blank'); if (w) w.opener = null; return Boolean(w); }
 
 async function openExternal(url) {
   if (!url) return status('choose a source first', 'err');
-  if (!inDesktopShell() && window.open(url, '_blank', 'noopener,noreferrer')) return;
+  if (!inDesktopShell() && openTab(url)) return;
   try { await post('/browser/external', {url}); }
   catch (e) { status(`could not open ${url}: ${e.message || e}`, 'err'); }
 }
@@ -621,7 +626,7 @@ function routeMarkdownLinks(el) {
       if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
       e.preventDefault(); e.stopPropagation();
       if (inDesktopShell()) return openExternal(href);
-      if (!window.open(href, '_blank', 'noopener,noreferrer')) openExternal(href);
+      if (!openTab(href)) openExternal(href);
     });
   });
 }

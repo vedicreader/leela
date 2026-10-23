@@ -38,8 +38,9 @@ const EDITING_SCOPES = new Set(['editor', 'exec', 'agent', 'term']);
 function eventContext(e) {
   const path = e.composedPath ? e.composedPath() : [e.target];
   const inPath = selector => path.some(n => n instanceof Element && n.matches(selector));
-  // Overlays own their keyboard while open, so commands behind a dialog never fire.
-  if (inPath('.lee-modal, .lee-ctxmenu')) return 'overlay';
+  // Overlays own their keyboard while open, so commands behind a dialog never fire. A slide deck
+  // owns it wherever focus has gone, since what is behind it cannot be seen.
+  if (inPath('.lee-modal, .lee-ctxmenu') || lee.present) return 'overlay';
   if (inPath('#termwrap, .xterm')) return 'term';
   // A live page wants its own keyboard as much as a shell does, so the inline browser is routed
   // like the terminal. It has to come before `#editor`, which contains it.

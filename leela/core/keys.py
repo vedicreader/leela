@@ -150,6 +150,7 @@ DEFAULTS = L(
     Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
     Key('notebook_language', '',           'global', 'notebook language'),
+    Key('present_notebook', 'alt+r',         'global', 'present notebook as slides'),
     Key('add_folder',       '',              'global', 'stage this folder, ignores first'),
     Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),
     Key('run_app',          'alt+shift+a',   'global', 'run a configuration', 'toast'),
@@ -185,6 +186,7 @@ DEFAULTS = L(
     Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
+    Key('present_from_cell', '',               'editor', 'present from this cell'),
 # Naming these here is what puts them in the palette and the keys help. CodeMirror's own keymap
 # already answers them inside an editor, and it is the same command either way.
     Key('indent_more',      'mod+]',           'editor', 'indent'),

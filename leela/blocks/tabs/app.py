@@ -100,7 +100,7 @@ def connect(app, ctx):
             docs.docs[key] = nb
             t.nb_lang = nb.lang
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                    'lang': nb.lang, 'disk_version': held, 'stale': stale,
+                    'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise,
                     'cells': [c.dict() for c in nb.cells]}
         if t.kind in ('pdf', 'image'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,

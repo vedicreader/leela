@@ -54,6 +54,8 @@ const ACTIONS = {
   pick_kernel:  () => pickKernel(),
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
   notebook_language: () => pickNotebookLanguage(),
+  present_notebook: () => presentNotebook(),
+  present_from_cell: () => presentNotebook('selected'),
   add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),
   cell_select_above: () => focusCell(lee.sel - 1),

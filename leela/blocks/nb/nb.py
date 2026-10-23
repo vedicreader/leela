@@ -172,6 +172,10 @@ class Notebook:
             v = self.meta.get(k)
             if isinstance(v, dict) and (name := v.get('language') or v.get('name')): return str(name)
         return 'python'
+    @property
+    def rise(self):
+        "RISE settings: legacy `livereveal` under `rise`, and either one ignored when it is not a mapping."
+        return {k: v for d in (self.meta.get('livereveal'), self.meta.get('rise')) if isinstance(d, dict) for k, v in d.items()}
     def set_lang(self, lang, display=None, kernel=None):
         "Name this notebook's language, in the two places nbformat readers look for it."
         self.meta['kernelspec'] = {'name': kernel or lang, 'language': lang,

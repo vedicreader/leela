@@ -51,6 +51,7 @@ BUTTONS = L(
     Btn('restart',      'restart',  'restart the kernel',              'toolbar', 'warn'),
     Btn('run_app',      'run',      'start a run configuration under an inspector', 'toolbar'),
     Btn('pick_kernel',  'kernel',   'choose the kernel and interpreter','toolbar'),
+    Btn('present_notebook', 'present', 'present the notebook as slides', 'toolbar'),
     Btn('palette',      'cmds',     'command palette',                 'toolbar'),
     Btn('help',         'keys',     'every binding',                   'toolbar'),
     Btn('run_cell',     '▶',        'run this cell',                   'cell', 'go'),

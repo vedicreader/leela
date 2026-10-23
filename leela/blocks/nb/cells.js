@@ -332,7 +332,7 @@ function valueLensMeta(item) {
           item.dtype ? `dtype ${item.dtype}` : ''].filter(Boolean).join(' · ') || 'runtime value';
 }
 function openValueLens(item, anchor, label = '') {
-  if (!item) return;
+  if (!item || lee.present) return;
   closeInlinePopover();
   const p = document.createElement('aside');
   p.className = 'lee-inline-popover lee-value-lens'; p.setAttribute('role', 'dialog');
@@ -409,8 +409,9 @@ function plotlyFrame(d, fig) {
   const json = JSON.stringify({data: fig.data || [], layout: fig.layout || {}, config: fig.config || {}}).replace(/</g, '\\u003c');
   const h = +(fig.layout && fig.layout.height) || 450;
   return sandboxFrame(d, `<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="p" style="width:100%;height:100vh"></div>` +
-    `<script src="${PLOTLY_JS}"><\/script><script>const f = ${json};` +
-    `Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, width: undefined, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
+    `<script src="${PLOTLY_JS}" onerror="document.getElementById('p').innerHTML=` +
+    `'<p style=&quot;font:13px sans-serif;color:#888;padding:1em&quot;>plotly.js could not load, so this chart cannot be drawn offline</p>'"><\/script>` +
+    `<script>const f = ${json}; if (window.Plotly) Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, width: undefined, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
 }
 function outputEl(o) {
   const d = document.createElement('div');

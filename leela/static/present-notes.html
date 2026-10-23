@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>leela · speaker notes</title>
+<style>
+:root { color-scheme: light dark; --fg: #1d1d1f; --dim: #6e6e73; --bg: #fbfbfd; --line: #d2d2d7; }
+@media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --dim: #a1a1a6; --bg: #161618; --line: #3a3a3c; } }
+body { margin: 0; font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+header { display: flex; gap: 1.2em; align-items: baseline; padding: .8em 1.4em; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 1em; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#where, #next { color: var(--dim); }
+#timer { font: 600 1.6em/1 ui-monospace, Menlo, monospace; }
+main { padding: 1em 1.4em 3em; max-width: 60em; }
+#notes { font-size: 1.25em; }
+#notes:empty::before { content: 'no notes for this slide'; color: var(--dim); }
+#notes pre { white-space: pre-wrap; }
+footer { position: fixed; bottom: 0; left: 0; right: 0; padding: .5em 1.4em; color: var(--dim); font-size: .8em; background: var(--bg); border-top: 1px solid var(--line); }
+body.idle main, body.idle #timer { opacity: .45; }
+</style></head>
+<body class="idle">
+<header><h1 id="title">speaker notes</h1><span id="where"></span><span id="timer">0:00</span></header>
+<main><div id="state"></div><div id="notes"></div><p id="next"></p></main>
+<footer>← → ↑ ↓, Space, Page Up and Page Down move the slides in Leela</footer>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+let st = {live: false}, skew = 0, painted = 0;
+async function md(text) {
+  if (!text.trim()) return '';
+  try {
+    const r = await fetch('/markdown/render', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                               body: JSON.stringify({text, allow_raw: false})});
+    if (r.ok) return (await r.json()).html;
+  } catch (_) {}
+  return `<pre>${esc(text)}</pre>`;
+}
+function clock() {
+  if (!st.live) return;
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - skew - st.started));
+  $('#timer').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+async function paint() {
+  const mine = ++painted, slides = st.slides || [], at = st.index || 0;
+  document.body.classList.toggle('idle', !st.live);
+  $('#title').textContent = st.title || 'speaker notes';
+  if (!st.live) {
+    $('#where').textContent = ''; $('#next').textContent = ''; $('#notes').innerHTML = '';
+    $('#state').textContent = st.ended ? 'the presentation has ended' : 'no presentation is running';
+    return;
+  }
+  $('#state').textContent = '';
+  $('#where').textContent = `slide ${at + 1} of ${slides.length}`;
+  $('#next').textContent = at + 1 < slides.length ? `next: ${slides[at + 1].title || 'untitled slide'}` : 'last slide';
+  const html = await md(slides[at]?.notes || '');
+  if (mine === painted) $('#notes').innerHTML = html;
+  clock();
+}
+const events = new EventSource('/present/events');
+events.addEventListener('state', e => { st = JSON.parse(e.data); skew = Date.now() / 1000 - st.now; paint(); });
+setInterval(clock, 1000);
+const KEYS = {ArrowRight: 'right', ArrowLeft: 'left', ArrowDown: 'down', ArrowUp: 'up', PageDown: 'next', PageUp: 'prev', ' ': 'next'};
+addEventListener('keydown', e => {
+  const cmd = e.key === ' ' && e.shiftKey ? 'prev' : KEYS[e.key];
+  if (!cmd || e.metaKey || e.ctrlKey || e.altKey || !st.live) return;
+  e.preventDefault();
+  fetch('/present/nav', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({cmd})});
+});
+</script>
+</body></html>

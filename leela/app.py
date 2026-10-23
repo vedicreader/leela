@@ -414,7 +414,7 @@ def _toast_panel():
 
 def _toolbar():
     "Only the actions used continuously; everything else lives in a named menu."
-    actions = {'run_cell', 'run_advance', 'run_file', 'run_selection', 'interrupt'}
+    actions = {'run_cell', 'run_advance', 'run_file', 'run_selection', 'interrupt', 'present_notebook'}
     buttons = [_btn(b) for b in btn_bar('toolbar') if b.action in actions]
     return Div(*buttons, Span(cls='lee-spacer'),
                Button('⋯', cls='lee-more lee-toolbar-more', title='more editor actions',

@@ -56,10 +56,17 @@ async function stopCell(i) {
          r.forced ? 'err' : 'ok');
 }
 
+/* Resolves to `{ok, error}`. The slide deck runs cells with the status line hidden under it, so it
+   reads the outcome here and follows the outputs through `lee-cell-output`. */
+const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
 async function runCell(i, advance) {
-  const c = lee.cells[i]; if (!c) return;
-  if (c.running) return status(`cell ${i + 1} is already running`, 'err');
+  const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
+  if (c.running) {
+    status(`cell ${i + 1} is already running`, 'err');
+    return {ok: false, error: `cell ${i + 1} is already running`};
+  }
   const runPath = lee.path, cellId = c.id;
+  let res = {ok: true, error: ''};
   const v = ensureCellMounted(i);
   const src = v ? LeeCM.getDoc(v) : c.source;
   const el = $(`.lee-cell[data-i="${i}"]`);
@@ -74,7 +81,7 @@ async function runCell(i, advance) {
     // first, or a newly created .ipynb is still zero-byte on disk while its cell runs.
     // `saveTab` has already said why, in the status line or the conflict dialog. Repeating a
     // generic `save the notebook` over the top of it hid the only diagnosable part.
-    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return;
+    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
     el?.classList.add('running');
@@ -90,16 +97,19 @@ async function runCell(i, advance) {
         if (!stillHere) return;
         if (event === 'output') {
           lee.cells[i].outputs = data.outputs || [];
-          renderOutputs(lee.cells[i]);
+          renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
         } else if (event === 'error') throw new Error(data.text || 'cell execution failed');
         else if (event === 'done') r = data;
       });
       if (!r) throw new Error('cell execution ended without a result');
       const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-      if (!stillHere) { leeVars(); return; }
+      if (!stillHere) {
+        c.running = false; el?.classList.remove('running'); leeVars();
+        return {ok: false, error: 'the notebook changed while the cell ran'};
+      }
       // Preserve the mounted cell object and its editor relationship.
       Object.assign(c, r.cell);
-      renderOutputs(r.cell);
+      renderOutputs(r.cell); cellOutputEvent(cellId, c.outputs || []);
       LeeCM.setInlineValues(v, r.inline || []);
       if (r.result) requestAnimationFrame(() => openValueLens(r.result, $('#out-' + c.id) || el, 'expression result'));
       $('#g-' + c.id).textContent = '[' + (r.cell.execution_count ?? ' ') + ']';
@@ -109,11 +119,13 @@ async function runCell(i, advance) {
       setCellState(c, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
       status(r.ok ? `cell ${i + 1} ran in ${duration}` : `cell ${i + 1} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
+      res = {ok: !!r.ok, error: r.ok ? '' : `cell ${i + 1} failed after ${duration}`};
     } catch (e) {
       const elapsed = performance.now() - began;
       c.execution_ms = elapsed; setCellTime(c, elapsed, false);
       setCellState(c, 'error', `run failed after ${formatCellTime(elapsed)}`);
       status(String(e.message || e), 'err');
+      res = {ok: false, error: String(e.message || e)};
     } finally { clearInterval(cellClock); }
     c.running = false;
     el?.classList.remove('running');
@@ -126,6 +138,7 @@ async function runCell(i, advance) {
   }
   if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }
   else if (advance) { if (i + 1 < lee.cells.length) focusCell(i + 1); else { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); } }
+  return res;
 }
 
 function paintDebugInlineValues(view, lineNo, variables) {

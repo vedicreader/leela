@@ -3911,3 +3911,29 @@ kbd {
 :root[data-theme="github"][data-mode="light"] .cm-line span:not([class*="cm-"]):not([class*="lee-"]) {
   --lee-green: #0a3069; --lee-purple: #0550ae; --lee-blue: #8250df; --lee-yellow: #953800;
 }
+/* The slide deck: above the IDE and its popovers, below `.lee-modal` so a save conflict still shows. */
+.lee-present { position: fixed; inset: 0; z-index: 49; background: #fff; }
+.lee-present:focus { outline: none; }
+.lee-present .reveal { width: 100%; height: 100%; }
+.lee-present .reveal .slides section:not(.stack) { max-height: 100%; overflow-y: auto; }
+.lee-present-cell { text-align: left; margin: 0 0 .4em; }
+.lee-present-cell.markdown, .lee-present-question { text-align: inherit; }
+.lee-present-question { font-style: italic; opacity: .85; }
+.lee-present-cell .lee-out { font: .45em/1.4 var(--lee-mono, monospace); white-space: pre-wrap; text-align: left; }
+.lee-present-cell .lee-out img { margin: .2em 0; }
+.lee-present-run { display: flex; gap: .5em; align-items: center; font-size: .4em; }
+.lee-present-run button { border: 1px solid currentColor; border-radius: 4px; background: transparent; color: inherit;
+  cursor: pointer; padding: 0 .6em; font: inherit; }
+.lee-present-cell.running .lee-present-run span { opacity: .7; }
+.lee-present-cell.failed .lee-present-run span { color: #c62828; }
+.lee-present-bar { position: absolute; top: 8px; right: 10px; z-index: 40; display: flex; gap: 6px; opacity: .3;
+  transition: opacity .2s; }
+.lee-present-bar:hover, .lee-present-bar:focus-within { opacity: 1; }
+.lee-present-bar button { font: 12px/1.6 var(--lee-mono, monospace); padding: 1px 8px; border-radius: 4px; cursor: pointer;
+  border: 1px solid rgba(128,128,128,.5); background: rgba(128,128,128,.12); color: inherit; }
+.lee-present-msg { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 40;
+  padding: 6px 12px; border-radius: 6px; background: rgba(0,0,0,.75); color: #fff; font: 13px/1.4 sans-serif; }
+.lee-present-header, .lee-present-footer, .lee-present-overlay { position: absolute; left: 0; right: 0; z-index: 30;
+  pointer-events: none; }
+.lee-present-header { top: 0; } .lee-present-footer { bottom: 0; } .lee-present-overlay { inset: 0; }
+.lee-present-header:empty, .lee-present-footer:empty, .lee-present-overlay:empty { display: none; }

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
+import asyncio, time
 
-from fasthtml.common import StreamingResponse
+from fasthtml.common import HTMLResponse, StreamingResponse
 from fastcore.all import first
 
 from ... import errstr
 from pathlib import Path
 
 from ...core.text import did_you_mean
-from ...core.web import fail, off_loop, sse
+from ...core.web import asset_dir, fail, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
@@ -43,6 +43,28 @@ def _rebase_notebook(tab, payload, docs):
     for cell, source in edits: cell.source = source
     docs[key] = disk
     return []
+
+NAV = ('next', 'prev', 'left', 'right', 'up', 'down')
+
+class Show:
+    "The one presentation running: what its notes page shows, and every page listening for it."
+    def __init__(self): self.state, self.subs = {'live': False}, set()
+    def now(self): return {**self.state, 'now': time.time()}
+    def push(self, event, data):
+        for q in self.subs: q.put_nowait((event, data))
+    def update(self, d):
+        "Apply the deck's `start`, `move` or `end`, and tell every listener."
+        op, st = d.get('op'), self.state
+        if op == 'start':
+            st = {'live': True, 'title': str(d.get('title') or ''), 'started': time.time(),
+                  'slides': [{'title': str(s.get('title') or ''), 'notes': str(s.get('notes') or '')} for s in d.get('slides') or []]}
+        elif op == 'end': st = {'live': False, 'ended': True, 'title': st.get('title', '')}
+        elif op != 'move': raise ValueError(f'{op!r} is not a presentation step')
+        elif not st['live']: raise ValueError('no presentation is running')
+        if st['live']: st['index'] = max(0, min(int(d.get('index') or 0), len(st['slides']) - 1))
+        self.state = st
+        self.push('state', self.now())
+        return self.now()
 
 def connect(app, ctx):
     rt = app.route
@@ -470,3 +492,33 @@ def connect(app, ctx):
         k, _task = item
         if not hasattr(k, 'stop'): return fail('this external runtime cannot be stopped safely')
         return await k.stop(timeout=2.0)
+    show = Show()
+    @rt('/present/notes')
+    def present_notes():
+        "The speaker's page, opened in the machine's own browser beside the deck."
+        return HTMLResponse((asset_dir('static')/'present-notes.html').read_text())
+    @rt('/present/state', methods=['GET', 'POST'])
+    async def present_state(req):
+        "Where the deck is: posted by the deck as it moves, read by the notes page."
+        if req.method == 'GET': return show.now()
+        try: return {'ok': True, **show.update(await req.json())}
+        except (ValueError, TypeError, AttributeError) as e: return fail(str(e), 409)
+    @rt('/present/nav', methods=['POST'])
+    async def present_nav(req):
+        "A key pressed on the notes page, passed on to the deck."
+        cmd = (await req.json()).get('cmd')
+        if cmd not in NAV: return fail(f'{cmd!r} is not a way to move through slides')
+        if not show.state['live']: return fail('no presentation is running', 409)
+        show.push('nav', {'cmd': cmd})
+        return {'ok': True}
+    @rt('/present/events')
+    async def present_events():
+        "The presentation pushed as it changes: `state` for the notes page, `nav` for the deck."
+        async def events():
+            q = asyncio.Queue(); show.subs.add(q)
+            try:
+                yield sse('state', show.now())
+                while True: yield sse(*await q.get())
+            finally: show.subs.discard(q)
+        return StreamingResponse(events(), media_type='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
