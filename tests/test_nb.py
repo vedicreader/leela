@@ -250,3 +250,12 @@ def test_another_tools_cell_and_notebook_metadata_survive_a_save(tmp_path):
     assert back['cells'][1]['metadata'] == {'solveit_ai': True, 'pinned': 1} and back['cells'][1]['outputs'][0]['data'] == {'text/markdown': 'two files'}
     assert back['cells'][2]['metadata'] == {'tags': ['keep']} and back['cells'][2]['cell_type'] == 'code'
     assert 'leela' not in back['cells'][1]['metadata']
+
+
+def test_a_markdown_cells_pasted_image_survives_a_save():
+    "Leela dropped nbformat `attachments`, so saving a notebook deleted the images pasted into its markdown cells."
+    att = {'a.png': {'image/png': 'iVBORw0KGgo='}}
+    md = Cell.from_nb({'cell_type': 'markdown', 'id': 'm', 'metadata': {}, 'source': '![a](attachment:a.png)', 'attachments': att})
+    assert md.nbcell()['attachments'] == att
+    code = Cell.from_nb({'cell_type': 'code', 'id': 'c', 'metadata': {}, 'source': 'x', 'outputs': [], 'execution_count': None})
+    assert 'attachments' not in code.nbcell()

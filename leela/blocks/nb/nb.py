@@ -101,6 +101,7 @@ class Cell(Dictable):
     #: review). Leela reads none of it and writes all of it back, so editing a dialog notebook
     #: here is a review of it, not the loss of every turn it held.
     extra: dict = field(default_factory=dict)
+    attachments: dict = field(default_factory=dict)
     def __post_init__(self):
         if self.context_mode not in CONTEXT_MODES: self.context_mode = 'auto'
     @property
@@ -137,6 +138,7 @@ class Cell(Dictable):
             if self.execution_ms is not None: meta['execution_ms'] = round(self.execution_ms, 3)
         elif self.approval is not None: meta.update(self.approval, kind='approval')
         elif self.outputs: c['outputs'] = list(self.outputs)   # a dialog's markdown prompt keeps its reply where it came
+        if self.attachments and c['cell_type'] == 'markdown': c['attachments'] = deepcopy(self.attachments)
         c['metadata'] = {**deepcopy(self.extra), **({'leela': meta} if meta else {})}
         return c
     @classmethod
@@ -149,7 +151,7 @@ class Cell(Dictable):
             id=str(c.get('id') or cell_id()),
             cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
             execution_count=c.get('execution_count'), execution_ms=meta.get('execution_ms'),
-            output_hash=str(meta.get('output_hash') or ''),
+            output_hash=str(meta.get('output_hash') or ''), attachments=dict(c.get('attachments') or {}),
             reply=str(meta.get('reply') or ''), calls=list(meta.get('calls') or []), usage=dict(meta.get('usage') or {}),
             context_mode=str(meta.get('context') or 'auto'), approval=dict(meta) if meta.get('kind') == 'approval' else None)
 

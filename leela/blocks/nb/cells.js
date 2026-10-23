@@ -236,6 +236,11 @@ function mountCell(c, i) {
    buffer, undo and save are the ones every other cell has. `data-md-edit` marks the editing ones. */
 const mdEditing = new Set();
 const mdSource = c => { const v = lee.editors.get(c.id); return v ? LeeCM.getDoc(v) : String(c.source || ''); };
+const nbBase = () => (lee.path || '').slice(0, (lee.path || '').lastIndexOf('/'));
+const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
+  const a = c.attachments?.[img.getAttribute('src').slice(11)], t = a && Object.keys(a)[0];
+  if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
+});
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
@@ -243,7 +248,8 @@ function paintMarkdownCell(el, c, now = false) {
   const src = mdSource(c);
   el.toggleAttribute('data-md-edit', mdEditing.has(c.id));
   host.classList.toggle('empty', !src.trim());
-  if (now) { host.dataset.markdown = src; flushMarkdown(host, true); } else renderMarkdown(host, src, true);
+  host.dataset.mdBase = nbBase();
+  if (now) { host.dataset.markdown = src; flushMarkdown(host, true, mdAttached(c)); } else renderMarkdown(host, src, true, mdAttached(c));
 }
 function editMarkdownCell(i) {
   const c = lee.cells[i], el = mdCellOf(i); if (c?.cell_type !== 'markdown' || !el) return;
@@ -448,7 +454,7 @@ function outputEl(o) {
   // After the rich types, as Jupyter ranks them: a FastHTML object sends its markup as `text/html` and
   // again as a fenced `text/markdown` block, and the fence is source, not the thing to draw.
   if (data['text/markdown'] != null) {
-    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
+    d.classList.add('lee-md-output'); d.dataset.mdBase = nbBase(); renderMarkdown(d, data['text/markdown']); return d;
   }
   outputText(d, data['text/plain'] || '');
   return d;
