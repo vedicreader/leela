@@ -2015,17 +2015,18 @@ wheels = [
 
 [[package]]
 name = "jupyasyncclient"
-version = "0.2.7"
+version = "0.2.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
+    { name = "fastspec" },
     { name = "fasttransport" },
     { name = "jupywire" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/99/c2/4ca2ec4f75f5bb7efa90f1a021271a408de5a7d8bcfb385913719b02bfc3/jupyasyncclient-0.2.7.tar.gz", hash = "sha256:130eefac57f46169480b3668a9f21482082827f00bf06efcbc60175bf4e88ea2", size = 22695, upload-time = "2026-08-15T09:31:42.061Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/99/b6d8fde2325e469c8d895bdf490bed5b67ccb529616459a4b7edaad6bb94/jupyasyncclient-0.2.20.tar.gz", hash = "sha256:185b10894997fbd87868da2cc0ef7c751142c25123e10d0f79352260680a3df5", size = 23622, upload-time = "2026-09-30T20:58:00.097Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/e4/90777f91dbd0cde5603eef4b90e2acb2ab436fb35fab94ce6533d055382a/jupyasyncclient-0.2.7-py3-none-any.whl", hash = "sha256:d9f169610a99db7265cdda1f03afe14da3cbb642256c69df007dd7ef47e9c10e", size = 20092, upload-time = "2026-08-15T09:31:41.083Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/56/f25718366c611d9923f1da3e2708d6faf74d49d1c6e041b8f36de9528dcf/jupyasyncclient-0.2.20-py3-none-any.whl", hash = "sha256:3898a07cf9e9d2d797356066c0756cb57e348b320d4f4eacb19b4926dad39625", size = 23804, upload-time = "2026-09-30T20:57:58.739Z" },
 ]
 
 [[package]]
@@ -2214,14 +2215,14 @@ wheels = [
 
 [[package]]
 name = "jupywire"
-version = "0.1.6"
+version = "0.1.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ca/c2/0bec47625460ebb1f617649673b0ee17d4ba6f424d9e9dcd4de5f9ef6d15/jupywire-0.1.6.tar.gz", hash = "sha256:8fd04a6d70cb368b9c3f22ac01f5fc394bb9df80418c34d862b07d331d3e8ef8", size = 24598, upload-time = "2026-08-25T01:50:38.757Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/68/cb0b3467e04ba8c2ea6b7046a6bdd33f1ebd4baee633a8ea56f2850370c2/jupywire-0.1.13.tar.gz", hash = "sha256:7026303259f3e85ac312e94f2c7dc26e095b776a0bd6c5f0f743ec416d5444cf", size = 24930, upload-time = "2026-09-30T20:38:13.515Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/ca/2bdaf9ae1a89be091ac3557d8ce55f0f8c16eaeb8f8431f4df82a5415999/jupywire-0.1.6-py3-none-any.whl", hash = "sha256:46bdedf348819f88f4152e95b6f28707911e7713cf86e72ab1199b77a558300e", size = 19108, upload-time = "2026-08-25T01:50:37.568Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/f9/a5b5e8e2b3ebcff7e0747e7c64864516d5c078044977498e52810cd5456a/jupywire-0.1.13-py3-none-any.whl", hash = "sha256:7ece1a6f8e1f3c28ba4e4ea9ac36ddd43ca4a6ed1842bfd75e17b114f701eb15", size = 19542, upload-time = "2026-09-30T20:38:11.681Z" },
 ]
 
 [[package]]
@@ -2398,7 +2399,7 @@ wheels = [
 
 [[package]]
 name = "kunda"
-version = "0.0.5"
+version = "0.0.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -2410,9 +2411,9 @@ dependencies = [
     { name = "jupyter-client" },
     { name = "jupywire" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ed/1b/b78b1fc279a172a9d6e7e6dc9a23398e3980763058df4bfed6f1e6e3520e/kunda-0.0.5.tar.gz", hash = "sha256:9efacaee4656ba2f0cdf8ced9f21e5c8aaa465785066425a5c0c1d885045120a", size = 37269, upload-time = "2026-10-20T08:37:15.35Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8c/d7/2c0b2c3aae5bf652d337d76a5c85da51525081a9a10f91735ed4ef66fc7c/kunda-0.0.6.tar.gz", hash = "sha256:79f82cb0842590bc2c2e5d1c4ef77ce4e75d4963f8e2e2b0f8405edda4784bc3", size = 44477, upload-time = "2026-10-23T12:10:36.162Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/df/18d940ef0742d531223c8ffcbff73cd0903f61d9c84f7a85440fabd68759/kunda-0.0.5-py3-none-any.whl", hash = "sha256:69ccfe3d9fe6d790e645b5f2afcc06216767132f1d2ecbea1af3d5164740f4e1", size = 30273, upload-time = "2026-10-20T08:37:14.179Z" },
+    { url = "https://files.pythonhosted.org/packages/60/5b/0aba485931d1f7dcc07b88293d5801339c01cfb041f3dcc4e5b071ff1d3f/kunda-0.0.6-py3-none-any.whl", hash = "sha256:21e260cc34635089d3f9e7efb0926f365d6f0dd38a290c4011e51a36940154f6", size = 34182, upload-time = "2026-10-23T12:10:34.673Z" },
 ]
 
 [[package]]
@@ -2546,7 +2547,7 @@ requires-dist = [
     { name = "httpx2", specifier = ">=2.10.0" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "ipymini", specifier = ">=0.0.1" },
-    { name = "jupyasyncclient", specifier = ">=0.2.1,<0.2.8" },
+    { name = "jupyasyncclient", specifier = ">=0.2.12" },
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
@@ -2558,7 +2559,7 @@ requires-dist = [
     { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.15" },
-    { name = "kunda", specifier = ">=0.0.5" },
+    { name = "kunda", specifier = ">=0.0.6" },
     { name = "lekhaka", specifier = ">=0.0.4" },
     { name = "litesearch", specifier = ">=0.1.58" },
     { name = "mdhtml", specifier = ">=0.1.38" },

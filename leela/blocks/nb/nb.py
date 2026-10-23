@@ -400,6 +400,7 @@ class Notebook:
             r = await kernel.execute(c.source, on_output=receive)
             c.outputs = r.outputs
             c.execution_count = r.execution_count
+            c._lost = bool(getattr(r, 'lost', False))   # kunda settled a run whose reply never came
         finally:
             c.running = False
             c.execution_ms = (time.perf_counter() - started) * 1000
@@ -743,10 +744,16 @@ async def run_watched(nb, i, k, on_output=None):
         heard = time.monotonic()
         if on_output: on_output(j, o)
     task, wait = asyncio.ensure_future(nb.run(i, k, on_output=emitted)), QUIET
+    async def finished():
+        c = task.result()
+        if not getattr(c, '_lost', False): return c, False
+        await _settle_lost(c, k)
+        nb.dirty = True
+        return c, True
     try:
         while True:
             await asyncio.wait([task], timeout=wait)
-            if task.done(): return task.result(), False
+            if task.done(): return await finished()
             if time.monotonic() - heard < wait: continue
             if (free := await shell_free(k)) is None: return await task, False
             if not free:
@@ -754,7 +761,7 @@ async def run_watched(nb, i, k, on_output=None):
                 continue
             # The reply travels ahead of the probe's answer; a second answer with the run still waiting means it is gone.
             await asyncio.wait([task], timeout=2)
-            if task.done(): return task.result(), False
+            if task.done(): return await finished()
             if not await shell_free(k): continue
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

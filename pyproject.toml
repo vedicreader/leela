@@ -21,7 +21,7 @@ dependencies = [
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",
     "kavacha>=0.0.10",
-    "kunda>=0.0.5",
+    "kunda>=0.0.6",
     "pullup>=0.0.11",
     "exhash>=0.4.10",
     "fossick>=0.1.20",
@@ -55,7 +55,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "keyring>=25.0.0",
     "jupygate>=0.0.1",
-    "jupyasyncclient>=0.2.1,<0.2.8",   # 0.2.8+ returns a bare async generator where GatewayKernel reads `.reply`: every cell 500s
+    "jupyasyncclient>=0.2.12",
     "jupywire>=0.1.1",
     "dhrona>=0.1.18",
 ]
