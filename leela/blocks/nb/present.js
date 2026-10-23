@@ -15,7 +15,11 @@ const PRESENT_MIN_ZOOM = .35;
 
 //: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
 const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
-const presentKey = () => `lee-present-text:${lee.path || lee.tabKey}`;
+const presentKey = (what = 'text') => `lee-present-${what}:${lee.path || lee.tabKey}`;
+//: `left`: text left and headings centred, the default; `center`: everything centred, as reveal's themes do.
+function presentAlign() {
+  try { return localStorage.getItem(presentKey('align')) === 'center' ? 'center' : 'left'; } catch { return 'left'; }
+}
 function presentStored() {
   try { const s = +localStorage.getItem(presentKey()); return s >= .5 && s <= 2.5 ? s : 1; } catch { return 1; }
 }
@@ -169,11 +173,19 @@ async function presentNotebook(start = '') {
     '<div class="lee-present-header"></div><div class="lee-present-footer"></div><div class="lee-present-overlay"></div>' +
     '<div class="lee-present-bar"><button type="button" data-smaller title="smaller text" aria-label="smaller text">A−</button>' +
     '<button type="button" data-bigger title="larger text" aria-label="larger text">A+</button>' +
+    '<button type="button" data-align title="centre all text" aria-label="centre all text">↔</button>' +
     '<button type="button" data-notes title="open the speaker notes in your browser">notes</button>' +
     '<button type="button" data-full title="fill the screen">⛶</button>' +
     '<button type="button" data-close title="stop presenting (escape)" aria-label="stop presenting">×</button></div>' +
     '<div class="lee-present-msg" role="status" hidden></div>';
-  const p = lee.present = {root, reveal: null, fsExit: 0, text: presentStored(), base: 0};
+  const p = lee.present = {root, reveal: null, fsExit: 0, text: presentStored(), base: 0, align: presentAlign()};
+  const aligned = () => {
+    root.dataset.align = p.align;
+    const b = $('[data-align]', root), left = p.align === 'left';
+    b.textContent = left ? '↔' : '⇤';
+    b.title = b.ariaLabel = left ? 'centre all text' : 'text left, headings centred';
+  };
+  aligned();
   closeInlinePopover(); document.body.appendChild(root); root.focus({preventScroll: true});
   const slidesEl = $('.slides', root), flat = [];
   deck.forEach((stack, h) => {
@@ -203,6 +215,11 @@ async function presentNotebook(start = '') {
   };
   $('[data-smaller]', root).onclick = () => resize(-1);
   $('[data-bigger]', root).onclick = () => resize(1);
+  $('[data-align]', root).onclick = () => {
+    p.align = p.align === 'left' ? 'center' : 'left';
+    try { localStorage.setItem(presentKey('align'), p.align); } catch {}
+    aligned(); layout(); presentSay(p.align === 'left' ? 'text left, headings centred' : 'all text centred');
+  };
   // a bar button left focused would take reveal's Space and arrows
   $('.lee-present-bar', root).addEventListener('click', () => root.focus({preventScroll: true}));
   root.addEventListener('lee-markdown-rendered', e => { $$('.lee-reply-actions', e.target).forEach(x => x.remove()); layout(); });

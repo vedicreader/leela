@@ -211,6 +211,39 @@ def test_a_long_slide_fits_its_page_and_the_text_size_is_the_presenters(tmp_path
     assert (out['floor'], out['ceiling']) == ('text 50%', 'text 250%')
 
 
+ALIGN = "() => { const s = lee.present.reveal.getCurrentSlide(); return [getComputedStyle(s.querySelector('h1')).textAlign, getComputedStyle(s.querySelector('p')).textAlign]; }"
+
+@pytest.mark.parametrize('browser', ['chromium', 'webkit'])
+def test_slide_text_is_left_with_centred_headings_until_the_presenter_centres_it(tmp_path, browser):
+    "reveal's themes centred every line of text; a toggle centres it again, remembered per notebook."
+    (tmp_path/'deck.ipynb').write_text(json.dumps({'cells': [md('# Heading\n\nbody text that reads better on the left', 'slide', 'a0')],
+                                                   'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        out = {}
+        await pg.route('**/browser/external', lambda r: asyncio.ensure_future(
+            r.fulfill(status=200, content_type='application/json', body='{"ok": true}')))
+        await pg.evaluate('p => leeOpenFile(p)', str(tmp_path/'deck.ipynb'))
+        await pg.wait_for_function('() => document.querySelectorAll(".lee-cell").length === 1')
+        await pg.evaluate('() => { selectCell(0); focusCell(0); }')
+        await pg.keyboard.press('Alt+KeyR')
+        await pg.wait_for_function(READY, timeout=20000)
+        await pg.wait_for_function('() => document.querySelector(".lee-present .slides h1")')
+        out['default'] = await pg.evaluate(ALIGN)
+        await pg.click('.lee-present-bar [data-align]')
+        out['centred'] = await pg.evaluate(ALIGN)
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_function('() => !document.querySelector(".lee-present")')
+        await pg.keyboard.press('Alt+KeyR')
+        await pg.wait_for_function(READY, timeout=20000)
+        await pg.wait_for_function('() => document.querySelector(".lee-present .slides h1")')
+        out['again'] = await pg.evaluate(ALIGN)
+        return out
+    out = asyncio.run(_real_page(go, tmp_path, browser))
+    assert out['default'] == ['center', 'left'], out
+    assert out['centred'] == ['center', 'center'], out
+    assert out['again'] == ['center', 'center'], 'the choice is remembered for this notebook'
+
+
 def test_an_external_link_opens_one_tab_in_a_browser(tmp_path):
     "`window.open(..., 'noopener')` returns null even when the tab opened, so a browser also asked the server to open it: two tabs, the notes page among them."
     async def go(pg):
