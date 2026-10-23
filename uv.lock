@@ -2381,7 +2381,7 @@ wheels = [
 
 [[package]]
 name = "koshas"
-version = "0.1.14"
+version = "0.1.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-grep-py" },
@@ -2391,9 +2391,9 @@ dependencies = [
     { name = "pyskills" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/28/93dc0e78a96dd597e6ca8ef47eb386d96a348fa0b98a9209e2e49ffc7fea/koshas-0.1.14.tar.gz", hash = "sha256:72f39533bf59238ae1964a09b9e283dc5782fd598dec0a2962a1f137657198be", size = 67604, upload-time = "2026-10-22T08:10:42.453Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e6/45/cfee516db85c2dcb0abee153ff416829e68046249ccc3ba01c4c67d9f248/koshas-0.1.15.tar.gz", hash = "sha256:e6652f3d2222836624940b2636e49ebaa47e7c834fce12e2a6e128fac955463a", size = 70160, upload-time = "2026-10-23T01:20:42.387Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/3a/6bd8b10f4aad01dd4d6f62a4670dfc7fe59a8e38af5dc37ca40b6494659a/koshas-0.1.14-py3-none-any.whl", hash = "sha256:68d2507cf60a5e341e54c646e917333b82b768e5ada09cfa32334243aac411c8", size = 71789, upload-time = "2026-10-22T08:10:41.189Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/9f/003b1df94f81de12cbfc3ff17774d5571d7d0892cdff44d40a19972c55c5/koshas-0.1.15-py3-none-any.whl", hash = "sha256:e8166c6b2167cd808ecf478d7d181497121305f8f577aac888202a0115495726", size = 74409, upload-time = "2026-10-23T01:20:41.114Z" },
 ]
 
 [[package]]
@@ -2417,7 +2417,7 @@ wheels = [
 
 [[package]]
 name = "laghu"
-version = "0.2.1"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -2426,9 +2426,18 @@ dependencies = [
     { name = "numpy" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/89/69069511b8c094c827560579608fa430b476713e3563edbce4dc572a213a/laghu-0.2.1.tar.gz", hash = "sha256:45fc6d8ade7a8080aa41c815baa6311a353cb20b41225d16e21e99b3a8ce9ec8", size = 24029, upload-time = "2026-10-19T06:10:32.387Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/f0/b1492f25df7fb5144baff2c909120f9b2b3ac3ed08bf2bc8b2c42931a591/laghu-0.3.1.tar.gz", hash = "sha256:ff4eb92a6a67038f67e0cf498bbffd54b836d8ef74e33ebf3946c339a56f389d", size = 27905, upload-time = "2026-10-23T01:26:08.566Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/78/28b0dbad70a1b6231a3874b2d9cfc0b0ce1216e35385016c993a0e6c873c/laghu-0.2.1-py3-none-any.whl", hash = "sha256:e93357d70f1e4cd6f3cdbf81135c6089f77a6ef38df683252c27a9fbd12c112c", size = 25874, upload-time = "2026-10-19T06:10:31.14Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/fa/c6137cefc4006dfe72d1aeead4fb0b313833e5833eafe8cf62effbc55946/laghu-0.3.1-py3-none-any.whl", hash = "sha256:b320c16880a784dc2d0495373c1b7e0d915a11d20e4213d4de38d9addd00b6af", size = 29809, upload-time = "2026-10-23T01:26:07.458Z" },
+]
+
+[[package]]
+name = "laghu-rs"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/bc/5ef40c967a1d7f7d0b20596f3f4dd823bb9f3a63d5a1d4d16b696b1b181b/laghu_rs-0.1.0.tar.gz", hash = "sha256:1a7c53a046409d106321c2a7f82426bef8ff92ff46653d67bca243c893dababf", size = 13347, upload-time = "2026-10-23T01:07:51.143Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/42/adeeb276ae50300ae576984890957fa0f1a76b601a64830a24c741b7d599/laghu_rs-0.1.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:e84833cbf3a890f2366f094f71f68c4e3cb8f9c740904b36c0e81a6ec4e588cd", size = 1422348, upload-time = "2026-10-23T01:07:49.575Z" },
 ]
 
 [[package]]
@@ -2544,10 +2553,10 @@ requires-dist = [
     { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "keyring", specifier = ">=25.0.0" },
-    { name = "koshas", specifier = ">=0.1.14" },
+    { name = "koshas", specifier = ">=0.1.15" },
     { name = "kunda", specifier = ">=0.0.5" },
     { name = "lekhaka", specifier = ">=0.0.4" },
-    { name = "litesearch", specifier = ">=0.1.54" },
+    { name = "litesearch", specifier = ">=0.1.56" },
     { name = "mdhtml", specifier = ">=0.1.38" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "orjson", specifier = ">=3.9" },
@@ -2558,7 +2567,7 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.75" },
+    { name = "ramabana", extras = ["cli"], specifier = "==0.2.76" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
@@ -2653,22 +2662,23 @@ wheels = [
 
 [[package]]
 name = "litesearch"
-version = "0.1.54"
+version = "0.1.56"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chonkie" },
     { name = "codesigs" },
     { name = "fastlite" },
     { name = "laghu" },
+    { name = "laghu-rs", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pdf-oxide" },
     { name = "pdflite" },
     { name = "pillow" },
     { name = "tokenizers" },
     { name = "usearch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/eb/8c/bd92d440d405010f7a2116ffe45190c19adc4ce00a74c7c1ec6932f1b0ed/litesearch-0.1.54.tar.gz", hash = "sha256:9070017bcb2c51feff6e46fa44ad2b79d51b5f398c1ba4fd33ff470bebff5e17", size = 90720, upload-time = "2026-10-22T23:46:59.205Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/09/dbe64371c7c0c2e9b0f4639ef8d8340a1a32f53e6a0c72fb70299b69824a/litesearch-0.1.56.tar.gz", hash = "sha256:82e6751294d87035f0229866ab3ccb79df9c54148112160e3b24193a06ab6061", size = 90824, upload-time = "2026-10-23T01:30:48.256Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/5f/0db89b5c53efc4811adfcbe981f04b93d71fa67d336056d263fb839abbe5/litesearch-0.1.54-py3-none-any.whl", hash = "sha256:95fcf30bd558cd38facaff3d07e7e51e33c19172ad8f14c00f71b7c0c06a0506", size = 96597, upload-time = "2026-10-22T23:46:57.522Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/ec/f8b5b51a4bf0e3cbbdcf85ee1a9ccd4c1032c753f53001929d7072298e9d/litesearch-0.1.56-py3-none-any.whl", hash = "sha256:0f7d998b5fbdaa995cb072f70f43388daff51333ee98a52574ecd4d73f1cabc8", size = 96653, upload-time = "2026-10-23T01:30:46.865Z" },
 ]
 
 [[package]]
@@ -4766,7 +4776,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.75"
+version = "0.2.76"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4780,9 +4790,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ba/d5/0a7090b85dc2c7af2510a8e981cdaaeb5f74b0efb6e423483a094d745ecd/ramabana-0.2.75.tar.gz", hash = "sha256:c092f967ba59301cb6d7c209ce763cd7d71f96b413a64a39886f1393bfdd8faa", size = 340521, upload-time = "2026-10-22T23:49:34.421Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/95/f8553d4579688e010a155b32f7471fa00a17e6e95396382d608c182369af/ramabana-0.2.76.tar.gz", hash = "sha256:9d5692d5761459d783c54369f70025dc13e97a29c84489600999e9f29ffd5107", size = 340523, upload-time = "2026-10-23T01:34:13.194Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/33/127eba8537340b5287e046fe868a8e30235da3d7f669d0db3efb677f8b98/ramabana-0.2.75-py3-none-any.whl", hash = "sha256:210f072b9bfb017f3989ed40b1daeff12b73eb8fa35c11590053d75b971d0df3", size = 340452, upload-time = "2026-10-22T23:49:32.417Z" },
+    { url = "https://files.pythonhosted.org/packages/66/03/0fc5d0cd505f9097788716710c7b1fb6731fc149af93c59c6510a92c6c30/ramabana-0.2.76-py3-none-any.whl", hash = "sha256:ed3884da21a71283ca5eaf292146d66a41045fa99ea8747df33b9e0b5ac84115", size = 340452, upload-time = "2026-10-23T01:34:11.405Z" },
 ]
 
 [package.optional-dependencies]

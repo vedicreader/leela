@@ -230,7 +230,7 @@ def test_every_package_a_tool_schema_is_read_from_ships_its_source():
 #: `cmath` through a Cython module, `ipykernel_launcher` through a `-m` string, `chardet`'s
 #: accelerator as a top-level extension, `nbformat`'s schema as a data file beside `__file__`.
 BUNDLED_IMPORTS = ('cmath', 'ipykernel_launcher', 'dhrishti', 'chardet', 'nbformat', 'vishalakshi', 'litert_lm',
-                   'rishi.claude', 'laghu', 'marisa_trie')
+                   'rishi.claude', 'laghu', 'marisa_trie', 'laghu_rs')
 
 @pytest.mark.slow
 def test_the_bundle_can_import_what_its_features_need():
