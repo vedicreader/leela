@@ -187,6 +187,13 @@ DEFAULTS = L(
     Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
     Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
     Key('present_from_cell', '',               'editor', 'present from this cell'),
+# RISE's own chords. Leela's router lets them through to any editor or field, so they type there.
+    Key('slide_none',       '',                'editor', 'slide type: none (continue)'),
+    Key('slide_slide',      'shift+i',         'editor', 'slide type: slide'),
+    Key('slide_subslide',   'shift+b',         'editor', 'slide type: subslide'),
+    Key('slide_fragment',   'shift+g',         'editor', 'slide type: fragment'),
+    Key('slide_skip',       '',                'editor', 'slide type: skip'),
+    Key('slide_notes',      '',                'editor', 'slide type: notes'),
 # Naming these here is what puts them in the palette and the keys help. CodeMirror's own keymap
 # already answers them inside an editor, and it is the same command either way.
     Key('indent_more',      'mod+]',           'editor', 'indent'),

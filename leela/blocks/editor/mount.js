@@ -403,6 +403,7 @@ function patchNotebook(host, before, cells, op = '') {
       paintCellMeta(el, c, i);   // an insert above renumbers every cell after it
       const gutter = $('#g-' + c.id); if (gutter) gutter.textContent = gutterFor(c);
       const context = $('.lee-cell-context', el); if (context) paintCellContext(context, c);
+      const slide = $('.lee-cell-slide', el); if (slide) paintCellSlide(slide, c);
       setCellState(c, cellState(c)); setCellTime(c, c.execution_ms, c.running);
       if (op === 'clear' || op === 'clear_cell') renderOutputs(c);
     }

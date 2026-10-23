@@ -51,6 +51,25 @@ async function cycleCellContext(i) {
   status(`cell ${i + 1}: ${contextLabel(mode)}`, 'ok');
 }
 window.leeCellContext = cycleCellContext;
+//: RISE writes `-` for a cell that continues the slide above, which is what no type means too.
+const SLIDE_TYPES = ['none', 'slide', 'subslide', 'fragment', 'skip', 'notes'];
+const SLIDE_TAGS = {slide: 'slide', subslide: 'sub', fragment: 'frag', skip: 'skip', notes: 'notes'};
+const slideType = c => { const t = c.extra?.slideshow?.slide_type; return SLIDE_TYPES.includes(t) ? t : 'none'; };
+function paintCellSlide(button, c) {
+  const t = slideType(c), cell = button.closest('.lee-cell');
+  button.dataset.type = t; button.textContent = SLIDE_TAGS[t] || 'slide';
+  button.title = t === 'none' ? 'continues the slide above; click to start a slide' : `slide type: ${t}; click for the next type`;
+  if (cell) cell.dataset.slide = t;
+}
+async function setCellSlide(indices, type) {
+  const r = await nbEdit({op: 'slide', i: indices[0], indices, type});
+  if (r.cells) status(`${indices.length === 1 ? `cell ${indices[0] + 1}` : plural(indices.length, 'cell')}: ${type === 'none' ? 'no slide type' : type}`, 'ok');
+}
+function cycleCellSlide(i) {
+  const c = lee.cells[i]; if (!c) return;
+  return setCellSlide([i], SLIDE_TYPES[(SLIDE_TYPES.indexOf(slideType(c)) + 1) % SLIDE_TYPES.length]);
+}
+window.leeCellSlide = button => cycleCellSlide(+button.closest('.lee-cell').dataset.i)?.catch(e => status(String(e.message || e), 'err'));
 
 function cellButtons(i) {
   const normal = (lee.bars.cell || []).map(b =>
@@ -92,12 +111,14 @@ function cellEl(c, i) {
     `${c.execution_ms == null ? 'hidden' : ''}>${esc(formatCellTime(c.execution_ms))}</time>` +
     `<button class="lee-cell-context" data-mode="${esc(c.context_mode || 'auto')}" ` +
     `onclick="event.stopPropagation();leeCellContext(${i})">${esc(contextLabel(c.context_mode || 'auto'))}</button>` +
+    `<button class="lee-cell-slide" onclick="event.stopPropagation();leeCellSlide(this)"></button>` +
     `<div class="lee-model-running" id="model-${c.id}" role="status" aria-live="polite" hidden>` +
     `<span class="lee-running-dot" aria-hidden="true">●</span>` +
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
     `${c.cell_type === 'markdown' ? mdCellHost(c) : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+  paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
     d.querySelector('.lee-md-cell').addEventListener('dblclick', () => editMarkdownCell(+d.dataset.i));

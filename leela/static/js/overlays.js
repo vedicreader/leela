@@ -383,7 +383,7 @@ window.leeDebugMenu = leeDebugMenu;
 document.addEventListener('pointerdown', e => { if (!e.target.closest('.lee-ctxmenu, .lee-more')) closeMenu(); }, true);
 window.addEventListener('blur', closeMenu);
 window.addEventListener('resize', () => { closeMenu(); layoutTabs(); });
-window.addEventListener('scroll', closeMenu, true);
+window.addEventListener('scroll', e => { if (!e.target.closest?.('.lee-ctxmenu')) closeMenu(); }, true);
 
 function showHelp() {
   const scopes = Object.entries(lee.help).sort(([a], [b]) =>

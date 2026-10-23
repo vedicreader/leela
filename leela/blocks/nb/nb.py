@@ -19,7 +19,7 @@ try:
 except ImportError:
     _jloads = json.loads
 
-__all__ = ['CELL_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
+__all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
            'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'strip_work_log',
            'merge_rows', 'merged_cells', 'CHOICES']
 
@@ -28,6 +28,8 @@ CELL_TYPES = ('code', 'markdown', 'prompt')
 MAX_CONTEXT = None
 MAX_CELL_OUT = None
 CONTEXT_MODES = ('auto', 'keep', 'discard')
+#: RISE's `slide_type` values. `none` is written as no key, which RISE and nbconvert read as `-`.
+SLIDE_TYPES = ('none', 'slide', 'subslide', 'fragment', 'skip', 'notes')
 MAX_UNDO = 100
 WORK_LOG = re.compile(r'\n*<details>\s*<summary>\s*what i did[^<]*</summary>[\s\S]*</details>\s*\Z', re.I)
 
@@ -352,6 +354,23 @@ class Notebook:
         c.clear()
         self.dirty = True
         return c
+    def set_slide(self, indices, t):
+        "Set the RISE `slide_type` of cells as one undoable operation."
+        if t not in SLIDE_TYPES: raise ValueError(f"slide type must be one of {', '.join(SLIDE_TYPES)}")
+        idx = sorted({int(j) for j in indices})
+        if not idx or idx[0] < 0 or idx[-1] >= len(self.cells): raise ValueError(f'no cell at {idx}')
+        cells = [self.cells[j] for j in idx if not self.cells[j].is_approval]
+        if not cells: return []
+        self._checkpoint(idx[0])
+        for c in cells:
+            s = c.extra.get('slideshow')
+            s = dict(s) if isinstance(s, dict) else {}
+            if t == 'none': s.pop('slide_type', None)
+            else: s['slide_type'] = t
+            if s: c.extra['slideshow'] = s
+            else: c.extra.pop('slideshow', None)
+        self.dirty = True
+        return cells
     def clear_cell(self, i):
         "Clear one cell's output/reply as an undoable notebook operation."
         if not (0 <= i < len(self.cells)): return None

@@ -392,6 +392,9 @@ def connect(app, ctx):
             nb._checkpoint(i)
             nb[i].context_mode = mode
             nb.dirty = True
+        elif op == 'slide':
+            try: nb.set_slide(d.get('indices') or [i], str(d.get('type') or 'none'))
+            except (TypeError, ValueError) as e: return fail(e)
         elif op == 'clear': nb.clear_all()
         else: return fail(f'unknown op {op!r}')
         if ctx.tab: ctx.tab.dirty = nb.dirty

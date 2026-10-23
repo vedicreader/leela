@@ -855,6 +855,10 @@ function chordMatches(c, e) {
 //: in command mode, and on its other chords everywhere.
 const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
+//: RISE's chords are shifted letters: a cell in command mode takes them, and every editor or field types them.
+const SLIDE_ACTIONS = new Set(['slide_none', 'slide_slide', 'slide_subslide', 'slide_fragment', 'slide_skip', 'slide_notes']);
+const typesHere = e => lee.kind !== 'notebook' || isTextEntry(e.target) ||
+  (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 //: Plain copy, cut and paste stay the browser's in a text field, and copy and cut also with text
 //: selected. Not a selection touching a cell's editor, which keeps one after it blurs, or the file
@@ -882,6 +886,7 @@ function findBinding(e, scope) {
     if (['cell_copy', 'cell_cut'].includes(k.action) && lee.kind !== 'notebook') continue;
     if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
     if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
+    if (SLIDE_ACTIONS.has(k.action) && !firesInTextEntry(chord) && typesHere(e)) continue;
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own
@@ -987,6 +992,12 @@ const ACTIONS = {
   notebook_language: () => pickNotebookLanguage(),
   present_notebook: () => presentNotebook(),
   present_from_cell: () => presentNotebook('selected'),
+  slide_none:     () => setCellSlide(selectedCellIndices(), 'none'),
+  slide_slide:    () => setCellSlide(selectedCellIndices(), 'slide'),
+  slide_subslide: () => setCellSlide(selectedCellIndices(), 'subslide'),
+  slide_fragment: () => setCellSlide(selectedCellIndices(), 'fragment'),
+  slide_skip:     () => setCellSlide(selectedCellIndices(), 'skip'),
+  slide_notes:    () => setCellSlide(selectedCellIndices(), 'notes'),
   add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),
   cell_select_above: () => focusCell(lee.sel - 1),
@@ -2223,6 +2234,7 @@ function patchNotebook(host, before, cells, op = '') {
       paintCellMeta(el, c, i);   // an insert above renumbers every cell after it
       const gutter = $('#g-' + c.id); if (gutter) gutter.textContent = gutterFor(c);
       const context = $('.lee-cell-context', el); if (context) paintCellContext(context, c);
+      const slide = $('.lee-cell-slide', el); if (slide) paintCellSlide(slide, c);
       setCellState(c, cellState(c)); setCellTime(c, c.execution_ms, c.running);
       if (op === 'clear' || op === 'clear_cell') renderOutputs(c);
     }
@@ -2342,6 +2354,25 @@ async function cycleCellContext(i) {
   status(`cell ${i + 1}: ${contextLabel(mode)}`, 'ok');
 }
 window.leeCellContext = cycleCellContext;
+//: RISE writes `-` for a cell that continues the slide above, which is what no type means too.
+const SLIDE_TYPES = ['none', 'slide', 'subslide', 'fragment', 'skip', 'notes'];
+const SLIDE_TAGS = {slide: 'slide', subslide: 'sub', fragment: 'frag', skip: 'skip', notes: 'notes'};
+const slideType = c => { const t = c.extra?.slideshow?.slide_type; return SLIDE_TYPES.includes(t) ? t : 'none'; };
+function paintCellSlide(button, c) {
+  const t = slideType(c), cell = button.closest('.lee-cell');
+  button.dataset.type = t; button.textContent = SLIDE_TAGS[t] || 'slide';
+  button.title = t === 'none' ? 'continues the slide above; click to start a slide' : `slide type: ${t}; click for the next type`;
+  if (cell) cell.dataset.slide = t;
+}
+async function setCellSlide(indices, type) {
+  const r = await nbEdit({op: 'slide', i: indices[0], indices, type});
+  if (r.cells) status(`${indices.length === 1 ? `cell ${indices[0] + 1}` : plural(indices.length, 'cell')}: ${type === 'none' ? 'no slide type' : type}`, 'ok');
+}
+function cycleCellSlide(i) {
+  const c = lee.cells[i]; if (!c) return;
+  return setCellSlide([i], SLIDE_TYPES[(SLIDE_TYPES.indexOf(slideType(c)) + 1) % SLIDE_TYPES.length]);
+}
+window.leeCellSlide = button => cycleCellSlide(+button.closest('.lee-cell').dataset.i)?.catch(e => status(String(e.message || e), 'err'));
 
 function cellButtons(i) {
   const normal = (lee.bars.cell || []).map(b =>
@@ -2383,12 +2414,14 @@ function cellEl(c, i) {
     `${c.execution_ms == null ? 'hidden' : ''}>${esc(formatCellTime(c.execution_ms))}</time>` +
     `<button class="lee-cell-context" data-mode="${esc(c.context_mode || 'auto')}" ` +
     `onclick="event.stopPropagation();leeCellContext(${i})">${esc(contextLabel(c.context_mode || 'auto'))}</button>` +
+    `<button class="lee-cell-slide" onclick="event.stopPropagation();leeCellSlide(this)"></button>` +
     `<div class="lee-model-running" id="model-${c.id}" role="status" aria-live="polite" hidden>` +
     `<span class="lee-running-dot" aria-hidden="true">●</span>` +
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
     `${c.cell_type === 'markdown' ? mdCellHost(c) : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+  paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
     d.querySelector('.lee-md-cell').addEventListener('dblclick', () => editMarkdownCell(+d.dataset.i));

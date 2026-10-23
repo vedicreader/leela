@@ -90,6 +90,10 @@ function chordMatches(c, e) {
 //: in command mode, and on its other chords everywhere.
 const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
+//: RISE's chords are shifted letters: a cell in command mode takes them, and every editor or field types them.
+const SLIDE_ACTIONS = new Set(['slide_none', 'slide_slide', 'slide_subslide', 'slide_fragment', 'slide_skip', 'slide_notes']);
+const typesHere = e => lee.kind !== 'notebook' || isTextEntry(e.target) ||
+  (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 //: Plain copy, cut and paste stay the browser's in a text field, and copy and cut also with text
 //: selected. Not a selection touching a cell's editor, which keeps one after it blurs, or the file
@@ -117,6 +121,7 @@ function findBinding(e, scope) {
     if (['cell_copy', 'cell_cut'].includes(k.action) && lee.kind !== 'notebook') continue;
     if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
     if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
+    if (SLIDE_ACTIONS.has(k.action) && !firesInTextEntry(chord) && typesHere(e)) continue;
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own

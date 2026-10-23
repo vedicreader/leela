@@ -1894,11 +1894,19 @@ kbd {
 .lee-output-fold:hover { background: var(--lee-bg3); color: var(--lee-fg); }
 /* Prompt cells use the same neutral writing surface as every other cell. Their gutter
    mark identifies the type without turning the editable area into a special input bar. */
-.lee-cell-context {
+.lee-cell-context, .lee-cell-slide {
   flex: none; padding: 2px 5px; border: 1px solid transparent; border-radius: 3px;
   background: transparent; color: var(--lee-fg4); cursor: pointer; font: 9.5px/1.3 var(--lee-mono);
 }
-.lee-cell-context:hover { border-color: var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-cell-context:hover, .lee-cell-slide:hover { border-color: var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-cell-slide[data-type="none"] { visibility: hidden; }
+.lee-cell:hover .lee-cell-slide[data-type="none"], .lee-cell.sel .lee-cell-slide[data-type="none"],
+.lee-cell-slide:focus-visible { visibility: visible; }
+.lee-cell-slide[data-type="slide"], .lee-cell-slide[data-type="subslide"] { color: var(--lee-aqua); }
+.lee-cell-slide[data-type="fragment"] { color: var(--lee-purple); }
+.lee-cell-slide[data-type="notes"] { color: var(--lee-yellow); }
+.lee-cell-slide[data-type="skip"] { text-decoration: line-through; }
+.lee-cell[data-slide="skip"] > .lee-cellmain { opacity: .6; }
 .lee-cell-context[data-mode="keep"] { color: var(--lee-green); }
 .lee-cell-context[data-mode="discard"] { color: var(--lee-orange); text-decoration: line-through; }
 .lee-reply {
@@ -2807,6 +2815,7 @@ kbd {
 /* ---- contextual menus + file dialogs ---- */
 .lee-ctxmenu {
   position: fixed; z-index: 60; width: max-content; min-width: 230px; max-width: min(360px, 92vw);
+  max-height: calc(100vh - 8px); overflow-y: auto;
   padding: 5px; border: 1px solid var(--lee-border); border-radius: 7px;
   background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.38);
 }
