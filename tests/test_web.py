@@ -714,3 +714,9 @@ def test_a_test_never_opens_the_machines_browser(system_browser):
     with TestClient(ide_app(Workspace())) as c:
         r = c.post('/browser/external', json={'url': 'https://example.test/notes'})
     assert r.json()['ok'] and system_browser == ['https://example.test/notes']
+
+def test_a_test_never_drives_the_machines_cdp_chrome(tmp_path):
+    "A workspace's inline browser took Leela's default CDP port, 9223, where the person's own headed Chrome listens, and a test opened its pages there as tabs."
+    from leela.workspace import Workspace
+    b = Workspace(roots=[tmp_path]).browser
+    assert b.port != 9223 and b.profile, (b.port, b.profile)

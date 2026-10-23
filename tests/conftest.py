@@ -20,8 +20,18 @@ _os.environ['LEELA_JOB_SWEEP'] = '0'
 #: `ai.history_path` is then a person's whole conversation log.
 REAL_CONFIG_HOME = _pathlib.Path.home()/'.config'/'leela'
 
+#: The CDP port this worker's tests get in place of 9223, which on a working machine is the person's headed Chrome.
+_CDP_PORT = []
+
 def pytest_sessionfinish(session):
     if _MADE_HERE: _shutil.rmtree(TEST_CONFIG_HOME, ignore_errors=True)
+    if not _CDP_PORT: return
+    import psutil
+    flag = f'--remote-debugging-port={_CDP_PORT[0]}'
+    for p in psutil.process_iter(['cmdline']):
+        try:
+            if flag in (p.info['cmdline'] or []): p.kill()
+        except psutil.Error: pass
 
 import asyncio
 import socket as _socket
@@ -115,6 +125,18 @@ def system_browser(monkeypatch):
     monkeypatch.setattr(webbrowser, 'get', lambda *a, **k: rec)
     for f in ('open', 'open_new', 'open_new_tab'): monkeypatch.setattr(webbrowser, f, lambda url, *a, **k: rec.open(url))
     return opened
+
+@pytest.fixture(autouse=True)
+def _private_cdp_chrome(monkeypatch, tmp_path_factory):
+    """A browser asked for port 9223 gets a headless Chrome on this worker's own port and profile; a test naming another port keeps it."""
+    from leela.blocks.browser import browser as B
+    if not _CDP_PORT:
+        with _socket.socket() as s: s.bind(('127.0.0.1', 0)); _CDP_PORT.append(s.getsockname()[1])
+    init = B.Browser.__init__
+    def own(self, port=9223, headless=True, profile=None):
+        if int(port) == 9223: port, profile = _CDP_PORT[0], profile or tmp_path_factory.getbasetemp()/'cdp-chrome'
+        init(self, port, headless, profile)
+    monkeypatch.setattr(B.Browser, '__init__', own)
 
 @pytest.fixture(autouse=True)
 def _sessions_off_the_repo(tmp_path_factory):
