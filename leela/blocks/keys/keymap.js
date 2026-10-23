@@ -85,10 +85,16 @@ function chordMatches(c, e) {
   return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
 
-//: Cell actions whose first chord is also a CodeMirror line command (copy, cut, copy line, toggle
-//: comment). While a cell's editor has focus CodeMirror gets that chord; the cell action answers it
-//: in command mode, and on its other chords everywhere.
-const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
+//: Cell actions whose first chord is also a CodeMirror line command (copy, cut, toggle comment).
+//: While a cell's editor has focus CodeMirror gets that chord; the cell action answers it in command
+//: mode, and on its other chords everywhere.
+const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment']);
+//: CodeMirror commands the table binds. Editors made with `tableKeys` have no chord of their own for them.
+const CM_EDIT = {copy_line_up: 'copyLineUp', copy_line_down: 'copyLineDown', delete_line: 'deleteLine',
+  select_line: 'selectLine', select_next_occurrence: 'selectNextOccurrence',
+  select_all_occurrences: 'selectSelectionMatches', add_cursor_above: 'addCursorAbove',
+  add_cursor_below: 'addCursorBelow', matching_bracket: 'cursorMatchingBracket',
+  select_parent_syntax: 'selectParentSyntax', block_comment: 'toggleBlockComment'};
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 //: RISE's chords are shifted letters: a cell in command mode takes them, and every editor or field types them.
 const SLIDE_ACTIONS = new Set(['slide_none', 'slide_slide', 'slide_subslide', 'slide_fragment', 'slide_skip', 'slide_notes']);
@@ -122,7 +128,7 @@ function findBinding(e, scope) {
     if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
     if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
     if (SLIDE_ACTIONS.has(k.action) && !firesInTextEntry(chord) && typesHere(e)) continue;
-    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
+    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down', 'cell_move_up', 'cell_move_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own
     // editors keeps its own panel, which searches the text on screen there.
@@ -159,6 +165,12 @@ window.addEventListener('keydown', e => {
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
   if (!match) return;
+  // Run on the editor under the caret; any other CodeMirror keeps its own chord for the command.
+  if (CM_EDIT[match.binding.action]) {
+    const v = textEditorOf(e); if (!v) return;
+    e.preventDefault(); e.stopPropagation();
+    return void LeeCM[CM_EDIT[match.binding.action]](v);
+  }
   const cmd = DEFER_IN_TEXT[match.binding.action], view = cmd && textEditorOf(e);
   if (view) {
     e.preventDefault(); e.stopPropagation();

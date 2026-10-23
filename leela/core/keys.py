@@ -219,6 +219,19 @@ DEFAULTS = L(
     Key('clear_all_outputs','mod+shift+backspace', 'editor', 'clear all outputs'),
     Key('move_line_up',     'alt+up',        'editor', 'move line up',        'toast'),
     Key('move_line_down',   'alt+down',      'editor', 'move line down'),
+# CodeMirror's editing commands. A cell or file editor drops CodeMirror's own chords for them, so
+# these rows and `keys.json` are the only chords they answer to.
+    Key('copy_line_up',     '',              'editor', 'duplicate line above'),
+    Key('copy_line_down',   'mod+shift+d',   'editor', 'duplicate line'),
+    Key('delete_line',      'mod+shift+k',   'editor', 'delete line'),
+    Key('select_line',      '',              'editor', 'select line'),
+    Key('select_next_occurrence', 'mod+d',   'editor', 'add next occurrence to the selection'),
+    Key('select_all_occurrences', 'mod+shift+l', 'editor', 'select every occurrence'),
+    Key('add_cursor_above', '',              'editor', 'add cursor above'),
+    Key('add_cursor_below', '',              'editor', 'add cursor below'),
+    Key('matching_bracket', 'mod+shift+\\',  'editor', 'go to matching bracket'),
+    Key('select_parent_syntax', 'mod+i',     'editor', 'expand selection to the enclosing syntax'),
+    Key('block_comment',    '',              'editor', 'toggle block comment'),
     Key('comment',          'mod+/',         'editor', 'toggle comment',      'toast'),
     Key('find_similar',     'ctrl+shift+a',  'editor', 'code like this',      'toast'),
     Key('code_map',         'ctrl+shift+m',  'editor', 'code map (clusters)'),
@@ -442,23 +455,28 @@ def read_overrides(path=None, notes=None):
     return out
 
 def apply_overrides(keys, over, notes=None):
-    "`keys` with the user's chords applied one at a time, skipping what cannot work."
+    "`keys` with the user's chords applied, skipping what cannot work."
     notes = ifnone(notes, NOTES)
-    out = L(list(keys))
+    out, todo = L(list(keys)), {}
     for a, c in (over or {}).items():
         i = out.argfirst(lambda k: k.action == a)
-        if i is None:
-            notes.append(f'keymap: no action named {a!r}')
-            continue
-        try: cand = replace(out[i], key=c)
-        except ValueError as e:
-            notes.append(f'keymap: {a}: {e}')
-            continue
-        trial = L(list(out)); trial[i] = cand
-        if bad := _dupes(trial):
-            notes.append(f'keymap: {a} -> {c!r} conflicts ({bad[0]}) — kept {out[i].key or "unbound"}')
-            continue
-        out = trial
+        if i is None: notes.append(f'keymap: no action named {a!r}'); continue
+        try: todo[i] = replace(out[i], key=c)
+        except ValueError as e: notes.append(f'keymap: {a}: {e}')
+    # Together first, so moving a chord is not refused for colliding with the action it leaves.
+    trial = L(list(out))
+    for i, k in todo.items(): trial[i] = k
+    if not _dupes(trial): return trial
+    # Then one at a time, again while a pass frees a chord another entry wanted.
+    moved = True
+    while todo and moved:
+        moved = False
+        for i in list(todo):
+            trial = L(list(out)); trial[i] = todo[i]
+            if not _dupes(trial): out, moved = trial, True; del todo[i]
+    for i, k in todo.items():
+        trial = L(list(out)); trial[i] = k
+        notes.append(f'keymap: {k.action} -> {k.key!r} conflicts ({_dupes(trial)[0]}) — kept {out[i].key or "unbound"}')
     return out
 
 _BULK = 50

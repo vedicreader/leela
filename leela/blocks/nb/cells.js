@@ -226,7 +226,7 @@ function mountCell(c, i) {
     // stay unmarked until the next save.
     changedLines: (lee.notebookGit?.lines || {})[c.id] || [],
     onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
-    settings: {overviewMode:'off'},
+    settings: {overviewMode:'off'}, tableKeys: true,
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
     onChange: (txt) => {
       const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;

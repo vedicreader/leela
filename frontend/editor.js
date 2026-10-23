@@ -15,8 +15,14 @@ import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLin
 import {defaultKeymap, history, historyKeymap, indentWithTab,
         undo as cmUndo, redo as cmRedo,
         indentMore as cmIndentMore, indentLess as cmIndentLess,
-        indentSelection as cmIndentSelection} from "@codemirror/commands";
-import {searchKeymap, highlightSelectionMatches, openSearchPanel} from "@codemirror/search";
+        indentSelection as cmIndentSelection,
+        copyLineUp as cmCopyLineUp, copyLineDown as cmCopyLineDown, deleteLine as cmDeleteLine,
+        selectLine as cmSelectLine, addCursorAbove as cmAddCursorAbove, addCursorBelow as cmAddCursorBelow,
+        cursorMatchingBracket as cmCursorMatchingBracket, selectParentSyntax as cmSelectParentSyntax,
+        toggleBlockComment as cmToggleBlockComment} from "@codemirror/commands";
+import {searchKeymap, highlightSelectionMatches, openSearchPanel,
+        selectNextOccurrence as cmSelectNextOccurrence,
+        selectSelectionMatches as cmSelectSelectionMatches} from "@codemirror/search";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
         acceptCompletion,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
@@ -886,7 +892,8 @@ export function create(el, opts = {}) {
   const {doc = "", lang = "python", readOnly = false, lineNums = false,
          placeholder = "", onChange = null, onSelection = null, onChangeClick = null, onDefinition = null,
          onBreakpoint = null, breakpoints = [], changedLines = [], binds = [], completeUrl = null,
-         lintUrl = "/lint", lintPath = "", settings = {}} = opts;
+         lintUrl = "/lint", lintPath = "", settings = {}, tableKeys = false} = opts;
+  const own = km => tableKeys ? km.filter(b => !TABLE_RUNS.has(b.run)) : km;
   const language = new Compartment(), editable = new Compartment(), linting = new Compartment(),
         preferences = new Compartment(), initialSettings=detectedIndentation(settings,doc);
 
@@ -907,8 +914,8 @@ export function create(el, opts = {}) {
     linting.of(lintExt(lang, readOnly, lintUrl, lintPath)),
     preferences.of(settingsExt(initialSettings, lineNums)),
     // app bindings first, so ctrl+enter runs a cell instead of inserting a newline
-    keymap.of([...appKeymap(binds), ...closeBracketsKeymap, ...searchKeymap,
-               ...historyKeymap, ...completionKeymap, indentWithTab, ...defaultKeymap]),
+    keymap.of([...appKeymap(binds), ...closeBracketsKeymap, ...own(searchKeymap),
+               ...historyKeymap, ...completionKeymap, indentWithTab, ...own(defaultKeymap)]),
   ];
   if (onBreakpoint) exts.unshift(breakpointGutter(onBreakpoint));
   if (onDefinition) exts.push(EditorView.domEventHandlers({mousedown(event, view) {
@@ -1048,3 +1055,13 @@ export const redo = (view) => cmRedo(view);
 export const indentMore = (view) => cmIndentMore(view);
 export const indentLess = (view) => cmIndentLess(view);
 export const indentSelection = (view) => cmIndentSelection(view);
+/* Editing commands `core/keys.py` names, so `keys.json` binds them. An editor made with `tableKeys`
+   drops CodeMirror's own chords for them, and Leela's router runs them on the chords the table gives. */
+const TABLE_RUNS = new Set([cmCopyLineUp, cmCopyLineDown, cmDeleteLine, cmSelectLine, cmAddCursorAbove,
+  cmAddCursorBelow, cmCursorMatchingBracket, cmSelectParentSyntax, cmToggleBlockComment,
+  cmSelectNextOccurrence, cmSelectSelectionMatches]);
+export {cmCopyLineUp as copyLineUp, cmCopyLineDown as copyLineDown, cmDeleteLine as deleteLine,
+  cmSelectLine as selectLine, cmAddCursorAbove as addCursorAbove, cmAddCursorBelow as addCursorBelow,
+  cmCursorMatchingBracket as cursorMatchingBracket, cmSelectParentSyntax as selectParentSyntax,
+  cmToggleBlockComment as toggleBlockComment, cmSelectNextOccurrence as selectNextOccurrence,
+  cmSelectSelectionMatches as selectSelectionMatches};

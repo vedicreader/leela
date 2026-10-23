@@ -47,6 +47,25 @@ def test_a_rejected_override_does_not_leak_into_the_defaults(tmp_path):
     assert {k.action: k.key for k in DEFAULTS}['focus_files'] == 'alt+shift+1'
 
 
+def test_two_actions_can_trade_chords(tmp_path):
+    "Applied one at a time, each half of a swap collided with the chord the other was about to give up."
+    p = _keymap(tmp_path, {'copy_line_down': 'mod+d', 'select_next_occurrence': 'mod+shift+d'})
+    notes = []
+    by = {k.action: k.key for k in apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)}
+    assert (by['copy_line_down'], by['select_next_occurrence'], notes) == ('mod+d', 'mod+shift+d', [])
+
+
+def test_every_editing_command_the_router_runs_is_a_row_in_the_table():
+    "A command with no row has no chord in a cell, since the cell editor drops CodeMirror's own."
+    import re
+    from fastcore.all import Path
+    import leela
+    src = (Path(leela.__file__).parent/'blocks/keys/keymap.js').read_text()
+    acts = re.findall(r'(\w+): \'\w+\'', re.search(r'const CM_EDIT = \{(.*?)\};', src, re.S)[1])
+    assert len(acts) == 11 and all(lookup(a) for a in acts), acts
+    assert lookup('copy_line_down').key == 'mod+shift+d' and lookup('select_next_occurrence').key == 'mod+d'
+
+
 def _written(path, keys=None, keep=True):
     from leela.core.keys import write_keymap
     write_keymap(path, keys=keys, keep=keep)

@@ -195,6 +195,7 @@ def test_the_keymap_answers_every_chord_it_claims_in_one_browser_session():
           f5: window._traps('run_cell', {key:'F5'}),
           moveUp: window._traps('cell_move_up', {key:'ArrowUp', code:'ArrowUp', altKey:true,
                                                  shiftKey:true}),
+          kind: lee.kind,
           below: window._traps('cell_below', {key:'ArrowDown', code:'ArrowDown', altKey:true,
                                               metaKey:MAC, ctrlKey:!MAC}),
           advance: window._traps('run_advance', {key:'Enter', shiftKey:true})})""")
@@ -228,8 +229,8 @@ def test_the_keymap_answers_every_chord_it_claims_in_one_browser_session():
     assert keymap['cmd_r'] is False, 'Cmd+R remains Chrome reload and is never an app binding'
     assert (editor['f5']['ran'], editor['f5']['prevented']) == (False, False), \
         'a function key is left to the os and the browser'
-    assert (editor['moveUp']['ran'], editor['moveUp']['prevented'], editor['moveUp']['action']) == \
-        (True, True, 'cell_move_up')
+    assert editor['kind'] != 'notebook' and (editor['moveUp']['ran'], editor['moveUp']['prevented']) == (False, False), \
+        'a cell move outside a notebook took the chord from the editor'
     assert (editor['below']['ran'], editor['below']['prevented'], editor['below']['action']) == \
         (True, True, 'cell_below')
     assert editor['advance']['ran'] is True, \

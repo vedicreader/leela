@@ -253,6 +253,7 @@ const ACTIONS = {
   browse_tabs:  () => pickWebTab(),
 };
 for (let i = 1; i <= 9; i++) ACTIONS['tab_' + i] = () => htmxPost('/tab/select?i=' + (i - 1));
+for (const [a, cmd] of Object.entries(CM_EDIT)) ACTIONS[a] = () => leeIndent(cmd);
 
 function leeAct(name) {
   const f = ACTIONS[name];

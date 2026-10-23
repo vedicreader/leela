@@ -850,10 +850,16 @@ function chordMatches(c, e) {
   return c.key.toLowerCase() === (e.key || '').toLowerCase();
 }
 
-//: Cell actions whose first chord is also a CodeMirror line command (copy, cut, copy line, toggle
-//: comment). While a cell's editor has focus CodeMirror gets that chord; the cell action answers it
-//: in command mode, and on its other chords everywhere.
-const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
+//: Cell actions whose first chord is also a CodeMirror line command (copy, cut, toggle comment).
+//: While a cell's editor has focus CodeMirror gets that chord; the cell action answers it in command
+//: mode, and on its other chords everywhere.
+const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment']);
+//: CodeMirror commands the table binds. Editors made with `tableKeys` have no chord of their own for them.
+const CM_EDIT = {copy_line_up: 'copyLineUp', copy_line_down: 'copyLineDown', delete_line: 'deleteLine',
+  select_line: 'selectLine', select_next_occurrence: 'selectNextOccurrence',
+  select_all_occurrences: 'selectSelectionMatches', add_cursor_above: 'addCursorAbove',
+  add_cursor_below: 'addCursorBelow', matching_bracket: 'cursorMatchingBracket',
+  select_parent_syntax: 'selectParentSyntax', block_comment: 'toggleBlockComment'};
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 //: RISE's chords are shifted letters: a cell in command mode takes them, and every editor or field types them.
 const SLIDE_ACTIONS = new Set(['slide_none', 'slide_slide', 'slide_subslide', 'slide_fragment', 'slide_skip', 'slide_notes']);
@@ -887,7 +893,7 @@ function findBinding(e, scope) {
     if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
     if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
     if (SLIDE_ACTIONS.has(k.action) && !firesInTextEntry(chord) && typesHere(e)) continue;
-    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down'].includes(k.action)
+    if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down', 'cell_move_up', 'cell_move_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own
     // editors keeps its own panel, which searches the text on screen there.
@@ -924,6 +930,12 @@ window.addEventListener('keydown', e => {
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
   if (!match) return;
+  // Run on the editor under the caret; any other CodeMirror keeps its own chord for the command.
+  if (CM_EDIT[match.binding.action]) {
+    const v = textEditorOf(e); if (!v) return;
+    e.preventDefault(); e.stopPropagation();
+    return void LeeCM[CM_EDIT[match.binding.action]](v);
+  }
   const cmd = DEFER_IN_TEXT[match.binding.action], view = cmd && textEditorOf(e);
   if (view) {
     e.preventDefault(); e.stopPropagation();
@@ -1189,6 +1201,7 @@ const ACTIONS = {
   browse_tabs:  () => pickWebTab(),
 };
 for (let i = 1; i <= 9; i++) ACTIONS['tab_' + i] = () => htmxPost('/tab/select?i=' + (i - 1));
+for (const [a, cmd] of Object.entries(CM_EDIT)) ACTIONS[a] = () => leeIndent(cmd);
 
 function leeAct(name) {
   const f = ACTIONS[name];
@@ -1948,7 +1961,7 @@ async function mountFile(host, st) {
     // A cached value is authoritative only after a real user edit, or a stale empty entry blanks
     // a freshly loaded file.
     doc: lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : (st.text || ''),
-    lang: st.lang || 'python', lineNums: true, lintPath: st.path || '',
+    lang: st.lang || 'python', lineNums: true, lintPath: st.path || '', tableKeys: true,
     completeUrl: '/complete', changedLines: git.ranges || [], breakpoints: lee.breakpoints.get(st.path)||[],
     onBreakpoint: st.lang==='python' ? lines=>{rememberBreakpoints(st.path,lines);if(lee.directDebug)post('/debug/breakpoints',{path:st.path,breakpoints:lines}).catch(e=>status(e.message||String(e),'err'));} : null,
     onChangeClick: line => showChangePopup(st.path, line),
@@ -2035,7 +2048,7 @@ async function mountSecondary(path, direction = 'vertical') {
   if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
   stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
   host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
-  const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',lineNums:true,lintPath:st.path||'',completeUrl:'/complete',
+  const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',lineNums:true,lintPath:st.path||'',completeUrl:'/complete',tableKeys:true,
     onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
   recordDiskVersion(st.path || path, st.disk_version || '');
   lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
@@ -2529,7 +2542,7 @@ function mountCell(c, i) {
     // stay unmarked until the next save.
     changedLines: (lee.notebookGit?.lines || {})[c.id] || [],
     onBreakpoint: c.cell_type === 'code' ? lines => rememberBreakpoints(c.id, lines) : null,
-    settings: {overviewMode:'off'},
+    settings: {overviewMode:'off'}, tableKeys: true,
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
     onChange: (txt) => {
       const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;
