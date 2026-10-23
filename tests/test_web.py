@@ -704,3 +704,13 @@ def test_a_conversations_turns_carry_the_tool_results_the_log_keeps_elsewhere(tm
         turns = client.get('/agent/thread/turns', params={'thread': resumed['session']}).json()
     assert resumed['turns'][0]['activity'][0]['detail'] == whole
     assert turns['ok'] and turns['turns'][0]['activity'][0]['detail'] == whole, turns
+
+
+def test_a_test_never_opens_the_machines_browser(system_browser):
+    "Slow and web tests that opened an external link left a stray tab in the user's Chrome."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    with TestClient(ide_app(Workspace())) as c:
+        r = c.post('/browser/external', json={'url': 'https://example.test/notes'})
+    assert r.json()['ok'] and system_browser == ['https://example.test/notes']

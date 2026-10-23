@@ -105,6 +105,18 @@ def _no_cpu_watchdog(monkeypatch):
     monkeypatch.setattr(watchdog, 'watch_cpu', lambda *a, **k: None)
 
 @pytest.fixture(autouse=True)
+def system_browser(monkeypatch):
+    """No test opens a tab in the machine's own browser; the URLs it was asked to open are kept here."""
+    import webbrowser
+    opened = []
+    class Recorder(webbrowser.BaseBrowser):
+        def open(self, url, new=0, autoraise=True): opened.append(url); return True
+    rec = Recorder('test')
+    monkeypatch.setattr(webbrowser, 'get', lambda *a, **k: rec)
+    for f in ('open', 'open_new', 'open_new_tab'): monkeypatch.setattr(webbrowser, f, lambda url, *a, **k: rec.open(url))
+    return opened
+
+@pytest.fixture(autouse=True)
 def _sessions_off_the_repo(tmp_path_factory):
     """No test writes an agent transcript into the checked-out repository."""
     from dhrishti.runtime import set_logging
