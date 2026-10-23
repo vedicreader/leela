@@ -222,6 +222,55 @@ def test_a_hanging_inspector_does_not_hold_back_the_done_event(tmp_path, monkeyp
     assert any('event: done' in l for l in lines) and took < 8, f'the stream had no done after {took:.1f}s'
 
 
+def test_outputs_still_queued_when_the_cell_ends_do_not_swallow_its_done(tmp_path):
+    """A slow reader let outputs and the end of the run pile up together, and the drain took the end for one more output."""
+    import socket
+    from conftest import FakeKernel, serve
+    from leela.blocks.runtime.kernels import ExecOutcome
+    class Burst(FakeKernel):
+        async def execute(self, code, on_output=None, **kw):
+            outs = [{'output_type': 'stream', 'name': 'stdout', 'text': f'{n} ' + 'x' * 250_000} for n in range(40)]
+            for o in outs: on_output(dict(o)); await asyncio.sleep(0)
+            return ExecOutcome(ok=True, execution_count=1, outputs=outs)
+    p = tmp_path/'burst.ipynb'
+    p.write_text(json.dumps({'cells': [{'cell_type': 'code', 'id': 'c0', 'source': 'x', 'metadata': {}, 'outputs': [], 'execution_count': None}],
+                             'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    ws = Workspace(roots=[tmp_path], approvals='auto'); ws.open(p)
+    async def burst(tab=None): return Burst()
+    ws.runtime = burst
+    body = json.dumps({'i': 0, 'id': 'c0', 'source': 'x', 'path': str(p)}).encode()
+    got = b''
+    with serve(ws) as url, socket.create_connection(('127.0.0.1', int(url.rsplit(':', 1)[1])), timeout=5) as s:
+        s.sendall(b'POST /nb/run/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n'
+                  b'Content-Length: %d\r\n\r\n' % len(body) + body)
+        try:
+            while b'event: done' not in got and (chunk := s.recv(1 << 20)): got += chunk
+        except TimeoutError: pass
+    ws.shutdown_now()
+    assert b'event: done' in got, f'{got.count(b"event: output")} output events and no done'
+
+
+def test_a_lost_reply_is_settled_from_what_ipython_recorded_of_the_cell(tmp_path):
+    """`_settle_lost` reads IPython's record of the last cell inside a silent execute, so that record has to survive one."""
+    from leela.blocks.nb.nb import LOST, _settle_lost
+    from leela.blocks.runtime.kernels import Kernel
+    async def go():
+        k = await Kernel(cwd=tmp_path, inspect=False, python=sys.executable).start()
+        try:
+            out = []
+            for src in ('a = 1', '1/0', 'b = 2'):
+                await k.execute(src)
+                await _settle_lost(c := Cell(source=src), k)
+                out.append(c)
+            await _settle_lost(other := Cell(source='not what ran'), k)
+            return out, other
+        finally: await k.shutdown()
+    (ran, raised, again), other = asyncio.run(go())
+    assert (ran.execution_count, again.execution_count) == (1, 3) and not ran.outputs and not again.outputs
+    assert raised.execution_count == 2 and raised.outputs[-1]['evalue'] == LOST[False]
+    assert other.execution_count is None and other.outputs[-1]['evalue'] == LOST[None]
+
+
 def test_read_cells_parses_notebooks_that_orjson_alone_rejects():
     from leela.blocks.nb.nb import read_cells
     nb = json.dumps({'cells': [{'cell_type': 'code', 'source': ['x=1\n'], 'outputs': []}],

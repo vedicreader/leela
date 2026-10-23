@@ -717,14 +717,23 @@ async function api(url, opts, retried) {
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
 
-async function postEvents(url, data, onEvent, signal = null) {
+/* `idle` is the most milliseconds the stream may send nothing, keep-alive comments included,
+   before it is given up with an error whose `stalled` is true. An error whose `unsent` is true
+   came before the stream began. */
+async function postEvents(url, data, onEvent, signal = null, idle = 0) {
   const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                              body: JSON.stringify(data || {}), signal});
-  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+                              body: JSON.stringify(data || {}), signal}).catch(e => { throw Object.assign(e, {unsent: true}); });
+  if (!r.ok) throw Object.assign(new Error((await r.text()) || r.statusText), {unsent: true});
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';
   while (true) {
-    const {value, done} = await reader.read();
+    let timer;
+    const silent = idle && new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error('the stream went silent'), {stalled: true})), idle); });
+    let got;
+    try { got = await (silent ? Promise.race([reader.read(), silent]) : reader.read()); }
+    catch (e) { if (e.stalled) reader.cancel().catch(() => {}); throw e; }
+    finally { clearTimeout(timer); }
+    const {value, done} = got;
     pending += decoder.decode(value || new Uint8Array(), {stream: !done});
     let cut;
     while ((cut = pending.indexOf('\n\n')) >= 0) {

@@ -543,7 +543,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return c.id
     def nb_run_cell(self, path, cell_id, timeout=120):
         "Run one cell in the kernel its notebook's tab runs in, the way the Run button does."
-        from ..nb.nb import Notebook
+        from ..nb.nb import Notebook, run_watched
         from ...workspace import Tab
         p = self.check(path, must_exist=True)
         nb = Notebook.load(p)
@@ -560,7 +560,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         note = ('' if was in (None, self._cells[str(p)]) else
                 "[this notebook's kernel is not the one your last run_cell here used (it restarted, or closed and started again): names from earlier cells are gone]\n")
         before = self._var_snapshot(k)
-        try: c = asyncio.run_coroutine_threadsafe(nb.run(i, k), loop).result(max(1, int(timeout)))
+        try: c, _ = asyncio.run_coroutine_threadsafe(run_watched(nb, i, k), loop).result(max(1, int(timeout)))
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
         if (origins := getattr(self.ws, 'origins', None)) is not None: origins.cell(c, path)

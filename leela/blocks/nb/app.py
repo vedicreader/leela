@@ -15,11 +15,13 @@ from ...core.web import asset_dir, fail, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
-from .nb import Cell, Notebook, cell_extras, inline_values, src_hash
+from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash
 
 __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running')
+#: Seconds between SSE comments on a silent run stream, well inside the page's own silence limit.
+KEEPALIVE = 15
 
 def _rebase_notebook(tab, payload, docs):
     "Put a draft's source edits onto the notebook as it is on disk now."
@@ -96,12 +98,12 @@ def connect(app, ctx):
         async with run_lock:
             k = await runtime_for(owner_tab)
             owner_tab.running += 1
-            try: c = await nb.run(i, k)
+            try: c, lost = await run_watched(nb, i, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         rows, result = await cell_extras(k, c)
-        return {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
+        return {'ok': not c.has_error, 'lost': lost, 'i': i, 'cell': c.dict(), 'result': result,
                 'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
     @rt('/nb/run/stream')
     async def nb_run_stream(req):
@@ -122,42 +124,53 @@ def connect(app, ctx):
         except BaseException:
             run_lock.release()
             raise
+        if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
+            run_lock.release()
+            return fail('that cell is no longer at this position', 409)
+        q = asyncio.Queue()
+        def emitted(_i, _output): q.put_nowait([dict(x) for x in nb[i].outputs])
+        async def run():
+            c, lost = await run_watched(nb, i, k, on_output=emitted)
+            note_origin(owner_tab, c)
+            if owner_tab: owner_tab.dirty = True
+            rows, result = await cell_extras(k, c)
+            return {'ok': not c.has_error, 'lost': lost, 'i': i, 'cell': c.dict(), 'result': result,
+                    'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
+        # The run outlives its stream: a page that lost the stream asks `/nb/run/state` for the outcome.
+        run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', nb[i].id)
+        def finished(_):
+            if owner_tab: owner_tab.running = max(0, owner_tab.running - 1)
+            if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
+            run_lock.release()
+            q.put_nowait(None)
+        if owner_tab: owner_tab.running += 1
+        task = asyncio.create_task(run())
+        task.add_done_callback(finished)
+        running_cells[run_key] = (k, task)
         async def events():
-            q = asyncio.Queue()
-            if owner_tab: owner_tab.running += 1
-            def emitted(_i, _output): q.put_nowait([dict(x) for x in nb[i].outputs])
-            task = asyncio.create_task(nb.run(i, k, on_output=emitted))
-            # The end of the cell wakes this loop, rather than a queue timeout every cell pays in
-            # full whether it printed anything or not.
-            task.add_done_callback(lambda _: q.put_nowait(None))
-            run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', nb[i].id)
-            running_cells[run_key] = (k, task)
             try:
                 while True:
-                    outputs = await q.get()
-                    if outputs is None:
-                        if q.empty(): break
+                    try: got = [await asyncio.wait_for(q.get(), KEEPALIVE)]
+                    except TimeoutError:
+                        yield ': keep-alive\n\n'
                         continue
-                    while not q.empty():
-                        nxt = q.get_nowait()
-                        if nxt is None: break
-                        outputs = nxt
-                    yield sse('output', {'i': i, 'outputs': outputs})
-                c = await task
-                note_origin(owner_tab, c)
-                if owner_tab: owner_tab.dirty = True
-                rows, result = await cell_extras(k, c)
-                yield sse('done', {'ok': not c.has_error, 'i': i, 'cell': c.dict(), 'result': result,
-                                    'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)})
+                    while not q.empty(): got.append(q.get_nowait())
+                    if (outputs := first(reversed(got), lambda o: o is not None)) is not None: yield sse('output', {'i': i, 'outputs': outputs})
+                    if None in got: break
+                yield sse('done', await task)
             except Exception as e:
                 yield sse('error', {'text': errstr(e)})
-            finally:
-                owner_tab.running = max(0, owner_tab.running - 1)
-                if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
-                if not task.done(): task.cancel()
-                run_lock.release()
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    @rt('/nb/run/state')
+    async def nb_run_state(req):
+        "Whether one cell's run is still going, and the cell as the server holds it, for a page whose run stream ended early."
+        d = await req.json()
+        owner_tab, nb, _ = run_owner(d)
+        c = first(x for x in (nb or []) if x.id == d.get('id'))
+        if c is None: return {'ok': True, 'running': False, 'cell': None}
+        item = running_cells.get(((owner_tab.path or owner_tab.title) if owner_tab else '', c.id))
+        return {'ok': True, 'running': bool(item) and not item[1].done(), 'cell': c.dict()}
     @rt('/nb/debug/stream')
     async def nb_debug_stream(req):
         "Debug one code cell through ipykernel's Jupyter Debug Protocol."

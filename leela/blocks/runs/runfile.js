@@ -55,9 +55,8 @@ async function runRange(start, end, label) {
     const c = lee.cells[i];
     if (c.cell_type !== 'code' || !(c.source || '').trim()) continue;
     status(`running cell ${i + 1}…`);
-    await runCell(i, false);
-    if ((lee.cells[i].outputs || []).some(o => o.output_type === 'error'))
-      return status(`cell ${i + 1} raised — stopped there`, 'err');
+    const r = await runCell(i, false);
+    if (!r.ok) return status(`${r.error || `cell ${i + 1} failed`} — stopped there`, 'err');
   }
   status(`ran ${label}`, 'ok');
 }

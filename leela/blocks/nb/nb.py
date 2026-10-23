@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from fastcore.all import first, L, Path, ifnone
 from fastcore.nbio import read_nb, write_nb, new_nb, nb2str
 from ... import Dictable
-from ..runtime.kernels import output_text
+from ..runtime.kernels import GatewayKernel, output_text
 import json
 
 try:
@@ -20,7 +20,7 @@ except ImportError:
     _jloads = json.loads
 
 __all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
-           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'strip_work_log',
+           'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'run_watched', 'strip_work_log',
            'merge_rows', 'merged_cells', 'CHOICES']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
@@ -707,3 +707,59 @@ async def cell_extras(k, cell, wait=5):
         return rows, (latest or {}).get('result')
     try: return await asyncio.wait_for(ask(), wait)
     except TimeoutError: return None, None
+
+#: Seconds a run may stay silent before Leela asks whether the kernel's shell is free.
+QUIET = 10
+#: Read inside a silent execute, while IPython still holds the previous cell's record.
+LAST_RUN = r'''import json as __leela_json
+print(__leela_json.dumps([(__leela_s := get_ipython()).last_execution_succeeded, __leela_s.execution_count - 1,
+                          (__leela_s.history_manager.input_hist_raw or [''])[-1]]))
+del __leela_json, __leela_s'''
+LOST = {False: 'the cell raised, and its traceback was lost on the way from the kernel',
+        None: 'the kernel finished this cell, but its reply was lost on the way, so whether it raised is unknown'}
+
+async def shell_free(k):
+    "Whether a gateway kernel's shell answers `kernel_info` within a second, which ipykernel does only between executes; None when it cannot be asked."
+    if not isinstance(k, GatewayKernel) or k.kc is None: return None
+    try: await k.kc.kernel_info_request(reply=True, timeout=1)
+    except Exception: return False
+    return True
+
+async def _settle_lost(c, k):
+    "Fill in a cell whose execute ended without its reply from what the idle kernel recorded of it."
+    try:
+        r = await asyncio.wait_for(k.execute(LAST_RUN, silent=True, store_history=False), 10)
+        ok, n, src = json.loads(''.join(o.get('text', '') for o in r.outputs if o.get('output_type') == 'stream').strip().splitlines()[-1])
+    except Exception: ok = n = src = None
+    if src is not None and src.strip() == c.source.strip(): c.execution_count = n
+    else: ok = None
+    if not ok: c.outputs.append({'output_type': 'error', 'ename': 'LostReply', 'evalue': LOST[ok], 'traceback': []})
+
+async def run_watched(nb, i, k, on_output=None):
+    "`(cell, lost)` for `nb.run(i, k)`; a run whose kernel went idle without its reply reaching us is settled from the kernel's record."
+    heard = time.monotonic()
+    def emitted(j, o):
+        nonlocal heard
+        heard = time.monotonic()
+        if on_output: on_output(j, o)
+    task, wait = asyncio.ensure_future(nb.run(i, k, on_output=emitted)), QUIET
+    try:
+        while True:
+            await asyncio.wait([task], timeout=wait)
+            if task.done(): return task.result(), False
+            if time.monotonic() - heard < wait: continue
+            if (free := await shell_free(k)) is None: return await task, False
+            if not free:
+                wait = min(wait * 2, 60)
+                continue
+            # The reply travels ahead of the probe's answer; a second answer with the run still waiting means it is gone.
+            await asyncio.wait([task], timeout=2)
+            if task.done(): return task.result(), False
+            if not await shell_free(k): continue
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await _settle_lost(c := nb.cells[i], k)
+            nb.dirty = True
+            return c, True
+    finally:
+        if not task.done(): task.cancel()

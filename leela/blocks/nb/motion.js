@@ -56,6 +56,21 @@ async function stopCell(i) {
          r.forced ? 'err' : 'ok');
 }
 
+/* A run stream that ended without its result leaves the server knowing how the cell stands. Ask it,
+   and keep asking, slower each time, while the cell is still running. */
+async function settleRun(path, id) {
+  for (let wait = 2000, misses = 0; ; wait = Math.min(wait * 2, 10000)) {
+    const s = await post('/nb/run/state', {path, id}).catch(e => { if (++misses > 3) throw e; return {running: true}; });
+    if (!s.running) {
+      if (!s.cell) throw new Error('the cell is no longer in the notebook');
+      const failed = (s.cell.outputs || []).some(o => o.output_type === 'error');
+      if (s.cell.execution_count == null && !failed) throw new Error('the run stream ended, and the kernel kept no record of this cell');
+      return {ok: !failed, cell: s.cell, inline: [], result: null};
+    }
+    await new Promise(res => setTimeout(res, wait));
+  }
+}
+
 /* Resolves to `{ok, error}`. The slide deck runs cells with the status line hidden under it, so it
    reads the outcome here and follows the outputs through `lee-cell-output`. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
@@ -91,17 +106,20 @@ async function runCell(i, advance) {
     $('#g-' + c.id).textContent = '[*]';
     status(`running cell ${i + 1}…`);
     try {
-      let r = null;
-      await postEvents('/nb/run/stream', {i, id: cellId, path: runPath || lee.tabKey || '', source: src}, (event, data) => {
-        const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-        if (!stillHere) return;
-        if (event === 'output') {
-          lee.cells[i].outputs = data.outputs || [];
-          renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
-        } else if (event === 'error') throw new Error(data.text || 'cell execution failed');
-        else if (event === 'done') r = data;
-      });
-      if (!r) throw new Error('cell execution ended without a result');
+      let r = null, failed = null;
+      const key = runPath || lee.tabKey || '';
+      try {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src}, (event, data) => {
+          if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
+          if (event === 'done') r = data;
+          const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
+          if (stillHere && event === 'output') {
+            lee.cells[i].outputs = data.outputs || [];
+            renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
+          }
+        }, null, 45000);
+      } catch (e) { if (e === failed || e.unsent) throw e; }
+      if (!r) r = await settleRun(key, cellId);
       const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
       if (!stillHere) {
         c.running = false; el?.classList.remove('running'); leeVars();
@@ -117,7 +135,7 @@ async function runCell(i, advance) {
       const duration = formatCellTime(elapsed);
       setCellTime(c, elapsed, false);
       setCellState(c, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${i + 1} ran in ${duration}` : `cell ${i + 1} failed after ${duration}`,
+      status(r.ok ? `cell ${i + 1} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${i + 1} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
       res = {ok: !!r.ok, error: r.ok ? '' : `cell ${i + 1} failed after ${duration}`};
     } catch (e) {

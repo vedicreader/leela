@@ -717,14 +717,23 @@ async function api(url, opts, retried) {
 const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify(data || {})});
 
-async function postEvents(url, data, onEvent, signal = null) {
+/* `idle` is the most milliseconds the stream may send nothing, keep-alive comments included,
+   before it is given up with an error whose `stalled` is true. An error whose `unsent` is true
+   came before the stream began. */
+async function postEvents(url, data, onEvent, signal = null, idle = 0) {
   const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                              body: JSON.stringify(data || {}), signal});
-  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+                              body: JSON.stringify(data || {}), signal}).catch(e => { throw Object.assign(e, {unsent: true}); });
+  if (!r.ok) throw Object.assign(new Error((await r.text()) || r.statusText), {unsent: true});
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';
   while (true) {
-    const {value, done} = await reader.read();
+    let timer;
+    const silent = idle && new Promise((_, no) => { timer = setTimeout(() => no(Object.assign(new Error('the stream went silent'), {stalled: true})), idle); });
+    let got;
+    try { got = await (silent ? Promise.race([reader.read(), silent]) : reader.read()); }
+    catch (e) { if (e.stalled) reader.cancel().catch(() => {}); throw e; }
+    finally { clearTimeout(timer); }
+    const {value, done} = got;
     pending += decoder.decode(value || new Uint8Array(), {stream: !done});
     let cut;
     while ((cut = pending.indexOf('\n\n')) >= 0) {
@@ -2972,6 +2981,21 @@ async function stopCell(i) {
          r.forced ? 'err' : 'ok');
 }
 
+/* A run stream that ended without its result leaves the server knowing how the cell stands. Ask it,
+   and keep asking, slower each time, while the cell is still running. */
+async function settleRun(path, id) {
+  for (let wait = 2000, misses = 0; ; wait = Math.min(wait * 2, 10000)) {
+    const s = await post('/nb/run/state', {path, id}).catch(e => { if (++misses > 3) throw e; return {running: true}; });
+    if (!s.running) {
+      if (!s.cell) throw new Error('the cell is no longer in the notebook');
+      const failed = (s.cell.outputs || []).some(o => o.output_type === 'error');
+      if (s.cell.execution_count == null && !failed) throw new Error('the run stream ended, and the kernel kept no record of this cell');
+      return {ok: !failed, cell: s.cell, inline: [], result: null};
+    }
+    await new Promise(res => setTimeout(res, wait));
+  }
+}
+
 /* Resolves to `{ok, error}`. The slide deck runs cells with the status line hidden under it, so it
    reads the outcome here and follows the outputs through `lee-cell-output`. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
@@ -3007,17 +3031,20 @@ async function runCell(i, advance) {
     $('#g-' + c.id).textContent = '[*]';
     status(`running cell ${i + 1}…`);
     try {
-      let r = null;
-      await postEvents('/nb/run/stream', {i, id: cellId, path: runPath || lee.tabKey || '', source: src}, (event, data) => {
-        const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-        if (!stillHere) return;
-        if (event === 'output') {
-          lee.cells[i].outputs = data.outputs || [];
-          renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
-        } else if (event === 'error') throw new Error(data.text || 'cell execution failed');
-        else if (event === 'done') r = data;
-      });
-      if (!r) throw new Error('cell execution ended without a result');
+      let r = null, failed = null;
+      const key = runPath || lee.tabKey || '';
+      try {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src}, (event, data) => {
+          if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
+          if (event === 'done') r = data;
+          const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
+          if (stillHere && event === 'output') {
+            lee.cells[i].outputs = data.outputs || [];
+            renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
+          }
+        }, null, 45000);
+      } catch (e) { if (e === failed || e.unsent) throw e; }
+      if (!r) r = await settleRun(key, cellId);
       const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
       if (!stillHere) {
         c.running = false; el?.classList.remove('running'); leeVars();
@@ -3033,7 +3060,7 @@ async function runCell(i, advance) {
       const duration = formatCellTime(elapsed);
       setCellTime(c, elapsed, false);
       setCellState(c, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${i + 1} ran in ${duration}` : `cell ${i + 1} failed after ${duration}`,
+      status(r.ok ? `cell ${i + 1} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${i + 1} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
       res = {ok: !!r.ok, error: r.ok ? '' : `cell ${i + 1} failed after ${duration}`};
     } catch (e) {
@@ -3312,7 +3339,11 @@ const PRESENT_MIN_ZOOM = .35;
 
 //: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
 const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
-const presentKey = () => `lee-present-text:${lee.path || lee.tabKey}`;
+const presentKey = (what = 'text') => `lee-present-${what}:${lee.path || lee.tabKey}`;
+//: `left`: text left and headings centred, the default; `center`: everything centred, as reveal's themes do.
+function presentAlign() {
+  try { return localStorage.getItem(presentKey('align')) === 'center' ? 'center' : 'left'; } catch { return 'left'; }
+}
 function presentStored() {
   try { const s = +localStorage.getItem(presentKey()); return s >= .5 && s <= 2.5 ? s : 1; } catch { return 1; }
 }
@@ -3466,11 +3497,19 @@ async function presentNotebook(start = '') {
     '<div class="lee-present-header"></div><div class="lee-present-footer"></div><div class="lee-present-overlay"></div>' +
     '<div class="lee-present-bar"><button type="button" data-smaller title="smaller text" aria-label="smaller text">A−</button>' +
     '<button type="button" data-bigger title="larger text" aria-label="larger text">A+</button>' +
+    '<button type="button" data-align title="centre all text" aria-label="centre all text">↔</button>' +
     '<button type="button" data-notes title="open the speaker notes in your browser">notes</button>' +
     '<button type="button" data-full title="fill the screen">⛶</button>' +
     '<button type="button" data-close title="stop presenting (escape)" aria-label="stop presenting">×</button></div>' +
     '<div class="lee-present-msg" role="status" hidden></div>';
-  const p = lee.present = {root, reveal: null, fsExit: 0, text: presentStored(), base: 0};
+  const p = lee.present = {root, reveal: null, fsExit: 0, text: presentStored(), base: 0, align: presentAlign()};
+  const aligned = () => {
+    root.dataset.align = p.align;
+    const b = $('[data-align]', root), left = p.align === 'left';
+    b.textContent = left ? '↔' : '⇤';
+    b.title = b.ariaLabel = left ? 'centre all text' : 'text left, headings centred';
+  };
+  aligned();
   closeInlinePopover(); document.body.appendChild(root); root.focus({preventScroll: true});
   const slidesEl = $('.slides', root), flat = [];
   deck.forEach((stack, h) => {
@@ -3500,6 +3539,11 @@ async function presentNotebook(start = '') {
   };
   $('[data-smaller]', root).onclick = () => resize(-1);
   $('[data-bigger]', root).onclick = () => resize(1);
+  $('[data-align]', root).onclick = () => {
+    p.align = p.align === 'left' ? 'center' : 'left';
+    try { localStorage.setItem(presentKey('align'), p.align); } catch {}
+    aligned(); layout(); presentSay(p.align === 'left' ? 'text left, headings centred' : 'all text centred');
+  };
   // a bar button left focused would take reveal's Space and arrows
   $('.lee-present-bar', root).addEventListener('click', () => root.focus({preventScroll: true}));
   root.addEventListener('lee-markdown-rendered', e => { $$('.lee-reply-actions', e.target).forEach(x => x.remove()); layout(); });
@@ -3622,9 +3666,8 @@ async function runRange(start, end, label) {
     const c = lee.cells[i];
     if (c.cell_type !== 'code' || !(c.source || '').trim()) continue;
     status(`running cell ${i + 1}…`);
-    await runCell(i, false);
-    if ((lee.cells[i].outputs || []).some(o => o.output_type === 'error'))
-      return status(`cell ${i + 1} raised — stopped there`, 'err');
+    const r = await runCell(i, false);
+    if (!r.ok) return status(`${r.error || `cell ${i + 1} failed`} — stopped there`, 'err');
   }
   status(`ran ${label}`, 'ok');
 }
