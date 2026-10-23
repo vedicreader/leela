@@ -885,6 +885,7 @@ document.documentElement.dataset.mode = resolved;
 document.documentElement.dataset.density = density;
 document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Script(src=_asset('lee-cm6.js'), defer=True),
+            Meta(name='lee-widgets-src', content=_asset('lee-widgets.js')),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
             Link(rel='stylesheet', href=_asset('lee-hl.css')),

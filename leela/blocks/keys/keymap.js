@@ -50,12 +50,16 @@ function eventContext(e) {
   // Before `#editor`, which holds the tab they are mounted in.
   if (inPath('.lee-vault-review')) return 'review';
   if (inPath('.lee-vault-docview')) return 'vault';
+  // Before `.lee-cell`, which holds it: a widget's sliders and fields take arrows and letters.
+  if (inPath('.lee-widget')) return 'widget';
   if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
   if (inPath('#vars, #varfilter, .lee-varspanel')) return 'vars';
   if (inPath('#filetree, .lee-files')) return 'files';
   return lee.scope || 'editor';
 }
 
+//: The element a key went to. `e.target` is retargeted to the host of an open shadow root, such as a widget's.
+const keyTarget = e => e.composedPath?.()[0] || e.target;
 function isTextEntry(el) {
   if (!(el instanceof Element)) return false;
   if (el.isContentEditable) return true;
@@ -98,7 +102,7 @@ const CM_EDIT = {copy_line_up: 'copyLineUp', copy_line_down: 'copyLineDown', del
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 //: RISE's chords are shifted letters: a cell in command mode takes them, and every editor or field types them.
 const SLIDE_ACTIONS = new Set(['slide_none', 'slide_slide', 'slide_subslide', 'slide_fragment', 'slide_skip', 'slide_notes']);
-const typesHere = e => lee.kind !== 'notebook' || isTextEntry(e.target) ||
+const typesHere = e => lee.kind !== 'notebook' || isTextEntry(keyTarget(e)) ||
   (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 //: Plain copy, cut and paste stay the browser's in a text field, and copy and cut also with text
@@ -107,7 +111,7 @@ const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.te
 const selTouches = (n, sel) => (n?.nodeType === 1 ? n : n?.parentElement)?.closest(sel);
 function nativeClipboard(e) {
   if (!['KeyC', 'KeyX', 'KeyV'].includes(e.code) || e.altKey || e.shiftKey || e.metaKey !== MAC || e.ctrlKey === MAC) return false;
-  if (isTextEntry(e.target)) return true;
+  if (isTextEntry(keyTarget(e))) return true;
   const s = getSelection(), own = '.lee-cell .cm-editor, #filetree, .lee-files';
   return e.code !== 'KeyV' && !!s && !s.isCollapsed && !!String(s).trim() &&
     !selTouches(s.anchorNode, own) && !selTouches(s.focusNode, own);
@@ -119,11 +123,13 @@ function findBinding(e, scope) {
   const allowed = (scope === 'term' || scope === 'web')
     ? k => k.scope === scope || k.action.startsWith('focus_') || TERM_ESCAPES.has(k.action)
     : k => k.scope === scope || k.scope === 'global';
-  const guard = !EDITING_SCOPES.has(scope) && isTextEntry(e.target);
+  const guard = !EDITING_SCOPES.has(scope) && isTextEntry(keyTarget(e));
   for (const k of lee.keys) {
     if (!allowed(k)) continue;
     const chord = k.chords.find(c => chordMatches(c, e));
     if (!chord || (guard && !firesInTextEntry(chord))) continue;
+    // A widget keeps every plain key, and its own undo; only chords that leave it reach Leela.
+    if (scope === 'widget' && (!firesInTextEntry(chord) || k.scope !== 'global' || DEFER_IN_TEXT[k.action])) continue;
     if (['cell_copy', 'cell_cut'].includes(k.action) && lee.kind !== 'notebook') continue;
     if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
     if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;

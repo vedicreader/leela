@@ -1,0 +1,8 @@
+@import '@lumino/widgets/style/widget.css';
+@import '@jupyter-widgets/controls/css/widgets-base.css';
+@import '@jupyter-widgets/html-manager/css/output.css';
+@import '@jupyterlab/rendermime/style/base.css';
+@import '@jupyterlab/outputarea/style/base.css';
+@import '@fortawesome/fontawesome-free/css/fontawesome.css';
+@import '@fortawesome/fontawesome-free/css/solid.css';
+@import '@fortawesome/fontawesome-free/css/v4-shims.css';

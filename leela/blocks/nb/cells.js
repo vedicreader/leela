@@ -298,7 +298,7 @@ function focusRenderedMarkdown(i) {
 }
 const MD_KEYS = {
   cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
-    return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(e.target) && !e.target.closest('button, a, summary'); },
+    return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(keyTarget(e)) && !e.target.closest('button, a, summary'); },
   cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown');
     return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel'); },
 };
@@ -309,6 +309,7 @@ function renderOutputs(c) {
     if (el._leeCodeFrame) cancelAnimationFrame(el._leeCodeFrame);
     for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
   });
+  widgetDetach(c);
   box.innerHTML = '';
   // A prompt cell's "output" is the answer, stored in the cell rather than in an nbformat output,
   // so it renders from its own fields.
@@ -327,10 +328,11 @@ function renderOutputs(c) {
       const usage = usageMeta(c.usage, '', c.usage?.model); if (usage) box.appendChild(usage);
     }
     // pictures and video the turn generated do arrive as nbformat outputs, and draw as any other
-    for (const o of (c.outputs || [])) box.appendChild(outputEl(o));
-    return;
+    (c.outputs || []).forEach((o, i) => box.appendChild(outputEl(o, c, i)));
+    return widgetSweep(c);
   }
-  for (const o of (c.outputs || [])) box.appendChild(outputEl(o));
+  (c.outputs || []).forEach((o, i) => box.appendChild(outputEl(o, c, i)));
+  widgetSweep(c);
 }
 
 const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
@@ -434,7 +436,7 @@ function plotlyFrame(d, fig) {
     `'<p style=&quot;font:13px sans-serif;color:#888;padding:1em&quot;>plotly.js could not load, so this chart cannot be drawn offline</p>'"><\/script>` +
     `<script>const f = ${json}; if (window.Plotly) Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, width: undefined, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
 }
-function outputEl(o) {
+function outputEl(o, c = null, i = 0) {
   const d = document.createElement('div');
   const tone = outputTone(o);
   d.className = `lee-out ${tone}`;
@@ -444,6 +446,7 @@ function outputEl(o) {
     return d;
   }
   const data = o.data || {};
+  if (data[WIDGET_MIME] != null) return widgetEl(o, c, i);
   if (data[PLOTLY_MIME] != null) return plotlyFrame(d, data[PLOTLY_MIME]);
   if (data['image/png']) {
     const i = document.createElement('img'), m = o.metadata?.['image/png'] || {};

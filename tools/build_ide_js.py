@@ -25,7 +25,7 @@ LAYERS = {
     'lee-core.js': [
         'static/js/core.js', 'blocks/keys/keymap.js', 'static/js/actions.js',
         'blocks/editor/markdown.js', 'blocks/editor/tabs.js', 'blocks/editor/mount.js',
-        'blocks/nb/cells.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js', 'blocks/nb/present.js',
+        'blocks/nb/cells.js', 'blocks/nb/widgets.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js', 'blocks/nb/present.js',
         'blocks/runs/runfile.js', 'blocks/runtime/kernel.js', 'blocks/keys/bind.js',
         'static/js/focus.js', 'blocks/nb/diffs.js', 'blocks/runtime/exec.js',
         'blocks/vars/vars.js'

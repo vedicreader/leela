@@ -100,6 +100,7 @@ dev = [
     "pillow>=10.0",
     "setuptools>=68.0",
     "pytest-timeout>=2.4.0",
+    "ipywidgets>=8.1",
 ]
 
 [tool.pytest.ini_options]

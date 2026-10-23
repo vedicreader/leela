@@ -1,0 +1,9 @@
+lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scratch folder outside the repository, so no node tooling enters it. Packages, exact: @jupyter-widgets/html-manager@1.0.15 @jupyter-widgets/base@6.0.12 @jupyter-widgets/controls@5.0.13 @jupyter-widgets/output@6.0.12 esbuild@0.28.1 (node 26.5.0, npm 11.17.0).
+
+    d=$(mktemp -d) && cp frontend/widgets.js frontend/widgets.css "$d" && cd "$d"
+    npm init -y && npm install --save-exact @jupyter-widgets/html-manager@1.0.15 @jupyter-widgets/base@6.0.12 @jupyter-widgets/controls@5.0.13 @jupyter-widgets/output@6.0.12 esbuild@0.28.1
+    node_modules/.bin/esbuild widgets.css --bundle --loader:.woff2=empty --loader:.woff=empty --loader:.ttf=empty --loader:.eot=empty --loader:.svg=empty --outfile=widgets.built.txt
+    node_modules/.bin/esbuild widgets.js --bundle --format=iife --global-name=LeeWidgets --minify --loader:.txt=text --loader:.svg=text --loader:.css=empty --external:@jupyter-widgets/base7 --external:@jupyter-widgets/controls7 --outfile=lee-widgets.js
+    cp lee-widgets.js <repo>/leela/vendor/ && cp node_modules/@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2 <repo>/leela/vendor/fonts/
+
+fonts/fa-solid-900.woff2 and fonts/LICENSE-Font-Awesome.txt: @fortawesome/fontawesome-free@5.15.4, the version html-manager 1.0.15 depends on.

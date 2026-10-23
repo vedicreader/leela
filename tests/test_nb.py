@@ -171,6 +171,41 @@ def test_a_cell_that_prints_nothing_does_not_wait_out_the_output_poll(tmp_path):
     assert took < .5, f'five quiet cells took {took:.2f}s; paying the poll would add 0.6s to that'
 
 
+def test_the_widget_socket_relays_both_ways_and_names_the_pages_own_messages(tmp_path):
+    """A page's widget update came back as an `echo_update` under the kernel's msg_id, so the page could not tell its own update from someone else's."""
+    pytest.importorskip('ipywidgets')
+    from urllib.parse import quote
+    src = ['from ipywidgets import IntSlider\ns = IntSlider(value=1); s', 's.value']
+    cells = [{'cell_type': 'code', 'id': f'c{i}', 'source': s, 'metadata': {}, 'outputs': [], 'execution_count': None} for i, s in enumerate(src)]
+    p = tmp_path/'w.ipynb'
+    p.write_text(json.dumps({'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable); ws.open(p)
+    def run(client, path, i):
+        with client.stream('POST', '/nb/run/stream', json={'i': i, 'id': f'c{i}', 'source': src[i], 'path': path}) as r:
+            return [json.loads(l[6:]) for l in r.iter_lines() if l.startswith('data: ')][-1]
+    def until(sock, want):
+        for _ in range(200):
+            if want(m := sock.receive_json()): return m
+        raise AssertionError(f'never heard what was wanted; last {m}')
+    try:
+        with TestClient(ide_app(ws)) as client:
+            path = client.get('/tab/state').json()['path']
+            with client.websocket_connect(f'/nb/comm/ws?path={quote(path)}') as sock:
+                assert sock.receive_json()['type'] == 'waiting'
+                run(client, path, 0)
+                until(sock, lambda m: m.get('type') == 'ready')
+                opened = until(sock, lambda m: m.get('msg_type') == 'comm_open' and m['content']['data']['state']['_model_name'] == 'IntSliderModel')
+                cid = opened['content']['comm_id']
+                sock.send_json({'op': 'send', 'id': 'page-1', 'comm_id': cid, 'data': {'method': 'update', 'state': {'value': 5}, 'buffer_paths': []}})
+                echo = until(sock, lambda m: m.get('msg_type') == 'comm_msg' and m['content']['data'].get('method') == 'echo_update')
+                sock.send_json({'op': 'info', 'id': 'q1', 'target_name': 'jupyter.widget'})
+                reply = until(sock, lambda m: m.get('type') == 'reply')
+                value = run(client, path, 1)['cell']['outputs'][0]['data']['text/plain']
+    finally: ws.shutdown_now()
+    assert echo['parent_header']['msg_id'] == 'page-1' and echo['content']['data']['state']['value'] == 5, echo
+    assert reply['id'] == 'q1' and cid in reply['content']['comms'], reply
+    assert value == '5', value
+
 UPDATING = '''from IPython.display import display, HTML
 import time
 h = display(HTML('<progress max="3" value="0"></progress>'), display_id=True)

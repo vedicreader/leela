@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio, time
+import asyncio, base64, json, time
 
 from fasthtml.common import HTMLResponse, StreamingResponse
 from fastcore.all import first
+from starlette.routing import WebSocketRoute
 
 from ... import errstr
 from pathlib import Path
@@ -17,7 +18,7 @@ from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash
 
-__all__ = ['CAPS', 'connect']
+__all__ = ['CAPS', 'CommRelay', 'connect']
 
 CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running')
 #: Seconds between SSE comments on a silent run stream, well inside the page's own silence limit.
@@ -47,6 +48,53 @@ def _rebase_notebook(tab, payload, docs):
     return []
 
 NAV = ('next', 'prev', 'left', 'right', 'up', 'down')
+#: Messages one page's widget socket holds while it falls behind; past it the page reloads widget state instead.
+COMM_BACKLOG = 2000
+#: Seconds between checks of which kernel a notebook's widget socket follows: a run starts one, a picker switches it.
+COMM_WATCH = .2
+
+class CommRelay:
+    "One page's widget socket: the kernel it follows, what waits to go to the page, and the page's own message ids."
+    def __init__(self): self.q, self.alias, self.k, self.dropped = asyncio.Queue(), {}, False, 0
+    def put(self, m):
+        if self.q.qsize() >= COMM_BACKLOG:
+            # Kernel messages go; what says the kernel's state, or answers a page's question, stays.
+            kept = [x for x in (self.q.get_nowait() for _ in range(self.q.qsize())) if 'header' not in x]
+            for x in [*kept, {'type': 'resync'}]: self.q.put_nowait(x)
+            if 'header' in m: return
+        self.q.put_nowait(m)
+    def follow(self, k):
+        "Follow `k`, telling the page: `waiting` with no kernel, `unsupported` without comms, else `ready`."
+        if k is self.k: return self.resync()
+        if self.k is not False and self.k is not None:
+            self.close()
+            self.put({'type': 'kernel_gone'})
+        self.k = k
+        if k is None: return self.put({'type': 'waiting'})
+        if not getattr(k, 'comms', False): return self.put({'type': 'unsupported'})
+        self.dropped = k.feed.dropped
+        k.subscribe(self.put)
+        self.put({'type': 'ready', 'kernel': f'{id(k):x}'})
+    def resync(self):
+        "Kunda drops the oldest messages for a slow subscriber; the page then reloads every widget's state."
+        if not getattr(self.k, 'comms', False) or self.k.feed.dropped == self.dropped: return
+        self.dropped = self.k.feed.dropped
+        self.put({'type': 'resync'})
+    def close(self):
+        if (off := getattr(self.k, 'unsubscribe', None)): off(self.put)
+    def send(self, d):
+        "Relay one comm message from the page, remembering the kernel's msg_id for it as the page's."
+        if not getattr(self.k, 'comms', False): raise RuntimeError('no kernel relays widget messages for this notebook')
+        mid = self.k.comm_send(d['comm_id'], d.get('data'), [base64.b64decode(b) for b in d.get('buffers') or ()],
+                               d.get('msg_type') or 'comm_msg', d.get('target_name'), d.get('metadata'))
+        self.alias[mid] = d.get('id') or mid
+        if len(self.alias) > COMM_BACKLOG: del self.alias[next(iter(self.alias))]
+    def frame(self, m):
+        "`m` as JSON for the page: buffers in base64, and a reply to the page's own message under the page's id."
+        if 'header' not in m: return json.dumps(m)
+        ph = m.get('parent_header') or {}
+        if (mine := self.alias.get(ph.get('msg_id'))): ph = {**ph, 'msg_id': mine}
+        return json.dumps({**m, 'parent_header': ph, 'buffers': [base64.b64encode(b).decode() for b in m.get('buffers') or ()]}, default=str)
 
 class Show:
     "The one presentation running: what its notes page shows, and every page listening for it."
@@ -79,7 +127,12 @@ def connect(app, ctx):
     def note_origin(tab, cell): ws.origins.cell(cell, (tab.path or tab.title) if tab else '')
     def dbg(method=None): return paused_kernel(dbgstate, method)
     def debug_ui(state): return notebook_state_ui(dbgstate, ctx.fs, state)
-    async def runtime_for(tab=None): return await ws.runtime(tab)
+    comm_relays = {}    # notebook key -> the `CommRelay` of every page holding a widget socket on it
+    async def runtime_for(tab=None):
+        "The tab's runtime, started if need be. Its widget sockets follow it before any cell runs, so no `comm_open` goes unheard."
+        k = await ws.runtime(tab)
+        for r in comm_relays.get(store.key(tab), ()): r.follow(k if getattr(k, 'alive', False) else None)
+        return k
     async def explain(k, err, scope='live'):
         "A kernel error with a `did you mean` appended, when a near-miss name exists."
         if not (err and 'is not defined' in err): return err
@@ -508,6 +561,51 @@ def connect(app, ctx):
         k, _task = item
         if not hasattr(k, 'stop'): return fail('this external runtime cannot be stopped safely')
         return await k.stop(timeout=2.0)
+    async def nb_comm_ws(sock):
+        "Relay one notebook kernel's widget traffic to a page and back. Several pages may hold one; none takes the run lock."
+        await sock.accept()
+        ref, r, asks = sock.query_params.get('path', ''), CommRelay(), set()
+        key = store.key(store.tab_for(ref)) or ref
+        comm_relays.setdefault(key, set()).add(r)
+        def kernel():
+            tab = store.tab_for(ref)
+            k = ws.runtime_peek(tab) if tab is not None and tab.kind == 'notebook' else None
+            return k if getattr(k, 'alive', False) else None
+        async def watch():
+            while True:
+                r.follow(kernel())
+                await asyncio.sleep(COMM_WATCH)
+        async def pump():
+            while True: await sock.send_text(r.frame(await r.q.get()))
+        async def ask(d):
+            try: r.put({'type': 'reply', 'id': d.get('id'), 'content': await r.k.comm_info(d.get('target_name'))})
+            except Exception as e: r.put({'type': 'error', 'id': d.get('id'), 'error': errstr(e)})
+        async def listen():
+            while True:
+                m = await sock.receive()
+                if m['type'] == 'websocket.disconnect': return
+                try: d = json.loads(m.get('text') or '{}')
+                except ValueError: d = None
+                if not isinstance(d, dict):
+                    r.put({'type': 'error', 'id': None, 'error': 'a widget frame is a JSON object'})
+                    continue
+                if d.get('op') == 'info':
+                    asks.add(t := asyncio.create_task(ask(d)))
+                    t.add_done_callback(asks.discard)
+                    continue
+                try: r.send(d)
+                except Exception as e: r.put({'type': 'error', 'id': d.get('id'), 'error': errstr(e)})
+        tasks = [asyncio.create_task(f()) for f in (watch, pump, listen)]
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in done: t.exception()      # a closed socket ends `pump`; that is how this ends, not a fault to log
+        finally:
+            r.close()
+            comm_relays.get(key, set()).discard(r)
+            for t in (*tasks, *asks): t.cancel()
+            try: await sock.close()
+            except Exception: pass
+    app.routes.append(WebSocketRoute('/nb/comm/ws', nb_comm_ws))
     show = Show()
     @rt('/present/notes')
     def present_notes():

@@ -20,10 +20,17 @@ from leela.workspace import Workspace               # noqa: E402
 from conftest import FakeKernel                     # noqa: E402
 
 def fake_kernels():
+    "Every `KernelPool` hands out a `FakeKernel` until the returned function is called; a later test in the worker gets real kernels again."
+    real = {n: KernelPool.__dict__.get(n) for n in ('get', 'peek', 'close_all')}   # None: inherited, so the override is deleted
     async def _get(self, key, **kw): return self.kernels.setdefault(key, FakeKernel())
     KernelPool.get = _get
     KernelPool.peek = lambda self, key: self.kernels.get(key)
     KernelPool.close_all = lambda self: asyncio.sleep(0)
+    def restore():
+        for n, f in real.items():
+            if f is None: delattr(KernelPool, n)
+            else: setattr(KernelPool, n, f)
+    return restore
 
 def fake_model(ws):
     """Point every job at the scripted backend, so no browser test builds a real engine."""
@@ -69,7 +76,7 @@ async def _started(srv, secs=20):
 
 async def _on_page(fn, roots=(), dpr=None, real_models=False):
     """Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."""
-    fake_kernels()
+    real_kernels = fake_kernels()
     ws = Workspace(roots=list(roots), approvals='auto')
     if not real_models: fake_model(ws)
     port = _free_port()
@@ -89,6 +96,7 @@ async def _on_page(fn, roots=(), dpr=None, real_models=False):
         #: server to exit released none of that, so each streaming test left about seven threads
         #: and a gigabyte behind and the run was OOM-killed a third of the way in.
         ws.shutdown_now()
+        real_kernels()
 
 def _run(fn, roots=(), dpr=None, real_models=False):
     return asyncio.run(_on_page(fn, roots, dpr, real_models))
@@ -582,7 +590,7 @@ def test_every_name_the_painted_page_reaches_for_resolves_in_the_shared_scope():
 
 def test_the_shell_boots_from_three_tags_in_order_and_paints_without_a_page_error():
     """Three tags, one scope."""
-    fake_kernels()
+    real_kernels = fake_kernels()
     ws = Workspace(roots=[], approvals='auto')
     port = _free_port()
     srv = _serve(ws, port)
@@ -609,7 +617,7 @@ def test_the_shell_boots_from_three_tags_in_order_and_paints_without_a_page_erro
                 await pg.wait_for_timeout(400)
             await b.close()
     try: asyncio.run(go())
-    finally: srv.should_exit = True
+    finally: srv.should_exit = True; real_kernels()
     assert bad == [], bad
     assert tags == list(IDE_BUNDLES), f'tag order {tags}, expected {list(IDE_BUNDLES)}'
     assert errors == [], f'the client reported {len(errors)} javascript problems: {errors[:5]}'

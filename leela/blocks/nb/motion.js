@@ -108,6 +108,7 @@ async function runCell(i, advance) {
     try {
       let r = null, failed = null;
       const key = runPath || lee.tabKey || '';
+      await widgetWatch(key, cellId);
       try {
         await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
