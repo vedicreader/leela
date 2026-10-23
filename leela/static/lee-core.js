@@ -850,8 +850,19 @@ function chordMatches(c, e) {
 const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
+//: Plain copy, cut and paste stay the browser's in a text field, and copy and cut also with text
+//: selected. Not a selection touching a cell's editor, which keeps one after it blurs, or the file
+//: tree, where shift-click marks rows and drags a text selection along.
+const selTouches = (n, sel) => (n?.nodeType === 1 ? n : n?.parentElement)?.closest(sel);
+function nativeClipboard(e) {
+  if (!['KeyC', 'KeyX', 'KeyV'].includes(e.code) || e.altKey || e.shiftKey || e.metaKey !== MAC || e.ctrlKey === MAC) return false;
+  if (isTextEntry(e.target)) return true;
+  const s = getSelection(), own = '.lee-cell .cm-editor, #filetree, .lee-files';
+  return e.code !== 'KeyV' && !!s && !s.isCollapsed && !!String(s).trim() &&
+    !selTouches(s.anchorNode, own) && !selTouches(s.focusNode, own);
+}
 function findBinding(e, scope) {
-  if (scope === 'overlay') return null;
+  if (scope === 'overlay' || nativeClipboard(e)) return null;
   // `term` and `web` hand the keyboard to something that is not Leela, keeping only the chords
   // that get you back out.
   const allowed = (scope === 'term' || scope === 'web')
@@ -2507,6 +2518,11 @@ function mountCell(c, i) {
    buffer, undo and save are the ones every other cell has. `data-md-edit` marks the editing ones. */
 const mdEditing = new Set();
 const mdSource = c => { const v = lee.editors.get(c.id); return v ? LeeCM.getDoc(v) : String(c.source || ''); };
+const nbBase = () => (lee.path || '').slice(0, (lee.path || '').lastIndexOf('/'));
+const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
+  const a = c.attachments?.[img.getAttribute('src').slice(11)], t = a && Object.keys(a)[0];
+  if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
+});
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
@@ -2514,7 +2530,8 @@ function paintMarkdownCell(el, c, now = false) {
   const src = mdSource(c);
   el.toggleAttribute('data-md-edit', mdEditing.has(c.id));
   host.classList.toggle('empty', !src.trim());
-  if (now) { host.dataset.markdown = src; flushMarkdown(host, true); } else renderMarkdown(host, src, true);
+  host.dataset.mdBase = nbBase();
+  if (now) { host.dataset.markdown = src; flushMarkdown(host, true, mdAttached(c)); } else renderMarkdown(host, src, true, mdAttached(c));
 }
 function editMarkdownCell(i) {
   const c = lee.cells[i], el = mdCellOf(i); if (c?.cell_type !== 'markdown' || !el) return;
@@ -2719,7 +2736,7 @@ function outputEl(o) {
   // After the rich types, as Jupyter ranks them: a FastHTML object sends its markup as `text/html` and
   // again as a fenced `text/markdown` block, and the fence is source, not the thing to draw.
   if (data['text/markdown'] != null) {
-    d.classList.add('lee-md-output'); renderMarkdown(d, data['text/markdown']); return d;
+    d.classList.add('lee-md-output'); d.dataset.mdBase = nbBase(); renderMarkdown(d, data['text/markdown']); return d;
   }
   outputText(d, data['text/plain'] || '');
   return d;

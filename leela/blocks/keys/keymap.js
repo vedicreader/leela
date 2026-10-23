@@ -90,8 +90,19 @@ function chordMatches(c, e) {
 const CELL_ON_CM_CHORD = new Set(['cell_copy', 'cell_cut', 'comment', 'cell_move_up', 'cell_move_down']);
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
+//: Plain copy, cut and paste stay the browser's in a text field, and copy and cut also with text
+//: selected. Not a selection touching a cell's editor, which keeps one after it blurs, or the file
+//: tree, where shift-click marks rows and drags a text selection along.
+const selTouches = (n, sel) => (n?.nodeType === 1 ? n : n?.parentElement)?.closest(sel);
+function nativeClipboard(e) {
+  if (!['KeyC', 'KeyX', 'KeyV'].includes(e.code) || e.altKey || e.shiftKey || e.metaKey !== MAC || e.ctrlKey === MAC) return false;
+  if (isTextEntry(e.target)) return true;
+  const s = getSelection(), own = '.lee-cell .cm-editor, #filetree, .lee-files';
+  return e.code !== 'KeyV' && !!s && !s.isCollapsed && !!String(s).trim() &&
+    !selTouches(s.anchorNode, own) && !selTouches(s.focusNode, own);
+}
 function findBinding(e, scope) {
-  if (scope === 'overlay') return null;
+  if (scope === 'overlay' || nativeClipboard(e)) return null;
   // `term` and `web` hand the keyboard to something that is not Leela, keeping only the chords
   // that get you back out.
   const allowed = (scope === 'term' || scope === 'web')
