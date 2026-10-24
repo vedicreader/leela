@@ -367,12 +367,13 @@ def connect(app, ctx):
         if (gone := by_id(nb, d)): return fail(gone, 409)
         i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
+        asked = nb[i]
         if 'source' in d: nb.take_sources([{'id': d.get('id'), 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
-        try: c = await off_loop(ws.ask_cell, nb, i)
+        try: c = await off_loop(ws.ask_cell, nb, asked)
         except Exception as e: return fail(e)
         owner_tab.dirty = True
         a = ctx.inline_ai
-        return {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
+        return {'ok': a.ready, 'i': place(nb, asked), 'id': asked.id, 'cell': c.dict(), 'note': a.note,
                 'problems': a.problems,
                 'cells': [x.dict() for x in nb.cells],
                 'activity': a.activity.rows(mark=a.activity._mark),
@@ -391,12 +392,13 @@ def connect(app, ctx):
         asked.running = True
         owner_tab.running += 1
         a = ctx.inline_ai
+        mine = {'cell_id': asked.id}
         async def events():
             import queue as _q
             out, done = _q.Queue(), object()
             def pump():
                 try:
-                    for chunk in ws.ask_cell_stream(nb, i): out.put(('chunk', chunk))
+                    for chunk in ws.ask_cell_stream(nb, asked): out.put(('chunk', chunk))
                 except Exception as e: out.put(('error', errstr(e)))
                 finally: out.put((done, None))
             task = asyncio.get_running_loop().run_in_executor(None, pump)
@@ -409,19 +411,19 @@ def connect(app, ctx):
                     pending = ctx.pending_approval
                     if pending is not None and pending.id != approval_id:
                         approval_id = pending.id
-                        proposal = {**pending.dict(), 'schemas': tool_schemas(a)}
+                        proposal = {**pending.dict(), 'schemas': tool_schemas(a), **mine}
                         yield sse('approval', proposal)
-                    for row in changed_activity(): yield sse('activity', row)
+                    for row in changed_activity(): yield sse('activity', {**row, **mine})
                     if await req.is_disconnected():
                         a.cancel()
                         return
                     if kind is None: continue
                     if kind is done:
-                        for row in changed_activity(): yield sse('activity', row)
+                        for row in changed_activity(): yield sse('activity', {**row, **mine})
                         break
-                    yield sse(kind, {'text': value})
+                    yield sse(kind, {'text': value, 'id': asked.id, **mine})
                 await task
-                yield sse('done', {'ok': a.ready, 'i': i, 'cell': asked.dict(), 'note': a.note,
+                yield sse('done', {'ok': a.ready, 'i': place(nb, asked), 'id': asked.id, **mine, 'cell': asked.dict(), 'note': a.note,
                                     'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
                                     'problems': a.problems,
                                     'cells': [x.dict() for x in nb.cells],

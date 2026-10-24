@@ -1,22 +1,20 @@
-/* Running a prompt cell. The answer arrives in the cell rather than the pane below, so it saves
- * with the notebook and reads in order.
- *
- * The tab is deliberately not re-mounted afterwards, even though the assistant's tools may have
- * edited files: `/tab/state` reloads the notebook from disk, which would throw away the answer
- * that has not been saved yet. Files it changed are reported instead. */
+/* A prompt cell answers into the cell, so the reply saves with the notebook. The tab is not re-mounted afterwards:
+ * `/tab/state` would reload from disk and drop an answer not yet saved. */
 async function askCell(i, src, el) {
-  const c = lee.cells[i], runPath = lee.path, cellId = c.id;
-  const notice = $('#model-' + c.id);
+  const c = lee.cells[i], runKey = lee.tabKey, cellId = c.id;
+  // The cell that was asked, wherever an insert, move or delete has put it; null once its tab is not shown.
+  const cur = () => lee.tabKey === runKey ? lee.cells.find(x => x.id === cellId) : null;
+  const notice = $('#model-' + cellId);
   const began = performance.now();
   let clock = null;
   el?.classList.add('running');
-  $('#g-' + c.id).textContent = '…';
+  $('#g-' + cellId).textContent = '…';
   if (notice) {
     notice.hidden = false;
     const tick = () => {
       const elapsed = performance.now() - began;
       const seconds = Math.floor(elapsed / 1000);
-      setCellTime(c, elapsed, true);
+      const at = cur(); if (at) setCellTime(at, elapsed, true);
       const time = notice.querySelector('.lee-running-time');
       if (time) time.textContent = seconds < 2 ? ' · starting' : ` · ${seconds}s elapsed`;
     };
@@ -26,20 +24,25 @@ async function askCell(i, src, el) {
   status('model running…');
   try {
     let r = null, raw = '';
-    const out = $('#out-' + c.id), seen = new Map();
-    if (out) out.innerHTML = '<div class="lee-agent-steps lee-cell-agent-steps"></div><div class="lee-reply"></div>';
-    // Held so Stop can end the turn here as well as asking the agent to stop: the reply stream is
-    // the only thing keeping the cell marked running once the agent has been told.
+    const seen = new Map();
+    // An insert or move re-renders the cell, so its reply area is made again when it has gone.
+    const area = (sel, fresh = false) => {
+      const out = $('#out-' + cellId); if (!out) return null;
+      if (fresh || !out.querySelector('.lee-reply')) seen.clear(), out.innerHTML = '<div class="lee-agent-steps lee-cell-agent-steps"></div><div class="lee-reply"></div>';
+      return out.querySelector(sel);
+    };
+    area('.lee-reply', true);
+    // Held so Stop can end the turn here as well as asking the agent to stop.
     lee.promptRuns = lee.promptRuns || new Map();
     const abort = new AbortController();
     lee.promptRuns.set(cellId, abort);
-    await postEvents('/nb/ask/stream', {i, id: cellId, path: lee.tabKey || '', source: src, seq: nextSeq()}, (event, data) => {
+    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq()}, (event, data) => {
+      const shown = cur();
       if (event === 'chunk') {
         raw += data.text || '';
-        const reply = $('#out-' + c.id + ' .lee-reply');
-        renderMarkdown(reply, raw);
+        const reply = shown && area('.lee-reply'); if (reply) renderMarkdown(reply, raw);
       } else if (event === 'activity') {
-        const steps = $('#out-' + c.id + ' .lee-agent-steps');
+        const steps = shown && area('.lee-agent-steps');
         let row = seen.get(data.id);
         if (!row && steps) { row = document.createElement('details'); steps.appendChild(row); seen.set(data.id, row); }
         if (row) renderAgentStep(row, data);
@@ -48,9 +51,10 @@ async function askCell(i, src, el) {
       else if (event === 'done') r = data;
     }, abort.signal);
     if (!r) throw new Error('the model stream ended without a result');
-    if (lee.path !== runPath || lee.cells[i]?.id !== cellId) { leeVars(); return; }
-    Object.assign(c, r.cell);
-    renderOutputs(c);
+    const at = cur();
+    if (!at) { leeVars(); return; }
+    Object.assign(at, r.cell);
+    renderOutputs(at);
     for (const e of (r.edits || []))
       agentLog(`<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +
                `<div class="lee-diff inline">${diffHtml(e.rows)}</div>`);
@@ -63,17 +67,17 @@ async function askCell(i, src, el) {
     markDirty();
     leeVars();
   } catch (e) {
-    if (e?.name === 'AbortError') status(`prompt cell ${i + 1} stopped`, 'ok');
+    if (e?.name === 'AbortError') { const n = lee.cells.indexOf(cur()); status(n < 0 ? 'prompt cell stopped' : `prompt cell ${n + 1} stopped`, 'ok'); }
     else status(String(e.message || e), 'err');
   }
   finally {
     lee.promptRuns?.delete(cellId);
     if (clock) clearInterval(clock);
-    if (c.execution_ms == null) c.execution_ms = performance.now() - began;
-    setCellTime(c, c.execution_ms, false);
+    const at = cur() || c;
+    if (at.execution_ms == null) at.execution_ms = performance.now() - began;
+    if (cur()) setCellTime(at, at.execution_ms, false);
     if (notice) notice.hidden = true;
   }
-  $('#g-' + c.id).textContent = '✦';
+  if (cur()) $('#g-' + cellId).textContent = '✦';
   el?.classList.remove('running');
 }
-

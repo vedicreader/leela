@@ -84,9 +84,12 @@ def connect(app, ctx):
 
     @rt('/tab/state')
     def tab_state(path: str = ''):
-        "Everything needed to mount the active tab, or an open tab addressed by absolute path."
-        want = str(Path(path).expanduser().resolve()) if path else ''
-        t = first(session.tabs, lambda x: x.path == want) if path else ctx.tab
+        "Everything needed to mount the active tab, or an open tab addressed by absolute path or, with none, by title."
+        t = first(session.tabs, lambda x: docs.key(x) == path) if path else ctx.tab
+        if t is None and path:
+            try: want = str(Path(path).expanduser().resolve())
+            except (RuntimeError, OSError): want = ''
+            t = first(session.tabs, lambda x: x.path == want)
         if t is None: return {'kind': None}
         held, stale = _held(t)
         if t.kind == 'notebook':

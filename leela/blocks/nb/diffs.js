@@ -52,7 +52,7 @@ async function leeLocalHistory(path = lee.path) {
       const out = await post('/history/restore', {id: back.dataset.restore});
       m.remove();
       await post('/tab/reload', {path: out.path});
-      await mountTab();
+      await mountTab(out.path);
       status(`${out.path.split('/').pop()} restored · ${out.label || 'from local history'}`, 'ok');
     } catch (err) { back.disabled = false; status(String(err.message || err), 'err'); }
   });

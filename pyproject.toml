@@ -107,6 +107,7 @@ dev = [
 testpaths = ["tests"]
 addopts = "-m 'not slow' -n auto --dist loadgroup"
 timeout = 300
+tmp_path_retention_policy = "failed"   # the controller's end-of-run cleanup of kept dirs stalled the run
 markers = ["slow: drives a browser, starts a kernel, or loads a model", "no_claude: runs as a machine without Claude Code, so `_claude_on_path` steps aside"]
 
 [tool.uv]

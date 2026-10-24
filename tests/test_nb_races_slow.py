@@ -140,6 +140,62 @@ def test_saving_one_scratch_notebook_keeps_another_scratch_notebooks_unsaved_tex
     assert page == 'kept = 1' and held == 'kept = 1', (page, held)
 
 @BROWSERS
+def test_a_prompt_answered_after_an_insert_above_it_fills_its_own_cell(tmp_path, browser, monkeypatch):
+    "The reply was applied to the cell at the index the ask began at, or dropped once that cell had moved."
+    from tests.fakemodel import Step, install
+    monkeypatch.setattr(web, 'fake_model', lambda ws: install(ws, [Step(text='four')], token_delay=0))
+    a = tmp_path/'p.ipynb'
+    a.write_text(json.dumps({'cells': [
+        {'cell_type': 'markdown', 'source': '# A', 'id': 'h', 'metadata': {}},
+        {'cell_type': 'markdown', 'source': 'why?', 'id': 'p', 'metadata': {'leela': {'kind': 'prompt'}}}],
+        'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await _open(pg, a)
+        routed, seen, release = _holding(pg, '**/nb/ask/stream', response=True); await routed
+        await pg.evaluate('() => { window.__ran = runCell(1); }')
+        await seen.wait()
+        await pg.evaluate("() => { focusCell(0); leeAct('cell_above'); }")
+        await pg.wait_for_function('lee.cells.length === 3')
+        await pg.evaluate('status("")')
+        release.set(); await pg.evaluate('window.__ran')
+        await pg.wait_for_function("lee.cells.find(c => c.id === 'p')?.reply", timeout=5000)
+        await pg.wait_for_function("document.querySelector('#out-p .lee-reply')?.textContent.includes('four')", timeout=5000)
+        new = await pg.evaluate('lee.cells[0].id')
+        return await pg.evaluate("id => [lee.cells.find(c => c.id === 'p').reply, lee.cells.find(c => c.id === id).reply || '', document.querySelector('#g-p').textContent, document.querySelector('#out-p .lee-reply')?.textContent || '', document.querySelector('#status')?.textContent || '']", new)
+    reply, other, glyph, shown, said = web._run(go, roots=[tmp_path], browser=browser)
+    assert 'four' in reply and not other and 'four' in shown and glyph != '…', (reply, other, glyph, shown)
+    assert said.strip(), 'the answer was dropped as the cell had moved, so nothing said it had arrived'
+
+@BROWSERS
+def test_a_tab_clicked_after_the_strip_is_refreshed_still_selects_it(tmp_path, browser):
+    "`refreshTabStrip` swapped the bar in without htmx knowing it, so its tabs had no `hx-post` behind them."
+    a, b = _pair(tmp_path)
+    async def go(pg):
+        await _open(pg, a); await _open(pg, b)
+        await pg.evaluate('refreshTabStrip()')
+        async with pg.expect_response('**/tab/select*', timeout=5000): await pg.click(f'.lee-tab[title="{a}"]')
+        await pg.wait_for_function('p => document.querySelector(".lee-tab.active")?.title === p', arg=str(a), timeout=5000)
+        return True
+    assert web._run(go, roots=[tmp_path], browser=browser)
+
+@BROWSERS
+def test_a_remount_and_an_exec_from_one_window_stay_on_its_own_tab_while_another_window_moves_the_server(tmp_path, browser):
+    "`mountTab()` and `/exec` followed the server's active tab, which the second window had moved to `b`."
+    a, b = _pair(tmp_path)
+    async def go(pg):
+        await _open(pg, a)
+        other = await pg.context.browser.new_page(); await other.goto(pg.url, wait_until='networkidle')
+        await other.wait_for_function('window.lee && lee.keys.length'); await _open(other, b)
+        await pg.evaluate('remountEditors()')
+        await pg.wait_for_timeout(500)
+        key = await pg.evaluate('lee.tabKey')
+        await pg.evaluate("() => LeeCM.setDoc(lee.editors.get('exec'), 'x')")
+        async with pg.expect_request('**/exec') as req: await pg.evaluate('runExec()')
+        return key, (await req.value).post_data_json['path'], await pg.evaluate('lee.cells.map(c => c.id)')
+    key, sent, ids = web._run(go, roots=[tmp_path], browser=browser)
+    assert (key, sent, ids) == (str(a), str(a), ['h', 'x', 'y']), (key, sent, ids)
+
+@BROWSERS
 def test_a_diff_and_a_disk_watch_from_one_window_act_on_its_own_notebook_while_another_window_shows_another(tmp_path, browser):
     "`/diff` and `/tab/watch` meant the tab active on the server, which the second window had moved to `b`."
     a, b = _pair(tmp_path)

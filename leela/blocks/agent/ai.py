@@ -980,7 +980,8 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
     def _add(md, meta):
         t = get_target()
         if not t: return None
-        nb, i = t
+        nb, i = t[0], at_cell(*t)
+        if i < 0: return None
         c = Cell(source=md, cell_type='markdown')
         c.approval = meta
         nb.insert(min(i + 1 + _n_approvals(nb, i), len(nb)), c)
@@ -1005,6 +1006,10 @@ def _irreversible(action):
     if action.tool == 'run_shell': return f"run_shell ({action.args.get('command', 'command')})"
     if action.tool in GIT_WRITE_TOOLS: return action.tool
     return None
+
+def at_cell(nb, ref):
+    "Where `ref` is in `nb` now: an index as is, a Cell by identity, -1 once it has gone."
+    return ref if isinstance(ref, int) else next((j for j, c in enumerate(nb.cells) if c is ref), -1)
 
 def _n_approvals(nb, i):
     "How many approval cells already sit below the prompt cell at `i`."

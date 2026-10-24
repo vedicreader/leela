@@ -49,7 +49,7 @@ async function runExec() {
   lee.execBusy = true; status('running exec…');
   const log = $('#execlog');
   try {
-    const r = await post('/exec', {code, scope: lee.execScope, frame_id: lee.debugState?.frame_id});
+    const r = await post('/exec', {code, path: lee.tabKey || '', scope: lee.execScope, frame_id: lee.debugState?.frame_id});
     const line = document.createElement('div');
     line.className = 'lee-runline' + (r.ok ? '' : ' err');
     line.innerHTML = `<span class="code">${esc(code)}</span><span class="arrow">→</span>` +

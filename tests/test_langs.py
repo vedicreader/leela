@@ -120,6 +120,46 @@ def test_a_closed_server_forgets_its_documents_and_answers_waiting_requests(tmp_
     assert s._versions == {} and s._pending == {}
     assert 'error' in waiting.get_nowait()
 
+FAKE_LSP = '''import sys, json
+def read():
+    n = 0
+    while True:
+        l = sys.stdin.buffer.readline()
+        if not l: sys.exit()
+        if l in (b'\\r\\n', b'\\n'): break
+        if l.lower().startswith(b'content-length'): n = int(l.split(b':')[1])
+    return json.loads(sys.stdin.buffer.read(n))
+while True:
+    m = read()
+    if 'id' in m and 'method' in m:
+        b = json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': {}}).encode()
+        sys.stdout.buffer.write(b'Content-Length: %d\\r\\n\\r\\n' % len(b) + b); sys.stdout.buffer.flush()
+    if m.get('method') == 'exit': sys.exit()
+'''
+
+def test_a_service_held_across_shutdown_cannot_start_a_server_nothing_will_stop(tmp_path, monkeypatch):
+    "A request thread already holding the service called `start` after `shutdown` had closed it, and the process it spawned outlived the app."
+    import asyncio, sys
+    from leela.blocks.lsp import lsp as lspmod
+    (tmp_path/'fake_lsp.py').write_text(FAKE_LSP)
+    monkeypatch.setattr(lspmod, 'find_server', lambda lang: ('fake', [sys.executable, str(tmp_path/'fake_lsp.py')]))
+    ws, a, _ = _two_repos(tmp_path)
+    ws.open(a/'main.py'); held = ws.lsp_for('python')
+    try:
+        assert held.available
+        asyncio.run(ws.shutdown())
+        assert not held.start() and not held.alive, 'a server was started after shutdown'
+    finally: held.close()
+
+def test_shutdown_now_from_inside_a_running_loop_still_tears_the_workspace_down(tmp_path):
+    "`asyncio.run` refused inside a loop and the error was swallowed, so nothing the workspace started was ever stopped."
+    import asyncio
+    ws, a, _ = _two_repos(tmp_path)
+    ws.open(a/'main.py'); sa = ws.lsp_for('python')
+    async def go(): ws.shutdown_now(); return ws._down
+    assert asyncio.run(go()), 'the teardown never ran'
+    assert sa.retired
+
 def test_after_shutdown_no_server_is_started_and_the_reaper_stops(tmp_path):
     import asyncio
     ws, a, _ = _two_repos(tmp_path)

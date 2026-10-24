@@ -404,8 +404,12 @@ async function duplicateEntries() {
 /* The server closed tabs we did not ask it to close. The strip is index-addressed, so a stale one
    makes the next click land on a different document. */
 async function refreshTabStrip() {
-  const bar = $('#tabbar'); if (!bar) return;
-  try { bar.outerHTML = await (await fetch('/tab/bar')).text(); } catch (_) {}
+  try {
+    const r = await fetch('/tab/bar'); if (!r.ok) return;
+    const fresh = new DOMParser().parseFromString(await r.text(), 'text/html').querySelector('#tabbar'), bar = $('#tabbar');
+    if (!fresh || !bar) return;
+    bar.replaceWith(fresh); htmx.process(fresh);
+  } catch (_) {}
 }
 async function removeRoot() {
   const sel = treeSel();

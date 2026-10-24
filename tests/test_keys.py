@@ -104,3 +104,12 @@ def test_a_keymap_written_before_a_default_moved_does_not_collide_after_it(tmp_p
     ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
     assert notes == []
     assert {k.action: k.key for k in ks}['add_root'] == 'O'
+
+
+def test_an_unbound_footer_action_leaves_the_footer_and_the_page_still_renders(monkeypatch):
+    "Unbinding `help` in keys.json made every page a 500: the footer read the first chord of an action with none."
+    from fastcore.xml import to_xml
+    import leela.app as A, leela.core.keys as K
+    monkeypatch.setattr(K, 'KEYS', apply_overrides(DEFAULTS, {'help': ''}, notes=[]))
+    html = to_xml(A._footer())
+    assert 'command palette' in html and '<span>keys</span>' not in html

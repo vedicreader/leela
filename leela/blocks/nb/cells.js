@@ -707,7 +707,7 @@ async function pickNotebookLanguage() {
     try {
       const d = await post('/nb/language', {path: lee.tabKey || '', lang: el.dataset.lang});
       status(`this notebook is ${d.lang} now`, 'ok');
-      await mountTab();
+      await mountTab(lee.tabKey);
     } catch (e) { status(String(e.message || e), 'err'); }
   });
 }

@@ -3925,7 +3925,7 @@ async function takeDiskVersion(path) {
    the rest read from disk when they are next shown. Returns the paths it would not touch. */
 async function reloadRestored(paths) {
   const d = await forgetDiskVersions(paths);
-  if ((d.paths || []).includes(lee.path)) await mountTab();
+  if ((d.paths || []).includes(lee.path)) await mountTab(lee.path);
   return d.held || [];
 }
 async function leeReloadFromDisk() {

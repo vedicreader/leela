@@ -399,6 +399,54 @@ def test_an_edit_lands_on_the_notebook_and_the_cells_it_names_whichever_tab_is_a
         assert client.post('/nb/edit', json={'op': 'delete', 'id': 'x', 'path': str(a)}).status_code == 409, 'a cell that has gone is refused, not replaced by its neighbour'
         assert client.post('/nb/ask/stream', json={'i': 0, 'id': 'gone', 'path': str(a), 'source': 'q'}).status_code == 409
 
+def test_a_prompt_cell_answers_into_its_own_cell_when_an_insert_lands_above_it_mid_stream(tmp_path):
+    "The reply was written by the index the ask began at, so an insert above put it in the cell that moved into that place."
+    from tests.fakemodel import Step, install
+    a, b, ws = _two(tmp_path)
+    install(ws, [Step(text='one two three four five six')], token_delay=0)
+    real = ws.ask_cell_stream
+    def racing(nb, cell):
+        for n, chunk in enumerate(real(nb, cell)):
+            if n == 1: nb.insert(0, Cell(source=''))
+            yield chunk
+    ws.ask_cell_stream = racing
+    with TestClient(ide_app(ws)) as client:
+        for p in (a, b): client.get('/tab/state', params={'path': str(p)})
+        asked = client.post('/nb/edit', json={'op': 'insert', 'i': 3, 'cell_type': 'prompt', 'source': 'why?', 'path': str(a)}).json()['cells'][3]['id']
+        events, name = [], None
+        with client.stream('POST', '/nb/ask/stream', json={'i': 3, 'id': asked, 'path': str(a), 'source': 'why?'}) as r:
+            for line in r.iter_lines():
+                if line.startswith('event: '): name = line[7:]
+                elif line.startswith('data: '):
+                    events.append((name, json.loads(line[6:])))
+        done = next(d for n, d in events if n == 'done')
+        assert done['i'] == 4 and done['id'] == asked and done['cells'][4]['id'] == asked, done
+        assert all(d.get('id') == asked or d.get('cell_id') == asked for n, d in events if n in ('chunk', 'done')), events
+        cells = client.get('/tab/state', params={'path': str(a)}).json()['cells']
+        assert cells[4]['id'] == asked and 'six' in cells[4]['reply'], cells
+        assert not any(c.get('reply') for c in cells[:4]), 'the reply landed in a neighbour'
+
+def test_exec_and_run_code_run_in_the_tab_they_name_not_the_one_active_on_the_server(tmp_path):
+    "A second window moves the server's active tab, and these ran in whichever kernel that tab owned."
+    from conftest import FakeKernel
+    a, b, ws = _two(tmp_path)
+    seen = []
+    async def runtime(tab=None): seen.append(tab and tab.path); return FakeKernel()
+    ws.runtime = runtime
+    with TestClient(ide_app(ws)) as client:
+        for p in (a, b): client.get('/tab/state', params={'path': str(p)})
+        assert ws.tab.path == str(b)
+        client.post('/exec', json={'code': 'x', 'path': str(a)}); client.post('/run/code', json={'code': 'x', 'path': str(a)})
+        assert seen == [str(a), str(a)], seen
+        client.post('/exec', json={'code': 'x'})
+        assert seen[-1] is None, 'a caller naming no tab keeps the active-tab fallback'
+        n = len(seen)
+        for route in ('/exec', '/run/code', '/run/file'): assert not client.post(route, json={'code': 'x', 'path': str(tmp_path/'shut.ipynb')}).json().get('ok'), route
+        assert len(seen) == n, 'a tab that is not open ran in another tab\'s kernel'
+        ws.new_scratch('notebook')
+        assert client.get('/tab/state', params={'path': ws.tab.title}).json()['title'] == ws.tab.title
+        assert client.get('/tab/state', params={'path': str(a)}).json()['path'] == str(a)
+
 def test_the_newest_source_write_wins_and_every_mutation_moves_the_version(tmp_path):
     "Two buffer posts for one cell that arrive out of order left the older text, and `/tabs/save-all` wrote it."
     a, b, ws = _two(tmp_path)

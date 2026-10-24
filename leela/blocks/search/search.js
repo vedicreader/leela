@@ -725,7 +725,7 @@ async function renameSymbol() {
     const summary=preview.files.map(f=>`${f.path.split('/').pop()} · ${f.edits} edit${f.edits===1?'':'s'}`).join('\n');
     if(!await confirmDialog('Rename across workspace',`${name} → ${next}\n\n${summary}`,'rename'))return;
     await post('/lsp/rename',{path:lee.path,text:LeeCM.getDoc(view),line:line.number-1,character,newName:next,apply:true});
-    await post('/tab/reload',{path:lee.path});await mountTab();refreshFileTree(undefined,false);status(`renamed ${name} to ${next}`,'ok');
+    const at=lee.path;await post('/tab/reload',{path:at});await mountTab(at);refreshFileTree(undefined,false);status(`renamed ${name} to ${next}`,'ok');
   }catch(e){status(e.message||String(e),'err');}
 }
 

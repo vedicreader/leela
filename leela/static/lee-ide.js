@@ -4550,7 +4550,7 @@ async function renameSymbol() {
     const summary=preview.files.map(f=>`${f.path.split('/').pop()} · ${f.edits} edit${f.edits===1?'':'s'}`).join('\n');
     if(!await confirmDialog('Rename across workspace',`${name} → ${next}\n\n${summary}`,'rename'))return;
     await post('/lsp/rename',{path:lee.path,text:LeeCM.getDoc(view),line:line.number-1,character,newName:next,apply:true});
-    await post('/tab/reload',{path:lee.path});await mountTab();refreshFileTree(undefined,false);status(`renamed ${name} to ${next}`,'ok');
+    const at=lee.path;await post('/tab/reload',{path:at});await mountTab(at);refreshFileTree(undefined,false);status(`renamed ${name} to ${next}`,'ok');
   }catch(e){status(e.message||String(e),'err');}
 }
 
@@ -5494,8 +5494,12 @@ async function duplicateEntries() {
 /* The server closed tabs we did not ask it to close. The strip is index-addressed, so a stale one
    makes the next click land on a different document. */
 async function refreshTabStrip() {
-  const bar = $('#tabbar'); if (!bar) return;
-  try { bar.outerHTML = await (await fetch('/tab/bar')).text(); } catch (_) {}
+  try {
+    const r = await fetch('/tab/bar'); if (!r.ok) return;
+    const fresh = new DOMParser().parseFromString(await r.text(), 'text/html').querySelector('#tabbar'), bar = $('#tabbar');
+    if (!fresh || !bar) return;
+    bar.replaceWith(fresh); htmx.process(fresh);
+  } catch (_) {}
 }
 async function removeRoot() {
   const sel = treeSel();

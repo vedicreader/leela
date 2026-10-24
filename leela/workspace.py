@@ -8,7 +8,7 @@ from fastcore.all import AttrDict, Path, L, atomic_save, first, ifnone
 
 from . import Dictable, leela_cfg
 from .agent.agent import Completer
-from .blocks.agent.ai import Assistant, notebook_approvals
+from .blocks.agent.ai import Assistant, at_cell, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
 from .blocks.memory.memory import PrivacyBlocked, pii_gate, withheld_why
@@ -424,7 +424,8 @@ class Workspace:
         "Write a compaction summary into the notebook the conversation is happening in."
         t = self._approval_target
         if not t: return
-        nb, i = t
+        nb, i = t[0], at_cell(*t)
+        if i < 0: return
         from .blocks.nb.nb import Cell
         c = Cell(source=f'**🗜 context compacted**\n\n{summary}', cell_type='markdown')
         c.approval = {'kind': 'compaction'}
@@ -683,13 +684,18 @@ class Workspace:
                 'shell escapes, so use only what the notebook has already imported. Call '
                 f'`run_python` with just the transformation asked for, binding it to `{name}`. '
                 'Leela hands that name to the user once you have bound it. Answer briefly.')
-    def ask_cell(self, nb, i):
-        "Answer the prompt cell at `i`, with the notebook above it as its context."
-        c = nb[i]
+    def _asked(self, nb, cell):
+        "`(cell, index)` for a prompt cell given as a Cell, or as its index."
+        c = nb[cell] if isinstance(cell, int) else cell
+        if (i := at_cell(nb, c)) < 0: raise ValueError('that cell is no longer in the notebook')
         if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
+        return c, i
+    def ask_cell(self, nb, cell):
+        "Answer the prompt `cell` (a Cell, or its index), with the notebook above it as its context."
+        c, i = self._asked(nb, cell)
         a = self.inline_ai
         png, screen, _ = self.take_screen()
-        self._approval_target = (nb, i)
+        self._approval_target = target = (nb, c)
         started = time.perf_counter()
         try:
             text = a.ask_with(c.source, context=self._agent_context(nb, i, c.source, a),
@@ -700,7 +706,7 @@ class Workspace:
                 if not retry or attempt == 2: break
                 text += '\n\n' + a.ask(retry)
         finally:
-            self._approval_target = None
+            if self._approval_target is target: self._approval_target = None
             c.execution_ms = (time.perf_counter() - started) * 1000
         trail = a.turn_md()
         c.reply = f'{text}\n\n{trail}' if trail else text
@@ -853,15 +859,14 @@ class Workspace:
         kw = {'reasoning_effort': reasoning} if reasoning and not ai.model.local else {}
         return ai.stream_with(prompt, context=context, screen=screen, image=media or None,
                               context_path=context_path, on_registered=on_registered, **kw)
-    def ask_cell_stream(self, nb, i):
-        "Answer the prompt cell at `i`, filling the cell in as the answer arrives."
-        c = nb[i]
-        if not c.is_prompt: raise ValueError(f'cell {i} is a {c.cell_type} cell, not a prompt')
+    def ask_cell_stream(self, nb, cell):
+        "Answer the prompt `cell` (a Cell, or its index), filling it in as the answer arrives."
+        c, i = self._asked(nb, cell)
         a = self.inline_ai
         png, screen, _ = self.take_screen()
         c.reply, c.calls, c.usage, c.outputs = '', [], {}, []
         nb.dirty = True
-        self._approval_target = (nb, i)
+        self._approval_target = target = (nb, c)
         started = time.perf_counter()
         try:
             context = self._agent_context(nb, i, c.source, a)
@@ -880,7 +885,7 @@ class Workspace:
                 yield sep
                 prompts.append(a.stream(retry))
         finally:
-            self._approval_target = None
+            if self._approval_target is target: self._approval_target = None
             c.execution_ms = (time.perf_counter() - started) * 1000
             if (trail := a.turn_md()): c.reply += f'\n\n{trail}'
             c.calls = a.activity.rows(mark=a.activity._mark)
@@ -1116,7 +1121,7 @@ class Workspace:
                 svc = LspService(None if self._down else root, lang)
                 if not self._down: self._lsps[key] = svc; self._start_reaper()
             if touch: svc.used = time.monotonic()
-        for s in stale: s.close()
+        for s in stale: s.retire()
         return svc
     def _stale_lsps(self, now, keep=None):
         "Take out every server that has gone unused for `LSP_IDLE`; the caller holds `_lsp_lock` and closes them after."
@@ -1125,7 +1130,7 @@ class Workspace:
     def reap_lsps(self, now=None):
         "Close the language servers nobody has used for `LSP_IDLE` seconds, and return them."
         with self._lsp_lock: stale = self._stale_lsps(time.monotonic() if now is None else now)
-        for s in stale: s.close()
+        for s in stale: s.retire()
         return stale
     def _start_reaper(self):
         "One daemon thread per workspace that reaps idle servers each minute until shutdown."
@@ -1158,7 +1163,7 @@ class Workspace:
         if self._inline_ai is not None: step(self._inline_ai.close)
         self._lsp_stop.set()
         with self._lsp_lock: services, self._lsps = list(self._lsps.values()), {}
-        for service in services: step(service.close)
+        for service in services: step(service.retire)
         for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit()):
             try: await coro
             except Exception: pass
@@ -1170,11 +1175,16 @@ class Workspace:
         "The same teardown from outside the loop, for process exit."
         # Back on the server's loop where there is one: a kernel's client cannot close from another.
         if self._down: return
-        if (loop := self._loop) is not None and loop.is_running():
+        try: here = asyncio.get_running_loop()
+        except RuntimeError: here = None
+        if (loop := self._loop) is not None and loop is not here and loop.is_running():
             try: return asyncio.run_coroutine_threadsafe(self.shutdown(), loop).result(timeout)
             except Exception: pass
-        try: asyncio.run(self.shutdown())
-        except Exception: pass
+        def run():
+            try: asyncio.run(self.shutdown())
+            except Exception: pass
+        if here is None: return run()
+        t = threading.Thread(target=run, name='leela-shutdown'); t.start(); t.join(timeout)   # `asyncio.run` cannot nest in a running loop
     def at_exit(self):
         "Tear this workspace down when the interpreter does, however it got there."
         atexit.register(self.shutdown_now); return self

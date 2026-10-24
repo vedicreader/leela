@@ -815,7 +815,7 @@ def _learning():
 
 def _footer():
     "Always-visible keys plus status."
-    ks = (by_scope('global') + by_scope('editor')).filter(lambda k: k.show == 'footer')
+    ks = (by_scope('global') + by_scope('editor')).filter(lambda k: k.show == 'footer' and k.bound)
     kids = ks.map(lambda k: Span(Kbd(k.keys[0]), Span(k.label), cls='lee-fkey'))
     return Footer(*kids, Span(cls='lee-spacer'),
                   Span(id='status', cls='lee-status', role='status', aria_live='polite', hidden=True),
@@ -1066,13 +1066,20 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         else:
             buf = d.get('text', '')
         return {'path': t.path, 'title': t.title, **_diff(disk, buf, t.path)}
+    def _named_tab(d):
+        "`(tab, error)` for the tab `path` names; no name is `(None, None)`, which keeps the active-tab fallback."
+        if not d.get('path'): return None, None
+        t = _docstore.tab_for(d['path'])
+        return t, None if t is not None else 'that tab is no longer open'
     @rt('/exec')
     async def exec_route(req):
-        "Run in the owner kernel or the agent's protected persistent overlay."
+        "Run in the kernel of the tab `path` names, else the active one, or the agent's protected persistent overlay."
         d = await req.json()
         code, scope = (d.get('code') or '').strip(), d.get('scope', 'live')
         if not code: return {'ok': True, 'text': '', 'outputs': []}
-        k = _debugstate.kernel or await _k()
+        tab, err = _named_tab(d)
+        if err: return _fail(err)
+        k = _debugstate.kernel or await _k(tab)
         if scope == 'live' and getattr(k, '_debug_thread', None) and hasattr(k, 'debug_evaluate'):
             try:
                 body = await k.debug_evaluate(code, d.get('frame_id'))
@@ -1096,11 +1103,13 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
                 'result': (latest or {}).get('result')}
     @rt('/run/file')
     async def run_file(req):
-        "Run the open .py as a script, in the tab's kernel."
+        "Run a .py as a script, in the kernel of the tab `path` names, else the active one."
         d = await req.json()
-        code, label = ws.run_file_code(src=d.get('text'))
+        tab, err = _named_tab(d)
+        if err: return _fail(err)
+        code, label = ws.run_file_code(tab=tab, src=d.get('text'))
         if code is None: return _fail(label)
-        k = await _k()
+        k = await _k(tab)
         res = await k.execute(code)
         return {'ok': res.ok, 'label': label, 'outputs': res.outputs,
                 'text': await _explain(k, res.error) or res.text or 'ok'}
@@ -1110,7 +1119,9 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         d = await req.json()
         code = (d.get('code') or '').strip()
         if not code: return _fail('nothing to run')
-        k = await _k()
+        tab, err = _named_tab(d)
+        if err: return _fail(err)
+        k = await _k(tab)
         res = await k.execute(code)
         return {'ok': res.ok, 'outputs': res.outputs,
                 'text': await _explain(k, res.error) or res.text or 'ok'}

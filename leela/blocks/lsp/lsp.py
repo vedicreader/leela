@@ -52,7 +52,7 @@ class LspService:
         self.lang = lang or 'python'
         self.server, self.argv = find_server(self.lang) if self.root else (None, None)
         self.command = self.argv[0] if self.argv else None
-        self.process, self._seq = None, 0
+        self.process, self._seq, self.retired = None, 0, False
         self.used, self.busy = time.monotonic(), 0
         self._pending, self._diagnostics, self._versions, self._cool = {}, {}, {}, {}
         self._lock = threading.Lock()
@@ -80,9 +80,11 @@ class LspService:
         with self._start_lock: return self._start()
 
     def _start(self):
+        if self.retired: return False
         if self.alive or not self.available: return self.alive
         self.process = subprocess.Popen(self.argv, cwd=str(self.root), stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+        if self.retired: self.close(); return False   # `retire` landed while the process was starting
         threading.Thread(target=self._read, daemon=True, name=f'leela-lsp-{self.lang}').start()
         try:
             self._request('initialize', {'processId': os.getpid(), 'rootUri': self._uri(self.root),
@@ -94,7 +96,7 @@ class LspService:
             self._notify('initialized', {})
             self.note = f'{self.server} connected'
         except Exception as e:
-            self.note = f'{self.server} failed: {type(e).__name__}: {e}'
+            if not self.retired: self.note = f'{self.server} failed: {type(e).__name__}: {e}'
             self.close()
             return False
         return True
@@ -173,6 +175,10 @@ class LspService:
             if row and row[0] >= started: return row[1], self.note
             time.sleep(.025)
         return self._diagnostics.get(uri, (0, []))[1], f'{self.server} diagnostics timed out; showing the latest result'
+    def retire(self):
+        "Close for good: a caller still holding this service cannot start another process."
+        self.retired, self.note = True, f'{self.server or self.lang} was stopped'
+        self.close()
     def close(self):
         "Stop the server and forget what it was told, so a later start opens every document afresh."
         if (p := self.process):

@@ -136,7 +136,7 @@ function remountEditors() {
   const v = lee.editors.get('exec');
   if (v) { LeeCM.destroy(v); lee.editors.delete('exec'); }
   mountExec();
-  mountTab();
+  mountTab(lee.tabKey);
 }
 
 /* Screen capture. The grab happens here because `getDisplayMedia` needs a user gesture and a real
