@@ -6,6 +6,8 @@
 
 Needs vishalakshi 0.1.33, shalya 0.1.19, uraiyadal 0.0.16, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.51, kunda 0.0.5, kavacha 0.0.8, dhrishti 0.1.8, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.11, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.62 and rishi 0.1.54.
 
+- The window title names the pane that has focus: `leela — <folder> · <scope>`, with `py`, `notebook`, `terminal`, `agent`, `exec`, `files`, `vars`, `vault`, `review`, `web` or `editor:<ext>` as the scope. The token comes from the scope the key router uses. The title changes at most once in 100 ms, and only when the string changes. Leela.app sets its native window title through `window.pywebview.api.set_title`. The agent's `2⚙ (!)` marks stay in front.
+
 - The canvas is removed: the `canvas` block and its `*.canvas.md` documents, the `+canvas` button and `hyper+j` shortcut, the `canvas_*` and `flow_canvas` agent tools, the canvas skill, and the `leela-bricks` development dependency. A saved session that lists a canvas tab opens without it.
 
 - kavacha's interpreter probes and build steps, pullup's `gh auth status` and dhrishti's `ps` get `/dev/null` as stdin, like Leela's own child processes (kavacha 0.0.8, pullup 0.0.11, dhrishti 0.1.8).

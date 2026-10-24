@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fastcore.basics import patch
+
 from kavacha.window import (ALT, CMD, CTRL, DEFAULT_SIZE, DOCK_RECENT, MIN_SIZE, NO_SUBSTITUTION,
     SHIFT, BACKENDS, ShellApi, backend, eval_js, install_menu_patch, keep_running_in_dock,  # noqa: F401
     mac_key, make_window, off_main_thread, open_window, quiet_text_substitution, shell_api,
@@ -23,6 +25,17 @@ __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', '
 use_app('leela', leela_cfg, 'LEELA_')
 #: The page reaches this as `window.pywebview.api.recent()`, and the Dock menu reads the same hook.
 shell_api().on_recent = recent_folders
+
+@patch
+def set_title(self:ShellApi, title, url=None):
+    "Retitle the native window that shows `url`, else the focused one. False if there is no window."
+    try: import webview
+    except ImportError: return False
+    bare = lambda u: str(u or '').split('#')[0]
+    ws = [w for w in webview.windows if url and bare(w.real_url) == bare(url)] or [webview.active_window()]
+    ws = [w for w in ws if w is not None]
+    for w in ws: w.set_title(str(title))
+    return bool(ws)
 
 def _act(action):
     "What picking a menu row does: the client's own dispatcher, in the window that has focus."

@@ -976,7 +976,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         return await client.api(path, params, timeout) if client else None
     @rt('/')
     def home():
-        return Title('leela'), _shell(ws, gate)
+        return Title(f'leela — {Path(ws.project_root).name}' if ws.project_root else 'leela'), _shell(ws, gate)
     @rt('/markdown/render')
     async def markdown_render(req):
         "Paste-safe Markdown rendering through mdhtml's explicit dialect."

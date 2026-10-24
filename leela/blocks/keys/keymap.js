@@ -58,6 +58,31 @@ function eventContext(e) {
   return lee.scope || 'editor';
 }
 
+/* The window title ends with the kind of pane that has focus, so a tool outside the page (Sanketa)
+ * can read it. The token comes from the same scope the key router uses. */
+function titleScope(scope, kind = lee.kind, path = lee.path) {
+  if (scope === 'term') return 'terminal';
+  if (scope === 'widget' || (scope === 'editor' && kind === 'notebook')) return 'notebook';
+  if (scope !== 'editor') return scope === 'global' ? '' : scope || '';
+  const ext = /\.([^./]+)$/.exec(path || '')?.[1]?.toLowerCase();
+  return ext === 'py' ? 'py' : ext ? `editor:${ext}` : 'editor';
+}
+//: `prefix` is the agent's attention marks; `base` is `leela — <folder>` as the server titled the page.
+const leelaTitle = (base, token, prefix = '') => [prefix, base, token].filter(Boolean).join(' · ');
+//: An overlay keeps the scope it opened over. Native windows are told only when the string changes.
+function paintTitle(scope) {
+  if (scope && scope !== 'overlay') lee.titleScope = scope;
+  clearTimeout(lee.titleTimer);
+  lee.titleTimer = setTimeout(() => {
+    const t = leelaTitle(lee.titleBase ||= document.title, titleScope(lee.titleScope || lee.scope), lee.titlePrefix);
+    if (t === lee.title) return;
+    document.title = lee.title = t;
+    window.pywebview?.api?.set_title?.(t, location.href)?.catch?.(() => {});
+  }, 100);
+}
+document.addEventListener('focusin', e => paintTitle(eventContext(e)), true);
+window.addEventListener('pywebviewready', () => { lee.title = ''; paintTitle(); });
+
 //: The element a key went to. `e.target` is retargeted to the host of an open shadow root, such as a widget's.
 const keyTarget = e => e.composedPath?.()[0] || e.target;
 function isTextEntry(el) {
