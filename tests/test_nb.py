@@ -360,3 +360,16 @@ def test_a_folded_heading_hides_its_section_and_moves_as_one_block():
     assert ids()[2] == 'P' and hidden_cells(nb.cells) == {5}, 'undo moved the section back and left P unfolded'
     nb.set_collapsed([2]); nb.reveal(5)
     assert hidden_cells(nb.cells) == set() and not any('heading_collapsed' in c.extra for c in nb.cells)
+
+def test_a_heading_op_folds_the_cell_its_id_names_wherever_that_cell_now_is(tmp_path):
+    "A fold sent by index landed on another cell when an insert reached the server first."
+    p = tmp_path/'h.ipynb'
+    Notebook([Cell(source='# A', cell_type='markdown', id='A'), Cell(source='a', id='a'), Cell(source='## P', cell_type='markdown', id='P')]).save(p)
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state', params={'path': str(p)})
+        assert client.post('/nb/edit', json={'op': 'insert', 'i': 0, 'cell_type': 'markdown', 'source': '# New'}).json()['ok']
+        r = client.post('/nb/edit', json={'op': 'heading', 'ids': ['P', 'gone'], 'collapsed': True}).json()
+        assert r['ok'] and {c['id'] for c in r['cells'] if c['extra'].get('heading_collapsed')} == {'P'}, r
+        r = client.post('/nb/edit', json={'op': 'heading', 'ids': ['gone'], 'collapsed': False}).json()
+        assert r['ok'] and [c['id'] for c in r['cells'] if c['extra'].get('heading_collapsed')] == ['P'], r

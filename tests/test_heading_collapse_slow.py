@@ -178,3 +178,31 @@ def test_a_cell_the_agent_adds_into_a_folded_section_is_shown(tmp_path, browser,
     at, shown, hidden = web._run(go, roots=[tmp_path], browser=browser)
     assert at == 4 and shown and hidden == [], (at, shown, hidden)
     assert 'heading_collapsed' not in _saved(p)[2]['metadata']
+
+@BROWSERS
+def test_a_fold_clicked_while_an_insert_awaits_its_response_survives_it(tmp_path, browser):
+    "The insert's response predates the fold, and the fold's index meant another cell once the insert landed."
+    import asyncio
+    p = _nb(tmp_path/'race.ipynb', folded=())
+    async def go(pg):
+        await _open(pg, p)
+        seen, release = asyncio.Event(), asyncio.Event()
+        async def hold(route):
+            if (route.request.post_data_json or {}).get('op') != 'insert': return await route.continue_()
+            resp = await route.fetch(); seen.set(); await release.wait()
+            await route.fulfill(response=resp)
+        await pg.route('**/nb/edit', hold)
+        await pg.evaluate("() => { focusCell(0); leeAct('cell_above'); }")
+        await seen.wait()
+        await pg.click('.lee-cell[data-i="2"] .lee-heading-caret')
+        await pg.evaluate('lee.headingSync')
+        release.set()
+        await pg.wait_for_function('lee.cells.length === 8')
+        page = await pg.evaluate("""() => [lee.cells.find(c => c.id === 'c2').extra?.heading_collapsed,
+          document.querySelector('#editor .lee-cell[data-id="c2"]').classList.contains('heading-collapsed')]""")
+        await pg.evaluate('saveTab(true)')
+        return page
+    page = web._run(go, roots=[tmp_path], browser=browser)
+    saved = {c['id']: c['metadata'] for c in _saved(p)}
+    assert page == [True, True], page
+    assert saved['c2'].get('heading_collapsed') is True and not any('heading_collapsed' in m for k, m in saved.items() if k != 'c2'), saved

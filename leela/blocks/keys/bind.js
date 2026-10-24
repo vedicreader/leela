@@ -169,6 +169,7 @@ async function captureScreen() {
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
+  const since = lee.headingSeq; lee.nbEditsInFlight++;   // before the wait: a fold clicked during it can still land after this edit
   await lee.headingSync;   // a fold posted just before addresses the indices this edit may shift
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
@@ -178,8 +179,11 @@ async function nbEdit(d) {
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
   const cur = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
   for (const c of cur) if (lee.cells[c.i]) lee.cells[c.i].source = c.source;
-  const r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: cur});
-  lee.cells = r.cells;
+  let r;
+  try { r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: cur}); }
+  finally { lee.nbEditsInFlight--; }
+  lee.cells = foldsSince(r.cells, since);
+  if (!lee.nbEditsInFlight) lee.headingFolds.clear();
   const same = r.cells.findIndex(c => c.id === selectedId);
   if (d.op === 'undo' || d.op === 'redo') lee.sel = Math.max(0, Math.min(r.index ?? lee.sel, r.cells.length - 1));
   else if (same >= 0) lee.sel = same;

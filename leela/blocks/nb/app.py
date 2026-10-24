@@ -462,7 +462,10 @@ def connect(app, ctx):
             try: nb.set_slide(d.get('indices') or [i], str(d.get('type') or 'none'))
             except (TypeError, ValueError) as e: return fail(e)
         elif op == 'heading':
-            nb.set_collapsed(None if d.get('all') else d.get('indices') or [i], bool(d.get('collapsed', True)))
+            # Ids are resolved here, so an edit that landed first cannot point the fold at another cell.
+            if (ids := d.get('ids')) is not None: ids = set(ids); at = [j for j, c in enumerate(nb.cells) if c.id in ids]
+            else: at = None if d.get('all') else d.get('indices') or [i]
+            nb.set_collapsed(at, bool(d.get('collapsed', True)))
         elif op == 'clear': nb.clear_all()
         else: return fail(f'unknown op {op!r}')
         if ctx.tab: ctx.tab.dirty = nb.dirty

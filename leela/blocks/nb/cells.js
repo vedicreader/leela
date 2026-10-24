@@ -215,7 +215,8 @@ function paintHeadings(cells = lee.cells) {
   queueNotebookOverview();
 }
 /* Folds or unfolds heading cells, every one when `indices` is null. Painted here at once and
-   written behind, chained so `nbEdit` and `saveTab` see the write land first. Not an undo step. */
+   written behind by cell id, chained so `nbEdit` and `saveTab` see the write land first. Not an undo step.
+   `lee.headingFolds` keeps each fold while an edit sent before it is in flight, for `foldsSince`. */
 function setHeadings(indices, collapsed) {
   const idx = (indices ?? lee.cells.map((_, i) => i)).filter(i => {
     const c = lee.cells[i]; return c && (collapsed ? headingLevel(c) && !c.extra?.heading_collapsed : c.extra?.heading_collapsed);
@@ -226,10 +227,21 @@ function setHeadings(indices, collapsed) {
     if (collapsed) c.extra.heading_collapsed = true; else delete c.extra.heading_collapsed;
   }
   paintHeadings();
-  const op = {op: 'heading', collapsed, ...(indices ? {indices: idx} : {all: true})};
-  lee.headingSync = lee.headingSync.then(() => post('/nb/edit', op)).catch(e => status(String(e.message || e), 'err'));
+  const ids = idx.map(i => lee.cells[i].id), fold = {collapsed, at: ++lee.headingSeq};
+  for (const id of ids) lee.headingFolds.set(id, fold);
+  lee.headingSync = lee.headingSync.then(() => post('/nb/edit', {op: 'heading', collapsed, ids}))
+    .catch(e => { for (const id of ids) if (lee.headingFolds.get(id) === fold) lee.headingFolds.delete(id); status(String(e.message || e), 'err'); });
   markDirty();
   if (collapsed && hiddenCells().has(lee.sel)) focusCell(shownAt(lee.sel));
+}
+//: Puts back on `cells` each fold made after `since`, which a response to an earlier request cannot hold.
+function foldsSince(cells, since) {
+  for (const c of cells) {
+    const f = lee.headingFolds.get(c.id); if (!f || f.at <= since) continue;
+    c.extra = {...c.extra};
+    if (f.collapsed && headingLevel(c)) c.extra.heading_collapsed = true; else delete c.extra.heading_collapsed;
+  }
+  return cells;
 }
 //: A heading cell folds itself; any other cell folds the section it sits in.
 function toggleHeading(i) {
