@@ -279,6 +279,7 @@ window.leeAct = leeAct;
 function setScope(s) {
   lee.scope = s;
   renderContextKeys(s);
+  paintTitle(s);
 }
 const activeTabIndex = () => $$('.lee-tab').findIndex(t => t.classList.contains('active'));
 async function closeTab(index = null) {

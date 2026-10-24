@@ -109,6 +109,7 @@ async function mountTab(expectedPath = '') {
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   lee.rise = st.rise || {};
+  paintTitle();
   // A notebook's kernelspec, so cells highlight and lint as the language they are.
   lee.nbLang = st.kind === 'notebook' ? (st.lang || 'python') : '';
   execLang();

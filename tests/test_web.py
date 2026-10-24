@@ -720,3 +720,10 @@ def test_a_test_never_drives_the_machines_cdp_chrome(tmp_path):
     from leela.workspace import Workspace
     b = Workspace(roots=[tmp_path]).browser
     assert b.port != 9223 and b.profile, (b.port, b.profile)
+
+
+def test_the_page_title_names_the_workspace_folder(tmp_path):
+    "The client adds the pane to this, so the folder part is the server's and matches the native window."
+    (root := tmp_path/'orgs').mkdir()
+    with TestClient(ide_app(Workspace(roots=[root]))) as c: assert '<title>leela — orgs</title>' in c.get('/').text
+    with TestClient(ide_app(Workspace(roots=[]))) as c: assert '<title>leela</title>' in c.get('/').text

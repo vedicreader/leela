@@ -1853,7 +1853,7 @@ function paintAgentAttention(attention, rows) {
   const bar = $('#agentattention'); if (!bar) return;
   const waiting = (attention.waiting || []).filter(id => id !== attention.active);
   const working = Math.max(0, (attention.working || 0) - (rows.some(t => t.id === attention.active && t.state === 'working') ? 1 : 0));
-  document.title = agentDocumentTitle(attention);
+  lee.titlePrefix = agentTitlePrefix(attention); paintTitle();
   if (!waiting.length) { bar.hidden = true; bar.innerHTML = ''; return; }
   const named = waiting.map(id => {
     const row = rows.find(t => t.id === id);
@@ -1864,12 +1864,11 @@ function paintAgentAttention(attention, rows) {
   for (const button of $$('[data-attention]', bar)) button.onclick = () => leeAgentAttend(button.dataset.attention);
   return working;
 }
-function agentDocumentTitle(attention) {
-  const base = lee.agentDocumentTitle ||= document.title.replace(/^[^·]*· /, '');
+function agentTitlePrefix(attention) {
   const bits = [];
   if (attention.working) bits.push(`${attention.working}⚙`);
   if ((attention.waiting || []).length) bits.push('(!)');
-  return bits.length ? `${bits.join(' ')} · ${base}` : base;
+  return bits.join(' ');
 }
 /* Switching to the conversation that asked, and then to the question it asked. The right pane with
    no idea what wanted you is half an answer. */

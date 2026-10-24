@@ -104,3 +104,47 @@ def test_a_keymap_written_before_a_default_moved_does_not_collide_after_it(tmp_p
     ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
     assert notes == []
     assert {k.action: k.key for k in ks}['add_root'] == 'O'
+
+
+def _keymap_js(expr):
+    "Evaluate `expr` in node with `keymap.js` loaded on a stub page; the title code needs no DOM."
+    import shutil, subprocess, pytest
+    from pathlib import Path
+    if not shutil.which('node'): pytest.skip('node is not installed')
+    stub = ("globalThis.lee = {scope: 'editor'}; globalThis.location = {href: 'http://x/'};"
+            "const _on = {}; globalThis.window = globalThis; globalThis.addEventListener = (k, f) => _on[k] = f;"
+            "globalThis.document = {title: 'leela — orgs', addEventListener() {}};"
+            "const _timers = []; globalThis.setTimeout = f => _timers.push(f); globalThis.clearTimeout = () => _timers.splice(0);\n")
+    src = stub + (Path(__file__).parents[1]/'leela'/'blocks'/'keys'/'keymap.js').read_text()
+    out = subprocess.run(['node', '-'], input=src + f'\nprocess.stdout.write(JSON.stringify({expr}));\n', capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_the_title_names_the_focused_pane_with_one_token_per_scope():
+    cases = [('editor', 'text', 'a/b.py', 'py'), ('editor', 'notebook', 'n.ipynb', 'notebook'),
+             ('widget', 'notebook', 'n.ipynb', 'notebook'), ('editor', 'text', 'README.MD', 'editor:md'),
+             ('editor', 'text', 'Makefile', 'editor'), ('term', 'text', 'a.py', 'terminal'),
+             ('agent', 'text', 'a.py', 'agent'), ('exec', 'text', 'a.py', 'exec'), ('files', 'text', 'a.py', 'files'),
+             ('vars', 'text', 'a.py', 'vars'), ('vault', '', '', 'vault'), ('review', '', '', 'review'),
+             ('global', 'text', 'a.py', '')]
+    got = _keymap_js(f'{json.dumps(cases)}.map(([s, k, p]) => titleScope(s, k, p))')
+    assert got == [c[3] for c in cases]
+    assert _keymap_js("[leelaTitle('leela — orgs', 'py'), leelaTitle('leela — orgs', 'agent', '2⚙ (!)'), leelaTitle('leela', '')]") == \
+        ['leela — orgs · py', '2⚙ (!) · leela — orgs · agent', 'leela']
+
+
+def test_the_title_is_painted_once_per_change_and_sent_to_the_native_window():
+    got = _keymap_js("""(() => {
+      const sent = []; window.pywebview = {api: {set_title: (t, u) => { sent.push([t, u]); return Promise.resolve(true); }}};
+      const flush = () => _timers.splice(0).forEach(f => f());
+      lee.kind = 'text'; lee.path = 'x.py';
+      paintTitle('term'); paintTitle('editor'); flush();
+      paintTitle('overlay'); flush();
+      lee.titlePrefix = '1⚙'; paintTitle(); flush();
+      delete window.pywebview; paintTitle('vault'); flush();
+      return {sent, title: document.title};
+    })()""")
+    assert got['sent'] == [['leela — orgs · py', 'http://x/'], ['1⚙ · leela — orgs · py', 'http://x/']], \
+        'debounced to the last scope, an overlay keeps the scope under it, and an unchanged title is not sent again'
+    assert got['title'] == '1⚙ · leela — orgs · vault', 'a browser without pywebview still gets the title'

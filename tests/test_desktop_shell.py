@@ -224,3 +224,18 @@ def test_a_launch_beside_a_leela_on_another_config_dir_serves_its_own(monkeypatc
     assert windows == [['http://127.0.0.1:5099/']]
 
 
+
+
+def test_the_page_retitles_its_own_native_window(monkeypatch):
+    from types import SimpleNamespace as NS
+    class W:
+        def __init__(self, url): self.real_url, self.title = url, ''
+        def set_title(self, t): self.title = t
+    a, b = W('http://127.0.0.1:5001/'), W('http://127.0.0.1:5002/')
+    monkeypatch.setitem(sys.modules, 'webview', NS(windows=[a, b], active_window=lambda: a))
+    api = desktop.shell_api()
+    assert api.set_title('leela — b · py', 'http://127.0.0.1:5002/#x')
+    assert (a.title, b.title) == ('', 'leela — b · py')
+    assert api.set_title('leela — a · agent') and a.title == 'leela — a · agent', 'no url means the focused window'
+    monkeypatch.setitem(sys.modules, 'webview', NS(windows=[], active_window=lambda: None))
+    assert api.set_title('leela') is False
