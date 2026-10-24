@@ -342,7 +342,7 @@ function keepNotebookShells(host, key, version) {
 
 function takeNotebookShells(host, st) {
   const key = st.path || st.title, held = key && nbShells.get(key);
-  if (!held || held.version !== st.disk_version || held.ids !== st.cells.map(c => c.id).join()) return false;
+  if (!held || held.version !== `${st.disk_version}@${st.version}` || held.ids !== st.cells.map(c => c.id).join()) return false;
   nbShells.delete(key);          // moving a fragment empties it, so it is good for one mount
   host.appendChild(held.frag);
   return true;
@@ -385,7 +385,9 @@ function patchNotebook(host, before, cells, op = '') {
   cells.forEach((c, i) => {
     const old = oldCells.get(c.id);
     let el = oldEls.get(c.id);
-    const changed = !old || old.source !== c.source || old.cell_type !== c.cell_type;
+    // Against what the editor holds now: `before` shares its cell objects with code that rewrites them.
+    const ed = lee.editors.get(c.id), held = ed ? LeeCM.getDoc(ed) : old?.source;
+    const changed = !old || held !== c.source || old.cell_type !== c.cell_type;
     if (!el || changed) {
       const view = lee.editors.get(c.id); if (view) LeeCM.destroy(view);
       lee.editors.delete(c.id);

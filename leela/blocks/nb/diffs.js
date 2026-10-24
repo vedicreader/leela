@@ -64,7 +64,7 @@ window.leeLocalHistory = leeLocalHistory;
 // moved the file underneath.
 function bufferBody() {
   return lee.kind === 'notebook'
-    ? {cells: lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))}
+    ? {cells: lee.cells.map((c, i) => ({i, id: c.id, seq: nextSeq(), source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))}
     : {text: lee.editors.has('file') ? LeeCM.getDoc(lee.editors.get('file')) : ''};
 }
 
@@ -102,7 +102,7 @@ async function openMergeConflict(conflictBox) {
         source: LeeCM.mergeResult(merge), cell_type: disk.cells?.[lee.cells.length + n]?.cell_type || 'code',
         metadata: {}, outputs: [], execution_count: null})).filter(cell => cell.source);
       if (added.length) await nbEdit({op:'paste_many', i:lee.cells.length, cells:added});
-      m.remove(); await saveTab(false, disk.disk_version, true); status('merged notebook saved', 'ok');
+      m.remove(); await saveTab(false, null, true); status('merged notebook saved', 'ok');
     };
     return;
   }
@@ -119,7 +119,7 @@ async function openMergeConflict(conflictBox) {
   $('[data-save-merge]', m).onclick = async () => {
     const result = LeeCM.mergeResult(mergeView), view = lee.editors.get('file');
     LeeCM.setDoc(view, result); rememberBuffer(lee.path, {path: lee.path, kind: 'text', text: result});
-    m.remove(); await saveTab(false, disk.disk_version, true); status('merged file saved', 'ok');
+    m.remove(); await saveTab(false, null, true); status('merged file saved', 'ok');
   };
 }
 function showSaveConflict(message) {
@@ -162,38 +162,38 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       setTabSaveState(saveTabEl, 'saved');
       if(!quiet)status(`saved ${path.split('/').pop()}`,'ok');return true;
     }
-    const bufferKeys = lee.kind === 'notebook'
-      ? [...lee.bufferTimers.keys()].filter(k => k.startsWith((lee.path || 'scratch') + ':'))
+    // The tab being saved, held: a switch while the save is out must not clear the next tab's state.
+    const tabKey = lee.tabKey, kind = lee.kind, cellKey = (lee.path || 'scratch') + ':';
+    const edits = () => lee.tabEdits.get(tabKey) || 0;
+    let editAt = expectedVersion ?? lee.editVersion, tabAt = edits();
+    const bufferKeys = kind === 'notebook'
+      ? [...lee.bufferTimers.keys()].filter(k => k.startsWith(cellKey))
       : [lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || ''];
     for (const k of bufferKeys) { clearTimeout(lee.bufferTimers.get(k)); lee.bufferTimers.delete(k); }
     let d;
     const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
     const base_disk_version = draftBaseFor(documentKey);
-    if (lee.kind === 'notebook') {
-      const cells = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
-      await lee.headingSync;
-      d = await post('/nb/save', {cells, base_disk_version, force});
+    if (kind === 'notebook') {
+      const seq = nextSeq(), cells = lee.cells.map((c, i) => ({i, id: c.id, seq, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
+      await headingSynced(tabKey);
+      d = await post('/nb/save', {tab: tabKey, cells, base_disk_version, force});
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
-      if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
-      d = await post('/nb/save', {text, base_disk_version, force});
+      if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);editAt=expectedVersion??lee.editVersion;tabAt=edits();}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
+      d = await post('/nb/save', {tab: tabKey, text, base_disk_version, force});
     }
-    // An autosave request can finish after another keystroke. The disk has its snapshot, but the
-    // newer browser buffer stays authoritative and schedules the next save.
-    if (expectedVersion !== null && expectedVersion !== lee.editVersion) {
-      // This request wrote an older snapshot, and newer typing is still in the editor and
-      // IndexedDB. Rebase that draft on our own disk write, or the follow-up autosave is mistaken
-      // for an external conflict.
-      lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
-      await rebaseDrafts(documentKey, lee.diskVersion);
-      setTabSaveState(saveTabEl, 'pending', 'Newer changes are queued for autosave');
+    const written = recordDiskVersion(documentKey, d.disk_version || diskVersionFor(documentKey));
+    // A keystroke, fold or edit made while the save was out is not in what it wrote: the disk has its
+    // snapshot, the tab stays dirty, and the newer draft is rebased on our own write so the next save
+    // is not mistaken for an external conflict.
+    if ((expectedVersion !== null && editAt !== lee.editVersion) || tabAt !== edits()) {
+      await rebaseDrafts(documentKey, written);
+      setTabSaveState(saveTabEl, 'pending', 'Changed while saving; not saved yet');
       return false;
     }
-    lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
-    recordDiskVersion(documentKey, lee.diskVersion);
     const key = documentKey;
-    if (lee.kind === 'notebook') {
-      for (const k of [...lee.buffers.keys()]) if (k.startsWith((lee.path || 'scratch') + ':')) {
+    if (kind === 'notebook') {
+      for (const k of [...lee.buffers.keys()]) if (k.startsWith(cellKey)) {
         lee.buffers.delete(k); lee.dirtyBuffers.delete(k);
       }
     } else { lee.buffers.delete(key); lee.dirtyBuffers.delete(key); }

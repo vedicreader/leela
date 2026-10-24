@@ -33,10 +33,12 @@ def _rebase_notebook(tab, payload, docs):
     except Exception: return None
     by_id = {c.id: c for c in disk.cells if c.id}
     clash, edits = [], []
+    held = {c.id: c for c in base.cells if c.id}
     for c in payload.get('cells', []):
         i = c.get('i')
-        if not isinstance(i, int) or not 0 <= i < len(base): return None
-        was = base[i]
+        if c.get('id'): was = held.get(c['id'])
+        else: was = base[i] if isinstance(i, int) and 0 <= i < len(base) else None
+        if was is None: return None
         now = by_id.get(was.id) if was.id else (disk[i] if i < len(disk) else None)
         if now is None: return None                      # the cell is gone: not ours to reconcile
         if now.source != was.source and now.source != c['source']:
@@ -124,6 +126,15 @@ def connect(app, ctx):
     running_cells = ctx.running.cells
     def doc(): return store.current()
     def run_owner(d): return store.owner(d.get('path'))
+    def by_id(nb, d):
+        "Turn `id` and `ids` into the positions they name now; a message when one has gone."
+        at = {c.id: j for j, c in enumerate(nb.cells)}
+        if d.get('id'):
+            if d['id'] not in at: return 'that cell is no longer in the notebook'
+            d['i'] = at[d['id']]
+        if d.get('ids') is not None and d.get('op') != 'heading':
+            if not all(x in at for x in d['ids']): return 'a selected cell is no longer in the notebook'
+            d['indices'] = [at[x] for x in d['ids']]
     def note_origin(tab, cell): ws.origins.cell(cell, (tab.path or tab.title) if tab else '')
     def dbg(method=None): return paused_kernel(dbgstate, method)
     def debug_ui(state): return notebook_state_ui(dbgstate, ctx.fs, state)
@@ -147,7 +158,7 @@ def connect(app, ctx):
         if nb is None: return fail('no notebook open')
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
-        nb[i].source = d.get('source', nb[i].source)
+        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         async with run_lock:
             k = await runtime_for(owner_tab)
             owner_tab.running += 1
@@ -167,7 +178,7 @@ def connect(app, ctx):
         if nb is None: return fail('no notebook open')
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
-        nb[i].source = d.get('source', nb[i].source)
+        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         # The notebook about to run is one stat; its tree is a walk, and that is once per root.
         if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
             doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
@@ -344,13 +355,15 @@ def connect(app, ctx):
     async def nb_ask(req):
         "Run a prompt cell: the assistant answers, with the notebook above it as context."
         d = await req.json()
-        nb, i = doc(), int(d.get('i', 0))
+        owner_tab, nb, _ = run_owner(d)
         if nb is None: return fail('no notebook open')
+        if (gone := by_id(nb, d)): return fail(gone, 409)
+        i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
-        nb[i].source = d.get('source', nb[i].source)
+        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         try: c = await off_loop(ws.ask_cell, nb, i)
         except Exception as e: return fail(e)
-        if ctx.tab: ctx.tab.dirty = True
+        owner_tab.dirty = True
         a = ctx.inline_ai
         return {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
                 'problems': a.problems,
@@ -361,13 +374,15 @@ def connect(app, ctx):
     async def nb_ask_stream(req):
         "Stream a prompt cell into its own reply area as markdown arrives."
         d = await req.json()
-        nb, i = doc(), int(d.get('i', 0))
+        owner_tab, nb, _ = run_owner(d)
         if nb is None: return fail('no notebook open')
+        if (gone := by_id(nb, d)): return fail(gone, 409)
+        i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
-        nb[i].source = d.get('source', nb[i].source)
-        nb[i].running = True
-        owner_tab = ctx.tab
-        if owner_tab: owner_tab.running += 1
+        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        asked = nb[i]
+        asked.running = True
+        owner_tab.running += 1
         a = ctx.inline_ai
         async def events():
             import queue as _q
@@ -399,30 +414,28 @@ def connect(app, ctx):
                         break
                     yield sse(kind, {'text': value})
                 await task
-                c = nb[i]
-                yield sse('done', {'ok': a.ready, 'i': i, 'cell': c.dict(), 'note': a.note,
+                yield sse('done', {'ok': a.ready, 'i': i, 'cell': asked.dict(), 'note': a.note,
                                     'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
                                     'problems': a.problems,
                                     'cells': [x.dict() for x in nb.cells],
                                     'activity': a.activity.rows(mark=a.activity._mark),
                                     'edits': edit_diffs(a)})
             finally:
-                nb[i].running = False
-                if owner_tab is not None:
-                    owner_tab.running = max(0, owner_tab.running - 1)
-                    owner_tab.dirty = True
+                asked.running = False
+                owner_tab.running = max(0, owner_tab.running - 1)
+                owner_tab.dirty = True
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
     @rt('/nb/edit')
     async def nb_edit(req):
-        "Structural edits: insert / delete / move / type / split / merge."
+        "Structural edits: insert / delete / move / type / split / merge, to the notebook `path` names, else the active one."
         d = await req.json()
-        nb = doc()
-        if nb is None: return fail('no notebook open')
+        tab, nb, _ = run_owner(d)
+        if nb is None: return fail('that notebook is no longer open' if d.get('path') else 'no notebook open')
+        nb.take_sources(d.get('sources', []), store.seqs_for(tab))
+        tab.dirty = tab.dirty or nb.dirty
+        if (gone := by_id(nb, d)): return fail(gone, 409)
         op, i = d.get('op'), int(d.get('i', 0))
-        for src in d.get('sources', []):
-            j = int(src.get('i', -1))
-            if 0 <= j < len(nb): nb[j].source = src.get('source', nb[j].source)
         if op == 'insert': nb.insert(i, Cell(source=d.get('source', ''), cell_type=d.get('cell_type', 'code')))
         elif op == 'delete': nb.delete(i)
         elif op == 'delete_many': nb.delete_many(d.get('indices') or [i])
@@ -468,14 +481,14 @@ def connect(app, ctx):
             nb.set_collapsed(at, bool(d.get('collapsed', True)))
         elif op == 'clear': nb.clear_all()
         else: return fail(f'unknown op {op!r}')
-        if ctx.tab: ctx.tab.dirty = nb.dirty
-        return {'ok': True, 'cells': [c.dict() for c in nb.cells],
+        tab.dirty = tab.dirty or nb.dirty
+        return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version,
                 'index': at if op in ('undo', 'redo') else i}
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')
-        t=(first(x for x in ws.tabs if x.path==path) if path else ctx.tab)
-        if t is None:return fail('nothing open')
+        t=store.tab_for(d['tab']) if d.get('tab') else first(x for x in ws.tabs if x.path==path) if path else ctx.tab
+        if t is None:return fail('that tab is no longer open' if d.get('tab') or path else 'nothing open')
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
         rebased = ''
@@ -502,8 +515,7 @@ def connect(app, ctx):
                     try:nb=Notebook.load(t.path) if t.path else Notebook.blank()
                     except Exception:return fail('no notebook')
                     docs[t.path or t.title]=nb
-                for c in d.get('cells', []):
-                    if 0 <= c['i'] < len(nb): nb[c['i']].source = c['source']
+                nb.take_sources(d.get('cells', []), store.seqs_for(t))
                 nb.save(t.path or d.get('path'), sandbox=ctx.fs)
             else:
                 ctx.fs.write(t.path, text := d.get('text', ''))
@@ -519,6 +531,7 @@ def connect(app, ctx):
                      if target and Path(target).exists() else None)
             operation = ctx.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
             return {'ok': True, 'path': t.path, 'disk_version': _disk_version(t.path),
+                    'version': nb.version if t.kind == 'notebook' else None,
                     'operation_id': operation['id'] if operation else ''}
         except Exception as e:
             return fail(e)

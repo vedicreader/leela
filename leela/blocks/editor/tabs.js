@@ -87,7 +87,7 @@ async function mountTab(expectedPath = '') {
   // The notebook being left keeps its shells, so coming back to it is a reattach rather than a
   // hundred elements built and laid out again. A dirty one is not kept: its summaries and outputs
   // describe a version that is not on disk.
-  if (lee.kind === 'notebook' && !$('.lee-tab.active.dirty')) keepNotebookShells($('#editor'), lee.tabKey, lee.diskVersion);
+  if (lee.kind === 'notebook' && !$('.lee-tab.active.dirty')) keepNotebookShells($('#editor'), lee.tabKey, lee.diskVersion && `${lee.diskVersion}@${lee.nbVersions.get(lee.tabKey)}`);
   // A screencast is a live encode in Chrome while it runs, so leaving the tab stops it. The page
   // stays open and the tab reattaches on the way back.
   closeWebView();
@@ -117,7 +117,7 @@ async function mountTab(expectedPath = '') {
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
-  else if (st.kind === 'notebook') mountNotebook(host, st);
+  else if (st.kind === 'notebook') { takeLate(st); mountNotebook(host, st); lee.mountedAt = mountVersion; }
   else await mountFile(host, st);
   if (recoveredDraft) {
     const tab = $('.lee-tab.active'); tab?.classList.add('dirty'); setTabSaveState(tab, 'pending');
@@ -169,7 +169,15 @@ async function mountTab(expectedPath = '') {
   }
 }
 
+//: What `/tab/state` said, with the newest edit response that landed while the tab was away and the folds not yet written.
+function takeLate(st) {
+  const key = st.path || st.title, late = lee.nbLate.get(key); lee.nbLate.delete(key);
+  if (late && late.version > (st.version ?? 0)) Object.assign(st, {cells: late.cells, version: late.version});
+  lee.cells = st.cells = foldsSince(key, st.cells, st.version);
+  lee.nbVersions.set(key, st.version);
+}
 function rememberBuffer(key, payload) {
+  payload = {...payload, seq: nextSeq()};
   lee.buffers.set(key, payload.text); lee.dirtyBuffers.add(key); persistDraft(key, payload);
   clearTimeout(lee.bufferTimers.get(key));
   lee.bufferTimers.set(key, setTimeout(() => {

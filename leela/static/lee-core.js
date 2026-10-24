@@ -23,8 +23,10 @@ const lee = {
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
   cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
-  headingHidden: new Set(), headingSync: Promise.resolve(),   // ids a folded heading hides, and its last write
-  headingFolds: new Map(), headingSeq: 0, nbEditsInFlight: 0,   // folds by cell id an edit's response may predate
+  headingHidden: new Set(), headingSync: new Map(),   // ids a folded heading hides, and each tab's chain of fold writes
+  headingFolds: new Map(),   // tab -> cell id -> a fold the state the page holds may predate
+  nbQueue: Promise.resolve(), nbLate: new Map(), nbVersions: new Map(), mountedAt: 0, srcSeq: 0,   // see `nbEdit`
+  tabEdits: new Map(),   // tab -> how many changes `markDirty` has counted, for a save to tell whether it holds them all
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
   // `diskVersion` is the tab on screen. A split pane holds a second file, whose version is its
   // own: basing that pane's draft on the tab's version made every save look like somebody
@@ -297,6 +299,9 @@ window.addEventListener('beforeunload', e => {
   snapshotCurrentDraft();
   if ($('.lee-tab.dirty')) { e.preventDefault(); e.returnValue = ''; }
 });
+//: A stamp on every source write the page sends, so the server keeps the newest of two that arrive out of order.
+const nextSeq = () => lee.srcSeq = Math.max(lee.srcSeq + 1, Date.now());
+const headingSynced = (key = lee.tabKey) => lee.headingSync.get(key) || Promise.resolve();
 async function restoreDrafts(st) {
   if (lee.observer) return false;   // the drafts are the person's, in storage this origin shares
   const documentKey = st.path || st.title || ''; if (!documentKey) return false;
@@ -1746,7 +1751,7 @@ async function mountTab(expectedPath = '') {
   // The notebook being left keeps its shells, so coming back to it is a reattach rather than a
   // hundred elements built and laid out again. A dirty one is not kept: its summaries and outputs
   // describe a version that is not on disk.
-  if (lee.kind === 'notebook' && !$('.lee-tab.active.dirty')) keepNotebookShells($('#editor'), lee.tabKey, lee.diskVersion);
+  if (lee.kind === 'notebook' && !$('.lee-tab.active.dirty')) keepNotebookShells($('#editor'), lee.tabKey, lee.diskVersion && `${lee.diskVersion}@${lee.nbVersions.get(lee.tabKey)}`);
   // A screencast is a live encode in Chrome while it runs, so leaving the tab stops it. The page
   // stays open and the tab reattaches on the way back.
   closeWebView();
@@ -1776,7 +1781,7 @@ async function mountTab(expectedPath = '') {
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
   else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
-  else if (st.kind === 'notebook') mountNotebook(host, st);
+  else if (st.kind === 'notebook') { takeLate(st); mountNotebook(host, st); lee.mountedAt = mountVersion; }
   else await mountFile(host, st);
   if (recoveredDraft) {
     const tab = $('.lee-tab.active'); tab?.classList.add('dirty'); setTabSaveState(tab, 'pending');
@@ -1828,7 +1833,15 @@ async function mountTab(expectedPath = '') {
   }
 }
 
+//: What `/tab/state` said, with the newest edit response that landed while the tab was away and the folds not yet written.
+function takeLate(st) {
+  const key = st.path || st.title, late = lee.nbLate.get(key); lee.nbLate.delete(key);
+  if (late && late.version > (st.version ?? 0)) Object.assign(st, {cells: late.cells, version: late.version});
+  lee.cells = st.cells = foldsSince(key, st.cells, st.version);
+  lee.nbVersions.set(key, st.version);
+}
 function rememberBuffer(key, payload) {
+  payload = {...payload, seq: nextSeq()};
   lee.buffers.set(key, payload.text); lee.dirtyBuffers.add(key); persistDraft(key, payload);
   clearTimeout(lee.bufferTimers.get(key));
   lee.bufferTimers.set(key, setTimeout(() => {
@@ -2213,7 +2226,7 @@ function keepNotebookShells(host, key, version) {
 
 function takeNotebookShells(host, st) {
   const key = st.path || st.title, held = key && nbShells.get(key);
-  if (!held || held.version !== st.disk_version || held.ids !== st.cells.map(c => c.id).join()) return false;
+  if (!held || held.version !== `${st.disk_version}@${st.version}` || held.ids !== st.cells.map(c => c.id).join()) return false;
   nbShells.delete(key);          // moving a fragment empties it, so it is good for one mount
   host.appendChild(held.frag);
   return true;
@@ -2256,7 +2269,9 @@ function patchNotebook(host, before, cells, op = '') {
   cells.forEach((c, i) => {
     const old = oldCells.get(c.id);
     let el = oldEls.get(c.id);
-    const changed = !old || old.source !== c.source || old.cell_type !== c.cell_type;
+    // Against what the editor holds now: `before` shares its cell objects with code that rewrites them.
+    const ed = lee.editors.get(c.id), held = ed ? LeeCM.getDoc(ed) : old?.source;
+    const changed = !old || held !== c.source || old.cell_type !== c.cell_type;
     if (!el || changed) {
       const view = lee.editors.get(c.id); if (view) LeeCM.destroy(view);
       lee.editors.delete(c.id);
@@ -2390,7 +2405,7 @@ async function cycleCellContext(i) {
   const c = lee.cells[i]; if (!c) return;
   const modes = ['auto', 'keep', 'discard'], mode = modes[(modes.indexOf(c.context_mode || 'auto') + 1) % modes.length];
   const r = await nbEdit({op: 'context', i, mode});
-  Object.assign(c, r.cells[i]);
+  Object.assign(c, r.cells?.find(x => x.id === c.id));
   const button = $(`.lee-cell[data-i="${i}"] .lee-cell-context`); if (button) paintCellContext(button, c);
   status(`cell ${i + 1}: ${contextLabel(mode)}`, 'ok');
 }
@@ -2559,8 +2574,9 @@ function paintHeadings(cells = lee.cells) {
   queueNotebookOverview();
 }
 /* Folds or unfolds heading cells, every one when `indices` is null. Painted here at once and
-   written behind by cell id, chained so `nbEdit` and `saveTab` see the write land first. Not an undo step.
-   `lee.headingFolds` keeps each fold while an edit sent before it is in flight, for `foldsSince`. */
+   written behind by cell id to this tab's notebook, chained per tab so its `nbEdit` and `saveTab` see
+   the write land first. Not an undo step. `lee.headingFolds` keeps each fold, with the notebook version
+   its write made once it lands, for `foldsSince`. */
 function setHeadings(indices, collapsed) {
   const idx = (indices ?? lee.cells.map((_, i) => i)).filter(i => {
     const c = lee.cells[i]; return c && (collapsed ? headingLevel(c) && !c.extra?.heading_collapsed : c.extra?.heading_collapsed);
@@ -2571,17 +2587,21 @@ function setHeadings(indices, collapsed) {
     if (collapsed) c.extra.heading_collapsed = true; else delete c.extra.heading_collapsed;
   }
   paintHeadings();
-  const ids = idx.map(i => lee.cells[i].id), fold = {collapsed, at: ++lee.headingSeq};
-  for (const id of ids) lee.headingFolds.set(id, fold);
-  lee.headingSync = lee.headingSync.then(() => post('/nb/edit', {op: 'heading', collapsed, ids}))
-    .catch(e => { for (const id of ids) if (lee.headingFolds.get(id) === fold) lee.headingFolds.delete(id); status(String(e.message || e), 'err'); });
+  const key = lee.tabKey, ids = idx.map(i => lee.cells[i].id), fold = {collapsed};
+  const folds = lee.headingFolds.get(key) || lee.headingFolds.set(key, new Map()).get(key);
+  for (const id of ids) folds.set(id, fold);
+  lee.headingSync.set(key, headingSynced(key).then(() => post('/nb/edit', {op: 'heading', collapsed, ids, path: key}))
+    .then(r => { fold.version = r.version; })
+    .catch(e => { for (const id of ids) if (folds.get(id) === fold) folds.delete(id); status(String(e.message || e), 'err'); }));
   markDirty();
   if (collapsed && hiddenCells().has(lee.sel)) focusCell(shownAt(lee.sel));
 }
-//: Puts back on `cells` each fold made after `since`, which a response to an earlier request cannot hold.
-function foldsSince(cells, since) {
+//: Puts back on `cells`, tab `key`'s notebook at `version`, each fold it cannot hold yet; forgets the folds it holds.
+function foldsSince(key, cells, version) {
+  const folds = lee.headingFolds.get(key); if (!folds) return cells;
   for (const c of cells) {
-    const f = lee.headingFolds.get(c.id); if (!f || f.at <= since) continue;
+    const f = folds.get(c.id); if (!f) continue;
+    if (f.version && f.version <= version) { folds.delete(c.id); continue; }
     c.extra = {...c.extra};
     if (f.collapsed && headingLevel(c)) c.extra.heading_collapsed = true; else delete c.extra.heading_collapsed;
   }
@@ -3022,7 +3042,7 @@ function scheduleAutoSave() {
 document.addEventListener('focusout',e=>{if(lee.filePrefs.autoSave==='onFocusChange'&&!lee.heldSaveConflicts.has(lee.path)&&e.target.closest?.('.cm-editor')&&$('.lee-tab.active.dirty'))saveTab(true);});
 window.addEventListener('blur',()=>{if(lee.filePrefs.autoSave==='onWindowChange'&&!lee.heldSaveConflicts.has(lee.path)&&$('.lee-tab.active.dirty'))saveTab(true);});
 function markDirty() {
-  lee.editVersion += 1;
+  lee.editVersion += 1; lee.tabEdits.set(lee.tabKey, (lee.tabEdits.get(lee.tabKey) || 0) + 1);
   const t = $('.lee-tab.active');
   if (t) { t.classList.add('dirty'); setTabSaveState(t, 'pending'); }
   scheduleAutoSave();
@@ -3399,7 +3419,7 @@ async function runCell(i, advance) {
   const runPath = lee.path, cellId = c.id;
   let res = {ok: true, error: ''};
   const v = ensureCellMounted(i);
-  const src = v ? LeeCM.getDoc(v) : c.source;
+  const src = v ? LeeCM.getDoc(v) : c.source, seq = nextSeq();
   const el = $(`.lee-cell[data-i="${i}"]`);
   if (c.cell_type === 'markdown') showRenderedMarkdown(c, true);
   else if (c.cell_type === 'prompt') {
@@ -3426,7 +3446,7 @@ async function runCell(i, advance) {
       const key = runPath || lee.tabKey || '';
       await widgetWatch(key, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src, seq}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
@@ -3673,7 +3693,7 @@ async function askCell(i, src, el) {
     lee.promptRuns = lee.promptRuns || new Map();
     const abort = new AbortController();
     lee.promptRuns.set(cellId, abort);
-    await postEvents('/nb/ask/stream', {i, source: src}, (event, data) => {
+    await postEvents('/nb/ask/stream', {i, id: cellId, path: lee.tabKey || '', source: src, seq: nextSeq()}, (event, data) => {
       if (event === 'chunk') {
         raw += data.text || '';
         const reply = $('#out-' + c.id + ' .lee-reply');
@@ -4385,24 +4405,42 @@ async function captureScreen() {
   } catch (e) { status('capture failed: ' + (e.message || e), 'err'); }
 }
 
+/* Edits go one at a time, each to the notebook it was made in, naming cells by id. A response is applied
+   only while that notebook is still the one mounted and only when it is no older than what is shown, and
+   text typed while it was in flight stays. One arriving while its tab is away waits in `lee.nbLate`. */
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
-  const since = lee.headingSeq; lee.nbEditsInFlight++;   // before the wait: a fold clicked during it can still land after this edit
-  await lee.headingSync;   // a fold posted just before addresses the indices this edit may shift
+  const key = lee.tabKey, cells = lee.cells, named = {path: key};
+  if (!['undo', 'redo', 'clear'].includes(d.op) && cells[d.i]) named.id = cells[d.i].id;
+  if (d.indices) named.ids = d.indices.map(i => cells[i]?.id).filter(Boolean);
+  const run = lee.nbQueue.then(() => sendEdit({...d, ...named}, key));
+  lee.nbQueue = run.catch(() => {});
+  return run;
+}
+//: A response for a notebook not on screen, kept for its next mount when it is the newest one seen.
+function lateEdit(key, r) {
+  if (r?.cells && r.version > (lee.nbLate.get(key)?.version ?? 0)) lee.nbLate.set(key, r);
+  return r;
+}
+async function sendEdit(d, key) {
+  await headingSynced(key);   // a fold posted just before is written first
+  const mounted = lee.mountedAt, here = () => lee.tabKey === key && lee.mountedAt === mounted && mounted === mountTabVersion;
+  if (!here()) return lateEdit(key, await post('/nb/edit', d));
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
   const visible = $$('.lee-cell', host).find(el => el.getBoundingClientRect().bottom > host.getBoundingClientRect().top);
   const anchor = visible ? {id: visible.dataset.id, top: visible.getBoundingClientRect().top} : null;
   const selectedId = lee.cells[lee.sel]?.id, selectedView = selectedId && lee.editors.get(selectedId);
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
-  const cur = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
-  for (const c of cur) if (lee.cells[c.i]) lee.cells[c.i].source = c.source;
-  let r;
-  try { r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: cur}); }
-  finally { lee.nbEditsInFlight--; }
-  lee.cells = foldsSince(r.cells, since);
-  if (!lee.nbEditsInFlight) lee.headingFolds.clear();
+  const seq = nextSeq(), sent = new Map(lee.cells.map(c => [c.id, lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source]));
+  for (const c of lee.cells) c.source = sent.get(c.id);
+  const r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
+  if (!here() || r.version < (lee.nbVersions.get(key) ?? 0)) return lateEdit(key, r);
+  lee.nbVersions.set(key, r.version);
+  // A cell this edit left as it was sent keeps what was typed into it since.
+  for (const c of r.cells) { const v = lee.editors.get(c.id); if (v && c.source === sent.get(c.id)) c.source = LeeCM.getDoc(v); }
+  lee.cells = foldsSince(key, r.cells, r.version);
   const same = r.cells.findIndex(c => c.id === selectedId);
   if (d.op === 'undo' || d.op === 'redo') lee.sel = Math.max(0, Math.min(r.index ?? lee.sel, r.cells.length - 1));
   else if (same >= 0) lee.sel = same;
@@ -4745,7 +4783,7 @@ window.leeLocalHistory = leeLocalHistory;
 // moved the file underneath.
 function bufferBody() {
   return lee.kind === 'notebook'
-    ? {cells: lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))}
+    ? {cells: lee.cells.map((c, i) => ({i, id: c.id, seq: nextSeq(), source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))}
     : {text: lee.editors.has('file') ? LeeCM.getDoc(lee.editors.get('file')) : ''};
 }
 
@@ -4783,7 +4821,7 @@ async function openMergeConflict(conflictBox) {
         source: LeeCM.mergeResult(merge), cell_type: disk.cells?.[lee.cells.length + n]?.cell_type || 'code',
         metadata: {}, outputs: [], execution_count: null})).filter(cell => cell.source);
       if (added.length) await nbEdit({op:'paste_many', i:lee.cells.length, cells:added});
-      m.remove(); await saveTab(false, disk.disk_version, true); status('merged notebook saved', 'ok');
+      m.remove(); await saveTab(false, null, true); status('merged notebook saved', 'ok');
     };
     return;
   }
@@ -4800,7 +4838,7 @@ async function openMergeConflict(conflictBox) {
   $('[data-save-merge]', m).onclick = async () => {
     const result = LeeCM.mergeResult(mergeView), view = lee.editors.get('file');
     LeeCM.setDoc(view, result); rememberBuffer(lee.path, {path: lee.path, kind: 'text', text: result});
-    m.remove(); await saveTab(false, disk.disk_version, true); status('merged file saved', 'ok');
+    m.remove(); await saveTab(false, null, true); status('merged file saved', 'ok');
   };
 }
 function showSaveConflict(message) {
@@ -4843,38 +4881,38 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       setTabSaveState(saveTabEl, 'saved');
       if(!quiet)status(`saved ${path.split('/').pop()}`,'ok');return true;
     }
-    const bufferKeys = lee.kind === 'notebook'
-      ? [...lee.bufferTimers.keys()].filter(k => k.startsWith((lee.path || 'scratch') + ':'))
+    // The tab being saved, held: a switch while the save is out must not clear the next tab's state.
+    const tabKey = lee.tabKey, kind = lee.kind, cellKey = (lee.path || 'scratch') + ':';
+    const edits = () => lee.tabEdits.get(tabKey) || 0;
+    let editAt = expectedVersion ?? lee.editVersion, tabAt = edits();
+    const bufferKeys = kind === 'notebook'
+      ? [...lee.bufferTimers.keys()].filter(k => k.startsWith(cellKey))
       : [lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || ''];
     for (const k of bufferKeys) { clearTimeout(lee.bufferTimers.get(k)); lee.bufferTimers.delete(k); }
     let d;
     const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
     const base_disk_version = draftBaseFor(documentKey);
-    if (lee.kind === 'notebook') {
-      const cells = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
-      await lee.headingSync;
-      d = await post('/nb/save', {cells, base_disk_version, force});
+    if (kind === 'notebook') {
+      const seq = nextSeq(), cells = lee.cells.map((c, i) => ({i, id: c.id, seq, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
+      await headingSynced(tabKey);
+      d = await post('/nb/save', {tab: tabKey, cells, base_disk_version, force});
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
-      if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
-      d = await post('/nb/save', {text, base_disk_version, force});
+      if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);editAt=expectedVersion??lee.editVersion;tabAt=edits();}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
+      d = await post('/nb/save', {tab: tabKey, text, base_disk_version, force});
     }
-    // An autosave request can finish after another keystroke. The disk has its snapshot, but the
-    // newer browser buffer stays authoritative and schedules the next save.
-    if (expectedVersion !== null && expectedVersion !== lee.editVersion) {
-      // This request wrote an older snapshot, and newer typing is still in the editor and
-      // IndexedDB. Rebase that draft on our own disk write, or the follow-up autosave is mistaken
-      // for an external conflict.
-      lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
-      await rebaseDrafts(documentKey, lee.diskVersion);
-      setTabSaveState(saveTabEl, 'pending', 'Newer changes are queued for autosave');
+    const written = recordDiskVersion(documentKey, d.disk_version || diskVersionFor(documentKey));
+    // A keystroke, fold or edit made while the save was out is not in what it wrote: the disk has its
+    // snapshot, the tab stays dirty, and the newer draft is rebased on our own write so the next save
+    // is not mistaken for an external conflict.
+    if ((expectedVersion !== null && editAt !== lee.editVersion) || tabAt !== edits()) {
+      await rebaseDrafts(documentKey, written);
+      setTabSaveState(saveTabEl, 'pending', 'Changed while saving; not saved yet');
       return false;
     }
-    lee.diskVersion = d.disk_version || lee.diskVersion; lee.seenDiskVersion = lee.diskVersion;
-    recordDiskVersion(documentKey, lee.diskVersion);
     const key = documentKey;
-    if (lee.kind === 'notebook') {
-      for (const k of [...lee.buffers.keys()]) if (k.startsWith((lee.path || 'scratch') + ':')) {
+    if (kind === 'notebook') {
+      for (const k of [...lee.buffers.keys()]) if (k.startsWith(cellKey)) {
         lee.buffers.delete(k); lee.dirtyBuffers.delete(k);
       }
     } else { lee.buffers.delete(key); lee.dirtyBuffers.delete(key); }

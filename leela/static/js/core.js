@@ -23,8 +23,10 @@ const lee = {
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
   cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
-  headingHidden: new Set(), headingSync: Promise.resolve(),   // ids a folded heading hides, and its last write
-  headingFolds: new Map(), headingSeq: 0, nbEditsInFlight: 0,   // folds by cell id an edit's response may predate
+  headingHidden: new Set(), headingSync: new Map(),   // ids a folded heading hides, and each tab's chain of fold writes
+  headingFolds: new Map(),   // tab -> cell id -> a fold the state the page holds may predate
+  nbQueue: Promise.resolve(), nbLate: new Map(), nbVersions: new Map(), mountedAt: 0, srcSeq: 0,   // see `nbEdit`
+  tabEdits: new Map(),   // tab -> how many changes `markDirty` has counted, for a save to tell whether it holds them all
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
   // `diskVersion` is the tab on screen. A split pane holds a second file, whose version is its
   // own: basing that pane's draft on the tab's version made every save look like somebody
@@ -297,6 +299,9 @@ window.addEventListener('beforeunload', e => {
   snapshotCurrentDraft();
   if ($('.lee-tab.dirty')) { e.preventDefault(); e.returnValue = ''; }
 });
+//: A stamp on every source write the page sends, so the server keeps the newest of two that arrive out of order.
+const nextSeq = () => lee.srcSeq = Math.max(lee.srcSeq + 1, Date.now());
+const headingSynced = (key = lee.tabKey) => lee.headingSync.get(key) || Promise.resolve();
 async function restoreDrafts(st) {
   if (lee.observer) return false;   // the drafts are the person's, in storage this origin shares
   const documentKey = st.path || st.title || ''; if (!documentKey) return false;

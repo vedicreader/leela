@@ -144,7 +144,7 @@ class FileHistory:
 
 class DocStore:
     "Open notebooks and unsaved file text, keyed by tab."
-    __slots__ = ('session', 'docs', 'buffers', 'bases', 'versions', 'run_locks')
+    __slots__ = ('session', 'docs', 'buffers', 'bases', 'versions', 'run_locks', 'seqs')
     def __init__(self, session):
         self.session = session
         self.docs = {}
@@ -153,6 +153,9 @@ class DocStore:
         #: The `disk_version` each cached document was read at. What is held matches that, not disk now; a branch switch is the difference.
         self.versions = {}
         self.run_locks = {}
+        #: Per tab, the newest page stamp taken for each cell id ('' for a file). Kept past `forget`, so a write
+        #: sent before a reload cannot land on the copy that replaced it.
+        self.seqs = {}
     @staticmethod
     def key(tab): return None if tab is None else (tab.path or tab.title)
     def current(self):
@@ -170,6 +173,7 @@ class DocStore:
         if tab is None or tab.kind != 'notebook': return None, None, None
         lock = self.run_locks.setdefault(self.session.kernel_key(tab), asyncio.Lock())
         return tab, self.doc_for(tab), lock
+    def seqs_for(self, tab): return self.seqs.setdefault(self.key(tab), {})
 
     def doc_for(self, tab):
         "The notebook behind `tab`, read from disk when nothing is held."

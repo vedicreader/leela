@@ -74,9 +74,11 @@ async function forgetDiskVersions(paths, force = false) {
     lee.heldSaveConflicts.delete(path);
     // Remove any durable browser draft too, or `mountTab` restores the very buffer that was dropped.
     await clearDrafts(path);
-    for (const key of [...lee.buffers.keys()])
+    // A mirror still waiting to be posted would put the dropped text back on the copy just read.
+    for (const key of new Set([...lee.buffers.keys(), ...lee.bufferTimers.keys()]))
       if (key === path || key.startsWith(path + ':')) {
         lee.buffers.delete(key); lee.dirtyBuffers.delete(key);
+        clearTimeout(lee.bufferTimers.get(key)); lee.bufferTimers.delete(key);
       }
   }
   return d;

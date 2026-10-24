@@ -195,7 +195,7 @@ def test_a_fold_clicked_while_an_insert_awaits_its_response_survives_it(tmp_path
         await pg.evaluate("() => { focusCell(0); leeAct('cell_above'); }")
         await seen.wait()
         await pg.click('.lee-cell[data-i="2"] .lee-heading-caret')
-        await pg.evaluate('lee.headingSync')
+        await pg.evaluate('headingSynced()')
         release.set()
         await pg.wait_for_function('lee.cells.length === 8')
         page = await pg.evaluate("""() => [lee.cells.find(c => c.id === 'c2').extra?.heading_collapsed,

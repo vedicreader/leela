@@ -1,7 +1,7 @@
 "The notebook document: cells, outputs, the .ipynb on disk, and source spans."
 
 from __future__ import annotations
-import ast, asyncio, hashlib, re, time, uuid
+import ast, asyncio, hashlib, itertools, re, time, uuid
 from base64 import b64encode
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -21,7 +21,7 @@ except ImportError:
 
 __all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans', 'heading_level', 'section_end', 'hidden_cells',
            'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'run_watched', 'strip_work_log',
-           'merge_rows', 'merged_cells', 'CHOICES']
+           'merge_rows', 'merged_cells', 'CHOICES', 'take_seq']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
@@ -34,6 +34,17 @@ MAX_UNDO = 100
 WORK_LOG = re.compile(r'\n*<details>\s*<summary>\s*what i did[^<]*</summary>[\s\S]*</details>\s*\Z', re.I)
 
 def cell_id(): return uuid.uuid4().hex[:8]
+
+#: One count for every notebook this process holds, so a reload outranks the copy it replaced. Microseconds
+#: since the epoch to start, so a page that outlives a restart still sees a later number, and within JS's exact integers.
+_VERSIONS = itertools.count(time.time_ns() // 1000)
+
+def take_seq(seqs, key, seq):
+    "Whether a page write stamped `seq` is no older than the last one `seqs` took for `key`, recording it."
+    if not seq: return True
+    if seq < seqs.get(key, 0): return False
+    seqs[key] = seq
+    return True
 
 #: JupyterLab's key for a folded heading. The folded cells are derived from it, never stored.
 COLLAPSED = 'heading_collapsed'
@@ -198,8 +209,23 @@ class Notebook:
         self.cells = L(ifnone(cells, [Cell()]))
         self.path = str(path) if path else ''
         self.meta = dict(meta or {})
-        self.dirty = False
+        self.version, self.dirty = next(_VERSIONS), False
         self._undo, self._redo = [], []
+    @property
+    def dirty(self): return self._dirty
+    @dirty.setter
+    def dirty(self, v):
+        if v: self.version = next(_VERSIONS)
+        self._dirty = bool(v)
+    def take_sources(self, rows, seqs):
+        "Put each `{id or i, source, seq}` row on its cell, unless `seqs` has taken a newer write for that cell."
+        by_id = {c.id: c for c in self.cells}
+        for r in rows:
+            i = int(r.get('i', -1))
+            c = by_id.get(r['id']) if r.get('id') else self.cells[i] if 0 <= i < len(self) else None
+            if c is None or not take_seq(seqs, c.id, r.get('seq')) or c.source == r.get('source', c.source): continue
+            c.source = r['source']
+            self.dirty = True
     def __len__(self): return len(self.cells)
     def __getitem__(self, i): return self.cells[i]
     @property
@@ -253,7 +279,7 @@ class Notebook:
         dst.append(self._snapshot(snap['index']))
         del dst[:-MAX_UNDO]
         folds = {c.id: c.extra.get(COLLAPSED) for c in self.cells}
-        self.cells, self.dirty = L(deepcopy(snap['cells'])), snap['dirty']
+        self.cells, self.dirty, self.version = L(deepcopy(snap['cells'])), snap['dirty'], next(_VERSIONS)
         # A fold is view state, not a step, so undo leaves every surviving cell folded as it is now.
         for c in self.cells:
             if c.id not in folds or bool(folds[c.id]) == bool(c.extra.get(COLLAPSED)): continue

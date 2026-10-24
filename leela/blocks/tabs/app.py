@@ -10,7 +10,7 @@ from fasthtml.common import Div
 
 from ... import errstr
 from ...core.web import fail
-from ..nb.nb import Notebook
+from ..nb.nb import Notebook, take_seq
 from .ui import tab_bar
 
 __all__ = ['CAPS', 'connect', 'disk_version']
@@ -100,7 +100,7 @@ def connect(app, ctx):
             docs.docs[key] = nb
             t.nb_lang = nb.lang
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                    'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise,
+                    'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version,
                     'cells': [c.dict() for c in nb.cells]}
         if t.kind in ('pdf', 'image'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
@@ -187,9 +187,7 @@ def connect(app, ctx):
         docs.versions.setdefault(path, docs.bases[path])   # a draft descends from what was read
         if kind == 'notebook':
             nb = docs.docs.get(path)
-            i = int(d.get('i', -1))
-            if nb is not None and 0 <= i < len(nb) and (not d.get('id') or nb[i].id == d.get('id')):
-                nb[i].source = text; nb.dirty = True
-        else: docs.buffers[path] = text
+            if nb is not None: nb.take_sources([{'id': d.get('id'), 'i': d.get('i', -1), 'source': text, 'seq': d.get('seq')}], docs.seqs_for(tab))
+        elif take_seq(docs.seqs_for(tab), '', d.get('seq')): docs.buffers[path] = text
         tab.dirty = True
         return {'ok': True}

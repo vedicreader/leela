@@ -373,3 +373,53 @@ def test_a_heading_op_folds_the_cell_its_id_names_wherever_that_cell_now_is(tmp_
         assert r['ok'] and {c['id'] for c in r['cells'] if c['extra'].get('heading_collapsed')} == {'P'}, r
         r = client.post('/nb/edit', json={'op': 'heading', 'ids': ['gone'], 'collapsed': False}).json()
         assert r['ok'] and [c['id'] for c in r['cells'] if c['extra'].get('heading_collapsed')] == ['P'], r
+
+def _two(tmp_path):
+    "Notebooks `a` and `b`, both open, `b` the active tab."
+    a, b = tmp_path/'a.ipynb', tmp_path/'b.ipynb'
+    for p in (a, b): Notebook([Cell(source='# H', cell_type='markdown', id='h'), Cell(source='x', id='x'), Cell(source='y', id='y')]).save(p)
+    ws = Workspace(roots=[tmp_path]); ws.open(a); ws.open(b)
+    return a, b, ws
+
+def _ids(r): return [c['id'] for c in r['cells']]
+
+def test_an_edit_lands_on_the_notebook_and_the_cells_it_names_whichever_tab_is_active(tmp_path):
+    "A fold sent just before a tab switch landed on the tab active on the server, and a cell named by index meant another cell once an edit shifted them."
+    a, b, ws = _two(tmp_path)
+    with TestClient(ide_app(ws)) as client:
+        for p in (a, b): client.get('/tab/state', params={'path': str(p)})
+        r = client.post('/nb/edit', json={'op': 'heading', 'ids': ['h'], 'collapsed': True, 'path': str(a)}).json()
+        assert r['ok'] and r['cells'][0]['extra'].get('heading_collapsed'), r
+        assert not client.get('/tab/state', params={'path': str(b)}).json()['cells'][0]['extra'].get('heading_collapsed'), 'the fold went to the active tab'
+        assert not client.post('/nb/edit', json={'op': 'clear', 'path': str(tmp_path/'shut.ipynb')}).json().get('ok'), 'a notebook that is not open is refused'
+        assert client.post('/nb/edit', json={'op': 'insert', 'i': 0, 'path': str(a)}).json()['ok']
+        r = client.post('/nb/edit', json={'op': 'delete', 'i': 1, 'id': 'x', 'path': str(a),
+                                          'sources': [{'i': 0, 'id': 'y', 'source': 'y = 2'}]}).json()
+        assert _ids(r)[1:] == ['h', 'y'] and r['cells'][2]['source'] == 'y = 2', r
+        assert client.post('/nb/edit', json={'op': 'delete', 'id': 'x', 'path': str(a)}).status_code == 409, 'a cell that has gone is refused, not replaced by its neighbour'
+        assert client.post('/nb/ask/stream', json={'i': 0, 'id': 'gone', 'path': str(a), 'source': 'q'}).status_code == 409
+
+def test_the_newest_source_write_wins_and_every_mutation_moves_the_version(tmp_path):
+    "Two buffer posts for one cell that arrive out of order left the older text, and `/tabs/save-all` wrote it."
+    a, b, ws = _two(tmp_path)
+    with TestClient(ide_app(ws)) as client:
+        v0 = client.get('/tab/state', params={'path': str(a)}).json()['version']
+        post = lambda seq, text: client.post('/tab/buffer', json={'path': str(a), 'kind': 'notebook', 'i': 1, 'id': 'x', 'text': text, 'seq': seq})
+        post(2, 'newer'); post(1, 'older')
+        v1 = client.get('/tab/state', params={'path': str(a)}).json()['version']
+        r = client.post('/nb/edit', json={'op': 'heading', 'ids': ['h'], 'collapsed': True, 'path': str(a)}).json()
+        assert v0 < v1 < r['version'], (v0, v1, r['version'])
+        assert client.post('/tabs/save-all').json()['ok']
+        assert [c.source for c in Notebook.load(a).cells] == ['# H', 'newer', 'y']
+        assert client.post('/nb/save', json={'tab': str(a), 'cells': [{'id': 'y', 'source': 'y = 3', 'seq': 3}]}).json()['version'] > r['version']
+        assert Notebook.load(a)[2].source == 'y = 3' and Notebook.load(b)[2].source == 'y', 'the save named its tab, not the active one'
+
+def test_a_cell_mirror_and_a_diff_find_their_cell_by_id_after_an_insert_shifts_it(tmp_path):
+    "A mirror sent before an insert landed was dropped, and the diff wrote each source into whatever cell now had its index."
+    a, b, ws = _two(tmp_path)
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state', params={'path': str(b)})
+        assert client.post('/nb/edit', json={'op': 'insert', 'i': 0, 'path': str(b)}).json()['ok']
+        client.post('/tab/buffer', json={'path': str(b), 'kind': 'notebook', 'i': 1, 'id': 'x', 'text': 'x = 1', 'seq': 1})
+        assert client.post('/diff', json={'cells': [{'i': 2, 'id': 'y', 'source': 'y = 1', 'seq': 2}]}).json()['rows']
+        assert [c['source'] for c in client.get('/tab/state', params={'path': str(b)}).json()['cells']] == ['', '# H', 'x = 1', 'y = 1']

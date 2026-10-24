@@ -166,24 +166,42 @@ async function captureScreen() {
   } catch (e) { status('capture failed: ' + (e.message || e), 'err'); }
 }
 
+/* Edits go one at a time, each to the notebook it was made in, naming cells by id. A response is applied
+   only while that notebook is still the one mounted and only when it is no older than what is shown, and
+   text typed while it was in flight stays. One arriving while its tab is away waits in `lee.nbLate`. */
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
-  const since = lee.headingSeq; lee.nbEditsInFlight++;   // before the wait: a fold clicked during it can still land after this edit
-  await lee.headingSync;   // a fold posted just before addresses the indices this edit may shift
+  const key = lee.tabKey, cells = lee.cells, named = {path: key};
+  if (!['undo', 'redo', 'clear'].includes(d.op) && cells[d.i]) named.id = cells[d.i].id;
+  if (d.indices) named.ids = d.indices.map(i => cells[i]?.id).filter(Boolean);
+  const run = lee.nbQueue.then(() => sendEdit({...d, ...named}, key));
+  lee.nbQueue = run.catch(() => {});
+  return run;
+}
+//: A response for a notebook not on screen, kept for its next mount when it is the newest one seen.
+function lateEdit(key, r) {
+  if (r?.cells && r.version > (lee.nbLate.get(key)?.version ?? 0)) lee.nbLate.set(key, r);
+  return r;
+}
+async function sendEdit(d, key) {
+  await headingSynced(key);   // a fold posted just before is written first
+  const mounted = lee.mountedAt, here = () => lee.tabKey === key && lee.mountedAt === mounted && mounted === mountTabVersion;
+  if (!here()) return lateEdit(key, await post('/nb/edit', d));
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
   const visible = $$('.lee-cell', host).find(el => el.getBoundingClientRect().bottom > host.getBoundingClientRect().top);
   const anchor = visible ? {id: visible.dataset.id, top: visible.getBoundingClientRect().top} : null;
   const selectedId = lee.cells[lee.sel]?.id, selectedView = selectedId && lee.editors.get(selectedId);
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
-  const cur = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
-  for (const c of cur) if (lee.cells[c.i]) lee.cells[c.i].source = c.source;
-  let r;
-  try { r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: cur}); }
-  finally { lee.nbEditsInFlight--; }
-  lee.cells = foldsSince(r.cells, since);
-  if (!lee.nbEditsInFlight) lee.headingFolds.clear();
+  const seq = nextSeq(), sent = new Map(lee.cells.map(c => [c.id, lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source]));
+  for (const c of lee.cells) c.source = sent.get(c.id);
+  const r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
+  if (!here() || r.version < (lee.nbVersions.get(key) ?? 0)) return lateEdit(key, r);
+  lee.nbVersions.set(key, r.version);
+  // A cell this edit left as it was sent keeps what was typed into it since.
+  for (const c of r.cells) { const v = lee.editors.get(c.id); if (v && c.source === sent.get(c.id)) c.source = LeeCM.getDoc(v); }
+  lee.cells = foldsSince(key, r.cells, r.version);
   const same = r.cells.findIndex(c => c.id === selectedId);
   if (d.op === 'undo' || d.op === 'redo') lee.sel = Math.max(0, Math.min(r.index ?? lee.sel, r.cells.length - 1));
   else if (same >= 0) lee.sel = same;

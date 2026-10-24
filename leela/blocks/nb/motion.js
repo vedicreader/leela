@@ -83,7 +83,7 @@ async function runCell(i, advance) {
   const runPath = lee.path, cellId = c.id;
   let res = {ok: true, error: ''};
   const v = ensureCellMounted(i);
-  const src = v ? LeeCM.getDoc(v) : c.source;
+  const src = v ? LeeCM.getDoc(v) : c.source, seq = nextSeq();
   const el = $(`.lee-cell[data-i="${i}"]`);
   if (c.cell_type === 'markdown') showRenderedMarkdown(c, true);
   else if (c.cell_type === 'prompt') {
@@ -110,7 +110,7 @@ async function runCell(i, advance) {
       const key = runPath || lee.tabKey || '';
       await widgetWatch(key, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src, seq}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;

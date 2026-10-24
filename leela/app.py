@@ -1061,8 +1061,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         if t.kind == 'notebook':
             nb = _doc()
             if nb is None: return _fail('no notebook open')
-            for c in d.get('cells', []):
-                if 0 <= c['i'] < len(nb): nb[c['i']].source = c['source']
+            nb.take_sources(d.get('cells', []), _docstore.seqs_for(t))
             buf = nb.source_text()
         else:
             buf = d.get('text', '')

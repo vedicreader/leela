@@ -33,7 +33,7 @@ async function askCell(i, src, el) {
     lee.promptRuns = lee.promptRuns || new Map();
     const abort = new AbortController();
     lee.promptRuns.set(cellId, abort);
-    await postEvents('/nb/ask/stream', {i, source: src}, (event, data) => {
+    await postEvents('/nb/ask/stream', {i, id: cellId, path: lee.tabKey || '', source: src, seq: nextSeq()}, (event, data) => {
       if (event === 'chunk') {
         raw += data.text || '';
         const reply = $('#out-' + c.id + ' .lee-reply');

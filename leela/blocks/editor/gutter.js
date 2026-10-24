@@ -134,12 +134,14 @@ async function copyChangeHunk(h) {
 /* Git reads and writes the file on disk, and this editor may hold a newer version of it. Both
  * directions are silent data loss: the revert overwrites the unsaved edit, or the next autosave
  * writes the reverted lines back. So the file is saved first and the buffer reloaded after. */
-async function refreshFileChanges(path, fromDisk = false) {
+async function refreshFileChanges(path, fromDisk = false, had = null) {
   const v = lee.editors.get('file');
   if (!v) return;
   if (fromDisk) {
     const st = await api('/tab/state?path=' + encodeURIComponent(path)).catch(() => null);
-    if (typeof st?.text === 'string') {
+    // Typing since `had` was read is newer than the file git just wrote, so it stays.
+    if (had !== null && LeeCM.getDoc(v) !== had) status(`${path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
+    else if (typeof st?.text === 'string') {
       lee.dirtyBuffers.delete(path); lee.buffers.delete(path);
       if (st.text !== LeeCM.getDoc(v)) LeeCM.setDoc(v, st.text);
       $$('.lee-tab').find(x => x.title === path)?.classList.remove('dirty');
@@ -157,10 +159,11 @@ async function revertChangeHunk(path, h) {
     `version. Every other change in the file is left alone.`, 'revert');
   if (!ok) return;
   closeChangePopup();
+  const view = lee.editors.get('file'), had = view ? LeeCM.getDoc(view) : null;
   // Reverse against the working tree, not the index. This is an edit to the file.
   try { await gitDo('apply_patch', {patch: h.patch, staged: false, reverse: true}); }
   catch (_) { return; }
-  await refreshFileChanges(path, true);
+  await refreshFileChanges(path, true, had);
 }
 
 async function commitChangeHunk(path, h, message) {
