@@ -8,9 +8,9 @@
 // source of truth: `create()` takes the bindings it should honour, and anything
 // it does not recognise is left to bubble up to the document handler.
 
-import {EditorState, Compartment, StateEffect, StateField, Prec, RangeSet} from "@codemirror/state";
+import {EditorState, EditorSelection, Compartment, StateEffect, StateField, Prec, RangeSet} from "@codemirror/state";
 import {EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
-        drawSelection, rectangularSelection, crosshairCursor, Decoration, WidgetType,
+        drawSelection, rectangularSelection, Decoration, WidgetType,
         gutter, GutterMarker, placeholder as cmPlaceholder, ViewPlugin, highlightSpecialChars} from "@codemirror/view";
 import {defaultKeymap, history, historyKeymap, indentWithTab,
         undo as cmUndo, redo as cmRedo,
@@ -24,7 +24,7 @@ import {searchKeymap, highlightSelectionMatches, openSearchPanel,
         selectNextOccurrence as cmSelectNextOccurrence,
         selectSelectionMatches as cmSelectSelectionMatches} from "@codemirror/search";
 import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
-        acceptCompletion,
+        acceptCompletion, completionStatus, closeCompletion,
         startCompletion as cmStartCompletion} from "@codemirror/autocomplete";
 import {syntaxHighlighting, HighlightStyle, indentUnit, bracketMatching,
         foldGutter, foldKeymap, indentOnInput, StreamLanguage, syntaxTree} from "@codemirror/language";
@@ -497,6 +497,64 @@ const ghostKeymap = Prec.highest(keymap.of([
   {key: "Tab", run: acceptCompletion},          // false when no option is selected, so indent still gets Tab
   {key: "Escape", run: (v) => (ghost(v) ? (clearGhost(v), true) : false)},
 ]));
+//: Column mode's goal column, or null when off. Any selection change but its own moves the goal to the main cursor.
+const setColumn = StateEffect.define();
+const columnField = StateField.define({
+  create: () => null,
+  update: (v, tr) => tr.effects.reduce((v, e) => e.is(setColumn) ? e.value : v,
+    v != null && tr.selection && !tr.isUserEvent('select.column') ? headCol(tr.state) : v),
+  provide: f => EditorView.editorAttributes.from(f, v => v == null ? {} : {class: 'lee-column'}),
+});
+export const columnMode = view => view.state.field(columnField, false) != null;
+export function setColumnMode(view, on) {
+  if (on && (view.state.readOnly || !view.state.facet(EditorView.editable) || view.state.field(columnField, false) === undefined)) return false;
+  if (on) closeCompletion(view);
+  view.dispatch({effects: setColumn.of(on ? headCol(view.state) : null)}); return true;
+}
+export const toggleColumnMode = view => setColumnMode(view, !columnMode(view));
+function headCol(s) { return s.selection.main.head - s.doc.lineAt(s.selection.main.head).from; }
+//: Whether Escape is the editor's: it leaves column mode, then collapses several cursors to one.
+export const holdsEscape = view => columnMode(view) || view.state.selection.ranges.length > 1;
+//: `grow` copies the edge range's anchor and head columns onto the next line, so a block grows by a line.
+function addColumn(view, dir, grow = false) {
+  const {state} = view, rs = state.selection.ranges, heads = rs.map(r => r.head);
+  const edge = rs[heads.indexOf(dir < 0 ? Math.min(...heads) : Math.max(...heads))];
+  const n = state.doc.lineAt(edge.head).number + dir;
+  if (n < 1 || n > state.doc.lines) return true;
+  const line = state.doc.line(n), at = c => line.from + Math.min(c, line.length), col = p => p - state.doc.lineAt(p).from;
+  const add = grow ? EditorSelection.range(at(col(edge.anchor)), at(col(edge.head))) : EditorSelection.cursor(at(state.field(columnField)));
+  view.dispatch({selection: EditorSelection.create([...rs, add], rs.length), scrollIntoView: true, userEvent: 'select.column'});
+  return true;
+}
+//: An open completion list keeps its arrows and Escape.
+const inColumn = f => v => columnMode(v) && !completionStatus(v.state) && f(v);
+const columnKeymap = Prec.highest(keymap.of([
+  {key: 'ArrowUp', run: inColumn(v => addColumn(v, -1)), shift: inColumn(v => addColumn(v, -1, true))},
+  {key: 'ArrowDown', run: inColumn(v => addColumn(v, 1)), shift: inColumn(v => addColumn(v, 1, true))},
+  {key: 'Escape', run: inColumn(v => setColumnMode(v, false))},
+]));
+const columnBadge = ViewPlugin.fromClass(class {
+  constructor(view) {
+    this.dom = view.dom.appendChild(Object.assign(document.createElement('div'), {className: 'lee-column-badge', textContent: 'column'}));
+    this.update({view});
+  }
+  update(u) { this.dom.hidden = !columnMode(u.view); }
+  destroy() { this.dom.remove(); }
+});
+const columnLeaves = EditorView.domEventHandlers({blur(e, view) { if (columnMode(view) && !view.dom.contains(e.relatedTarget)) setColumnMode(view, false); }});
+//: Shift+Alt draws the rectangle, so the crosshair shows on that pair; Alt alone adds a cursor.
+const rectCursor = EditorView.domEventHandlers(Object.fromEntries(['keydown', 'keyup', 'mousemove', 'mouseleave'].map(t =>
+  [t, (e, view) => { view.contentDOM.classList.toggle('lee-rect', t !== 'mouseleave' && e.altKey && e.shiftKey); return false; }])));
+const multiTheme = EditorView.theme({
+  '.cm-content.lee-rect, &.lee-column .cm-content': {cursor: 'crosshair'},
+  '.lee-column-badge': {position: 'absolute', top: '2px', right: '18px', zIndex: 5, padding: '0 6px', borderRadius: '3px',
+    font: '11px/16px system-ui, sans-serif', background: 'var(--lee-accent, #3b82f6)', color: '#fff', pointerEvents: 'none'},
+});
+export function setSelections(view, ranges) {
+  view.focus();
+  view.dispatch({selection: EditorSelection.create(ranges.map(([a, b]) => EditorSelection.range(a, b))), scrollIntoView: true});
+}
+
 function bindFind(view) {
   view.contentDOM.addEventListener("keydown", event => {
     if (event.key.toLowerCase() !== "f" || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return;
@@ -899,16 +957,19 @@ export function create(el, opts = {}) {
 
   const exts = [
     history(),
+    EditorState.allowMultipleSelections.of(true),
     drawSelection(),
     indentOnInput(),
     pairedTripleQuoteInput,
     pairedTripleQuotes,
-    rectangularSelection(),
-    crosshairCursor(),
+    EditorView.clickAddsSelectionRange.of(e => e.altKey && !e.shiftKey),
+    rectangularSelection({eventFilter: e => e.altKey && e.shiftKey && e.button === 0}),
+    rectCursor, multiTheme,
     syntaxHighlighting(hl, {fallback: true}),
     theme,
     quietTyping,
     ghostField, inlineField, changesField, breakpointField, debugLineField, packageField, inlayHintField, ghostKeymap,
+    columnField, columnKeymap, columnBadge, columnLeaves,
     language.of(langExt(lang)),
     editable.of(EditorView.editable.of(!readOnly)),
     linting.of(lintExt(lang, readOnly, lintUrl, lintPath)),
@@ -955,7 +1016,8 @@ export function createMerge(el, opts = {}) {
     readOnlyRight = false, revertControls = 'a-to-b'} = opts;
   const side = (readOnly = false) => [
     settingsExt(settings), langExt(lang), syntaxHighlighting(hl, {fallback: true}), theme, quietTyping,
-    lineNumbers(), drawSelection(), highlightSelectionMatches(), readOnly ? EditorState.readOnly.of(true) : [],
+    lineNumbers(), EditorState.allowMultipleSelections.of(true), drawSelection(), highlightSelectionMatches(),
+    readOnly ? EditorState.readOnly.of(true) : [],
     keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap]),
   ];
   const merge = new MergeView({parent: el, orientation: 'a-b', revertControls,

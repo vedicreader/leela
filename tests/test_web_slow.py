@@ -52,12 +52,14 @@ def _serve(ws, port):
 
 CHROMIUM = _os.environ.get('LEELA_CHROMIUM')
 
-async def _launch(pw):
-    "Chromium, or a skip. `LEELA_CHROMIUM` names the binary where playwright cannot find its own."
-    kw = {'executable_path': CHROMIUM} if CHROMIUM else {}
-    if _os.geteuid() == 0: kw['args'] = ['--no-sandbox']
-    try: return await pw.chromium.launch(**kw)
-    except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
+async def _launch(pw, browser='chromium'):
+    "`browser`, or a skip. `LEELA_CHROMIUM` names the binary where playwright cannot find its own."
+    kw = {}
+    if browser == 'chromium':
+        if CHROMIUM: kw['executable_path'] = CHROMIUM
+        if _os.geteuid() == 0: kw['args'] = ['--no-sandbox']
+    try: return await getattr(pw, browser).launch(**kw)
+    except Exception as e: pytest.skip(f'no {browser} for playwright: {e}')
 
 def _launch_sync(pw):
     "The blocking twin of `_launch`, for the sync-API tests."
@@ -74,8 +76,8 @@ async def _started(srv, secs=20):
         await asyncio.sleep(.02)
     raise RuntimeError('the app never started')
 
-async def _on_page(fn, roots=(), dpr=None, real_models=False):
-    """Boot the app, open it in chromium, hand the page to `fn`, and return what it returns."""
+async def _on_page(fn, roots=(), dpr=None, real_models=False, browser='chromium'):
+    """Boot the app, open it in `browser`, hand the page to `fn`, and return what it returns."""
     real_kernels = fake_kernels()
     ws = Workspace(roots=list(roots), approvals='auto')
     if not real_models: fake_model(ws)
@@ -84,7 +86,7 @@ async def _on_page(fn, roots=(), dpr=None, real_models=False):
     await _started(srv)
     try:
         async with async_playwright() as pw:
-            b = await _launch(pw)
+            b = await _launch(pw, browser)
             pg = await b.new_page(**({'device_scale_factor': dpr} if dpr else {}))
             await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
             await pg.wait_for_function('window.lee && lee.keys.length')
@@ -98,8 +100,8 @@ async def _on_page(fn, roots=(), dpr=None, real_models=False):
         ws.shutdown_now()
         real_kernels()
 
-def _run(fn, roots=(), dpr=None, real_models=False):
-    return asyncio.run(_on_page(fn, roots, dpr, real_models))
+def _run(fn, roots=(), dpr=None, real_models=False, browser='chromium'):
+    return asyncio.run(_on_page(fn, roots, dpr, real_models, browser))
 
 
 def test_tab_takes_the_completion_that_is_on_screen():

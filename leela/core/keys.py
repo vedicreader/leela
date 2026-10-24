@@ -229,6 +229,7 @@ DEFAULTS = L(
     Key('select_all_occurrences', 'mod+shift+l', 'editor', 'select every occurrence'),
     Key('add_cursor_above', '',              'editor', 'add cursor above'),
     Key('add_cursor_below', '',              'editor', 'add cursor below'),
+    Key('column_mode',      'hyper+\\',      'editor', 'column mode: up and down add a cursor at the column'),
     Key('matching_bracket', 'mod+shift+\\',  'editor', 'go to matching bracket'),
     Key('select_parent_syntax', 'mod+i',     'editor', 'expand selection to the enclosing syntax'),
     Key('block_comment',    '',              'editor', 'toggle block comment'),

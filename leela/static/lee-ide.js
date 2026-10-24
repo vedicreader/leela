@@ -4697,6 +4697,18 @@ function findReplaceAll() {
   status(`replaced ${n} match${n === 1 ? '' : 'es'}`, 'ok');
 }
 
+/* Every hit in one editor becomes a cursor: the current hit's cell, else the selected cell, or the file. */
+function findSelectAll() {
+  if (!lee.find) findPaint();
+  const state = lee.find, doc = state.at >= 0 ? state.hits[state.at].doc : lee.kind === 'notebook' ? lee.sel : -1;
+  const hits = state.hits.filter(h => h.doc === doc && h.to > h.from);
+  if (!hits.length) return status('no matches in this editor', 'err');
+  if (doc >= 0 && doc !== lee.sel) focusCell(doc);
+  const view = findView(doc); if (!view) return;
+  LeeCM.setSelections(view, hits.map(h => [h.from, h.to]));
+  status(`${hits.length} match${hits.length === 1 ? '' : 'es'} selected`, 'ok');
+}
+
 function findClose() {
   const bar = $('#leefind'); if (bar) bar.hidden = true;
   lee.find = null;
@@ -4715,6 +4727,7 @@ function findMake() {
       `<span class="lee-find-count" id="leefindcount" aria-live="polite"></span>` +
       `<button type="button" data-find="prev" title="previous match (shift+enter)">&#8593;</button>` +
       `<button type="button" data-find="next" title="next match (enter)">&#8595;</button>` +
+      `<button type="button" data-find="select" title="select every match in this editor" aria-label="select every match in this editor">sel</button>` +
       `<button type="button" data-find="close" title="close (esc)">&#10005;</button>` +
     `</div>` +
     `<input class="lee-input" id="leefindr" spellcheck="false" placeholder="replace" aria-label="replace">` +
@@ -4736,6 +4749,7 @@ function findMake() {
     if (b.dataset.find === 'close') return findClose();
     if (b.dataset.find === 'one') return findReplaceOne();
     if (b.dataset.find === 'all') return findReplaceAll();
+    if (b.dataset.find === 'select') return findSelectAll();
     findStep(b.dataset.find === 'next' ? 1 : -1);
   });
   const step = e => {

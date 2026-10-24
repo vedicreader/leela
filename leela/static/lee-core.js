@@ -1217,6 +1217,13 @@ const ACTIONS = {
 };
 for (let i = 1; i <= 9; i++) ACTIONS['tab_' + i] = () => htmxPost('/tab/select?i=' + (i - 1));
 for (const [a, cmd] of Object.entries(CM_EDIT)) ACTIONS[a] = () => leeIndent(cmd);
+//: A rendered markdown cell keeps its editor mounted and hidden, so `offsetParent` is what says it is on screen.
+ACTIONS.column_mode = () => {
+  const v = curEditor();
+  if (!v?.dom.offsetParent) return status('put the cursor in an editor first', 'err');
+  LeeCM.focus(v);
+  if (!LeeCM.toggleColumnMode(v)) status('column mode needs an editable editor', 'err');
+};
 
 function leeAct(name) {
   const f = ACTIONS[name];
@@ -2630,8 +2637,8 @@ function focusRenderedMarkdown(i) {
 const MD_KEYS = {
   cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
     return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(keyTarget(e)) && !e.target.closest('button, a, summary'); },
-  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown');
-    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel'); },
+  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown'), v = el && lee.editors.get(el.dataset.id);
+    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel') && !(v && LeeCM.holdsEscape(v)); },
 };
 
 function renderOutputs(c) {

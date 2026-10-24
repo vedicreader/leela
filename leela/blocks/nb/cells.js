@@ -299,8 +299,8 @@ function focusRenderedMarkdown(i) {
 const MD_KEYS = {
   cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
     return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(keyTarget(e)) && !e.target.closest('button, a, summary'); },
-  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown');
-    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel'); },
+  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown'), v = el && lee.editors.get(el.dataset.id);
+    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel') && !(v && LeeCM.holdsEscape(v)); },
 };
 
 function renderOutputs(c) {
