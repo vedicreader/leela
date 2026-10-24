@@ -143,9 +143,9 @@ def connect(app, ctx):
         try: ctx.history.keep(path, None, ctx.fs.read(path), 'changed outside Leela')
         except Exception: pass
     @rt('/tab/watch')
-    def tab_watch():
-        "Pollable disk identity for the open document; no file contents cross the wire."
-        t = ctx.tab
+    def tab_watch(path: str = ''):
+        "Pollable disk identity for the tab `path` names, else the active one; no file contents cross the wire."
+        t = docs.tab_for(path)
         held = disk_version(t.path) if t else ''
         if t is not None and t.path and held not in ('', 'missing'):
             known = docs.versions.get(docs.key(t))
@@ -188,6 +188,6 @@ def connect(app, ctx):
         if kind == 'notebook':
             nb = docs.docs.get(path)
             if nb is not None: nb.take_sources([{'id': d.get('id'), 'i': d.get('i', -1), 'source': text, 'seq': d.get('seq')}], docs.seqs_for(tab))
-        elif take_seq(docs.seqs_for(tab), '', d.get('seq')): docs.buffers[path] = text
-        tab.dirty = True
+            tab.dirty = tab.dirty or nb is None or nb.dirty
+        elif take_seq(docs.seqs_for(tab), '', d.get('seq')): docs.buffers[path], tab.dirty = text, True
         return {'ok': True}

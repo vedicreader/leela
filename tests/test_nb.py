@@ -423,3 +423,43 @@ def test_a_cell_mirror_and_a_diff_find_their_cell_by_id_after_an_insert_shifts_i
         client.post('/tab/buffer', json={'path': str(b), 'kind': 'notebook', 'i': 1, 'id': 'x', 'text': 'x = 1', 'seq': 1})
         assert client.post('/diff', json={'cells': [{'i': 2, 'id': 'y', 'source': 'y = 1', 'seq': 2}]}).json()['rows']
         assert [c['source'] for c in client.get('/tab/state', params={'path': str(b)}).json()['cells']] == ['', '# H', 'x = 1', 'y = 1']
+
+def test_every_source_write_is_stamped_so_an_older_one_arriving_last_is_refused(tmp_path, monkeypatch):
+    "The debugger's source, a `source` edit and a file save wrote unstamped, so a write sent before them and landing after them won."
+    from conftest import FakeKernel
+    from leela.blocks.runtime.kernels import KernelPool
+    async def _get(self, key, **kw): return self.kernels.setdefault(key, FakeKernel())
+    monkeypatch.setattr(KernelPool, 'get', _get)
+    a, b, ws = _two(tmp_path)
+    f = tmp_path/'f.py'; f.write_text('v0\n'); ws.open(f)
+    with TestClient(ide_app(ws)) as client:
+        state = lambda p: client.get('/tab/state', params={'path': str(p)}).json()
+        state(a)
+        client.post('/tab/buffer', json={'path': str(a), 'kind': 'notebook', 'id': 'x', 'text': 'x = 5', 'seq': 5})
+        client.post('/nb/debug/stream', json={'path': str(a), 'i': 1, 'id': 'x', 'source': 'x = 3', 'seq': 3})
+        assert client.post('/nb/edit', json={'path': str(a), 'op': 'source', 'id': 'x', 'source': 'x = 4', 'seq': 4}).json()['ok']
+        assert state(a)['cells'][1]['source'] == 'x = 5'
+        state(f)
+        mirror = lambda seq, text: client.post('/tab/buffer', json={'path': str(f), 'kind': 'text', 'text': text, 'seq': seq})
+        mirror(1, 'v1\n')
+        assert client.post('/nb/save', json={'path': str(f), 'text': 'v3\n', 'seq': 3}).json()['ok']
+        mirror(2, 'v2\n')
+        assert state(f)['text'] == f.read_text() == 'v3\n'
+        assert not next(t for t in ws.tabs if t.path.endswith('f.py')).dirty, 'a mirror older than the save marked the saved tab dirty'
+
+def test_a_request_naming_its_tab_acts_on_it_and_a_move_finds_its_anchor_by_id(tmp_path):
+    "With another window on `b`, a stop, a diff and a disk watch from `a` acted on `b`; a move's target index meant another cell once an insert landed first."
+    a, b, ws = _two(tmp_path)
+    with TestClient(ide_app(ws)) as client:
+        for p in (a, b): client.get('/tab/state', params={'path': str(p)})
+        asked = client.post('/nb/edit', json={'op': 'insert', 'i': 3, 'cell_type': 'prompt', 'source': 'why?', 'path': str(a)}).json()['cells'][3]['id']
+        r = client.post('/nb/interrupt', json={'path': str(a), 'id': asked}).json()
+        assert r.get('stopped') == 'prompt', r
+        d = client.post('/diff', json={'path': str(a), 'cells': [{'id': 'x', 'source': 'x = 9', 'seq': 1}]}).json()
+        assert d['path'] == str(a) and d['rows'], d
+        assert client.get('/tab/watch', params={'path': str(a)}).json()['path'] == str(a)
+        assert client.post('/nb/edit', json={'op': 'insert', 'i': 0, 'path': str(b)}).json()['ok']
+        r = client.post('/nb/edit', json={'op': 'move_many', 'ids': ['y'], 'target_id': 'x', 'target': 1, 'path': str(b)}).json()
+        assert _ids(r)[1:] == ['h', 'y', 'x'], r
+        assert _ids(client.post('/nb/edit', json={'op': 'move_many', 'ids': ['y'], 'target_id': '', 'path': str(b)}).json())[1:] == ['h', 'x', 'y']
+        assert client.post('/nb/edit', json={'op': 'move_many', 'ids': ['y'], 'target_id': 'gone', 'path': str(b)}).status_code == 409

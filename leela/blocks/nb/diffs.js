@@ -70,7 +70,7 @@ function bufferBody() {
 
 async function showDiff() {
   if (!lee.kind) return status('nothing open', 'err');
-  const d = await post('/diff', bufferBody());
+  const d = await post('/diff', {path: lee.tabKey, ...bufferBody()});
   if (!d.rows.length) return status('no unsaved changes', 'ok');
   status(`${d.label} unsaved`, 'ok');
   diffModal('unsaved changes — ' + d.title, d.label, d.rows);
@@ -101,7 +101,7 @@ async function openMergeConflict(conflictBox) {
       const added = merges.slice(lee.cells.length).map((merge, n) => ({
         source: LeeCM.mergeResult(merge), cell_type: disk.cells?.[lee.cells.length + n]?.cell_type || 'code',
         metadata: {}, outputs: [], execution_count: null})).filter(cell => cell.source);
-      if (added.length) await nbEdit({op:'paste_many', i:lee.cells.length, cells:added});
+      if (added.length && !await nbEdit({op:'paste_many', i:lee.cells.length, cells:added})) return;
       m.remove(); await saveTab(false, null, true); status('merged notebook saved', 'ok');
     };
     return;
@@ -152,7 +152,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   try {
     if (lee.activeEditor==='secondary' && lee.editors.get('secondary') && lee.secondaryPath) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
-      const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
+      const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),seq:nextSeq(),base_disk_version,force});
       noteSelfWrite(path);
       // Without this the pane saved and learned nothing, so the next edit began from the same
       // stale base and was refused all over again.
@@ -163,7 +163,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       if(!quiet)status(`saved ${path.split('/').pop()}`,'ok');return true;
     }
     // The tab being saved, held: a switch while the save is out must not clear the next tab's state.
-    const tabKey = lee.tabKey, kind = lee.kind, cellKey = (lee.path || 'scratch') + ':';
+    const tabKey = lee.tabKey, kind = lee.kind, cellKey = tabKey + ':';
     const edits = () => lee.tabEdits.get(tabKey) || 0;
     let editAt = expectedVersion ?? lee.editVersion, tabAt = edits();
     const bufferKeys = kind === 'notebook'
@@ -180,7 +180,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
       if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);editAt=expectedVersion??lee.editVersion;tabAt=edits();}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
-      d = await post('/nb/save', {tab: tabKey, text, base_disk_version, force});
+      d = await post('/nb/save', {tab: tabKey, text, seq: nextSeq(), base_disk_version, force});
     }
     const written = recordDiskVersion(documentKey, d.disk_version || diskVersionFor(documentKey));
     // A keystroke, fold or edit made while the save was out is not in what it wrote: the disk has its
@@ -244,6 +244,7 @@ async function saveAllTabs() {
   const activeDirty = !!$('.lee-tab.active.dirty');
   if (activeDirty && !await saveTab(true)) return;
   await new Promise(resolve => setTimeout(resolve, 140));
+  await Promise.all([...lee.headingSync.values(), lee.nbQueue]);   // folds and edits still out are in what it writes
   try {
     const d = await post('/tabs/save-all'), saved = d.saved + (activeDirty ? 1 : 0);
     for (const tab of $$('.lee-tab')) {

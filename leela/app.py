@@ -1052,14 +1052,14 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         except OSError: return None
     @rt('/diff')
     async def diff_route(req):
-        "What the editor holds, against what is on disk."
+        "What the editor of the tab `path` names, else the active one, holds against what is on disk."
         d = await req.json()
-        t = ws.tab
-        if t is None: return _fail('nothing open')
+        t = _docstore.tab_for(d.get('path'))
+        if t is None: return _fail('that tab is no longer open' if d.get('path') else 'nothing open')
         disk = ws.disk_text(t)
         if disk is None: return _fail(f'{t.title} has never been saved')
         if t.kind == 'notebook':
-            nb = _doc()
+            nb = _docstore.doc_for(t)
             if nb is None: return _fail('no notebook open')
             nb.take_sources(d.get('cells', []), _docstore.seqs_for(t))
             buf = nb.source_text()

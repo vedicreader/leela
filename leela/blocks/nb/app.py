@@ -16,7 +16,7 @@ from ...core.web import asset_dir, fail, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
-from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash
+from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash, take_seq
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
@@ -124,18 +124,21 @@ def connect(app, ctx):
     docs, run_locks = store.docs, store.run_locks
     buffers, buffer_bases, doc_versions = store.buffers, store.bases, store.versions
     running_cells = ctx.running.cells
-    def doc(): return store.current()
     def run_owner(d): return store.owner(d.get('path'))
     def by_id(nb, d):
-        "Turn `id` and `ids` into the positions they name now; a message when one has gone."
+        "Turn `id`, `ids` and `target_id` ('' for the end) into the positions they name now; a message when one has gone."
         at = {c.id: j for j, c in enumerate(nb.cells)}
         if d.get('id'):
             if d['id'] not in at: return 'that cell is no longer in the notebook'
             d['i'] = at[d['id']]
+        if (t := d.get('target_id')) is not None:
+            if t and t not in at: return 'the cell to move before is no longer in the notebook'
+            d['target'] = at[t] if t else len(nb.cells)
         if d.get('ids') is not None and d.get('op') != 'heading':
             if not all(x in at for x in d['ids']): return 'a selected cell is no longer in the notebook'
             d['indices'] = [at[x] for x in d['ids']]
     def note_origin(tab, cell): ws.origins.cell(cell, (tab.path or tab.title) if tab else '')
+    def place(nb, c): return next((j for j, x in enumerate(nb.cells) if x is c), -1)
     def dbg(method=None): return paused_kernel(dbgstate, method)
     def debug_ui(state): return notebook_state_ui(dbgstate, ctx.fs, state)
     comm_relays = {}    # notebook key -> the `CommRelay` of every page holding a widget socket on it
@@ -158,16 +161,18 @@ def connect(app, ctx):
         if nb is None: return fail('no notebook open')
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
-        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        c = nb[i]
+        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         async with run_lock:
+            if place(nb, c) < 0: return fail('that cell is no longer in the notebook', 409)
             k = await runtime_for(owner_tab)
             owner_tab.running += 1
-            try: c, lost = await run_watched(nb, i, k)
+            try: c, lost = await run_watched(nb, c, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         rows, result = await cell_extras(k, c)
-        return {'ok': not c.has_error, 'lost': lost, 'i': i, 'cell': c.dict(), 'result': result,
+        return {'ok': not c.has_error, 'lost': lost, 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
                 'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
     @rt('/nb/run/stream')
     async def nb_run_stream(req):
@@ -178,7 +183,8 @@ def connect(app, ctx):
         if nb is None: return fail('no notebook open')
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
-        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        c = nb[i]
+        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         # The notebook about to run is one stat; its tree is a walk, and that is once per root.
         if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
             doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
@@ -188,20 +194,20 @@ def connect(app, ctx):
         except BaseException:
             run_lock.release()
             raise
-        if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
+        if place(nb, c) < 0:
             run_lock.release()
-            return fail('that cell is no longer at this position', 409)
+            return fail('that cell is no longer in the notebook', 409)
         q = asyncio.Queue()
-        def emitted(_i, _output): q.put_nowait([dict(x) for x in nb[i].outputs])
+        def emitted(_i, _output): q.put_nowait([dict(x) for x in c.outputs])
         async def run():
-            c, lost = await run_watched(nb, i, k, on_output=emitted)
+            _, lost = await run_watched(nb, c, k, on_output=emitted)
             note_origin(owner_tab, c)
             if owner_tab: owner_tab.dirty = True
             rows, result = await cell_extras(k, c)
-            return {'ok': not c.has_error, 'lost': lost, 'i': i, 'cell': c.dict(), 'result': result,
+            return {'ok': not c.has_error, 'lost': lost, 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
                     'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
         # The run outlives its stream: a page that lost the stream asks `/nb/run/state` for the outcome.
-        run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', nb[i].id)
+        run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', c.id)
         def finished(_):
             if owner_tab: owner_tab.running = max(0, owner_tab.running - 1)
             if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
@@ -219,7 +225,7 @@ def connect(app, ctx):
                         yield ': keep-alive\n\n'
                         continue
                     while not q.empty(): got.append(q.get_nowait())
-                    if (outputs := first(reversed(got), lambda o: o is not None)) is not None: yield sse('output', {'i': i, 'outputs': outputs})
+                    if (outputs := first(reversed(got), lambda o: o is not None)) is not None: yield sse('output', {'i': place(nb, c), 'id': c.id, 'outputs': outputs})
                     if None in got: break
                 yield sse('done', await task)
             except Exception as e:
@@ -245,8 +251,9 @@ def connect(app, ctx):
             return fail(f'no cell {i}')
         if d.get('id') and nb[i].id != d['id']:
             return fail('that cell is no longer at this position', 409)
-        if nb[i].cell_type != 'code': return fail('only code cells can be debugged')
-        nb[i].source = d.get('source', nb[i].source)
+        c = nb[i]
+        if c.cell_type != 'code': return fail('only code cells can be debugged')
+        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
         except BaseException:
@@ -259,16 +266,16 @@ def connect(app, ctx):
             run_lock.release()
             return fail('a debugger session is already active', 409)
         breakpoints = d.get('breakpoints') or []
-        dbgstate.kernel, dbgstate.origin_path, dbgstate.cell_id = k, owner_tab.path, nb[i].id
+        dbgstate.kernel, dbgstate.origin_path, dbgstate.cell_id = k, owner_tab.path, c.id
         async def events():
-            q, c = asyncio.Queue(), nb[i]
+            q = asyncio.Queue()
             c.clear(); c.running = True
             if owner_tab: owner_tab.running += 1
             started = asyncio.get_running_loop().time()
             try:
                 notebook_sources = [(cell.id, cell.source) for cell in nb.cells if cell.cell_type == 'code']
                 verified = await k.debug_start(c.source, breakpoints, notebook_sources)
-                yield sse('ready', {'i': i, 'breakpoints': verified})
+                yield sse('ready', {'i': place(nb, c), 'id': c.id, 'breakpoints': verified})
                 def output(_out): q.put_nowait(('output', None))
                 def debug(event): q.put_nowait(('debug', event))
                 task = asyncio.create_task(k.execute(c.source, on_output=output, on_debug=debug))
@@ -288,7 +295,7 @@ def connect(app, ctx):
                 c.fresh, c.output_hash = True, src_hash(c.source)
                 note_origin(owner_tab, c)
                 if owner_tab: owner_tab.dirty = True
-                yield sse('done', {'ok': result.ok, 'i': i, 'cell': c.dict(),
+                yield sse('done', {'ok': result.ok, 'i': place(nb, c), 'id': c.id, 'cell': c.dict(),
                                     'error': result.error})
             except Exception as e:
                 yield sse('error', {'text': errstr(e)})
@@ -360,7 +367,7 @@ def connect(app, ctx):
         if (gone := by_id(nb, d)): return fail(gone, 409)
         i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
-        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if 'source' in d: nb.take_sources([{'id': d.get('id'), 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         try: c = await off_loop(ws.ask_cell, nb, i)
         except Exception as e: return fail(e)
         owner_tab.dirty = True
@@ -379,7 +386,7 @@ def connect(app, ctx):
         if (gone := by_id(nb, d)): return fail(gone, 409)
         i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
-        if 'source' in d: nb.take_sources([{'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if 'source' in d: nb.take_sources([{'id': d.get('id'), 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         asked = nb[i]
         asked.running = True
         owner_tab.running += 1
@@ -462,9 +469,7 @@ def connect(app, ctx):
         elif op == 'redo':
             if (at := nb.redo()) is None: return fail('no cell operation to redo')
         elif op == 'merge': nb.merge(i)
-        elif op == 'source':
-            nb[i].source = d.get('source', '')
-            nb.dirty = True
+        elif op == 'source': nb.take_sources([{'id': nb[i].id, 'i': i, 'source': d.get('source', ''), 'seq': d.get('seq')}], store.seqs_for(tab))
         elif op == 'context':
             mode = str(d.get('mode') or 'auto')
             if mode not in ('auto', 'keep', 'discard'): return fail('context mode must be auto, keep or discard')
@@ -519,8 +524,9 @@ def connect(app, ctx):
                 nb.save(t.path or d.get('path'), sandbox=ctx.fs)
             else:
                 ctx.fs.write(t.path, text := d.get('text', ''))
-                buffers.pop(t.path or t.title, None)
-            t.dirty = False
+                # A mirror stamped after this text has already landed: it stays held, and the tab dirty.
+                if (newest := take_seq(store.seqs_for(t), '', d.get('seq'))): buffers.pop(t.path or t.title, None)
+            t.dirty = t.kind != 'notebook' and not newest
             buffer_bases.pop(t.path or t.title, None)
             # what is cached now matches the file again, so this is the version it was read at
             doc_versions[t.path or t.title] = _disk_version(t.path)
@@ -567,7 +573,7 @@ def connect(app, ctx):
         cell_id = d.get('id') or ''
         item = running_cells.get((d.get('path') or '', cell_id))
         if item is None:
-            nb = doc()
+            nb = run_owner(d)[1]
             c = first(x for x in (nb or []) if x.id == cell_id)
             if c is not None and c.is_prompt:
                 # `cancel`, which is what the agent panel's own stop reaches: it refuses the calls

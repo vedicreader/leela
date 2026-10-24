@@ -1,6 +1,6 @@
 "Requests a notebook page sends land on the notebook and cells they were made in, and a late response never undoes newer work."
 
-import asyncio, json
+import asyncio, json, threading
 import pytest
 
 pytestmark = pytest.mark.slow
@@ -50,6 +50,134 @@ def _holding(pg, url, when=lambda r: True, response=False):
     return pg.route(url, hold), seen, release
 
 def op(name): return lambda r: (r.post_data_json or {}).get('op') == name
+
+def _gated(monkeypatch):
+    "A kernel whose `slow` cell prints, then waits for the returned event before it finishes as run 7."
+    from conftest import FakeKernel
+    from leela.blocks.runtime.kernels import ExecOutcome
+    gate, real = threading.Event(), FakeKernel.execute
+    async def execute(self, code, on_output=None, **kw):
+        if code.strip() != 'slow': return await real(self, code, **kw)
+        row = {'output_type': 'stream', 'name': 'stdout', 'text': 'hi\n'}
+        on_output(row)
+        while not gate.is_set(): await asyncio.sleep(.05)
+        return ExecOutcome(ok=True, execution_count=7, outputs=[row])
+    monkeypatch.setattr(FakeKernel, 'execute', execute)
+    return gate
+
+CELL = """id => [!!lee.cells.find(c => c.id === id)?.outputs?.length, document.querySelector('#g-' + id).textContent,
+  document.querySelector('#state-' + id).className.includes('done')]"""
+
+@BROWSERS
+def test_a_cell_inserted_above_a_running_cell_leaves_the_run_on_the_cell_that_ran(tmp_path, browser, monkeypatch):
+    "Outputs, the tick and the execution count went to whichever cell had the running cell's index, or nowhere."
+    gate = _gated(monkeypatch)
+    a = _nb(tmp_path/'r.ipynb', [('h', 'markdown', '# A'), ('x', 'code', 'slow'), ('y', 'code', 'y')])
+    async def go(pg):
+        await _open(pg, a)
+        await pg.evaluate('() => { window.__ran = runCell(1); }')
+        await pg.wait_for_function("document.querySelector('#out-x')?.textContent.includes('hi')")
+        await pg.evaluate("() => { focusCell(0); leeAct('cell_above'); }")
+        await pg.wait_for_function('lee.cells.length === 4')
+        gate.set()
+        ran = await pg.evaluate('window.__ran')
+        new = await pg.evaluate('lee.cells[0].id')
+        page = await pg.evaluate(CELL, 'x'), await pg.evaluate(CELL, new)
+        await pg.evaluate('saveTab(true)')
+        return ran, page, new
+    ran, (x, other), new = web._run(go, roots=[tmp_path], browser=browser)
+    assert ran['ok'] and x == [True, '[7]', True] and not other[0] and other[1] != '[7]' and not other[2], (ran, x, other)
+    saved = _cells(a)
+    assert saved['x']['execution_count'] == 7 and saved['x']['outputs'] and not saved[new].get('outputs'), saved
+
+@BROWSERS
+def test_a_move_queued_behind_an_insert_lands_before_the_cell_it_was_aimed_at(tmp_path, browser):
+    "The target went as an index, which meant the cell above the one aimed at once the insert landed."
+    a, _ = _pair(tmp_path)
+    async def go(pg):
+        await _open(pg, a)
+        routed, seen, release = _holding(pg, '**/nb/edit', op('insert')); await routed
+        await pg.evaluate("() => { focusCell(0); leeAct('cell_above'); }")
+        await seen.wait()
+        await pg.evaluate('() => { window.__moved = moveCellsTo([2], 1); }')
+        release.set(); await pg.evaluate('window.__moved')
+        return await pg.evaluate('lee.cells.map(c => c.id)'), await pg.evaluate("p => api('/tab/state?path=' + encodeURIComponent(p)).then(s => s.cells.map(c => c.id))", str(a))
+    page, held = web._run(go, roots=[tmp_path], browser=browser)
+    assert page[1:] == held[1:] == ['h', 'y', 'x'], (page, held)
+
+@BROWSERS
+def test_an_edit_answered_after_a_tab_switch_moves_no_focus_on_the_tab_now_shown(tmp_path, browser):
+    "The late response went back to the caller, which focused its cell index on the notebook switched to."
+    a, b = _pair(tmp_path)
+    async def go(pg):
+        await _open(pg, b); await _open(pg, a)
+        routed, seen, release = _holding(pg, '**/nb/edit', op('insert'), response=True); await routed
+        await pg.evaluate("() => { focusCell(2); leeAct('cell_above'); }")
+        await seen.wait()
+        await _open(pg, b)
+        await pg.evaluate('() => { focusCell(0); status(""); }')
+        async with pg.expect_response('**/nb/edit'): release.set()
+        await pg.wait_for_timeout(300)
+        return await pg.evaluate("[lee.tabKey, lee.sel, document.querySelector('#status')?.textContent || '']")
+    key, sel, said = web._run(go, roots=[tmp_path], browser=browser)
+    assert sel == 0 and 'inserted' not in said, (key, sel, said)
+
+@BROWSERS
+def test_saving_one_scratch_notebook_keeps_another_scratch_notebooks_unsaved_text(tmp_path, browser):
+    "Every scratch notebook shared the `scratch:` mirror key, and its mirror named no tab, so the server never held its text."
+    async def go(pg):
+        shown = "t => lee.tabKey === t && lee.cells.length && !!document.querySelector(`#editor .lee-cell[data-id=\"${lee.cells[0].id}\"]`)"
+        await pg.evaluate("leeAct('new_notebook')"); await pg.wait_for_function(shown, arg='untitled-1')
+        await pg.evaluate("leeAct('new_notebook')"); await pg.wait_for_function(shown, arg='untitled-2')
+        b = await pg.evaluate('lee.cells[0].id')
+        async with pg.expect_response('**/tab/buffer'): await _type(pg, b, 'kept = 1')
+        await pg.click('.lee-tab[title="untitled-1"]'); await pg.wait_for_function(shown, arg='untitled-1')
+        await _type(pg, await pg.evaluate('lee.cells[0].id'), 'other = 2')
+        await pg.evaluate('saveTab(true)')
+        await pg.click('.lee-tab[title="untitled-2"]'); await pg.wait_for_function(shown, arg='untitled-2')
+        return await pg.evaluate("async () => [LeeCM.getDoc(ensureCellMounted(0)), (await api('/tab/state')).cells[0].source]")
+    page, held = web._run(go, roots=[tmp_path], browser=browser)
+    assert page == 'kept = 1' and held == 'kept = 1', (page, held)
+
+@BROWSERS
+def test_a_diff_and_a_disk_watch_from_one_window_act_on_its_own_notebook_while_another_window_shows_another(tmp_path, browser):
+    "`/diff` and `/tab/watch` meant the tab active on the server, which the second window had moved to `b`."
+    a, b = _pair(tmp_path)
+    async def go(pg):
+        await _open(pg, a)
+        other = await pg.context.browser.new_page(); await other.goto(pg.url, wait_until='networkidle')
+        await other.wait_for_function('window.lee && lee.keys.length'); await _open(other, b)
+        await _type(pg, 'x', ' # mine')
+        async with pg.expect_response('**/diff') as got: await pg.evaluate('showDiff()')
+        diff = await (await got.value).json()
+        await pg.evaluate("document.querySelector('.lee-modal, .lee-modal-wrap')?.remove(); saveTab(true)")
+        await pg.evaluate('document.activeElement?.blur()')
+        _nb(a, [('h', 'markdown', '# A'), ('x', 'code', 'x # mine'), ('y', 'code', 'y = disk')])
+        await pg.evaluate('watchOpenFile()')
+        await pg.wait_for_function("lee.cells.find(c => c.id === 'y')?.source === 'y = disk'", timeout=5000)
+        return diff['path'], await pg.evaluate('lee.tabKey'), await other.evaluate('lee.tabKey')
+    path, mine, theirs = web._run(go, roots=[tmp_path], browser=browser)
+    assert (path, mine, theirs) == (str(a), str(a), str(b))
+
+@BROWSERS
+def test_a_fold_still_out_when_its_tab_is_left_is_saved_and_the_strip_says_so(tmp_path, browser):
+    "The switch's save-all ran before the fold landed, so the server held it unsaved while the strip showed the tab clean."
+    a, b = _pair(tmp_path)
+    async def go(pg):
+        await _open(pg, b); await _open(pg, a)
+        routed, seen, release = _holding(pg, '**/nb/edit', op('heading')); await routed
+        await pg.click('.lee-cell[data-i="0"] .lee-heading-caret')
+        await seen.wait()
+        await _open(pg, b)
+        await pg.wait_for_timeout(400)
+        release.set(); await pg.evaluate(SYNCED, str(a))
+        await pg.wait_for_timeout(800)
+        shown = await pg.evaluate('p => document.querySelector(`.lee-tab[title="${p}"]`).classList.contains("dirty")', str(a))
+        held = await pg.evaluate("p => fetch('/tab/bar').then(r => r.text()).then(t => new DOMParser().parseFromString(t, 'text/html').querySelector(`.lee-tab[title=\"${p}\"]`).classList.contains('dirty'))", str(a))
+        return shown, held
+    shown, held = web._run(go, roots=[tmp_path], browser=browser)
+    assert shown == held, (shown, held)
+    assert _cells(a)['h']['metadata'].get('heading_collapsed') is True, 'the fold was not in what the switch saved'
 
 @BROWSERS
 def test_a_fold_sent_just_before_a_tab_switch_lands_on_its_own_notebook(tmp_path, browser):

@@ -377,7 +377,7 @@ function codeLang(name = '', path = '') {
 async function promoteCodeToNotebook(code, lang = 'python') {
   if (lee.kind !== 'notebook') return status('open a notebook before promoting code', 'err');
   const at = lee.sel + 1;
-  await nbEdit({op: 'insert', i: at, source: code, cell_type: lang === 'markdown' ? 'markdown' : 'code'});
+  if (!await nbEdit({op: 'insert', i: at, source: code, cell_type: lang === 'markdown' ? 'markdown' : 'code'})) return;
   focusCell(at); status(`promoted to cell ${at + 1}`, 'ok');
 }
 const SNIPPET_LINES = 2000;

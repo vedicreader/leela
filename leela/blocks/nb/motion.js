@@ -80,7 +80,9 @@ async function runCell(i, advance) {
     status(`cell ${i + 1} is already running`, 'err');
     return {ok: false, error: `cell ${i + 1} is already running`};
   }
-  const runPath = lee.path, cellId = c.id;
+  const runKey = lee.tabKey, cellId = c.id;
+  // The cell that runs, wherever an insert, move or delete above has put it since; null once its tab is not shown.
+  const cur = () => lee.tabKey === runKey ? lee.cells.find(x => x.id === cellId) : null;
   let res = {ok: true, error: ''};
   const v = ensureCellMounted(i);
   const src = v ? LeeCM.getDoc(v) : c.source, seq = nextSeq();
@@ -102,63 +104,59 @@ async function runCell(i, advance) {
     el?.classList.add('running');
     setCellState(c, 'running');
     setCellTime(c, 0, true);
-    const cellClock = setInterval(() => setCellTime(c, performance.now() - began, true), 100);
+    const cellClock = setInterval(() => { if (cur()) setCellTime(c, performance.now() - began, true); }, 100);
     $('#g-' + c.id).textContent = '[*]';
     status(`running cell ${i + 1}…`);
     try {
       let r = null, failed = null;
-      const key = runPath || lee.tabKey || '';
-      await widgetWatch(key, cellId);
+      await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src, seq}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
-          const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-          if (stillHere && event === 'output') {
-            lee.cells[i].outputs = data.outputs || [];
-            renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
-          }
+          const at = cur();
+          if (at && event === 'output') { at.outputs = data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
         }, null, 45000);
       } catch (e) { if (e === failed || e.unsent) throw e; }
-      if (!r) r = await settleRun(key, cellId);
-      const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-      if (!stillHere) {
+      if (!r) r = await settleRun(runKey, cellId);
+      const at = cur();
+      if (!at) {
         c.running = false; el?.classList.remove('running'); leeVars();
         return {ok: false, error: 'the notebook changed while the cell ran'};
       }
-      // Preserve the mounted cell object and its editor relationship.
-      Object.assign(c, r.cell);
-      renderOutputs(r.cell); cellOutputEvent(cellId, c.outputs || []);
-      LeeCM.setInlineValues(v, r.inline || []);
-      if (r.result) requestAnimationFrame(() => openValueLens(r.result, $('#out-' + c.id) || el, 'expression result'));
-      $('#g-' + c.id).textContent = '[' + (r.cell.execution_count ?? ' ') + ']';
-      const elapsed = Number(c.execution_ms ?? (performance.now() - began));
-      const duration = formatCellTime(elapsed);
-      setCellTime(c, elapsed, false);
-      setCellState(c, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${i + 1} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${i + 1} failed after ${duration}`,
+      Object.assign(at, r.cell);
+      renderOutputs(at); cellOutputEvent(cellId, at.outputs || []);
+      const view = lee.editors.get(cellId); if (view) LeeCM.setInlineValues(view, r.inline || []);
+      if (r.result) requestAnimationFrame(() => openValueLens(r.result, $('#out-' + cellId) || el, 'expression result'));
+      $('#g-' + cellId).textContent = '[' + (r.cell.execution_count ?? ' ') + ']';
+      const elapsed = Number(at.execution_ms ?? (performance.now() - began));
+      const duration = formatCellTime(elapsed), n = lee.cells.indexOf(at) + 1;
+      setCellTime(at, elapsed, false);
+      setCellState(at, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
+      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${n} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
-      res = {ok: !!r.ok, error: r.ok ? '' : `cell ${i + 1} failed after ${duration}`};
+      res = {ok: !!r.ok, error: r.ok ? '' : `cell ${n} failed after ${duration}`};
     } catch (e) {
-      const elapsed = performance.now() - began;
-      c.execution_ms = elapsed; setCellTime(c, elapsed, false);
-      setCellState(c, 'error', `run failed after ${formatCellTime(elapsed)}`);
+      const elapsed = performance.now() - began, at = cur() || c;
+      at.execution_ms = elapsed; setCellTime(at, elapsed, false);
+      setCellState(at, 'error', `run failed after ${formatCellTime(elapsed)}`);
       status(String(e.message || e), 'err');
       res = {ok: false, error: String(e.message || e)};
     } finally { clearInterval(cellClock); }
-    c.running = false;
-    el?.classList.remove('running');
+    for (const x of [c, cur()]) if (x) x.running = false;
+    if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
     // A run rewrites the outputs, which is a change to the document, and only typing used to
     // schedule a save. Saved here rather than marked dirty: marking it left the notebook to the
     // autosave delay, and the next run flushed it on the way in, so every cell wrote the whole file
     // twice. Once a run has saved it, the next run finds nothing to flush.
-    if (lee.path === runPath && autoSaveEnabled()) saveTab(true).catch(() => {});
+    if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
-  if (advance === 'insert') { const at = belowAt(i); await nbEdit({op: 'insert', i: at}); focusCell(at); }
+  if (!advance || (i = cur() ? lee.cells.findIndex(x => x.id === cellId) : -1) < 0) return res;
+  if (advance === 'insert') { const at = belowAt(i); if (await nbEdit({op: 'insert', i: at})) focusCell(at); }
   else if (advance) {
     const j = visibleCell(i, 1), at = lee.cells.length;
-    if (j >= 0) focusCell(j); else { await nbEdit({op: 'insert', i: at}); focusCell(at); }
+    if (j >= 0) focusCell(j); else if (await nbEdit({op: 'insert', i: at})) focusCell(at);
   }
   return res;
 }
@@ -282,7 +280,7 @@ window.leeDebugStop = leeDebugStop;
 async function debugCell(i) {
   const c = lee.cells[i]; if (!c || c.cell_type !== 'code') return;
   if (lee.debugCell != null) return status('a debugger session is already active', 'err');
-  const view = ensureCellMounted(i), source = LeeCM.getDoc(view);
+  const view = ensureCellMounted(i), source = LeeCM.getDoc(view), key = lee.tabKey;
   let breakpoints = lee.breakpoints.get(c.id) || [];
   if (!breakpoints.length) {
     breakpoints = [LeeCM.lineOf(view)]; rememberBreakpoints(c.id, breakpoints);
@@ -292,7 +290,7 @@ async function debugCell(i) {
   status(`starting ipykernel debugger for cell ${i + 1}…`);
   let done = null;
   try {
-    await postEvents('/nb/debug/stream', {i, id: c.id, path: lee.path || lee.tabKey || '', source, breakpoints}, (event, data) => {
+    await postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
       if (event === 'ready') {
         rememberBreakpoints(c.id, data.breakpoints || breakpoints);
         LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);
@@ -306,10 +304,11 @@ async function debugCell(i) {
       } else if (event === 'done') done = data;
       else if (event === 'error') throw new Error(data.text || 'debugger failed');
     });
-    if (done?.cell) {
-      Object.assign(c, done.cell); renderOutputs(c);
-      $('#g-' + c.id).textContent = '[' + (c.execution_count ?? ' ') + ']';
-      setCellState(c, done.ok ? 'done' : 'error');
+    const at = lee.tabKey === key && lee.cells.find(x => x.id === c.id);
+    if (done?.cell && at) {
+      Object.assign(at, done.cell); renderOutputs(at);
+      $('#g-' + c.id).textContent = '[' + (at.execution_count ?? ' ') + ']';
+      setCellState(at, done.ok ? 'done' : 'error');
     }
     status(done?.ok ? 'debug session finished' : (done?.error || 'debug session failed'), done?.ok ? 'ok' : 'err');
   } catch (e) { setCellState(c, 'error'); status(String(e.message || e), 'err'); }

@@ -45,7 +45,7 @@ function paintCellContext(button, c) {
 async function cycleCellContext(i) {
   const c = lee.cells[i]; if (!c) return;
   const modes = ['auto', 'keep', 'discard'], mode = modes[(modes.indexOf(c.context_mode || 'auto') + 1) % modes.length];
-  const r = await nbEdit({op: 'context', i, mode});
+  const r = await nbEdit({op: 'context', i, mode}); if (!r) return;
   Object.assign(c, r.cells?.find(x => x.id === c.id));
   const button = $(`.lee-cell[data-i="${i}"] .lee-cell-context`); if (button) paintCellContext(button, c);
   status(`cell ${i + 1}: ${contextLabel(mode)}`, 'ok');
@@ -63,7 +63,7 @@ function paintCellSlide(button, c) {
 }
 async function setCellSlide(indices, type) {
   const r = await nbEdit({op: 'slide', i: indices[0], indices, type});
-  if (r.cells) status(`${indices.length === 1 ? `cell ${indices[0] + 1}` : plural(indices.length, 'cell')}: ${type === 'none' ? 'no slide type' : type}`, 'ok');
+  if (r?.cells) status(`${indices.length === 1 ? `cell ${indices[0] + 1}` : plural(indices.length, 'cell')}: ${type === 'none' ? 'no slide type' : type}`, 'ok');
 }
 function cycleCellSlide(i) {
   const c = lee.cells[i]; if (!c) return;
@@ -279,7 +279,7 @@ async function cutCell(i) {
   const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
   if (!cells.length) return status('select notebook cells to cut', 'err');
   lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
-  await nbEdit({op: 'delete_many', i: indices[0], indices});
+  if (!await nbEdit({op: 'delete_many', i: indices[0], indices})) return;
   focusCell(shownAt(Math.min(indices[0], lee.cells.length - 1)));
   status(`${cells.length} cell${cells.length === 1 ? '' : 's'} cut`, 'ok');
 }
@@ -288,14 +288,14 @@ async function pasteCell(i) {
   const cells = lee.cellClipboard?.cells || (lee.cellClipboard?.cell ? [lee.cellClipboard.cell] : []);
   if (!cells.length) return status('copy or cut cells first', 'err');
   const at = Math.max(0, Math.min(i, lee.cells.length));
-  await nbEdit({op: 'paste_many', i: at, cells});
+  if (!await nbEdit({op: 'paste_many', i: at, cells})) return;
   focusCell(at); lee.cellSelection = new Set(cells.map((_, n) => at + n)); paintSel();
   status(`${cells.length} cell${cells.length === 1 ? '' : 's'} pasted from ${compactPath(lee.cellClipboard.from)}`, 'ok');
 }
 
 async function moveCellsTo(indices, to) {
   indices = [...new Set(indices)].sort((a,b) => a-b);
-  const r = await nbEdit({op: 'move_many', i: indices[0], indices, target: to});
+  const r = await nbEdit({op: 'move_many', i: indices[0], indices, target: to}); if (!r) return;
   const at = r.index ?? to; focusCell(at); lee.cellSelection = new Set(indices.map((_, n) => at + n));
   paintSel(); status(`${indices.length} cells moved`, 'ok');
 }
@@ -310,14 +310,14 @@ async function moveCellTo(from, to) {
     if (to > from && to < end) return focusCell(from);
     return moveCellsTo(Array.from({length: end - from}, (_, n) => from + n), to > from ? to + 1 : to);
   }
-  const r = await nbEdit({op: 'move', i: from, d: to - from});
+  const r = await nbEdit({op: 'move', i: from, d: to - from}); if (!r) return;
   const at = r.index ?? to; focusCell(at);
   status(at === from ? 'nothing to move past' : `cell moved to ${at + 1}`, at === from ? 'info' : 'ok');
 }
 
 function mountCell(c, i) {
   if (lee.editors.has(c.id)) return;
-  const key = `${lee.path || 'scratch'}:${c.id}`;
+  const key = `${lee.tabKey}:${c.id}`;
   // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must never
   // replace the non-empty source `/tab/state` returned after running a cell.
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
@@ -339,7 +339,7 @@ function mountCell(c, i) {
       const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;
       const level = headingLevel(lee.cells[at]);
       lee.cells[at].source = txt;
-      rememberBuffer(key, {path: lee.path, kind: 'notebook', i: at, id: c.id, text: txt});
+      rememberBuffer(key, {path: lee.path, title: lee.tabKey, kind: 'notebook', i: at, id: c.id, text: txt});
       if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
       if (headingLevel(lee.cells[at]) !== level) paintHeadings();
       markDirty();

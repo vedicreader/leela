@@ -23,6 +23,15 @@ function takeSavedVersions(d) {
   }
 }
 
+/* Background tabs' dots: lit for each the server holds unsaved, cleared only for each a save-all wrote. Never
+   cleared from the strip alone, which has not seen a mirror still in flight or a draft not yet posted. */
+function setTabDirt(titles, dirty) {
+  for (const tab of $$('.lee-tab:not(.active)')) if (titles.has(tab.title)) { tab.classList.toggle('dirty', dirty); setTabSaveState(tab, dirty ? 'pending' : 'saved'); }
+}
+async function syncTabDirt() {
+  const bar = new DOMParser().parseFromString(await (await fetch('/tab/bar')).text(), 'text/html');
+  setTabDirt(new Set($$('.lee-tab.dirty', bar).map(t => t.title)), true);
+}
 let mountTabVersion=0;
 function saveTabLocation() {
   const view = curEditor(), key = lee.path || lee.tabKey;
@@ -71,7 +80,13 @@ async function mountTab(expectedPath = '') {
   // and switching inside the delay left that tab dirty with nothing left to save it. The server
   // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty') || lee.bufferTimers.size)) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
+  // The strip just swapped in is the server's, which has not yet seen a fold or edit still out for the tab
+  // being left. Those land first, then the strip says what the server holds and the save goes by that.
+  const leaving = lee.tabKey;
+  setTimeout(() => Promise.all([headingSynced(leaving), lee.nbQueue]).then(syncTabDirt)
+    .then(() => autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty') || lee.bufferTimers.size) && post('/tabs/save-all')
+      .then(d => { takeSavedVersions(d); setTabDirt(new Set(Object.keys(d.versions || {})), false); }))
+    .catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;

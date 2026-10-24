@@ -168,21 +168,23 @@ async function captureScreen() {
 
 /* Edits go one at a time, each to the notebook it was made in, naming cells by id. A response is applied
    only while that notebook is still the one mounted and only when it is no older than what is shown, and
-   text typed while it was in flight stays. One arriving while its tab is away waits in `lee.nbLate`. */
+   text typed while it was in flight stays. One arriving while its tab is away waits in `lee.nbLate`.
+   Resolves to the response it applied, or null, so a caller leaves focus and selection alone. */
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
-  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
+  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return null; }
   const key = lee.tabKey, cells = lee.cells, named = {path: key};
   if (!['undo', 'redo', 'clear'].includes(d.op) && cells[d.i]) named.id = cells[d.i].id;
   if (d.indices) named.ids = d.indices.map(i => cells[i]?.id).filter(Boolean);
+  if (d.op === 'move_many') named.target_id = cells[d.target]?.id || '';   // '' is the end
   const run = lee.nbQueue.then(() => sendEdit({...d, ...named}, key));
   lee.nbQueue = run.catch(() => {});
   return run;
 }
-//: A response for a notebook not on screen, kept for its next mount when it is the newest one seen.
+//: Keeps a response for a notebook not on screen for its next mount, when it is the newest one seen. Nothing was applied: null.
 function lateEdit(key, r) {
   if (r?.cells && r.version > (lee.nbLate.get(key)?.version ?? 0)) lee.nbLate.set(key, r);
-  return r;
+  return null;
 }
 async function sendEdit(d, key) {
   await headingSynced(key);   // a fold posted just before is written first
@@ -196,7 +198,7 @@ async function sendEdit(d, key) {
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
   const seq = nextSeq(), sent = new Map(lee.cells.map(c => [c.id, lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source]));
   for (const c of lee.cells) c.source = sent.get(c.id);
-  const r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
+  const r = await post('/nb/edit', d.op === 'source' ? {...d, seq} : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
   if (!here() || r.version < (lee.nbVersions.get(key) ?? 0)) return lateEdit(key, r);
   lee.nbVersions.set(key, r.version);
   // A cell this edit left as it was sent keeps what was typed into it since.

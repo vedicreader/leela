@@ -479,8 +479,8 @@ class Notebook:
         for c in self.cells: c.clear()
         self.dirty = True
     async def run(self, i, kernel, on_output=None):
-        "Run cell `i` against `kernel`, replacing its outputs. Non-code cells are a no-op."
-        c = self.cells[i]
+        "Run cell `i`, an index or the `Cell` itself, against `kernel`, replacing its outputs. Non-code cells are a no-op."
+        c = i if isinstance(i, Cell) else self.cells[i]
         if c.cell_type != 'code': return c
         c.clear()
         c.running = True
@@ -834,14 +834,15 @@ async def _settle_lost(c, k):
     else: ok = None
     if not ok: c.outputs.append({'output_type': 'error', 'ename': 'LostReply', 'evalue': LOST[ok], 'traceback': []})
 
-async def run_watched(nb, i, k, on_output=None):
-    "`(cell, lost)` for `nb.run(i, k)`; a run whose kernel went idle without its reply reaching us is settled from the kernel's record."
+async def run_watched(nb, c, k, on_output=None):
+    "`(cell, lost)` for `nb.run(c, k)`, `c` a `Cell` or its index now; a run whose kernel went idle without its reply reaching us is settled from the kernel's record."
+    if not isinstance(c, Cell): c = nb.cells[c]
     heard = time.monotonic()
     def emitted(j, o):
         nonlocal heard
         heard = time.monotonic()
         if on_output: on_output(j, o)
-    task, wait = asyncio.ensure_future(nb.run(i, k, on_output=emitted)), QUIET
+    task, wait = asyncio.ensure_future(nb.run(c, k, on_output=emitted)), QUIET
     async def finished():
         c = task.result()
         if not getattr(c, '_lost', False): return c, False
@@ -863,7 +864,7 @@ async def run_watched(nb, i, k, on_output=None):
             if not await shell_free(k): continue
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-            await _settle_lost(c := nb.cells[i], k)
+            await _settle_lost(c, k)
             nb.dirty = True
             return c, True
     finally:

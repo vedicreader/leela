@@ -72,35 +72,35 @@ const ACTIONS = {
   cell_page_down: () => focusCellPage(1),
   cell_move_up: () => moveCellTo(lee.sel, lee.sel - 1),
   cell_move_down: () => moveCellTo(lee.sel, lee.sel + 1),
-  cell_above:   async () => { const at = lee.sel; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted above', 'ok'); },
-  cell_below:   async () => { const at = belowAt(lee.sel); await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
-  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(shownAt(Math.min(at, lee.cells.length - 1))); status('cell deleted', 'ok'); },
+  cell_above:   async () => { const at = lee.sel; if (!await nbEdit({op: 'insert', i: at})) return; focusCell(at); status('cell inserted above', 'ok'); },
+  cell_below:   async () => { const at = belowAt(lee.sel); if (!await nbEdit({op: 'insert', i: at})) return; focusCell(at); status('cell inserted below', 'ok'); },
+  cell_delete:  async () => { const at = lee.sel; if (!await nbEdit({op: 'delete', i: at})) return; focusCell(shownAt(Math.min(at, lee.cells.length - 1))); status('cell deleted', 'ok'); },
   notebook_undo: async () => {
     if (lee.kind === 'text') return status('nothing to undo outside a notebook');
-    const r = await nbEdit({op: 'undo', i: lee.sel});
+    const r = await nbEdit({op: 'undo', i: lee.sel}); if (!r) return;
     focusCell(r.index ?? lee.sel); status('cell operation undone', 'ok');
   },
   notebook_redo: async () => {
     if (lee.kind === 'text') return status('nothing to redo outside a notebook');
-    const r = await nbEdit({op: 'redo', i: lee.sel});
+    const r = await nbEdit({op: 'redo', i: lee.sel}); if (!r) return;
     focusCell(r.index ?? lee.sel); status('cell operation redone', 'ok');
   },
   cell_type:    async () => {
     const id = lee.cells[lee.sel]?.id;
-    const r = await nbEdit({op: 'type', i: lee.sel, cycle: true});
+    const r = await nbEdit({op: 'type', i: lee.sel, cycle: true}); if (!r) return;
     const at = Math.max(0, r.cells.findIndex(c => c.id === id));
     focusCell(at); status(`cell ${at + 1} is now ${r.cells[at]?.cell_type || 'code'}`, 'ok');
   },
   capture:      () => captureScreen(),
   cell_split:   async () => {
     const at = lee.sel, v = lee.editors.get(lee.cells[at].id);
-    await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0});
+    if (!await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0})) return;
     focusCell(at + 1); status('cell split', 'ok');
   },
   cell_split_symbols: async () => {
     const at = lee.sel, was = lee.cells.length;
-    const r = await nbEdit({op: 'split_symbols', i: at});
-    const made = (r?.cells?.length ?? was) - was;
+    const r = await nbEdit({op: 'split_symbols', i: at}); if (!r) return;
+    const made = r.cells.length - was;
     if (!made) return status('no top-level class or function to split out', 'err');
     focusCell(at); status(`split into ${made + 1} cells`, 'ok');
   },
@@ -111,7 +111,7 @@ const ACTIONS = {
   cell_edit:    () => editMarkdownCell(lee.sel),
   cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
   cell_duplicate: async () => {
-    const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
+    const at = lee.sel; if (!await nbEdit({op: 'duplicate', i: at})) return;
     focusCell(at + 1); status('cell duplicated', 'ok');
   },
   cell_copy: () => copyCell(lee.sel),
@@ -120,18 +120,21 @@ const ACTIONS = {
   cell_paste_below: () => pasteCell(belowAt(lee.sel)),
   cell_merge_above: async () => {
     const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
-    await nbEdit({op: 'merge_above', i: at}); focusCell(at - 1); status('cells merged', 'ok');
+    if (!await nbEdit({op: 'merge_above', i: at})) return;
+    focusCell(at - 1); status('cells merged', 'ok');
   },
   cell_merge_below: async () => {
     const at = lee.sel; if (at + 1 >= lee.cells.length) return status('there is no cell below', 'err');
-    await nbEdit({op: 'merge_below', i: at}); focusCell(at); status('cells merged', 'ok');
+    if (!await nbEdit({op: 'merge_below', i: at})) return;
+    focusCell(at); status('cells merged', 'ok');
   },
   clear_cell_output: async () => {
-    const at = lee.sel; await nbEdit({op: 'clear_cell', i: at});
+    const at = lee.sel; if (!await nbEdit({op: 'clear_cell', i: at})) return;
     focusCell(at); status('cell output cleared', 'ok');
   },
   clear_all_outputs: async () => {
-    await nbEdit({op: 'clear'}); focusCell(lee.sel); status('all outputs cleared', 'ok');
+    if (!await nbEdit({op: 'clear'})) return;
+    focusCell(lee.sel); status('all outputs cleared', 'ok');
   },
   comment:      () => toggleComment(),
   cell_comment: () => toggleComment(),

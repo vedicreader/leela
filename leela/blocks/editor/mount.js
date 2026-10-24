@@ -391,7 +391,7 @@ function patchNotebook(host, before, cells, op = '') {
     if (!el || changed) {
       const view = lee.editors.get(c.id); if (view) LeeCM.destroy(view);
       lee.editors.delete(c.id);
-      const key = `${lee.path || 'scratch'}:${c.id}`;
+      const key = `${lee.tabKey}:${c.id}`;
       lee.buffers.set(key, c.source); lee.dirtyBuffers.add(key);
       const fresh = cellEl(c, i);
       if (el) el.replaceWith(fresh);

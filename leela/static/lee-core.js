@@ -377,7 +377,7 @@ function codeLang(name = '', path = '') {
 async function promoteCodeToNotebook(code, lang = 'python') {
   if (lee.kind !== 'notebook') return status('open a notebook before promoting code', 'err');
   const at = lee.sel + 1;
-  await nbEdit({op: 'insert', i: at, source: code, cell_type: lang === 'markdown' ? 'markdown' : 'code'});
+  if (!await nbEdit({op: 'insert', i: at, source: code, cell_type: lang === 'markdown' ? 'markdown' : 'code'})) return;
   focusCell(at); status(`promoted to cell ${at + 1}`, 'ok');
 }
 const SNIPPET_LINES = 2000;
@@ -1042,35 +1042,35 @@ const ACTIONS = {
   cell_page_down: () => focusCellPage(1),
   cell_move_up: () => moveCellTo(lee.sel, lee.sel - 1),
   cell_move_down: () => moveCellTo(lee.sel, lee.sel + 1),
-  cell_above:   async () => { const at = lee.sel; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted above', 'ok'); },
-  cell_below:   async () => { const at = belowAt(lee.sel); await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
-  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(shownAt(Math.min(at, lee.cells.length - 1))); status('cell deleted', 'ok'); },
+  cell_above:   async () => { const at = lee.sel; if (!await nbEdit({op: 'insert', i: at})) return; focusCell(at); status('cell inserted above', 'ok'); },
+  cell_below:   async () => { const at = belowAt(lee.sel); if (!await nbEdit({op: 'insert', i: at})) return; focusCell(at); status('cell inserted below', 'ok'); },
+  cell_delete:  async () => { const at = lee.sel; if (!await nbEdit({op: 'delete', i: at})) return; focusCell(shownAt(Math.min(at, lee.cells.length - 1))); status('cell deleted', 'ok'); },
   notebook_undo: async () => {
     if (lee.kind === 'text') return status('nothing to undo outside a notebook');
-    const r = await nbEdit({op: 'undo', i: lee.sel});
+    const r = await nbEdit({op: 'undo', i: lee.sel}); if (!r) return;
     focusCell(r.index ?? lee.sel); status('cell operation undone', 'ok');
   },
   notebook_redo: async () => {
     if (lee.kind === 'text') return status('nothing to redo outside a notebook');
-    const r = await nbEdit({op: 'redo', i: lee.sel});
+    const r = await nbEdit({op: 'redo', i: lee.sel}); if (!r) return;
     focusCell(r.index ?? lee.sel); status('cell operation redone', 'ok');
   },
   cell_type:    async () => {
     const id = lee.cells[lee.sel]?.id;
-    const r = await nbEdit({op: 'type', i: lee.sel, cycle: true});
+    const r = await nbEdit({op: 'type', i: lee.sel, cycle: true}); if (!r) return;
     const at = Math.max(0, r.cells.findIndex(c => c.id === id));
     focusCell(at); status(`cell ${at + 1} is now ${r.cells[at]?.cell_type || 'code'}`, 'ok');
   },
   capture:      () => captureScreen(),
   cell_split:   async () => {
     const at = lee.sel, v = lee.editors.get(lee.cells[at].id);
-    await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0});
+    if (!await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0})) return;
     focusCell(at + 1); status('cell split', 'ok');
   },
   cell_split_symbols: async () => {
     const at = lee.sel, was = lee.cells.length;
-    const r = await nbEdit({op: 'split_symbols', i: at});
-    const made = (r?.cells?.length ?? was) - was;
+    const r = await nbEdit({op: 'split_symbols', i: at}); if (!r) return;
+    const made = r.cells.length - was;
     if (!made) return status('no top-level class or function to split out', 'err');
     focusCell(at); status(`split into ${made + 1} cells`, 'ok');
   },
@@ -1081,7 +1081,7 @@ const ACTIONS = {
   cell_edit:    () => editMarkdownCell(lee.sel),
   cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
   cell_duplicate: async () => {
-    const at = lee.sel; await nbEdit({op: 'duplicate', i: at});
+    const at = lee.sel; if (!await nbEdit({op: 'duplicate', i: at})) return;
     focusCell(at + 1); status('cell duplicated', 'ok');
   },
   cell_copy: () => copyCell(lee.sel),
@@ -1090,18 +1090,21 @@ const ACTIONS = {
   cell_paste_below: () => pasteCell(belowAt(lee.sel)),
   cell_merge_above: async () => {
     const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
-    await nbEdit({op: 'merge_above', i: at}); focusCell(at - 1); status('cells merged', 'ok');
+    if (!await nbEdit({op: 'merge_above', i: at})) return;
+    focusCell(at - 1); status('cells merged', 'ok');
   },
   cell_merge_below: async () => {
     const at = lee.sel; if (at + 1 >= lee.cells.length) return status('there is no cell below', 'err');
-    await nbEdit({op: 'merge_below', i: at}); focusCell(at); status('cells merged', 'ok');
+    if (!await nbEdit({op: 'merge_below', i: at})) return;
+    focusCell(at); status('cells merged', 'ok');
   },
   clear_cell_output: async () => {
-    const at = lee.sel; await nbEdit({op: 'clear_cell', i: at});
+    const at = lee.sel; if (!await nbEdit({op: 'clear_cell', i: at})) return;
     focusCell(at); status('cell output cleared', 'ok');
   },
   clear_all_outputs: async () => {
-    await nbEdit({op: 'clear'}); focusCell(lee.sel); status('all outputs cleared', 'ok');
+    if (!await nbEdit({op: 'clear'})) return;
+    focusCell(lee.sel); status('all outputs cleared', 'ok');
   },
   comment:      () => toggleComment(),
   cell_comment: () => toggleComment(),
@@ -1687,6 +1690,15 @@ function takeSavedVersions(d) {
   }
 }
 
+/* Background tabs' dots: lit for each the server holds unsaved, cleared only for each a save-all wrote. Never
+   cleared from the strip alone, which has not seen a mirror still in flight or a draft not yet posted. */
+function setTabDirt(titles, dirty) {
+  for (const tab of $$('.lee-tab:not(.active)')) if (titles.has(tab.title)) { tab.classList.toggle('dirty', dirty); setTabSaveState(tab, dirty ? 'pending' : 'saved'); }
+}
+async function syncTabDirt() {
+  const bar = new DOMParser().parseFromString(await (await fetch('/tab/bar')).text(), 'text/html');
+  setTabDirt(new Set($$('.lee-tab.dirty', bar).map(t => t.title)), true);
+}
 let mountTabVersion=0;
 function saveTabLocation() {
   const view = curEditor(), key = lee.path || lee.tabKey;
@@ -1735,7 +1747,13 @@ async function mountTab(expectedPath = '') {
   // and switching inside the delay left that tab dirty with nothing left to save it. The server
   // holds a buffer for every tab, so it persists what is dirty, once the last mirror has landed.
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty') || lee.bufferTimers.size)) setTimeout(() => post('/tabs/save-all').then(takeSavedVersions).catch(() => {}), 160);
+  // The strip just swapped in is the server's, which has not yet seen a fold or edit still out for the tab
+  // being left. Those land first, then the strip says what the server holds and the save goes by that.
+  const leaving = lee.tabKey;
+  setTimeout(() => Promise.all([headingSynced(leaving), lee.nbQueue]).then(syncTabDirt)
+    .then(() => autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty') || lee.bufferTimers.size) && post('/tabs/save-all')
+      .then(d => { takeSavedVersions(d); setTabDirt(new Set(Object.keys(d.versions || {})), false); }))
+    .catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
   const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
   if(mountVersion!==mountTabVersion)return;
@@ -2275,7 +2293,7 @@ function patchNotebook(host, before, cells, op = '') {
     if (!el || changed) {
       const view = lee.editors.get(c.id); if (view) LeeCM.destroy(view);
       lee.editors.delete(c.id);
-      const key = `${lee.path || 'scratch'}:${c.id}`;
+      const key = `${lee.tabKey}:${c.id}`;
       lee.buffers.set(key, c.source); lee.dirtyBuffers.add(key);
       const fresh = cellEl(c, i);
       if (el) el.replaceWith(fresh);
@@ -2404,7 +2422,7 @@ function paintCellContext(button, c) {
 async function cycleCellContext(i) {
   const c = lee.cells[i]; if (!c) return;
   const modes = ['auto', 'keep', 'discard'], mode = modes[(modes.indexOf(c.context_mode || 'auto') + 1) % modes.length];
-  const r = await nbEdit({op: 'context', i, mode});
+  const r = await nbEdit({op: 'context', i, mode}); if (!r) return;
   Object.assign(c, r.cells?.find(x => x.id === c.id));
   const button = $(`.lee-cell[data-i="${i}"] .lee-cell-context`); if (button) paintCellContext(button, c);
   status(`cell ${i + 1}: ${contextLabel(mode)}`, 'ok');
@@ -2422,7 +2440,7 @@ function paintCellSlide(button, c) {
 }
 async function setCellSlide(indices, type) {
   const r = await nbEdit({op: 'slide', i: indices[0], indices, type});
-  if (r.cells) status(`${indices.length === 1 ? `cell ${indices[0] + 1}` : plural(indices.length, 'cell')}: ${type === 'none' ? 'no slide type' : type}`, 'ok');
+  if (r?.cells) status(`${indices.length === 1 ? `cell ${indices[0] + 1}` : plural(indices.length, 'cell')}: ${type === 'none' ? 'no slide type' : type}`, 'ok');
 }
 function cycleCellSlide(i) {
   const c = lee.cells[i]; if (!c) return;
@@ -2638,7 +2656,7 @@ async function cutCell(i) {
   const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
   if (!cells.length) return status('select notebook cells to cut', 'err');
   lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
-  await nbEdit({op: 'delete_many', i: indices[0], indices});
+  if (!await nbEdit({op: 'delete_many', i: indices[0], indices})) return;
   focusCell(shownAt(Math.min(indices[0], lee.cells.length - 1)));
   status(`${cells.length} cell${cells.length === 1 ? '' : 's'} cut`, 'ok');
 }
@@ -2647,14 +2665,14 @@ async function pasteCell(i) {
   const cells = lee.cellClipboard?.cells || (lee.cellClipboard?.cell ? [lee.cellClipboard.cell] : []);
   if (!cells.length) return status('copy or cut cells first', 'err');
   const at = Math.max(0, Math.min(i, lee.cells.length));
-  await nbEdit({op: 'paste_many', i: at, cells});
+  if (!await nbEdit({op: 'paste_many', i: at, cells})) return;
   focusCell(at); lee.cellSelection = new Set(cells.map((_, n) => at + n)); paintSel();
   status(`${cells.length} cell${cells.length === 1 ? '' : 's'} pasted from ${compactPath(lee.cellClipboard.from)}`, 'ok');
 }
 
 async function moveCellsTo(indices, to) {
   indices = [...new Set(indices)].sort((a,b) => a-b);
-  const r = await nbEdit({op: 'move_many', i: indices[0], indices, target: to});
+  const r = await nbEdit({op: 'move_many', i: indices[0], indices, target: to}); if (!r) return;
   const at = r.index ?? to; focusCell(at); lee.cellSelection = new Set(indices.map((_, n) => at + n));
   paintSel(); status(`${indices.length} cells moved`, 'ok');
 }
@@ -2669,14 +2687,14 @@ async function moveCellTo(from, to) {
     if (to > from && to < end) return focusCell(from);
     return moveCellsTo(Array.from({length: end - from}, (_, n) => from + n), to > from ? to + 1 : to);
   }
-  const r = await nbEdit({op: 'move', i: from, d: to - from});
+  const r = await nbEdit({op: 'move', i: from, d: to - from}); if (!r) return;
   const at = r.index ?? to; focusCell(at);
   status(at === from ? 'nothing to move past' : `cell moved to ${at + 1}`, at === from ? 'info' : 'ok');
 }
 
 function mountCell(c, i) {
   if (lee.editors.has(c.id)) return;
-  const key = `${lee.path || 'scratch'}:${c.id}`;
+  const key = `${lee.tabKey}:${c.id}`;
   // Only a docChanged transaction marks a buffer authoritative. A stale empty cache must never
   // replace the non-empty source `/tab/state` returned after running a cell.
   const source = lee.dirtyBuffers.has(key) ? lee.buffers.get(key) : c.source;
@@ -2698,7 +2716,7 @@ function mountCell(c, i) {
       const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;
       const level = headingLevel(lee.cells[at]);
       lee.cells[at].source = txt;
-      rememberBuffer(key, {path: lee.path, kind: 'notebook', i: at, id: c.id, text: txt});
+      rememberBuffer(key, {path: lee.path, title: lee.tabKey, kind: 'notebook', i: at, id: c.id, text: txt});
       if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
       if (headingLevel(lee.cells[at]) !== level) paintHeadings();
       markDirty();
@@ -3416,7 +3434,9 @@ async function runCell(i, advance) {
     status(`cell ${i + 1} is already running`, 'err');
     return {ok: false, error: `cell ${i + 1} is already running`};
   }
-  const runPath = lee.path, cellId = c.id;
+  const runKey = lee.tabKey, cellId = c.id;
+  // The cell that runs, wherever an insert, move or delete above has put it since; null once its tab is not shown.
+  const cur = () => lee.tabKey === runKey ? lee.cells.find(x => x.id === cellId) : null;
   let res = {ok: true, error: ''};
   const v = ensureCellMounted(i);
   const src = v ? LeeCM.getDoc(v) : c.source, seq = nextSeq();
@@ -3438,63 +3458,59 @@ async function runCell(i, advance) {
     el?.classList.add('running');
     setCellState(c, 'running');
     setCellTime(c, 0, true);
-    const cellClock = setInterval(() => setCellTime(c, performance.now() - began, true), 100);
+    const cellClock = setInterval(() => { if (cur()) setCellTime(c, performance.now() - began, true); }, 100);
     $('#g-' + c.id).textContent = '[*]';
     status(`running cell ${i + 1}…`);
     try {
       let r = null, failed = null;
-      const key = runPath || lee.tabKey || '';
-      await widgetWatch(key, cellId);
+      await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: key, source: src, seq}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
-          const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-          if (stillHere && event === 'output') {
-            lee.cells[i].outputs = data.outputs || [];
-            renderOutputs(lee.cells[i]); cellOutputEvent(cellId, lee.cells[i].outputs);
-          }
+          const at = cur();
+          if (at && event === 'output') { at.outputs = data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
         }, null, 45000);
       } catch (e) { if (e === failed || e.unsent) throw e; }
-      if (!r) r = await settleRun(key, cellId);
-      const stillHere = lee.path === runPath && lee.cells[i]?.id === cellId;
-      if (!stillHere) {
+      if (!r) r = await settleRun(runKey, cellId);
+      const at = cur();
+      if (!at) {
         c.running = false; el?.classList.remove('running'); leeVars();
         return {ok: false, error: 'the notebook changed while the cell ran'};
       }
-      // Preserve the mounted cell object and its editor relationship.
-      Object.assign(c, r.cell);
-      renderOutputs(r.cell); cellOutputEvent(cellId, c.outputs || []);
-      LeeCM.setInlineValues(v, r.inline || []);
-      if (r.result) requestAnimationFrame(() => openValueLens(r.result, $('#out-' + c.id) || el, 'expression result'));
-      $('#g-' + c.id).textContent = '[' + (r.cell.execution_count ?? ' ') + ']';
-      const elapsed = Number(c.execution_ms ?? (performance.now() - began));
-      const duration = formatCellTime(elapsed);
-      setCellTime(c, elapsed, false);
-      setCellState(c, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${i + 1} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${i + 1} failed after ${duration}`,
+      Object.assign(at, r.cell);
+      renderOutputs(at); cellOutputEvent(cellId, at.outputs || []);
+      const view = lee.editors.get(cellId); if (view) LeeCM.setInlineValues(view, r.inline || []);
+      if (r.result) requestAnimationFrame(() => openValueLens(r.result, $('#out-' + cellId) || el, 'expression result'));
+      $('#g-' + cellId).textContent = '[' + (r.cell.execution_count ?? ' ') + ']';
+      const elapsed = Number(at.execution_ms ?? (performance.now() - began));
+      const duration = formatCellTime(elapsed), n = lee.cells.indexOf(at) + 1;
+      setCellTime(at, elapsed, false);
+      setCellState(at, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
+      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${n} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
-      res = {ok: !!r.ok, error: r.ok ? '' : `cell ${i + 1} failed after ${duration}`};
+      res = {ok: !!r.ok, error: r.ok ? '' : `cell ${n} failed after ${duration}`};
     } catch (e) {
-      const elapsed = performance.now() - began;
-      c.execution_ms = elapsed; setCellTime(c, elapsed, false);
-      setCellState(c, 'error', `run failed after ${formatCellTime(elapsed)}`);
+      const elapsed = performance.now() - began, at = cur() || c;
+      at.execution_ms = elapsed; setCellTime(at, elapsed, false);
+      setCellState(at, 'error', `run failed after ${formatCellTime(elapsed)}`);
       status(String(e.message || e), 'err');
       res = {ok: false, error: String(e.message || e)};
     } finally { clearInterval(cellClock); }
-    c.running = false;
-    el?.classList.remove('running');
+    for (const x of [c, cur()]) if (x) x.running = false;
+    if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
     // A run rewrites the outputs, which is a change to the document, and only typing used to
     // schedule a save. Saved here rather than marked dirty: marking it left the notebook to the
     // autosave delay, and the next run flushed it on the way in, so every cell wrote the whole file
     // twice. Once a run has saved it, the next run finds nothing to flush.
-    if (lee.path === runPath && autoSaveEnabled()) saveTab(true).catch(() => {});
+    if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
-  if (advance === 'insert') { const at = belowAt(i); await nbEdit({op: 'insert', i: at}); focusCell(at); }
+  if (!advance || (i = cur() ? lee.cells.findIndex(x => x.id === cellId) : -1) < 0) return res;
+  if (advance === 'insert') { const at = belowAt(i); if (await nbEdit({op: 'insert', i: at})) focusCell(at); }
   else if (advance) {
     const j = visibleCell(i, 1), at = lee.cells.length;
-    if (j >= 0) focusCell(j); else { await nbEdit({op: 'insert', i: at}); focusCell(at); }
+    if (j >= 0) focusCell(j); else if (await nbEdit({op: 'insert', i: at})) focusCell(at);
   }
   return res;
 }
@@ -3618,7 +3634,7 @@ window.leeDebugStop = leeDebugStop;
 async function debugCell(i) {
   const c = lee.cells[i]; if (!c || c.cell_type !== 'code') return;
   if (lee.debugCell != null) return status('a debugger session is already active', 'err');
-  const view = ensureCellMounted(i), source = LeeCM.getDoc(view);
+  const view = ensureCellMounted(i), source = LeeCM.getDoc(view), key = lee.tabKey;
   let breakpoints = lee.breakpoints.get(c.id) || [];
   if (!breakpoints.length) {
     breakpoints = [LeeCM.lineOf(view)]; rememberBreakpoints(c.id, breakpoints);
@@ -3628,7 +3644,7 @@ async function debugCell(i) {
   status(`starting ipykernel debugger for cell ${i + 1}…`);
   let done = null;
   try {
-    await postEvents('/nb/debug/stream', {i, id: c.id, path: lee.path || lee.tabKey || '', source, breakpoints}, (event, data) => {
+    await postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
       if (event === 'ready') {
         rememberBreakpoints(c.id, data.breakpoints || breakpoints);
         LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);
@@ -3642,10 +3658,11 @@ async function debugCell(i) {
       } else if (event === 'done') done = data;
       else if (event === 'error') throw new Error(data.text || 'debugger failed');
     });
-    if (done?.cell) {
-      Object.assign(c, done.cell); renderOutputs(c);
-      $('#g-' + c.id).textContent = '[' + (c.execution_count ?? ' ') + ']';
-      setCellState(c, done.ok ? 'done' : 'error');
+    const at = lee.tabKey === key && lee.cells.find(x => x.id === c.id);
+    if (done?.cell && at) {
+      Object.assign(at, done.cell); renderOutputs(at);
+      $('#g-' + c.id).textContent = '[' + (at.execution_count ?? ' ') + ']';
+      setCellState(at, done.ok ? 'done' : 'error');
     }
     status(done?.ok ? 'debug session finished' : (done?.error || 'debug session failed'), done?.ok ? 'ok' : 'err');
   } catch (e) { setCellState(c, 'error'); status(String(e.message || e), 'err'); }
@@ -4407,21 +4424,23 @@ async function captureScreen() {
 
 /* Edits go one at a time, each to the notebook it was made in, naming cells by id. A response is applied
    only while that notebook is still the one mounted and only when it is no older than what is shown, and
-   text typed while it was in flight stays. One arriving while its tab is away waits in `lee.nbLate`. */
+   text typed while it was in flight stays. One arriving while its tab is away waits in `lee.nbLate`.
+   Resolves to the response it applied, or null, so a caller leaves focus and selection alone. */
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
-  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
+  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return null; }
   const key = lee.tabKey, cells = lee.cells, named = {path: key};
   if (!['undo', 'redo', 'clear'].includes(d.op) && cells[d.i]) named.id = cells[d.i].id;
   if (d.indices) named.ids = d.indices.map(i => cells[i]?.id).filter(Boolean);
+  if (d.op === 'move_many') named.target_id = cells[d.target]?.id || '';   // '' is the end
   const run = lee.nbQueue.then(() => sendEdit({...d, ...named}, key));
   lee.nbQueue = run.catch(() => {});
   return run;
 }
-//: A response for a notebook not on screen, kept for its next mount when it is the newest one seen.
+//: Keeps a response for a notebook not on screen for its next mount, when it is the newest one seen. Nothing was applied: null.
 function lateEdit(key, r) {
   if (r?.cells && r.version > (lee.nbLate.get(key)?.version ?? 0)) lee.nbLate.set(key, r);
-  return r;
+  return null;
 }
 async function sendEdit(d, key) {
   await headingSynced(key);   // a fold posted just before is written first
@@ -4435,7 +4454,7 @@ async function sendEdit(d, key) {
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
   const seq = nextSeq(), sent = new Map(lee.cells.map(c => [c.id, lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source]));
   for (const c of lee.cells) c.source = sent.get(c.id);
-  const r = await post('/nb/edit', d.op === 'source' ? d : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
+  const r = await post('/nb/edit', d.op === 'source' ? {...d, seq} : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
   if (!here() || r.version < (lee.nbVersions.get(key) ?? 0)) return lateEdit(key, r);
   lee.nbVersions.set(key, r.version);
   // A cell this edit left as it was sent keeps what was typed into it since.
@@ -4789,7 +4808,7 @@ function bufferBody() {
 
 async function showDiff() {
   if (!lee.kind) return status('nothing open', 'err');
-  const d = await post('/diff', bufferBody());
+  const d = await post('/diff', {path: lee.tabKey, ...bufferBody()});
   if (!d.rows.length) return status('no unsaved changes', 'ok');
   status(`${d.label} unsaved`, 'ok');
   diffModal('unsaved changes — ' + d.title, d.label, d.rows);
@@ -4820,7 +4839,7 @@ async function openMergeConflict(conflictBox) {
       const added = merges.slice(lee.cells.length).map((merge, n) => ({
         source: LeeCM.mergeResult(merge), cell_type: disk.cells?.[lee.cells.length + n]?.cell_type || 'code',
         metadata: {}, outputs: [], execution_count: null})).filter(cell => cell.source);
-      if (added.length) await nbEdit({op:'paste_many', i:lee.cells.length, cells:added});
+      if (added.length && !await nbEdit({op:'paste_many', i:lee.cells.length, cells:added})) return;
       m.remove(); await saveTab(false, null, true); status('merged notebook saved', 'ok');
     };
     return;
@@ -4871,7 +4890,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   try {
     if (lee.activeEditor==='secondary' && lee.editors.get('secondary') && lee.secondaryPath) {
       const path=lee.secondaryPath,base_disk_version=draftBaseFor(path);
-      const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),base_disk_version,force});
+      const d=await post('/nb/save',{path,text:normalizeSavedText(LeeCM.getDoc(lee.editors.get('secondary'))),seq:nextSeq(),base_disk_version,force});
       noteSelfWrite(path);
       // Without this the pane saved and learned nothing, so the next edit began from the same
       // stale base and was refused all over again.
@@ -4882,7 +4901,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
       if(!quiet)status(`saved ${path.split('/').pop()}`,'ok');return true;
     }
     // The tab being saved, held: a switch while the save is out must not clear the next tab's state.
-    const tabKey = lee.tabKey, kind = lee.kind, cellKey = (lee.path || 'scratch') + ':';
+    const tabKey = lee.tabKey, kind = lee.kind, cellKey = tabKey + ':';
     const edits = () => lee.tabEdits.get(tabKey) || 0;
     let editAt = expectedVersion ?? lee.editVersion, tabAt = edits();
     const bufferKeys = kind === 'notebook'
@@ -4899,7 +4918,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
       if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);editAt=expectedVersion??lee.editVersion;tabAt=edits();}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
-      d = await post('/nb/save', {tab: tabKey, text, base_disk_version, force});
+      d = await post('/nb/save', {tab: tabKey, text, seq: nextSeq(), base_disk_version, force});
     }
     const written = recordDiskVersion(documentKey, d.disk_version || diskVersionFor(documentKey));
     // A keystroke, fold or edit made while the save was out is not in what it wrote: the disk has its
@@ -4963,6 +4982,7 @@ async function saveAllTabs() {
   const activeDirty = !!$('.lee-tab.active.dirty');
   if (activeDirty && !await saveTab(true)) return;
   await new Promise(resolve => setTimeout(resolve, 140));
+  await Promise.all([...lee.headingSync.values(), lee.nbQueue]);   // folds and edits still out are in what it writes
   try {
     const d = await post('/tabs/save-all'), saved = d.saved + (activeDirty ? 1 : 0);
     for (const tab of $$('.lee-tab')) {

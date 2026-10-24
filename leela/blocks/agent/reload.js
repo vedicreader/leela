@@ -32,7 +32,7 @@ async function watchOpenFile() {
   if (!lee.path || lee.watchingDisk || document.hidden) return;
   lee.watchingDisk = true;
   try {
-    const d = await api('/tab/watch');
+    const d = await api('/tab/watch?path=' + encodeURIComponent(lee.path));
     if (!d || d.path !== lee.path || !lee.diskVersion) return;
     if (d.disk_version === lee.diskVersion) return;
     // Never advance the editor's base token while it is dirty. Doing so makes a missing IndexedDB
@@ -86,7 +86,7 @@ async function forgetDiskVersions(paths, force = false) {
 // Accepting disk for the tab on screen is explicit, so it takes what is there over unsaved edits.
 async function takeDiskVersion(path) {
   await forgetDiskVersions([path], true);
-  await mountTab();
+  await mountTab(path);
 }
 /* What a rollback owes every tab holding a file it restored: the one on screen is remounted, and
    the rest read from disk when they are next shown. Returns the paths it would not touch. */
