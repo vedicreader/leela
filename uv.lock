@@ -2424,7 +2424,7 @@ wheels = [
 
 [[package]]
 name = "kunda"
-version = "0.0.6"
+version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -2436,9 +2436,9 @@ dependencies = [
     { name = "jupyter-client" },
     { name = "jupywire" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/d7/2c0b2c3aae5bf652d337d76a5c85da51525081a9a10f91735ed4ef66fc7c/kunda-0.0.6.tar.gz", hash = "sha256:79f82cb0842590bc2c2e5d1c4ef77ce4e75d4963f8e2e2b0f8405edda4784bc3", size = 44477, upload-time = "2026-10-23T12:10:36.162Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/0d/0701c5cab49c16d8eb8329ceaaeea61b5c07bf118f3c8be6cafeb88a7219/kunda-0.0.7.tar.gz", hash = "sha256:5454d8a1d0a00e69f86eb4c10530fa151f836fbbc975fdbb07fa45ed7a37d754", size = 44957, upload-time = "2026-10-24T03:08:08.559Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/5b/0aba485931d1f7dcc07b88293d5801339c01cfb041f3dcc4e5b071ff1d3f/kunda-0.0.6-py3-none-any.whl", hash = "sha256:21e260cc34635089d3f9e7efb0926f365d6f0dd38a290c4011e51a36940154f6", size = 34182, upload-time = "2026-10-23T12:10:34.673Z" },
+    { url = "https://files.pythonhosted.org/packages/60/2c/738c805ff0208446ce9de5c2193b6366c3ba23f96b0b5c107f5c289ee613/kunda-0.0.7-py3-none-any.whl", hash = "sha256:a2efaab6d969a4d7d2028bfc0a94e0a91a06874b5696c8d5eede2f2ef3a3a1ef", size = 34339, upload-time = "2026-10-24T03:08:07.222Z" },
 ]
 
 [[package]]
@@ -2585,7 +2585,7 @@ requires-dist = [
     { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.15" },
-    { name = "kunda", specifier = ">=0.0.6" },
+    { name = "kunda", specifier = ">=0.0.7" },
     { name = "lekhaka", specifier = ">=0.0.4" },
     { name = "litesearch", specifier = ">=0.1.58" },
     { name = "mdhtml", specifier = ">=0.1.38" },
