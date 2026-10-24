@@ -23,6 +23,7 @@ const lee = {
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
   cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
+  headingHidden: new Set(), headingSync: Promise.resolve(),   // ids a folded heading hides, and its last write
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
   // `diskVersion` is the tab on screen. A split pane holds a second file, whose version is its
   // own: basing that pane's draft on the tab's version made every save look like somebody

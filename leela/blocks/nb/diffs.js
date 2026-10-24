@@ -171,6 +171,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     const base_disk_version = draftBaseFor(documentKey);
     if (lee.kind === 'notebook') {
       const cells = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
+      await lee.headingSync;
       d = await post('/nb/save', {cells, base_disk_version, force});
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));

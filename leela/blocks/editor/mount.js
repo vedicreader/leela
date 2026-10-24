@@ -266,8 +266,9 @@ document.addEventListener('pointerdown', e => {
 }, true);
 
 function notebookHeadings(cells) {
-  return cells.flatMap((c, i) => c.cell_type === 'markdown' ? String(c.source || '').split('\n').flatMap(line => {
-    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line); return m ? [{i, level: m[1].length, text: m[2].replace(/[*_`]/g, '')}] : [];
+  return cells.flatMap((c, i) => c.cell_type === 'markdown' ? String(c.source || '').split('\n').flatMap((line, n) => {
+    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    return m ? [{i, level: m[1].length, text: m[2].replace(/[*_`]/g, ''), folds: n === 0 && headingLevel(c) > 0}] : [];
   }) : []);
 }
 function notebookToc(cells) {
@@ -276,17 +277,13 @@ function notebookToc(cells) {
   toc.innerHTML = `<summary>contents <span>${headings.length || 'no'} sections</span></summary><nav></nav>`;
   const nav = toc.querySelector('nav');
   if (!headings.length) nav.innerHTML = '<div class="lee-dim">Add Markdown headings to build the outline.</div>';
-  else headings.forEach((h, at) => {
-    const next = headings.slice(at + 1).find(x => x.level <= h.level);
+  else headings.forEach(h => {
     const row = document.createElement('div'); row.className = 'lee-toc-row'; row.style.setProperty('--level', h.level);
-    row.innerHTML = `<button class="lee-toc-jump">${esc(h.text)}</button>` +
-      `<button class="lee-toc-fold" title="collapse or expand this section">${lee.collapsedCells.has(cells[h.i].id) ? '+' : '−'}</button>`;
+    // Only a cell's first line is a heading that folds; a later one in the same cell is a place to go.
+    row.innerHTML = `<button class="lee-toc-jump">${esc(h.text)}</button>` + (h.folds
+      ? `<button class="lee-toc-fold" data-i="${h.i}" title="collapse or expand this section">${headingFolded(cells[h.i]) ? '+' : '−'}</button>` : '');
     row.querySelector('.lee-toc-jump').onclick = () => { toc.open = false; focusCell(h.i); };
-    row.querySelector('.lee-toc-fold').onclick = () => {
-      const end = next ? next.i : cells.length;
-      for (let i = h.i; i < end; i++) setCellCollapsed(i, !lee.collapsedCells.has(cells[h.i].id));
-      row.querySelector('.lee-toc-fold').textContent = lee.collapsedCells.has(cells[h.i].id) ? '+' : '−';
-    };
+    const fold = row.querySelector('.lee-toc-fold'); if (fold) fold.onclick = () => toggleHeading(h.i);
     nav.appendChild(row);
   });
   return toc;
@@ -358,10 +355,12 @@ function mountNotebook(host, st) {
     LeeCM.destroy(view); lee.editors.delete(key);
   }
   host.innerHTML = '';
+  lee.headingHidden = hiddenIds(st.cells);
   if (!takeNotebookShells(host, st)) {
     host.appendChild(notebookToc(st.cells));
     st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
   }
+  paintHeadings(st.cells);
   selectCell(Math.min(lee.sel, st.cells.length - 1));
   observeNotebookCells(host, st.cells);
   lee.notebookGit = {};       // marks belong to the notebook that was open, not the next one
@@ -376,6 +375,7 @@ function patchNotebook(host, before, cells, op = '') {
   const oldCells = new Map(before.map(c => [c.id, c]));
   const oldEls = new Map($$('.lee-cell', host).map(el => [el.dataset.id, el]));
   const ids = new Set(cells.map(c => c.id));
+  lee.headingHidden = hiddenIds(cells);
   for (const [id, el] of oldEls) if (!ids.has(id)) {
     const view = lee.editors.get(id); if (view) LeeCM.destroy(view);
     lee.editors.delete(id); el.remove();
@@ -396,7 +396,7 @@ function patchNotebook(host, before, cells, op = '') {
       el = fresh;
     } else {
       el.dataset.i = i;
-      el.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '');
+      el.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '') + (lee.headingHidden.has(c.id) ? ' heading-hidden' : '');
       const buttons = $('.lee-cellbtns', el); if (buttons) buttons.innerHTML = cellButtons(i);
       const summary = $('.lee-cell-summary', el);
       if (summary) summary.textContent = String(c.source || '').trim().split('\n')[0] || 'empty cell';
@@ -409,6 +409,7 @@ function patchNotebook(host, before, cells, op = '') {
     }
     host.appendChild(el); // appending an existing node reorders it without remounting
   });
+  paintHeadings(cells);
   paintSel();
   observeNotebookCells(host, cells);
   // `className` is rewritten above for every reused cell, so the marks are reapplied from what

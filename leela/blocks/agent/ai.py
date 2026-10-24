@@ -539,6 +539,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         nb = Notebook.load(p) if p.exists() else Notebook.blank(p)
         c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
         if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
+        nb.reveal(first(j for j, x in enumerate(nb.cells) if x is c))   # the fold lives in the file, so unfold it there
         nb.save(p, sandbox=self.ws.fs)
         return c.id
     def nb_run_cell(self, path, cell_id, timeout=120):
@@ -550,6 +551,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         i = first(i for i, c in enumerate(nb.cells) if c.id == cell_id)
         if i is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
         if nb[i].cell_type != 'code': return f'cell {cell_id} is a {nb[i].cell_type} cell; only code cells run'
+        if nb.reveal(i): nb.save(p, sandbox=self.ws.fs)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
         # an unopened notebook gets the private kernel its tab would have, never the kernel of the tab in front

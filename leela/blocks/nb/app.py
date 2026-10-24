@@ -426,7 +426,7 @@ def connect(app, ctx):
         if op == 'insert': nb.insert(i, Cell(source=d.get('source', ''), cell_type=d.get('cell_type', 'code')))
         elif op == 'delete': nb.delete(i)
         elif op == 'delete_many': nb.delete_many(d.get('indices') or [i])
-        elif op == 'move': nb.move(i, int(d.get('d', 1)))
+        elif op == 'move': i = nb.move(i, int(d.get('d', 1)))
         elif op == 'move_many': i = nb.move_many(d.get('indices') or [i], int(d.get('target', i)))
         elif op == 'type':
             nb.cycle_type(i) if d.get('cycle') else nb.set_type(i, d.get('cell_type', 'code'))
@@ -461,6 +461,8 @@ def connect(app, ctx):
         elif op == 'slide':
             try: nb.set_slide(d.get('indices') or [i], str(d.get('type') or 'none'))
             except (TypeError, ValueError) as e: return fail(e)
+        elif op == 'heading':
+            nb.set_collapsed(None if d.get('all') else d.get('indices') or [i], bool(d.get('collapsed', True)))
         elif op == 'clear': nb.clear_all()
         else: return fail(f'unknown op {op!r}')
         if ctx.tab: ctx.tab.dirty = nb.dirty

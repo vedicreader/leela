@@ -19,7 +19,7 @@ try:
 except ImportError:
     _jloads = json.loads
 
-__all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans',
+__all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans', 'heading_level', 'section_end', 'hidden_cells',
            'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'run_watched', 'strip_work_log',
            'merge_rows', 'merged_cells', 'CHOICES']
 
@@ -34,6 +34,41 @@ MAX_UNDO = 100
 WORK_LOG = re.compile(r'\n*<details>\s*<summary>\s*what i did[^<]*</summary>[\s\S]*</details>\s*\Z', re.I)
 
 def cell_id(): return uuid.uuid4().hex[:8]
+
+#: JupyterLab's key for a folded heading. The folded cells are derived from it, never stored.
+COLLAPSED = 'heading_collapsed'
+_HEADING = re.compile(r'(#{1,6})[ \t]+\S')
+
+def heading_level(c):
+    "The level of a markdown cell whose first line is a heading, else 0."
+    if c.cell_type != 'markdown': return 0
+    m = _HEADING.match(c.source)
+    return len(m.group(1)) if m else 0
+
+def section_end(cells, i):
+    "The index after the last cell under heading cell `i`: the next heading at its level or above."
+    lv, j = heading_level(cells[i]), i + 1
+    while j < len(cells) and not 0 < heading_level(cells[j]) <= lv: j += 1
+    return j
+
+def _folded(c): return bool(heading_level(c) and c.extra.get(COLLAPSED))
+
+def hidden_cells(cells):
+    "Indices of the cells a collapsed heading above them hides."
+    out, i = set(), 0
+    while i < len(cells):
+        if _folded(cells[i]):
+            e = section_end(cells, i)
+            out.update(range(i + 1, e)); i = e
+        else: i += 1
+    return out
+
+def _ancestors(cells, i):
+    "The heading cells whose sections hold cell `i`, nearest first."
+    bound, out = heading_level(cells[i]) or 7, []
+    for j in range(i - 1, -1, -1):
+        if 0 < (lv := heading_level(cells[j])) < bound: out.append(j); bound = lv
+    return out
 
 def strip_work_log(text):
     "A reply without the `turn_md` fold `cell.calls` already holds. Mirrors `stripWorkLog`, `leela/static/js/core.js`."
@@ -217,7 +252,14 @@ class Notebook:
         snap = src.pop()
         dst.append(self._snapshot(snap['index']))
         del dst[:-MAX_UNDO]
+        folds = {c.id: c.extra.get(COLLAPSED) for c in self.cells}
         self.cells, self.dirty = L(deepcopy(snap['cells'])), snap['dirty']
+        # A fold is view state, not a step, so undo leaves every surviving cell folded as it is now.
+        for c in self.cells:
+            if c.id not in folds or bool(folds[c.id]) == bool(c.extra.get(COLLAPSED)): continue
+            if folds[c.id]: c.extra[COLLAPSED] = True
+            else: c.extra.pop(COLLAPSED)
+            self.dirty = True
         self.meta = deepcopy(snap.get('meta') or {})
         return max(0, min(snap['index'], len(self.cells) - 1))
     def undo(self):
@@ -241,13 +283,43 @@ class Notebook:
         self.dirty = True
         return c
     def move(self, i, d):
-        "Move a cell by `d` positions, shifting the cells between rather than swapping endpoints."
+        "Move a cell by `d` positions, shifting the cells between; a collapsed heading steps its whole section by one block."
+        if 0 <= i < len(self.cells) and abs(d) == 1 and _folded(self.cells[i]): return self._move_section(i, d)
         j = i + d
         if not (0 <= i < len(self.cells) and 0 <= j < len(self.cells)): return i
         self._checkpoint(i)
         self.cells.insert(j, self.cells.pop(i))
         self.dirty = True
         return j
+    def _move_section(self, i, d):
+        # Down, the next cell is always a heading at this level or above, and it moves as its whole
+        # section so no cells of its are taken in. Up, a sibling section is passed whole; with none,
+        # the one visible cell above is.
+        cells, e = self.cells, section_end(self.cells, i)
+        if d > 0:
+            return self.move_many(range(i, e), section_end(cells, e)) if e < len(cells) else i
+        if i == 0: return i
+        lv, hid = heading_level(cells[i]), hidden_cells(cells)
+        p = first(j for j in range(i - 1, -1, -1) if 0 < heading_level(cells[j]) <= lv)
+        t = p if p is not None and heading_level(cells[p]) == lv else first(j for j in range(i - 1, -1, -1) if j not in hid)
+        return self.move_many(range(i, e), t)
+    def set_collapsed(self, indices=None, collapsed=True):
+        "Fold or unfold heading cells, every one when `indices` is None. View state: no undo step."
+        idx = range(len(self.cells)) if indices is None else self._live(indices)
+        out = []
+        for j in idx:
+            c = self.cells[j]
+            if collapsed:
+                if not heading_level(c) or c.extra.get(COLLAPSED): continue
+                c.extra[COLLAPSED] = True
+            elif c.extra.pop(COLLAPSED, None) is None: continue
+            out.append(c)
+        if out: self.dirty = True
+        return out
+    def reveal(self, i):
+        "Unfold the collapsed headings that hide cell `i`; return the cells changed."
+        if not (0 <= i < len(self.cells)): return []
+        return self.set_collapsed([j for j in _ancestors(self.cells, i) if _folded(self.cells[j])], False)
     def set_type(self, i, t):
         self._checkpoint(i)
         c = self.cells[i]

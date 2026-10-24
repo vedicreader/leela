@@ -155,8 +155,11 @@ async function runCell(i, advance) {
     if (lee.path === runPath && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
-  if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }
-  else if (advance) { if (i + 1 < lee.cells.length) focusCell(i + 1); else { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); } }
+  if (advance === 'insert') { const at = belowAt(i); await nbEdit({op: 'insert', i: at}); focusCell(at); }
+  else if (advance) {
+    const j = visibleCell(i, 1), at = lee.cells.length;
+    if (j >= 0) focusCell(j); else { await nbEdit({op: 'insert', i: at}); focusCell(at); }
+  }
   return res;
 }
 
@@ -188,7 +191,7 @@ async function revealDebugFrame(state) {
     if (frame.cell_id && lee.kind === 'notebook') {
       const i = lee.cells.findIndex(c => c.id === frame.cell_id);
       if (i >= 0) {
-        selectCell(i); const view = ensureCellMounted(i);
+        unfoldTo(i); selectCell(i); const view = ensureCellMounted(i);
         LeeCM.setDebugLine(view, frame.line); paintDebugInlineValues(view, frame.line, state.variables); jumpToLine(frame.line);
       }
     } else {

@@ -23,6 +23,7 @@ const lee = {
   term: null, terms: new Map(), activeTerm: '', termSeq: 0,
   cellObserver: null, cellMountTimer: 0, cellsOwed: null, lastDoc: null, buffers: new Map(), dirtyBuffers: new Set(), bufferTimers: new Map(),
   autoSaveTimer: null, saving: false, editVersion: 0, collapsedCells: new Set(), fileGit: null,
+  headingHidden: new Set(), headingSync: Promise.resolve(),   // ids a folded heading hides, and its last write
   diskVersion: '', seenDiskVersion: '', watchingDisk: false,
   // `diskVersion` is the tab on screen. A split pane holds a second file, whose version is its
   // own: basing that pane's draft on the tab's version made every save look like somebody
@@ -1027,17 +1028,17 @@ const ACTIONS = {
   slide_notes:    () => setCellSlide(selectedCellIndices(), 'notes'),
   add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),
-  cell_select_above: () => focusCell(lee.sel - 1),
-  cell_select_below: () => focusCell(lee.sel + 1),
+  cell_select_above: () => focusCell(Math.max(visibleCell(lee.sel, -1), 0)),
+  cell_select_below: () => { const j = visibleCell(lee.sel, 1); focusCell(j < 0 ? lee.sel : j); },
   cell_first: () => focusCell(0),
-  cell_last: () => focusCell(lee.cells.length - 1),
+  cell_last: () => focusCell(shownAt(lee.cells.length - 1)),
   cell_page_up: () => focusCellPage(-1),
   cell_page_down: () => focusCellPage(1),
   cell_move_up: () => moveCellTo(lee.sel, lee.sel - 1),
   cell_move_down: () => moveCellTo(lee.sel, lee.sel + 1),
   cell_above:   async () => { const at = lee.sel; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted above', 'ok'); },
-  cell_below:   async () => { const at = lee.sel + 1; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
-  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(Math.min(at, lee.cells.length - 1)); status('cell deleted', 'ok'); },
+  cell_below:   async () => { const at = belowAt(lee.sel); await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
+  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(shownAt(Math.min(at, lee.cells.length - 1))); status('cell deleted', 'ok'); },
   notebook_undo: async () => {
     if (lee.kind === 'text') return status('nothing to undo outside a notebook');
     const r = await nbEdit({op: 'undo', i: lee.sel});
@@ -1068,6 +1069,9 @@ const ACTIONS = {
     focusCell(at); status(`split into ${made + 1} cells`, 'ok');
   },
   cell_collapse: () => setCellCollapsed(lee.sel),
+  heading_toggle: () => toggleHeading(lee.sel),
+  collapse_all_headings: () => setHeadings(null, true),
+  expand_all_headings: () => setHeadings(null, false),
   cell_edit:    () => editMarkdownCell(lee.sel),
   cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
   cell_duplicate: async () => {
@@ -1077,7 +1081,7 @@ const ACTIONS = {
   cell_copy: () => copyCell(lee.sel),
   cell_cut: () => cutCell(lee.sel),
   cell_paste_above: () => pasteCell(lee.sel),
-  cell_paste_below: () => pasteCell(lee.sel + 1),
+  cell_paste_below: () => pasteCell(belowAt(lee.sel)),
   cell_merge_above: async () => {
     const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
     await nbEdit({op: 'merge_above', i: at}); focusCell(at - 1); status('cells merged', 'ok');
@@ -1789,7 +1793,7 @@ async function mountTab(expectedPath = '') {
         let i = loc.cellId ? lee.cells.findIndex(c => c.id === loc.cellId) : -1;
         if (i < 0 && loc.cellIndex >= 0 && loc.cellIndex < lee.cells.length) i = loc.cellIndex;
         if (i >= 0) {
-          selectCell(i); const view = ensureCellMounted(i);
+          unfoldTo(i); selectCell(i); const view = ensureCellMounted(i);
           if (loc.debug) {
             LeeCM.setDebugLine(view, loc.line);
             paintDebugInlineValues(view, loc.line, lee.debugState?.variables);
@@ -2132,8 +2136,9 @@ document.addEventListener('pointerdown', e => {
 }, true);
 
 function notebookHeadings(cells) {
-  return cells.flatMap((c, i) => c.cell_type === 'markdown' ? String(c.source || '').split('\n').flatMap(line => {
-    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line); return m ? [{i, level: m[1].length, text: m[2].replace(/[*_`]/g, '')}] : [];
+  return cells.flatMap((c, i) => c.cell_type === 'markdown' ? String(c.source || '').split('\n').flatMap((line, n) => {
+    const m = /^(#{1,6})\s+(.+?)\s*$/.exec(line);
+    return m ? [{i, level: m[1].length, text: m[2].replace(/[*_`]/g, ''), folds: n === 0 && headingLevel(c) > 0}] : [];
   }) : []);
 }
 function notebookToc(cells) {
@@ -2142,17 +2147,13 @@ function notebookToc(cells) {
   toc.innerHTML = `<summary>contents <span>${headings.length || 'no'} sections</span></summary><nav></nav>`;
   const nav = toc.querySelector('nav');
   if (!headings.length) nav.innerHTML = '<div class="lee-dim">Add Markdown headings to build the outline.</div>';
-  else headings.forEach((h, at) => {
-    const next = headings.slice(at + 1).find(x => x.level <= h.level);
+  else headings.forEach(h => {
     const row = document.createElement('div'); row.className = 'lee-toc-row'; row.style.setProperty('--level', h.level);
-    row.innerHTML = `<button class="lee-toc-jump">${esc(h.text)}</button>` +
-      `<button class="lee-toc-fold" title="collapse or expand this section">${lee.collapsedCells.has(cells[h.i].id) ? '+' : '−'}</button>`;
+    // Only a cell's first line is a heading that folds; a later one in the same cell is a place to go.
+    row.innerHTML = `<button class="lee-toc-jump">${esc(h.text)}</button>` + (h.folds
+      ? `<button class="lee-toc-fold" data-i="${h.i}" title="collapse or expand this section">${headingFolded(cells[h.i]) ? '+' : '−'}</button>` : '');
     row.querySelector('.lee-toc-jump').onclick = () => { toc.open = false; focusCell(h.i); };
-    row.querySelector('.lee-toc-fold').onclick = () => {
-      const end = next ? next.i : cells.length;
-      for (let i = h.i; i < end; i++) setCellCollapsed(i, !lee.collapsedCells.has(cells[h.i].id));
-      row.querySelector('.lee-toc-fold').textContent = lee.collapsedCells.has(cells[h.i].id) ? '+' : '−';
-    };
+    const fold = row.querySelector('.lee-toc-fold'); if (fold) fold.onclick = () => toggleHeading(h.i);
     nav.appendChild(row);
   });
   return toc;
@@ -2224,10 +2225,12 @@ function mountNotebook(host, st) {
     LeeCM.destroy(view); lee.editors.delete(key);
   }
   host.innerHTML = '';
+  lee.headingHidden = hiddenIds(st.cells);
   if (!takeNotebookShells(host, st)) {
     host.appendChild(notebookToc(st.cells));
     st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
   }
+  paintHeadings(st.cells);
   selectCell(Math.min(lee.sel, st.cells.length - 1));
   observeNotebookCells(host, st.cells);
   lee.notebookGit = {};       // marks belong to the notebook that was open, not the next one
@@ -2242,6 +2245,7 @@ function patchNotebook(host, before, cells, op = '') {
   const oldCells = new Map(before.map(c => [c.id, c]));
   const oldEls = new Map($$('.lee-cell', host).map(el => [el.dataset.id, el]));
   const ids = new Set(cells.map(c => c.id));
+  lee.headingHidden = hiddenIds(cells);
   for (const [id, el] of oldEls) if (!ids.has(id)) {
     const view = lee.editors.get(id); if (view) LeeCM.destroy(view);
     lee.editors.delete(id); el.remove();
@@ -2262,7 +2266,7 @@ function patchNotebook(host, before, cells, op = '') {
       el = fresh;
     } else {
       el.dataset.i = i;
-      el.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '');
+      el.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '') + (lee.headingHidden.has(c.id) ? ' heading-hidden' : '');
       const buttons = $('.lee-cellbtns', el); if (buttons) buttons.innerHTML = cellButtons(i);
       const summary = $('.lee-cell-summary', el);
       if (summary) summary.textContent = String(c.source || '').trim().split('\n')[0] || 'empty cell';
@@ -2275,6 +2279,7 @@ function patchNotebook(host, before, cells, op = '') {
     }
     host.appendChild(el); // appending an existing node reorders it without remounting
   });
+  paintHeadings(cells);
   paintSel();
   observeNotebookCells(host, cells);
   // `className` is rewritten above for every reused cell, so the marks are reapplied from what
@@ -2428,13 +2433,14 @@ window.leeCellAct = leeCellAct; window.leeCellMenu = leeCellMenu;
 
 function cellEl(c, i) {
   const d = document.createElement('div');
-  d.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '');
+  d.className = 'lee-cell ' + c.cell_type + (lee.collapsedCells.has(c.id) ? ' collapsed' : '') + (lee.headingHidden.has(c.id) ? ' heading-hidden' : '');
   d.dataset.i = i; d.dataset.id = c.id;
   d.style.setProperty('--lee-cell-lines', Math.min(20, Math.max(2, String(c.source || '').split('\n').length)));
   const state = cellState(c);
   d.innerHTML =
     `<div class="lee-gutter" draggable="true" title="drag to move cell">` +
     `<button class="lee-cell-fold" title="collapse cell" aria-label="collapse cell">${lee.collapsedCells.has(c.id) ? '+' : '−'}</button>` +
+    (c.cell_type === 'markdown' ? `<button class="lee-heading-caret" aria-label="collapse or expand this section"></button>` : '') +
     `<div class="lee-execution-count" id="g-${c.id}">${gutterFor(c)}</div></div>` +
     `<div class="lee-cellmain"><div class="lee-cell-chrome">` +
     `<button class="lee-cell-meta" data-cell-id="${esc(c.id)}" title="${esc(cellMetaTitle(c, i))}" ` +
@@ -2455,11 +2461,13 @@ function cellEl(c, i) {
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
-    `${c.cell_type === 'markdown' ? mdCellHost(c) : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+    `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
   paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
     d.querySelector('.lee-md-cell').addEventListener('dblclick', () => editMarkdownCell(+d.dataset.i));
+    d.querySelector('.lee-heading-caret').onclick = e => { e.stopPropagation(); toggleHeading(+d.dataset.i); };
+    d.querySelector('.lee-heading-badge').onclick = e => { e.stopPropagation(); setHeadings([+d.dataset.i], false); };
   }
   d.addEventListener('mousedown', e => { selectCell(+d.dataset.i, e.shiftKey); setScope('editor'); });
   d.querySelector('.lee-cell-fold').onclick = e => { e.stopPropagation(); setCellCollapsed(+d.dataset.i); };
@@ -2496,6 +2504,86 @@ function setCellCollapsed(i, value = null) {
   const button = el?.querySelector('.lee-cell-fold'); if (button) button.textContent = collapsed ? '+' : '−';
 }
 
+/* A heading cell is a markdown cell whose first line is a heading, and JupyterLab's
+   `heading_collapsed` is its fold. What a fold hides is worked out from the headings every time
+   and never stored. The same rules as `heading_level` and `section_end` in `nb.py`. */
+const headingLevel = c => c?.cell_type === 'markdown' ? (/^(#{1,6})[ \t]+\S/.exec(String(c.source || ''))?.[1].length || 0) : 0;
+const headingFolded = c => !!(headingLevel(c) && c.extra?.heading_collapsed);
+function sectionEnd(cells, i) {
+  const lv = headingLevel(cells[i]); let j = i + 1;
+  while (j < cells.length && !(headingLevel(cells[j]) && headingLevel(cells[j]) <= lv)) j++;
+  return j;
+}
+function hiddenCells(cells = lee.cells) {
+  const out = new Set();
+  for (let i = 0; i < cells.length;) {
+    if (!headingFolded(cells[i])) { i++; continue; }
+    const e = sectionEnd(cells, i);
+    for (let j = i + 1; j < e; j++) out.add(j);
+    i = e;
+  }
+  return out;
+}
+const hiddenIds = cells => new Set([...hiddenCells(cells)].map(i => cells[i].id));
+function headingAncestors(i, cells = lee.cells) {
+  let bound = headingLevel(cells[i]) || 7; const out = [];
+  for (let j = i - 1; j >= 0; j--) { const lv = headingLevel(cells[j]); if (lv && lv < bound) { out.push(j); bound = lv; } }
+  return out;
+}
+//: The next shown cell from `i` in direction `step`, or -1.
+function visibleCell(i, step) {
+  const hid = hiddenCells();
+  for (let j = i + step; j >= 0 && j < lee.cells.length; j += step) if (!hid.has(j)) return j;
+  return -1;
+}
+//: `i`, or the shown cell above it, which is the folded heading hiding it.
+function shownAt(i) { const hid = hiddenCells(); while (i > 0 && hid.has(i)) i--; return i; }
+//: Where a cell inserted below `i` goes: after a folded heading's section, not into it.
+const belowAt = i => headingFolded(lee.cells[i]) ? sectionEnd(lee.cells, i) : i + 1;
+function paintHeadings(cells = lee.cells) {
+  const hid = hiddenCells(cells);
+  lee.headingHidden = new Set([...hid].map(i => cells[i].id));
+  $$('#editor .lee-cell').forEach(el => {
+    const i = +el.dataset.i, c = cells[i]; if (!c) return;
+    const folded = headingFolded(c);
+    el.classList.toggle('heading-hidden', hid.has(i));
+    el.classList.toggle('heading', !!headingLevel(c)); el.classList.toggle('heading-collapsed', folded);
+    const caret = $('.lee-heading-caret', el);
+    if (caret) { caret.textContent = folded ? '▸' : '▾'; caret.title = folded ? 'expand this section' : 'collapse this section'; }
+    const badge = $('.lee-heading-badge', el); if (!badge) return;
+    badge.hidden = !folded;
+    if (folded) { badge.textContent = `${plural(sectionEnd(cells, i) - i - 1, 'cell')} hidden`; badge.title = 'expand this section'; }
+  });
+  $$('#editor .lee-toc-fold').forEach(b => { b.textContent = headingFolded(cells[+b.dataset.i]) ? '+' : '−'; });
+  queueNotebookOverview();
+}
+/* Folds or unfolds heading cells, every one when `indices` is null. Painted here at once and
+   written behind, chained so `nbEdit` and `saveTab` see the write land first. Not an undo step. */
+function setHeadings(indices, collapsed) {
+  const idx = (indices ?? lee.cells.map((_, i) => i)).filter(i => {
+    const c = lee.cells[i]; return c && (collapsed ? headingLevel(c) && !c.extra?.heading_collapsed : c.extra?.heading_collapsed);
+  });
+  if (!idx.length) return;
+  for (const i of idx) {
+    const c = lee.cells[i]; c.extra = {...c.extra};
+    if (collapsed) c.extra.heading_collapsed = true; else delete c.extra.heading_collapsed;
+  }
+  paintHeadings();
+  const op = {op: 'heading', collapsed, ...(indices ? {indices: idx} : {all: true})};
+  lee.headingSync = lee.headingSync.then(() => post('/nb/edit', op)).catch(e => status(String(e.message || e), 'err'));
+  markDirty();
+  if (collapsed && hiddenCells().has(lee.sel)) focusCell(shownAt(lee.sel));
+}
+//: A heading cell folds itself; any other cell folds the section it sits in.
+function toggleHeading(i) {
+  const h = headingLevel(lee.cells[i]) ? i : headingAncestors(i)[0];
+  if (h == null) return status('this cell is under no heading', 'err');
+  setHeadings([h], !headingFolded(lee.cells[h]));
+}
+function unfoldTo(i) {
+  if (hiddenCells().has(i)) setHeadings(headingAncestors(i).filter(j => headingFolded(lee.cells[j])), false);
+}
+
 function cellClipboardPayload(i) {
   const cell = lee.cells[i]; if (!cell || lee.kind !== 'notebook') return null;
   const view = lee.editors.get(cell.id);
@@ -2518,7 +2606,7 @@ async function cutCell(i) {
   if (!cells.length) return status('select notebook cells to cut', 'err');
   lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
   await nbEdit({op: 'delete_many', i: indices[0], indices});
-  focusCell(Math.min(indices[0], lee.cells.length - 1));
+  focusCell(shownAt(Math.min(indices[0], lee.cells.length - 1)));
   status(`${cells.length} cell${cells.length === 1 ? '' : 's'} cut`, 'ok');
 }
 async function pasteCell(i) {
@@ -2542,8 +2630,15 @@ async function moveCellTo(from, to) {
   const last = lee.cells.length - 1;
   to = Math.max(0, Math.min(to, last));
   if (from === to || from < 0 || from > last) return focusCell(from);
-  await nbEdit({op: 'move', i: from, d: to - from});
-  focusCell(to); status(`cell moved to ${to + 1}`, 'ok');
+  // Dragged, a folded heading takes its section along. Stepped, the server moves it a block at a time.
+  const end = headingFolded(lee.cells[from]) ? sectionEnd(lee.cells, from) : from + 1;
+  if (end > from + 1 && Math.abs(to - from) > 1) {
+    if (to > from && to < end) return focusCell(from);
+    return moveCellsTo(Array.from({length: end - from}, (_, n) => from + n), to > from ? to + 1 : to);
+  }
+  const r = await nbEdit({op: 'move', i: from, d: to - from});
+  const at = r.index ?? to; focusCell(at);
+  status(at === from ? 'nothing to move past' : `cell moved to ${at + 1}`, at === from ? 'info' : 'ok');
 }
 
 function mountCell(c, i) {
@@ -2568,9 +2663,11 @@ function mountCell(c, i) {
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
     onChange: (txt) => {
       const at = lee.cells.findIndex(cell => cell.id === c.id); if (at < 0) return;
+      const level = headingLevel(lee.cells[at]);
       lee.cells[at].source = txt;
       rememberBuffer(key, {path: lee.path, kind: 'notebook', i: at, id: c.id, text: txt});
       if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
+      if (headingLevel(lee.cells[at]) !== level) paintHeadings();
       markDirty();
     },
   });
@@ -2854,6 +2951,7 @@ function revealCell(cell) {
   else if (below > 0) host.scrollTop += below;
 }
 function focusCell(i) {
+  unfoldTo(Math.max(0, Math.min(i, lee.cells.length - 1)));
   selectCell(i);
   const c = lee.cells[lee.sel]; if (!c) return;
   // Mounted first: an unmounted cell is a shell whose height is a guess, and the reveal measures it.
@@ -2870,8 +2968,8 @@ function focusCellPage(direction) {
   if (!host || !current) return focusCell(lee.sel + direction);
   const target = current.getBoundingClientRect().top + direction * Math.max(180, host.clientHeight * .78);
   const cells = $$('.lee-cell', host);
-  const candidates = cells.filter(el => direction < 0 ? +el.dataset.i < lee.sel : +el.dataset.i > lee.sel);
-  if (!candidates.length) return focusCell(direction < 0 ? 0 : lee.cells.length - 1);
+  const candidates = cells.filter(el => !el.classList.contains('heading-hidden') && (direction < 0 ? +el.dataset.i < lee.sel : +el.dataset.i > lee.sel));
+  if (!candidates.length) return focusCell(direction < 0 ? 0 : shownAt(lee.cells.length - 1));
   const next = candidates.reduce((best, el) =>
     Math.abs(el.getBoundingClientRect().top - target) < Math.abs(best.getBoundingClientRect().top - target) ? el : best);
   focusCell(+next.dataset.i);
@@ -3360,8 +3458,11 @@ async function runCell(i, advance) {
     if (lee.path === runPath && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
-  if (advance === 'insert') { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); }
-  else if (advance) { if (i + 1 < lee.cells.length) focusCell(i + 1); else { await nbEdit({op: 'insert', i: i + 1}); focusCell(i + 1); } }
+  if (advance === 'insert') { const at = belowAt(i); await nbEdit({op: 'insert', i: at}); focusCell(at); }
+  else if (advance) {
+    const j = visibleCell(i, 1), at = lee.cells.length;
+    if (j >= 0) focusCell(j); else { await nbEdit({op: 'insert', i: at}); focusCell(at); }
+  }
   return res;
 }
 
@@ -3393,7 +3494,7 @@ async function revealDebugFrame(state) {
     if (frame.cell_id && lee.kind === 'notebook') {
       const i = lee.cells.findIndex(c => c.id === frame.cell_id);
       if (i >= 0) {
-        selectCell(i); const view = ensureCellMounted(i);
+        unfoldTo(i); selectCell(i); const view = ensureCellMounted(i);
         LeeCM.setDebugLine(view, frame.line); paintDebugInlineValues(view, frame.line, state.variables); jumpToLine(frame.line);
       }
     } else {
@@ -4274,6 +4375,7 @@ async function captureScreen() {
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
+  await lee.headingSync;   // a fold posted just before addresses the indices this edit may shift
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
   const visible = $$('.lee-cell', host).find(el => el.getBoundingClientRect().bottom > host.getBoundingClientRect().top);
@@ -4733,6 +4835,7 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     const base_disk_version = draftBaseFor(documentKey);
     if (lee.kind === 'notebook') {
       const cells = lee.cells.map((c, i) => ({i, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
+      await lee.headingSync;
       d = await post('/nb/save', {cells, base_disk_version, force});
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));

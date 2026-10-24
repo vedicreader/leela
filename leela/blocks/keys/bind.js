@@ -169,6 +169,7 @@ async function captureScreen() {
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
   if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return {}; }
+  await lee.headingSync;   // a fold posted just before addresses the indices this edit may shift
   const host = $('#editor'), scrollTop = host?.scrollTop || 0;
   const before = lee.cells.slice();
   const visible = $$('.lee-cell', host).find(el => el.getBoundingClientRect().bottom > host.getBoundingClientRect().top);

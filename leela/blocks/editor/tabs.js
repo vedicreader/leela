@@ -135,7 +135,7 @@ async function mountTab(expectedPath = '') {
         let i = loc.cellId ? lee.cells.findIndex(c => c.id === loc.cellId) : -1;
         if (i < 0 && loc.cellIndex >= 0 && loc.cellIndex < lee.cells.length) i = loc.cellIndex;
         if (i >= 0) {
-          selectCell(i); const view = ensureCellMounted(i);
+          unfoldTo(i); selectCell(i); const view = ensureCellMounted(i);
           if (loc.debug) {
             LeeCM.setDebugLine(view, loc.line);
             paintDebugInlineValues(view, loc.line, lee.debugState?.variables);

@@ -452,6 +452,17 @@ body {
 .lee-gutter .lee-cell-fold { position: absolute; left: 0; top: 7px; width: 18px; height: 18px;
                              border: 1px solid transparent; border-radius: 3px; text-align: center; }
 .lee-gutter .lee-cell-fold:hover { border-color: var(--lee-border); background: var(--lee-bg2); }
+/* A folded heading's section. Kept apart from `.collapsed`, which folds one cell into its banner. */
+.lee-cell.heading-hidden { display: none; }
+.lee-heading-caret { display: none; position: absolute; left: 0; top: 28px; width: 18px; height: 18px; padding: 0;
+                     border: 1px solid transparent; border-radius: 3px; background: transparent;
+                     color: var(--lee-fg4); font: 12px/1 var(--lee-mono); text-align: center; cursor: pointer; }
+.lee-cell.heading .lee-heading-caret { display: block; }
+.lee-heading-caret:hover { color: var(--lee-accent); border-color: var(--lee-border); background: var(--lee-bg2); }
+.lee-heading-badge { margin: 2px 0 6px 12px; padding: 1px 8px; border: 1px solid var(--lee-border); border-radius: 10px;
+                     background: var(--lee-bg2); color: var(--lee-fg4); font: 11px/1.5 var(--lee-mono); cursor: pointer; }
+.lee-heading-badge:hover { color: var(--lee-accent); border-color: var(--lee-accent); }
+.lee-heading-badge[hidden] { display: none; }
 .lee-cell-summary { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                     color: var(--lee-fg4); font: 11px/1.4 var(--lee-mono); }
 .lee-cell.collapsed { min-height: 30px; }

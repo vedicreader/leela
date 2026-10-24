@@ -343,3 +343,20 @@ def test_a_markdown_cells_pasted_image_survives_a_save():
     assert md.nbcell()['attachments'] == att
     code = Cell.from_nb({'cell_type': 'code', 'id': 'c', 'metadata': {}, 'source': 'x', 'outputs': [], 'execution_count': None})
     assert 'attachments' not in code.nbcell()
+
+def test_a_folded_heading_hides_its_section_and_moves_as_one_block():
+    "What a fold hides comes from the headings; a folded section steps a whole block, and undo leaves folds as they are."
+    from leela.blocks.nb.nb import hidden_cells
+    rows = ['# A', 'a', '## P', 'p', '### P1', 'p1', '## Q', 'q', '#\nx']
+    nb = Notebook([Cell(source=s, cell_type='markdown' if s.startswith('#') else 'code', id=s.split()[-1]) for s in rows])
+    ids = lambda: [c.id for c in nb.cells]
+    nb.set_collapsed([4]); assert hidden_cells(nb.cells) == {5}
+    nb.set_collapsed([2]); assert hidden_cells(nb.cells) == {3, 4, 5}
+    assert not nb._undo and nb.set_collapsed([1, 8]) == [], 'a fold is no undo step, and `#` with nothing after it is no heading'
+    assert nb.move(2, 1) == 5 and ids() == ['A', 'a', 'Q', 'q', 'x', 'P', 'p', 'P1', 'p1'], 'down, past the next section whole'
+    assert nb.move(5, -1) == 2 and ids() == ['A', 'a', 'P', 'p', 'P1', 'p1', 'Q', 'q', 'x'], 'up, past the sibling section whole'
+    assert nb.move(2, -1) == 1 and ids() == ['A', 'P', 'p', 'P1', 'p1', 'a', 'Q', 'q', 'x'], 'with no sibling, past the one cell above'
+    nb.set_collapsed([1], False); nb.undo()
+    assert ids()[2] == 'P' and hidden_cells(nb.cells) == {5}, 'undo moved the section back and left P unfolded'
+    nb.set_collapsed([2]); nb.reveal(5)
+    assert hidden_cells(nb.cells) == set() and not any('heading_collapsed' in c.extra for c in nb.cells)

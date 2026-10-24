@@ -64,17 +64,17 @@ const ACTIONS = {
   slide_notes:    () => setCellSlide(selectedCellIndices(), 'notes'),
   add_folder:   () => treeAddFolder(),
   edit_keys:    () => editKeys(),
-  cell_select_above: () => focusCell(lee.sel - 1),
-  cell_select_below: () => focusCell(lee.sel + 1),
+  cell_select_above: () => focusCell(Math.max(visibleCell(lee.sel, -1), 0)),
+  cell_select_below: () => { const j = visibleCell(lee.sel, 1); focusCell(j < 0 ? lee.sel : j); },
   cell_first: () => focusCell(0),
-  cell_last: () => focusCell(lee.cells.length - 1),
+  cell_last: () => focusCell(shownAt(lee.cells.length - 1)),
   cell_page_up: () => focusCellPage(-1),
   cell_page_down: () => focusCellPage(1),
   cell_move_up: () => moveCellTo(lee.sel, lee.sel - 1),
   cell_move_down: () => moveCellTo(lee.sel, lee.sel + 1),
   cell_above:   async () => { const at = lee.sel; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted above', 'ok'); },
-  cell_below:   async () => { const at = lee.sel + 1; await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
-  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(Math.min(at, lee.cells.length - 1)); status('cell deleted', 'ok'); },
+  cell_below:   async () => { const at = belowAt(lee.sel); await nbEdit({op: 'insert', i: at}); focusCell(at); status('cell inserted below', 'ok'); },
+  cell_delete:  async () => { const at = lee.sel; await nbEdit({op: 'delete', i: at}); focusCell(shownAt(Math.min(at, lee.cells.length - 1))); status('cell deleted', 'ok'); },
   notebook_undo: async () => {
     if (lee.kind === 'text') return status('nothing to undo outside a notebook');
     const r = await nbEdit({op: 'undo', i: lee.sel});
@@ -105,6 +105,9 @@ const ACTIONS = {
     focusCell(at); status(`split into ${made + 1} cells`, 'ok');
   },
   cell_collapse: () => setCellCollapsed(lee.sel),
+  heading_toggle: () => toggleHeading(lee.sel),
+  collapse_all_headings: () => setHeadings(null, true),
+  expand_all_headings: () => setHeadings(null, false),
   cell_edit:    () => editMarkdownCell(lee.sel),
   cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
   cell_duplicate: async () => {
@@ -114,7 +117,7 @@ const ACTIONS = {
   cell_copy: () => copyCell(lee.sel),
   cell_cut: () => cutCell(lee.sel),
   cell_paste_above: () => pasteCell(lee.sel),
-  cell_paste_below: () => pasteCell(lee.sel + 1),
+  cell_paste_below: () => pasteCell(belowAt(lee.sel)),
   cell_merge_above: async () => {
     const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
     await nbEdit({op: 'merge_above', i: at}); focusCell(at - 1); status('cells merged', 'ok');
