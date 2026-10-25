@@ -426,6 +426,20 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
             assert listed['urls'] == ['http://127.0.0.1:8767', 'http://127.0.0.1:8768']
         finally: c.get(f'/dev/stop?path={p}')
 
+def test_the_stop_button_stops_a_run_when_no_kernel_is_open(tmp_path):
+    "The toolbar's stop calls /kernel/interrupt. With only a run up it answered 'no running kernel' and left the server and its inspector alive."
+    p = tmp_path/'srv.py'; p.write_text(SERVER_RUN.format(port=8769, port2=8770))
+    ws = Workspace(roots=[tmp_path], dev_port=9477)
+    with TestClient(ide_app(ws)) as c:
+        if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
+        assert c.get(f'/dev/start?path={p}').json()['ok']
+        try:
+            r = c.get('/kernel/interrupt').json()
+            assert r.get('ok'), r
+            listed = c.get('/dev/list').json()['servers'][0]
+            assert not listed['alive'] and listed['running'] is False, listed
+        finally: c.get(f'/dev/stop?path={p}')
+
 def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
     """Two folders open, each with an environment."""
     a, b = tmp_path/'first', tmp_path/'second'

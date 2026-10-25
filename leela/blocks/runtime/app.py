@@ -123,7 +123,12 @@ def connect(app, ctx):
     @rt('/kernel/interrupt')
     async def k_interrupt():
         k = session.runtime_peek()
-        if k is None: return fail('no running kernel')
+        if k is None:
+            # no notebook kernel: the toolbar's stop ends the runs still up, inspector included, rather than doing nothing
+            live = [s for s in ctx.dev.all() if s.alive]
+            if not live: return fail('nothing running: no kernel and no run')
+            for s in live: await ctx.dev.stop(s.script)
+            return {'ok': True, 'forced': False, 'note': 'stopped ' + ', '.join(s.label or s.script for s in live)}
         if hasattr(k, 'stop'): return await k.stop(timeout=2.0)
         await k.interrupt()
         return {'ok': True, 'forced': False, 'note': 'interrupt sent'}
