@@ -16,8 +16,8 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]==0.2.76",
-    "shalya>=0.1.19",
+    "ramabana[cli]==0.2.78",
+    "shalya>=0.1.22",
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",
     "kavacha>=0.0.10",
@@ -28,7 +28,7 @@ dependencies = [
     "ipykernel>=7.3.0",
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
-    "koshas>=0.1.15",
+    "koshas>=0.1.18",
     "litesearch>=0.1.61",
     "mdhtml>=0.1.38",
     "rgapi>=0.1.22",
@@ -44,7 +44,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dhrishti>=0.1.10",
     "watchfiles>=1.0",
-    "vishalakshi>=0.1.33",
+    "vishalakshi>=0.1.35",
     "rahasya>=0.0.4",
     "varga>=0.0.7",
     "lekhaka>=0.0.4",
@@ -62,7 +62,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ipymini = []
-local = ["rishi[mlx,llama]==0.1.55"]
+local = ["rishi[mlx,llama]==0.1.56"]
 desktop = ["kavacha[window]>=0.0.10"]
 macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.10"]
 windows = ["leela[desktop]", "kavacha[windows]>=0.0.10"]
@@ -88,14 +88,14 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",
     "leela[local]",
-    "rishi[all]==0.1.55",
+    "rishi[all]==0.1.56",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.55",
+    "rishi==0.1.56",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
