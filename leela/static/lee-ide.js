@@ -319,11 +319,13 @@ lee.runs = [];
 /* What is running, next to the kernel it is not. A dev server is a process leela started and can
    end, and the only evidence one existed was output arriving, which is what a broken one does not
    do. */
+/* A run is up while its process is: the inspector outlives the command, and keeps its ports. */
+const runUp = s => s.running !== false || !!s.alive;
 function paintRunsPill() {
   const pill = $('#runspill'); if (!pill) return;
   const runs = lee.runs || [];
-  const live = runs.filter(s => s.running !== false);
-  const dead = runs.filter(s => s.running === false && s.code);
+  const live = runs.filter(runUp);
+  const dead = runs.filter(s => !runUp(s) && s.code);
   pill.className = 'lee-pill ' + (dead.length ? 'lee-pill-err' : live.length ? 'lee-pill-on' : 'lee-pill-off');
   pill.textContent = live.length === 1 ? '▶ ' + (live[0].label || 'run')
     : live.length ? `▶ ${live.length} runs`
@@ -332,22 +334,22 @@ function paintRunsPill() {
                            : 'nothing running — click to start a script';
 }
 function runState(s) {
-  if (s.running === false) return s.code ? `exited ${s.code}` : 'finished';
+  if (s.running === false) return (s.code ? `exited ${s.code}` : 'finished') + (s.alive ? ' · still up' + (s.pid ? ' · pid ' + s.pid : '') : '');
   return 'running' + (s.app_url ? ' · ' + s.app_url : s.pid ? ' · pid ' + s.pid : '');
 }
 async function leeRunsMenu(anchor) {
   await pollRunLogs();
   const runs = lee.runs || [];
   const rows = runs.map(s => ({
-    label: (s.running === false ? '⚠ ' : '▶ ') + (s.label || s.path),
+    label: (runUp(s) ? '▶ ' : '⚠ ') + (s.label || s.path),
     detail: runState(s), run: () => leeRunTerm(s.script || s.path, s.label, s.pid),
   }));
   // Where each running app is listening, as rows: a port is the thing you want back after a reload.
-  const urls = runs.filter(s => s.running !== false).flatMap(s => (s.urls || []).map(url => ({url, s})));
+  const urls = runs.filter(runUp).flatMap(s => (s.urls || []).map(url => ({url, s})));
   if (urls.length) rows.push({separator: true});
   for (const {url, s} of urls) rows.push({label: 'open ' + url, detail: s.label || s.path, run: () => openExternal(url)});
   if (rows.length) rows.push({separator: true});
-  for (const s of runs.filter(s => s.running !== false)) rows.push({
+  for (const s of runs.filter(runUp)) rows.push({
     label: 'stop ' + (s.label || s.path), warn: true,
     run: async () => {
       try { await api('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
@@ -365,7 +367,7 @@ window.leeRunsMenu = leeRunsMenu;
 function adoptRuns(servers) {
   if (lee.runsAdopted) return;
   lee.runsAdopted = true;
-  const up = servers.filter(s => s.running !== false && s.pid && !lee.terms.has('run:' + (s.script || s.path)));
+  const up = servers.filter(s => runUp(s) && s.pid && !lee.terms.has('run:' + (s.script || s.path)));
   for (const s of up) leeRunTerm(s.script || s.path, s.label, s.pid, true).catch(() => {});
   if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still up — see the runs pill`);
 }
