@@ -440,6 +440,50 @@ def test_the_stop_button_stops_a_run_when_no_kernel_is_open(tmp_path):
             assert not listed['alive'] and listed['running'] is False, listed
         finally: c.get(f'/dev/stop?path={p}')
 
+def test_the_stop_button_stops_a_run_beside_an_idle_kernel(tmp_path):
+    "A notebook tab's kernel open but idle: stop ends the run, and the kernel is not interrupted. It used to interrupt the idle kernel and leave the run up."
+    p = tmp_path/'srv.py'; p.write_text(SERVER_RUN.format(port=8771, port2=8772))
+    ws = Workspace(roots=[tmp_path], dev_port=9478)
+    hit = []
+    class Idle:
+        alive = True
+        async def interrupt(self): hit.append('interrupt')
+    ws.runtime_peek = lambda tab=None: Idle()
+    with TestClient(ide_app(ws)) as c:
+        if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
+        assert c.get(f'/dev/start?path={p}').json()['ok']
+        try:
+            r = c.get('/kernel/interrupt').json()
+            assert r.get('ok') and 'stopped' in r.get('note', ''), r
+            assert not c.get('/dev/list').json()['servers'][0]['alive']
+            assert hit == [], 'the idle kernel was interrupted'
+        finally: c.get(f'/dev/stop?path={p}')
+
+def _alive_after(tmp_path, body, port, wait=8.0):
+    "Run `body` as a script under the inspector; whether its process is still up `wait` seconds later."
+    import time
+    p = tmp_path/'s.py'; p.write_text(body)
+    ws = Workspace(roots=[tmp_path], dev_port=port)
+    with TestClient(ide_app(ws)) as c:
+        if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
+        c.get(f'/dev/start?path={p}')
+        try:
+            end = time.monotonic() + wait
+            while time.monotonic() < end:
+                s = c.get('/dev/list').json()['servers'][0]
+                if not s['alive']: return False
+                time.sleep(0.2)
+            return True
+        finally: c.get(f'/dev/stop?path={p}')
+
+def test_a_command_that_exits_cleanly_takes_its_inspector_with_it(tmp_path):
+    "Exit 0, as uvicorn returns on Ctrl-C: the process ends. It used to idle with the inspector up and its ports held."
+    assert not _alive_after(tmp_path, 'print("done")\n', 9479)
+
+def test_a_command_that_crashes_keeps_its_inspector_for_a_look(tmp_path):
+    "A crash keeps the inspector up, so the variable panel can show what went wrong."
+    assert _alive_after(tmp_path, 'x = 1\nraise ValueError("boom")\n', 9480, wait=4.0)
+
 def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
     """Two folders open, each with an environment."""
     a, b = tmp_path/'first', tmp_path/'second'

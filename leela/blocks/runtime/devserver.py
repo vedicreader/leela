@@ -338,6 +338,11 @@ def _child(argv=None):
         code = 1
         traceback.print_exc()
     finally:
+        # A clean exit or Ctrl-C (uvicorn returns 0 on it) ends the run, inspector and ports included. A crash keeps the
+        # inspector up, so the variable panel can show what went wrong.
+        if code in (0, 130):
+            print(f'[leela] command exited ({code}); inspector stopped', flush=True)
+            os._exit(code)
         print(f'[leela] command exited ({code}); inspector still live', flush=True)
         try:
             while True: time.sleep(1)
