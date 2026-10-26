@@ -87,6 +87,8 @@ async function runCell(i, advance) {
     try { await askCell(i, src, el); }
     finally { c.running = false; }
   } else {
+    const p = lee.cells.find(x => x.cell_type === 'markdown' && x.extra?.lesson?.role === 'prediction' && x.extra.lesson.for === cellId);
+    const pv = p && lee.editors.get(p.id), guess = p ? {prediction: pv ? LeeCM.getDoc(pv) : p.source, confidence: p.extra.lesson.confidence} : {};
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
@@ -100,7 +102,7 @@ async function runCell(i, advance) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();

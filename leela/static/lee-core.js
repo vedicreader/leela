@@ -3240,6 +3240,15 @@ async function pickNotebookLanguage() {
     } catch (e) { status(String(e.message || e), 'err'); }
   });
 }
+function learnDiff(guess, actual) {
+  const lines = text => text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/)
+    .map(line => line.split(/[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/).filter(Boolean).join(' ')).filter(Boolean);
+  const g = lines(guess), a = lines(actual);
+  return Array.from({length: Math.max(g.length, a.length)}, (_, i) => {
+    const x = g[i] ?? null, y = a[i] ?? null;
+    return {guess: x, actual: y, kind: x === null ? 'missing' : y === null ? 'extra' : x === y ? 'match' : 'mismatch'};
+  });
+}
 /* ipywidgets in notebook cells. Each notebook has one link: a socket on `/nb/comm/ws` following its
    kernel, and the vendored manager, loaded once a widget has to be drawn. A view is kept per cell,
    output and model, so re-rendering a cell's outputs moves the live widget rather than rebuilding it.
@@ -3593,6 +3602,8 @@ async function runCell(i, advance) {
     try { await askCell(i, src, el); }
     finally { c.running = false; }
   } else {
+    const p = lee.cells.find(x => x.cell_type === 'markdown' && x.extra?.lesson?.role === 'prediction' && x.extra.lesson.for === cellId);
+    const pv = p && lee.editors.get(p.id), guess = p ? {prediction: pv ? LeeCM.getDoc(pv) : p.source, confidence: p.extra.lesson.confidence} : {};
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
@@ -3606,7 +3617,7 @@ async function runCell(i, advance) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();

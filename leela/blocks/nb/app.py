@@ -17,6 +17,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash, take_seq
+from .lesson import lock
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
@@ -169,6 +170,7 @@ def connect(app, ctx):
             owner_tab.running += 1
             try: c, lost = await run_watched(nb, c, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
+            if c.cell_type == 'code': lock(c, d.get('prediction', ''), d.get('confidence'))
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         rows, result = await cell_extras(k, c)
@@ -201,6 +203,7 @@ def connect(app, ctx):
         def emitted(_i, _output): q.put_nowait([dict(x) for x in c.outputs])
         async def run():
             _, lost = await run_watched(nb, c, k, on_output=emitted)
+            if c.cell_type == 'code': lock(c, d.get('prediction', ''), d.get('confidence'))
             note_origin(owner_tab, c)
             if owner_tab: owner_tab.dirty = True
             rows, result = await cell_extras(k, c)
