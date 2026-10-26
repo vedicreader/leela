@@ -623,6 +623,30 @@ function rupakaDraw(spec, key = null, pass = null) {
   if (pass) e.gen = pass.gen;
   return e;
 }
+const katexLoad = {p: null};
+//: One promise, failure included: a missing bundle is one console warning and the TeX left as text, never a refetch per render.
+function loadKatex() {
+  return katexLoad.p ||= new Promise((ok, no) => {
+    if (window.katex) return ok(window.katex);
+    document.head.appendChild(Object.assign(document.createElement('link'), {rel: 'stylesheet',
+      href: $('meta[name="lee-katex-css"]')?.content || '/leestatic/katex/katex.min.css'}));
+    const s = document.createElement('script');
+    s.src = $('meta[name="lee-katex-src"]')?.content || '/leestatic/katex/katex.min.js';
+    s.onload = () => window.katex ? ok(window.katex) : no(new Error('katex.js defined no katex'));
+    s.onerror = () => { s.remove(); no(new Error('katex.js could not be loaded')); };
+    document.head.appendChild(s);
+  }).catch(e => { console.warn('Leela math:', e); return null; });
+}
+//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. A promise while any is pending, else nothing.
+function renderMath(el) {
+  const todo = $$('span.math:not([data-mathed]), div.math:not([data-mathed])', el);
+  if (!todo.length) return null;
+  return loadKatex().then(k => k && todo.forEach(m => {
+    if (!m.isConnected || m.dataset.mathed) return;
+    m.dataset.mathed = '1';
+    k.render(m.textContent, m, {displayMode: m.classList.contains('display'), throwOnError: false, trust: false});
+  }));
+}
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
 //: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
 function rupakaFences(el, owner = null) {
@@ -741,8 +765,9 @@ function renderMarkdown(el, text, allowRaw = false, onRender = null, delay = 32)
         if (onRender) try { onRender(el, sent); } catch (e) { console.warn('Leela markdown annotation:', e); }
         resolveMarkdownImages(el); routeMarkdownLinks(el);
         upgradePortableToolMarkdown(el); enhanceCodeBlocks(el); addMarkdownCellAction(el);
-        // Only now is the text on the page. Anything that measures the result waits for this.
-        el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
+        // Only now is the text on the page, math included. Anything that measures the result waits for this.
+        const math = renderMath(el);
+        if (math) math.then(() => rupakaRendered(el)); else rupakaRendered(el);
       });
     } catch (e) {
       if (!el.isConnected || el.dataset.markdown !== sent) return;

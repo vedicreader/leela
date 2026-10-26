@@ -40,7 +40,7 @@ PACKAGES = [
     'fastclaude',
     'webview',                      # the shell itself
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
-    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',
+    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'nh3', 'yaml',
     'laghu_rs',                     # laghu's optional Rust core, imported inside a try and shipped as a .so
     # `readability` falls back to `chardet`, whose accelerator is a top-level extension the
     # scanner never sees, and whose models are data files a zip import cannot read. Without it

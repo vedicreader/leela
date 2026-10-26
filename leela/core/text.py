@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import re
+import nh3
 from dataclasses import dataclass
 from difflib import SequenceMatcher, get_close_matches
 from fastcore.all import L
@@ -16,7 +17,7 @@ except ImportError:                                  # a broken wheel still rank
     def _ratio(a, b): return SequenceMatcher(None, a, b).ratio()
 
 __all__ = ['DiffRow', 'HL_MAX', 'path_lang', 'hl_lines', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
-           'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds']
+           'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds', 'clean_html']
 
 @dataclass
 class DiffRow(Dictable):
@@ -121,7 +122,32 @@ _MD_TAGS ={'paragraph': ('p',), 'code_block': ('pre',), 'list': ('ul', 'ol'), 't
 
 _MD_SILENT = frozenset({'link_ref', 'footnote_def'})
 
-_MD_OPTS = dict(math='on', implicit_figures=True)
+_MD_OPTS = dict(math='dollars', implicit_figures=True)
+
+_HTML_TAGS = set('a abbr b blockquote br caption cite code col colgroup dd del details div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p pre q s samp section small span strong sub summary sup table tbody td tfoot th thead tr u ul var'.split())
+_HTML_DROP = set('script style iframe frame object embed video audio form button meta base link noscript template svg math select textarea'.split())
+_HTML_ATTRS = {'*': set('class id title lang dir role data-id'.split()), 'a': {'href'}, 'img': set('src alt title width height'.split()),
+               'td': set('colspan rowspan scope align'.split()), 'th': set('colspan rowspan scope align'.split()), 'col': {'span'},
+               'ol': {'start', 'type'}, 'li': {'value'}, 'details': {'open'}, 'input': {'checked', 'disabled'}}
+_CLASS_PREFIX, _CLASS_NAMES = ('language-', 'hl-', 'footnote-'), {'footnotes', 'task-list', 'xref', 'math', 'inline', 'display'}
+_ROLES = {'doc-noteref', 'doc-backlink', 'doc-endnotes'}
+_ID_OK = re.compile(r'^[A-Za-z][\w:.-]{0,80}$')
+_IMG_DATA = re.compile(r'^data:image/(png|jpeg|gif|webp|avif);base64,')
+
+def _html_attr(tag, attr, val):
+    "nh3's per-attribute verdict: the value to keep, or None. Class, id and role are policy, so raw HTML cannot borrow the UI's."
+    if attr == 'class': return ' '.join(t for t in val.split() if t.startswith(_CLASS_PREFIX) or t in _CLASS_NAMES) or None
+    if attr == 'id': return val if _ID_OK.match(val) else None
+    if attr == 'role': return val if val in _ROLES else None
+    if attr in ('href', 'src') and re.sub(r'[\x00-\x20]+', '', val).lower().startswith('data:'):
+        return val if tag == 'img' and attr == 'src' and _IMG_DATA.match(val) else None
+    return val
+
+def clean_html(html):
+    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles, and only safe link schemes."
+    return nh3.clean(html, tags=_HTML_TAGS, clean_content_tags=_HTML_DROP, attributes=_HTML_ATTRS, attribute_filter=_html_attr,
+                     strip_comments=False, url_schemes={'http', 'https', 'mailto', 'data'}, link_rel='noopener noreferrer',
+                     tag_attribute_values={'input': {'type': {'checkbox'}}}, set_tag_attribute_values={'input': {'disabled': 'disabled'}})
 
 def _tags(b):
     "The tags a block may render as; `('h2',)` for a level-2 heading, `()` when unknowable."

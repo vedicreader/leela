@@ -2419,7 +2419,7 @@ wheels = [
 
 [[package]]
 name = "koshas"
-version = "0.1.18"
+version = "0.1.20"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ast-grep-py" },
@@ -2429,9 +2429,9 @@ dependencies = [
     { name = "pyskills" },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f5/8c/32f95873e1ee70ff177eeb14d7e788f49b3936cd8d176e6a06782e07bb8f/koshas-0.1.18.tar.gz", hash = "sha256:cffb4fa7c7903838a979ad6405a1062a204fbe63a3945e68cea280b134b9f2dd", size = 72989, upload-time = "2026-10-25T08:06:33.622Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/f4/86ced981c54e68f74837da01d894d69c4ec9d211c0c1d6afb52963db5ef2/koshas-0.1.20.tar.gz", hash = "sha256:b8d09ddf6d4784f169c83853953eed7e7de3a4897d1ecd847d9a3a8bc4c90d13", size = 72986, upload-time = "2026-10-26T09:25:33.712Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/42/8625c7aa7a0ca5c0057eddc7d0fe5d64afa506bc7e42ad85333dfb4e004f/koshas-0.1.18-py3-none-any.whl", hash = "sha256:e303cf9456bad35752e28832ca39e9109635ae5f3f11a0e41b2b419191105994", size = 77156, upload-time = "2026-10-25T08:06:32.453Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/07/2cf8474d7d773f4af0b2571bd04a48aba461242a75ab28071cd5971af4ad/koshas-0.1.20-py3-none-any.whl", hash = "sha256:d82ad77a8b4512c2ff6ac2652d756a19cf82d8bb98caacc6a9d9416681021a3c", size = 77152, upload-time = "2026-10-26T09:25:32.371Z" },
 ]
 
 [[package]]
@@ -2517,6 +2517,7 @@ dependencies = [
     { name = "lekhaka" },
     { name = "litesearch" },
     { name = "mdhtml" },
+    { name = "nh3" },
     { name = "numpy" },
     { name = "orjson" },
     { name = "packaging" },
@@ -2596,11 +2597,12 @@ requires-dist = [
     { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "keyring", specifier = ">=25.0.0" },
-    { name = "koshas", specifier = ">=0.1.18" },
+    { name = "koshas", specifier = ">=0.1.20" },
     { name = "kunda", specifier = ">=0.0.7" },
     { name = "lekhaka", specifier = ">=0.0.4" },
     { name = "litesearch", specifier = ">=0.1.61" },
     { name = "mdhtml", specifier = ">=0.1.38" },
+    { name = "nh3", specifier = "==0.3.7" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "orjson", specifier = ">=3.9" },
     { name = "packaging", specifier = ">=24.0" },

@@ -12,3 +12,11 @@ lee-rupaka.js and lee-rupaka.css: rupaka 0.0.1 from PyPI, wheel rupaka-0.0.1-py3
 
     d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.1-py3-none-any.whl" https://files.pythonhosted.org/packages/a9/f1/ff44d254de23192343782bd91039a0b0d0e8af59a5e9ff74de00b5c074a8/rupaka-0.0.1-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.1-py3-none-any.whl"
     uv run --no-project --with "$d/rupaka-0.0.1-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
+
+katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375 (the registry's own sha1 0a13a42c2deb4f74e61f162d440b9165a548030f and sha512 Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg== both match). Download into an empty folder, check the digests, extract into another, and copy dist/katex.min.js, dist/katex.min.css and dist/fonts/*.woff2 (the stylesheet lists woff and ttf after woff2; no browser Leela runs in fetches them) with LICENSE as LICENSE-KaTeX.txt:
+
+    d=$(mktemp -d) && curl -sS -o "$d/katex-0.16.47.tgz" https://registry.npmjs.org/katex/-/katex-0.16.47.tgz && shasum -a 256 "$d/katex-0.16.47.tgz"
+    e=$(mktemp -d) && tar -xzf "$d/katex-0.16.47.tgz" -C "$e" && mkdir -p leela/vendor/katex/fonts && cp "$e/package/dist/katex.min.js" "$e/package/dist/katex.min.css" leela/vendor/katex/ && cp "$e"/package/dist/fonts/*.woff2 leela/vendor/katex/fonts/ && cp "$e/package/LICENSE" leela/vendor/katex/LICENSE-KaTeX.txt
+
+katex/katex.min.js SHA-256 a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48
+katex/katex.min.css SHA-256 0289a02cf451a44dd73add683a09644252363871ac11713a647b732cee8b1ee3

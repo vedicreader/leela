@@ -167,14 +167,14 @@ def test_the_selection_agent_has_no_tool_that_could_change_anything(tmp_path):
 
 
 def test_untrusted_markdown_cannot_execute_raw_html(tmp_path):
-    """The property is that the tag is escaped, not that the string `onerror=` is absent."""
+    """Without `allow_raw` the tag is escaped; with it the tag stays but its handler is stripped."""
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as client:
         raw = '```{=html}\n<img src=x onerror=alert(1)>\n```'
         safe = client.post('/markdown/render', json={'text': raw, 'allow_raw': False}).json()['html']
         trusted = client.post('/markdown/render', json={'text': raw, 'allow_raw': True}).json()['html']
     import re   # fastpylight, which ramabana 0.2.5's `[cli]` brings, highlights the escaped tag into spans
     assert '<img' not in safe and '&lt;img src=x onerror=alert(1)&gt;' in re.sub(r'<[^>]+>', '', safe), safe
-    assert '<img' in trusted and 'onerror' in trusted, 'an explicit `{=html}` block is deliberate'
+    assert '<img' in trusted and 'onerror' not in trusted, 'an explicit `{=html}` block keeps its markup, never its handlers'
 
 
 def test_resuming_a_history_session_puts_its_turns_back_into_the_model_context(tmp_path):

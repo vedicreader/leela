@@ -37,7 +37,7 @@ from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
 from .core.web import Assets, IDE_BUNDLES, static_dirs
 from .core.text import did_you_mean
-from .core.text import md_block_diff, md_blocks, md_change_kinds
+from .core.text import clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook
 from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
@@ -871,6 +871,8 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             Meta(name='lee-widgets-src', content=_asset('lee-widgets.js')),
             Meta(name='lee-rupaka-src', content=_asset('lee-rupaka.js')),
             Meta(name='lee-rupaka-css', content=_asset('lee-rupaka.css')),
+            Meta(name='lee-katex-src', content=_asset('katex/katex.min.js')),
+            Meta(name='lee-katex-css', content=_asset('katex/katex.min.css')),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
             Link(rel='stylesheet', href=_asset('lee-hl.css')),
@@ -972,11 +974,11 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             text = re.sub(r'(?m)^([ \t]*`{3,})\{=html\}([ \t]*)$', r'\1html\2', text)
         try:
             from mdhtml import md2mdhtml, mdhtml2html
-            symbolic = md2mdhtml(text, math='on', implicit_figures=True,
+            symbolic = md2mdhtml(text, math='dollars', implicit_figures=True,
                                  bare_autolinks=True, frontmatter=False)
             rendered = mdhtml2html(symbolic, refs='ids', auto_ids=False, hl=MD_HIGHLIGHT)
             warnings = list(getattr(symbolic, 'warnings', ())) + list(getattr(rendered, 'warnings', ()))
-            return {'html': str(rendered), 'warnings': list(dict.fromkeys(map(str, warnings)))}
+            return {'html': clean_html(str(rendered)), 'warnings': list(dict.fromkeys(map(str, warnings)))}
         except Exception as e: return _fail(e)
     @rt('/markdown/blocks')
     async def markdown_blocks(req):
@@ -1148,7 +1150,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
         diagnostics = []
         try:
             from mdhtml import md2mdhtml
-            symbolic = md2mdhtml(code, math='on', implicit_figures=True,
+            symbolic = md2mdhtml(code, math='dollars', implicit_figures=True,
                                  bare_autolinks=True, frontmatter=False)
             for warning in getattr(symbolic, 'warnings', ()):
                 diagnostics.append({'from': 0, 'to': min(1, len(code)), 'severity': 'warning',

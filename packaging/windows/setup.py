@@ -32,7 +32,7 @@ PACKAGES = [
     'fastclaude',                   # see the macOS definition
     'webview', 'clr_loader', 'pythonnet',
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
-    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'yaml',
+    'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'nh3', 'yaml',
     # `readability` falls back to `chardet`, whose accelerator is a top-level extension the
     # scanner never sees, and whose models are data files a zip import cannot read. Without it
     # the agent's web tool, research and `to_md` all die in the bundle and nowhere else.
