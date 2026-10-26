@@ -560,10 +560,18 @@ async function updateAgentSuggest() {
   } else return closeAgentSuggest();
   lee.agentSuggestAt = 0; paintAgentSuggest();
 }
+/* The chip reads `model · mode`; `data-mode` tints it when a write can run without asking. */
+function paintAgentChip() {
+  const chip = $('#agentchip'), model = $('#agentmodel'), mode = $('#agentcontrol'); if (!chip || !model || !mode) return;
+  $('#agentchipmodel', chip).textContent = (model.selectedOptions[0]?.text || model.value).split(' · ')[0];
+  $('#agentchipmode', chip).textContent = mode.value; chip.dataset.mode = mode.value;
+}
+window.paintAgentChip = paintAgentChip;
 async function leeAgentControl(control) {
   try {
     const d = await post('/agent/control', {control});
     const select = $('#agentcontrol'); if (select) select.value = d.control;
+    paintAgentChip();
     status(`agent control: ${d.control}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }

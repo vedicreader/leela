@@ -115,7 +115,7 @@ window.leeExpand = leeExpand; window.leeExpandPane = leeExpandPane;
 
 // Full screen hides the layout you would otherwise click back from, so Escape is the way out.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal').length || leeExpandState().mode !== 'full') return;
+  if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || leeExpandState().mode !== 'full') return;
   e.preventDefault(); e.stopPropagation(); leeExpand('');
 }, true);
 
@@ -3644,7 +3644,11 @@ function confirmDialog(title, detail, action = 'confirm', alt = '') {
 
 /* One menu renderer for every contextual surface. Labels and effective chords come from
  * `leela.blocks.keys.menus` and `leela.core.keys`. The browser positions rows and dispatches. */
-function closeMenu() { $('.lee-ctxmenu')?.remove(); }
+function closeMenu() {
+  $('.lee-ctxmenu')?.remove();
+  if (lee.menuAnchor?.hasAttribute('aria-haspopup')) lee.menuAnchor.setAttribute('aria-expanded', 'false');
+  lee.menuAnchor = null;
+}
 function openMenu(surface, x, y) {
   closeMenu();
   lee.menuSurface = surface;   // an action can act on what was right-clicked, not on the focus
@@ -3653,16 +3657,22 @@ function openMenu(surface, x, y) {
   const menu = document.createElement('div');
   menu.className = 'lee-ctxmenu'; menu.setAttribute('role', 'menu'); menu.tabIndex = -1;
   menu.innerHTML = rows.map(r => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
-    `<button class="lee-menuitem ${esc(r.kind)}" role="menuitem" data-action="${esc(r.action)}">` +
+    `<button class="lee-menuitem ${esc(r.kind)}" role="${r.check ? 'menuitemcheckbox' : 'menuitem'}"` +
+    `${r.check ? ` aria-checked="${!!lee.menuChecks?.[r.action]?.()}"` : ''}${lee.menuOff?.[r.action]?.() ? ' disabled' : ''} data-action="${esc(r.action)}">` +
     `<span>${esc(r.label)}</span>${r.chord && r.chord !== '—' ? `<kbd>${esc(displayChord(r.chord))}</kbd>` : ''}</button>`).join('');
   document.body.appendChild(menu);
   const rect = menu.getBoundingClientRect();
   menu.style.left = Math.max(4, Math.min(x, innerWidth - rect.width - 4)) + 'px';
   menu.style.top = Math.max(4, Math.min(y, innerHeight - rect.height - 4)) + 'px';
-  menu.onclick = e => { const item = e.target.closest('.lee-menuitem'); if (!item) return; closeMenu(); leeAct(item.dataset.action); };
+  menu.onclick = e => {
+    const item = e.target.closest('.lee-menuitem'); if (!item || item.disabled) return;
+    if (item.getAttribute('role') !== 'menuitemcheckbox') { closeMenu(); return leeAct(item.dataset.action); }
+    const sync = () => item.setAttribute('aria-checked', String(!!lee.menuChecks?.[item.dataset.action]?.()));
+    Promise.resolve(leeAct(item.dataset.action)).then(sync, sync); sync();
+  };
   menu.onkeydown = e => {
-    const items = $$('.lee-menuitem', menu), at = items.indexOf(document.activeElement);
-    if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+    const items = $$('.lee-menuitem:not(:disabled)', menu), at = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); const back = lee.menuAnchor; closeMenu(); back?.focus(); }
     else if (e.key === 'ArrowDown') { e.preventDefault(); items[(at + 1 + items.length) % items.length]?.focus(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); items[(at - 1 + items.length) % items.length]?.focus(); }
     else if (e.key === 'Home') { e.preventDefault(); items[0]?.focus(); }
@@ -3672,6 +3682,8 @@ function openMenu(surface, x, y) {
 }
 function leeMenuAt(surface, anchor) {
   const r = anchor.getBoundingClientRect(); openMenu(surface, r.right - 4, r.bottom + 3);
+  if (!$('.lee-ctxmenu')) return;
+  lee.menuAnchor = anchor; if (anchor.hasAttribute('aria-haspopup')) anchor.setAttribute('aria-expanded', 'true');
 }
 window.leeMenuAt = leeMenuAt;
 
@@ -3803,10 +3815,10 @@ function leeDebugMenu(anchor) {
 }
 window.leeDebugMenu = leeDebugMenu;
 
-document.addEventListener('pointerdown', e => { if (!e.target.closest('.lee-ctxmenu, .lee-more')) closeMenu(); }, true);
+document.addEventListener('pointerdown', e => { if (!e.target.closest('.lee-ctxmenu, .lee-more, [aria-haspopup="menu"]')) closeMenu(); }, true);
 window.addEventListener('blur', closeMenu);
 window.addEventListener('resize', () => { closeMenu(); layoutTabs(); });
-window.addEventListener('scroll', e => { if (!e.target.closest?.('.lee-ctxmenu')) closeMenu(); }, true);
+window.addEventListener('scroll', e => { if (!e.target.closest?.('.lee-ctxmenu, #agentlog')) closeMenu(); }, true);
 
 function showHelp() {
   const scopes = Object.entries(lee.help).sort(([a], [b]) =>

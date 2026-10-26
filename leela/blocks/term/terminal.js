@@ -115,7 +115,7 @@ window.leeExpand = leeExpand; window.leeExpandPane = leeExpandPane;
 
 // Full screen hides the layout you would otherwise click back from, so Escape is the way out.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal').length || leeExpandState().mode !== 'full') return;
+  if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || leeExpandState().mode !== 'full') return;
   e.preventDefault(); e.stopPropagation(); leeExpand('');
 }, true);
 

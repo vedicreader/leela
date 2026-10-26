@@ -49,7 +49,14 @@ MENUS = {
     'kernel': L(S('pick_kernel'), S('switch_env'), S(), S('interrupt', 'warn'),
                 S('restart', 'warn')),
     'exec': L(S('exec_run'), S('exec_promote'), S('toggle_scope'), S(), S('exec_clear')),
+    'agent_head': L(S('agent_new'), S('agent_threads'), S('agent_history'), S('agent_assess'), S('agent_round'), S('agent_accept'), S(),
+                    S('agent_calm'), S('agent_expand'), S(),
+                    S('agent_research'), S('agent_exhash'), S('agent_browser'), S('memory_notes'), S(),
+                    S('agent_warm'), S('agent_full'), S('agent_state')),
 }
+
+#: rows that show a state and keep the menu open when clicked; the browser reads the state from `lee.menuChecks`
+CHECKS = {'agent_history', 'agent_calm', 'agent_expand', 'agent_research', 'agent_exhash', 'agent_browser', 'agent_warm', 'agent_full'}
 
 def menu(surface):
     "The rows for one surface, in declaration order."
@@ -60,7 +67,7 @@ def _row(item):
     if not item.action: return {'separator': True}
     key = lookup(item.action)
     return {'action': item.action, 'label': key.label or item.action.replace('_', ' '),
-            'chord': chord_display(key), 'kind': item.kind}
+            'chord': chord_display(key), 'kind': item.kind, 'check': item.action in CHECKS}
 
 def web_menus():
     "JSON-ready menus, resolving labels and effective user chords from the keymap."

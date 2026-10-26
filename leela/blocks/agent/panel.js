@@ -195,7 +195,7 @@ async function loadAgentModels(legacy = $('#legacymodels')?.checked ?? true) {
   }
   MODEL_RUNTIMES = Object.fromEntries((d.models || []).map(m => [m.value, m.runtime || '']));
   JOB_HELP = d.job_help || JOB_HELP;
-  markHarness(selects.agent.value);
+  markHarness(selects.agent.value); paintAgentChip();
   paintJobModels(d);
   for (const select of Object.values(selects)) attachModelPicker(select);
   paintModelPickers();

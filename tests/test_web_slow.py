@@ -1426,6 +1426,7 @@ def test_model_settings_open_from_every_route_on_a_machine_with_nothing_set_up(m
     _bare_machine(monkeypatch, tmp_path)
     async def go(pg):
         await pg.set_viewport_size({'width': 1280, 'height': 600})
+        await pg.click('#agentchip > summary')   # the model picker lives in the chip's panel
         await pg.wait_for_selector('[data-model-pick="agentmodel"]')
         out = {'settings': await pg.evaluate(OPEN_SETTINGS)}
         await pg.click('.lee-routing-popover button:has-text("+ model")')

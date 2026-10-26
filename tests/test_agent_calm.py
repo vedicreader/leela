@@ -109,13 +109,13 @@ def test_calm_command_toggles_without_sending_a_turn_and_waits_out_a_running_tur
           lee.prefs = {agent: {}}; leePane('right', true); leeRight('agent');
           const log = $('#agentlog'), prompt = $('#agentprompt'), out = {};
           const say = async q => { prompt.value = q; await sendAgent(); };
-          await say('/calm on'); out.on = [agentCalm(), $('#agentcalm')?.getAttribute('aria-pressed'), prompt.value];
-          await say('/calm off'); out.off = [agentCalm(), $('#agentcalm')?.getAttribute('aria-pressed')];
+          await say('/calm on'); out.on = [agentCalm(), prompt.value];
+          await say('/calm off'); out.off = [agentCalm()];
           log.insertAdjacentHTML('beforeend', '<div id="mark">kept</div>'); lee.agentBusy = true;
           await say('/calm'); out.busy = [agentCalm(), !!$('#mark'), prompt.value];
           lee.agentBusy = false; out.posts = (window._posts || []).filter(u => u === '/agent/turn' || u === '/agent/steer');
           return out;
         }""")
     got = asyncio.run(_real_page(go, tmp_path))
-    assert got['on'] == [True, 'true', ''] and got['off'] == [False, 'false'], got
+    assert got['on'] == [True, ''] and got['off'] == [False], got
     assert got['busy'] == [True, True, ''] and got['posts'] == [], got

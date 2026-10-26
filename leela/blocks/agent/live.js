@@ -46,7 +46,6 @@ function restoreAgentLive() {
   const log = $('#agentlog'); if (!log) return;
   log.replaceChildren(lee.agentLive || document.createDocumentFragment());
   lee.agentLive = null; lee.agentView = 'live';
-  $('#agenthistory')?.classList.remove('active');
   stickAgentLog(log, true);
 }
 function userMessage(text) {
@@ -446,7 +445,7 @@ async function paintAgentThread(id) {
   if ((d.turns || []).length) { log.innerHTML = ''; renderTurns(log, d.turns, titleText(d.title) || 'conversation'); }
   else log.innerHTML = welcome ? welcome.outerHTML : '';
   renderWarmStart(log, d.warm);
-  lee.agentView = 'live'; $('#agenthistory')?.classList.remove('active');
+  lee.agentView = 'live';
   trimAgentLog(log);   // a conversation of any length arrives here whole
   // Nothing to set aside: the live pane is what was just painted into the log.
   lee.agentLive = null; stickAgentLog(log, true);
@@ -476,7 +475,6 @@ function paintResumed(d) {
     stickAgentLog(log, true);
   }
   lee.agentView = 'live'; lee.agentLive = null; lee.agentThread = d.session || lee.agentThread;
-  $('#agenthistory')?.classList.remove('active');
   loadAgentModels().catch(() => {});
 }
 /* A pick returns its `done`; until then `lee.agentPicked` is pending, so the boot resume can wait for
@@ -515,7 +513,7 @@ function warmAgentHistory() {
 }
 async function leeAgentHistory() {
   if (lee.agentView === 'history') return restoreAgentLive();
-  rememberAgentLive(); lee.agentView = 'history'; $('#agenthistory')?.classList.add('active');
+  rememberAgentLive(); lee.agentView = 'history';
   /* `rememberAgentLive` moves the nodes out rather than copying them, so from here until the
      history is painted the only copy of the conversation is in `lee.agentLive`. A history read
      that fails must put it back, or the pane is left blank with the work in a variable. */
@@ -596,8 +594,7 @@ function paintAgentThreads(d) {
     $('#agentnotify', list).onchange = e => leeAgentNotifyToggle(e.target.checked);
     bindAgentThreadCards(list);
   }
-  paintAgentWarmToggle();   // the preference arrives with the settings; the button shows it once they have
-  paintAgentAcceptButton();
+  paintAgentMore();   // the preference arrives with the settings; the dot shows it once they have
   paintAgentAttention(d.attention || {}, rows);
 }
 function bindAgentThreadCards(list) {
@@ -908,50 +905,67 @@ function notifyAgentAttention(d) {
 }
 window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = agentNotifyEnabled;
 /* Warm starts are opt-in per new conversation: the toggle is a preference, read when `+` is
-   pressed, so a person decides before the first prompt and sees the choice on the button. */
+   pressed, so a person decides before the first prompt and sees the choice in the ⋯ menu. */
 function agentWarmEnabled() { return prefGet('agent', 'warm', false) === true; }
-function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); paintAgentOptins(); paintAgentFullToggle(); paintAgentCalmToggle(); }
 /* Calm mode folds each stretch of tool activity into one closed group. A running turn keeps the
    mode it started in, so a switch made mid-turn waits for the next turn. */
 function agentCalm() { return prefGet('agent', 'calm', false) === true; }
-function paintAgentCalmToggle() { $('#agentcalm')?.setAttribute('aria-pressed', String(agentCalm())); }
 async function leeAgentCalm(on = !agentCalm()) {
-  prefSet('agent', 'calm', on); paintAgentCalmToggle();
+  prefSet('agent', 'calm', on); paintAgentMore();
   if (lee.agentBusy) return status(`calm mode ${on ? 'on' : 'off'} from the next turn`, 'ok');
   if (!lee.agentView || lee.agentView === 'live') await paintAgentThread(lee.agentThread || '');
   status(`calm mode ${on ? 'on' : 'off'}`, 'ok');
 }
 window.leeAgentCalm = leeAgentCalm;
 function leeAgentWarmToggle() {
-  const on = !agentWarmEnabled(); prefSet('agent', 'warm', on); paintAgentWarmToggle();
+  const on = !agentWarmEnabled(); prefSet('agent', 'warm', on); paintAgentMore();
   status(on ? 'the next new conversation starts warm' : 'new conversations start cold', 'ok');
 }
-/* Opt-in tool groups for the next new conversation. The buttons are painted from the workspace
-   default on the server; a preference, once set, overrides it for this browser. */
+/* Opt-in tool groups for the next new conversation. The workspace default rides on the head's
+   data attributes; a preference, once set, overrides it for this browser. */
 /* The profile is ramabana's: `auto` is small for a local or small-window model. `full` here asks for
    everything on the next new conversation; the workspace default is the settings pane's select. */
-function agentFullEnabled() { const p = prefGet('agent', 'full', null); return p === null ? $('#agentfull')?.getAttribute('aria-pressed') === 'true' : p === true; }
-function paintAgentFullToggle() { $('#agentfull')?.setAttribute('aria-pressed', String(agentFullEnabled())); }
+const agentHead = () => $('.lee-agent-head')?.dataset || {};
+const AGENT_OPTINS = ['research', 'exhash', 'browser'];
+const agentOptinDefault = name => (agentHead().optinDefault || '').split(' ').includes(name);
+function agentOptinOn(name) { const p = prefGet('agent', 'optin:' + name, null); return p === null ? agentOptinDefault(name) : p === true; }
+function agentOptins() { return AGENT_OPTINS.filter(agentOptinOn); }
+function agentFullEnabled() { const p = prefGet('agent', 'full', null); return p === null ? agentHead().profile === 'full' : p === true; }
 function leeAgentFullToggle() {
-  const on = !agentFullEnabled(); prefSet('agent', 'full', on); paintAgentFullToggle();
+  const on = !agentFullEnabled(); prefSet('agent', 'full', on); paintAgentMore();
   status(on ? 'the next new conversation is briefed in full' : 'new conversations take the workspace profile', 'ok');
 }
 window.leeAgentFullToggle = leeAgentFullToggle;
-function agentOptinButtons() { return $$('[data-optin]').filter(b => b.id.startsWith('agentoptin-')); }
-function agentOptins() { return agentOptinButtons().filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.dataset.optin); }
-function paintAgentOptins() {
-  for (const b of agentOptinButtons()) {
-    const pref = prefGet('agent', 'optin:' + b.dataset.optin, null);
-    if (pref !== null) b.setAttribute('aria-pressed', String(pref === true));
-  }
-}
 function leeAgentOptinToggle(name) {
-  const b = $(`#agentoptin-${name}`); if (!b) return;
-  const on = b.getAttribute('aria-pressed') !== 'true';
-  prefSet('agent', 'optin:' + name, on); b.setAttribute('aria-pressed', String(on));
+  if (!AGENT_OPTINS.includes(name)) return;
+  const on = !agentOptinOn(name); prefSet('agent', 'optin:' + name, on); paintAgentMore();
   status(on ? `the next new conversation gets ${name}` : `new conversations go without ${name}`, 'ok');
 }
 window.leeAgentOptinToggle = leeAgentOptinToggle; window.agentOptins = agentOptins;
+/* The head's ⋯ menu is the shared one, `agent_head` in `leela.blocks.keys.menus`. Rows marked `check` read
+   their state from `menuChecks`; a toggle that differs from its default lights the dot on the button. */
+lee.menuChecks = {agent_history: () => lee.agentView === 'history', agent_calm: agentCalm,
+  agent_expand: () => $('#agentexpand')?.getAttribute('aria-pressed') === 'true',
+  agent_research: () => agentOptinOn('research'), agent_exhash: () => agentOptinOn('exhash'),
+  agent_browser: () => agentOptinOn('browser'), agent_warm: agentWarmEnabled, agent_full: agentFullEnabled};
+lee.menuOff = {agent_accept: () => !agentRoundSource()};
+function agentMoreActive() {
+  const diff = (on, was, name) => on === was ? '' : on ? name : 'no ' + name;
+  return [diff(agentCalm(), false, 'calm'), diff(agentWarmEnabled(), false, 'warm start'),
+    diff(agentFullEnabled(), agentHead().profile === 'full', 'full briefing'),
+    ...AGENT_OPTINS.map(n => diff(agentOptinOn(n), agentOptinDefault(n), n))].filter(Boolean);
+}
+function paintAgentMore() {
+  const b = $('#agentmore'); if (!b) return;
+  const on = agentMoreActive(), label = on.length ? `more actions, active: ${on.join(', ')}` : 'more actions';
+  b.classList.toggle('dotted', !!on.length); b.setAttribute('aria-label', label); b.title = label;
+}
+function leeAgentMenu() {
+  const b = $('#agentmore'); if (!b) return;
+  if ($('.lee-ctxmenu') && lee.menuAnchor === b) return closeMenu();
+  leePane('right', true); leeRight('agent'); leeMenuAt('agent_head', b);
+}
+window.leeAgentMenu = leeAgentMenu; window.paintAgentMore = paintAgentMore;
 /* A warm start is one collapsed block above the first turn. Its body is the rounds as they were
    replayed: the user line, the assistant's words, and every tool call painted with the same step
    renderer a live call gets, so "seeing the instructions run" reads like the conversation does.
@@ -998,7 +1012,6 @@ function renderWarmStart(log, rep) {
    accept button shows once something is here to accept: a capture this page made, or an open
    `.dhrona/*.ipynb` tab. */
 const agentRoundSource = () => lee.agentRoundSource || (/\/\.dhrona\/[^/]+\.ipynb$/.test(lee.path || '') ? lee.path : '');
-function paintAgentAcceptButton() { const b = $('#agentaccept'); if (b) b.hidden = !agentRoundSource(); }
 async function leeAgentAssess() {
   try {
     const d = await post('/agent/thread/assess', {thread: lee.agentThread});
@@ -1015,7 +1028,7 @@ async function leeAgentCapture() {
   const name = prompt('round name', lee.agentTitle || ''); if (name === null) return;
   try {
     const d = await post('/agent/thread/capture', {thread: lee.agentThread, name});
-    lee.agentRoundSource = d.path; paintAgentAcceptButton(); await leeOpenFile(d.path);
+    lee.agentRoundSource = d.path; await leeOpenFile(d.path);
     status(`review ${d.name}: remove poor routes, save, then accept`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }
@@ -1036,7 +1049,7 @@ async function leeAgentNew() {
     if (leftBusy) startAgentBusyWatch();
     approvalCards.clear(); const log = $('#agentlog'), input = $('#agentprompt');
     if (log) { dropCodeSurfaces(log); log.innerHTML = ''; lee.agentLive = null; lee.agentView = 'live'; } if (input) input.value = '';
-    await refreshAgentThreads(); $('#agenthistory')?.classList.remove('active'); input?.focus(); status('new conversation started', 'ok');
+    await refreshAgentThreads(); input?.focus(); status('new conversation started', 'ok');
     loadAgentModels().catch(() => {});
   } catch (e) { status(String(e.message || e), 'err'); }
   finally { picked(); }

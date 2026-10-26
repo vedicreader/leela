@@ -1289,13 +1289,26 @@ const ACTIONS = {
   profile_full:     () => setProfile('full'),
 
   agent_new:    () => leeAgentNew(),
-  agent_threads: () => $('#agentthreads')?.focus(),
+  agent_threads: () => { leePane('right', true); leeRight('agent'); leeAgentThreadsToggle(true); },
   agent_send:   () => sendAgent(),
   agent_steer_force: () => sendAgent(true),
   agent_stop:   () => stopAgent(),
   agent_tools:  () => agentTools(),
   agent_fold_turn: () => foldAgentTurn(currentAgentTurn(), !currentAgentTurn()?.classList.contains('folded')),
   agent_fold_all: () => foldAgentTurns(!agentTurnCards().every(c => c.classList.contains('folded'))),
+  agent_menu:   () => leeAgentMenu(),
+  agent_history: () => leeAgentHistory(),
+  agent_assess: () => leeAgentAssess(),
+  agent_round:  () => leeAgentCapture(),
+  agent_accept: () => leeAgentAccept(),
+  agent_calm:   () => leeAgentCalm(),
+  agent_expand: () => leeAgentExpand(),
+  agent_research: () => leeAgentOptinToggle('research'),
+  agent_exhash: () => leeAgentOptinToggle('exhash'),
+  agent_browser: () => leeAgentOptinToggle('browser'),
+  agent_warm:   () => leeAgentWarmToggle(),
+  agent_full:   () => leeAgentFullToggle(),
+  agent_state:  () => leeAgentState(),
 
   close_others: () => closeTabs('others'),
   close_right:  () => closeTabs('right'),
@@ -1330,7 +1343,7 @@ ACTIONS.column_mode = () => {
 function leeAct(name) {
   const f = ACTIONS[name];
   if (!f) return status('no handler for ' + name);
-  try { const r = f(); if (r && r.catch) r.catch(e => status(String(e.message || e), 'err')); }
+  try { const r = f(); if (r && r.catch) r.catch(e => status(String(e.message || e), 'err')); return r; }
   catch (e) { status(String(e.message || e), 'err'); }
 }
 window.leeAct = leeAct;
