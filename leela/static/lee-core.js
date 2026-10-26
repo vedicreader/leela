@@ -1137,6 +1137,12 @@ const ACTIONS = {
   run_selection: () => runSelection(),
   pick_kernel:  () => pickKernel(),
   new_notebook: () => htmxPost('/tab/new?kind=notebook'),
+  new_lesson:   async () => {
+    const name = await inputDialog('new lesson notebook', 'name', '', 'lesson name');
+    if (!name) return;
+    await htmxPost('/lesson/new?name=' + encodeURIComponent(name));
+    await refreshFileTree();
+  },
   notebook_language: () => pickNotebookLanguage(),
   present_notebook: () => presentNotebook(),
   present_from_cell: () => presentNotebook('selected'),

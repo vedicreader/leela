@@ -268,6 +268,7 @@ def test_every_keymap_action_and_menu_row_has_a_handler_on_the_loaded_page():
     barred = sorted({r.action for r in rows if not isinstance(r, Js) and isinstance(r, MenuItem) and r.action})
     exprs = sorted({r.expr for r in rows if isinstance(r, Js)})
     assert keyed and barred and exprs
+    assert 'new_lesson' in keyed and 'new_lesson' in barred
     async def go(pg):
         return await pg.evaluate("""([keyed, barred, exprs]) => ({
           keyed: keyed.filter(a => typeof ACTIONS[a] !== 'function'),
@@ -689,9 +690,29 @@ def test_the_palette_lists_commands_and_hands_a_file_query_to_the_opener(tmp_pat
     assert saved[0].startswith('save') and saved[-1].startswith('Open file matching “save”'), saved
     assert not any('zqxw_notes.py' in r for r in only) and len(only) == 1, only
     assert not asked, 'the palette searched files itself'
+    assert any(r.startswith('new lesson notebook') for r in empty), empty
     assert not any(r.startswith('Open file') for r in empty), 'an empty query offers no hand-off'
     assert (prefilled, focused) == ('zqxw', 'qo')
     assert not still_open, 'opening the file closes both'
+
+def test_the_palette_creates_a_lesson_notebook_and_cancel_creates_nothing(tmp_path):
+    async def go(pg):
+        await pg.evaluate('palette()')
+        await pg.fill('#cp', 'new lesson notebook')
+        await pg.press('#cp', 'Enter')
+        await pg.wait_for_selector('#dialoginput')
+        await pg.click('#dialogcancel')
+        assert not (tmp_path/'lessons').exists()
+        await pg.evaluate("void leeAct('new_lesson')")
+        await pg.fill('#dialoginput', 'सॉफ्टमैक्स')
+        await pg.press('#dialoginput', 'Enter')
+        await pg.wait_for_function("() => lee.path.includes('/lessons/') && lee.cells.length === 5")
+        return await pg.evaluate('({path: lee.path, count: lee.cells.length, kind: lee.kind})')
+    got = _run(go, roots=[tmp_path])
+    from abhyasa.store import slugify
+    path = tmp_path/'lessons'/f'{slugify("सॉफ्टमैक्स")}.ipynb'
+    assert got == {'path': str(path), 'count': 5, 'kind': 'notebook'}
+    assert path.is_file()
 
 def test_the_file_opener_lists_the_project_and_adds_hidden_folders_on_request(tmp_path):
     """Hidden folders are a second batch behind a checkbox, so the project's own files are never waiting on `.venv`."""

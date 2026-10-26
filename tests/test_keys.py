@@ -5,6 +5,16 @@ from fastcore.all import first
 from leela.core.keys import DEFAULTS, apply_overrides, keymap_json, lookup, read_overrides, web_keymap
 
 
+def test_new_lesson_is_an_unbound_palette_command_in_the_file_menu():
+    from leela.blocks.keys.menus import BAR
+    key = lookup('new_lesson')
+    assert key is not None
+    assert (key.key, key.scope, key.label) == ('', 'global', 'new lesson notebook')
+    row = first(web_keymap(), lambda k: k['action'] == 'new_lesson')
+    assert row and row['label'] == key.label and row['chords'] == []
+    actions = [r.action for title, rows in BAR if title == 'File' for r in rows]
+    assert actions[actions.index('new_notebook') + 1] == 'new_lesson'
+
 def test_no_default_chord_lands_on_one_the_browser_will_not_deliver():
     reserved = {'ctrl+up', 'ctrl+down', 'ctrl+left', 'ctrl+right'}
     landed = [(k.action, c) for k in DEFAULTS for c in k.keys if c in reserved]

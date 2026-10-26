@@ -149,6 +149,7 @@ DEFAULTS = L(
     Key('run_file',         'mod+alt+enter',  'global', 'run this script',    'toast'),
     Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
     Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
+    Key('new_lesson',       '',              'global', 'new lesson notebook'),
     Key('notebook_language', '',           'global', 'notebook language'),
     Key('present_notebook', 'alt+r',         'global', 'present notebook as slides'),
     Key('add_folder',       '',              'global', 'stage this folder, ignores first'),

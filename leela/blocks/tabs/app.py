@@ -76,6 +76,31 @@ def connect(app, ctx):
         session.new_scratch(kind)
         session.watch_env(None)
         return tab_bar(session)
+    @rt('/lesson/new', methods=['POST'])
+    async def lesson_new(req, name: str = ''):
+        from abhyasa.store import slugify
+        from ..nb.lesson import lesson_notebook
+        try:
+            if req.headers.get('content-type', '').startswith('application/json'): name = (await req.json()).get('name')
+            if not isinstance(name, str) or not name.strip(): return fail('Enter a lesson name')
+            name = name.strip()
+            root = session.project_root
+            if root is None or root == ctx.fs.loose: return fail('Open a folder first')
+            folder = root/'lessons'
+            if folder.is_symlink(): return fail('The lessons folder must not be a symbolic link')
+            folder = ctx.fs._check(folder)
+            folder.mkdir(parents=True, exist_ok=True)
+            slug, n = slugify(name), 1
+            path = folder/f'{slug}.ipynb'
+            while path.exists() or path.is_symlink():
+                n += 1
+                path = folder/f'{slug}-{n}.ipynb'
+            lesson_notebook(name).save(path, sandbox=ctx.fs)
+            session.open(path)
+            session.watch_env(None)
+            session.save()
+            return tab_bar(session)
+        except Exception as e: return fail(e)
     def _held(t):
         "The version the cached copy of `t` was read at, and whether the file has moved since."
         key, now = t.path or t.title, disk_version(t.path) if t.path else ''

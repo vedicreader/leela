@@ -81,7 +81,7 @@ if _missing := sorted({i.action for rows in MENUS.values() for i in rows if i.ac
 #: rather than made a menu of its own. Rows are keymap actions, AppKit selectors, or JS.
 BAR = (
     ('__app__', L(S('settings'), S('setup_models'))),
-    ('File',    L(S('new_file'), S('new_notebook'), S('new_dir'), S(),
+    ('File',    L(S('new_file'), S('new_notebook'), S('new_lesson'), S('new_dir'), S(),
                   S('quick_open'), S('open_folder'), S('add_root'), S('recent_tabs'), S(),
                   S('save'), S('save_all'), S('reload_file'), S(), S('close_tab'), S('close_others'),
                   S('close_right'), S('close_saved'), S('remove_root'), S(),
