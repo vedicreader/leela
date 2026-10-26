@@ -344,6 +344,22 @@ def _no_leaked_ownership():
     B._OURS.clear(); B._LIVE.clear()
 
 
+def test_a_headless_start_never_takes_the_visible_cdp_chromes_port_or_profile(monkeypatch, tmp_path):
+    "Nothing on 9223: the headless Chrome starts on its own port and profile, not the visible CDP Chrome's. A Chrome already up on 9223 is adopted there."
+    from leela.blocks.browser import browser as B
+    monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))
+    monkeypatch.delenv('LEELA_CDP_PROFILE', raising=False)
+    asked = []
+    async def connect(**kw): asked.append(kw); return FakeCdp()
+    monkeypatch.setattr('fossick.cdp.cdp_connect', connect)
+    for up in (False, True):
+        b = B.Browser(port=9223); b.port, b.profile = 9223, None   # past conftest's private port, to test the real rule
+        monkeypatch.setattr(b, 'running', lambda up=up: up)
+        asyncio.run(b.cdp())
+    started, adopted = asked
+    assert (started['port'], str(started['user_data_dir'])) == (B.HEADLESS_PORT, str(B.HEADLESS_PROFILE)), started
+    assert (adopted['port'], adopted['user_data_dir']) == (9223, None), adopted
+
 def test_the_last_window_out_closes_the_shared_chrome_not_the_first(monkeypatch, tmp_path):
     "Windows share one Chrome per port. Closing one must not take the pages of the others with it."
     monkeypatch.setattr('leela.blocks.browser.browser.leela_cfg', Path(tmp_path))

@@ -30,6 +30,9 @@ class Shot(bytes):
     "A screenshot's JPEG bytes and the scale it was retaken at; 1 when it was not."
     scale = 1
 
+#: The visible CDP Chrome's port, and the port and profile a headless start takes instead; kavacha's `cdp_target` uses the same.
+CDP_PORT, HEADLESS_PORT, HEADLESS_PROFILE = 9223, 9224, Path.home()/'.cache'/'kavacha'/'headless-chrome'
+
 #: Ports whose Chrome this process started, and the connected `Browser`s on each. One Chrome serves
 #: every window on a port, so closing it belongs to the last window out rather than the first.
 _OURS, _LIVE = set(), {}
@@ -81,6 +84,9 @@ class Browser:
             try: from fossick.cdp import cdp_connect
             except ImportError as e:
                 raise BrowserUnavailable(f'the inline browser needs fossick ({errstr(e)})') from e
+            # a headless start on the visible CDP Chrome's port and profile takes that Chrome over; one already up there is adopted
+            if self.headless and self.port == CDP_PORT and not self.running():
+                self.port, self.profile = HEADLESS_PORT, self.profile or HEADLESS_PROFILE
             # Asked before connecting: afterwards a Chrome Leela started looks like one it adopted.
             started = not self.running()
             try: self._cdp = await cdp_connect(port=self.port, headless=self.headless,
