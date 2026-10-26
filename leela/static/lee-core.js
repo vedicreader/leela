@@ -2447,6 +2447,7 @@ function patchNotebook(host, before, cells, op = '') {
       if (op === 'clear' || op === 'clear_cell') renderOutputs(c);
     }
     host.appendChild(el); // appending an existing node reorders it without remounting
+    if (c.extra?.lesson) { paintLessonCell(el, c); renderLessonReveal(c); }
   });
   paintHeadings(cells);
   paintSel();
@@ -2662,6 +2663,7 @@ function cellEl(c, i) {
     e.preventDefault(); d.classList.remove('drag-target');
     if (indices.length > 1) moveCellsTo(indices, +d.dataset.i); else moveCellTo(from, +d.dataset.i);
   });
+  if (c.extra?.lesson) paintLessonCell(d, c);
   return d;
 }
 
@@ -2836,7 +2838,8 @@ function mountCell(c, i) {
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
     doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
-    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place` : '',
+    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place`
+      : c.cell_type === 'markdown' && c.extra?.lesson?.role === 'prediction' ? 'Your guess: what will the code below print?' : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     lintPath: lee.path || 'scratch.ipynb',
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
@@ -2853,6 +2856,7 @@ function mountCell(c, i) {
       lee.cells[at].source = txt;
       rememberBuffer(key, {path: lee.path, title: lee.tabKey, kind: 'notebook', i: at, id: c.id, text: txt});
       if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
+      if (lee.cells[at].extra?.lesson) renderLessonReveal(lee.cells[at]);
       if (headingLevel(lee.cells[at]) !== level) paintHeadings();
       markDirty();
     },
@@ -2863,6 +2867,7 @@ function mountCell(c, i) {
     if (at >= 0) { lee.activeEditor='primary'; lee.sel = at; setScope('editor'); paintSel(); }
   });
   renderOutputs(c);
+  if (c.extra?.lesson) renderLessonReveal(c);
   if (c.running) {
     const el = $(`.lee-cell[data-i="${i}"]`); el?.classList.add('running');
     setCellState(c, 'running', 'still running in the background');
@@ -3249,6 +3254,65 @@ function learnDiff(guess, actual) {
     return {guess: x, actual: y, kind: x === null ? 'missing' : y === null ? 'extra' : x === y ? 'match' : 'mismatch'};
   });
 }
+
+function lessonActual(c) {
+  const text = value => Array.isArray(value) ? value.join('') : String(value ?? '');
+  const outputs = c.outputs || [], error = outputs.find(o => o.output_type === 'error');
+  if (error) {
+    const last = stripAnsi(text((error.traceback || []).join('\n'))).trim().split('\n').pop();
+    return 'It raised ' + (last || `${error.ename}: ${error.evalue}`);
+  }
+  return stripAnsi(outputs.map(o => o.output_type === 'stream' ? text(o.text) : text(o.data?.['text/plain'])).filter(Boolean).join('\n'));
+}
+function lessonRevealText(c) {
+  const lesson = c.extra.lesson, rows = learnDiff(String(lesson.prediction || ''), lessonActual(c));
+  const different = rows.filter(r => r.kind !== 'match');
+  if (!different.length) return 'Right. You saw that before running it.';
+  const lines = rows.filter(r => r.kind === 'match').map(r => r.actual);
+  for (const r of different) lines.push(r.kind === 'missing' ? `It printed ${r.actual}, which you did not expect.`
+    : r.kind === 'extra' ? `You expected ${r.guess}, which did not appear.` : `You wrote ${r.guess}. It printed ${r.actual}.`);
+  if (lesson.confidence >= 60) lines.push('You were sure, and it went another way. That is the part worth a look.');
+  return lines.join('\n');
+}
+function lessonRevealActions(cell, el) {}
+function renderLessonReveal(c) {
+  const cell = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`); if (!cell) return;
+  $('.lee-reveal', cell)?.remove();
+  if (c.cell_type !== 'code' || !c.extra?.lesson || c.extra.lesson.for_count !== c.execution_count
+      || c.stale || $('#state-' + c.id)?.classList.contains('stale') || c.running || !c.outputs?.length) return;
+  const el = document.createElement('div'); el.className = 'lee-reveal';
+  el.textContent = lessonRevealText(c);
+  $('#out-' + c.id, cell).after(el);
+  lessonRevealActions(c, el);
+}
+function paintLessonCell(cell, c) {
+  const role = c.cell_type === 'markdown' ? c.extra?.lesson?.role : '';
+  cell.dataset.lessonRole = role || '';
+  $('.lee-confidence', cell)?.remove();
+  if (role !== 'prediction') return;
+  const row = document.createElement('div'); row.className = 'lee-confidence';
+  const label = document.createElement('span'); label.textContent = 'Sure?'; row.appendChild(label);
+  for (const [value, name] of [[10, 'not'], [30, 'a little'], [50, 'half'], [70, 'fairly'], [90, 'very']]) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = name;
+    button.setAttribute('aria-pressed', String(c.extra.lesson.confidence === value));
+    button.onclick = async () => {
+      const at = lee.cells.findIndex(x => x.id === c.id), current = lee.cells[at]; if (!current) return;
+      const previous = current.extra.lesson.confidence, confidence = previous === value ? null : value;
+      if (confidence === null) delete current.extra.lesson.confidence; else current.extra.lesson.confidence = confidence;
+      for (const b of row.querySelectorAll('button')) { b.disabled = true; b.setAttribute('aria-pressed', String(b === button && confidence !== null)); }
+      try { await nbEdit({op: 'lesson_confidence', i: at, confidence}); }
+      catch (e) {
+        if (previous == null) delete current.extra.lesson.confidence; else current.extra.lesson.confidence = previous;
+        status(String(e.message || e), 'err');
+      } finally {
+        const now = lee.cells.find(x => x.id === c.id), host = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`);
+        if (now && host) paintLessonCell(host, now);
+      }
+    };
+    row.appendChild(button);
+  }
+  $('.lee-cellmain', cell).appendChild(row);
+}
 /* ipywidgets in notebook cells. Each notebook has one link: a socket on `/nb/comm/ws` following its
    kernel, and the vendored manager, loaded once a widget has to be drawn. A view is kept per cell,
    output and model, so re-rendering a cell's outputs moves the live widget rather than rebuilding it.
@@ -3584,6 +3648,8 @@ async function settleRun(path, id) {
    reads the outcome here and follows the outputs through `lee-cell-output`. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
 async function runCell(i, advance) {
+  // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
+  await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
   if (c.running) {
     status(`cell ${i + 1} is already running`, 'err');
@@ -3607,6 +3673,7 @@ async function runCell(i, advance) {
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
+    if (c.extra?.lesson) $('.lee-reveal', el)?.remove();
     el?.classList.add('running');
     setCellState(c, 'running');
     setCellTime(c, 0, true);
@@ -3650,6 +3717,7 @@ async function runCell(i, advance) {
       res = {ok: false, error: String(e.message || e)};
     } finally { clearInterval(cellClock); }
     for (const x of [c, cur()]) if (x) x.running = false;
+    if (cur()?.extra?.lesson) renderLessonReveal(cur());
     if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
     if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();

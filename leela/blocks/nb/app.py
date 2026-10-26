@@ -481,6 +481,16 @@ def connect(app, ctx):
             nb._checkpoint(i)
             nb[i].context_mode = mode
             nb.dirty = True
+        elif op == 'lesson_confidence':
+            confidence = d.get('confidence')
+            if nb[i].cell_type != 'markdown' or nb[i].extra.get('lesson', {}).get('role') != 'prediction':
+                return fail('Confidence belongs to a prediction cell.')
+            if confidence is not None and (type(confidence) is not int or confidence not in (10, 30, 50, 70, 90)):
+                return fail('Confidence must be 10, 30, 50, 70, 90 or None.')
+            nb._checkpoint(i)
+            if confidence is None: nb[i].extra['lesson'].pop('confidence', None)
+            else: nb[i].extra['lesson']['confidence'] = confidence
+            nb.dirty = True
         elif op == 'slide':
             try: nb.set_slide(d.get('indices') or [i], str(d.get('type') or 'none'))
             except (TypeError, ValueError) as e: return fail(e)

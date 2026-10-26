@@ -150,6 +150,7 @@ function cellEl(c, i) {
     e.preventDefault(); d.classList.remove('drag-target');
     if (indices.length > 1) moveCellsTo(indices, +d.dataset.i); else moveCellTo(from, +d.dataset.i);
   });
+  if (c.extra?.lesson) paintLessonCell(d, c);
   return d;
 }
 
@@ -324,7 +325,8 @@ function mountCell(c, i) {
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
     doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
-    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place` : '',
+    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place`
+      : c.cell_type === 'markdown' && c.extra?.lesson?.role === 'prediction' ? 'Your guess: what will the code below print?' : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     lintPath: lee.path || 'scratch.ipynb',
     onDefinition: c.cell_type === 'code' ? name => findDefinition(name) : null,
@@ -341,6 +343,7 @@ function mountCell(c, i) {
       lee.cells[at].source = txt;
       rememberBuffer(key, {path: lee.path, title: lee.tabKey, kind: 'notebook', i: at, id: c.id, text: txt});
       if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
+      if (lee.cells[at].extra?.lesson) renderLessonReveal(lee.cells[at]);
       if (headingLevel(lee.cells[at]) !== level) paintHeadings();
       markDirty();
     },
@@ -351,6 +354,7 @@ function mountCell(c, i) {
     if (at >= 0) { lee.activeEditor='primary'; lee.sel = at; setScope('editor'); paintSel(); }
   });
   renderOutputs(c);
+  if (c.extra?.lesson) renderLessonReveal(c);
   if (c.running) {
     const el = $(`.lee-cell[data-i="${i}"]`); el?.classList.add('running');
     setCellState(c, 'running', 'still running in the background');

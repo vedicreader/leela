@@ -69,6 +69,8 @@ async function settleRun(path, id) {
    reads the outcome here and follows the outputs through `lee-cell-output`. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
 async function runCell(i, advance) {
+  // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
+  await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
   if (c.running) {
     status(`cell ${i + 1} is already running`, 'err');
@@ -92,6 +94,7 @@ async function runCell(i, advance) {
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
+    if (c.extra?.lesson) $('.lee-reveal', el)?.remove();
     el?.classList.add('running');
     setCellState(c, 'running');
     setCellTime(c, 0, true);
@@ -135,6 +138,7 @@ async function runCell(i, advance) {
       res = {ok: false, error: String(e.message || e)};
     } finally { clearInterval(cellClock); }
     for (const x of [c, cur()]) if (x) x.running = false;
+    if (cur()?.extra?.lesson) renderLessonReveal(cur());
     if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
     if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();

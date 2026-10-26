@@ -2054,6 +2054,16 @@ kbd {
 .lee-md-cell > :first-child { margin-top: 0; }
 .lee-md-cell > :last-child { margin-bottom: 0; }
 .lee-md-cell.empty::before { content: 'double-click to edit'; color: var(--lee-fg4); font-style: italic; opacity: .7; }
+.lee-cell[data-lesson-role="prediction"] .lee-md-cell.empty::before { content: 'Your guess: what will the code below print?'; }
+.lee-reveal, .lee-cell[data-lesson-role="card"] .lee-md-cell {
+  border-left: 2px solid color-mix(in srgb, var(--lee-accent) 28%, transparent);
+  padding: 10px 16px; margin: 10px 0; line-height: 1.65;
+}
+.lee-reveal { font-family: inherit; white-space: pre-wrap; }
+.lee-confidence { display: flex; align-items: center; gap: 8px; margin: 6px 0 12px; color: var(--lee-fg4); font-size: 12px; }
+.lee-confidence button { border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; font: inherit; padding: 2px 6px; cursor: pointer; }
+.lee-confidence button[aria-pressed="true"] { border-color: var(--lee-border); color: var(--lee-fg2); background: var(--lee-bg2); }
+.lee-confidence button:focus-visible { outline: 1px solid var(--lee-accent); outline-offset: 1px; }
 .lee-md code { font-family: var(--lee-mono); background: var(--lee-bg2); padding: 1px 4px; border-radius: 3px; }
 
 /* ---- exec + agent ---- */
