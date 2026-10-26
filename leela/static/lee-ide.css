@@ -2010,6 +2010,9 @@ kbd {
 }
 .lee-reply-actions button:hover { background: var(--lee-bg2); color: var(--lee-green); }
 .lee-md-output { padding: 8px 11px; white-space: normal; }
+/* `.lee-out` is set in the mono font for text outputs; a markdown output is prose, as a markdown cell is. */
+.lee-out.lee-md-output { font-family: inherit; font-size: inherit; }
+.lee-md-output code { font-family: var(--lee-mono); }
 .lee-md-output > :first-child { margin-top: 0; }
 .lee-md-output > :last-child:not(.lee-reply-actions) { margin-bottom: 0; }
 .lee-reply :not(pre) > code { padding: 1px 4px; border-radius: 3px; background: var(--lee-bg2); }
