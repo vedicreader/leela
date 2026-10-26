@@ -104,7 +104,7 @@ const presentCss = href => new Promise(ok => {
 
 function presentMarkdown(host, text, cell) {
   host.dataset.mdBase = nbBase();
-  renderMarkdown(host, text, true, cell ? mdAttached(cell) : null);
+  renderMarkdown(host, text, true, mdPaint(cell, false));
 }
 function presentOutputs(box, outputs) {
   $$('[data-markdown]', box).forEach(el => { for (const v of el._leeCodeViews || []) try { LeeCM.destroy(v); } catch {} });

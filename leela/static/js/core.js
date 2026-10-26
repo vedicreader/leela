@@ -579,6 +579,64 @@ function enhanceCodeBlocks(el) {
   el._leeCodeSurfaces = kept;
   el._leeCodeViews = [...kept.values()].map(s => s._leeView);
 }
+const RUPAKA_MIME = 'application/vnd.rupaka+json';
+const rupaka = {hosts: new Map(), passes: new Map(), load: null, sheet: null, seq: 0};
+//: One promise, failure included: a missing bundle is one error line, not a refetch on every render. `retry` is the only way out.
+function loadRupaka(retry = false) {
+  if (retry) rupaka.load = null;
+  return rupaka.load ||= (async () => {
+    const css = fetch($('meta[name="lee-rupaka-css"]')?.content || '/leestatic/lee-rupaka.css')
+      .then(r => r.ok ? r.text() : Promise.reject(new Error(`rupaka.css: ${r.status} ${r.statusText}`)));
+    const js = window.Rupaka ? 0 : new Promise((ok, no) => {
+      const s = document.createElement('script');
+      s.src = $('meta[name="lee-rupaka-src"]')?.content || '/leestatic/lee-rupaka.js';
+      s.onload = ok; s.onerror = () => { s.remove(); no(new Error('rupaka.js could not be loaded')); };
+      document.head.appendChild(s);
+    });
+    return (await Promise.all([css, js]))[0];
+  })();
+}
+function rupakaStyle(root, css) {
+  const text = css + ':host{display:block}';
+  if (!('adoptedStyleSheets' in root)) return root.prepend(Object.assign(document.createElement('style'), {textContent: text}));
+  if (!rupaka.sheet) { rupaka.sheet = new CSSStyleSheet(); rupaka.sheet.replaceSync(text); }
+  root.adoptedStyleSheets = [rupaka.sheet];
+}
+const rupakaErr = e => Object.assign(document.createElement('p'), {className: 'lee-rk-err', textContent: `rupaka: ${e.message || e}`});
+const rupakaPass = owner => { const p = {owner, gen: ++rupaka.seq}; rupaka.passes.set(owner, p); return p; };
+//: Hosts of `owner` that the pass did not touch are gone from the page, as `widgetSweep` does for widgets.
+function rupakaSweep(p) {
+  for (const [k, e] of rupaka.hosts) if (e.owner === p.owner && e.gen !== p.gen) rupaka.hosts.delete(k);
+  if (rupaka.passes.get(p.owner) === p) rupaka.passes.delete(p.owner);
+}
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh.
+function rupakaDraw(spec, key = null, pass = null) {
+  let e = key && rupaka.hosts.get(key);
+  if (!e) {
+    const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
+    host.attachShadow({mode: 'open'}).append(inner);
+    e = {host, ok: false, err: null, owner: pass?.owner};
+    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); e.ok = true; })
+      .catch(err => { e.err = err; });
+    if (key) rupaka.hosts.set(key, e);
+  }
+  if (pass) e.gen = pass.gen;
+  return e;
+}
+const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
+function rupakaFences(el, owner = null) {
+  const pass = owner && rupakaPass(owner), seen = new Map();
+  $$('pre > code.language-rupaka', el).forEach(code => {
+    const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
+    const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
+    let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
+    const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
+    if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
+  });
+  if (pass) rupakaSweep(pass);
+}
 /* This copies an answer into the open notebook, so it needs one. Hidden rather than disabled, and
    back the moment a notebook tab is focused. */
 function markdownCellActionState(button) {

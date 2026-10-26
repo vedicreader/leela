@@ -1,0 +1,159 @@
+/* static/rupaka.css */
+/* rupaka core style. Blocks use only the --rk-* vars. Each var maps to the host's vars in this order:
+   abhyasa (--fg, --acc, ...), vedicreader (--mh-*), leela (--lee-*), then system colours. So a demo takes the look of its page. */
+.rk {
+  --rk-bg: var(--bg, var(--mh-paper, var(--lee-bg, Canvas)));
+  --rk-fg: var(--fg, var(--mh-ink, var(--lee-fg, CanvasText)));
+  --rk-ink2: var(--ink2, var(--mh-ink, var(--lee-fg2, var(--rk-fg))));
+  --rk-mute: var(--mute, var(--mh-ink-2, var(--lee-fg2, GrayText)));
+  --rk-line: var(--line, var(--mh-rule, var(--lee-border, color-mix(in srgb, CanvasText 20%, Canvas))));
+  --rk-acc: var(--acc, var(--mh-accent, var(--lee-accent, LinkText)));
+  --rk-ok: var(--ok, var(--lee-green, color-mix(in srgb, green 70%, CanvasText)));
+  --rk-no: var(--no, var(--lee-red, color-mix(in srgb, firebrick 80%, CanvasText)));
+  --rk-serif: var(--serif, var(--mh-serif, ui-serif, Georgia, serif));
+  --rk-head: var(--head, var(--mh-serif, var(--rk-serif)));
+  --rk-mono: var(--mono, var(--lee-mono, ui-monospace, monospace));
+  color: var(--rk-fg); font-family: var(--rk-serif); font-size: 17px; line-height: 1.55; max-width: 640px;
+}
+.rk-title { font: 400 22px/1.3 var(--rk-head); margin: 0 0 2px; color: var(--rk-fg); }
+.rk-ask { color: var(--rk-ink2); margin: 0 0 16px; }
+.rk-b { margin: 14px 0; }
+.rk-lbl { display: block; font: 500 12px/1.4 var(--rk-serif); letter-spacing: .14em; text-transform: uppercase; color: var(--rk-mute); margin: 0 0 4px; }
+.rk-note { color: var(--rk-mute); font-size: 15px; font-style: italic; margin-top: 4px; }
+.rk-err { color: var(--rk-no); font-style: italic; }
+.rk svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: none; }
+.rk svg:focus { outline: none; }
+.rk svg:focus-visible, .rk [tabindex]:focus-visible { outline: 2px solid var(--rk-acc); outline-offset: 3px; }
+.rk text { fill: var(--rk-fg); font-family: var(--rk-serif); }
+.rk kbd { font: 12px/1 var(--rk-mono); color: var(--rk-mute); margin-left: 6px; letter-spacing: .04em; }
+.rk button { font: 15px/1 var(--rk-serif); padding: 9px 14px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--rk-fg) 22%, transparent);
+             background: transparent; color: var(--rk-fg); cursor: pointer; }
+.rk button:hover { background: color-mix(in srgb, var(--rk-fg) 6%, transparent); }
+.rk button.go { background: var(--rk-acc); color: var(--rk-bg); border-color: var(--rk-acc); }
+.rk button.go kbd { color: var(--rk-bg); }
+.rk button:disabled { opacity: .5; cursor: default; }
+.rk button:focus-visible { outline: 2px solid var(--rk-acc); outline-offset: 2px; }
+.rk [hidden] { display: none !important; }
+
+/* blocks/axis/axis.css */
+.rk-axis .grid .hair { stroke: color-mix(in srgb, var(--rk-line) 70%, transparent); stroke-width: 1; }
+.rk-axis .grid .zero, .rk-axis .grid .main { stroke: var(--rk-mute); stroke-width: 1; }
+.rk-axis .grid text.num { fill: var(--rk-mute); font-size: 12px; font-variant-numeric: tabular-nums; }
+.rk-axis .grid text.axl { fill: var(--rk-mute); font-size: 13px; font-style: italic; }
+
+/* blocks/bars/bars.css */
+.rk-bars .bar { transition: transform .25s ease; }
+.rk-bars rect { transition: width .25s ease, x .25s ease; }
+.rk-bars rect.p0, .rk-bars .key i.p0 { fill: var(--rk-acc); background: var(--rk-acc); }
+.rk-bars rect.p1, .rk-bars .key i.p1 { fill: color-mix(in srgb, var(--rk-acc) 50%, var(--rk-bg)); background: color-mix(in srgb, var(--rk-acc) 50%, var(--rk-bg)); }
+.rk-bars text.v { fill: var(--rk-mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+.rk-bars text.t { font-size: 15px; }
+.rk-bars .key { font-size: 13px; color: var(--rk-mute); display: flex; gap: 16px; margin-top: 4px; }
+.rk-bars .key i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+
+/* blocks/caption/caption.css */
+.rk-caption p { color: var(--rk-ink2); font-size: 16px; margin: 0; }
+.rk-caption b { color: var(--rk-fg); font-weight: 600; }
+
+/* blocks/choice/choice.css */
+.rk-choice .opts { display: flex; gap: 8px; flex-wrap: wrap; }
+.rk-choice .opts button[aria-checked=true] { border-color: var(--rk-acc); box-shadow: inset 0 -2px 0 var(--rk-acc); }
+
+/* blocks/gate/gate.css */
+.rk-gate { padding: 14px 0; border-top: 1px solid var(--rk-line); border-bottom: 1px solid var(--rk-line); }
+.rk-gate .q { margin: 0 0 10px; }
+.rk-gate .opts { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.rk-gate .opts button[aria-checked=true] { border-color: var(--rk-acc); box-shadow: inset 0 -2px 0 var(--rk-acc); }
+.rk-gate .opts button:disabled { opacity: 1; color: var(--rk-ink2); }
+.rk-gate .opts button:disabled[aria-checked=true] { color: var(--rk-fg); }
+.rk-gate textarea { box-sizing: border-box; width: 100%; font: 16px/1.5 var(--rk-serif); color: var(--rk-fg); background: transparent; border: 0;
+                    border-bottom: 1px solid color-mix(in srgb, var(--rk-fg) 22%, transparent); padding: 4px 2px; resize: vertical; margin-bottom: 12px; }
+.rk-gate textarea:focus { outline: none; border-bottom-color: var(--rk-fg); }
+.rk-gate textarea::placeholder { color: var(--rk-mute); font-style: italic; opacity: 1; }
+.rk-gate .verdict { margin: 0 0 10px; font-size: 18px; }
+.rk-gate .verdict .ok { color: var(--rk-ok); } .rk-gate .verdict .no { color: var(--rk-no); }
+.rk-gate .verdict .stale { color: var(--rk-mute); font-size: 15px; font-style: italic; }
+.rk-gate .acts { display: flex; gap: 10px; align-items: center; }
+
+/* blocks/grid/grid.css */
+.rk-grid svg { max-width: 100%; }
+.rk-grid .cell rect { stroke: var(--rk-bg); stroke-width: 1; cursor: pointer; }
+.rk-grid .cell text { font-size: 15px; font-variant-numeric: tabular-nums; fill: var(--rk-fg); pointer-events: none; }
+.rk-grid text.hd { font-size: 13px; fill: var(--rk-mute); }
+.rk-grid .cur { fill: none; stroke: transparent; stroke-width: 2; pointer-events: none; }
+.rk-grid svg:focus-visible .cur, .rk-grid svg:focus .cur { stroke: var(--rk-fg); }
+.rk-grid svg:focus-visible { outline: none; }
+.rk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* blocks/plot/plot.css */
+.rk-plot .ln { fill: none; stroke: var(--rk-acc); stroke-width: 2; stroke-linejoin: round; }
+.rk-plot .dots circle { fill: var(--rk-acc); }
+
+/* blocks/point/point.css */
+.rk-point .dot { fill: var(--rk-acc); stroke: var(--rk-bg); stroke-width: 2; }
+.rk-point .halo { fill: transparent; }
+.rk-point.drag { cursor: grab; } .rk-point.held { cursor: grabbing; }
+.rk-point.drag:hover .halo, .rk-point.held .halo { fill: color-mix(in srgb, var(--rk-acc) 14%, transparent); }
+.rk-point:focus { outline: none; }
+.rk-point:focus-visible .halo { fill: none; stroke: var(--rk-acc); stroke-width: 2; }
+.rk-point text.pl { font-size: 14px; fill: var(--rk-fg); paint-order: stroke; stroke: var(--rk-bg); stroke-width: 4px; }
+
+/* blocks/ranklist/ranklist.css */
+.rk-ranklist .row rect.hit { fill: transparent; }
+.rk-ranklist .row line { stroke: var(--rk-line); }
+.rk-ranklist .row text.n { fill: var(--rk-mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+.rk-ranklist .row text.t { font-size: 16px; }
+.rk-ranklist .row text.grip { fill: var(--rk-mute); font-size: 14px; }
+.rk-ranklist.live .row { cursor: grab; }
+.rk-ranklist .row.drag rect.hit, .rk-ranklist .row:focus-visible rect.hit { fill: color-mix(in srgb, var(--rk-acc) 12%, transparent); }
+.rk-ranklist .row:focus { outline: none; }
+.rk-ranklist .row { transition: transform .18s ease; } .rk-ranklist .row.drag { transition: none; }
+.rk-ranklist:not(.live) .grip { display: none; }
+
+/* a drag must own the pointer: no text selection, no pan */
+.rk-ranklist svg { touch-action: none; user-select: none; -webkit-user-select: none; }
+
+/* blocks/readout/readout.css */
+.rk-readout .big { font: 400 30px/1.3 var(--rk-head); margin: 2px 0; color: var(--rk-fg); }
+
+/* blocks/row/row.css */
+.rk-row { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+.rk-row > * { flex: 1 1 220px; min-width: 0; margin: 0; }
+
+/* blocks/slider/slider.css */
+.rk-slider input { width: 100%; max-width: 340px; accent-color: var(--rk-acc); display: block; margin: 6px 0 0; }
+.rk-slider output { font: 500 15px/1 var(--rk-serif); letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; margin-left: 10px; color: var(--rk-fg); }
+.rk-slider input:focus-visible { outline: 2px solid var(--rk-acc); outline-offset: 4px; border-radius: 2px; }
+
+/* blocks/stack/stack.css */
+.rk-stack > .rk-b:first-child { margin-top: 0; }
+.rk-stack > .rk-b:last-child { margin-bottom: 0; }
+
+/* blocks/toggle/toggle.css */
+.rk-toggle .sw { display: inline-flex; align-items: center; gap: 10px; }
+.rk-toggle .sw i { width: 30px; height: 16px; border-radius: 8px; border: 1px solid var(--rk-mute); position: relative; display: inline-block; }
+.rk-toggle .sw i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--rk-mute); transition: left .15s; }
+.rk-toggle .sw[aria-checked=true] i { border-color: var(--rk-acc); background: color-mix(in srgb, var(--rk-acc) 18%, transparent); }
+.rk-toggle .sw[aria-checked=true] i::after { left: 16px; background: var(--rk-acc); }
+
+/* blocks/wheel/wheel.css */
+.rk-wheel { max-width: 260px; }
+.rk-wheel.ang { max-width: 460px; }
+.rk-wheel .ring { fill: none; stroke: var(--rk-line); stroke-width: 1; }
+.rk-wheel .sep, .rk-wheel .marks line { stroke: var(--rk-line); stroke-width: 1; }
+.rk-wheel .marks line { stroke: var(--rk-mute); }
+.rk-wheel .tick text, .rk-wheel text.tick { font-size: 15px; fill: var(--rk-ink2); cursor: pointer; }
+.rk-wheel.ang text.tick { font-size: 10.5px; cursor: inherit; }
+.rk-wheel.ang .outer text { font-size: 12px; fill: var(--rk-mute); letter-spacing: .06em; }
+.rk-wheel .tick.on text { fill: var(--rk-bg); font-weight: 600; }
+.rk-wheel.ang text.tick.on { fill: var(--rk-fg); font-weight: 600; }
+.rk-wheel .tick .dot { fill: transparent; }
+.rk-wheel .tick.on .dot { fill: var(--rk-acc); }
+.rk-wheel .wedge { fill: color-mix(in srgb, var(--rk-acc) 16%, transparent); }
+.rk-wheel .hand { stroke: var(--rk-acc); stroke-width: 1.5; }
+.rk-wheel .val { font: 400 30px var(--rk-head); fill: var(--rk-fg); }
+.rk-wheel.ang .val { font-size: 26px; }
+.rk-wheel svg { cursor: grab; } .rk-wheel svg.drag { cursor: grabbing; }
+.rk-wheel.rk-locked svg { cursor: default; }
+.rk-wheel svg:focus-visible { outline: none; }
+.rk-wheel svg:focus-visible .ring { stroke: var(--rk-acc); stroke-width: 2; }

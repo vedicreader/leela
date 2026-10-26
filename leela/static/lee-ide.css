@@ -1897,6 +1897,7 @@ kbd {
 .lee-out.log { color: var(--lee-log); }
 .lee-out.error, .lee-out.err { color: var(--lee-red); }
 .lee-out img, .lee-out svg { max-width: 100%; }
+.lee-rk-err { margin: .25em 0; color: var(--lee-fg3); font-size: .85em; }
 .lee-out.lee-out-media { max-height: none; overflow: visible; }
 .lee-out-media > img { display: block; max-width: 100%; height: auto; }
 .lee-output-fold {

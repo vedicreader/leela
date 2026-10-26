@@ -7,3 +7,8 @@ lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scr
     cp lee-widgets.js <repo>/leela/vendor/ && cp node_modules/@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2 <repo>/leela/vendor/fonts/
 
 fonts/fa-solid-900.woff2 and fonts/LICENSE-Font-Awesome.txt: @fortawesome/fontawesome-free@5.15.4, the version html-manager 1.0.15 depends on.
+
+lee-rupaka.js and lee-rupaka.css: rupaka 0.0.1 from PyPI, wheel rupaka-0.0.1-py3-none-any.whl, SHA-256 6deef0ff9ea6b6c182bcb046ac2f74f5535da2213044ef25d546c6286b567b9d. Download the wheel into an empty folder, check the digest, then write the two bundles with the wheel's own renderer:
+
+    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.1-py3-none-any.whl" https://files.pythonhosted.org/packages/a9/f1/ff44d254de23192343782bd91039a0b0d0e8af59a5e9ff74de00b5c074a8/rupaka-0.0.1-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.1-py3-none-any.whl"
+    uv run --no-project --with "$d/rupaka-0.0.1-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor

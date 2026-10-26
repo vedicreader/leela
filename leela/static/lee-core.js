@@ -579,6 +579,64 @@ function enhanceCodeBlocks(el) {
   el._leeCodeSurfaces = kept;
   el._leeCodeViews = [...kept.values()].map(s => s._leeView);
 }
+const RUPAKA_MIME = 'application/vnd.rupaka+json';
+const rupaka = {hosts: new Map(), passes: new Map(), load: null, sheet: null, seq: 0};
+//: One promise, failure included: a missing bundle is one error line, not a refetch on every render. `retry` is the only way out.
+function loadRupaka(retry = false) {
+  if (retry) rupaka.load = null;
+  return rupaka.load ||= (async () => {
+    const css = fetch($('meta[name="lee-rupaka-css"]')?.content || '/leestatic/lee-rupaka.css')
+      .then(r => r.ok ? r.text() : Promise.reject(new Error(`rupaka.css: ${r.status} ${r.statusText}`)));
+    const js = window.Rupaka ? 0 : new Promise((ok, no) => {
+      const s = document.createElement('script');
+      s.src = $('meta[name="lee-rupaka-src"]')?.content || '/leestatic/lee-rupaka.js';
+      s.onload = ok; s.onerror = () => { s.remove(); no(new Error('rupaka.js could not be loaded')); };
+      document.head.appendChild(s);
+    });
+    return (await Promise.all([css, js]))[0];
+  })();
+}
+function rupakaStyle(root, css) {
+  const text = css + ':host{display:block}';
+  if (!('adoptedStyleSheets' in root)) return root.prepend(Object.assign(document.createElement('style'), {textContent: text}));
+  if (!rupaka.sheet) { rupaka.sheet = new CSSStyleSheet(); rupaka.sheet.replaceSync(text); }
+  root.adoptedStyleSheets = [rupaka.sheet];
+}
+const rupakaErr = e => Object.assign(document.createElement('p'), {className: 'lee-rk-err', textContent: `rupaka: ${e.message || e}`});
+const rupakaPass = owner => { const p = {owner, gen: ++rupaka.seq}; rupaka.passes.set(owner, p); return p; };
+//: Hosts of `owner` that the pass did not touch are gone from the page, as `widgetSweep` does for widgets.
+function rupakaSweep(p) {
+  for (const [k, e] of rupaka.hosts) if (e.owner === p.owner && e.gen !== p.gen) rupaka.hosts.delete(k);
+  if (rupaka.passes.get(p.owner) === p) rupaka.passes.delete(p.owner);
+}
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh.
+function rupakaDraw(spec, key = null, pass = null) {
+  let e = key && rupaka.hosts.get(key);
+  if (!e) {
+    const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
+    host.attachShadow({mode: 'open'}).append(inner);
+    e = {host, ok: false, err: null, owner: pass?.owner};
+    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); e.ok = true; })
+      .catch(err => { e.err = err; });
+    if (key) rupaka.hosts.set(key, e);
+  }
+  if (pass) e.gen = pass.gen;
+  return e;
+}
+const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
+function rupakaFences(el, owner = null) {
+  const pass = owner && rupakaPass(owner), seen = new Map();
+  $$('pre > code.language-rupaka', el).forEach(code => {
+    const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
+    const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
+    let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
+    const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
+    if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
+  });
+  if (pass) rupakaSweep(pass);
+}
 /* This copies an answer into the open notebook, so it needs one. Hidden rather than disabled, and
    back the moment a notebook tab is focused. */
 function markdownCellActionState(button) {
@@ -837,8 +895,8 @@ function eventContext(e) {
   // Before `#editor`, which holds the tab they are mounted in.
   if (inPath('.lee-vault-review')) return 'review';
   if (inPath('.lee-vault-docview')) return 'vault';
-  // Before `.lee-cell`, which holds it: a widget's sliders and fields take arrows and letters.
-  if (inPath('.lee-widget')) return 'widget';
+  // Before `.lee-cell`, which holds it: a widget's sliders and fields take arrows and letters, a rupaka demo's gate takes mod+enter.
+  if (inPath('.lee-widget, .lee-rupaka')) return 'widget';
   if (inPath('#editor, .lee-cell, #filecm')) return 'editor';
   if (inPath('#vars, #varfilter, .lee-varspanel')) return 'vars';
   if (inPath('#filetree, .lee-files')) return 'files';
@@ -2781,6 +2839,8 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
   const a = c.attachments?.[img.getAttribute('src').slice(11)], t = a && Object.keys(a)[0];
   if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
 });
+//: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
+const mdPaint = (c, cached = true) => el => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null); };
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
@@ -2789,7 +2849,7 @@ function paintMarkdownCell(el, c, now = false) {
   el.toggleAttribute('data-md-edit', mdEditing.has(c.id));
   host.classList.toggle('empty', !src.trim());
   host.dataset.mdBase = nbBase();
-  if (now) { host.dataset.markdown = src; flushMarkdown(host, true, mdAttached(c)); } else renderMarkdown(host, src, true, mdAttached(c));
+  if (now) { host.dataset.markdown = src; flushMarkdown(host, true, mdPaint(c)); } else renderMarkdown(host, src, true, mdPaint(c));
 }
 function editMarkdownCell(i) {
   const c = lee.cells[i], el = mdCellOf(i); if (c?.cell_type !== 'markdown' || !el) return;
@@ -2817,7 +2877,7 @@ function focusRenderedMarkdown(i) {
 }
 const MD_KEYS = {
   cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
-    return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(keyTarget(e)) && !e.target.closest('button, a, summary'); },
+    return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(keyTarget(e)) && !keyTarget(e).closest?.('button, a, summary'); },
   cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown'), v = el && lee.editors.get(el.dataset.id);
     return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel') && !(v && LeeCM.holdsEscape(v)); },
 };
@@ -2829,6 +2889,7 @@ function renderOutputs(c) {
     for (const v of (el._leeCodeViews || [])) try { LeeCM.destroy(v); } catch {}
   });
   widgetDetach(c);
+  const rkPass = rupakaPass(`out:${c.id}`);
   box.innerHTML = '';
   // A prompt cell's "output" is the answer, stored in the cell rather than in an nbformat output,
   // so it renders from its own fields.
@@ -2848,9 +2909,11 @@ function renderOutputs(c) {
     }
     // pictures and video the turn generated do arrive as nbformat outputs, and draw as any other
     (c.outputs || []).forEach((o, i) => box.appendChild(outputEl(o, c, i)));
+    rupakaSweep(rkPass);
     return widgetSweep(c);
   }
   (c.outputs || []).forEach((o, i) => box.appendChild(outputEl(o, c, i)));
+  rupakaSweep(rkPass);
   widgetSweep(c);
 }
 
@@ -2955,6 +3018,17 @@ function plotlyFrame(d, fig) {
     `'<p style=&quot;font:13px sans-serif;color:#888;padding:1em&quot;>plotly.js could not load, so this chart cannot be drawn offline</p>'"><\/script>` +
     `<script>const f = ${json}; if (window.Plotly) Plotly.newPlot('p', f.data, Object.assign({}, f.layout, {autosize: true, width: undefined, height: undefined}), Object.assign({responsive: true}, f.config));<\/script>`, h);
 }
+//: A rupaka output is drawn here, so the `text/html` fallback `rupaka.show` sends beside it never reaches a frame.
+function rupakaEl(d, raw, pass, i) {
+  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  const fail = err => d.append(rupakaErr(err), Object.assign(document.createElement('pre'), {textContent: text}));
+  let spec; try { spec = JSON.parse(text); } catch (err) { fail(err); return d; }
+  d.classList.add('lee-out-media');
+  const e = rupakaDraw(spec, pass && `${pass.owner}:${i}:${text.length}:${text}`, pass);
+  if (e.err) fail(e.err); else d.append(e.host);
+  if (!e.ok && !e.err) e.done.then(() => { if (e.err) { e.host.remove(); fail(e.err); } rupakaRendered(d); });
+  return d;
+}
 function outputEl(o, c = null, i = 0) {
   const d = document.createElement('div');
   const tone = outputTone(o);
@@ -2966,6 +3040,7 @@ function outputEl(o, c = null, i = 0) {
   }
   const data = o.data || {};
   if (data[WIDGET_MIME] != null) return widgetEl(o, c, i);
+  if (data[RUPAKA_MIME] != null) return rupakaEl(d, data[RUPAKA_MIME], c?.id && rupaka.passes.get(`out:${c.id}`), i);
   if (data[PLOTLY_MIME] != null) return plotlyFrame(d, data[PLOTLY_MIME]);
   if (data['image/png']) {
     const i = document.createElement('img'), m = o.metadata?.['image/png'] || {};
@@ -2998,7 +3073,7 @@ function outputEl(o, c = null, i = 0) {
   // After the rich types, as Jupyter ranks them: a FastHTML object sends its markup as `text/html` and
   // again as a fenced `text/markdown` block, and the fence is source, not the thing to draw.
   if (data['text/markdown'] != null) {
-    d.classList.add('lee-md-output'); d.dataset.mdBase = nbBase(); renderMarkdown(d, data['text/markdown']); return d;
+    d.classList.add('lee-md-output'); d.dataset.mdBase = nbBase(); renderMarkdown(d, data['text/markdown'], false, el => rupakaFences(el, c?.id ? `outmd:${c.id}:${i}` : null)); return d;
   }
   outputText(d, data['text/plain'] || '');
   return d;
@@ -3897,7 +3972,7 @@ const presentCss = href => new Promise(ok => {
 
 function presentMarkdown(host, text, cell) {
   host.dataset.mdBase = nbBase();
-  renderMarkdown(host, text, true, cell ? mdAttached(cell) : null);
+  renderMarkdown(host, text, true, mdPaint(cell, false));
 }
 function presentOutputs(box, outputs) {
   $$('[data-markdown]', box).forEach(el => { for (const v of el._leeCodeViews || []) try { LeeCM.destroy(v); } catch {} });
