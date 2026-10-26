@@ -36,7 +36,7 @@ BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a co
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -874,7 +874,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
             except Exception: pass
 
 def _session_tools(host):
-    "The Run button, as the one tool Leela adds to the live session; `inspect_python('')` reads the namespace."
+    "The Run button and the demo inserter, as the tools Leela adds to the live session; `inspect_python('')` reads the namespace."
     @summary(lambda a: f'Run {a.get("path","")} cell {a.get("cell_id","?")}')
     def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run one notebook cell in the user's live kernel, as pressing Run on it would.
@@ -882,7 +882,24 @@ def _session_tools(host):
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
-    return [small_tool(run_cell)]   # the Run button belongs to a small session too
+    @summary(lambda a: f'Add demo to {a.get("path", "")}')
+    def add_demo(path: str, spec: dict | str, after_cell_id: str = '') -> str:
+        "Insert one markdown demo cell into any `.ipynb`. Demos belong in lesson notebooks."
+        from rupaka.spec import validate
+        from ..nb.lesson import demo_refusal, fence
+        try:
+            if isinstance(spec, str): spec = json.loads(spec)
+            if errors := validate(spec): return demo_refusal(errors)
+            p = host.check_write(path)
+            if p.suffix != '.ipynb': return 'add_demo failed: path must be an .ipynb notebook'
+            cells = host.nb_cells(str(p))
+            index = -1
+            if after_cell_id:
+                index = first(i + 1 for i, (cid, _, _) in enumerate(cells) if cid == after_cell_id)
+                if index is None: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
+            return host.nb_add_cell(str(p), fence(spec), index=index, cell_type='markdown')
+        except Exception as e: return f'add_demo failed: {errstr(e)}'
+    return [small_tool(run_cell), small_tool(add_demo)]   # the Run button belongs to a small session too
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
     "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."
@@ -1079,6 +1096,7 @@ class Assistant(Agent):
         self._video_toolset = video_tools(host, jobs=self.video_jobs)
         self._built_mode = None            # whether a feed was followed when the tool list was last built
         self._briefed_mode = None          # …and the one the live turn backend was last briefed with
+        self._briefed_lesson = False
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
         from ...workspace import AGENT_CHANNELS
         for k, attr in AGENT_CHANNELS.items(): setattr(self, attr, getattr(ws, k, '') or '')
@@ -1114,14 +1132,25 @@ class Assistant(Agent):
         feeds = getattr(self.ws, 'feeds', None)
         return feeds is not None and any(True for _ in feeds)
 
+    def _lesson(self):
+        from ..nb.nb import Notebook
+        tab = getattr(self.ws, 'tab', None)
+        if tab is None or tab.kind != 'notebook' or not tab.path: return False
+        try: return bool(Notebook.load(self.host.check(tab.path)).meta.get('lesson'))
+        except Exception: return False
     def _follow_mode(self):
-        "Re-brief the live turn backend when a feed came or went, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
+        "Re-brief the live turn backend when a feed came or went, or the active tab became or stopped being a lesson notebook, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
         if self._briefed_mode is None: self._briefed_mode = self._built_mode   # a backend installed from outside (`tests.fakemodel`) was briefed with what `tools` built
-        mode = self._mode()
-        if self._briefed_mode is None or mode == self._briefed_mode: self._briefed_mode = self._briefed_mode or mode; return
+        mode, lesson = self._mode(), self._lesson()
+        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson:
+            self._briefed_mode = mode
+            return
         self._forget()
-        self._be('turn').refresh(self.system_prompt(), self.tools)
-        self._briefed_mode = mode
+        be = self._be('turn')
+        prompt = self.system_prompt()
+        be.refresh(prompt, self.tools)
+        from ..nb.lesson import LESSON_CHARTER
+        self._briefed_mode, self._briefed_lesson = mode, LESSON_CHARTER in prompt
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."
@@ -1142,7 +1171,9 @@ class Assistant(Agent):
         "The backend for `job`, on an engine the whole daemon shares rather than a copy of the weights per workspace."
         spec = self.routing.spec(job); fresh = (spec.backend, spec.model_id) not in self._backends
         be = super()._be(job)
-        if fresh and job == 'turn': self._briefed_mode = self._built_mode   # built with `tools=self.tools` just now
+        if fresh and job == 'turn':
+            from ..nb.lesson import LESSON_CHARTER
+            self._briefed_mode, self._briefed_lesson = self._built_mode, LESSON_CHARTER in be.sp
         if self.engines is not None: self.engines.attach(be)
         return be
 
@@ -1180,6 +1211,9 @@ class Assistant(Agent):
         small = self.profile == 'small'
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
         base += VAULT_MARKS
+        if self._lesson():
+            from ..nb.lesson import LESSON_CHARTER
+            base += '\n\n' + LESSON_CHARTER
         if loose := getattr(self.host, 'loose_files', ()):
             base += f'\n\nLoose files: {", ".join(loose)}. Each was opened on its own: read and edit it, but nothing beside it is yours to touch.'
         if (writable := self.host.writable_roots) != self.host.roots:
