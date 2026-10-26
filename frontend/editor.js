@@ -803,8 +803,9 @@ function overviewPlugin(mode = 'off', threshold = 120) {
 const stickyPlugin = ViewPlugin.fromClass(class {
   constructor(view){this.view=view;this.dom=document.createElement('div');this.dom.className='cm-lee-sticky';view.dom.appendChild(this.dom);this.draw();}
   update(update){if(update.docChanged||update.viewportChanged||update.selectionSet)this.draw();}
-  draw(){const line=this.view.state.doc.lineAt(this.view.viewport.from).number;let label='';
-    for(let n=line;n>=Math.max(1,line-200);n--){const t=this.view.state.doc.line(n).text.trim();if(/^(async\s+def|def|class)\s+/.test(t)){label=t;break;}}
+  draw(){const doc=this.view.state.doc,line=doc.lineAt(this.view.viewport.from).number,decl=/^(async\s+def|def|class)\s+/;let label='';
+    // A declaration on the top line is on screen already; a copy painted over it read as ghost text.
+    if(!decl.test(doc.line(line).text.trim()))for(let n=line-1;n>=Math.max(1,line-200);n--){const t=doc.line(n).text.trim();if(decl.test(t)){label=t;break;}}
     this.dom.textContent=label;this.dom.hidden=!label;}
   destroy(){this.dom.remove();}
 });
