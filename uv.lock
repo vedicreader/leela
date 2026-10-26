@@ -17,6 +17,24 @@ constraints = [
 ]
 
 [[package]]
+name = "abhyasa"
+version = "0.0.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastcore" },
+    { name = "ipywidgets" },
+    { name = "python-fasthtml" },
+    { name = "rishi" },
+    { name = "rupaka" },
+    { name = "vidyut" },
+    { name = "vishalakshi" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4f/16/a1588be857a9bb08725cabae1ff1b30b5a6dcc0f608556f2af0322f58bfa/abhyasa-0.0.9.tar.gz", hash = "sha256:2c8b76385d351779f74a6b6431f69bdc4c5f3cef98c54540a1830638372cdd34", size = 1065640, upload-time = "2026-10-26T10:04:12.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/f7/5cb81b81929e82f36678428a8d542a0b6a2f8fd8f679e5ace29eba499aca/abhyasa-0.0.9-py3-none-any.whl", hash = "sha256:33c1ae60e9e43785b2e0ccd2eae54fe68575ee704db1f0349fa666d537be7861", size = 1106806, upload-time = "2026-10-26T10:04:10.556Z" },
+]
+
+[[package]]
 name = "adhara"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2495,6 +2513,7 @@ wheels = [
 name = "leela"
 source = { editable = "." }
 dependencies = [
+    { name = "abhyasa" },
     { name = "cfeasy" },
     { name = "dhrishti" },
     { name = "dhrona" },
@@ -2575,6 +2594,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "abhyasa", specifier = ">=0.0.9" },
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.10" },
     { name = "dhrona", specifier = ">=0.1.18" },
@@ -5264,6 +5284,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c7/3b/ebda527b56beb90cb7652cb1c7e4f91f48649fbcd8d2eb2fb6e77cd3329b/ruamel_yaml-0.19.1.tar.gz", hash = "sha256:53eb66cd27849eff968ebf8f0bf61f46cdac2da1d1f3576dd4ccee9b25c31993", size = 142709, upload-time = "2026-01-02T16:50:31.84Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b8/0c/51f6841f1d84f404f92463fc2b1ba0da357ca1e3db6b7fbda26956c3b82a/ruamel_yaml-0.19.1-py3-none-any.whl", hash = "sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93", size = 118102, upload-time = "2026-01-02T16:50:29.201Z" },
+]
+
+[[package]]
+name = "rupaka"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastcore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/6a/e92e0d8ad1e73137d702bb96268ba3dd7a5e2e0d8af01ffad9c6b7e955eb/rupaka-0.0.1.tar.gz", hash = "sha256:832f670e2a4626319018a5d11901213f9aef7f7d690891552bf140252034049c", size = 290285, upload-time = "2026-10-26T00:54:37.701Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/f1/ff44d254de23192343782bd91039a0b0d0e8af59a5e9ff74de00b5c074a8/rupaka-0.0.1-py3-none-any.whl", hash = "sha256:6deef0ff9ea6b6c182bcb046ac2f74f5535da2213044ef25d546c6286b567b9d", size = 317631, upload-time = "2026-10-26T00:54:35.892Z" },
 ]
 
 [[package]]

@@ -17,6 +17,7 @@ classifiers = [
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
     "ramabana[cli]==0.2.78",
+    "abhyasa>=0.0.9",
     "shalya>=0.1.22",
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",
