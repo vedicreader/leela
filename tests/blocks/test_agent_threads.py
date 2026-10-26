@@ -563,6 +563,31 @@ def test_boot_picks_up_this_apps_newest_conversation_and_not_the_clis(tmp_path):
     finally: ws.threads.shutdown()
 
 
+def test_boot_with_no_saved_conversation_resumes_nothing_and_is_not_an_error(tmp_path):
+    "A first run has no saved conversation; resuming 'latest' answered 400 (ramabana's KeyError) on every page load."
+    ws = Workspace(roots=[tmp_path])
+    try:
+        with TestClient(ide_app(ws)) as client:
+            for everything in (False, True):
+                r = client.post('/agent/resume', json={'session': 'latest', 'everything': everything})
+                assert r.status_code == 200 and r.json()['turns'] == [], (everything, r.text)
+            assert client.post('/agent/resume', json={'session': 'no-such-session'}).status_code >= 400, 'a named session that is missing is still an error'
+    finally: ws.threads.shutdown()
+
+
+def test_boot_does_not_fall_back_to_the_clis_conversation(tmp_path):
+    "With only the CLI's conversations in the log, the filtered 'latest' resumed the CLI's newest anyway."
+    from leela.blocks.agent.turns import surfaces
+    ws = Workspace(roots=[tmp_path]); model = ws.ai.model.name
+    _log(ws, [{'session': 'agent_cli', 'turn_id': 'agent_cli:1', 'at': 30, 'model': model, 'prompt': 'theirs', 'reply': 'r2'}])
+    try:
+        with TestClient(ide_app(ws)) as client:
+            d = client.post('/agent/resume', json={'session': 'latest'}).json()
+            assert d['ok'] and d['turns'] == [] and d['session'] != 'agent_cli', d
+            assert 'agent_cli' not in surfaces(ws.ai.cfg)
+    finally: ws.threads.shutdown()
+
+
 def test_a_threads_opt_ins_survive_eviction_and_resume(tmp_path, monkeypatch):
     from tests.fakemodel import Step, install
     from leela.blocks.agent.ai import Assistant

@@ -155,7 +155,9 @@ def connect(app, ctx):
         session = str(d.get('session') or 'latest')
         if session == 'latest':
             await off_loop(ws.fresh_history, ws.ai)
-            session = (first((s['id'] for s in ws.ai.sessions()), '') if d.get('everything') else latest_started_here(ws.ai)) or 'latest'
+            session = first((s['id'] for s in ws.ai.sessions()), '') if d.get('everything') else latest_started_here(ws.ai)
+            # No saved conversation is a first run, not a bad request: there is nothing to resume.
+            if not session: return {'ok': True, 'session': ws.threads.active_id, 'turns': []}
         try: thread = await off_loop(ws.threads.resume, session)
         except Exception as e:
             from .threads import TurnError
