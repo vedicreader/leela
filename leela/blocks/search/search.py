@@ -73,6 +73,7 @@ class Hit(Dictable):
 
 #: Paths that are never the answer to a code search, whatever matched in them.
 DEMOTED = re.compile(r'(^|/)(node_modules|dist|build|vendor|third_party)(/|$)|\.min\.(js|css)$')
+_NB_MARK = re.compile(r'^# %% (\S+\.ipynb) #([\w-]+)\s*$')
 
 #: Settings key -> weight field. The settings file is camelCase and says which leg it means; the
 #: dataclass is named for the feature. One table, so neither spelling has to guess the other.
@@ -285,8 +286,6 @@ class Search:
         return rows
     def _here(self, place):
         "The project's own copy of an indexed package file."
-        # One Kosha index serves every checkout, so a row can name another virtualenv's copy of
-        # the same package, which the sandbox cannot open at all.
         parts = Path(place).parts if place else ()
         if 'site-packages' in parts:
             rest = parts[len(parts) - list(reversed(parts)).index('site-packages'):]
@@ -461,7 +460,7 @@ class Search:
         self.backend, self.note = 'fts', 'kosha FTS5 · indexed files'
         return self._indexed_hits(rows, 'fts', 'rank')
     def _symbols(self, q, limit):
-        "Exact/fuzzy symbol names across this repo and Kosha's shared environment DB."
+        "Exact/fuzzy symbol names across this repo and packages its own environment installs."
         k = self._kosha()
         if k is None: return None
         name = (q or '').strip()
@@ -473,13 +472,16 @@ class Search:
         exact = "json_extract(metadata, '$.name') = ?"
         fuzzy = "json_extract(metadata, '$.name') LIKE ? OR json_extract(metadata, '$.mod_name') LIKE ?"
         try:
+            from kosha.core import env_pkg_versions
+            mine = [n.lower() for n in env_pkg_versions(path=k.env_path, root=k.root)]
             def rows(st, env=False):
+                if env and not mine: return []
                 cols = 'content, metadata' + (', package' if env else ', path')
-                found = list(st.rows_where(exact, [leaf], select=cols, limit=limit))
+                scope, sargs = (f" AND lower(package) IN ({','.join('?' * len(mine))})", mine) if env else ('', [])
+                found = list(st.rows_where(f'({exact}){scope}', [leaf, *sargs], select=cols, limit=limit))
                 if len(found) < limit:
-                    more = st.rows_where(f'NOT ({exact}) AND ({fuzzy})', [leaf, like, like],
-                        select=cols, limit=limit - len(found))
-                    found.extend(more)
+                    found.extend(st.rows_where(f'NOT ({exact}) AND ({fuzzy}){scope}', [leaf, like, like, *sargs],
+                        select=cols, limit=limit - len(found)))
                 return found
             rr, er = rows(k.code_st), rows(k.env_st, True)
         except Exception as e:
@@ -489,7 +491,9 @@ class Search:
         for row, env in [*((r, False) for r in rr), *((r, True) for r in er)]:
             m = _meta(row)
             raw = str(m.get('path') or row.get('path') or '')
-            out.append(Hit(path=self._here(raw) or raw,
+            path = self._here(raw) or raw
+            if env and not self._covers(path): path = ''
+            out.append(Hit(path=path,
                 line=int(m.get('lineno') or 1), text=(row.get('content') or '').strip(),
                 kind='env-symbol' if env else 'symbol',
                 symbol=str(m.get('mod_name') or m.get('name') or ''),
@@ -1121,10 +1125,33 @@ class Search:
                         text=str(line).strip()[:200], kind='symbol', symbol=m.group(3),
                         score=float(len(m.group(1))), cell=cid, cell_index=i, cell_line=n, column=m.start(3)))
         return out
+    def _from_nbdev(self, h, texts):
+        "Point a hit in an nbdev-exported module at the notebook cell it was exported from, when that notebook is open here."
+        if h.kind.startswith('env-') or not h.path.endswith('.py') or int(h.line or 0) < 1: return
+        def read(p):
+            if p not in texts:
+                try: texts[p] = self.fs.read(p)
+                except Exception: texts[p] = ''
+            return texts[p]
+        lines = read(h.path).split('\n')
+        if h.line > len(lines): return
+        at = next((i for i in range(h.line - 1, -1, -1) if lines[i].startswith('# %% ')), None)
+        if at is None or not (mark := _NB_MARK.match(lines[at])): return
+        nb = (Path(h.path).parent/mark[1]).resolve()
+        if not self._covers(nb) or not (text := read(str(nb))): return
+        cells = read_cells(text) or []
+        i = next((j for j, c in enumerate(cells) if str(c.get('id') or '') == mark[2]), None)
+        if i is None: return
+        want = lines[h.line - 1].strip()
+        n = next((j for j, l in enumerate(cell_lines(cells[i]), 1) if str(l).strip() == want), 1)
+        span = source_spans(text, cells)[i]
+        h.path, h.cell, h.cell_index, h.cell_line = str(nb), mark[2], i, n
+        h.line = span[0] + n - 1 if span else 0
     def _place(self, hits):
         "Give every notebook hit the cell and in-cell line that make it openable."
-        cache = {}
+        cache, texts = {}, {}
         for h in hits:
+            self._from_nbdev(h, texts)
             if not _is_nb(h.path) or h.cell_index >= 0: continue
             if h.path not in cache:
                 try: text = self.fs.read(h.path)

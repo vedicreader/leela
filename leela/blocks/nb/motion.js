@@ -20,36 +20,30 @@ function jumpToLine(line) {
   const n = Math.max(1, Math.min(Number(line) || 1, v.state.doc.lines));
   const pos = v.state.doc.line(n).from;
   v.dispatch({selection: {anchor: pos}, scrollIntoView: true}); v.focus();
-  // After the layout `scrollIntoView` just caused, or the measurement is of the old position.
   requestAnimationFrame(() => centreOnPos(v, pos));
 }
-function openLocation(hit) {
-  // A hit in a notebook reports two coordinates: `line` in the .ipynb JSON, which is what ripgrep
-  // and blame speak, and the cell plus the line inside it, which is the only pair an editor can
-  // open. Prefer the second when the server placed the hit. A hit it could not place keeps the
-  // file line rather than opening a cell chosen at random.
+
+async function openLocation(hit) {
   const name = hit.path.split('/').pop();
   const inCell = Number(hit.cell_line) > 0;
-  if (!inCell && /\.ipynb$/i.test(hit.path)) {
-    // Nowhere to scroll to: the JSON line is not a line of any cell's editor, and jumping to it
-    // inside whichever cell is selected would look like an answer.
-    leeOpenFile(hit.path);
-    return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
-  }
-  const line = inCell ? Number(hit.cell_line) : hit.line;
-  lee.pendingLocation = {path: hit.path, line, column: Number(hit.column || 0), symbol: hit.symbol || '',
-                         cellId: hit.cell || '',
-                         cellIndex: Number.isFinite(hit.cell_index) ? Number(hit.cell_index) : -1};
-  leeOpenFile(hit.path);
-  status(`${name}${inCell ? ` · cell ${Number(hit.cell_index) + 1}` : ''}:${line}`);
+  try {
+    if (!inCell && /\.ipynb$/i.test(hit.path)) {
+      await leeOpenFile(hit.path);
+      return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
+    }
+    const line = inCell ? Number(hit.cell_line) : hit.line;
+    lee.pendingLocation = {path: hit.path, line, column: Number(hit.column || 0), symbol: hit.symbol || '',
+                           cellId: hit.cell || '',
+                           cellIndex: Number.isFinite(hit.cell_index) ? Number(hit.cell_index) : -1};
+    await leeOpenFile(hit.path);
+    status(`${name}${inCell ? ` · cell ${Number(hit.cell_index) + 1}` : ''}:${line}`);
+  } catch (e) { return status(e.message || String(e), 'err');}
 }
 
 async function stopCell(i) {
   const c = lee.cells[i];
   if (!c?.running) return status(`cell ${i + 1} is not running`, 'err');
   status(`stopping cell ${i + 1}…`);
-  // A prompt cell is a turn of the inline agent rather than anything in a kernel. The server
-  // stops the agent; this ends the reply stream that is holding the cell open here.
   lee.promptRuns?.get(c.id)?.abort();
   const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
   status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
@@ -93,11 +87,6 @@ async function runCell(i, advance) {
     try { await askCell(i, src, el); }
     finally { c.running = false; }
   } else {
-    // Code run from a file-backed notebook has to be visible to code that reads that notebook
-    // during the cell, such as indexers, nbdev and papermill. Flush the whole browser document
-    // first, or a newly created .ipynb is still zero-byte on disk while its cell runs.
-    // `saveTab` has already said why, in the status line or the conflict dialog. Repeating a
-    // generic `save the notebook` over the top of it hid the only diagnosable part.
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
@@ -145,10 +134,6 @@ async function runCell(i, advance) {
     } finally { clearInterval(cellClock); }
     for (const x of [c, cur()]) if (x) x.running = false;
     if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
-    // A run rewrites the outputs, which is a change to the document, and only typing used to
-    // schedule a save. Saved here rather than marked dirty: marking it left the notebook to the
-    // autosave delay, and the next run flushed it on the way in, so every cell wrote the whole file
-    // twice. Once a run has saved it, the next run finds nothing to flush.
     if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
@@ -198,8 +183,6 @@ async function revealDebugFrame(state) {
     }
     return;
   }
-  // Library frames are outside the workspace sandbox. Ask by frame id, never by a browser path,
-  // and show a read-only source view so step-in stays useful.
   if(lee.directDebug)return;
   const src = await api(`/nb/debug/source?frame_id=${frame.id}`);
   let pane = $('#debugsource');
@@ -320,4 +303,3 @@ async function debugCell(i) {
   }
 }
 window.leeDebugCell = debugCell;
-
