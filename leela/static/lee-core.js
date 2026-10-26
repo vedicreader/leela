@@ -474,6 +474,14 @@ function portableToolSummary(tool, args) {
   const body = Object.entries(a).slice(0, 2).map(([k, v]) => `${k}: ${short(v).slice(0, 54)}`).join(' · ');
   return `${tool.replaceAll('_', ' ')}${body ? ' · ' + body : ''}`;
 }
+const activitySummary = (title, count) => `<span class="lee-activity-title">${title}</span>` +
+  `<span class="lee-activity-count">${count}</span><span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
+function activityGroup(title, count, cls = '') {
+  const group = document.createElement('details'), list = document.createElement('section');
+  group.className = `lee-activity-group ${cls}`.trim(); list.className = 'lee-activity-list';
+  group.innerHTML = `<summary>${activitySummary(title, count)}</summary>`; group.appendChild(list);
+  return group;
+}
 function polishActivityGroup(el) {
   $$('ul, ol', el).forEach(list => {
     const rows = $$('.lee-agent-step', list);
@@ -486,9 +494,7 @@ function polishActivityGroup(el) {
     if (!summary || !/what i did/i.test(summary.textContent || '')) return;
     group.classList.add('lee-activity-group');
     const count = $$('.lee-agent-step', group).length;
-    summary.innerHTML = `<span class="lee-activity-title">Work log</span>` +
-      `<span class="lee-activity-count">${count} ${count === 1 ? 'step' : 'steps'}</span>` +
-      `<span class="lee-agent-step-chevron" aria-hidden="true"></span>`;
+    summary.innerHTML = activitySummary('Work log', `${count} ${count === 1 ? 'step' : 'steps'}`);
   });
 }
 /* The fold a step row replaces. Only a `result` fold holding this one block goes with it: climbing to

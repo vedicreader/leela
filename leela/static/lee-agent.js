@@ -1209,7 +1209,7 @@ function renderTurns(log, turns, heading, fold = true) {
     let closing = null;
     if ((turn.timeline || []).length) {
       const root = document.createElement('div'); root.className = 'lee-agent-timeline'; item.appendChild(root);
-      const paint = agentTimeline(root);
+      const paint = agentTimeline(root, agentCalm());
       const paintActivity = part => {
         paint.activity(part.data);
         for (const child of part.children || []) paintActivity(child);
@@ -1220,12 +1220,14 @@ function renderTurns(log, turns, heading, fold = true) {
         // what the person said mid-turn, in the place they said it
         else if (part.kind === 'steer' && part.data?.text) paint.append(userMessage(part.data.text));
       }
+      paint.end();
       closing = closing || root;
     } else {
       if ((turn.activity || []).length) {
-        const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
+        const calm = agentCalm(), steps = calm ? activityGroup('Activity', calmSummary(turn.activity.map(a => ({done: true, ...a}))), 'calm')
+          : Object.assign(document.createElement('div'), {className: 'lee-agent-steps'});
         for (const activity of turn.activity) {
-          const row = document.createElement('details'); renderAgentStep(row, activity); steps.appendChild(row);
+          const row = document.createElement('details'); renderAgentStep(row, activity); (calm ? steps.lastElementChild : steps).appendChild(row);
         }
         item.appendChild(steps);
       }
@@ -1924,7 +1926,18 @@ window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = 
 /* Warm starts are opt-in per new conversation: the toggle is a preference, read when `+` is
    pressed, so a person decides before the first prompt and sees the choice on the button. */
 function agentWarmEnabled() { return prefGet('agent', 'warm', false) === true; }
-function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); paintAgentOptins(); paintAgentFullToggle(); }
+function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); paintAgentOptins(); paintAgentFullToggle(); paintAgentCalmToggle(); }
+/* Calm mode folds each stretch of tool activity into one closed group. A running turn keeps the
+   mode it started in, so a switch made mid-turn waits for the next turn. */
+function agentCalm() { return prefGet('agent', 'calm', false) === true; }
+function paintAgentCalmToggle() { $('#agentcalm')?.setAttribute('aria-pressed', String(agentCalm())); }
+async function leeAgentCalm(on = !agentCalm()) {
+  prefSet('agent', 'calm', on); paintAgentCalmToggle();
+  if (lee.agentBusy) return status(`calm mode ${on ? 'on' : 'off'} from the next turn`, 'ok');
+  if (!lee.agentView || lee.agentView === 'live') await paintAgentThread(lee.agentThread || '');
+  status(`calm mode ${on ? 'on' : 'off'}`, 'ok');
+}
+window.leeAgentCalm = leeAgentCalm;
 function leeAgentWarmToggle() {
   const on = !agentWarmEnabled(); prefSet('agent', 'warm', on); paintAgentWarmToggle();
   status(on ? 'the next new conversation starts warm' : 'new conversations start cold', 'ok');
@@ -3543,21 +3556,45 @@ const AGENT_RENDER_GAP = 100;
 const AGENT_RENDER_CEILING = 1200;
 const agentRenderGap = n => Math.min(AGENT_RENDER_CEILING, AGENT_RENDER_GAP + Math.round(n / 20));
 
-function agentTimeline(root) {
-  const actions = new Map(); let prose = null, tail = null, rendered = 0;
+/* `parts` are the activity payloads of one group. Pending calls put `working` in front. */
+function calmSummary(parts) {
+  const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+  const files = new Set(parts.filter(a => a.done && a.ok && a.kind === 'edit' && a.args?.path).map(a => a.args.path));
+  const subs = parts.filter(a => a.kind === 'delegate').length, failed = parts.filter(a => a.done && !a.ok).length;
+  const bits = [parts.length && plural(parts.length, 'tool call'), files.size && plural(files.size, 'file changed', 'files changed'),
+    subs && plural(subs, 'sub-agent'), failed && `${failed} failed`].filter(Boolean);
+  return (parts.some(a => !a.done) ? ['working', ...bits] : bits).join(' · ');
+}
+
+/* With `calm`, a stretch of activity between two text chunks lives in one closed group. Prose
+   sealing inside `activity` leaves the group open; a text chunk, `seal`, `append` or `end` closes it. */
+function agentTimeline(root, calm = false) {
+  const actions = new Map(), groups = []; let prose = null, tail = null, rendered = 0, group = null;
   const dropTail = () => { if (tail) { tail.remove(); tail = null; } };
-  const seal = () => {
+  const sealProse = () => {
     const el = prose; prose = null; rendered = 0; dropTail();
     if (el) flushMarkdown(el);
+  };
+  const seal = () => { sealProse(); group = null; };
+  const openGroup = () => {
+    if (!group) { group = activityGroup('Activity', '', 'calm'); group._acts = new Map(); groups.push(group); root.appendChild(group); }
+    return group;
+  };
+  const summarize = g => {
+    const acts = [...g._acts.values()].map(a => g._end && !a.done ? {...a, done: true, ok: false} : a);
+    g.querySelector('.lee-activity-count').textContent = calmSummary(acts) || 'context compacted';
   };
   const activity = a => {
     const id = a.action_id || a.id; if (!id) return null;
     let held = actions.get(id), row = held?.row;
     if (!row) {
-      seal();
-      row = document.createElement('details'); held = {row, parent: a.parent_action_id || '', children: null};
-      actions.set(id, held); root.appendChild(row);
+      sealProse();
+      row = document.createElement('details');
+      held = {row, parent: a.parent_action_id || '', children: null,
+              group: calm ? actions.get(a.parent_action_id || '')?.group ?? openGroup() : null};
+      actions.set(id, held); (held.group?.lastElementChild || root).appendChild(row);
     }
+    if (held.group) { held.group._acts.set(id, a); summarize(held.group); }
     held.parent = a.parent_action_id || held.parent;
     const children = held.children; if (children) children.remove();
     renderAgentStep(row, a); if (children) { row.appendChild(children); held.children = children; }
@@ -3566,7 +3603,7 @@ function agentTimeline(root) {
       parent.children ||= (() => { const box = document.createElement('div'); box.className = 'lee-agent-children'; parent.row.appendChild(box); return box; })();
       parent.children.appendChild(row);
     }
-    for (const child of actions.values()) if (child.parent === id && child.row.parentElement === root) {
+    for (const child of actions.values()) if (child.parent === id && !child.row.parentElement.classList.contains('lee-agent-children')) {
       held.children ||= (() => { const box = document.createElement('div'); box.className = 'lee-agent-children'; row.appendChild(box); return box; })();
       held.children.appendChild(child.row);
     }
@@ -3584,8 +3621,9 @@ function agentTimeline(root) {
   };
   // `prose !== el` is a stretch that was sealed or replaced while its render was on the wire
   const painted = (el, sent) => { if (prose !== el) return; rendered = (sent || '').length; showTail(); };
-  return {root, actions, seal, activity, chunk(text) {
+  return {root, actions, calm, seal, activity, chunk(text) {
     if (!prose) {
+      group = null;
       prose = document.createElement('div'); prose.className = 'lee-reply lee-agent-reply lee-timeline-prose';
       prose._text = ''; rendered = 0; root.appendChild(prose);
     }
@@ -3593,7 +3631,9 @@ function agentTimeline(root) {
     renderMarkdown(prose, prose._text, false, painted, agentRenderGap(prose._text.length));
     showTail();
     return prose;
-  }, append(node) { seal(); if (node) root.appendChild(node); return node; }};
+  }, append(node) { seal(); if (node) root.appendChild(node); return node; },
+  note(node) { sealProse(); (calm ? openGroup().lastElementChild : root).appendChild(node); return node; },
+  end() { seal(); for (const g of groups) { g._end = true; summarize(g); } }};
 }
 
 function setAgentStatus(state, title) {
@@ -3609,6 +3649,8 @@ function setAgentStatus(state, title) {
 // answer chunks and final diffs stream independently, and each tool row is updated in place so
 // pending work never stays on screen after that step has finished.
 async function sendAgent(force = false) {
+  const calm = $('#agentprompt')?.value.trim().match(/^\/calm(?:\s+(on|off))?$/i);
+  if (calm) { $('#agentprompt').value = ''; return leeAgentCalm(calm[1] ? calm[1].toLowerCase() === 'on' : undefined); }
   if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer();
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
@@ -3656,7 +3698,7 @@ function agentListen(thread, since, card = null) {
   let progress = agentProgress(host);
   let timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
   host.appendChild(timelineRoot); stickAgentLog(log);
-  let timeline = agentTimeline(timelineRoot), seen = timeline.actions;
+  let timeline = agentTimeline(timelineRoot, agentCalm()), seen = timeline.actions;
   // A steer is drawn by the steer block, which is not in this scope. It belongs in the turn,
   // between the prose before it and the call after, so it needs the same painter.
   lee.agentTimeline = timeline;
@@ -3759,9 +3801,9 @@ function agentListen(thread, since, card = null) {
     status(run.state === 'detached' ? 'provider detached; no further output will be used' : run.state, 'ok');
   }));
   es.addEventListener('compaction', dedupe(d => {
-    timeline.seal(); const note = document.createElement('details'); note.className = 'lee-compaction-event';
+    const note = document.createElement('details'); note.className = 'lee-compaction-event';
     note.innerHTML = `<summary>Context compacted automatically · ${esc(d.strategy)} · ${esc(d.note)}</summary><pre>${esc(d.text || '')}</pre>`;
-    timelineRoot.appendChild(note); progress.phase('Context compacted; continuing from checkpoint');
+    timeline.note(note); progress.phase('Context compacted; continuing from checkpoint');
   }));
 
   es.addEventListener('error', dedupe((d, ev) => {
@@ -3790,7 +3832,7 @@ function agentListen(thread, since, card = null) {
         progress = agentProgress(host);
         timelineRoot = document.createElement('div'); timelineRoot.className = 'lee-agent-timeline';
         host.appendChild(timelineRoot);
-        timeline = agentTimeline(timelineRoot); seen = timeline.actions; lee.agentTimeline = timeline;
+        timeline = agentTimeline(timelineRoot, agentCalm()); seen = timeline.actions; lee.agentTimeline = timeline;
         body = null; raw = '';
         refoldAfter(log);   // the last durable turn is no longer the newest, so it may fold again
       }
@@ -3803,12 +3845,12 @@ function agentListen(thread, since, card = null) {
   }));
 
   es.addEventListener('done', dedupe(async d => {
-    timeline.seal(); retireCheckpoints(checkpoints); runDone = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
+    timeline.end(); retireCheckpoints(checkpoints); runDone = true; lee.agentBusy = false; lee.agentRuns = []; setAgentStatus('ready'); progress.finish(true); updateAgentRunstrip({runs: []}); refreshAgentBudget();
     // a turn that ended on a call has no prose block, and its pictures are still its own
     const closing = body || timelineRoot;
     addResponseRevision(closing, d.turn_id, raw, d.capabilities || {}); drawTurnMedia(closing, d.media);
     const usage = usageMeta(d.usage, d.usage_label, d.model); if (usage) timelineRoot.appendChild(usage);
-    for (const e of (d.edits || []))
+    for (const e of (timeline.calm ? [] : d.edits || []))
       // into the turn's body, not `agentLog`: what this turn wrote is part of this turn
       host.insertAdjacentHTML('beforeend',
         `<div class="lee-runline"><span class="sub">✎ ${esc(e.path.split('/').pop())} ${esc(e.label)}</span></div>` +

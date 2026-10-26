@@ -1127,6 +1127,8 @@ kbd {
 }
 .lee-activity-group > summary::-webkit-details-marker { display: none; }
 .lee-activity-group[open] > summary { border-bottom-color: var(--lee-border); }
+.lee-activity-group.calm { margin: 4px 4px 6px !important; background: transparent; border-style: dashed; }
+.lee-activity-group.calm > summary { background: transparent; }
 .lee-activity-title { color: var(--lee-fg2); font: 600 10.5px/1 var(--lee-mono); letter-spacing: .02em; }
 .lee-activity-count { color: var(--lee-fg4); font: 9.5px/1 var(--lee-mono); }
 .lee-activity-group[open] > summary .lee-agent-step-chevron { transform: rotate(225deg) translate(-1px, 1px); }

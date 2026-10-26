@@ -193,7 +193,7 @@ function renderTurns(log, turns, heading, fold = true) {
     let closing = null;
     if ((turn.timeline || []).length) {
       const root = document.createElement('div'); root.className = 'lee-agent-timeline'; item.appendChild(root);
-      const paint = agentTimeline(root);
+      const paint = agentTimeline(root, agentCalm());
       const paintActivity = part => {
         paint.activity(part.data);
         for (const child of part.children || []) paintActivity(child);
@@ -204,12 +204,14 @@ function renderTurns(log, turns, heading, fold = true) {
         // what the person said mid-turn, in the place they said it
         else if (part.kind === 'steer' && part.data?.text) paint.append(userMessage(part.data.text));
       }
+      paint.end();
       closing = closing || root;
     } else {
       if ((turn.activity || []).length) {
-        const steps = document.createElement('div'); steps.className = 'lee-agent-steps';
+        const calm = agentCalm(), steps = calm ? activityGroup('Activity', calmSummary(turn.activity.map(a => ({done: true, ...a}))), 'calm')
+          : Object.assign(document.createElement('div'), {className: 'lee-agent-steps'});
         for (const activity of turn.activity) {
-          const row = document.createElement('details'); renderAgentStep(row, activity); steps.appendChild(row);
+          const row = document.createElement('details'); renderAgentStep(row, activity); (calm ? steps.lastElementChild : steps).appendChild(row);
         }
         item.appendChild(steps);
       }
@@ -908,7 +910,18 @@ window.leeAgentNotifyToggle = leeAgentNotifyToggle; window.agentNotifyEnabled = 
 /* Warm starts are opt-in per new conversation: the toggle is a preference, read when `+` is
    pressed, so a person decides before the first prompt and sees the choice on the button. */
 function agentWarmEnabled() { return prefGet('agent', 'warm', false) === true; }
-function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); paintAgentOptins(); paintAgentFullToggle(); }
+function paintAgentWarmToggle() { $('#agentwarm')?.setAttribute('aria-pressed', String(agentWarmEnabled())); paintAgentOptins(); paintAgentFullToggle(); paintAgentCalmToggle(); }
+/* Calm mode folds each stretch of tool activity into one closed group. A running turn keeps the
+   mode it started in, so a switch made mid-turn waits for the next turn. */
+function agentCalm() { return prefGet('agent', 'calm', false) === true; }
+function paintAgentCalmToggle() { $('#agentcalm')?.setAttribute('aria-pressed', String(agentCalm())); }
+async function leeAgentCalm(on = !agentCalm()) {
+  prefSet('agent', 'calm', on); paintAgentCalmToggle();
+  if (lee.agentBusy) return status(`calm mode ${on ? 'on' : 'off'} from the next turn`, 'ok');
+  if (!lee.agentView || lee.agentView === 'live') await paintAgentThread(lee.agentThread || '');
+  status(`calm mode ${on ? 'on' : 'off'}`, 'ok');
+}
+window.leeAgentCalm = leeAgentCalm;
 function leeAgentWarmToggle() {
   const on = !agentWarmEnabled(); prefSet('agent', 'warm', on); paintAgentWarmToggle();
   status(on ? 'the next new conversation starts warm' : 'new conversations start cold', 'ok');
