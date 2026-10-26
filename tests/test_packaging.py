@@ -55,7 +55,7 @@ def test_no_frozen_package_is_shadowed_by_a_directory_in_the_repository_root(whi
 def test_every_frozen_package_is_the_import_name_and_not_the_distribution_name(which, request):
     """`PACKAGES` is copied whole because the scanner cannot see an import made inside a function."""
     for name in request.getfixturevalue(which).PACKAGES:
-        if name in ('clr_loader', 'pythonnet'): continue     # Windows-only, absent on the test host
+        if name in ('clr_loader', 'pythonnet', 'winpty'): continue     # Windows-only, absent on the test host
         # A uv-made venv carries no pip, which is why the installer falls back to uv. The build
         # venv is made with `python -m venv` and upgrades pip first, so the bundle does get one.
         if name == 'pip': continue

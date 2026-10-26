@@ -1,9 +1,18 @@
 "Real terminals for the IDE, and the lazygit bridge built on them."
 
 from __future__ import annotations
-import asyncio, errno, os, pty, secrets, shlex, shutil, signal, subprocess, sys, termios, time
+import asyncio, codecs, errno, os, secrets, shlex, shutil, signal, subprocess, sys, threading, time
 from fastcore.all import Path, L, first, store_attr
 from fastcore.xtras import clean_cli_output
+
+try: import pty, termios
+except ImportError: pty = termios = None   # Windows: `WinSession` runs on ConPTY instead
+
+IS_WIN = os.name == 'nt'
+#: `signal.SIGKILL` is absent on Windows, where `WinSession.kill` ends the tree whatever the signal.
+KILL = getattr(signal, 'SIGKILL', signal.SIGTERM)
+#: Shells whose `-l` is not "login": `wsl -l` lists distros and exits.
+NO_LOGIN = ('wsl', 'powershell', 'pwsh', 'cmd')
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
            'LazygitMissing', 'NoPython', 'own_python', 'bundle_env', 'default_shell', 'path_prelude', 'shell_argv',
@@ -27,8 +36,17 @@ class LazygitMissing(ToolMissing):
 class NoPython(ToolMissing):
     "A frozen app whose bundle has no helper Python."
 
+def which_exe(name, env=None):
+    "Absolute path of `name`, trying System32 when a stripped PATH hides it."
+    if exe := shutil.which(name, path=(env or os.environ).get('PATH')): return exe
+    sysroot = os.environ.get('SystemRoot')
+    return str(p) if sysroot and (p := Path(sysroot)/'System32'/name).exists() else None
+
+def _stem(exe): return Path(str(exe)).stem.lower()
+
 def default_shell():
-    "The user's shell, falling back to bash then sh."
+    "The user's shell. On Windows, WSL, then PowerShell, then cmd; elsewhere bash, then sh."
+    if IS_WIN: return next((e for e in map(which_exe, ('wsl.exe', 'powershell.exe')) if e), os.environ.get('COMSPEC') or 'cmd.exe')
     return os.environ.get('SHELL') or (DEFAULT_SHELL if Path(DEFAULT_SHELL).exists() else '/bin/sh')
 
 EXTERNAL_TERMINALS = (('Kaku', 'kaku'), ('WezTerm', 'wezterm'), ('kitty', 'kitty'),
@@ -43,7 +61,7 @@ def shell_argv(
     exe = str(shell or '').strip() or default_shell()
     extra = [str(a) for a in (args or ())]
     if extra: return [exe, *extra]
-    return [exe, '-l'] if login else [exe]
+    return [exe, '-l'] if login and _stem(exe) not in NO_LOGIN else [exe]
 
 def external_terminal_argv(
     cwd,
@@ -52,7 +70,7 @@ def external_terminal_argv(
     "The argv that opens a real terminal application at `cwd`, or None if none is installed."
     cwd = str(cwd or Path.home())
     if template := str(command or '').strip():
-        parts = shlex.split(template if '{dir}' in template else f'{template} {{dir}}')
+        parts = shlex.split(template if '{dir}' in template else f'{template} {{dir}}', posix=not IS_WIN)
         return [cwd if p == '{dir}' else p.replace('{dir}', cwd) for p in parts]
     darwin = sys.platform == 'darwin'
     for app, binary in EXTERNAL_TERMINALS:
@@ -62,7 +80,7 @@ def external_terminal_argv(
 
 def path_prelude(py, shell=None):
     "The line that puts a project's venv first on PATH, in the language of the user's shell."
-    if not py: return ''
+    if not py or IS_WIN: return ''   # a Windows venv path means nothing inside WSL
     bindir = Path(py).parent
     name = Path(str(shell or default_shell())).name
     if name == 'fish': return f' set -gx PATH {bindir} $PATH'
@@ -106,7 +124,17 @@ for k in os.environ.pop('LEELA_PTY_DROP', '').split(','): os.environ.pop(k, None
 os.execvpe(sys.argv[1], sys.argv[1:], os.environ)
 '''
 
-class PtySession:
+class _Session:
+    "What both sessions share: the SIGTERM-then-kill escalation."
+    def _escalate(self, end):
+        self.escalation = None
+        if not self.group_alive: return
+        if time.monotonic() >= end:
+            self.kill(KILL)
+            return
+        self.escalation = self.loop.call_later(.02, self._escalate, end)
+
+class PtySession(_Session):
     "A command on its own pty and process group, read on the loop into a ring a late viewer replays from."
     def __init__(self, argv, cwd, env, rows, cols, buffer_bytes, keep_bundle=False):
         self.loop = asyncio.get_running_loop()
@@ -196,13 +224,83 @@ class PtySession:
         except ProcessLookupError: return False
         except Exception: return True   # EPERM or anything odd: assume alive, and let the deadline decide
         return True
-    def _escalate(self, end):
+
+def win_argv(argv, cwd):
+    "`argv` with an absolute executable, and `--cd` so `wsl.exe` starts in `cwd` (a UNC path cannot be a Win32 cwd)."
+    exe, rest = which_exe(argv[0]) or argv[0], list(argv[1:])
+    if _stem(exe) == 'wsl' and cwd and '--cd' not in rest: rest = ['--cd', str(cwd), *rest]
+    return [exe, *rest]
+
+def _taskkill(pid):
+    "End a process and its children. A WSL child outlives the relay: Windows cannot reach it."
+    subprocess.run(['taskkill', '/T', '/F', '/PID', str(pid)], capture_output=True)
+
+class WinSession(_Session):
+    "A command on a ConPTY, read on a thread into the ring `PtySession` keeps."
+    def __init__(self, argv, cwd, env, rows, cols, buffer_bytes, keep_bundle=False):
+        try: from winpty import PtyProcess
+        except ImportError as e: raise ToolMissing('terminals on Windows need pywinpty and Windows 10 1809 or later') from e
+        self.loop = asyncio.get_running_loop()
+        self.buf, self.end, self.limit = bytearray(), 0, buffer_bytes
+        self.changed = asyncio.Event()
+        self.eof = self.stopping = self.killed = False
         self.escalation = None
-        if not self.group_alive: return
-        if time.monotonic() >= end:
-            self.kill(signal.SIGKILL)
-            return
-        self.escalation = self.loop.call_later(.02, self._escalate, end)
+        self.keys = codecs.getincrementaldecoder('utf-8')('replace')
+        if getattr(sys, 'frozen', False):
+            from kunda.pythons import strip_bundle
+            env = strip_bundle(dict(env))
+        self.proc = PtyProcess.spawn(win_argv(argv, cwd), cwd=cwd, env=env, dimensions=(rows, cols))
+        self.pid = self.proc.pid
+        self.thread = threading.Thread(target=self._pump, daemon=True)
+        self.thread.start()
+    @property
+    def alive(self): return self.proc.isalive()
+    @property
+    def exit_code(self):
+        if self.alive: return None
+        return -1 if (c := self.proc.exitstatus) is None else c
+    def _post(self, f, *a):
+        try: self.loop.call_soon_threadsafe(f, *a)
+        except RuntimeError: pass   # the loop closed first: app shutdown
+    def _pump(self):
+        while True:
+            try: text = self.proc.read(MAX_FRAME)
+            except (EOFError, OSError): break
+            if text: self._post(self._feed, text.encode('utf-8', 'replace'))
+            elif not self.alive: break
+            else: time.sleep(.01)
+        self._post(self.close)
+    def _feed(self, data):
+        self.buf.extend(data)
+        self.end += len(data)
+        if len(self.buf) > self.limit: del self.buf[:-self.limit]
+        self.changed.set()
+    def close(self):
+        self.eof = True
+        self.changed.set()
+    def read_from(self, off):
+        start = self.end - len(self.buf)
+        return bytes(self.buf[max(0, off-start):]), self.end, max(0, start-off)
+    async def wait_change(self, seen_end, timeout=None):
+        "Until the ring moves past `seen_end`, the pty closes, or `timeout` passes."
+        self.changed.clear()
+        if self.end != seen_end or self.eof: return
+        try: await asyncio.wait_for(self.changed.wait(), timeout)
+        except asyncio.TimeoutError: pass
+    def resize(self, rows, cols):
+        try: self.proc.setwinsize(rows, cols)
+        except Exception: pass   # the child is gone
+    def write(self, data):
+        if self.eof: raise OSError(errno.EIO, 'terminal closed')
+        if not (text := self.keys.decode(bytes(data))): return
+        try: self.proc.write(text)
+        except EOFError as e: raise OSError(errno.EIO, 'terminal closed') from e
+    def kill(self, sig=None):
+        if self.killed: return
+        self.killed = True
+        threading.Thread(target=_taskkill, args=(self.pid,), daemon=True).start()
+    @property
+    def group_alive(self): return self.alive
 
 class Pty:
     "One command on a pseudo-terminal: bytes in, bytes out, and a size."
@@ -231,7 +329,7 @@ class Pty:
         env = dict(os.environ if self.env is None else self.env)
         env.setdefault('TERM', 'xterm-256color')
         env.pop('PYTHONSTARTUP', None)
-        self.sess = PtySession(self.argv, cwd=self.cwd, env=env, rows=self.rows, cols=self.cols,
+        self.sess = (WinSession if IS_WIN else PtySession)(self.argv, cwd=self.cwd, env=env, rows=self.rows, cols=self.cols,
                                buffer_bytes=RING, keep_bundle=self.keep_bundle)
         self.pid = self.sess.pid
         self._off = 0
@@ -294,7 +392,7 @@ class Pty:
         if (s := self.sess) is None: return
         if grace <= 0:
             if s.escalation: s.escalation.cancel()
-            s.kill(signal.SIGKILL)
+            s.kill(KILL)
             return
         if s.stopping: return
         s.kill(signal.SIGTERM)
@@ -305,7 +403,7 @@ class Pty:
         except RuntimeError:
             end = time.monotonic() + grace
             while s.group_alive and time.monotonic() < end: time.sleep(.02)
-            if s.group_alive: s.kill(signal.SIGKILL)
+            if s.group_alive: s.kill(KILL)
     def state(self):
         return dict(pid=self.pid, alive=self.alive, argv=self.argv, cwd=self.cwd, cols=self.cols,
             rows=self.rows, exit=self.exit_note)

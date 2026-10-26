@@ -19,6 +19,7 @@ PACKAGES = [
     # the thread answers a failed import by returning: the file tree simply stopped following the
     # disk in every packaged build, with nothing said.
     'watchfiles',
+    'winpty',   # ConPTY terminals; `blocks/term/term.py` imports it lazily, so the scanner never sees it
     'leela', 'ramabana', 'dhrishti', 'fastcore', 'fasthtml', 'starlette', 'uvicorn',
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
     'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',

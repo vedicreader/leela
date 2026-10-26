@@ -1,7 +1,10 @@
 "What the agent reads back off a terminal."
 
 import asyncio, os, signal, sys
-from leela.blocks.term.term import MAX_FRAME, SCROLLBACK, Pty
+import pytest
+from leela.blocks.term.term import IS_WIN, MAX_FRAME, SCROLLBACK, Pty
+
+pytestmark = pytest.mark.skipif(IS_WIN, reason='POSIX pty')
 
 
 def test_group_shutdown_after_parent_exit(tmp_path):

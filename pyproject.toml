@@ -65,7 +65,7 @@ ipymini = []
 local = ["rishi[mlx,llama]==0.1.56"]
 desktop = ["kavacha[window]>=0.0.10"]
 macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.10"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.10"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.10", "pywinpty>=2.0; sys_platform == 'win32'"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"

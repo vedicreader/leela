@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ...core.web import fail
-from .term import LazygitMissing, external_terminal_argv, lazygit_argv
+from .term import IS_WIN, LazygitMissing, external_terminal_argv, lazygit_argv
 
 __all__ = ['CAPS', 'connect', 'term_cwd', 'term_project']
 
@@ -57,6 +57,7 @@ def connect(app, ctx):
         argv = _external()
         if not argv: return fail('no external terminal found — set terminal.external in settings')
         import subprocess
-        try: subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        detach = {'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if IS_WIN else {'start_new_session': True}
+        try: subprocess.Popen(argv, **detach, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as e: return fail(f'could not open {argv[0]} — {e}')
         return {'ok': True, 'argv': argv}
