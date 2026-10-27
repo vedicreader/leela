@@ -79,3 +79,37 @@ def test_the_idle_probe_does_not_settle_a_long_silent_cell_early(tmp_path, monke
     took = first(at for e, _, at in events if e == 'done') - began
     assert done['ok'] and not done.get('lost') and done['cell']['execution_count'] is not None, done
     assert took >= 4 and False in answers, (took, answers)
+
+def test_debugging_a_cell_through_a_gateway_kernel_stops_at_the_breakpoint_and_returns_the_result(tmp_path):
+    "The route gates on `kernel_kind` and `debug_start`; a gateway kernel has both, and the stop event arrives over the websocket."
+    code = 'x = [4, 5]\ny = x[0] + 3\nprint(y)'
+    p = tmp_path/'d.ipynb'
+    p.write_text(json.dumps({'cells': [{'cell_type': 'code', 'id': 'c0', 'source': code, 'metadata': {}, 'outputs': [], 'execution_count': None}],
+                             'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    gw = GatewayService(port=0).start()
+    ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable, transport='gateway', gateway=gw); ws.open(p)
+    events = []
+    try:
+        with TestClient(ide_app(ws)) as client:
+            path = client.get('/tab/state').json()['path']
+            def stream():
+                with client.stream('POST', '/nb/debug/stream', json={'i': 0, 'id': 'c0', 'source': code, 'path': path, 'breakpoints': [2]}) as r:
+                    for l in r.iter_lines():
+                        if l.startswith('event:'): ev = l[7:]
+                        elif l.startswith('data: '): events.append((ev, json.loads(l[6:])))
+                        elif l: events.append(('body', l))
+            t = threading.Thread(target=stream, daemon=True); t.start()
+            # `TestClient` hands back a streamed response only when the app has finished, and this one
+            # waits at the breakpoint for `continue`, so the stop is read from the state route.
+            state, deadline = {}, time.monotonic() + 40
+            while time.monotonic() < deadline and not (state.get('paused') and state.get('frames')):
+                time.sleep(.2); state = client.get('/nb/debug/state').json()
+            assert client.portal.call(ws.runtime).kernel_kind == 'ipykernel'
+            assert state.get('paused') and state['frames'][0]['line'] == 2, (state, events)
+            assert client.post('/nb/debug/control', json={'command': 'continue'}).json()['ok']
+            t.join(30)
+    finally:
+        ws.shutdown_now(); gw.stop()
+    assert [e for e, _ in events][:2] == ['ready', 'stopped'] and events[0][1]['breakpoints'] == [2], events
+    done = next((d for e, d in events if e == 'done'), None)
+    assert done and done['ok'] and '7' in json.dumps(done['cell']['outputs']), events
