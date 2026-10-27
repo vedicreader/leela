@@ -100,6 +100,7 @@ def _detached(cell):
     "A copy of `cell` with a fresh identity and no running state."
     n = deepcopy(cell)
     n.id, n.running, n.fresh = cell_id(), False, False
+    if isinstance(ex := n.extra.get('exercise'), dict) and 'state' in ex: ex['state'] = fresh_exercise_state()
     return n
 
 #: `default_exp` and its kind name the notebook, not the cell, so a split does not copy them on.
@@ -125,6 +126,8 @@ def _directives(source):
     head = lines[:n]
     tag = [l for l in head if not l.lstrip('#| ').startswith(NB_DIRECTIVE)]
     return ''.join(head), ''.join(tag), ''.join(lines[n:])
+
+def fresh_exercise_state(): return dict(checks=0, rung=0, last=None, passed=False)
 
 def page_extra(extra):
     "`extra` as the page may see it: a hidden exercise test keeps its `say`, never its test text."

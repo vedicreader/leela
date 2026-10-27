@@ -1,18 +1,21 @@
 import json, re, time
 from itertools import zip_longest
+from pathlib import Path
 from fastcore.xtras import fenced, fenced_blocks
 from fastcore.ansi import strip_ansi
 from fastcore.basics import first
 from abhyasa.method import METHODS
 from abhyasa.tutor import HINTS, TUTOR_SP
-from .nb import Cell, Notebook
-from .exercise import exercise_cells
+from .nb import Cell, Notebook, src_hash
+from .exercise import exercise_cells, exercise_meta
 
 LESSON_CHARTER = (TUTOR_SP + '\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
     + '\nAdd demos only with add_demo. Never write the reveal, Leela builds it.'
     + '\nWhen the learner asks for another way, re-explain with a method not yet used from abhyasa.method.METHODS:\n'
     + '\n'.join(f'- {name}: {text}' for name, text in METHODS.items())
-    + '\nTo set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test\'s expected value.')
+    + '\nTo set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test\'s expected value.'
+    + '\nTo grade, call check_exercise, then grade_exercise. Give one hint rung at a time; name a package only after confirming it is installed; name the module at rung 3 and the function at rung 4; never write the call.'
+    + "\nAfter each learner message add at most one line 'Prompt note: ...' when it would help.")
 
 def lesson_notebook(name, exercise=None) -> Notebook:
     code = Cell(source='pass')
@@ -68,7 +71,7 @@ def lesson_feedback(cell):
 
 def record_card(memory, nb, cell, path):
     from abhyasa.store import Learning, slugify
-    from abhyasa.model import DEPTHS, update
+    from abhyasa.model import update
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
     vault = memory._store('learning')
@@ -95,10 +98,44 @@ def record_card(memory, nb, cell, path):
                 attempt = lr.record(concept=slug, question=card['question'] or next(iter(cell.source.splitlines()), ''),
                     answer=guess, thinking=card['thinking'], correct=correct, confidence=confidence, depth=1, kind='predict',
                     feedback=lesson_feedback(cell), actual=actual, notebook=path, card_key=key)
-            level = f'Your level: {DEPTHS[c.floor]}.' if c.floor else 'Not at a level yet.'
-            days = (c.due - time.time())/86400
-            when = 'due now' if days <= 0 else f'in {days*24:.0f} h' if days < 1 else f'in {days:.0f} d'
-            return f'Saved to your learning shelf. {level} Next review {when}.'
+            return _saved(c)
+
+def _saved(c):
+    from abhyasa.model import DEPTHS
+    level = f'Your level: {DEPTHS[c.floor]}.' if c.floor else 'Not at a level yet.'
+    days = (c.due - time.time())/86400
+    when = 'due now' if days <= 0 else f'in {days*24:.0f} h' if days < 1 else f'in {days:.0f} d'
+    return f'Saved to your learning shelf. {level} Next review {when}.'
+
+def exercise_filing(nb, cell, path):
+    "What `record_exercise` files, copied now so a later edit cannot change it."
+    task = first(c for c in nb.cells if c.extra.get('exercise', {}).get('role') == 'task' and c.extra['exercise'].get('for') == cell.id)
+    name = nb.meta.get('lesson', {}).get('name') or Path(path).stem
+    return dict(name=name, question=task.source.split('\n\n')[0] if task else name, answer=cell.source, path=str(path),
+                key=f'{cell.id}:{src_hash(cell.source)}', **exercise_meta(cell)['state']['grade'])
+
+def record_exercise(memory, f):
+    "File a graded full pass as one `code` attempt at depth 4 per source version; a new grade of the same source replaces the note."
+    from abhyasa.store import Learning, slugify
+    from abhyasa.model import update
+    from litesearch.core import write_txn
+    from ..memory.memory import _open_lock
+    slug = slugify(f['name'])
+    vault = memory._store('learning')
+    with _open_lock(memory.path):
+        lr = Learning(vault)
+        with write_txn(lr.v.db):
+            attempt = first(a for a in lr.attempts(slug, limit=10000) if a.get('card_key') == f['key'])
+            c = lr.concept(slug) or lr.put(f['name'], slug=slug)
+            if attempt is None or not c.seen:
+                u = update(c, 4, True)
+                u.pop('kind')
+                c = lr.update(slug, **u)
+            if attempt is None:
+                lr.record(concept=slug, question=f['question'], answer=f['answer'], correct=True, depth=4, kind='code',
+                          grade=f['score'], feedback=f['note'], notebook=f['path'], card_key=f['key'])
+            else: lr.mark_attempt(attempt.id, grade=f['score'], feedback=f['note'])
+            return _saved(c)
 
 def fence(spec): return fenced(json.dumps(spec, ensure_ascii=False), 'rupaka')
 def demo_refusal(errors): return '\n'.join(errors)

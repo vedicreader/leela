@@ -36,7 +36,7 @@ BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a co
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo', 'add_exercise'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo', 'add_exercise', 'grade_exercise'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
@@ -590,6 +590,29 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         tab.dirty = True
         return json.dumps(v, indent=1)
+    def nb_grade_exercise(self, path, cell_id, score, note):
+        "Grade the learner's checked exercise cell in its open tab's notebook, then file a full pass on the learning shelf."
+        from ..nb.exercise import Refused, grade_cell
+        from ..nb.lesson import exercise_filing, record_exercise
+        p = self.check(path, must_exist=True)
+        loop = self._loop()
+        if loop is None: return 'no running event loop owns the notebooks here, so nothing can be graded'
+        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
+        store = getattr(self.ws, 'docstore', None)
+        _, nb, lock = store.owner(str(p)) if tab and store else (None, None, None)
+        if nb is None: return f'{path} is not open in a tab. Open it, check the exercise there, then grade it.'
+        c = first(c for c in nb.cells if c.id == cell_id)
+        if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
+        async def grade():
+            state = grade_cell(nb, c, lock, score, note)
+            return state['passed'] and exercise_filing(nb, c, p)
+        try: filing = asyncio.run_coroutine_threadsafe(grade(), loop).result(30)
+        except Refused as e: return str(e)
+        tab.dirty = True
+        head = f'Graded {score} of 10.'
+        if not filing: return head + ' Not filed on the learning shelf: only a full pass is.'
+        try: return f'{head} {record_exercise(self._vault(write=True), filing)}'
+        except Exception as e: return f'{head} Not filed on the learning shelf: {errstr(e)}'
     def _var_snapshot(self, k=None):
         "Name to value for every variable `k` (else the agent's kernel) shows, or None when no inspector will say."
         try: return {r['name']: r['value'] for r in self._var_rows(k)}
@@ -962,7 +985,13 @@ def _session_tools(host):
         """
         try: return clip(host.nb_check_exercise(path, cell_id, timeout))
         except Exception as e: return f'check_exercise failed: {errstr(e)}'
-    return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise), small_tool(check_exercise)]   # the Run button belongs to a small session too
+    @summary(lambda a: f'Grade {a.get("path", "")} cell {a.get("cell_id", "?")}')
+    def grade_exercise(path: str, cell_id: str, score: int, note: str) -> str:
+        """Store your grade of the learner's approach on the exercise cell you just checked: `score` is a whole number from 0 to 10, `note` one plain line saying why. Call check_exercise first; a changed source needs a new check. A full pass is filed on the learning shelf. Never put a hidden test or a solution in the note, the page shows it.
+        """
+        try: return clip(host.nb_grade_exercise(path, cell_id, score, note))
+        except Exception as e: return f'grade_exercise failed: {errstr(e)}'
+    return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise), small_tool(check_exercise), small_tool(grade_exercise)]   # the Run button belongs to a small session too
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
     "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."

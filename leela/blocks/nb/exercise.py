@@ -1,6 +1,6 @@
 import asyncio, json, subprocess, sys
 from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
-from .nb import Cell, run_watched
+from .nb import Cell, fresh_exercise_state, run_watched, src_hash
 
 def validate_exercise_spec(spec):
     if not isinstance(spec, dict): validate_exercise(spec)
@@ -21,7 +21,7 @@ def validate_exercise_spec(spec):
 def exercise_cells(spec):
     spec = validate_exercise_spec(spec)
     code = Cell(source=spec['stub'], extra={'exercise': dict(v=1, fname=spec['fname'], uses=spec['uses'], tests=spec['tests'],
-        state=dict(checks=0, rung=0, last=None, passed=False))})
+        state=fresh_exercise_state())})
     lines = [t['test'] if t['shown'] else t['say'] for t in spec['tests']]
     task = Cell(source=spec['task'] + '\n\n' + '\n\n'.join(lines), cell_type='markdown',
         extra={'exercise': {'role': 'task', 'for': code.id}})
@@ -118,7 +118,8 @@ JUDGE = {
     'raised': 'The cell raised an error, so no check ran.', 'stuck': 'The checks ran out of time.',
     'broken': 'The checks could not run.', 'done': '{passed} of {total} checks pass.',
     'not_exercise': 'That cell is not an exercise.', 'stale': 'This page is out of date with the notebook. Reload it.',
-    'busy': 'Another run is in progress. Try again when it finishes.'}
+    'busy': 'Another run is in progress. Try again when it finishes.',
+    'unchecked': 'Call check_exercise first: this code has not been checked since it last changed.'}
 
 class Refused(ValueError): pass
 
@@ -147,9 +148,31 @@ async def check_cell(nb, c, lock, runtime):
     if lock.locked(): raise Refused(JUDGE['busy'])
     async with lock:
         k = await runtime()
+        h = src_hash(c.source)
         c, _ = await run_watched(nb, c, k)
         res = {} if c.has_error else await run_checks(k, meta['fname'], [t['test'] for t in meta['tests']], BUDGET)
-    return _verdict(meta, c, res)
+    v = _verdict(meta, c, res)
+    if src_hash(c.source) == h:
+        done = v['state'] == 'done' and v['passed'] == v['total']
+        s = meta.setdefault('state', fresh_exercise_state())
+        s.update(checks=s.get('checks', 0) + 1, passed=done, last=dict(hash=h, state=v['state'], passed=v['passed'], total=v['total']))
+        nb.dirty = True
+    return v
+
+def grade_cell(nb, c, lock, score, note):
+    "Store the agent's 0-10 grade on the source `check_cell` last ran; `Refused` for a bad grade, changed code or a held `lock`."
+    if not (meta := exercise_meta(c)): raise Refused(JUDGE['not_exercise'])
+    if lock.locked(): raise Refused(JUDGE['busy'])
+    if type(score) is not int or not 0 <= score <= 10: raise Refused('`score` must be a whole number from 0 to 10.')
+    note = note.strip() if isinstance(note, str) else ''
+    if not (note and len(note) <= 200 and note.isprintable()): raise Refused('`note` must be one plain line of 1 to 200 characters.')
+    squash = lambda s: ''.join(s.split())
+    if any(squash(t['test']) in squash(note) for t in meta['tests'] if not t['shown']): raise Refused('`note` must not quote a hidden test.')
+    h = src_hash(c.source)
+    if (meta.get('state', {}).get('last') or {}).get('hash') != h: raise Refused(JUDGE['unchecked'])
+    meta['state']['grade'] = dict(score=score, note=note, hash=h)
+    nb.dirty = True
+    return meta['state']
 
 def public_verdict(v):
     "What the page may see of `check_cell`: a hidden check keeps its label and status, never its test or what it returned."
