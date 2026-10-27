@@ -8,9 +8,12 @@ from pathlib import Path
 from fastcore.all import store_attr
 
 from ... import errstr
+from ...core import keys as keymap
 from .fs import SKIP_DIRS
 
-__all__ = ['Watcher']
+__all__ = ['Watcher', 'KEYMAP']
+
+KEYMAP = ('keymap',)    # queued when the keymap file changed and `keymap.KEYS` was rebuilt
 
 MAX_BATCH = 200
 RUST_TIMEOUT = 500      # how long the watcher can take to notice it was stopped
@@ -46,11 +49,11 @@ class Watcher:
         except RuntimeError: loop = self.loop
         if loop is None: return
         self.close(wait=False)
-        if not roots: return
-        self.roots, self.loop, self.stop = roots, loop, threading.Event()
-        self.thread = threading.Thread(target=self._run, args=(roots, self.stop), daemon=True,
-                                       name='leela-fs-watch')
-        self.thread.start()
+        self.roots, self.loop, self.stop, self.keys = roots, loop, threading.Event(), keymap.VERSION
+        if roots:
+            self.thread = threading.Thread(target=self._run, args=(roots, self.stop), daemon=True,
+                                           name='leela-fs-watch')
+            self.thread.start()
         threading.Thread(target=self._poll, args=(self.stop,), daemon=True, name='leela-loose-poll').start()
     def close(self, wait=True):
         # The notify thread is Rust: one alive at interpreter teardown segfaults. Teardown joins.
@@ -73,14 +76,22 @@ class Watcher:
             try: self._push(sorted({p for _change, p in batch}))
             except RuntimeError: return                      # the loop closed under us
     def _poll(self, stop):
-        "Admitted files sit outside every watched root, so they are statted."
+        "Admitted files and the keymap sit outside every watched root, so they are statted."
         seen = {}
         while not stop.wait(self.poll):
             now = {p: _sig(p) for p in self.fs.admitted}
-            if hit := sorted(str(p) for p, s in now.items() if p in seen and seen[p] != s):
-                try: self._push(hit)
-                except RuntimeError: return
+            try:
+                if hit := sorted(str(p) for p, s in now.items() if p in seen and seen[p] != s): self._push(hit)
+                if keymap.changed() or self.keys != keymap.VERSION: self.loop.call_soon_threadsafe(self._keymap)
+            except RuntimeError: return
             seen = now
+    def _keymap(self):
+        # On the loop, so a reload never interleaves with a route that reads or saves the keymap.
+        # The keymap is global: another workspace's watcher, or a save, may have rebuilt it first.
+        keymap.refresh()
+        if self.keys == keymap.VERSION: return
+        self.keys = keymap.VERSION
+        for q in list(self.subs): self._offer_one(q, KEYMAP)
     def _push(self, paths, resync=False):
         # A batch is a delta, so one lost is lost for good. Too many to carry is a redraw instead.
         if len(paths) > MAX_BATCH: paths, resync = [], True
@@ -88,11 +99,11 @@ class Watcher:
     def announce(self, path):
         "Tell every subscriber a tab was opened on `path` by something other than the page. From any thread."
         if self.loop is None: return
-        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer_open, q, str(path))
+        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer_one, q, str(path))
     @classmethod
-    def _offer_open(cls, q, path):
+    def _offer_one(cls, q, item):
         if q.full(): cls._offer(q, [], False)
-        q.put_nowait(path)
+        q.put_nowait(item)
     @staticmethod
     def _offer(q, paths, resync=False):
         if q.full():

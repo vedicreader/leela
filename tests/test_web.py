@@ -667,6 +667,117 @@ def test_a_tab_opened_by_the_shell_is_pushed_to_the_page_that_is_listening(tmp_p
         finally: w.close()
     assert asyncio.run(run()) == str(tmp_path/'a.md')
 
+@pytest.fixture
+def keyfile(tmp_path, monkeypatch):
+    "A keymap file of the test's own, and the global `KEYS` put back after."
+    import leela.core.keys as keymap
+    p = tmp_path/'cfg'/'keys.json'
+    monkeypatch.setenv('LEELA_KEYMAP', str(p))
+    keymap.reload()
+    yield p
+    keymap.reload(tmp_path/'gone.json')
+
+def _chord(action):
+    import leela.core.keys as keymap
+    return keymap.lookup(action).key
+
+def test_a_keymap_edit_on_disk_reaches_the_open_page_over_fs_events(tmp_path, keyfile):
+    """Sanketa writes keys.json as text. Leela read it only at import or from its own panel, so the page kept the old chords until a restart."""
+    import leela.core.keys as keymap
+    ws = Workspace(roots=[tmp_path])
+    ws.fs_watch.poll = .05
+    app, got = ide_app(ws), []
+    async def run():
+        sent = asyncio.Event()
+        async def send(m):
+            if m['type'] == 'http.response.body' and b'event: keys' in m.get('body', b''): got.append(m['body']); sent.set()
+        scope = {'type': 'http', 'method': 'GET', 'path': '/fs/events', 'raw_path': b'/fs/events', 'query_string': b'',
+                 'headers': [(b'host', b'127.0.0.1')], 'scheme': 'http', 'server': ('127.0.0.1', 80), 'client': ('127.0.0.1', 1),
+                 'root_path': '', 'http_version': '1.1'}
+        never, asked = asyncio.Event(), []
+        async def receive():
+            if not asked: asked.append(1); return {'type': 'http.request', 'body': b'', 'more_body': False}
+            await never.wait()
+        task = asyncio.create_task(app(scope, receive, send))
+        try:
+            await asyncio.sleep(.3)
+            keyfile.parent.mkdir(parents=True, exist_ok=True)
+            keyfile.write_text(json.dumps({'keys': {'run_cell': 'ctrl+y'}}))
+            await asyncio.wait_for(sent.wait(), 5)
+        finally:
+            task.cancel()
+            ws.fs_watch.close()
+    asyncio.run(run())
+    d = json.loads(got[0].decode().split('data: ', 1)[1])
+    assert next(k for k in d['keys'] if k['action'] == 'run_cell')['key'] == 'ctrl+y', 'the push carries the new chord'
+    assert {'keys', 'help', 'menus', 'bars', 'notes', 'path'} <= set(d), 'and all of what /keys.json returns'
+    assert _chord('run_cell') == 'ctrl+y'
+    with TestClient(ide_app(Workspace(roots=[]))) as c:
+        assert next(k for k in c.get('/keys.json').json()['keys'] if k['action'] == 'run_cell')['key'] == 'ctrl+y'
+
+def test_the_same_bytes_written_again_do_not_reload_the_keymap(keyfile, monkeypatch):
+    "An Undo can put back the bytes Leela already holds. Only other bytes are a change."
+    import leela.core.keys as keymap
+    keyfile.parent.mkdir(parents=True, exist_ok=True)
+    keyfile.write_text(json.dumps({'keys': {'run_cell': 'ctrl+y'}}))
+    assert keymap.refresh() and _chord('run_cell') == 'ctrl+y'
+    calls = []
+    monkeypatch.setattr(keymap, 'reload', lambda *a: calls.append(a))
+    keyfile.write_text(json.dumps({'keys': {'run_cell': 'ctrl+y'}}))
+    assert not keymap.changed() and not keymap.refresh() and not calls
+
+def test_a_watcher_queues_nothing_for_the_same_bytes_and_one_event_for_other_bytes(tmp_path, keyfile):
+    "The poll thread compares content, so a rewrite of the same bytes is quiet."
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher, KEYMAP
+    keyfile.parent.mkdir(parents=True, exist_ok=True)
+    keyfile.write_text('{"keys": {}}')
+    import leela.core.keys as keymap
+    keymap.reload()
+    async def run():
+        (proj := tmp_path/'proj').mkdir()
+        ws = [Watcher(Sandbox([]), poll=.05), Watcher(Sandbox([proj]), poll=.05)]
+        qs = [w.subscribe() for w in ws]
+        try:
+            await asyncio.sleep(.3)
+            for q in qs:
+                while not q.empty(): q.get_nowait()
+            keyfile.write_text('{"keys": {}}')
+            with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(qs[0].get(), .4)
+            keyfile.write_text('{"keys": {"run_cell": "ctrl+y"}}')
+            return [await asyncio.wait_for(q.get(), 3) for q in qs]
+        finally:
+            for w in ws: w.close()
+    got = asyncio.run(run())
+    assert got[0] is KEYMAP, 'a workspace with no folder open still hears the keymap'
+    assert got[1] is KEYMAP, 'and so does every other workspace, though only one of them reloads it'
+    assert _chord('run_cell') == 'ctrl+y'
+
+def test_a_broken_keymap_file_keeps_the_last_good_keys_and_says_why(keyfile):
+    "A half-written file must not take every custom chord away."
+    import leela.core.keys as keymap
+    keyfile.parent.mkdir(parents=True, exist_ok=True)
+    keyfile.write_text(json.dumps({'keys': {'run_cell': 'ctrl+y'}}))
+    assert keymap.refresh()
+    for bad in ('{"keys": {"run_cell": ', '[1, 2]'):
+        keyfile.write_text(bad)
+        assert keymap.refresh() and _chord('run_cell') == 'ctrl+y'
+        assert len(keymap.NOTES) == 1 and 'last good keys' in keymap.NOTES[0] and str(keyfile) in keymap.NOTES[0]
+    with TestClient(ide_app(Workspace(roots=[]))) as c:
+        assert c.get('/keys.json').json()['notes'] == list(keymap.NOTES), 'the page shows the note as the keys panel does'
+    keyfile.write_text(json.dumps({'keys': {'run_cell': 'ctrl+u'}}))
+    assert keymap.refresh() and _chord('run_cell') == 'ctrl+u' and not keymap.NOTES, 'a good file again clears the note'
+
+def test_a_deleted_keymap_file_falls_back_to_the_defaults(keyfile):
+    import leela.core.keys as keymap
+    default = next(k.key for k in keymap.DEFAULTS if k.action == 'run_cell')
+    keyfile.parent.mkdir(parents=True, exist_ok=True)
+    keyfile.write_text(json.dumps({'keys': {'run_cell': 'ctrl+y'}}))
+    assert keymap.refresh() and _chord('run_cell') == 'ctrl+y'
+    keyfile.unlink()
+    assert keymap.refresh() and _chord('run_cell') == default and not keymap.NOTES
+    assert not keymap.refresh(), 'a file still gone is no change'
+
 
 def test_a_folder_opened_after_startup_still_hears_the_shutdown(tmp_path):
     """The lifespan legs were zipped over the sites present at startup, so a workspace opened later never heard `lifespan.shutdown` and left its kernels, terminals and dev servers running."""

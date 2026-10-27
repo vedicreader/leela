@@ -802,7 +802,7 @@ def _learning():
 def _footer():
     "Always-visible keys plus status."
     ks = (by_scope('global') + by_scope('editor')).filter(lambda k: k.show == 'footer' and k.bound)
-    kids = ks.map(lambda k: Span(Kbd(k.keys[0]), Span(k.label), cls='lee-fkey'))
+    kids = ks.map(lambda k: Span(Kbd(k.keys[0]), Span(k.label), cls='lee-fkey', data_action=k.action))
     return Footer(*kids, Span(cls='lee-spacer'),
                   Button(id='lessondue', cls='lee-due', type='button', hidden=True,
                          onclick='leePane("right", true);leeRight("learn")'),

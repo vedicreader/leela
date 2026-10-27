@@ -889,11 +889,21 @@ function paintKeyLabels(root = document) {
   $$('kbd', root).forEach(k => { if (k.textContent.includes('mod+')) k.textContent = displayChord(k.textContent); });
 }
 
-async function loadKeys() {
-  const d = await api('/keys.json');
+//: The server draws the footer once; its chords follow `lee.keys` from here.
+function paintFooterKeys() {
+  $$('.lee-fkey[data-action]').forEach(el => {
+    const first = (lee.keys.find(k => k.action === el.dataset.action)?.key || '').split(' ').find(Boolean);
+    el.style.display = first ? '' : 'none';
+    const kbd = el.querySelector('kbd'); if (kbd && first) kbd.textContent = displayChord(first);
+  });
+}
+
+//: `d` is a keymap the server pushed over `/fs/events`, so it is not fetched again.
+async function loadKeys(d) {
+  d ||= await api('/keys.json');
   lee.keys = d.keys; lee.help = d.help; lee.keyPath = d.path; lee.keyNotes = d.notes || [];
   lee.bars = d.bars || {}; lee.menus = d.menus || {};
-  paintKeyLabels();
+  paintFooterKeys(); paintKeyLabels();
   const prompt = $('#agentprompt'); if (prompt) prompt.placeholder = displayChord(prompt.placeholder);
   renderContextKeys(lee.scope);
   if (lee.keyNotes.length) status(lee.keyNotes[0] + ' — see the keys panel', 'err');

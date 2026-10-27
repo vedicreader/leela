@@ -286,6 +286,14 @@ function watchFiles() {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }
     if (d.path) leeOpenFile(d.path).catch(err => leeFail('open', d.path, err));
   });
+  // The keymap file changed on disk: Sanketa, an Undo, a hand edit.
+  es.addEventListener('keys', e => {
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+    const chords = ks => JSON.stringify((ks || []).map(k => [k.action, k.chords]));
+    const rebound = chords(lee.keys) !== chords(d.keys);
+    loadKeys(d).catch(() => {});
+    if (rebound) { remountEditors(); if (!lee.keyNotes.length) status('keys changed on disk and are live', 'ok'); }
+  });
   es.onerror = () => { es.close(); if (fsEvents === es) setTimeout(watchFiles, 3000); };
   return es;
 }

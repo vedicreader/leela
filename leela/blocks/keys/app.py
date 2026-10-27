@@ -16,20 +16,22 @@ from ...core.web import fail
 from ...core.keys import help_rows, keymap_json, keymap_path, web_keymap
 from .menus import web_menus
 
-__all__ = ['CAPS', 'connect']
+__all__ = ['CAPS', 'connect', 'keys_payload']
 
 CAPS = ()
+
+def keys_payload():
+    "The keymap, and the buttons that run the same actions, from one source in one fetch."
+    from ...core.ui import BARS
+    return {'keys': web_keymap(), 'help': help_rows(), 'menus': web_menus(),
+            'path': str(keymap_path()), 'notes': list(keymap.NOTES),
+            'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,
+                          'kind': b.kind} for b in btn_bar(n)] for n in BARS}}
 
 def connect(app, ctx):
     rt = app.route
     @rt('/keys.json')
-    def keys_json():
-        "The keymap, and the buttons that run the same actions, from one source in one fetch."
-        from ...core.ui import BARS
-        return JSONResponse({'keys': web_keymap(), 'help': help_rows(), 'menus': web_menus(),
-                             'path': str(keymap_path()), 'notes': list(keymap.NOTES),
-                             'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,
-                                           'kind': b.kind} for b in btn_bar(n)] for n in BARS}})
+    def keys_json(): return JSONResponse(keys_payload())
     def _file(p):
         "What the file now holds, for a panel that must not save from a stale copy of it."
         try: text = p.read_text()

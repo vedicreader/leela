@@ -13,6 +13,8 @@ from ...core.text import fuzzy_rank
 from .fs import lang_for
 from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
+from ..keys.app import keys_payload
+from .watch import KEYMAP
 from ...core.web import diff_payload
 from ..settings.settings import start_folder
 
@@ -102,6 +104,7 @@ def connect(app, ctx):
                 while True:
                     got = await q.get()
                     if isinstance(got, str): yield sse('opened', {'path': got}); continue
+                    if got is KEYMAP: yield sse('keys', keys_payload()); continue
                     paths, resync = got
                     _freshen(ctx, paths, resync)
                     shown, tracked = await off_loop(_sort_changes, ctx, paths, hidden)

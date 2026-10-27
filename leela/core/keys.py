@@ -7,7 +7,8 @@ from fastcore.all import L, Path, first, ifnone
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
-           'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload']
+           'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload',
+           'changed', 'refresh', 'VERSION']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'vault', 'review')
@@ -542,12 +543,49 @@ def write_keymap(path=None, keys=None, keep=True):
     p.write_text(json.dumps(keymap_json(keys, {**kept, **eff}), indent=2) + '\n')
     return p
 
+def _read(p):
+    try: return Path(p).read_bytes()
+    except OSError: return None
+
+_seen = (None, None)   # the file `KEYS` came from, and its bytes then
+VERSION = 0            # counts changes to what the page is sent, so each workspace's watcher tells its pages once
+
+def _bump(was):
+    global VERSION
+    if (list(KEYS), list(NOTES)) != was: VERSION += 1
+
 def reload(path=None):
     "Rebuild `KEYS` from the defaults plus the user's file. Called once at import."
-    global KEYS
+    global KEYS, _seen
+    p, was = Path(path) if path else keymap_path(), (list(KEYS), list(NOTES))
+    _seen = (p, _read(p))
     NOTES.clear()
-    KEYS = apply_overrides(DEFAULTS, read_overrides(path), NOTES)
+    KEYS = apply_overrides(DEFAULTS, read_overrides(p), NOTES)
+    _bump(was)
     return KEYS
+
+def changed():
+    "Whether the keymap file holds other bytes than the ones `KEYS` came from."
+    p = keymap_path()
+    return (p, _read(p)) != _seen
+
+def refresh():
+    "Reload if the file changed. True if it did. A file that is not a JSON object keeps the last good keys."
+    global _seen
+    p = keymap_path()
+    b = _read(p)
+    if (p, b) == _seen: return False
+    try: d = None if b is None else json.loads(b)
+    except ValueError as e: d = e
+    if d is None or isinstance(d, dict):
+        reload(p)
+        return True
+    _seen, was = (p, b), (list(KEYS), list(NOTES))
+    why = f'{type(d).__name__}: {d}' if isinstance(d, Exception) else 'expected an object of action -> chord'
+    NOTES.clear()
+    NOTES.append(f'{p}: {why}. The last good keys stay in use.')
+    _bump(was)
+    return True
 
 if _c := _dupes(DEFAULTS): raise ValueError('keymap conflicts:\n  ' + '\n  '.join(_c))
 KEYS = DEFAULTS
