@@ -58,6 +58,73 @@ def test_relative_tab_open_uses_the_project_root_and_keeps_the_sandbox(tmp_path,
         assert 'lee-err' not in client.post('/tab/open', params={'path': str(target)}).text
 
 
+@pytest.mark.parametrize('loose', [False, True])
+def test_stdlib_definition_opens_read_only_through_the_page_routes(tmp_path, loose):
+    import sys
+    from leela.blocks.agent.ai import WorkspaceHost
+    from leela.blocks.fs.fs import Unsafe
+    project, other = tmp_path/'project', tmp_path/'other'
+    project.mkdir(); other.mkdir()
+    (project/'.venv'/'bin').mkdir(parents=True)
+    (project/'.venv'/'bin'/'python').symlink_to(sys.executable)
+    source = project/'caller.py'
+    source.write_text('import inspect\ninspect.signature(f)\n')
+    outside = tmp_path/'outside.py'; outside.write_text('outside = True\n')
+    ws = Workspace(roots=[other, project]); ws.activate_root(project)
+    if loose: ws.fs.loose = other
+    assert ws.search.stdlib_root()
+    kind, hits = ws.search.declaration_or_usages('signature', str(source), 2, dotted='inspect.signature')
+    assert kind == 'definition' and hits
+    target = Path(hits[0].path).resolve()
+    before = target.read_bytes()
+    with TestClient(ide_app(ws)) as client:
+        opened = client.post('/tab/open', params={'path': str(target)})
+        assert 'lee-err' not in opened.text, opened.text
+        assert 'read-only' in opened.text
+        assert ws.active_root == project.resolve() and target not in ws.fs.admitted
+        state = client.get('/tab/state').json()
+        assert state['read_only'] and state['text'] == before.decode('utf-8')
+        assert state['text'].splitlines()[hits[0].line - 1].startswith('def signature')
+        assert client.get('/cwd').json()['root'] == str(project.resolve())
+        saved = client.post('/nb/save', json={'path': str(target), 'text': state['text']}).json()
+        assert 'read-only' in saved['error'], saved
+        buffered = client.post('/tab/buffer', json={'path': str(target), 'kind': 'text', 'text': 'changed'}).json()
+        assert 'read-only' in buffered['error'], buffered
+        assert not ws.tab.dirty and client.get('/tab/state').json()['text'] == state['text']
+        with pytest.raises(Unsafe, match='read-only'): WorkspaceHost(ws).write(target, state['text'])
+        if not loose:
+            refused = client.post('/tab/open', params={'path': str(outside)})
+            assert 'outside the open folders' in refused.text
+            assert ws.tab.path == str(target)
+    assert target.read_bytes() == before
+    saved_session = tmp_path/'session.json'
+    saved_session.write_text(json.dumps({'tabs': [{'path': str(target)}]}))
+    ws.close()
+    assert ws.reopen_saved_tabs(saved_session) == 1
+    assert ws.tab.path == str(target) and ws.fs.read_only(ws.tab.path)
+
+
+def test_stdlib_read_boundary_resolves_symlinks_and_refuses_mutations(tmp_path, monkeypatch):
+    from leela.blocks.fs.fs import Sandbox, Unsafe
+    project, stdlib = tmp_path/'project', tmp_path/'stdlib'
+    project.mkdir(); stdlib.mkdir()
+    target = stdlib/'module.py'; target.write_text('value = 1\n')
+    outside = tmp_path/'outside.py'; outside.write_text('private = 1\n')
+    (project/'module.py').symlink_to(target)
+    (stdlib/'escape.py').symlink_to(outside)
+    fs = Sandbox([project])
+    monkeypatch.setattr(fs, 'stdlib_root', lambda: [stdlib.resolve()])
+    assert fs.read(project/'module.py') == target.read_text()
+    for path in (outside, stdlib/'escape.py'):
+        with pytest.raises(Unsafe, match='outside the open folders'): fs.read(path)
+    local = project/'local.py'; local.write_text('local = 1\n')
+    for action in (lambda: fs.write(target, 'changed'), lambda: fs.rename(target, 'new.py'),
+                   lambda: fs.delete(target), lambda: fs.move(target, project),
+                   lambda: fs.touch(stdlib/'new.py'), lambda: fs.copy(local, stdlib)):
+        with pytest.raises(Unsafe): action()
+    assert target.read_text() == 'value = 1\n' and outside.exists()
+
+
 def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
     "We are in a browser, so the viewer already exists -- the feature is handing the bytes over."
     pdf = tmp_path/'paper.pdf'

@@ -30,8 +30,8 @@ def connect(app, ctx):
     @rt('/cwd')
     def cwd_info():
         t, fs = ctx.tab, ctx.fs
-        return {'cwd': str(ctx.session.cwd_for() or ''), 'explicit': bool(t and t.cwd),
-                'root': str(fs.root_of(t.path) if t and t.path else (ctx.session.project_root or ''))}
+        root = fs.root_of(t.path) if t and t.path and not fs.read_only(t.path) else ctx.session.project_root
+        return {'cwd': str(ctx.session.cwd_for() or ''), 'explicit': bool(t and t.cwd), 'root': str(root or '')}
     @rt('/cwd/set')
     async def cwd_set(req):
         d = await req.json()

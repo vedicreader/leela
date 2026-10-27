@@ -153,12 +153,12 @@ def connect(app, ctx):
                 docs.versions[key] = held
         except Exception as e: return {'kind': 'error', 'error': errstr(e)}
         return {'kind': 'text', 'path': t.path, 'title': t.title, 'lang': t.lang or '',
-                'disk_version': held, 'stale': stale, 'text': text}
+                'disk_version': held, 'stale': stale, 'text': text, 'read_only': bool(t.path and ctx.fs.read_only(t.path))}
     @rt('/tab/disk')
     def tab_disk(path: str = ''):
         "Current on-disk text for the explicit conflict/merge editor."
         try:
-            p = ctx.fs._check(path or (ctx.tab.path if ctx.tab else ''), must_exist=True)
+            p = ctx.fs._check(path or (ctx.tab.path if ctx.tab else ''), must_exist=True, reading=True)
             if p.suffix == '.ipynb':
                 return {'path': str(p), 'kind': 'notebook',
                         'cells': [c.dict() for c in Notebook.load(p).cells],
@@ -214,6 +214,9 @@ def connect(app, ctx):
         path, kind, text = d.get('path') or d.get('title') or '', d.get('kind'), d.get('text', '')
         tab = first(session.tabs, lambda t: docs.key(t) == path)
         if tab is None: return fail('that tab is no longer open')
+        try:
+            if tab.path: ctx.fs._check(tab.path)
+        except Exception as e: return fail(e)
         docs.bases.setdefault(path, str(d.get('base_disk_version') or disk_version(tab.path)))
         docs.versions.setdefault(path, docs.bases[path])   # a draft descends from what was read
         if kind == 'notebook':

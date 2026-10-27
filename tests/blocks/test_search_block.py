@@ -135,6 +135,26 @@ def test_an_imported_name_beats_a_project_definition_of_the_same_name(ws, tmp_pa
     kind, out = ws.search.declaration_or_usages('store_attr', str(tmp_path/'other.py'), 1)
     assert out[0].path.endswith('helpers.py'), 'a file that imports nothing still gets the project one'
 
+def test_a_stdlib_symbol_opens_its_definition(ws, tmp_path, no_index):
+    import sys
+    py = tmp_path/'.venv'/'bin'/'python'
+    py.parent.mkdir(parents=True); py.symlink_to(sys.executable)
+    s = ws.search
+    assert s.stdlib_root(), 'the fixture must find the project interpreter stdlib'
+    use = tmp_path/'use.py'
+    for src, dotted in [(r'''import inspect
+inspect.signature(f)
+''', 'inspect.signature'), (r'''from inspect import signature
+signature(f)
+''', '')]:
+        use.write_text(src)
+        kind, out = s.declaration_or_usages('signature', str(use), 2, dotted=dotted)
+        assert kind == 'definition'
+        assert out[0].kind == 'definition' and out[0].package == ''
+        assert out[0].path.endswith('inspect.py')
+        assert Path(out[0].path).read_text().splitlines()[out[0].line - 1].startswith('def signature(')
+
+
 def test_a_submodule_imported_by_name_is_the_module(ws, tmp_path, no_index):
     "`from fastcore import test` binds a module, whatever `def test` another package has."
     site = _venv(tmp_path, {'fastcore/__init__.py': '', 'fastcore/test.py': 'def test_eq(a, b): pass\n',

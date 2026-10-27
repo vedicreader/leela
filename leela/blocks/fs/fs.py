@@ -1,11 +1,12 @@
 "Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
-import asyncio, os, shutil, re
+import asyncio, os, shutil, re, subprocess
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from itertools import islice, zip_longest
 from fastcore.all import Path, L, atomic_save, mkdir as fc_mkdir
+from kunda.pythons import clean_env, project_python
 from rgapi import fda, fd_iter
 from shalya.host import DENY
 from fastcore.shutil import move as fc_move
@@ -89,7 +90,29 @@ class Sandbox:
     "The open folders, and every filesystem operation the IDE is allowed to perform inside them."
     def __init__(self, roots=()):
         self.roots, self.admitted, self.loose = L(), L(), None
+        self._stdlib_cache = (None, L())
         for r in roots: self.add_root(r)
+    def stdlib_root(self):
+        "The project interpreter's resolved standard library. Cached for the current roots."
+        key = tuple(self.roots)
+        cached_key, cached = self._stdlib_cache
+        if cached_key == key: return cached
+        found = L()
+        if py := project_python(self.roots):
+            try:
+                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'],
+                                   env=clean_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+                if r.returncode == 0 and r.stdout.strip():
+                    p = Path(r.stdout.strip()).resolve()
+                    if (p/'os.py').is_file() and not Path.home().is_relative_to(p) and not any(root.is_relative_to(p) for root in self.roots):
+                        found = L(p)
+            except (OSError, subprocess.TimeoutExpired): pass
+        self._stdlib_cache = (key, found)
+        return found
+    def read_only(self, ref):
+        "Whether a resolved path is readable as stdlib outside the open folders."
+        p = Path(ref).expanduser().resolve()
+        return not self.covers(p) and any(p.is_relative_to(r) for r in self.stdlib_root())
     def _admits(self, p):
         "Whether `p` is an admitted loose file. A path that resolved elsewhere since it was admitted is not."
         return any(a == p or (_same(a, p) and a.resolve() == a) for a in self.admitted)
@@ -100,6 +123,7 @@ class Sandbox:
         "Allow one file outside every root, for as long as its tab stays open. Needs the loose root among the roots."
         if self.loose is None: raise Unsafe('no loose-file workspace is open')
         p = Path(p).expanduser().resolve()
+        if self.read_only(p): raise Unsafe(f'{p.name} is read-only (standard library)')
         if self.covers(p): return p
         if why := loose_refusal(p): raise Unsafe(why)
         self.admitted = self.admitted + [p]
@@ -125,13 +149,16 @@ class Sandbox:
         if p == self.loose: self.loose, self.admitted = None, L()
         self.roots = self.roots.filter(lambda r: r != p)
         return p
-    def _check(self, ref, must_exist=False):
-        "Resolve `ref` and refuse it unless it resolves inside an open root."
+    def _check(self, ref, must_exist=False, reading=False):
+        "Resolve a path inside the open folders, or stdlib for reads."
         if not self.roots: raise Unsafe('no folder is open')
         p = Path(ref).expanduser()
         if not p.is_absolute(): p = self.roots[0]/p
         p = p.resolve()
-        if not self.covers(p): raise Unsafe(f'{p} is outside the open folders')
+        if not self.covers(p):
+            if not self.read_only(p): raise Unsafe(f'{p} is outside the open folders')
+            if not reading: raise Unsafe(f'{p.name} is read-only (standard library)')
+            if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): raise Unsafe(f'{p.name} may hold credentials')
         if must_exist and not p.exists(): raise FileNotFoundError(str(p))
         return p
     def root_of(self, ref):
@@ -167,7 +194,7 @@ class Sandbox:
         return L(found).filter(lambda p: p not in seen).sorted(), found.stop_reason == 'timeout'
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
-        p = self._check(ref, must_exist=True)
+        p = self._check(ref, must_exist=True, reading=True)
         if p.is_dir(): raise IsADirectoryError(str(p))
         if not is_texty(p): raise Unsafe(f'{p.name} is a binary file')
         if p.stat().st_size > MAX_EDIT_BYTES: raise Unsafe(f'{p.name} is too large to edit')

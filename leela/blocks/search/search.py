@@ -1,8 +1,7 @@
 "Predictable human search (rg unless a mode is picked), semantic agent search, and every hit."
 
 from __future__ import annotations
-from kunda.pythons import clean_env
-import ast, json, re, subprocess, threading
+import ast, json, re, threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from functools import wraps
@@ -675,17 +674,8 @@ class Search:
         if not lib.is_dir(): return L()
         return L(p/'site-packages' for p in lib.iterdir() if (p/'site-packages').is_dir())
     def stdlib_root(self):
-        "The project interpreter's own library, which a venv's `lib` does not hold. Asked once."
-        if (got := getattr(self, '_stdlib', None)) is not None: return got
-        from ..runtime.kernels import project_python
-        self._stdlib = L()
-        if py := project_python(self.fs.roots):
-            try:
-                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'], env=clean_env(), stdin=subprocess.DEVNULL,
-                                   capture_output=True, text=True, timeout=10)
-                if (d := Path(r.stdout.strip() or '.')).is_dir(): self._stdlib = L(d)
-            except Exception: pass
-        return self._stdlib
+        "The project interpreter's standard library, shared with file reads."
+        return self.fs.stdlib_root()
     def module_roots(self, path=''):
         "Where a dotted module is looked up: the file's own folder, the environment, the stdlib, the project."
         env = self.env_roots()
@@ -707,6 +697,14 @@ class Search:
         # Nothing declares a module, so a symbol lookup on `test` finds somebody else's `def test`.
         f = self.module_file(dotted, path)
         return None if f is None else self._file_hit(f, dotted)
+    def module_symbol(self, mod, name, path=''):
+        "A top-level symbol in a module or the module its package re-exports it from."
+        if (f := self.module_file(mod, path)) is None: return None
+        if f.name == '__init__.py' and (src := self.reexported_from(mod, name, path)):
+            mod, f = src, self.module_file(src, path)
+        if f is not None and (h := first(h for h in self.symbols(f) if h.symbol == name and h.score == 0)):
+            return self._file_hit(f, mod, h.line, name)
+        return None
     def _file_hit(self, f, dotted, line=1, symbol=''):
         "A file as a jump target; one in `site-packages` carries its package and dotted module."
         env = first(r for r in self.env_roots() if str(f).startswith(str(r)))
@@ -933,14 +931,24 @@ class Search:
         if '.' in (dotted or '') and (m := self.module_hit(dotted, path or '')):
             self.backend, self.note = 'module', f'{dotted} is a module'
             return 'definition', L(m)
-        # an absolute import of an installed package says which `name` this is, whatever the project defines
-        if (src := self.absolute_source(name, path or '')) and self.installed(src):
-            if (m := self.module_hit(f'{src}.{name}', path or '')) and not self.reexported_from(src, name, path or ''):
-                self.backend, self.note = 'module', f'{src}.{name} is a module'
+        if '.' in (dotted or ''):
+            head = dotted.rsplit('.', 1)[0]
+            mod = self.imported_module(head, path or '') or head
+            if m := self.module_symbol(mod, name, path or ''):
+                self.backend, self.note = 'module', f'{name} is defined in {mod}'
                 return 'definition', L(m)
-            if env := self.env_definitions(name, path=path or ''):
-                self.note = f'defined in {env[0].package}, not in this project'
-                return 'definition', env
+        # an absolute import of an installed package says which `name` this is, whatever the project defines
+        if src := self.absolute_source(name, path or ''):
+            if self.installed(src):
+                if (m := self.module_hit(f'{src}.{name}', path or '')) and not self.reexported_from(src, name, path or ''):
+                    self.backend, self.note = 'module', f'{src}.{name} is a module'
+                    return 'definition', L(m)
+                if env := self.env_definitions(name, path=path or ''):
+                    self.note = f'defined in {env[0].package}, not in this project'
+                    return 'definition', env
+            elif m := self.module_symbol(src, name, path or ''):
+                self.backend, self.note = 'module', f'{name} is defined in {src}'
+                return 'definition', L(m)
         defs = self.definitions(name, path, limit)
         if defs and not self.at_definition(defs, path, line, cell_index): return 'definition', defs
         if not defs and (m := self.module_hit(self.imported_module(name, path or ''), path or '')):

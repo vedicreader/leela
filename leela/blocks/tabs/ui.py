@@ -26,6 +26,7 @@ def tab_bar(ws):
             Span(cls='lee-tab-run', title=f'{t.running} cell(s) running') if t.running else '',
             Span(cls='lee-save-state ' + ('pending' if t.dirty else 'saved'), title=saved, aria_label=saved),
             Span(label(t), cls='lee-tab-name'),
+            Span('read-only', cls='lee-dim') if t.path and ws.fs.read_only(t.path) else '',
             Button('×', cls='lee-tab-x', title=f'close {t.title}', aria_label=f'close {t.title}',
                    onclick=f'event.stopPropagation();leeCloseTab({i})'),
             cls='lee-tab' + (' active' if active else '') + (' dirty' if t.dirty else ''),

@@ -532,9 +532,9 @@ class Workspace:
         self.watch_env(None)
         return t
     def open(self, path, kind=None):
-        "Open a file, focusing it if it is already open. Refuses anything outside the open folders, unless this is the loose-files window."
-        if self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()): self.fs.admit(a)
-        p = self.fs._check(path, must_exist=True)
+        "Open a file, focusing it if it is already open. Outside stdlib files are read-only."
+        if self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()) and not self.fs.read_only(a): self.fs.admit(a)
+        p = self.fs._check(path, must_exist=True, reading=True)
         if not openable(p): raise Unsafe(f'{p.name} is not a text file')
         try: self.active_root = self.fs.root_of(p)
         except Unsafe: pass
@@ -626,7 +626,7 @@ class Workspace:
         return self.tab
     def text_at(self, ref):
         "One file as a single diffable document, or None when it cannot be read."
-        try: p = self.fs._check(ref)
+        try: p = self.fs._check(ref, reading=True)
         except Exception: return None
         if not p.exists(): return ''
         try: return Notebook.load(p).source_text() if p.suffix == '.ipynb' else self.fs.read(p)
@@ -1305,7 +1305,7 @@ class Workspace:
         for t in saved:
             place = str(t.get('path') or '')
             try:
-                if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve())): continue
+                if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve()) and not self.fs.read_only(place)): continue
                 tab = self.open(place)
                 if int(d.get('version', 0)) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
