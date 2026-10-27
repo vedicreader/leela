@@ -18,6 +18,7 @@ from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash, take_seq
 from .lesson import lock, record_card
+from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
@@ -245,6 +246,24 @@ def connect(app, ctx):
         if c is None: return {'ok': True, 'running': False, 'cell': None}
         item = running_cells.get(((owner_tab.path or owner_tab.title) if owner_tab else '', c.id))
         return {'ok': True, 'running': bool(item) and not item[1].done(), 'cell': c.dict()}
+    @rt('/exercise/check')
+    async def exercise_check(req):
+        "Run an exercise's code cell and then its checks in the tab's kernel; the page gets the public verdict, never a hidden test."
+        d = await req.json()
+        owner_tab, nb, run_lock = run_owner(d)
+        i = int(d.get('i', 0))
+        if nb is None: return fail('no notebook open')
+        if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
+            return fail('that cell is no longer at this position', 409)
+        c = nb[i]
+        if not exercise_meta(c): return fail(JUDGE['not_exercise'], 400)
+        if not take_seq(store.seqs_for(owner_tab), c.id, d.get('seq')): return fail(JUDGE['stale'], 409)
+        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab))
+        except Refused as e: return fail(str(e), 409)
+        note_origin(owner_tab, c)
+        if owner_tab: owner_tab.dirty = True
+        return public_verdict(verdict)
     @rt('/nb/debug/stream')
     async def nb_debug_stream(req):
         "Debug one code cell through ipykernel's Jupyter Debug Protocol."

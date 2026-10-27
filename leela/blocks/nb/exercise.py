@@ -1,6 +1,6 @@
 import asyncio, json, subprocess, sys
 from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
-from .nb import Cell
+from .nb import Cell, run_watched
 
 def validate_exercise_spec(spec):
     if not isinstance(spec, dict): validate_exercise(spec)
@@ -108,3 +108,51 @@ async def run_checks(k, fname, tests, timeout=10):
     text = ''.join(o.get('text', '') for o in r.outputs if o.get('output_type') == 'stream')
     try: return json.loads(text.strip().splitlines()[-1])
     except (IndexError, ValueError): return {'error': 'the kernel sent no check result'}
+
+#: Seconds the checks of one press of Check share.
+BUDGET = 10
+#: What the page and the agent both say, so a learner and the tutor read the same words.
+JUDGE = {
+    'pass': 'Passes.', 'fail': 'Does not match yet.', 'error': 'Raised an error.', 'timeout': 'Took too long.',
+    'missing': 'No function named {fname} is defined yet. Run the cell that defines it.',
+    'raised': 'The cell raised an error, so no check ran.', 'stuck': 'The checks ran out of time.',
+    'broken': 'The checks could not run.', 'done': '{passed} of {total} checks pass.',
+    'not_exercise': 'That cell is not an exercise.', 'stale': 'This page is out of date with the notebook. Reload it.',
+    'busy': 'Another run is in progress. Try again when it finishes.'}
+
+class Refused(ValueError): pass
+
+def exercise_meta(c):
+    "The `extra.exercise` of an exercise code cell, else None."
+    ex = c.extra.get('exercise')
+    return ex if c.cell_type == 'code' and isinstance(ex, dict) and 'tests' in ex else None
+
+def _verdict(meta, c, res):
+    rows, tests = res.get('checks', []), meta['tests']
+    state = ('raised' if c.has_error else 'stuck' if res.get('timeout') else 'broken' if res.get('error')
+             else 'missing' if not res.get('found') else 'done')
+    checks = []
+    for t, r in zip(tests, rows):
+        status, got = r['status'], r.get('got')
+        msg = JUDGE[status]
+        if status == 'fail' and t['shown'] and got is not None: msg += f' It returned {got}.'
+        checks.append(dict(i=r['i'], say=t['say'], shown=t['shown'], test=t['test'], status=status, got=got, error=r.get('error'), message=msg))
+    passed = sum(r['status'] == 'pass' for r in checks)
+    return dict(id=c.id, source=c.source, state=state, passed=passed, total=len(tests), checks=checks,
+                summary=JUDGE[state].format(fname=meta['fname'], passed=passed, total=len(tests)))
+
+async def check_cell(nb, c, lock, runtime):
+    "Run the learner's exercise cell, then its checks in the same kernel; `Refused` when the cell is no exercise or a run holds `lock`."
+    if not (meta := exercise_meta(c)): raise Refused(JUDGE['not_exercise'])
+    if lock.locked(): raise Refused(JUDGE['busy'])
+    async with lock:
+        k = await runtime()
+        c, _ = await run_watched(nb, c, k)
+        res = {} if c.has_error else await run_checks(k, meta['fname'], [t['test'] for t in meta['tests']], BUDGET)
+    return _verdict(meta, c, res)
+
+def public_verdict(v):
+    "What the page may see of `check_cell`: a hidden check keeps its label and status, never its test or what it returned."
+    checks = [dict(i=r['i'], say=r['say'], status=r['status'], message=r['message'], **({'got': r['got']} if r['shown'] and r['got'] is not None else {}))
+              for r in v['checks']]
+    return dict(ok=True, state=v['state'], summary=v['summary'], passed=v['passed'], total=v['total'], checks=checks)

@@ -570,6 +570,26 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
         if (origins := getattr(self.ws, 'origins', None)) is not None: origins.cell(c, path)
         return note + self._cell_report(path, c, before, k)
+    def nb_check_exercise(self, path, cell_id, timeout=120):
+        "The learner's exercise cell run and checked as the Check button does, from the open tab's notebook when there is one: the full verdict as JSON text."
+        from ..nb.exercise import Refused, check_cell
+        from ..nb.nb import Notebook
+        from ...workspace import Tab
+        p = self.check(path, must_exist=True)
+        loop = self._loop()
+        if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
+        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
+        store = getattr(self.ws, 'docstore', None)
+        _, nb, lock = store.owner(str(p)) if tab and store else (None, None, None)
+        if nb is None: nb, lock = Notebook.load(p), asyncio.Lock()
+        c = first(c for c in nb.cells if c.id == cell_id)
+        if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
+        tab = tab or Tab(path=str(p), kind='notebook')
+        try: v = asyncio.run_coroutine_threadsafe(check_cell(nb, c, lock, lambda: self.ws.runtime(tab)), loop).result(max(1, int(timeout)))
+        except Refused as e: return str(e)
+        except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
+        tab.dirty = True
+        return json.dumps(v, indent=1)
     def _var_snapshot(self, k=None):
         "Name to value for every variable `k` (else the agent's kernel) shows, or None when no inspector will say."
         try: return {r['name']: r['value'] for r in self._var_rows(k)}
@@ -935,7 +955,14 @@ def _session_tools(host):
             nb.save(p, sandbox=host.ws.fs)
             return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; the stub fails {n - passed}.'
         except Exception as e: return f'add_exercise failed: {errstr(e)}'
-    return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise)]   # the Run button belongs to a small session too
+    @summary(lambda a: f'Check {a.get("path", "")} cell {a.get("cell_id", "?")}')
+    def check_exercise(path: str, cell_id: str, timeout: int = 120) -> str:
+        """Run the learner's exercise code cell and its checks in the notebook's kernel, as pressing Check does.
+        Returns JSON: the learner's current source, a summary, and every check with its test, status and what the function returned. Hidden tests are included for you; never show them. Take `cell_id` from `notebook_cells`.
+        """
+        try: return clip(host.nb_check_exercise(path, cell_id, timeout))
+        except Exception as e: return f'check_exercise failed: {errstr(e)}'
+    return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise), small_tool(check_exercise)]   # the Run button belongs to a small session too
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
     "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."
