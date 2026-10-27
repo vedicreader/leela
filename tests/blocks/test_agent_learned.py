@@ -62,7 +62,8 @@ def test_a_running_batch_and_uncommitted_changes_come_back_verbatim(learned):
         for act in ('accept', 'reject'):
             r = c.post(f'/agent/learned/{act}', json={'id': A})
             assert r.status_code == 409 and r.json()['ok'] is False, act
-    (f/'scratch.md').write_text('by hand')
+    # Since ramabana 0.2.79 only an uncommitted edit to a file the lesson changes blocks it; A changes AGENTS.md.
+    (f/'AGENTS.md').write_text('# Learned\n\n- by hand\n')
     r = c.post('/agent/learned/accept', json={'id': A})
     assert r.status_code == 409 and r.json()['ok'] is False
     assert [x['id'] for x in c.get('/agent/learned').json()['pending']] == [A, B], 'nothing was decided'
