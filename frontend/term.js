@@ -48,7 +48,7 @@ class LeeTerminal {
     this.mode = mode;
     this.term = new Terminal({
       fontFamily: getComputedStyle(el).getPropertyValue('--lee-mono').trim() || 'monospace',
-      fontSize: 13, cursorBlink: true, scrollback: 5000,
+      fontSize: parseFloat(getComputedStyle(el).getPropertyValue('--lee-code-size')), cursorBlink: true, scrollback: 5000,
       allowProposedApi: true, theme: themeFrom(el), macOptionIsMeta: optionMeta,
     });
     this.fit = new FitAddon();

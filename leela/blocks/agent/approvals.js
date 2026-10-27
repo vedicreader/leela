@@ -288,7 +288,7 @@ function markTurnUndone(out, bar, files, revise) {
    report was "I click edit and undo, nothing happens". The reason is carried here rather than in
    `lee-ide.css` so the bar explains itself wherever it is painted. */
 const REVISION_MUTED = 'opacity:.4;cursor:default';
-const REVISION_NOTE = 'flex:1 0 100%;order:9;margin-top:5px;color:var(--lee-fg4);font:9px/1.45 var(--lee-mono);white-space:normal';
+const REVISION_NOTE = 'flex:1 0 100%;order:9;margin-top:5px;color:var(--lee-fg4);font:var(--lee-size-min)/1.45 var(--lee-mono);white-space:normal';
 function addResponseRevision(out, turnId, raw, capabilities = {}) {
   if (!turnId || !out) return;
   const bar = document.createElement('div'); bar.className = 'lee-response-revision';
