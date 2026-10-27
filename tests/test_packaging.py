@@ -251,6 +251,22 @@ def test_the_bundle_can_import_what_its_features_need():
 
 
 @pytest.mark.slow
+def test_the_bundle_validates_a_rupaka_demo():
+    """rupaka lists its `blocks/`, `fns/` and `demos/` folders with `Path.glob`, which sees nothing inside `python313.zip`: every `add_demo` spec was refused there and nowhere else."""
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
+    python = app/'Contents'/'MacOS'/'python'
+    if not python.exists(): pytest.skip('the bundle ships no interpreter helper')
+    res = app/'Contents'/'Resources'
+    env = {'PYTHONHOME': str(res), 'PYTHONPATH': ':'.join([str(res/'lib'/'python313.zip'), str(res/'lib'/'python3.13'),
+                                                            str(res/'lib'/'python3.13'/'lib-dynload')])}
+    src = ('from rupaka.spec import gallery, validate; g = gallery(); assert g, "the gallery is empty"; '
+           'errs = validate(next(iter(g.values()))); assert not errs, errs; print(len(g))')
+    r = subprocess.run([str(python), '-B', '-c', src], capture_output=True, text=True, timeout=180, env=env)
+    assert r.returncode == 0, f'the bundle cannot validate a rupaka demo:\n{r.stderr.strip()[-1500:]}'
+
+
+@pytest.mark.slow
 def test_the_browser_driver_is_a_file_the_app_can_execute():
     """`playwright` and `patchright` drive a browser by *running* `driver/node`, and a file inside `python313.zip` cannot be run, so fossick's browser fetching failed in the packaged app and nowhere else."""
     import os, zipfile
