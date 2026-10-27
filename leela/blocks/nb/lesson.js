@@ -27,7 +27,30 @@ function lessonRevealText(c) {
   if (lesson.confidence >= 60) lines.push('You were sure, and it went another way. That is the part worth a look.');
   return lines.join('\n');
 }
-function lessonRevealActions(cell, el) {}
+function lessonRevealActions(cell, el) {
+  const lesson = cell.extra.lesson, key = `${cell.id}:${cell.execution_count}`;
+  const row = document.createElement('div'); row.className = 'lee-reveal-save'; el.appendChild(row);
+  if (lesson.saved === key) { row.textContent = lesson.saved_message || 'Saved to your learning shelf.'; return; }
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'lee-btn'; button.textContent = 'Save card';
+  row.appendChild(button);
+  button.onmousedown = e => { e.preventDefault(); e.stopPropagation(); };
+  button.onclick = async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    const path = lee.path, tabKey = lee.tabKey;
+    try {
+      await lee.nbQueue;
+      if (lee.tabKey !== tabKey) throw new Error('Return to the lesson notebook, then save.');
+      if ($('.lee-tab.active')?.classList.contains('dirty')) throw new Error('Save the notebook first.');
+      const d = await post('/lesson/save', {path, cell_id: cell.id});
+      lesson.saved = d.saved; lesson.saved_message = d.message;
+      const current = lee.tabKey === tabKey && lee.cells.find(c => c.id === cell.id && c.execution_count === cell.execution_count);
+      if (current) Object.assign(current.extra.lesson, {saved: d.saved, saved_message: d.message});
+      row.textContent = d.message;
+      if (d.disk_version) { recordDiskVersion(path, d.disk_version); await rebaseDrafts(path, d.disk_version); noteSelfWrite(path); }
+    } catch (e) { status(String(e.message || e), 'err'); button.disabled = false; }
+  };
+}
 function renderLessonReveal(c) {
   const cell = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`); if (!cell) return;
   $('.lee-reveal', cell)?.remove();

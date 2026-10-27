@@ -4,7 +4,7 @@ import pytest
 from test_completion_caret_slow import _real_page
 
 pytestmark = pytest.mark.slow
-SHOTS = Path(__file__).parents[1]/'target/learn/sliceE'
+SHOTS = Path(__file__).parents[1]/'target/learn/sliceF'
 
 def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
@@ -26,6 +26,7 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         assert await pred.locator('.lee-confidence button[aria-pressed="true"]').count() == 0
         assert await pred.locator('.lee-md-cell').evaluate("e => getComputedStyle(e, '::before').content") == '"Your guess: what will the code below print?"'
         await pred.locator('.lee-md-cell').dblclick()
+        await pg.wait_for_function("document.activeElement?.closest('.lee-cell')?.dataset.i === '2' && document.activeElement.classList.contains('cm-content')")
         await pg.keyboard.type('one\nwrong')
         await pred.get_by_role('button', name='fairly', exact=True).click()
         await pg.wait_for_function('lee.cells[2].extra.lesson.confidence === 70')
@@ -45,8 +46,8 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         reveal = pg.locator('.lee-reveal')
         await reveal.wait_for()
         text = 'one\nYou wrote wrong. It printed two.\nYou were sure, and it went another way. That is the part worth a look.'
-        assert await reveal.inner_text() == text
-        assert await reveal.locator('.lee-reveal-save').count() == 0
+        assert (await reveal.inner_text()).startswith(text)
+        assert await reveal.get_by_role('button', name='Save card', exact=True).count() == 1
         assert await reveal.evaluate("e => getComputedStyle(e).fontFamily === getComputedStyle(document.body).fontFamily && !/mono|Menlo|Consolas/i.test(getComputedStyle(e).fontFamily)")
         assert await reveal.evaluate("e => e.previousElementSibling.id.startsWith('out-')")
         assert await pg.evaluate('saveTab(true)')
@@ -54,6 +55,20 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         disk = json.loads(path.read_text())
         assert disk['cells'][2]['metadata']['lesson']['confidence'] == 70
         assert disk['cells'][3]['metadata']['lesson']['confidence'] == 70
+        await pg.route('**/lesson/save', lambda route: route.fulfill(status=400, content_type='application/json', body='{"ok": false, "error": "Vault locked for this test."}'))
+        async with pg.expect_response('**/lesson/save'):
+            await reveal.get_by_role('button', name='Save card', exact=True).click()
+        await pg.wait_for_function("document.querySelector('.lee-reveal-save button')?.disabled === false")
+        assert await reveal.get_by_role('button', name='Save card', exact=True).count() == 1
+        await pg.unroute('**/lesson/save')
+        saves = []
+        pg.on('request', lambda r: saves.append(r) if r.url.endswith('/lesson/save') else None)
+        await reveal.get_by_role('button', name='Save card', exact=True).evaluate("e => { e.click(); e.click(); if (!e.disabled) throw Error('Save card was not disabled while posting'); }")
+        await pg.wait_for_function("document.querySelector('.lee-reveal-save')?.textContent.startsWith('Saved to your learning shelf.')")
+        assert len(saves) == 1
+        saved_text = await reveal.locator('.lee-reveal-save').inner_text()
+        assert 'Not at a level yet. Next review in 5 h.' in saved_text
+        assert await reveal.get_by_role('button', name='Save card', exact=True).count() == 0
         bgs = {}
         for mode in ('light', 'dark'):
             await pg.evaluate("m => { document.documentElement.dataset.theme = 'leela'; document.documentElement.dataset.mode = m; }", mode)
@@ -67,7 +82,9 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         await pg.wait_for_function('lee.cells.length === 5')
         await pg.evaluate('ensureCellMounted(3)')
         await pg.locator('.lee-reveal').wait_for()
-        assert await pg.locator('.lee-reveal').inner_text() == text
+        assert (await pg.locator('.lee-reveal').inner_text()).startswith(text)
+        assert await pg.locator('.lee-reveal-save').inner_text() == saved_text
+        assert await pg.get_by_role('button', name='Save card', exact=True).count() == 0
         assert await pg.locator('.lee-confidence button[aria-pressed="true"]').inner_text() == 'fairly'
         await pg.route('**/nb/edit', lambda route: route.fulfill(status=400, content_type='application/json', body='{"ok": false, "error": "Confidence save refused for this test."}'))
         await pg.locator('.lee-confidence').get_by_role('button', name='very', exact=True).click()

@@ -17,11 +17,11 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash, take_seq
-from .lesson import lock
+from .lesson import lock, record_card
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
-CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running')
+CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running', 'memory')
 #: Seconds between SSE comments on a silent run stream, well inside the page's own silence limit.
 KEEPALIVE = 15
 
@@ -125,6 +125,7 @@ def connect(app, ctx):
     docs, run_locks = store.docs, store.run_locks
     buffers, buffer_bases, doc_versions = store.buffers, store.bases, store.versions
     running_cells = ctx.running.cells
+    lesson_lock = asyncio.Lock()
     def run_owner(d): return store.owner(d.get('path'))
     def by_id(nb, d):
         "Turn `id`, `ids` and `target_id` ('' for the end) into the positions they name now; a message when one has gone."
@@ -504,6 +505,34 @@ def connect(app, ctx):
         tab.dirty = tab.dirty or nb.dirty
         return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version,
                 'index': at if op in ('undo', 'redo') else i}
+    @rt('/lesson/save')
+    async def lesson_save(req):
+        d = await req.json()
+        async with lesson_lock:
+            tab, nb, run_lock = run_owner(d)
+            if nb is None: return fail('Save the notebook first.')
+            cell = first(c for c in nb.cells if c.id == d.get('cell_id') and c.cell_type == 'code')
+            lesson = cell.extra.get('lesson') if cell else None
+            if not lesson or lesson.get('for_count') != cell.execution_count or cell.stale or run_lock.locked():
+                return fail('Run the cell after writing your guess, then save.')
+            key = f'{cell.id}:{cell.execution_count}'
+            if lesson.get('saved') == key:
+                return dict(ok=True, saved=key, message=lesson.get('saved_message', 'Saved to your learning shelf.'))
+            if not tab.path or not Path(tab.path).is_file() or tab.dirty or nb.dirty or doc_versions.get(tab.path) != _disk_version(tab.path):
+                return fail('Save the notebook first.')
+            if not nb.meta.get('lesson', {}).get('name'): return fail('This is not a lesson notebook.')
+            async with run_lock:
+                try: message = await off_loop(record_card, ctx.memory, nb, cell, tab.path)
+                except ImportError as e:
+                    if (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail('Saving cards needs abhyasa. Install abhyasa, then try again.')
+                    return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
+                except Exception as e: return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
+                lesson.update(saved=key, saved_message=message)
+                saved = await nb_save(req)
+                if not isinstance(saved, dict) or not saved.get('ok'):
+                    lesson.pop('saved', None); lesson.pop('saved_message', None)
+                    return saved
+                return dict(saved, saved=key, message=message)
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')
