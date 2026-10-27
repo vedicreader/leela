@@ -311,6 +311,77 @@ def test_a_link_in_the_desktop_shell_goes_to_the_system_browser_and_never_throug
     assert len(got['page_posted']) == 2 and 'example.com/b' in got['page_posted'][1], 'and falls back to the route when it returns null'
 
 
+def test_markdown_links_never_navigate_the_desktop_shell(tmp_path):
+    base = tmp_path/'docs #100%'; base.mkdir()
+    target = tmp_path/'reply.py'; target.write_text('reply = 1\n')
+    async def go(pg):
+        posted = []
+        async def fulfil(route):
+            posted.append(route.request.post_data_json['url'])
+            await route.fulfill(status=200, content_type='application/json', body='{}')
+        await pg.route('**/browser/external', fulfil)
+        url = pg.url
+        await pg.evaluate("""([base, root]) => {
+          lee.inShell = true; window._linkFiles = []; window._realLinkOpen = leeOpenFile;
+          window._linkWindows = []; window.open = url => { window._linkWindows.push(url); return null; };
+          window.leeOpenFile = async path => {
+            window._linkFiles.push(path);
+            if (path.endsWith('missing.py')) throw new Error('not found');
+          };
+          const d = document.createElement('div'); d.id = 'link-test'; d.dataset.mdBase = base;
+          const links = {relative:'nested/../file%20name%23%3F.py?q=1#part', root:root,
+            missing:'missing.py', script:'javascript:window._linkExecuted=true', file:'file:///tmp/x',
+            protocol:'//example.com/a', malformed:'bad%path', web:'https://example.com/meta'};
+          for (const [id, href] of Object.entries(links)) {
+            const a = document.createElement('a'); a.id = 'link-' + id; a.href = href;
+            a.textContent = id; d.append(a, document.createElement('br'));
+          }
+          document.body.append(d);
+          const reply = document.createElement('div'); reply.className = 'lee-reply';
+          reply.innerHTML = '<a id="link-reply" href="reply.py?x=1#part">reply</a>';
+          document.body.append(reply); routeMarkdownLinks(d); routeMarkdownLinks(reply);
+        }""", [str(base), str(target)])
+        for name, path in [('relative', str(base/'file name#?.py')), ('root', str(target)), ('reply', 'reply.py')]:
+            await pg.locator('#link-' + name).click()
+            await pg.wait_for_timeout(80)
+            assert pg.url == url, f'{name} navigated the app window to {pg.url}'
+            assert await pg.evaluate('window._linkFiles.at(-1)') == path
+        await pg.locator('#link-missing').click()
+        await pg.wait_for_function("document.getElementById('status').textContent.includes('not found')")
+        assert await pg.locator('#status').inner_text() == f'could not open {base}/missing.py: not found'
+        for name, href in [('script', 'javascript:window._linkExecuted=true'), ('file', 'file:///tmp/x'),
+                           ('protocol', '//example.com/a')]:
+            await pg.locator('#link-' + name).click()
+            assert await pg.locator('#status').inner_text() == f'will not open {href}'
+            assert pg.url == url
+        assert not await pg.evaluate('Boolean(window._linkExecuted)')
+        await pg.locator('#link-malformed').click()
+        assert 'could not open bad%path:' in await pg.locator('#status').inner_text()
+        for modifier in ['Meta', 'Shift', 'Alt']:
+            await pg.locator('#link-web').click(modifiers=[modifier])
+        await pg.evaluate("""() => document.getElementById('link-web').dispatchEvent(
+          new MouseEvent('click', {bubbles:true, cancelable:true, ctrlKey:true}))""")
+        await pg.locator('#link-web').click(button='middle')
+        await pg.wait_for_function('window._linkFiles.length === 4')
+        for _ in range(100):
+            if len(posted) == 5: break
+            await pg.wait_for_timeout(30)
+        assert posted == ['https://example.com/meta'] * 5
+        assert await pg.evaluate('window._linkWindows') == []
+        await pg.locator('#link-relative').click(button='middle')
+        assert await pg.evaluate('window._linkFiles.at(-1)') == str(base/'file name#?.py')
+        await pg.evaluate('window.leeOpenFile = window._realLinkOpen')
+        await pg.locator('#link-reply').click()
+        await pg.wait_for_function('(path) => lee.path === path && lee.kind === "text"', arg=str(target))
+        assert await pg.evaluate('LeeCM.getDoc(lee.editors.get("file"))') == 'reply = 1\n'
+        await pg.locator('#link-missing').click()
+        await pg.wait_for_function("document.getElementById('status').textContent.includes('FileNotFoundError')")
+        assert f'could not open {base}/missing.py:' in await pg.locator('#status').inner_text()
+        assert 'err' in await pg.locator('#status').get_attribute('class')
+        assert pg.url == url
+    _run(go, roots=[tmp_path])
+
+
 def test_every_editor_refuses_the_systems_own_autocorrect():
     """WKWebView hands a `contenteditable` to NSSpellChecker and a browser does not, so the packaged app curled quotes, corrected identifiers, and offered inline predictions under CodeMirror."""
     async def go(pg):

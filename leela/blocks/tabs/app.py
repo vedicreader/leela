@@ -48,6 +48,9 @@ def connect(app, ctx):
     @rt('/tab/open')
     def tab_open(path: str):
         try:
+            p = Path(path).expanduser()
+            if not p.is_absolute() and session.project_root is not None:
+                path = ctx.fs._check(session.project_root/p, must_exist=True)
             session.open(path)
             session.watch_env(None)
             session.save()

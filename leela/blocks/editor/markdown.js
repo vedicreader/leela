@@ -195,6 +195,7 @@ async function leeOpenFile(path) {
   const doc=new DOMParser().parseFromString(html,'text/html'),fresh=doc.querySelector('#tabbar');
   // `/tab/open` answers a refusal with an error div and a 200, so the reason is in the body.
   if(!fresh)throw new Error(doc.querySelector('.lee-err')?.textContent?.trim()||'tab open returned no tab bar');
+  path=fresh.querySelector('.lee-tab.active')?.title||path;lee.pendingFocusPath=path;
   // `#tabbar` is an htmx swap target, so a failed swap can replace it with an error string and
   // take it out of the page. Every open after that fails on the missing element, so put it back.
   const old=$('#tabbar');

@@ -714,15 +714,30 @@ async function openExternal(url) {
 
 function routeMarkdownLinks(el) {
   $$('a[href]', el).forEach(a => {
-    const href = a.getAttribute('href') || '';
-    if (!/^https?:/i.test(href) || a.dataset.leeLink) return;
-    a.dataset.leeLink = '1'; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    a.addEventListener('click', e => {
-      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // the browser's to handle
+    const href = (a.getAttribute('href') || '').trim().replace(/[\t\r\n]/g, '');
+    if (!href || href.startsWith('#') || a.dataset.leeLink) return;
+    const web = /^https?:/i.test(href);
+    a.dataset.leeLink = '1';
+    if (web) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+    const follow = async e => {
+      if (e.type === 'auxclick' && e.button !== 1) return;
+      if (web && !inDesktopShell() && (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) return;
       e.preventDefault(); e.stopPropagation();
-      if (inDesktopShell()) return openExternal(href);
-      if (!openTab(href)) openExternal(href);
-    });
+      if (web) return openExternal(href);
+      if (/^[a-z][a-z\d+.-]*:/i.test(href) || /^[\/\\]{2}/.test(href)) return status(`will not open ${href}`, 'err');
+      let path = href;
+      try {
+        path = decodeURIComponent(href.split(/[?#]/)[0]);
+        if (!path) throw new Error('empty path');
+        const base = a.closest('[data-md-base]')?.dataset.mdBase || '';
+        if (!path.startsWith('/') && base) {
+          const encoded = path.split('/').map(encodeURIComponent).join('/');
+          path = decodeURIComponent(new URL(encoded, 'file://' + base.split('/').map(encodeURIComponent).join('/') + '/').pathname);
+        }
+        await leeOpenFile(path);
+      } catch (e) { status(`could not open ${path}: ${e.message || e}`, 'err'); }
+    };
+    a.addEventListener('click', follow); a.addEventListener('auxclick', follow);
   });
 }
 

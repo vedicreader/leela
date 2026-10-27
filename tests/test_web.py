@@ -39,6 +39,25 @@ def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
     assert workspace_urls([tmp_path/'link'], 5001) == ['http://real-name.localhost:5001/']
 
 
+@pytest.mark.parametrize('loose', [False, True])
+def test_relative_tab_open_uses_the_project_root_and_keeps_the_sandbox(tmp_path, loose):
+    first, project = tmp_path/'first', tmp_path/'project'
+    first.mkdir(); project.mkdir()
+    target = project/'reply.py'; target.write_text('reply = 1\n')
+    outside = tmp_path/'outside.py'; outside.write_text('outside = 1\n')
+    ws = Workspace(roots=[first, project]); ws.activate_root(project)
+    if loose: ws.fs.loose = first
+    with TestClient(ide_app(ws)) as client:
+        opened = client.post('/tab/open', params={'path': 'reply.py'})
+        assert 'lee-err' not in opened.text, opened.text
+        assert ws.tab.path == str(target.resolve())
+        refused = client.post('/tab/open', params={'path': '../outside.py'})
+        assert 'outside the open folders' in refused.text, refused.text
+        assert ws.tab.path == str(target.resolve())
+        assert not ws.fs.admitted
+        assert 'lee-err' not in client.post('/tab/open', params={'path': str(target)}).text
+
+
 def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
     "We are in a browser, so the viewer already exists -- the feature is handing the bytes over."
     pdf = tmp_path/'paper.pdf'
