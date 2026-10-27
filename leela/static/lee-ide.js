@@ -5789,7 +5789,7 @@ function initSplits() {
   // which would erase a pane the last session had minimised.
   const closed = ['left', 'right', 'bottom'].filter(p => localStorage.getItem('lee-pane-' + p) === 'hidden');
   const savedRight = localStorage.getItem('lee-right-view');
-  if (['agent', 'vars', 'memory'].includes(savedRight)) leeRight(savedRight);
+  if (['agent', 'vars', 'memory', 'learn'].includes(savedRight)) leeRight(savedRight);
   const savedDock = localStorage.getItem('lee-dock-view');
   if (['exec', 'term', 'logs'].includes(savedDock)) leeDock(savedDock);
   for (const pane of closed) leePane(pane, false);
@@ -6031,6 +6031,8 @@ async function boot() {
   bootStep('editor width', observeEditorWidth);
   bootStep('project runtime', checkProjectRuntime);
   bootStep('variables', leeVars);
+  bootStep('lesson reviews', refreshLessonDue);
+  setInterval(whenVisible(refreshLessonDue), 600000);
   setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
   bootStep('approvals', approvalLoop);                       // catches Rishi approvals raised outside an agent SSE stream
@@ -6088,7 +6090,7 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
   if (id === 'tabbar') { mountTab().then(leeVars); refreshPillsForTab(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
+  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); refreshLessonDue(); requestAnimationFrame(layoutTabs); }
 });
 function refactorRows(files, selected) {
   return files.map((file, i) => `<label class="lee-mrow"><input type="checkbox" data-refactor-path="${esc(file.path)}"${selected.has(file.path) ? ' checked' : ''}>` +
@@ -8545,3 +8547,43 @@ async function paintRecent() {
   });
 }
 window.leePaintRecent = paintRecent;
+let lessonDueRows = null, lessonDueError = '', lessonDueSeq = 0;
+function paintLessonReview() {
+  const body = $('#lessonreviewbody'); if (!body) return;
+  body.replaceChildren();
+  if (lessonDueError) {
+    const message = document.createElement('p'); message.textContent = lessonDueError;
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'lee-btn'; retry.textContent = 'Try again';
+    retry.onclick = refreshLessonDue; body.append(message, retry); return;
+  }
+  if (lessonDueRows === null) { body.textContent = 'Loading review…'; return; }
+  if (!lessonDueRows.length) { body.textContent = 'Nothing to learn or review right now.'; return; }
+  for (const row of lessonDueRows) {
+    const card = document.createElement('details'); card.className = 'lee-lesson-review-card';
+    const title = document.createElement('summary'); title.textContent = row.name; card.appendChild(title);
+    for (const [key, cls] of [['question', 'lee-lesson-question'], ['why', 'lee-lesson-why'], ['reason', 'lee-lesson-reason']]) {
+      if (!row[key]) continue;
+      const p = document.createElement('p'); p.className = cls; p.textContent = row[key]; card.appendChild(p);
+    }
+    const show = document.createElement('button'); show.type = 'button'; show.className = 'lee-btn'; show.textContent = 'Show my last answer';
+    show.onclick = () => {
+      const last = document.createElement('div'); last.className = 'lee-lesson-last-answer';
+      for (const [key, label] of [['answer', 'My last answer'], ['thinking', 'Thinking'], ['actual', 'Actual']]) {
+        const heading = document.createElement('h4'), p = document.createElement('p');
+        heading.textContent = label; p.textContent = row[key] || ''; last.append(heading, p);
+      }
+      show.replaceWith(last);
+    };
+    card.appendChild(show); body.appendChild(card);
+  }
+}
+async function refreshLessonDue() {
+  const seq = ++lessonDueSeq;
+  try {
+    const rows = await api('/lesson/due'); if (seq !== lessonDueSeq) return;
+    lessonDueRows = rows; lessonDueError = '';
+    const item = $('#lessondue');
+    if (item) { item.textContent = rows.length ? `${rows.length} due` : ''; item.hidden = !rows.length; }
+  } catch (e) { if (seq !== lessonDueSeq) return; lessonDueError = String(e.message || e); }
+  paintLessonReview();
+}

@@ -84,6 +84,8 @@ async function boot() {
   bootStep('editor width', observeEditorWidth);
   bootStep('project runtime', checkProjectRuntime);
   bootStep('variables', leeVars);
+  bootStep('lesson reviews', refreshLessonDue);
+  setInterval(whenVisible(refreshLessonDue), 600000);
   setInterval(whenVisible(leeVars), 2500);   // the kernel's own inspector is the source of truth
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
   bootStep('approvals', approvalLoop);                       // catches Rishi approvals raised outside an agent SSE stream
@@ -141,5 +143,5 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
   if (id === 'tabbar') { mountTab().then(leeVars); refreshPillsForTab(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); requestAnimationFrame(layoutTabs); }
+  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); refreshLessonDue(); requestAnimationFrame(layoutTabs); }
 });

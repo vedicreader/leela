@@ -106,3 +106,59 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         assert await pg.locator('.lee-reveal').count() == 0
         assert await pg.evaluate('lessonRevealActions(lee.cells[3], document.createElement("div")) === undefined')
     asyncio.run(_real_page(go, tmp_path))
+
+def test_lesson_due_review_question_before_last_answer(tmp_path, monkeypatch):
+    import time
+    from abhyasa.store import Learning
+    from leela.blocks.memory.memory import Memory
+    monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
+    home = tmp_path/'home'
+    (home/'Library').mkdir(parents=True)
+    (home/'Library/Keychains').symlink_to(Path.home()/'Library/Keychains', target_is_directory=True)
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
+    memory = Memory(path=tmp_path/'learning.db', offline=True)
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(memory.path))
+    lr = Learning(memory._store('learning'))
+    lr.put('Recall practice', seen=1, due=time.time()-86400, last=time.time()-172800, stability=.5, misses=2)
+    lr.record(concept='recall-practice', question='What will the function print?', answer='My saved answer',
+              thinking='I traced the function.', actual='The actual output')
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1440, 'height': 1100})
+        pg.set_default_timeout(15000)
+        due = pg.locator('#lessondue')
+        await pg.wait_for_function("document.querySelector('#lessondue')?.textContent === '1 due'")
+        await pg.evaluate('leePane("right", false)')
+        await due.click()
+        pane = pg.locator('.lee-lesson-review')
+        await pane.wait_for(state='visible')
+        await pane.locator('summary').click()
+        assert 'What will the function print?' in await pane.inner_text()
+        assert 'due for review: recall about ' in await pane.inner_text()
+        assert 'missed the last 2 times' in await pane.inner_text()
+        assert 'My saved answer' not in await pane.text_content()
+        assert 'I traced the function.' not in await pane.text_content()
+        assert 'The actual output' not in await pane.text_content()
+        assert await pane.evaluate("e => getComputedStyle(e).fontFamily === getComputedStyle(document.body).fontFamily && !/mono|Menlo|Consolas/i.test(getComputedStyle(e).fontFamily)")
+        shots = Path(__file__).parents[1]/'target/learn/sliceG'
+        shots.mkdir(parents=True, exist_ok=True)
+        for mode in ('light', 'dark'):
+            await pg.evaluate("m => { document.documentElement.dataset.theme = 'leela'; document.documentElement.dataset.mode = m; }", mode)
+            await pg.wait_for_timeout(800)
+            await pg.screenshot(path=str(shots/f'review-question-{mode}.png'))
+        await pane.get_by_role('button', name='Show my last answer', exact=True).click()
+        revealed = await pane.inner_text()
+        assert all(s in revealed for s in ('My saved answer', 'I traced the function.', 'The actual output'))
+        await pg.screenshot(path=str(shots/'review-answer-dark.png'))
+        await pg.route('**/lesson/due', lambda route: route.fulfill(status=400, content_type='application/json', body='{"ok":false,"error":"Review vault locked for this test."}'))
+        await pg.evaluate('refreshLessonDue()')
+        assert 'Review vault locked for this test.' in await pane.inner_text()
+        await pg.unroute('**/lesson/due')
+        await pane.get_by_role('button', name='Try again', exact=True).click()
+        await pane.locator('summary').wait_for()
+        assert 'My saved answer' not in await pane.text_content()
+        await pg.route('**/lesson/due', lambda route: route.fulfill(status=200, content_type='application/json', body='[]'))
+        await pg.evaluate('refreshLessonDue()')
+        assert await due.is_hidden() and await due.text_content() == ''
+        assert await pane.locator('#lessonreviewbody').inner_text() == 'Nothing to learn or review right now.'
+    asyncio.run(_real_page(go, tmp_path))

@@ -567,11 +567,12 @@ def _memory_panel():
         cls='lee-panel lee-memory')
 
 def _right_workspace(ws):
-    "Agent, variables and durable research memory share the right-hand work area."
+    "Agent, variables, memory and lesson review share the right-hand work area."
     return Aside(
         Div(Button('agent', cls='lee-righttab active', data_right='agent', onclick='leeRight("agent")'),
             Button('variables', cls='lee-righttab', data_right='vars', onclick='leeRight("vars")'),
             Button('memory', cls='lee-righttab', data_right='memory', onclick='leeRight("memory")'),
+            Button('Review', cls='lee-righttab', data_right='learn', onclick='leeRight("learn")'),
             Button('●', cls='lee-pane-pin pinned', type='button', data_pane_pin='right',
                    title='pinned open — unpin to close it when you click away',
                    aria_label='pin right tools open', aria_pressed='true',
@@ -579,7 +580,9 @@ def _right_workspace(ws):
             Button('−', cls='lee-pane-min', title='minimise right tools',
                    aria_label='minimise right tools', onclick='leePane("right", false)'),
             cls='lee-righttabs', role='tablist', aria_label='right tools'),
-        Div(_agent_panel(ws), _vars_panel(ws), _memory_panel(), cls='lee-rightbody'),
+        Div(_agent_panel(ws), _vars_panel(ws), _memory_panel(),
+            Div(Div('Review', cls='lee-phead'), Div('Loading review…', id='lessonreviewbody', cls='lee-lesson-review-body'),
+                cls='lee-panel lee-lesson-review'), cls='lee-rightbody'),
         cls='lee-right right-agent', id='right')
 
 def _state_text(ws):
@@ -801,6 +804,8 @@ def _footer():
     ks = (by_scope('global') + by_scope('editor')).filter(lambda k: k.show == 'footer' and k.bound)
     kids = ks.map(lambda k: Span(Kbd(k.keys[0]), Span(k.label), cls='lee-fkey'))
     return Footer(*kids, Span(cls='lee-spacer'),
+                  Button(id='lessondue', cls='lee-due', type='button', hidden=True,
+                         onclick='leePane("right", true);leeRight("learn")'),
                   Span(id='status', cls='lee-status', role='status', aria_live='polite', hidden=True),
                   cls='lee-footer')
 

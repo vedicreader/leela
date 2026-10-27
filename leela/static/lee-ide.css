@@ -592,7 +592,9 @@ body {
 .lee-rightbody > .lee-panel { position: absolute; inset: 0; }
 .lee-right.right-agent .lee-varspanel, .lee-right.right-agent .lee-memory,
 .lee-right.right-vars .lee-agent, .lee-right.right-vars .lee-memory,
-.lee-right.right-memory .lee-agent, .lee-right.right-memory .lee-varspanel { display: none; }
+.lee-right.right-memory .lee-agent, .lee-right.right-memory .lee-varspanel,
+.lee-right:not(.right-learn) .lee-lesson-review,
+.lee-right.right-learn .lee-agent, .lee-right.right-learn .lee-varspanel, .lee-right.right-learn .lee-memory { display: none; }
 /* Expanded is one slot in one mode, both classes written together. `wide` hands the pane the
    dominant share of the grid it sits in; `full` lifts it over the shell, between header and
    footer. Neither class outlives the pane: `leePane` drops both when it hides one, so no track
@@ -2055,11 +2057,20 @@ kbd {
 .lee-md-cell > :last-child { margin-bottom: 0; }
 .lee-md-cell.empty::before { content: 'double-click to edit'; color: var(--lee-fg4); font-style: italic; opacity: .7; }
 .lee-cell[data-lesson-role="prediction"] .lee-md-cell.empty::before { content: 'Your guess: what will the code below print?'; }
-.lee-reveal, .lee-cell[data-lesson-role="card"] .lee-md-cell {
+.lee-reveal, .lee-cell[data-lesson-role="card"] .lee-md-cell, .lee-lesson-review-card {
   border-left: 2px solid color-mix(in srgb, var(--lee-accent) 28%, transparent);
   padding: 10px 16px; margin: 10px 0; line-height: 1.65;
 }
 .lee-reveal { font-family: inherit; white-space: pre-wrap; }
+.lee-lesson-review { font-family: inherit; }
+.lee-lesson-review-body { overflow: auto; padding: 16px; }
+.lee-lesson-review-card { overflow-wrap: anywhere; }
+.lee-lesson-review-card summary { cursor: pointer; color: var(--lee-fg2); }
+.lee-lesson-review-card p { white-space: pre-wrap; margin: 12px 0; }
+.lee-lesson-why, .lee-lesson-reason { color: var(--lee-fg4); font-size: 12px; }
+.lee-lesson-why { font-style: italic; }
+.lee-lesson-last-answer h4 { font: inherit; color: var(--lee-fg4); margin: 16px 0 4px; }
+.lee-lesson-last-answer p { margin-top: 4px; }
 .lee-confidence { display: flex; align-items: center; gap: 8px; margin: 6px 0 12px; color: var(--lee-fg4); font-size: 12px; }
 .lee-confidence button { border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; font: inherit; padding: 2px 6px; cursor: pointer; }
 .lee-confidence button[aria-pressed="true"] { border-color: var(--lee-border); color: var(--lee-fg2); background: var(--lee-bg2); }
@@ -2298,6 +2309,9 @@ kbd {
 }
 .lee-fkey { display: flex; gap: 4px; align-items: center; white-space: nowrap; }
 .lee-fkey kbd { min-width: 0; }
+.lee-due { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; cursor: pointer; white-space: nowrap; }
+.lee-due[hidden] { display: none; }
+.lee-due:focus-visible { outline: 1px solid var(--lee-accent); outline-offset: 2px; }
 .lee-status {
   position: fixed; left: 50%; bottom: 34px; z-index: 24; display: flex; align-items: center; gap: 9px;
   max-width: min(680px, calc(100vw - 32px)); min-height: 38px; padding: 8px 14px 8px 11px;

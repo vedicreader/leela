@@ -6,7 +6,7 @@ function initSplits() {
   // which would erase a pane the last session had minimised.
   const closed = ['left', 'right', 'bottom'].filter(p => localStorage.getItem('lee-pane-' + p) === 'hidden');
   const savedRight = localStorage.getItem('lee-right-view');
-  if (['agent', 'vars', 'memory'].includes(savedRight)) leeRight(savedRight);
+  if (['agent', 'vars', 'memory', 'learn'].includes(savedRight)) leeRight(savedRight);
   const savedDock = localStorage.getItem('lee-dock-view');
   if (['exec', 'term', 'logs'].includes(savedDock)) leeDock(savedDock);
   for (const pane of closed) leePane(pane, false);

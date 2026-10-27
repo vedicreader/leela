@@ -47,6 +47,7 @@ function lessonRevealActions(cell, el) {
       const current = lee.tabKey === tabKey && lee.cells.find(c => c.id === cell.id && c.execution_count === cell.execution_count);
       if (current) Object.assign(current.extra.lesson, {saved: d.saved, saved_message: d.message});
       row.textContent = d.message;
+      refreshLessonDue();
       if (d.disk_version) { recordDiskVersion(path, d.disk_version); await rebaseDrafts(path, d.disk_version); noteSelfWrite(path); }
     } catch (e) { status(String(e.message || e), 'err'); button.disabled = false; }
   };

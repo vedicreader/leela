@@ -731,12 +731,14 @@ function leeRight(which) {
   right.classList.toggle('right-agent', which === 'agent');
   right.classList.toggle('right-vars', which === 'vars');
   right.classList.toggle('right-memory', which === 'memory');
+  right.classList.toggle('right-learn', which === 'learn');
   $$('.lee-righttab', right).forEach(b => {
     const active = b.dataset.right === which;
     b.classList.toggle('active', active); b.setAttribute('aria-selected', String(active));
   });
   if (which === 'agent') requestAnimationFrame(() => stickAgentLog());
   if (which === 'memory' && !lee.memoryLoaded) leeMemoryNotes();
+  if (which === 'learn') paintLessonReview();
 }
 window.leeRight = leeRight;
 
