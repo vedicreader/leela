@@ -62,7 +62,7 @@ def test_check_stores_public_state_and_the_page_never_sees_a_hidden_test(rig):
 
 def test_grade_is_stored_with_its_source_hash_shown_on_the_page_and_validated(rig):
     r = rig
-    assert 'grade_exercise' in WRITE_TOOLS
+    assert 'grade_exercise' not in WRITE_TOOLS   # a grade is a note under the learner's own checks, so it does not ask
     assert 'check_exercise first' in r['grade'](8)
     assert 'grade' not in r['state']()
     r['check'](GOOD)
