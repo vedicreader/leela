@@ -81,3 +81,49 @@ def test_lesson_adds_exercise_after_code(spec):
     task, code = nb.cells[4:6]
     assert task.extra['exercise']['for'] == code.id and code.source == spec['stub']
     assert nb.cells[6].extra['lesson']['for'] == nb.cells[3].id
+
+@pytest.mark.parametrize('source, found, statuses, got', [
+    ('def double(x): return x*2', True, ['pass', 'pass'], None),
+    ('def double(x): return 4', True, ['pass', 'fail'], '4'),
+    ('x = 1', False, [], None)])
+def test_check_solution_without_kernel(spec, source, found, statuses, got):
+    from leela.blocks.nb.exercise import check_solution
+    result = check_solution(spec, source)
+    assert result['solution']['found'] is found
+    assert [r['status'] for r in result['solution']['checks']] == statuses
+    if got is not None: assert result['solution']['checks'][-1]['got'] == got
+    assert [r['status'] for r in result['stub']['checks']] == ['fail', 'fail']
+
+@pytest.mark.parametrize('source', ['while True: pass', 'def double(x):\n    while True: pass'])
+def test_check_solution_timeout(spec, source):
+    import time
+    from leela.blocks.nb.exercise import check_solution
+    started = time.monotonic()
+    result = check_solution(spec, source, timeout=.1)['solution']
+    assert time.monotonic() - started < 2.1
+    assert result.get('timeout') or all(r['status'] == 'timeout' for r in result['checks'])
+
+@pytest.mark.parametrize('source', ['raise ValueError("SECRET_SOURCE_TOKEN")', 'def double(:'])
+def test_check_solution_source_errors_do_not_echo_source(spec, source):
+    import json
+    from leela.blocks.nb.exercise import check_solution
+    result = check_solution(spec, source)
+    assert result['solution'].get('error')
+    assert 'SECRET_SOURCE_TOKEN' not in json.dumps(result)
+
+
+def test_check_solution_isolated_stdin_and_silent(spec, monkeypatch):
+    import subprocess, sys
+    from leela.blocks.nb.exercise import check_solution
+    source = 'print("SECRET_SOURCE_TOKEN")\nimport sys\nassert sys.flags.isolated\ndef double(x): return x*2'
+    calls, run = [], subprocess.run
+    def capture(*args, **kwargs):
+        calls.append((args, kwargs))
+        return run(*args, **kwargs)
+    monkeypatch.setattr(subprocess, 'run', capture)
+    result = check_solution(spec, source)
+    assert all(r['status'] == 'pass' for r in result['solution']['checks'])
+    assert len(calls) == 2
+    assert calls[0][0][0][:3] == [sys.executable, '-I', '-c']
+    assert source not in calls[0][0][0][-1] and calls[0][1]['input'] == source
+    assert calls[0][1]['timeout'] == 11

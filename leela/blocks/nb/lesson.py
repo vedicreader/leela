@@ -11,7 +11,8 @@ from .exercise import exercise_cells
 LESSON_CHARTER = (TUTOR_SP + '\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
     + '\nAdd demos only with add_demo. Never write the reveal, Leela builds it.'
     + '\nWhen the learner asks for another way, re-explain with a method not yet used from abhyasa.method.METHODS:\n'
-    + '\n'.join(f'- {name}: {text}' for name, text in METHODS.items()))
+    + '\n'.join(f'- {name}: {text}' for name, text in METHODS.items())
+    + '\nTo set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test\'s expected value.')
 
 def lesson_notebook(name, exercise=None) -> Notebook:
     code = Cell(source='pass')

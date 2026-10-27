@@ -36,13 +36,16 @@ BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a co
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo'})
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo', 'add_exercise'})
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 STOP_NOTE = 'the user stopped this turn'
+HIDDEN_ARGS = {'add_exercise': {'solution': '(reference solution hidden)'}}   #: arguments no approval display shows, and what it shows instead
+def _hide(tool, args): return {**args, **{k: v for k, v in HIDDEN_ARGS.get(tool, {}).items() if k in args}}
+def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in HIDDEN_ARGS.get(tool, {}) if k in was}}
 def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
@@ -102,8 +105,8 @@ class Intervention(Ask):
     @property
     def edited(self): return self.tool != self.original_tool or self.args != self.original_args
     def dict(self):
-        return {**super().dict(), 'args': self.args, 'control': self.control, 'edited': self.edited,
-            'original_tool': self.original_tool, 'original_args': self.original_args,
+        return {**super().dict(), 'args': _hide(self.tool, self.args), 'control': self.control, 'edited': self.edited,
+            'original_tool': self.original_tool, 'original_args': _hide(self.original_tool, self.original_args),
             'action_id': self.id, 'revision': self.revision, 'branch_id': self.branch_id,
             'parent_action_id': self.parent_action_id,
             'rollback': self.before is not None and self.after is not None and self.before != self.after}
@@ -217,7 +220,7 @@ class Interventions(Approvals):
             (self.control == 'guided' and (name in GUIDED_TOOLS or path_write(name, args))))
         checkpoint = force or loop or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, args),
-            preview=preview_for(name, args, self.host), control=self.control,
+            preview=preview_for(name, _hide(name, args), self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
         if path_write(name, args): a.preview = f"saves {', '.join(write_targets(name, args))}\n\n{args.get('prompt', '')}"   # ramabana 0.2.3's preview names only the first
         if loop: a.preview = f'the same call {_times(self._streak)} running -- allow it?\n\n{a.preview}'.strip()
@@ -252,8 +255,8 @@ class Interventions(Approvals):
         if a is None or not a.pending: return None
         if ok:
             if tool: a.tool = str(tool)
-            if args is not None: a.args = dict(args)
-            a.summary, a.preview = _summary(a.tool, a.args), preview_for(a.tool, a.args, self.host)
+            if args is not None: a.args = _restore(a.tool, dict(args), a.original_tool, a.original_args)
+            a.summary, a.preview = _summary(a.tool, a.args), preview_for(a.tool, _hide(a.tool, a.args), self.host)
         return super().answer(id, ok, note, session=session)
     def gate(self, tool_call):
         "Pause according to the control level, then apply an approved rewrite to the live call."
@@ -899,7 +902,40 @@ def _session_tools(host):
                 if index is None: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
             return host.nb_add_cell(str(p), fence(spec), index=index, cell_type='markdown')
         except Exception as e: return f'add_demo failed: {errstr(e)}'
-    return [small_tool(run_cell), small_tool(add_demo)]   # the Run button belongs to a small session too
+    @summary(lambda a: f'Add exercise to {a.get("path", "")}')
+    def add_exercise(path: str, task: str, fname: str, stub: str, tests: list | str, solution: str,
+                     after_cell_id: str = '', uses: list | None = None) -> str:
+        "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored."
+        from ..nb.exercise import check_solution, exercise_cells, validate_exercise_spec
+        from ..nb.nb import Notebook
+        try:
+            if isinstance(tests, str): tests = json.loads(tests)
+            spec = validate_exercise_spec(dict(task=task, fname=fname, stub=stub, tests=tests, uses=[] if uses is None else uses))
+            checked = check_solution(spec, solution)
+            ref, draft, n = checked['solution'], checked['stub'], len(spec['tests'])
+            if ref.get('timeout'): return 'the solution check times out (timeout)'
+            if ref.get('error'): return 'the solution check errors'
+            if not ref.get('found'): return 'the solution defines no callable function'
+            rows = ref['checks']
+            if bad := [t['say'] for t, r in zip(spec['tests'], rows) if r['status'] == 'fail']:
+                return 'the solution fails: ' + ', '.join(bad)
+            if any(r['status'] == 'timeout' for r in rows): return 'the solution check times out (timeout)'
+            if len(rows) != n or any(r['status'] != 'pass' for r in rows): return 'the solution check errors'
+            passed = sum(r['status'] == 'pass' for r in draft.get('checks', [])) if draft.get('found') else 0
+            if passed == n: return 'the stub already passes every test'
+            p = host.check_write(path)
+            if p.suffix != '.ipynb': return 'add_exercise failed: path must be an .ipynb notebook'
+            nb = Notebook.load(p)
+            index = first(i + 1 for i, c in enumerate(nb.cells) if c.id == after_cell_id) if after_cell_id else len(nb)
+            if index is None: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
+            task_cell, code = exercise_cells(spec)
+            nb.insert(index, task_cell)
+            nb.insert(index + 1, code)
+            nb.reveal(index + 1)
+            nb.save(p, sandbox=host.ws.fs)
+            return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; the stub fails {n - passed}.'
+        except Exception as e: return f'add_exercise failed: {errstr(e)}'
+    return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise)]   # the Run button belongs to a small session too
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
     "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."
@@ -1009,7 +1045,7 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
         md = answer_md(a)
         if getattr(a, 'edited', False):
             md += (f'\n\nEdited `{a.original_tool}` into `{a.tool}` before execution.'
-                f'\n\n```json\n{json.dumps(a.args, indent=2, default=str)}\n```')
+                f'\n\n```json\n{json.dumps(_hide(a.tool, a.args), indent=2, default=str)}\n```')
         _add(md, {'kind': 'approval', 'id': a.id, 'tool': a.tool,
             'state': 'approved' if a.answer else 'refused',
             'edited': bool(getattr(a, 'edited', False))})
