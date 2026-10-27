@@ -126,6 +126,19 @@ def _directives(source):
     tag = [l for l in head if not l.lstrip('#| ').startswith(NB_DIRECTIVE)]
     return ''.join(head), ''.join(tag), ''.join(lines[n:])
 
+def page_extra(extra):
+    "`extra` as the page may see it: a hidden exercise test keeps its `say`, never its test text."
+    ex = extra.get('exercise')
+    if not (isinstance(ex, dict) and 'tests' in ex): return extra
+    tests = [t if t.get('shown') is True else dict(say=t.get('say'), shown=False) for t in ex['tests']]
+    return {**extra, 'exercise': {**ex, 'tests': tests}}
+
+def restore_exercise(pasted, stored):
+    "Give a cell pasted from the page the exercise of the stored cell it was copied from; the page never held the hidden tests, so with no such cell the exercise goes."
+    ex = stored.extra.get('exercise') if stored else None
+    if isinstance(ex, dict) and 'tests' in ex: pasted.extra['exercise'] = deepcopy(ex)
+    elif 'tests' in (pasted.extra.get('exercise') or {}): del pasted.extra['exercise']
+
 @dataclass
 class Cell(Dictable):
     "One notebook cell. `outputs` are nbformat dicts exactly as the kernel sent them."
@@ -160,7 +173,10 @@ class Cell(Dictable):
     def stale(self):
         "Whether the outputs held here were produced by source this cell no longer has."
         return bool(self.outputs and self.output_hash and self.output_hash != src_hash(self.source))
-    def dict(self): return {**super().dict(), 'stale': self.stale}
+    def dict(self):
+        "The cell as the page sees it, which is every route's view of it."
+        d = super().dict()
+        return {**d, 'extra': page_extra(d['extra']), 'stale': self.stale}
     @property
     def is_prompt(self): return self.cell_type == 'prompt'
     @property

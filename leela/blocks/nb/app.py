@@ -16,7 +16,7 @@ from ...core.web import asset_dir, fail, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
-from .nb import Cell, Notebook, cell_extras, inline_values, run_watched, src_hash, take_seq
+from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import lock, record_card
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 
@@ -485,6 +485,8 @@ def connect(app, ctx):
             fields = Cell.__dataclass_fields__
             try: pasted = [Cell(**{name: raw[name] for name in fields if name in raw}) for raw in raws]
             except (TypeError, ValueError) as e: return fail(f'invalid cell clipboard: {e}')
+            held = {c.id: c for c in nb.cells}
+            for raw, n in zip(raws, pasted): restore_exercise(n, held.get(raw.get('id')))
             nb.paste_many(i, pasted)
         elif op == 'merge_above': nb.merge(i - 1) if i > 0 else None
         elif op == 'merge_below': nb.merge(i)
