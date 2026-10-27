@@ -361,6 +361,7 @@ function mountNotebook(host, st) {
     st.cells.forEach((c, i) => host.appendChild(cellEl(c, i)));
   }
   paintHeadings(st.cells);
+  for (const c of st.cells) if (isExercise(c)) renderExercise(c);
   selectCell(Math.min(lee.sel, st.cells.length - 1));
   observeNotebookCells(host, st.cells);
   lee.notebookGit = {};       // marks belong to the notebook that was open, not the next one
@@ -411,6 +412,7 @@ function patchNotebook(host, before, cells, op = '') {
     }
     host.appendChild(el); // appending an existing node reorders it without remounting
     if (c.extra?.lesson) { paintLessonCell(el, c); renderLessonReveal(c); }
+    if (isExercise(c)) renderExercise(c, el);
   });
   paintHeadings(cells);
   paintSel();

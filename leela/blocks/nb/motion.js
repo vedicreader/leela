@@ -139,6 +139,7 @@ async function runCell(i, advance) {
     } finally { clearInterval(cellClock); }
     for (const x of [c, cur()]) if (x) x.running = false;
     if (cur()?.extra?.lesson) renderLessonReveal(cur());
+    if (isExercise(cur())) renderExercise(cur());
     if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
     if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();

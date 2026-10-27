@@ -5,7 +5,7 @@ from leela.app import ide_app
 from leela.blocks.agent.ai import WRITE_TOOLS, _session_tools
 from leela.blocks.nb import exercise
 from leela.blocks.nb.exercise import exercise_cells
-from leela.blocks.nb.nb import Cell, Notebook
+from leela.blocks.nb.nb import Cell, Notebook, src_hash
 from leela.workspace import Workspace
 
 SPEC = dict(task='Double a number.', fname='double', stub='def double(x):\n    pass', tests=[
@@ -48,6 +48,19 @@ def test_route_pass_fail_and_never_a_hidden_test(rig):
     for hidden in ('-246', '-123', 'assert double(-123)', 'expected'): assert hidden not in r.text
     assert got['summary'] == '0 of 2 checks pass.'
 
+def test_the_page_is_told_whether_the_grade_is_for_the_code_it_holds(rig):
+    client, ws, p, live, lock, code, body = rig
+    got = check(client, body(GOOD)).json()
+    assert got['cell']['id'] == code.id and got['cell']['source'] == GOOD and got['cell']['execution_count'] is not None
+    assert got['cell']['graded_current'] is False
+    for hidden in ('-246', '-123', 'assert double(-123)'): assert hidden not in json.dumps(got)
+    live[2].extra['exercise']['state']['grade'] = dict(score=8, note='Clear.', hash=src_hash(GOOD))
+    held = lambda: client.get('/tab/state').json()['cells']
+    assert held()[2]['graded_current'] is True and 'graded_current' not in held()[0]
+    assert client.post('/nb/edit', json=dict(path=str(p), op='source', i=2, id=code.id, source=GOOD + '\n')).json()['ok']
+    assert held()[2]['graded_current'] is False
+    assert check(client, body(GOOD, seq=100)).json()['cell']['graded_current'] is True
+
 def test_route_raised_missing_and_error(rig):
     client, ws, p, live, lock, code, body = rig
     got = check(client, body('x = 1')).json()
@@ -55,7 +68,7 @@ def test_route_raised_missing_and_error(rig):
     got = check(client, body('1 / 0')).json()
     assert got['state'] == 'raised' and got['checks'] == []
     got = check(client, body('def double(x):\n    raise ValueError("nope")')).json()
-    assert [c['status'] for c in got['checks']] == ['error', 'error'] and 'nope' not in json.dumps(got)
+    assert [c['status'] for c in got['checks']] == ['error', 'error'] and 'nope' not in json.dumps(got['checks'])
 
 def test_route_refuses_before_running_anything(rig):
     client, ws, p, live, lock, code, body = rig

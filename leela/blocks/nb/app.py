@@ -263,7 +263,8 @@ def connect(app, ctx):
         except Refused as e: return fail(str(e), 409)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
-        return public_verdict(verdict)
+        if (now := first(x for x in nb if x.id == c.id)) is None: return fail('that cell is no longer in the notebook', 409)
+        return {**public_verdict(verdict), 'cell': now.dict()}
     @rt('/nb/debug/stream')
     async def nb_debug_stream(req):
         "Debug one code cell through ipykernel's Jupyter Debug Protocol."

@@ -118,7 +118,8 @@ function cellEl(c, i) {
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
-    `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div></div>`;
+    `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div>` +
+    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${c.id}"></div>` : ''}</div>`;
   paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
@@ -151,6 +152,7 @@ function cellEl(c, i) {
     if (indices.length > 1) moveCellsTo(indices, +d.dataset.i); else moveCellTo(from, +d.dataset.i);
   });
   if (c.extra?.lesson) paintLessonCell(d, c);
+  if (isExercise(c)) renderExercise(c, d);
   return d;
 }
 
@@ -344,6 +346,7 @@ function mountCell(c, i) {
       rememberBuffer(key, {path: lee.path, title: lee.tabKey, kind: 'notebook', i: at, id: c.id, text: txt});
       if (cellState(lee.cells[at]) !== 'idle') setCellState(lee.cells[at], 'stale', 'code changed since the last run');
       if (lee.cells[at].extra?.lesson) renderLessonReveal(lee.cells[at]);
+      if (isExercise(lee.cells[at])) { lee.cells[at].graded_current = false; renderExercise(lee.cells[at]); }
       if (headingLevel(lee.cells[at]) !== level) paintHeadings();
       markDirty();
     },

@@ -136,6 +136,12 @@ def page_extra(extra):
     tests = [t if t.get('shown') is True else dict(say=t.get('say'), shown=False) for t in ex['tests']]
     return {**extra, 'exercise': {**ex, 'tests': tests}}
 
+def graded_current(extra, source):
+    "Whether the grade on an exercise cell was given to the source it holds now."
+    state = extra['exercise'].get('state')
+    grade = state.get('grade') if isinstance(state, dict) else None
+    return isinstance(grade, dict) and grade.get('hash') == src_hash(source)
+
 def restore_exercise(pasted, stored):
     "Give a cell pasted from the page the exercise of the stored cell it was copied from; the page never held the hidden tests, so with no such cell the exercise goes."
     ex = stored.extra.get('exercise') if stored else None
@@ -179,7 +185,9 @@ class Cell(Dictable):
     def dict(self):
         "The cell as the page sees it, which is every route's view of it."
         d = super().dict()
-        return {**d, 'extra': page_extra(d['extra']), 'stale': self.stale}
+        ex = d['extra'].get('exercise')
+        return {**d, 'extra': page_extra(d['extra']), 'stale': self.stale,
+                **({'graded_current': graded_current(d['extra'], self.source)} if isinstance(ex, dict) and 'tests' in ex else {})}
     @property
     def is_prompt(self): return self.cell_type == 'prompt'
     @property
