@@ -44,10 +44,12 @@ class LeeTerminal {
     this.el = el;
     this.onExit = onExit || (() => {});
     this.onStatus = onStatus || (() => {});
+    const {optionMeta = true, mode} = window.leeTermDefaults?.() || {};
+    this.mode = mode;
     this.term = new Terminal({
       fontFamily: getComputedStyle(el).getPropertyValue('--lee-mono').trim() || 'monospace',
       fontSize: 13, cursorBlink: true, scrollback: 5000,
-      allowProposedApi: true, theme: themeFrom(el),
+      allowProposedApi: true, theme: themeFrom(el), macOptionIsMeta: optionMeta,
     });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
@@ -62,7 +64,7 @@ class LeeTerminal {
       // The hello must be first: the server refuses everything until it has the token.
       // `id` keys the pty on the server. Without it every shell falls back to the kind, so a
       // second terminal attaches to the first one's pty and takes its reader with it.
-      this.send({t: 'hello', token, cwd, kind: kind || 'shell', id,
+      this.send({t: 'hello', token, cwd, kind: kind || 'shell', id, mode: this.mode,
                  cols: this.term.cols, rows: this.term.rows});
       this.onStatus('connected');
     };
@@ -102,6 +104,9 @@ class LeeTerminal {
   // media query -- so the terminal has to be told, or it keeps a dark palette on a
   // light page and the cursor goes invisible again from the other direction.
   retheme() { try { this.term.options.theme = themeFrom(this.el); } catch {} }
+
+  // With it off, Option plus a key types the composed character; on, the key reaches the shell as Alt.
+  setOptionMeta(on) { this.term.options.macOptionIsMeta = on; }
 
   dispose() {
     try { this._ro.disconnect(); } catch {}

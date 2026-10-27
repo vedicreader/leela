@@ -7,7 +7,7 @@ from fastcore.xtras import clean_cli_output
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
            'LazygitMissing', 'NoPython', 'own_python', 'bundle_env', 'default_shell', 'path_prelude', 'shell_argv',
-           'external_terminal_argv', 'EXTERNAL_TERMINALS']
+           'external_terminal_argv', 'EXTERNAL_TERMINALS', 'colorfgbg']
 
 #: A frame carries everything the ring gathered since the last one, up to this: a websocket frame
 #: costs a WKWebView about 140 times what its own bytes do.
@@ -26,6 +26,10 @@ class LazygitMissing(ToolMissing):
 
 class NoPython(ToolMissing):
     "A frozen app whose bundle has no helper Python."
+
+def colorfgbg(mode):
+    "The `COLORFGBG` for a resolved theme mode, or `None` for anything else, which leaves the inherited value alone."
+    return {'light': '0;15', 'dark': '15;0'}.get(mode) if isinstance(mode, str) else None
 
 def default_shell():
     "The user's shell, falling back to bash then sh."

@@ -7,6 +7,8 @@ const ACTIONS = {
   toggle_left:  () => leePane('left'),
   toggle_right: () => leePane('right'),
   toggle_bottom:() => leePane('bottom'),
+  leave_full_screen: () => leeLeaveFullScreen(),
+  term_option_meta: () => leeTermOptionMeta(),
   toggle_scope: () => leeScope(lee.execScope === 'live' ? 'agent' : 'live'),
   help:         () => showHelp(),
   settings:     () => editorSettings(),

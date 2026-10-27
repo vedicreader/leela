@@ -40,7 +40,7 @@ from .core.text import did_you_mean
 from .core.text import clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook
-from .blocks.term.term import TerminalGate, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
+from .blocks.term.term import TerminalGate, colorfgbg, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 
 __all__ = ['ide_app', 'serve_ide']
@@ -906,6 +906,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
             # Even with no project interpreter: `venv_env` is where the bundle's own redirection is
             # taken off, and a terminal that keeps it runs `python` against the bundle's stdlib.
             env = venv_env(py)
+            if bg := colorfgbg(hello.get('mode')): env = {**env, 'COLORFGBG': bg}
             prelude = path_prelude(py, shell.get('shell')) if argv is None else ''
             if argv is None:
                 argv = shell_argv(shell.get('shell'), shell.get('shellArgs'), shell.get('loginShell'))

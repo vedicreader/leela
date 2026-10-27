@@ -927,7 +927,7 @@ function renderContextKeys(scope = lee.scope) {
  * and xterm owns pty input, and neither gets a duplicate copy of this map. The capturing listener
  * resolves an accepted app command before an editor can consume it. An unaccepted event continues
  * untouched. */
-const TERM_ESCAPES = new Set(['help', 'quit', 'palette', 'settings', 'toggle_left', 'toggle_right']);
+const TERM_ESCAPES = new Set(['help', 'quit', 'palette', 'settings', 'toggle_left', 'toggle_right', 'leave_full_screen']);
 const EDITING_SCOPES = new Set(['editor', 'exec', 'agent', 'term']);
 
 function eventContext(e) {
@@ -1116,6 +1116,8 @@ const ACTIONS = {
   toggle_left:  () => leePane('left'),
   toggle_right: () => leePane('right'),
   toggle_bottom:() => leePane('bottom'),
+  leave_full_screen: () => leeLeaveFullScreen(),
+  term_option_meta: () => leeTermOptionMeta(),
   toggle_scope: () => leeScope(lee.execScope === 'live' ? 'agent' : 'live'),
   help:         () => showHelp(),
   settings:     () => editorSettings(),

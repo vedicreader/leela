@@ -82,6 +82,7 @@ function leeExpandState() {
   const [which, mode] = (localStorage.getItem('lee-expand') || '').split(':');
   return PANE_HIDDEN[which] && EXPAND_MODES.includes(mode) ? {which, mode} : {which: '', mode: ''};
 }
+const leaveChord = () => displayChord((lee.keys || []).find(k => k.action === 'leave_full_screen')?.key?.split(' ')[0] || '');
 function leeSyncExpand() {
   const shell = $('#shell'); if (!shell) return;
   let {which, mode} = leeExpandState();
@@ -94,7 +95,7 @@ function leeSyncExpand() {
     const slot = b.dataset.paneExpand, own = slot === which ? mode : '';
     const label = own === 'wide' ? 'full screen' : own === 'full' ? 'restore' : 'expand';
     b.textContent = b.dataset.paneExpandIcon ? (own === 'full' ? '\u2921' : '\u2922') : label;
-    b.title = `${label} the ${slot} pane`;
+    b.title = `${label} the ${slot} pane${own === 'full' && leaveChord() ? ` (${leaveChord()})` : ''}`;
     b.setAttribute('aria-label', `${label} the ${slot} pane`);
     b.setAttribute('aria-pressed', String(!!own));
   });
@@ -109,15 +110,32 @@ function leeExpand(which = '', mode = '') {
 function leeExpandPane(which) {
   const cur = leeExpandState(), mode = cur.which !== which ? 'wide' : cur.mode === 'wide' ? 'full' : '';
   leeExpand(which, mode);
-  status(`${which} pane ${mode === 'wide' ? 'expanded' : mode === 'full' ? 'full screen' : 'restored'}`);
+  status(`${which} pane ${mode === 'wide' ? 'expanded' : mode === 'full' ? 'full screen' : 'restored'}${mode === 'full' && leaveChord() ? ` · ${leaveChord()} to leave` : ''}`);
 }
 window.leeExpand = leeExpand; window.leeExpandPane = leeExpandPane;
 
-// Full screen hides the layout you would otherwise click back from, so Escape is the way out.
+function leeLeaveFullScreen() {
+  if (leeExpandState().mode === 'full') leeExpand(''); else status('no pane is full screen');
+}
+window.leeLeaveFullScreen = leeLeaveFullScreen;
+
+// Full screen hides the layout you would otherwise click back from, so Escape is the way out, except
+// in a terminal, where Escape belongs to the program running there. `leave_full_screen` works anywhere.
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || leeExpandState().mode !== 'full') return;
+  if ((e.composedPath?.() || [e.target]).some(n => n.matches?.('#termwrap, .xterm'))) return;
   e.preventDefault(); e.stopPropagation(); leeExpand('');
 }, true);
+
+// New terminals read these when they are made; `leeTermOptionMeta` also reaches the open ones.
+const termOptionMeta = () => prefGet('terminal', 'macOptionIsMeta', true) !== false;
+window.leeTermDefaults = () => ({optionMeta: termOptionMeta(), mode: document.documentElement.dataset.mode});
+function leeTermOptionMeta(on = !termOptionMeta()) {
+  prefSet('terminal', 'macOptionIsMeta', on);
+  for (const t of lee.terms.values()) t.view.setOptionMeta(on);
+  status(`terminal: Option key ${on ? 'acts as Meta' : 'types composed characters'}`, 'ok');
+}
+window.leeTermOptionMeta = leeTermOptionMeta;
 
 function leePane(which, show = null, persist = true) {
   const shell = $('#shell'); if (!shell) return;

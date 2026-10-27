@@ -141,6 +141,8 @@ DEFAULTS = L(
     Key('toggle_left',      'alt+shift+b hyper+left', 'global', 'toggle file pane'),
     Key('toggle_right',     'alt+shift+v hyper+right', 'global', 'toggle agent / variables pane'),
     Key('toggle_bottom',    'hyper+down',    'global', 'toggle bottom tools'),
+    Key('leave_full_screen', 'mod+shift+e',  'global', 'leave full screen pane', 'toast'),
+    Key('term_option_meta', '',              'global', 'Terminal: Option key as Meta'),
     Key('toggle_scope',     'alt+i',         'global', 'live / isolated',     'toast'),
     Key('interrupt',        'alt+shift+i',    'global', 'interrupt kernel',   'toast'),
     Key('restart',          'alt+shift+r hyper+r', 'global', 'restart kernel'),
