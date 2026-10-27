@@ -11,6 +11,13 @@ def test_record_parameters():
                             'kind', 'hints', 'dont_know', 'grade', 'feedback', 'first_error', 'misconception', 'session', 'meta']
     assert params['meta'].kind is inspect.Parameter.VAR_KEYWORD
 
+def test_exercise_pure_contract():
+    from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
+    assert callable(safe_test) and callable(validate_exercise)
+    assert isinstance(SAFE_NAMES, (list, tuple)) and 'len' in SAFE_NAMES
+    assert safe_test('assert double(2) == 4', 'double')
+    assert not safe_test('assert double.__globals__', 'double')
+
 def test_six_hint_rungs():
     from abhyasa.tutor import HINTS
     assert len(HINTS) == 6

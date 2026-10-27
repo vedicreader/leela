@@ -6,19 +6,21 @@ from fastcore.basics import first
 from abhyasa.method import METHODS
 from abhyasa.tutor import HINTS, TUTOR_SP
 from .nb import Cell, Notebook
+from .exercise import exercise_cells
 
 LESSON_CHARTER = (TUTOR_SP + '\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
     + '\nAdd demos only with add_demo. Never write the reveal, Leela builds it.'
     + '\nWhen the learner asks for another way, re-explain with a method not yet used from abhyasa.method.METHODS:\n'
     + '\n'.join(f'- {name}: {text}' for name, text in METHODS.items()))
 
-def lesson_notebook(name) -> Notebook:
+def lesson_notebook(name, exercise=None) -> Notebook:
     code = Cell(source='pass')
     return Notebook([
         Cell(source=f'# {name}\n\nA lesson notebook. Predict the output before running the code. Then write your reasoning in the card.', cell_type='markdown'),
         Cell(source='No demo yet. Ask the tutor to add one.', cell_type='markdown'),
         Cell(cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': code.id}}),
         code,
+        *(exercise_cells(exercise) if exercise is not None else []),
         Cell(source='### Question\n\n### Thinking\n\n<!-- Write the question under Question and your reasoning under Thinking. -->',
              cell_type='markdown', extra={'lesson': {'role': 'card', 'for': code.id}}),
     ], meta={'lesson': {'v': 1, 'name': name}})

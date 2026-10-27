@@ -1,0 +1,88 @@
+import asyncio, json
+from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
+from .nb import Cell
+
+def validate_exercise_spec(spec):
+    if not isinstance(spec, dict): validate_exercise(spec)
+    rows = spec.get('tests')
+    tests = [t.get('test') if isinstance(t, dict) else None for t in rows] if isinstance(rows, list) else rows
+    clean = validate_exercise({k: spec.get(k) for k in ('task', 'fname', 'stub')} | {'tests': tests})
+    rows = [{k: t.get(k) for k in ('say', 'test', 'shown')} for t in rows]
+    for t in rows:
+        say = t['say']
+        if not (isinstance(say, str) and say.strip() and len(say) <= 200 and say.isprintable()):
+            raise ValueError('`say` must be a short plain string (1 to 200 characters)')
+        if type(t['shown']) is not bool: raise ValueError('`shown` must be a bool')
+    uses = spec.get('uses', [])
+    if not isinstance(uses, list) or any(not isinstance(u, str) for u in uses):
+        raise ValueError('`uses` must be a list of strings')
+    return {k: clean[k] for k in ('task', 'fname', 'stub')} | dict(tests=rows, uses=list(uses))
+
+def exercise_cells(spec):
+    spec = validate_exercise_spec(spec)
+    code = Cell(source=spec['stub'], extra={'exercise': dict(v=1, fname=spec['fname'], uses=spec['uses'], tests=spec['tests'],
+        state=dict(checks=0, rung=0, last=None, passed=False))})
+    lines = [t['test'] if t['shown'] else t['say'] for t in spec['tests']]
+    task = Cell(source=spec['task'] + '\n\n' + '\n\n'.join(lines), cell_type='markdown',
+        extra={'exercise': {'role': 'task', 'for': code.id}})
+    return [task, code]
+
+HARNESS = r'''import ast, builtins, contextlib, io, json, signal, threading, time
+try:
+    fname, tests, names, budget = json.loads(PAYLOAD)
+    deadline, stopped = time.monotonic() + budget, False
+    safe = {n: getattr(builtins, n) for n in names if hasattr(builtins, n)}
+    fn = __leela_exercise_ns.get(fname)
+    result = {'found': callable(fn), 'checks': []}
+    def boom(*_): raise TimeoutError()
+    for i, t in enumerate(tests if result['found'] else []):
+        row = dict(i=i, status='pass', got=None, error=None)
+        remaining = deadline - time.monotonic()
+        if stopped or remaining <= 0:
+            result['checks'].append(dict(i=i, status='timeout', got=None, error='TimeoutError'))
+            continue
+        scope = {'__builtins__': safe, fname: fn}
+        timed = threading.current_thread() is threading.main_thread()
+        if timed:
+            old = signal.signal(signal.SIGALRM, boom)
+            signal.setitimer(signal.ITIMER_REAL, min(2., remaining))
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                tree = ast.parse(t)
+                expr = tree.body[0].test
+                capture = (isinstance(expr, ast.Compare) and len(expr.ops) == 1
+                    and isinstance(expr.ops[0], ast.Eq) and isinstance(expr.left, ast.Call))
+                if capture:
+                    expr.left = ast.NamedExpr(target=ast.Name(id='__leela_exercise_got', ctx=ast.Store()), value=expr.left)
+                    ast.fix_missing_locations(tree)
+                try: exec(compile(tree, '<exercise>', 'exec'), scope)
+                except AssertionError:
+                    row['status'] = 'fail'
+                    if capture and '__leela_exercise_got' in scope: row['got'] = repr(scope['__leela_exercise_got'])[:200]
+        except KeyboardInterrupt:
+            stopped = True
+            row.update(status='timeout', got=None, error='TimeoutError')
+        except TimeoutError: row.update(status='timeout', got=None, error='TimeoutError')
+        except BaseException as e: row.update(status='error', got=None, error=type(e).__name__)
+        finally:
+            if timed:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old)
+        result['checks'].append(row)
+    print(json.dumps(result))
+finally: globals().clear()
+'''
+
+async def run_checks(k, fname, tests, timeout=10):
+    if not isinstance(fname, str) or not fname.isidentifier() or fname.startswith('_'):
+        raise ValueError('`fname` must be a plain function name')
+    if not isinstance(tests, list) or not tests or any(not isinstance(t, str) or not safe_test(t, fname) for t in tests):
+        raise ValueError('`tests` must contain plain asserts on the function')
+    payload = json.dumps([fname, tests, list(SAFE_NAMES), timeout])
+    body = HARNESS.replace('PAYLOAD', repr(payload))
+    snippet = f"exec({body!r}, {{'__builtins__': __builtins__, '__leela_exercise_ns': globals()}})"
+    try: r = await asyncio.wait_for(k.execute(snippet, silent=True, store_history=False), timeout + 1)
+    except asyncio.TimeoutError: return {'timeout': True}
+    text = ''.join(o.get('text', '') for o in r.outputs if o.get('output_type') == 'stream')
+    try: return json.loads(text.strip().splitlines()[-1])
+    except (IndexError, ValueError): return {'error': 'the kernel sent no check result'}
