@@ -285,7 +285,7 @@ def connect(app, ctx):
             raise
         if getattr(k, 'kernel_kind', None) != 'ipykernel' or not hasattr(k, 'debug_start'):
             run_lock.release()
-            return fail('cell debugging currently requires a direct ipykernel runtime')
+            return fail('cell debugging requires an ipykernel runtime')
         if dbgstate.paused:
             run_lock.release()
             return fail('a debugger session is already active', 409)
