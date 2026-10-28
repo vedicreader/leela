@@ -125,7 +125,7 @@ def guard(path, h, method='GET'):
 
 NAV = {'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}
 
-NO_INDEX = 'No code index for this yet.'
+NO_INDEX = 'No code index yet.'
 ROW = dict(package='pydantic_ai', content='def run_sync(self, prompt):\n    "<b>Run</b> the agent."',
            metadata=dict(name='run_sync', path='pydantic_ai/agent.py', lineno=40, docstring='Run <i>the</i> agent.'))
 
@@ -160,6 +160,8 @@ def test_lookup_with_no_index_says_one_line(rig, monkeypatch, k):
     r = c.get('/learn/lookup?q=x&pane=1')
     one_line(r, 200, NO_INDEX)
     assert '<html class="lee-learn-page in-pane">' in r.text and '<title>Look up code</title>' in r.text
+    assert 'action="/learn/lookup"' in r.text and 'value="x"' in r.text, 'the form stays, so another search needs no reload'
+    assert ' autofocus' not in r.text, 'a page in the pane never takes focus from the editor'
 
 def test_lookup_when_making_the_handle_raises(rig, monkeypatch):
     c, ws = rig[:2]
@@ -206,6 +208,7 @@ def test_lookup_with_no_query_asks_for_one(rig, monkeypatch):
     handle(ws, monkeypatch, k)
     r = c.get('/learn/lookup')
     assert r.status_code == 200 and 'Type what to look for.' in r.text and k.calls == []
+    assert 'placeholder="What to look for"' in r.text and ' autofocus' in r.text
     headers_ok(r)
 
 def test_lookup_says_when_nothing_is_found(rig, monkeypatch):
@@ -478,3 +481,21 @@ def test_open_with_no_folder_says_when_the_fixed_folder_cannot_be_made(tmp_path,
             if block == 'parent_file': assert fixed.parent.read_text() == 'keep'
             if block == 'link': assert list((tmp_path/'away').iterdir()) == []
         finally: fixed.parent.parent.chmod(0o755)
+
+@pytest.mark.parametrize('pane', ['', '1'])
+def test_an_opened_lesson_keeps_the_step_title_and_a_way_back(rig, pane):
+    c = rig[0]
+    r = opened(c, walk=JID, step='0', pane=pane)
+    one_line(r, 200, 'Opened in Leela.')
+    back = f'/learn?walk={JID}&amp;step=0' + ('&amp;pane=1' if pane else '')
+    assert '<title>Attention</title>' in r.text and f'<a href="{back}" class="lee-learn-back">Back to the step</a>' in r.text, r.text
+    r = opened(c, walk='', step='', topic='Softmax')
+    assert '<title>Softmax</title>' in r.text and 'href="/learn?topic=Softmax" class="lee-learn-back"' in r.text, r.text
+    assert '<title>Learn</title>' in opened(c, walk='nope').text, 'a refusal keeps the plain title'
+
+def test_lookup_keeps_the_tool_for_the_next_search(rig, monkeypatch):
+    c, ws = rig[:2]
+    handle(ws, monkeypatch, None)
+    r = c.get('/learn/lookup?q=x&tool=abc123&pane=1')
+    assert re.search(r'<input type="hidden" (name="tool" value="abc123"|value="abc123" name="tool")>', r.text), 'a second search left the tool environment'
+    assert 'name="tool"' not in c.get('/learn/lookup?q=x').text

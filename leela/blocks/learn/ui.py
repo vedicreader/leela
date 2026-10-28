@@ -1,8 +1,8 @@
-from fasthtml.common import Blockquote, Body, Button, Code, Form, H1, Head, Hidden, Html, Input, Link, Main, Meta, P, Pre, Script, Section, Span, Strong, Title
+from fasthtml.common import A, Blockquote, Body, Button, Code, Form, H1, Head, Hidden, Html, Input, Link, Main, Meta, P, Pre, Script, Section, Span, Strong, Title
 from ...core.web import asset
 from ..settings.settings import theme_boot
 
-__all__ = ['Page', 'StepPage', 'LookupPage']
+__all__ = ['Page', 'StepPage', 'OpenedPage', 'LookupPage']
 
 # A frame takes the IDE's theme over its own saved one, and follows it when it changes.
 FOLLOW = """try { if (window.parent !== window) { const d = document.documentElement, p = window.parent.document.documentElement;
@@ -32,18 +32,23 @@ def StepPage(v, q, pane:bool=False, root=None):
                                    Hidden(name='pane', value='1') if pane else None,
                                    Button('Open as a lesson', type='submit', cls='lee-btn'), method='post', action='/learn/open'), pane=pane, root=root)
 
+def OpenedPage(title, here, pane:bool=False, root=None):
+    "The page after a lesson opens: the step's title, the line `Opened in Leela.` and a link back to the step at `here`."
+    back = here + '&pane=1' if pane else here
+    return Page(title, P('Opened in Leela.', cls='lee-learn-line'), P(A('Back to the step', href=back, cls='lee-learn-back')), pane=pane, root=root, here=here)
+
 def _Hit(r, path):
     return Section(P(Strong(r['name']), ' ', Span(r['package'], cls='lee-learn-line'), ' ', Code(f"{r['path']}:{r['line']}")),
                    P(r['doc'], cls='lee-learn-note') if r['doc'] else None, Pre(Code(r['snippet'])),
                    Button('Put in a scratch cell', type='button', onclick='leeScratch(this)', data_path=path, data_snippet=r['snippet'], cls='lee-btn') if path else None,
                    cls='lee-learn-hit')
 
-def LookupPage(q, rows, packages=(), path='', pane:bool=False, root=None):
-    "The page of the `lookup` rows `rows` for `q`. With `path`, each row has a button that adds its snippet to that notebook as a scratch cell."
-    say = 'Type what to look for.' if not q else None if rows else 'Nothing found.'
+def LookupPage(q, rows, packages=(), path='', pane:bool=False, root=None, say=None, tool=''):
+    "The page of the `lookup` rows `rows` for `q`. With `path`, each row has a button that adds its snippet to that notebook as a scratch cell. `say` replaces the line above the rows."
+    say = say or ('Type what to look for.' if not q else None if rows else 'Nothing found.')
     return Page('Look up code',
-                Form(Input(type='search', name='q', value=q, aria_label='What to look for', cls='lee-input'), *[Hidden(name='package', value=p) for p in packages],
-                     Hidden(name='path', value=path) if path else None, Hidden(name='pane', value='1') if pane else None,
+                Form(Input(type='search', name='q', value=q, aria_label='What to look for', placeholder='What to look for', autofocus=not pane, cls='lee-input'), *[Hidden(name='package', value=p) for p in packages],
+                     Hidden(name='path', value=path) if path else None, Hidden(name='tool', value=tool) if tool else None, Hidden(name='pane', value='1') if pane else None,
                      Button('Look up', type='submit', cls='lee-btn'), method='get', action='/learn/lookup'),
                 P(say, cls='lee-learn-line') if say else None, *[_Hit(r, path) for r in rows],
                 P('', cls='lee-learn-line', role='status', aria_live='polite') if path else None, pane=pane, js=bool(path), root=root)

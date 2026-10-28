@@ -34,8 +34,8 @@ def _ws(root, monkeypatch):
 
 def _watch(pg, base):
     "The console errors, page errors, failed requests and error responses of Leela's own pages."
-    # `/git/file` answers 400 for a file outside any repository, as `notes.txt` in `tmp_path` is; the editor catches it
-    bad, own = [], lambda u: (u or '').startswith(base) and 'favicon' not in u and '/git/file?' not in u
+    # `/git/file` and `/git/notebook` answer 400 for a file outside any repository, as every file in `tmp_path` is; the editor catches it
+    bad, own = [], lambda u: (u or '').startswith(base) and 'favicon' not in u and '/git/file?' not in u and '/git/notebook?' not in u
     def con(m):
         u = (m.location or {}).get('url', '')
         if m.type == 'error' and (not u or own(u)): bad.append(f'console: {m.text} at {u}')
@@ -209,10 +209,19 @@ def test_open_as_a_lesson_from_the_pane(tmp_path, monkeypatch):
         await frame.wait_for_url('**/learn/open'); await frame.wait_for_load_state('load')
         assert await frame.locator('main.lee-learn > p.lee-learn-line').inner_text() == 'Opened in Leela.'
         assert await frame.evaluate("document.documentElement.classList.contains('in-pane')")
+        await pg.wait_for_function(f"document.querySelector('{HEAD} strong')?.textContent === 'Attention'")   # the pane head keeps the step's title
+        await _shoot(pg, 'opened-pane', ide=True)
         await pg.wait_for_function(f'(JSON.parse({SAVED} || "null") || {{}}).page === {json.dumps(STEP0)}')   # a reload mounts the step, not POST-only /learn/open
         await pg.wait_for_function('p => lee.path === p', arg=p)
         assert await pg.evaluate("!document.querySelector('#editor2').hidden && !!document.querySelector('#editor2 iframe')")
+        q = pg.locator('.lee-cell[data-i="0"] .lee-md-cell blockquote')
+        await q.wait_for()
+        assert await q.evaluate("e => { const s = getComputedStyle(e); return [s.marginLeft, s.borderLeftWidth, s.textAlign]; }") == ['0px', '2px', 'start']   # the step reads as a quote, not an indented block
+        await _shoot(pg, 'opened-lesson', ide=True)
         assert Path(p).is_file()
+        await frame.get_by_role('link', name='Back to the step').click()
+        await frame.wait_for_url('**step=0**pane=1**'); await frame.wait_for_load_state('load')
+        assert await frame.get_by_role('button', name='Open as a lesson').count() == 1
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
 
 STATE = f"""() => {{ const f = document.querySelector('#editor2 iframe');
@@ -239,10 +248,11 @@ def test_lookup_page_in_the_pane(tmp_path, monkeypatch):
     async def go(pg, base):
         r = await pg.goto(base + '/learn/lookup?q=x&pane=1', wait_until='networkidle')
         assert r.status == 200 and r.headers['content-type'].startswith('text/html')
-        if await pg.locator('form[action="/learn/lookup"]').count(): assert await pg.locator('input[type=search].lee-input').count() == 1
-        else: assert await pg.locator('main.lee-learn > p.lee-learn-line').inner_text() == 'No code index for this yet.'
+        assert await pg.locator('form[action="/learn/lookup"] input[type=search].lee-input[placeholder="What to look for"]').count() == 1
+        assert await pg.locator('main.lee-learn > p.lee-learn-line').first.inner_text() in ('No code index yet.', 'Nothing found.')
         await _ide(pg, base)
         frame = await _side(pg, tmp_path, '/learn/lookup?q=x', 'Look up code')
-        assert 'No code index for this yet.' in await frame.locator('body').inner_text() or await frame.locator('input[type=search]').count() == 1
+        assert await frame.locator('input[type=search]').count() == 1
+        assert await pg.evaluate("!document.activeElement || document.activeElement.tagName !== 'IFRAME'"), 'the pane took focus from the IDE'
         await _shoot(pg, 'lookup-pane', ide=True)
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch), ide=False))

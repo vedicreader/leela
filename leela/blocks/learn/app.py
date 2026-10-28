@@ -4,7 +4,7 @@ from fasthtml.common import FtResponse, JSONResponse, P
 from ... import errstr
 from ...core.web import fail, off_loop
 from ..memory.memory import _open_lock
-from .ui import LookupPage, Page, StepPage
+from .ui import LookupPage, OpenedPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect']
 
@@ -37,7 +37,7 @@ def said(req, root, text, code=200, title='Learn', pane=None, here=None):
     pane = req.query_params.get('pane') == '1' if pane is None else pane
     return FtResponse(Page(title, P(text, cls='lee-learn-line'), pane=pane, root=root, here=here), status_code=code, headers=HEADERS)
 
-NO_INDEX = 'No code index for this yet.'
+NO_INDEX = 'No code index yet.'
 
 def kosha_for(search, tool=None):
     "The kosha handle of the tool environment `tool` when it is ready; else the project handle."
@@ -92,7 +92,7 @@ def connect(app, ctx):
         except OSError as e: return say(f'Leela could not write the lesson. {errstr(e)}', 500)
         except Exception as e: return say(f'Leela could not open the lesson. {errstr(e)}', 500)
         # the pane keeps the step's own URL, so a reload does not GET this POST route
-        return said(req, root, 'Opened in Leela.', pane=f.get('pane') == '1', here=handoff(q.walk, v.get('i', q.step), q.topic))
+        return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic), pane=f.get('pane') == '1', root=root), headers=HEADERS)
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names
@@ -102,9 +102,9 @@ def connect(app, ctx):
         except ValueError as e: return said(req, root, str(e), 400, 'Look up code')
         try: rows = await off_loop(find_code, ctx.search, q, names, p.get('tool')) if q else []
         except Exception: rows = None
-        if rows is None: return said(req, root, NO_INDEX, title='Look up code')
         t = ctx.docs.tab_for(path) if path else None
-        return FtResponse(LookupPage(q, rows, given, path if t is not None and t.kind == 'notebook' else '', pane=p.get('pane') == '1', root=root), headers=HEADERS)
+        return FtResponse(LookupPage(q, rows or [], given, path if t is not None and t.kind == 'notebook' else '', pane=p.get('pane') == '1', root=root,
+                                     say=NO_INDEX if rows is None else None, tool=p.get('tool', '')), headers=HEADERS)
     @app.route('/learn/scratch', methods=['POST'])
     async def learn_scratch(req):
         from .learn import scratch_cell
