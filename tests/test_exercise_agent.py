@@ -201,7 +201,6 @@ def test_a_recorded_add_exercise_runs_with_the_solution_and_keeps_it_out_of_its_
     assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in json.dumps(run) and 'SECRET_REFERENCE_SOLUTION_7f9c' not in json.dumps(ws.ai.calls, default=str)
     assert ('add_exercise', {**args, 'solution': '[SECRET]'}) in ws.ai.calls
 
-@pytest.mark.xfail(strict=True, reason="ramabana 0.2.87 `Agent._ask_raised` records `ask.args` as given, and Leela's `Interventions.request` asks with the real args")
 def test_the_approval_row_and_the_saved_history_keep_no_solution(recorded):
     ws, *_, rows = recorded
     kept = dict(rows=json.dumps(rows), history=json.dumps(ws.ai.history, default=str), saved=Path(ws.ai.history_path).read_text())
