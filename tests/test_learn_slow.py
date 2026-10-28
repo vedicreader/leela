@@ -224,6 +224,20 @@ def test_open_as_a_lesson_from_the_pane(tmp_path, monkeypatch):
         assert await frame.get_by_role('button', name='Open as a lesson').count() == 1
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
 
+SCRATCH = """p => fetch('/learn/scratch', {method: 'POST', headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({path: p, snippet: 'print("scratch 7c1")'})}).then(r => r.status)"""
+
+def test_a_scratch_cell_appears_in_the_open_notebook_with_no_other_edit(tmp_path, monkeypatch):
+    from leela.blocks.nb.lesson import lesson_notebook
+    p = (tmp_path/'lesson.ipynb').resolve(); lesson_notebook('Doubling').save(p)
+    async def go(pg, base):
+        await pg.evaluate('p => leeOpenFile(p)', str(p))
+        await pg.wait_for_selector('.lee-cell')
+        await pg.evaluate('document.activeElement?.blur()')
+        assert await pg.evaluate(SCRATCH, str(p)) == 200
+        await pg.wait_for_function("[...document.querySelectorAll('.lee-cell')].some(c => c.textContent.includes('scratch 7c1'))")
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
 STATE = f"""() => {{ const f = document.querySelector('#editor2 iframe');
   return [lee.sidePage?.url, lee.sidePage?.title, f?.contentWindow.location.href, {SAVED}, document.querySelector('{HEAD}')?.textContent]; }}"""
 SEND = """([origin, u]) => { const w = document.querySelector('#editor2 iframe').contentWindow;

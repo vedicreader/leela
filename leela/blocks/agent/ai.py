@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
-from ...agent.agent import Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
+from ...agent.agent import SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
@@ -43,9 +43,7 @@ __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_cont
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 STOP_NOTE = 'the user stopped this turn'
-HIDDEN_ARGS = {'add_exercise': {'solution': '(reference solution hidden)'}}   #: arguments no approval display shows, and what it shows instead
-def _hide(tool, args): return {**args, **{k: v for k, v in HIDDEN_ARGS.get(tool, {}).items() if k in args}}
-def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in HIDDEN_ARGS.get(tool, {}) if k in was}}
+def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in SECRET_ARGS.get(tool, ()) if k in was}}
 def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
@@ -105,8 +103,8 @@ class Intervention(Ask):
     @property
     def edited(self): return self.tool != self.original_tool or self.args != self.original_args
     def dict(self):
-        return {**super().dict(), 'args': _hide(self.tool, self.args), 'control': self.control, 'edited': self.edited,
-            'original_tool': self.original_tool, 'original_args': _hide(self.original_tool, self.original_args),
+        return {**super().dict(), 'args': _hidden(self.tool, self.args), 'control': self.control, 'edited': self.edited,
+            'original_tool': self.original_tool, 'original_args': _hidden(self.original_tool, self.original_args),
             'action_id': self.id, 'revision': self.revision, 'branch_id': self.branch_id,
             'parent_action_id': self.parent_action_id,
             'rollback': self.before is not None and self.after is not None and self.before != self.after}
@@ -219,8 +217,8 @@ class Interventions(Approvals):
         control_checkpoint = not bypassed and (self.control == 'directed' or
             (self.control == 'guided' and (name in GUIDED_TOOLS or path_write(name, args))))
         checkpoint = force or loop or (required and not bypassed) or control_checkpoint
-        a = Intervention(tool=name, args=args, summary=_summary(name, args),
-            preview=preview_for(name, _hide(name, args), self.host), control=self.control,
+        a = Intervention(tool=name, args=args, summary=_summary(name, shown := _hidden(name, args)),
+            preview=preview_for(name, shown, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
         if path_write(name, args): a.preview = f"saves {', '.join(write_targets(name, args))}\n\n{args.get('prompt', '')}"   # ramabana 0.2.3's preview names only the first
         if loop: a.preview = f'the same call {_times(self._streak)} running -- allow it?\n\n{a.preview}'.strip()
@@ -256,7 +254,8 @@ class Interventions(Approvals):
         if ok:
             if tool: a.tool = str(tool)
             if args is not None: a.args = _restore(a.tool, dict(args), a.original_tool, a.original_args)
-            a.summary, a.preview = _summary(a.tool, a.args), preview_for(a.tool, _hide(a.tool, a.args), self.host)
+            shown = _hidden(a.tool, a.args)
+            a.summary, a.preview = _summary(a.tool, shown), preview_for(a.tool, shown, self.host)
         return super().answer(id, ok, note, session=session)
     def gate(self, tool_call):
         "Pause according to the control level, then apply an approved rewrite to the live call."
@@ -586,7 +585,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         c = first(c for c in nb.cells if c.id == cell_id)
         if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
         tab = tab or Tab(path=str(p), kind='notebook')
-        try: v = asyncio.run_coroutine_threadsafe(check_cell(nb, c, lock, lambda: self.ws.runtime(tab)), loop).result(max(1, int(timeout)))
+        try: v = asyncio.run_coroutine_threadsafe(check_cell(nb, c, lock, lambda: self.ws.runtime(tab), getattr(self.ws, 'jobs', None)), loop).result(max(1, int(timeout)))
         except Refused as e: return str(e)
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         tab.dirty = True
@@ -950,16 +949,15 @@ def _session_tools(host):
     def add_exercise(path: str, task: str, fname: str, stub: str, tests: list | str, solution: str,
                      after_cell_id: str = '', uses: list | None = None, packages: list | None = None) -> str:
         "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored. With `packages`, the code runs with those packages, no network and no API key."
-        from ..learn.tools import make_tool_env, tool_key, tool_names, tool_python
+        from ..learn.tools import make_tool_env, tool_names
         from ..nb.exercise import check_solution, exercise_cells, validate_exercise_spec
         from ..nb.nb import Notebook
         try:
             if isinstance(tests, str): tests = json.loads(tests)
             spec = validate_exercise_spec(dict(task=task, fname=fname, stub=stub, tests=tests, uses=[] if uses is None else uses))
             if packages is not None:
-                names = tool_names(packages)
-                if not tool_python(key := tool_key(names)) and not (made := make_tool_env(names)).ok: return f'add_exercise failed: {made.error}'
-                spec = validate_exercise_spec(spec | dict(env=key))
+                if not (made := make_tool_env(names := tool_names(packages))).ok: return f'add_exercise failed: {made.error}'
+                spec = validate_exercise_spec(spec | dict(env=made.key, requires=names))
             checked = check_solution(spec, solution)
             ref, draft, n = checked['solution'], checked['stub'], len(spec['tests'])
             if ref.get('timeout'): return 'the solution check times out (timeout)'
@@ -1131,7 +1129,7 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
         md = answer_md(a)
         if getattr(a, 'edited', False):
             md += (f'\n\nEdited `{a.original_tool}` into `{a.tool}` before execution.'
-                f'\n\n```json\n{json.dumps(_hide(a.tool, a.args), indent=2, default=str)}\n```')
+                f'\n\n```json\n{json.dumps(_hidden(a.tool, a.args), indent=2, default=str)}\n```')
         _add(md, {'kind': 'approval', 'id': a.id, 'tool': a.tool,
             'state': 'approved' if a.answer else 'refused',
             'edited': bool(getattr(a, 'edited', False))})

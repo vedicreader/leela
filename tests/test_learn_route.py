@@ -12,7 +12,8 @@ from leela.workspace import Workspace
 from learn_data import JID, rig, walk  # noqa: F401
 
 def headers_ok(r):
-    assert "frame-ancestors 'self'" in r.headers['content-security-policy'] and r.headers['referrer-policy'] == 'no-referrer'
+    csp = r.headers['content-security-policy']
+    assert "frame-ancestors 'self'" in csp and "img-src 'self' data:" in csp and r.headers['referrer-policy'] == 'no-referrer'
 
 def one_line(r, code, text, exact=True):
     "`r` is a styled `learn` page of the muted line `text` with the status `code` and both headers."
@@ -237,19 +238,45 @@ def test_lookup_uses_the_project_for_a_tool_that_is_not_ready(rig, monkeypatch):
     asked = handle(ws, monkeypatch, k)
     assert c.get('/learn/lookup?q=x&tool=0123456789abcdef').status_code == 200 and asked == [None] and k.calls
 
-def test_scratch_appends_and_never_changes_the_graded_cell(rig):
+def test_scratch_writes_the_notebook_as_an_agent_edit_does_and_tells_the_open_tab(rig, monkeypatch):
     c, ws, lr, j, root = rig
     p, nb = lesson_tab(c, ws, root)
+    told = []
+    monkeypatch.setattr(ws.fs_watch, 'changed', told.append, raising=False)
     graded = next(x for x in nb.cells if 'tests' in x.extra.get('exercise', {}))
     before, extra, ids = graded.source, repr(graded.extra), [x.id for x in nb.cells]
     r = c.post('/learn/scratch', json=dict(path=str(p), snippet='from pydantic_ai import Agent'))
     assert r.status_code == 200, r.text
-    got = r.json()
-    assert got['ok'] and got['index'] == len(ids) and got['version'] == nb.version
+    got, disk = r.json(), Notebook.load(p)
+    assert got['ok'] and got['index'] == len(ids) and isinstance(got['version'], int)
     assert [x['id'] for x in got['cells']][:-1] == ids and got['cells'][-1]['source'] == 'from pydantic_ai import Agent'
-    assert nb.cells[-1].extra == {'lesson': {'role': 'scratch'}} and nb.cells[-1].cell_type == 'code'
-    assert graded.source == before and repr(graded.extra) == extra
-    assert ws.docstore.tab_for(str(p)).dirty
+    assert disk.cells[-1].source == 'from pydantic_ai import Agent' and disk.cells[-1].extra == {'lesson': {'role': 'scratch'}} and disk.cells[-1].cell_type == 'code'
+    kept = next(x for x in disk.cells if x.id == graded.id)
+    assert kept.source == before and repr(kept.extra) == extra
+    assert told == [[str(p)]], 'the open tab hears of the write as it does of an agent edit'
+
+@pytest.mark.parametrize('route', ['/learn/scratch', '/lesson/predict'])
+@pytest.mark.parametrize('body', [b'', b'[1]', b'null'])
+@pytest.mark.parametrize('ctype', ['application/json', 'text/plain'])
+def test_a_body_that_is_not_a_json_object_is_400(rig, route, body, ctype):
+    c = TestClient(rig[0].app, base_url='http://127.0.0.1:5011', raise_server_exceptions=False)
+    r = c.post(route, content=body, headers={'content-type': ctype})
+    assert r.status_code == 400 and r.json() == dict(ok=False, error='The request body is not a JSON object.'), r.text
+
+PANE_ONLY = 'The side pane shows only Learn pages.'
+
+@pytest.mark.parametrize('path', ['/', '/tab/state', '/lesson/due'])
+def test_a_pane_request_outside_learn_gets_the_one_line_refusal(rig, path):
+    one_line(rig[0].get(path + '?pane=1'), 403, PANE_ONLY)
+    assert rig[0].get(path).status_code != 403
+
+def test_a_pane_request_inside_learn_still_passes(rig):
+    c = rig[0]
+    assert c.get(f'/learn?walk={JID}&pane=1').status_code == 200 and c.get('/learn/lookup?pane=1').status_code == 200
+
+def test_learn_pages_load_images_from_leela_only(rig):
+    for u in (f'/learn?walk={JID}&step=0', '/learn?walk=gone-0000', '/learn/lookup?pane=1'):
+        assert "img-src 'self' data:" in rig[0].get(u).headers['content-security-policy'], u
 
 @pytest.mark.parametrize('body', [dict(path='nope.ipynb', snippet='x'), dict(snippet='x'), dict(path='', snippet='x'), dict(path='P', snippet=5), dict(path='P')])
 def test_scratch_refuses_a_path_that_is_not_an_open_notebook(rig, body):

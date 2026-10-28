@@ -12,7 +12,7 @@ from ... import errstr
 from pathlib import Path
 
 from ...core.text import did_you_mean
-from ...core.web import asset_dir, fail, off_loop, sse
+from ...core.web import NOT_OBJECT, asset_dir, fail, json_obj, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
@@ -259,7 +259,7 @@ def connect(app, ctx):
         if not exercise_meta(c): return fail(JUDGE['not_exercise'], 400)
         if not take_seq(store.seqs_for(owner_tab), c.id, d.get('seq')): return fail(JUDGE['stale'], 409)
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
-        try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab))
+        try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab), ws.jobs)
         except Refused as e: return fail(str(e), 409)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
@@ -557,7 +557,7 @@ def connect(app, ctx):
                 return dict(saved, saved=key, message=message)
     @rt('/lesson/predict', methods=['POST'])
     async def lesson_predict(req):
-        d = await req.json()
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
         async with lesson_lock:
             tab, nb, _ = run_owner(d)
             if nb is None: return fail('Return to the lesson notebook, then try.')

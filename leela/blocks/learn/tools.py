@@ -7,7 +7,8 @@ from abhyasa import check
 from ... import errstr
 from .learn import PKG, _NAME
 
-__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'install_cmds', 'make_tool_env', 'index_env', 'tool_job', 'active_job', 'LIBRARY_TOTAL', 'library_check']
+__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_indexed', 'install_cmds', 'make_tool_env', 'index_env', 'tool_job',
+           'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
 TOO_LONG = 'The install took too long. Try again.'
@@ -42,6 +43,19 @@ def tool_python(key):
     p = _python(d)
     return p if (d/'ready').is_file() and p.is_file() and os.access(p, os.X_OK) else None
 
+def tool_indexed(key):
+    "True when kosha last indexed the packages of the tool environment `key` without an error."
+    try: return (tool_dir(key)/'indexed').is_file()
+    except ValueError: return False
+
+def _index(key):
+    "Index the tool environment `key` through `index_env`; the error text, or '' after a full index."
+    (d := tool_dir(key)/'indexed').unlink(missing_ok=True)
+    try: index_env(key)
+    except Exception as e: return errstr(e)
+    d.touch()
+    return ''
+
 def install_cmds(names, d, uv:str, py=sys.version_info) -> list[list[str]]:
     "The `uv venv` and `uv pip install` argv lists that make the environment for `names` in `d`, wheels only."
     return [[uv, 'venv', str(d/'.venv'), '--python', f'{py[0]}.{py[1]}'],
@@ -57,17 +71,19 @@ def _uv_error(names, r):
 
 def make_tool_env(names, run=subprocess.run, uv=None,
                   budget=600):  # seconds for both commands together
-    "Make the tool environment for `names` once: `AttrDict(key, ok, python, error)`. `ready` is written only after both commands succeed and the Python exists."
+    "Make the tool environment for `names` once, then index it: `AttrDict(key, ok, python, error)`, plus `index_error` when the index fails. `ready` is written after the index; a failed index runs again on the next call."
     from ...workspace import _session_lock
     names = tool_names(names)
     key = tool_key(names)
     d = tool_dir(key)
-    def res(ok, error=''): p = tool_python(key); return AttrDict(key=key, ok=ok, python=str(p) if p else None, error=error)
-    if tool_python(key): return res(True)
-    if not (uv := uv or shutil.which('uv')): return res(False, NO_UV)
+    def res(ok, error='', index_error=''):
+        p = tool_python(key)
+        return AttrDict(key=key, ok=ok, python=str(p) if p else None, error=error, **({'index_error': index_error} if index_error else {}))
+    if tool_python(key) and tool_indexed(key): return res(True)
     with _session_lock(d, timeout=budget) as held:
         if not held: return res(False, BUSY)
-        if tool_python(key): return res(True)
+        if tool_python(key): return res(True, index_error='' if tool_indexed(key) else _index(key))
+        if not (uv := uv or shutil.which('uv')): return res(False, NO_UV)
         shutil.rmtree(d, ignore_errors=True)
         d.mkdir(parents=True)
         end = monotonic() + budget
@@ -79,8 +95,9 @@ def make_tool_env(names, run=subprocess.run, uv=None,
             if r.returncode: return res(False, _uv_error(names, r))
         p = _python(d)
         if not (p.is_file() and os.access(p, os.X_OK)): return res(False, NO_PY)
+        why = _index(key)
         with atomic_save(d/'ready', mode='w') as f: f.write('\n'.join(names) + '\n')
-        return res(True)
+        return res(True, index_error=why)
 
 def library_check(spec, source, key:str) -> dict:
     "The `run_isolated` report for `source` against `spec`'s tests, closed, in the Python of the tool environment `key`. `ValueError` when it is not ready."
@@ -95,17 +112,19 @@ def index_env(key):
     Kosha(dir=tool_dir(key)).sync(repo=False, graph=False, pyproject=False, verbose=False, in_parallel=False)
 
 def tool_job(job, report):
-    "The `tool_env` job: make the environment, then index it. `JobError` for a failed install; an index failure is `index_error` in the result."
+    "The `tool_env` job: `make_tool_env`, which installs and indexes. `JobError` for a failed install; an index failure is `index_error` in the result."
     from ..vault.jobs import JobError
     names = job.params['names']
-    report(current='installing ' + ' '.join(names), progress=0.1)
+    report(current='installing and indexing ' + ' '.join(names), progress=0.1)
     r = make_tool_env(names)
     if not r.ok: raise JobError(r.error)
-    report(current='indexing the packages', progress=0.8)
-    try: index_env(r.key)
-    except Exception as e: r.index_error = errstr(e)
     return dict(r)
 
 def active_job(jobs, key):
     "The queued or running `tool_env` job for `key` whose process is alive, or None."
     return first(j for j in jobs.all(limit=100, kind='tool_env') if j.active and j.target == key and jobs.alive(j))
+
+def start_tool_job(jobs, names):
+    "The `tool_env` job that makes the environment for `names`: the active one for its key, else a new one."
+    names = tool_names(names)
+    return active_job(jobs, key := tool_key(names)) or jobs.start('tool_env', key, names=names)

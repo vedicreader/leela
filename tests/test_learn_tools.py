@@ -14,6 +14,13 @@ from learn_data import rig  # noqa: F401
 @pytest.fixture(autouse=True)
 def data_home(tmp_path, monkeypatch): monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
 
+@pytest.fixture(autouse=True)
+def indexed(monkeypatch):
+    "The keys `index_env` was asked to index; no test here runs a real kosha sync."
+    seen = []
+    monkeypatch.setattr(tools, 'index_env', seen.append)
+    return seen
+
 @pytest.mark.parametrize('bad', [[], list('abcdef'), ['-e .'], ['--index-url=https://x'], ['https://x/p.whl'],
                                  ['../p'], ['/tmp/p'], ['p; rm -rf ~'], ['p @ file:///x'], ['git+https://x'], 'httpx', None, [5]])
 def test_tool_names_refuse_options_urls_and_paths(bad):
@@ -44,10 +51,10 @@ def fake(code_for, python=True, on=None):
     run.calls = calls
     return run
 
-def test_ready_only_after_a_full_install():
+def test_ready_only_after_a_full_install(indexed):
     run = fake(lambda c: 0)
     r = make_tool_env(['httpx'], run=run, uv='/u/uv')
-    assert r.ok and tool_python(r.key) is not None and (tool_dir(r.key)/'ready').exists()
+    assert r.ok and tool_python(r.key) is not None and (tool_dir(r.key)/'ready').exists() and indexed == [r.key]
     assert all(isinstance(a, str) for c, _ in run.calls for a in c)                           # argv lists, no shell
     assert all(kw['stdin'] is subprocess.DEVNULL and kw['capture_output'] for _, kw in run.calls)
     run = fake(lambda c: 1 if c[1] == 'pip' else 0)
@@ -122,20 +129,40 @@ def test_a_second_install_waits_and_finds_it_ready():
     t.join(5)
     assert out and out[0].ok and run.calls == []
 
-def test_the_job_indexes_and_keeps_an_index_failure(monkeypatch):
-    seen = []
+def test_the_job_indexes_and_keeps_an_index_failure(monkeypatch, indexed):
     monkeypatch.setattr(tools, 'make_tool_env', lambda names: make_tool_env(names, run=fake(lambda c: 0), uv='/u/uv'))
-    monkeypatch.setattr(tools, 'index_env', lambda key: seen.append(key))
     job, report = SimpleNamespace(params=dict(names=['httpx'])), lambda **kw: None
     r = tool_job(job, report)
-    assert r['ok'] and seen == [r['key']] and 'index_error' not in r
+    assert r['ok'] and indexed == [r['key']] and 'index_error' not in r
     def boom(key): raise RuntimeError('database is locked')
     monkeypatch.setattr(tools, 'index_env', boom)
-    r = tool_job(job, report)
+    r = tool_job(SimpleNamespace(params=dict(names=['six'])), report)
     assert r['ok'] and 'database is locked' in r['index_error'] and tool_python(r['key']) is not None
     monkeypatch.setattr(tools, 'make_tool_env', lambda names: make_tool_env(names, run=fake(lambda c: 1), uv='/u/uv'))
     from leela.blocks.vault.jobs import JobError
     with pytest.raises(JobError, match='has no wheel'): tool_job(SimpleNamespace(params=dict(names=['sdist-only'])), report)
+
+def test_make_tool_env_indexes_before_ready_and_retries_a_failed_index(monkeypatch):
+    seen, fails = [], ['database is locked']
+    def index(key):
+        seen.append((key, (tool_dir(key)/'ready').exists()))
+        if fails: raise RuntimeError(fails.pop())
+    monkeypatch.setattr(tools, 'index_env', index)
+    r = make_tool_env(['httpx'], run=fake(lambda c: 0), uv='/u/uv')
+    assert r.ok and tool_python(r.key) is not None and 'database is locked' in r.index_error, r
+    assert seen == [(r.key, False)] and not tools.tool_indexed(r.key), 'the index runs before ready, and a failed one leaves the mark off'
+    again = make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv')
+    assert again.ok and 'index_error' not in again and seen == [(r.key, False), (r.key, True)] and tools.tool_indexed(r.key), 'the next call indexes again, with no install'
+    assert make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv').ok and len(seen) == 2, 'an indexed environment is done'
+
+def test_post_starts_a_job_for_a_ready_environment_that_needs_its_index(rig, monkeypatch):
+    c, ws = rig[:2]
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    key = ready_env(['httpx'])
+    a = c.post('/learn/tool', json=dict(names=['httpx'])).json()
+    assert a['ok'] and a['job']['target'] == key, a
+    assert wait(ws, a['job']['id']).status == 'complete' and tools.tool_indexed(key)
+    assert c.post('/learn/tool', json=dict(names=['httpx'])).json() == dict(ok=True, key=key, ready=True)
 
 def test_the_workspace_registers_the_job_kind(rig):
     assert 'tool_env' in rig[1].jobs._handlers
@@ -293,11 +320,11 @@ def lesson(tmp_path, monkeypatch):
         with TestClient(ide_app(ws)) as client:
             client.get('/tab/state')
             _, live, _ = ws.docstore.owner(str(p))
-            yield client, p, live, code, key, {f.__name__: f for f in _session_tools(ws.inline_ai.host)}
+            yield client, p, live, code, key, {f.__name__: f for f in _session_tools(ws.inline_ai.host)}, ws
     finally: ws.shutdown_now()
 
 def test_a_deleted_environment_gives_the_recovery_message_on_the_route_and_the_agent_tool(lesson, abhyasa_cfg):
-    client, p, live, code, key, agent = lesson
+    client, p, live, code, key, agent, _ = lesson
     body = dict(path=str(p), i=1, id=code.id, source=GOOD)
     got = client.post('/exercise/check', json=body).json()
     assert got['passed'] == 2 and live[1].execution_count is None and live[1].extra['exercise']['state']['passed']
@@ -308,6 +335,51 @@ def test_a_deleted_environment_gives_the_recovery_message_on_the_route_and_the_a
     assert agent['check_exercise'](str(p), code.id) == JUDGE['no_env']
     assert live[1].extra['exercise']['state']['passed'] is False and live[1].execution_count is None
     assert 'check_exercise first' in agent['grade_exercise'](str(p), code.id, 8, 'Fine.')
+
+def test_a_deleted_environment_with_requires_is_made_again_from_the_route_and_the_agent_tool(lesson, monkeypatch, abhyasa_cfg):
+    client, p, live, code, key, agent, ws = lesson
+    made, go = [], threading.Event()
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and made.append(names) or AttrDict(key=key, ok=False, error='stopped'))
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    live[1].extra['exercise']['requires'] = ['six']
+    shutil.rmtree(tool_dir(key))
+    r = client.post('/exercise/check', json=dict(path=str(p), i=1, id=code.id, source=GOOD))
+    assert r.status_code == 409 and r.json() == dict(ok=False, error=JUDGE['rebuilding'])
+    assert agent['check_exercise'](str(p), code.id) == JUDGE['rebuilding']
+    [job] = ws.jobs.all(kind='tool_env')
+    assert job.target == key and job.params == dict(names=['six']), 'the route and the agent tool start one job'
+    go.set()
+    assert wait(ws, job.id).status != 'complete' and made == [['six']]
+
+def test_requires_round_trips_through_the_spec_and_the_cell():
+    key = tool_key(['six'])
+    spec = validate_exercise_spec(SPEC | dict(env=key, requires=['six', 'six']))
+    assert spec['requires'] == ['six'] and validate_exercise_spec(spec) == spec and 'requires' not in validate_exercise_spec(SPEC | dict(env=key))
+    assert exercise_cells(spec)[1].extra['exercise']['requires'] == ['six']
+    for bad in (['--index-url=https://x'], 'six', [], [5]):
+        with pytest.raises(ValueError, match='requires'): validate_exercise_spec(SPEC | dict(env=key, requires=bad))
+
+class Jobs:
+    "Enough of `Jobs` for `start_tool_job`: no job runs, each start is kept."
+    def __init__(self): self.started = []
+    def all(self, limit=100, kind=None): return []
+    def start(self, kind, target, **params): self.started.append((kind, target, params)); return SimpleNamespace(id=len(self.started))
+
+def test_a_deleted_environment_with_requires_is_made_again_as_a_job(monkeypatch, abhyasa_cfg):
+    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    key = ready_env()
+    task, code = exercise_cells(SPEC | dict(env=key, requires=['six']))
+    nb, jobs = Notebook([task, code]), Jobs()
+    shutil.rmtree(tool_dir(key))
+    with pytest.raises(Refused) as e: asyncio.run(check_cell(nb, code, asyncio.Lock(), no_kernel, jobs))
+    assert str(e.value) == JUDGE['rebuilding'] == 'Leela is making the tool environment for this lesson again.'
+    assert jobs.started == [('tool_env', key, dict(names=['six']))]
+    with pytest.raises(Refused) as e: asyncio.run(check_cell(nb, code, asyncio.Lock(), no_kernel))
+    assert str(e.value) == JUDGE['no_env'], 'with no jobs to start one, the old message stays'
+    old_task, old = exercise_cells(SPEC | dict(env=key))
+    with pytest.raises(Refused) as e: asyncio.run(check_cell(Notebook([old_task, old]), old, asyncio.Lock(), no_kernel, jobs))
+    assert str(e.value) == JUDGE['no_env'] and len(jobs.started) == 1, 'an old spec with no requires keeps the old message'
 
 @pytest.fixture
 def add(tmp_path):
@@ -321,14 +393,31 @@ def add(tmp_path):
 def test_add_exercise_with_packages_finds_or_makes_the_environment_then_checks_in_it(add, monkeypatch, abhyasa_cfg):
     f, path = add
     made, seen, real = [], [], exercise.library_check
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: made.append(names) or AttrDict(key=ready_env(names), ok=True, error=''))
+    def make(names):
+        made.append(names)
+        return AttrDict(key=k if tool_python(k := tool_key(names)) else ready_env(names), ok=True, error='')
+    monkeypatch.setattr(tools, 'make_tool_env', make)
     monkeypatch.setattr(exercise, 'library_check', lambda *a: seen.append(a[2]) or real(*a))
     assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise')
     key = tool_key(['six'])
     assert made == [['six']] and seen == [key, key]
-    assert Notebook.load(path).cells[-1].extra['exercise']['env'] == key and 'SECRET_REFERENCE' not in path.read_text()
-    assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise') and made == [['six']]
+    meta = Notebook.load(path).cells[-1].extra['exercise']
+    assert meta['env'] == key and meta['requires'] == ['six'] and 'SECRET_REFERENCE' not in path.read_text()
+    assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise') and made == [['six'], ['six']]
     assert f(str(path), **SPEC, solution='def double(x): return 4', packages=['six']) == 'the solution fails: A negative number'
+
+def this_python(cmd, **kw):
+    "A `uv` whose venv's Python is this one, so the checks after an install run."
+    if cmd[1] == 'venv': (p := Path(cmd[2])/'bin'/'python').parent.mkdir(parents=True); p.symlink_to(sys.executable)
+    return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+def test_add_exercise_ends_with_an_indexed_environment(add, monkeypatch, indexed, abhyasa_cfg):
+    f, path = add
+    real = make_tool_env
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: real(names, run=this_python, uv='/u/uv'))
+    assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise')
+    key = tool_key(['six'])
+    assert indexed == [key] and tools.tool_indexed(key)
 
 def test_add_exercise_with_packages_refuses_a_failed_install_or_a_bad_name(add, monkeypatch):
     f, path = add

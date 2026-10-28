@@ -2,7 +2,8 @@ import asyncio, json
 from abhyasa import check
 from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
 from ...core.web import off_loop
-from ..learn.tools import library_check, tool_dir
+from ..learn import tools
+from ..learn.tools import library_check, tool_dir, tool_names
 from .nb import Cell, fresh_exercise_state, run_watched, src_hash
 
 def validate_exercise_spec(spec):
@@ -22,12 +23,16 @@ def validate_exercise_spec(spec):
     if (env := spec.get('env')) is not None:
         try: tool_dir(env)
         except ValueError: raise ValueError('`env` must be the 16 character key of a tool environment') from None
-    return {k: clean[k] for k in ('task', 'fname', 'stub')} | dict(tests=rows, uses=list(uses)) | ({} if env is None else dict(env=env))
+    if (req := spec.get('requires')) is not None:
+        try: req = tool_names(req)
+        except ValueError as e: raise ValueError(f'`requires` must list 1 to 5 package names ({e})') from None
+    return ({k: clean[k] for k in ('task', 'fname', 'stub')} | dict(tests=rows, uses=list(uses)) | ({} if env is None else dict(env=env))
+            | ({} if req is None else dict(requires=req)))
 
 def exercise_cells(spec):
     spec = validate_exercise_spec(spec)
     code = Cell(source=spec['stub'], extra={'exercise': dict(v=1, fname=spec['fname'], uses=spec['uses'], tests=spec['tests'],
-        state=fresh_exercise_state(), **{k: spec[k] for k in ('env',) if k in spec})})
+        state=fresh_exercise_state(), **{k: spec[k] for k in ('env', 'requires') if k in spec})})
     lines = [t['test'] if t['shown'] else t['say'] for t in spec['tests']]
     task = Cell(source=spec['task'] + '\n\n' + '\n\n'.join(lines), cell_type='markdown',
         extra={'exercise': {'role': 'task', 'for': code.id}})
@@ -117,6 +122,7 @@ JUDGE = {
     'not_exercise': 'That cell is not an exercise.', 'stale': 'This page is out of date with the notebook. Reload it.',
     'busy': 'Another run is in progress. Try again when it finishes.',
     'no_env': 'This lesson needs its tool environment. Make it again from the lesson.',
+    'rebuilding': 'Leela is making the tool environment for this lesson again.',
     'unchecked': 'Call check_exercise first: this code has not been checked since it last changed.'}
 
 class Refused(ValueError): pass
@@ -140,8 +146,18 @@ def _verdict(meta, c, res, raised):
     return dict(id=c.id, source=c.source, state=state, passed=passed, total=len(tests), checks=checks,
                 summary=JUDGE[state].format(fname=meta['fname'], passed=passed, total=len(tests)))
 
-async def check_cell(nb, c, lock, runtime):
-    "Check the learner's exercise cell: with `env`, its source in `library_check`; else the cell, then its checks, in the live kernel. `Refused` for no exercise, a held `lock` or a missing tool environment."
+def _rebuild(meta, nb, jobs):
+    "The refusal for a missing tool environment: with `requires` and `jobs`, a `tool_env` job makes it again and `meta` names its key."
+    try: names = tool_names(meta.get('requires'))
+    except ValueError: names = None
+    if not names or jobs is None: return Refused(JUDGE['no_env'])
+    if not tools.shutil.which('uv'): return Refused(tools.NO_UV)
+    if (key := tools.tool_key(names)) != meta['env']: meta['env'], nb.dirty = key, True
+    tools.start_tool_job(jobs, names)
+    return Refused(JUDGE['rebuilding'])
+
+async def check_cell(nb, c, lock, runtime, jobs=None):
+    "Check the learner's exercise cell: with `env`, its source in `library_check`; else the cell, then its checks, in the live kernel. `Refused` for no exercise, a held `lock` or a missing tool environment, which `jobs` makes again from `requires`."
     if not (meta := exercise_meta(c)): raise Refused(JUDGE['not_exercise'])
     if lock.locked(): raise Refused(JUDGE['busy'])
     async with lock:
@@ -151,7 +167,7 @@ async def check_cell(nb, c, lock, runtime):
             except ValueError:
                 meta.setdefault('state', fresh_exercise_state()).update(passed=False, last=None)
                 nb.dirty = True
-                raise Refused(JUDGE['no_env']) from None
+                raise _rebuild(meta, nb, jobs) from None
         else:
             k = await runtime()
             h = src_hash(c.source)

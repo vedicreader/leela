@@ -91,6 +91,24 @@ def test_predict_compares_as_the_runtime_does(serve):
     a = attempts(r)[0]
     assert bool(a.correct) and a.feedback == 'The answer is 4.'
 
+def test_predict_compares_a_list_answer_as_the_runtime_does(serve):
+    r = serve(lesson(fence(spec(gate=dict(GATE, options=[[1, 2], [2, 1]], answer={'is': [1, 2]})))))
+    assert post(r, picked='1,2').json()['logged']
+    a = attempts(r)[0]
+    assert bool(a.correct) and (a.answer, a.expected) == ('1,2', '1,2')
+
+JS_VALUES = json.dumps([4, 4.0, '4', 0.5, -0.0, 1e21, 1e-7, 1.5e-7, 123456789.125, 1e16, 2**53 + 1, 0.1 + 0.2, True, False, None, '',
+                        [1, 2], [1, [2, [3]]], [None, 'a', True], [], {'a': 1}, [{'a': 1}], 'x,y'])
+
+def test_js_is_the_runtimes_string():
+    "`_js` gives what `String(v)` gives in the rupaka runtime for every JSON value the page can send."
+    from leela.blocks.nb.lesson import _js
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    r = subprocess.run([node, '-e', 'console.log(JSON.stringify(JSON.parse(process.argv[1]).map(String)))', JS_VALUES], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert [_js(v) for v in json.loads(JS_VALUES)] == json.loads(r.stdout)
+
 def test_predict_forged_ok_is_ignored(rig):
     assert post(rig, picked=6, ok=True, ans=6).json()['logged']
     assert not attempts(rig)[0].correct

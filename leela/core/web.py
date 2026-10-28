@@ -15,7 +15,7 @@ from starlette.staticfiles import StaticFiles
 
 from .. import errstr
 
-__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'JsonBody', 'sse', 'off_loop', 'unless_gone',
+__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'NOT_OBJECT', 'JsonBody', 'json_obj', 'sse', 'off_loop', 'unless_gone',
            'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES']
 
 #: Client bundles in execution order. They share one lexical scope, so `lee-core.js` declares the vocabulary and the rest read it.
@@ -58,6 +58,14 @@ def fail(err, code=400, kind=None, **extra):
     if kind: body['kind'] = kind
     return JSONResponse(body | extra, status_code=code)
 
+NOT_OBJECT = 'The request body is not a JSON object.'
+
+async def json_obj(req):
+    "The JSON object in the body of `req`, or None for an empty, unreadable or non-object body."
+    try: d = json.loads(await req.body())
+    except ValueError: return None
+    return d if isinstance(d, dict) else None
+
 class JsonBody:
     "Answer `fail` 400 for a JSON body that is not an object, before FastHTML parses it into a 500."
     def __init__(self, app): self.app = app
@@ -67,7 +75,7 @@ class JsonBody:
         body = await Request(scope, receive).body()
         try: ok = not body or isinstance(json.loads(body), dict)
         except ValueError: ok = False
-        if not ok: return await fail('The request body is not a JSON object.')(scope, receive, send)
+        if not ok: return await fail(NOT_OBJECT)(scope, receive, send)
         sent = False
         async def replay():
             nonlocal sent

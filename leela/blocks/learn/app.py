@@ -3,13 +3,13 @@ from pathlib import Path
 from fastcore.basics import first
 from fasthtml.common import FtResponse, JSONResponse, P
 from ... import errstr
-from ...core.web import fail, off_loop
+from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
 from .ui import LookupPage, OpenedPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('memory', 'search', 'docs', 'jobs', 'fs')
+CAPS = ('memory', 'search', 'docs', 'jobs', 'fs', 'fs_watch')
 
 def due_cards(memory):
     from abhyasa.store import Learning
@@ -25,7 +25,8 @@ def due_cards(memory):
                 why=f'due for review: recall about {recall(c, now):.0%}', reason=first(understanding(c, now).reasons) or ''))
         return rows
 
-HEADERS = {'Content-Security-Policy': "frame-ancestors 'self'", 'Referrer-Policy': 'no-referrer'}
+HEADERS = {'Content-Security-Policy': "frame-ancestors 'self'; img-src 'self' data:", 'Referrer-Policy': 'no-referrer'}
+PANE_ONLY = 'The side pane shows only Learn pages.'
 
 def read_step(memory, q):
     from abhyasa.store import Learning
@@ -67,6 +68,11 @@ def notebook_tab(docs, path):
     return t if t is not None and t.kind == 'notebook' else None
 
 def connect(app, ctx):
+    def pane_only(req):
+        "The one-line refusal for a `pane=1` request outside `/learn`; None for every other request."
+        p = req.url.path
+        if req.query_params.get('pane') == '1' and p != '/learn' and not p.startswith('/learn/'): return said(req, ctx.session.project_root, PANE_ONLY, 403)
+    app.before.append(pane_only)
     @app.route('/lesson/due')
     async def lesson_due():
         try: return JSONResponse(await off_loop(due_cards, ctx.memory))
@@ -120,14 +126,18 @@ def connect(app, ctx):
                                      say=NO_INDEX if rows is None else None, tool=p.get('tool', '')), headers=HEADERS)
     @app.route('/learn/scratch', methods=['POST'])
     async def learn_scratch(req):
+        from ..nb.nb import Notebook
         from .learn import scratch_cell
-        d = await req.json()
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
         path, snippet = d.get('path'), d.get('snippet')
         if not (path and isinstance(path, str) and isinstance(snippet, str)): return fail('Give the path of an open notebook and the snippet.')
-        tab, nb, _ = ctx.docs.owner(path)
-        if nb is None: return fail('That notebook is not open.')
+        tab, live, _ = ctx.docs.owner(path)
+        if live is None or not tab.path: return fail('That notebook is not open.')
+        # as an agent's notebook edit: the file changes, and the open tab follows the disk
+        nb = Notebook.load(tab.path)
         scratch_cell(nb, snippet)
-        tab.dirty = True
+        nb.save(tab.path, sandbox=ctx.fs)
+        ctx.fs_watch.changed([tab.path])
         return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version, 'index': len(nb.cells) - 1}
     @app.route('/learn/tool', methods=['POST'])
     async def learn_tool_make(req):
@@ -137,11 +147,10 @@ def connect(app, ctx):
         try: names = tools.tool_names(d.get('names') if isinstance(d, dict) else None)
         except ValueError as e: return fail(str(e))
         key = tools.tool_key(names)
-        if tools.tool_python(key): return {'ok': True, 'key': key, 'ready': True}
-        if not tools.shutil.which('uv'): return fail(tools.NO_UV, 503)
+        if tools.tool_python(key) and tools.tool_indexed(key): return {'ok': True, 'key': key, 'ready': True}
+        if not tools.tool_python(key) and not tools.shutil.which('uv'): return fail(tools.NO_UV, 503)
         # no await between the check and the start, so one event loop starts one job for a key
-        job = tools.active_job(ctx.jobs, key) or ctx.jobs.start('tool_env', key, names=names)
-        return {'ok': True, 'key': key, 'job': job.dict()}
+        return {'ok': True, 'key': key, 'job': tools.start_tool_job(ctx.jobs, names).dict()}
     @app.route('/learn/tool', methods=['GET'])
     async def learn_tool(req):
         from .tools import tool_dir, tool_python

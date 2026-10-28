@@ -1,4 +1,4 @@
-import json, threading, time
+import json, time
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -138,29 +138,44 @@ ASK = dict(path='ordinary.ipynb', task='Double a number.', fname='double', stub=
 EDITS = dict(unchanged=lambda a: a, edited=lambda a: {**a, 'task': 'Double it.'}, blanked=lambda a: {**a, 'solution': ''},
              dropped=lambda a: {k: v for k, v in a.items() if k != 'solution'})
 
-def approve(edit, ask=ASK):
-    nb = Notebook([Cell(source='set an exercise', cell_type='prompt')])
-    ap = notebook_approvals(lambda: (nb, 0), timeout=5); stop = ap.listen(); shown = {}
-    def answer():
-        for _ in range(300):
-            if (a := ap.pending) is not None:
-                shown.update(a.dict())
-                return ap.answer(a.id, True, args=edit(a.dict()['args']))
-            time.sleep(.01)
-    threading.Thread(target=answer, daemon=True).start()
-    tc = {'function': {'name': 'add_exercise', 'arguments': dict(ask)}}
+@pytest.fixture
+def marked(tmp_path):
+    "A workspace whose agent has recorded its tools, so ramabana's `SECRET_ARGS` holds each tool's `secret_args`."
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path], approvals='ask')
+    try: yield ws.ai, ws.ai.tools
+    finally: ws.shutdown_now()
+
+def approve(edit, ask=ASK, tool='add_exercise', tools=WRITE_TOOLS):
+    "Raise `tool` with `ask` through Leela's notebook approvals and answer it with `edit` as the ask is raised."
+    nb, shown = Notebook([Cell(source='set an exercise', cell_type='prompt')]), {}
+    ap = notebook_approvals(lambda: (nb, 0), tools=tools, timeout=5)
+    stop = ap.listen(on_ask=lambda a: shown.update(a.dict()) or ap.answer(a.id, True, args=edit(a.dict()['args'])))
+    tc = {'function': {'name': tool, 'arguments': dict(ask)}}
     try: decision = ap.gate(tc)
     finally: stop()
     return tc['function']['arguments'], nb, shown, decision
 
-def test_approval_card_hides_the_reference_solution():
+def test_approval_card_hides_the_reference_solution(marked):
     args, nb, shown, decision = approve(EDITS['edited'])
     card = '\n'.join([json.dumps(shown), json.dumps(decision.dict()), *(c.source for c in nb.cells)])
-    assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in card and '(reference solution hidden)' in card
+    assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in card and '[SECRET]' in card
     assert 'Double it.' in nb.cells[-1].source, 'the edit is still shown'
 
+def test_a_new_tool_marked_secret_is_hidden_on_leelas_card(marked):
+    "A tool's `secret_args`, recorded by ramabana, hide on Leela's card with no Leela list naming the tool."
+    def peek(x: str, y: str = '') -> str:
+        "Return `x`."
+        return x
+    peek.secret_args = ('x',)
+    marked[0]._record(peek)
+    args, nb, shown, decision = approve(lambda a: {**a, 'y': 'shown'}, dict(x='PEEK_SECRET_51b2', y='plain'), 'peek', {'peek'})
+    card = '\n'.join([json.dumps(shown), json.dumps(decision.dict()), *(c.source for c in nb.cells)])
+    assert 'PEEK_SECRET_51b2' not in card and '[SECRET]' in card and 'shown' in card
+    assert args == dict(x='PEEK_SECRET_51b2', y='shown'), 'the tool still runs with the real value'
+
 @pytest.mark.parametrize('edit', EDITS)
-def test_the_tool_still_receives_the_reference_solution(edit):
+def test_the_tool_still_receives_the_reference_solution(marked, edit):
     args, *_ = approve(EDITS[edit])
     assert args['solution'] == SOLUTION
     assert args['task'] == ('Double it.' if edit == 'edited' else ASK['task'])
@@ -176,12 +191,7 @@ def recorded(tmp_path, monkeypatch, abhyasa_cfg):
     ws = Workspace(roots=[tmp_path], approvals='ask')
     try:
         add, ap = next(t for t in ws.ai.tools if t.__name__ == 'add_exercise'), ws.ai.approvals
-        stop = ap.listen()
-        def answer():
-            for _ in range(300):
-                if (a := ap.pending) is not None: return ap.answer(a.id, True, args={**a.dict()['args'], 'task': 'Double it.'})
-                time.sleep(.01)
-        threading.Thread(target=answer, daemon=True).start()
+        stop = ap.listen(on_ask=lambda a: ap.answer(a.id, True, args={**a.dict()['args'], 'task': 'Double it.'}))
         ws.ai._prepare('set an exercise')
         tc = {'id': 'call-1', 'function': {'name': 'add_exercise', 'arguments': {**ASK, 'path': str(path)}}}
         try: assert ap.gate(tc)
@@ -206,8 +216,8 @@ def test_the_approval_row_and_the_saved_history_keep_no_solution(recorded):
     kept = dict(rows=json.dumps(rows), history=json.dumps(ws.ai.history, default=str), saved=Path(ws.ai.history_path).read_text())
     assert not (leaks := [k for k, t in kept.items() if 'SECRET_REFERENCE_SOLUTION_7f9c' in t]), leaks
 
-def test_an_exercise_with_packages_still_hides_the_reference_solution():
+def test_an_exercise_with_packages_still_hides_the_reference_solution(marked):
     args, nb, shown, decision = approve(EDITS['unchanged'], {**ASK, 'packages': ['six']})
     card = '\n'.join([json.dumps(shown), json.dumps(decision.dict()), *(c.source for c in nb.cells)])
-    assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in card and '(reference solution hidden)' in card and 'six' in card
+    assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in card and '[SECRET]' in card and 'six' in card
     assert args['solution'] == SOLUTION and args['packages'] == ['six']

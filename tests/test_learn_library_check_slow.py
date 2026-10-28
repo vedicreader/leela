@@ -1,8 +1,9 @@
-import os, shutil, time
+import os, pwd, shutil, time
+from pathlib import Path
 import pytest
-from leela.blocks.learn.tools import LIBRARY_TOTAL, library_check, make_tool_env
+from leela.blocks.learn.tools import LIBRARY_TOTAL, library_check, make_tool_env, tool_indexed
 
-pytestmark = pytest.mark.skipif(not (os.getenv('LEELA_NET_TESTS') == '1' and shutil.which('uv')), reason='needs uv and LEELA_NET_TESTS=1')
+pytestmark = [pytest.mark.slow, pytest.mark.skipif(not (os.getenv('LEELA_NET_TESTS') == '1' and shutil.which('uv')), reason='needs uv and LEELA_NET_TESTS=1')]
 SPEC = dict(fname='f', tests=['assert f() == 1'])
 
 @pytest.fixture(scope='module')
@@ -27,8 +28,17 @@ def test_the_asyncio_socket_pair_passes(key):
     assert statuses(library_check(SPEC, 'import six, asyncio\ndef f():\n    return asyncio.run(asyncio.sleep(0, result=1))', key)) == ['pass']
 
 def test_a_write_inside_the_work_folder_is_allowed(key):
+    real = Path(pwd.getpwuid(os.getuid()).pw_dir)/'leela-x'   # the account's home, whatever HOME says
+    assert not real.exists()
     src = 'import os\nopen("x.txt", "w").write("x")\nopen(os.path.expanduser("~/leela-x"), "w").write("x")\ndef f(): return 1'
     assert statuses(library_check(SPEC, src, key)) == ['pass']
+    assert not real.exists(), 'the check wrote into the real home'
+
+def test_the_made_environment_has_a_kosha_index_that_find_code_reads(key):
+    from leela.blocks.learn.app import find_code
+    assert tool_indexed(key)
+    rows = find_code(None, 'with_metaclass', ['six'], tool=key)
+    assert any(r['name'] == 'with_metaclass' and r['package'] == 'six' for r in rows or []), rows
 
 @pytest.mark.parametrize('bad', ['import socket\ns = socket.socket(socket.AF_UNIX)\ns.connect("/tmp/x")\ndef f(): return 1',
                                  'import socket\nsocket.create_connection(("1.1.1.1", 53))\ndef f(): return 1',
