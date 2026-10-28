@@ -921,7 +921,8 @@ git commit -m "Check the reference solution in abhyasa's closed runner, in place
 
 **Interfaces:**
 - `LIBRARY_TOTAL = 20.`
-- `library_check(spec, source, key:str) -> dict`: `python = tool_python(key)`; `ValueError('The tool environment is not ready.')` when None; returns `run_isolated('assert', spec['fname'], source, tests, total=LIBRARY_TOTAL, sandbox=True, python=str(python), unix=True)`.- The `unix` switch: the audit hook allows `socket.socket` for `AF_UNIX` only (asyncio's socket pair); `connect`, `bind`, `getaddrinfo` and `sendto` stay refused; on macOS the `sandbox-exec` profile adds `(allow network* (local unix))` only when the pair fails without it.
+- `library_check(spec, source, key:str) -> dict`: `python = tool_python(key)`; `ValueError('The tool environment is not ready.')` when None; returns `run_isolated('assert', spec['fname'], source, tests, total=LIBRARY_TOTAL, sandbox=True, python=str(python), unix=True)`.
+- The `unix` switch: the audit hook allows `socket.socket` for `AF_UNIX` only (asyncio's socket pair); `connect`, `bind`, `getaddrinfo` and `sendto` stay refused; on macOS the `sandbox-exec` profile adds `(allow network* (local unix))` only when the pair fails without it.
 - Exercise spec: `env: str` (a tool key) is optional; with it, the graded check is the closed `library_check`, and the learner's own runs stay in the live kernel.
 
 - [ ] **Step 1: Write the failing tests**

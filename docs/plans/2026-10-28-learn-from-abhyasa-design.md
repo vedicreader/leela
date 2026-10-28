@@ -33,7 +33,7 @@ This design also closes four gaps that the research for the brief found in Leela
 - Leela does not write to a journey, a walk state or a demo record of abhyasa.
 - Leela does not call abhyasa over the network. Both apps read the same store.
 - No `leela://` URL scheme. abhyasa links to the loopback URL in `serving.json` (abhyasa spec 6.12).
-- No new keyboard shortcut. The split editor already has buttons; a key for the pane needs the keymap audit that `AGENTS.md` asks for, and that is a separate change.
+- No new keyboard shortcut. The split editor already has buttons; a key for the pane needs the keymap audit that `AGENTS.md` asks for, and that is a separate change. The owner decided (28 Oct) that the pane key comes after that audit and uses the same ⌥Z and Esc as abhyasa.
 - No board, timeline, `image` block or `resolve` hook here. They wait for rupaka 0.0.2 and later (brief, section 4).
 - No "walk this notebook" (`journey_from_pages`). That is a later plan.
 - Learner runs in the live kernel do not change. Only the graded check moves to a closed process.
@@ -82,7 +82,7 @@ The button posts `walk`, `step` and `topic` back to `/learn/open`. The request i
 - With a project folder open, it writes `lessons/<walk>-<step>.ipynb` (or `lessons/<slug>.ipynb` for a topic) through `ctx.fs`, as `/lesson/new` does (`leela/blocks/tabs/app.py:82`). When that file exists and its meta names the same walk and step, it opens the file again and writes nothing.
 - The notebook is `lesson_notebook(name, step=…)`. Its first cell holds the passage and the note. Its meta holds `lesson.walk = {walk, step, section}`.
 - It calls `ws.open_external(path)` (`leela/workspace.py:548`). That focuses the tab and tells each page that shows the workspace.
-- With no folder open, it answers "Open a folder in Leela, then open this link again." and writes nothing.
+- With no folder open, it uses the fixed lessons folder `~/Learning/Leela lessons`, which it creates when missing, and adds that folder as a workspace root before it opens the file. It does not refuse.
 - The browser tab then shows one line: "Opened in Leela." When the request came from Leela's own window, it shows the notebook.
 
 ### 4.5 What Leela writes back
@@ -129,7 +129,7 @@ The contract is the docstring of `abhyasa-walk/abhyasa/core/pane.py`. Leela is a
 
 ### 6.2 Library code checks
 
-- A graded check on a library lesson runs `abhyasa.check.run_isolated(..., sandbox=True)` with the Python of the tool environment. This needs two engine options: `python=` (the interpreter in place of `sys.executable`) and a switch that lets the audit hook and the `sandbox-exec` profile allow a local `AF_UNIX` socket pair. Leela asks abhyasa for both. Until abhyasa ships them, Leela keeps its own runner, with a comment that gives the reason and names `leela-reuse.md` 6.4.
+- A graded check on a library lesson runs `abhyasa.check.run_isolated(..., sandbox=True)` with the Python of the tool environment. This needs two engine options: `python=` (the interpreter in place of `sys.executable`) and a switch that lets the audit hook and the `sandbox-exec` profile allow a local `AF_UNIX` socket pair. Both come from abhyasa 0.0.11, so Leela calls `abhyasa.check.run_isolated(python=, unix=)` and has no runner of its own.
 - asyncio needs a local socket pair to start (PydanticAI's `run_sync`). Allow `socket.socket` with `AF_UNIX` only. `connect`, `bind`, `getaddrinfo` and `sendto` stay refused.
 - A library check has a 20 s total. The 2 s limit for each test stays.
 - `-I -B` keeps the environment's own `site-packages` and drops the user site and the `PYTHON*` variables.
