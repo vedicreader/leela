@@ -10,11 +10,11 @@ const copy = () => { try { for (const k of ['theme', 'mode', 'density']) if (p.d
 if (p.style.colorScheme) d.style.colorScheme = p.style.colorScheme; } catch (_) {} };
 copy(); new MutationObserver(copy).observe(p, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density', 'style']}); } } catch (_) {}"""
 
-def Page(title, *body, pane:bool=False, js:bool=False, root=None):
-    "A `learn` page with the title `title` as its heading, in the theme saved for the project `root`. `pane` makes it a page in the side pane; `pane` or `js` loads `lee-pane.js`."
+def Page(title, *body, pane:bool=False, js:bool=False, root=None, here=None):
+    "A `learn` page with the title `title` as its heading, in the theme saved for the project `root`. `pane` makes it a page in the side pane; `pane` or `js` loads `lee-pane.js`; `here` is the URL the pane keeps for it."
     return Html(Head(Meta(charset='utf-8'), Title(title), Script(theme_boot(root) + '\n' + FOLLOW), Link(rel='stylesheet', href=asset('lee-ide.css')),
                      Script(src=asset('lee-pane.js')) if pane or js else None),
-                Body(Main(H1(title), *body, cls='lee-learn')), cls='lee-learn-page in-pane' if pane else 'lee-learn-page')
+                Body(Main(H1(title), *body, cls='lee-learn')), cls='lee-learn-page in-pane' if pane else 'lee-learn-page', data_rh_url=here)
 
 def StepPage(v, q, pane:bool=False, root=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane."
@@ -29,6 +29,7 @@ def StepPage(v, q, pane:bool=False, root=None):
         title, step = v.name, ''
         body = [P(v.concept.get('statement') or '') if v.concept else P('This idea is not in your learning store.', cls='lee-learn-line')]
     return Page(title, *body, Form(Hidden(name='walk', value=q.walk), Hidden(name='step', value=step), Hidden(name='topic', value=q.topic),
+                                   Hidden(name='pane', value='1') if pane else None,
                                    Button('Open as a lesson', type='submit', cls='lee-btn'), method='post', action='/learn/open'), pane=pane, root=root)
 
 def _Hit(r, path):

@@ -23,17 +23,37 @@ def lesson_charter(step=None) -> str:
     "The tutor prompt as saved in abhyasa now, then `CHARTER_TAIL`."
     return prompt('tutor') + CHARTER_TAIL
 
-def lesson_notebook(name, exercise=None) -> Notebook:
-    code = Cell(source='pass')
+def _passage(step):
+    quote = '\n'.join(f'> {x}'.rstrip() for x in (step.get('text') or '').splitlines())
+    return ''.join(f'\n\n{x}' for x in (quote, step.get('note') or '') if x)
+
+def lesson_notebook(name, exercise=None, step:dict|None=None) -> Notebook:
+    "A lesson notebook for `name`; with the walk `step` (`walk`, `step`, `section`, `text`, `note`), its first cell quotes the passage and the note, and its meta names the step."
+    code, meta = Cell(source='pass'), {'v': 1, 'name': name}
+    if step is not None: meta['walk'] = {k: step.get(k, '') for k in ('walk', 'step', 'section')}
     return Notebook([
-        Cell(source=f'# {name}\n\nA lesson notebook. Predict the output before running the code. Then write your reasoning in the card.', cell_type='markdown'),
+        Cell(source=f'# {name}\n\nA lesson notebook. Predict the output before running the code. Then write your reasoning in the card.' + (_passage(step) if step else ''),
+             cell_type='markdown'),
         Cell(source='No demo yet. Ask the tutor to add one.', cell_type='markdown'),
         Cell(cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': code.id}}),
         code,
         *(exercise_cells(exercise) if exercise is not None else []),
         Cell(source='### Question\n\n### Thinking\n\n<!-- Write the question under Question and your reasoning under Thinking. -->',
              cell_type='markdown', extra={'lesson': {'role': 'card', 'for': code.id}}),
-    ], meta={'lesson': {'v': 1, 'name': name}})
+    ], meta={'lesson': meta})
+
+def walk_meta(nb) -> dict:
+    "The attempt meta for a check in `nb`: its walk, step, `from`, `app` and a non-empty section; empty with no walk."
+    w = (nb.meta.get('lesson') or {}).get('walk')
+    if not isinstance(w, dict) or not w.get('walk') or not isinstance(w.get('step'), int): return {}
+    return dict(walk=w['walk'], step=w['step'], app='leela', **{'from': f"{w['walk']}/{w['step']}"}, **({'section': w['section']} if w.get('section') else {}))
+
+def save_lesson(fs, folder, pick, nb) -> Path:
+    "Write `nb` through the sandbox `fs` at `pick(folder)` in the checked lessons folder `folder`, unless that path is taken; `ValueError` for a symbolic-link folder."
+    if Path(folder).is_symlink(): raise ValueError('The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
+    (folder := fs._check(folder)).mkdir(parents=True, exist_ok=True)
+    if not ((p := pick(folder)).exists() or p.is_symlink()): nb.save(p, sandbox=fs)
+    return p
 
 def parse_card(text):
     text = re.sub(r'<!--[\s\S]*?-->', '', text)
@@ -103,7 +123,7 @@ def record_card(memory, nb, cell, path):
                 c = lr.update(slug, **u)
                 attempt = lr.record(concept=slug, question=card['question'] or next(iter(cell.source.splitlines()), ''),
                     answer=guess, thinking=card['thinking'], correct=correct, confidence=confidence, depth=1, kind='predict',
-                    feedback=lesson_feedback(cell), actual=actual, notebook=path, card_key=key)
+                    feedback=lesson_feedback(cell), actual=actual, notebook=path, card_key=key, **walk_meta(nb))
             return _saved(c)
 
 def _saved(c):
@@ -118,7 +138,7 @@ def exercise_filing(nb, cell, path):
     task = first(c for c in nb.cells if c.extra.get('exercise', {}).get('role') == 'task' and c.extra['exercise'].get('for') == cell.id)
     name = nb.meta.get('lesson', {}).get('name') or Path(path).stem
     return dict(name=name, question=task.source.split('\n\n')[0] if task else name, answer=cell.source, path=str(path),
-                key=f'{cell.id}:{src_hash(cell.source)}', **exercise_meta(cell)['state']['grade'])
+                key=f'{cell.id}:{src_hash(cell.source)}', walk=walk_meta(nb), **exercise_meta(cell)['state']['grade'])
 
 def record_exercise(memory, f):
     "File a graded full pass as one `code` attempt at depth 4 per source version; a new grade of the same source replaces the note."
@@ -139,7 +159,7 @@ def record_exercise(memory, f):
                 c = lr.update(slug, **u)
             if attempt is None:
                 lr.record(concept=slug, question=f['question'], answer=f['answer'], correct=True, depth=4, kind='code',
-                          grade=f['score'], feedback=f['note'], notebook=f['path'], card_key=f['key'])
+                          grade=f['score'], feedback=f['note'], notebook=f['path'], card_key=f['key'], **f.get('walk', {}))
             else: lr.mark_attempt(attempt.id, grade=f['score'], feedback=f['note'])
             return _saved(c)
 
@@ -177,7 +197,7 @@ def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=N
     elif type(ok) is not bool: raise ValueError('This check needs ok as true or false.')
     elif ans is not None and not isinstance(ans, (str, int, float)): raise ValueError('This check needs ans as one value: a string, a number, true, false or null.')
     return dict(name=nb.meta['lesson']['name'], spec=spec, gate=gate, picked=_js(picked), ans=_js(ans), ok=ok, why=str(why or ''),
-                notebook=str(path or ''), card_key=f'{cell.id}:{src_hash(cell.source)}:{spec["id"]}:{gate}')
+                notebook=str(path or ''), card_key=f'{cell.id}:{src_hash(cell.source)}:{spec["id"]}:{gate}', walk=walk_meta(nb))
 
 def record_prediction(memory, f):
     "File one rupaka prediction through abhyasa once per source version; None when its key is already filed."
@@ -193,7 +213,7 @@ def record_prediction(memory, f):
             if any(x.get('card_key') == f['card_key'] for x in lr.attempts(slug, limit=10000)): return None
             if lr.concept(slug) is None: lr.put(f['name'], slug=slug)
             d = lr.put_demo(f['spec'], slug, by='leela:lesson')
-            lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'])
+            lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'], **f.get('walk', {}))
             return _saved(lr.concept(slug))
 
 def fence(spec): return fenced(json.dumps(spec, ensure_ascii=False), 'rupaka')

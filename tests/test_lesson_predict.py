@@ -43,8 +43,8 @@ def serve(tmp_path, monkeypatch):
             return AttrDict(c=c, ws=ws, p=p, nb=ws.docstore.doc_for(ws.tab), opened=opened)
         yield go
 
-def lesson(*sources, exercise=None):
-    nb = lesson_notebook('Halves', exercise=exercise)
+def lesson(*sources, exercise=None, step=None):
+    nb = lesson_notebook('Halves', exercise=exercise, step=step)
     nb[1].source = '\n\n'.join(sources) if sources else fence(DEMO)
     return nb
 
@@ -70,13 +70,19 @@ def test_predict_ok_is_server_side_and_once(rig):
     assert len(rows) == 1
     a = rows[0]
     assert (a.kind, a.method, bool(a.correct), a.answer, a.expected, a.question) == ('demo', 'demo', False, '2', '4', 'What is half of 8?')
-    assert a.notebook == str(rig.p) and a.gate == 'g1' and a.demo == 'halves'
+    assert a.notebook == str(rig.p) and a.gate == 'g1' and a.demo == 'halves' and not {'walk', 'step', 'from', 'app'} & set(a)
     assert a.card_key == f'{rig.nb[1].id}:{src_hash(rig.nb[1].source)}:halves:g1'
     c = shelf(rig).concept('halves')
     assert c.seen == 1 and c.due > time.time() and 'kind' not in c
     d = shelf(rig).demo('halves')
     assert (d.concept, d.by, d.stats) == ('halves', 'leela:lesson', {'shown': 1, 'right': 0})
     assert set(rig.opened) == {'learning'}
+
+def test_predict_in_a_walk_lesson_carries_the_walk_meta(serve):
+    r = serve(lesson(step=dict(walk='attention-ab12', step=1, section='', text='Half of it.', note='')))
+    assert post(r, picked=4, why='half').json()['logged']
+    a = attempts(r)[0]
+    assert (a.kind, a.walk, a.step, a['from'], a.app, a.notebook) == ('demo', 'attention-ab12', 1, 'attention-ab12/1', 'leela', str(r.p)) and 'section' not in a
 
 def test_predict_compares_as_the_runtime_does(serve):
     g = dict(GATE, options=['4', 5], answer={'is': 4.0})

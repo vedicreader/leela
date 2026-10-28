@@ -25,6 +25,7 @@ SAVED = "localStorage.getItem('lee-editor-split')"
 
 def _ws(root, monkeypatch):
     "A workspace on `root` alone, with an offline vault in `root` that holds the walk `JID`."
+    monkeypatch.setattr('leela.blocks.learn.learn.LESSONS', root.parent/f'{root.name}-home'/'Learning'/'Leela lessons')   # never the owner's folder
     ws = Workspace(roots=[root], approvals='auto', python=sys.executable)
     monkeypatch.setattr(ws, 'memory', Memory(path=root/'vault.db', offline=True))
     monkeypatch.setattr(ws.search, 'prefer_kosha', False)   # no code index outside `root`
@@ -198,6 +199,20 @@ def test_reload_restores_a_local_page_and_drops_any_other(tmp_path, monkeypatch)
         await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length')
         await pg.wait_for_function(f'{SAVED} === null')
         assert await pg.evaluate("!document.querySelector('#editor2 iframe') && document.querySelector('#editor2').hidden")
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
+def test_open_as_a_lesson_from_the_pane(tmp_path, monkeypatch):
+    p = str((tmp_path/'lessons'/f'{JID}-0.ipynb').resolve())
+    async def go(pg, base):
+        frame = await _side(pg, tmp_path)
+        await frame.get_by_role('button', name='Open as a lesson').click()
+        await frame.wait_for_url('**/learn/open'); await frame.wait_for_load_state('load')
+        assert await frame.locator('main.lee-learn > p.lee-learn-line').inner_text() == 'Opened in Leela.'
+        assert await frame.evaluate("document.documentElement.classList.contains('in-pane')")
+        await pg.wait_for_function(f'(JSON.parse({SAVED} || "null") || {{}}).page === {json.dumps(STEP0)}')   # a reload mounts the step, not POST-only /learn/open
+        await pg.wait_for_function('p => lee.path === p', arg=p)
+        assert await pg.evaluate("!document.querySelector('#editor2').hidden && !!document.querySelector('#editor2 iframe')")
+        assert Path(p).is_file()
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
 
 STATE = f"""() => {{ const f = document.querySelector('#editor2 iframe');

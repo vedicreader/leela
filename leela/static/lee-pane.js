@@ -65,7 +65,8 @@ function leePaneTell(m) { if (window.parent !== window) window.parent.postMessag
 function leePaneAt() {
   let trail = [];
   try { trail = JSON.parse(document.querySelector('[data-rh-trail]').dataset.rhTrail); } catch (_) {}
-  leePaneTell({type: 'rh:at', url: leePaneHere(location), title: document.title, trail});
+  const here = document.documentElement.dataset?.rhUrl;
+  leePaneTell({type: 'rh:at', url: leeIsLocal(here) ? here : leePaneHere(location), title: document.title, trail});
 }
 function leePaneKey(e) {
   if (e.key !== 'Escape' || e.defaultPrevented) return;

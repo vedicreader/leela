@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from fastcore.basics import AttrDict
 from packaging.utils import canonicalize_name
@@ -7,7 +8,9 @@ from abhyasa.journey import walk_state
 from abhyasa.store import slugify
 from ..nb.nb import Cell
 
-__all__ = ['PKG', 'find_step', 'is_local', 'pane_url', 'pkg_names', 'lookup', 'scratch_cell']
+__all__ = ['LESSONS', 'PKG', 'Taken', 'find_step', 'is_local', 'open_step', 'pane_url', 'pkg_names', 'lookup', 'scratch_cell']
+
+LESSONS = Path.home()/'Learning'/'Leela lessons'
 
 # a copy of abhyasa.core.pane.is_local: abhyasa.core imports abhyasa's web UI (leela-reuse.md 5)
 _BAD = re.compile(r'[\x00-\x1f\x7f\\]')
@@ -35,6 +38,40 @@ def find_step(lr, q) -> AttrDict:
     s = j.steps[i]
     c = lr.concept(s['slug'])
     return AttrDict(kind='step', j=j, i=i, step=s, name=c.name if c else s['slug'])
+
+class Taken(Exception): "The lesson's file name holds something that is not that lesson."
+
+def lessons_folder(session, fs) -> Path:
+    "`lessons` in the project folder; `LESSONS` with no folder open or a project folder that holds it, made and opened as a root when no root covers it."
+    root = session.project_root
+    if root is not None and root != fs.loose and not LESSONS.resolve().is_relative_to(root): return root/'lessons'
+    if LESSONS.is_symlink(): raise ValueError('The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
+    if not fs.covers(LESSONS.resolve()):
+        LESSONS.mkdir(parents=True, exist_ok=True)
+        session.add_root(LESSONS)
+    return LESSONS
+
+def open_step(session, fs, v, q) -> Path:
+    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there."
+    from ..nb.lesson import lesson_notebook, save_lesson
+    from ..nb.nb import Notebook
+    if v.kind == 'step':
+        r, what, file = v.step.get('read') or {}, 'step', f'{q.walk}-{v.i}.ipynb'
+        nb = lesson_notebook(v.name, step=dict(walk=q.walk, step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=v.step.get('note') or ''))
+        mine = lambda m: isinstance(w := m.get('walk'), dict) and (w.get('walk'), w.get('step')) == (q.walk, v.i)
+    else:
+        if not (slug := slugify(q.topic)): raise ValueError('topic: give a name with a letter or a digit')
+        what, file, nb = 'idea', f'{slug}.ipynb', lesson_notebook(v.name)
+        nb.meta['lesson']['topic'] = slug
+        mine = lambda m: m.get('topic') == slug and 'walk' not in m
+    def pick(folder):
+        p = folder/file
+        if not (p.exists() or p.is_symlink()): return p
+        try: m = p.is_file() and not p.is_symlink() and Notebook.load(fs._check(p, must_exist=True)).meta.get('lesson')
+        except Exception: m = None
+        if isinstance(m, dict) and mine(m): return p
+        raise Taken(f'{p.name} is in the lessons folder and is not the lesson for this {what}. Move it or rename it, then open the lesson again.')
+    return save_lesson(fs, lessons_folder(session, fs), pick, nb)
 
 PKG = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}(\[[A-Za-z0-9._,-]{1,64}\])?((==|>=|<=|~=|<|>)[A-Za-z0-9.*+!-]{1,32})?')
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')

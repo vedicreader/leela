@@ -82,23 +82,22 @@ def connect(app, ctx):
     @rt('/lesson/new', methods=['POST'])
     async def lesson_new(req, name: str = ''):
         from abhyasa.store import slugify
-        from ..nb.lesson import lesson_notebook
+        from ..nb.lesson import lesson_notebook, save_lesson
+        def free(folder):
+            slug, n = slugify(name), 1
+            path = folder/f'{slug}.ipynb'
+            while path.exists() or path.is_symlink():
+                n += 1
+                path = folder/f'{slug}-{n}.ipynb'
+            return path
         try:
             if req.headers.get('content-type', '').startswith('application/json'): name = (await req.json()).get('name')
             if not isinstance(name, str) or not name.strip(): return fail('Enter a lesson name')
             name = name.strip()
             root = session.project_root
             if root is None or root == ctx.fs.loose: return fail('Open a folder first')
-            folder = root/'lessons'
-            if folder.is_symlink(): return fail('The lessons folder must not be a symbolic link')
-            folder = ctx.fs._check(folder)
-            folder.mkdir(parents=True, exist_ok=True)
-            slug, n = slugify(name), 1
-            path = folder/f'{slug}.ipynb'
-            while path.exists() or path.is_symlink():
-                n += 1
-                path = folder/f'{slug}-{n}.ipynb'
-            lesson_notebook(name).save(path, sandbox=ctx.fs)
+            try: path = save_lesson(ctx.fs, root/'lessons', free, lesson_notebook(name))
+            except ValueError as e: return fail(str(e))
             session.open(path)
             session.watch_env(None)
             session.save()

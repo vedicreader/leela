@@ -256,6 +256,7 @@ GET,POST /keys/reset
 GET,POST /keys/save
 GET /learn
 GET /learn/lookup
+POST /learn/open
 POST /learn/scratch
 GET,POST /learn/tool
 POST /lesson/predict

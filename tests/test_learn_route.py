@@ -1,8 +1,14 @@
-import asyncio, re
+import asyncio, html, re, sys
+from contextlib import contextmanager
 from unittest.mock import Mock
 import pytest
+from starlette.testclient import TestClient
 from abhyasa.store import Learning
+from leela.app import ide_app
 from leela.blocks.memory.memory import Memory
+from leela.blocks.nb.lesson import lesson_notebook
+from leela.blocks.nb.nb import Notebook
+from leela.workspace import Workspace
 from learn_data import JID, rig, walk  # noqa: F401
 
 def headers_ok(r):
@@ -250,3 +256,225 @@ def test_guard_lets_only_a_learn_navigation_cross_site():
     assert guard('/learn/', NAV) == 421 and guard('/tab/state', NAV) == 421
     assert guard('/learn', {**NAV, 'host': 'evil.example'}) == 421
     assert guard('/learn', {**NAV, 'origin': 'https://evil.example'}) == 421
+
+def test_guard_lets_a_post_from_the_pane_frame_in():
+    h = {'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', 'origin': 'http://127.0.0.1:5011'}
+    assert guard('/learn/open', h, 'POST') == 'passed' and guard('/learn/open', {**h, 'sec-fetch-dest': 'document'}, 'POST') == 'passed'
+    assert guard('/learn/open', {**h, 'origin': 'https://evil.example'}, 'POST') == 421
+
+def opened(c, **form): return c.post('/learn/open', data=form)
+
+def state(ws, lr, root):
+    "Everything an open must not change when it refuses."
+    return (lr.journey(JID), sorted(str(p) for p in root.rglob('*.ipynb')), [t.path for t in ws.tabs], len(lr.attempts(limit=10**6)),
+            [x.id for x in ws.jobs.all(limit=10**6)], list(ws.fs.roots))
+
+@pytest.fixture
+def announced(rig, monkeypatch):
+    seen = []
+    monkeypatch.setattr(rig[1].fs_watch, 'announce', seen.append)
+    return seen
+
+def test_open_makes_one_lesson_and_reopens_it(rig, announced, monkeypatch):
+    c, ws, lr, j, root = rig
+    for k in ('put_journey', 'walk_step', 'journey_step'):
+        if hasattr(Learning, k): monkeypatch.setattr(Learning, k, lambda *a, **kw: pytest.fail('Leela wrote the journey'))
+    before, roots = lr.journey(JID), list(ws.fs.roots)
+    r = opened(c, walk=JID, step='0', topic='')
+    one_line(r, 200, 'Opened in Leela.')
+    assert '<html class="lee-learn-page"' in r.text and 'in-pane' not in r.text
+    assert f'data-rh-url="/learn?walk={JID}&amp;step=0"' in r.text      # the pane keeps the step, not this POST route
+    p = root/'lessons'/f'{JID}-0.ipynb'
+    nb = Notebook.load(p)
+    assert nb.meta['lesson']['walk'] == dict(walk=JID, step=0, section='2 Background') and nb.meta['lesson']['name'] == 'Softmax'
+    assert '> Softmax maps scores to weights.' in nb[0].source and 'Watch the sum.' in nb[0].source
+    assert ws.tab.path == str(p) and announced == [str(p)]
+    t, n = p.stat().st_mtime_ns, len(ws.tabs)
+    one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+    assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p] and len(ws.tabs) == n and announced == [str(p)] * 2
+    one_line(opened(c, walk=JID, step='', topic='Attention'), 200, 'Opened in Leela.')   # no step: the current one; a walk wins over a topic
+    assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p]
+    assert opened(c, walk=JID, step='1').status_code == 200 and Notebook.load(root/'lessons'/f'{JID}-1.ipynb').meta['lesson']['walk'] == dict(walk=JID, step=1, section='')
+    assert lr.journey(JID) == before and list(ws.fs.roots) == roots and len(lr.attempts(limit=10**6)) == 0
+
+@pytest.mark.parametrize('topic, name, file', [('Softmax', 'Softmax', 'softmax'), ('Agents & tools + more', 'Agents & tools + more', 'agents-and-tools-plus-more'),
+                                               ('सॉफ्टमैक्स', 'सॉफ्टमैक्स', 'saphtamaiksa')])
+def test_open_makes_a_topic_lesson_and_reopens_it(rig, topic, name, file):
+    c, ws, lr, j, root = rig
+    assert html.escape(topic) in c.get('/learn', params=dict(topic=topic)).text
+    one_line(opened(c, walk='', step='', topic=topic), 200, 'Opened in Leela.')
+    p = root/'lessons'/f'{file}.ipynb'
+    nb = Notebook.load(p)
+    assert nb.meta['lesson'] == {'v': 1, 'name': name, 'topic': file} and nb[0].source.startswith(f'# {name}\n')
+    t = p.stat().st_mtime_ns
+    assert opened(c, topic=topic).status_code == 200 and p.stat().st_mtime_ns == t and ws.tab.path == str(p)
+    assert list((root/'lessons').iterdir()) == [p]
+
+def _plain(p): Notebook.blank().save(p)
+def _lesson(**kw): return lambda p: (lesson_notebook('Softmax', step=dict(walk=JID, step=0, section='', text='', note='') | kw) if kw else lesson_notebook('Softmax')).save(p)
+def _topic(slug):
+    def make(p):
+        nb = lesson_notebook('Softmax'); nb.meta['lesson']['topic'] = slug; nb.save(p)
+    return make
+TAKEN = dict(invalid=lambda p: p.write_text('{not json'), empty=lambda p: p.write_bytes(b''), plain=_plain, other_lesson=_lesson(),
+             other_walk=_lesson(walk='other-0000'), other_step=_lesson(step=1), topic_lesson=_topic('softmax'),
+             folder=lambda p: p.mkdir(), link=lambda p: ((p.parent/'real.ipynb').write_text('{}'), p.symlink_to(p.parent/'real.ipynb')),
+             dangling=lambda p: p.symlink_to(p.parent/'gone.ipynb'))
+
+@pytest.mark.parametrize('kind', TAKEN)
+def test_open_refuses_a_file_that_is_not_this_lesson_and_changes_no_bytes(rig, announced, kind):
+    c, ws, lr, j, root = rig
+    (folder := root/'lessons').mkdir()
+    p = folder/f'{JID}-0.ipynb'
+    TAKEN[kind](p)
+    snap = lambda: sorted((str(x), x.is_symlink(), x.is_dir(), x.read_bytes() if x.is_file() else None) for x in folder.iterdir())
+    before, was = snap(), state(ws, lr, root)
+    r = opened(c, walk=JID, step='0')
+    one_line(r, 409, f'{p.name} is in the lessons folder and is not the lesson for this step. Move it or rename it, then open the lesson again.')
+    assert snap() == before and state(ws, lr, root) == was and announced == []
+
+@pytest.mark.parametrize('kind', ['other_walk', 'plain'])
+def test_open_refuses_a_topic_file_that_is_not_this_topic(rig, kind):
+    c, ws, lr, j, root = rig
+    (folder := root/'lessons').mkdir()
+    p = folder/'softmax.ipynb'
+    (_topic('soft-max') if kind == 'plain' else _lesson(walk='other-0000'))(p)
+    b = p.read_bytes()
+    one_line(opened(c, topic='Softmax'), 409, 'softmax.ipynb is in the lessons folder and is not the lesson for this idea. Move it or rename it, then open the lesson again.')
+    assert p.read_bytes() == b and ws.tab is None
+
+@pytest.mark.parametrize('where', ['outside', 'inside', 'dangling'])
+def test_open_refuses_a_symbolic_link_lessons_folder(rig, tmp_path_factory, where):
+    c, ws, lr, j, root = rig
+    target = {'outside': tmp_path_factory.mktemp('outside'), 'inside': root/'elsewhere', 'dangling': root/'gone'}[where]
+    if where == 'inside': target.mkdir()
+    (root/'lessons').symlink_to(target, target_is_directory=True)
+    was = state(ws, lr, root)
+    one_line(opened(c, walk=JID, step='0'), 400, 'The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
+    assert state(ws, lr, root) == was and not (where != 'dangling' and list(target.iterdir())) and not (root/'gone').exists()
+
+def test_open_checks_the_walk_again_when_it_posts(rig, announced):
+    c, ws, lr, j, root = rig
+    assert c.get(f'/learn?walk={JID}&step=1').status_code == 200
+    lr.put_journey({**j, 'steps': j.steps[:1]})
+    was = state(ws, lr, root)
+    one_line(opened(c, walk=JID, step='1'), 400, 'step: this walk has no step 1')
+    assert state(ws, lr, root) == was
+    assert c.get(f'/learn?walk={JID}&step=0').status_code == 200
+    lr.drop_journey(JID)
+    was = state(ws, lr, root)
+    one_line(opened(c, walk=JID, step='0', topic='Softmax'), 200, 'This walk is not in your learning store.')
+    assert state(ws, lr, root) == was and announced == [] and not (root/'lessons').exists()
+
+@pytest.mark.parametrize('form, code, text', [
+    (dict(walk='../x'), 400, 'walk is not a walk id'), (dict(walk=JID, step='-1'), 400, 'step must be a whole number from 0'),
+    (dict(walk='', step='', topic=''), 400, 'nothing to open'), (dict(), 400, 'nothing to open'), (dict(walk=JID, step='9'), 400, 'no step 9'),
+    (dict(walk='gone-0000', step='0'), 200, 'This walk is not in your learning store.'), (dict(walk='done-0001'), 200, 'This walk is done.'),
+    (dict(walk=JID, step='0', pane='1', topic='x' * 1000), 400, 'topic is more than')])
+def test_open_refuses_as_the_link_does(rig, form, code, text):
+    c, ws, lr, j, root = rig
+    lr.put_journey({**j, 'id': 'done-0001', 'steps': [{**s, 'status': 'known'} for s in j.steps]})
+    was = state(ws, lr, root)
+    one_line(opened(c, **form), code, text, exact=code == 200)
+    assert state(ws, lr, root) == was
+
+def test_open_reads_the_journey_under_the_lock(rig, monkeypatch):
+    from leela.blocks.memory.memory import _open_lock
+    c, ws, lr, j, root = rig
+    journey = Learning.journey
+    def locked(self, jid):
+        assert _open_lock(ws.memory.path).locked()
+        return journey(self, jid)
+    monkeypatch.setattr(Learning, 'journey', locked)
+    assert opened(c, walk=JID, step='0').status_code == 200
+
+def test_open_says_when_the_store_cannot_be_read(rig, monkeypatch):
+    def locked(*a): raise PermissionError('locked')
+    monkeypatch.setattr(Memory, '_store', locked)
+    one_line(opened(rig[0], walk=JID, step='0'), 503, 'The learning store is locked or cannot be read.')
+    assert not (rig[4]/'lessons').exists()
+
+def test_open_from_the_pane_answers_in_the_pane(rig):
+    c = rig[0]
+    assert '<input type="hidden" value="1" name="pane">' in c.get(f'/learn?walk={JID}&step=0&pane=1').text
+    assert 'name="pane"' not in c.get(f'/learn?walk={JID}&step=0').text and 'name="pane"' not in c.get('/learn?topic=Softmax').text
+    assert '<input type="hidden" value="1" name="pane">' in c.get('/learn?topic=Softmax&pane=1').text
+    r = opened(c, walk=JID, step='0', pane='1')
+    one_line(r, 200, 'Opened in Leela.')
+    assert '<html class="lee-learn-page in-pane" data-rh-url="/learn?walk=' in r.text and 'lee-pane.js' in r.text
+    r = opened(c, walk='gone-0000', pane='1')
+    one_line(r, 200, 'This walk is not in your learning store.')
+    assert 'in-pane' in r.text
+    assert 'in-pane' not in opened(c, walk=JID, step='0').text
+
+@pytest.mark.parametrize('boom, code', [(OSError('disk full'), 500), (PermissionError('denied'), 500), ('unsafe', 403)])
+def test_open_says_when_it_cannot_write_and_opens_nothing(rig, monkeypatch, announced, boom, code):
+    from leela.blocks.fs.fs import Unsafe
+    c, ws, lr, j, root = rig
+    e = Unsafe('outside the open folders') if boom == 'unsafe' else boom
+    def save(self, path=None, sandbox=None): raise e
+    monkeypatch.setattr(Notebook, 'save', save)
+    was = state(ws, lr, root)
+    r = opened(c, walk=JID, step='0')
+    one_line(r, code, 'Leela could not write the lesson.', exact=False)
+    assert 'Opened in Leela.' not in r.text and state(ws, lr, root) == was and announced == []
+
+@contextmanager
+def bare(tmp_path, monkeypatch, *roots, loose=None):
+    "A client on a workspace with the given roots and no folder of its own; `LESSONS` is a folder in `tmp_path`."
+    import leela.blocks.learn.learn as L
+    monkeypatch.setattr(L, 'LESSONS', fixed := tmp_path/'home'/'Learning'/'Leela lessons')   # the owner's real folder is never used
+    ws = Workspace(roots=[], approvals='auto', python=sys.executable)
+    if loose: loose.mkdir(parents=True, exist_ok=True); ws.add_root(loose, loose=True)
+    for r in roots: r.mkdir(parents=True, exist_ok=True); ws.add_root(r)
+    monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'other.db', offline=True))
+    lr = Learning(ws.memory._store('learning')); walk(lr)
+    seen = []
+    monkeypatch.setattr(ws.fs_watch, 'announce', seen.append)
+    try:
+        with TestClient(ide_app(ws), base_url='http://127.0.0.1:5011') as c: yield c, ws, fixed.resolve(), seen
+    finally: ws.shutdown_now()
+
+def test_open_with_no_folder_uses_the_fixed_folder_twice(tmp_path, monkeypatch):
+    with bare(tmp_path, monkeypatch) as (c, ws, fixed, seen):
+        assert ws.project_root is None
+        one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+        p = fixed/f'{JID}-0.ipynb'
+        assert p.is_file() and list(ws.fs.roots) == [fixed] and ws.tab.path == str(p) and seen == [str(p)]
+        t = p.stat().st_mtime_ns
+        one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+        assert p.stat().st_mtime_ns == t and not (fixed/'lessons').exists() and list(ws.fs.roots) == [fixed] and len(ws.tabs) == 1
+        assert opened(c, topic='Softmax').status_code == 200 and (fixed/'softmax.ipynb').is_file()
+        assert sorted(x.name for x in fixed.iterdir()) == [f'{JID}-0.ipynb', 'softmax.ipynb']
+
+@pytest.mark.parametrize('case', ['loose', 'loose_and_fixed', 'loose_and_parent', 'fixed_alone'])
+def test_open_with_the_fixed_folder_already_open_or_covered(tmp_path, monkeypatch, case):
+    fixed, loose = tmp_path/'home'/'Learning'/'Leela lessons', tmp_path/'loose'
+    roots = dict(loose=(), loose_and_fixed=(fixed,), loose_and_parent=(tmp_path/'home',), fixed_alone=(fixed,))[case]
+    with bare(tmp_path, monkeypatch, *roots, loose=None if case == 'fixed_alone' else loose) as (c, ws, fixed, seen):
+        before = list(ws.fs.roots)
+        for _ in range(2): one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+        p = fixed/f'{JID}-0.ipynb'
+        assert p.is_file() and ws.tab.path == str(p) and not (fixed/'lessons').exists() and len(ws.tabs) == 1
+        assert list(ws.fs.roots) == (before + [fixed] if case == 'loose' else before) and len(set(ws.fs.roots)) == len(ws.fs.roots)
+        if case != 'fixed_alone': assert ws.fs.roots[0] == loose.resolve() and ws.fs.loose == loose.resolve()
+
+@pytest.mark.parametrize('block', ['file', 'parent_file', 'read_only', 'link'])
+def test_open_with_no_folder_says_when_the_fixed_folder_cannot_be_made(tmp_path, monkeypatch, block):
+    import leela.blocks.learn.learn as L
+    with bare(tmp_path, monkeypatch) as (c, ws, fixed, seen):
+        fixed = L.LESSONS
+        fixed.parent.parent.mkdir(parents=True)
+        if block == 'file': fixed.parent.mkdir(); fixed.write_text('keep')
+        elif block == 'parent_file': fixed.parent.write_text('keep')
+        elif block == 'link': fixed.parent.mkdir(); (tmp_path/'away').mkdir(); fixed.symlink_to(tmp_path/'away', target_is_directory=True)
+        else: fixed.parent.parent.chmod(0o555)
+        try:
+            r = opened(c, walk=JID, step='0')
+            if block == 'link': one_line(r, 400, 'The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
+            else: one_line(r, 500, 'Leela could not write the lesson.', exact=False)
+            assert list(ws.fs.roots) == [] and ws.tab is None and seen == []
+            if block == 'file': assert fixed.read_text() == 'keep'
+            if block == 'parent_file': assert fixed.parent.read_text() == 'keep'
+            if block == 'link': assert list((tmp_path/'away').iterdir()) == []
+        finally: fixed.parent.parent.chmod(0o755)

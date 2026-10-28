@@ -47,9 +47,9 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14" },
     { name = "ramabana", marker = "extra == 'models'", specifier = ">=0.2.78" },
     { name = "rishi", specifier = ">=0.1.56" },
-    { name = "rupaka", specifier = ">=0.0.2" },
-    { name = "rupaka", extras = ["check"], marker = "extra == 'demo'", specifier = ">=0.0.2" },
-    { name = "rupaka", extras = ["check"], marker = "extra == 'dev'", specifier = ">=0.0.2" },
+    { name = "rupaka", specifier = ">=0.0.3" },
+    { name = "rupaka", extras = ["check"], marker = "extra == 'demo'", specifier = ">=0.0.3" },
+    { name = "rupaka", extras = ["check"], marker = "extra == 'dev'", specifier = ">=0.0.3" },
     { name = "vidyut", specifier = ">=0.4" },
     { name = "vishalakshi", specifier = ">=0.1.35" },
 ]

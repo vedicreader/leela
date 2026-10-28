@@ -8,7 +8,7 @@ from .ui import LookupPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('memory', 'search', 'docs', 'jobs')
+CAPS = ('memory', 'search', 'docs', 'jobs', 'fs')
 
 def due_cards(memory):
     from abhyasa.store import Learning
@@ -32,9 +32,10 @@ def read_step(memory, q):
     vault = memory._store('learning')
     with _open_lock(memory.path): return find_step(Learning(vault), q)
 
-def said(req, root, text, code=200, title='Learn'):
-    "A `learn` page of the one line `text`, with the status `code`."
-    return FtResponse(Page(title, P(text, cls='lee-learn-line'), pane=req.query_params.get('pane') == '1', root=root), status_code=code, headers=HEADERS)
+def said(req, root, text, code=200, title='Learn', pane=None, here=None):
+    "A `learn` page of the one line `text`, with the status `code`; `pane` defaults to the query's `pane=1`."
+    pane = req.query_params.get('pane') == '1' if pane is None else pane
+    return FtResponse(Page(title, P(text, cls='lee-learn-line'), pane=pane, root=root, here=here), status_code=code, headers=HEADERS)
 
 NO_INDEX = 'No code index for this yet.'
 
@@ -69,6 +70,29 @@ def connect(app, ctx):
         if v.kind == 'missing': return said(req, root, 'This walk is not in your learning store.')
         if v.kind == 'done': return said(req, root, 'This walk is done.')
         return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root), headers=HEADERS)
+    @app.route('/learn/open', methods=['POST'])
+    async def learn_open(req):
+        from urllib.parse import urlencode
+        from abhyasa.journey import handoff, read_handoff
+        from ..fs.fs import Unsafe
+        from .learn import Taken, open_step
+        f, root = await req.form(), ctx.session.project_root
+        say = lambda text, code=200: said(req, root, text, code, pane=f.get('pane') == '1')
+        try: q = read_handoff(urlencode({k: f[k] for k in ('walk', 'step', 'topic') if f.get(k)}))
+        except ValueError as e: return say(str(e), 400)
+        try: v = await off_loop(read_step, ctx.memory, q)
+        except ValueError as e: return say(str(e), 400)
+        except Exception: return say('The learning store is locked or cannot be read.', 503)
+        if v.kind == 'missing': return say('This walk is not in your learning store.')
+        if v.kind == 'done': return say('This walk is done.')
+        try: ctx.session.open_external(open_step(ctx.session, ctx.fs, v, q))
+        except Taken as e: return say(str(e), 409)
+        except ValueError as e: return say(str(e), 400)
+        except Unsafe as e: return say(f'Leela could not write the lesson. {e}', 403)
+        except OSError as e: return say(f'Leela could not write the lesson. {errstr(e)}', 500)
+        except Exception as e: return say(f'Leela could not open the lesson. {errstr(e)}', 500)
+        # the pane keeps the step's own URL, so a reload does not GET this POST route
+        return said(req, root, 'Opened in Leela.', pane=f.get('pane') == '1', here=handoff(q.walk, v.get('i', q.step), q.topic))
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names

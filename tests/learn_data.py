@@ -21,7 +21,8 @@ def walk(lr):
     return lr.put_journey(dict(id=JID, title='Attention', goal='', steps=steps, mode='walk', tool=True))
 
 @pytest.fixture
-def rig(tmp_path, monkeypatch):
+def rig(tmp_path, tmp_path_factory, monkeypatch):
+    monkeypatch.setattr('leela.blocks.learn.learn.LESSONS', tmp_path_factory.mktemp('home')/'Learning'/'Leela lessons')
     ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable)
     monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'vault.db', offline=True))
     lr = Learning(ws.memory._store('learning')); j = walk(lr)
