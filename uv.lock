@@ -18,7 +18,8 @@ constraints = [
 
 [[package]]
 name = "abhyasa"
-source = { directory = "../abhyasa-walk" }
+version = "0.0.11"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "fossick" },
@@ -31,34 +32,10 @@ dependencies = [
     { name = "vidyut" },
     { name = "vishalakshi" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastcore", specifier = ">=1.8" },
-    { name = "fossick", specifier = ">=0.1.22" },
-    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=7.3.0" },
-    { name = "ipywidgets", specifier = ">=8.1" },
-    { name = "mdhtml", specifier = ">=0.1.38" },
-    { name = "mlx-audio", marker = "extra == 'whisper'", specifier = ">=0.5" },
-    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.25" },
-    { name = "nh3", specifier = ">=0.3.7" },
-    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.6.3" },
-    { name = "pobblebonk", marker = "extra == 'dev'", specifier = ">=0.0.6" },
-    { name = "pobblebonk", marker = "extra == 'tick'", specifier = ">=0.0.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "python-fasthtml", specifier = ">=0.14" },
-    { name = "ramabana", marker = "extra == 'models'", specifier = ">=0.2.78" },
-    { name = "rishi", specifier = ">=0.1.56" },
-    { name = "rupaka", specifier = ">=0.0.3" },
-    { name = "rupaka", extras = ["check"], marker = "extra == 'demo'", specifier = ">=0.0.3" },
-    { name = "rupaka", extras = ["check"], marker = "extra == 'dev'", specifier = ">=0.0.3" },
-    { name = "vidyut", specifier = ">=0.4" },
-    { name = "vishalakshi", specifier = ">=0.1.35" },
+sdist = { url = "https://files.pythonhosted.org/packages/3e/ba/f3bb6d12cfb79241090720bf58cd35890f204f9cc5915d44abca5b69d7a4/abhyasa-0.0.11.tar.gz", hash = "sha256:23ec95d9838e4326ed77009d19f879707d90c16585d6458e4b944f597f21969c", size = 1153929, upload-time = "2026-10-28T20:25:03.681Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8e/c8/dd7aacf24b95805ce1490739275e5738c897acf00f6d02ab92bf15ef8db1/abhyasa-0.0.11-py3-none-any.whl", hash = "sha256:003e317e81d6cbc31f6905ddc96e6c762961e6112e93c18aef43c8dfb8c0001a", size = 1207292, upload-time = "2026-10-28T20:25:01.771Z" },
 ]
-provides-extras = ["demo", "dev", "models", "tick", "whisper"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "abhyasa", extras = ["dev"] }]
 
 [[package]]
 name = "adhara"
@@ -2621,7 +2598,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abhyasa", directory = "../abhyasa-walk" },
+    { name = "abhyasa", specifier = ">=0.0.11,<0.1" },
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.10" },
     { name = "dhrona", specifier = ">=0.1.18" },

@@ -120,6 +120,3 @@ constraint-dependencies = ["mcp<2", "pyjwt>=2.15.0"]
 [tool.uv.sources]
 # PyPI, not sibling checkouts: the app bundle installs from this lock, and an editable path breaks it
 leela = { workspace = true }
-# Temporary: abhyasa 0.0.11 is not on PyPI yet. Remove this line and relock at its release; build no app before then.
-# Not editable: an editable install puts abhyasa-walk's own tests package on sys.path.
-abhyasa = { path = "../abhyasa-walk" }
