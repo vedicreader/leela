@@ -317,8 +317,21 @@ function leePaneKey(e) {
   if (t && (t.isContentEditable || (t.matches && t.matches('textarea, select, input:not([type=button], [type=submit], [type=reset], [type=checkbox], [type=radio])')))) return;
   e.preventDefault(); leePaneTell({type: 'rh:close', level: 1});
 }
+async function leeScratch(btn) {
+  "Post the button's snippet to `/learn/scratch` for its notebook, and say the result in the page's status line.";
+  const say = t => { const s = document.querySelector('[role=status]'); if (s) s.textContent = t; };
+  btn.disabled = true;
+  try {
+    const r = await fetch('/learn/scratch', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                             body: JSON.stringify({path: btn.dataset.path, snippet: btn.dataset.snippet})});
+    const d = await r.json().catch(() => ({}));
+    say(r.ok && d.ok ? 'Added a scratch cell at the end of the notebook.' : String(d.error || 'Leela did not add the cell.'));
+  } catch (_) { say('Leela did not add the cell.'); }
+  finally { btn.disabled = false; }
+}
 function leePaneBoot() {
   if (document.documentElement.classList.contains('in-pane')) { leePaneAt(); document.addEventListener('keydown', leePaneKey); return; }
+  if (typeof lee === 'undefined') return;   // a learn page in a tab of its own: no split editor to host a pane
   window.leeSidePage = {open: leeSidePageOpen, close: leeSidePageClose};
   window.addEventListener('message', e => leePaneMessage(e, lee.sidePage));
 }

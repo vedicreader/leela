@@ -5,11 +5,11 @@ from starlette.responses import PlainTextResponse
 from ... import errstr
 from ...core.web import fail, off_loop
 from ..memory.memory import _open_lock
-from .ui import StepPage
+from .ui import LookupPage, StepPage
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ('memory',)
+CAPS = ('memory', 'search', 'docs')
 
 def due_cards(memory):
     from abhyasa.store import Learning
@@ -35,6 +35,19 @@ def read_step(memory, q):
 
 def said(text, code=200): return PlainTextResponse(text, status_code=code, headers=HEADERS)
 
+NO_INDEX = 'No code index for this yet.'
+
+def kosha_for(search, tool=None):
+    "The kosha handle that searches the tool environment `tool`. Every key gives the project handle until tool environments exist."
+    return search._kosha()
+
+def find_code(search, q, names, tool=None):
+    "The `lookup` rows for `q` in `names`, or None when there is no code index."
+    from .learn import lookup
+    k = kosha_for(search, tool)
+    if k is None or not k.pkgs2consider(): return None
+    return lookup(k, q, names)
+
 def connect(app, ctx):
     @app.route('/lesson/due')
     async def lesson_due():
@@ -51,3 +64,26 @@ def connect(app, ctx):
         if v.kind == 'missing': return said('This walk is not in your learning store.')
         if v.kind == 'done': return said('This walk is done.')
         return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1'), headers=HEADERS)
+    @app.route('/learn/lookup', methods=['GET'])
+    async def learn_lookup(req):
+        from .learn import pkg_names
+        p = req.query_params
+        q, path, given = p.get('q', '').strip(), p.get('path', ''), p.getlist('package')
+        try: names = pkg_names(given)
+        except ValueError as e: return said(str(e), 400)
+        try: rows = await off_loop(find_code, ctx.search, q, names, p.get('tool')) if q else []
+        except Exception: rows = None
+        if rows is None: return said(NO_INDEX)
+        t = ctx.docs.tab_for(path) if path else None
+        return FtResponse(LookupPage(q, rows, given, path if t is not None and t.kind == 'notebook' else '', pane=p.get('pane') == '1'), headers=HEADERS)
+    @app.route('/learn/scratch', methods=['POST'])
+    async def learn_scratch(req):
+        from .learn import scratch_cell
+        d = await req.json()
+        path, snippet = d.get('path'), d.get('snippet')
+        if not (path and isinstance(path, str) and isinstance(snippet, str)): return fail('Give the path of an open notebook and the snippet.')
+        tab, nb, _ = ctx.docs.owner(path)
+        if nb is None: return fail('That notebook is not open.')
+        scratch_cell(nb, snippet)
+        tab.dirty = True
+        return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version, 'index': len(nb.cells) - 1}
