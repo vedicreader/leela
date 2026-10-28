@@ -77,9 +77,9 @@ async function lessonPredict(e) {
     settle(true);
     if (d.message) status(d.message, 'ok');
   } catch (err) {
-    const said = err?.body && typeof err.body === 'object' && (err.body.error || err.body.message);
-    settle(false, said || 'Leela did not save this. Try again.');
-    status(String(said || err?.message || err), 'err');
+    const said = err?.body && typeof err.body === 'object' && (err.body.error || err.body.message) || 'Leela did not save this. Try again.';
+    settle(false, said);
+    status(said, 'err');
   }
 }
 // The Node harnesses load this file with no `document`.

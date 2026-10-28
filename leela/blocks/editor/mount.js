@@ -221,7 +221,7 @@ function mountPage(url, title = '', direction = 'vertical') {
   const head = document.createElement('div'), trail = document.createElement('span'), own = document.createElement('a'),
     x = document.createElement('button'), frame = document.createElement('iframe');
   head.className = 'lee-split-head'; trail.className = 'lee-split-trail'; own.className = 'lee-split-own';
-  own.textContent = 'Own session ↗'; own.target = '_blank'; own.rel = 'noopener'; own.title = 'Open this page in a new tab';
+  own.textContent = 'Open in a tab'; own.target = '_blank'; own.rel = 'noopener'; own.title = 'Open this page in a new tab';
   x.className = 'lee-btn'; x.type = 'button'; x.textContent = 'close'; x.onclick = leeCloseSplit;
   frame.src = src; head.append(trail, own, x); host.replaceChildren(head, frame);
   const page = lee.sidePage = {frame, url: leeOwnURL(url), title: String(title || ''), trail: [], direction: direction === 'horizontal' ? 'horizontal' : 'vertical',
@@ -233,7 +233,7 @@ function mountPage(url, title = '', direction = 'vertical') {
   return true;
 }
 function paintSidePage(page) {
-  "The trail, the title and the Own session link of the side page, as text, and the page kept for a reload."
+  "The trail, the title and the Open in a tab link of the side page, as text, and the page kept for a reload."
   const head = page.frame.previousElementSibling, trail = $('.lee-split-trail', head), b = document.createElement('strong');
   trail.replaceChildren();
   for (const [label, href] of page.trail) {

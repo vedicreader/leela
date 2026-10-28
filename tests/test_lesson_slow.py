@@ -185,6 +185,11 @@ def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
         await pg.wait_for_function('lee.cells.length === 5')
         demo = pg.locator('.lee-cell[data-i="1"] .lee-rupaka')
         await demo.locator('button.go').wait_for()
+        look = await demo.evaluate('''h => { const r = h.shadowRoot, s = getComputedStyle, p = document.body.appendChild(document.createElement('span'));
+          p.style.font = '11px var(--lee-sans)'; const want = s(p).fontFamily; p.remove();
+          return [s(r.querySelector('.opts button')).fontFamily === want, s(r.querySelector('.opts button')).fontSize, s(r.querySelector('.rk')).fontSize,
+                  s(document.documentElement).getPropertyValue('--lee-code-size').trim()]; }''')
+        assert look[0] and look[1] == '11px' and look[2] == look[3], look   # the gate takes Leela's font and sizes, not rupaka's serif page
         await pg.locator('.lee-cell[data-i="2"] .lee-md-cell').dblclick()
         await pg.wait_for_function("document.activeElement?.closest('.lee-cell')?.dataset.i === '2' && document.activeElement.classList.contains('cm-content')")
         await pg.keyboard.type('four')

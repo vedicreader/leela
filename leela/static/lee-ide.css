@@ -2121,6 +2121,8 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-ex-msg { color: var(--lee-fg4); }
 .lee-ex-grade { margin-top: 6px; padding-left: 10px; border-left: 2px solid color-mix(in srgb, var(--lee-accent) 28%, transparent); color: var(--lee-fg2); }
 .lee-md code { font-family: var(--lee-mono); background: var(--lee-bg2); padding: 1px 4px; border-radius: 3px; }
+.lee-md-cell blockquote, .lee-md-output blockquote { margin: .6em 0; padding: 0 0 0 12px; border-left: 2px solid var(--lee-border); color: var(--lee-fg2); text-align: start; }
+.lee-rupaka { --serif: var(--lee-sans); --head: var(--lee-sans); }
 
 /* ---- exec + agent ---- */
 .lee-execlog, .lee-agentlog {

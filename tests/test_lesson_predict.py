@@ -278,12 +278,16 @@ const err = (status, body) => Object.assign(new Error(body?.error || status), {b
       ['html', err('Bad Gateway', '<html>'), 'x', true], ['network', new TypeError('Failed to fetch'), 'x', true],
       ['old', {ok: true, logged: true, message: 'Saved.'}, 'x', false], ['old-error', new TypeError('Failed to fetch'), 'x', false],
       ['not-ours', {ok: true}, null, true]]) {
-    ctx.reply = reply; const ev = event(source, withSettle), p = ctx.lessonPredict(ev), heldAtOnce = ev.held; await p;
-    out[name] = {heldAtOnce, settled: ev.settled}; }
+    ctx.reply = reply; ctx.said = []; const ev = event(source, withSettle), p = ctx.lessonPredict(ev), heldAtOnce = ev.held; await p;
+    out[name] = {heldAtOnce, settled: ev.settled, said: ctx.said}; }
   console.log(JSON.stringify(out)); })();'''
     r = subprocess.run([node, '-e', harness, str(ROOT/'leela/blocks/nb/lesson.js')], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     got, retry = json.loads(r.stdout), 'Leela did not save this. Try again.'
+    said = {k: got[k].pop('said') for k in got}
+    assert said['conflict'] == [['err', 'This demo changed. Run the cell again, then try.']]
+    assert said['html'] == said['network'] == said['old-error'] == [['err', retry]], 'the toast says what the gate says, never Failed to fetch'
+    assert said['logged'] == said['old'] == [['ok', 'Saved.']]
     assert got['logged'] == got['repeat'] == {'heldAtOnce': True, 'settled': [[True]]}
     assert got['conflict'] == {'heldAtOnce': True, 'settled': [[False, 'This demo changed. Run the cell again, then try.']]}
     assert got['html'] == got['network'] == {'heldAtOnce': True, 'settled': [[False, retry]]}

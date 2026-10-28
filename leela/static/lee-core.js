@@ -596,8 +596,12 @@ function loadRupaka(retry = false) {
     return (await Promise.all([css, js]))[0];
   })();
 }
+//: rupaka's sizes are fixed px for a reading page; in Leela a demo takes the IDE's text and button sizes. Its fonts come from `--serif` and `--head` on `.lee-rupaka`.
+const RUPAKA_LEE = `.rk{font-size:var(--lee-code-size);line-height:1.6}.rk-title{font-size:calc(var(--lee-code-size) + 3px)}
+.rk-lbl,.rk kbd{font-size:var(--lee-size-min)}.rk-note,.rk-gate .verdict,.rk-gate .verdict .stale,.rk-gate textarea{font-size:inherit}
+.rk button{font:inherit;font-size:11px;line-height:1.4;padding:3px 10px}`;
 function rupakaStyle(root, css) {
-  const text = css + ':host{display:block}';
+  const text = css + RUPAKA_LEE + ':host{display:block}';
   if (!('adoptedStyleSheets' in root)) return root.prepend(Object.assign(document.createElement('style'), {textContent: text}));
   if (!rupaka.sheet) { rupaka.sheet = new CSSStyleSheet(); rupaka.sheet.replaceSync(text); }
   root.adoptedStyleSheets = [rupaka.sheet];
@@ -2293,7 +2297,7 @@ function mountPage(url, title = '', direction = 'vertical') {
   const head = document.createElement('div'), trail = document.createElement('span'), own = document.createElement('a'),
     x = document.createElement('button'), frame = document.createElement('iframe');
   head.className = 'lee-split-head'; trail.className = 'lee-split-trail'; own.className = 'lee-split-own';
-  own.textContent = 'Own session ↗'; own.target = '_blank'; own.rel = 'noopener'; own.title = 'Open this page in a new tab';
+  own.textContent = 'Open in a tab'; own.target = '_blank'; own.rel = 'noopener'; own.title = 'Open this page in a new tab';
   x.className = 'lee-btn'; x.type = 'button'; x.textContent = 'close'; x.onclick = leeCloseSplit;
   frame.src = src; head.append(trail, own, x); host.replaceChildren(head, frame);
   const page = lee.sidePage = {frame, url: leeOwnURL(url), title: String(title || ''), trail: [], direction: direction === 'horizontal' ? 'horizontal' : 'vertical',
@@ -2305,7 +2309,7 @@ function mountPage(url, title = '', direction = 'vertical') {
   return true;
 }
 function paintSidePage(page) {
-  "The trail, the title and the Own session link of the side page, as text, and the page kept for a reload."
+  "The trail, the title and the Open in a tab link of the side page, as text, and the page kept for a reload."
   const head = page.frame.previousElementSibling, trail = $('.lee-split-trail', head), b = document.createElement('strong');
   trail.replaceChildren();
   for (const [label, href] of page.trail) {
@@ -3400,9 +3404,9 @@ async function lessonPredict(e) {
     settle(true);
     if (d.message) status(d.message, 'ok');
   } catch (err) {
-    const said = err?.body && typeof err.body === 'object' && (err.body.error || err.body.message);
-    settle(false, said || 'Leela did not save this. Try again.');
-    status(String(said || err?.message || err), 'err');
+    const said = err?.body && typeof err.body === 'object' && (err.body.error || err.body.message) || 'Leela did not save this. Try again.';
+    settle(false, said);
+    status(said, 'err');
   }
 }
 // The Node harnesses load this file with no `document`.

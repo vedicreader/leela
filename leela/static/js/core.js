@@ -596,8 +596,12 @@ function loadRupaka(retry = false) {
     return (await Promise.all([css, js]))[0];
   })();
 }
+//: rupaka's sizes are fixed px for a reading page; in Leela a demo takes the IDE's text and button sizes. Its fonts come from `--serif` and `--head` on `.lee-rupaka`.
+const RUPAKA_LEE = `.rk{font-size:var(--lee-code-size);line-height:1.6}.rk-title{font-size:calc(var(--lee-code-size) + 3px)}
+.rk-lbl,.rk kbd{font-size:var(--lee-size-min)}.rk-note,.rk-gate .verdict,.rk-gate .verdict .stale,.rk-gate textarea{font-size:inherit}
+.rk button{font:inherit;font-size:11px;line-height:1.4;padding:3px 10px}`;
 function rupakaStyle(root, css) {
-  const text = css + ':host{display:block}';
+  const text = css + RUPAKA_LEE + ':host{display:block}';
   if (!('adoptedStyleSheets' in root)) return root.prepend(Object.assign(document.createElement('style'), {textContent: text}));
   if (!rupaka.sheet) { rupaka.sheet = new CSSStyleSheet(); rupaka.sheet.replaceSync(text); }
   root.adoptedStyleSheets = [rupaka.sheet];
