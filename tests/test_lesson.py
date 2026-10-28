@@ -110,6 +110,16 @@ def test_charter_uses_dependency_rules_and_hint_order():
     assert 'another way' in LESSON_CHARTER.lower() and 'not yet used' in LESSON_CHARTER
     assert all(name in LESSON_CHARTER for name in METHODS)
 
+def test_a_newer_abhyasa_lists_only_its_text_ways(monkeypatch):
+    "abhyasa 0.0.11 adds ways such as board, which are not lesson ways yet."
+    import importlib, abhyasa.method as am, leela.blocks.nb.lesson as lesson
+    monkeypatch.setattr(am, 'METHODS', {**am.METHODS, 'board': 'Draw on a board.'})
+    monkeypatch.setattr(am, 'TEXT_WAYS', tuple(METHODS), raising=False)
+    try: assert '- board:' not in importlib.reload(lesson).LESSON_CHARTER
+    finally:
+        monkeypatch.undo()
+        importlib.reload(lesson)
+
 def test_demo_refusal_preserves_real_validator_lines():
     errors = validate({})
     assert errors

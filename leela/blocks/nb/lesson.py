@@ -5,14 +5,16 @@ from fastcore.xtras import fenced, fenced_blocks
 from fastcore.ansi import strip_ansi
 from fastcore.basics import first
 from abhyasa.method import METHODS
+try: from abhyasa.method import TEXT_WAYS
+except ImportError: TEXT_WAYS = tuple(METHODS)   # abhyasa 0.0.9 has no TEXT_WAYS; its METHODS are the text ways
 from abhyasa.tutor import HINTS, TUTOR_SP
 from .nb import Cell, Notebook, src_hash
 from .exercise import exercise_cells, exercise_meta
 
 LESSON_CHARTER = (TUTOR_SP + '\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
     + '\nAdd demos only with add_demo. Never write the reveal, Leela builds it.'
-    + '\nWhen the learner asks for another way, re-explain with a method not yet used from abhyasa.method.METHODS:\n'
-    + '\n'.join(f'- {name}: {text}' for name, text in METHODS.items())
+    + '\nWhen the learner asks for another way, re-explain with a method not yet used from these:\n'
+    + '\n'.join(f'- {name}: {METHODS[name]}' for name in TEXT_WAYS)
     + '\nTo set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test\'s expected value.'
     + '\nTo grade, call check_exercise, then grade_exercise. Give one hint rung at a time; name a package only after confirming it is installed; name the module at rung 3 and the function at rung 4; never write the call.'
     + "\nAfter each learner message add at most one line 'Prompt note: ...' when it would help.")
