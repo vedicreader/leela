@@ -190,7 +190,7 @@ def test_lookup_says_when_nothing_is_found(rig, monkeypatch):
     r = c.get('/learn/lookup?q=zzz')
     assert r.status_code == 200 and 'Nothing found.' in r.text
 
-def test_lookup_ignores_tool_for_now(rig, monkeypatch):
+def test_lookup_uses_the_project_for_a_tool_that_is_not_ready(rig, monkeypatch):
     c, ws = rig[:2]
     k = FakeKosha()
     asked = handle(ws, monkeypatch, k)

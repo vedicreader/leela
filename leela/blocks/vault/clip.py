@@ -205,7 +205,12 @@ def register_all(jobs, memory, search=None, cwd=None, feeds=None):
     jobs.register('poll', lambda job, report: jobs.poll_due())
     jobs.register('script', lambda job, report: run_script(job.target, cwd=cwd))
     jobs.register('migrate_memory', lambda job, report: _migrate(job, report))
+    jobs.register('tool_env', _tool_env)
     return jobs
+
+def _tool_env(job, report):
+    from ..learn.tools import tool_job
+    return tool_job(job, report)
 
 def _migrate(job, report):
     from ...migrate_memory import migrate
