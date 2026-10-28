@@ -714,6 +714,22 @@ kbd {
 .lee-editor-secondary .lee-cm { height:calc(100% - 28px); }
 .lee-editor-secondary iframe { display:block; width:100%; height:calc(100% - 28px); border:0; background:var(--lee-bg); }
 .lee-split-head .lee-split-trail a, .lee-split-own { color:inherit; }
+.lee-learn { width:100%; max-width:70ch; margin-inline:auto; padding:24px 20px 40px; color:var(--lee-fg); font:var(--lee-code-size)/1.65 var(--lee-sans); font-weight:var(--lee-md-output-weight); overflow-wrap:anywhere; }
+.lee-learn > h1 { margin:0 0 16px; font-size:calc(var(--lee-code-size) + 3px); line-height:1.35; font-weight:600; }
+.lee-learn > p { margin:0 0 12px; }
+.lee-learn blockquote { margin:0 0 12px; padding:0; border:0; background:none; color:var(--lee-fg); font:inherit; white-space:pre-wrap; }
+.lee-learn .lee-learn-section { margin:0 0 8px; color:var(--lee-fg4); font:var(--lee-size-min)/1.5 var(--lee-mono); }
+.lee-learn .lee-learn-note { margin:0 0 12px; color:var(--lee-fg2); font-size:inherit; line-height:1.6; white-space:pre-wrap; }
+html.in-pane .lee-learn { max-width:none; margin:0; padding:16px; }
+html.in-pane .lee-learn > h1 { display:none; }
+.lee-learn > form { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0; }
+.lee-learn input[type="search"] { flex:1 1 12ch; min-width:0; }
+.lee-learn .lee-learn-line { color:var(--lee-fg4); font:inherit; }
+.lee-learn > .lee-learn-line { margin:0 0 12px; }
+.lee-learn [role="status"]:empty { display:none; }
+.lee-learn-hit { margin:20px 0; } .lee-learn-hit > p { margin:0 0 8px; } .lee-learn code { font-family:var(--lee-mono); }
+.lee-learn-hit pre { max-width:100%; margin:8px 0; padding:0; overflow-x:auto; background:none; border:0; font:var(--lee-code-size)/var(--lee-code-line-height) var(--lee-mono); }
+html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body { height:auto; min-height:100%; overflow:visible; }
 .lee-empty { width: min(560px, calc(100% - 40px)); min-height: 100%; display: flex; flex-direction: column;
   align-items: flex-start; justify-content: center; margin: auto; padding: 48px 0 76px; text-align: left; color: var(--lee-fg4);
   animation: lee-empty-in .45s ease both; }

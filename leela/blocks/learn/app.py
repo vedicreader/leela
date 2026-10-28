@@ -1,11 +1,10 @@
 import time
 from fastcore.basics import first
-from fasthtml.common import FtResponse, JSONResponse
-from starlette.responses import PlainTextResponse
+from fasthtml.common import FtResponse, JSONResponse, P
 from ... import errstr
 from ...core.web import fail, off_loop
 from ..memory.memory import _open_lock
-from .ui import LookupPage, StepPage
+from .ui import LookupPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect']
 
@@ -33,7 +32,9 @@ def read_step(memory, q):
     vault = memory._store('learning')
     with _open_lock(memory.path): return find_step(Learning(vault), q)
 
-def said(text, code=200): return PlainTextResponse(text, status_code=code, headers=HEADERS)
+def said(req, root, text, code=200, title='Learn'):
+    "A `learn` page of the one line `text`, with the status `code`."
+    return FtResponse(Page(title, P(text, cls='lee-learn-line'), pane=req.query_params.get('pane') == '1', root=root), status_code=code, headers=HEADERS)
 
 NO_INDEX = 'No code index for this yet.'
 
@@ -59,26 +60,27 @@ def connect(app, ctx):
     @app.route('/learn', methods=['GET'])
     async def learn(req):
         from abhyasa.journey import read_handoff
+        root = ctx.session.project_root
         try: q = read_handoff(req.url.query)
-        except ValueError as e: return said(str(e), 400)
+        except ValueError as e: return said(req, root, str(e), 400)
         try: v = await off_loop(read_step, ctx.memory, q)
-        except ValueError as e: return said(str(e), 400)
-        except Exception: return said('The learning store is locked or cannot be read.', 503)
-        if v.kind == 'missing': return said('This walk is not in your learning store.')
-        if v.kind == 'done': return said('This walk is done.')
-        return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1'), headers=HEADERS)
+        except ValueError as e: return said(req, root, str(e), 400)
+        except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
+        if v.kind == 'missing': return said(req, root, 'This walk is not in your learning store.')
+        if v.kind == 'done': return said(req, root, 'This walk is done.')
+        return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root), headers=HEADERS)
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names
         p = req.query_params
-        q, path, given = p.get('q', '').strip(), p.get('path', ''), p.getlist('package')
+        q, path, given, root = p.get('q', '').strip(), p.get('path', ''), p.getlist('package'), ctx.session.project_root
         try: names = pkg_names(given)
-        except ValueError as e: return said(str(e), 400)
+        except ValueError as e: return said(req, root, str(e), 400, 'Look up code')
         try: rows = await off_loop(find_code, ctx.search, q, names, p.get('tool')) if q else []
         except Exception: rows = None
-        if rows is None: return said(NO_INDEX)
+        if rows is None: return said(req, root, NO_INDEX, title='Look up code')
         t = ctx.docs.tab_for(path) if path else None
-        return FtResponse(LookupPage(q, rows, given, path if t is not None and t.kind == 'notebook' else '', pane=p.get('pane') == '1'), headers=HEADERS)
+        return FtResponse(LookupPage(q, rows, given, path if t is not None and t.kind == 'notebook' else '', pane=p.get('pane') == '1', root=root), headers=HEADERS)
     @app.route('/learn/scratch', methods=['POST'])
     async def learn_scratch(req):
         from .learn import scratch_cell

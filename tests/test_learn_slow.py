@@ -77,12 +77,13 @@ async def _on_learn(fn, ws, ide=True):
         real_kernels()
 
 async def _shoot(pg, name, ide=False):
-    "Light and dark screenshots when `LEELA_SHOTS=1`: the IDE through `applyTheme`, a learn page through the colour scheme its stylesheet follows."
+    "Light and dark screenshots when `LEELA_SHOTS=1`: the IDE through `applyTheme`, a learn page through the cached theme its first paint reads."
     if os.environ.get('LEELA_SHOTS') != '1': return
     SHOTS.mkdir(parents=True, exist_ok=True)
     for mode in ('light', 'dark'):
         await pg.emulate_media(color_scheme=mode)
         if ide: await pg.evaluate('m => applyTheme(`leela:${m}:relaxed`)', mode)
+        else: await pg.evaluate("m => localStorage.setItem('lee-theme', `leela:${m}:relaxed`)", mode); await pg.reload(wait_until='networkidle')
         await pg.wait_for_timeout(800)   # the theme change is a CSS transition
         await pg.screenshot(path=str(SHOTS/f'{name}-{mode}.png'))
 
@@ -110,6 +111,47 @@ def test_step_page_in_a_tab_of_its_own(tmp_path, monkeypatch):
         await _shoot(pg, 'step-page')
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch), ide=False))
 
+BG = 'getComputedStyle(document.body).backgroundColor'
+
+def test_a_pane_in_a_dark_ide_on_a_light_os_is_dark_and_follows_the_ide(tmp_path, monkeypatch):
+    async def go(pg, base):
+        await pg.emulate_media(color_scheme='light')
+        await pg.evaluate("applyTheme('leela:dark:relaxed')")
+        await pg.evaluate("localStorage.setItem('lee-theme', 'leela:light:relaxed')")   # the frame's own first paint reads light
+        frame = await _side(pg, tmp_path)
+        await pg.wait_for_timeout(800)   # the theme change is a CSS transition
+        ide = await pg.evaluate("getComputedStyle(document.querySelector('#editor')).backgroundColor")
+        assert ide == 'rgb(13, 17, 23)', ide
+        assert await frame.evaluate('[document.documentElement.dataset.theme, document.documentElement.dataset.mode, document.documentElement.style.colorScheme]') == ['leela', 'dark', 'dark']
+        await frame.wait_for_function(f'{BG} === {ide!r}')
+        await pg.evaluate("applyTheme('leela:light:relaxed')")
+        await frame.wait_for_function(f"{BG} === 'rgb(255, 255, 255)' && document.documentElement.dataset.mode === 'light'")
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
+def test_a_long_step_page_in_a_tab_of_its_own_scrolls(tmp_path, monkeypatch):
+    ws = _ws(tmp_path, monkeypatch)
+    lr = Learning(ws.memory._store('learning')); j = walk(lr)
+    lr.put_journey({**j, 'id': 'long-0001', 'steps': [{**j.steps[0], 'read': {**j.steps[0]['read'], 'text': '\n'.join(f'line {i}' for i in range(200))}}]})
+    async def go(pg, base):
+        await pg.goto(base + '/learn?walk=long-0001&step=0', wait_until='networkidle')
+        assert await pg.evaluate('document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight')
+        await pg.evaluate('window.scrollTo(0, 600)')
+        assert await pg.evaluate('document.scrollingElement.scrollTop') == 600
+    asyncio.run(_on_learn(go, ws, ide=False))
+
+def test_a_step_page_in_a_tab_of_its_own_uses_the_saved_theme(tmp_path, monkeypatch):
+    from leela.blocks.settings.settings import theme_backgrounds
+    (tmp_path/'.leela').mkdir(exist_ok=True)
+    (tmp_path/'.leela/settings.json').write_text(json.dumps({'appearance': {'theme': 'nord:dark:tight'}}))
+    want = theme_backgrounds()['nord']['dark'].lstrip('#')
+    rgb = 'rgb({}, {}, {})'.format(*(int(want[i:i + 2], 16) for i in (0, 2, 4)))
+    async def go(pg, base):
+        await pg.emulate_media(color_scheme='light')
+        await pg.goto(base + STEP0, wait_until='networkidle')
+        assert await pg.evaluate('[document.documentElement.dataset.theme, document.documentElement.dataset.mode, document.documentElement.dataset.density]') == ['nord', 'dark', 'tight']
+        assert await pg.evaluate(BG) == rgb
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch), ide=False))
+
 def test_side_page_opens_in_the_split(tmp_path, monkeypatch):
     async def go(pg, base):
         frame = await _side(pg, tmp_path)
@@ -132,12 +174,13 @@ def test_escape_goes_back_along_the_trail_then_closes(tmp_path, monkeypatch):
         await frame.evaluate("([u, t]) => parent.postMessage({type: 'rh:at', url: u, title: 'Attention', trail: t}, location.origin)",
                              [STEP1, [['Softmax', STEP0]]])
         await pg.wait_for_function(f"document.querySelector('{HEAD} a')?.textContent === 'Softmax'")
-        await frame.locator('h1').click(); await pg.keyboard.press('Escape')
+        assert not await frame.locator('h1').is_visible()   # the split head shows the title
+        await frame.locator('blockquote').click(); await pg.keyboard.press('Escape')
         await frame.wait_for_url('**step=0**'); await frame.wait_for_load_state('load')
         assert await frame.locator('blockquote').inner_text() == 'Softmax maps scores to weights.'
         await pg.wait_for_function(f"!document.querySelector('{HEAD} a')")
         assert json.loads(await pg.evaluate(SAVED))['page'] == STEP0
-        await frame.locator('h1').click(); await pg.keyboard.press('Escape')
+        await frame.locator('blockquote').click(); await pg.keyboard.press('Escape')
         await pg.wait_for_function("!document.querySelector('#editor2 iframe') && document.querySelector('#editor2').hidden")
         assert await pg.evaluate(SAVED) is None
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
@@ -180,9 +223,9 @@ def test_a_message_from_another_origin_changes_nothing(tmp_path, monkeypatch):
 def test_lookup_page_in_the_pane(tmp_path, monkeypatch):
     async def go(pg, base):
         r = await pg.goto(base + '/learn/lookup?q=x&pane=1', wait_until='networkidle')
-        assert r.status == 200
-        if r.headers['content-type'].startswith('text/plain'): assert await pg.locator('body').inner_text() == 'No code index for this yet.'
-        else: assert await pg.locator('form[action="/learn/lookup"] input[type=search]').count() == 1
+        assert r.status == 200 and r.headers['content-type'].startswith('text/html')
+        if await pg.locator('form[action="/learn/lookup"]').count(): assert await pg.locator('input[type=search].lee-input').count() == 1
+        else: assert await pg.locator('main.lee-learn > p.lee-learn-line').inner_text() == 'No code index for this yet.'
         await _ide(pg, base)
         frame = await _side(pg, tmp_path, '/learn/lookup?q=x', 'Look up code')
         assert 'No code index for this yet.' in await frame.locator('body').inner_text() or await frame.locator('input[type=search]').count() == 1

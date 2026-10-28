@@ -1,4 +1,4 @@
-import asyncio
+import asyncio, re
 from unittest.mock import Mock
 import pytest
 from abhyasa.store import Learning
@@ -7,6 +7,12 @@ from learn_data import JID, rig, walk  # noqa: F401
 
 def headers_ok(r):
     assert "frame-ancestors 'self'" in r.headers['content-security-policy'] and r.headers['referrer-policy'] == 'no-referrer'
+
+def one_line(r, code, text, exact=True):
+    "`r` is a styled `learn` page of the muted line `text` with the status `code` and both headers."
+    assert r.status_code == code and r.headers['content-type'].startswith('text/html') and 'Traceback' not in r.text
+    assert 'class="lee-learn-page' in r.text and (f'<p class="lee-learn-line">{text}</p>' in r.text if exact else 'class="lee-learn-line">' in r.text and text in r.text)
+    headers_ok(r)
 
 def test_learn_shows_the_step_and_writes_nothing(rig):
     c, ws, lr, j, root = rig
@@ -17,10 +23,22 @@ def test_learn_shows_the_step_and_writes_nothing(rig):
     assert r.headers['content-type'].startswith('text/html')
     headers_ok(r)
     assert 'action="/learn/open"' in r.text and 'method="post"' in r.text
+    assert '<html class="lee-learn-page">' in r.text and 'in-pane' not in r.text
+    assert '<button type="submit" class="lee-btn">Open as a lesson</button>' in r.text
+    assert re.search(r'<p class="lee-learn-line">\s*Idea: <strong>', r.text)
+    assert r.text.index('localStorage.getItem') < r.text.index('lee-ide.css') and 'MutationObserver' in r.text
     r = c.get(f'/learn?walk={JID}&step=1')
     assert '<script>x()' not in r.text and '&lt;script&gt;' in r.text
     assert 'Softmax maps scores to weights.' in c.get(f'/learn?walk={JID}').text
     assert state() == before
+
+def test_a_learn_page_renders_the_saved_theme_before_the_stylesheet(rig):
+    c, ws, lr, j, root = rig
+    (root/'.leela').mkdir(exist_ok=True)
+    (root/'.leela/settings.json').write_text('{"appearance": {"theme": "nord:dark:tight"}}')
+    for u in (f'/learn?walk={JID}&step=0', '/learn?walk=gone-0000', '/learn/lookup'):
+        t = c.get(u).text
+        assert 'saved = "nord:dark:tight"' in t and t.index('saved = ') < t.index('lee-ide.css'), u
 
 def test_learn_is_get_only(rig):
     assert rig[0].post(f'/learn?walk={JID}').status_code == 405
@@ -31,9 +49,10 @@ def test_learn_shows_the_current_step_and_a_done_walk(rig):
     r = c.get('/learn?walk=half-0001')
     assert r.status_code == 200 and 'Attention mixes values.' in r.text and 'Softmax maps' not in r.text
     lr.put_journey({**j, 'id': 'done-0001', 'steps': [{**s, 'status': 'known'} for s in j.steps]})
-    r = c.get('/learn?walk=done-0001')
-    assert r.status_code == 200 and r.text == 'This walk is done.' and r.headers['content-type'].startswith('text/plain')
-    headers_ok(r)
+    one_line(c.get('/learn?walk=done-0001'), 200, 'This walk is done.')
+    r = c.get('/learn?walk=done-0001&pane=1')
+    one_line(r, 200, 'This walk is done.')
+    assert '<html class="lee-learn-page in-pane">' in r.text
 
 def test_learn_shows_a_step_with_no_passage_or_note(rig):
     c, ws, lr, j, root = rig
@@ -53,10 +72,7 @@ def test_learn_escapes_the_title_and_the_note(rig):
     (f'walk={JID}&step=9', 400, 'no step 9'), ('walk=gone-0000', 200, 'This walk is not in your learning store.'),
     ('walk=gone-0000&topic=Softmax', 200, 'This walk is not in your learning store.')])
 def test_learn_refuses_bad_queries(rig, q, code, text):
-    r = rig[0].get('/learn?' + q)
-    assert r.status_code == code and text in r.text and 'Traceback' not in r.text
-    assert r.headers['content-type'].startswith('text/plain')
-    headers_ok(r)
+    one_line(rig[0].get('/learn?' + q), code, text, exact=code == 200)
 
 def test_a_bad_query_never_opens_the_store(rig, monkeypatch):
     opened = []
@@ -81,10 +97,7 @@ def test_learn_says_when_the_store_cannot_be_read(rig, monkeypatch):
     with monkeypatch.context() as m:
         def locked(*a): raise PermissionError('locked')
         m.setattr(Memory, '_store', locked)
-        r = c.get(f'/learn?walk={JID}')
-        assert r.status_code == 503 and r.text == 'The learning store is locked or cannot be read.'
-        assert r.headers['content-type'].startswith('text/plain')
-        headers_ok(r)
+        one_line(c.get(f'/learn?walk={JID}'), 503, 'The learning store is locked or cannot be read.')
     assert c.get(f'/learn?walk={JID}').status_code == 200
 
 def test_learn_opens_a_topic(rig):
@@ -139,16 +152,14 @@ def test_lookup_with_no_index_says_one_line(rig, monkeypatch, k):
     c, ws = rig[:2]
     handle(ws, monkeypatch, k)
     r = c.get('/learn/lookup?q=x&pane=1')
-    assert r.status_code == 200 and r.text == NO_INDEX and r.headers['content-type'].startswith('text/plain')
-    headers_ok(r)
+    one_line(r, 200, NO_INDEX)
+    assert '<html class="lee-learn-page in-pane">' in r.text and '<title>Look up code</title>' in r.text
 
 def test_lookup_when_making_the_handle_raises(rig, monkeypatch):
     c, ws = rig[:2]
     def boom(path=None): raise OSError('locked')
     monkeypatch.setattr(ws.search, '_kosha', boom)
-    r = c.get('/learn/lookup?q=x')
-    assert r.status_code == 200 and r.text == NO_INDEX
-    headers_ok(r)
+    one_line(c.get('/learn/lookup?q=x'), 200, NO_INDEX)
 
 @pytest.mark.parametrize('pkg', ["x' OR 1=1 --", '--index-url=https://x', '../p'])
 def test_lookup_refuses_a_bad_package_name_before_the_index(rig, monkeypatch, pkg):
@@ -156,8 +167,13 @@ def test_lookup_refuses_a_bad_package_name_before_the_index(rig, monkeypatch, pk
     c, ws = rig[:2]
     asked = handle(ws, monkeypatch, FakeKosha())
     r = c.get(f'/learn/lookup?q=x&package={quote(pkg)}')
-    assert r.status_code == 400 and 'not a package name' in r.text and 'Traceback' not in r.text and asked == []
-    headers_ok(r)
+    one_line(r, 400, 'not a package name', exact=False)
+    assert asked == [] and '<p class="lee-learn-line"><' not in r.text
+
+def test_a_refusal_page_escapes_what_it_repeats(rig):
+    r = rig[0].get('/learn/lookup?q=x&package=%3Cimg%20src%3Dx%20onerror%3Dy()%3E&pane=1')
+    one_line(r, 400, 'not a package name', exact=False)
+    assert '<img src=x' not in r.text and '&lt;img src=x' in r.text and 'class="lee-learn-page in-pane"' in r.text
 
 def test_lookup_shows_rows_as_text_and_the_scratch_button_only_for_an_open_notebook(rig, monkeypatch):
     from urllib.parse import quote
@@ -167,7 +183,8 @@ def test_lookup_shows_rows_as_text_and_the_scratch_button_only_for_an_open_noteb
     r = c.get('/learn/lookup?q=run+sync&package=pydantic-ai&pane=1')
     assert r.status_code == 200 and r.headers['content-type'].startswith('text/html')
     headers_ok(r)
-    assert 'class="in-pane"' in r.text and 'lee-pane.js' in r.text and 'run_sync' in r.text and 'pydantic_ai/agent.py:40' in r.text
+    assert 'class="lee-learn-page in-pane"' in r.text and 'lee-pane.js' in r.text and 'run_sync' in r.text and 'pydantic_ai/agent.py:40' in r.text
+    assert 'class="lee-input"' in r.text and '<button type="submit" class="lee-btn">Look up</button>' in r.text
     assert '<b>Run' not in r.text and '&lt;b&gt;Run' in r.text and '<i>the' not in r.text
     assert k.calls[-1] == ('run sync', dict(limit=8, where="(package='pydantic_ai')"))
     assert 'Put in a scratch cell' not in r.text
@@ -175,6 +192,7 @@ def test_lookup_shows_rows_as_text_and_the_scratch_button_only_for_an_open_noteb
     p, _ = lesson_tab(c, ws, root)
     t = c.get(f'/learn/lookup?q=x&path={quote(str(p))}').text
     assert 'Put in a scratch cell' in t and 'in-pane' not in t and 'data-snippet=' in t
+    assert re.search(r'<button type="button"[^>]*class="lee-btn"[^>]*>Put in a scratch cell</button>', t)
 
 def test_lookup_with_no_query_asks_for_one(rig, monkeypatch):
     c, ws = rig[:2]
