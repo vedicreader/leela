@@ -3,10 +3,10 @@ from itertools import zip_longest
 from pathlib import Path
 from fastcore.xtras import fenced, fenced_blocks
 from fastcore.ansi import strip_ansi
-from fastcore.basics import first
+from fastcore.basics import AttrDict, first
 import abhyasa.tutor
 from abhyasa.method import METHODS
-from abhyasa.prompts import prompt
+from abhyasa.prompts import prompt, register
 from abhyasa.tutor import HINTS
 from .nb import Cell, Notebook, src_hash
 from .exercise import exercise_cells, exercise_meta
@@ -19,9 +19,50 @@ CHARTER_TAIL = ('\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enu
     + '\nTo grade, call check_exercise, then grade_exercise. Give one hint rung at a time; name a package only after confirming it is installed; name the module at rung 3 and the function at rung 4; never write the call.'
     + "\nAfter each learner message add at most one line 'Prompt note: ...' when it would help.")
 
-def lesson_charter(step=None) -> str:
-    "The tutor prompt as saved in abhyasa now, then `CHARTER_TAIL`."
-    return prompt('tutor') + CHARTER_TAIL
+LIBRARY_PROMPT = register('leela.library', 'Library lessons', 'What the tutor says about code that uses a library.',
+    'This lesson uses a library. The learner\'s code runs with no network and no API key. '
+    'Set tasks that use the library\'s offline test helpers. For PydanticAI, use `pydantic_ai.models.test.TestModel` '
+    'and `pydantic_ai.models.function.FunctionModel`. When you know no offline helpers for the library, set tasks on its pure functions only.')
+
+def _step_block(s):
+    head = f"\n\nThis lesson is step {s['step']} of the walk {s['walk']}." if s.get('walk') else '\n\nThis lesson is a walk step.'
+    rows = [f'{k}: {v}' for k, v in (('Concept', s.get('concept')), ('Section', s.get('section')), ('Note', s.get('note'))) if v]
+    if s.get('check'): rows.append(f"The walk checks this idea with a {s['check']} check. Ask for it only after the learner tries.")
+    quote = '\n'.join(f'> {x}'.rstrip() for x in (s.get('text') or '').splitlines())
+    return head + ('\nPassage:\n' + quote if quote else '') + ''.join(f'\n{r}' for r in rows)
+
+def lesson_charter(step=None, packages=()) -> str:
+    "The tutor prompt as saved in abhyasa now, then `CHARTER_TAIL`; with `step`, the walk step; with `packages`, the library prompt and the package names."
+    t = prompt('tutor') + CHARTER_TAIL + (_step_block(step) if step else '')
+    return t + (f"\n\n{prompt('leela.library')}\nPackages in this lesson's tool environment: {', '.join(packages)}." if packages else '')
+
+def step_brief(v) -> dict|None:
+    "The charter's `step` from the `find_step` result `v`: walk, step, section, passage, note, concept and check kind; None unless `v` is a step."
+    if v.get('kind') != 'step': return None
+    s, r = v.step, v.step.get('read') or {}
+    return dict(walk=v.j.get('id', ''), step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=s.get('note') or '',
+                concept=v.name, check=(s.get('check') or {}).get('kind') or '')
+
+def lesson_step(memory, nb) -> dict|None:
+    "The `step_brief` of the walk step the lesson meta of `nb` names, read from the learning shelf of `memory`; None with no valid walk. Store errors raise."
+    from abhyasa.store import Learning
+    from ..learn import learn
+    from ..memory.memory import _open_lock
+    if not (w := walk_meta(nb)) or w['step'] < 0: return None
+    vault = memory._store('learning')   # before the lock: `_store` takes it too
+    with _open_lock(memory.path): return step_brief(learn.find_step(Learning(vault), AttrDict(walk=w['walk'], step=w['step'], topic='')))
+
+def lesson_env(nb) -> str|None:
+    "The one tool environment key the exercise cells of `nb` name; None for none or more than one."
+    envs = {m['env'] for c in nb.cells if (m := exercise_meta(c)) and m.get('env')}
+    return first(envs) if len(envs) == 1 else None
+
+def env_packages(key) -> tuple:
+    "The requirement strings in the `ready` file of the tool environment `key`; empty for no key, no file or a name `tool_names` refuses."
+    from ..learn.tools import tool_dir, tool_names
+    if not key: return ()
+    try: return tuple(tool_names((tool_dir(key)/'ready').read_text().split()))
+    except (OSError, ValueError): return ()
 
 def _passage(step):
     quote = '\n'.join(f'> {x}'.rstrip() for x in (step.get('text') or '').splitlines())

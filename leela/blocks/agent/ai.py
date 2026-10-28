@@ -1001,6 +1001,25 @@ def _session_tools(host):
         except Exception as e: return f'grade_exercise failed: {errstr(e)}'
     return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise), small_tool(check_exercise), small_tool(grade_exercise)]   # the Run button belongs to a small session too
 
+def _stat_sig(p):
+    try: s = Path(p).stat(); return s.st_mtime_ns, s.st_size
+    except OSError: return 0, 0
+
+def _code_rows(rows):
+    return '\n\n'.join(f"{r['name']} ({r['package']}) {r['path']}:{r['line']}" + ''.join(f'\n{x}' for x in (r['doc'], r['snippet']) if x) for r in rows)
+
+def _lesson_tools(host, env):
+    "The tools Leela adds only while the active tab is a lesson; `env()` gives that lesson's tool environment key and packages at call time."
+    @summary(lambda a: f'Look up code for {_1(a.get("q"))}')
+    def look_up_code(q: str) -> str:
+        "Search the code index for `q`: the lesson's library packages when it has a tool environment, else the project. Returns name, package, path:line, doc and a short snippet per hit."
+        from ..learn.app import NO_INDEX, find_code
+        key, names = env()
+        try: rows = find_code(host.ws.search, q, list(names), key)
+        except Exception: rows = None
+        return NO_INDEX if rows is None else clip(_code_rows(rows)) if rows else 'Nothing found.'
+    return [small_tool(look_up_code)]
+
 def _news_tools(host, mx=MAX_TOOL_CHARS):
     "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."
     from ..vault.news import NEWS_SHELF, fetch_feed, feed_title, news_rows, poll_feeds
@@ -1192,6 +1211,8 @@ class Assistant(Agent):
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
+        self._lesson_toolset = _lesson_tools(host, lambda: self._lesson_env())
+        self._lesson_seen = (None, None)   # (seal, (step, packages)) of the last learning-store read
         self.video_jobs = VideoJobs()   # offered with no video model too, so asking for one says how to add it
         self._video_toolset = video_tools(host, jobs=self.video_jobs)
         self._built_mode = None            # whether a feed was followed when the tool list was last built
@@ -1232,18 +1253,46 @@ class Assistant(Agent):
         feeds = getattr(self.ws, 'feeds', None)
         return feeds is not None and any(True for _ in feeds)
 
-    def _lesson(self):
+    def _lesson_nb(self):
+        "The active tab's notebook when it is a lesson notebook, else None."
         from ..nb.nb import Notebook
         tab = getattr(self.ws, 'tab', None)
-        if tab is None or tab.kind != 'notebook' or not tab.path: return False
-        try: return bool(Notebook.load(self.host.check(tab.path)).meta.get('lesson'))
-        except Exception: return False
+        if tab is None or tab.kind != 'notebook' or not tab.path: return None
+        try: nb = Notebook.load(self.host.check(tab.path))
+        except Exception: return None
+        return nb if nb.meta.get('lesson') else None
+    def _lesson(self): return self._lesson_nb() is not None
+    def _lesson_env(self, nb=None):
+        "`(key, packages)` of the active lesson's one tool environment; `(None, ())` for none."
+        from ..nb.lesson import env_packages, lesson_env
+        if nb is None and (nb := self._lesson_nb()) is None: return None, ()
+        return (key := lesson_env(nb)), env_packages(key)
+    def _lesson_ctx(self):
+        "`(step, packages)` of the active lesson, None outside one. The learning store is read again only when the notebook, its lesson meta, the store file or its WAL, or the environment changed; a store error gives no step and is not kept."
+        from ..nb.lesson import lesson_step
+        if (nb := self._lesson_nb()) is None: return None
+        key, packages = self._lesson_env(nb)
+        mem = getattr(self.ws, 'memory', None)
+        db = getattr(mem, 'path', None)
+        seal = (str(self.ws.tab.path), json.dumps(nb.meta['lesson'], sort_keys=True, default=str), key, packages, id(mem),
+                *(_stat_sig(f) for f in ((db, Path(f'{db}-wal')) if db else ())))
+        if self._lesson_seen[0] == seal: return self._lesson_seen[1]
+        try: step = lesson_step(mem, nb) if mem is not None else None
+        except Exception:
+            self._lesson_seen = (None, None)
+            return None, packages
+        self._lesson_seen = (seal, (step, packages))
+        return step, packages
+    def _charter(self):
+        "The lesson charter for the active tab, with its walk step and packages; '' outside a lesson."
+        from ..nb.lesson import lesson_charter
+        return '' if (c := self._lesson_ctx()) is None else lesson_charter(*c)
     def _follow_mode(self):
         "Re-brief the live turn backend when a feed came or went, the active tab became or stopped being a lesson notebook, or the lesson charter's text changed, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
-        from ..nb.lesson import CHARTER_TAIL, lesson_charter
+        from ..nb.lesson import CHARTER_TAIL
         if self._briefed_mode is None: self._briefed_mode = self._built_mode   # a backend installed from outside (`tests.fakemodel`) was briefed with what `tools` built
-        mode, lesson = self._mode(), self._lesson()
-        charter = lesson_charter() if lesson else ''
+        mode, charter = self._mode(), self._charter()
+        lesson = bool(charter)
         if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson and charter == self._briefed_charter:
             self._briefed_mode = mode
             return
@@ -1274,19 +1323,19 @@ class Assistant(Agent):
         spec = self.routing.spec(job); fresh = (spec.backend, spec.model_id) not in self._backends
         be = super()._be(job)
         if fresh and job == 'turn':
-            from ..nb.lesson import CHARTER_TAIL, lesson_charter
+            from ..nb.lesson import CHARTER_TAIL
             self._briefed_mode, self._briefed_lesson = self._built_mode, CHARTER_TAIL in be.sp
-            self._briefed_charter = c if self._briefed_lesson and (c := lesson_charter()) in be.sp else ''
+            self._briefed_charter = c if self._briefed_lesson and (c := self._charter()) and c in be.sp else ''
         if self.engines is not None: self.engines.attach(be)
         return be
 
     @property
     def tools(self):
-        "Leela's own tools on the registry: news tools while a feed is followed, the rest always."
+        "Leela's own tools on the registry: news tools while a feed is followed, lesson tools while the active tab is a lesson, the rest always."
         if self._tools is None:
             feeds = mode = self._mode()
-            want = [*(self._news_toolset if feeds else []), *self._session_toolset, *self._video_toolset]
-            stale = {id(f) for f in self._news_toolset} - {id(f) for f in want}
+            want = [*(self._news_toolset if feeds else []), *(self._lesson_toolset if self._lesson() else []), *self._session_toolset, *self._video_toolset]
+            stale = {id(f) for f in [*self._news_toolset, *self._lesson_toolset]} - {id(f) for f in want}
             self.registry.tools[:] = [f for f in self.registry.tools if id(f) not in stale]
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in want if f.__name__ not in registered)
@@ -1314,9 +1363,7 @@ class Assistant(Agent):
         small = self.profile == 'small'
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
         base += VAULT_MARKS
-        if self._lesson():
-            from ..nb.lesson import lesson_charter
-            base += '\n\n' + lesson_charter()
+        if charter := self._charter(): base += '\n\n' + charter
         if loose := getattr(self.host, 'loose_files', ()):
             base += f'\n\nLoose files: {", ".join(loose)}. Each was opened on its own: read and edit it, but nothing beside it is yours to touch.'
         if (writable := self.host.writable_roots) != self.host.roots:
