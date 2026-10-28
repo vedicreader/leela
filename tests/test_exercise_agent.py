@@ -4,7 +4,7 @@ import pytest
 from leela.blocks.agent.ai import Interventions, WorkspaceHost, WRITE_TOOLS, _session_tools, notebook_approvals
 from leela.blocks.fs.fs import Sandbox
 from leela.blocks.nb.exercise import validate_exercise_spec
-from leela.blocks.nb.lesson import LESSON_CHARTER
+from leela.blocks.nb.lesson import CHARTER_TAIL
 from leela.blocks.nb.nb import Cell, Notebook
 
 SOLUTION = 'def double(x):\n    # SECRET_REFERENCE_SOLUTION_7f9c\n    return x*2'
@@ -103,7 +103,7 @@ def test_add_exercise_is_gated_and_briefed():
     assert 'add_exercise' in WRITE_TOOLS
     gate = Interventions(tools=WRITE_TOOLS, mode='ask')
     assert gate.request('add_exercise', {'path': 'ordinary.ipynb'}, timeout=.01).answer is False
-    assert "To set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test's expected value." in LESSON_CHARTER.splitlines()
+    assert "To set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test's expected value." in CHARTER_TAIL.splitlines()
 
 ASK = dict(path='ordinary.ipynb', task='Double a number.', fname='double', stub='def double(x):\n    pass',
           tests=[dict(say='A positive number', test='assert double(2) == 4', shown=True)], solution=SOLUTION)

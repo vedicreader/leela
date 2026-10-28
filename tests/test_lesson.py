@@ -5,7 +5,7 @@ from abhyasa.method import METHODS
 from abhyasa.tutor import HINTS, TUTOR_SP
 from fastcore.xtras import fenced_blocks
 from rupaka.spec import validate
-from leela.blocks.nb.lesson import LESSON_CHARTER, demo_refusal, fence, lesson_notebook, lock, parse_card, same_lines
+from leela.blocks.nb.lesson import CHARTER_TAIL, demo_refusal, lesson_charter, fence, lesson_notebook, lock, parse_card, same_lines
 from leela.blocks.nb.nb import Cell, Notebook
 
 @pytest.mark.parametrize('guess,actual,rows', [
@@ -100,15 +100,16 @@ def test_lesson_notebook_template_and_metadata_roundtrip():
     assert other.meta['lesson']['name'] == 'Other'
     assert other[2].extra['lesson']['role'] == 'prediction'
 
-def test_charter_uses_dependency_rules_and_hint_order():
-    assert TUTOR_SP in LESSON_CHARTER
-    positions = [LESSON_CHARTER.index(f'{i}. {hint}') for i, hint in enumerate(HINTS, 1)]
+def test_charter_uses_dependency_rules_and_hint_order(abhyasa_cfg):
+    charter = lesson_charter()
+    assert charter == TUTOR_SP + CHARTER_TAIL
+    assert 'adult' in charter and 'never praise effort' in charter.lower()
+    positions = [CHARTER_TAIL.index(f'{i}. {hint}') for i, hint in enumerate(HINTS, 1)]
     assert positions == sorted(positions)
-    assert 'add_demo' in LESSON_CHARTER
-    assert 'never write the reveal' in LESSON_CHARTER.lower()
-    assert 'adult' in LESSON_CHARTER and 'never praise effort' in LESSON_CHARTER.lower()
-    assert 'another way' in LESSON_CHARTER.lower() and 'not yet used' in LESSON_CHARTER
-    assert all(name in LESSON_CHARTER for name in METHODS)
+    assert 'add_demo' in CHARTER_TAIL
+    assert 'never write the reveal' in CHARTER_TAIL.lower()
+    assert 'another way' in CHARTER_TAIL.lower() and 'not yet used' in CHARTER_TAIL
+    assert all(name in CHARTER_TAIL for name in METHODS)
 
 def test_demo_refusal_preserves_real_validator_lines():
     errors = validate({})

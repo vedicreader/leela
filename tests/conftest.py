@@ -103,6 +103,13 @@ def cfg_home(monkeypatch, tmp_path_factory):
     assert _pathlib.Path(leela.leela_cfg) != REAL_CONFIG_HOME
     return cfg
 
+@pytest.fixture
+def abhyasa_cfg(monkeypatch, tmp_path):
+    """An `ABHYASA_CONFIG` of this test's own, for a test that reads or saves abhyasa's prompts."""
+    d = tmp_path/'abhyasa'
+    monkeypatch.setenv('ABHYASA_CONFIG', str(d))
+    return d
+
 @pytest.fixture(autouse=True)
 def _no_backup_threads(monkeypatch):
     """No test schedules real backups."""

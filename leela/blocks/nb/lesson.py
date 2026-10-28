@@ -4,18 +4,24 @@ from pathlib import Path
 from fastcore.xtras import fenced, fenced_blocks
 from fastcore.ansi import strip_ansi
 from fastcore.basics import first
+import abhyasa.tutor
 from abhyasa.method import METHODS
-from abhyasa.tutor import HINTS, TUTOR_SP
+from abhyasa.prompts import prompt
+from abhyasa.tutor import HINTS
 from .nb import Cell, Notebook, src_hash
 from .exercise import exercise_cells, exercise_meta
 
-LESSON_CHARTER = (TUTOR_SP + '\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
+CHARTER_TAIL = ('\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
     + '\nAdd demos only with add_demo. Never write the reveal, Leela builds it.'
     + '\nWhen the learner asks for another way, re-explain with a method not yet used from abhyasa.method.METHODS:\n'
     + '\n'.join(f'- {name}: {text}' for name, text in METHODS.items())
     + '\nTo set a coding exercise, call add_exercise with a reference solution; Leela checks it and never stores it. Never show the solution or a hidden test\'s expected value.'
     + '\nTo grade, call check_exercise, then grade_exercise. Give one hint rung at a time; name a package only after confirming it is installed; name the module at rung 3 and the function at rung 4; never write the call.'
     + "\nAfter each learner message add at most one line 'Prompt note: ...' when it would help.")
+
+def lesson_charter(step=None) -> str:
+    "The tutor prompt as saved in abhyasa now, then `CHARTER_TAIL`."
+    return prompt('tutor') + CHARTER_TAIL
 
 def lesson_notebook(name, exercise=None) -> Notebook:
     code = Cell(source='pass')

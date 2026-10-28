@@ -1188,7 +1188,7 @@ class Assistant(Agent):
         self._video_toolset = video_tools(host, jobs=self.video_jobs)
         self._built_mode = None            # whether a feed was followed when the tool list was last built
         self._briefed_mode = None          # …and the one the live turn backend was last briefed with
-        self._briefed_lesson = False
+        self._briefed_lesson, self._briefed_charter = False, ''   # the lesson charter text the live turn backend was briefed with
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
         from ...workspace import AGENT_CHANNELS
         for k, attr in AGENT_CHANNELS.items(): setattr(self, attr, getattr(ws, k, '') or '')
@@ -1231,18 +1231,20 @@ class Assistant(Agent):
         try: return bool(Notebook.load(self.host.check(tab.path)).meta.get('lesson'))
         except Exception: return False
     def _follow_mode(self):
-        "Re-brief the live turn backend when a feed came or went, or the active tab became or stopped being a lesson notebook, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
+        "Re-brief the live turn backend when a feed came or went, the active tab became or stopped being a lesson notebook, or the lesson charter's text changed, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
+        from ..nb.lesson import CHARTER_TAIL, lesson_charter
         if self._briefed_mode is None: self._briefed_mode = self._built_mode   # a backend installed from outside (`tests.fakemodel`) was briefed with what `tools` built
         mode, lesson = self._mode(), self._lesson()
-        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson:
+        charter = lesson_charter() if lesson else ''
+        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson and charter == self._briefed_charter:
             self._briefed_mode = mode
             return
         self._forget()
         be = self._be('turn')
         prompt = self.system_prompt()
         be.refresh(prompt, self.tools)
-        from ..nb.lesson import LESSON_CHARTER
-        self._briefed_mode, self._briefed_lesson = mode, LESSON_CHARTER in prompt
+        self._briefed_mode, self._briefed_lesson = mode, CHARTER_TAIL in prompt
+        self._briefed_charter = charter if self._briefed_lesson else ''
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."
@@ -1264,8 +1266,9 @@ class Assistant(Agent):
         spec = self.routing.spec(job); fresh = (spec.backend, spec.model_id) not in self._backends
         be = super()._be(job)
         if fresh and job == 'turn':
-            from ..nb.lesson import LESSON_CHARTER
-            self._briefed_mode, self._briefed_lesson = self._built_mode, LESSON_CHARTER in be.sp
+            from ..nb.lesson import CHARTER_TAIL, lesson_charter
+            self._briefed_mode, self._briefed_lesson = self._built_mode, CHARTER_TAIL in be.sp
+            self._briefed_charter = c if self._briefed_lesson and (c := lesson_charter()) in be.sp else ''
         if self.engines is not None: self.engines.attach(be)
         return be
 
@@ -1304,8 +1307,8 @@ class Assistant(Agent):
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
         base += VAULT_MARKS
         if self._lesson():
-            from ..nb.lesson import LESSON_CHARTER
-            base += '\n\n' + LESSON_CHARTER
+            from ..nb.lesson import lesson_charter
+            base += '\n\n' + lesson_charter()
         if loose := getattr(self.host, 'loose_files', ()):
             base += f'\n\nLoose files: {", ".join(loose)}. Each was opened on its own: read and edit it, but nothing beside it is yours to touch.'
         if (writable := self.host.writable_roots) != self.host.roots:

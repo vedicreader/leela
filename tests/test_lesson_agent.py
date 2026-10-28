@@ -1,13 +1,14 @@
 import json
 from types import SimpleNamespace
 import pytest
+from abhyasa.prompts import PROMPTS, set_prompt
 from rupaka.spec import gallery, validate
 from leela.blocks.agent.ai import Interventions, WorkspaceHost, WRITE_TOOLS, _session_tools
 from leela.blocks.fs.fs import Sandbox
-from leela.blocks.nb.lesson import LESSON_CHARTER, demo_refusal, fence, lesson_notebook
+from leela.blocks.nb.lesson import CHARTER_TAIL, demo_refusal, fence, lesson_notebook
 from leela.blocks.nb.nb import Cell, Notebook
 from leela.workspace import Tab, Workspace
-from tests.fakemodel import WIDE, install
+from tests.fakemodel import WIDE, Step, install
 
 @pytest.fixture
 def demo(tmp_path):
@@ -87,16 +88,16 @@ def test_lesson_charter_follows_only_the_active_tab(tmp_path, profile):
     ws.open(lesson)
     ws.open(ordinary)
     ai = ws.ai
-    assert LESSON_CHARTER not in ai.system_prompt()
+    assert CHARTER_TAIL not in ai.system_prompt()
     assert 'add_demo' in {f.__name__ for f in ai._plain}
     ws.activate(ws.find(lesson))
-    assert LESSON_CHARTER in ai.system_prompt()
+    assert CHARTER_TAIL in ai.system_prompt()
     ws.activate(ws.find(ordinary))
-    assert LESSON_CHARTER not in ai.system_prompt()
+    assert CHARTER_TAIL not in ai.system_prompt()
     ws.close()
-    assert LESSON_CHARTER in ai.system_prompt()
+    assert CHARTER_TAIL in ai.system_prompt()
     ws.close()
-    assert LESSON_CHARTER not in ai.system_prompt()
+    assert CHARTER_TAIL not in ai.system_prompt()
 
 @pytest.mark.parametrize('start_lesson', [False, True])
 def test_live_backend_rebriefs_both_ways_without_tool_rebuilds_hiding_it(tmp_path, monkeypatch, start_lesson):
@@ -113,16 +114,16 @@ def test_live_backend_rebriefs_both_ways_without_tool_rebuilds_hiding_it(tmp_pat
     refresh = be.refresh
     monkeypatch.setattr(be, 'refresh', lambda sp, tools: (prompts.append(sp), refresh(sp, tools))[-1])
     ai._follow_mode()
-    assert (LESSON_CHARTER in be.sp) == start_lesson
+    assert (CHARTER_TAIL in be.sp) == start_lesson
     for target in (not start_lesson, start_lesson):
         ws.activate(ws.find(lesson if target else ordinary))
-        assert (LESSON_CHARTER in ai.system_prompt()) == target
+        assert (CHARTER_TAIL in ai.system_prompt()) == target
         ai._forget()
         _ = ai.tools
         count = len(prompts)
         ai._follow_mode()
         assert len(prompts) == count + 1
-        assert (LESSON_CHARTER in be.sp) == target
+        assert (CHARTER_TAIL in be.sp) == target
         ai._follow_mode()
         assert len(prompts) == count + 1
 
@@ -140,8 +141,38 @@ def test_feed_changes_still_rebrief_without_changing_lesson_status(tmp_path):
         ai._forget()
         _ = ai.tools
         ai._follow_mode()
-        assert LESSON_CHARTER in be.sp
+        assert CHARTER_TAIL in be.sp
         assert ('news_latest' in {f.__name__ for f in be.tools}) == followed
+
+def test_a_saved_tutor_prompt_reaches_the_live_backend_on_the_next_turn(tmp_path, monkeypatch, abhyasa_cfg):
+    path = tmp_path/'lesson.ipynb'
+    lesson_notebook('Softmax').save(path)
+    ws = Workspace(roots=[tmp_path])
+    ws.open(path)
+    be = install(ws, [Step(text='ok')], token_delay=0, spec=WIDE)
+    ai, prompts = ws.ai, []
+    refresh = be.refresh
+    monkeypatch.setattr(be, 'refresh', lambda sp, tools: (prompts.append(sp), refresh(sp, tools))[-1])
+    a, b = 'Prompt A. Ask one question at a time.', 'Prompt B. Never give the answer.'
+    set_prompt('tutor', a)
+    assert a + CHARTER_TAIL in ai.system_prompt()
+    ai.ask('first')
+    assert len(prompts) == 1 and a + CHARTER_TAIL in be.sp and ai._briefed_lesson
+    ai.ask('second')
+    assert len(prompts) == 1
+    hist = list(be.hist)
+    asked = lambda h: [m['content'].splitlines()[0] for m in h if m['role'] == 'user']
+    assert asked(hist) == ['first', 'second']
+    set_prompt('tutor', b)
+    ai.ask('third')
+    assert len(prompts) == 2 and b + CHARTER_TAIL in be.sp and a not in be.sp
+    ai.ask('fourth')
+    assert len(prompts) == 2
+    set_prompt('tutor', '')
+    ai.ask('fifth')
+    assert len(prompts) == 3 and PROMPTS['tutor'].dflt + CHARTER_TAIL in be.sp and b not in be.sp
+    assert be.hist[:len(hist)] == hist
+    assert asked(be.hist) == ['first', 'second', 'third', 'fourth', 'fifth']
 
 @pytest.mark.parametrize('tab', [None, Tab(path='', kind='notebook', scratch=True), Tab(path='missing.ipynb'), Tab(path='broken.ipynb'), Tab(path='note.py')])
 def test_unreadable_or_non_notebook_tabs_have_no_lesson_charter(tmp_path, tab):
@@ -150,4 +181,4 @@ def test_unreadable_or_non_notebook_tabs_have_no_lesson_charter(tmp_path, tab):
         tab.path = str(tmp_path/tab.path) if tab.path else ''
         if tab.path.endswith('broken.ipynb'): (tmp_path/'broken.ipynb').write_text('{broken')
         ws.tabs.append(tab)
-    assert LESSON_CHARTER not in ws.ai.system_prompt()
+    assert CHARTER_TAIL not in ws.ai.system_prompt()

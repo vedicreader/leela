@@ -54,10 +54,10 @@ def test_learn_handoff():
     for bad in ('walk=../x', 'walk=a-1&step=-1', ''):
         with pytest.raises(ValueError): read_handoff(bad)
 
-def test_prompts_contract():
+def test_prompts_contract(abhyasa_cfg):
     import abhyasa.tutor
     from abhyasa.prompts import PROMPTS, prompt
-    assert 'tutor' in PROMPTS and prompt('tutor') == PROMPTS['tutor'].dflt   # ABHYASA_CONFIG is a temp folder: no saved text
+    assert 'tutor' in PROMPTS and prompt('tutor') == PROMPTS['tutor'].dflt
 
 def test_run_isolated_contract():
     from abhyasa.check import run_isolated

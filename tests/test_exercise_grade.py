@@ -5,7 +5,7 @@ from abhyasa.store import Learning
 from leela.app import ide_app
 from leela.blocks.agent.ai import WRITE_TOOLS, _session_tools
 from leela.blocks.memory.memory import Memory
-from leela.blocks.nb.lesson import LESSON_CHARTER, lesson_notebook
+from leela.blocks.nb.lesson import CHARTER_TAIL, lesson_notebook
 from leela.blocks.nb.nb import src_hash
 from leela.workspace import Workspace
 
@@ -122,7 +122,7 @@ def test_a_copied_exercise_cell_starts_with_no_check_and_no_grade(rig):
     assert r['state']()['grade']['score'] == 8
 
 def test_the_charter_carries_the_grading_rules():
-    lines = LESSON_CHARTER.splitlines()
-    assert 'call add_exercise with a reference solution' in LESSON_CHARTER
+    lines = CHARTER_TAIL.splitlines()
+    assert 'call add_exercise with a reference solution' in CHARTER_TAIL
     assert ("To grade, call check_exercise, then grade_exercise. Give one hint rung at a time; name a package only after confirming it is installed; name the module at rung 3 and the function at rung 4; never write the call.") in lines
     assert "After each learner message add at most one line 'Prompt note: ...' when it would help." in lines
