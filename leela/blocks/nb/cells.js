@@ -379,7 +379,7 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
   if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
 });
 //: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
-const mdPaint = (c, cached = true) => el => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null); };
+const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null, cached && c ? src : null); };
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {

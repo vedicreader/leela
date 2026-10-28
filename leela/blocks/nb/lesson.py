@@ -137,5 +137,58 @@ def record_exercise(memory, f):
             else: lr.mark_attempt(attempt.id, grade=f['score'], feedback=f['note'])
             return _saved(c)
 
+def _gates(bs):
+    for b in bs if isinstance(bs, list) else []:
+        if not isinstance(b, dict): continue
+        if b.get('type') == 'gate': yield b
+        yield from _gates(b.get('blocks'))
+
+def demo_gate(cell, demo, gate):
+    "`(spec, block)` of gate `gate` in demo `demo` among the `rupaka` fences of markdown `cell`; ValueError when there is none or more than one."
+    src = cell.source if cell.cell_type == 'markdown' else ''
+    specs = []
+    for info, body, *_ in fenced_blocks(src) + fenced_blocks(src, ch='~'):
+        if info != 'rupaka': continue
+        try: s = json.loads(body)
+        except ValueError: continue
+        if isinstance(s, dict): specs.append(s)
+    hits = [(s, g) for s in specs if (s.get('id') or '') == (demo or '') for g in _gates(s.get('blocks')) if g.get('id') == gate]
+    if not hits: raise ValueError(f'This cell has no gate {gate!r}.')
+    if len(hits) > 1: raise ValueError(f'This cell has more than one gate {gate!r}. Give each gate its own id.')
+    return hits[0]
+
+def _js(v):
+    "`String(v)` as the rupaka runtime makes it, for a JSON scalar."
+    if isinstance(v, bool): return str(v).lower()
+    if v is None: return 'null'
+    return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+
+def prediction_filing(nb, cell, path, demo, gate, picked, why=''):
+    "What `record_prediction` files for one gate, copied now; None when the gate's answer is a state path."
+    spec, g = demo_gate(cell, demo, gate)
+    if not isinstance(a := g.get('answer'), dict) or 'is' not in a: return None
+    ok, why = _js(picked) == _js(a['is']), str(why or '')
+    return dict(name=nb.meta['lesson']['name'], question=str(g.get('prompt') or gate), answer=_js(picked), thinking=why, correct=ok,
+                depth=3 if why.strip() else 2, feedback=f'The answer is {_js(a["is"])}.', notebook=str(path or ''),
+                card_key=f'{cell.id}:{src_hash(cell.source)}:{spec.get("id") or ""}:{gate}', gate=gate, demo=spec.get('id') or '')
+
+def record_prediction(memory, f):
+    "File one rupaka prediction as a `demo` attempt per source version; None when its key is already filed."
+    from abhyasa.store import Learning, slugify
+    from abhyasa.model import update
+    from litesearch.core import write_txn
+    from ..memory.memory import _open_lock
+    slug, a = slugify(f['name']), {k: v for k, v in f.items() if k != 'name'}
+    vault = memory._store('learning')
+    with _open_lock(memory.path):
+        lr = Learning(vault)
+        with write_txn(lr.v.db):
+            if any(x.get('card_key') == a['card_key'] for x in lr.attempts(slug, limit=10000)): return None
+            u = update(lr.concept(slug) or lr.put(f['name'], slug=slug), a['depth'], a['correct'])
+            u.pop('kind')
+            c = lr.update(slug, **u)
+            lr.record(concept=slug, kind='demo', **a)
+            return _saved(c)
+
 def fence(spec): return fenced(json.dumps(spec, ensure_ascii=False), 'rupaka')
 def demo_refusal(errors): return '\n'.join(errors)

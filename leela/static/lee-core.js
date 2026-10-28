@@ -648,14 +648,17 @@ function renderMath(el) {
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
-//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
-function rupakaFences(el, owner = null) {
+//: `nb.src_hash` in the page: the first 12 hex digits of the SHA-256 of `text`.
+const srcHash = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from.
+function rupakaFences(el, owner = null, src = null) {
   const pass = owner && rupakaPass(owner), seen = new Map();
   $$('pre > code.language-rupaka', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
     const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
     let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
     const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    if (src != null) e.host.leeSource = src;
     const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
     if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
   });
@@ -2962,7 +2965,7 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
   if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
 });
 //: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
-const mdPaint = (c, cached = true) => el => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null); };
+const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null, cached && c ? src : null); };
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
@@ -3382,6 +3385,20 @@ function renderLessonReveal(c) {
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
 }
+//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson and computes `ok` itself.
+async function lessonPredict(e) {
+  const at = e.composedPath(), host = at.find(n => n.classList?.contains('lee-rupaka')), cell = at.find(n => n.matches?.('.lee-cell[data-id]'));
+  if (!cell || host?.leeSource == null) return;
+  const {demo, gate, picked, why} = e.detail, path = lee.path;
+  try {
+    const src = await srcHash(host.leeSource);
+    await lee.nbQueue;
+    const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, why, src});
+    if (d.message || d.reason) status(d.message || d.reason, d.logged ? 'ok' : 'info');
+  } catch (err) { status(String(err.message || err), 'err'); }
+}
+// The Node harnesses load this file with no `document`.
+globalThis.document?.addEventListener('rk-predict', lessonPredict);
 function paintLessonCell(cell, c) {
   const role = c.cell_type === 'markdown' ? c.extra?.lesson?.role : '';
   cell.dataset.lessonRole = role || '';

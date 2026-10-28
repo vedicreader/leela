@@ -648,14 +648,17 @@ function renderMath(el) {
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
-//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
-function rupakaFences(el, owner = null) {
+//: `nb.src_hash` in the page: the first 12 hex digits of the SHA-256 of `text`.
+const srcHash = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 12);
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from.
+function rupakaFences(el, owner = null, src = null) {
   const pass = owner && rupakaPass(owner), seen = new Map();
   $$('pre > code.language-rupaka', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
     const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
     let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
     const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    if (src != null) e.host.leeSource = src;
     const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
     if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
   });

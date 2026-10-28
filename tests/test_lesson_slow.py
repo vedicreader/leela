@@ -162,3 +162,44 @@ def test_lesson_due_review_question_before_last_answer(tmp_path, monkeypatch):
         assert await due.is_hidden() and await due.text_content() == ''
         assert await pane.locator('#lessonreviewbody').inner_text() == 'Nothing to learn or review right now.'
     asyncio.run(_real_page(go, tmp_path))
+
+def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
+    from abhyasa.store import Learning
+    from leela.blocks.memory.memory import Memory
+    from leela.blocks.nb.lesson import fence, lesson_notebook
+    monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
+    home = tmp_path/'home'
+    (home/'Library').mkdir(parents=True)
+    (home/'Library/Keychains').symlink_to(Path.home()/'Library/Keychains', target_is_directory=True)
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'learning.db'))
+    gate = dict(type='gate', id='g1', prompt='What is half of 8?', options=[2, 4, 6], answer={'is': 4}, why='Why?')
+    nb = lesson_notebook('Halves')
+    nb[1].source = 'Pick one.\n\n' + fence(dict(id='halves', blocks=[dict(type='stack', blocks=[gate])]))
+    path = tmp_path/'halves.ipynb'; nb.save(path)
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1440, 'height': 1100})
+        pg.set_default_timeout(15000)
+        await pg.evaluate('p => leeOpenFile(p)', str(path))
+        await pg.wait_for_function('lee.cells.length === 5')
+        demo = pg.locator('.lee-cell[data-i="1"] .lee-rupaka')
+        await demo.locator('button.go').wait_for()
+        await pg.locator('.lee-cell[data-i="2"] .lee-md-cell').dblclick()
+        await pg.wait_for_function("document.activeElement?.closest('.lee-cell')?.dataset.i === '2' && document.activeElement.classList.contains('cm-content')")
+        await pg.keyboard.type('four')
+        await pg.wait_for_function("lee.cells[2].source === 'four' || lee.editors.get(lee.cells[2].id) && LeeCM.getDoc(lee.editors.get(lee.cells[2].id)) === 'four'")
+        await demo.locator('.opts button').nth(1).click()
+        await demo.locator('textarea').fill('Half of 8 is 4.')
+        async with pg.expect_response('**/lesson/predict') as got:
+            await demo.locator('button.go').click()
+        resp = await got.value
+        assert resp.status == 200, await resp.text()
+        body = await resp.json()
+        assert body['logged'] is True and body['message'].startswith('Saved to your learning shelf. '), body
+        assert set(json.loads(resp.request.post_data)) == {'path', 'cell_id', 'demo', 'gate', 'picked', 'why', 'src'}
+        await pg.wait_for_function("document.querySelector('#status')?.textContent.startsWith('Saved to your learning shelf.')")
+    asyncio.run(_real_page(go, tmp_path))
+    rows = Learning(Memory(path=tmp_path/'learning.db', offline=True)._store('learning')).attempts('halves', limit=10)
+    assert len(rows) == 1
+    assert (bool(rows[0].correct), rows[0].depth, rows[0].answer, rows[0].thinking, rows[0].gate) == (True, 3, '4', 'Half of 8 is 4.', 'g1')
