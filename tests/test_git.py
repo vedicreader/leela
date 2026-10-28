@@ -115,6 +115,50 @@ def test_a_resolution_keeps_the_files_mode(repo_git):
     assert resolving(c).status_code == 200
     assert path.stat().st_mode & 0o111, 'still executable'
 
+def conflicted_files(repo_git, *names):
+    "Leave the repository mid-merge with each of these files conflicted between two texts."
+    r, paths = GitRepo.at(repo_git), [repo_git/n for n in names]
+    def commit_all(text, msg):
+        for p in paths: p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text)
+        git(repo_git, 'add', '.'); git(repo_git, 'commit', '-m', msg)
+    commit_all('base\n', 'base'); r.create('other'); commit_all('theirs\n', 'other side')
+    r.checkout('main'); commit_all('ours\n', 'main side')
+    assert subprocess.run(['git', 'merge', 'other'], cwd=repo_git, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode != 0
+    return paths
+
+def test_a_conflict_route_refuses_what_the_sandbox_refuses(repo_git, monkeypatch):
+    "Git sat above the open folder, so a conflicted file beside it was written or deleted with no sandbox check."
+    outside, lib, ok = conflicted_files(repo_git, 'other.py', 'lib/x.py', 'src/ok.py')
+    c, ws = served([repo_git/'src'])
+    monkeypatch.setattr(ws.fs, 'stdlib_root', lambda: [(repo_git/'lib').resolve()])
+    for path, why in ((outside, 'outside the open folders'), (lib, 'standard library')):
+        was, rel = path.read_text(), str(path.relative_to(repo_git))
+        for choice in ('resolved', 'ours', 'worktree'):
+            r = gitop(c, op='resolve_conflict', path=rel, choice=choice, content='x\n', before=was)
+            assert r.json().get('ok') is False and why in r.json()['error'], (rel, choice, r.json())
+            assert path.read_text() == was and unmerged_now(repo_git, rel), (rel, choice)
+    r = gitop(c, op='resolve_conflict', path='src/ok.py', choice='resolved', content='settled\n', before=ok.read_text())
+    assert r.status_code == 200 and ok.read_text() == 'settled\n'
+
+def test_a_batch_resolution_stops_at_a_file_outside_the_folders(repo_git):
+    "`resolve_safe_conflicts` names no paths by default, so only the write itself can refuse the outside file."
+    outside, ok = conflicted_files(repo_git, 'other.py', 'src/ok.py')
+    same = 'a\n<<<<<<< ours\nsame\n=======\nsame\n>>>>>>> theirs\nb\n'
+    for p in (outside, ok): p.write_text(same)
+    c, _ = served([repo_git/'src'])
+    assert c.get('/git/conflicts').json()['files']
+    r = gitop(c, op='resolve_safe_conflicts')
+    assert r.json().get('ok') is False and 'outside the open folders' in r.json()['error'], r.json()
+    assert outside.read_text() == same and ok.read_text() == same, 'nothing was left half-done'
+
+def test_discarding_the_whole_folder_stays_an_ordinary_write(repo_git):
+    "`.` names the open folder itself, so checking its parent would refuse the folder the user opened."
+    c, _ = served([repo_git])
+    (repo_git/'src'/'app.py').write_text('value = 2\n')
+    assert gitop(c, op='discard', paths=['.']).status_code == 200
+    assert (repo_git/'src'/'app.py').read_text() == 'value = 1\n'
+
 NOTEBOOK = {
     'cells': [
         {'cell_type': 'markdown', 'id': 'a1', 'metadata': {}, 'source': ['# title\n', '\n', 'prose\n']},

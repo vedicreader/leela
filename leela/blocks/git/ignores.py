@@ -55,7 +55,7 @@ def missing_rules(repo, folder):
         out.append((kind, list(spec['lines'])))
     return out
 
-def prepare(repo, folder, write=True):
+def prepare(repo, folder, write=True, save=None):
     "Give `folder` the ignore rules its project kinds need, and say what was added."
     missing = missing_rules(repo, folder)
     wanted = [l for _, lines in missing for l in lines]
@@ -66,7 +66,9 @@ def prepare(repo, folder, write=True):
         added = [l for l in wanted if l not in old]
         if added:
             head = old + ([''] if old and old[-1].strip() else [])
-            target.write_text('\n'.join(head + added) + '\n', encoding='utf-8')
+            text = '\n'.join(head + added) + '\n'
+            if save: save(target, text)
+            else: target.write_text(text, encoding='utf-8')
             from .seam import invalidate
             invalidate(repo.root)
     return {'kinds': [k for k, _ in missing], 'added': added, 'path': str(target)}

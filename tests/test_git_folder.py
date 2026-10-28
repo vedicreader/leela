@@ -57,6 +57,17 @@ def test_staging_a_folder_writes_its_ignores_first(tmp_path):
     assert not any(p.startswith('mycrate/target') for p in staged), 'the build output stayed out'
     assert not any(p.endswith('.whl') for p in staged), 'and so did the wheel'
 
+def test_preparing_a_folder_never_writes_through_a_gitignore_that_leaves_the_folders(tmp_path):
+    "`prepare` wrote `.gitignore` with a bare `write_text`, which follows a link out of every open folder."
+    root = tmp_path/'repo'; root.mkdir()
+    _repo(root); d = _crate(root)
+    outside = tmp_path/'elsewhere.txt'; outside.write_text('keep\n')
+    (d/'.gitignore').symlink_to(outside)
+    with TestClient(ide_app(Workspace(roots=[root]))) as client:
+        r = client.post('/git/tree/prepare', json={'path': str(d)})
+    assert r.json().get('ok') is False, r.text
+    assert outside.read_text() == 'keep\n'
+
 # what the tree shows ------------------------------------------------------------------------------
 
 def test_a_folder_takes_the_strongest_state_under_it(tmp_path):

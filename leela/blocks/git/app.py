@@ -116,10 +116,7 @@ def _sandboxed(ctx, repo):
     "Point this repository's worktree writes at the sandbox, and collect them for the journal."
     rows = []
     def save(target, text):
-        target = Path(target).resolve()
-        # A repository rooted above every open folder is normal: `.gitignore` then sits outside the
-        # sandbox, and refusing the write would break an operation that works today.
-        if not ctx.fs.covers(target): return target.write_text(text, encoding='utf-8')
+        target = ctx.fs._check(target)
         before = _read(target)
         mode = target.stat().st_mode if target.is_file() else None
         ctx.fs.write(target, text)
@@ -135,10 +132,8 @@ def _dropped_files(ctx, repo):
     def drop(target):
         # Resolving the path itself would follow a conflicted symlink and take away the file it
         # points at, which is on nobody's side of the merge.
-        target = Path(target).parent.resolve()/Path(target).name
-        # Same rule as `_sandboxed`: a repository rooted above every open folder is normal, and the
-        # trash is reached through the sandbox, so a file outside it can only be removed outright.
-        if not ctx.fs.covers(target) or ctx.journal.trash is None: return target.unlink()
+        target = ctx.fs._check(Path(target).parent)/Path(target).name
+        if ctx.journal.trash is None: return target.unlink()
         gone.append((str(target), ctx.journal.trash.keep(target)))
     repo.dropper = drop
     return gone
@@ -235,6 +230,12 @@ def _journalled(ctx, repo, op, run, choice=''):
                            trashed=gone, hooked=not (rows or gone))
     return outcome
 
+def _writable(ctx, repo, paths):
+    "Refuse, before anything changes, a file the sandbox would not let this route write or remove."
+    for p in paths:
+        t = Path(repo.root, p)
+        ctx.fs._check(t if t.is_dir() else t.parent)
+
 def _guard(ctx, repo, op, d, seen):
     "Refuse a write the browser composed against text the file no longer holds."
     # `worktree` is the one choice that overwrites nothing: it stages the file exactly as it is on
@@ -325,6 +326,8 @@ def connect(app, ctx):
         try:
             def act():
                 r, op = repo_at(d.get('repo') or ''), str(d.get('op') or '')
+                if op in ('resolve_conflict', 'write_worktree', 'discard'):
+                    _writable(ctx, r, git_paths(d.get('paths') if op == 'discard' else [d.get('path')]))
                 if op in ('resolve_conflict', 'write_worktree'):
                     _guard(ctx, r, op, d, panes if op == 'resolve_conflict' else reviews)
                 if op == 'resolve_safe_conflicts': _guard_batch(ctx, r, d, plans)
@@ -531,7 +534,7 @@ def connect(app, ctx):
                 repository, relative = repo_relative(d.get('path') or '', 'tree path')
                 folder = Path(repository.root)/relative if relative else Path(repository.root)
                 if not folder.is_dir(): raise GitError(f'{folder.name} is not a folder')
-                rules = prepare(repository, folder, write=not d.get('dry_run'))
+                rules = prepare(repository, folder, write=not d.get('dry_run'), save=ctx.fs.write)
                 staged = []
                 if not d.get('dry_run'):
                     # The rules live inside the folder, so staging the folder carries them along.
