@@ -323,3 +323,25 @@ def test_a_narrow_split_keeps_the_cell_bar_off_the_gutter(tmp_path, monkeypatch)
             return [...bar.children].filter(x => x.getBoundingClientRect().width && x.getBoundingClientRect().left < g.right - .5).map(x => x.className); })""")
         assert bad == [], bad
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
+def test_a_web_link_on_a_step_opens_outside_the_pane_and_the_page(tmp_path, monkeypatch):
+    ws = _ws(tmp_path, monkeypatch)
+    lr = Learning(ws.memory._store('learning')); j = lr.journey(JID)
+    lr.put_journey({**j, 'steps': [{**j.steps[0], 'note': 'Read [the paper](https://example.org/paper).'}, j.steps[1]]})
+    async def go(pg, base):
+        asked = []   # the harness aborts outside requests, so a popup ends on an error page; its request shows where it went
+        pg.context.on('request', lambda r: 'example.org' in r.url and asked.append(r.url))
+        await pg.goto(base + STEP0, wait_until='networkidle')
+        async with pg.expect_popup() as pop: await pg.get_by_role('link', name='the paper').click()
+        await pg.wait_for_timeout(300)
+        assert asked == ['https://example.org/paper'] and pg.url == base + STEP0, (asked, pg.url)
+        await (await pop.value).close()
+        await _ide(pg, base)
+        frame = await _side(pg, tmp_path)
+        async with pg.expect_popup() as pop: await frame.get_by_role('link', name='the paper').click()
+        await pg.wait_for_timeout(300)
+        assert asked == ['https://example.org/paper'] * 2, asked
+        await (await pop.value).close()
+        assert 'step=0' in frame.url and await frame.locator('blockquote').count() == 1, 'the site loaded in the pane'
+        await _shoot(pg, 'pane-link', ide=True)
+    asyncio.run(_on_learn(go, ws, ide=False))

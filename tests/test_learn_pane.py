@@ -116,3 +116,38 @@ def test_a_page_in_the_pane_has_no_chrome(rig):
     assert 'in-pane' not in t and 'lee-pane.js' in t, 'a step page in a tab of its own loads the module for its maths, and gets no pane chrome'
     js = c.get(src[1])
     assert js.status_code == 200 and 'javascript' in js.headers['content-type'] and js.text == PANE_JS.read_text()
+
+LINKS = r'''
+const src = require('fs').readFileSync(process.argv[1], 'utf8');
+global.location = {origin: 'http://127.0.0.1:5011'};
+global.document = {addEventListener() {}, documentElement: {classList: {contains: c => c === 'in-pane'}}};
+const posted = []; global.window = {parent: {postMessage: (m, o) => posted.push([m, o])}};
+eval(src);
+const frame = {contentWindow: {}}, linked = [];
+const host = {frame, trail: [], link: u => linked.push(u)};
+const m = (data, origin = location.origin, source = frame.contentWindow) => leePaneMessage({data, origin, source}, host);
+const took = [m({type: 'rh:link', url: 'https://example.org/a?b=1'}), m({type: 'rh:link', url: 'http://example.org/'}),
+  m({type: 'rh:link', url: 'https://example.org/'}, 'http://evil.example'), m({type: 'rh:link', url: 'https://example.org/'}, location.origin, {}),
+  ...['javascript:alert(1)', '//evil.example', 'data:text/html,x', '/learn?walk=a-1', 'https://a.example/\n', 'https://a\\b.example', 5, null].map(url => m({type: 'rh:link', url}))];
+const anchors = [];
+const click = (href, mods = {}) => { const a = href == null ? null : {href: href.startsWith('/') || href.startsWith('#') ? location.origin + '/learn' + href.replace(/^#/, '#') : href};
+  if (a) anchors.push(a);
+  const ev = {target: {closest: () => a}, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...mods};
+  leePaneLink(ev); return ev.defaultPrevented; };
+const stopped = [click('https://example.org/x'), click('/learn?walk=a-1'), click('mailto:a@b.c'), click('#f'), click(null),
+                 click('https://example.org/m', {metaKey: true}), click('https://example.org/w', {button: 1})];
+console.log(JSON.stringify({took, linked, stopped, posted, targets: anchors.map(a => a.target || '')}));
+'''
+
+def test_a_web_link_in_the_pane_opens_outside_it_and_only_from_its_own_frame():
+    "A link in a pane page loaded the site inside the frame; the IDE opens it instead, for its own frame and a web address only."
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    r = subprocess.run([node, '-e', LINKS, str(PANE_JS)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out['took'] == [True, True] + [False] * 10
+    assert out['linked'] == ['https://example.org/a?b=1', 'http://example.org/']
+    assert out['stopped'] == [True, False, False, False, False, False, False], 'only a plain click on a web link goes to the IDE'
+    assert out['targets'] == ['_blank', '', '', '', '_blank', '_blank'], 'a modifier or middle click opens its own tab'
+    assert out['posted'] == [[{'type': 'rh:link', 'url': 'https://example.org/x'}, 'http://127.0.0.1:5011']]

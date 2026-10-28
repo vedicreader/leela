@@ -18,6 +18,10 @@ function leePaneURL(u) {
   return leeJoinURL(p, [...leeQueryWithout(q, 'pane'), 'pane=1'], h);
 }
 function leeOwnURL(u) { const [p, q, h] = leeURLParts(u); return leeJoinURL(p, leeQueryWithout(q, 'pane'), h); }
+function leeWeb(u) {
+  "Whether `u` is a web address that may leave the pane: http or https, with no control character or backslash.";
+  return typeof u === 'string' && /^https?:\/\/[^\/]/i.test(u) && !/[\x00-\x20\x7f\\]/.test(u);
+}
 function leeTrail(t) {
   "A copy of the trail `[[label, url], ...]`, or null when it is not a list or a part is not a text label and a local URL.";
   if (t === undefined) return [];
@@ -35,6 +39,7 @@ function leePaneMessage(e, host) {
     host.trail = trail; host.at(d.url, d.title || '', trail); return true;
   }
   if (d.type === 'rh:open') { if (!leeIsLocal(d.url)) return false; host.trail = []; host.open(d.url); return true; }
+  if (d.type === 'rh:link') { if (!leeWeb(d.url) || !host.link) return false; host.link(d.url); return true; }
   if (d.type === 'rh:close') {
     if (d.level === undefined) { host.close(); return true; }
     if (d.level !== 1) return false;
@@ -68,6 +73,15 @@ function leePaneAt() {
   const here = document.documentElement.dataset?.rhUrl;
   leePaneTell({type: 'rh:at', url: leeIsLocal(here) ? here : leePaneHere(location), title: document.title, trail});
 }
+function leePaneLink(e) {
+  "A web link on a learn page opens in a new tab. In the pane a plain click goes to the IDE, so the site never loads in the frame.";
+  if (e.defaultPrevented || e.button > 1) return;
+  const a = e.target?.closest?.('a[href]');
+  if (!a || !leeWeb(a.href) || a.href.startsWith(location.origin + '/')) return;
+  a.target = '_blank'; a.rel = 'noopener noreferrer';
+  if (!document.documentElement.classList.contains('in-pane') || e.button === 1 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  e.preventDefault(); leePaneTell({type: 'rh:link', url: a.href});
+}
 function leePaneKey(e) {
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   const t = e.target;
@@ -93,7 +107,7 @@ function leeLearnMath() {
     try { katex.render(e.textContent, e, {displayMode: e.classList.contains('display'), throwOnError: false}); } catch (_) {}
 }
 function leePaneBoot() {
-  if (document.documentElement.classList.contains('lee-learn-page')) leeLearnMath();
+  if (document.documentElement.classList.contains('lee-learn-page')) { leeLearnMath(); document.addEventListener('click', leePaneLink); document.addEventListener('auxclick', leePaneLink); }
   if (document.documentElement.classList.contains('in-pane')) { leePaneAt(); document.addEventListener('keydown', leePaneKey); return; }
   if (typeof lee === 'undefined') return;   // a learn page in a tab of its own: no split editor to host a pane
   window.leeSidePage = {open: leeSidePageOpen, close: leeSidePageClose};

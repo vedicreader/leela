@@ -2303,6 +2303,7 @@ function mountPage(url, title = '', direction = 'vertical') {
   const page = lee.sidePage = {frame, url: leeOwnURL(url), title: String(title || ''), trail: [], direction: direction === 'horizontal' ? 'horizontal' : 'vertical',
     at(u, t) { page.url = leeOwnURL(u); if (t) page.title = t; paintSidePage(page); },
     open(u) { const p = leePaneURL(u); if (!p) return; try { frame.contentWindow.location.replace(p); } catch (_) { frame.src = p; } },
+    link: openExternal,
     close: leeCloseSplit};
   lee.secondaryPath = ''; lee.activeEditor = 'primary';
   paintSidePage(page);
