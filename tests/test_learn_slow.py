@@ -4,7 +4,7 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-import asyncio, json, os, sys
+import asyncio, json, os, re, sys
 from pathlib import Path
 
 pytest.importorskip('playwright.async_api')
@@ -41,7 +41,9 @@ def _watch(pg, base):
         if m.type == 'error' and (not u or own(u)): bad.append(f'console: {m.text} at {u}')
     pg.on('console', con)
     pg.on('pageerror', lambda e: bad.append(f'pageerror: {e}'))
-    pg.on('requestfailed', lambda r: own(r.url) and bad.append(f'failed: {r.url} {r.failure}'))
+    # core.js TAB_READS: a read about the tab on screen is aborted when that tab redraws or closes, by design
+    ended = lambda r: 'ERR_ABORTED' in (r.failure or '') and re.match(r'/(lsp/(symbols|inlay-hints|hover)|lint|git/file|outline|editor/packages)(\?|$)', r.url[len(base):])
+    pg.on('requestfailed', lambda r: own(r.url) and not ended(r) and bad.append(f'failed: {r.url} {r.failure}'))
     pg.on('response', lambda r: own(r.url) and r.status >= 400 and bad.append(f'{r.status}: {r.url}'))
     return bad
 
