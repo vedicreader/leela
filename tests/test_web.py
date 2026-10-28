@@ -924,3 +924,38 @@ def test_the_page_title_names_the_workspace_folder(tmp_path):
     (root := tmp_path/'orgs').mkdir()
     with TestClient(ide_app(Workspace(roots=[root]))) as c: assert '<title>leela — orgs</title>' in c.get('/').text
     with TestClient(ide_app(Workspace(roots=[]))) as c: assert '<title>leela</title>' in c.get('/').text
+
+
+@pytest.mark.parametrize('route', ['/nb/edit', '/lesson/save'])
+@pytest.mark.parametrize('body', ['{bad', '[1]', 'null', b'\xff'])
+@pytest.mark.parametrize('ctype', ['application/json', 'Application/JSON; charset=utf-8'])
+def test_a_body_that_is_not_a_json_object_gets_the_ide_error(tmp_path, route, body, ctype):
+    "FastHTML parsed the body before any handler ran, so bad JSON or a JSON list was a 500 with a traceback."
+    with TestClient(ide_app(Workspace(roots=[tmp_path])), raise_server_exceptions=False) as c:
+        r = c.post(route, content=body, headers={'Content-Type': ctype})
+    assert (r.status_code, r.json()) == (400, {'ok': False, 'error': 'The request body is not a JSON object.'}), r.text
+
+def test_an_empty_json_body_still_reaches_the_route(tmp_path):
+    with TestClient(ide_app(Workspace(roots=[tmp_path])), raise_server_exceptions=False) as c:
+        r = c.post('/nb/edit', content=b'', headers={'Content-Type': 'application/json'})
+    assert 'not a JSON object' not in r.text, r.text
+
+def test_a_bad_json_body_gets_the_ide_error_on_any_method(tmp_path):
+    with TestClient(ide_app(Workspace(roots=[tmp_path])), raise_server_exceptions=False) as c:
+        r = c.put('/nb/edit', content='[1]', headers={'Content-Type': 'application/json'})
+    assert r.status_code == 400 and r.json()['error'] == 'The request body is not a JSON object.', r.text
+
+def test_a_beacon_of_events_still_reaches_its_route(tmp_path):
+    "`focus.js` sends `{events: [...]}` by `sendBeacon`; a guard that refused it would fail with no sign."
+    with TestClient(ide_app(Workspace(roots=[tmp_path])), raise_server_exceptions=False) as c:
+        r = c.post('/ai/events', content=json.dumps({'events': [{'kind': 'focus'}]}), headers={'Content-Type': 'application/json'})
+    assert 'not a JSON object' not in r.text and r.status_code != 500, r.text
+
+def test_the_host_guard_refuses_before_the_body_is_read(tmp_path):
+    messages = []
+    async def send(m): messages.append(m)
+    async def receive(): raise AssertionError('the body was read for a refused host')
+    app = LoopbackHostGuard(ide_app(Workspace(roots=[tmp_path])))
+    scope = {'type': 'http', 'method': 'POST', 'path': '/nb/edit', 'headers': [(b'host', b'attacker.example:5001'), (b'content-type', b'application/json')]}
+    asyncio.run(app(scope, receive, send))
+    assert messages[0]['status'] == 421
