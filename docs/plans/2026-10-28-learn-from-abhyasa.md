@@ -4,7 +4,7 @@
 
 **Goal:** Leela opens a walk step or a topic from abhyasa at `/learn`, teaches code with real libraries in a lesson notebook (a tool environment, a closed-process check, kosha lookup in the side pane, the agent as tutor), and writes every check back to the shared learning store with the walk meta. On the way, Leela logs rupaka predictions, keeps its rupaka bundle and validator on one version, and reads the tutor prompt through `abhyasa.prompts`.
 
-**Architecture:** The work lives in the existing `learn` block (`leela/blocks/learn/`), which today has one route, `/lesson/due`. It gets a domain module (`learn.py`: the handoff, the step lookup, `is_local`), the FT pieces (`ui.py`), the pane script (`pane.js`), and the tool module (`tools.py`: tool environments and library checks). Lesson notebooks stay in `leela/blocks/nb/lesson.py` and `exercise.py`; they get the walk meta, the prediction record, the charter function and the move to `abhyasa.check.run_isolated`. The handoff functions, the prompt registry and the closed runner come from abhyasa; Leela adds no copy of them, except `is_local` (three lines, with a reason) and, until abhyasa ships `python=`, the library runner.
+**Architecture:** The work lives in the existing `learn` block (`leela/blocks/learn/`), which today has one route, `/lesson/due`. It gets a domain module (`learn.py`: the handoff, the step lookup, `is_local`), the FT pieces (`ui.py`), the pane script (`pane.js`), and the tool module (`tools.py`: tool environments and library checks). Lesson notebooks stay in `leela/blocks/nb/lesson.py` and `exercise.py`; they get the walk meta, the prediction record, the charter function and the move to `abhyasa.check.run_isolated`. The handoff functions, the prompt registry and the closed runner come from abhyasa; Leela adds no copy of them, except `is_local` (three lines, with a reason).
 
 **Tech Stack:** Python 3.13, FastHTML, Starlette `TestClient`, abhyasa (PyPI), rupaka (PyPI, vendored bundle), kosha (`koshas`), `uv`, pytest, Node for the small JS harnesses, Playwright bundled Chromium for one browser check.
 
@@ -57,13 +57,13 @@ Files that the ramabana agent edits now in Leela's main checkout: `leela/blocks/
 
 ### Task 0: Pin abhyasa >= the next version once it is released
 
-The next abhyasa release carries the walk (abhyasa plan Tasks 3, 7, 11 and 14). The walk branch has `__version__ = "0.0.11"`. Use the number that is released; the plan writes `0.0.11`.
+The next abhyasa release carries the walk (abhyasa plan Tasks 3, 7, 11 and 14). The walk branch has `__version__ = "0.0.11"`. 0.0.11 is the walk release (decided 28 Oct).
 
 **Needs abhyasa:** the release with `abhyasa.journey.LEELA_ROUTE`, `handoff`, `read_handoff`, `HANDOFF_CASES`, `walk_state`, `Learning.put_journey`; `abhyasa.prompts`; `abhyasa.check.run_isolated`.
 **Touches the ramabana agent's files:** yes, `tests/test_abhyasa_contract.py`.
 
 **Files:**
-- Modify: `pyproject.toml` (`abhyasa>=0.0.11,<0.1`; add `rupaka==<the version that abhyasa 0.0.11 requires>`), `uv.lock`
+- Modify: `pyproject.toml` (`abhyasa>=0.0.11,<0.1`; add `rupaka==<exact version that abhyasa 0.0.11 requires, read from abhyasa's pyproject at release time>`), `uv.lock`
 - Modify: `tests/conftest.py` (`ABHYASA_CONFIG` under the test config home)
 - Test: `tests/test_abhyasa_contract.py`
 
@@ -73,7 +73,7 @@ The next abhyasa release carries the walk (abhyasa plan Tasks 3, 7, 11 and 14). 
 - `abhyasa.journey.HANDOFF_CASES: list[tuple[dict, str]]`, `LEELA_ROUTE = '/learn'`
 - `abhyasa.journey.walk_state(j) -> AttrDict(steps, current, done, total, sections)`
 - `abhyasa.prompts.prompt(name:str) -> str`, `register(name, label, note, dflt, check=None) -> str`, `set_prompt(name, text='') -> str`, `PROMPTS`
-- `abhyasa.check.run_isolated(kind, fname, source, tests, *, total=10., setup=(), sandbox=True) -> dict`
+- `abhyasa.check.run_isolated(kind, fname, source, tests, *, total=10., setup=(), sandbox=True, python=None, unix=False) -> dict`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -107,7 +107,7 @@ def test_prompts_contract():
 def test_run_isolated_contract():
     from abhyasa.check import run_isolated
     ps = inspect.signature(run_isolated).parameters
-    assert list(ps)[:4] == ['kind', 'fname', 'source', 'tests'] and {'total', 'setup', 'sandbox'} <= ps.keys()
+    assert list(ps)[:4] == ['kind', 'fname', 'source', 'tests'] and {'total', 'setup', 'sandbox', 'python', 'unix'} <= ps.keys()
 
 def test_journey_contract():
     from abhyasa.journey import walk_state
@@ -496,7 +496,7 @@ git commit -m "Add /learn: show a walk step or a topic from an abhyasa link, and
 - `lesson_notebook(name, exercise=None, step:dict|None=None) -> Notebook`: with `step = dict(walk, step, section, text, note)`, the first cell is the heading, the passage as a Markdown quote and the note; `meta['lesson']['walk'] = dict(walk=…, step=…, section=…)`. Cell positions do not change, so `lesson_notebook(name)` stays as today.
 - `walk_meta(nb) -> dict`: `{}` with no walk; else `dict(walk=jid, step=i, section=s, app='leela', **{'from': f'{jid}/{i}'})`, with `section` only when it is not empty.
 - `record_card`, `record_exercise` (through `exercise_filing`, which copies `walk_meta(nb)` under `walk`) and `record_prediction` pass `**walk_meta(nb)` to `lr.record`.
-- `open_step(session, fs, lr, q) -> Path`: writes `lessons/<walk>-<step>.ipynb`, or `lessons/<slug>.ipynb` for a topic, with `fs._check` and `sandbox=fs`, as `/lesson/new` does; reopens a file whose meta names the same walk and step, and writes nothing then. Raises `ValueError('Open a folder in Leela, then open this link again.')` when `session.project_root` is None or the loose root; `ValueError` for a symbolic-link `lessons` folder.
+- `open_step(session, fs, lr, q) -> Path`: writes `lessons/<walk>-<step>.ipynb`, or `lessons/<slug>.ipynb` for a topic, with `fs._check` and `sandbox=fs`, as `/lesson/new` does; reopens a file whose meta names the same walk and step, and writes nothing then. With no project folder open (`session.project_root` is None or the loose root), it uses the fixed folder `LESSONS = Path.home()/'Learning'/'Leela lessons'`, which it creates when missing, and adds that folder as a workspace root before it opens the file (decided 28 Oct). `ValueError` for a symbolic-link `lessons` folder.
 - `POST /learn/open` (form `walk`, `step`, `topic`): `read_handoff` on the form; `open_step`; `session.open_external(path)`; 200 with the line "Opened in Leela."; `ValueError` gives 400 with its text. It never calls `put_journey`, `walk_step` or `journey_step`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -520,15 +520,17 @@ def test_open_makes_one_lesson_and_reopens_it(rig):
     assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p]
     assert lr.journey(JID) == before                                                      # Leela never writes the journey
 
-def test_open_refuses_a_bad_form_and_no_folder(rig, tmp_path, monkeypatch):
+def test_open_refuses_a_bad_form_and_uses_the_fixed_folder_with_no_folder(rig, tmp_path, monkeypatch):
+    import leela.blocks.learn.learn as L
     assert rig[0].post('/learn/open', data=dict(walk='../x')).status_code == 400
+    monkeypatch.setattr(L, 'LESSONS', tmp_path/'Leela lessons')                          # the owner's real folder is never used
     ws = Workspace(roots=[], approvals='auto', python=sys.executable)
     monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'other.db', offline=True))
     walk(Learning(ws.memory._store('learning')))
     try:
         with TestClient(ide_app(ws), base_url='http://127.0.0.1:5011') as c:
             r = c.post('/learn/open', data=dict(walk=JID, step='0'))
-            assert r.status_code == 400 and 'Open a folder in Leela' in r.text
+            assert r.status_code == 200 and (tmp_path/'Leela lessons'/f'{JID}-0.ipynb').is_file(), r.text
     finally: ws.shutdown_now()
 ```
 
@@ -660,7 +662,7 @@ Move `JID`, `walk` and the `rig` fixture of `tests/test_learn_route.py` into `te
 Run: `uv run pytest tests/test_learn_pane.py -q`
 Expected: FAIL with `ImportError: cannot import name 'is_local'` and a missing `pane.js`.
 
-- [ ] **Step 3: Implement.** `pane.js` defines functions only at the top level, with `function` declarations (the Node harness loads the file with `eval`, and a `const` would stay inside it); the in-pane boot runs from one `DOMContentLoaded` listener when `document.documentElement.classList.contains('in-pane')`. Add no key binding (Non-goals in the spec).
+- [ ] **Step 3: Implement.** `pane.js` defines functions only at the top level, with `function` declarations (the Node harness loads the file with `eval`, and a `const` would stay inside it); the in-pane boot runs from one `DOMContentLoaded` listener when `document.documentElement.classList.contains('in-pane')`. Add no key binding. A pane key comes after Leela's keymap audit, and it uses the same ⌥Z and Esc as abhyasa (decided 28 Oct).
 
 - [ ] **Step 4: Run the tests to see them pass**
 
@@ -908,8 +910,8 @@ git commit -m "Check the reference solution in abhyasa's closed runner, in place
 
 ### Task 10: Library code checks
 
-**Needs abhyasa:** `run_isolated(..., python=None, unix=False)` (asked for in `leela-reuse.md` 6.4). Until it ships, Leela's runner below, with the reason comment.
-**Touches the ramabana agent's files:** yes, `leela/blocks/nb/exercise.py` (an exercise with `env` uses `library_check`), and `tests/test_abhyasa_contract.py` (pins `python` and `unix` when they ship).
+**Needs abhyasa:** `run_isolated(..., python=None, unix=False)` in 0.0.11, so Leela has no runner copy (decided 28 Oct).
+**Touches the ramabana agent's files:** yes, `leela/blocks/nb/exercise.py` (an exercise with `env` uses `library_check`), and `tests/test_abhyasa_contract.py` (pins `python` and `unix`).
 
 **Files:**
 - Modify: `leela/blocks/learn/tools.py` (`library_check`)
@@ -919,8 +921,7 @@ git commit -m "Check the reference solution in abhyasa's closed runner, in place
 
 **Interfaces:**
 - `LIBRARY_TOTAL = 20.`
-- `library_check(spec, source, key:str) -> dict`: `python = tool_python(key)`; `ValueError('The tool environment is not ready.')` when None; returns `run_isolated('assert', spec['fname'], source, tests, total=LIBRARY_TOTAL, sandbox=True, python=str(python), unix=True)`. When the locked abhyasa has no `python` parameter, it uses `_run_isolated_in(python, ...)`, a copy that calls the public `abhyasa.check.snippet` and `parse`, with the comment `# until abhyasa.check.run_isolated takes python= and unix= (leela-reuse.md 6.4)`.
-- The `unix` switch: the audit hook allows `socket.socket` for `AF_UNIX` only (asyncio's socket pair); `connect`, `bind`, `getaddrinfo` and `sendto` stay refused; on macOS the `sandbox-exec` profile adds `(allow network* (local unix))` only when the pair fails without it.
+- `library_check(spec, source, key:str) -> dict`: `python = tool_python(key)`; `ValueError('The tool environment is not ready.')` when None; returns `run_isolated('assert', spec['fname'], source, tests, total=LIBRARY_TOTAL, sandbox=True, python=str(python), unix=True)`.- The `unix` switch: the audit hook allows `socket.socket` for `AF_UNIX` only (asyncio's socket pair); `connect`, `bind`, `getaddrinfo` and `sendto` stay refused; on macOS the `sandbox-exec` profile adds `(allow network* (local unix))` only when the pair fails without it.
 - Exercise spec: `env: str` (a tool key) is optional; with it, the graded check is the closed `library_check`, and the learner's own runs stay in the live kernel.
 
 - [ ] **Step 1: Write the failing tests**
@@ -995,7 +996,7 @@ git commit -m "Run a graded library check in a closed process with the tool envi
 - Test: `tests/test_lesson_prompt.py`, `tests/test_lesson_agent.py`
 
 **Interfaces:**
-- `LIBRARY_PROMPT = register('leela.library', 'Library lessons', 'What the tutor says about code that uses a library.', dflt)`. The default: the code runs with no network and no API key; use the library's offline test helpers (for PydanticAI: `pydantic_ai.models.test.TestModel` and `pydantic_ai.models.function.FunctionModel`); with no known helpers, set a task on the pure functions only.
+- `LIBRARY_PROMPT = register('leela.library', 'Library lessons', 'What the tutor says about code that uses a library.', dflt)`. The default: the code runs with no network and no API key; use the library's offline test helpers (for PydanticAI: `pydantic_ai.models.test.TestModel` and `pydantic_ai.models.function.FunctionModel`); with no known helpers, set a task on the pure functions only. Saved edits go to abhyasa's `settings.json`; a `store=` argument comes in a later change (decided 28 Oct).
 - `lesson_charter(step:dict|None=None, packages=()) -> str`: `prompt('tutor') + CHARTER_TAIL`, then, with `step`, the passage, the note, the concept and the check kind; with `packages`, `prompt('leela.library')` and the package names.
 - `look_up_code(q:str) -> str`: the rows of Task 7's `lookup` for the lesson's tool environment, as short text; available only when `_lesson()` is true.
 - The charter keeps abhyasa's anti-goals (they are in `TUTOR_SP`): no answer, rubric or solution before the learner tries; one check for each idea; no score or timer.

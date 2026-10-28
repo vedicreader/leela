@@ -188,10 +188,18 @@ The closed process is not a security boundary. Docs say "a closed process with n
 ## 11. Decisions for the owner
 
 1. **The abhyasa release.** Every task needs the abhyasa release that carries the walk (`abhyasa.journey.handoff`, `abhyasa.prompts`, `abhyasa.check.run_isolated`). The walk branch says 0.0.11 today. Which number, and which exact rupaka version does it require?
+   **Decided (28 Oct 2026):** abhyasa 0.0.11 is the walk release. Leela pins rupaka to the exact version that abhyasa 0.0.11 requires. Task 0 reads that version from abhyasa's `pyproject.toml` at release time.
 2. **`run_isolated(python=…, unix=True)`.** Put both options into that same abhyasa release (then Leela has no runner copy), or ship the walk first and let Leela keep a copy with a reason until a later release?
+   **Decided (28 Oct 2026):** `run_isolated(python=, unix=)` ships in abhyasa 0.0.11. Leela has no runner copy. Tasks 9 and 10 use `abhyasa.check.run_isolated` directly.
 3. **No folder open.** `/learn/open` refuses with "Open a folder in Leela, then open this link again.", as `/lesson/new` does. The other choice is a fixed folder, for example `~/Leela/lessons`, that Leela opens as a workspace.
+   **Decided (28 Oct 2026):** With no folder open, `/learn/open` uses a fixed folder, `~/Learning/Leela lessons`, and creates it when it is missing. Leela's config code has no default workspace, so this folder is new. Task 5 states the path.
 4. **Gate tries.** One attempt for each gate and cell version (the first prediction counts), or one for each try, as abhyasa logs?
+   **Decided (28 Oct 2026):** Leela logs only the first try at each demo gate for each cell version. Later tries log nothing.
 5. **uv settings.** Installs use the owner's own uv config (index, certificates). The other choice is `--no-config`, which drops the owner's TLS settings.
+   **Decided (28 Oct 2026):** Tool installs use the owner's uv config, with its index and certificates. Leela does not pass `--no-config`.
 6. **Prompt edits for Leela's own prompt.** `abhyasa.prompts.saved()` reads abhyasa's `settings.json`, so an edit made in Leela lands in abhyasa's file, and abhyasa's Settings page does not list Leela's prompt. Keep it this way, or ask abhyasa for a `store=` argument?
+   **Decided (28 Oct 2026):** Leela's own prompt stays in abhyasa's `settings.json` for now. A `store=` argument in abhyasa can come in a later change.
 7. **Hints.** Leela has no hint counter, so an attempt from Leela has no `hints` value. Add a counter in a later change, or leave it out?
+   **Decided (28 Oct 2026):** Leela has no hint count for now. An attempt from Leela has no `hints` value.
 8. **A key for the pane.** None in this plan. Add one after the keymap audit?
+   **Decided (28 Oct 2026):** No pane key yet. A pane shortcut comes after Leela's keymap audit, and it uses the same ⌥Z and Esc as abhyasa.
