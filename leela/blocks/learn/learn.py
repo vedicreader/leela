@@ -6,6 +6,7 @@ from packaging.utils import canonicalize_name
 import abhyasa.journey  # adds Learning.journey
 from abhyasa.journey import walk_state
 from abhyasa.store import slugify
+from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
 
 __all__ = ['LESSONS', 'PKG', 'Taken', 'find_step', 'is_local', 'open_step', 'pane_url', 'pkg_names', 'lookup', 'scratch_cell']
@@ -41,18 +42,22 @@ def find_step(lr, q) -> AttrDict:
 
 class Taken(Exception): "The lesson's file name holds something that is not that lesson."
 
-def lessons_folder(session, fs) -> Path:
-    "`lessons` in the project folder; `LESSONS` with no folder open or a project folder that holds it, made and opened as a root when no root covers it."
+def _linked(p) -> bool:
+    "Whether `p`, or a folder above it that does not hold the home folder, is a symbolic link."
+    return any(x.is_symlink() for x in (p, *p.parents) if not Path.home().is_relative_to(x))
+
+def lessons_folder(session, fs) -> tuple[Path, bool]:
+    "`lessons` in the project folder, or `LESSONS` with no folder open or a project folder that holds it; and whether this call made `LESSONS` a root."
     root = session.project_root
-    if root is not None and root != fs.loose and not LESSONS.resolve().is_relative_to(root): return root/'lessons'
-    if LESSONS.is_symlink(): raise ValueError('The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
-    if not fs.covers(LESSONS.resolve()):
-        LESSONS.mkdir(parents=True, exist_ok=True)
-        session.add_root(LESSONS)
-    return LESSONS
+    if root is not None and root != fs.loose and not LESSONS.resolve().is_relative_to(root): return root/'lessons', False
+    if _linked(LESSONS): raise ValueError('The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
+    if fs.covers(LESSONS.resolve()): return LESSONS, False
+    LESSONS.mkdir(parents=True, exist_ok=True)
+    session.add_root(LESSONS)
+    return LESSONS, True
 
 def open_step(session, fs, v, q) -> Path:
-    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there."
+    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A refusal or a failed write closes a `LESSONS` root it opened."
     from ..nb.lesson import lesson_notebook, save_lesson
     from ..nb.nb import Notebook
     if v.kind == 'step':
@@ -67,11 +72,17 @@ def open_step(session, fs, v, q) -> Path:
     def pick(folder):
         p = folder/file
         if not (p.exists() or p.is_symlink()): return p
+        if p.is_file() and not p.is_symlink() and p.stat().st_size > MAX_EDIT_BYTES:
+            raise Taken(f'{p.name} is in the lessons folder and is too large for Leela to check. Move it or rename it, then open the lesson again.')
         try: m = p.is_file() and not p.is_symlink() and Notebook.load(fs._check(p, must_exist=True)).meta.get('lesson')
         except Exception: m = None
         if isinstance(m, dict) and mine(m): return p
         raise Taken(f'{p.name} is in the lessons folder and is not the lesson for this {what}. Move it or rename it, then open the lesson again.')
-    return save_lesson(fs, lessons_folder(session, fs), pick, nb)
+    folder, made = lessons_folder(session, fs)
+    try: return save_lesson(fs, folder, pick, nb)
+    except Exception:
+        if made: session.drop_root(folder, closed=False)
+        raise
 
 PKG = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}(\[[A-Za-z0-9._,-]{1,64}\])?((==|>=|<=|~=|<|>)[A-Za-z0-9.*+!-]{1,32})?')
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
@@ -98,7 +109,7 @@ def lookup(k, q:str, packages=(), limit:int=8) -> list[dict]:
 
 def _row(r) -> dict:
     m = r.get('metadata') or {}
-    return dict(name=m.get('name', ''), package=r.get('package', ''), path=m.get('path', ''), line=m.get('lineno'),
+    return dict(name=m.get('name', ''), package=r.get('package', ''), path=(m.get('path') or '').rpartition('site-packages/')[2], line=m.get('lineno'),
                 doc=(m.get('docstring') or '').strip().split('\n')[0], snippet='\n'.join((r.get('content') or '').splitlines()[:12]))
 
 def scratch_cell(nb, snippet:str):

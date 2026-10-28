@@ -1,4 +1,5 @@
 import json, threading, time
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from leela.blocks.agent.ai import Interventions, WorkspaceHost, WRITE_TOOLS, _session_tools, notebook_approvals
@@ -41,7 +42,7 @@ def test_add_exercise_inserts_checked_cells_without_solution(exercise, spec, as_
     assert task.extra['exercise'] == {'role': 'task', 'for': code.id}
     assert code.source == spec['stub'] and code.extra['exercise']['uses'] == ['math']
     assert '-246' not in task.source
-    assert result == f'Added the exercise (cells {task.id}, {code.id}). Checked: the solution passes 2 of 2; the stub fails 2.'
+    assert result == f'Added the exercise (cells {task.id}, {code.id}). Checked: the solution passes 2 of 2; the stub fails 2 of 2 tests.'
     for text in (path.read_text(), result, *(json.dumps(c.extra) for c in after.cells)):
         assert SOLUTION not in text and 'SECRET_REFERENCE_SOLUTION_7f9c' not in text
 
@@ -73,7 +74,18 @@ def test_a_solution_that_fails_one_test_and_times_out_on_another_names_the_failu
     assert add(str(path), **spec, solution='def double(x):\n    while x < 0: pass\n    return 0') == 'the solution fails: A positive number'
     assert path.read_bytes() == before
 
-@pytest.mark.parametrize('stub, says', [('def double(x):\n    raise NotImplementedError', 'the stub errors on 2'),
+def test_a_stub_that_fails_some_tests_says_how_many_of_all(exercise, spec):
+    add, path, _ = exercise
+    assert add(str(path), **{**spec, 'stub': 'def double(x): return 4'}, solution=SOLUTION).endswith('the solution passes 2 of 2; the stub fails 1 of 2 tests.')
+
+def test_a_stub_status_with_no_words_says_it_does_not_pass(exercise, spec, monkeypatch):
+    import leela.blocks.nb.exercise as E
+    rows = lambda *s: dict(found=True, timeout=False, checks=[dict(i=i, status=x) for i, x in enumerate(s)])
+    monkeypatch.setattr(E, 'check_solution', lambda spec, solution: dict(solution=rows('pass', 'pass'), stub=rows('pass', 'skipped')))
+    add, path, _ = exercise
+    assert add(str(path), **spec, solution=SOLUTION).endswith('the solution passes 2 of 2; the stub does not pass every test.')
+
+@pytest.mark.parametrize('stub, says', [('def double(x):\n    raise NotImplementedError', 'the stub errors on 2 of 2 tests'),
     ('raise ValueError("stub")', 'the stub check errors'),
     ('# write double here', 'the stub defines no callable function')])
 def test_a_stub_that_cannot_fail_an_assert_is_described_as_it_is(exercise, spec, stub, says, abhyasa_cfg):
@@ -152,6 +164,48 @@ def test_the_tool_still_receives_the_reference_solution(edit):
     args, *_ = approve(EDITS[edit])
     assert args['solution'] == SOLUTION
     assert args['task'] == ('Double it.' if edit == 'edited' else ASK['task'])
+
+@pytest.fixture
+def recorded(tmp_path, monkeypatch, abhyasa_cfg):
+    "One approved and edited `add_exercise` call through the agent's gate and its recorded tool: the workspace, the args that ran, the solutions the check got and the tool's rows."
+    import leela.blocks.nb.exercise as E
+    from leela.workspace import Workspace
+    path = tmp_path/'ordinary.ipynb'; Notebook([Cell(source='before')]).save(path)
+    seen, real = [], E.check_solution
+    monkeypatch.setattr(E, 'check_solution', lambda spec, solution, **kw: seen.append(solution) or real(spec, solution, **kw))
+    ws = Workspace(roots=[tmp_path], approvals='ask')
+    try:
+        add, ap = next(t for t in ws.ai.tools if t.__name__ == 'add_exercise'), ws.ai.approvals
+        stop = ap.listen()
+        def answer():
+            for _ in range(300):
+                if (a := ap.pending) is not None: return ap.answer(a.id, True, args={**a.dict()['args'], 'task': 'Double it.'})
+                time.sleep(.01)
+        threading.Thread(target=answer, daemon=True).start()
+        ws.ai._prepare('set an exercise')
+        tc = {'id': 'call-1', 'function': {'name': 'add_exercise', 'arguments': {**ASK, 'path': str(path)}}}
+        try: assert ap.gate(tc)
+        finally: stop()
+        args = tc['function']['arguments']; out = add(**args)
+        ws.ai._finish('done')
+        yield ws, args, out, seen, [x.dict() for x in ws.ai.activity.acts if x.tool == 'add_exercise']
+    finally: ws.shutdown_now()
+
+def test_a_recorded_add_exercise_runs_with_the_solution_and_keeps_it_out_of_its_row_and_calls(recorded):
+    "ramabana 0.2.87 writes `[SECRET]` for a tool's `secret_args`; the tool and Leela's approval edit still use the real solution."
+    ws, args, out, seen, rows = recorded
+    assert args['solution'] == SOLUTION and args['task'] == 'Double it.', 'the edit runs with the real solution'
+    assert out.startswith('Added the exercise') and seen == [SOLUTION], 'the tool gets the real solution'
+    run = [r for r in rows if r['kind'] == 'tool']
+    assert len(run) == 1 and run[0]['action_id'] == 'call-1', 'the row of the run keeps the approved call'
+    assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in json.dumps(run) and 'SECRET_REFERENCE_SOLUTION_7f9c' not in json.dumps(ws.ai.calls, default=str)
+    assert ('add_exercise', {**args, 'solution': '[SECRET]'}) in ws.ai.calls
+
+@pytest.mark.xfail(strict=True, reason="ramabana 0.2.87 `Agent._ask_raised` records `ask.args` as given, and Leela's `Interventions.request` asks with the real args")
+def test_the_approval_row_and_the_saved_history_keep_no_solution(recorded):
+    ws, *_, rows = recorded
+    kept = dict(rows=json.dumps(rows), history=json.dumps(ws.ai.history, default=str), saved=Path(ws.ai.history_path).read_text())
+    assert not (leaks := [k for k, t in kept.items() if 'SECRET_REFERENCE_SOLUTION_7f9c' in t]), leaks
 
 def test_an_exercise_with_packages_still_hides_the_reference_solution():
     args, nb, shown, decision = approve(EDITS['unchanged'], {**ASK, 'packages': ['six']})

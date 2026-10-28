@@ -1,4 +1,4 @@
-import json, sys
+import json, re, sys
 import pytest
 from starlette.testclient import TestClient
 from abhyasa.store import Learning
@@ -85,7 +85,7 @@ def test_a_full_pass_with_a_grade_files_one_code_attempt_per_source_version(rig)
     assert len(r['attempts']()) == 0
     r['check'](GOOD)
     msg = r['grade'](8)
-    assert 'learning shelf' in msg and 'review' in msg
+    assert re.search(r'Saved\. Next review (today|tomorrow|in \d+ days)\.$', msg), msg
     [a] = r['attempts']()
     assert (a.kind, a.depth, a.correct, a.grade, a.feedback, a.answer) == ('code', 4, True, 8, 'Clear and short.', GOOD)
     assert a.card_key == f'{r["cell"].id}:{src_hash(GOOD)}' and 'Double a number.' in a.question

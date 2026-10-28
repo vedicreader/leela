@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
-from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, plan_tools, preview_for
+from ...agent.agent import Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
@@ -275,7 +275,7 @@ class Interventions(Approvals):
                     self._execution_meta.append({'action_id': a.id, 'revision': a.revision,
                         'branch_id': a.branch_id,
                         'parent_action_id': a.parent_action_id,
-                        'tool': a.tool, 'args': dict(a.args)})
+                        'tool': a.tool, 'args': _hidden(a.tool, dict(a.args))})
             else:
                 # A bare backend denial reads to a model as a transient permission failure and it
                 # proposes the same call again, so "no" resolves as a durable instruction.
@@ -291,8 +291,9 @@ class Interventions(Approvals):
     def execution_meta(self, name, args):
         "Consume identity recorded by the approval hook before the wrapped tool executes."
         with self._state_lock:
+            # ramabana 0.2.87 passes `args` with each `secret_args` value as `[SECRET]`
             i = first(i for i, row in enumerate(self._execution_meta)
-                if row['tool'] == name and row['args'] == dict(args or {}))
+                if row['tool'] == name and _hidden(name, row['args']) == _hidden(name, dict(args or {})))
             return self._execution_meta.pop(i) if i is not None else {}
 
 class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, WatchHost, ApiHost, ShellHost,
@@ -973,7 +974,8 @@ def _session_tools(host):
             if got.count('pass') == n: return 'the stub already passes every test'
             stub = ('the stub check times out' if draft.get('timeout') else 'the stub check errors' if draft.get('error')
                     else 'the stub defines no callable function' if not draft.get('found')
-                    else '; '.join(f'the stub {w} {got.count(s)}' for s, w in (('fail', 'fails'), ('error', 'errors on'), ('timeout', 'times out on')) if s in got))
+                    else '; '.join(f'the stub {w} {got.count(s)} of {n} tests' for s, w in (('fail', 'fails'), ('error', 'errors on'), ('timeout', 'times out on')) if s in got)
+                    or 'the stub does not pass every test')
             p = host.check_write(path)
             if p.suffix != '.ipynb': return 'add_exercise failed: path must be an .ipynb notebook'
             nb = Notebook.load(p)
@@ -986,6 +988,7 @@ def _session_tools(host):
             nb.save(p, sandbox=host.ws.fs)
             return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; {stub}.'
         except Exception as e: return f'add_exercise failed: {errstr(e)}'
+    add_exercise.secret_args = ('solution',)
     @summary(lambda a: f'Check {a.get("path", "")} cell {a.get("cell_id", "?")}')
     def check_exercise(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run the learner's exercise code cell and its checks in the notebook's kernel, as pressing Check does.

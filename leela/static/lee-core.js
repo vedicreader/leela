@@ -3354,6 +3354,8 @@ function lessonRevealText(c) {
   if (lesson.confidence >= 60) lines.push('You were sure, and it went another way. That is the part worth a look.');
   return lines.join('\n');
 }
+//: The line a failed lesson write shows: the server's own sentence when it sent one, else a line that says what to do.
+const lessonSaid = err => err?.body && typeof err.body === 'object' && (err.body.error || err.body.message) || 'Leela did not save this. Try again.';
 function lessonRevealActions(cell, el) {
   const lesson = cell.extra.lesson, key = `${cell.id}:${cell.execution_count}`;
   const row = document.createElement('div'); row.className = 'lee-reveal-save'; el.appendChild(row);
@@ -3367,8 +3369,8 @@ function lessonRevealActions(cell, el) {
     const path = lee.path, tabKey = lee.tabKey;
     try {
       await lee.nbQueue;
-      if (lee.tabKey !== tabKey) throw new Error('Return to the lesson notebook, then save.');
-      if ($('.lee-tab.active')?.classList.contains('dirty')) throw new Error('Save the notebook first.');
+      const stop = lee.tabKey !== tabKey ? 'Return to the lesson notebook, then save.' : $('.lee-tab.active')?.classList.contains('dirty') ? 'Save the notebook first.' : '';
+      if (stop) { status(stop, 'err'); button.disabled = false; return; }
       const d = await post('/lesson/save', {path, cell_id: cell.id});
       lesson.saved = d.saved; lesson.saved_message = d.message;
       const current = lee.tabKey === tabKey && lee.cells.find(c => c.id === cell.id && c.execution_count === cell.execution_count);
@@ -3376,7 +3378,7 @@ function lessonRevealActions(cell, el) {
       row.textContent = d.message;
       refreshLessonDue();
       if (d.disk_version) { recordDiskVersion(path, d.disk_version); await rebaseDrafts(path, d.disk_version); noteSelfWrite(path); }
-    } catch (e) { status(String(e.message || e), 'err'); button.disabled = false; }
+    } catch (e) { status(lessonSaid(e), 'err'); button.disabled = false; }
   };
 }
 function renderLessonReveal(c) {
@@ -3404,7 +3406,7 @@ async function lessonPredict(e) {
     settle(true);
     if (d.message) status(d.message, 'ok');
   } catch (err) {
-    const said = err?.body && typeof err.body === 'object' && (err.body.error || err.body.message) || 'Leela did not save this. Try again.';
+    const said = lessonSaid(err);
     settle(false, said);
     status(said, 'err');
   }
@@ -3429,7 +3431,7 @@ function paintLessonCell(cell, c) {
       try { await nbEdit({op: 'lesson_confidence', i: at, confidence}); }
       catch (e) {
         if (previous == null) delete current.extra.lesson.confidence; else current.extra.lesson.confidence = previous;
-        status(String(e.message || e), 'err');
+        status(lessonSaid(e), 'err');
       } finally {
         const now = lee.cells.find(x => x.id === c.id), host = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`);
         if (now && host) paintLessonCell(host, now);

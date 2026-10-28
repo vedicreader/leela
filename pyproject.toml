@@ -16,7 +16,7 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]==0.2.83",
+    "ramabana[cli]==0.2.87",
     "abhyasa>=0.0.11,<0.1",
     "rupaka==0.0.3",   # the vendored bundle is written from this wheel
     "shalya>=0.1.22",

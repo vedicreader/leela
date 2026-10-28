@@ -64,10 +64,10 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         saves = []
         pg.on('request', lambda r: saves.append(r) if r.url.endswith('/lesson/save') else None)
         await reveal.get_by_role('button', name='Save card', exact=True).evaluate("e => { e.click(); e.click(); if (!e.disabled) throw Error('Save card was not disabled while posting'); }")
-        await pg.wait_for_function("document.querySelector('.lee-reveal-save')?.textContent.startsWith('Saved to your learning shelf.')")
+        await pg.wait_for_function("document.querySelector('.lee-reveal-save')?.textContent.startsWith('Saved. Next review ')")
         assert len(saves) == 1
         saved_text = await reveal.locator('.lee-reveal-save').inner_text()
-        assert 'Not at a level yet. Next review in 5 h.' in saved_text
+        assert saved_text.strip() in ('Saved. Next review today.', 'Saved. Next review tomorrow.'), saved_text
         assert await reveal.get_by_role('button', name='Save card', exact=True).count() == 0
         bgs = {}
         for mode in ('light', 'dark'):
@@ -212,9 +212,9 @@ def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
         resp = await got.value
         assert resp.status == 200, await resp.text()
         body = await resp.json()
-        assert body['logged'] is True and body['message'].startswith('Saved to your learning shelf. '), body
+        assert body['logged'] is True and body['message'].startswith('Saved. Next review '), body
         assert set(json.loads(resp.request.post_data)) == {'path', 'cell_id', 'demo', 'gate', 'picked', 'ans', 'ok', 'why', 'src'}
-        await pg.wait_for_function("document.querySelector('#status')?.textContent.startsWith('Saved to your learning shelf.')")
+        await pg.wait_for_function("document.querySelector('#status')?.textContent.startsWith('Saved. Next review ')")
         await verdict.wait_for()
         assert (await verdict.inner_text()).startswith('You said 4. That is right.')
         assert await lock.is_hidden() and await note.is_hidden()

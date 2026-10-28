@@ -202,6 +202,20 @@ def test_lookup_shows_rows_as_text_and_the_scratch_button_only_for_an_open_noteb
     assert 'Put in a scratch cell' in t and 'in-pane' not in t and 'data-snippet=' in t
     assert re.search(r'<button type="button"[^>]*class="lee-btn"[^>]*>Put in a scratch cell</button>', t)
 
+def test_lookup_shows_a_package_path_and_finds_a_notebook_through_a_linked_folder(rig, monkeypatch, tmp_path_factory):
+    "A row showed the whole virtual environment path, and a notebook asked for as /tmp while its tab was /private/tmp had no scratch button."
+    from urllib.parse import quote
+    c, ws, lr, j, root = rig
+    row = {**ROW, 'metadata': {**ROW['metadata'], 'path': '/Users/someone/proj/.venv/lib/python3.13/site-packages/pydantic_ai/agent.py'}}
+    handle(ws, monkeypatch, FakeKosha(rows=(row,)))
+    p, _ = lesson_tab(c, ws, root)
+    (alias := tmp_path_factory.mktemp('alias')/'root').symlink_to(root, target_is_directory=True)
+    t = c.get(f'/learn/lookup?q=x&path={quote(str(alias/p.name))}').text
+    assert 'pydantic_ai/agent.py:40' in t and '/Users/someone' not in t and 'site-packages' not in t
+    assert 'Put in a scratch cell' in t and f'data-path="{p}"' in t, 'the button posts the path of the open tab'
+    assert 'Put in a scratch cell' not in c.get(f'/learn/lookup?q=x&path={quote(str(alias/"shut.ipynb"))}').text
+    assert c.get('/learn/lookup?q=x&path=a%00b').status_code == 200
+
 def test_lookup_with_no_query_asks_for_one(rig, monkeypatch):
     c, ws = rig[:2]
     k = FakeKosha()
@@ -410,17 +424,50 @@ def test_open_from_the_pane_answers_in_the_pane(rig):
     assert 'in-pane' in r.text
     assert 'in-pane' not in opened(c, walk=JID, step='0').text
 
+@pytest.mark.parametrize('where', ['project', 'no_folder'])
 @pytest.mark.parametrize('boom, code', [(OSError('disk full'), 500), (PermissionError('denied'), 500), ('unsafe', 403)])
-def test_open_says_when_it_cannot_write_and_opens_nothing(rig, monkeypatch, announced, boom, code):
+def test_open_says_when_it_cannot_write_and_opens_nothing(rig, monkeypatch, announced, boom, code, where, tmp_path):
     from leela.blocks.fs.fs import Unsafe
     c, ws, lr, j, root = rig
     e = Unsafe('outside the open folders') if boom == 'unsafe' else boom
     def save(self, path=None, sandbox=None): raise e
     monkeypatch.setattr(Notebook, 'save', save)
+    if where == 'no_folder':
+        (tmp_path/'nf').mkdir()
+        with bare(tmp_path/'nf', monkeypatch) as (c, ws, fixed, seen):
+            r = opened(c, walk=JID, step='0')
+            one_line(r, code, 'Leela could not write the lesson.', exact=False)
+            assert list(ws.fs.roots) == [] and ws.tab is None and seen == [] and str(fixed) not in ws._closed_roots, 'a failed save leaves no new folder open'
+        return
     was = state(ws, lr, root)
     r = opened(c, walk=JID, step='0')
     one_line(r, code, 'Leela could not write the lesson.', exact=False)
     assert 'Opened in Leela.' not in r.text and state(ws, lr, root) == was and announced == []
+
+@pytest.mark.parametrize('boom, text', [
+    (PermissionError(13, 'Permission denied', '/Users/someone/Learning/Leela lessons/x.ipynb'), 'Leela could not write the lesson. Permission denied: x.ipynb'),
+    (OSError('/Users/someone/disk full'), 'Leela could not write the lesson.'),
+    (RuntimeError('/Users/someone/secret'), 'Leela could not open the lesson.')])
+def test_open_failure_shows_no_folder_path_or_type_name(rig, monkeypatch, boom, text):
+    def save(self, path=None, sandbox=None): raise boom
+    monkeypatch.setattr(Notebook, 'save', save)
+    r = opened(rig[0], walk=JID, step='0')
+    one_line(r, 500, text)
+    assert '/Users/someone' not in r.text and type(boom).__name__ not in r.text
+
+def test_open_does_not_read_a_large_file_to_check_it(rig, monkeypatch):
+    import leela.blocks.learn.learn as L
+    c, ws, lr, j, root = rig
+    (folder := root/'lessons').mkdir()
+    _lesson(walk=JID, step=0)(p := folder/f'{JID}-0.ipynb')
+    monkeypatch.setattr(L, 'MAX_EDIT_BYTES', 10)
+    monkeypatch.setattr(Notebook, 'load', lambda *a, **kw: pytest.fail('Leela read a file over the size limit on the event loop'))
+    one_line(opened(c, walk=JID, step='0'), 409, f'{p.name} is in the lessons folder and is too large for Leela to check. Move it or rename it, then open the lesson again.')
+
+def test_no_test_uses_the_owners_lessons_folder():
+    import leela.blocks.learn.learn as L
+    from pathlib import Path
+    assert Path.home() not in L.LESSONS.parents
 
 @contextmanager
 def bare(tmp_path, monkeypatch, *roots, loose=None):
@@ -462,7 +509,14 @@ def test_open_with_the_fixed_folder_already_open_or_covered(tmp_path, monkeypatc
         assert list(ws.fs.roots) == (before + [fixed] if case == 'loose' else before) and len(set(ws.fs.roots)) == len(ws.fs.roots)
         if case != 'fixed_alone': assert ws.fs.roots[0] == loose.resolve() and ws.fs.loose == loose.resolve()
 
-@pytest.mark.parametrize('block', ['file', 'parent_file', 'read_only', 'link'])
+def test_open_with_no_folder_leaves_no_folder_open_when_the_file_is_taken(tmp_path, monkeypatch):
+    import leela.blocks.learn.learn as L
+    with bare(tmp_path, monkeypatch) as (c, ws, fixed, seen):
+        L.LESSONS.mkdir(parents=True); _plain(L.LESSONS/f'{JID}-0.ipynb')
+        one_line(opened(c, walk=JID, step='0'), 409, f'{JID}-0.ipynb is in the lessons folder and is not the lesson for this step. Move it or rename it, then open the lesson again.')
+        assert list(ws.fs.roots) == [] and ws.tab is None and seen == [] and str(fixed) not in ws._closed_roots
+
+@pytest.mark.parametrize('block', ['file', 'parent_file', 'read_only', 'link', 'parent_link'])
 def test_open_with_no_folder_says_when_the_fixed_folder_cannot_be_made(tmp_path, monkeypatch, block):
     import leela.blocks.learn.learn as L
     with bare(tmp_path, monkeypatch) as (c, ws, fixed, seen):
@@ -471,15 +525,16 @@ def test_open_with_no_folder_says_when_the_fixed_folder_cannot_be_made(tmp_path,
         if block == 'file': fixed.parent.mkdir(); fixed.write_text('keep')
         elif block == 'parent_file': fixed.parent.write_text('keep')
         elif block == 'link': fixed.parent.mkdir(); (tmp_path/'away').mkdir(); fixed.symlink_to(tmp_path/'away', target_is_directory=True)
+        elif block == 'parent_link': (tmp_path/'away').mkdir(); fixed.parent.symlink_to(tmp_path/'away', target_is_directory=True)
         else: fixed.parent.parent.chmod(0o555)
         try:
             r = opened(c, walk=JID, step='0')
-            if block == 'link': one_line(r, 400, 'The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
+            if block in ('link', 'parent_link'): one_line(r, 400, 'The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
             else: one_line(r, 500, 'Leela could not write the lesson.', exact=False)
             assert list(ws.fs.roots) == [] and ws.tab is None and seen == []
             if block == 'file': assert fixed.read_text() == 'keep'
             if block == 'parent_file': assert fixed.parent.read_text() == 'keep'
-            if block == 'link': assert list((tmp_path/'away').iterdir()) == []
+            if block in ('link', 'parent_link'): assert list((tmp_path/'away').iterdir()) == []
         finally: fixed.parent.parent.chmod(0o755)
 
 @pytest.mark.parametrize('pane', ['', '1'])

@@ -1,4 +1,4 @@
-import asyncio, io, json, time
+import asyncio, io, json, socket, time
 from contextlib import redirect_stdout
 import pytest
 from leela.blocks.nb.exercise import check_solution, run_checks
@@ -100,15 +100,28 @@ def test_check_solution_uses_the_closed_runner(monkeypatch, abhyasa_cfg):
     assert r['stub']['checks'][0]['status'] == 'fail'
     assert len(seen) == 2 and all(kw['sandbox'] for _, kw in seen)
 
-@pytest.mark.parametrize('src', ['import socket; socket.create_connection(("127.0.0.1", 9))\ndef double(x): return 2 * x',
-                                 'open({out!r}, "w").write("x")\ndef double(x): return 2 * x',
-                                 'while True: pass',
-                                 'print(\'{{"v": 1, "found": true, "timeout": false, "checks": [{{"i": 0, "status": "pass"}}]}}\')\ndef double(x): return x'])
+@pytest.mark.parametrize('src', ['open({out!r}, "w").write("x")\ndef double(x): return 2 * x', 'while True: pass'])
 def test_hostile_reference_solutions_do_not_pass(src, tmp_path, abhyasa_cfg):
     out = tmp_path/'leela-x'
     r = check_solution(SPEC, src.format(out=str(out)), timeout=3)['solution']
     assert r.get('timeout') or r.get('error') or [c['status'] for c in r.get('checks', [])] != ['pass']
     assert not out.exists()
+
+def test_a_reference_solution_cannot_reach_a_listening_socket(abhyasa_cfg):
+    "The old case dialled port 9, where nothing listens, so it failed with or without the sandbox."
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0)); s.listen(1); s.settimeout(.5)
+        src = f'import socket; socket.create_connection(("127.0.0.1", {s.getsockname()[1]}), timeout=1)\ndef double(x): return 2 * x'
+        r = check_solution(SPEC, src, timeout=3)['solution']
+        with pytest.raises(TimeoutError): s.accept()
+    assert r.get('error') or [c['status'] for c in r.get('checks', [])] != ['pass']
+
+def test_a_result_line_printed_after_the_real_one_is_not_taken(abhyasa_cfg):
+    "The old case printed its forged line first and returned `x`, so it failed anyway and the nonce went untested."
+    forged = json.dumps(dict(v=1, found=True, timeout=False, checks=[dict(i=0, status='fail', got='FORGED-1234', error=None)]))
+    r = check_solution(SPEC, f'import atexit; atexit.register(print, {forged!r})\ndef double(x): return 2 * x', timeout=3)['solution']
+    assert 'FORGED-1234' not in json.dumps(r)
+    assert r.get('error') or [c['status'] for c in r['checks']] == ['pass']
 
 def test_a_mixed_fail_and_timeout_reference_keeps_its_rows(abhyasa_cfg):
     spec = {**SPEC, 'tests': [dict(say='doubles 2', test='assert double(2) == 4', shown=True),

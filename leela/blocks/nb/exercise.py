@@ -80,7 +80,7 @@ finally: globals().clear()
 '''
 
 def _as_checked(r):
-    "`r` with `timeout` for a stopped run only, and no checks when the function is missing."
+    "`r` with `timeout` for a stopped run only, and no checks when the function is missing. A test that timed out keeps its `timeout` status on its row."
     return r if 'checks' not in r else {**r, 'timeout': False} | ({} if r['found'] else dict(checks=[]))
 
 def check_solution(spec, solution, timeout=10):

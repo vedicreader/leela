@@ -118,6 +118,11 @@ def abhyasa_cfg(monkeypatch, tmp_path):
     return d
 
 @pytest.fixture(autouse=True)
+def _no_real_lessons(monkeypatch, tmp_path_factory):
+    "No test writes `~/Learning/Leela lessons`; a test that wants its own folder patches `LESSONS` again."
+    monkeypatch.setattr('leela.blocks.learn.learn.LESSONS', tmp_path_factory.mktemp('home')/'Learning'/'Leela lessons')
+
+@pytest.fixture(autouse=True)
 def _no_backup_threads(monkeypatch):
     """No test schedules real backups."""
     from leela.core import backups

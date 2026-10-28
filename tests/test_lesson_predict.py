@@ -64,7 +64,7 @@ def test_predict_ok_is_server_side_and_once(rig):
     r = post(rig, picked=2, why='', ok=True, ans=2)            # the page says right; 2 is wrong
     assert r.status_code == 200, r.text
     d = r.json()
-    assert (d['ok'], d['logged']) == (True, True) and d['message'].startswith('Saved to your learning shelf. '), d
+    assert (d['ok'], d['logged']) == (True, True) and d['message'].startswith('Saved. Next review '), d
     assert post(rig, picked=4, why='half').json() == {'ok': True, 'logged': False}   # "try again" logs nothing
     rows = attempts(rig)
     assert len(rows) == 1
@@ -259,7 +259,7 @@ def test_lesson_predict_holds_the_gate_until_the_server_answers():
     node = shutil.which('node')
     if not node: pytest.skip('node is not installed')
     harness = r'''const vm = require('vm'), fs = require('fs'), src = fs.readFileSync(process.argv[1], 'utf8');
-const fn = src.slice(src.indexOf('async function lessonPredict'), src.indexOf('\n}\n', src.indexOf('async function lessonPredict')) + 3);
+const fn = (src.match(/^const lessonSaid = .*;$/m) || [''])[0] + '\n' + src.slice(src.indexOf('async function lessonPredict'), src.indexOf('\n}\n', src.indexOf('async function lessonPredict')) + 3);
 const ctx = {lee: {path: '/n.ipynb', nbQueue: Promise.resolve()}, srcHash: async s => 'h:' + s, said: [], reply: null};
 ctx.status = (t, k) => ctx.said.push([k, t]);
 ctx.post = async () => { const r = ctx.reply; if (r instanceof Error) throw r; return r; };
@@ -292,3 +292,36 @@ const err = (status, body) => Object.assign(new Error(body?.error || status), {b
     assert got['conflict'] == {'heldAtOnce': True, 'settled': [[False, 'This demo changed. Run the cell again, then try.']]}
     assert got['html'] == got['network'] == {'heldAtOnce': True, 'settled': [[False, retry]]}
     assert got['old'] == got['old-error'] == got['not-ours'] == {'heldAtOnce': False, 'settled': []}
+
+def test_save_card_and_confidence_toast_the_server_line_or_a_retry_line():
+    "Both toasted the raw `e.message`, such as Failed to fetch."
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    harness = r'''const vm = require('vm'), fs = require('fs');
+ const el = tag => ({tag, children: [], dataset: {}, classList: {contains: c => c === 'dirty' && ctx.dirty}, appendChild(c) { this.children.push(c); return c; },
+   setAttribute() {}, querySelectorAll() { return this.children.filter(c => c.tag === 'button'); }, remove() {}});
+const main = el('div'), ctx = {said: [], reply: null, dirty: false, CSS: {escape: s => s}, lee: {tabKey: 'k', path: '/n.ipynb', nbQueue: Promise.resolve(), cells: []}};
+ctx.document = {createElement: el, addEventListener() {}};
+ctx.$ = sel => sel === '.lee-tab.active' ? el('div') : sel === '.lee-cellmain' ? main : null;
+ctx.status = (t, k) => ctx.said.push([k, t]);
+ctx.post = ctx.nbEdit = async () => { throw ctx.reply; };
+vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx);
+const err = body => Object.assign(new Error(body?.error || 'Bad Request'), {body});
+const cases = [['server', err({ok: false, error: 'The learning vault is locked or unreadable.'})], ['html', err('<html>')], ['network', new TypeError('Failed to fetch')]];
+(async () => { const out = {card: {}, sure: {}};
+  for (const [name, reply] of cases) {
+    ctx.reply = reply; ctx.said = [];
+    const host = el('div'); ctx.lessonRevealActions({id: 'c1', execution_count: 1, extra: {lesson: {}}}, host);
+    await host.children[0].children[0].onclick(); out.card[name] = ctx.said;
+    ctx.said = []; main.children = []; const c = {id: 'p1', cell_type: 'markdown', extra: {lesson: {role: 'prediction'}}}; ctx.lee.cells = [c];
+    ctx.paintLessonCell(el('div'), c); await main.children[0].children[1].onclick(); out.sure[name] = ctx.said; }
+  ctx.dirty = true; ctx.said = []; const host = el('div'); ctx.lessonRevealActions({id: 'c1', execution_count: 1, extra: {lesson: {}}}, host);
+  await host.children[0].children[0].onclick(); out.card.dirty = ctx.said;
+  console.log(JSON.stringify(out)); })();'''
+    r = subprocess.run([node, '-e', harness, str(ROOT/'leela/blocks/nb/lesson.js')], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    got, retry = json.loads(r.stdout), [['err', 'Leela did not save this. Try again.']]
+    for k in ('card', 'sure'):
+        assert got[k]['server'] == [['err', 'The learning vault is locked or unreadable.']], got
+        assert got[k]['html'] == got[k]['network'] == retry, got
+    assert got['card']['dirty'] == [['err', 'Save the notebook first.']], 'a check on the page keeps its own line'

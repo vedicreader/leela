@@ -1,4 +1,5 @@
-import json, re, time
+import json, re
+from datetime import date
 from itertools import zip_longest
 from pathlib import Path
 from fastcore.xtras import fenced, fenced_blocks
@@ -168,11 +169,9 @@ def record_card(memory, nb, cell, path):
             return _saved(c)
 
 def _saved(c):
-    from abhyasa.model import DEPTHS
-    level = f'Your level: {DEPTHS[c.floor]}.' if c.floor else 'Not at a level yet.'
-    days = (c.due - time.time())/86400
-    when = 'due now' if days <= 0 else f'in {days*24:.0f} h' if days < 1 else f'in {days:.0f} d'
-    return f'Saved to your learning shelf. {level} Next review {when}.'
+    # abhyasa.blocks.walk.ui.when_review says the same, and importing it loads abhyasa's web UI
+    days = (date.fromtimestamp(c.due) - date.today()).days
+    return f"Saved. Next review {'today' if days <= 0 else 'tomorrow' if days == 1 else f'in {days} days'}."
 
 def exercise_filing(nb, cell, path):
     "What `record_exercise` files, copied now so a later edit cannot change it."

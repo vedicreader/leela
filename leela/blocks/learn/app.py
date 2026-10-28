@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from fastcore.basics import first
 from fasthtml.common import FtResponse, JSONResponse, P
 from ... import errstr
@@ -53,6 +54,18 @@ def find_code(search, q, names, tool=None):
     if k is None or not k.pkgs2consider(): return None
     return lookup(k, q, names)
 
+def os_why(e) -> str:
+    "`e.strerror` and the name of the file in `e`, with no folder; empty when `e` has no `strerror`."
+    return f'{e.strerror}: {Path(str(e.filename)).name}' if e.strerror and e.filename is not None else e.strerror or ''
+
+def notebook_tab(docs, path):
+    "The open notebook tab that `path` names, as given or resolved; None for no such tab."
+    t = docs.tab_for(path) if path else None
+    if path and t is None:
+        try: t = docs.tab_for(str(Path(path).expanduser().resolve()))
+        except (OSError, ValueError, RuntimeError): t = None
+    return t if t is not None and t.kind == 'notebook' else None
+
 def connect(app, ctx):
     @app.route('/lesson/due')
     async def lesson_due():
@@ -89,8 +102,8 @@ def connect(app, ctx):
         except Taken as e: return say(str(e), 409)
         except ValueError as e: return say(str(e), 400)
         except Unsafe as e: return say(f'Leela could not write the lesson. {e}', 403)
-        except OSError as e: return say(f'Leela could not write the lesson. {errstr(e)}', 500)
-        except Exception as e: return say(f'Leela could not open the lesson. {errstr(e)}', 500)
+        except OSError as e: return say(f'Leela could not write the lesson. {os_why(e)}'.strip(), 500)
+        except Exception: return say('Leela could not open the lesson.', 500)
         # the pane keeps the step's own URL, so a reload does not GET this POST route
         return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic), pane=f.get('pane') == '1', root=root), headers=HEADERS)
     @app.route('/learn/lookup', methods=['GET'])
@@ -102,8 +115,8 @@ def connect(app, ctx):
         except ValueError as e: return said(req, root, str(e), 400, 'Look up code')
         try: rows = await off_loop(find_code, ctx.search, q, names, p.get('tool')) if q else []
         except Exception: rows = None
-        t = ctx.docs.tab_for(path) if path else None
-        return FtResponse(LookupPage(q, rows or [], given, path if t is not None and t.kind == 'notebook' else '', pane=p.get('pane') == '1', root=root,
+        t = notebook_tab(ctx.docs, path)
+        return FtResponse(LookupPage(q, rows or [], given, ctx.docs.key(t) if t is not None else '', pane=p.get('pane') == '1', root=root,
                                      say=NO_INDEX if rows is None else None, tool=p.get('tool', '')), headers=HEADERS)
     @app.route('/learn/scratch', methods=['POST'])
     async def learn_scratch(req):

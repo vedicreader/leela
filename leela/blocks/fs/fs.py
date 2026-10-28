@@ -9,6 +9,7 @@ from fastcore.all import Path, L, atomic_save, mkdir as fc_mkdir
 from kunda.pythons import clean_env, project_python
 from rgapi import fda, fd_iter
 from shalya.host import DENY
+from shalya.core import Unsafe as HostUnsafe
 from fastcore.shutil import move as fc_move
 from fastcore.xtras import flexicache, time_policy
 
@@ -38,8 +39,8 @@ _BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.g
 
 MAX_EDIT_BYTES = 4_000_000
 
-class Unsafe(Exception):
-    "A path that resolves outside every open root, or an operation refused for safety."
+class Unsafe(HostUnsafe):
+    "A path that resolves outside every open root, or an operation refused for safety; a shalya refusal, so the agent's guards see it."
 
 _GEN = 0
 def _changed():
