@@ -96,7 +96,11 @@ function initEditorSplitter() {
     e.preventDefault(); bar.classList.add('drag'); stage.classList.add('split-dragging'); bar.setPointerCapture(e.pointerId);
     const r = stage.getBoundingClientRect();
     bar.onpointermove = ev => setSplitSize(across() ? (ev.clientY - r.top) / r.height * 100 : (ev.clientX - r.left) / r.width * 100);
-    bar.onpointerup = () => { bar.classList.remove('drag'); stage.classList.remove('split-dragging'); bar.onpointermove = bar.onpointerup = null; setSplitSize(splitSize(), true); };
+    // a cancelled drag (a system gesture, a context menu) ends as a finished one, or the frames stay deaf to the pointer
+    bar.onpointerup = bar.onpointercancel = bar.onlostpointercapture = () => {
+      bar.classList.remove('drag'); stage.classList.remove('split-dragging');
+      bar.onpointermove = bar.onpointerup = bar.onpointercancel = bar.onlostpointercapture = null; setSplitSize(splitSize(), true);
+    };
   };
   bar.onkeydown = e => {
     const step = (across() ? {ArrowUp: -5, ArrowDown: 5} : {ArrowLeft: -5, ArrowRight: 5})[e.key];

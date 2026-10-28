@@ -124,7 +124,8 @@ global.document = {addEventListener() {}, documentElement: {classList: {contains
 const posted = []; global.window = {parent: {postMessage: (m, o) => posted.push([m, o])}};
 eval(src);
 const frame = {contentWindow: {}}, linked = [];
-const host = {frame, trail: [], link: u => linked.push(u)};
+const keyed = [];
+const host = {frame, trail: [], link: u => linked.push(u), key: k => keyed.push(k)};
 const m = (data, origin = location.origin, source = frame.contentWindow) => leePaneMessage({data, origin, source}, host);
 const took = [m({type: 'rh:link', url: 'https://example.org/a?b=1'}), m({type: 'rh:link', url: 'http://example.org/'}),
   m({type: 'rh:link', url: 'https://example.org/'}, 'http://evil.example'), m({type: 'rh:link', url: 'https://example.org/'}, location.origin, {}),
@@ -136,7 +137,13 @@ const click = (href, mods = {}) => { const a = href == null ? null : {href: href
   leePaneLink(ev); return ev.defaultPrevented; };
 const stopped = [click('https://example.org/x'), click('/learn?walk=a-1'), click('mailto:a@b.c'), click('#f'), click(null),
                  click('https://example.org/m', {metaKey: true}), click('https://example.org/w', {button: 1})];
-console.log(JSON.stringify({took, linked, stopped, posted, targets: anchors.map(a => a.target || '')}));
+const keys = [m({type: 'rh:key', key: 's', code: 'KeyS', meta: true}), m({type: 'rh:key', key: 'P', code: 'KeyP', meta: true, shift: true}),
+  m({type: 'rh:key', key: 'w', ctrl: true}), m({type: 'rh:key', key: 'q', meta: true}), m({type: 'rh:key', key: 's'}),
+  m({type: 'rh:key', key: 's', meta: true}, 'http://evil.example'), m({type: 'rh:key', key: 's', meta: true, alt: true}), m({type: 'rh:key', key: ['s'], meta: true})];
+const press = (key, mods) => { const ev = {key, code: 'Key' + key.toUpperCase(), target: {isContentEditable: false, matches: () => true}, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+  defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...mods}; const n = posted.length; leePaneKey(ev); return [ev.defaultPrevented, posted.slice(n).map(p => p[0])]; };
+const pressed = [press('s', {metaKey: true}), press('p', {metaKey: true, shiftKey: true}), press('c', {metaKey: true}), press('s', {})];
+console.log(JSON.stringify({took, linked, stopped, posted, targets: anchors.map(a => a.target || ''), keys, keyed, pressed}));
 '''
 
 def test_a_web_link_in_the_pane_opens_outside_it_and_only_from_its_own_frame():
@@ -150,4 +157,24 @@ def test_a_web_link_in_the_pane_opens_outside_it_and_only_from_its_own_frame():
     assert out['linked'] == ['https://example.org/a?b=1', 'http://example.org/']
     assert out['stopped'] == [True, False, False, False, False, False, False], 'only a plain click on a web link goes to the IDE'
     assert out['targets'] == ['_blank', '', '', '', '_blank', '_blank'], 'a modifier or middle click opens its own tab'
-    assert out['posted'] == [[{'type': 'rh:link', 'url': 'https://example.org/x'}, 'http://127.0.0.1:5011']]
+    assert out['posted'][0] == [{'type': 'rh:link', 'url': 'https://example.org/x'}, 'http://127.0.0.1:5011']
+
+def test_an_ide_chord_in_the_pane_reaches_the_ide():
+    "Cmd+S, Cmd+P and Cmd+W in a pane page went nowhere, or to the browser's Save Page; the page sends them to the IDE as it sends Escape."
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    r = subprocess.run([node, '-e', LINKS, str(PANE_JS)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out['keys'] == [True, True, True] + [False] * 5
+    assert out['keyed'] == [dict(key='s', code='KeyS', metaKey=True, ctrlKey=False, shiftKey=False),
+                            dict(key='P', code='KeyP', metaKey=True, ctrlKey=False, shiftKey=True), dict(key='w', code='', metaKey=False, ctrlKey=True, shiftKey=False)]
+    s, p, c, plain = out['pressed']
+    assert s == [True, [dict(type='rh:key', key='s', code='KeyS', meta=True, ctrl=False, shift=False)]] and p[0] and p[1][0]['shift']
+    assert c == [False, []] and plain == [False, []], 'copy and plain keys stay in the page'
+
+def test_a_safe_alignment_has_a_plain_one_before_it():
+    "A WebKit before 17.6 drops `safe flex-end` whole, and the cell bar's buttons moved to the left."
+    css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
+    rules = [r for r in re.findall(r'\{[^{}]*\}', css) if 'safe flex-end' in r]
+    assert rules and all(re.search(r'justify-content:\s*flex-end;[^}]*justify-content:\s*safe flex-end', r) for r in rules), rules

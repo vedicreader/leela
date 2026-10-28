@@ -294,6 +294,7 @@ const err = (status, body) => Object.assign(new Error(body?.error || status), {b
       ['logged', {ok: true, logged: true, message: 'Saved.'}, 'x', true], ['repeat', {ok: true, logged: false}, 'x', true],
       ['conflict', err('Conflict', {ok: false, error: 'This demo changed. Run the cell again, then try.'}), 'x', true],
       ['html', err('Bad Gateway', '<html>'), 'x', true], ['network', new TypeError('Failed to fetch'), 'x', true],
+      ['text', err('Internal Server Error', 'The learning vault is locked.'), 'x', true],
       ['old', {ok: true, logged: true, message: 'Saved.'}, 'x', false], ['old-error', new TypeError('Failed to fetch'), 'x', false],
       ['not-ours', {ok: true}, null, true]]) {
     ctx.reply = reply; ctx.said = []; const ev = event(source, withSettle), p = ctx.lessonPredict(ev), heldAtOnce = ev.held; await p;
@@ -306,6 +307,8 @@ const err = (status, body) => Object.assign(new Error(body?.error || status), {b
     assert said['conflict'] == [['err', 'This demo changed. Run the cell again, then try.']]
     assert said['html'] == said['network'] == said['old-error'] == [['err', retry]], 'the toast says what the gate says, never Failed to fetch'
     assert said['logged'] == said['old'] == [['ok', 'Saved.']]
+    assert said['repeat'] == [['ok', '']], 'an ok answer clears a failure toast left by an earlier try'
+    assert said['text'] == [['err', 'The learning vault is locked.']] and got['text']['settled'] == [[False, 'The learning vault is locked.']], 'a text 500 keeps its sentence'
     assert got['logged'] == got['repeat'] == {'heldAtOnce': True, 'settled': [[True]]}
     assert got['conflict'] == {'heldAtOnce': True, 'settled': [[False, 'This demo changed. Run the cell again, then try.']]}
     assert got['html'] == got['network'] == {'heldAtOnce': True, 'settled': [[False, retry]]}

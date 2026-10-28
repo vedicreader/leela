@@ -28,7 +28,7 @@ function lessonRevealText(c) {
   return lines.join('\n');
 }
 //: The line a failed lesson write shows: the server's own sentence when it sent one, else a line that says what to do.
-const lessonSaid = err => err?.body && typeof err.body === 'object' && (err.body.error || err.body.message) || 'Leela did not save this. Try again.';
+const lessonSaid = (err, b = err?.body) => (b && typeof b === 'object' && (b.error || b.message)) || (typeof b === 'string' && b.trim() && !b.trim().startsWith('<') && b.trim().slice(0, 300)) || 'Leela did not save this. Try again.';
 function lessonRevealActions(cell, el) {
   const lesson = cell.extra.lesson, key = `${cell.id}:${cell.execution_count}`;
   const row = document.createElement('div'); row.className = 'lee-reveal-save'; el.appendChild(row);
@@ -77,7 +77,7 @@ async function lessonPredict(e) {
     await lee.nbQueue;
     const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, ans, ok, why, src});
     settle(true);
-    if (d.message) status(d.message, 'ok');
+    status(d.message || '', 'ok');   // an ok answer also clears the toast of a failed try
   } catch (err) {
     const said = lessonSaid(err);
     settle(false, said);

@@ -284,6 +284,10 @@ function leePaneMessage(e, host) {
   }
   if (d.type === 'rh:open') { if (!leeIsLocal(d.url)) return false; host.trail = []; host.open(d.url); return true; }
   if (d.type === 'rh:link') { if (!leeWeb(d.url) || !host.link) return false; host.link(d.url); return true; }
+  if (d.type === 'rh:key') {
+    if (!leePaneChord(d.key, d.meta || d.ctrl, d.alt) || !host.key) return false;
+    host.key({key: d.key, code: typeof d.code === 'string' ? d.code : '', metaKey: !!d.meta, ctrlKey: !!d.ctrl, shiftKey: !!d.shift}); return true;
+  }
   if (d.type === 'rh:close') {
     if (d.level === undefined) { host.close(); return true; }
     if (d.level !== 1) return false;
@@ -326,7 +330,14 @@ function leePaneLink(e) {
   if (!document.documentElement.classList.contains('in-pane') || e.button === 1 || e.metaKey || e.ctrlKey || e.shiftKey) return;
   e.preventDefault(); leePaneTell({type: 'rh:link', url: a.href});
 }
+function leePaneChord(key, mod, alt) {
+  "Whether a key is one of the IDE chords a pane page hands on: Cmd or Ctrl with P, S or W, and no Alt.";
+  return typeof key === 'string' && !!mod && !alt && ['p', 's', 'w'].includes(key.toLowerCase());
+}
 function leePaneKey(e) {
+  if (!e.defaultPrevented && leePaneChord(e.key, e.metaKey || e.ctrlKey, e.altKey)) {
+    e.preventDefault(); leePaneTell({type: 'rh:key', key: e.key, code: e.code, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey}); return;
+  }
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   const t = e.target;
   if (t && (t.isContentEditable || (t.matches && t.matches('textarea, select, input:not([type=button], [type=submit], [type=reset], [type=checkbox], [type=radio])')))) return;
@@ -6021,7 +6032,11 @@ function initEditorSplitter() {
     e.preventDefault(); bar.classList.add('drag'); stage.classList.add('split-dragging'); bar.setPointerCapture(e.pointerId);
     const r = stage.getBoundingClientRect();
     bar.onpointermove = ev => setSplitSize(across() ? (ev.clientY - r.top) / r.height * 100 : (ev.clientX - r.left) / r.width * 100);
-    bar.onpointerup = () => { bar.classList.remove('drag'); stage.classList.remove('split-dragging'); bar.onpointermove = bar.onpointerup = null; setSplitSize(splitSize(), true); };
+    // a cancelled drag (a system gesture, a context menu) ends as a finished one, or the frames stay deaf to the pointer
+    bar.onpointerup = bar.onpointercancel = bar.onlostpointercapture = () => {
+      bar.classList.remove('drag'); stage.classList.remove('split-dragging');
+      bar.onpointermove = bar.onpointerup = bar.onpointercancel = bar.onlostpointercapture = null; setSplitSize(splitSize(), true);
+    };
   };
   bar.onkeydown = e => {
     const step = (across() ? {ArrowUp: -5, ArrowDown: 5} : {ArrowLeft: -5, ArrowRight: 5})[e.key];

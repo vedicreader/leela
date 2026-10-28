@@ -40,6 +40,10 @@ function leePaneMessage(e, host) {
   }
   if (d.type === 'rh:open') { if (!leeIsLocal(d.url)) return false; host.trail = []; host.open(d.url); return true; }
   if (d.type === 'rh:link') { if (!leeWeb(d.url) || !host.link) return false; host.link(d.url); return true; }
+  if (d.type === 'rh:key') {
+    if (!leePaneChord(d.key, d.meta || d.ctrl, d.alt) || !host.key) return false;
+    host.key({key: d.key, code: typeof d.code === 'string' ? d.code : '', metaKey: !!d.meta, ctrlKey: !!d.ctrl, shiftKey: !!d.shift}); return true;
+  }
   if (d.type === 'rh:close') {
     if (d.level === undefined) { host.close(); return true; }
     if (d.level !== 1) return false;
@@ -82,7 +86,14 @@ function leePaneLink(e) {
   if (!document.documentElement.classList.contains('in-pane') || e.button === 1 || e.metaKey || e.ctrlKey || e.shiftKey) return;
   e.preventDefault(); leePaneTell({type: 'rh:link', url: a.href});
 }
+function leePaneChord(key, mod, alt) {
+  "Whether a key is one of the IDE chords a pane page hands on: Cmd or Ctrl with P, S or W, and no Alt.";
+  return typeof key === 'string' && !!mod && !alt && ['p', 's', 'w'].includes(key.toLowerCase());
+}
 function leePaneKey(e) {
+  if (!e.defaultPrevented && leePaneChord(e.key, e.metaKey || e.ctrlKey, e.altKey)) {
+    e.preventDefault(); leePaneTell({type: 'rh:key', key: e.key, code: e.code, meta: e.metaKey, ctrl: e.ctrlKey, shift: e.shiftKey}); return;
+  }
   if (e.key !== 'Escape' || e.defaultPrevented) return;
   const t = e.target;
   if (t && (t.isContentEditable || (t.matches && t.matches('textarea, select, input:not([type=button], [type=submit], [type=reset], [type=checkbox], [type=radio])')))) return;

@@ -228,6 +228,7 @@ function mountPage(url, title = '', direction = 'vertical') {
     at(u, t) { page.url = leeOwnURL(u); if (t) page.title = t; paintSidePage(page); },
     open(u) { const p = leePaneURL(u); if (!p) return; try { frame.contentWindow.location.replace(p); } catch (_) { frame.src = p; } },
     link: openExternal,
+    key: k => document.body.dispatchEvent(new KeyboardEvent('keydown', {...k, bubbles: true, cancelable: true})),   // the keymap on `window` decides
     close: leeCloseSplit};
   lee.secondaryPath = ''; lee.activeEditor = 'primary';
   paintSidePage(page);

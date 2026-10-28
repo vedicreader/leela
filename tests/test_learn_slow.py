@@ -120,9 +120,8 @@ def test_a_pane_in_a_dark_ide_on_a_light_os_is_dark_and_follows_the_ide(tmp_path
         await pg.evaluate("applyTheme('leela:dark:relaxed')")
         await pg.evaluate("localStorage.setItem('lee-theme', 'leela:light:relaxed')")   # the frame's own first paint reads light
         frame = await _side(pg, tmp_path)
-        await pg.wait_for_timeout(800)   # the theme change is a CSS transition
-        ide = await pg.evaluate("getComputedStyle(document.querySelector('#editor')).backgroundColor")
-        assert ide == 'rgb(13, 17, 23)', ide
+        ide = 'rgb(13, 17, 23)'   # the theme change is a CSS transition: wait for its end colour, not for a fixed time
+        await pg.wait_for_function(f"getComputedStyle(document.querySelector('#editor')).backgroundColor === {ide!r}")
         assert await frame.evaluate('[document.documentElement.dataset.theme, document.documentElement.dataset.mode, document.documentElement.style.colorScheme]') == ['leela', 'dark', 'dark']
         await frame.wait_for_function(f'{BG} === {ide!r}')
         await pg.evaluate("applyTheme('leela:light:relaxed')")
@@ -359,3 +358,25 @@ def test_a_web_link_on_a_step_opens_outside_the_pane_and_the_page(tmp_path, monk
         assert 'step=0' in frame.url and await frame.locator('blockquote').count() == 1, 'the site loaded in the pane'
         await _shoot(pg, 'pane-link', ide=True)
     asyncio.run(_on_learn(go, ws, ide=False))
+
+def test_a_cancelled_split_drag_leaves_the_side_page_clickable(tmp_path, monkeypatch):
+    async def go(pg, base):
+        frame = await _side(pg, tmp_path)
+        box = await pg.locator('.lee-editor-splitter').bounding_box()
+        await pg.mouse.move(box['x'] + 1, box['y'] + 40); await pg.mouse.down()
+        assert await pg.evaluate("document.querySelector('#editorstage').classList.contains('split-dragging')")
+        await pg.evaluate("document.querySelector('.lee-editor-splitter').dispatchEvent(new PointerEvent('pointercancel', {pointerId: 1, bubbles: true}))")
+        assert not await pg.evaluate("document.querySelector('#editorstage').classList.contains('split-dragging')"), 'the frame stayed deaf to the pointer'
+        assert await pg.evaluate("getComputedStyle(document.querySelector('#editor2 iframe')).pointerEvents") != 'none'
+        await pg.mouse.up()
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
+def test_an_ide_chord_pressed_in_the_pane_runs_in_the_ide(tmp_path, monkeypatch):
+    async def go(pg, base):
+        frame = await _side(pg, tmp_path)
+        await frame.locator('blockquote').click()
+        mod = 'Meta' if await pg.evaluate("navigator.platform.startsWith('Mac')") else 'Control'
+        await frame.locator('body').press(f'{mod}+Shift+P')
+        await pg.wait_for_function("lee.lastKeyEvent?.action === 'palette'")
+        assert await pg.locator('.lee-modal').count() >= 1, 'the palette did not open'
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
