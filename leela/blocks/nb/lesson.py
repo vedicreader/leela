@@ -163,32 +163,32 @@ def _js(v):
     if v is None: return 'null'
     return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
 
-def prediction_filing(nb, cell, path, demo, gate, picked, why=''):
-    "What `record_prediction` files for one gate, copied now; None when the gate's answer is a state path."
+def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=None):
+    "What `record_prediction` files for one gate, copied now; ValueError for a bad gate, or for a state-path gate without a valid `ans` and `ok`."
     spec, g = demo_gate(cell, demo, gate)
-    if not isinstance(a := g.get('answer'), dict) or 'is' not in a: return None
-    ok, why = _js(picked) == _js(a['is']), str(why or '')
-    return dict(name=nb.meta['lesson']['name'], question=str(g.get('prompt') or gate), answer=_js(picked), thinking=why, correct=ok,
-                depth=3 if why.strip() else 2, feedback=f'The answer is {_js(a["is"])}.', notebook=str(path or ''),
-                card_key=f'{cell.id}:{src_hash(cell.source)}:{spec.get("id") or ""}:{gate}', gate=gate, demo=spec.get('id') or '')
+    if not spec.get('id'): raise ValueError('This demo has no id. Give it one, then try.')
+    if isinstance(a := g.get('answer'), dict): ans, ok = a.get('is'), _js(picked) == _js(a.get('is'))
+    elif type(ok) is not bool: raise ValueError('This check needs ok as true or false.')
+    elif ans is not None and not isinstance(ans, (str, int, float)): raise ValueError('This check needs ans as one value: a string, a number, true, false or null.')
+    return dict(name=nb.meta['lesson']['name'], spec=spec, gate=gate, picked=_js(picked), ans=_js(ans), ok=ok, why=str(why or ''),
+                notebook=str(path or ''), card_key=f'{cell.id}:{src_hash(cell.source)}:{spec["id"]}:{gate}')
 
 def record_prediction(memory, f):
-    "File one rupaka prediction as a `demo` attempt per source version; None when its key is already filed."
+    "File one rupaka prediction through abhyasa once per source version; None when its key is already filed."
     from abhyasa.store import Learning, slugify
-    from abhyasa.model import update
+    import abhyasa.demo  # adds Learning.put_demo and Learning.record_prediction
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
-    slug, a = slugify(f['name']), {k: v for k, v in f.items() if k != 'name'}
+    slug = slugify(f['name'])
     vault = memory._store('learning')
     with _open_lock(memory.path):
         lr = Learning(vault)
         with write_txn(lr.v.db):
-            if any(x.get('card_key') == a['card_key'] for x in lr.attempts(slug, limit=10000)): return None
-            u = update(lr.concept(slug) or lr.put(f['name'], slug=slug), a['depth'], a['correct'])
-            u.pop('kind')
-            c = lr.update(slug, **u)
-            lr.record(concept=slug, kind='demo', **a)
-            return _saved(c)
+            if any(x.get('card_key') == f['card_key'] for x in lr.attempts(slug, limit=10000)): return None
+            if lr.concept(slug) is None: lr.put(f['name'], slug=slug)
+            d = lr.put_demo(f['spec'], slug, by='leela:lesson')
+            lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'])
+            return _saved(lr.concept(slug))
 
 def fence(spec): return fenced(json.dumps(spec, ensure_ascii=False), 'rupaka')
 def demo_refusal(errors): return '\n'.join(errors)

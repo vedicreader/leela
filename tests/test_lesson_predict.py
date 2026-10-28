@@ -6,6 +6,7 @@ import pytest
 from fastcore.basics import AttrDict
 from starlette.testclient import TestClient
 from abhyasa.store import Learning
+import abhyasa.demo  # adds Learning.demo and Learning.demos
 from leela.app import ide_app
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import demo_gate, fence, lesson_notebook
@@ -56,7 +57,8 @@ def post(r, i=1, gate='g1', demo='halves', src=None, path=None, **kw):
                 src=src_hash(cell.source) if src is None and cell else src, **kw)
     return r.c.post('/lesson/predict', json=body)
 
-def attempts(r, slug='halves'): return list(Learning(r.ws.memory._store('learning')).attempts(slug, limit=10000))
+def shelf(r): return Learning(r.ws.memory._store('learning'))
+def attempts(r, slug='halves'): return list(shelf(r).attempts(slug, limit=10000))
 
 def test_predict_ok_is_server_side_and_once(rig):
     r = post(rig, picked=2, why='', ok=True, ans=2)            # the page says right; 2 is wrong
@@ -67,18 +69,14 @@ def test_predict_ok_is_server_side_and_once(rig):
     rows = attempts(rig)
     assert len(rows) == 1
     a = rows[0]
-    assert (a.kind, bool(a.correct), a.depth, a.answer, a.question, a.thinking) == ('demo', False, 2, '2', 'What is half of 8?', '')
-    assert a.feedback == 'The answer is 4.'
+    assert (a.kind, a.method, bool(a.correct), a.answer, a.expected, a.question) == ('demo', 'demo', False, '2', '4', 'What is half of 8?')
     assert a.notebook == str(rig.p) and a.gate == 'g1' and a.demo == 'halves'
     assert a.card_key == f'{rig.nb[1].id}:{src_hash(rig.nb[1].source)}:halves:g1'
-    c = Learning(rig.ws.memory._store('learning')).concept('halves')
+    c = shelf(rig).concept('halves')
     assert c.seen == 1 and c.due > time.time() and 'kind' not in c
+    d = shelf(rig).demo('halves')
+    assert (d.concept, d.by, d.stats) == ('halves', 'leela:lesson', {'shown': 1, 'right': 0})
     assert set(rig.opened) == {'learning'}
-
-def test_predict_right_with_reasoning_is_depth_3(rig):
-    assert post(rig, picked=4, why='Half of 8 is 4.').json()['logged']
-    a = attempts(rig)[0]
-    assert (bool(a.correct), a.depth, a.thinking, a.answer) == (True, 3, 'Half of 8 is 4.', '4')
 
 def test_predict_compares_as_the_runtime_does(serve):
     g = dict(GATE, options=['4', 5], answer={'is': 4.0})
@@ -160,6 +158,17 @@ def test_predict_edited_cell_logs_again_and_a_stale_src_is_409(rig):
     assert post(rig, picked=4).json()['logged']
     keys = {a.card_key for a in attempts(rig)}
     assert keys == {f'{rig.nb[1].id}:{old}:halves:g1', f'{rig.nb[1].id}:{src_hash(new)}:halves:g1'}
+    assert [d.stats for d in shelf(rig).demos()] == [{'shown': 2, 'right': 1}]
+
+def test_predict_edited_demo_reuses_its_shelf_demo(rig):
+    assert post(rig, picked=4).json()['logged']
+    new = fence(spec(gate=dict(GATE, prompt='What is 8 / 2?')))
+    assert rig.c.post('/nb/edit', json=dict(path=str(rig.p), op='source', i=1, source=new)).json()['ok']
+    assert post(rig, picked=4).json()['logged']
+    ds = shelf(rig).demos()
+    assert len(ds) == 1 and ds[0].slug == 'halves' and ds[0].stats == {'shown': 2, 'right': 2}
+    assert ds[0].spec['blocks'][0]['blocks'][0]['blocks'][0]['prompt'] == 'What is 8 / 2?'
+    assert sorted(a.question for a in attempts(rig)) == ['What is 8 / 2?', 'What is half of 8?']
 
 def test_predict_an_edit_to_another_cell_does_not_block(rig):
     assert rig.c.post('/nb/edit', json=dict(path=str(rig.p), op='source', i=3, source='print(1)')).json()['ok']
@@ -175,9 +184,23 @@ def test_predict_renamed_copy_is_the_same_attempt(rig, tmp_path):
     rows = attempts(rig)
     assert len(rows) == 1 and rows[0].notebook == str(rig.p)
 
-def test_predict_state_path_answer_is_not_filed(serve):
+def test_predict_state_path_answer_files_the_page_values(serve):
     r = serve(lesson(fence(spec(gate=dict(GATE, answer='half')))))
-    assert post(r, picked=4).json() == {'ok': True, 'logged': False, 'reason': 'This check depends on the demo state, so Leela does not file it.'}
+    assert post(r, picked=6, ans=6, ok=True, why='Half of 12.').json()['logged']
+    a = attempts(r)[0]
+    assert (bool(a.correct), a.answer, a.expected, a.thinking) == (True, '6', '6', 'Half of 12.')
+
+@pytest.mark.parametrize('kw', [{}, dict(ans=4), dict(ans=4, ok='true'), dict(ans=4, ok=1), dict(ans=[4], ok=True), dict(ans={'is': 4}, ok=False)])
+def test_predict_state_path_refuses_a_bad_verdict(serve, kw):
+    r = serve(lesson(fence(spec(gate=dict(GATE, answer='half')))))
+    res = post(r, picked=4, **kw)
+    assert res.status_code == 400 and res.json()['error'].startswith('This check needs '), res.text
+    assert r.opened == []
+
+def test_predict_refuses_a_demo_without_an_id(serve):
+    r = serve(lesson(fence(spec(id=''))))
+    res = post(r, demo='', picked=4)
+    assert res.status_code == 400 and res.json()['error'] == 'This demo has no id. Give it one, then try.'
     assert r.opened == []
 
 @pytest.mark.parametrize('failure', ['missing', 'locked'])
@@ -206,7 +229,7 @@ def test_predict_rolls_back_a_failed_attempt(rig, monkeypatch, failure):
         assert post(rig, picked=4).status_code == 400
     assert attempts(rig) == []
     assert post(rig, picked=4).json()['logged']
-    assert len(attempts(rig)) == 1 and Learning(rig.ws.memory._store('learning')).concept('halves').seen == 1
+    assert len(attempts(rig)) == 1 and shelf(rig).concept('halves').seen == 1 and shelf(rig).demo('halves').stats['shown'] == 1
 
 def test_simultaneous_predictions_log_once(rig):
     with ThreadPoolExecutor(max_workers=2) as pool:

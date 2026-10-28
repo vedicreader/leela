@@ -3385,16 +3385,16 @@ function renderLessonReveal(c) {
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
 }
-//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson and computes `ok` itself.
+//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer.
 async function lessonPredict(e) {
   const at = e.composedPath(), host = at.find(n => n.classList?.contains('lee-rupaka')), cell = at.find(n => n.matches?.('.lee-cell[data-id]'));
   if (!cell || host?.leeSource == null) return;
-  const {demo, gate, picked, why} = e.detail, path = lee.path;
+  const {demo, gate, picked, ans, ok, why} = e.detail, path = lee.path;
   try {
     const src = await srcHash(host.leeSource);
     await lee.nbQueue;
-    const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, why, src});
-    if (d.message || d.reason) status(d.message || d.reason, d.logged ? 'ok' : 'info');
+    const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, ans, ok, why, src});
+    if (d.message) status(d.message, 'ok');
   } catch (err) { status(String(err.message || err), 'err'); }
 }
 // The Node harnesses load this file with no `document`.

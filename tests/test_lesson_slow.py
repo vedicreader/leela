@@ -197,7 +197,7 @@ def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
         assert resp.status == 200, await resp.text()
         body = await resp.json()
         assert body['logged'] is True and body['message'].startswith('Saved to your learning shelf. '), body
-        assert set(json.loads(resp.request.post_data)) == {'path', 'cell_id', 'demo', 'gate', 'picked', 'why', 'src'}
+        assert set(json.loads(resp.request.post_data)) == {'path', 'cell_id', 'demo', 'gate', 'picked', 'ans', 'ok', 'why', 'src'}
         await pg.wait_for_function("document.querySelector('#status')?.textContent.startsWith('Saved to your learning shelf.')")
     asyncio.run(_real_page(go, tmp_path))
     rows = Learning(Memory(path=tmp_path/'learning.db', offline=True)._store('learning')).attempts('halves', limit=10)
