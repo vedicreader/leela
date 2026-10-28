@@ -67,6 +67,21 @@ def test_bad_solution_refuses_without_writing(exercise, spec, solution, expected
     assert path.read_bytes() == before
 
 
+def test_a_solution_that_fails_one_test_and_times_out_on_another_names_the_failure(exercise, spec, abhyasa_cfg):
+    add, path, _ = exercise
+    before = path.read_bytes()
+    assert add(str(path), **spec, solution='def double(x):\n    while x < 0: pass\n    return 0') == 'the solution fails: A positive number'
+    assert path.read_bytes() == before
+
+@pytest.mark.parametrize('stub, says', [('def double(x):\n    raise NotImplementedError', 'the stub errors on 2'),
+    ('raise ValueError("stub")', 'the stub check errors'),
+    ('# write double here', 'the stub defines no callable function')])
+def test_a_stub_that_cannot_fail_an_assert_is_described_as_it_is(exercise, spec, stub, says, abhyasa_cfg):
+    add, path, _ = exercise
+    result = add(str(path), **{**spec, 'stub': stub}, solution=SOLUTION)
+    assert result.startswith('Added the exercise') and result.endswith(f'the solution passes 2 of 2; {says}.')
+    assert 'the stub fails' not in result
+
 def test_already_passing_stub_refuses(exercise, spec):
     add, path, _ = exercise
     spec['stub'] = 'def double(x): return x*2'

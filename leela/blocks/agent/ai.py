@@ -964,8 +964,11 @@ def _session_tools(host):
                 return 'the solution fails: ' + ', '.join(bad)
             if any(r['status'] == 'timeout' for r in rows): return 'the solution check times out (timeout)'
             if len(rows) != n or any(r['status'] != 'pass' for r in rows): return 'the solution check errors'
-            passed = sum(r['status'] == 'pass' for r in draft.get('checks', [])) if draft.get('found') else 0
-            if passed == n: return 'the stub already passes every test'
+            got = [r['status'] for r in draft.get('checks', [])]
+            if got.count('pass') == n: return 'the stub already passes every test'
+            stub = ('the stub check times out' if draft.get('timeout') else 'the stub check errors' if draft.get('error')
+                    else 'the stub defines no callable function' if not draft.get('found')
+                    else '; '.join(f'the stub {w} {got.count(s)}' for s, w in (('fail', 'fails'), ('error', 'errors on'), ('timeout', 'times out on')) if s in got))
             p = host.check_write(path)
             if p.suffix != '.ipynb': return 'add_exercise failed: path must be an .ipynb notebook'
             nb = Notebook.load(p)
@@ -976,7 +979,7 @@ def _session_tools(host):
             nb.insert(index + 1, code)
             nb.reveal(index + 1)
             nb.save(p, sandbox=host.ws.fs)
-            return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; the stub fails {n - passed}.'
+            return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; {stub}.'
         except Exception as e: return f'add_exercise failed: {errstr(e)}'
     @summary(lambda a: f'Check {a.get("path", "")} cell {a.get("cell_id", "?")}')
     def check_exercise(path: str, cell_id: str, timeout: int = 120) -> str:

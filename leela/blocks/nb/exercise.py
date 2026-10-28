@@ -1,4 +1,5 @@
-import asyncio, json, subprocess, sys
+import asyncio, json
+from abhyasa import check
 from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
 from .nb import Cell, fresh_exercise_state, run_watched, src_hash
 
@@ -73,27 +74,17 @@ try:
 finally: globals().clear()
 '''
 
+def _as_checked(r):
+    "`r` with `timeout` for a stopped run only, and no checks when the function is missing."
+    return r if 'checks' not in r else {**r, 'timeout': False} | ({} if r['found'] else dict(checks=[]))
+
 def check_solution(spec, solution, timeout=10):
+    "`run_isolated` reports for `solution` and the stub, each in a closed process of `timeout` seconds."
     spec = validate_exercise_spec(spec)
     if not isinstance(solution, str): raise ValueError('`solution` must be Python source text')
-    payload = json.dumps([spec['fname'], [t['test'] for t in spec['tests']], list(SAFE_NAMES), timeout])
-    body = HARNESS.replace('PAYLOAD', repr(payload))
-    script = f'''import contextlib, json, os, sys
-ns = {{}}
-try:
-    with open(os.devnull, 'w') as out, contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-        exec(compile(sys.stdin.read(), '<exercise>', 'exec'), ns)
-except BaseException as e: print(json.dumps({{'error': type(e).__name__}}))
-else: exec({body!r}, {{'__builtins__': __builtins__, '__leela_exercise_ns': ns}})
-'''
-    results = {}
-    for key, source in (('solution', solution), ('stub', spec['stub'])):
-        try:
-            r = subprocess.run([sys.executable, '-I', '-c', script], input=source, text=True, capture_output=True, timeout=timeout + 1)
-            results[key] = json.loads(r.stdout) if r.returncode == 0 else {'error': 'the subprocess sent no check result'}
-        except subprocess.TimeoutExpired: results[key] = {'timeout': True}
-        except (ValueError, OSError): results[key] = {'error': 'the subprocess sent no check result'}
-    return results
+    tests = [t['test'] for t in spec['tests']]
+    return {k: _as_checked(check.run_isolated('assert', spec['fname'], src, tests, total=timeout, sandbox=True))
+            for k, src in (('solution', solution), ('stub', spec['stub']))}
 
 async def run_checks(k, fname, tests, timeout=10):
     if not isinstance(fname, str) or not fname.isidentifier() or fname.startswith('_'):
