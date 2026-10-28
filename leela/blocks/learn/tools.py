@@ -3,15 +3,17 @@ from time import monotonic
 from fastcore.basics import AttrDict, first
 from fastcore.xdg import xdg_data_home
 from fastcore.xtras import atomic_save
+from abhyasa import check
 from ... import errstr
 from .learn import PKG, _NAME
 
-__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'install_cmds', 'make_tool_env', 'index_env', 'tool_job', 'active_job']
+__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'install_cmds', 'make_tool_env', 'index_env', 'tool_job', 'active_job', 'LIBRARY_TOTAL', 'library_check']
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
 TOO_LONG = 'The install took too long. Try again.'
 BUSY = 'Another install of these packages is still running. Try again later.'
 NO_PY = 'The install did not make a Python for the lesson. Try again.'
+LIBRARY_TOTAL = 20.   # seconds for one library check; each test keeps abhyasa's `runner.per_test`
 _KEY, _WHEEL = re.compile(r'[0-9a-f]{16}'), re.compile(r'no (usable |matching )?wheels?', re.I)
 
 def tool_names(names) -> list[str]:
@@ -79,6 +81,13 @@ def make_tool_env(names, run=subprocess.run, uv=None,
         if not (p.is_file() and os.access(p, os.X_OK)): return res(False, NO_PY)
         with atomic_save(d/'ready', mode='w') as f: f.write('\n'.join(names) + '\n')
         return res(True)
+
+def library_check(spec, source, key:str) -> dict:
+    "The `run_isolated` report for `source` against `spec`'s tests, closed, in the Python of the tool environment `key`. `ValueError` when it is not ready."
+    from ..nb.exercise import _as_checked
+    if not (python := tool_python(key)): raise ValueError('The tool environment is not ready.')
+    tests = [t if isinstance(t, str) else dict(test=t['test'], say=t['say'], hidden=not t['shown']) for t in spec['tests']]
+    return _as_checked(check.run_isolated('assert', spec['fname'], source, tests, total=LIBRARY_TOTAL, sandbox=True, python=str(python), unix=True))
 
 def index_env(key):
     "Index the packages of the tool environment `key` in kosha, so `/learn/lookup?tool=` finds them."

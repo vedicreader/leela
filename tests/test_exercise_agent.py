@@ -126,7 +126,7 @@ ASK = dict(path='ordinary.ipynb', task='Double a number.', fname='double', stub=
 EDITS = dict(unchanged=lambda a: a, edited=lambda a: {**a, 'task': 'Double it.'}, blanked=lambda a: {**a, 'solution': ''},
              dropped=lambda a: {k: v for k, v in a.items() if k != 'solution'})
 
-def approve(edit):
+def approve(edit, ask=ASK):
     nb = Notebook([Cell(source='set an exercise', cell_type='prompt')])
     ap = notebook_approvals(lambda: (nb, 0), timeout=5); stop = ap.listen(); shown = {}
     def answer():
@@ -136,7 +136,7 @@ def approve(edit):
                 return ap.answer(a.id, True, args=edit(a.dict()['args']))
             time.sleep(.01)
     threading.Thread(target=answer, daemon=True).start()
-    tc = {'function': {'name': 'add_exercise', 'arguments': dict(ASK)}}
+    tc = {'function': {'name': 'add_exercise', 'arguments': dict(ask)}}
     try: decision = ap.gate(tc)
     finally: stop()
     return tc['function']['arguments'], nb, shown, decision
@@ -152,3 +152,9 @@ def test_the_tool_still_receives_the_reference_solution(edit):
     args, *_ = approve(EDITS[edit])
     assert args['solution'] == SOLUTION
     assert args['task'] == ('Double it.' if edit == 'edited' else ASK['task'])
+
+def test_an_exercise_with_packages_still_hides_the_reference_solution():
+    args, nb, shown, decision = approve(EDITS['unchanged'], {**ASK, 'packages': ['six']})
+    card = '\n'.join([json.dumps(shown), json.dumps(decision.dict()), *(c.source for c in nb.cells)])
+    assert 'SECRET_REFERENCE_SOLUTION_7f9c' not in card and '(reference solution hidden)' in card and 'six' in card
+    assert args['solution'] == SOLUTION and args['packages'] == ['six']

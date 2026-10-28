@@ -1,9 +1,14 @@
-import subprocess, threading, time
+import asyncio, json, shutil, subprocess, sys, threading, time
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
+from fastcore.basics import AttrDict
 from leela.blocks.learn import tools
-from leela.blocks.learn.tools import NO_UV, TOO_LONG, install_cmds, make_tool_env, tool_dir, tool_job, tool_key, tool_names, tool_python
+from leela.blocks.learn.tools import (LIBRARY_TOTAL, NO_UV, TOO_LONG, install_cmds, library_check, make_tool_env, tool_dir, tool_job,
+                                      tool_key, tool_names, tool_python)
+from leela.blocks.nb import exercise
+from leela.blocks.nb.exercise import JUDGE, Refused, check_cell, exercise_cells, grade_cell, validate_exercise_spec
+from leela.blocks.nb.nb import Cell, Notebook
 from learn_data import rig  # noqa: F401
 
 @pytest.fixture(autouse=True)
@@ -194,3 +199,143 @@ def test_lookup_searches_a_ready_tool_environment(rig, monkeypatch):
     key = tool_key(['httpx'])
     assert isinstance(kosha_for(ws.search, key), K) and made == [tool_dir(key)]
     assert kosha_for(ws.search, tool_key(['six'])) == 'project' and kosha_for(ws.search, '../x') == 'project' and kosha_for(ws.search) == 'project'
+
+SPEC = dict(task='Double a number.', fname='double', stub='def double(x):\n    pass', tests=[
+    dict(say='A positive number', test='assert double(2) == 4', shown=True),
+    dict(say='A negative number', test='assert double(-123) == -246', shown=False)])
+GOOD, WRONG = 'def double(x):\n    return x * 2', 'def double(x):\n    return 999777'
+SECRET = 'def double(x):\n    # SECRET_REFERENCE_SOLUTION_7f9c\n    return x*2'
+
+def ready_env(names=('six',)):
+    "A ready tool environment for `names` whose Python is this one, so a check needs no install."
+    key = tool_key(list(names))
+    d = tool_dir(key); p = d/'.venv'/'bin'/'python'
+    p.parent.mkdir(parents=True); p.symlink_to(sys.executable); (d/'ready').write_text('\n'.join(names) + '\n')
+    return key
+
+def no_install(*a, **kw): pytest.fail('a check must never install')
+
+def test_library_check_needs_a_ready_environment(monkeypatch):
+    assert LIBRARY_TOTAL == 20.
+    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    key = tool_key(['six'])
+    for k in ('nokey', key):
+        with pytest.raises(ValueError, match='not ready'): library_check(SPEC, GOOD, k)
+    ready_env(); (tool_dir(key)/'.venv'/'bin'/'python').unlink()
+    with pytest.raises(ValueError, match='not ready'): library_check(SPEC, GOOD, key)
+
+def test_library_check_runs_the_tool_python_closed_with_hidden_rows(monkeypatch, abhyasa_cfg):
+    import abhyasa.check
+    key, seen, real = ready_env(), [], abhyasa.check.run_isolated
+    monkeypatch.setattr(abhyasa.check, 'run_isolated', lambda *a, **kw: seen.append((a, kw)) or real(*a, **kw))
+    r = library_check(SPEC, GOOD, key)
+    [(a, kw)] = seen
+    assert a[:3] == ('assert', 'double', GOOD) and kw == dict(total=LIBRARY_TOTAL, sandbox=True, python=str(tool_python(key)), unix=True)
+    assert [(t['test'], t['hidden']) for t in a[3]] == [(t['test'], not t['shown']) for t in SPEC['tests']]
+    assert r['found'] and [(c['status'], c['hidden']) for c in r['checks']] == [('pass', False), ('pass', True)]
+    assert r['checks'][1]['got'] is None                                                      # a hidden pass shows no value
+    missing = library_check(SPEC, 'x = 1', key)
+    assert missing['found'] is False and missing['checks'] == []
+    assert [c['status'] for c in library_check(dict(fname='double', tests=['assert double(2) == 4']), GOOD, key)['checks']] == ['pass']
+
+def test_env_round_trips_through_the_spec_and_the_cell(tmp_path):
+    key = tool_key(['six'])
+    spec = validate_exercise_spec(SPEC | dict(env=key))
+    assert spec['env'] == key and validate_exercise_spec(spec) == spec and 'env' not in validate_exercise_spec(SPEC)
+    task, code = exercise_cells(SPEC | dict(env=key))
+    assert code.extra['exercise']['env'] == key and 'env' not in exercise_cells(SPEC)[1].extra['exercise']
+    Notebook([task, code]).save(tmp_path/'l.ipynb')
+    assert Notebook.load(tmp_path/'l.ipynb').cells[1].extra['exercise']['env'] == key
+    for bad in ('../x', '0123456789ABCDEF', '', 5, ['ab']):
+        with pytest.raises(ValueError, match='env'): validate_exercise_spec(SPEC | dict(env=bad))
+
+def no_kernel(): pytest.fail('a check with `env` must not use the live kernel')
+
+def library_cell(key, source):
+    task, code = exercise_cells(SPEC | dict(env=key))
+    code.source = source
+    return Notebook([task, code]), code
+
+def test_check_cell_with_env_uses_library_check_off_the_loop_and_not_the_kernel(monkeypatch, abhyasa_cfg):
+    key, seen, real = ready_env(), [], exercise.library_check
+    monkeypatch.setattr(exercise, 'library_check', lambda *a: seen.append((a[1:], threading.current_thread() is threading.main_thread())) or real(*a))
+    nb, code = library_cell(key, WRONG)
+    v = asyncio.run(check_cell(nb, code, asyncio.Lock(), no_kernel))
+    assert seen == [((WRONG, key), False)] and code.execution_count is None
+    assert v['state'] == 'done' and [c['status'] for c in v['checks']] == ['fail', 'fail'] and v['checks'][0]['got'] == '999777'
+    assert code.extra['exercise']['state']['last']['passed'] == 0 and nb.dirty
+
+def test_a_deleted_environment_refuses_without_install_and_clears_an_earlier_pass(monkeypatch, abhyasa_cfg):
+    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    key = ready_env()
+    nb, code = library_cell(key, GOOD)
+    assert asyncio.run(check_cell(nb, code, asyncio.Lock(), no_kernel))['passed'] == 2 and code.extra['exercise']['state']['passed']
+    shutil.rmtree(tool_dir(key))
+    with pytest.raises(Refused) as e: asyncio.run(check_cell(nb, code, asyncio.Lock(), no_kernel))
+    assert str(e.value) == JUDGE['no_env'] == 'This lesson needs its tool environment. Make it again from the lesson.'
+    s = code.extra['exercise']['state']
+    assert s['passed'] is False and s['last'] is None
+    with pytest.raises(Refused, match='check_exercise first'): grade_cell(nb, code, asyncio.Lock(), 8, 'Fine.')
+
+@pytest.fixture
+def lesson(tmp_path, monkeypatch):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.blocks.agent.ai import _session_tools
+    from leela.workspace import Workspace
+    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    key, p = ready_env(), tmp_path/'lesson.ipynb'
+    task, code = exercise_cells(SPEC | dict(env=key))
+    Notebook([task, code]).save(p)
+    ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable)
+    ws.open(p)
+    try:
+        with TestClient(ide_app(ws)) as client:
+            client.get('/tab/state')
+            _, live, _ = ws.docstore.owner(str(p))
+            yield client, p, live, code, key, {f.__name__: f for f in _session_tools(ws.inline_ai.host)}
+    finally: ws.shutdown_now()
+
+def test_a_deleted_environment_gives_the_recovery_message_on_the_route_and_the_agent_tool(lesson, abhyasa_cfg):
+    client, p, live, code, key, agent = lesson
+    body = dict(path=str(p), i=1, id=code.id, source=GOOD)
+    got = client.post('/exercise/check', json=body).json()
+    assert got['passed'] == 2 and live[1].execution_count is None and live[1].extra['exercise']['state']['passed']
+    for hidden in ('-246', '-123'): assert hidden not in json.dumps(got)
+    shutil.rmtree(tool_dir(key))
+    r = client.post('/exercise/check', json=dict(body, seq=100))
+    assert r.status_code == 409 and r.json() == dict(ok=False, error=JUDGE['no_env'])
+    assert agent['check_exercise'](str(p), code.id) == JUDGE['no_env']
+    assert live[1].extra['exercise']['state']['passed'] is False and live[1].execution_count is None
+    assert 'check_exercise first' in agent['grade_exercise'](str(p), code.id, 8, 'Fine.')
+
+@pytest.fixture
+def add(tmp_path):
+    from leela.blocks.agent.ai import WorkspaceHost, _session_tools
+    from leela.blocks.fs.fs import Sandbox
+    path = tmp_path/'lesson.ipynb'
+    Notebook([Cell(source='before')]).save(path)
+    host = WorkspaceHost(SimpleNamespace(fs=Sandbox([tmp_path]), project_root=tmp_path))
+    return {f.__name__: f for f in _session_tools(host)}['add_exercise'], path
+
+def test_add_exercise_with_packages_finds_or_makes_the_environment_then_checks_in_it(add, monkeypatch, abhyasa_cfg):
+    f, path = add
+    made, seen, real = [], [], exercise.library_check
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: made.append(names) or AttrDict(key=ready_env(names), ok=True, error=''))
+    monkeypatch.setattr(exercise, 'library_check', lambda *a: seen.append(a[2]) or real(*a))
+    assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise')
+    key = tool_key(['six'])
+    assert made == [['six']] and seen == [key, key]
+    assert Notebook.load(path).cells[-1].extra['exercise']['env'] == key and 'SECRET_REFERENCE' not in path.read_text()
+    assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise') and made == [['six']]
+    assert f(str(path), **SPEC, solution='def double(x): return 4', packages=['six']) == 'the solution fails: A negative number'
+
+def test_add_exercise_with_packages_refuses_a_failed_install_or_a_bad_name(add, monkeypatch):
+    f, path = add
+    before = path.read_bytes()
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: AttrDict(key=tool_key(names), ok=False, error='six has no wheel for this computer, so Leela cannot install it.'))
+    assert f(str(path), **SPEC, solution=SECRET, packages=['six']) == 'add_exercise failed: six has no wheel for this computer, so Leela cannot install it.'
+    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    assert f(str(path), **SPEC, solution=SECRET, packages=['--index-url=https://x']).startswith('add_exercise failed: ValueError: package:')
+    assert f(str(path), **{**SPEC, 'fname': 'not a name'}, solution=SECRET, packages=['six']).startswith('add_exercise failed')
+    assert path.read_bytes() == before

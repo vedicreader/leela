@@ -1,6 +1,8 @@
 import asyncio, json
 from abhyasa import check
 from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
+from ...core.web import off_loop
+from ..learn.tools import library_check, tool_dir
 from .nb import Cell, fresh_exercise_state, run_watched, src_hash
 
 def validate_exercise_spec(spec):
@@ -17,12 +19,15 @@ def validate_exercise_spec(spec):
     uses = spec.get('uses', [])
     if not isinstance(uses, list) or any(not isinstance(u, str) for u in uses):
         raise ValueError('`uses` must be a list of strings')
-    return {k: clean[k] for k in ('task', 'fname', 'stub')} | dict(tests=rows, uses=list(uses))
+    if (env := spec.get('env')) is not None:
+        try: tool_dir(env)
+        except ValueError: raise ValueError('`env` must be the 16 character key of a tool environment') from None
+    return {k: clean[k] for k in ('task', 'fname', 'stub')} | dict(tests=rows, uses=list(uses)) | ({} if env is None else dict(env=env))
 
 def exercise_cells(spec):
     spec = validate_exercise_spec(spec)
     code = Cell(source=spec['stub'], extra={'exercise': dict(v=1, fname=spec['fname'], uses=spec['uses'], tests=spec['tests'],
-        state=fresh_exercise_state())})
+        state=fresh_exercise_state(), **{k: spec[k] for k in ('env',) if k in spec})})
     lines = [t['test'] if t['shown'] else t['say'] for t in spec['tests']]
     task = Cell(source=spec['task'] + '\n\n' + '\n\n'.join(lines), cell_type='markdown',
         extra={'exercise': {'role': 'task', 'for': code.id}})
@@ -79,12 +84,13 @@ def _as_checked(r):
     return r if 'checks' not in r else {**r, 'timeout': False} | ({} if r['found'] else dict(checks=[]))
 
 def check_solution(spec, solution, timeout=10):
-    "`run_isolated` reports for `solution` and the stub, each in a closed process of `timeout` seconds."
+    "`run_isolated` reports for `solution` and the stub, each in a closed process of `timeout` seconds; with `env`, `library_check` in that tool environment."
     spec = validate_exercise_spec(spec)
     if not isinstance(solution, str): raise ValueError('`solution` must be Python source text')
     tests = [t['test'] for t in spec['tests']]
-    return {k: _as_checked(check.run_isolated('assert', spec['fname'], src, tests, total=timeout, sandbox=True))
-            for k, src in (('solution', solution), ('stub', spec['stub']))}
+    run = ((lambda src: library_check(spec, src, spec['env'])) if 'env' in spec else
+           lambda src: _as_checked(check.run_isolated('assert', spec['fname'], src, tests, total=timeout, sandbox=True)))
+    return {k: run(src) for k, src in (('solution', solution), ('stub', spec['stub']))}
 
 async def run_checks(k, fname, tests, timeout=10):
     if not isinstance(fname, str) or not fname.isidentifier() or fname.startswith('_'):
@@ -110,6 +116,7 @@ JUDGE = {
     'broken': 'The checks could not run.', 'done': '{passed} of {total} checks pass.',
     'not_exercise': 'That cell is not an exercise.', 'stale': 'This page is out of date with the notebook. Reload it.',
     'busy': 'Another run is in progress. Try again when it finishes.',
+    'no_env': 'This lesson needs its tool environment. Make it again from the lesson.',
     'unchecked': 'Call check_exercise first: this code has not been checked since it last changed.'}
 
 class Refused(ValueError): pass
@@ -119,9 +126,9 @@ def exercise_meta(c):
     ex = c.extra.get('exercise')
     return ex if c.cell_type == 'code' and isinstance(ex, dict) and 'tests' in ex else None
 
-def _verdict(meta, c, res):
+def _verdict(meta, c, res, raised):
     rows, tests = res.get('checks', []), meta['tests']
-    state = ('raised' if c.has_error else 'stuck' if res.get('timeout') else 'broken' if res.get('error')
+    state = ('raised' if raised else 'stuck' if res.get('timeout') else 'broken' if res.get('error')
              else 'missing' if not res.get('found') else 'done')
     checks = []
     for t, r in zip(tests, rows):
@@ -134,15 +141,24 @@ def _verdict(meta, c, res):
                 summary=JUDGE[state].format(fname=meta['fname'], passed=passed, total=len(tests)))
 
 async def check_cell(nb, c, lock, runtime):
-    "Run the learner's exercise cell, then its checks in the same kernel; `Refused` when the cell is no exercise or a run holds `lock`."
+    "Check the learner's exercise cell: with `env`, its source in `library_check`; else the cell, then its checks, in the live kernel. `Refused` for no exercise, a held `lock` or a missing tool environment."
     if not (meta := exercise_meta(c)): raise Refused(JUDGE['not_exercise'])
     if lock.locked(): raise Refused(JUDGE['busy'])
     async with lock:
-        k = await runtime()
         h = src_hash(c.source)
-        c, _ = await run_watched(nb, c, k)
-        res = {} if c.has_error else await run_checks(k, meta['fname'], [t['test'] for t in meta['tests']], BUDGET)
-    v = _verdict(meta, c, res)
+        if key := meta.get('env'):
+            try: res, raised = await off_loop(library_check, meta, c.source, key), False
+            except ValueError:
+                meta.setdefault('state', fresh_exercise_state()).update(passed=False, last=None)
+                nb.dirty = True
+                raise Refused(JUDGE['no_env']) from None
+        else:
+            k = await runtime()
+            h = src_hash(c.source)
+            c, _ = await run_watched(nb, c, k)
+            raised = c.has_error
+            res = {} if raised else await run_checks(k, meta['fname'], [t['test'] for t in meta['tests']], BUDGET)
+    v = _verdict(meta, c, res, raised)
     if src_hash(c.source) == h:
         done = v['state'] == 'done' and v['passed'] == v['total']
         s = meta.setdefault('state', fresh_exercise_state())

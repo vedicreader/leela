@@ -947,13 +947,18 @@ def _session_tools(host):
         except Exception as e: return f'add_demo failed: {errstr(e)}'
     @summary(lambda a: f'Add exercise to {a.get("path", "")}')
     def add_exercise(path: str, task: str, fname: str, stub: str, tests: list | str, solution: str,
-                     after_cell_id: str = '', uses: list | None = None) -> str:
-        "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored."
+                     after_cell_id: str = '', uses: list | None = None, packages: list | None = None) -> str:
+        "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored. With `packages`, the code runs with those packages, no network and no API key."
+        from ..learn.tools import make_tool_env, tool_key, tool_names, tool_python
         from ..nb.exercise import check_solution, exercise_cells, validate_exercise_spec
         from ..nb.nb import Notebook
         try:
             if isinstance(tests, str): tests = json.loads(tests)
             spec = validate_exercise_spec(dict(task=task, fname=fname, stub=stub, tests=tests, uses=[] if uses is None else uses))
+            if packages is not None:
+                names = tool_names(packages)
+                if not tool_python(key := tool_key(names)) and not (made := make_tool_env(names)).ok: return f'add_exercise failed: {made.error}'
+                spec = validate_exercise_spec(spec | dict(env=key))
             checked = check_solution(spec, solution)
             ref, draft, n = checked['solution'], checked['stub'], len(spec['tests'])
             if ref.get('timeout'): return 'the solution check times out (timeout)'
