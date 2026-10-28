@@ -11,6 +11,7 @@ if _MADE_HERE:
     TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
     _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
+_os.environ['ABHYASA_CONFIG'] = _os.path.join(TEST_CONFIG_HOME, 'abhyasa')   # abhyasa's cfg_dir() ignores XDG_CONFIG_HOME
 #: No orphan sweep thread unless a test asks for one with `Jobs.sweep(seconds)`.
 _os.environ['LEELA_JOB_SWEEP'] = '0'
 

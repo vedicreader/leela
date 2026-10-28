@@ -18,21 +18,45 @@ constraints = [
 
 [[package]]
 name = "abhyasa"
-version = "0.0.9"
-source = { registry = "https://pypi.org/simple" }
+source = { directory = "../abhyasa-walk" }
 dependencies = [
     { name = "fastcore" },
     { name = "ipywidgets" },
+    { name = "mdhtml" },
+    { name = "nh3" },
     { name = "python-fasthtml" },
     { name = "rishi" },
     { name = "rupaka" },
     { name = "vidyut" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4f/16/a1588be857a9bb08725cabae1ff1b30b5a6dcc0f608556f2af0322f58bfa/abhyasa-0.0.9.tar.gz", hash = "sha256:2c8b76385d351779f74a6b6431f69bdc4c5f3cef98c54540a1830638372cdd34", size = 1065640, upload-time = "2026-10-26T10:04:12.061Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/f7/5cb81b81929e82f36678428a8d542a0b6a2f8fd8f679e5ace29eba499aca/abhyasa-0.0.9-py3-none-any.whl", hash = "sha256:33c1ae60e9e43785b2e0ccd2eae54fe68575ee704db1f0349fa666d537be7861", size = 1106806, upload-time = "2026-10-26T10:04:10.556Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "fastcore", specifier = ">=1.8" },
+    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=7.3.0" },
+    { name = "ipywidgets", specifier = ">=8.1" },
+    { name = "mdhtml", specifier = ">=0.1.38" },
+    { name = "mlx-audio", marker = "extra == 'whisper'", specifier = ">=0.5" },
+    { name = "nbdev", marker = "extra == 'dev'", specifier = ">=3.3.25" },
+    { name = "nh3", specifier = ">=0.3.7" },
+    { name = "notebook", marker = "extra == 'dev'", specifier = ">=7.6.3" },
+    { name = "pobblebonk", marker = "extra == 'dev'", specifier = ">=0.0.6" },
+    { name = "pobblebonk", marker = "extra == 'tick'", specifier = ">=0.0.6" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "python-fasthtml", specifier = ">=0.14" },
+    { name = "ramabana", marker = "extra == 'models'", specifier = ">=0.2.78" },
+    { name = "rishi", specifier = ">=0.1.56" },
+    { name = "rupaka", specifier = ">=0.0.1" },
+    { name = "rupaka", extras = ["check"], marker = "extra == 'demo'", specifier = ">=0.0.1" },
+    { name = "rupaka", extras = ["check"], marker = "extra == 'dev'", specifier = ">=0.0.1" },
+    { name = "vidyut", specifier = ">=0.4" },
+    { name = "vishalakshi", specifier = ">=0.1.35" },
 ]
+provides-extras = ["demo", "dev", "models", "tick", "whisper"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "abhyasa", extras = ["dev"] }]
 
 [[package]]
 name = "adhara"
@@ -1371,15 +1395,15 @@ wheels = [
 
 [[package]]
 name = "fastspec"
-version = "0.2.5"
+version = "0.2.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
     { name = "fasttransport" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/44/07/5174ddc253295afa771ff9eb05508adf22fda97775e37c3193229ee93d4a/fastspec-0.2.5.tar.gz", hash = "sha256:a5d32aff8a2c9dfd7db333b94b1126f3ff7d0fe0c61ae54da3f2197392af3ffa", size = 30263, upload-time = "2026-09-21T07:09:30.776Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/47/5bfdc91796ab98013cf74a9a7bd945598c5ed43ef5756970b8fda785de80/fastspec-0.2.6.tar.gz", hash = "sha256:675025b7e0596af986ac1eec961790b6a129f3b80ac74dc7eca8b2d80d34b3c5", size = 30402, upload-time = "2026-10-27T05:25:25.777Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/f1/664e8ecc32b009784d0f718b40933d24c40498fb4170d421cc18ef285d8f/fastspec-0.2.5-py3-none-any.whl", hash = "sha256:a08fc9eb30629221392f7df1474dfcd426f61364e7258b238e04b7af06120ce4", size = 27805, upload-time = "2026-09-21T07:09:29.232Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/df/c37a03ce9ef09953767c8f790e082c30e165a822af9c4df2de66761216e3/fastspec-0.2.6-py3-none-any.whl", hash = "sha256:cdbcfe3ebe129cbccde8182a9456332b5cf5c5db75ea14321f464f0a1c31f20e", size = 27943, upload-time = "2026-10-27T05:25:24.377Z" },
 ]
 
 [[package]]
@@ -2061,7 +2085,7 @@ wheels = [
 
 [[package]]
 name = "jupyasyncclient"
-version = "0.2.20"
+version = "0.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -2070,14 +2094,14 @@ dependencies = [
     { name = "jupywire" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/de/99/b6d8fde2325e469c8d895bdf490bed5b67ccb529616459a4b7edaad6bb94/jupyasyncclient-0.2.20.tar.gz", hash = "sha256:185b10894997fbd87868da2cc0ef7c751142c25123e10d0f79352260680a3df5", size = 23622, upload-time = "2026-09-30T20:58:00.097Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b8/17/278c505af31beaeda4ed69f205315fe92c636ee9420ebab8baef28f6df27/jupyasyncclient-0.2.21.tar.gz", hash = "sha256:885509ccceb20010bb50d3f053c112d807efbbadb5084f0b086604e66b4c02aa", size = 19920, upload-time = "2026-10-28T05:12:48.97Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/56/f25718366c611d9923f1da3e2708d6faf74d49d1c6e041b8f36de9528dcf/jupyasyncclient-0.2.20-py3-none-any.whl", hash = "sha256:3898a07cf9e9d2d797356066c0756cb57e348b320d4f4eacb19b4926dad39625", size = 23804, upload-time = "2026-09-30T20:57:58.739Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/5e/be4d73714cf2f38ea117cc2024241750f91dc5a2220e686729ec02aea8f5/jupyasyncclient-0.2.21-py3-none-any.whl", hash = "sha256:0ab21b8933ab15a0ee2add04b4cdddd7154da33027daa58e282c999f0b77e073", size = 19802, upload-time = "2026-10-28T05:12:47.058Z" },
 ]
 
 [[package]]
 name = "jupygate"
-version = "0.0.3"
+version = "0.0.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -2087,9 +2111,9 @@ dependencies = [
     { name = "starlette" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/39/52/200194174541c4e8e40bd013be525ae31ad6709f199d229335e97aa2e561/jupygate-0.0.3.tar.gz", hash = "sha256:6a013cbb78f020bb6934544dc35cec43fc95be5463c7ffc5d10173ab3d047535", size = 24863, upload-time = "2026-08-12T01:46:23.071Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/28/15b97f22943e07f803d41c672923b574d2e5cfefefb3e488004716e1c42c/jupygate-0.0.5.tar.gz", hash = "sha256:2d634f7e443a1f9b90aa238a06aee5c6459719077d0bade9da2e47526271d020", size = 23319, upload-time = "2026-10-27T01:18:51.838Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/e1/e252d2c370c9a6ee2acc0911ee445477117fb878ce2b6d343cb00cc2566a/jupygate-0.0.3-py3-none-any.whl", hash = "sha256:98fb61f5c09bea74c1bc42a6e177a39434e71e7db3236495c5d5ff935a0d0334", size = 20806, upload-time = "2026-08-12T01:46:22.085Z" },
+    { url = "https://files.pythonhosted.org/packages/00/85/b70bf7dcee3ce4f85b986360874d32ca848cdf655fd8721841f5b78cfa49/jupygate-0.0.5-py3-none-any.whl", hash = "sha256:1dadad93eb80df5fba15e40de86a98dc8e05c6fbe04ad64e83ef514a34cdd1fc", size = 18968, upload-time = "2026-10-27T01:18:50.549Z" },
 ]
 
 [[package]]
@@ -2270,14 +2294,14 @@ wheels = [
 
 [[package]]
 name = "jupywire"
-version = "0.1.13"
+version = "0.1.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/39/68/cb0b3467e04ba8c2ea6b7046a6bdd33f1ebd4baee633a8ea56f2850370c2/jupywire-0.1.13.tar.gz", hash = "sha256:7026303259f3e85ac312e94f2c7dc26e095b776a0bd6c5f0f743ec416d5444cf", size = 24930, upload-time = "2026-09-30T20:38:13.515Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/2c/de59a748a3785ca2b032c267951bbcfcb80a88537c62947f713dca8528b1/jupywire-0.1.14.tar.gz", hash = "sha256:5edca31b237e8f3a7c33d06518e4b289678fbb667557af41549bdf29bcdbc04b", size = 24303, upload-time = "2026-10-27T01:04:38.139Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/f9/a5b5e8e2b3ebcff7e0747e7c64864516d5c078044977498e52810cd5456a/jupywire-0.1.13-py3-none-any.whl", hash = "sha256:7ece1a6f8e1f3c28ba4e4ea9ac36ddd43ca4a6ed1842bfd75e17b114f701eb15", size = 19542, upload-time = "2026-09-30T20:38:11.681Z" },
+    { url = "https://files.pythonhosted.org/packages/95/83/aa1b5bd02e9d4389f022a434fc2ec1664ffc66f36392a09fe4308c9c716a/jupywire-0.1.14-py3-none-any.whl", hash = "sha256:7b2fc6f163ec9c988c29bab1339e4b10c717ef81587161af6f12b6bbf24ad1e9", size = 19886, upload-time = "2026-10-27T01:04:36.805Z" },
 ]
 
 [[package]]
@@ -2454,7 +2478,7 @@ wheels = [
 
 [[package]]
 name = "kunda"
-version = "0.0.8"
+version = "0.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -2466,9 +2490,9 @@ dependencies = [
     { name = "jupyter-client" },
     { name = "jupywire" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e5/13/a4f6aec25be354f86be31b9e9df7f996cc7bcbb2cffa56c110f9950ae789/kunda-0.0.8.tar.gz", hash = "sha256:5f6eca23d018a6a9669dcd3467ed10bff72f949633883d87daddd2c3fb41ab68", size = 46529, upload-time = "2026-10-27T21:38:54.004Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/5a/44db543b9f6c4759055e880eb3f2d7c3120d9e5a2b0bf76001c7be98bd10/kunda-0.0.9.tar.gz", hash = "sha256:1d8486e15b59555e8de89325c1447c67848223dd7ae642570b36e1e0b0697a6d", size = 46701, upload-time = "2026-10-28T06:05:24.474Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/4a/e8349f03a2229b49fc2e35a252a8d527e18794f763197930ca11d1ccf85b/kunda-0.0.8-py3-none-any.whl", hash = "sha256:f029ae671cf9d292a9783507921a9678279d91fe777a446f055172b65d7a99af", size = 34911, upload-time = "2026-10-27T21:38:52.528Z" },
+    { url = "https://files.pythonhosted.org/packages/77/34/9fb05d90e18000fe2a766164e4c31b52ea15a44457a72137ef2f19525bc6/kunda-0.0.9-py3-none-any.whl", hash = "sha256:f10312d19be07b03916be33e6199897b97fbe6df76432312a516d0eedcaeb0d5", size = 35075, upload-time = "2026-10-28T06:05:23.273Z" },
 ]
 
 [[package]]
@@ -2550,6 +2574,7 @@ dependencies = [
     { name = "rapidfuzz" },
     { name = "rgapi" },
     { name = "rich" },
+    { name = "rupaka" },
     { name = "shalya" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -2594,7 +2619,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abhyasa", specifier = ">=0.0.9" },
+    { name = "abhyasa", directory = "../abhyasa-walk" },
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.10" },
     { name = "dhrona", specifier = ">=0.1.18" },
@@ -2618,7 +2643,7 @@ requires-dist = [
     { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.10" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.20" },
-    { name = "kunda", specifier = ">=0.0.8" },
+    { name = "kunda", specifier = ">=0.0.9" },
     { name = "lekhaka", specifier = ">=0.0.4" },
     { name = "litesearch", specifier = ">=0.1.61" },
     { name = "mdhtml", specifier = ">=0.1.38" },
@@ -2637,6 +2662,7 @@ requires-dist = [
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.56" },
+    { name = "rupaka", specifier = "==0.0.1" },
     { name = "shalya", specifier = ">=0.1.22" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
