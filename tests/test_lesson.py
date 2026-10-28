@@ -1,7 +1,7 @@
 import json, re
 from copy import deepcopy
 import pytest
-from abhyasa.method import METHODS
+from abhyasa.method import METHODS, TEXT_WAYS
 from abhyasa.tutor import HINTS, TUTOR_SP
 from fastcore.xtras import fenced_blocks
 from rupaka.spec import validate
@@ -109,7 +109,8 @@ def test_charter_uses_dependency_rules_and_hint_order(abhyasa_cfg):
     assert 'add_demo' in CHARTER_TAIL
     assert 'never write the reveal' in CHARTER_TAIL.lower()
     assert 'another way' in CHARTER_TAIL.lower() and 'not yet used' in CHARTER_TAIL
-    assert all(name in CHARTER_TAIL for name in METHODS)
+    ways = [l for l in CHARTER_TAIL.splitlines() if l.startswith('- ')]
+    assert ways == [f'- {n}: {METHODS[n]}' for n in TEXT_WAYS]          # board, timeline and playground are not lesson ways yet
 
 def test_demo_refusal_preserves_real_validator_lines():
     errors = validate({})
