@@ -276,7 +276,7 @@ def test_look_up_code_reads_the_current_lessons_environment(walks, monkeypatch):
     w.go(w.b); w.ai._follow_mode()
     look = first(f for f in w.ai.registry.tools if f.__name__ == 'look_up_code')
     out['rows'] = None
-    assert look('Agent') == 'No code index for this yet.'
+    assert look('Agent') == app.NO_INDEX
     assert seen[-1] == ('Agent', ['pydantic-ai-slim'], w.key)
     out['rows'] = []
     assert look('Agent') == 'Nothing found.'
@@ -287,7 +287,7 @@ def test_look_up_code_reads_the_current_lessons_environment(walks, monkeypatch):
     look('softmax')
     assert seen[-1] == ('softmax', [], None)
     monkeypatch.setattr(app, 'find_code', lambda *a, **k: 1/0)
-    assert look('Agent') == 'No code index for this yet.'
+    assert look('Agent') == app.NO_INDEX
 
 @pytest.mark.parametrize('tab', [None, Tab(path='', kind='notebook', scratch=True), Tab(path='missing.ipynb'), Tab(path='broken.ipynb'), Tab(path='note.py')])
 def test_unreadable_or_non_notebook_tabs_have_no_lesson_charter(tmp_path, tab):
