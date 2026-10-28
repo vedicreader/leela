@@ -35,9 +35,9 @@ def test_rupaka_vendor_version():
     import rupaka
     text = (ROOT/'leela'/'vendor'/'lee-rupaka.js').read_text()
     version = re.search(r"\bversion:\s*'([^']+)'", text).group(1)
-    if version != rupaka.__version__:
-        pytest.xfail(f'vendored rupaka {version} differs from installed rupaka {rupaka.__version__}; vendor unchanged in slice A')
-    assert version == rupaka.__version__
+    assert version == rupaka.__version__, f'vendored rupaka {version}, installed {rupaka.__version__}: write the bundle again (leela/vendor/README)'
+    deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
+    assert f'rupaka=={version}' in deps
 
 def test_abhyasa_dependency_floor():
     deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
