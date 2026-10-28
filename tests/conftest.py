@@ -82,6 +82,13 @@ def _curated_models_only(monkeypatch):
     monkeypatch.setattr(rm, 'LIVE', {})     # a test that wants a listing sets its own
 
 @pytest.fixture(autouse=True)
+def _no_real_beat(monkeypatch, tmp_path_factory):
+    "No agent turn reads this machine's beat: ramabana finds no `pob.db`, so it has no beat and adds no notes."
+    import ramabana.monitor as rmon
+    monkeypatch.setattr(rmon, 'POB_HOME', tmp_path_factory.mktemp('pob'))
+    assert _pathlib.Path.home()/'.pobblebonk' not in rmon.pob_path().parents
+
+@pytest.fixture(autouse=True)
 def cfg_home(monkeypatch, tmp_path_factory):
     """A config dir per test, and never the real one."""
     cfg = tmp_path_factory.mktemp('cfg')/'leela'
