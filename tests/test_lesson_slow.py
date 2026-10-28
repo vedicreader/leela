@@ -191,14 +191,28 @@ def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
         await pg.wait_for_function("lee.cells[2].source === 'four' || lee.editors.get(lee.cells[2].id) && LeeCM.getDoc(lee.editors.get(lee.cells[2].id)) === 'four'")
         await demo.locator('.opts button').nth(1).click()
         await demo.locator('textarea').fill('Half of 8 is 4.')
-        async with pg.expect_response('**/lesson/predict') as got:
+        refused = 'This demo changed. Run the cell again, then try.'
+        await pg.route('**/lesson/predict', lambda route: route.fulfill(status=409, content_type='application/json', body=json.dumps({'ok': False, 'error': refused})))
+        async with pg.expect_response('**/lesson/predict'):
             await demo.locator('button.go').click()
+        note, verdict, lock = demo.locator('p.note'), demo.locator('p.verdict'), demo.locator('button.go')
+        await note.filter(has_text=refused).wait_for()
+        assert await note.inner_text() == refused
+        assert await lock.is_enabled() and await verdict.is_hidden()
+        assert await demo.locator('.opts button').nth(1).get_attribute('aria-checked') == 'true'
+        assert await demo.locator('textarea').input_value() == 'Half of 8 is 4.'
+        await pg.unroute('**/lesson/predict')
+        async with pg.expect_response('**/lesson/predict') as got:
+            await lock.click()
         resp = await got.value
         assert resp.status == 200, await resp.text()
         body = await resp.json()
         assert body['logged'] is True and body['message'].startswith('Saved to your learning shelf. '), body
         assert set(json.loads(resp.request.post_data)) == {'path', 'cell_id', 'demo', 'gate', 'picked', 'ans', 'ok', 'why', 'src'}
         await pg.wait_for_function("document.querySelector('#status')?.textContent.startsWith('Saved to your learning shelf.')")
+        await verdict.wait_for()
+        assert (await verdict.inner_text()).startswith('You said 4. That is right.')
+        assert await lock.is_hidden() and await note.is_hidden()
     asyncio.run(_real_page(go, tmp_path))
     rows = Learning(Memory(path=tmp_path/'learning.db', offline=True)._store('learning')).attempts('halves', limit=10)
     assert len(rows) == 1

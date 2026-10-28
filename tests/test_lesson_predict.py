@@ -247,3 +247,38 @@ ctx.srcHash(process.argv[2]).then(h => console.log(h));'''
     r = subprocess.run([node, '-e', harness, str(ROOT/'leela/static/js/core.js'), text], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == src_hash(text)
+
+def test_lesson_predict_holds_the_gate_until_the_server_answers():
+    "lessonPredict holds a rupaka 0.0.2 gate, settles it from the server's answer, and leaves a gate without `settle` alone."
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    harness = r'''const vm = require('vm'), fs = require('fs'), src = fs.readFileSync(process.argv[1], 'utf8');
+const fn = src.slice(src.indexOf('async function lessonPredict'), src.indexOf('\n}\n', src.indexOf('async function lessonPredict')) + 3);
+const ctx = {lee: {path: '/n.ipynb', nbQueue: Promise.resolve()}, srcHash: async s => 'h:' + s, said: [], reply: null};
+ctx.status = (t, k) => ctx.said.push([k, t]);
+ctx.post = async () => { const r = ctx.reply; if (r instanceof Error) throw r; return r; };
+vm.createContext(ctx); vm.runInContext(fn + '; globalThis.lessonPredict = lessonPredict;', ctx);
+const event = (source, withSettle) => { const ev = {held: false, settled: []};
+  const host = {classList: {contains: c => c === 'lee-rupaka'}, leeSource: source}, cell = {matches: s => s.startsWith('.lee-cell'), dataset: {id: 'c1'}};
+  ev.composedPath = () => [host, cell]; ev.preventDefault = () => { ev.held = true; };
+  ev.detail = {demo: 'd', gate: 'g1', picked: 4, ans: 4, ok: true, why: ''};
+  if (withSettle) ev.detail.settle = (...a) => ev.settled.push(a);
+  return ev; };
+const err = (status, body) => Object.assign(new Error(body?.error || status), {body});
+(async () => { const out = {};
+  for (const [name, reply, source, withSettle] of [
+      ['logged', {ok: true, logged: true, message: 'Saved.'}, 'x', true], ['repeat', {ok: true, logged: false}, 'x', true],
+      ['conflict', err('Conflict', {ok: false, error: 'This demo changed. Run the cell again, then try.'}), 'x', true],
+      ['html', err('Bad Gateway', '<html>'), 'x', true], ['network', new TypeError('Failed to fetch'), 'x', true],
+      ['old', {ok: true, logged: true, message: 'Saved.'}, 'x', false], ['old-error', new TypeError('Failed to fetch'), 'x', false],
+      ['not-ours', {ok: true}, null, true]]) {
+    ctx.reply = reply; const ev = event(source, withSettle), p = ctx.lessonPredict(ev), heldAtOnce = ev.held; await p;
+    out[name] = {heldAtOnce, settled: ev.settled}; }
+  console.log(JSON.stringify(out)); })();'''
+    r = subprocess.run([node, '-e', harness, str(ROOT/'leela/blocks/nb/lesson.js')], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    got, retry = json.loads(r.stdout), 'Leela did not save this. Try again.'
+    assert got['logged'] == got['repeat'] == {'heldAtOnce': True, 'settled': [[True]]}
+    assert got['conflict'] == {'heldAtOnce': True, 'settled': [[False, 'This demo changed. Run the cell again, then try.']]}
+    assert got['html'] == got['network'] == {'heldAtOnce': True, 'settled': [[False, retry]]}
+    assert got['old'] == got['old-error'] == got['not-ours'] == {'heldAtOnce': False, 'settled': []}

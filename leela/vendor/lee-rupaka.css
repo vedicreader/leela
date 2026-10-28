@@ -73,6 +73,7 @@
 .rk-gate .verdict { margin: 0 0 10px; font-size: 18px; }
 .rk-gate .verdict .ok { color: var(--rk-ok); } .rk-gate .verdict .no { color: var(--rk-no); }
 .rk-gate .verdict .stale { color: var(--rk-mute); font-size: 15px; font-style: italic; }
+.rk-gate .note { margin: 0 0 10px; color: var(--rk-mute); font-style: italic; }
 .rk-gate .acts { display: flex; gap: 10px; align-items: center; }
 
 /* blocks/grid/grid.css */

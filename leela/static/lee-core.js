@@ -3385,17 +3385,25 @@ function renderLessonReveal(c) {
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
 }
-//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer.
+//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer. The gate reveals once the server answers ok. A failure opens the gate again with the server's message.
 async function lessonPredict(e) {
   const at = e.composedPath(), host = at.find(n => n.classList?.contains('lee-rupaka')), cell = at.find(n => n.matches?.('.lee-cell[data-id]'));
   if (!cell || host?.leeSource == null) return;
-  const {demo, gate, picked, ans, ok, why} = e.detail, path = lee.path;
+  // rupaka 0.0.1 has no settle, and its gate reveals on lock-in.
+  const held = typeof e.detail?.settle === 'function', settle = held ? e.detail.settle : () => {};
+  if (held) e.preventDefault();
   try {
+    const {demo, gate, picked, ans, ok, why} = e.detail, path = lee.path;
     const src = await srcHash(host.leeSource);
     await lee.nbQueue;
     const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, ans, ok, why, src});
+    settle(true);
     if (d.message) status(d.message, 'ok');
-  } catch (err) { status(String(err.message || err), 'err'); }
+  } catch (err) {
+    const said = err?.body && typeof err.body === 'object' && (err.body.error || err.body.message);
+    settle(false, said || 'Leela did not save this. Try again.');
+    status(String(said || err?.message || err), 'err');
+  }
 }
 // The Node harnesses load this file with no `document`.
 globalThis.document?.addEventListener('rk-predict', lessonPredict);

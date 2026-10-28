@@ -47,9 +47,9 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14" },
     { name = "ramabana", marker = "extra == 'models'", specifier = ">=0.2.78" },
     { name = "rishi", specifier = ">=0.1.56" },
-    { name = "rupaka", specifier = ">=0.0.1" },
-    { name = "rupaka", extras = ["check"], marker = "extra == 'demo'", specifier = ">=0.0.1" },
-    { name = "rupaka", extras = ["check"], marker = "extra == 'dev'", specifier = ">=0.0.1" },
+    { name = "rupaka", specifier = ">=0.0.2" },
+    { name = "rupaka", extras = ["check"], marker = "extra == 'demo'", specifier = ">=0.0.2" },
+    { name = "rupaka", extras = ["check"], marker = "extra == 'dev'", specifier = ">=0.0.2" },
     { name = "vidyut", specifier = ">=0.4" },
     { name = "vishalakshi", specifier = ">=0.1.35" },
 ]
@@ -2662,7 +2662,7 @@ requires-dist = [
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.56" },
-    { name = "rupaka", specifier = "==0.0.1" },
+    { name = "rupaka", specifier = "==0.0.3" },
     { name = "shalya", specifier = ">=0.1.22" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
@@ -5314,14 +5314,14 @@ wheels = [
 
 [[package]]
 name = "rupaka"
-version = "0.0.1"
+version = "0.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/6a/e92e0d8ad1e73137d702bb96268ba3dd7a5e2e0d8af01ffad9c6b7e955eb/rupaka-0.0.1.tar.gz", hash = "sha256:832f670e2a4626319018a5d11901213f9aef7f7d690891552bf140252034049c", size = 290285, upload-time = "2026-10-26T00:54:37.701Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/65/292bb70cff8a2c020705c7e6e8e569de2c4f55fca30da3fe9591908537d9/rupaka-0.0.3.tar.gz", hash = "sha256:8b017945b7d61f7b655e6755701a81a1c77a109d36103ffa4a53143b54c3b759", size = 290638, upload-time = "2026-10-28T08:50:24.855Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/f1/ff44d254de23192343782bd91039a0b0d0e8af59a5e9ff74de00b5c074a8/rupaka-0.0.1-py3-none-any.whl", hash = "sha256:6deef0ff9ea6b6c182bcb046ac2f74f5535da2213044ef25d546c6286b567b9d", size = 317631, upload-time = "2026-10-26T00:54:35.892Z" },
+    { url = "https://files.pythonhosted.org/packages/59/c3/a17f93fcd6b052f95cc030ccfde2aa89fc5c84f5cf6a79bba4bb51da3574/rupaka-0.0.3-py3-none-any.whl", hash = "sha256:c2a525f2ffa90fa14369d793954934355bf27abc559ccc4555fb2bb5b5a70924", size = 318033, upload-time = "2026-10-28T08:50:23.207Z" },
 ]
 
 [[package]]
