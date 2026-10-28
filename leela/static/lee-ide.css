@@ -712,6 +712,8 @@ kbd {
 .lee-split-head { height:28px; display:flex; align-items:center; gap:8px; padding:0 8px; border-bottom:1px solid var(--lee-border); color:var(--lee-fg3); font:11px var(--lee-mono); }
 .lee-split-head span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
 .lee-editor-secondary .lee-cm { height:calc(100% - 28px); }
+.lee-editor-secondary iframe { display:block; width:100%; height:calc(100% - 28px); border:0; background:var(--lee-bg); }
+.lee-split-head .lee-split-trail a, .lee-split-own { color:inherit; }
 .lee-empty { width: min(560px, calc(100% - 40px)); min-height: 100%; display: flex; flex-direction: column;
   align-items: flex-start; justify-content: center; margin: auto; padding: 48px 0 76px; text-align: left; color: var(--lee-fg4);
   animation: lee-empty-in .45s ease both; }

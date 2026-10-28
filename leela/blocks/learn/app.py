@@ -50,4 +50,4 @@ def connect(app, ctx):
         except Exception: return said('The learning store is locked or cannot be read.', 503)
         if v.kind == 'missing': return said('This walk is not in your learning store.')
         if v.kind == 'done': return said('This walk is done.')
-        return FtResponse(StepPage(v, q), headers=HEADERS)
+        return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1'), headers=HEADERS)

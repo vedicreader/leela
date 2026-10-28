@@ -174,8 +174,12 @@ async function mountTab(expectedPath = '') {
   refreshKernelPill();
   if (lee.kind === 'text' || lee.kind === 'notebook') leeSymbols();
   paintAgentAttachments();
-  try { const split=JSON.parse(localStorage.getItem('lee-editor-split')||'null'); if(split?.path&&split.path!==st.path) await mountSecondary(split.path,split.direction); }
-  catch (_) { localStorage.removeItem('lee-editor-split'); }
+  const split = leeSavedSplit(localStorage.getItem('lee-editor-split'));
+  if (split === false) leeCloseSplit();
+  else if (split?.page) { if (!lee.sidePage?.frame?.isConnected && !mountPage(split.page, split.title, split.direction)) leeCloseSplit(); }
+  else if (split?.path && split.path !== st.path) {
+    try { await mountSecondary(split.path, split.direction); } catch (_) { localStorage.removeItem('lee-editor-split'); }
+  }
   if (lee.pendingFocusPath === st.path) {
     lee.pendingFocusPath = '';
     requestAnimationFrame(() => {

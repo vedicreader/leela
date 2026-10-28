@@ -36,7 +36,7 @@ LAYERS = {
         'blocks/agent/media.js', 'blocks/agent/reload.js'
     ],
     'lee-ide.js': [
-        'blocks/term/terminal.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js',
+        'blocks/term/terminal.js', 'blocks/learn/pane.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js',
         'blocks/git/cwd.js', 'blocks/editor/gutter.js', 'blocks/git/state.js',
         'blocks/git/views.js', 'blocks/workflows/workflows.js', 'blocks/workflows/builder.js',
         'blocks/pipelines/releases.js', 'blocks/pipelines/deploys.js', 'blocks/drive/drive.js',
@@ -50,6 +50,9 @@ LAYERS = {
         'blocks/workspace/projects.js', 'blocks/learn/review.js'
     ],
 }
+
+#: copy -> the one module it is, for a page outside the IDE that loads that module alone. The wheel ships no block module.
+ALONE = {'lee-pane.js': 'blocks/learn/pane.js'}
 
 assert tuple(LAYERS) == IDE_BUNDLES, f'{tuple(LAYERS)} is not what `core.web` serves: {IDE_BUNDLES}'
 
@@ -80,7 +83,7 @@ def orphans():
 def build(check=False):
     if gone := missing(): raise SystemExit(f'named but absent: {[p.name for p in gone]}')
     if extra := orphans(): raise SystemExit(f'present but unnamed: {[str(p.relative_to(PKG)) for p in extra]}')
-    plan = [(name, bundle(name), OUTDIR/name) for name in LAYERS]
+    plan = [(name, bundle(name), OUTDIR/name) for name in LAYERS] + [(name, _text(PKG/m), OUTDIR/name) for name, m in ALONE.items()]
     for name, text, out in plan:
         if check:
             if not out.is_file(): raise SystemExit(f'{name} has never been built')
@@ -88,7 +91,7 @@ def build(check=False):
         else: out.write_text(text)
     n = len(modules())
     verb = 'match' if check else 'built from'
-    print(f'{len(plan)} bundle(s) {verb} {n} modules: ' +
+    print(f'{len(LAYERS)} bundle(s) and {len(ALONE)} copy {verb} {n} modules: ' +
           ', '.join(f'{k} ({len(v)})' for k, v in LAYERS.items()))
 
 if __name__ == '__main__': build(check='--check' in sys.argv)
