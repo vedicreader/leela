@@ -1,13 +1,15 @@
 import json
 from types import SimpleNamespace
 import pytest
+from fastcore.basics import first
+from abhyasa.prompts import PROMPTS, set_prompt
 from rupaka.spec import gallery, validate
 from leela.blocks.agent.ai import Interventions, WorkspaceHost, WRITE_TOOLS, _session_tools
 from leela.blocks.fs.fs import Sandbox
-from leela.blocks.nb.lesson import LESSON_CHARTER, demo_refusal, fence, lesson_notebook
+from leela.blocks.nb.lesson import CHARTER_TAIL, demo_refusal, fence, lesson_notebook
 from leela.blocks.nb.nb import Cell, Notebook
 from leela.workspace import Tab, Workspace
-from tests.fakemodel import WIDE, install
+from tests.fakemodel import WIDE, Step, install
 
 @pytest.fixture
 def demo(tmp_path):
@@ -87,16 +89,16 @@ def test_lesson_charter_follows_only_the_active_tab(tmp_path, profile):
     ws.open(lesson)
     ws.open(ordinary)
     ai = ws.ai
-    assert LESSON_CHARTER not in ai.system_prompt()
+    assert CHARTER_TAIL not in ai.system_prompt()
     assert 'add_demo' in {f.__name__ for f in ai._plain}
     ws.activate(ws.find(lesson))
-    assert LESSON_CHARTER in ai.system_prompt()
+    assert CHARTER_TAIL in ai.system_prompt()
     ws.activate(ws.find(ordinary))
-    assert LESSON_CHARTER not in ai.system_prompt()
+    assert CHARTER_TAIL not in ai.system_prompt()
     ws.close()
-    assert LESSON_CHARTER in ai.system_prompt()
+    assert CHARTER_TAIL in ai.system_prompt()
     ws.close()
-    assert LESSON_CHARTER not in ai.system_prompt()
+    assert CHARTER_TAIL not in ai.system_prompt()
 
 @pytest.mark.parametrize('start_lesson', [False, True])
 def test_live_backend_rebriefs_both_ways_without_tool_rebuilds_hiding_it(tmp_path, monkeypatch, start_lesson):
@@ -113,16 +115,16 @@ def test_live_backend_rebriefs_both_ways_without_tool_rebuilds_hiding_it(tmp_pat
     refresh = be.refresh
     monkeypatch.setattr(be, 'refresh', lambda sp, tools: (prompts.append(sp), refresh(sp, tools))[-1])
     ai._follow_mode()
-    assert (LESSON_CHARTER in be.sp) == start_lesson
+    assert (CHARTER_TAIL in be.sp) == start_lesson
     for target in (not start_lesson, start_lesson):
         ws.activate(ws.find(lesson if target else ordinary))
-        assert (LESSON_CHARTER in ai.system_prompt()) == target
+        assert (CHARTER_TAIL in ai.system_prompt()) == target
         ai._forget()
         _ = ai.tools
         count = len(prompts)
         ai._follow_mode()
         assert len(prompts) == count + 1
-        assert (LESSON_CHARTER in be.sp) == target
+        assert (CHARTER_TAIL in be.sp) == target
         ai._follow_mode()
         assert len(prompts) == count + 1
 
@@ -140,8 +142,152 @@ def test_feed_changes_still_rebrief_without_changing_lesson_status(tmp_path):
         ai._forget()
         _ = ai.tools
         ai._follow_mode()
-        assert LESSON_CHARTER in be.sp
+        assert CHARTER_TAIL in be.sp
         assert ('news_latest' in {f.__name__ for f in be.tools}) == followed
+
+def test_a_saved_tutor_prompt_reaches_the_live_backend_on_the_next_turn(tmp_path, monkeypatch, abhyasa_cfg):
+    path = tmp_path/'lesson.ipynb'
+    lesson_notebook('Softmax').save(path)
+    ws = Workspace(roots=[tmp_path])
+    ws.open(path)
+    be = install(ws, [Step(text='ok')], token_delay=0, spec=WIDE)
+    ai, prompts = ws.ai, []
+    refresh = be.refresh
+    monkeypatch.setattr(be, 'refresh', lambda sp, tools: (prompts.append(sp), refresh(sp, tools))[-1])
+    a, b = 'Prompt A. Ask one question at a time.', 'Prompt B. Never give the answer.'
+    set_prompt('tutor', a)
+    assert a + CHARTER_TAIL in ai.system_prompt()
+    ai.ask('first')
+    assert len(prompts) == 1 and a + CHARTER_TAIL in be.sp and ai._briefed_lesson
+    ai.ask('second')
+    assert len(prompts) == 1
+    hist = list(be.hist)
+    asked = lambda h: [m['content'].splitlines()[0] for m in h if m['role'] == 'user']
+    assert asked(hist) == ['first', 'second']
+    set_prompt('tutor', b)
+    ai.ask('third')
+    assert len(prompts) == 2 and b + CHARTER_TAIL in be.sp and a not in be.sp
+    ai.ask('fourth')
+    assert len(prompts) == 2
+    set_prompt('tutor', '')
+    ai.ask('fifth')
+    assert len(prompts) == 3 and PROMPTS['tutor'].dflt + CHARTER_TAIL in be.sp and b not in be.sp
+    assert be.hist[:len(hist)] == hist
+    assert asked(be.hist) == ['first', 'second', 'third', 'fourth', 'fifth']
+
+@pytest.fixture
+def walks(tmp_path, monkeypatch, abhyasa_cfg, request):
+    "A workspace over a learning store with the test walk; lesson A is step 0, lesson B is step 1 with a `pydantic-ai-slim` exercise."
+    from abhyasa.store import Learning
+    from leela.blocks.learn import learn
+    from leela.blocks.learn.tools import tool_dir, tool_key
+    from leela.blocks.memory.memory import Memory
+    from tests.learn_data import JID, walk
+    from tests.test_lesson_prompt import SPEC
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
+    key = tool_key(['pydantic-ai-slim'])
+    tool_dir(key).mkdir(parents=True); (tool_dir(key)/'ready').write_text('pydantic-ai-slim\n')
+    a, b, c, plain = (tmp_path/f'{n}.ipynb' for n in ('a', 'b', 'c', 'ordinary'))
+    lesson_notebook('Softmax', step=dict(walk=JID, step=0)).save(a)
+    lesson_notebook('Attention', exercise=SPEC | dict(env=key), step=dict(walk=JID, step=1)).save(b)
+    lesson_notebook('Gone', step=dict(walk='nope-1', step=0)).save(c)
+    Notebook.blank(plain).save(plain)
+    ws = Workspace(roots=[tmp_path], agent_profile=getattr(request, 'param', 'auto'))
+    monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'vault.db', offline=True))
+    lr = Learning(ws.memory._store('learning')); walk(lr)
+    for p in (a, b, c, plain): ws.open(p)
+    reads, real = [], learn.find_step
+    monkeypatch.setattr(learn, 'find_step', lambda lr, q: (reads.append((q.walk, q.step)), real(lr, q))[-1])
+    be = install(ws, [], spec=WIDE)
+    prompts, refresh = [], be.refresh
+    monkeypatch.setattr(be, 'refresh', lambda sp, tools: (prompts.append(sp), refresh(sp, tools))[-1])
+    go = lambda p: ws.activate(ws.find(p))
+    try: yield SimpleNamespace(ws=ws, ai=ws.ai, be=be, lr=lr, reads=reads, prompts=prompts, go=go, a=a, b=b, c=c, plain=plain, key=key, JID=JID)
+    finally: ws.shutdown_now()
+
+A_TEXT, B_TEXT = 'Softmax maps scores to weights.', 'Attention mixes values.'
+
+def test_lesson_a_to_lesson_b_rebriefs_once_with_the_new_step_and_packages(walks):
+    w = walks
+    w.go(w.a); w.ai._follow_mode()
+    assert A_TEXT in w.be.sp and 'Watch the sum.' in w.be.sp and 'pydantic-ai-slim' not in w.be.sp and 'TestModel' not in w.be.sp
+    n = len(w.prompts)
+    w.go(w.b); w.ai._follow_mode()
+    assert len(w.prompts) == n + 1 and B_TEXT in w.be.sp and A_TEXT not in w.be.sp
+    assert 'pydantic-ai-slim' in w.be.sp and 'TestModel' in w.be.sp and 'Attention' in w.ai._briefed_charter
+    reads = len(w.reads)
+    for _ in range(3): w.ai._follow_mode(); w.ai.system_prompt()
+    assert len(w.prompts) == n + 1 and len(w.reads) == reads
+    w.go(w.a); w.ai._follow_mode()
+    assert len(w.prompts) == n + 2 and A_TEXT in w.be.sp and B_TEXT not in w.be.sp
+
+def test_a_store_change_reloads_the_step(walks):
+    w = walks
+    w.go(w.a); w.ai._follow_mode()
+    n, reads = len(w.prompts), len(w.reads)
+    j = w.lr.journey(w.JID)
+    w.lr.put_journey(dict(j, steps=[dict(j.steps[0], note='Watch the sum again.'), *j.steps[1:]]))
+    w.ai._follow_mode()
+    assert len(w.reads) == reads + 1 and len(w.prompts) == n + 1 and 'Watch the sum again.' in w.be.sp
+    w.ai._follow_mode()
+    assert len(w.reads) == reads + 1 and len(w.prompts) == n + 1
+
+def test_tutor_and_library_prompt_edits_reach_the_next_briefing(walks):
+    w = walks
+    w.go(w.b); w.ai._follow_mode()
+    n = len(w.prompts)
+    set_prompt('leela.library', 'Library rule X.')
+    w.ai._follow_mode()
+    assert len(w.prompts) == n + 1 and 'Library rule X.' in w.be.sp and 'TestModel' not in w.be.sp
+    set_prompt('tutor', 'Tutor rule Y.')
+    w.ai._follow_mode()
+    assert len(w.prompts) == n + 2 and 'Tutor rule Y.' in w.be.sp and 'Library rule X.' in w.be.sp and B_TEXT in w.be.sp
+
+def test_a_missing_or_unreadable_walk_never_reuses_the_previous_passage(walks, monkeypatch):
+    from leela.blocks.learn import learn
+    from leela.blocks.nb.lesson import lesson_charter
+    w = walks
+    w.go(w.a); w.ai._follow_mode()
+    assert A_TEXT in w.be.sp
+    w.go(w.c); w.ai._follow_mode()
+    assert w.ai._briefed_charter == lesson_charter() and A_TEXT not in w.be.sp
+    w.go(w.b); w.ai._follow_mode()
+    assert B_TEXT in w.be.sp
+    def locked(lr, q): raise OSError('database is locked')
+    monkeypatch.setattr(learn, 'find_step', locked)
+    w.go(w.a); w.ai._follow_mode()
+    assert w.ai._briefed_charter == lesson_charter(packages=()) and A_TEXT not in w.be.sp and B_TEXT not in w.be.sp
+
+@pytest.mark.parametrize('walks', ['small', 'full'], indirect=True)
+def test_look_up_code_follows_the_lesson_tab(walks):
+    w = walks
+    names = lambda: ({f.__name__ for f in w.be.tools}, {f.__name__ for f in w.ai.registry.tools})
+    for p, want in ((w.a, True), (w.plain, False), (w.b, True), (w.plain, False)):
+        w.go(p); w.ai._follow_mode()
+        offered, registered = names()
+        assert ('look_up_code' in offered) == want and ('look_up_code' in registered) == want
+        assert 'add_demo' in offered and sum(f.__name__ == 'look_up_code' for f in w.ai.registry.tools) <= 1
+
+def test_look_up_code_reads_the_current_lessons_environment(walks, monkeypatch):
+    from leela.blocks.learn import app
+    w = walks
+    seen, out = [], {}
+    monkeypatch.setattr(app, 'find_code', lambda search, q, names, tool=None: (seen.append((q, list(names), tool)), out['rows'])[-1])
+    w.go(w.b); w.ai._follow_mode()
+    look = first(f for f in w.ai.registry.tools if f.__name__ == 'look_up_code')
+    out['rows'] = None
+    assert look('Agent') == app.NO_INDEX
+    assert seen[-1] == ('Agent', ['pydantic-ai-slim'], w.key)
+    out['rows'] = []
+    assert look('Agent') == 'Nothing found.'
+    out['rows'] = [dict(name='Agent.run_sync', package='pydantic_ai_slim', path='pydantic_ai/agent.py', line=12, doc='Run the agent.', snippet='def run_sync(self, p):\n    ...')]
+    t = look('Agent')
+    assert all(x in t for x in ('Agent.run_sync', 'pydantic_ai_slim', 'pydantic_ai/agent.py:12', 'Run the agent.', 'def run_sync'))
+    w.go(w.a)
+    look('softmax')
+    assert seen[-1] == ('softmax', [], None)
+    monkeypatch.setattr(app, 'find_code', lambda *a, **k: 1/0)
+    assert look('Agent') == app.NO_INDEX
 
 @pytest.mark.parametrize('tab', [None, Tab(path='', kind='notebook', scratch=True), Tab(path='missing.ipynb'), Tab(path='broken.ipynb'), Tab(path='note.py')])
 def test_unreadable_or_non_notebook_tabs_have_no_lesson_charter(tmp_path, tab):
@@ -150,4 +296,4 @@ def test_unreadable_or_non_notebook_tabs_have_no_lesson_charter(tmp_path, tab):
         tab.path = str(tmp_path/tab.path) if tab.path else ''
         if tab.path.endswith('broken.ipynb'): (tmp_path/'broken.ipynb').write_text('{broken')
         ws.tabs.append(tab)
-    assert LESSON_CHARTER not in ws.ai.system_prompt()
+    assert CHARTER_TAIL not in ws.ai.system_prompt()

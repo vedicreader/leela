@@ -216,7 +216,7 @@ window.leePinPane = leePinPane;
 function leeAutoClosePanes(target) {
   const shell = $('#shell');
   if (!shell || !(target instanceof Element)) return;
-  if (target.closest('.lee-modal, .lee-ctxmenu, .lee-pane-restore, .lee-split')) return;
+  if (target.closest('.lee-modal, .lee-ctxmenu, .lee-pane-restore, .lee-split, .lee-editor-splitter')) return;
   for (const [which, sel] of Object.entries(DOCKABLE)) {
     const pane = $(sel);
     if (leePinned(which) || !pane || pane.contains(target)) continue;

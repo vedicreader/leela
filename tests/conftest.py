@@ -11,6 +11,8 @@ if _MADE_HERE:
     TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
     _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
 _os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
+_os.environ['XDG_DATA_HOME'] = _os.path.join(TEST_CONFIG_HOME, 'data')
+_os.environ['ABHYASA_CONFIG'] = _os.path.join(TEST_CONFIG_HOME, 'abhyasa')   # abhyasa's cfg_dir() ignores XDG_CONFIG_HOME
 #: No orphan sweep thread unless a test asks for one with `Jobs.sweep(seconds)`.
 _os.environ['LEELA_JOB_SWEEP'] = '0'
 
@@ -81,6 +83,13 @@ def _curated_models_only(monkeypatch):
     monkeypatch.setattr(rm, 'LIVE', {})     # a test that wants a listing sets its own
 
 @pytest.fixture(autouse=True)
+def _no_real_beat(monkeypatch, tmp_path_factory):
+    "No agent turn reads this machine's beat: ramabana finds no `pob.db`, so it has no beat and adds no notes."
+    import ramabana.monitor as rmon
+    monkeypatch.setattr(rmon, 'POB_HOME', tmp_path_factory.mktemp('pob'))
+    assert _pathlib.Path.home()/'.pobblebonk' not in rmon.pob_path().parents
+
+@pytest.fixture(autouse=True)
 def cfg_home(monkeypatch, tmp_path_factory):
     """A config dir per test, and never the real one."""
     cfg = tmp_path_factory.mktemp('cfg')/'leela'
@@ -101,6 +110,18 @@ def cfg_home(monkeypatch, tmp_path_factory):
     assert REAL_CONFIG_HOME not in _pathlib.Path(leela.leela_cfg).parents
     assert _pathlib.Path(leela.leela_cfg) != REAL_CONFIG_HOME
     return cfg
+
+@pytest.fixture
+def abhyasa_cfg(monkeypatch, tmp_path):
+    """An `ABHYASA_CONFIG` of this test's own, for a test that reads or saves abhyasa's prompts."""
+    d = tmp_path/'abhyasa'
+    monkeypatch.setenv('ABHYASA_CONFIG', str(d))
+    return d
+
+@pytest.fixture(autouse=True)
+def _no_real_lessons(monkeypatch, tmp_path_factory):
+    "No test writes `~/Learning/Leela lessons`; a test that wants its own folder patches `LESSONS` again."
+    monkeypatch.setattr('leela.blocks.learn.learn.LESSONS', tmp_path_factory.mktemp('home')/'Learning'/'Leela lessons')
 
 @pytest.fixture(autouse=True)
 def _no_backup_threads(monkeypatch):

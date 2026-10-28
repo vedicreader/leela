@@ -475,12 +475,12 @@ class Workspace:
         self._rebrief_agents()
         self.fs_watch.start(restart=True)
         return r
-    def drop_root(self, p):
-        "Close a folder, and every tab that lived inside it."
+    def drop_root(self, p, closed=True):
+        "Close a folder, and every tab that lived inside it; `closed=False` undoes an `add_root` and leaves the saved session's copy of the folder alone."
         r = self.fs.drop_root(p)
         # One saved session, several windows. A folder this window never had is another window's and
         # is kept; one it closed is a decision, and `save` takes it out of the file.
-        self._closed_roots.add(str(r))
+        if closed: self._closed_roots.add(str(r))
         self._owns_session = True   # closing the last folder is a session to save, not an empty one
         # The folder the project surfaces were about is gone, so the choice is stale. `project_root`
         # guards against it, but anything reading `active_root` directly would follow it out.

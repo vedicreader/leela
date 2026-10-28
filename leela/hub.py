@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'OPEN_PATH', 'workspace_slug',
+__all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'learn_navigation', 'OPEN_PATH', 'workspace_slug',
            'workspace_slugs', 'assign_slugs', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
@@ -125,6 +125,12 @@ class WorkspaceSite:
     #: `release(path)` closes that tab. Only the loose-files workspace gives one up when a folder takes the file.
     release: object = None
 
+def learn_navigation(scope, headers) -> bool:
+    "True for a browser's top-level `GET /learn` navigation, the one cross-site request that the guard lets in."
+    h = lambda k: headers.get(k, b'').decode().lower()
+    return (scope.get('method') == 'GET' and scope.get('path') == '/learn'
+            and h(b'sec-fetch-mode') == 'navigate' and h(b'sec-fetch-dest') == 'document')
+
 class LoopbackHostGuard:
     "Reject DNS-rebinding and forwarded Host headers before they reach executable routes."
     def __init__(self, app): self.app = app
@@ -135,7 +141,7 @@ class LoopbackHostGuard:
         origin = headers.get(b'origin', b'').decode()
         origin_host = _name(urlsplit(origin).hostname) if origin else ''
         origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost')
-        browser_ok = headers.get(b'sec-fetch-site', b'').decode().lower() != 'cross-site'
+        browser_ok = headers.get(b'sec-fetch-site', b'').decode().lower() != 'cross-site' or learn_navigation(scope, headers)
         if allowed and origin_ok and browser_ok:
             await self.app(scope, receive, send)
             return

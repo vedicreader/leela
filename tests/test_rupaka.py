@@ -11,10 +11,11 @@ SPEC = {'blocks': [{'type': 'text', 'text': 'hi'}]}
 
 def test_the_vendored_rupaka_is_the_version_the_readme_pins():
     "A stale or half-copied vendor file fails here, not in a user's notebook."
-    js = (ROOT/'vendor'/'lee-rupaka.js').read_text()
-    assert "version: '0.0.1'" in js and 'R.mount' in js
-    assert 'rupaka-0.0.1-py3-none-any.whl' in (ROOT/'vendor'/'README').read_text()
-    assert '.rk' in (ROOT/'vendor'/'lee-rupaka.css').read_text()
+    import rupaka
+    from rupaka.render import bundle
+    v = rupaka.__version__
+    assert f'rupaka-{v}-py3-none-any.whl' in (ROOT/'vendor'/'README').read_text()
+    for kind in ('js', 'css'): assert (ROOT/'vendor'/f'lee-rupaka.{kind}').read_text() == bundle(kind), f'lee-rupaka.{kind} is not the {v} wheel: write it again (leela/vendor/README)'
 
 @pytest.mark.parametrize('hl', ['spans', None])
 def test_a_rupaka_fence_reaches_the_browser_as_a_language_class(monkeypatch, hl):

@@ -1,11 +1,11 @@
-import json, sys
+import json, re, sys
 import pytest
 from starlette.testclient import TestClient
 from abhyasa.store import Learning
 from leela.app import ide_app
 from leela.blocks.agent.ai import WRITE_TOOLS, _session_tools
 from leela.blocks.memory.memory import Memory
-from leela.blocks.nb.lesson import LESSON_CHARTER, lesson_notebook
+from leela.blocks.nb.lesson import CHARTER_TAIL, lesson_notebook
 from leela.blocks.nb.nb import src_hash
 from leela.workspace import Workspace
 
@@ -18,11 +18,11 @@ WRONG = 'def double(x):\n    return 999777'
 SCALED = 'def double(x):\n    return x * 1000 + 7'
 
 @pytest.fixture
-def rig(tmp_path, monkeypatch):
+def rig(tmp_path, monkeypatch, request):
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
     mem = Memory(path=tmp_path/'vault.db', offline=True)
     p = tmp_path/'lesson.ipynb'
-    nb = lesson_notebook('Doubling', SPEC)
+    nb = lesson_notebook('Doubling', SPEC, step=getattr(request, 'param', None))
     nb.save(p)
     code = next(c for c in nb.cells if 'tests' in c.extra.get('exercise', {}))
     ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable)
@@ -85,7 +85,7 @@ def test_a_full_pass_with_a_grade_files_one_code_attempt_per_source_version(rig)
     assert len(r['attempts']()) == 0
     r['check'](GOOD)
     msg = r['grade'](8)
-    assert 'learning shelf' in msg and 'review' in msg
+    assert re.search(r'Saved\. Next review (today|tomorrow|in \d+ days)\.$', msg), msg
     [a] = r['attempts']()
     assert (a.kind, a.depth, a.correct, a.grade, a.feedback, a.answer) == ('code', 4, True, 8, 'Clear and short.', GOOD)
     assert a.card_key == f'{r["cell"].id}:{src_hash(GOOD)}' and 'Double a number.' in a.question
@@ -102,6 +102,17 @@ def test_a_full_pass_with_a_grade_files_one_code_attempt_per_source_version(rig)
     r['grade'](7, 'Same idea, other order.')
     assert sorted(a.card_key.split(':')[1] for a in r['attempts']()) == sorted([src_hash(GOOD), src_hash(GOOD2)])
     assert lr.concept('doubling').seen == 2
+
+@pytest.mark.parametrize('rig', [dict(walk='attention-ab12', step=0, section='2 Background', text='Double it.', note='')], indirect=True)
+def test_a_full_pass_in_a_walk_lesson_carries_the_walk_meta(rig):
+    rig['check'](GOOD); rig['grade'](8)
+    [a] = rig['attempts']()
+    assert (a.kind, a.walk, a.step, a['from'], a.app, a.section) == ('code', 'attention-ab12', 0, 'attention-ab12/0', 'leela', '2 Background')
+
+def test_a_full_pass_in_a_plain_lesson_has_no_walk_meta(rig):
+    rig['check'](GOOD); rig['grade'](8)
+    [a] = rig['attempts']()
+    assert not {'walk', 'step', 'from', 'app', 'section'} & set(a)
 
 def test_grade_refuses_a_plain_cell_and_a_notebook_that_is_not_open(rig, tmp_path):
     r = rig
@@ -122,7 +133,7 @@ def test_a_copied_exercise_cell_starts_with_no_check_and_no_grade(rig):
     assert r['state']()['grade']['score'] == 8
 
 def test_the_charter_carries_the_grading_rules():
-    lines = LESSON_CHARTER.splitlines()
-    assert 'call add_exercise with a reference solution' in LESSON_CHARTER
+    lines = CHARTER_TAIL.splitlines()
+    assert 'call add_exercise with a reference solution' in CHARTER_TAIL
     assert ("To grade, call check_exercise, then grade_exercise. Give one hint rung at a time; name a package only after confirming it is installed; name the module at rung 3 and the function at rung 4; never write the call.") in lines
     assert "After each learner message add at most one line 'Prompt note: ...' when it would help." in lines

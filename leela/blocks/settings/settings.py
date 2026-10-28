@@ -10,7 +10,7 @@ from ...core.backups import ENTRIES as BACKUP_ENTRIES, PRECIOUS
 
 __all__ = ['DEFAULT_SETTINGS', 'Settings', 'user_settings_file', 'WORKSPACE_SETTINGS_FILE',
            'CODE_FOLDER', 'agent_cfg', 'start_folder', 'THEME_DEFAULT', 'theme_backgrounds', 'parse_theme',
-           'theme_background']
+           'theme_background', 'saved_theme', 'theme_boot']
 
 #: Where the folder picker starts when nothing else names a folder. Home is mostly not projects.
 CODE_FOLDER = '~/code'
@@ -304,3 +304,30 @@ def theme_background(theme=None):
         except Exception: theme = ''
     fam, mode, _ = parse_theme(theme, bgs)
     return (bgs[fam]['light'], bgs[fam]['dark']) if mode == 'system' else bgs[fam][mode]
+
+def saved_theme(root=None):
+    "The theme the settings for the project `root` hold, for the first paint. Empty where none was ever chosen."
+    try: held = Settings(root).effective()
+    except Exception: return ''
+    # `workbench` is where it briefly lived; a settings file written then still reads.
+    try: return str((held.get('appearance') or {}).get('theme')
+                    or (held.get('workbench') or {}).get('theme') or '')
+    except Exception: return ''
+
+def theme_boot(root=None):
+    "The inline first-paint script that puts the saved theme for `root` on <html>."
+    # The saved theme is rendered in as the fallback rather than left to the cache alone:
+    # the cache is per origin. A family this build does not draw, or a cache from a newer one,
+    # would leave the page unstyled, so it reads as `parseTheme` in prefs.js does.
+    return """try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
+const families = """ + json.dumps(sorted(theme_backgrounds())) + """, saved = """ + json.dumps(saved_theme(root)) + """;
+const stored = localStorage.getItem('lee-theme') || saved || 'cursor:light:tight';
+let [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
+if (!families.includes(family)) family = 'cursor';
+if (!['system', 'dark', 'light'].includes(mode)) mode = 'light';
+if (!['tight', 'relaxed'].includes(density)) density = family === 'cursor' ? 'tight' : 'relaxed';
+const resolved = mode === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
+document.documentElement.dataset.theme = family;
+document.documentElement.dataset.mode = resolved;
+document.documentElement.dataset.density = density;
+document.documentElement.style.colorScheme = resolved; } catch (_) {}"""

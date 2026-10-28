@@ -635,5 +635,5 @@ The bundled highlight style (`frontend/editor.js` `hl`) reads only the shared se
 ## `leela/blocks/settings/prefs.js` `nativeBackground`
 The theme reaches the desktop window through kavacha's `ShellApi.set_background`, the JavaScript bridge pywebview already gives the page. The colour is per app, because pywebview does not say which window called: a workspace-scoped theme in one window repaints every window's native background, and each page's own colours are unaffected. The launch colour comes from the user-scope theme in `leela.desktop.run_shell`, which every launch route passes through, and the page corrects it on its first paint.
 
-## `leela/app.py` the first-paint family list
-The inline script cannot read `prefs.js`, so the server writes in the families `lee-ide.css` draws, from `theme_backgrounds`. The stylesheet is the list because a family it does not draw is exactly the unstyled page the check prevents. The completeness test holds it equal to the picker's.
+## `leela/blocks/settings/settings.py` `theme_boot`: the first-paint family list
+The inline script cannot read `prefs.js`, so the server writes in the families `lee-ide.css` draws, from `theme_backgrounds`. The IDE page and the learn pages use the same script. The stylesheet is the list because a family it does not draw is exactly the unstyled page the check prevents. The completeness test holds it equal to the picker's.

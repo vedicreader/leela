@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
-from ...agent.agent import Agent, Approvals, Ask, _summary, answer_md, ask_md, plan_tools, preview_for
+from ...agent.agent import SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
@@ -43,9 +43,7 @@ __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_cont
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 STOP_NOTE = 'the user stopped this turn'
-HIDDEN_ARGS = {'add_exercise': {'solution': '(reference solution hidden)'}}   #: arguments no approval display shows, and what it shows instead
-def _hide(tool, args): return {**args, **{k: v for k, v in HIDDEN_ARGS.get(tool, {}).items() if k in args}}
-def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in HIDDEN_ARGS.get(tool, {}) if k in was}}
+def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in SECRET_ARGS.get(tool, ()) if k in was}}
 def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
 GUIDED_TOOLS = WRITE_TOOLS | frozenset({'web_search', 'read_url', 'research'})
 
@@ -105,8 +103,8 @@ class Intervention(Ask):
     @property
     def edited(self): return self.tool != self.original_tool or self.args != self.original_args
     def dict(self):
-        return {**super().dict(), 'args': _hide(self.tool, self.args), 'control': self.control, 'edited': self.edited,
-            'original_tool': self.original_tool, 'original_args': _hide(self.original_tool, self.original_args),
+        return {**super().dict(), 'args': _hidden(self.tool, self.args), 'control': self.control, 'edited': self.edited,
+            'original_tool': self.original_tool, 'original_args': _hidden(self.original_tool, self.original_args),
             'action_id': self.id, 'revision': self.revision, 'branch_id': self.branch_id,
             'parent_action_id': self.parent_action_id,
             'rollback': self.before is not None and self.after is not None and self.before != self.after}
@@ -219,8 +217,8 @@ class Interventions(Approvals):
         control_checkpoint = not bypassed and (self.control == 'directed' or
             (self.control == 'guided' and (name in GUIDED_TOOLS or path_write(name, args))))
         checkpoint = force or loop or (required and not bypassed) or control_checkpoint
-        a = Intervention(tool=name, args=args, summary=_summary(name, args),
-            preview=preview_for(name, _hide(name, args), self.host), control=self.control,
+        a = Intervention(tool=name, args=args, summary=_summary(name, shown := _hidden(name, args)),
+            preview=preview_for(name, shown, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
         if path_write(name, args): a.preview = f"saves {', '.join(write_targets(name, args))}\n\n{args.get('prompt', '')}"   # ramabana 0.2.3's preview names only the first
         if loop: a.preview = f'the same call {_times(self._streak)} running -- allow it?\n\n{a.preview}'.strip()
@@ -256,7 +254,8 @@ class Interventions(Approvals):
         if ok:
             if tool: a.tool = str(tool)
             if args is not None: a.args = _restore(a.tool, dict(args), a.original_tool, a.original_args)
-            a.summary, a.preview = _summary(a.tool, a.args), preview_for(a.tool, _hide(a.tool, a.args), self.host)
+            shown = _hidden(a.tool, a.args)
+            a.summary, a.preview = _summary(a.tool, shown), preview_for(a.tool, shown, self.host)
         return super().answer(id, ok, note, session=session)
     def gate(self, tool_call):
         "Pause according to the control level, then apply an approved rewrite to the live call."
@@ -275,7 +274,7 @@ class Interventions(Approvals):
                     self._execution_meta.append({'action_id': a.id, 'revision': a.revision,
                         'branch_id': a.branch_id,
                         'parent_action_id': a.parent_action_id,
-                        'tool': a.tool, 'args': dict(a.args)})
+                        'tool': a.tool, 'args': _hidden(a.tool, dict(a.args))})
             else:
                 # A bare backend denial reads to a model as a transient permission failure and it
                 # proposes the same call again, so "no" resolves as a durable instruction.
@@ -291,8 +290,9 @@ class Interventions(Approvals):
     def execution_meta(self, name, args):
         "Consume identity recorded by the approval hook before the wrapped tool executes."
         with self._state_lock:
+            # ramabana 0.2.87 passes `args` with each `secret_args` value as `[SECRET]`
             i = first(i for i, row in enumerate(self._execution_meta)
-                if row['tool'] == name and row['args'] == dict(args or {}))
+                if row['tool'] == name and _hidden(name, row['args']) == _hidden(name, dict(args or {})))
             return self._execution_meta.pop(i) if i is not None else {}
 
 class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, WatchHost, ApiHost, ShellHost,
@@ -585,7 +585,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         c = first(c for c in nb.cells if c.id == cell_id)
         if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
         tab = tab or Tab(path=str(p), kind='notebook')
-        try: v = asyncio.run_coroutine_threadsafe(check_cell(nb, c, lock, lambda: self.ws.runtime(tab)), loop).result(max(1, int(timeout)))
+        try: v = asyncio.run_coroutine_threadsafe(check_cell(nb, c, lock, lambda: self.ws.runtime(tab), getattr(self.ws, 'jobs', None)), loop).result(max(1, int(timeout)))
         except Refused as e: return str(e)
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         tab.dirty = True
@@ -947,13 +947,17 @@ def _session_tools(host):
         except Exception as e: return f'add_demo failed: {errstr(e)}'
     @summary(lambda a: f'Add exercise to {a.get("path", "")}')
     def add_exercise(path: str, task: str, fname: str, stub: str, tests: list | str, solution: str,
-                     after_cell_id: str = '', uses: list | None = None) -> str:
-        "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored."
+                     after_cell_id: str = '', uses: list | None = None, packages: list | None = None) -> str:
+        "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored. With `packages`, the code runs with those packages, no network and no API key."
+        from ..learn.tools import make_tool_env, tool_names
         from ..nb.exercise import check_solution, exercise_cells, validate_exercise_spec
         from ..nb.nb import Notebook
         try:
             if isinstance(tests, str): tests = json.loads(tests)
             spec = validate_exercise_spec(dict(task=task, fname=fname, stub=stub, tests=tests, uses=[] if uses is None else uses))
+            if packages is not None:
+                if not (made := make_tool_env(names := tool_names(packages))).ok: return f'add_exercise failed: {made.error}'
+                spec = validate_exercise_spec(spec | dict(env=made.key, requires=names))
             checked = check_solution(spec, solution)
             ref, draft, n = checked['solution'], checked['stub'], len(spec['tests'])
             if ref.get('timeout'): return 'the solution check times out (timeout)'
@@ -964,8 +968,12 @@ def _session_tools(host):
                 return 'the solution fails: ' + ', '.join(bad)
             if any(r['status'] == 'timeout' for r in rows): return 'the solution check times out (timeout)'
             if len(rows) != n or any(r['status'] != 'pass' for r in rows): return 'the solution check errors'
-            passed = sum(r['status'] == 'pass' for r in draft.get('checks', [])) if draft.get('found') else 0
-            if passed == n: return 'the stub already passes every test'
+            got = [r['status'] for r in draft.get('checks', [])]
+            if got.count('pass') == n: return 'the stub already passes every test'
+            stub = ('the stub check times out' if draft.get('timeout') else 'the stub check errors' if draft.get('error')
+                    else 'the stub defines no callable function' if not draft.get('found')
+                    else '; '.join(f'the stub {w} {got.count(s)} of {n} tests' for s, w in (('fail', 'fails'), ('error', 'errors on'), ('timeout', 'times out on')) if s in got)
+                    or 'the stub does not pass every test')
             p = host.check_write(path)
             if p.suffix != '.ipynb': return 'add_exercise failed: path must be an .ipynb notebook'
             nb = Notebook.load(p)
@@ -976,8 +984,9 @@ def _session_tools(host):
             nb.insert(index + 1, code)
             nb.reveal(index + 1)
             nb.save(p, sandbox=host.ws.fs)
-            return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; the stub fails {n - passed}.'
+            return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; {stub}.'
         except Exception as e: return f'add_exercise failed: {errstr(e)}'
+    add_exercise.secret_args = ('solution',)
     @summary(lambda a: f'Check {a.get("path", "")} cell {a.get("cell_id", "?")}')
     def check_exercise(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run the learner's exercise code cell and its checks in the notebook's kernel, as pressing Check does.
@@ -992,6 +1001,25 @@ def _session_tools(host):
         try: return clip(host.nb_grade_exercise(path, cell_id, score, note))
         except Exception as e: return f'grade_exercise failed: {errstr(e)}'
     return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise), small_tool(check_exercise), small_tool(grade_exercise)]   # the Run button belongs to a small session too
+
+def _stat_sig(p):
+    try: s = Path(p).stat(); return s.st_mtime_ns, s.st_size
+    except OSError: return 0, 0
+
+def _code_rows(rows):
+    return '\n\n'.join(f"{r['name']} ({r['package']}) {r['path']}:{r['line']}" + ''.join(f'\n{x}' for x in (r['doc'], r['snippet']) if x) for r in rows)
+
+def _lesson_tools(host, env):
+    "The tools Leela adds only while the active tab is a lesson; `env()` gives that lesson's tool environment key and packages at call time."
+    @summary(lambda a: f'Look up code for {_1(a.get("q"))}')
+    def look_up_code(q: str) -> str:
+        "Search the code index for `q`: the lesson's library packages when it has a tool environment, else the project. Returns name, package, path:line, doc and a short snippet per hit."
+        from ..learn.app import NO_INDEX, find_code
+        key, names = env()
+        try: rows = find_code(host.ws.search, q, list(names), key)
+        except Exception: rows = None
+        return NO_INDEX if rows is None else clip(_code_rows(rows)) if rows else 'Nothing found.'
+    return [small_tool(look_up_code)]
 
 def _news_tools(host, mx=MAX_TOOL_CHARS):
     "The feeds as tools. The memory tools read the main shelf; feeds are on `news`. What the loaded specs send is `api_context`, in the briefing."
@@ -1101,7 +1129,7 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
         md = answer_md(a)
         if getattr(a, 'edited', False):
             md += (f'\n\nEdited `{a.original_tool}` into `{a.tool}` before execution.'
-                f'\n\n```json\n{json.dumps(_hide(a.tool, a.args), indent=2, default=str)}\n```')
+                f'\n\n```json\n{json.dumps(_hidden(a.tool, a.args), indent=2, default=str)}\n```')
         _add(md, {'kind': 'approval', 'id': a.id, 'tool': a.tool,
             'state': 'approved' if a.answer else 'refused',
             'edited': bool(getattr(a, 'edited', False))})
@@ -1184,11 +1212,13 @@ class Assistant(Agent):
         self.session_state = str(getattr(ws, 'agent_state', '') or '')
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
+        self._lesson_toolset = _lesson_tools(host, lambda: self._lesson_env())
+        self._lesson_seen = (None, None)   # (seal, (step, packages)) of the last learning-store read
         self.video_jobs = VideoJobs()   # offered with no video model too, so asking for one says how to add it
         self._video_toolset = video_tools(host, jobs=self.video_jobs)
         self._built_mode = None            # whether a feed was followed when the tool list was last built
         self._briefed_mode = None          # …and the one the live turn backend was last briefed with
-        self._briefed_lesson = False
+        self._briefed_lesson, self._briefed_charter = False, ''   # the lesson charter text the live turn backend was briefed with
         super().__init__(host, model=model, sp=sp, warm=warm, **kwargs)
         from ...workspace import AGENT_CHANNELS
         for k, attr in AGENT_CHANNELS.items(): setattr(self, attr, getattr(ws, k, '') or '')
@@ -1224,25 +1254,55 @@ class Assistant(Agent):
         feeds = getattr(self.ws, 'feeds', None)
         return feeds is not None and any(True for _ in feeds)
 
-    def _lesson(self):
+    def _lesson_nb(self):
+        "The active tab's notebook when it is a lesson notebook, else None."
         from ..nb.nb import Notebook
         tab = getattr(self.ws, 'tab', None)
-        if tab is None or tab.kind != 'notebook' or not tab.path: return False
-        try: return bool(Notebook.load(self.host.check(tab.path)).meta.get('lesson'))
-        except Exception: return False
+        if tab is None or tab.kind != 'notebook' or not tab.path: return None
+        try: nb = Notebook.load(self.host.check(tab.path))
+        except Exception: return None
+        return nb if nb.meta.get('lesson') else None
+    def _lesson(self): return self._lesson_nb() is not None
+    def _lesson_env(self, nb=None):
+        "`(key, packages)` of the active lesson's one tool environment; `(None, ())` for none."
+        from ..nb.lesson import env_packages, lesson_env
+        if nb is None and (nb := self._lesson_nb()) is None: return None, ()
+        return (key := lesson_env(nb)), env_packages(key)
+    def _lesson_ctx(self):
+        "`(step, packages)` of the active lesson, None outside one. The learning store is read again only when the notebook, its lesson meta, the store file or its WAL, or the environment changed; a store error gives no step and is not kept."
+        from ..nb.lesson import lesson_step
+        if (nb := self._lesson_nb()) is None: return None
+        key, packages = self._lesson_env(nb)
+        mem = getattr(self.ws, 'memory', None)
+        db = getattr(mem, 'path', None)
+        seal = (str(self.ws.tab.path), json.dumps(nb.meta['lesson'], sort_keys=True, default=str), key, packages, id(mem),
+                *(_stat_sig(f) for f in ((db, Path(f'{db}-wal')) if db else ())))
+        if self._lesson_seen[0] == seal: return self._lesson_seen[1]
+        try: step = lesson_step(mem, nb) if mem is not None else None
+        except Exception:
+            self._lesson_seen = (None, None)
+            return None, packages
+        self._lesson_seen = (seal, (step, packages))
+        return step, packages
+    def _charter(self):
+        "The lesson charter for the active tab, with its walk step and packages; '' outside a lesson."
+        from ..nb.lesson import lesson_charter
+        return '' if (c := self._lesson_ctx()) is None else lesson_charter(*c)
     def _follow_mode(self):
-        "Re-brief the live turn backend when a feed came or went, or the active tab became or stopped being a lesson notebook, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
+        "Re-brief the live turn backend when a feed came or went, the active tab became or stopped being a lesson notebook, or the lesson charter's text changed, since it was last briefed. A form or a route may rebuild `tools` between turns; the backend's own briefing is what counts. A turn with no change rebuilds nothing."
+        from ..nb.lesson import CHARTER_TAIL
         if self._briefed_mode is None: self._briefed_mode = self._built_mode   # a backend installed from outside (`tests.fakemodel`) was briefed with what `tools` built
-        mode, lesson = self._mode(), self._lesson()
-        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson:
+        mode, charter = self._mode(), self._charter()
+        lesson = bool(charter)
+        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson and charter == self._briefed_charter:
             self._briefed_mode = mode
             return
         self._forget()
         be = self._be('turn')
         prompt = self.system_prompt()
         be.refresh(prompt, self.tools)
-        from ..nb.lesson import LESSON_CHARTER
-        self._briefed_mode, self._briefed_lesson = mode, LESSON_CHARTER in prompt
+        self._briefed_mode, self._briefed_lesson = mode, CHARTER_TAIL in prompt
+        self._briefed_charter = charter if self._briefed_lesson else ''
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."
@@ -1264,18 +1324,19 @@ class Assistant(Agent):
         spec = self.routing.spec(job); fresh = (spec.backend, spec.model_id) not in self._backends
         be = super()._be(job)
         if fresh and job == 'turn':
-            from ..nb.lesson import LESSON_CHARTER
-            self._briefed_mode, self._briefed_lesson = self._built_mode, LESSON_CHARTER in be.sp
+            from ..nb.lesson import CHARTER_TAIL
+            self._briefed_mode, self._briefed_lesson = self._built_mode, CHARTER_TAIL in be.sp
+            self._briefed_charter = c if self._briefed_lesson and (c := self._charter()) and c in be.sp else ''
         if self.engines is not None: self.engines.attach(be)
         return be
 
     @property
     def tools(self):
-        "Leela's own tools on the registry: news tools while a feed is followed, the rest always."
+        "Leela's own tools on the registry: news tools while a feed is followed, lesson tools while the active tab is a lesson, the rest always."
         if self._tools is None:
             feeds = mode = self._mode()
-            want = [*(self._news_toolset if feeds else []), *self._session_toolset, *self._video_toolset]
-            stale = {id(f) for f in self._news_toolset} - {id(f) for f in want}
+            want = [*(self._news_toolset if feeds else []), *(self._lesson_toolset if self._lesson() else []), *self._session_toolset, *self._video_toolset]
+            stale = {id(f) for f in [*self._news_toolset, *self._lesson_toolset]} - {id(f) for f in want}
             self.registry.tools[:] = [f for f in self.registry.tools if id(f) not in stale]
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in want if f.__name__ not in registered)
@@ -1303,9 +1364,7 @@ class Assistant(Agent):
         small = self.profile == 'small'
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
         base += VAULT_MARKS
-        if self._lesson():
-            from ..nb.lesson import LESSON_CHARTER
-            base += '\n\n' + LESSON_CHARTER
+        if charter := self._charter(): base += '\n\n' + charter
         if loose := getattr(self.host, 'loose_files', ()):
             base += f'\n\nLoose files: {", ".join(loose)}. Each was opened on its own: read and edit it, but nothing beside it is yours to touch.'
         if (writable := self.host.writable_roots) != self.host.roots:

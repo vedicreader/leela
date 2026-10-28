@@ -95,12 +95,12 @@ def test_check_solution_without_kernel(spec, source, found, statuses, got):
     assert [r['status'] for r in result['stub']['checks']] == ['fail', 'fail']
 
 @pytest.mark.parametrize('source', ['while True: pass', 'def double(x):\n    while True: pass'])
-def test_check_solution_timeout(spec, source):
+def test_check_solution_timeout(spec, source, abhyasa_cfg):
     import time
     from leela.blocks.nb.exercise import check_solution
     started = time.monotonic()
     result = check_solution(spec, source, timeout=.1)['solution']
-    assert time.monotonic() - started < 2.1
+    assert time.monotonic() - started < 2 * (.1 + 2) + 1   # abhyasa stops each of the two runs at `total + 2` s; 1 s for a loaded machine
     assert result.get('timeout') or all(r['status'] == 'timeout' for r in result['checks'])
 
 @pytest.mark.parametrize('source', ['raise ValueError("SECRET_SOURCE_TOKEN")', 'def double(:'])
@@ -112,18 +112,15 @@ def test_check_solution_source_errors_do_not_echo_source(spec, source):
     assert 'SECRET_SOURCE_TOKEN' not in json.dumps(result)
 
 
-def test_check_solution_isolated_stdin_and_silent(spec, monkeypatch):
-    import subprocess, sys
+def test_check_solution_delegates_to_the_closed_runner_isolated_and_silent(spec, monkeypatch, abhyasa_cfg):
+    import abhyasa.check, json
     from leela.blocks.nb.exercise import check_solution
-    source = 'print("SECRET_SOURCE_TOKEN")\nimport sys\nassert sys.flags.isolated\ndef double(x): return x*2'
-    calls, run = [], subprocess.run
-    def capture(*args, **kwargs):
-        calls.append((args, kwargs))
-        return run(*args, **kwargs)
-    monkeypatch.setattr(subprocess, 'run', capture)
-    result = check_solution(spec, source)
-    assert all(r['status'] == 'pass' for r in result['solution']['checks'])
-    assert len(calls) == 2
-    assert calls[0][0][0][:3] == [sys.executable, '-I', '-c']
-    assert source not in calls[0][0][0][-1] and calls[0][1]['input'] == source
-    assert calls[0][1]['timeout'] == 11
+    source = 'print("SECRET_SOURCE_TOKEN")\nimport os, sys\nassert sys.flags.isolated and os.getcwd() == os.environ["HOME"]\ndef double(x): return x*2'
+    calls, real = [], abhyasa.check.run_isolated
+    monkeypatch.setattr(abhyasa.check, 'run_isolated', lambda *a, **kw: calls.append((a, kw)) or real(*a, **kw))
+    result = check_solution(spec, source, timeout=5)
+    tests = [t['test'] for t in spec['tests']]
+    assert calls == [(('assert', 'double', source, tests), dict(total=5, sandbox=True)),
+                     (('assert', 'double', spec['stub'], tests), dict(total=5, sandbox=True))]
+    assert [r['status'] for r in result['solution']['checks']] == ['pass', 'pass']
+    assert 'SECRET_SOURCE_TOKEN' not in json.dumps(result)

@@ -1,4 +1,6 @@
-import builtins, json, shutil, subprocess, time
+import builtins, json, re, shutil, subprocess, time
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from abhyasa.store import Learning, slugify
@@ -38,8 +40,7 @@ def test_save_records_once_and_schedules_review(saved_lesson, guess, correct, co
     r = client.post('/lesson/save', json=body)
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data['ok'] and data['message'].startswith('Saved to your learning shelf. '), data
-    assert 'Next review in ' in data['message']
+    assert data['ok'] and re.fullmatch(r'Saved\. Next review (today|tomorrow|in \d+ days)\.', data['message']), data
     lr = Learning(ws.memory._store('learning'))
     attempts = lr.attempts(slugify(nb.meta['lesson']['name']), limit=10000)
     assert len(attempts) == 1
@@ -99,6 +100,13 @@ def test_save_reports_store_failure_and_allows_retry(saved_lesson, monkeypatch, 
         assert r.status_code == 400, r.text
         assert ('abhyasa' if failure == 'missing' else 'locked or unreadable') in r.json()['error']
     assert client.post('/lesson/save', json=body).json()['ok']
+
+@pytest.mark.parametrize('days, when', [(-2, 'today'), (0, 'today'), (1, 'tomorrow'), (3, 'in 3 days')])
+def test_the_saved_line_names_the_review_day_in_words(days, when):
+    "The line said 'Your level: explain. Next review in 24 h.'"
+    from leela.blocks.nb.lesson import _saved
+    due = datetime.combine(date.today() + timedelta(days=days), datetime.min.time()).timestamp() + 60
+    assert _saved(SimpleNamespace(due=due, floor=2)) == f'Saved. Next review {when}.'
 
 @pytest.mark.parametrize('failure', ['record', 'update'])
 def test_save_rolls_back_a_failed_attempt(saved_lesson, monkeypatch, failure):

@@ -12,12 +12,12 @@ from ... import errstr
 from pathlib import Path
 
 from ...core.text import did_you_mean
-from ...core.web import asset_dir, fail, off_loop, sse
+from ...core.web import NOT_OBJECT, asset_dir, fail, json_obj, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import lock, record_card
+from .lesson import lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
@@ -259,7 +259,7 @@ def connect(app, ctx):
         if not exercise_meta(c): return fail(JUDGE['not_exercise'], 400)
         if not take_seq(store.seqs_for(owner_tab), c.id, d.get('seq')): return fail(JUDGE['stale'], 409)
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
-        try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab))
+        try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab), ws.jobs)
         except Refused as e: return fail(str(e), 409)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
@@ -527,6 +527,9 @@ def connect(app, ctx):
         tab.dirty = tab.dirty or nb.dirty
         return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version,
                 'index': at if op in ('undo', 'redo') else i}
+    def _vault_fail(e):
+        if isinstance(e, ImportError) and (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail('Saving cards needs abhyasa. Install abhyasa, then try again.')
+        return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
     @rt('/lesson/save')
     async def lesson_save(req):
         d = await req.json()
@@ -545,16 +548,28 @@ def connect(app, ctx):
             if not nb.meta.get('lesson', {}).get('name'): return fail('This is not a lesson notebook.')
             async with run_lock:
                 try: message = await off_loop(record_card, ctx.memory, nb, cell, tab.path)
-                except ImportError as e:
-                    if (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail('Saving cards needs abhyasa. Install abhyasa, then try again.')
-                    return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
-                except Exception as e: return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
+                except Exception as e: return _vault_fail(e)
                 lesson.update(saved=key, saved_message=message)
                 saved = await nb_save(req)
                 if not isinstance(saved, dict) or not saved.get('ok'):
                     lesson.pop('saved', None); lesson.pop('saved_message', None)
                     return saved
                 return dict(saved, saved=key, message=message)
+    @rt('/lesson/predict', methods=['POST'])
+    async def lesson_predict(req):
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        async with lesson_lock:
+            tab, nb, _ = run_owner(d)
+            if nb is None: return fail('Return to the lesson notebook, then try.')
+            if not isinstance(lesson := nb.meta.get('lesson'), dict) or not lesson.get('name'): return dict(ok=True, logged=False)
+            cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
+            if cell is None: return fail('That cell is no longer in the notebook.')
+            if d.get('src') != src_hash(cell.source): return fail('This demo changed. Run the cell again, then try.', 409)
+            try: f = prediction_filing(nb, cell, tab.path, d.get('demo'), str(d.get('gate') or ''), d.get('picked'), d.get('why'), d.get('ans'), d.get('ok'))
+            except ValueError as e: return fail(str(e))
+            try: message = await off_loop(record_prediction, ctx.memory, f)
+            except Exception as e: return _vault_fail(e)
+            return dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')

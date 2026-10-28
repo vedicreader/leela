@@ -9,11 +9,13 @@ from pathlib import Path
 from fastcore.aio import athreaded
 from fastcore.basics import first, ifnone
 from fasthtml.common import JSONResponse
+from starlette.datastructures import Headers
+from starlette.requests import Request
 from starlette.staticfiles import StaticFiles
 
 from .. import errstr
 
-__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'sse', 'off_loop', 'unless_gone',
+__all__ = ['asset_dir', 'static_dirs', 'Assets', 'asset', 'fail', 'NOT_OBJECT', 'JsonBody', 'json_obj', 'sse', 'off_loop', 'unless_gone',
            'diff_payload', 'found', 'pipeline_socket', 'IDE_BUNDLES']
 
 #: Client bundles in execution order. They share one lexical scope, so `lee-core.js` declares the vocabulary and the rest read it.
@@ -55,6 +57,32 @@ def fail(err, code=400, kind=None, **extra):
     if isinstance(err, Exception) and getattr(err, 'kind', None): body |= {'kind': err.kind, 'refs': list(getattr(err, 'refs', ()))}
     if kind: body['kind'] = kind
     return JSONResponse(body | extra, status_code=code)
+
+NOT_OBJECT = 'The request body is not a JSON object.'
+
+async def json_obj(req):
+    "The JSON object in the body of `req`, or None for an empty, unreadable or non-object body."
+    try: d = json.loads(await req.body())
+    except ValueError: return None
+    return d if isinstance(d, dict) else None
+
+class JsonBody:
+    "Answer `fail` 400 for a JSON body that is not an object, before FastHTML parses it into a 500."
+    def __init__(self, app): self.app = app
+    async def __call__(self, scope, receive, send):
+        ctype = Headers(scope=scope).get('content-type', '') if scope['type'] == 'http' else ''
+        if ctype.split(';')[0].strip().lower() != 'application/json': return await self.app(scope, receive, send)
+        body = await Request(scope, receive).body()
+        try: ok = not body or isinstance(json.loads(body), dict)
+        except ValueError: ok = False
+        if not ok: return await fail(NOT_OBJECT)(scope, receive, send)
+        sent = False
+        async def replay():
+            nonlocal sent
+            if sent: return await receive()
+            sent = True
+            return {'type': 'http.request', 'body': body, 'more_body': False}
+        await self.app(scope, replay, send)
 
 def sse(event, data):
     "One server-sent event. Newlines in the payload would end the frame, so it goes as JSON."

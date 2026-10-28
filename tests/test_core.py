@@ -277,6 +277,12 @@ def test_the_config_dir_stays_inside_the_temp_dir(cfg_home):
     assert not str(real).startswith(safe)
     assert Path(leela_cfg) != real and real not in Path(leela_cfg).parents
 
+def test_the_data_dir_stays_inside_the_temp_dir():
+    from fastcore.xdg import xdg_data_home
+    from leela.blocks.learn.tools import tool_dir
+    for p in (xdg_data_home(), tool_dir('0'*16)):
+        assert str(p).startswith(TEST_CONFIG_HOME), f'{p} escapes the test config dir'
+
 def _saved(path): return json.loads(path.read_text())
 
 def test_a_rootless_save_does_not_blank_the_folders_and_tabs_beside_it(tmp_path):

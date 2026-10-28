@@ -181,14 +181,21 @@ function secondaryNotebook(host, st) {
     cells || '<div class="lee-dim">this notebook has no cells</div>';
 }
 
+function splitStage(direction) {
+  "The second pane, shown beside the editor with its editor destroyed and its side page dropped."
+  const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return null;
+  if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
+  lee.sidePage = null;
+  stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
+  host.hidden=false; setSplitSize(localStorage.getItem(SPLIT_SIZE)); return host;
+}
+
 async function mountSecondary(path, direction = 'vertical') {
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
   const st=await api('/tab/state?path='+encodeURIComponent(path));
   if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs and images can`,'err');
   if (st.kind !== 'text') {
-    if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
-    stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
-    host.hidden=false;
+    splitStage(direction);
     host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path||path))}</span>` +
       `<span class="lee-dim">${esc(SPLIT_KINDS[st.kind])}</span>` +
       `<button class="lee-btn" onclick="leeCloseSplit()">close</button></div>` +
@@ -201,15 +208,46 @@ async function mountSecondary(path, direction = 'vertical') {
     localStorage.setItem('lee-editor-split', JSON.stringify({path, direction}));
     return;
   }
-  if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
-  stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
-  host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
+  splitStage(direction); host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
   const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',readOnly:!!st.read_only,lineNums:true,lintPath:st.path||'',completeUrl:'/complete',tableKeys:true,
     onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
   recordDiskVersion(st.path || path, st.disk_version || '');
   lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
 }
-function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
+function mountPage(url, title = '', direction = 'vertical') {
+  "The local Leela page `url` in the second pane, in a frame with `pane=1`. False when `url` is not local or there is no second pane."
+  const src = leePaneURL(url), host = src && splitStage(direction === 'horizontal' ? 'horizontal' : 'vertical');
+  if (!host) return false;
+  const head = document.createElement('div'), trail = document.createElement('span'), own = document.createElement('a'),
+    x = document.createElement('button'), frame = document.createElement('iframe');
+  head.className = 'lee-split-head'; trail.className = 'lee-split-trail'; own.className = 'lee-split-own';
+  own.textContent = 'Open in a tab'; own.target = '_blank'; own.rel = 'noopener'; own.title = 'Open this page in a new tab';
+  x.className = 'lee-btn'; x.type = 'button'; x.textContent = 'close'; x.onclick = leeCloseSplit;
+  frame.src = src; head.append(trail, own, x); host.replaceChildren(head, frame);
+  const page = lee.sidePage = {frame, url: leeOwnURL(url), title: String(title || ''), trail: [], direction: direction === 'horizontal' ? 'horizontal' : 'vertical',
+    at(u, t) { page.url = leeOwnURL(u); if (t) page.title = t; paintSidePage(page); },
+    open(u) { const p = leePaneURL(u); if (!p) return; try { frame.contentWindow.location.replace(p); } catch (_) { frame.src = p; } },
+    link: openExternal,
+    key: k => document.body.dispatchEvent(new KeyboardEvent('keydown', {...k, bubbles: true, cancelable: true})),   // the keymap on `window` decides
+    close: leeCloseSplit};
+  lee.secondaryPath = ''; lee.activeEditor = 'primary';
+  paintSidePage(page);
+  return true;
+}
+function paintSidePage(page) {
+  "The trail, the title and the Open in a tab link of the side page, as text, and the page kept for a reload."
+  const head = page.frame.previousElementSibling, trail = $('.lee-split-trail', head), b = document.createElement('strong');
+  trail.replaceChildren();
+  for (const [label, href] of page.trail) {
+    const a = document.createElement('a'); a.textContent = label; a.href = href;
+    a.onclick = e => { e.preventDefault(); page.trail = []; page.open(href); };
+    trail.append(a, ' › ');
+  }
+  b.textContent = page.title || 'Side page'; trail.append(b);
+  page.frame.title = b.textContent; $('.lee-split-own', head).href = leeOwnURL(page.url);
+  localStorage.setItem('lee-editor-split', JSON.stringify({page: page.url, title: page.title, direction: page.direction}));
+}
+function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.sidePage=null;lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
 window.leeCloseSplit=leeCloseSplit;
 function leeSplit(direction='vertical') {
   // Any open tab the second pane can hold, not only the text ones: two notebooks beside each other

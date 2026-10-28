@@ -64,10 +64,10 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
         saves = []
         pg.on('request', lambda r: saves.append(r) if r.url.endswith('/lesson/save') else None)
         await reveal.get_by_role('button', name='Save card', exact=True).evaluate("e => { e.click(); e.click(); if (!e.disabled) throw Error('Save card was not disabled while posting'); }")
-        await pg.wait_for_function("document.querySelector('.lee-reveal-save')?.textContent.startsWith('Saved to your learning shelf.')")
+        await pg.wait_for_function("document.querySelector('.lee-reveal-save')?.textContent.startsWith('Saved. Next review ')")
         assert len(saves) == 1
         saved_text = await reveal.locator('.lee-reveal-save').inner_text()
-        assert 'Not at a level yet. Next review in 5 h.' in saved_text
+        assert saved_text.strip() in ('Saved. Next review today.', 'Saved. Next review tomorrow.'), saved_text
         assert await reveal.get_by_role('button', name='Save card', exact=True).count() == 0
         bgs = {}
         for mode in ('light', 'dark'):
@@ -162,3 +162,63 @@ def test_lesson_due_review_question_before_last_answer(tmp_path, monkeypatch):
         assert await due.is_hidden() and await due.text_content() == ''
         assert await pane.locator('#lessonreviewbody').inner_text() == 'Nothing to learn or review right now.'
     asyncio.run(_real_page(go, tmp_path))
+
+def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
+    from abhyasa.store import Learning
+    from leela.blocks.memory.memory import Memory
+    from leela.blocks.nb.lesson import fence, lesson_notebook
+    monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
+    home = tmp_path/'home'
+    (home/'Library').mkdir(parents=True)
+    (home/'Library/Keychains').symlink_to(Path.home()/'Library/Keychains', target_is_directory=True)
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'learning.db'))
+    gate = dict(type='gate', id='g1', prompt='What is half of 8?', options=[2, 4, 6], answer={'is': 4}, why='Why?')
+    nb = lesson_notebook('Halves')
+    nb[1].source = 'Pick one.\n\n' + fence(dict(id='halves', blocks=[dict(type='stack', blocks=[gate])]))
+    path = tmp_path/'halves.ipynb'; nb.save(path)
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1440, 'height': 1100})
+        pg.set_default_timeout(15000)
+        await pg.evaluate('p => leeOpenFile(p)', str(path))
+        await pg.wait_for_function('lee.cells.length === 5')
+        demo = pg.locator('.lee-cell[data-i="1"] .lee-rupaka')
+        await demo.locator('button.go').wait_for()
+        look = await demo.evaluate('''h => { const r = h.shadowRoot, s = getComputedStyle, p = document.body.appendChild(document.createElement('span'));
+          p.style.font = '11px var(--lee-sans)'; const want = s(p).fontFamily; p.remove();
+          return [s(r.querySelector('.opts button')).fontFamily === want, s(r.querySelector('.opts button')).fontSize, s(r.querySelector('.rk')).fontSize,
+                  s(document.documentElement).getPropertyValue('--lee-code-size').trim()]; }''')
+        assert look[0] and look[1] == '11px' and look[2] == look[3], look   # the gate takes Leela's font and sizes, not rupaka's serif page
+        await pg.locator('.lee-cell[data-i="2"] .lee-md-cell').dblclick()
+        await pg.wait_for_function("document.activeElement?.closest('.lee-cell')?.dataset.i === '2' && document.activeElement.classList.contains('cm-content')")
+        await pg.keyboard.type('four')
+        await pg.wait_for_function("lee.cells[2].source === 'four' || lee.editors.get(lee.cells[2].id) && LeeCM.getDoc(lee.editors.get(lee.cells[2].id)) === 'four'")
+        await demo.locator('.opts button').nth(1).click()
+        await demo.locator('textarea').fill('Half of 8 is 4.')
+        refused = 'This demo changed. Run the cell again, then try.'
+        await pg.route('**/lesson/predict', lambda route: route.fulfill(status=409, content_type='application/json', body=json.dumps({'ok': False, 'error': refused})))
+        async with pg.expect_response('**/lesson/predict'):
+            await demo.locator('button.go').click()
+        note, verdict, lock = demo.locator('p.note'), demo.locator('p.verdict'), demo.locator('button.go')
+        await note.filter(has_text=refused).wait_for()
+        assert await note.inner_text() == refused
+        assert await lock.is_enabled() and await verdict.is_hidden()
+        assert await demo.locator('.opts button').nth(1).get_attribute('aria-checked') == 'true'
+        assert await demo.locator('textarea').input_value() == 'Half of 8 is 4.'
+        await pg.unroute('**/lesson/predict')
+        async with pg.expect_response('**/lesson/predict') as got:
+            await lock.click()
+        resp = await got.value
+        assert resp.status == 200, await resp.text()
+        body = await resp.json()
+        assert body['logged'] is True and body['message'].startswith('Saved. Next review '), body
+        assert set(json.loads(resp.request.post_data)) == {'path', 'cell_id', 'demo', 'gate', 'picked', 'ans', 'ok', 'why', 'src'}
+        await pg.wait_for_function("document.querySelector('#status')?.textContent.startsWith('Saved. Next review ')")
+        await verdict.wait_for()
+        assert (await verdict.inner_text()).startswith('You said 4. That is right.')
+        assert await lock.is_hidden() and await note.is_hidden()
+    asyncio.run(_real_page(go, tmp_path))
+    rows = Learning(Memory(path=tmp_path/'learning.db', offline=True)._store('learning')).attempts('halves', limit=10)
+    assert len(rows) == 1
+    assert (bool(rows[0].correct), rows[0].depth, rows[0].answer, rows[0].thinking, rows[0].gate) == (True, 3, '4', 'Half of 8 is 4.', 'g1')

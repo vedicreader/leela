@@ -35,9 +35,9 @@ from .core.web import asset as _asset
 from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
-from .core.web import Assets, IDE_BUNDLES, static_dirs
+from .core.web import Assets, IDE_BUNDLES, JsonBody, static_dirs
 from .core.text import did_you_mean
-from .core.text import clean_html, md_block_diff, md_blocks, md_change_kinds
+from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook
 from .blocks.term.term import TerminalGate, colorfgbg, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
@@ -45,12 +45,6 @@ from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 
 __all__ = ['ide_app', 'serve_ide']
 
-def _md_highlight():
-    "`spans` when mdhtml can highlight, else off."
-    try: import fastpylight; return 'spans'
-    except ImportError: return None
-
-MD_HIGHLIGHT = _md_highlight()
 
 #: Seconds an idle connection stays open. uvicorn's 5 closed connections WebKit still held, and WebKit
 #: does not retry a POST sent on one: the Markdown renderer showed "Load failed" after a pause.
@@ -828,16 +822,6 @@ def _shell(ws, gate):
         Button('terminal / exec', cls='lee-pane-restore restore-bottom', onclick='leePane("bottom", true)'),
         id='shell', cls='lee-app')
 
-def _saved_theme(ws):
-    "The theme the settings hold, for the first paint. Empty where none was ever chosen."
-    from .blocks.settings.settings import Settings
-    try: held = Settings(ws.project_root).effective()
-    except Exception: return ''
-    # `workbench` is where it briefly lived; a settings file written then still reads.
-    try: return str((held.get('appearance') or {}).get('theme')
-                    or (held.get('workbench') or {}).get('theme') or '')
-    except Exception: return ''
-
 def _warm_probes():
     "Pay for the model probes while the window is still opening."
     import threading
@@ -846,7 +830,7 @@ def _warm_probes():
 
 def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     "Build the FastHTML IDE around an open workspace. `gate` decides who may open a terminal."
-    from .blocks.settings.settings import theme_backgrounds
+    from .blocks.settings.settings import theme_boot
     gate = gate or TerminalGate()
     _runstate = RunState()
     running_cells = _runstate.cells
@@ -857,21 +841,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             Link(rel='icon', href=_asset('favicon-dark.svg'), type='image/svg+xml',
                  media='(prefers-color-scheme: dark)'),
             Script(src=_asset('htmx.min.js'), defer=True),
-            # The saved theme is rendered in as the fallback rather than left to the cache alone:
-            # the cache is per origin. A family this build does not draw, or a cache from a newer one,
-            # would leave the page unstyled, so it reads as `parseTheme` in prefs.js does.
-            Script("""try { const legacy = {system: 'leela:system:relaxed', dark: 'leela:dark:relaxed', light: 'leela:light:relaxed', cursor: 'cursor:light:tight'};
-const families = """ + json.dumps(sorted(theme_backgrounds())) + """, saved = """ + json.dumps(_saved_theme(ws)) + """;
-const stored = localStorage.getItem('lee-theme') || saved || 'cursor:light:tight';
-let [family, mode, density] = (stored.includes(':') ? stored : legacy[stored] || 'cursor:light:tight').split(':');
-if (!families.includes(family)) family = 'cursor';
-if (!['system', 'dark', 'light'].includes(mode)) mode = 'light';
-if (!['tight', 'relaxed'].includes(density)) density = family === 'cursor' ? 'tight' : 'relaxed';
-const resolved = mode === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : mode;
-document.documentElement.dataset.theme = family;
-document.documentElement.dataset.mode = resolved;
-document.documentElement.dataset.density = density;
-document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
+            Script(theme_boot(ws.project_root)),
             Script(src=_asset('lee-cm6.js'), defer=True),
             Meta(name='lee-widgets-src', content=_asset('lee-widgets.js')),
             Meta(name='lee-rupaka-src', content=_asset('lee-rupaka.js')),
@@ -944,7 +914,7 @@ document.documentElement.style.colorScheme = resolved; } catch (_) {}"""),
     # `fast_app` imports `fasthtml.pico` whatever `pico=` says: 212ms and IPython, for a stylesheet link this app never uses.
     # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
-                   middleware=(Middleware(GZipMiddleware, minimum_size=512),),
+                   middleware=(Middleware(GZipMiddleware, minimum_size=512), Middleware(JsonBody)),
                    on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
                    routes=(Mount('/leestatic', Assets(*static_dirs())),
                            WebSocketRoute('/term/ws', term_ws)))

@@ -27,6 +27,8 @@ function lessonRevealText(c) {
   if (lesson.confidence >= 60) lines.push('You were sure, and it went another way. That is the part worth a look.');
   return lines.join('\n');
 }
+//: The line a failed lesson write shows: the server's own sentence when it sent one, else a line that says what to do.
+const lessonSaid = (err, b = err?.body) => (b && typeof b === 'object' && (b.error || b.message)) || (typeof b === 'string' && b.trim() && !b.trim().startsWith('<') && b.trim().slice(0, 300)) || 'Leela did not save this. Try again.';
 function lessonRevealActions(cell, el) {
   const lesson = cell.extra.lesson, key = `${cell.id}:${cell.execution_count}`;
   const row = document.createElement('div'); row.className = 'lee-reveal-save'; el.appendChild(row);
@@ -40,8 +42,8 @@ function lessonRevealActions(cell, el) {
     const path = lee.path, tabKey = lee.tabKey;
     try {
       await lee.nbQueue;
-      if (lee.tabKey !== tabKey) throw new Error('Return to the lesson notebook, then save.');
-      if ($('.lee-tab.active')?.classList.contains('dirty')) throw new Error('Save the notebook first.');
+      const stop = lee.tabKey !== tabKey ? 'Return to the lesson notebook, then save.' : $('.lee-tab.active')?.classList.contains('dirty') ? 'Save the notebook first.' : '';
+      if (stop) { status(stop, 'err'); button.disabled = false; return; }
       const d = await post('/lesson/save', {path, cell_id: cell.id});
       lesson.saved = d.saved; lesson.saved_message = d.message;
       const current = lee.tabKey === tabKey && lee.cells.find(c => c.id === cell.id && c.execution_count === cell.execution_count);
@@ -49,7 +51,7 @@ function lessonRevealActions(cell, el) {
       row.textContent = d.message;
       refreshLessonDue();
       if (d.disk_version) { recordDiskVersion(path, d.disk_version); await rebaseDrafts(path, d.disk_version); noteSelfWrite(path); }
-    } catch (e) { status(String(e.message || e), 'err'); button.disabled = false; }
+    } catch (e) { status(lessonSaid(e), 'err'); button.disabled = false; }
   };
 }
 function renderLessonReveal(c) {
@@ -62,6 +64,28 @@ function renderLessonReveal(c) {
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
 }
+//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer. The gate reveals once the server answers ok. A failure opens the gate again with the server's message.
+async function lessonPredict(e) {
+  const at = e.composedPath(), host = at.find(n => n.classList?.contains('lee-rupaka')), cell = at.find(n => n.matches?.('.lee-cell[data-id]'));
+  if (!cell || host?.leeSource == null) return;
+  // rupaka 0.0.1 has no settle, and its gate reveals on lock-in.
+  const held = typeof e.detail?.settle === 'function', settle = held ? e.detail.settle : () => {};
+  if (held) e.preventDefault();
+  try {
+    const {demo, gate, picked, ans, ok, why} = e.detail, path = lee.path;
+    const src = await srcHash(host.leeSource);
+    await lee.nbQueue;
+    const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, ans, ok, why, src});
+    settle(true);
+    status(d.message || '', 'ok');   // an ok answer also clears the toast of a failed try
+  } catch (err) {
+    const said = lessonSaid(err);
+    settle(false, said);
+    status(said, 'err');
+  }
+}
+// The Node harnesses load this file with no `document`.
+globalThis.document?.addEventListener('rk-predict', lessonPredict);
 function paintLessonCell(cell, c) {
   const role = c.cell_type === 'markdown' ? c.extra?.lesson?.role : '';
   cell.dataset.lessonRole = role || '';
@@ -80,7 +104,7 @@ function paintLessonCell(cell, c) {
       try { await nbEdit({op: 'lesson_confidence', i: at, confidence}); }
       catch (e) {
         if (previous == null) delete current.extra.lesson.confidence; else current.extra.lesson.confidence = previous;
-        status(String(e.message || e), 'err');
+        status(lessonSaid(e), 'err');
       } finally {
         const now = lee.cells.find(x => x.id === c.id), host = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`);
         if (now && host) paintLessonCell(host, now);

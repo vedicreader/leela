@@ -596,8 +596,12 @@ function loadRupaka(retry = false) {
     return (await Promise.all([css, js]))[0];
   })();
 }
+//: rupaka's sizes are fixed px for a reading page; in Leela a demo takes the IDE's text and button sizes. Its fonts come from `--serif` and `--head` on `.lee-rupaka`.
+const RUPAKA_LEE = `.rk{font-size:var(--lee-code-size);line-height:1.6}.rk-title{font-size:calc(var(--lee-code-size) + 3px)}
+.rk-lbl,.rk kbd{font-size:var(--lee-size-min)}.rk-note,.rk-gate .verdict,.rk-gate .verdict .stale,.rk-gate textarea{font-size:inherit}
+.rk button{font:inherit;font-size:11px;line-height:1.4;padding:3px 10px}`;
 function rupakaStyle(root, css) {
-  const text = css + ':host{display:block}';
+  const text = css + RUPAKA_LEE + ':host{display:block}';
   if (!('adoptedStyleSheets' in root)) return root.prepend(Object.assign(document.createElement('style'), {textContent: text}));
   if (!rupaka.sheet) { rupaka.sheet = new CSSStyleSheet(); rupaka.sheet.replaceSync(text); }
   root.adoptedStyleSheets = [rupaka.sheet];
@@ -648,14 +652,37 @@ function renderMath(el) {
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
-//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
-function rupakaFences(el, owner = null) {
+//: SHA-256 for a page with no `crypto.subtle`: plain http at a LAN address is not a secure context.
+function sha256Hex(bytes) {
+  const K = [], H = [], prime = n => { for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; };
+  for (let n = 2, i = 0; i < 64; n++) if (prime(n)) { if (i < 8) H[i] = (n ** .5 * 2 ** 32) | 0; K[i++] = (n ** (1 / 3) * 2 ** 32) | 0; }
+  const l = bytes.length, words = new Array(((l + 72) >> 6) << 4).fill(0), r = (x, k) => (x >>> k) | (x << (32 - k)), w = [];
+  for (let i = 0; i < l; i++) words[i >> 2] |= bytes[i] << (24 - (i % 4) * 8);
+  words[l >> 2] |= 0x80 << (24 - (l % 4) * 8);
+  words[words.length - 2] = Math.floor(l / 2 ** 29); words[words.length - 1] = (l * 8) | 0;
+  for (let j = 0; j < words.length; j += 16) {
+    const a = H.slice();
+    for (let i = 0; i < 64; i++) {
+      w[i] = i < 16 ? words[j + i] | 0 : (w[i - 16] + (r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3)) + w[i - 7] + (r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10))) | 0;
+      const [A, B, C, D, E, F, G, X] = a;
+      const t1 = (X + (r(E, 6) ^ r(E, 11) ^ r(E, 25)) + ((E & F) ^ (~E & G)) + K[i] + w[i]) | 0, t2 = ((r(A, 2) ^ r(A, 13) ^ r(A, 22)) + ((A & B) ^ (A & C) ^ (B & C))) | 0;
+      a.splice(0, 8, (t1 + t2) | 0, A, B, C, (D + t1) | 0, E, F, G);
+    }
+    for (let i = 0; i < 8; i++) H[i] = (H[i] + a[i]) | 0;
+  }
+  return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+}
+//: `nb.src_hash` in the page: the first 12 hex digits of the SHA-256 of `text`.
+const srcHash = async (text, b = new TextEncoder().encode(text)) => (globalThis.crypto?.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('') : sha256Hex(b)).slice(0, 12);
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from.
+function rupakaFences(el, owner = null, src = null) {
   const pass = owner && rupakaPass(owner), seen = new Map();
   $$('pre > code.language-rupaka', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
     const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
     let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
     const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    if (src != null) e.host.leeSource = src;
     const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
     if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
   });
@@ -2003,8 +2030,12 @@ async function mountTab(expectedPath = '') {
   refreshKernelPill();
   if (lee.kind === 'text' || lee.kind === 'notebook') leeSymbols();
   paintAgentAttachments();
-  try { const split=JSON.parse(localStorage.getItem('lee-editor-split')||'null'); if(split?.path&&split.path!==st.path) await mountSecondary(split.path,split.direction); }
-  catch (_) { localStorage.removeItem('lee-editor-split'); }
+  const split = leeSavedSplit(localStorage.getItem('lee-editor-split'));
+  if (split === false) leeCloseSplit();
+  else if (split?.page) { if (!lee.sidePage?.frame?.isConnected && !mountPage(split.page, split.title, split.direction)) leeCloseSplit(); }
+  else if (split?.path && split.path !== st.path) {
+    try { await mountSecondary(split.path, split.direction); } catch (_) { localStorage.removeItem('lee-editor-split'); }
+  }
   if (lee.pendingFocusPath === st.path) {
     lee.pendingFocusPath = '';
     requestAnimationFrame(() => {
@@ -2246,14 +2277,21 @@ function secondaryNotebook(host, st) {
     cells || '<div class="lee-dim">this notebook has no cells</div>';
 }
 
+function splitStage(direction) {
+  "The second pane, shown beside the editor with its editor destroyed and its side page dropped."
+  const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return null;
+  if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
+  lee.sidePage = null;
+  stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
+  host.hidden=false; setSplitSize(localStorage.getItem(SPLIT_SIZE)); return host;
+}
+
 async function mountSecondary(path, direction = 'vertical') {
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
   const st=await api('/tab/state?path='+encodeURIComponent(path));
   if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs and images can`,'err');
   if (st.kind !== 'text') {
-    if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
-    stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
-    host.hidden=false;
+    splitStage(direction);
     host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path||path))}</span>` +
       `<span class="lee-dim">${esc(SPLIT_KINDS[st.kind])}</span>` +
       `<button class="lee-btn" onclick="leeCloseSplit()">close</button></div>` +
@@ -2266,15 +2304,46 @@ async function mountSecondary(path, direction = 'vertical') {
     localStorage.setItem('lee-editor-split', JSON.stringify({path, direction}));
     return;
   }
-  if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
-  stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
-  host.hidden=false; host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
+  splitStage(direction); host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
   const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',readOnly:!!st.read_only,lineNums:true,lintPath:st.path||'',completeUrl:'/complete',tableKeys:true,
     onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
   recordDiskVersion(st.path || path, st.disk_version || '');
   lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
 }
-function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
+function mountPage(url, title = '', direction = 'vertical') {
+  "The local Leela page `url` in the second pane, in a frame with `pane=1`. False when `url` is not local or there is no second pane."
+  const src = leePaneURL(url), host = src && splitStage(direction === 'horizontal' ? 'horizontal' : 'vertical');
+  if (!host) return false;
+  const head = document.createElement('div'), trail = document.createElement('span'), own = document.createElement('a'),
+    x = document.createElement('button'), frame = document.createElement('iframe');
+  head.className = 'lee-split-head'; trail.className = 'lee-split-trail'; own.className = 'lee-split-own';
+  own.textContent = 'Open in a tab'; own.target = '_blank'; own.rel = 'noopener'; own.title = 'Open this page in a new tab';
+  x.className = 'lee-btn'; x.type = 'button'; x.textContent = 'close'; x.onclick = leeCloseSplit;
+  frame.src = src; head.append(trail, own, x); host.replaceChildren(head, frame);
+  const page = lee.sidePage = {frame, url: leeOwnURL(url), title: String(title || ''), trail: [], direction: direction === 'horizontal' ? 'horizontal' : 'vertical',
+    at(u, t) { page.url = leeOwnURL(u); if (t) page.title = t; paintSidePage(page); },
+    open(u) { const p = leePaneURL(u); if (!p) return; try { frame.contentWindow.location.replace(p); } catch (_) { frame.src = p; } },
+    link: openExternal,
+    key: k => document.body.dispatchEvent(new KeyboardEvent('keydown', {...k, bubbles: true, cancelable: true})),   // the keymap on `window` decides
+    close: leeCloseSplit};
+  lee.secondaryPath = ''; lee.activeEditor = 'primary';
+  paintSidePage(page);
+  return true;
+}
+function paintSidePage(page) {
+  "The trail, the title and the Open in a tab link of the side page, as text, and the page kept for a reload."
+  const head = page.frame.previousElementSibling, trail = $('.lee-split-trail', head), b = document.createElement('strong');
+  trail.replaceChildren();
+  for (const [label, href] of page.trail) {
+    const a = document.createElement('a'); a.textContent = label; a.href = href;
+    a.onclick = e => { e.preventDefault(); page.trail = []; page.open(href); };
+    trail.append(a, ' › ');
+  }
+  b.textContent = page.title || 'Side page'; trail.append(b);
+  page.frame.title = b.textContent; $('.lee-split-own', head).href = leeOwnURL(page.url);
+  localStorage.setItem('lee-editor-split', JSON.stringify({page: page.url, title: page.title, direction: page.direction}));
+}
+function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.sidePage=null;lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
 window.leeCloseSplit=leeCloseSplit;
 function leeSplit(direction='vertical') {
   // Any open tab the second pane can hold, not only the text ones: two notebooks beside each other
@@ -2922,7 +2991,7 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
   if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
 });
 //: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
-const mdPaint = (c, cached = true) => el => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null); };
+const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null, cached && c ? src : null); };
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
@@ -3307,6 +3376,8 @@ function lessonRevealText(c) {
   if (lesson.confidence >= 60) lines.push('You were sure, and it went another way. That is the part worth a look.');
   return lines.join('\n');
 }
+//: The line a failed lesson write shows: the server's own sentence when it sent one, else a line that says what to do.
+const lessonSaid = (err, b = err?.body) => (b && typeof b === 'object' && (b.error || b.message)) || (typeof b === 'string' && b.trim() && !b.trim().startsWith('<') && b.trim().slice(0, 300)) || 'Leela did not save this. Try again.';
 function lessonRevealActions(cell, el) {
   const lesson = cell.extra.lesson, key = `${cell.id}:${cell.execution_count}`;
   const row = document.createElement('div'); row.className = 'lee-reveal-save'; el.appendChild(row);
@@ -3320,8 +3391,8 @@ function lessonRevealActions(cell, el) {
     const path = lee.path, tabKey = lee.tabKey;
     try {
       await lee.nbQueue;
-      if (lee.tabKey !== tabKey) throw new Error('Return to the lesson notebook, then save.');
-      if ($('.lee-tab.active')?.classList.contains('dirty')) throw new Error('Save the notebook first.');
+      const stop = lee.tabKey !== tabKey ? 'Return to the lesson notebook, then save.' : $('.lee-tab.active')?.classList.contains('dirty') ? 'Save the notebook first.' : '';
+      if (stop) { status(stop, 'err'); button.disabled = false; return; }
       const d = await post('/lesson/save', {path, cell_id: cell.id});
       lesson.saved = d.saved; lesson.saved_message = d.message;
       const current = lee.tabKey === tabKey && lee.cells.find(c => c.id === cell.id && c.execution_count === cell.execution_count);
@@ -3329,7 +3400,7 @@ function lessonRevealActions(cell, el) {
       row.textContent = d.message;
       refreshLessonDue();
       if (d.disk_version) { recordDiskVersion(path, d.disk_version); await rebaseDrafts(path, d.disk_version); noteSelfWrite(path); }
-    } catch (e) { status(String(e.message || e), 'err'); button.disabled = false; }
+    } catch (e) { status(lessonSaid(e), 'err'); button.disabled = false; }
   };
 }
 function renderLessonReveal(c) {
@@ -3342,6 +3413,28 @@ function renderLessonReveal(c) {
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
 }
+//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer. The gate reveals once the server answers ok. A failure opens the gate again with the server's message.
+async function lessonPredict(e) {
+  const at = e.composedPath(), host = at.find(n => n.classList?.contains('lee-rupaka')), cell = at.find(n => n.matches?.('.lee-cell[data-id]'));
+  if (!cell || host?.leeSource == null) return;
+  // rupaka 0.0.1 has no settle, and its gate reveals on lock-in.
+  const held = typeof e.detail?.settle === 'function', settle = held ? e.detail.settle : () => {};
+  if (held) e.preventDefault();
+  try {
+    const {demo, gate, picked, ans, ok, why} = e.detail, path = lee.path;
+    const src = await srcHash(host.leeSource);
+    await lee.nbQueue;
+    const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, ans, ok, why, src});
+    settle(true);
+    status(d.message || '', 'ok');   // an ok answer also clears the toast of a failed try
+  } catch (err) {
+    const said = lessonSaid(err);
+    settle(false, said);
+    status(said, 'err');
+  }
+}
+// The Node harnesses load this file with no `document`.
+globalThis.document?.addEventListener('rk-predict', lessonPredict);
 function paintLessonCell(cell, c) {
   const role = c.cell_type === 'markdown' ? c.extra?.lesson?.role : '';
   cell.dataset.lessonRole = role || '';
@@ -3360,7 +3453,7 @@ function paintLessonCell(cell, c) {
       try { await nbEdit({op: 'lesson_confidence', i: at, confidence}); }
       catch (e) {
         if (previous == null) delete current.extra.lesson.confidence; else current.extra.lesson.confidence = previous;
-        status(String(e.message || e), 'err');
+        status(lessonSaid(e), 'err');
       } finally {
         const now = lee.cells.find(x => x.id === c.id), host = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`);
         if (now && host) paintLessonCell(host, now);

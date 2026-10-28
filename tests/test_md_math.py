@@ -112,3 +112,10 @@ def test_a_katex_that_will_not_load_leaves_the_tex_and_warns_once(tmp_path):
                 'katex': await pg.evaluate(f'() => document.querySelectorAll({CELL!r} + " .katex").length')}
     got = _run(go, roots=[tmp_path])
     assert got['tex'] == ['a^2+b^2', 'c'] and got['katex'] == 0 and len(got['warnings']) == 1, got
+
+def test_no_cdn_for_katex():
+    root = Path(__file__).parents[1]/'leela'
+    hits = [str(p) for p in root.rglob('*') if p.suffix in ('.py', '.js', '.html') and 'vendor' not in p.parts
+            and 'cdn.jsdelivr.net' in p.read_text(errors='ignore')]
+    assert hits == []
+    assert (root/'vendor'/'katex'/'katex.min.js').is_file()

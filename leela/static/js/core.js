@@ -596,8 +596,12 @@ function loadRupaka(retry = false) {
     return (await Promise.all([css, js]))[0];
   })();
 }
+//: rupaka's sizes are fixed px for a reading page; in Leela a demo takes the IDE's text and button sizes. Its fonts come from `--serif` and `--head` on `.lee-rupaka`.
+const RUPAKA_LEE = `.rk{font-size:var(--lee-code-size);line-height:1.6}.rk-title{font-size:calc(var(--lee-code-size) + 3px)}
+.rk-lbl,.rk kbd{font-size:var(--lee-size-min)}.rk-note,.rk-gate .verdict,.rk-gate .verdict .stale,.rk-gate textarea{font-size:inherit}
+.rk button{font:inherit;font-size:11px;line-height:1.4;padding:3px 10px}`;
 function rupakaStyle(root, css) {
-  const text = css + ':host{display:block}';
+  const text = css + RUPAKA_LEE + ':host{display:block}';
   if (!('adoptedStyleSheets' in root)) return root.prepend(Object.assign(document.createElement('style'), {textContent: text}));
   if (!rupaka.sheet) { rupaka.sheet = new CSSStyleSheet(); rupaka.sheet.replaceSync(text); }
   root.adoptedStyleSheets = [rupaka.sheet];
@@ -648,14 +652,37 @@ function renderMath(el) {
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
-//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line.
-function rupakaFences(el, owner = null) {
+//: SHA-256 for a page with no `crypto.subtle`: plain http at a LAN address is not a secure context.
+function sha256Hex(bytes) {
+  const K = [], H = [], prime = n => { for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; };
+  for (let n = 2, i = 0; i < 64; n++) if (prime(n)) { if (i < 8) H[i] = (n ** .5 * 2 ** 32) | 0; K[i++] = (n ** (1 / 3) * 2 ** 32) | 0; }
+  const l = bytes.length, words = new Array(((l + 72) >> 6) << 4).fill(0), r = (x, k) => (x >>> k) | (x << (32 - k)), w = [];
+  for (let i = 0; i < l; i++) words[i >> 2] |= bytes[i] << (24 - (i % 4) * 8);
+  words[l >> 2] |= 0x80 << (24 - (l % 4) * 8);
+  words[words.length - 2] = Math.floor(l / 2 ** 29); words[words.length - 1] = (l * 8) | 0;
+  for (let j = 0; j < words.length; j += 16) {
+    const a = H.slice();
+    for (let i = 0; i < 64; i++) {
+      w[i] = i < 16 ? words[j + i] | 0 : (w[i - 16] + (r(w[i - 15], 7) ^ r(w[i - 15], 18) ^ (w[i - 15] >>> 3)) + w[i - 7] + (r(w[i - 2], 17) ^ r(w[i - 2], 19) ^ (w[i - 2] >>> 10))) | 0;
+      const [A, B, C, D, E, F, G, X] = a;
+      const t1 = (X + (r(E, 6) ^ r(E, 11) ^ r(E, 25)) + ((E & F) ^ (~E & G)) + K[i] + w[i]) | 0, t2 = ((r(A, 2) ^ r(A, 13) ^ r(A, 22)) + ((A & B) ^ (A & C) ^ (B & C))) | 0;
+      a.splice(0, 8, (t1 + t2) | 0, A, B, C, (D + t1) | 0, E, F, G);
+    }
+    for (let i = 0; i < 8; i++) H[i] = (H[i] + a[i]) | 0;
+  }
+  return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');
+}
+//: `nb.src_hash` in the page: the first 12 hex digits of the SHA-256 of `text`.
+const srcHash = async (text, b = new TextEncoder().encode(text)) => (globalThis.crypto?.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('') : sha256Hex(b)).slice(0, 12);
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from.
+function rupakaFences(el, owner = null, src = null) {
   const pass = owner && rupakaPass(owner), seen = new Map();
   $$('pre > code.language-rupaka', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
     const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
     let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
     const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    if (src != null) e.host.leeSource = src;
     const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
     if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
   });
