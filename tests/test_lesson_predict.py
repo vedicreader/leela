@@ -346,3 +346,21 @@ const cases = [['server', err({ok: false, error: 'The learning vault is locked o
         assert got[k]['server'] == [['err', 'The learning vault is locked or unreadable.']], got
         assert got[k]['html'] == got[k]['network'] == retry, got
     assert got['card']['dirty'] == [['err', 'Save the notebook first.']], 'a check on the page keeps its own line'
+
+HASH = r'''
+const vm = require('vm'), src = require('fs').readFileSync(process.argv[1], 'utf8'), texts = JSON.parse(process.argv[2]);
+const grab = re => (src.match(re) || [''])[0];
+const code = grab(/^function sha256Hex\(bytes\) \{[\s\S]*?^\}$/m) + '\n' + grab(/^const srcHash = .*;$/m);
+const ctx = {TextEncoder, Uint8Array}; vm.createContext(ctx); vm.runInContext(code + '; globalThis.srcHash = srcHash;', ctx);
+(async () => console.log(JSON.stringify(await Promise.all(texts.map(t => ctx.srcHash(t))))))();
+'''
+
+def test_a_gate_saves_on_a_page_with_no_crypto_subtle():
+    "On plain http at a LAN address `crypto.subtle` is missing, so every gate failed to save; the page hashes the source itself."
+    from leela.blocks.nb.nb import src_hash
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    texts = ['', 'x', 'print(1)\n', 'सॉफ्टमैक्स — ✓ 😀', 'a' * 55, 'a' * 56, 'a' * 63, 'a' * 64, 'b' * 1000, 'def f(x):\n    return 2 * x\n' * 40]
+    r = subprocess.run([node, '-e', HASH, str(ROOT/'leela/static/js/core.js'), json.dumps(texts)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == [src_hash(t) for t in texts]
