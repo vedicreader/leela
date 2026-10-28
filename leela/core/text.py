@@ -16,7 +16,7 @@ try:
 except ImportError:                                  # a broken wheel still ranks, just slower
     def _ratio(a, b): return SequenceMatcher(None, a, b).ratio()
 
-__all__ = ['DiffRow', 'HL_MAX', 'path_lang', 'hl_lines', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
+__all__ = ['MD_HIGHLIGHT', 'md_html', 'DiffRow', 'HL_MAX', 'path_lang', 'hl_lines', 'udiff', 'diff_rows', 'diff_stat', 'diff_label', 'closest',
            'did_you_mean', 'fuzzy_rank', 'md_blocks', 'md_block_diff', 'md_change_kinds', 'clean_html']
 
 @dataclass
@@ -143,11 +143,24 @@ def _html_attr(tag, attr, val):
         return val if tag == 'img' and attr == 'src' and _IMG_DATA.match(val) else None
     return val
 
-def clean_html(html):
-    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles, and only safe link schemes."
+def clean_html(html, relative=True):
+    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles, and only safe link schemes. `relative=False` drops relative URLs, so stored text makes no request to Leela."
     return nh3.clean(html, tags=_HTML_TAGS, clean_content_tags=_HTML_DROP, attributes=_HTML_ATTRS, attribute_filter=_html_attr,
-                     strip_comments=False, url_schemes={'http', 'https', 'mailto', 'data'}, link_rel='noopener noreferrer',
+                     strip_comments=False, url_schemes={'http', 'https', 'mailto', 'data'}, link_rel='noopener noreferrer', url_relative='pass_through' if relative else 'deny',
                      tag_attribute_values={'input': {'type': {'checkbox'}}}, set_tag_attribute_values={'input': {'disabled': 'disabled'}})
+
+def _md_highlight():
+    "`spans` when mdhtml can highlight, else off."
+    try: import fastpylight; return 'spans'
+    except ImportError: return None
+
+MD_HIGHLIGHT = _md_highlight()
+
+def md_html(text):
+    "Safe HTML for stored Markdown `text`: dollar maths as `.math`, highlighted code, and only what `clean_html` keeps."
+    from mdhtml import md2mdhtml, mdhtml2html
+    md = md2mdhtml(str(text or ''), math='dollars', implicit_figures=True, bare_autolinks=True, frontmatter=False)
+    return clean_html(str(mdhtml2html(md, refs='ids', auto_ids=False, hl=MD_HIGHLIGHT)), relative=False)
 
 def _tags(b):
     "The tags a block may render as; `('h2',)` for a level-2 heading, `()` when unknowable."

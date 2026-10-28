@@ -132,7 +132,7 @@ def test_a_pane_in_a_dark_ide_on_a_light_os_is_dark_and_follows_the_ide(tmp_path
 def test_a_long_step_page_in_a_tab_of_its_own_scrolls(tmp_path, monkeypatch):
     ws = _ws(tmp_path, monkeypatch)
     lr = Learning(ws.memory._store('learning')); j = walk(lr)
-    lr.put_journey({**j, 'id': 'long-0001', 'steps': [{**j.steps[0], 'read': {**j.steps[0]['read'], 'text': '\n'.join(f'line {i}' for i in range(200))}}]})
+    lr.put_journey({**j, 'id': 'long-0001', 'steps': [{**j.steps[0], 'read': {**j.steps[0]['read'], 'text': '\n\n'.join(f'line {i}' for i in range(200))}}]})
     async def go(pg, base):
         await pg.goto(base + '/learn?walk=long-0001&step=0', wait_until='networkidle')
         assert await pg.evaluate('document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight')
@@ -256,3 +256,70 @@ def test_lookup_page_in_the_pane(tmp_path, monkeypatch):
         assert await pg.evaluate("!document.activeElement || document.activeElement.tagName !== 'IFRAME'"), 'the pane took focus from the IDE'
         await _shoot(pg, 'lookup-pane', ide=True)
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch), ide=False))
+
+MATHS = dict(text='Weights $w_i$ sum to 1.\n\n$$\\sum_i w_i = 1$$\n\n```python\nprint(1 < 2)\n```', note='Watch **the sum**.')
+
+def test_a_step_page_draws_its_maths_and_moves_between_steps(tmp_path, monkeypatch):
+    ws = _ws(tmp_path, monkeypatch)
+    lr = Learning(ws.memory._store('learning')); j = lr.journey(JID)
+    lr.put_journey({**j, 'steps': [{**j.steps[0], 'read': dict(section='2 Background', text=MATHS['text']), 'note': MATHS['note']}, j.steps[1]]})
+    async def go(pg, base):
+        await pg.goto(base + STEP0, wait_until='networkidle')
+        await pg.wait_for_selector('blockquote .katex'); await pg.wait_for_selector('blockquote .katex-display')
+        assert await pg.locator('blockquote pre code').inner_text() == 'print(1 < 2)\n'
+        assert await pg.locator('.lee-learn-note strong').inner_text() == 'the sum'
+        assert await pg.locator('.lee-learn-steps span').inner_text() == 'Step 1 of 2' and await pg.get_by_role('link', name='Previous step').count() == 0
+        await _shoot(pg, 'step-maths')
+        await _ide(pg, base)
+        frame = await _side(pg, tmp_path)
+        await frame.wait_for_selector('blockquote .katex')
+        await frame.get_by_role('link', name='Next step').click()
+        await frame.wait_for_url('**step=1**pane=1**'); await frame.wait_for_load_state('load')
+        assert 'Attention mixes values.' in await frame.locator('blockquote').inner_text()
+        assert await frame.locator('.lee-learn-steps span').inner_text() == 'Step 2 of 2'
+        await pg.wait_for_function(f"(JSON.parse({SAVED} || 'null') || {{}}).page?.includes('step=1')")
+        await frame.get_by_role('link', name='Previous step').click()
+        await frame.wait_for_url('**step=0**pane=1**')
+    asyncio.run(_on_learn(go, ws, ide=False))
+
+WIDTH = "document.querySelector('#editor').getBoundingClientRect().width / document.querySelector('#editorstage').getBoundingClientRect().width"
+
+def test_the_split_resizes_by_drag_and_keys_and_keeps_its_size(tmp_path, monkeypatch):
+    async def go(pg, base):
+        await _side(pg, tmp_path)
+        bar = pg.locator('.lee-editor-splitter')
+        assert abs(await pg.evaluate(WIDTH) - .5) < .02
+        box, stage = await bar.bounding_box(), await pg.locator('#editorstage').bounding_box()
+        await pg.mouse.move(box['x'] + 1, box['y'] + 40); await pg.mouse.down()
+        await pg.mouse.move(stage['x'] + stage['width'] * .65, box['y'] + 40, steps=8)   # across the side page's frame
+        await pg.mouse.up()
+        assert abs(await pg.evaluate(WIDTH) - .65) < .03, await pg.evaluate(WIDTH)
+        await bar.focus(); await pg.keyboard.press('ArrowLeft'); await pg.keyboard.press('ArrowLeft')
+        assert abs(await pg.evaluate(WIDTH) - .55) < .03 and await bar.get_attribute('aria-valuenow') == '55'
+        for _ in range(12): await pg.keyboard.press('ArrowLeft')
+        assert await bar.get_attribute('aria-valuenow') == '20' and await pg.evaluate("localStorage.getItem('lee-editor-split-size')") == '20'
+        assert not await pg.evaluate("document.querySelector('#editor2').hidden"), 'an arrow key on the splitter reached another binding'
+        await pg.keyboard.press('ArrowRight'); await pg.keyboard.press('ArrowRight')
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length')
+        await pg.wait_for_function("document.querySelector('#editor2 iframe')")
+        assert abs(await pg.evaluate(WIDTH) - .30) < .03, await pg.evaluate(WIDTH)
+        await pg.evaluate('leeCloseSplit()'); await pg.evaluate('([u, t]) => window.leeSidePage.open(u, t)', [STEP0, 'Softmax'])
+        await pg.wait_for_function("document.querySelector('#editor2 iframe')")
+        assert abs(await pg.evaluate(WIDTH) - .30) < .03, 'closing the split forgot its size'
+        await _shoot(pg, 'split-resized', ide=True)
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
+def test_a_narrow_split_keeps_the_cell_bar_off_the_gutter(tmp_path, monkeypatch):
+    from leela.blocks.nb.nb import Notebook
+    p = tmp_path/'n.ipynb'; Notebook.blank().save(p)
+    async def go(pg, base):
+        await pg.evaluate("localStorage.setItem('lee-editor-split-size', '25')")
+        await pg.evaluate('p => leeOpenFile(p)', str(p)); await pg.wait_for_selector('.lee-cell .lee-cell-chrome')
+        assert await pg.evaluate('([u, t]) => window.leeSidePage.open(u, t)', [STEP0, 'Softmax']) is True
+        await pg.wait_for_function("document.querySelector('#editor2 iframe')")
+        await pg.evaluate("for (const t of document.querySelectorAll('.lee-cell-time')) { t.hidden = false; t.textContent = '66ms'; }")
+        bad = await pg.evaluate("""() => [...document.querySelectorAll('#editor .lee-cell')].flatMap(c => {
+            const g = c.querySelector('.lee-gutter').getBoundingClientRect(), bar = c.querySelector('.lee-cell-chrome');
+            return [...bar.children].filter(x => x.getBoundingClientRect().width && x.getBoundingClientRect().left < g.right - .5).map(x => x.className); })""")
+        assert bad == [], bad
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))

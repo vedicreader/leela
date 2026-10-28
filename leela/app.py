@@ -37,7 +37,7 @@ from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
 from .core.web import Assets, IDE_BUNDLES, JsonBody, static_dirs
 from .core.text import did_you_mean
-from .core.text import clean_html, md_block_diff, md_blocks, md_change_kinds
+from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook
 from .blocks.term.term import TerminalGate, colorfgbg, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
@@ -45,12 +45,6 @@ from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 
 __all__ = ['ide_app', 'serve_ide']
 
-def _md_highlight():
-    "`spans` when mdhtml can highlight, else off."
-    try: import fastpylight; return 'spans'
-    except ImportError: return None
-
-MD_HIGHLIGHT = _md_highlight()
 
 #: Seconds an idle connection stays open. uvicorn's 5 closed connections WebKit still held, and WebKit
 #: does not retry a POST sent on one: the Markdown renderer showed "Load failed" after a pause.

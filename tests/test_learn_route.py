@@ -71,7 +71,7 @@ def test_learn_escapes_the_title_and_the_note(rig):
     lr.put_journey({**j, 'id': 'html-0001', 'title': '<b>Bold</b> walk', 'steps': [{**j.steps[0], 'note': '<img src=x onerror=y()>'}]})
     r = c.get('/learn?walk=html-0001&step=0')
     assert '<b>Bold' not in r.text and '&lt;b&gt;Bold' in r.text
-    assert '<img src=x' not in r.text and '&lt;img src=x' in r.text
+    assert 'onerror' not in r.text and 'src="x"' not in r.text and '<img src=x' not in r.text, 'markdown keeps no handler and no request'
 
 @pytest.mark.parametrize('q, code, text', [
     ('walk=../x', 400, 'walk is not a walk id'), ('walk=a-1&step=-1', 400, 'step must be a whole number from 0'), ('', 400, 'nothing to open'),
@@ -554,3 +554,25 @@ def test_lookup_keeps_the_tool_for_the_next_search(rig, monkeypatch):
     r = c.get('/learn/lookup?q=x&tool=abc123&pane=1')
     assert re.search(r'<input type="hidden" (name="tool" value="abc123"|value="abc123" name="tool")>', r.text), 'a second search left the tool environment'
     assert 'name="tool"' not in c.get('/learn/lookup?q=x').text
+
+MATH = dict(text='Weights $w_i$ sum to 1.\n\n$$\\sum w = 1$$\n\n```python\nprint(1 < 2)\n```', note='See [the paper](https://example.org), [here](javascript:x()) and ![a](/learn/x).')
+
+def test_a_step_renders_its_markdown_and_maths_and_keeps_nothing_live(rig):
+    c, ws, lr, j, root = rig
+    lr.put_journey({**j, 'id': 'math-0001', 'steps': [{**j.steps[0], 'read': dict(section='', text=MATH['text']), 'note': MATH['note']}, j.steps[1]]})
+    r = c.get('/learn?walk=math-0001&step=0')
+    assert '<span class="math inline">w_i</span>' in r.text and '<span class="math display">\\sum w = 1</span>' in r.text
+    assert re.search(r'<pre><code class="language-python">.*print.*&lt;.*2', r.text) and '$w_i$' not in r.text
+    assert 'href="https://example.org"' in r.text and 'javascript:' not in r.text and 'src="/learn/x"' not in r.text, 'stored text makes no request'
+    assert 'katex/katex.min.js' in r.text and 'katex/katex.min.css' in r.text and 'lee-pane.js' in r.text
+    r = c.get('/learn?walk=math-0001&step=1')
+    assert '<script>x()' not in r.text and '&lt;script&gt;' in r.text
+
+@pytest.mark.parametrize('pane', ['', '1'])
+def test_a_step_says_where_it_is_in_the_walk_and_links_its_neighbours(rig, pane):
+    c = rig[0]
+    tail = '&amp;pane=1' if pane else ''
+    first, last = c.get(f'/learn?walk={JID}&step=0&pane={pane}').text, c.get(f'/learn?walk={JID}&step=1&pane={pane}').text
+    assert 'Step 1 of 2' in first and f'href="/learn?walk={JID}&amp;step=1{tail}"' in first and 'Previous step' not in first
+    assert 'Step 2 of 2' in last and f'href="/learn?walk={JID}&amp;step=0{tail}"' in last and 'Next step' not in last
+    assert 'Step ' not in c.get('/learn?topic=Softmax').text, 'a topic is not in a walk'

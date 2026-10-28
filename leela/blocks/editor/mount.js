@@ -187,7 +187,7 @@ function splitStage(direction) {
   if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
   lee.sidePage = null;
   stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
-  host.hidden=false; return host;
+  host.hidden=false; setSplitSize(localStorage.getItem(SPLIT_SIZE)); return host;
 }
 
 async function mountSecondary(path, direction = 'vertical') {

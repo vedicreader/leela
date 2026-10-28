@@ -34,6 +34,7 @@ function initSplits() {
       sp.onpointermove = move; sp.onpointerup = up;
     };
   });
+  initEditorSplitter();
   const centreHeight = () => $('.lee-centre')?.clientHeight || window.innerHeight;
   // The dock can occupy most of the workspace. The editor keeps its own 140px floor.
   const limit = () => Math.min(900, Math.max(110, centreHeight() - 240));
@@ -74,6 +75,34 @@ function initSplits() {
     localStorage.setItem('lee-expand', 'right:wide');
   localStorage.removeItem('lee-agent-expanded');
   leeSyncExpand();
+}
+
+const SPLIT_SIZE = 'lee-editor-split-size';   //: the first pane's share in percent; its own key, as each side page rewrites `lee-editor-split`
+//: The share of the first pane of the editor split, clamped to 20-80; `keep` saves it for the next split and the next session.
+function setSplitSize(v, keep = false) {
+  const stage = $('#editorstage'), bar = $('.lee-editor-splitter'); if (!stage || !bar) return;
+  v = Math.round(Math.max(20, Math.min(80, Number(v) || 50)));
+  stage.style.setProperty('--lee-split', v + '%'); bar.setAttribute('aria-valuenow', v);
+  bar.setAttribute('aria-orientation', stage.classList.contains('split-horizontal') ? 'horizontal' : 'vertical');
+  if (keep) localStorage.setItem(SPLIT_SIZE, v);
+}
+const splitSize = () => parseFloat($('#editorstage')?.style.getPropertyValue('--lee-split')) || 50;
+function initEditorSplitter() {
+  const stage = $('#editorstage'), bar = $('.lee-editor-splitter'); if (!stage || !bar) return;
+  Object.assign(bar, {tabIndex: 0, title: 'Drag, or use the arrow keys, to resize the split'});
+  bar.setAttribute('role', 'separator'); bar.setAttribute('aria-label', 'Resize the split'); bar.setAttribute('aria-valuemin', 20); bar.setAttribute('aria-valuemax', 80);
+  const across = () => stage.classList.contains('split-horizontal');
+  bar.onpointerdown = e => {
+    e.preventDefault(); bar.classList.add('drag'); stage.classList.add('split-dragging'); bar.setPointerCapture(e.pointerId);
+    const r = stage.getBoundingClientRect();
+    bar.onpointermove = ev => setSplitSize(across() ? (ev.clientY - r.top) / r.height * 100 : (ev.clientX - r.left) / r.width * 100);
+    bar.onpointerup = () => { bar.classList.remove('drag'); stage.classList.remove('split-dragging'); bar.onpointermove = bar.onpointerup = null; setSplitSize(splitSize(), true); };
+  };
+  bar.onkeydown = e => {
+    const step = (across() ? {ArrowUp: -5, ArrowDown: 5} : {ArrowLeft: -5, ArrowRight: 5})[e.key];
+    if (!step) return;
+    e.preventDefault(); e.stopPropagation(); setSplitSize(splitSize() + step, true);
+  };
 }
 
 async function refreshKernelPill() {

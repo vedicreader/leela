@@ -113,6 +113,6 @@ def test_a_page_in_the_pane_has_no_chrome(rig):
     src = re.search(r'<script src="(/leestatic/lee-pane\.js\?v=\d+)"', r.text)
     assert r.status_code == 200 and 'class="lee-learn-page in-pane"' in r.text and src and 'id="tabbar"' not in r.text
     t = c.get(f'/learn?walk={JID}&step=0').text
-    assert 'in-pane' not in t and 'pane.js' not in t
+    assert 'in-pane' not in t and 'lee-pane.js' in t, 'a step page in a tab of its own loads the module for its maths, and gets no pane chrome'
     js = c.get(src[1])
     assert js.status_code == 200 and 'javascript' in js.headers['content-type'] and js.text == PANE_JS.read_text()

@@ -86,7 +86,14 @@ async function leeScratch(btn) {
   } catch (_) { say('Leela did not add the cell.'); }
   finally { btn.disabled = false; }
 }
+function leeLearnMath() {
+  "Draw each `.math` of a learn page with KaTeX, which the page loads deferred; a formula KaTeX cannot read stays as its text.";
+  if (!window.katex) return;
+  for (const e of document.querySelectorAll('.lee-learn .math'))
+    try { katex.render(e.textContent, e, {displayMode: e.classList.contains('display'), throwOnError: false}); } catch (_) {}
+}
 function leePaneBoot() {
+  if (document.documentElement.classList.contains('lee-learn-page')) leeLearnMath();
   if (document.documentElement.classList.contains('in-pane')) { leePaneAt(); document.addEventListener('keydown', leePaneKey); return; }
   if (typeof lee === 'undefined') return;   // a learn page in a tab of its own: no split editor to host a pane
   window.leeSidePage = {open: leeSidePageOpen, close: leeSidePageClose};
