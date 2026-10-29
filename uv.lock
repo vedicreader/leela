@@ -2540,6 +2540,7 @@ name = "leela"
 source = { editable = "." }
 dependencies = [
     { name = "abhyasa" },
+    { name = "beautifulsoup4" },
     { name = "cfeasy" },
     { name = "dhrishti" },
     { name = "dhrona" },
@@ -2622,6 +2623,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "abhyasa", directory = "../abhyasa" },
+    { name = "beautifulsoup4", specifier = ">=4.15.0" },
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.10" },
     { name = "dhrona", specifier = ">=0.1.18" },

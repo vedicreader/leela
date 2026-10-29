@@ -33,6 +33,7 @@ dependencies = [
     "koshas>=0.1.20",
     "litesearch>=0.1.61",
     "mdhtml>=0.1.38",
+    "beautifulsoup4>=4.15.0",   # the room copy finds rupaka demos in rendered markdown (blocks/nb/show.py)
     "nh3==0.3.7",
     "rgapi>=0.1.22",
     "python-fasthtml>=0.14.9",
