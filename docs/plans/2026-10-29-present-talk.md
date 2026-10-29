@@ -4,7 +4,7 @@
 
 **Goal:** Leela has one presentation mode. Select a cell. Press Alt+R or click Present. Use arrows or Space. Open Audience window if you have a projector. Alt+R, the toolbar Present button and "Present from this cell" start the same presentation at the selected cell, with unsaved edits, and write nothing to disk. The audience window is an optional action inside the presentation. Only notebooks are presented.
 
-**Architecture:** The page groups the live cells into one flat line of slides with the RISE rules in `present.js`. It posts that line, with the editor text and outputs, to `POST /present/start`. The server renders and cleans each slide block, keeps the presentation in memory in `Presentation` (`leela/blocks/nb/show.py`), and returns two copies: the presenter copy (notes, demo answers) and the room copy (neither). One shared slide renderer, `leela/blocks/nb/slides.js`, draws both copies on a 1280x720 canvas. The presenter screen is an overlay in the IDE page, because the kernel, `runCell` and the live cells are there. The audience window is a page alone, `/present/audience`, that loads `lee-slides.js`. The two windows keep in step through abhyasa's `stage.js` over `BroadcastChannel`. reveal.js leaves Leela.
+**Architecture:** The page groups the live cells into one flat line of slides with the RISE rules in `present.js`. It posts that line, with the editor text and outputs, to `POST /present/start`. The server renders and cleans each slide block, keeps the presentation in memory in `Presentation` (`leela/blocks/nb/show.py`), and returns two copies: the presenter copy (notes, demo answers) and the room copy (neither). One shared slide renderer, `leela/blocks/nb/slides.js`, draws both copies on a 1280x720 canvas. The presenter screen is an overlay in the IDE page, because the kernel, `runCell` and the live cells are there. The audience window is a page alone, `/present/audience`, that loads `lee-slides.js`. The presenter posts each move to the server. The server keeps the state of the one presentation and sends each change to the audience windows over SSE (decision 4, changed on 29 October). reveal.js leaves Leela.
 
 **Tech Stack:** Python 3.13, FastHTML, Starlette `TestClient`, abhyasa 0.0.12 (path source until it is on PyPI), rupaka 0.0.6 (PyPI, vendored bundle), `mdhtml`, `nh3`, `uv`, pytest, Node for the JS harnesses, Playwright with its bundled Chromium.
 
@@ -17,12 +17,12 @@ Owner decisions (final, 29 October):
 1. Alt+R is an instant show of the live notebook, with unsaved edits. A presentation writes no file.
 2. Slides come from RISE cell metadata: `slide`, `subslide`, `fragment`, `skip`, `notes`. H2 headings cut slides only when no cell is marked `slide` or `subslide`; `fragment`, `notes`, `skip` and `-` marks still allow them (session decision after the Task 1 review, matching today's boundary rule). Slides are cut per cell, so a markdown cell with several H2 headings opens one slide.
 3. RISE subslides are flattened into one line.
-4. There is one mode. The audience window is an optional action inside it, over `BroadcastChannel`.
+4. There is one mode. The audience window is an optional action inside it. Changed on 29 October (`target/reviews/task4-review.md`): the audience window gets its updates through the Leela server, not over `BroadcastChannel`. The presenter (the IDE window) posts its moves to the server: slide, step, laser point, blank, demo state (`Rupaka.state`), gate settle and open, output and end. The server holds the current state of the one presentation (`Presentation` in `presentation.py`) and sends each change to the audience windows over SSE, keyed by the per-session key. A reloaded audience window gets the current state at once (slide, step, demo state, settled gates, last output). A reloaded presenter resumes from the server's state. The audience window has GET routes only. The presenter shows `Audience window: connected` or `Audience window: not connected` from the server's count of audience streams, not from timers.
 5. Esc never ends the presentation.
 6. Leela's themes and fonts are used everywhere. `rise.theme` is dropped.
 7. Saved talks and run logs are deferred. If they return, the talk is `<notebook>.talk.json` beside the notebook and run logs go to the shared learning store.
 8. "Shared themes" means Leela's own theme families and fonts (`--lee-*` tokens, `--lee-sans`, `--lee-mono`).
-9. In the Mac app the fallback is "Present in your browser".
+9. Dropped on 29 October. The fallback "Present in your browser" is not needed. Leela serves the audience page, so the Mac app opens it in the system browser and it gets the same updates from the server.
 10. There is no "Present to a room" command and there are no vertical stacks. Alt+R starts the one mode.
 11. No path source is in a release. A release check fails while `[tool.uv.sources] abhyasa` is there.
 
@@ -47,8 +47,8 @@ Decisions made in this plan (the owner can overrule each one):
 - **The server renders slide markup for both windows.** Markdown goes through the same `mdhtml` calls as `/markdown/render` (`leela/app.py:952-955`) and then `clean_html` (`leela/core/text.py:146-150`). The presenter preview and the audience draw the same HTML, so what the presenter sees is what the room sees.
 - **One shared slide renderer.** `slides.js` is in `LAYERS` for the IDE page and in `ALONE` as `lee-slides.js` for the audience page, as `blocks/learn/pane.js` is in both today (`tools/build_ide_js.py:39`, `:55`). `orphans()` (`build_ide_js.py:77-81`) needs no change.
 - **reveal.js is removed**, with `leela/vendor/reveal/`, `loadReveal`, `presentFit` and the reveal options of `riseConfig`. It brought a second public keymap and the white page.
-- **The channel name is `'leela:' + key`.** `key` is `secrets.token_hex(16)` from `POST /present/start`, made without `new_run`.
-- **Two Leela stage types.** `cellout` `{cell, gen, seq, html}` carries cleaned rich output. `size` `{tenths: 5..25}` carries the A-/A+ scale, so both windows draw the same text size. Both come through `abhyasaStage.add` in `slides.js`.
+- **No channel (decision 4, changed).** The key is `secrets.token_hex(16)` from `POST /present/start`, made without `new_run`. It names the room stream `GET /present/room?k=<key>`. No window opens a `BroadcastChannel`.
+- **Server events, not Leela stage types.** The room stream sends `state`, `at` (slide, step, blank and the A-/A+ size in tenths, so both windows draw the same text size), `point`, `demo`, `answers`, `look` and `end`. Task 7 adds `out` for cleaned rich output. The audience page checks each `point`, `demo` and `answers` with `abhyasaStage.valid` before it draws it. Leela adds no type with `abhyasaStage.add`.
 - **Fragments on the wire.** `go.slide` is `s<n>` from 1. `go.beat` is 1 plus the number of fragment groups shown. A slide shows at most 49 fragment groups. Groups after the 49th show with the 49th, and the presenter sees a warning.
 - **Notes-only slides make no slide.** Their notes join the notes of the next visible slide.
 - **`riseConfig` keeps `start_slideshow_at` only.** `/tab/state` still carries `rise` (`tests/test_present.py:86-97` stays green).
@@ -111,12 +111,14 @@ The review found these defects. Task 4 fixes each one, and its tests pin them:
 | cross-site request | every `/present/*` route | 421 from `LoopbackHostGuard` (no exemption) | 3 |
 | second client starts | `POST /present/start` | old presentation ends; `presentation-ended` `{id, reason: 'replaced'}` on `/present/events`; old page shows `Another presentation started.`; old audience shows the end card | 3, 4 |
 | popup refused | Audience window button | the button stays; status `The browser blocked the window. Click again.` | 4 |
-| Mac app | Audience window button | "Present in your browser" with the URL and a copy button | 4 |
-| audience window closed | presenter | after 5 s with no `here`: status `The audience window is closed.`; the presenter returns to the clean slide; the presentation goes on | 4 |
+| Mac app | Audience window button | the system browser opens the audience page through `openExternal`; it gets the same server events (decision 9 dropped) | 4 |
+| audience window closed | presenter | the server's count of room streams falls to 0; the strip says `Audience window: not connected`; nothing on the presenter screen moves; the presentation goes on | 4 |
 | Esc | presenter | dismisses one transient thing, leaves demo focus or exits fullscreen; never ends | 5 |
 | reload of the IDE page | `POST /present/resume` | the presenter screen comes back at the same place with the same key and live state | 6 |
 | stale `localStorage` while another presentation is live | `POST /present/resume` | 410 or 403; the page removes the entry and touches nothing | 6 |
-| reload of the audience window | `hello` | the presenter replays `go`, `blank`, `size`, one `cellout` per cell, each `demo`, the `answers` | 6 |
+| reload of the audience window | `GET /present/room` | the first event is `state`: the place, blank, size, theme, each demo state and the answers sent so far (Task 7 adds the last output of each cell); the presenter sends nothing | 4, 6 |
+| presentation ended or replaced | `GET /present/room` | the stream sends `end` `{}` with no key and closes; the audience shows the end card; a reconnect gets 410 | 4 |
+| wrong, missing or stale key on the room stream | `GET /present/room` | 403 or 410 before any event; no state | 4 |
 | server restarted | `POST /present/resume` 410 | the page offers "Present again from slide N"; a new key; the audience window opens again | 6 |
 | output for a cell that is not on a visible slide | `POST /present/out` | 400, nothing sent | 7 |
 | stale output (older `gen` or `seq`) | `POST /present/out`, audience `cellout` | dropped; 200 `{stale: true}` | 7 |
@@ -144,16 +146,16 @@ The review found these defects. Task 4 fixes each one, and its tests pin them:
 
 ## Review Focus
 
-1. **Notes or answers reach the room before reveal.** Expected: `/present/deck`, the audience page and every channel message before the presenter reveals hold no notes, no gate `answer`, no path and no editor-only id. Tests: `test_room_copy_has_no_notes_answers_or_paths` (Task 2), `test_a_gate_answer_never_reaches_the_room_before_reveal` (Task 2, Task 7).
+1. **Notes or answers reach the room before reveal.** Expected: `/present/deck`, the audience page and every room event before the presenter reveals hold no notes, no gate `answer`, no path and no editor-only id. Tests: `test_room_copy_has_no_notes_answers_or_paths` (Task 2), `test_a_gate_answer_never_reaches_the_room_before_reveal` (Task 2, Task 7).
 2. **Script in a cell output or in markdown.** Expected: the server drops `<script>`, event attributes, `javascript:` and remote `src`; the audience walker drops what the server missed; the audience page sends `script-src 'self'`. Tests: `test_clean_out_keeps_text_and_images_only` (Task 2), `test_audience_walker_drops_what_the_server_missed` (Task 4), `test_audience_page_headers` (Task 3).
-3. **Another page drives the presentation.** Expected: 421 for a cross-site request, 403 without the key or with a stale key on every mutation route, no framing of the audience page, and the presenter ignores every channel message except `hello` and `here`. Tests: `test_every_mutation_route_refuses_cross_site_and_wrong_keys` (Task 3), `test_presenter_ignores_presenter_messages_from_the_channel` (Task 4).
+3. **Another page drives the presentation.** Expected: 421 for a cross-site request, 403 without the key or with a stale key on every mutation route, no framing of the audience page, no state on the room stream for a wrong key, and an audience page that has GET routes only and posts nothing. Tests: `test_every_mutation_route_refuses_cross_site_and_wrong_keys` (Task 3), `test_the_room_stream_refuses_bad_keys_with_no_state` and `test_the_audience_cannot_post` (Task 4).
 4. **One stray key ends a presentation.** Expected: Esc, Alt+R, Alt+W, Alt+T, `/` and the palette chord never end or leave it. Test: `test_esc_never_ends_the_presentation` (Task 5).
 5. **A reload loses the place or the live state.** Tests: `test_reload_keeps_the_place`, `test_reload_mid_run` (Task 6).
 6. **Alt+R writes files.** Expected: a presentation, with runs and the audience window, writes no file under the workspace. Test: `test_a_presentation_writes_nothing` (Task 4).
 
 ## Key map
 
-The presenter sets the class `talk` on `html` while the presentation is open, and passes this `keys` object to `abhyasaStage.presenter`. `keymap.js:53` still routes every key to scope `overlay`, and `keymap.js:155` gives no binding there, so no Leela command fires behind the presentation. Stop is a button for that reason.
+The presenter sets the class `talk` on `html` while the presentation is open. `present.js` binds this `keys` object with its own capture listener, because the IDE page does not load `stage.js` (decision 4, changed). It follows the rules of `abhyasaStage.presenter`: no held keys, no Alt, Cmd or Ctrl, no keys in a text box or a demo except Esc, and Space or Enter on a focused button presses the button. `keymap.js:53` still routes every key to scope `overlay`, and `keymap.js:155` gives no binding there, so no Leela command fires behind the presentation. Stop is a button for that reason.
 
 | key (`e.code` name) | action |
 |---|---|
@@ -481,66 +483,112 @@ Expected: PASS.
 
 ---
 
-### Task 4: One shared slide renderer, the look, and the optional audience window
+### Task 4: The server relay, one shared slide renderer, the look, and the optional audience window
 
-Goal: Alt+R, the toolbar button and "Present from this cell" open the new presenter screen, drawn by `slides.js` in Leela's tokens. The Audience window button opens the audience page, which draws the room copy with the same renderer. reveal.js and the notes page leave.
+Goal: Alt+R, the toolbar button and "Present from this cell" open the new presenter screen. The shared renderer `slides.js` draws it in Leela's tokens. The Audience window button opens the audience page. That page draws the room copy with the same renderer. The presenter posts each move to the server. The server keeps the state and sends each change to the audience windows over SSE (decision 4). reveal.js, the notes page and its routes leave. This task follows `target/reviews/task4-review.md`; where the review and an older line of this plan disagree, the review wins.
 
 **Files:**
-- Create: `leela/blocks/nb/slides.js` (`slidesDraw`, `slidesFit`, `slideTypes`, `safeHtml`, the audience boot); add to `LAYERS` `lee-core.js` after `present.js` (`tools/build_ide_js.py:28`) and to `ALONE` as `'lee-slides.js'` (`build_ide_js.py:55`)
-- Create: `leela/static/lee-slides.css` (canvas, type sizes, blank, laser dot, presenter chrome, strip, error panel); the IDE head links it after `lee-ide.css`
-- Modify: `leela/blocks/nb/present.js:1-287` (`presentNotebook` rewritten; `riseConfig` keeps `start` only; `loadReveal`, `presentFit`, `presentCss`, `presentNotesPage`, `presentSync`, `REVEAL_THEMES`, `RISE_TRANSITIONS`, `SLIDE_NUMBERS`, `NAV_CMDS` removed)
-- Modify: `leela/static/lee-ide.css:4029-4054` (the `.lee-present*` rules leave; `lee-slides.css` replaces them)
-- Modify: `leela/blocks/nb/app.py:54`, `:103-121`, `:714-743` (`NAV`, `Show`, `/present/notes`, `/present/nav` and the `GET`/`POST` `/present/state` removed; `/present/events` stays for `presentation-ended`), `leela/blocks/nb/show.py` (`Presentation` pushes through the events route)
-- Delete: `leela/static/present-notes.html`, `leela/vendor/reveal/` and its rows in `leela/vendor/README` (only after Task 0 merges)
-- Modify: `tests/test_present.py:63-75`, `:118-142`, `:149-163`; `tests/test_present_slow.py:129-151`, `:160-211`, `:216-244` (on purpose; see Step 1)
-- Test: `tests/test_present.py`, `tests/test_present_slow.py`
+- Create: `leela/blocks/nb/slides.js` (`slidesSafe`, `slidesDraw`, `slidesFit`, `slidesMount`, `slidesTheme`, `slidesAudience`). It uses no global of the IDE page: each input is an argument. It is in `LAYERS` `lee-core.js` before `present.js` and in `ALONE` as `'lee-slides.js'`, as `blocks/learn/pane.js` is in both.
+- Create: `leela/static/lee-slides.css` (canvas, type sizes, fragments, blank, laser dot, end card, presenter screen, strip, Notes drawer). The IDE head links it after `lee-ide.css`.
+- Modify: `leela/blocks/nb/present.js` (`presentNotebook` rewritten; `riseConfig` keeps `start` only; `loadReveal`, `presentFit`, `presentCss`, `presentNotesPage`, `presentSync`, `presentAlign`, `presentCell`, `REVEAL_THEMES`, `RISE_TRANSITIONS`, `SLIDE_NUMBERS` and `NAV_CMDS` removed)
+- Modify: `leela/blocks/nb/presentation.py` (`Room`, `GET /present/room`, `POST /present/move`; `/present/at` sends `at`; `/present/end` and a replacing start send `end`; `/present/events` moves here and sends `audience`)
+- Modify: `leela/blocks/nb/app.py` (`NAV`, `Show`, `/present/notes`, `/present/nav`, `/present/state` and `/present/events` leave this file), `leela/blocks/nb/show.py` (`NOT_SHOWN`), `leela/static/present-audience.html` (meta tags for the rupaka CSS and KaTeX, and `lee-hl.css`), `leela/app.py` (head link), `leela/static/lee-ide.css` (the `.lee-present*` rules leave), `tests/routes.txt`
+- Delete: `leela/static/present-notes.html`, `leela/vendor/reveal/` and its rows in `leela/vendor/README`
+- Modify on purpose: `tests/test_present.py`, `tests/test_present_routes.py`, `tests/test_present_slow.py`, `tests/test_md_output_font.py:90-95` (see Step 1)
 
-**Interfaces:**
-- `slidesDraw(el, deck, slide, step)`: draws slide `slide` of `deck` into the 1280x720 canvas `el`. Blocks with `frag < step` show. A code block shows its source and `out`. A demo block mounts rupaka in the presenter with `rupakaDraw` (`core.js:617-628`) and in the audience with `Rupaka.mount`. Math goes through KaTeX: `renderMath` (`core.js:645`) in the IDE, the vendored KaTeX from `/leestatic/katex/` on the audience page when a block has math.
-- `slidesFit(el)`: shrinks the canvas text in steps to the floor (body 20px, code 18px) and returns `{fits}`. The presenter shows the overflow warning when `fits` is false.
-- `slideTypes(S)`: `S.add('cellout', {cell, gen, seq, html})` with `cell` the stage `ID` rule, `gen` and `seq` integers 0..1e9, `html` a string, all required; `S.add('size', {tenths})` with `tenths` an integer 5..25. A flag makes a second call a no-op. About 10-20 lines.
-- `safeHtml(html, key) -> DocumentFragment`: keeps only `p, pre, code, span, div, b, i, em, strong, br, h1-h6, table, thead, tbody, tr, th, td, ul, ol, li, img, figure, figcaption, blockquote`, keeps only `class`, and `src` on `img` only when it is `data:image/(png|jpeg|gif|webp);base64,` or exactly `/present/img/<64 hex>?k=<key>`. Both windows put every server HTML through it.
-- Presenter screen (`presentNotebook(start)`): posts the line from Task 1 and the live cells to `/present/start`, sets `html.talk`, opens `ch = abhyasaStage.channel('leela:' + key)`, calls `slideTypes`, starts `abhyasaStage.presenter(canvas, ch, {keys})` (Task 5 fills `keys`; this task binds next, previous and Esc only), and draws the clean slide with the strip. The strip hides after 3 s with no input. Pointer movement within 80px of its edge or keyboard focus in it shows it again. It hides with `opacity` and `transform`, so it stays in the focus order and the accessibility tree. The root is `role="dialog"` with `aria-label="Presentation"` and keeps focus.
-- Notes button on one screen: opens a notes panel on the presenter screen with the line `The room can see these notes. Open the Audience window to keep them private.` The panel is closed by default.
-- Audience window button: its click handler calls `window.open(audience, 'leela-audience-' + key, 'popup,width=1280,height=720')` with no `await` before it. A null result keeps the button and shows `The browser blocked the window. Click again.` With `inDesktopShell()`, the button shows "Present in your browser" with `location.origin` and a copy button.
-- When the audience window says `hello`, the presenter answers with `go`, `blank`, `size` and the live state (Task 6 adds the full replay), and switches to the presenter layout: notes (about 320px column, 18px), the current slide, the next slide's title, the elapsed time. With no `here` for 5 s it shows `The audience window is closed.` and goes back to the clean slide with the notes panel closed. The presentation does not restart or move.
-- The presenter listens on the channel for `hello` and `here` only.
-- A-/A+: `presentStep` (`present.js:17`) in tenths, stored per notebook as today, sent as `size` and posted to `/present/at`.
-- End: one button labelled "End". It posts `/present/end`, sends `end`, removes `html.talk`, and focuses the selected cell, as `closePresentation` does today (`present.js:286`). No recap opens.
-- `presentation-ended` on `/present/events` for another key: the page shows `Another presentation started.` and closes its presenter screen.
-- Audience page (`document.body.dataset.page === 'audience'`): reads `k`, fetches `/present/deck?k=`, sets `data-theme` and `data-mode` from `deck.look.theme` (with `system` through `matchMedia` and a `change` listener, as `prefs.js:52,79` do), sets `--lee-mono` from `deck.look.mono`, calls `slideTypes`, opens the channel, calls `abhyasaStage.audience(el, {ch, draw, title})`, then `ch.on('cellout', draw)` and `ch.on('size', draw)` (`stage.js:124`, `:157`). It has no controls, run buttons, notes, toasts or key help. F or a double-click fills the screen. `end` shows the notebook title on `--lee-bg`.
-- In the Mac app, a spike decides whether two `kavacha` windows on one origin share a `BroadcastChannel`. Build the browser fallback first. A native window is in "Later" unless the spike passes and the owner agrees.
+**Two keys** (from the teacher review of this task; it makes the owner's "the audience window can never send presenter commands" true):
+- `POST /present/start` makes two keys with `secrets.token_hex(16)`: `key` for the presenter and `ak` for the audience. The reply holds both. `audience` is `/present/audience?k=<ak>`.
+- The read routes (`/present/audience`, `/present/deck`, `/present/img/{h}`, `/present/room`) take either key. Every image URL in both copies holds `ak`, so the presenter key never reaches the audience page.
+- The mutation routes (`/present/at`, `/present/move`, `/present/end`, and the later `/present/resume`, `/present/out`, `/present/show-error`) take `key` only. `ak` gets 403 there.
+- The order of the checks stays as in Task 3: with nothing live, every key gets 410; else a missing, wrong or old key gets 403.
+
+**Server routes** (in `presentation.py`; they use the one `Presentation` of Task 3, its `check` and its limits; there is no second store):
+- `GET /present/room?k=`: the room stream (SSE). The handler runs the check, takes the live presentation and adds its queue before the stream starts, so an end that comes between them is not lost. The generator never reads `pres.cur`. A refused key gets its 403 or 410 before any event. The first event is `state` `{title, at, look, demo, answers}`: the place, the theme, the latest state of each demo and the answers sent so far. Then each change follows: `at` `{slide, step, blank, size}`, `point` `{x, y}` or `{off: true}`, `demo` `{slug, state, gates, pick}`, `answers` `{slide, slug, gates}` and `look` `{theme}`. When the presentation ends, or a later start replaces it, the stream sends `end` `{}` and closes. No event holds either key. The stream sends an SSE comment every 15 s, so the server sees a closed window and the count of streams falls.
+- `POST /present/move` `{k, t, ...}`: the presenter's moves other than the place. `t` is `point`, `demo`, `answers` or `look`. The fields of `point`, `demo` and `answers` follow `stage.js`. `look` is `{theme}` with `theme` as `family:mode:density`. The check in Python has the rules of `stage.js`: no key named `__proto__`, `constructor` or `prototype`, at most 8 levels and 40000 parts, finite numbers, a boolean is never an integer, and the whole move, with `v` and `t`, is at most 65536 UTF-16 units as `JSON.stringify` counts. A `demo` or `answers` slug must be a demo of the room copy, and an `answers` slide must be a slide of it. The body of a move is at most 512 KB, because an escaped JSON body can hold 6 bytes for each UTF-16 unit. Any other move gets 400, and nothing is sent. The server stores `demo` by slug, `answers` by slug, and `look` in the room copy, for a reload. It does not store `point`. A `demo` move drops the stored answers of each gate that it does not list as done. A move to another slide drops all stored answers, as `forget` does in the audience.
+- `POST /present/at` sends `at` to each room stream after it changes the place.
+- Each room stream reads a `Room` queue of 64 events. A `point` that arrives while a `point` waits at the end of the queue replaces it, so the server drops old laser moves. The presenter also sends at most one `point` per animation frame and at most about 30 a second. When the queue is full, the server empties it and closes the stream. `EventSource` connects again and gets a new `state`. An `end` empties the queue and goes in alone, so it is never dropped.
+- `/present/events` moves from `app.py` to `presentation.py`. It sends `presentation` `{id}` first, then `audience` `{id, n}` for the live presentation, `presentation-ended` as in Task 3, and `audience` `{id, n}` each time the number of room streams changes. The legacy `state` event leaves.
+- The audience page uses only GET routes: the page, the deck, the images, `stage.js`, the rupaka bundle and the room stream. Its script holds no POST.
+
+**Shared renderer** (`slides.js`, loaded by the IDE page in `lee-core.js` and by the audience page as `lee-slides.js`):
+- `slidesSafe(html, key) -> DocumentFragment`: parses with `DOMParser`. It keeps only `p, pre, code, span, div, b, i, em, strong, br, hr, h1-h6, table, thead, tbody, tr, th, td, ul, ol, li, img, figure, figcaption, blockquote, sup, sub, del, s, kbd, a`. It keeps `class` except names that start with `lee-`, `stage-` or `rk`, so a notebook cannot cover the slide with Leela's own classes; `width` and `height` on `img`; `href` on `a` when it starts with `http:`, `https:` or `mailto:`, with `target="_blank"` and `rel="noopener noreferrer"`; and `src` on `img` only when it is `data:image/(png|jpeg|gif|webp);base64,` or exactly `/present/img/<64 hex>?k=<key>`. Both windows put every server HTML through it.
+- `slidesDraw(el, deck, i, step, {key, size, mount, math})`: draws slide `i` of `deck` into the 1280x720 canvas `el`. `el` is a child of the stage root, so the laser dot and the blank screen of `stage.js` stay on the root when a slide is drawn again. A block with `frag < step` shows. A later block keeps its place and is hidden. A code block shows its source and `out`. Each `pre > code.language-rupaka` becomes a demo through `mount(spec)`. The IDE passes a `mount` built on `rupakaDraw` (`core.js:617-628`). The audience page passes `slidesMount`. `math(el)` fills `span.math` and `div.math`: `renderMath` in the IDE, the vendored KaTeX on the audience page.
+- `slidesMount(spec)`: a host with a shadow root, the rupaka CSS from `meta[name="lee-rupaka-css"]` and the slide sizes, and `Rupaka.mount` on an inner element, as `rupakaDraw` does. It returns `{host, inner}`.
+- `slidesFit(el) -> {fits}`: shrinks the text of the canvas in steps to the floor (body 20px, code 18px). At the floor it stops, and the slide is cut at the safe margin.
+- `slidesTheme(theme, mono)`: sets `data-theme`, `data-mode` and `data-density` on `html` from `family:mode:density`. For `system` mode it follows `matchMedia` and its `change` listener. It sets `--lee-mono` when `mono` is not empty.
+
+**Presenter screen** (`presentNotebook(start)` in `present.js`):
+- It shows `Preparing slides…` in the status line, then posts the line from Task 1 and the live cells to `/present/start`. A refusal shows the server's message. For a notebook too large to send, it adds `Clear large outputs, then try again.`
+- It sets `html.talk` and opens the root `role="dialog"` with `aria-label="Presentation"`. The root keeps focus.
+- The slide fills the space above the strip, scaled from 1280x720. The strip is in the bottom margin and never covers the slide. It holds, in order: previous, next, `N / M`, Run (one button for each code cell of this slide), Audience window, the connection line, Notes, A-, A+, Full screen, and End at the far end. Its text is at least 14px and its buttons at least 32px, in `--lee-*` colours. The strip hides after 3 s with no input, with `opacity` and `transform`, so it stays in the focus order. Pointer movement within 80px of the bottom edge, or focus in the strip, shows it.
+- Keys in this task: next (`ArrowRight`, `ArrowDown`, `Space`, `PageDown`), previous (`ArrowLeft`, `ArrowUp`, `Shift+Space`, `PageUp`), `KeyN` (Notes drawer), `KeyF` (full screen) and `Escape` (closes the Notes drawer; it never ends). Space or Enter on a focused strip button presses the button. Task 5 adds the rest of the key map.
+- Each move calls `presentMove`, draws the slide and posts `/present/at`. All posts of one presenter go through one promise chain, so the server gets them in order. Right after the start the presenter posts `at` with its stored text size. A 403 or 410 on a post closes the presenter screen with `This presentation has ended.` Any other failure shows `Moves are not reaching the audience window.` The presenter screen opens only after the start returns its key.
+- Notes: a drawer that the presenter opens with N or the Notes button. It holds the notes, the next slide's title and the elapsed time. It is closed by default. Nothing on the presenter screen moves when an audience window connects. The drawer says `The room can see these notes when you share this screen.`
+- Audience window button: its click handler calls `window.open` with no `await` before it, with the one window name `leela-audience`. A second click focuses the open window and does not open another. A null result keeps the button and shows `The browser blocked the window. Click again.` In the Mac app it calls `openExternal`, which opens the system browser. After the window opens, a one-line hint shows: `Drag this window to the projector, then press F.`
+- The connection line says `Audience window: connected` while the server counts one or more room streams, else `Audience window: not connected`. It reads the `audience` event of `/present/events`.
+- A-/A+: `presentStep` (`present.js:17`) in tenths, stored per notebook as today, posted to `/present/at` as `size`.
+- A theme change in the IDE posts a `look` move, so the audience follows it during the show.
+- When the slide does not fit at the floor, the status line says `Slide N has more than fits. Split it or trim it.` At start the presenter measures each slide and names every slide that does not fit.
+- End: the first click changes the label to `End now?`. A second click within 3 s posts `/present/end`, removes `html.talk`, and focuses the selected cell, as `closePresentation` does today (`present.js:286`). No recap opens.
+- `presentation-ended` on `/present/events` for this presentation's id with `reason: 'replaced'`: the page shows `Another presentation started.` and closes its presenter screen.
+- Run (minimal in this task): `runCell(i, false)`, then the presenter screen draws the cell's outputs. Task 7 sends outputs to the room.
+
+**Audience page** (`document.body.dataset.page === 'audience'`):
+- It reads `k` (the audience key `ak`) from the address and keeps it there, because a reload asks the server for the page with it. It also keeps it in `sessionStorage`, so a second click on Audience window can tell this window from an old one.
+- It fetches `/present/deck?k=`, calls `slidesTheme` with `deck.look`, and opens `EventSource('/present/room?k=')`.
+- It calls `abhyasaStage.audience(root, {ch, draw, title})` with a channel object built on the room stream: `on` takes the server events and returns an unsubscribe function, and `send` does nothing. The object turns `at` into the stage messages `go` and `blank`, adds `v: 1`, and drops each message that `abhyasaStage.valid` refuses. Each `state` event resets the whole view: place, blank, size, theme, demo states and answers. The page keeps the latest `demo` and `answers` of each slug and applies them again after each draw. `stage.js` draws the laser dot and the blank screen. `abhyasaStage.mirror(inner)` applies each demo state (`apply`) and the answers (`reveal`). The audience page does not call `abhyasaStage.channel`.
+- It has no controls, run buttons, notes, toasts or key help. F or a double-click fills the screen.
+- On `end` the page closes its `EventSource`. When the stream fails and the browser does not connect again, the page asks for the deck to tell 403 from 410. `end`, or a 410, shows the end card: the notebook title and `The presentation has ended.` on `--lee-bg`. A 403 shows `This presentation link is not valid.` It never shows an error page.
+
+**Design decisions** (from the review; the owner did not object):
+- Nothing moves when the audience window connects. Notes, the next slide title and the clock are in a drawer that the presenter opens with N or the Notes button.
+- Full screen comes back: a button and the F key.
+- End is at the far end of the strip and needs a second click within 3 s.
+- The strip: text at least 14px, buttons at least 32px, Leela's colours, in the bottom margin, hidden when idle. Space on a focused button presses the button.
+- One audience window name; a second click focuses it. The hint `Drag this window to the projector, then press F.` shows after it opens.
+- The end card is calm. The audience page follows theme changes during the show.
+- An output type that the room cannot show appears as `This output type is not shown in presentations.` The server writes it in both copies (`NOT_SHOWN` in `show.py`) for an output with no type that the room shows.
+- `Preparing slides…` while the server builds the deck. A notebook too large gets the message to clear large outputs. A slide too long at the floor is named to the presenter at start.
+- Leela's themes and fonts everywhere. Output and code are 24px on the slide, not under half the body size.
 
 - [ ] **Step 1: Write the failing tests, and change today's tests on purpose**
-  - Change `test_rise_settings_reach_reveal_by_name_and_nothing_else_does` (`test_present.py:63-75`) to `test_rise_settings_keep_only_the_start`: `riseConfig` returns `{start}` and nothing else, because the reveal options and `rise.theme` are dropped (decision 6).
-  - Remove `test_the_notes_page_follows_the_deck_and_says_when_it_has_ended` (`test_present.py:118-142`), because the notes page and its routes are dropped. `test_a_second_start_ends_the_first` (Task 3) and the slow tests below cover the events route.
-  - Change the packaging tests (`test_present.py:149-163`): the builds and the wheel carry `leela/static/present-audience.html`, `leela/static/lee-slides.css` and `leela/static/lee-slides.js`, and no `leela/vendor/reveal/` or `present-notes.html`.
-  - Fast (node): `test_audience_walker_drops_what_the_server_missed`: `safeHtml` on `<img src=x onerror=alert(1)>`, `<a href="javascript:x">`, `<svg><script>`, `<img src="https://evil.example/a">`, `/present/img/<hash>?k=<other key>` and a good `data:image/png` keeps the good image and the text only. The slow test runs the same cases in the browser when node has no `DOMParser`.
-  - Fast (node): `test_leela_types_are_added_once`: after `slideTypes(S)`, `valid` accepts a `cellout` and a `size`; it refuses a `cellout` over 65536, an extra field, a missing `gen`, and `size` 30. A second call does not throw.
-  - The assertion at `test_present_slow.py:139` (the notebook keeps its edit buttons) fails intermittently on Leela main `0a75751` too (2 of 3 runs on 29 October, with rupaka 0.0.3 and abhyasa 0.0.11): it counts `.lee-cell .lee-reply-actions` before the notebook has drawn them. The rewrite waits for the buttons with `wait_for_function` before it counts.
-  - Rewrite `test_a_notebook_presents_as_slides_and_leaves_the_ide_as_it_found_it` (`test_present_slow.py:129-151`) on purpose: `READY` becomes `.lee-present[data-ready]`; the deck is one line of 5 slides, because subslides are flattened; no `/present/notes` request is made; `reopen` counts one `.lee-present`. The unsaved edit, the image, the leak, `tick 2`, the closed-state focus, the unchanged IDE styles and the not-a-notebook message stay as they are.
-  - Rewrite `test_a_long_slide_fits_its_page_and_the_text_size_is_the_presenters` (`:160-211`) on purpose: the long slide shrinks to the floor and the presenter sees the overflow warning; A+ twice gives 120%; the floor and ceiling messages stay `text 50%` and `text 250%`.
-  - Replace `test_slide_text_is_left_with_centred_headings_until_the_presenter_centres_it` (`:216-244`) with `test_slide_text_and_headings_are_left_aligned`, because the align toggle is dropped and centred headings are a review defect.
-  - Slow, `test_the_look_is_leelas`: for two families in dark and light, the presenter canvas and the audience page background equal `--lee-bg`, the body font is `--lee-sans`, code is `--lee-mono`, the heading is 44-46px and the body 28px at a 1280x720 window, no `reveal` stylesheet is loaded, and an error on the slide uses no colour outside the tokens.
-  - Slow, `test_the_strip_hides_and_comes_back`: after 3 s idle the strip has opacity 0 and is still focusable; Tab focuses "previous" and the strip shows; pointer movement near the edge shows it.
-  - Slow, `test_the_audience_window_follows`: click Audience window, catch the popup with `context.wait_for_event('page')`, press ArrowRight, and wait until the audience shows the fragment; the presenter shows notes, the next title and the clock; close the popup and wait for the closed line and the clean slide; with `window.open` returning null (`page.add_init_script`), the button stays.
-  - Slow, `test_presenter_ignores_presenter_messages_from_the_channel`: a third page on the channel sends `go`, `end` and `blank`; the presenter's place does not change and `/present/deck` still answers.
-  - Slow, `test_a_second_client_ends_the_first`: two IDE pages; page 2 starts; page 1 shows `Another presentation started.` and its audience shows the end card.
-  - Slow, `test_a_presentation_writes_nothing`: present, run a cell, open the audience window, end; the notebook file's bytes and mtime are unchanged and no new file is under the workspace root.
+  - Fast, `tests/test_present_routes.py`: `test_presenter_moves_reach_the_room_and_a_reload_gets_the_state` (the first event is `state` at the start place; `/present/at` and `/present/move` give `at`, `demo`, `answers` and `look`; a second stream gets all of them in its `state`); `test_the_room_stream_refuses_bad_keys_with_no_state` (missing, wrong and old keys get 403; after end, 410; no `state` event); `test_the_audience_cannot_post` (POST to the room stream, the deck, the page and an image gets 405; `lee-slides.js` holds no POST and names no presenter route); `test_laser_moves_are_coalesced` (a `Room` queue keeps one waiting `point` at its end and keeps the order of other events; the route relays the last point); `test_a_bad_move_sends_nothing` (an unknown `t`, an extra field, a point outside 0..1, a `demo` with a bad slug, a move over 65536: 400 and no event); `test_end_and_replace_send_end_without_the_key`; `test_the_audience_count_follows_the_room_streams`; `test_the_audience_key_reads_and_never_moves` (`ak` reads the page, the deck, an image and the room stream, and gets 403 on every mutation; no copy holds `key`). Add `/present/move` to `MUTATIONS`. Change `test_a_presentation_starts_from_the_live_cells_and_writes_nothing` on purpose: `audience` and the image URLs hold `ak`, not `key`.
+  - Fast, `tests/test_present_room.py`: `test_an_output_the_room_cannot_show_says_so`.
+  - Change `test_rise_settings_reach_reveal_by_name_and_nothing_else_does` to `test_rise_settings_keep_only_the_start`, because the reveal options and `rise.theme` are dropped (decision 6).
+  - Remove `test_the_notes_page_follows_the_deck_and_says_when_it_has_ended`, because the notes page and its routes are dropped.
+  - Change the packaging tests: the builds and the wheel carry `present-audience.html`, `lee-slides.css` and `lee-slides.js`, and no `leela/vendor/reveal/` or `present-notes.html`.
+  - Change `test_reveal_themes_fetch_no_web_fonts` (`tests/test_md_output_font.py:90-95`) to `test_slides_fetch_no_web_fonts`, because `leela/vendor/reveal/` is deleted.
+  - Change `test_audience_page_headers` to expect `lee-hl.css` after `lee-slides.css`, because code on a slide needs the highlight colours.
+  - Slow, rewrite the main test on purpose: `.lee-present[data-ready]`; one line of 5 slides; the unsaved edit, the image from `/present/img/`, the markdown output, and no notes or skipped text on the slide; the Notes drawer shows the notes and the next title; Run shows `tick 2`; the palette chord opens nothing; End twice closes and focuses the selected cell; the IDE styles do not change; two quick starts leave one `.lee-present`; the not-a-notebook message stays. It waits for the notebook's reply buttons with `wait_for_function` before it counts them (the count raced on main).
+  - Slow, replace the long-slide and align tests with `test_a_long_slide_shrinks_to_the_floor_and_text_is_left`: the overflow line names slide 1; A+ twice gives `text 120%`; the floor and ceiling messages stay `text 50%` and `text 250%`; headings and body are left-aligned.
+  - Slow, `test_the_audience_window_follows`: the popup opens with `context.wait_for_event('page')`; the hint shows; the strip says connected; both windows draw the same slide markup; ArrowRight shows the fragment in the audience; a theme change in the IDE changes the audience; the walker cases of `test_audience_walker_drops_what_the_server_missed` run on the audience page; a second click with the window open focuses it; closing the popup makes the strip say not connected; with `window.open` returning null the button stays and the blocked line shows; End twice shows the end card in the audience. It saves light and dark screenshots of both windows to `target/present-shots/`.
+  - Slow, `test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict`: the room copy mounts the demo with no answer in its shadow root and with its gate `inert`; a `demo` move with the presenter's pick and then an `answers` move show the verdict.
+  - Slow, `test_an_output_the_room_cannot_show_says_so_on_the_slide`.
 
 - [ ] **Step 2: Run the tests to see them fail**
 
-Run: `uv run pytest tests/test_present.py -q && uv run pytest tests/test_present_slow.py -q -m slow`
-Expected: FAIL (`riseConfig` still returns reveal options; no `lee-slides.js`).
+Run: `uv run pytest tests/test_present.py tests/test_present_room.py tests/test_present_routes.py tests/test_md_output_font.py -q && uv run pytest tests/test_present_slow.py -m slow -p no:xdist -o addopts=`
+Expected: FAIL (404 on `/present/room`; `riseConfig` still returns reveal options; no `lee-slides.js`).
 
-- [ ] **Step 3: Implement** as the interfaces say. Delete `leela/vendor/reveal/` only after Task 0 merges.
+- [ ] **Step 3: Implement** as above. Run `uv run python tools/build_ide_js.py` after each JS edit.
 
 - [ ] **Step 4: Run the tests to see them pass**
 
-Run: `uv run python tools/build_ide_js.py && uv run pytest tests/test_present.py tests/test_present_routes.py -q && uv run pytest -q -x --ignore-glob='*_slow.py' && uv run pytest tests/test_present_slow.py tests/test_web_slow.py -q -m slow`
+Run: `uv run python tools/build_ide_js.py --check && uv run pytest tests/test_present.py tests/test_present_room.py tests/test_present_routes.py tests/test_abhyasa_contract.py tests/test_web.py -q && uv run pytest -q -n 6 --ignore-glob='*_slow.py' && uv run pytest tests/test_present_slow.py -m slow -p no:xdist -o addopts=`
 Expected: PASS.
 
-**Risks:** the audience page loads all of `lee-ide.css`; a body rule there can reach the audience page, and `test_the_look_is_leelas` is the check. In the Mac app, "Present in your browser" opens a second IDE client on the same workspace, and its start ends the app's presentation. A one-screen projection shows whatever the presenter opens, Notes included; the Notes line says so.
+- As built (Task 4), where it departs from the lines above or from the review file:
+  - Two keys, not one. The review file names one per-session key. With one key the audience page held the presenter's key, so it could post moves; the teacher review of this task found that this broke the owner's "the audience window can never send presenter commands". `ak` is the audience key; `key` alone moves. `test_a_presentation_starts_from_the_live_cells_and_writes_nothing` changed on purpose for it.
+  - An ended presentation answers 410 on the room stream, not 404, as Task 3's `check` does for every keyed route.
+  - The audience key stays in the address bar. Task 3's note planned to remove it with `history.replaceState`, but `GET /present/audience` needs `k`, so a reload without it got 403 (found by `test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict`).
+  - The presenter does not mirror its own demos yet. The room side (`room_spec` copies, `mirror.apply`, `reveal`, the stored state at reload) and the `demo` and `answers` moves are built and tested by posting moves. The presenter's `mirror.watch` and the `answers` on reveal stay in Task 7, which also loads `stage.js` on the IDE page.
+  - Laser (`KeyX`) and blank (`KeyB`) are not bound yet: the routes, the coalescing and the audience drawing are built; Task 5 binds the keys.
+  - Run in the strip draws the outputs on the presenter screen only. The room keeps the deck's outputs until Task 7.
+  - Run saves a notebook with unsaved edits before it runs (`leela/blocks/nb/motion.js:94`). This is Leela's behaviour before this plan, and it conflicts with decision 1 ("a presentation writes no file") once a cell runs. The slow test checks that nothing is written up to the first Run. The owner decides whether Run in a presentation skips that save (Task 7).
+  - `leela/vendor/README` had no reveal.js rows, so it did not change.
+  - The design screenshots are in `target/present-shots/` (gitignored), written by `test_the_audience_window_follows` and `test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict`.
+
+**Risks:** the audience page loads all of `lee-ide.css`; a body rule there can reach the audience page. The audience key is a bearer capability in the audience URL: whoever holds it can read the room copy and the room stream, but cannot move the presentation. In the Mac app the system browser keeps the audience URL, with the key, in its history. A one-screen projection shows whatever the presenter opens, the Notes drawer included; the drawer says so. Each audience window holds one HTTP connection open for the room stream.
 
 ---
 
@@ -554,9 +602,9 @@ Goal: every key in the key map does what the table says, and no stray key ends t
 - Test: `tests/test_present.py`, `tests/test_present_slow.py`
 
 **Interfaces:**
-- `keys` as the key map says. Next and back call `presentMove` (Task 1), post `/present/at` and send `go`.
+- `keys` as the key map says. Next and back call `presentMove` (Task 1) and post `/present/at`; the server sends `at` to the room (Task 4).
 - `Escape` returns false when a `.lee-modal` is open, so the dialog's own handler takes it. Otherwise it closes the first open thing in the key map order and returns true. With nothing open it returns true and does nothing.
-- `KeyX` toggles the laser through the `laser()` of `abhyasaStage.presenter` (`stage.js:197-201`). `KeyB` toggles blank, posts `/present/at` and sends `blank`.
+- `KeyX` toggles the laser. While it is on, pointer movement over the slide posts `point` moves to `/present/move`, at most one per animation frame, and leaving the slide posts `{off: true}` (the rules of `stage.js:182-192`). `KeyB` toggles blank and posts `/present/at`.
 
 - [ ] **Step 1: Write the failing tests**
   - Fast: `test_present_keys_are_listed`: the "Present" rows in `KEYS` name every key in the `keys` object of `present.js` (read as text, as `test_keys.py` does for the Graph); `_dupes(DEFAULTS) == []`; `test_present_is_one_action_with_the_same_name_everywhere_it_appears` (`test_present.py:99-116`) stays green.
@@ -575,7 +623,7 @@ Expected: FAIL.
 Run: `uv run python tools/build_ide_js.py && uv run pytest tests/test_present.py tests/test_keys.py -q && uv run pytest -q -x --ignore-glob='*_slow.py' && uv run pytest tests/test_present_slow.py -q -m slow`
 Expected: PASS.
 
-**Risks:** a clicker that sends `.` or `F5` for blank or start does nothing. Space on a focused strip button: `stage.js:180` calls `preventDefault`, so the button does not also click.
+**Risks:** a clicker that sends `.` or `F5` for blank or start does nothing. Space on a focused strip button presses the button and does not move (Task 4).
 
 ---
 
@@ -584,17 +632,17 @@ Expected: PASS.
 Goal: a reload of the IDE page or of the audience window comes back at the same slide and step, with the same output and demo state.
 
 **Files:**
-- Modify: `leela/blocks/nb/app.py` (`POST /present/resume`), `leela/blocks/nb/show.py`, `leela/blocks/nb/present.js` (resume on tab load; `localStorage['lee-present:<path>'] = key`; full replay on `hello`), `tests/routes.txt`
+- Modify: `leela/blocks/nb/presentation.py` (`POST /present/resume`), `leela/blocks/nb/present.js` (resume on tab load; `localStorage['lee-present:<path>'] = key`), `tests/routes.txt`. There is no replay on `hello`: the room stream sends the server's state at connect (Task 4).
 - Test: `tests/test_present_routes.py`, `tests/test_present_slow.py`
 
 **Interfaces:**
-- `POST /present/resume` `{k}`: `check(k)`, then returns `{ok, key, presenter, at, live}`. It makes no new key.
+- `POST /present/resume` `{k}`: `check(k)`, then returns `{ok, key, id, presenter, at, live, look}` from the server's state. It makes no new key.
 - On a notebook tab load, when `localStorage` holds a key for this path: `POST /present/resume`. On 200 the presenter screen comes back at `at` with the same key, so an open audience window keeps working. On 403 or 410 the page removes the entry. When no presentation is live at all, the page offers "Present again from slide N" (a new key; the audience window must open again). When another presentation is live, the page offers nothing and touches nothing.
-- On `hello` the presenter replays `go` at `at`, `blank`, `size`, one `cellout` per entry of `live.outs`, each `demo` snapshot, and the `answers` messages.
+- A reloaded audience window gets the server's state as the first event of `GET /present/room` (Task 4); Task 7 adds the last output of each cell to it. The presenter sends nothing for it. A reloaded presenter reads `live` from `/present/resume` and draws the same demo states and outputs.
 
 - [ ] **Step 1: Write the failing tests**
   - Fast: `test_resume_returns_the_presentation_without_a_new_key`: start, move to s2 step 1, resume: same key, same `at`; a wrong key 403; after a second start, the first key 403. Add `/present/resume` to `MUTATIONS`.
-  - Slow, `test_reload_keeps_the_place`: go to s2 step 1; reload the audience page and wait for s2 step 1; reload the IDE page, wait for the presenter screen at s2 step 1, press ArrowRight, and see the audience follow without opening it again.
+  - Slow, `test_reload_keeps_the_place`: go to s2 step 1; reload the audience page and wait for s2 step 1 (the key comes from `sessionStorage`); reload the IDE page, wait for the presenter screen at s2 step 1, press ArrowRight, and see the audience follow without opening it again.
   - Slow, `test_reload_mid_run`: run the `tick` cell (`test_present_slow.py:23`); reload the audience page during the run and see the latest output; reload the IDE page after the run and see the same output in both windows.
   - Slow, `test_stale_entry_while_another_presentation_is_live`: write an old key for notebook A, start from notebook B in another page, open A: no presenter screen, the entry is gone, and B is still live at its place.
 
@@ -620,27 +668,27 @@ Goal: Run and Stop sit beside each code cell of the slide in the presenter contr
 
 **Files:**
 - Modify: `leela/blocks/nb/present.js:137-148` (`presentRun` reworked: a generation per run, a sequence per output event, Run and Stop in the strip, the error panel) and the `lee-cell-output` listener that replaces `onOutput` (`:241-243`)
-- Modify: `leela/blocks/nb/slides.js` (`cellout` drawing; demo mirror in both windows)
+- Modify: `leela/blocks/nb/slides.js` (`out` drawing; demo mirror in the presenter window; Task 4 built the audience side)
 - Modify: `leela/static/js/core.js:617-628` (`rupakaDraw` keeps the inner mount element on its entry, so `abhyasaStage.mirror` can address it)
 - Modify: `leela/blocks/editor/mount.js:493` (`markPreviousRuns` dispatches `lee-kernel-restart`), `leela/blocks/runtime/kernel.js:35` (the reconnect button calls `markPreviousRuns`)
-- Modify: `leela/blocks/nb/app.py` (`POST /present/out`, `POST /present/show-error`, `POST /present/demo`), `leela/blocks/nb/show.py`, `leela/static/lee-slides.css` (error panel), `tests/routes.txt`
+- Modify: `leela/blocks/nb/presentation.py` (`POST /present/out`, `POST /present/show-error`; each stores the output in `live.outs`, sends `out` on the room stream and adds it to the `state` event), `leela/blocks/nb/show.py`, `leela/static/lee-slides.css` (error panel), `leela/app.py` (the IDE head loads `/present/stage.js` for `abhyasaStage.mirror` only; no channel), `tests/routes.txt`
 - Test: `tests/test_present_routes.py`, `tests/test_present.py`, `tests/test_present_slow.py`
 
 **Interfaces:**
 - `POST /present/out` `{k, cell, gen, seq, outputs, done, ok}`: `check(k)`; 400 when `cell` is not a code cell of a visible slide; `{stale: true}` when `(gen, seq)` is not newer than `live.outs[cell]`; else `clean_out`, `images.update`, `clip_msg`, store in `live.outs`, and return `{msg, error}`. `msg` is the `cellout` for the room. `error` goes to the presenter only.
 - `POST /present/show-error` `{k, cell, gen}`: builds a `cellout` whose `html` is the room output plus the error as escaped text in a `pre`, stores it, returns `{msg}`. 400 when that run has no error.
-- `POST /present/demo` `{k, slug, snapshot}`: stores the snapshot for replay.
-- The presenter sends `cellout` only for a reply whose key is current and whose `(gen, seq)` is the newest for the cell, at most once per animation frame per cell.
+- Demo state goes through `POST /present/move` `{t: 'demo'}` (Task 4), not a route of its own.
+- The presenter posts `/present/out` only for a reply whose key is current and whose `(gen, seq)` is the newest for the cell, at most once per animation frame per cell. The server sends `out` `{cell, gen, seq, html}` to the room.
 - Run: `runCell(i, false)` as today (`present.js:142`). Stop: shown while a run is active; posts `/kernel/interrupt`, as `actions.js:37-38` does.
 - Error panel: in the presenter controls, outside the slide preview. A `--lee-red` left border, the summary `<ename>: <evalue>`, a `<details>` with the traceback, and a "Show error" button. Esc closes it.
-- Kernel restart: on `lee-kernel-restart`, the presenter clears each output box, sends an empty `cellout` with a new `gen` for each cell in `live.outs`, and enables Run.
-- Demos: the presenter mounts each spec with answers through `rupakaDraw`, calls `abhyasaStage.mirror(inner).watch`, posts `/present/demo` and sends `demo`. A gate pick in a slide is not filed, because `lessonPredict` returns outside `.lee-cell[data-id]` (`lesson.js:69-70`). The audience mounts `room_spec` copies and calls `mirror(inner).apply`. After the presenter reveals, the presenter sends `answers` from `mirror.answers()` and the audience calls `reveal`. A snapshot over 65536 is not sent and not stored; the status line says `The demo is too large for the room screen.`
+- Kernel restart: on `lee-kernel-restart`, the presenter clears each output box, posts an empty output with a new `gen` for each cell in `live.outs`, and enables Run.
+- Demos: the presenter mounts each spec with answers through `rupakaDraw`, calls `abhyasaStage.mirror(inner).watch`, and posts each snapshot as a `demo` move. A gate pick in a slide is not filed, because `lessonPredict` returns outside `.lee-cell[data-id]` (`lesson.js:69-70`). The audience side (`room_spec` copies, `mirror(inner).apply`, `reveal`) is built in Task 4. After the presenter reveals, the presenter posts `answers` from `mirror.answers()` as an `answers` move. A snapshot over 65536 is not sent and not stored; the status line says `The demo is too large for the room screen.`
 
 - [ ] **Step 1: Write the failing tests**
-  - Fast: `test_out_only_for_visible_code_cells_in_order`: posting for `m1` (notes) and an unknown id gives 400; `gen=1, seq=2` then `gen=1, seq=1` gives `{stale: true}`; `gen=2, seq=1` is stored; a stale key 403. Add `/present/out`, `/present/show-error` and `/present/demo` to `MUTATIONS`.
+  - Fast: `test_out_only_for_visible_code_cells_in_order`: posting for `m1` (notes) and an unknown id gives 400; `gen=1, seq=2` then `gen=1, seq=1` gives `{stale: true}`; `gen=2, seq=1` is stored, sent as `out` on the room stream, and in the next `state`; a stale key 403. Add `/present/out` and `/present/show-error` to `MUTATIONS`.
   - Fast: `test_a_failed_run_keeps_the_error_private`: outputs with a stream and an error give a `msg` with the stream and no `ZeroDivisionError`, and an `error` with it; `/present/show-error` then gives a `msg` with the escaped traceback; a run with no error gives 400 there.
   - Fast: `test_outputs_load_by_hash`: an `image/png` output is then served at `/present/img/<sha>?k=`.
-  - Fast (node): `test_stage_messages_never_carry_an_answer`: the message builders in `present.js` on a slide whose demo gate answer is `ANSWER-7731` give `demo` messages with no `ANSWER-7731`, and `abhyasaStage.valid` passes each one after `slideTypes`.
+  - Fast (node): `test_stage_messages_never_carry_an_answer`: the move builders in `present.js` on a slide whose demo gate answer is `ANSWER-7731` give `demo` moves with no `ANSWER-7731`, and `abhyasaStage.valid` passes each one.
   - Slow, `test_a_run_streams_to_the_audience`: Run on the `tick` cell shows `tick 2` on the audience page; `1/0` shows the private panel with `ZeroDivisionError` and the audience shows no traceback; Show error sends it; a cell that prints `<script>window.hit=1</script>` as `text/html` leaves `window.hit` undefined on the audience page; 200 small images and 300 kB of `"<\\` text show with the too-long line and no channel error.
   - Slow, `test_overlapping_runs`: run a slow cell twice before the first finishes; the audience shows only the second run's output.
   - Slow, `test_stop_and_restart`: run `while True: pass`, press Stop, see `KeyboardInterrupt` in the panel; run a cell, restart the kernel from the Kernel menu; both screens clear the output and Run is enabled.
@@ -684,7 +732,7 @@ Every JS task rewrites `leela/static/lee-core.js`, so Tasks 1, 4, 5, 6 and 7 run
 | 1 Slide line and fragments | none | `nb/present.js`, `static/lee-core.js`, `tests/test_present.py`, `tests/data/rise_cases.json` |
 | 2 Room copy | none | `nb/show.py`, `tests/test_present_room.py` |
 | 3 State and routes | 0, 2 | `nb/presentation.py`, `nb/app.py`, `static/present-audience.html`, `packaging/macos/setup.py`, `packaging/windows/setup.py`, `tests/routes.txt`, `tests/test_present_routes.py` |
-| 4 Renderer, look, audience window | 0, 1, 3 | `nb/slides.js`, `nb/present.js`, `nb/app.py`, `nb/show.py`, `static/lee-slides.css`, `static/lee-ide.css`, `static/present-notes.html`, `static/lee-*.js`, `leela/app.py` (head link), `vendor/reveal/`, `vendor/README`, `tools/build_ide_js.py`, `tests/test_present.py`, `tests/test_present_slow.py` |
+| 4 Relay, renderer, look, audience window | 0, 1, 3 | `nb/slides.js`, `nb/present.js`, `nb/presentation.py`, `nb/app.py`, `nb/show.py`, `static/present-audience.html`, `tests/routes.txt`, `tests/test_present_routes.py`, `tests/test_present_room.py`, `tests/test_md_output_font.py`, `static/lee-slides.css`, `static/lee-ide.css`, `static/present-notes.html`, `static/lee-*.js`, `leela/app.py` (head link), `vendor/reveal/`, `vendor/README`, `tools/build_ide_js.py`, `tests/test_present.py`, `tests/test_present_slow.py` |
 | 5 One key scope | 4 | `nb/present.js`, `core/keys.py`, `static/lee-core.js`, `tests/test_present.py`, `tests/test_present_slow.py` |
 | 6 Recovery | 5 | `nb/app.py`, `nb/show.py`, `nb/present.js`, `static/lee-core.js`, `tests/routes.txt`, `tests/test_present_routes.py`, `tests/test_present_slow.py` |
 | 7 Live code and demos | 6 | `nb/present.js`, `nb/slides.js`, `static/js/core.js`, `editor/mount.js`, `runtime/kernel.js`, `nb/app.py`, `nb/show.py`, `static/lee-slides.css`, `static/lee-*.js`, `tests/routes.txt`, `tests/test_present_routes.py`, `tests/test_present.py`, `tests/test_present_slow.py` |
@@ -706,7 +754,7 @@ One opt-in feature, "Ask the room", built on `rupaka.poll`. It covers the room f
 - saved `.talk.json` files, the run log, `recap` and `recap_html`;
 - hand counts, gate-to-room questions, the `run` ask kind and the `output` type ("What does this print?");
 - agent-drafted speaker notes;
-- a native audience window in the Mac app (Task 4 spike);
+- a native audience window in the Mac app (the system browser opens the audience page; decision 9 dropped);
 - clicker blank keys other than B.
 
 If saved talks return, decision 7 holds: the talk is `<notebook>.talk.json` beside the notebook and run logs go to the shared learning store with `Learning.put_run`.
