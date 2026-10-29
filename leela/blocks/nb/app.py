@@ -169,10 +169,11 @@ def connect(app, ctx):
             return fail('that cell is no longer at this position', 409)
         c = nb[i]
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
-        # The notebook about to run is one stat; its tree is a walk, and that is once per root.
-        if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
-            doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
-        await off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
+        # The notebook about to run is one stat; its tree is a walk, and that is once per root. `save: false` (a presentation) writes neither.
+        if d.get('save') is not False:
+            if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
+                doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
+            await off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
         except BaseException:

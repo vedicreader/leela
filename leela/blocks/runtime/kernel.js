@@ -32,7 +32,7 @@ async function pickKernel() {
   const clearWeights = m.querySelector('#clearengines');
   if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
-  if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
+  if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); markPreviousRuns(); status('kernel restarted', 'ok'); };
   m.querySelector('#kernel-auto-manage').onchange = async (e) => {
     try { e.target.checked = await setKernelAutoManage(e.target.checked); }
     catch (err) { e.target.checked = !e.target.checked; status(String(err.message || err), 'err'); }

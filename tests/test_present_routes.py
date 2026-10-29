@@ -31,7 +31,8 @@ CELLS = [dict(id='m0', cell_type='markdown', source='# Intro\nUNSAVED-EDIT ![p](
 LINE = [dict(items=[dict(i=0, frag=-1), dict(i=2, frag=0)], notes=[1], groups=1), dict(items=[dict(i=3, frag=-1)], notes=[], groups=0)]
 #: every keyed route that changes the presentation; `/present/start` is the one unkeyed mutation, because it makes the key
 MUTATIONS = [('/present/at', dict(slide='s2', step=0, blank=False, size=10)), ('/present/move', dict(t='look', theme='leela:dark:relaxed')), ('/present/resume', {}),
-             ('/present/end', {})]
+             ('/present/out', dict(cell='c2', gen=1, seq=1, outputs=[], done=True)), ('/present/show-error', dict(cell='c2', gen=1)),
+             ('/present/clear', dict(gen=1)), ('/present/end', {})]
 SHUT = {'cache-control': 'no-store', 'x-content-type-options': 'nosniff'}
 
 def body(root, **kw):
@@ -536,7 +537,8 @@ def test_a_room_that_connects_again_gets_blank_and_no_laser(bare):
         t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
         await _until(lambda: got)
         ev, st = got[0]
-        assert ev == 'state' and st['at']['blank'] is True and 'point' not in json.dumps(st) and set(st) == {'title', 'at', 'look', 'demo', 'answers'}
+        # Task 7 on purpose: the state also holds the latest output of each code cell
+        assert ev == 'state' and st['at']['blank'] is True and 'point' not in json.dumps(st) and set(st) == {'title', 'at', 'look', 'demo', 'answers', 'outs'}
         await _stop(stop, t)
     asyncio.run(go())
 
@@ -664,3 +666,134 @@ def test_a_resume_tells_the_other_pages_who_holds_the_presenter_screen(bare):
         assert a['key'] not in json.dumps(ev) and a['ak'] not in json.dumps(ev)
         await _stop(stop, t)
     asyncio.run(go())
+
+ERR = {'output_type': 'error', 'ename': 'ZeroDivisionError', 'evalue': 'division by zero',
+       'traceback': ['\x1b[31mTraceback <b>x</b>\x1b[0m', 'ZeroDivisionError: division by zero']}
+def _stream(t): return {'output_type': 'stream', 'name': 'stdout', 'text': t}
+OUT_CELLS = CELLS + [dict(id='c4', cell_type='code', source='print(2)', outputs=[_stream('DECK-OUT\n')])]
+OUT_LINE = [LINE[0], dict(items=[dict(i=3, frag=-1), dict(i=4, frag=-1)], notes=[], groups=0)]
+def _out_body(root): return body(root, cells=copy.deepcopy(OUT_CELLS), line=copy.deepcopy(OUT_LINE))
+def _o(k, cell, gen, seq, outputs=(), done=True): return dict(k=k, cell=cell, gen=gen, seq=seq, outputs=list(outputs), done=done)
+
+def test_output_goes_to_any_code_cell_of_the_deck_in_order_and_a_reload_gets_it(bare):
+    "Output for a code cell on another slide is kept with no audience window, sent as `out` in order, and in each new `state`."
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', _out_body(root)))[1]; k = a['key']
+        for cell in ('m1', 'm0', 'nope', 7):
+            assert (await _post(app, '/present/out', _o(k, cell, 1, 1)))[0] == 400 and not pres.cur['live']['outs'], cell
+        for bad in (dict(gen=0), dict(gen=True), dict(seq=-1), dict(seq=1.5), dict(done='yes'), dict(outputs={}), dict(outputs=['x']), dict(extra=1)):
+            assert (await _post(app, '/present/out', {**_o(k, 'c2', 1, 1), **bad}))[0] == 400, bad
+        s, r = await _post(app, '/present/out', _o(k, 'c4', 1, 2, [_stream('second slide 2\n')], done=False))
+        assert s == 200 and r['msg'] == dict(cell='c4', gen=1, seq=2, html='<pre>second slide 2\n</pre>') and r['error'] is None, r
+        assert (await _post(app, '/present/out', _o(k, 'c4', 1, 1, [_stream('older\n')])))[1] == dict(ok=True, stale=True)
+        assert (await _post(app, '/present/out', _o(k, 'c4', 1, 2, [_stream('same\n')])))[1] == dict(ok=True, stale=True)
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        assert got[0][0] == 'state' and got[0][1]['outs'] == [dict(cell='c4', gen=1, seq=2, html='<pre>second slide 2\n</pre>')]
+        assert (await _post(app, '/present/out', _o(k, 'c4', 2, 1, [_stream('rerun\n')])))[0] == 200
+        assert (await _post(app, '/present/out', _o(k, 'c2', 1, 1, [_out(RED)])))[0] == 200
+        await _until(lambda: len(got) == 3)
+        assert got[1] == ('out', dict(cell='c4', gen=2, seq=1, html='<pre>rerun\n</pre>'))
+        assert got[2][0] == 'out' and f'/present/img/{_sha(RED)}?k={a["ak"]}' in got[2][1]['html']
+        again, stop2 = [], asyncio.Event()
+        t2 = asyncio.create_task(_listen(app, again, stop2, _room(a['ak'])))
+        await _until(lambda: again)
+        outs = again[0][1]['outs']
+        assert {o['cell']: (o['gen'], o['seq']) for o in outs} == {'c4': (2, 1), 'c2': (1, 1)} and 'rerun' in json.dumps(outs)
+        assert k not in json.dumps(got + again)
+        await _stop(stop, t); await _stop(stop2, t2)
+    asyncio.run(go())
+
+def test_a_failed_run_keeps_the_error_private_until_show_error_for_that_run(bare):
+    "The room gets a failed run's other outputs; Show error needs the run that failed last, so a late click shows no older traceback."
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', _out_body(root)))[1]; k = a['key']
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        s, r = await _post(app, '/present/out', _o(k, 'c2', 3, 1, [_stream('before the error\n'), ERR]))
+        assert s == 200 and 'before the error' in r['msg']['html'] and 'ZeroDivisionError' not in json.dumps(r['msg'])
+        assert r['error']['ename'] == 'ZeroDivisionError' and '\x1b' not in json.dumps(r['error'])
+        assert (await _post(app, '/present/show-error', dict(k=k, cell='c4', gen=3)))[0] == 400, 'that cell has no run'
+        for bad in (dict(gen='3'), dict(gen=True), dict(cell='m1'), dict(extra=1)):
+            assert (await _post(app, '/present/show-error', {**dict(k=k, cell='c2', gen=3), **bad}))[0] == 400, bad
+        s, r2 = await _post(app, '/present/show-error', dict(k=k, cell='c2', gen=3))
+        h = r2['msg']['html']
+        assert s == 200 and r2['msg']['seq'] == 2 and 'before the error' in h and 'ZeroDivisionError: division by zero' in h and '&lt;b&gt;x&lt;/b&gt;' in h and '<b>' not in h, r2
+        await _until(lambda: len(got) == 3)
+        assert 'ZeroDivisionError' not in json.dumps(got[1]) and got[2] == ('out', r2['msg'])
+        assert (await _post(app, '/present/out', _o(k, 'c2', 4, 1, [], done=False)))[0] == 200
+        assert (await _post(app, '/present/out', _o(k, 'c2', 4, 2, [dict(ERR, evalue='RUN-TWO', traceback=['ZeroDivisionError: RUN-TWO'])])))[0] == 200
+        await _until(lambda: len(got) == 5)
+        assert (await _post(app, '/present/show-error', dict(k=k, cell='c2', gen=3)))[1] == dict(ok=True, stale=True)
+        await asyncio.sleep(.1)
+        assert len(got) == 5 and 'division by zero' not in json.dumps(got[3:]), 'a late click reveals no older traceback'
+        s, r3 = await _post(app, '/present/show-error', dict(k=k, cell='c2', gen=4))
+        assert s == 200 and 'RUN-TWO' in r3['msg']['html'] and 'division by zero' not in r3['msg']['html']
+        assert (await _post(app, '/present/out', _o(k, 'c2', 5, 1, [_stream('fixed\n')])))[1]['error'] is None
+        assert (await _post(app, '/present/show-error', dict(k=k, cell='c2', gen=5)))[0] == 400, 'a run with no error'
+        await _stop(stop, t)
+    asyncio.run(go())
+
+def test_a_kernel_restart_clears_every_code_cell_and_every_private_error(bare):
+    "`/present/clear` empties each code cell of the deck, its first outputs too, drops each error, and makes older runs stale."
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', _out_body(root)))[1]; k = a['key']
+        assert (await _post(app, '/present/out', _o(k, 'c2', 2, 1, [ERR])))[0] == 200
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        assert (await _post(app, '/present/clear', dict(k=k, gen=2)))[1] == dict(ok=True, stale=True)
+        assert (await _post(app, '/present/clear', dict(k=k, gen='3')))[0] == 400
+        assert (await _post(app, '/present/clear', dict(k=k, gen=3))) == (200, dict(ok=True))
+        await _until(lambda: len(got) == 3)
+        assert sorted(d['cell'] for e, d in got[1:]) == ['c2', 'c4'] and all(e == 'out' and d['html'] == '' and d['gen'] == 3 for e, d in got[1:])
+        assert (await _post(app, '/present/show-error', dict(k=k, cell='c2', gen=2)))[1] == dict(ok=True, stale=True)
+        assert (await _post(app, '/present/show-error', dict(k=k, cell='c2', gen=3)))[0] == 400
+        assert (await _post(app, '/present/out', _o(k, 'c2', 2, 9, [_stream('late\n')])))[1] == dict(ok=True, stale=True)
+        assert (await _post(app, '/present/out', _o(k, 'c2', 4, 1, [_stream('after\n')])))[0] == 200
+        again, stop2 = [], asyncio.Event()
+        t2 = asyncio.create_task(_listen(app, again, stop2, _room(a['ak'])))
+        await _until(lambda: again)
+        assert {o['cell']: o['html'] for o in again[0][1]['outs']} == {'c2': '<pre>after\n</pre>', 'c4': ''}
+        assert all(o.get('error') is None for o in pres.cur['live']['outs'].values() if o['cell'] == 'c4')
+        await _stop(stop, t); await _stop(stop2, t2)
+    asyncio.run(go())
+
+def test_run_images_go_to_the_live_store_within_its_quota(rig, monkeypatch):
+    "An image a run shows is served by hash with the audience key; at the store's limit the output falls back to its text."
+    import leela.blocks.nb.presentation as pm
+    from leela.blocks.nb.show import IMG_MOST
+    c, root, app = rig
+    a = c.post('/present/start', json=_out_body(root)).json(); k = a['key']
+    r = c.post('/present/out', json=_o(k, 'c4', 1, 1, [_out(GREEN)])).json()
+    assert f'/present/img/{_sha(GREEN)}?k={a["ak"]}' in r['msg']['html'] and k not in r['msg']['html']
+    assert c.get(f'/present/img/{_sha(GREEN)}', params=dict(k=a['ak'])).content == GREEN
+    imgs = held(app).cur['images']
+    for i in range(IMG_MOST - len(imgs)): imgs[f'{i:064x}'] = ('image/png', b'x')
+    pic = _png((1, 2, 3))
+    fig = {'output_type': 'display_data', 'data': {'image/png': base64.b64encode(pic).decode(), 'text/plain': '<Figure FALLBACK>'}}
+    h = c.post('/present/out', json=_o(k, 'c4', 2, 1, [fig])).json()['msg']['html']
+    assert '&lt;Figure FALLBACK&gt;' in h and '<img' not in h and _sha(pic) not in imgs and len(imgs) == IMG_MOST
+    monkeypatch.setattr(pm, 'MOST_RUN', 2000)
+    r = c.post('/present/out', json=_o(k, 'c4', 3, 1, [_stream('x' * 4000)]))
+    assert r.status_code == 400 and held(app).cur['live']['outs']['c4']['gen'] == 2, 'a body over the limit is refused before it is read'
+
+def test_a_run_in_a_presentation_initialises_no_placeholder(tmp_path, monkeypatch):
+    "`save: false` on `/nb/run/stream` writes neither the zero-byte notebook it runs nor another placeholder; an ordinary run still does."
+    p, other = tmp_path/'new.ipynb', tmp_path/'other.ipynb'; p.touch(); other.touch()
+    ws = Workspace(roots=[tmp_path]); ws.open(p)
+    async def no_kernel(tab=None): raise RuntimeError('no kernel in this test')
+    monkeypatch.setattr(ws, 'runtime', no_kernel)
+    try:
+        with TestClient(ide_app(ws)) as client:
+            client.get('/tab/state', params={'path': str(p)})
+            with pytest.raises(RuntimeError): client.post('/nb/run/stream', json={'path': str(p), 'i': 0, 'source': 'X = 1', 'save': False})
+            assert (p.stat().st_size, other.stat().st_size) == (0, 0)
+            with pytest.raises(RuntimeError): client.post('/nb/run/stream', json={'path': str(p), 'i': 0, 'source': 'X = 1'})
+            assert p.stat().st_size and other.stat().st_size, 'ordinary Run keeps its behaviour'
+    finally: ws.shutdown_now()

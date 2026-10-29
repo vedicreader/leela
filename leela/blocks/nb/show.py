@@ -147,6 +147,10 @@ def clean_out(outputs, key, images, fs=None, base='', room=True):
     "`(html, error)` of a cell's `outputs`: text, raster images and demos only, the error apart with no ANSI codes, or None."
     return _outs(outputs, key, images, fs, base, room)[:2]
 
+def error_html(err):
+    "The error `clean_out` gives as escaped text: its traceback, or `ename: evalue` when it has none."
+    return _pre('\n'.join(err.get('traceback') or [f"{err.get('ename', '')}: {err.get('evalue', '')}"]))
+
 def _units(s): return len(s.encode('utf-16-le', 'surrogatepass')) // 2
 def _cost(s): return _units(json.dumps(s, ensure_ascii=False)) - 2
 def _size(m): return _units(json.dumps(m, ensure_ascii=False, separators=(',', ':')))

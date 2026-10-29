@@ -5,9 +5,9 @@ from pathlib import Path
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 from ...core.web import NOT_OBJECT, asset, asset_dir, fail, json_obj, off_loop, sse
-from .show import MOST, MOST_GROUPS, _size, decks
+from .show import MOST, MOST_GROUPS, _size, clean_out, clip_msg, decks, error_html
 
-__all__ = ['Presentation', 'Drop', 'Room', 'check_start', 'check_move', 'connect']
+__all__ = ['Presentation', 'Drop', 'Room', 'check_start', 'check_move', 'stage_src', 'connect']
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
@@ -17,17 +17,24 @@ LONG = {'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-
 MOST_CELLS, MOST_SRC, MOST_OUT, MOST_SLIDES, MOST_BODY, EVENTS_MOST = 2000, 1_000_000, 4_000_000, 9999, 32 << 20, 64
 #: an escaped JSON body holds up to 6 bytes for each of the 65536 UTF-16 units a move may have
 MOST_MOVE, KEEPALIVE = 512 << 10, 15
+#: a run's outputs as the presenter posts them, before the room copy is cleaned and clipped
+MOST_RUN, MOST_OUTS = 16 << 20, 2000
 STREAM = SHUT | {'X-Accel-Buffering': 'no'}
 KINDS = ('markdown', 'code', 'raw', 'prompt')
 ENDED, BAD_KEY, NEWER = 'This presentation has ended.', 'This presentation link is not valid.', 'A newer presentation started.'
 NOTHING, NOT_NB, OUTSIDE = 'There is nothing to present in this notebook.', 'Only a notebook can be presented.', 'The notebook is outside the open folders.'
 NOT_IN, TWICE = 'The slide line names a cell that is not in the notebook.', 'A cell is in the slide line more than once.'
+BAD_OUT, NOT_CODE, NO_ERROR = 'That is not an output this presentation takes.', 'That cell is not a code cell of this presentation.', 'That run has no error to show.'
 
 def _no(err, code=400):
     "`fail` that no cache keeps and no browser sniffs."
     r = fail(err, code); r.headers.update(SHUT); return r
 
 def _int(v): return isinstance(v, int) and not isinstance(v, bool)
+def _count(v, lo=0): return _int(v) and lo <= v < 2**31
+def _room_out(o): return {x: o[x] for x in ('cell', 'gen', 'seq', 'html')}
+def _stage(): return (files('abhyasa')/'core'/'stage.js').read_bytes()
+def stage_src(): return f'/present/stage.js?v={hashlib.sha256(_stage()).hexdigest()[:16]}'
 
 def _chars(x):
     "The characters of text in a JSON value."
@@ -54,7 +61,7 @@ class Room(asyncio.Queue):
         super().put_nowait(x)
 
 class Presentation:
-    "The live presentation, if any, as `cur`: `key`, `ak`, `id`, `path`, `title`, `presenter`, `room`, `images`, `at`, `groups`, `slugs`, `src`, `live`, `rooms`, `holder` and `started`. Only the event loop changes it."
+    "The live presentation, if any, as `cur`: `key`, `ak`, `id`, `path`, `base`, `title`, `presenter`, `room`, `images`, `at`, `groups`, `slugs`, `src`, `live`, `rooms`, `holder` and `started`. Only the event loop changes it."
     def __init__(self): self.cur, self.n, self.subs, self.boot = None, 0, set(), secrets.token_hex(8)
     @property
     def id(self): return self.cur and self.cur['id']
@@ -74,9 +81,10 @@ class Presentation:
         b = k.encode('utf-8', 'surrogatepass')
         if not any(secrets.compare_digest(b, self.cur[n].encode()) for n in (('key', 'ak') if read else ('key',))): return _no(BAD_KEY, 403)
     def state(self, cur):
-        "What a room stream sends first: the place, the theme, each demo state and the answers so far."
+        "What a room stream sends first: the place, the theme, each demo state, the answers so far and the latest output of each code cell."
         live = cur['live']
-        return dict(title=cur['title'], at=cur['at'], look=cur['room']['look'], demo=list(live['demo'].values()), answers=list(live['answers'].values()))
+        return dict(title=cur['title'], at=cur['at'], look=cur['room']['look'], demo=list(live['demo'].values()), answers=list(live['answers'].values()),
+                    outs=[_room_out(o) for o in live['outs'].values()])
     def mine(self, cur):
         "What the presenter page needs to draw `cur`: both keys, the presenter copy, the place, the look, the live state and the code sources. Never on a stream."
         return dict(ok=True, key=cur['key'], ak=cur['ak'], id=cur['id'], boot=self.boot, holder=cur['holder'], presenter=cur['presenter'], at=cur['at'],
@@ -209,7 +217,7 @@ def connect(app, ctx):
     rt, fs, ws = app.route, ctx.fs, ctx.session
     pres = app.state.presentation = Presentation()
     # abhyasa's file, read through its package: `abhyasa.core` imports abhyasa's web UI, so `files('abhyasa')` opens it without that import
-    stage = (files('abhyasa')/'core'/'stage.js').read_bytes()
+    stage = _stage()
     ver = hashlib.sha256(stage).hexdigest()[:16]
     async def stage_js(req): return Response(stage, media_type='text/javascript', headers=LONG)
     # first in the table: FastHTML's `/{fname:path}.{ext:static}` route answers every `.js` path it reaches
@@ -227,7 +235,7 @@ def connect(app, ctx):
         if n != pres.n: return _no(NEWER, 409)
         at = dict(slide=f"s{s['slide'] + 1}", step=s['step'], blank=False, size=10)
         cells = s['cells']; src = {cells[x['i']]['id']: cells[x['i']].get('source', '') for sl in s['line'] for x in sl['items'] if cells[x['i']]['cell_type'] == 'code'}
-        pres.begin(cur := dict(key=key, ak=ak, id=pid, path=s['path'], title=s['title'], presenter=p, room=r, images=imgs, at=at, groups=s['groups'], slugs=_slugs(r),
+        pres.begin(cur := dict(key=key, ak=ak, id=pid, path=s['path'], base=s['base'], title=s['title'], presenter=p, room=r, images=imgs, at=at, groups=s['groups'], slugs=_slugs(r),
                                src=src, live=dict(outs={}, demo={}, answers={}), rooms=set(), holder=secrets.token_hex(8), started=time.time()))
         return JSONResponse(pres.mine(cur), headers=SHUT)
     @rt('/present/resume', methods=['POST'])
@@ -289,6 +297,55 @@ def connect(app, ctx):
         elif t == 'answers': live['answers'][f['slug']] = f
         elif t == 'look': c['room']['look'] = c['presenter']['look'] = {**c['room']['look'], 'theme': f['theme']}
         pres.relay(t, f)
+        return JSONResponse(dict(ok=True), headers=SHUT)
+    def stale(): return JSONResponse(dict(ok=True, stale=True), headers=SHUT)
+    @rt('/present/out', methods=['POST'])
+    async def present_out(req):
+        "A run's outputs for a code cell of the deck, cleaned and clipped for the room, kept for a reload and sent as `out`; the error goes back to the presenter only."
+        d, no = await _body(req, MOST_RUN, 'The output is larger than 16 MB.')
+        if no: return no
+        if no := pres.check(d.get('k')): return no
+        c, cell, gen, seq, outs = pres.cur, d.get('cell'), d.get('gen'), d.get('seq'), d.get('outputs')
+        if set(d) != {'k', 'cell', 'gen', 'seq', 'outputs', 'done'} or not _count(gen, 1) or not _count(seq) or not isinstance(d['done'], bool): return _no(BAD_OUT)
+        if not isinstance(outs, list) or len(outs) > MOST_OUTS or not all(isinstance(o, dict) for o in outs) or _chars(outs) > MOST_RUN: return _no(BAD_OUT)
+        if not isinstance(cell, str) or cell not in c['src']: return _no(NOT_CODE)
+        if (old := c['live']['outs'].get(cell)) and (gen, seq) <= (old['gen'], old['seq']): return stale()
+        h, err = clean_out(outs, c['ak'], c['images'], fs, c['base'])
+        try: msg = clip_msg(dict(cell=cell, gen=gen, seq=seq, html=h))
+        except ValueError as e: return _no(str(e))
+        c['live']['outs'][cell] = dict(msg, room=msg['html'], done=d['done'], error=err)
+        pres.relay('out', msg)
+        return JSONResponse(dict(ok=True, msg=msg, error=err), headers=SHUT)
+    @rt('/present/show-error', methods=['POST'])
+    async def present_show_error(req):
+        "Send the room the error of run `gen` of a cell with its other outputs; a run the server no longer holds as the last one is stale."
+        d, no = await _body(req)
+        if no: return no
+        if no := pres.check(d.get('k')): return no
+        c, cell, gen = pres.cur, d.get('cell'), d.get('gen')
+        if set(d) != {'k', 'cell', 'gen'} or not _count(gen, 1): return _no(BAD_OUT)
+        if not isinstance(cell, str) or cell not in c['src']: return _no(NOT_CODE)
+        o = c['live']['outs'].get(cell)
+        if o and o['gen'] > gen: return stale()
+        if not o or o['gen'] < gen or not o['error']: return _no(NO_ERROR)
+        try: msg = clip_msg(dict(cell=cell, gen=gen, seq=o['seq'] + 1, html=o['room'] + error_html(o['error'])))
+        except ValueError as e: return _no(str(e))
+        o.update(msg)
+        pres.relay('out', msg)
+        return JSONResponse(dict(ok=True, msg=msg), headers=SHUT)
+    @rt('/present/clear', methods=['POST'])
+    async def present_clear(req):
+        "After a kernel restart: every code cell of the deck empty on the room screen, every error gone, and every run before `gen` stale."
+        d, no = await _body(req)
+        if no: return no
+        if no := pres.check(d.get('k')): return no
+        c, gen = pres.cur, d.get('gen')
+        if set(d) != {'k', 'gen'} or not _count(gen, 1): return _no(BAD_OUT)
+        outs = c['live']['outs']
+        if any(o['gen'] >= gen for o in outs.values()): return stale()
+        for cell in c['src']:
+            outs[cell] = dict(cell=cell, gen=gen, seq=0, html='', room='', done=True, error=None)
+            pres.relay('out', _room_out(outs[cell]))
         return JSONResponse(dict(ok=True), headers=SHUT)
     @rt('/present/room', methods=['GET'])
     async def present_room(req):

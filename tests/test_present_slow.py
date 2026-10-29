@@ -116,7 +116,9 @@ async def _walk(pg, root):
     await pg.wait_for_function(f'() => ({AT})()[0] === 4')
     out['ends_last'] = await pg.evaluate(ENDS)
     await pg.click('.lee-present-strip [data-run="c9"]')
-    await pg.wait_for_function(f'() => ({MSG})().includes("ZeroDivisionError")', timeout=60000)
+    # Task 7 on purpose: a failure opens the private error panel, not the status message
+    await pg.wait_for_function('''() => !document.querySelector('.lee-present-err').hidden && document.querySelector('.lee-present-err').textContent.includes('ZeroDivisionError')''', timeout=60000)
+    out['file_after_runs'] = (root/'deck.ipynb').read_bytes(), (root/'deck.ipynb').stat().st_mtime_ns
     await _end(pg)
     out['closed'] = await pg.evaluate('''() => ({focus: document.activeElement.closest('.lee-cell')?.dataset.i, sel: String(lee.sel),
       talk: document.documentElement.classList.contains('talk'), present: lee.present})''')
@@ -171,8 +173,8 @@ def test_a_notebook_presents_as_slides_and_leaves_the_ide_as_it_found_it(tmp_pat
     assert out['reopen'] == 1
     assert set(out['said'].values()) == {'only a notebook can be presented as slides'}, out['said']
     assert not [u for u in out['asked'] if 'reveal' in u or '/present/notes' in u or '/present/state' in u], out['asked']
-    # Run saves a notebook with unsaved edits before it runs (`motion.js:94`), so the check stops at the first Run
     assert out['file_at_run'] == before, 'starting, moving, notes and the palette chord write nothing'
+    assert out['file_after_runs'] == before, 'Task 7: Run in a presentation saves nothing, the unsaved edit included'
 
 
 LONG = '# Long\n\n' + '\n\n'.join(f'line {i} of a slide written far longer than one page holds' for i in range(20))
@@ -943,3 +945,238 @@ def test_a_server_restart_says_so_in_both_windows(tmp_path):
     assert head == 'Leela restarted' and 'from slide 2' in copy and 'audience window must open again' in copy and yes == 'Start again' and not shown, out['pres']
     assert 'The presentation has ended.' in out['aud'] and 'Leela restarted' in out['aud'], out['aud']
     assert out['again'] == [[1, 0], True]
+
+RUN_CELLS = [md('# Run', 'slide', 'r0'), code("import time\nfor i in range(4):\n    print('tick', i, flush=True)\n    time.sleep(0.8)", '-', 'r1'),
+             md('# Fail', 'slide', 'r2'), code("n = globals().get('n', 0) + 1\nprint('before', n, flush=True)\nimport time; time.sleep(0.6)\nraise ValueError(f'RUN-{n}')", '-', 'r3'),
+             md('# Loop', 'slide', 'r4'), code('while True: pass', '-', 'r5'),
+             md('# Other', 'slide', 'r6'), code("print('other done')", '-', 'r7', [{'output_type': 'stream', 'name': 'stdout', 'text': 'OLD-OUT\n'}]),
+             md('# Die', 'slide', 'r8'), code('import os\nos._exit(1)', '-', 'r9'),
+             md('# Big', 'slide', 'r10'), code("from IPython.display import HTML, display\ndisplay(HTML('<script>window.hit = 1</script><b>BOLD-OUT</b>'))\nprint('<\\\\' * 150000)", '-', 'r11')]
+AUD_HAS = "s => !!document.querySelector('.lee-stage > .lee-slide')?.textContent.includes(s)"
+PRES_HAS = "s => !!document.querySelector('.lee-present .lee-slide:not(.lee-measure)')?.textContent.includes(s)"
+AUD_TEXT = "() => document.querySelector('.lee-stage > .lee-slide').textContent"
+#: text in an output box, not in the code above it
+AUD_OUT = "s => [...document.querySelectorAll('.lee-stage > .lee-slide .lee-out')].some(e => e.textContent.includes(s))"
+PRES_OUT = "s => [...document.querySelectorAll('.lee-present .lee-slide:not(.lee-measure) .lee-out')].some(e => e.textContent.includes(s))"
+ERRP = "() => { const e = document.querySelector('.lee-present-err'); return e && !e.hidden ? e.textContent : ''; }"
+#: the output of each code cell the server holds, from the `state` of a new room stream
+OUTS = '''async () => { const p = lee.present; await p.chain; return await new Promise(ok => { const es = new EventSource('/present/room?k=' + p.ak);
+  es.addEventListener('state', e => { es.close(); ok(Object.fromEntries(JSON.parse(e.data).outs.map(o => [o.cell, o.html]))); }); }); }'''
+
+def _disk(*ps): return [(p.read_bytes(), p.stat().st_mtime_ns) for p in ps]
+async def _run(pg, cell): await pg.click(f'.lee-present-strip [data-run="{cell}"]')
+async def _outs(pg, cond, t=60):
+    for _ in range(int(t*2)):
+        if cond(o := await pg.evaluate(OUTS)): return o
+        await asyncio.sleep(.5)
+    raise AssertionError(f'the server never held the output: {o}')
+
+def test_a_run_in_a_presentation_writes_no_file_and_streams_to_the_room(tmp_path):
+    "Run in a show runs the live text and saves nothing, with autosave on in every mode; output streams to the room; a failure keeps its traceback private."
+    deck, empty = tmp_path/'deck.ipynb', tmp_path/'empty.ipynb'
+    _nb(deck, RUN_CELLS); empty.touch()
+    async def go(pg):
+        out, saves = {}, []
+        pg.on('request', lambda r: saves.append(r.url) if r.method == 'POST' and 'save' in r.url else None)
+        await _open(pg, deck, len(RUN_CELLS))
+        await pg.evaluate('''() => { lee.filePrefs.autoSave = 'off'; const v = ensureCellMounted(6);
+          v.dispatch({changes: {from: 0, to: v.state.doc.length, insert: '# Other\\n\\nUNSAVED-EDIT'}}); }''')
+        await pg.wait_for_function("() => document.querySelector('.lee-tab.active.dirty')")
+        out['before'] = _disk(deck, empty)
+        await _start(pg)
+        await pg.evaluate('''async () => { const f = lee.filePrefs, wait = ms => new Promise(r => setTimeout(r, ms));
+          Object.assign(f, {autoSave: 'afterDelay', autoSaveDelay: 100}); markDirty(); await wait(600);
+          f.autoSave = 'onFocusChange'; document.querySelector('.cm-editor').dispatchEvent(new FocusEvent('focusout', {bubbles: true})); await wait(300);
+          f.autoSave = 'onWindowChange'; dispatchEvent(new Event('blur')); await wait(300); f.autoSave = 'afterDelay'; }''')
+        aud = await _audience(pg, 'Run')
+        await _run(pg, 'r1')
+        await aud.wait_for_function(AUD_HAS, arg='tick 0', timeout=60000)
+        out['streaming'] = [await aud.evaluate(AUD_HAS, 'tick 3'), await pg.evaluate('''() => !document.querySelector('.lee-present-strip [data-stop="r1"]').hidden''')]
+        await aud.wait_for_function(AUD_HAS, arg='tick 3', timeout=60000)
+        await _to(pg, 1)
+        await _run(pg, 'r3')
+        await pg.wait_for_function(f'() => ({ERRP})().includes("RUN-1")', timeout=60000)
+        await aud.wait_for_function(AUD_HAS, arg='before 1')
+        out['room'], out['panel'] = await aud.evaluate(AUD_TEXT), await pg.evaluate(ERRP)
+        out['pres'] = await pg.evaluate("() => document.querySelector('.lee-present .lee-slide:not(.lee-measure)').textContent")
+        await _to(pg, 5)
+        await _run(pg, 'r11')
+        await aud.wait_for_function(AUD_OUT, arg='Output is too long for the room screen.', timeout=60000)
+        out['big'] = [await aud.evaluate(AUD_OUT, 'BOLD-OUT'), await aud.evaluate('() => window.hit'), await pg.evaluate(PRES_OUT, 'Output is too long for the room screen.'),
+                      await aud.evaluate("() => document.querySelector('.lee-stage > .lee-slide .lee-out').textContent.length")]
+        await pg.wait_for_timeout(1500)
+        out['disk'], out['pref'], out['saves'] = _disk(deck, empty), await pg.evaluate('() => lee.filePrefs.autoSave'), list(saves)
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['streaming'] == [False, True], ('the room sees the first line while the cell still runs, and Stop shows', out['streaming'])
+    assert 'before 1' in out['room'] and not any(x in out['room'] or x in out['pres'] for x in ('RUN-1', 'Traceback', 'ValueError: ')), out['room']
+    assert 'ValueError: RUN-1' in out['panel'] and 'The room cannot see this error.' in out['panel'], out['panel']
+    assert out['disk'] == out['before'], 'no Run, autosave or audience window wrote the notebook or the placeholder'
+    assert out['saves'] == [] and out['pref'] == 'afterDelay', (out['saves'], out['pref'])
+    bold, hit, clipped, n = out['big']
+    assert bold is True and hit is None and clipped is True and n < 70000, ('a script in output never runs, and long output is clipped on both screens', out['big'])
+
+def test_a_zero_byte_notebook_runs_in_a_presentation_and_stays_zero_bytes(tmp_path):
+    "Run in a show does not make a zero-byte notebook, or any other placeholder, into valid JSON."
+    blank, other = tmp_path/'blank.ipynb', tmp_path/'other.ipynb'; blank.touch(); other.touch()
+    async def go(pg):
+        await _open(pg, blank, 1)
+        await pg.evaluate('''() => { const v = ensureCellMounted(0); v.dispatch({changes: {from: 0, to: v.state.doc.length, insert: "print('blank ran')"}}); }''')
+        await _start(pg)
+        await pg.click('.lee-present-strip [data-run]')
+        await pg.wait_for_function(PRES_OUT, arg='blank ran', timeout=60000)
+        await pg.wait_for_timeout(500)
+        return [blank.stat().st_size, other.stat().st_size]
+    assert asyncio.run(_real_page(go, tmp_path)) == [0, 0]
+
+def test_stop_show_error_restart_and_a_dead_kernel(tmp_path):
+    "Show error shows the last failed run only; Stop ends a long cell; a restart, and Stop on a cell whose kernel died, clear every code cell on both screens."
+    _nb(tmp_path/'deck.ipynb', RUN_CELLS)
+    async def go(pg):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', len(RUN_CELLS))
+        await _start(pg)
+        aud = await _audience(pg, 'Run')
+        await _to(pg, 1)
+        await _run(pg, 'r3')
+        await pg.wait_for_function(f'() => ({ERRP})().includes("RUN-1")', timeout=60000)
+        g1 = await pg.evaluate('() => lee.present.err.gen')
+        await _run(pg, 'r3')
+        out['rerun_panel'] = await pg.evaluate(ERRP)
+        await pg.wait_for_function(f'() => ({ERRP})().includes("RUN-2")', timeout=60000)
+        out['late'] = await pg.evaluate('''g => fetch('/present/show-error', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({k: lee.present.key, cell: 'r3', gen: g})}).then(r => r.json())''', g1)
+        await pg.click('.lee-present-err [data-show-error]')
+        await aud.wait_for_function(AUD_HAS, arg='RUN-2')
+        out['shown'] = await aud.evaluate(AUD_TEXT)
+        await _to(pg, 2)
+        await _run(pg, 'r5')
+        await pg.wait_for_selector('.lee-present-strip [data-stop="r5"]:not([hidden])')
+        out['run_off'] = await pg.evaluate('''() => document.querySelector('.lee-present-strip [data-run="r5"]').disabled''')
+        await pg.wait_for_timeout(800)
+        await pg.click('.lee-present-strip [data-stop="r5"]')
+        await pg.wait_for_function(f'() => ({ERRP})().includes("KeyboardInterrupt")', timeout=30000)
+        await pg.wait_for_function('''() => !document.querySelector('.lee-present-strip [data-run="r5"]').disabled && document.querySelector('.lee-present-strip [data-stop="r5"]').hidden''')
+        await _to(pg, 3)
+        await aud.wait_for_function(AUD_HAS, arg='OLD-OUT')
+        await pg.evaluate('() => ACTIONS.restart()')
+        await aud.wait_for_function(f'() => !({AUD_HAS})("OLD-OUT")', timeout=30000)
+        out['restart'] = [await pg.evaluate(ERRP), await pg.evaluate(PRES_HAS, 'OLD-OUT'), await _outs(pg, lambda o: o.get('r3') == '')]
+        await _run(pg, 'r7')
+        await aud.wait_for_function(AUD_OUT, arg='other done', timeout=60000)
+        await _to(pg, 4)
+        await _run(pg, 'r9')
+        # kunda does not see the kernel process go during a run, so the run waits; Stop finds the kernel gone and restarts it by force
+        await pg.wait_for_selector('.lee-present-strip [data-stop="r9"]:not([hidden])')
+        await pg.wait_for_timeout(1500)
+        await pg.click('.lee-present-strip [data-stop="r9"]')
+        out['dead'] = await _outs(pg, lambda o: o.get('r7') == '')
+        await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press('ArrowLeft')
+        await aud.wait_for_function(AUD_HAS, arg='Other')
+        out['dead_room'], out['dead_pres'] = await aud.evaluate(AUD_OUT, 'other done'), await pg.evaluate(PRES_OUT, 'other done')
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['rerun_panel'] == '', 'a new run of the cell closes the old error'
+    assert out['late'] == {'ok': True, 'stale': True}, out['late']
+    assert 'RUN-2' in out['shown'] and 'RUN-1' not in out['shown'], out['shown']
+    assert out['run_off'] is True
+    panel, old, outs = out['restart']
+    assert panel == '' and old is False and set(outs.values()) == {''} and {'r1', 'r3', 'r5', 'r7', 'r9'} <= set(outs), out['restart']
+    assert out['dead']['r7'] == '' and out['dead_room'] is False and out['dead_pres'] is False, out
+
+def test_output_for_another_slide_and_every_reconnect_get_the_latest(tmp_path):
+    "Output that arrives while its slide is away shows when it returns; a reloaded audience and a reloaded presenter get the latest; a changed cell cannot run."
+    _nb(tmp_path/'deck.ipynb', RUN_CELLS)
+    async def go(pg):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', len(RUN_CELLS))
+        await _start(pg)
+        aud = await _audience(pg, 'Run')
+        await _run(pg, 'r1')
+        await aud.wait_for_function(AUD_HAS, arg='tick 0', timeout=60000)
+        await _to(pg, 1)
+        await aud.wait_for_function(AUD_HAS, arg='Fail')
+        await aud.reload()
+        await aud.wait_for_function(AUD_HAS, arg='Fail', timeout=20000)
+        await _outs(pg, lambda o: 'tick 3' in o.get('r1', ''))
+        await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press('ArrowLeft')
+        await aud.wait_for_function(AUD_HAS, arg='tick 3')
+        out['back'] = await pg.evaluate(PRES_HAS, 'tick 3')
+        await _run(pg, 'r1')
+        await aud.wait_for_function(f'() => ({AUD_HAS})("tick 0") && !({AUD_HAS})("tick 3")', timeout=60000)
+        await aud.reload()
+        await aud.wait_for_function(AUD_HAS, arg='tick ', timeout=20000)
+        out['aud_reload'] = await aud.evaluate(AUD_TEXT)
+        await pg.reload()
+        await pg.wait_for_function(READY, timeout=20000)
+        await aud.wait_for_function(AUD_HAS, arg='tick 3', timeout=60000)
+        await pg.wait_for_function(PRES_HAS, arg='tick 3', timeout=30000)
+        await pg.evaluate('''() => { const v = ensureCellMounted(7); v.dispatch({changes: {from: 0, to: v.state.doc.length, insert: "print('changed')"}}); }''')
+        await _to(pg, 3)
+        out['stale'] = await pg.evaluate('''() => { const b = document.querySelector('.lee-present-strip [data-run="r7"]'); return [b.disabled, b.title]; }''')
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['back'] is True
+    assert 'tick 0' in out['aud_reload'] and 'tick 3' not in out['aud_reload'], out['aud_reload']
+    assert out['stale'][0] is True and 'changed' in out['stale'][1], out['stale']
+
+DEMO2 = demo('d2', title='Weights', state={'x': 2}, blocks=[slider('x', label='x', min=0, max=4, step=1),
+             gate('g1', 'Which one?', ['one', 'two'], is_('two'), again=True), readout('x is {x}')])
+PSHADOW = "s => document.querySelector('.lee-present .lee-slide:not(.lee-measure) .lee-rupaka')?.shadowRoot?.querySelector(s)"
+SLIDE_TO = f'''v => {{ const i = ({PSHADOW})('input[type=range]'); i.value = v; i.dispatchEvent(new Event('input', {{bubbles: true}})); }}'''
+LOCK = f'''() => {{ const g = ({PSHADOW})('.rk-gate'); [...g.querySelectorAll('.opts button')].find(x => x.textContent.startsWith('two')).click(); g.querySelector('button.go').click(); }}'''
+AGAIN = f'''() => [...({PSHADOW})('.rk-gate').querySelectorAll('button')].find(x => x.textContent === 'Try another').click()'''
+
+def test_a_demo_is_mirrored_and_its_answers_follow_the_settle(tmp_path):
+    "The presenter's own demo drives the room copy; answers go only after the gate settles; Try another reopens the room's gate; a reload restores both."
+    _nb(tmp_path/'deck.ipynb', [md(f'# Demo\n\n```rupaka\n{json.dumps(DEMO2)}\n```', 'slide', 'd0'), md('# After', 'slide', 'd1')])
+    pv, av = f'() => ({PSHADOW})(".verdict:not([hidden])")?.textContent || ""', f'() => ({SHADOW})(".verdict:not([hidden])")?.textContent || ""'
+    async def go(pg):
+        out, moves, asked = {}, [], []
+        def seen(r):
+            asked.append(r.url)
+            if r.method == 'POST' and '/present/move' in r.url: moves.append(json.loads(r.post_data))
+        pg.on('request', seen)
+        await _open(pg, tmp_path/'deck.ipynb', 2)
+        await _start(pg)
+        await pg.wait_for_function(f'() => ({PSHADOW})(".rk-gate")', timeout=20000)
+        aud = await _audience(pg, 'Demo')
+        await aud.wait_for_function(f'() => ({SHADOW})(".rk-gate")', timeout=20000)
+        await pg.evaluate(SLIDE_TO, 3)
+        await aud.wait_for_function(f'() => ({SHADOW})(".rk").textContent.includes("x is 3")')
+        out['inert'] = await aud.evaluate(f'() => ({SHADOW})(".rk-gate").inert')
+        await pg.evaluate(LOCK)
+        await aud.wait_for_function(f'() => ({av})().includes("You said")')
+        out['verdict'] = await aud.evaluate(av)
+        await pg.evaluate(AGAIN)
+        await aud.wait_for_function(f'() => !({av})()')
+        out['reopened'] = await aud.evaluate(f'() => !({SHADOW})(".rk-gate button.go").hidden')
+        await pg.evaluate(LOCK)
+        await aud.wait_for_function(f'() => ({av})().includes("You said")')
+        n = len(moves)
+        await pg.reload()
+        await pg.wait_for_function(READY, timeout=20000)
+        await pg.wait_for_function(f'() => ({pv})().includes("You said")', timeout=20000)
+        await pg.wait_for_timeout(500)
+        out['restored'] = await pg.evaluate(f'''() => ({{x: ({PSHADOW})('input[type=range]').value, inert: ({PSHADOW})('.rk-gate').inert}})''')
+        out['reload_moves'] = moves[n:]
+        await pg.evaluate(SLIDE_TO, 4)
+        await aud.wait_for_function(f'() => ({SHADOW})(".rk").textContent.includes("x is 4")')
+        await pg.wait_for_timeout(300)
+        out['kept'] = await aud.evaluate(av)
+        await aud.reload()
+        await aud.wait_for_function(f'() => ({av})().includes("You said") && ({SHADOW})(".rk").textContent.includes("x is 4")', timeout=20000)
+        out['moves'], out['asked'] = moves, asked
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['inert'] is True and 'You said' in out['verdict'] and 'two' in out['verdict'] and out['reopened'] is True, out
+    ms = out['moves']
+    done = [i for i, m in enumerate(ms) if m['t'] == 'demo' and m['gates'].get('g1') == 'done']
+    answers = [i for i, m in enumerate(ms) if m['t'] == 'answers']
+    assert done and answers and done[0] < answers[0], ('the done snapshot goes before its answers', ms)
+    assert all(any(d < a for d in done) for a in answers) and all(m['gates'] == {'g1': {'is': 'two'}} for m in ms if m['t'] == 'answers'), ms
+    assert any(m['t'] == 'demo' and 'g1' not in m['gates'] for m in ms[done[0]:]), 'Try another sends a snapshot with the gate open'
+    assert all(set(m['gates'].values()) <= {'done'} and set(m) - {'k'} == {'t', 'slug', 'state', 'gates', 'pick'} for m in ms if m['t'] == 'demo'), 'a demo move has no answer'
+    assert out['restored'] == {'x': '3', 'inert': False} and out['reload_moves'] == [], out
+    assert 'You said' in out['kept'], 'a reloaded presenter keeps the settled gate done for the room'
+    assert not [u for u in out['asked'] if '/lesson/predict' in u]

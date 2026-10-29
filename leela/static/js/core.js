@@ -613,13 +613,13 @@ function rupakaSweep(p) {
   for (const [k, e] of rupaka.hosts) if (e.owner === p.owner && e.gen !== p.gen) rupaka.hosts.delete(k);
   if (rupaka.passes.get(p.owner) === p) rupaka.passes.delete(p.owner);
 }
-//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh.
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into.
 function rupakaDraw(spec, key = null, pass = null) {
   let e = key && rupaka.hosts.get(key);
   if (!e) {
     const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
     host.attachShadow({mode: 'open'}).append(inner);
-    e = {host, ok: false, err: null, owner: pass?.owner};
+    e = {host, inner, ok: false, err: null, owner: pass?.owner};
     e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); e.ok = true; })
       .catch(err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);

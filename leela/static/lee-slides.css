@@ -59,6 +59,7 @@ body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; backgro
   color: var(--lee-selection-fg); background: var(--lee-sel); border-color: var(--lee-sel); }
 .lee-present-strip :is([data-where], [data-conn], [data-size]) { padding: 0 4px; color: var(--lee-fg2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lee-present-strip [data-runs] { display: contents; }
+.lee-present-strip button[hidden] { display: none; }
 .lee-present-strip .lee-gap { flex: 1; }
 .lee-present-strip [data-end] { margin-left: auto; color: var(--lee-red); }
 .lee-present-strip [data-end][data-armed] { color: var(--lee-bg); background: var(--lee-red); border-color: var(--lee-red); }
@@ -72,6 +73,14 @@ body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; backgro
 .lee-present-notes :is([data-upcoming], [data-clock]) { margin: 0 0 8px; font-size: 16px; color: var(--lee-fg); }
 .lee-present-notes [data-upcoming] { padding-top: 12px; border-top: 1px solid var(--lee-border); }
 .lee-present-notes [data-clock] { font-variant-numeric: tabular-nums; }
+.lee-present-err { flex: none; width: min(420px, 40vw); box-sizing: border-box; padding: 12px 20px 16px; overflow: auto; background: var(--lee-bg1);
+  border-left: 4px solid var(--lee-red); color: var(--lee-fg); font: 16px/1.45 var(--lee-sans); }
+.lee-present-err[hidden] { display: none; }
+.lee-present-err [data-err-sum] { margin: 0 0 8px; font: 600 16px/1.4 var(--lee-mono); overflow-wrap: anywhere; }
+.lee-present-err pre { margin: 8px 0 0; font: 13px/1.45 var(--lee-mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--lee-fg2); }
+.lee-present-err summary { cursor: pointer; font-size: 14px; color: var(--lee-fg2); }
+.lee-present-err-acts { display: flex; gap: 8px; margin-top: 12px; }
+.lee-present-err-acts button { min-height: 32px; padding: 0 12px; font: 14px var(--lee-sans); color: var(--lee-fg); background: var(--lee-bg2); border: 1px solid var(--lee-border); border-radius: 4px; }
 .lee-present-msg { position: absolute; left: 50%; bottom: 12px; z-index: 6; max-width: 70%; padding: 8px 14px; transform: translateX(-50%);
   background: var(--lee-bg1); color: var(--lee-fg); border: 1px solid var(--lee-border); border-radius: 6px; font: 14px/1.4 var(--lee-sans); }
 .lee-present-msg[hidden] { display: none; }

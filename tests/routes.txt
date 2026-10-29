@@ -299,9 +299,12 @@ GET /present/img/{h}
 GET /present/room
 GET /present/stage.js
 POST /present/at
+POST /present/clear
 POST /present/end
 POST /present/move
+POST /present/out
 POST /present/resume
+POST /present/show-error
 POST /present/start
 GET,POST /project/fastship
 GET,POST /project/fastship/action

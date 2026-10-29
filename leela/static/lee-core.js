@@ -613,13 +613,13 @@ function rupakaSweep(p) {
   for (const [k, e] of rupaka.hosts) if (e.owner === p.owner && e.gen !== p.gen) rupaka.hosts.delete(k);
   if (rupaka.passes.get(p.owner) === p) rupaka.passes.delete(p.owner);
 }
-//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh.
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into.
 function rupakaDraw(spec, key = null, pass = null) {
   let e = key && rupaka.hosts.get(key);
   if (!e) {
     const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
     host.attachShadow({mode: 'open'}).append(inner);
-    e = {host, ok: false, err: null, owner: pass?.owner};
+    e = {host, inner, ok: false, err: null, owner: pass?.owner};
     e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); e.ok = true; })
       .catch(err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);
@@ -2586,11 +2586,14 @@ function setCellState(c, state, label = '') {
   refreshCellMeta(c);           // the run count and the outputs it left are in the tooltip
   queueNotebookOverview();      // a failure is one of the two things the stripe reports
 }
+//: The kernel is a new one: a presentation clears what it showed from the old one.
+const kernelRestarted = () => dispatchEvent(new CustomEvent('lee-kernel-restart'));
 function markPreviousRuns() {
   for (const c of lee.cells) {
     if (c.cell_type !== 'code' || c.execution_count == null) continue;
     c.fresh = false; setCellState(c, 'previous'); setCellTime(c, c.execution_ms, false);
   }
+  kernelRestarted();
 }
 function formatCellTime(ms) {
   if (ms == null || !Number.isFinite(Number(ms))) return '';
@@ -3284,7 +3287,9 @@ function focusCellPage(direction) {
     Math.abs(el.getBoundingClientRect().top - target) < Math.abs(best.getBoundingClientRect().top - target) ? el : best);
   focusCell(+next.dataset.i);
 }
-function autoSaveEnabled() { return (lee.filePrefs.autoSave || 'afterDelay') !== 'off'; }
+//: The autosave mode in effect: `off` while a presentation is open, which writes no file; the setting does not change.
+const autoSaveMode = () => lee.present ? 'off' : lee.filePrefs.autoSave || 'afterDelay';
+function autoSaveEnabled() { return autoSaveMode() !== 'off'; }
 function normalizeSavedText(text) {
   const prefs=lee.filePrefs||{}; let out=String(text??'');
   if(prefs.trimTrailingWhitespace)out=out.split('\n').map(line=>line.replace(/[ \t]+$/,'')).join('\n');
@@ -3306,9 +3311,10 @@ function setTabSaveState(tab, state, detail = '') {
 }
 function scheduleAutoSave() {
   clearTimeout(lee.autoSaveTimer);
-  if ((lee.filePrefs.autoSave || 'afterDelay') !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
+  if (autoSaveMode() !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
   const version = lee.editVersion;
   lee.autoSaveTimer = setTimeout(async () => {
+    if (autoSaveMode() !== 'afterDelay') return;
     if (lee.saving || version !== lee.editVersion) return scheduleAutoSave();
     lee.saving = true;
     setTabSaveState($('.lee-tab.active'), 'saving');
@@ -3316,8 +3322,8 @@ function scheduleAutoSave() {
     finally { lee.saving = false; if (version !== lee.editVersion) scheduleAutoSave(); }
   }, Math.max(100, Number(lee.filePrefs.autoSaveDelay) || 900));
 }
-document.addEventListener('focusout',e=>{if(lee.filePrefs.autoSave==='onFocusChange'&&!lee.heldSaveConflicts.has(lee.path)&&e.target.closest?.('.cm-editor')&&$('.lee-tab.active.dirty'))saveTab(true);});
-window.addEventListener('blur',()=>{if(lee.filePrefs.autoSave==='onWindowChange'&&!lee.heldSaveConflicts.has(lee.path)&&$('.lee-tab.active.dirty'))saveTab(true);});
+document.addEventListener('focusout',e=>{if(autoSaveMode()==='onFocusChange'&&!lee.heldSaveConflicts.has(lee.path)&&e.target.closest?.('.cm-editor')&&$('.lee-tab.active.dirty'))saveTab(true);});
+window.addEventListener('blur',()=>{if(autoSaveMode()==='onWindowChange'&&!lee.heldSaveConflicts.has(lee.path)&&$('.lee-tab.active.dirty'))saveTab(true);});
 function markDirty() {
   lee.editVersion += 1; lee.tabEdits.set(lee.tabKey, (lee.tabEdits.get(lee.tabKey) || 0) + 1);
   const t = $('.lee-tab.active');
@@ -3878,6 +3884,7 @@ async function stopCell(i) {
   const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
   status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
          r.forced ? 'err' : 'ok');
+  if (r.forced) kernelRestarted();
 }
 
 /* A run stream that ended without its result leaves the server knowing how the cell stands. Ask it,
@@ -3896,9 +3903,10 @@ async function settleRun(path, id) {
 }
 
 /* Resolves to `{ok, error}`. The slide deck runs cells with the status line hidden under it, so it
-   reads the outcome here and follows the outputs through `lee-cell-output`. */
+   reads the outcome here and follows the outputs through `lee-cell-output`. `save: false` runs the
+   live text and writes no file: no save before or after, and no placeholder made valid. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
-async function runCell(i, advance) {
+async function runCell(i, advance, {save = true} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
@@ -3921,7 +3929,7 @@ async function runCell(i, advance) {
   } else {
     const p = lee.cells.find(x => x.cell_type === 'markdown' && x.extra?.lesson?.role === 'prediction' && x.extra.lesson.for === cellId);
     const pv = p && lee.editors.get(p.id), guess = p ? {prediction: pv ? LeeCM.getDoc(pv) : p.source, confidence: p.extra.lesson.confidence} : {};
-    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
+    if (save && lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
     if (c.extra?.lesson) $('.lee-reveal', el)?.remove();
@@ -3935,7 +3943,7 @@ async function runCell(i, advance) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();
@@ -3971,7 +3979,7 @@ async function runCell(i, advance) {
     if (cur()?.extra?.lesson) renderLessonReveal(cur());
     if (isExercise(cur())) renderExercise(cur());
     if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
-    if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
+    if (save && lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
   if (!advance || (i = cur() ? lee.cells.findIndex(x => x.id === cellId) : -1) < 0) return res;
@@ -4278,8 +4286,9 @@ function slidesFit(el) {
 }
 
 /* Draw slide `i` of `deck` at `step` into canvas `el`: a block shows when its fragment group is below `step`; a later one keeps its place, hidden.
-   `mount(spec, id)` turns each demo into a host; `math(el)` fills the formulas. Only the body is redrawn, so the laser dot and the blank screen stay. */
-function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math = null} = {}) {
+   `mount(spec, id)` turns each demo into a host; `math(el)` fills the formulas; `outs` maps a code cell to the room output of its last run, in place of
+   the deck's. Only the body is redrawn, so the laser dot and the blank screen stay. */
+function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math = null, outs = null} = {}) {
   const s = deck?.slides?.[i], body = document.createElement('div');
   body.className = 'lee-slide-body';
   el.style.setProperty('--slide-size', size/10);
@@ -4287,7 +4296,7 @@ function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math 
     const box = body.appendChild(document.createElement('div'));
     box.className = `lee-block ${b.kind}${b.frag >= step ? ' lee-frag-hidden' : ''}`; box.dataset.cell = b.cell;
     box.append(slidesSafe(b.html, key));
-    if (b.kind === 'code') box.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out'})).append(slidesSafe(b.out, key));
+    if (b.kind === 'code') box.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out'})).append(slidesSafe(outs && Object.hasOwn(outs, b.cell) ? outs[b.cell] : b.out, key));
     if (!mount) continue;
     [...box.querySelectorAll('pre > code.language-rupaka')].forEach((code, n) => {
       let spec; try { spec = JSON.parse(code.textContent); } catch { return; }
@@ -4299,6 +4308,18 @@ function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math 
   math?.(body);
   return slidesFit(el);
 }
+
+//: Output `html` in the box of code cell `cell` on canvas `el`, then the fit again; `{fits}`, or null when that cell is not on the slide drawn.
+function slidesOut(el, cell, html, key = '') {
+  const box = [...el.querySelectorAll(':scope > .lee-slide-body > .lee-block.code')].find(b => b.dataset.cell === cell)?.querySelector(':scope > .lee-out');
+  if (!box) return null;
+  box.replaceChildren(slidesSafe(html, key));
+  return slidesFit(el);
+}
+//: Whether output `m` of a run is newer than `old`: a later run `gen`, or a later `seq` of the same run.
+const slidesNewer = (m, old) => !old || m.gen > old.gen || m.gen === old.gen && m.seq > old.seq;
+//: The room output of each code cell in `outs` (`{cell: {html}}`), as `slidesDraw` takes it.
+const slidesHtml = outs => Object.fromEntries(Object.entries(outs).map(([c, o]) => [c, o.html]));
 
 //: The slide sizes on a demo's shadow root `root`, after the sheets it has; `room` adds the rules of the room copy.
 function slidesRk(root, room = false) {
@@ -4362,7 +4383,7 @@ function slidesAudience() {
   const root = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'lee-stage'}));
   const canvas = root.appendChild(Object.assign(document.createElement('div'), {className: 'lee-slide'}));
   const q = `?k=${encodeURIComponent(k)}`, demos = new Map(), fns = {};
-  let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}}, es = null, stage = null, done = false;
+  let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}, outs: {}}, es = null, stage = null, done = false;
   let boot = '', wait = 0, timer = 0;
   slidesScale(root);
   const name = () => String(deck?.title || '').replace(/\.ipynb$/i, '');
@@ -4406,18 +4427,25 @@ function slidesAudience() {
   const draw = () => {
     if (done || !deck) return;
     const i = Math.max(0, Math.min(deck.slides.length - 1, +at.slide.slice(1) - 1));
-    slidesDraw(canvas, deck, i, at.step, {key: k, size: at.size, mount, math: slidesMath});
+    slidesDraw(canvas, deck, i, at.step, {key: k, size: at.size, mount, math: slidesMath, outs: slidesHtml(held.outs)});
     for (const d of demos.values()) if (canvas.contains(d.host)) show(d, d.slug);
   };
-  const keep = m => { held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug); };
+  // a demo state drops the answers of each gate it does not list as done, as the server does, so a reopened gate never shows an old answer
+  const keep = m => {
+    const a = m.t === 'demo' && held.answers[m.slug], g = a && Object.fromEntries(Object.entries(a.gates).filter(([id]) => m.gates[id] === 'done'));
+    if (a) { if (Object.keys(g).length) held.answers[m.slug] = {...a, gates: g}; else delete held.answers[m.slug]; }
+    held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug);
+  };
   const on = {
-    state: d => { wait = 0; at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
+    state: d => { wait = 0; at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}])),
+                                  outs: Object.fromEntries((d.outs || []).map(x => [x.cell, x]))};
                   slidesTheme(d.look?.theme, deck.look?.mono); emit({t: 'point', off: true}); emit({t: 'blank', on: !!at.blank}); draw(); },
     at: d => { if (d.slide !== at.slide) held.answers = {}; at = d; emit({t: 'go', slide: d.slide, beat: Math.min(50, d.step + 1)}); emit({t: 'blank', on: !!d.blank}); },
     point: d => emit({t: 'point', ...d}),
     demo: d => emit({t: 'demo', ...d}),
     answers: d => emit({t: 'answers', ...d}),
     look: d => slidesTheme(d.theme, deck.look?.mono),
+    out: d => { if (!slidesNewer(d, held.outs[d.cell])) return; held.outs[d.cell] = d; if (!done && deck) slidesOut(canvas, d.cell, d.html, k); },
     end: () => emit({t: 'end'}),
   };
   // the browser connects an open stream again by itself; a closed one is asked about first, so a 403 or 410 shows its card
@@ -4658,23 +4686,181 @@ function presentCheck(p, d) {
   if (d.id) { presentForget(p.id); return status('Another presentation started.', 'err'); }
   presentGone(p);
 }
-//: The cell's live outputs in place of the server's copy, on the presenter screen only.
-function presentOuts(p, id, outs) {
-  const box = $(`.lee-slide .lee-block[data-cell="${CSS.escape(id)}"] .lee-out`, p.root); if (!box) return;
-  $$('[data-markdown]', box).forEach(el => { for (const v of el._leeCodeViews || []) try { LeeCM.destroy(v); } catch {} });
-  box.replaceChildren(...(outs || []).map(outputEl));
+//: Post the body `make()` gives, `[url, body]` or null, for `slot`: one post of a slot in the chain at a time, and only the newest of those that wait; `then` gets the reply.
+function presentLatest(p, slot, make, then) {
+  const s = (p.slots ||= {})[slot] ||= {busy: false, next: null};
+  s.next = {make, then};
+  if (!s.busy) presentDrain(p, s);
 }
-async function presentRun(p, id) {
-  const i = lee.cells.findIndex(c => c.id === id), button = () => $(`[data-run="${CSS.escape(id)}"]`, p.root);
-  if (i < 0) return presentSay('This cell is no longer in the notebook.');
-  if (button()) button().disabled = true;
-  p.outs[id] = lee.cells[i].outputs || []; presentSay('Running…');
-  const r = await runCell(i, false);
+function presentDrain(p, s) {
+  const m = s.next; if (!m) return;
+  s.next = null;
+  const b = m.make(); if (!b) return presentDrain(p, s);
+  s.busy = true;
+  presentPost(p, ...b).then(r => { s.busy = false; m.then?.(r); presentDrain(p, s); });
+}
+//: Post the newest outputs of run `gen` of code cell `id`; a run from before the last kernel restart sends nothing. `seq` counts the posts of one run.
+function presentOut(p, id, gen, outputs, done) {
+  const q = p.outq[id] ||= {gen: 0, seq: 0};
+  if (gen <= p.floor || gen < q.gen) return;
+  presentLatest(p, 'out:' + id, () => {
+    if (gen <= p.floor || gen < q.gen) return null;
+    if (gen !== q.gen) { q.gen = gen; q.seq = 0; }
+    return ['/present/out', {cell: id, gen, seq: ++q.seq, outputs, done}];
+  }, r => { if (r?.msg && lee.present === p && gen > p.floor) presentShown(p, id, r, done, gen); });
+}
+//: The room copy the server made of a run's outputs, drawn on the presenter screen too; a finished run that failed opens the private error panel.
+function presentShown(p, id, r, done, gen) {
+  if (!slidesNewer(r.msg, p.outs[id])) return;
+  p.outs[id] = r.msg; presentBox(p, id);
+  if (done && r.error) presentErr(p, {cell: id, gen, ...r.error});
+  else if (done && p.err?.cell === id) presentErr(p, null);
+}
+function presentBox(p, id) {
+  const f = slidesOut(p.canvas, id, p.outs[id]?.html || '', p.ak);
+  if (f && !f.fits) presentSay(`Slide ${p.at.slide + 1} has more than fits. Split it or trim it.`);
+}
+//: The private error panel for error `e` of a run, `{cell, gen, ename, evalue, traceback}`, or closed for null.
+function presentErr(p, e) {
+  const box = $('.lee-present-err', p.root); p.err = e; if (!box) return;
+  if (!e && box.contains(document.activeElement)) p.root.focus({preventScroll: true});
+  box.hidden = !e; if (!e) return;
+  $('[data-err-sum]', box).textContent = `${e.ename}: ${e.evalue}`;
+  $('[data-err-tb]', box).textContent = (e.traceback || []).join('\n');
+}
+//: Show error: the server sends the error to the room only while run `gen` is the last run of the cell.
+function presentShowError(p) {
+  const e = p.err; if (!e) return;
+  presentPost(p, '/present/show-error', {cell: e.cell, gen: e.gen}).then(r => {
+    if (lee.present !== p || !r) return;
+    if (p.err === e) presentErr(p, null);
+    if (r.stale) return presentSay('A newer run of this cell replaced that error.');
+    if (slidesNewer(r.msg, p.outs[e.cell])) { p.outs[e.cell] = r.msg; presentBox(p, e.cell); }
+    presentSay('The room can see the error.');
+  });
+}
+//: The kernel restarted, died or was stopped by force: every code cell of the deck empty on both screens, no private error, and each older run stale.
+function presentReset(p) {
   if (lee.present !== p) return;
-  const c = lee.cells.find(x => x.id === id), err = (c?.outputs || []).find(o => o.output_type === 'error');
-  if (c) presentOuts(p, id, p.outs[id] = c.outputs || []);
-  if (button()) button().disabled = false;
-  presentSay(err ? `${err.ename}: ${err.evalue}` : r.ok ? '' : presentError(r.error));
+  p.floor = p.gen = Math.max(p.gen, p.floor) + 1;
+  for (const id of Object.keys(p.src)) p.outs[id] = {cell: id, gen: p.floor, seq: 0, html: ''};
+  presentErr(p, null); p.draw();
+  presentPost(p, '/present/clear', {gen: p.floor});
+}
+//: A run that ended with no count and no error: kunda settles the runs of a kernel that died that way.
+const presentDied = c => !!c && c.execution_count == null && !(c.outputs || []).some(o => o.output_type === 'error');
+//: Run the live text of code cell `id` with no save; its outputs stream to the room as it runs.
+async function presentRun(p, id) {
+  const i = lee.cells.findIndex(c => c.id === id);
+  if (p.runs[id] || i < 0 || presentStale(p, id)) return presentStrip(p);
+  const gen = p.gen = Math.max(p.gen, p.floor) + 1, run = p.runs[id] = {gen};
+  if (p.err?.cell === id) presentErr(p, null);
+  presentStrip(p);
+  presentOut(p, id, gen, [], false);
+  const r = await runCell(i, false, {save: false});
+  if (p.runs[id] === run) delete p.runs[id];
+  if (lee.present !== p) return;
+  const c = lee.cells.find(x => x.id === id);
+  if (r.ok && presentDied(c)) presentReset(p);
+  else {
+    presentOut(p, id, gen, c?.outputs || [], true);
+    if (!r.ok && !(c?.outputs || []).some(o => o.output_type === 'error')) presentSay(presentError(r.error));
+  }
+  presentStrip(p);
+}
+//: A run the server still holds after a reload of this page: its final outputs from `/nb/run/state`, posted as the same run.
+async function presentFollow(p, id, o) {
+  const run = p.runs[id] = {gen: o.gen};
+  p.outq[id] = {gen: o.gen, seq: o.seq};
+  presentStrip(p);
+  let s = null; try { s = await settleRun(p.path, id); } catch {}
+  if (p.runs[id] === run) delete p.runs[id];
+  if (lee.present !== p) return;
+  if (s?.cell) presentOut(p, id, o.gen, s.cell.outputs || [], true);
+  presentStrip(p);
+}
+//: Stop code cell `id` by the exact-cell path; a run that this page did not start, after a reload, goes to the same route.
+async function presentStop(p, id) {
+  const i = lee.cells.findIndex(c => c.id === id);
+  try {
+    if (lee.cells[i]?.running) return await stopCell(i);
+    if ((await post('/nb/interrupt', {path: p.path, id})).forced) kernelRestarted();
+  } catch (e) { presentSay(String(e.message || e)); }
+}
+//: Run and Stop for each code cell of the slide: Stop shows while the cell runs, and Run is off while it runs or no longer matches the deck.
+function presentStrip(p) {
+  const s = p.deck.slides[p.at.slide] || {}, code = (s.blocks || []).filter(b => b.kind === 'code'), n = code.length > 1;
+  const btn = (text, title, fn) => Object.assign(document.createElement('button'), {type: 'button', textContent: text, title, onclick: fn});
+  $('[data-runs]', p.root).replaceChildren(...code.flatMap((b, j) => {
+    const id = b.cell, on = !!p.runs[id], stale = presentStale(p, id), tag = n ? ` ${j + 1}` : '';
+    const run = btn('Run' + tag, stale ? 'Run is off: this cell changed or left the notebook after the presentation started.' : 'Run this code cell', () => presentRun(p, id));
+    const stop = btn('Stop' + tag, 'Stop this code cell', () => presentStop(p, id));
+    run.dataset.run = stop.dataset.stop = id; run.disabled = on || stale; stop.hidden = !on;
+    return [run, stop];
+  }));
+  if (document.activeElement === document.body && lee.present === p) p.root.focus({preventScroll: true});
+}
+
+//: The `demo` move of mirror snapshot `s` of demo `slug`: the stage fields only; null when it is over the 65536 units of a stage message.
+function presentDemoMove(slug, s) {
+  const m = {t: 'demo', slug, state: s.state, gates: s.gates, pick: s.pick};
+  return JSON.stringify({v: 1, ...m}).length > 65536 ? null : m;
+}
+const presentGate = (inner, id) => [...inner.querySelectorAll('.rk-gate .q[id]')].find(q => q.id.endsWith(`-${id}-q`))?.closest('.rk-gate');
+//: Presenter demo `d` mirrored to the room: the server's state first after a reload, one watch for the mount, a first snapshot, then each change.
+function presentMirror(p, d) {
+  try { d.mirror = abhyasaStage.mirror(d.inner); } catch { return; }
+  presentHydrate(p, d);
+  d.unwatch = d.mirror.watch(() => presentDemo(p, d));
+  presentDemo(p, d);
+}
+/* The server's demo state on the presenter copy, which stays writable: its inputs, and each done gate settled with the pick. The mirror does not
+   count a gate settled this way, so `d.kept` holds it as done while it stays closed. */
+function presentHydrate(p, d) {
+  d.kept = {gates: {}, pick: {}, answers: {}};
+  const s = p.held.demo[d.slug], a = p.held.answers[d.slug]?.gates || {}; if (!s) return;
+  try {
+    const now = Rupaka.state(d.inner), keys = Object.keys(now).filter(k => Object.hasOwn(s.state, k) && JSON.stringify(now[k]) !== JSON.stringify(s.state[k]));
+    if (keys.length) Rupaka.set(d.inner, Object.fromEntries(keys.map(k => [k, s.state[k]])));
+    for (const [id, v] of Object.entries(s.gates)) {
+      const os = Rupaka.options(d.inner, id) || [], i = s.pick?.[id], pick = Array.isArray(i) ? i.map(x => os[x]) : os[i];
+      if (v === 'done' && Rupaka.settle(d.inner, id, pick ?? null)) Object.assign(d.kept, {gates: {...d.kept.gates, [id]: 'done'}, pick: i == null ? d.kept.pick : {...d.kept.pick, [id]: i},
+                                                                             answers: a[id] ? {...d.kept.answers, [id]: a[id]} : d.kept.answers});
+    }
+  } catch {}
+}
+//: The mirror's snapshot of `d`, with each kept gate that is still closed.
+function presentSnap(d) {
+  const s = d.mirror.snapshot(), k = d.kept;
+  for (const id of Object.keys(k.gates)) {
+    const go = presentGate(d.inner, id)?.querySelector('button.go');
+    if (go?.hidden && !s.gates[id]) { s.gates[id] = 'done'; if (k.pick[id] != null) s.pick[id] = k.pick[id]; }
+    else { delete k.gates[id]; delete k.pick[id]; delete k.answers[id]; }
+  }
+  return s;
+}
+//: A changed snapshot of demo `d` as a `demo` move; its answers follow in a move of their own, after the server has the snapshot of the settled gate.
+function presentDemo(p, d) {
+  if (lee.present !== p || !d.mirror) return;
+  const m = presentDemoMove(d.slug, presentSnap(d));
+  if (!m || !abhyasaStage.valid({v: 1, ...m})) return presentSay('The demo is too large for the room screen.');
+  const was = p.held.demo[d.slug], key = x => JSON.stringify([x.state, x.gates, x.pick || {}]);
+  if (was && key(was) === key(m)) return p.slots?.['demo:' + d.slug]?.busy || presentAnswers(p, d);
+  p.held.demo[d.slug] = m;
+  const a = p.held.answers[d.slug], g = a && Object.fromEntries(Object.entries(a.gates).filter(([id]) => m.gates[id] === 'done'));
+  if (a) { if (Object.keys(g).length) p.held.answers[d.slug] = {...a, gates: g}; else delete p.held.answers[d.slug]; }
+  presentLatest(p, 'demo:' + d.slug, () => ['/present/move', m], () => presentAnswers(p, d));
+}
+//: The answers of the settled gates of demo `d` for the room, once the server holds those gates as done; never from `rk-predict` itself.
+function presentAnswers(p, d) {
+  if (lee.present !== p || !d.mirror || !p.canvas.contains(d.host)) return;
+  const done = p.held.demo[d.slug]?.gates || {}, got = {...d.kept.answers, ...d.mirror.answers()};
+  const gates = Object.fromEntries(Object.entries(got).filter(([id]) => done[id] === 'done'));
+  if (!Object.keys(gates).length || JSON.stringify(p.held.answers[d.slug]?.gates) === JSON.stringify(gates)) return;
+  const m = {t: 'answers', slide: `s${p.at.slide + 1}`, slug: d.slug, gates};
+  if (!abhyasaStage.valid({v: 1, ...m})) return;
+  p.held.answers[d.slug] = m;
+  presentPost(p, '/present/move', m);
 }
 function presentEnd(p) { presentForget(p.id); lee.presentWait = presentPost(p, '/present/end', {}, true); closePresentation(); }
 
@@ -4702,7 +4888,11 @@ const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div 
   '<aside class="lee-present-notes" id="lee-present-notes" aria-label="Speaker notes" hidden><div class="lee-present-notes-head"><h2>Speaker notes</h2>' +
   '<button type="button" data-close title="Close the notes (Esc)">Close</button></div>' +
   '<p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
-  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside><div class="lee-present-msg" role="status" hidden></div></div>' +
+  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside>' +
+  '<div class="lee-present-err" role="alert" hidden><p data-err-sum></p><p class="lee-present-warn">The room cannot see this error.</p>' +
+  '<details><summary>Traceback</summary><pre data-err-tb></pre></details><div class="lee-present-err-acts">' +
+  '<button type="button" data-show-error title="Show this error on the room screen">Show error</button><button type="button" data-err-close title="Close (Esc)">Close</button></div></div>' +
+  '<div class="lee-present-msg" role="status" hidden></div></div>' +
   '<div class="lee-present-strip" role="toolbar" aria-label="Presentation controls">' +
   '<span class="lee-present-group"><button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +
   '<span data-where></span><span data-runs></span></span>' +
@@ -4723,18 +4913,26 @@ function presentOpen(r, fresh, path) {
   dot.setAttribute('aria-hidden', 'true');
   canvas.appendChild(Object.assign(document.createElement('div'), {className: 'stage-blank', textContent: String(r.presenter?.title || '').replace(/\.ipynb$/i, '')}));
   const at = presentIndex(r.at), ide = presentTheme();
-  const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, boot: r.boot, holder: r.holder, path, src: r.src || {}, audience: r.audience, deck: r.presenter,
+  const live = r.live || {}, outs = Object.values(live.outs || {});
+  const p = lee.present = {root, canvas, key: r.key, ak: r.ak, id: r.id, boot: r.boot, holder: r.holder, path, src: r.src || {}, audience: r.audience, deck: r.presenter,
                            line: r.presenter.slides.map(s => ({groups: s.groups || 0})), at, acked: at, text: fresh ? presentStored() : r.at.size/10,
-                           blank: !fresh && !!r.at.blank, outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now() - (r.elapsed || 0)*1000, win: null,
+                           blank: !fresh && !!r.at.blank, outs: Object.fromEntries(outs.map(o => [o.cell, {cell: o.cell, gen: o.gen, seq: o.seq, html: o.html}])),
+                           gen: Math.max(0, ...outs.map(o => o.gen)), floor: 0, runs: {}, outq: {}, err: null, held: {demo: {...live.demo}, answers: {...live.answers}},
+                           demos: new Map(), slugs: new Set(r.presenter.slides.flatMap(s => (s.blocks || []).flatMap(b => (b.demo || []).map(x => x.id)))), chain: Promise.resolve(), started: Date.now() - (r.elapsed || 0)*1000, win: null,
                            ide, look: fresh ? ide : r.look?.theme || '', laser: false, pt: null, frame: 0, busy: false, lit: false, sent: 0, dotT: 0, left: -Infinity, inert: []};
   canvas.classList.toggle('blank', p.blank);
-  const demo = spec => { const e = rupakaDraw(spec); e.done.then(() => slidesRk(e.host.shadowRoot)); return e.host; };
-  const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, demo(spec)).get(id);
+  // the presenter's own demo, with its answers, is the source of the room copy: one mirror for each mount, once rupaka has drawn it
+  const demo = spec => {
+    const e = rupakaDraw(spec), d = {host: e.host, inner: e.inner, slug: spec.id, mirror: null, kept: {gates: {}, pick: {}, answers: {}}};
+    // a demo that a run's output shows is not in the deck, so the server takes no move for it; both windows draw it from the room copy
+    e.done.then(() => { if (!e.ok) return; slidesRk(e.host.shadowRoot); if (lee.present === p && p.slugs.has(d.slug)) presentMirror(p, d); });
+    return d;
+  };
+  const mount = (spec, id) => (p.demos.get(id) || p.demos.set(id, demo(spec)).get(id)).host;
   const stuck = d => { const a = presentMove(p.line, p.at, d); return a.slide === p.at.slide && a.step === p.at.step; };
-  const run = b => { const e = Object.assign(document.createElement('button'), {type: 'button', title: 'Run this code cell', onclick: () => presentRun(p, b.cell)}); e.dataset.run = b.cell; return e; };
   p.draw = () => {
-    const s = p.deck.slides[p.at.slide] || {}, {fits} = slidesDraw(canvas, p.deck, p.at.slide, p.at.step, {key: p.ak, size: Math.round(p.text*10), mount, math: renderMath});
-    for (const [id, outs] of Object.entries(p.outs)) presentOuts(p, id, outs);
+    const s = p.deck.slides[p.at.slide] || {}, {fits} = slidesDraw(canvas, p.deck, p.at.slide, p.at.step, {key: p.ak, size: Math.round(p.text*10), mount, math: renderMath, outs: slidesHtml(p.outs)});
+    for (const d of p.demos.values()) presentAnswers(p, d);
     const g = p.line[p.at.slide]?.groups || 0;
     q('[data-where]').textContent = `${p.at.slide + 1} / ${p.deck.slides.length}` + (g ? ` · step ${p.at.step + 1} / ${g + 1}` : '');
     q('[data-prev]').disabled = stuck(-1); q('[data-next]').disabled = stuck(1);
@@ -4742,12 +4940,12 @@ function presentOpen(r, fresh, path) {
     q('[data-size]').textContent = `Text ${Math.round(28*p.text*(+canvas.style.getPropertyValue('--slide-fit') || 1))} px`;
     q('[data-notes-body]').replaceChildren(slidesSafe(s.notes || '', p.ak));
     q('[data-upcoming]').textContent = s.next ? `Next: ${s.next}` : 'This is the last slide.';
-    const code = (s.blocks || []).filter(b => b.kind === 'code');
-    q('[data-runs]').replaceChildren(...code.map((b, n) => Object.assign(run(b), {textContent: code.length > 1 ? `Run ${n + 1}` : 'Run'})));
+    presentStrip(p);
     if (!fits) presentSay(`Slide ${p.at.slide + 1} has more than fits. Split it or trim it.`);
   };
   const go = d => {
     const a = presentMove(p.line, p.at, d); if (a.slide === p.at.slide && a.step === p.at.step) return;
+    if (a.slide !== p.at.slide) p.held.answers = {};
     p.at = a; p.draw(); presentGo(p);
   };
   const resize = d => {
@@ -4790,6 +4988,7 @@ function presentOpen(r, fresh, path) {
     if ($('.lee-modal')) return false;
     if (document.fullscreenElement) return false;
     if (performance.now() - p.left < PRESENT_FULL_MS) return true;
+    if (p.err) return presentErr(p, null), true;
     if (!notes.hidden) return setNotes(false), true;
     if (p.laser) return laser(false), true;
     const a = document.activeElement;
@@ -4815,7 +5014,9 @@ function presentOpen(r, fresh, path) {
   p.onFocus = e => { if (lee.present === p && !root.contains(e.target) && !e.target.closest?.('.lee-modal')) root.focus({preventScroll: true}); };
   p.onBlur = () => dark();
   canvas.addEventListener('pointermove', point); canvas.addEventListener('pointerleave', dark); canvas.addEventListener('pointercancel', dark);
-  p.onOutput = e => { if (lee.present === p && e.detail.id in p.outs) presentOuts(p, e.detail.id, p.outs[e.detail.id] = e.detail.outputs || []); };
+  p.onOutput = e => { const run = lee.present === p && p.runs[e.detail.id]; if (run) presentOut(p, e.detail.id, run.gen, e.detail.outputs || [], false); };
+  p.onRestart = () => presentReset(p);
+  q('[data-show-error]').onclick = () => presentShowError(p); q('[data-err-close]').onclick = () => presentErr(p, null);
   q('[data-prev]').onclick = () => go(-1); q('[data-next]').onclick = () => go(1);
   q('[data-smaller]').onclick = () => resize(-1); q('[data-bigger]').onclick = () => resize(1);
   notesBtn.onclick = toggleNotes; q('[data-close]').onclick = () => setNotes(false); q('[data-full]').onclick = full;
@@ -4862,7 +5063,8 @@ function presentOpen(r, fresh, path) {
     const s = Math.floor((Date.now() - p.started)/1000);
     q('[data-clock]').textContent = `Time: ${Math.floor(s/60)}:${String(s % 60).padStart(2, '0')}`;
   }, 1000);
-  document.addEventListener('keydown', p.onKey, true); addEventListener('lee-cell-output', p.onOutput);
+  document.addEventListener('keydown', p.onKey, true); addEventListener('lee-cell-output', p.onOutput); addEventListener('lee-kernel-restart', p.onRestart);
+  clearTimeout(lee.autoSaveTimer);
   document.addEventListener('fullscreenchange', p.onFull); document.addEventListener('focusin', p.onFocus, true); addEventListener('blur', p.onBlur);
   document.documentElement.classList.add('talk');
   closeInlinePopover(); document.body.appendChild(root); slidesScale(q('.lee-stage'));
@@ -4876,6 +5078,9 @@ function presentOpen(r, fresh, path) {
   p.draw(); wake();
   if (long.length) presentSay(long.length === 1 ? `Slide ${long[0]} has more than fits. Split it or trim it.` : `Slides ${long.join(', ')} have more than fits. Split them or trim them.`);
   if (fresh) { presentGo(p); if (p.look) presentPost(p, '/present/move', {t: 'look', theme: p.look}); }
+  const failed = outs.filter(o => o.error && o.html === o.room).sort((a, b) => b.gen - a.gen)[0];
+  if (failed) presentErr(p, {cell: failed.cell, gen: failed.gen, ...failed.error});
+  for (const o of outs) if (!o.done) presentFollow(p, o.cell, o);
   presentKeep(p);
   root.dataset.ready = '';
 }
@@ -4883,7 +5088,8 @@ function presentOpen(r, fresh, path) {
 function closePresentation() {
   const p = lee.present; if (!p) return;
   lee.present = null;
-  document.removeEventListener('keydown', p.onKey, true); removeEventListener('lee-cell-output', p.onOutput);
+  document.removeEventListener('keydown', p.onKey, true); removeEventListener('lee-cell-output', p.onOutput); removeEventListener('lee-kernel-restart', p.onRestart);
+  for (const d of p.demos.values()) d.unwatch?.();
   document.removeEventListener('fullscreenchange', p.onFull); document.removeEventListener('focusin', p.onFocus, true); removeEventListener('blur', p.onBlur);
   cancelAnimationFrame(p.frame); clearTimeout(p.dotT);
   for (const el of p.inert || []) el.inert = false;
@@ -4897,6 +5103,7 @@ function closePresentation() {
   $$('iframe', p.root).forEach(f => f.remove());
   p.root.remove();
   if (lee.kind === 'notebook' && lee.cells.length) focusCell(lee.sel);
+  if ($('.lee-tab.active.dirty')) scheduleAutoSave();
 }
 /* The exec log holds anything run outside a notebook cell: the exec box, a selection, a whole
  * file. One place to look for what this kernel has been asked to do. */
@@ -5007,7 +5214,7 @@ async function pickKernel() {
   const clearWeights = m.querySelector('#clearengines');
   if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
-  if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); status('kernel restarted', 'ok'); };
+  if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); markPreviousRuns(); status('kernel restarted', 'ok'); };
   m.querySelector('#kernel-auto-manage').onchange = async (e) => {
     try { e.target.checked = await setKernelAutoManage(e.target.checked); }
     catch (err) { e.target.checked = !e.target.checked; status(String(err.message || err), 'err'); }

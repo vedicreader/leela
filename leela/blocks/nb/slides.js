@@ -53,8 +53,9 @@ function slidesFit(el) {
 }
 
 /* Draw slide `i` of `deck` at `step` into canvas `el`: a block shows when its fragment group is below `step`; a later one keeps its place, hidden.
-   `mount(spec, id)` turns each demo into a host; `math(el)` fills the formulas. Only the body is redrawn, so the laser dot and the blank screen stay. */
-function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math = null} = {}) {
+   `mount(spec, id)` turns each demo into a host; `math(el)` fills the formulas; `outs` maps a code cell to the room output of its last run, in place of
+   the deck's. Only the body is redrawn, so the laser dot and the blank screen stay. */
+function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math = null, outs = null} = {}) {
   const s = deck?.slides?.[i], body = document.createElement('div');
   body.className = 'lee-slide-body';
   el.style.setProperty('--slide-size', size/10);
@@ -62,7 +63,7 @@ function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math 
     const box = body.appendChild(document.createElement('div'));
     box.className = `lee-block ${b.kind}${b.frag >= step ? ' lee-frag-hidden' : ''}`; box.dataset.cell = b.cell;
     box.append(slidesSafe(b.html, key));
-    if (b.kind === 'code') box.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out'})).append(slidesSafe(b.out, key));
+    if (b.kind === 'code') box.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out'})).append(slidesSafe(outs && Object.hasOwn(outs, b.cell) ? outs[b.cell] : b.out, key));
     if (!mount) continue;
     [...box.querySelectorAll('pre > code.language-rupaka')].forEach((code, n) => {
       let spec; try { spec = JSON.parse(code.textContent); } catch { return; }
@@ -74,6 +75,18 @@ function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math 
   math?.(body);
   return slidesFit(el);
 }
+
+//: Output `html` in the box of code cell `cell` on canvas `el`, then the fit again; `{fits}`, or null when that cell is not on the slide drawn.
+function slidesOut(el, cell, html, key = '') {
+  const box = [...el.querySelectorAll(':scope > .lee-slide-body > .lee-block.code')].find(b => b.dataset.cell === cell)?.querySelector(':scope > .lee-out');
+  if (!box) return null;
+  box.replaceChildren(slidesSafe(html, key));
+  return slidesFit(el);
+}
+//: Whether output `m` of a run is newer than `old`: a later run `gen`, or a later `seq` of the same run.
+const slidesNewer = (m, old) => !old || m.gen > old.gen || m.gen === old.gen && m.seq > old.seq;
+//: The room output of each code cell in `outs` (`{cell: {html}}`), as `slidesDraw` takes it.
+const slidesHtml = outs => Object.fromEntries(Object.entries(outs).map(([c, o]) => [c, o.html]));
 
 //: The slide sizes on a demo's shadow root `root`, after the sheets it has; `room` adds the rules of the room copy.
 function slidesRk(root, room = false) {
@@ -137,7 +150,7 @@ function slidesAudience() {
   const root = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'lee-stage'}));
   const canvas = root.appendChild(Object.assign(document.createElement('div'), {className: 'lee-slide'}));
   const q = `?k=${encodeURIComponent(k)}`, demos = new Map(), fns = {};
-  let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}}, es = null, stage = null, done = false;
+  let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}, outs: {}}, es = null, stage = null, done = false;
   let boot = '', wait = 0, timer = 0;
   slidesScale(root);
   const name = () => String(deck?.title || '').replace(/\.ipynb$/i, '');
@@ -181,18 +194,25 @@ function slidesAudience() {
   const draw = () => {
     if (done || !deck) return;
     const i = Math.max(0, Math.min(deck.slides.length - 1, +at.slide.slice(1) - 1));
-    slidesDraw(canvas, deck, i, at.step, {key: k, size: at.size, mount, math: slidesMath});
+    slidesDraw(canvas, deck, i, at.step, {key: k, size: at.size, mount, math: slidesMath, outs: slidesHtml(held.outs)});
     for (const d of demos.values()) if (canvas.contains(d.host)) show(d, d.slug);
   };
-  const keep = m => { held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug); };
+  // a demo state drops the answers of each gate it does not list as done, as the server does, so a reopened gate never shows an old answer
+  const keep = m => {
+    const a = m.t === 'demo' && held.answers[m.slug], g = a && Object.fromEntries(Object.entries(a.gates).filter(([id]) => m.gates[id] === 'done'));
+    if (a) { if (Object.keys(g).length) held.answers[m.slug] = {...a, gates: g}; else delete held.answers[m.slug]; }
+    held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug);
+  };
   const on = {
-    state: d => { wait = 0; at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
+    state: d => { wait = 0; at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}])),
+                                  outs: Object.fromEntries((d.outs || []).map(x => [x.cell, x]))};
                   slidesTheme(d.look?.theme, deck.look?.mono); emit({t: 'point', off: true}); emit({t: 'blank', on: !!at.blank}); draw(); },
     at: d => { if (d.slide !== at.slide) held.answers = {}; at = d; emit({t: 'go', slide: d.slide, beat: Math.min(50, d.step + 1)}); emit({t: 'blank', on: !!d.blank}); },
     point: d => emit({t: 'point', ...d}),
     demo: d => emit({t: 'demo', ...d}),
     answers: d => emit({t: 'answers', ...d}),
     look: d => slidesTheme(d.theme, deck.look?.mono),
+    out: d => { if (!slidesNewer(d, held.outs[d.cell])) return; held.outs[d.cell] = d; if (!done && deck) slidesOut(canvas, d.cell, d.html, k); },
     end: () => emit({t: 'end'}),
   };
   // the browser connects an open stream again by itself; a closed one is asked about first, so a 403 or 410 shows its card

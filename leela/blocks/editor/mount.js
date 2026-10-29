@@ -490,11 +490,14 @@ function setCellState(c, state, label = '') {
   refreshCellMeta(c);           // the run count and the outputs it left are in the tooltip
   queueNotebookOverview();      // a failure is one of the two things the stripe reports
 }
+//: The kernel is a new one: a presentation clears what it showed from the old one.
+const kernelRestarted = () => dispatchEvent(new CustomEvent('lee-kernel-restart'));
 function markPreviousRuns() {
   for (const c of lee.cells) {
     if (c.cell_type !== 'code' || c.execution_count == null) continue;
     c.fresh = false; setCellState(c, 'previous'); setCellTime(c, c.execution_ms, false);
   }
+  kernelRestarted();
 }
 function formatCellTime(ms) {
   if (ms == null || !Number.isFinite(Number(ms))) return '';

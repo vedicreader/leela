@@ -48,6 +48,7 @@ async function stopCell(i) {
   const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
   status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
          r.forced ? 'err' : 'ok');
+  if (r.forced) kernelRestarted();
 }
 
 /* A run stream that ended without its result leaves the server knowing how the cell stands. Ask it,
@@ -66,9 +67,10 @@ async function settleRun(path, id) {
 }
 
 /* Resolves to `{ok, error}`. The slide deck runs cells with the status line hidden under it, so it
-   reads the outcome here and follows the outputs through `lee-cell-output`. */
+   reads the outcome here and follows the outputs through `lee-cell-output`. `save: false` runs the
+   live text and writes no file: no save before or after, and no placeholder made valid. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
-async function runCell(i, advance) {
+async function runCell(i, advance, {save = true} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
@@ -91,7 +93,7 @@ async function runCell(i, advance) {
   } else {
     const p = lee.cells.find(x => x.cell_type === 'markdown' && x.extra?.lesson?.role === 'prediction' && x.extra.lesson.for === cellId);
     const pv = p && lee.editors.get(p.id), guess = p ? {prediction: pv ? LeeCM.getDoc(pv) : p.source, confidence: p.extra.lesson.confidence} : {};
-    if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
+    if (save && lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return {ok: false, error: 'the notebook could not be saved first'};
     const began = performance.now();
     c.running = true;
     if (c.extra?.lesson) $('.lee-reveal', el)?.remove();
@@ -105,7 +107,7 @@ async function runCell(i, advance) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess}, (event, data) => {
+        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();
@@ -141,7 +143,7 @@ async function runCell(i, advance) {
     if (cur()?.extra?.lesson) renderLessonReveal(cur());
     if (isExercise(cur())) renderExercise(cur());
     if (cur()) $(`#editor .lee-cell[data-id="${CSS.escape(cellId)}"]`)?.classList.remove('running');
-    if (lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
+    if (save && lee.path && cur() && autoSaveEnabled()) saveTab(true).catch(() => {});
     leeVars();
   }
   if (!advance || (i = cur() ? lee.cells.findIndex(x => x.id === cellId) : -1) < 0) return res;

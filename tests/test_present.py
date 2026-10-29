@@ -239,3 +239,39 @@ def test_run_knows_when_a_cell_no_longer_matches_the_stored_deck():
       const a = ['c1', 'c2', 'c3', 'm0'].map(i => presentStale(p, i)); globalThis.lee = {cells: []};
       return [...a, presentStale(p, 'c1')]; })()""")
     assert got == [False, True, True, True, True]
+
+def _node(src):
+    if not shutil.which('node'): pytest.skip('node is not installed')
+    out = subprocess.run(['node', '-'], input=src, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+def test_stage_messages_never_carry_an_answer():
+    "The demo move built from a mirror snapshot takes the stage fields only, `abhyasaStage.valid` passes it, and one over 65536 is not built."
+    from importlib.resources import files
+    stage = (files('abhyasa.core')/'stage.js').read_text()
+    got = _node(stage + PRESENT_JS.read_text() + """
+      const snap = {state: {x: 3}, gates: {g1: 'done'}, pick: {g1: 1}, said: {g1: 'ANSWER-7731'}, answer: 'ANSWER-7731'};
+      const m = presentDemoMove('d1', snap), big = presentDemoMove('d1', {state: {t: 'y'.repeat(70000)}, gates: {}, pick: {}});
+      process.stdout.write(JSON.stringify({m, ok: abhyasaStage.valid({v: 1, ...m}), big}));""")
+    assert 'ANSWER-7731' not in json.dumps(got['m']) and got['ok'] is True and got['big'] is None, got
+    assert got['m'] == {'t': 'demo', 'slug': 'd1', 'state': {'x': 3}, 'gates': {'g1': 'done'}, 'pick': {'g1': 1}}
+
+COALESCE = '''globalThis.lee = {present: null}; const sent = [], wait = [];
+globalThis.presentPost = (p, url, body) => { sent.push([url, body.seq, body.gen, body.outputs, body.done]); return new Promise(r => wait.push(() => r({ok: true, msg: {html: ''}}))); };
+%s
+presentShown = () => {};
+const p = lee.present = {outq: {}, floor: 0};
+presentOut(p, 'c1', 1, ['a'], false); presentOut(p, 'c1', 1, ['a', 'b'], false); presentOut(p, 'c1', 1, ['a', 'b', 'c'], false); presentOut(p, 'c1', 1, ['final'], true);
+presentOut(p, 'c2', 1, ['other'], true);
+const tick = () => new Promise(r => setTimeout(r, 5));
+(async () => { const first = sent.length; wait.shift()(); await tick(); wait.shift()(); await tick(); wait.shift()(); await tick();
+  p.floor = 2; presentOut(p, 'c1', 1, ['late'], false); presentOut(p, 'c1', 2, ['the restart itself'], false); presentOut(p, 'c1', 3, ['after the restart'], true); await tick();
+  process.stdout.write(JSON.stringify({first, sent})); })();'''
+
+def test_streamed_output_coalesces_so_no_old_snapshot_waits_in_the_post_chain():
+    "While one output post of a cell is out, newer snapshots replace each other; a run older than the last restart sends nothing."
+    got = _node(COALESCE % PRESENT_JS.read_text())
+    assert got['first'] == 2, 'one post for each cell at a time'
+    assert got['sent'] == [['/present/out', 1, 1, ['a'], False], ['/present/out', 1, 1, ['other'], True], ['/present/out', 2, 1, ['final'], True],
+                           ['/present/out', 1, 3, ['after the restart'], True]], got['sent']
