@@ -24,7 +24,7 @@ def test_six_hint_rungs():
 
 def test_pure_imports_in_isolated_python():
     src = '''import sys, json
-import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.check, rupaka.spec
+import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.check, abhyasa.talk, abhyasa.core.stage, rupaka.spec
 print(json.dumps([n for n in sys.modules if n == 'ipywidgets' or n.startswith('ipywidgets.') or n == 'abhyasa.app' or n == 'abhyasa.blocks' or n.startswith('abhyasa.blocks.')]))
 '''
     p = subprocess.run([sys.executable, '-I', '-c', src], capture_output=True, text=True, timeout=60)
@@ -41,8 +41,23 @@ def test_rupaka_vendor_version():
 
 def test_abhyasa_dependency_floor():
     deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
-    assert 'abhyasa>=0.0.11,<0.1' in deps
-    assert any(re.fullmatch(r'rupaka==\d+\.\d+\.\d+', d) for d in deps)
+    assert 'abhyasa>=0.0.12,<0.1' in deps and 'rupaka==0.0.6' in deps
+
+def test_talk_contract():
+    from abhyasa.talk import TALK_SCHEMA, TALK_CASES, check_talk, new_run
+    assert TALK_SCHEMA == 1
+    for t, want in TALK_CASES: assert check_talk(t) == want
+    run = new_run(TALK_CASES[0][0], now=1.)
+    assert run['at'] == dict(slide='s1', beat=1, blank=False, pane=None, ask=None) and len(run['key']) == 16
+
+def test_stage_contract():
+    from importlib.resources import files
+    from abhyasa.core.stage import STAGE_V, STAGE_TYPES, STAGE_CASES
+    js = (files('abhyasa.core')/'stage.js').read_text()
+    assert STAGE_V == 1 and 'out' not in STAGE_TYPES and (files('abhyasa.core')/'stage.css').is_file()
+    src = js + f'\nprocess.stdout.write(JSON.stringify({json.dumps([m for m, _ in STAGE_CASES])}.map(abhyasaStage.valid)));'
+    got = json.loads(subprocess.run(['node', '-'], input=src, capture_output=True, text=True, check=True).stdout)
+    assert got == [ok for _, ok in STAGE_CASES]
 
 def test_learn_handoff():
     from abhyasa.journey import LEELA_ROUTE, HANDOFF_CASES, handoff, read_handoff
