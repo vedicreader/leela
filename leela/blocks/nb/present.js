@@ -39,17 +39,31 @@ function presentFit(p) {
   }
 }
 
+//: Whether markdown text has an H2 line outside a backtick or tilde fence.
+function presentH2(s) {
+  let fence = '';
+  for (const l of s.split(/\r?\n/)) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(l);
+    if (fence) { if (m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) fence = ''; }
+    else if (m && !(m[1][0] === '`' && m[2].includes('`'))) fence = m[1];
+    else if (/^ {0,3}##(?:[ \t]|$)/.test(l)) return true;
+  }
+  return false;
+}
+
 /* `[[slide, ...subslides], ...]`, each slide `{items: [{i, frag}], notes: [i]}` with `i` an index
-   into `cells`. `src` reads a cell's text, so unsaved edits are what gets presented. */
+   into `cells`. `src` reads a cell's text, so unsaved edits are what gets presented. With no `slide`
+   or `subslide` cell, a markdown cell with an H2 line opens a slide; with no H2 either, each cell does. */
 function presentSlides(cells, src = c => String(c.source || '')) {
-  const kind = c => c.extra?.slideshow?.slide_type;
+  const kind = c => c.extra?.slideshow?.slide_type, ok = c => c.approval == null;
   // only a slide boundary makes unmarked cells continue a slide; a skip or notes mark alone does not
-  const typed = cells.some(c => kind(c) === 'slide' || kind(c) === 'subslide');
+  const typed = cells.some(c => ok(c) && (kind(c) === 'slide' || kind(c) === 'subslide'));
+  const heads = typed ? [] : cells.map(c => ok(c) && c.cell_type === 'markdown' && presentH2(src(c))), byH2 = heads.some(Boolean);
   const deck = []; let stack = null, slide = null;
   const open = sub => { slide = {items: [], notes: [], frag: -1}; if (!sub || !stack) deck.push(stack = []); stack.push(slide); };
   cells.forEach((c, i) => {
-    if (c.approval) return;
-    const t = kind(c) || (typed ? '-' : 'slide');
+    if (!ok(c)) return;
+    const k = kind(c), t = byH2 && (!k || k === '-') ? (heads[i] ? 'slide' : '-') : k || (typed ? '-' : 'slide');
     if (t === 'skip') return;
     const empty = !src(c).trim() && !(c.outputs || []).length && !c.reply;
     if (t === 'slide' || t === 'subslide') open(t === 'subslide');
@@ -69,6 +83,36 @@ function presentAt(deck, i) {
       const it = s.items.find(x => x.i === j); if (it) return {h, v, f: it.frag};
     }
   return {h: 0, v: 0, f: -1};
+}
+
+//: The most fragment groups a slide shows: stage `go.beat` is one plus the groups shown, at most 50.
+const PRESENT_GROUPS = 49;
+/* The deck as one line `[{items: [{i, frag}], notes: [i], groups, warn}]`: subslides in order, a notes-only
+   slide's notes on the next slide with items (on the last one at the end), groups past the 49th in the 49th. */
+function presentLine(deck) {
+  const line = []; let held = [];
+  for (const s of deck.flat()) {
+    if (!s.items.length) { held.push(...s.notes); continue; }
+    const top = s.items.reduce((m, x) => Math.max(m, x.frag), -1);
+    line.push({items: s.items.map(({i, frag}) => ({i, frag: Math.min(frag, PRESENT_GROUPS - 1)})), notes: [...held, ...s.notes],
+               groups: Math.min(top + 1, PRESENT_GROUPS), warn: top >= PRESENT_GROUPS});
+    held = [];
+  }
+  if (line.length) line.at(-1).notes.push(...held);
+  return line;
+}
+//: `{slide, step}` where cell `i` shows, or the nearest visible cell above it; a fragment's own group is not yet shown.
+function presentPlace(line, i) {
+  const at = new Map(line.flatMap((s, slide) => s.items.map(x => [x.i, {slide, step: Math.max(0, x.frag)}])));
+  for (let j = i; j >= 0; j--) if (at.has(j)) return at.get(j);
+  return {slide: 0, step: 0};
+}
+//: One fragment group forward (`d = 1`) or back (`d = -1`), else the next slide at its start or the previous one in full.
+function presentMove(line, {slide, step}, d) {
+  const s = line[slide]; if (!s) return {slide: 0, step: 0};
+  if (d > 0) return step < s.groups ? {slide, step: step + 1} : slide + 1 < line.length ? {slide: slide + 1, step: 0} : {slide, step};
+  if (d < 0) return step > 0 ? {slide, step: step - 1} : slide > 0 ? {slide: slide - 1, step: line[slide - 1].groups} : {slide, step};
+  return {slide, step};
 }
 
 //: RISE settings as reveal.js options, by name. Nothing else reaches reveal.js.

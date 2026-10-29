@@ -60,6 +60,70 @@ def test_a_skip_or_notes_mark_alone_leaves_every_other_cell_its_own_slide():
     got = _js(f'presentSlides({json.dumps(cells)}).map(s => s.map(x => ({{items: x.items.map(y => y.i), notes: x.notes}})))')
     assert got == [[{'items': [0], 'notes': []}], [{'items': [2], 'notes': [3]}], [{'items': [4, 5, 6], 'notes': []}]], got
 
+CASES = json.loads((ROOT/'tests'/'data'/'rise_cases.json').read_text())
+_LINE = 'cs => presentLine(presentSlides(cs, c => c.live ?? String(c.source || ""))).map(s => ({...s, items: s.items.map(x => [x.i, x.frag])}))'
+
+def _lines(cases):
+    "Each case's flat line and its start places, from the page's own grouping."
+    return _js(f'''Object.fromEntries(Object.entries({json.dumps(cases)}).map(([k, c]) => {{
+      const l = presentLine(presentSlides(c.cells, x => x.live ?? String(x.source || "")));
+      return [k, {{line: ({_LINE})(c.cells), place: (c.place || []).map(([i]) => {{ const p = presentPlace(l, i); return [i, p.slide, p.step]; }})}}];
+    }}))''')
+
+def test_the_slide_line_follows_the_case_table():
+    got = _lines(CASES)
+    for k, c in CASES.items():
+        assert got[k]['line'] == c['line'], k
+        assert got[k]['place'] == c.get('place', []), k
+
+def test_the_case_table_holds_cells_the_way_the_editor_writes_them():
+    "The editor's `none` removes `slide_type`; only a file holds `-`, and an approval cell takes no slide type from the editor."
+    from leela.blocks.nb.nb import Cell, Notebook
+    for k, c in CASES.items():
+        nb = Notebook([Cell(cell_type=x['cell_type'], source=x['source'], outputs=list(x.get('outputs', [])), reply=x.get('reply', ''),
+                            approval=x.get('approval')) for x in c['cells']])
+        for i, x in enumerate(c['cells']):
+            t = x['extra'].get('slideshow', {}).get('slide_type')
+            if t == '-' or 'approval' in x: nb.cells[i].extra = json.loads(json.dumps(x['extra']))
+            elif t: nb.set_slide([i], t)
+            else: nb.set_slide([i], 'slide'); nb.set_slide([i], 'none')
+        page = [{**cl.dict(), 'live': x.get('live')} for cl, x in zip(nb.cells, c['cells'])]
+        assert [p['extra'] for p in page] == [x['extra'] for x in c['cells']], k
+        assert _js(f'({_LINE})({json.dumps(page, default=str)})') == c['line'], k
+
+def test_h2_cuts_slides_only_without_slide_metadata():
+    plain = [_cell(None, '## A\ntext'), _cell(None, 'x', 'code'), _cell(None, '## B'), _cell(None, 'y')]
+    typed = [_cell('slide', '## A'), _cell(None, '## B')]
+    marks = [_cell(None, '## A'), _cell('fragment', 'f'), _cell('notes', '## n'), _cell('skip', '## s'), _cell(None, '## B')]
+    got = _js(f'[{json.dumps(plain)}, {json.dumps(typed)}, {json.dumps(marks)}].map(c => presentLine(presentSlides(c)).map(s => s.items.map(x => x.i)))')
+    assert got == [[[0, 1], [2, 3]], [[0, 1]], [[0, 1], [4]]]
+
+def test_move_and_place_walk_fragments_in_one_line():
+    cells = [_cell('slide', 'a'), _cell('fragment', 'b'), _cell('subslide', 'c'), _cell('notes', 'n'), _cell('slide', 'd')]
+    got = _js(f'''(() => {{ const l = presentLine(presentSlides({json.dumps(cells)})), m = presentMove;
+      let a = {{slide: 0, step: 0}}, walk = [a];
+      for (const d of [1, 1, 1, 1, -1, -1, -1, -1]) walk.push(a = m(l, a, d));
+      return {{n: l.length, walk, place: [1, 3, 4].map(i => presentPlace(l, i))}}; }})()''')
+    assert got['n'] == 3
+    assert [(w['slide'], w['step']) for w in got['walk']] == [(0, 0), (0, 1), (1, 0), (2, 0), (2, 0), (1, 0), (0, 1), (0, 0), (0, 0)]
+    assert got['place'] == [{'slide': 0, 'step': 0}, {'slide': 1, 'step': 0}, {'slide': 2, 'step': 0}]
+    walk = _js(f'''(() => {{ const l = presentLine(presentSlides({json.dumps(CASES["frags_subs"]["cells"])})); let a = {{slide: 0, step: 0}}, w = [];
+      for (const d of [1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1]) w.push(a = presentMove(l, a, d)); return w.map(x => [x.slide, x.step]); }})()''')
+    assert walk == [[0, 1], [0, 2], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2], [2, 2], [2, 1], [2, 0], [1, 1], [1, 0], [0, 2], [0, 1]]
+    assert _js('[presentPlace([], 3), presentMove([], {slide: 0, step: 0}, 1)]') == [{'slide': 0, 'step': 0}] * 2
+
+def test_49_fragment_groups_fit_and_the_rest_show_with_the_49th():
+    def go(n): return _js(f'''(() => {{ const l = presentLine(presentSlides({json.dumps([_cell('slide', 'a')] + [_cell('fragment', f'f{i}') for i in range(n)] + [_cell('slide', 'z')])}));
+      return {{s: l[0], last: presentPlace(l, {n}), end: presentMove(l, {{slide: 0, step: 49}}, 1), back: presentMove(l, {{slide: 1, step: 0}}, -1)}}; }})()''')
+    full, over, far = go(49), go(50), go(52)
+    assert (full['s']['groups'], full['s']['warn']) == (49, False)
+    assert [x['frag'] for x in full['s']['items']] == list(range(-1, 49))
+    for g, n in ((over, 50), (far, 52)):
+        assert (g['s']['groups'], g['s']['warn']) == (49, True), n
+        assert [x['frag'] for x in g['s']['items']] == list(range(-1, 49)) + [48]*(n - 49), n
+        assert g['last'] == {'slide': 0, 'step': 48} and g['back'] == {'slide': 0, 'step': 49}, n
+        assert g['end'] == {'slide': 1, 'step': 0}, n
+
 def test_rise_settings_reach_reveal_by_name_and_nothing_else_does():
     got = _js('[riseConfig({theme: "black", transition: "linear", width: "100%", height: 768, controls: false,'
               ' progress: true, slideNumber: "c/t", center: false, header: "<b>h</b>", footer: "  ", overlay: "o",'
