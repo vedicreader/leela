@@ -25,7 +25,7 @@ body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; backgro
 .lee-slide table { border-collapse: collapse; }
 .lee-slide :is(th, td) { padding: .2em .5em; border: 1px solid var(--lee-border); }
 .lee-slide blockquote { padding-left: .8em; border-left: 4px solid var(--lee-border); color: var(--lee-fg2); }
-.lee-slide .lee-rupaka { margin: 0 0 calc(14px * var(--u)); font-size: calc(22px * var(--u)); }
+.lee-slide .lee-rupaka { margin: 0 0 calc(14px * var(--u)); font-size: calc(28px * var(--u)); }
 .lee-frag-hidden { visibility: hidden; }
 .stage-dot { position: absolute; z-index: 3; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; pointer-events: none;
   background: var(--lee-red); box-shadow: 0 0 12px var(--lee-red); opacity: 0; transition: opacity .2s; }
@@ -33,32 +33,44 @@ body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; backgro
 .stage-blank { position: absolute; inset: 0; z-index: 2; display: none; align-items: center; justify-content: center;
   background: var(--lee-bg); color: var(--lee-fg4); font: 28px var(--lee-sans); }
 .lee-slide.blank .stage-blank { display: flex; }
-.lee-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
-  background: var(--lee-bg); color: var(--lee-fg2); font-family: var(--lee-sans); }
-.lee-end h1 { margin: 0; font-size: 32px; font-weight: 600; color: var(--lee-fg); }
-.lee-end p { margin: 0; font-size: 18px; }
+.lee-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  padding: 48px 64px; box-sizing: border-box; text-align: center; background: var(--lee-bg); color: var(--lee-fg2); font-family: var(--lee-sans); }
+.lee-end h1 { margin: 0; font-size: 44px; font-weight: 600; line-height: 1.2; color: var(--lee-fg); }
+.lee-end p { margin: 0; font-size: 28px; color: var(--lee-fg2); }
 /* The presenter screen: above the IDE and its popovers, below `.lee-modal` so a save conflict still shows. */
 .lee-present { position: fixed; inset: 0; z-index: 49; display: flex; flex-direction: column; background: var(--lee-bg); color: var(--lee-fg); font-family: var(--lee-sans); }
 .lee-present:focus { outline: none; }
-.lee-present > .lee-stage { flex: 1; min-height: 0; }
-.lee-present-strip { flex: none; display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 16px; box-sizing: border-box;
+/* The slide and the open Notes drawer share one row, so the drawer takes width from the slide and covers none of it. */
+.lee-present-main { position: relative; flex: 1; min-height: 0; display: flex; }
+.lee-present-main > .lee-stage { flex: 1; min-width: 0; width: auto; height: auto; }
+.lee-present-strip { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-height: 56px; padding: 8px 16px; box-sizing: border-box;
   background: var(--lee-bg1); border-top: 1px solid var(--lee-border); font-size: 14px; transition: opacity .25s, transform .25s; }
 .lee-present.lee-idle .lee-present-strip { opacity: 0; transform: translateY(8px); }
-.lee-present-strip button { min-width: 32px; min-height: 32px; padding: 0 12px; font: 14px var(--lee-sans); color: var(--lee-fg);
+.lee-present-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:where(.lee-present-strip, .lee-present-notes) button { min-width: 32px; min-height: 32px; padding: 0 12px; font: 14px var(--lee-sans); color: var(--lee-fg);
   background: var(--lee-bg); border: 1px solid var(--lee-border); border-radius: 6px; cursor: pointer; }
-.lee-present-strip button:hover { border-color: var(--lee-accent); }
-.lee-present-strip button:focus-visible { outline: 2px solid var(--lee-accent); outline-offset: 1px; }
+:where(.lee-present-tools, .lee-present-notes) button { background: transparent; border-color: transparent; }
+:where(.lee-present-strip, .lee-present-notes) button:hover:not(:disabled) { background: var(--lee-bg2); border-color: var(--lee-border); }
+:where(.lee-present-strip, .lee-present-notes) button:focus-visible { outline: 2px solid var(--lee-accent); outline-offset: 1px; }
 .lee-present-strip button:disabled { opacity: .5; cursor: default; }
-.lee-present-strip :is([data-where], [data-conn]) { padding: 0 4px; color: var(--lee-fg2); white-space: nowrap; }
+.lee-present-strip [data-notes][aria-expanded="true"] {
+  color: var(--lee-selection-fg); background: var(--lee-sel); border-color: var(--lee-sel); }
+.lee-present-strip :is([data-where], [data-conn], [data-size]) { padding: 0 4px; color: var(--lee-fg2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lee-present-strip [data-runs] { display: contents; }
 .lee-present-strip .lee-gap { flex: 1; }
-.lee-present-strip [data-end] { color: var(--lee-red); }
+.lee-present-strip [data-end] { margin-left: auto; color: var(--lee-red); }
 .lee-present-strip [data-end][data-armed] { color: var(--lee-bg); background: var(--lee-red); border-color: var(--lee-red); }
-.lee-present-notes { position: absolute; top: 0; right: 0; bottom: 56px; z-index: 5; width: 340px; box-sizing: border-box; padding: 20px 24px; overflow: auto;
+.lee-present-notes { flex: none; width: min(340px, 35vw); box-sizing: border-box; padding: 12px 24px 20px; overflow: auto;
   background: var(--lee-bg1); border-left: 1px solid var(--lee-border); color: var(--lee-fg); font-size: 18px; line-height: 1.5; }
 .lee-present-notes[hidden] { display: none; }
-.lee-present-notes :is(.lee-present-warn, [data-next], [data-clock]) { margin: 0 0 12px; font-size: 14px; color: var(--lee-fg2); }
-.lee-present-msg { position: absolute; left: 50%; bottom: 68px; z-index: 6; max-width: 70%; padding: 8px 14px; transform: translateX(-50%);
+.lee-present-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 -12px 8px 0; }
+.lee-present-notes h2 { margin: 0; font: 600 16px/1.3 var(--lee-sans); color: var(--lee-fg); }
+.lee-present-warn { margin: 0 0 16px; padding: 0 0 12px; border-bottom: 1px solid var(--lee-border); font-size: 14px; color: var(--lee-fg2); }
+.lee-present-notes [data-notes-body] { margin: 0 0 16px; }
+.lee-present-notes :is([data-upcoming], [data-clock]) { margin: 0 0 8px; font-size: 16px; color: var(--lee-fg); }
+.lee-present-notes [data-upcoming] { padding-top: 12px; border-top: 1px solid var(--lee-border); }
+.lee-present-notes [data-clock] { font-variant-numeric: tabular-nums; }
+.lee-present-msg { position: absolute; left: 50%; bottom: 12px; z-index: 6; max-width: 70%; padding: 8px 14px; transform: translateX(-50%);
   background: var(--lee-bg1); color: var(--lee-fg); border: 1px solid var(--lee-border); border-radius: 6px; font: 14px/1.4 var(--lee-sans); }
 .lee-present-msg[hidden] { display: none; }
 .lee-slide.lee-measure { position: fixed; left: -99999px; top: 0; visibility: hidden; transform: none; }

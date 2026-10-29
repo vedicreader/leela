@@ -7,7 +7,13 @@ const SLIDES_DATA = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]*$/;
 const SLIDES_OURS = /^(lee-|stage-|rk)/;
 //: The body is 28px; the fit shrinks it to 20px and stops.
 const SLIDES_FLOOR = 20/28;
-const SLIDES_RK = ':host{display:block}.rk{font-size:inherit;line-height:1.45}.rk button{font:inherit;font-size:.8em}.rk-title{font-size:1.1em}';
+//: rupaka's sizes are fixed px for a reading page; on a slide a demo takes the slide's text size and Leela's colours, in both windows.
+const SLIDES_RK = `:host{display:block}.rk{font-size:inherit;line-height:1.45;max-width:100%;font-family:var(--lee-sans)}.rk-title{font-size:1.1em}
+.rk button,.rk-gate textarea,.rk-gate .verdict,.rk-note{font:inherit}.rk button{padding:.3em .6em;line-height:1.2}.rk-gate .verdict .stale{font-size:inherit}
+.rk-lbl,.rk-slider output,.rk kbd{font-size:.85em;letter-spacing:normal;text-transform:none}.rk-lbl{color:var(--lee-fg)}.rk-note,.rk-gate .note{color:var(--lee-fg2)}
+.rk-slider input{font-size:inherit;max-width:24em;accent-color:var(--lee-accent)}.rk-gate{border-color:var(--lee-border)}.rk-gate .verdict .ok{color:var(--lee-green)}`;
+//: The room copy has no keys to press and no box to type in: an explanation shows as text, an empty one not at all.
+const SLIDES_ROOM = `.rk kbd{display:none}.rk-gate textarea{border:0;padding:0;resize:none;background:none;color:var(--lee-fg);overflow:hidden}.rk-gate textarea.lee-empty{display:none}`;
 
 //: Server HTML as a fragment with only the tags, classes, links and image sources a slide may have; `key` names the images of this presentation.
 function slidesSafe(html, key = '') {
@@ -69,13 +75,24 @@ function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math 
   return slidesFit(el);
 }
 
-//: A demo in a shadow root with rupaka's CSS and the slide's sizes, mounted as `rupakaDraw` mounts it in the IDE; `{host, inner}`.
+//: The slide sizes on a demo's shadow root `root`, after the sheets it has; `room` adds the rules of the room copy.
+function slidesRk(root, room = false) {
+  const css = SLIDES_RK + (room ? SLIDES_ROOM : '');
+  if (!('adoptedStyleSheets' in root)) return root.append(Object.assign(document.createElement('style'), {textContent: css}));
+  const s = (slidesRk.sheets ||= {})[css] ||= new CSSStyleSheet();
+  if (!s.cssRules.length) s.replaceSync(css);
+  if (!root.adoptedStyleSheets.includes(s)) root.adoptedStyleSheets = [...root.adoptedStyleSheets, s];
+}
+//: Mark each empty explanation box of a room demo, so the room does not see an empty field.
+const slidesWhy = inner => inner.querySelectorAll('.rk-gate textarea').forEach(t => t.classList.toggle('lee-empty', !t.value.trim()));
+
+//: A room demo in a shadow root with rupaka's CSS and the slide's sizes, mounted as `rupakaDraw` mounts it in the IDE; `{host, inner}`.
 function slidesMount(spec) {
   const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div'), root = host.attachShadow({mode: 'open'});
   const css = document.querySelector('meta[name="lee-rupaka-css"]')?.content;
   if (css) root.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: css}));
-  root.append(Object.assign(document.createElement('style'), {textContent: SLIDES_RK}), inner);
-  try { window.Rupaka.mount(inner, spec); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
+  root.append(inner); slidesRk(root, true);
+  try { window.Rupaka.mount(inner, spec); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
   return {host, inner};
 }
 
@@ -117,20 +134,23 @@ function slidesAudience() {
   const q = `?k=${encodeURIComponent(k)}`, demos = new Map(), fns = {};
   let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}}, es = null, stage = null, done = false;
   slidesScale(root);
-  const card = (title, text) => {
+  const name = () => String(deck?.title || '').replace(/\.ipynb$/i, '');
+  const card = (text, title = name()) => {
     done = true; es?.close(); stage?.stop();
     const c = Object.assign(document.createElement('div'), {className: 'lee-end'});
-    c.append(Object.assign(document.createElement('h1'), {textContent: title || 'Presentation'}), Object.assign(document.createElement('p'), {textContent: text}));
+    c.append(Object.assign(document.createElement('h1'), {textContent: text}));
+    if (title) c.append(Object.assign(document.createElement('p'), {textContent: title}));
     root.replaceChildren(c);
   };
-  const ended = () => card(deck?.title, 'The presentation has ended.');
-  const refused = r => r.status === 410 ? ended() : card(deck?.title, 'This presentation link is not valid.');
+  const ended = () => card('The presentation has ended.');
+  const refused = r => r.status === 410 ? ended() : card('This presentation link is not valid.');
   const ch = {on(t, f) { (fns[t] ||= []).push(f); return () => { fns[t] = fns[t].filter(x => x !== f); }; }, send() {}, close() {}};
   const emit = m => { m = {v: 1, ...m}; if (abhyasaStage.valid(m)) for (const f of fns[m.t] || []) f(m); };
   const show = (d, slug) => {
     if (!d.mirror) return;
     const s = held.demo[slug], a = held.answers[slug];
     try { d.mirror.apply(s?.state || {}, s?.gates || {}, s?.pick || {}); if (a) d.mirror.reveal(a.gates); else d.mirror.forget(); } catch {}
+    slidesWhy(d.inner);
   };
   const mount = (spec, id) => {
     let d = demos.get(id);
@@ -167,11 +187,11 @@ function slidesAudience() {
   addEventListener('dblclick', () => document.documentElement.requestFullscreen?.().catch(() => {}));
   fetch('/present/deck' + q).then(async r => {
     if (!r.ok) return refused(r);
-    deck = await r.json(); document.title = deck.title || 'Presentation';
+    deck = await r.json(); document.title = name() || 'Presentation';
     slidesTheme(deck.look?.theme, deck.look?.mono);
-    stage = abhyasaStage.audience(canvas, {ch, title: deck.title, draw: m => m.t === 'go' ? draw() : m.t === 'end' ? ended() : (m.t === 'demo' || m.t === 'answers') && keep(m)});
+    stage = abhyasaStage.audience(canvas, {ch, title: name(), draw: m => m.t === 'go' ? draw() : m.t === 'end' ? ended() : (m.t === 'demo' || m.t === 'answers') && keep(m)});
     listen();
-  }).catch(() => card('', 'The presentation could not be loaded. Reload this window.'));
+  }).catch(() => card('The presentation could not be loaded. Reload this window.', ''));
 }
 
 if (typeof document !== 'undefined' && document.body?.dataset.page === 'audience') slidesAudience();

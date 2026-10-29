@@ -134,6 +134,27 @@ def test_the_text_size_moves_in_tenths_between_half_and_two_and_a_half():
     assert _js('[presentStep(1, 1), presentStep(1, -1), presentStep(1.2, 1), presentStep(.5, -1), presentStep(2.5, 1), presentStep(.7000001, 1)]') \
         == [1.1, .9, 1.3, .5, 2.5, .8]
 
+STARTS = '''const log = []; let release;
+globalThis.lee = {kind: 'notebook', cells: [{id: 'a', cell_type: 'markdown', source: '# A', extra: {}}], sel: 0, path: 'd.ipynb'};
+globalThis.status = () => {}; globalThis.mdSource = c => c.source;
+globalThis.post = url => { log.push(url); return url === '/present/end' ? new Promise(r => { release = () => r({ok: true}); }) : Promise.resolve({key: 'k' + log.length}); };
+%s
+presentOpen = r => { log.push('open ' + r.key); lee.present = {chain: Promise.resolve(), key: r.key}; };
+closePresentation = () => { lee.present = null; };
+const ticks = () => new Promise(r => setTimeout(r, 10));
+(async () => {
+  presentEnd({chain: Promise.resolve(), key: 'old'}); presentNotebook(); presentNotebook(); await ticks();
+  const held = [...log]; release(); await ticks();
+  process.stdout.write(JSON.stringify([held, log]));
+})();'''
+
+def test_a_page_sends_one_start_at_a_time_after_the_last_end():
+    "The server keeps the start it reads last and refuses one an end overtakes, so two quick starts after End once opened nothing."
+    if not shutil.which('node'): pytest.skip('node is not installed')
+    out = subprocess.run(['node', '-'], input=STARTS % PRESENT_JS.read_text(), capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [['/present/end'], ['/present/end', '/present/start', 'open k2']]
+
 def _nb(path, meta, cells=None):
     cells = cells or [{'cell_type': 'markdown', 'id': 'm1', 'metadata': {'slideshow': {'slide_type': 'slide'}}, 'source': '# hi'}]
     path.write_text(json.dumps({'cells': cells, 'metadata': meta, 'nbformat': 4, 'nbformat_minor': 5}))

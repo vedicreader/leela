@@ -6,7 +6,7 @@ const PRESENT_KINDS = new Set(['markdown', 'code', 'raw', 'prompt']);
 //: A start the server refused because the notebook is too large to send.
 const PRESENT_LARGE = /characters of (output|source)|larger than 32 MB|at most 2,000 cells/;
 const PRESENT_GONE = /^This presentation (has ended|link is not valid)\.$/;
-const PRESENT_HINT = 'Drag this window to the projector, then press F.';
+const PRESENT_HINT = 'Move the audience window to the projector. In that window, press F for full screen.';
 
 //: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
 const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
@@ -133,7 +133,7 @@ async function presentRun(p, id) {
   if (button()) button().disabled = false;
   presentSay(err ? `${err.ename}: ${err.evalue}` : r.ok ? '' : presentError(r.error));
 }
-function presentEnd(p) { presentPost(p, '/present/end', {}, true); closePresentation(); }
+function presentEnd(p) { lee.presentWait = presentPost(p, '/present/end', {}, true); closePresentation(); }
 
 async function presentNotebook(start = '') {
   if (lee.kind !== 'notebook') return status(PRESENT_NOT_NOTEBOOK, 'err');
@@ -143,41 +143,52 @@ async function presentNotebook(start = '') {
   const ticket = lee.presentTicket = (lee.presentTicket || 0) + 1, name = lee.path || lee.tabKey;
   const at = (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
   status('Preparing slides…');
+  const body = {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
+    cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))};
+  // the server keeps the start whose body it reads last and refuses a start an end overtakes, so one start at a time, after the last end
+  const sent = (lee.presentWait || Promise.resolve()).then(() => ticket === lee.presentTicket ? post('/present/start', body) : null);
+  lee.presentWait = sent.catch(() => {});
   let r;
-  try {
-    r = await post('/present/start', {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
-      cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))});
-  } catch (e) { if (ticket === lee.presentTicket) status(presentRefused(e), 'err'); return; }
-  if (ticket !== lee.presentTicket || lee.present) return;
+  try { r = await sent; } catch (e) { if (ticket === lee.presentTicket) status(presentRefused(e), 'err'); return; }
+  if (!r || ticket !== lee.presentTicket || lee.present) return;
   status('');
   presentOpen(r, line, at);
 }
 
-const PRESENT_HTML = '<div class="lee-stage"><div class="lee-slide"></div></div>' +
-  '<aside class="lee-present-notes" aria-label="Notes" hidden><p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
-  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside>' +
+const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div class="lee-slide"></div></div>' +
+  '<aside class="lee-present-notes" id="lee-present-notes" aria-label="Speaker notes" hidden><div class="lee-present-notes-head"><h2>Speaker notes</h2>' +
+  '<button type="button" data-close title="Close the notes (Esc)">Close</button></div>' +
+  '<p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
+  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside><div class="lee-present-msg" role="status" hidden></div></div>' +
   '<div class="lee-present-strip" role="toolbar" aria-label="Presentation controls">' +
-  '<button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +
-  '<span data-where></span><span data-runs></span><span class="lee-gap"></span>' +
-  '<button type="button" data-audience title="Open a window to show on the projector">Audience window</button><span data-conn role="status">Audience window: not connected</span>' +
-  '<button type="button" data-notes title="Notes (N)">Notes</button>' +
-  '<button type="button" data-smaller title="Smaller text" aria-label="Smaller text">A−</button><button type="button" data-bigger title="Larger text" aria-label="Larger text">A+</button>' +
-  '<button type="button" data-full title="Full screen (F)">Full screen</button><button type="button" data-end title="End the presentation">End</button></div>' +
-  '<div class="lee-present-msg" role="status" hidden></div>';
+  '<span class="lee-present-group"><button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +
+  '<span data-where></span><span data-runs></span></span>' +
+  '<span class="lee-present-group"><button type="button" data-audience title="Open a window to show on the projector">Audience window</button><span data-conn role="status">Audience window: not connected</span></span>' +
+  '<span class="lee-present-group lee-present-tools"><button type="button" data-notes title="Notes (N)" aria-controls="lee-present-notes" aria-expanded="false">Notes</button>' +
+  '<button type="button" data-smaller title="Smaller text" aria-label="Smaller text">A−</button><span data-size title="Body text size on the 1280 by 720 slide"></span>' +
+  '<button type="button" data-bigger title="Larger text" aria-label="Larger text">A+</button>' +
+  '<button type="button" data-full title="Full screen (F)">Full screen</button></span><span class="lee-gap"></span>' +
+  '<button type="button" data-end title="End the presentation">End</button></div>';
 
 //: The presenter screen for the started presentation `r`, at place `at` of `line`.
 function presentOpen(r, line, at) {
   const root = Object.assign(document.createElement('div'), {className: 'lee-present', tabIndex: -1, innerHTML: PRESENT_HTML});
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Presentation');
-  const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]');
+  const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]'), notesBtn = q('[data-notes]');
   const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, audience: r.audience, deck: r.presenter, line, at, text: presentStored(), blank: false,
                            outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now(), win: null, look: presentTheme()};
-  const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, rupakaDraw(spec).host).get(id);
+  const demo = spec => { const e = rupakaDraw(spec); e.done.then(() => slidesRk(e.host.shadowRoot)); return e.host; };
+  const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, demo(spec)).get(id);
+  const stuck = d => { const a = presentMove(p.line, p.at, d); return a.slide === p.at.slide && a.step === p.at.step; };
   const run = b => { const e = Object.assign(document.createElement('button'), {type: 'button', title: 'Run this code cell', onclick: () => presentRun(p, b.cell)}); e.dataset.run = b.cell; return e; };
   p.draw = () => {
     const s = p.deck.slides[p.at.slide] || {}, {fits} = slidesDraw(canvas, p.deck, p.at.slide, p.at.step, {key: p.ak, size: Math.round(p.text*10), mount, math: renderMath});
     for (const [id, outs] of Object.entries(p.outs)) presentOuts(p, id, outs);
-    q('[data-where]').textContent = `${p.at.slide + 1} / ${p.deck.slides.length}`;
+    const g = p.line[p.at.slide]?.groups || 0;
+    q('[data-where]').textContent = `${p.at.slide + 1} / ${p.deck.slides.length}` + (g ? ` · step ${p.at.step + 1} / ${g + 1}` : '');
+    q('[data-prev]').disabled = stuck(-1); q('[data-next]').disabled = stuck(1);
+    if (document.activeElement?.disabled && root.contains(document.activeElement)) root.focus({preventScroll: true});
+    q('[data-size]').textContent = `Text ${Math.round(28*p.text*(+canvas.style.getPropertyValue('--slide-fit') || 1))} px`;
     q('[data-notes-body]').replaceChildren(slidesSafe(s.notes || '', p.ak));
     q('[data-upcoming]').textContent = s.next ? `Next: ${s.next}` : 'This is the last slide.';
     const code = (s.blocks || []).filter(b => b.kind === 'code');
@@ -195,24 +206,29 @@ function presentOpen(r, line, at) {
   };
   const full = () => document.fullscreenElement ? document.exitFullscreen().catch(() => {})
     : root.requestFullscreen ? root.requestFullscreen().catch(() => presentSay('Use View › Enter Full Screen to fill the screen.')) : presentSay('Use View › Enter Full Screen to fill the screen.');
-  const toggleNotes = () => { notes.hidden = !notes.hidden; };
+  const setNotes = open => {
+    const inside = notes.contains(document.activeElement);
+    notes.hidden = !open; root.classList.toggle('lee-notes-open', open); notesBtn.setAttribute('aria-expanded', String(open));
+    if (!open && inside) notesBtn.focus({preventScroll: true});
+  };
+  const toggleNotes = () => setNotes(notes.hidden);
   p.keys = {ArrowRight: () => go(1), ArrowDown: () => go(1), Space: () => go(1), PageDown: () => go(1),
             ArrowLeft: () => go(-1), ArrowUp: () => go(-1), 'Shift+Space': () => go(-1), PageUp: () => go(-1),
-            KeyN: toggleNotes, KeyF: full, Escape: () => { notes.hidden = true; }};
+            KeyN: toggleNotes, KeyF: full, Escape: () => setNotes(false)};
   // the rules of `abhyasaStage.presenter`, which the IDE page does not load: no held, Alt, Cmd or Ctrl key, no key in a text box or a demo but Esc
   p.onKey = e => {
     if (lee.present !== p || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || $('.lee-modal')) return;
     const a = document.activeElement;
     if (a && (a.matches('textarea, input, select, [contenteditable]:not([contenteditable="false"])') || a.isContentEditable)) return;
     if (e.key !== 'Escape' && a?.closest('.lee-rupaka')) return;
-    if ((e.code === 'Space' || e.code === 'Enter') && a?.matches('button') && strip.contains(a)) return;
+    if ((e.code === 'Space' || e.code === 'Enter') && a?.matches('button') && (strip.contains(a) || notes.contains(a))) return;
     const fn = p.keys[(e.shiftKey ? 'Shift+' : '') + e.code]; if (!fn) return;
     e.preventDefault(); e.stopPropagation(); fn();
   };
   p.onOutput = e => { if (lee.present === p && e.detail.id in p.outs) presentOuts(p, e.detail.id, p.outs[e.detail.id] = e.detail.outputs || []); };
   q('[data-prev]').onclick = () => go(-1); q('[data-next]').onclick = () => go(1);
   q('[data-smaller]').onclick = () => resize(-1); q('[data-bigger]').onclick = () => resize(1);
-  q('[data-notes]').onclick = toggleNotes; q('[data-full]').onclick = full;
+  notesBtn.onclick = toggleNotes; q('[data-close]').onclick = () => setNotes(false); q('[data-full]').onclick = full;
   q('[data-audience]').onclick = () => {
     const url = location.origin + p.audience;
     if (inDesktopShell()) { openExternal(url); return presentSay(PRESENT_HINT); }
@@ -231,7 +247,7 @@ function presentOpen(r, line, at) {
     root.classList.remove('lee-idle'); clearTimeout(p.idle);
     p.idle = setTimeout(() => { if (!strip.contains(document.activeElement)) root.classList.add('lee-idle'); }, 3000);
   };
-  root.addEventListener('pointermove', e => { if (innerHeight - e.clientY <= 80) wake(); });
+  root.addEventListener('pointermove', e => { if (innerHeight - e.clientY <= Math.max(80, strip.offsetHeight + 24)) wake(); });
   strip.addEventListener('focusin', wake); strip.addEventListener('pointerdown', wake);
   root.addEventListener('lee-markdown-rendered', e => $$('.lee-reply-actions', e.target).forEach(x => x.remove()));
   p.events = new EventSource('/present/events');

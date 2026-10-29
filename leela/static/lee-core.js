@@ -4232,7 +4232,13 @@ const SLIDES_DATA = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]*$/;
 const SLIDES_OURS = /^(lee-|stage-|rk)/;
 //: The body is 28px; the fit shrinks it to 20px and stops.
 const SLIDES_FLOOR = 20/28;
-const SLIDES_RK = ':host{display:block}.rk{font-size:inherit;line-height:1.45}.rk button{font:inherit;font-size:.8em}.rk-title{font-size:1.1em}';
+//: rupaka's sizes are fixed px for a reading page; on a slide a demo takes the slide's text size and Leela's colours, in both windows.
+const SLIDES_RK = `:host{display:block}.rk{font-size:inherit;line-height:1.45;max-width:100%;font-family:var(--lee-sans)}.rk-title{font-size:1.1em}
+.rk button,.rk-gate textarea,.rk-gate .verdict,.rk-note{font:inherit}.rk button{padding:.3em .6em;line-height:1.2}.rk-gate .verdict .stale{font-size:inherit}
+.rk-lbl,.rk-slider output,.rk kbd{font-size:.85em;letter-spacing:normal;text-transform:none}.rk-lbl{color:var(--lee-fg)}.rk-note,.rk-gate .note{color:var(--lee-fg2)}
+.rk-slider input{font-size:inherit;max-width:24em;accent-color:var(--lee-accent)}.rk-gate{border-color:var(--lee-border)}.rk-gate .verdict .ok{color:var(--lee-green)}`;
+//: The room copy has no keys to press and no box to type in: an explanation shows as text, an empty one not at all.
+const SLIDES_ROOM = `.rk kbd{display:none}.rk-gate textarea{border:0;padding:0;resize:none;background:none;color:var(--lee-fg);overflow:hidden}.rk-gate textarea.lee-empty{display:none}`;
 
 //: Server HTML as a fragment with only the tags, classes, links and image sources a slide may have; `key` names the images of this presentation.
 function slidesSafe(html, key = '') {
@@ -4294,13 +4300,24 @@ function slidesDraw(el, deck, i, step, {key = '', size = 10, mount = null, math 
   return slidesFit(el);
 }
 
-//: A demo in a shadow root with rupaka's CSS and the slide's sizes, mounted as `rupakaDraw` mounts it in the IDE; `{host, inner}`.
+//: The slide sizes on a demo's shadow root `root`, after the sheets it has; `room` adds the rules of the room copy.
+function slidesRk(root, room = false) {
+  const css = SLIDES_RK + (room ? SLIDES_ROOM : '');
+  if (!('adoptedStyleSheets' in root)) return root.append(Object.assign(document.createElement('style'), {textContent: css}));
+  const s = (slidesRk.sheets ||= {})[css] ||= new CSSStyleSheet();
+  if (!s.cssRules.length) s.replaceSync(css);
+  if (!root.adoptedStyleSheets.includes(s)) root.adoptedStyleSheets = [...root.adoptedStyleSheets, s];
+}
+//: Mark each empty explanation box of a room demo, so the room does not see an empty field.
+const slidesWhy = inner => inner.querySelectorAll('.rk-gate textarea').forEach(t => t.classList.toggle('lee-empty', !t.value.trim()));
+
+//: A room demo in a shadow root with rupaka's CSS and the slide's sizes, mounted as `rupakaDraw` mounts it in the IDE; `{host, inner}`.
 function slidesMount(spec) {
   const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div'), root = host.attachShadow({mode: 'open'});
   const css = document.querySelector('meta[name="lee-rupaka-css"]')?.content;
   if (css) root.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: css}));
-  root.append(Object.assign(document.createElement('style'), {textContent: SLIDES_RK}), inner);
-  try { window.Rupaka.mount(inner, spec); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
+  root.append(inner); slidesRk(root, true);
+  try { window.Rupaka.mount(inner, spec); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
   return {host, inner};
 }
 
@@ -4342,20 +4359,23 @@ function slidesAudience() {
   const q = `?k=${encodeURIComponent(k)}`, demos = new Map(), fns = {};
   let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}}, es = null, stage = null, done = false;
   slidesScale(root);
-  const card = (title, text) => {
+  const name = () => String(deck?.title || '').replace(/\.ipynb$/i, '');
+  const card = (text, title = name()) => {
     done = true; es?.close(); stage?.stop();
     const c = Object.assign(document.createElement('div'), {className: 'lee-end'});
-    c.append(Object.assign(document.createElement('h1'), {textContent: title || 'Presentation'}), Object.assign(document.createElement('p'), {textContent: text}));
+    c.append(Object.assign(document.createElement('h1'), {textContent: text}));
+    if (title) c.append(Object.assign(document.createElement('p'), {textContent: title}));
     root.replaceChildren(c);
   };
-  const ended = () => card(deck?.title, 'The presentation has ended.');
-  const refused = r => r.status === 410 ? ended() : card(deck?.title, 'This presentation link is not valid.');
+  const ended = () => card('The presentation has ended.');
+  const refused = r => r.status === 410 ? ended() : card('This presentation link is not valid.');
   const ch = {on(t, f) { (fns[t] ||= []).push(f); return () => { fns[t] = fns[t].filter(x => x !== f); }; }, send() {}, close() {}};
   const emit = m => { m = {v: 1, ...m}; if (abhyasaStage.valid(m)) for (const f of fns[m.t] || []) f(m); };
   const show = (d, slug) => {
     if (!d.mirror) return;
     const s = held.demo[slug], a = held.answers[slug];
     try { d.mirror.apply(s?.state || {}, s?.gates || {}, s?.pick || {}); if (a) d.mirror.reveal(a.gates); else d.mirror.forget(); } catch {}
+    slidesWhy(d.inner);
   };
   const mount = (spec, id) => {
     let d = demos.get(id);
@@ -4392,11 +4412,11 @@ function slidesAudience() {
   addEventListener('dblclick', () => document.documentElement.requestFullscreen?.().catch(() => {}));
   fetch('/present/deck' + q).then(async r => {
     if (!r.ok) return refused(r);
-    deck = await r.json(); document.title = deck.title || 'Presentation';
+    deck = await r.json(); document.title = name() || 'Presentation';
     slidesTheme(deck.look?.theme, deck.look?.mono);
-    stage = abhyasaStage.audience(canvas, {ch, title: deck.title, draw: m => m.t === 'go' ? draw() : m.t === 'end' ? ended() : (m.t === 'demo' || m.t === 'answers') && keep(m)});
+    stage = abhyasaStage.audience(canvas, {ch, title: name(), draw: m => m.t === 'go' ? draw() : m.t === 'end' ? ended() : (m.t === 'demo' || m.t === 'answers') && keep(m)});
     listen();
-  }).catch(() => card('', 'The presentation could not be loaded. Reload this window.'));
+  }).catch(() => card('The presentation could not be loaded. Reload this window.', ''));
 }
 
 if (typeof document !== 'undefined' && document.body?.dataset.page === 'audience') slidesAudience();
@@ -4408,7 +4428,7 @@ const PRESENT_KINDS = new Set(['markdown', 'code', 'raw', 'prompt']);
 //: A start the server refused because the notebook is too large to send.
 const PRESENT_LARGE = /characters of (output|source)|larger than 32 MB|at most 2,000 cells/;
 const PRESENT_GONE = /^This presentation (has ended|link is not valid)\.$/;
-const PRESENT_HINT = 'Drag this window to the projector, then press F.';
+const PRESENT_HINT = 'Move the audience window to the projector. In that window, press F for full screen.';
 
 //: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
 const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
@@ -4535,7 +4555,7 @@ async function presentRun(p, id) {
   if (button()) button().disabled = false;
   presentSay(err ? `${err.ename}: ${err.evalue}` : r.ok ? '' : presentError(r.error));
 }
-function presentEnd(p) { presentPost(p, '/present/end', {}, true); closePresentation(); }
+function presentEnd(p) { lee.presentWait = presentPost(p, '/present/end', {}, true); closePresentation(); }
 
 async function presentNotebook(start = '') {
   if (lee.kind !== 'notebook') return status(PRESENT_NOT_NOTEBOOK, 'err');
@@ -4545,41 +4565,52 @@ async function presentNotebook(start = '') {
   const ticket = lee.presentTicket = (lee.presentTicket || 0) + 1, name = lee.path || lee.tabKey;
   const at = (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
   status('Preparing slides…');
+  const body = {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
+    cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))};
+  // the server keeps the start whose body it reads last and refuses a start an end overtakes, so one start at a time, after the last end
+  const sent = (lee.presentWait || Promise.resolve()).then(() => ticket === lee.presentTicket ? post('/present/start', body) : null);
+  lee.presentWait = sent.catch(() => {});
   let r;
-  try {
-    r = await post('/present/start', {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
-      cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))});
-  } catch (e) { if (ticket === lee.presentTicket) status(presentRefused(e), 'err'); return; }
-  if (ticket !== lee.presentTicket || lee.present) return;
+  try { r = await sent; } catch (e) { if (ticket === lee.presentTicket) status(presentRefused(e), 'err'); return; }
+  if (!r || ticket !== lee.presentTicket || lee.present) return;
   status('');
   presentOpen(r, line, at);
 }
 
-const PRESENT_HTML = '<div class="lee-stage"><div class="lee-slide"></div></div>' +
-  '<aside class="lee-present-notes" aria-label="Notes" hidden><p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
-  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside>' +
+const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div class="lee-slide"></div></div>' +
+  '<aside class="lee-present-notes" id="lee-present-notes" aria-label="Speaker notes" hidden><div class="lee-present-notes-head"><h2>Speaker notes</h2>' +
+  '<button type="button" data-close title="Close the notes (Esc)">Close</button></div>' +
+  '<p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
+  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside><div class="lee-present-msg" role="status" hidden></div></div>' +
   '<div class="lee-present-strip" role="toolbar" aria-label="Presentation controls">' +
-  '<button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +
-  '<span data-where></span><span data-runs></span><span class="lee-gap"></span>' +
-  '<button type="button" data-audience title="Open a window to show on the projector">Audience window</button><span data-conn role="status">Audience window: not connected</span>' +
-  '<button type="button" data-notes title="Notes (N)">Notes</button>' +
-  '<button type="button" data-smaller title="Smaller text" aria-label="Smaller text">A−</button><button type="button" data-bigger title="Larger text" aria-label="Larger text">A+</button>' +
-  '<button type="button" data-full title="Full screen (F)">Full screen</button><button type="button" data-end title="End the presentation">End</button></div>' +
-  '<div class="lee-present-msg" role="status" hidden></div>';
+  '<span class="lee-present-group"><button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +
+  '<span data-where></span><span data-runs></span></span>' +
+  '<span class="lee-present-group"><button type="button" data-audience title="Open a window to show on the projector">Audience window</button><span data-conn role="status">Audience window: not connected</span></span>' +
+  '<span class="lee-present-group lee-present-tools"><button type="button" data-notes title="Notes (N)" aria-controls="lee-present-notes" aria-expanded="false">Notes</button>' +
+  '<button type="button" data-smaller title="Smaller text" aria-label="Smaller text">A−</button><span data-size title="Body text size on the 1280 by 720 slide"></span>' +
+  '<button type="button" data-bigger title="Larger text" aria-label="Larger text">A+</button>' +
+  '<button type="button" data-full title="Full screen (F)">Full screen</button></span><span class="lee-gap"></span>' +
+  '<button type="button" data-end title="End the presentation">End</button></div>';
 
 //: The presenter screen for the started presentation `r`, at place `at` of `line`.
 function presentOpen(r, line, at) {
   const root = Object.assign(document.createElement('div'), {className: 'lee-present', tabIndex: -1, innerHTML: PRESENT_HTML});
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Presentation');
-  const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]');
+  const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]'), notesBtn = q('[data-notes]');
   const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, audience: r.audience, deck: r.presenter, line, at, text: presentStored(), blank: false,
                            outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now(), win: null, look: presentTheme()};
-  const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, rupakaDraw(spec).host).get(id);
+  const demo = spec => { const e = rupakaDraw(spec); e.done.then(() => slidesRk(e.host.shadowRoot)); return e.host; };
+  const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, demo(spec)).get(id);
+  const stuck = d => { const a = presentMove(p.line, p.at, d); return a.slide === p.at.slide && a.step === p.at.step; };
   const run = b => { const e = Object.assign(document.createElement('button'), {type: 'button', title: 'Run this code cell', onclick: () => presentRun(p, b.cell)}); e.dataset.run = b.cell; return e; };
   p.draw = () => {
     const s = p.deck.slides[p.at.slide] || {}, {fits} = slidesDraw(canvas, p.deck, p.at.slide, p.at.step, {key: p.ak, size: Math.round(p.text*10), mount, math: renderMath});
     for (const [id, outs] of Object.entries(p.outs)) presentOuts(p, id, outs);
-    q('[data-where]').textContent = `${p.at.slide + 1} / ${p.deck.slides.length}`;
+    const g = p.line[p.at.slide]?.groups || 0;
+    q('[data-where]').textContent = `${p.at.slide + 1} / ${p.deck.slides.length}` + (g ? ` · step ${p.at.step + 1} / ${g + 1}` : '');
+    q('[data-prev]').disabled = stuck(-1); q('[data-next]').disabled = stuck(1);
+    if (document.activeElement?.disabled && root.contains(document.activeElement)) root.focus({preventScroll: true});
+    q('[data-size]').textContent = `Text ${Math.round(28*p.text*(+canvas.style.getPropertyValue('--slide-fit') || 1))} px`;
     q('[data-notes-body]').replaceChildren(slidesSafe(s.notes || '', p.ak));
     q('[data-upcoming]').textContent = s.next ? `Next: ${s.next}` : 'This is the last slide.';
     const code = (s.blocks || []).filter(b => b.kind === 'code');
@@ -4597,24 +4628,29 @@ function presentOpen(r, line, at) {
   };
   const full = () => document.fullscreenElement ? document.exitFullscreen().catch(() => {})
     : root.requestFullscreen ? root.requestFullscreen().catch(() => presentSay('Use View › Enter Full Screen to fill the screen.')) : presentSay('Use View › Enter Full Screen to fill the screen.');
-  const toggleNotes = () => { notes.hidden = !notes.hidden; };
+  const setNotes = open => {
+    const inside = notes.contains(document.activeElement);
+    notes.hidden = !open; root.classList.toggle('lee-notes-open', open); notesBtn.setAttribute('aria-expanded', String(open));
+    if (!open && inside) notesBtn.focus({preventScroll: true});
+  };
+  const toggleNotes = () => setNotes(notes.hidden);
   p.keys = {ArrowRight: () => go(1), ArrowDown: () => go(1), Space: () => go(1), PageDown: () => go(1),
             ArrowLeft: () => go(-1), ArrowUp: () => go(-1), 'Shift+Space': () => go(-1), PageUp: () => go(-1),
-            KeyN: toggleNotes, KeyF: full, Escape: () => { notes.hidden = true; }};
+            KeyN: toggleNotes, KeyF: full, Escape: () => setNotes(false)};
   // the rules of `abhyasaStage.presenter`, which the IDE page does not load: no held, Alt, Cmd or Ctrl key, no key in a text box or a demo but Esc
   p.onKey = e => {
     if (lee.present !== p || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || $('.lee-modal')) return;
     const a = document.activeElement;
     if (a && (a.matches('textarea, input, select, [contenteditable]:not([contenteditable="false"])') || a.isContentEditable)) return;
     if (e.key !== 'Escape' && a?.closest('.lee-rupaka')) return;
-    if ((e.code === 'Space' || e.code === 'Enter') && a?.matches('button') && strip.contains(a)) return;
+    if ((e.code === 'Space' || e.code === 'Enter') && a?.matches('button') && (strip.contains(a) || notes.contains(a))) return;
     const fn = p.keys[(e.shiftKey ? 'Shift+' : '') + e.code]; if (!fn) return;
     e.preventDefault(); e.stopPropagation(); fn();
   };
   p.onOutput = e => { if (lee.present === p && e.detail.id in p.outs) presentOuts(p, e.detail.id, p.outs[e.detail.id] = e.detail.outputs || []); };
   q('[data-prev]').onclick = () => go(-1); q('[data-next]').onclick = () => go(1);
   q('[data-smaller]').onclick = () => resize(-1); q('[data-bigger]').onclick = () => resize(1);
-  q('[data-notes]').onclick = toggleNotes; q('[data-full]').onclick = full;
+  notesBtn.onclick = toggleNotes; q('[data-close]').onclick = () => setNotes(false); q('[data-full]').onclick = full;
   q('[data-audience]').onclick = () => {
     const url = location.origin + p.audience;
     if (inDesktopShell()) { openExternal(url); return presentSay(PRESENT_HINT); }
@@ -4633,7 +4669,7 @@ function presentOpen(r, line, at) {
     root.classList.remove('lee-idle'); clearTimeout(p.idle);
     p.idle = setTimeout(() => { if (!strip.contains(document.activeElement)) root.classList.add('lee-idle'); }, 3000);
   };
-  root.addEventListener('pointermove', e => { if (innerHeight - e.clientY <= 80) wake(); });
+  root.addEventListener('pointermove', e => { if (innerHeight - e.clientY <= Math.max(80, strip.offsetHeight + 24)) wake(); });
   strip.addEventListener('focusin', wake); strip.addEventListener('pointerdown', wake);
   root.addEventListener('lee-markdown-rendered', e => $$('.lee-reply-actions', e.target).forEach(x => x.remove()));
   p.events = new EventSource('/present/events');
