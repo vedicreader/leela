@@ -19,6 +19,7 @@ from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
+from . import presentation
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
@@ -712,6 +713,7 @@ def connect(app, ctx):
             except Exception: pass
     app.routes.append(WebSocketRoute('/nb/comm/ws', nb_comm_ws))
     show = Show()
+    pres = presentation.connect(app, ctx, show.subs)
     @rt('/present/notes')
     def present_notes():
         "The speaker's page, opened in the machine's own browser beside the deck."
@@ -732,10 +734,11 @@ def connect(app, ctx):
         return {'ok': True}
     @rt('/present/events')
     async def present_events():
-        "The presentation pushed as it changes: `state` for the notes page, `nav` for the deck."
+        "The presentation pushed as it changes: `presentation` (the live id) first, `presentation-ended`, and `state` and `nav` for the old deck."
         async def events():
-            q = asyncio.Queue(); show.subs.add(q)
+            q = presentation.Drop(presentation.EVENTS_MOST); show.subs.add(q)
             try:
+                yield sse('presentation', {'id': pres.id})
                 yield sse('state', show.now())
                 while True: yield sse(*await q.get())
             finally: show.subs.discard(q)

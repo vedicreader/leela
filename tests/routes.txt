@@ -293,6 +293,13 @@ GET,POST /nb/run/state
 GET,POST /nb/run/stream
 GET,POST /nb/save
 GET,POST /outline
+GET /present/audience
+GET /present/deck
+GET /present/img/{h}
+GET /present/stage.js
+POST /present/at
+POST /present/end
+POST /present/start
 GET,POST /project/fastship
 GET,POST /project/fastship/action
 GET,POST /project/nbdev_prepare

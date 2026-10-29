@@ -47,7 +47,7 @@ Decisions made in this plan (the owner can overrule each one):
 - **The server renders slide markup for both windows.** Markdown goes through the same `mdhtml` calls as `/markdown/render` (`leela/app.py:952-955`) and then `clean_html` (`leela/core/text.py:146-150`). The presenter preview and the audience draw the same HTML, so what the presenter sees is what the room sees.
 - **One shared slide renderer.** `slides.js` is in `LAYERS` for the IDE page and in `ALONE` as `lee-slides.js` for the audience page, as `blocks/learn/pane.js` is in both today (`tools/build_ide_js.py:39`, `:55`). `orphans()` (`build_ide_js.py:77-81`) needs no change.
 - **reveal.js is removed**, with `leela/vendor/reveal/`, `loadReveal`, `presentFit` and the reveal options of `riseConfig`. It brought a second public keymap and the white page.
-- **The channel name is `'leela:' + key`.** `key` is `secrets.token_hex(8)` from `POST /present/start`, made without `new_run`.
+- **The channel name is `'leela:' + key`.** `key` is `secrets.token_hex(16)` from `POST /present/start`, made without `new_run`.
 - **Two Leela stage types.** `cellout` `{cell, gen, seq, html}` carries cleaned rich output. `size` `{tenths: 5..25}` carries the A-/A+ scale, so both windows draw the same text size. Both come through `abhyasaStage.add` in `slides.js`.
 - **Fragments on the wire.** `go.slide` is `s<n>` from 1. `go.beat` is 1 plus the number of fragment groups shown. A slide shows at most 49 fragment groups. Groups after the 49th show with the 49th, and the presenter sees a warning.
 - **Notes-only slides make no slide.** Their notes join the notes of the next visible slide.
@@ -103,11 +103,13 @@ The review found these defects. Task 4 fixes each one, and its tests pin them:
 | bad slide line (unknown cell id, fragment groups out of order, over 9999 slides) | `POST /present/start` | 400 with the reason; no presentation starts | 3 |
 | more than 49 fragment groups on a slide | page and server | the slide shows; the presenter sees a warning with the slide number | 1, 4 |
 | text over the floor | renderer | cut at the safe margin; the presenter sees `Slide N has more than fits. Split it or trim it.` | 4 |
-| wrong or stale key | every route with `k` | 403 `This is not the key of the presentation.` | 3 |
+| wrong, stale, empty, missing or non-text key | every route with `k` | 403 `This presentation link is not valid.` | 3 |
 | no presentation | same | 410 `This presentation has ended.` | 3 |
+| a later start arrives while a start builds | `POST /present/start` | the earlier one: 409 `A newer presentation started.`; nothing changes for it | 3 |
+| malformed start or a build failure | `POST /present/start` | 400 with the reason (500 for a build fault); the live presentation, key, images and subscribers do not change | 3 |
 | unknown slide, step out of range | `POST /present/at` | 400, place unchanged | 3 |
 | cross-site request | every `/present/*` route | 421 from `LoopbackHostGuard` (no exemption) | 3 |
-| second client starts | `POST /present/start` | old presentation ends; `presentation-ended` on `/present/events`; old page shows `Another presentation started.`; old audience shows the end card | 3, 4 |
+| second client starts | `POST /present/start` | old presentation ends; `presentation-ended` `{id, reason: 'replaced'}` on `/present/events`; old page shows `Another presentation started.`; old audience shows the end card | 3, 4 |
 | popup refused | Audience window button | the button stays; status `The browser blocked the window. Click again.` | 4 |
 | Mac app | Audience window button | "Present in your browser" with the URL and a copy button | 4 |
 | audience window closed | presenter | after 5 s with no `here`: status `The audience window is closed.`; the presenter returns to the clean slide; the presentation goes on | 4 |
@@ -371,9 +373,9 @@ Expected: PASS.
 Goal: the server holds one presentation in memory, serves the audience page, deck, images and `stage.js` behind the key where needed, keeps the place, and checks the key on every mutation route. It writes no file.
 
 **Files:**
-- Modify: `leela/blocks/nb/show.py` (`Presentation`), `leela/blocks/nb/app.py:714` (hold `pres = Presentation()` beside `show`; new routes after `:743`)
+- Create: `leela/blocks/nb/presentation.py` (`Presentation`, `Drop`, `check_start`, the routes); `leela/blocks/nb/app.py:714` calls its `connect` beside `show`, and `/present/events` sends the live id first through a bounded `Drop` queue
 - Create: `leela/static/present-audience.html` (no inline script; links `lee-ide.css`, `lee-slides.css`; loads `/present/stage.js`, `/leestatic/lee-rupaka.js`, `/leestatic/lee-slides.js`)
-- Modify: `tests/routes.txt`
+- Modify: `tests/routes.txt`, `packaging/macos/setup.py`, `packaging/windows/setup.py` (`abhyasa` copied whole, for `abhyasa/core/stage.js`)
 - Create: `tests/test_present_routes.py`
 
 This task keeps `Show`, `/present/notes`, `/present/nav` and `/present/state` as they are. `tests/test_present.py:118-142` pins them, and Task 1 owns that file in parallel. Task 4 removes them.
@@ -386,7 +388,17 @@ This task keeps `Show`, `/present/notes`, `/present/nav` and `/present/state` as
 - `POST /present/at` `{k, slide, step, blank, size}`: 400 for an unknown slide, a step outside `0..groups`, or a size outside 5..25.
 - `POST /present/end` `{k}`: drops the presentation and pushes `presentation-ended`.
 - Headers on the audience page and the deck: `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`. `LoopbackHostGuard` does not change.
-- `MUTATIONS` in `tests/test_present_routes.py` lists `/present/at`, `/present/end`; Task 6 adds `/present/resume`; Task 7 adds `/present/out`, `/present/show-error`, `/present/demo`.
+- `MUTATIONS` in `tests/test_present_routes.py` lists the keyed mutation routes: `/present/at`, `/present/end`; Task 6 adds `/present/resume`; Task 7 adds `/present/out`, `/present/show-error`, `/present/demo`. `/present/start` is the one unkeyed mutation, because it makes the key; the host guard and the start checks are its only gate. The legacy unkeyed `/present/state` and `/present/nav` act on `Show` alone until Task 4 removes them.
+- As built (Task 3), from the session decisions after the teacher review (`target/reviews/task3-review.md`), where they differ from the lines above:
+  - `POST /present/start` checks the request first, before any rendering: at most 2000 cells, 1,000,000 characters of source and 4,000,000 characters of output text per cell, 9999 slides, 49 fragment groups, and a body of 32 MB; cells a list of objects with unique text ids and a type in `markdown`, `code`, `raw`, `prompt`; line items and notes integers (not booleans), in range and disjoint; fragment groups in order with `groups` one past the last; `start` a place `{slide, step}` (0-based slide) in the line. An empty line is 400 `There is nothing to present in this notebook.`. The path goes through `ctx.fs` without reading the file or needing it on disk; `..`, a path outside the roots, a symlink out and a path that is not `.ipynb` are refused. Every refusal is a `fail` 400 with a plain message, and the body must be `application/json`.
+  - It then builds a complete candidate off the loop (`off_loop`) into new dicts, with `key = secrets.token_hex(16)` made first. Each start takes a number on the loop after its checks; the build replaces the live presentation in one step only when no later start, and no `/present/end`, came while it ran. Otherwise it answers 409 `A newer presentation started.`. A malformed start or a build failure leaves the live presentation, its key, images and subscribers as they were. The reply is `{ok, key, id, presenter, at, audience}`; `id` is a separate random id, never the key.
+  - `check(k)`: 410 `This presentation has ended.` with nothing live; else 403 `This presentation link is not valid.` for a missing, empty or non-text key, before `secrets.compare_digest`. Every keyed route calls it first; `/present/img/{h}` checks the key before it looks at `h`, then needs `^[0-9a-f]{64}$` and a hash in the live store (404 `No such image.`). Images are found by key, not hash: the same hash in two presentations answers only to the live key.
+  - Every change to the presentation and every event put runs on the event loop: the routes are `async`, and only the deck build leaves it.
+  - `GET /present/stage.js` (GET only, no key, no path parameter) serves `files('abhyasa')/'core'/'stage.js'` read with `read_bytes`, as `text/javascript` with `Cache-Control: public, max-age=31536000, immutable` and `nosniff`. The audience page asks for it as `?v=<first 16 hex of its SHA-256>`. The route goes first in the route table, because FastHTML's `/{fname:path}.{ext:static}` route answers every `.js` path. It reads through `files('abhyasa')` and not `files('abhyasa.core')`, because importing `abhyasa.core` loads abhyasa's web UI (`leela/blocks/learn/learn.py:16`). There is no `stage.css` route.
+  - Headers: the audience page and the deck send the CSP above, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`; start replies, image replies and every keyed error reply send `no-store` and `nosniff`.
+  - `/present/events` sends `presentation` `{id}` first (the live id, or null), then the legacy `state`. An end or a replacement sends `presentation-ended` `{id, reason: 'ended' | 'replaced'}`. Each subscriber has a `Drop` queue of 64 events that loses the oldest, and leaves the set when it disconnects. Task 4's presenter sends `end` on its stage channel when its own id ends; an audience whose presenter is gone stays on the last slide until a reload gets 410.
+  - The key is a bearer capability in the audience URL and the image URLs. `no-referrer` and `noreferrer` links stop referrer leaks; history, copied links and logs can still hold it. Task 4 removes `k` from the audience address bar after load with `history.replaceState` and keeps it in `sessionStorage` for a reload.
+  - The 32 MB check reads `Content-Length` and the body length in the route. `JsonBody` reads a whole `application/json` body before any route runs, so a larger body is held in memory once before it is refused.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -671,7 +683,7 @@ Every JS task rewrites `leela/static/lee-core.js`, so Tasks 1, 4, 5, 6 and 7 run
 | 0 Pins and rupaka bundle | none (done, `e4c3260`) | `pyproject.toml`, `uv.lock`, `leela/vendor/*`, `tests/test_abhyasa_contract.py` |
 | 1 Slide line and fragments | none | `nb/present.js`, `static/lee-core.js`, `tests/test_present.py`, `tests/data/rise_cases.json` |
 | 2 Room copy | none | `nb/show.py`, `tests/test_present_room.py` |
-| 3 State and routes | 0, 2 | `nb/show.py`, `nb/app.py`, `static/present-audience.html`, `tests/routes.txt`, `tests/test_present_routes.py` |
+| 3 State and routes | 0, 2 | `nb/presentation.py`, `nb/app.py`, `static/present-audience.html`, `packaging/macos/setup.py`, `packaging/windows/setup.py`, `tests/routes.txt`, `tests/test_present_routes.py` |
 | 4 Renderer, look, audience window | 0, 1, 3 | `nb/slides.js`, `nb/present.js`, `nb/app.py`, `nb/show.py`, `static/lee-slides.css`, `static/lee-ide.css`, `static/present-notes.html`, `static/lee-*.js`, `leela/app.py` (head link), `vendor/reveal/`, `vendor/README`, `tools/build_ide_js.py`, `tests/test_present.py`, `tests/test_present_slow.py` |
 | 5 One key scope | 4 | `nb/present.js`, `core/keys.py`, `static/lee-core.js`, `tests/test_present.py`, `tests/test_present_slow.py` |
 | 6 Recovery | 5 | `nb/app.py`, `nb/show.py`, `nb/present.js`, `static/lee-core.js`, `tests/routes.txt`, `tests/test_present_routes.py`, `tests/test_present_slow.py` |
