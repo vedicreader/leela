@@ -40,8 +40,16 @@ def test_rupaka_vendor_version():
     assert f'rupaka=={version}' in deps
 
 def test_abhyasa_dependency_floor():
-    deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
+    t = tomllib.loads((ROOT/'pyproject.toml').read_text())
+    deps = t['project']['dependencies']
     assert 'abhyasa>=0.0.12,<0.1' in deps and 'rupaka==0.0.6' in deps
+    assert 'abhyasa' not in t['tool']['uv']['sources']
+
+def test_room_spec_contract():
+    from abhyasa.core.stage import room_spec
+    s = {'state': {'x': 2}, 'blocks': [{'type': 'row', 'blocks': [{'type': 'gate', 'id': 'g', 'answer': {'is': 'two'}, 'why': 'w'}]}, {'type': 'readout', 'answer': 1}]}
+    assert room_spec(s) == {'state': {'x': 2}, 'blocks': [{'type': 'row', 'blocks': [{'type': 'gate', 'id': 'g', 'why': 'w'}]}, {'type': 'readout', 'answer': 1}]}
+    assert s['blocks'][0]['blocks'][0]['answer'] == {'is': 'two'}
 
 def test_talk_contract():
     from abhyasa.talk import TALK_SCHEMA, TALK_CASES, check_talk, new_run

@@ -6,7 +6,7 @@
 
 **Architecture:** The page groups the live cells into one flat line of slides with the RISE rules in `present.js`. It posts that line, with the editor text and outputs, to `POST /present/start`. The server renders and cleans each slide block, keeps the presentation in memory in `Presentation` (`leela/blocks/nb/show.py`), and returns two copies: the presenter copy (notes, demo answers) and the room copy (neither). One shared slide renderer, `leela/blocks/nb/slides.js`, draws both copies on a 1280x720 canvas. The presenter screen is an overlay in the IDE page, because the kernel, `runCell` and the live cells are there. The audience window is a page alone, `/present/audience`, that loads `lee-slides.js`. The presenter posts each move to the server. The server keeps the state of the one presentation and sends each change to the audience windows over SSE (decision 4, changed on 29 October). reveal.js leaves Leela.
 
-**Tech Stack:** Python 3.13, FastHTML, Starlette `TestClient`, abhyasa 0.0.12 (path source until it is on PyPI), rupaka 0.0.6 (PyPI, vendored bundle), `mdhtml`, `nh3`, `uv`, pytest, Node for the JS harnesses, Playwright with its bundled Chromium.
+**Tech Stack:** Python 3.13, FastHTML, Starlette `TestClient`, abhyasa 0.0.12 (PyPI), rupaka 0.0.6 (PyPI, vendored bundle), `mdhtml`, `nh3`, `uv`, pytest, Node for the JS harnesses, Playwright with its bundled Chromium.
 
 **Sources:** the design review the owner approved on 29 October (it replaces the two-mode plan at `9fe6d4a`); abhyasa `core/stage.js` and `blocks/talk/app.py` at 0.0.12 (the installed copy is the same file as abhyasa `main` at `448ae19`); `docs/decisions.md:626-639` for the theme families.
 
@@ -39,7 +39,7 @@ Settled abhyasa contracts (abhyasa 0.0.12; the installed `abhyasa/core/stage.js`
 - `abhyasaStage.audience` subscribes only to the fixed `DRAWN` list (`stage.js:124`, `:157`). A type added with `add` reaches `draw` only through an explicit `ch.on`.
 - `abhyasaStage.presenter(el, ch, {keys})` takes keys only while `html` has the class `talk`. It ignores Alt, Cmd, Ctrl and held keys (`stage.js:174`), keys in a text box (`stage.js:176`) and keys in `[data-rupaka]` except Esc (`stage.js:177`). A key name is its `e.code`, with `Shift+` before it (`stage.js:178`).
 - `abhyasaStage.mirror(host)` needs `Rupaka.state`, `set`, `settle`, `options` and `open` (`stage.js:217`, `:224`). It returns `{snapshot, apply, watch, answers, reveal, forget}` (`stage.js:300`). `apply` makes every gate of the audience copy `inert` (`stage.js:243`). A gate is done when no listener calls `preventDefault` on its `rk-predict` (`stage.js:229-236`).
-- `room_spec` is at `abhyasa/blocks/talk/app.py:142-148`. Importing that module builds abhyasa's talk app.
+- `room_spec` is in `abhyasa.core.stage`. Importing `abhyasa.core` loads abhyasa's web UI modules and its settings, and Leela's code imports no abhyasa web code (`tests/test_learn_pane.py`), so Leela keeps its own copy.
 
 Decisions made in this plan (the owner can overrule each one):
 
@@ -133,7 +133,7 @@ The review found these defects. Task 4 fixes each one, and its tests pin them:
 - **Task 0 first.** It is done (`e4c3260`, checked against abhyasa main `448ae19`). No other task edits `pyproject.toml`, `uv.lock`, `leela/vendor/*` or `tests/test_abhyasa_contract.py` until Task 0 merges.
 - **Plan review.** Before you edit code for a task, send that task (its survey lines, routes, failure states and tests) to an independent teacher sub-agent for a missing-cases review, as `AGENTS.md` asks. Task 5 also needs the keymap audit that `AGENTS.md` asks for before a key changes.
 - **Code style.** `CLAUDE.md`: dense fastai style, one-line docstrings, no banner comments, rationale in `docs/`. Never hand-roll what abhyasa, rupaka, mdhtml, nh3, fastcore or shalya does.
-- **No second copy without a reason.** The one copy is `room_spec`. It has a one-line comment with the reason and a parity test.
+- **One checked copy.** Leela keeps one copy of `room_spec`, because importing `abhyasa.core` loads abhyasa's web UI. A parity test reads `abhyasa/core/stage.py` as text and compares the two on every case. The copy goes when abhyasa makes `abhyasa.core.stage` importable on its own (asked of the abhyasa session on 29 October).
 - **Tests never reach the owner's data.** `Workspace(roots=[tmp_path])`. `tests/conftest.py` sets `XDG_CONFIG_HOME` and `ABHYASA_CONFIG` under a temp folder. A slow test serves the app with `_serve(ws, _free_port())`. Never port 5001, never the running Leela on ports 5010-5019, never the owner's workspace.
 - **Processes.** Never kill a process by name. A test stops only what it started.
 - **Browser checks.** Playwright's bundled Chromium through `_launch` (`tests/test_web_slow.py:55`), or Chrome for Testing named by `LEELA_CHROMIUM`. Never `/Applications/Google Chrome.app`, port 9223 or `~/.cache/fastcdp/cdp-chrome`. One browser at a time, closed in a `finally`, headless, audio muted. Two windows are two pages of one context: `context.wait_for_event('page')` after the presenter's `window.open`. Browser tests go in `*_slow.py` files and run with `-m slow` (`pyproject.toml:111` has `-m 'not slow'`).
@@ -305,7 +305,7 @@ Goal: the server turns the posted slide line into a presenter copy and a room co
 - `slide_html(md, base, key, images) -> str`: `mdhtml` with the options of `/markdown/render` (`leela/app.py:953-955`), `allow_raw` false, then `clean_html` (`leela/core/text.py:146-150`). Then each `img src`: a path inside a workspace root becomes `/present/img/<sha256>?k=<key>` and its bytes go into `images`; a `data:image/(png|jpeg|gif|webp);base64,` source stays; any other source is dropped.
 - `clean_out(outputs, key, images) -> (room, error)`: `stream`, `text/plain`, `text/markdown` (through `slide_html`), `text/html` (through `clean_html`), `image/png`, `image/jpeg`, `image/gif` (by hash into `images`). `room` is the HTML of every output except `error`. `error` is `{ename, evalue, traceback}` with ANSI codes removed, or None. Never `<script>`, `on*` attributes, `javascript:` or a remote `src`.
 - `clip_msg(msg, most=65536) -> dict`: cuts `msg['html']` so that the JSON of the whole message, counted in UTF-16 code units as `JSON.stringify` counts, is at most `most`. It drops whole trailing blocks first, then cuts the text of the last text block and escapes it again. The result is balanced markup and ends with `<p>Output is too long for the room screen.</p>` when anything was cut.
-- `room_spec(spec)`: a copy of `abhyasa/blocks/talk/app.py:142-148`, with the comment `# copy: importing abhyasa.blocks.talk.app builds the talk app`. Drop it when abhyasa moves `room_spec` into `abhyasa.talk` or core.
+- `room_spec(spec)`: Leela's copy of `abhyasa.core.stage.room_spec`. `tests/test_present_room.py::test_room_spec_matches_abhyasa` compares it with abhyasa's source, and `tests/test_abhyasa_contract.py::test_room_spec_contract` pins abhyasa's function.
 - What the room never receives (Task 2 review decision, pinned by tests): notes and skipped cells with their source, outputs, demos and images; `next` titles; tracebacks; any gate `answer` in a demo, from a markdown fence, a `text/markdown` or `text/html` output, or `application/vnd.rupaka+json`; the HTML page fallback of a rupaka output; HTML comments and `id`, `data-id` and `title` attributes; file links (only `http(s)`, `mailto` and `#` stay); any workspace path; any image source other than `/present/img/<sha256>?k=<key>`.
 - Stated limits (the room can still see these; the guide says so): an answer written as plain text, stream text, escaped HTML, code source, or a rupaka example shown inside another fence; a gate whose answer is a state path or a derived value (`room_spec` removes the key, the state stays); the gate's `why`, `prompt` and `options` (parity with abhyasa); `alt` text; stderr text.
 - As built (Task 2), where it differs from the lines above: `demo_fences` runs on rendered and cleaned HTML with the IDE's own selector `pre > code.language-rupaka` (as `core.js:680` does), through BeautifulSoup, so the room finds exactly the demos the page would mount; a fence that is not JSON or fails `rupaka.spec.validate` is dropped, never kept as code. `slide_html` and `room_html` return `(html, specs)`. `decks` and `clean_out` take an optional `fs` (the `Sandbox`, `ctx.fs`), and a local image is read only through `Sandbox._check`. Code blocks have `html` (source) and `out` (outputs). Images are PNG, JPEG, GIF or WebP checked from the bytes, at most 8 MB each, 16384 pixels a side, 40 million pixels, 100 images and 64 MB in total; SVG is refused. A room spec fails `validate`, so room HTML must never pass through `room_html` again. `beautifulsoup4` is declared in `pyproject.toml`.
@@ -347,9 +347,7 @@ def test_clip_counts_the_whole_message(): ...
     # escape-heavy text ('"\\<\n' * 30_000), emoji text, and 2000 small image tags: each clip_msg result has _size <= 65536,
     # parses as balanced markup (html.parser with a tag stack), and ends with the 'too long' line; a small message is unchanged
 
-def test_room_spec_matches_abhyasa(): ...
-    # read abhyasa/blocks/talk/app.py from importlib.util.find_spec('abhyasa').submodule_search_locations without importing
-    # abhyasa.blocks.talk; exec its room_spec with ast in a namespace with deepcopy; compare with ours on nested gate cases
+# room_spec is Leela's copy; test_room_spec_matches_abhyasa compares it with abhyasa/core/stage.py, read as text
 ```
 
 Write each `...` test in full; the comment lines give its assertions.
@@ -789,6 +787,6 @@ If saved talks return, decision 7 holds: the talk is `<notebook>.talk.json` besi
 
 ## Open questions for the owner
 
-1. **`room_spec` in abhyasa core.** Leela keeps a copy with a parity test. Recommendation: ask abhyasa to move `room_spec` into `abhyasa.talk`, then drop the copy.
+1. **`room_spec` in abhyasa core.** Open. abhyasa 0.0.12 has `room_spec` in `abhyasa.core.stage`, but importing `abhyasa.core` loads its web UI and settings, which Leela's code must not do. Leela keeps its checked copy until abhyasa makes that module importable on its own.
 2. **A-/A+ in the audience window.** This plan sends `size`, so both windows draw the same text size. Recommendation: keep it; the alternative is a presenter-only size, which makes the preview differ from the room.
 3. **Last good output.** This plan keeps a failed run's outputs except the `error` entry. Recommendation: keep it; the alternative is to put back the previous successful run's outputs, which hides output the room has already seen.

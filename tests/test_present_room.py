@@ -48,7 +48,7 @@ def _balanced(s):
     p = _Tags(); p.feed(s); p.close(); return not p.stack
 
 def test_room_spec_matches_abhyasa():
-    src = (Path(find_spec('abhyasa').submodule_search_locations[0])/'blocks'/'talk'/'app.py').read_text()
+    src = (Path(find_spec('abhyasa').submodule_search_locations[0])/'core'/'stage.py').read_text()   # read, not imported: importing abhyasa.core loads its web UI
     fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == 'room_spec')
     ns = {'deepcopy': deepcopy}; exec(compile(ast.Module([fn], []), 'abhyasa_room_spec', 'exec'), ns)
     cases = [_spec(), _spec(answer='x'), {'blocks': [{'type': 'row', 'blocks': [{'type': 'gate', 'id': 'a', 'answer': 'p.0'}, {'type': 'stack', 'answer': 1}]}]},
