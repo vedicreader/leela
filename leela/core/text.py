@@ -139,14 +139,17 @@ def _html_attr(tag, attr, val):
     if attr == 'class': return ' '.join(t for t in val.split() if t.startswith(_CLASS_PREFIX) or t in _CLASS_NAMES) or None
     if attr == 'id': return val if _ID_OK.match(val) else None
     if attr == 'role': return val if val in _ROLES else None
-    if attr in ('href', 'src') and re.sub(r'[\x00-\x20]+', '', val).lower().startswith('data:'):
-        return val if tag == 'img' and attr == 'src' and _IMG_DATA.match(val) else None
+    if attr in ('href', 'src'):
+        u = re.sub(r'[\x00-\x20]+', '', val).lower()
+        if u.startswith('data:'): return val if tag == 'img' and attr == 'src' and _IMG_DATA.match(val) else None
+        # a notebook cell's own image, which `mdAttached` swaps for its data URL; a browser fetches nothing for the scheme
+        if u.startswith('attachment:'): return val if tag == 'img' and attr == 'src' else None
     return val
 
 def clean_html(html, relative=True):
-    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles, and only safe link schemes. `relative=False` drops relative URLs, so stored text makes no request to Leela."
-    return nh3.clean(html, tags=_HTML_TAGS, clean_content_tags=_HTML_DROP, attributes=_HTML_ATTRS, attribute_filter=_html_attr,
-                     strip_comments=False, url_schemes={'http', 'https', 'mailto', 'data'}, link_rel='noopener noreferrer', url_relative='pass_through' if relative else 'deny',
+    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles, and only safe link schemes. `relative=False` drops relative URLs and attachments, so stored text makes no request to Leela."
+    return nh3.clean(html, tags=_HTML_TAGS, clean_content_tags=_HTML_DROP, attributes=_HTML_ATTRS, attribute_filter=_html_attr, strip_comments=False,
+                     url_schemes={'http', 'https', 'mailto', 'data'} | ({'attachment'} if relative else set()), link_rel='noopener noreferrer', url_relative='pass_through' if relative else 'deny',
                      tag_attribute_values={'input': {'type': {'checkbox'}}}, set_tag_attribute_values={'input': {'disabled': 'disabled'}})
 
 def _md_highlight():

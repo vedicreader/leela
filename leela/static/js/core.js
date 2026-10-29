@@ -713,7 +713,7 @@ function resolveMarkdownImages(el) {
   const base = el.closest('[data-md-base]')?.dataset.mdBase || '';
   $$('img', el).forEach(img => {
     const src = img.getAttribute('src') || '';
-    if (!src || /^(https?:|data:|blob:|\/file\/raw)/.test(src)) return;
+    if (!src || /^(https?:|data:|blob:|attachment:|\/file\/raw)/i.test(src)) return;
     if (!src.startsWith('/') && !base) return;
     // `..` and `.` are resolved by URL, so a path cannot climb out through the query string.
     const abs = src.startsWith('/') ? src : new URL(src, 'file://' + base + '/').pathname;

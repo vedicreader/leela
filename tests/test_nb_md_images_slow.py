@@ -17,18 +17,22 @@ IMGS = r"""() => [...document.querySelectorAll('.lee-cell[data-i="0"] .lee-md-ce
 def test_markdown_cell_images_resolve_against_the_notebook(tmp_path):
     (tmp_path/'images').mkdir(); (tmp_path/'images'/'dot.png').write_bytes(DOT)
     p = tmp_path/'pics.ipynb'
-    src = '<img src="images/dot.png">\n\n![d](images/dot.png)\n\n![a](attachment:a.png)\n'
+    src = '<img src="images/dot.png">\n\n![d](images/dot.png)\n\n![a](attachment:a.png)\n\n![m](attachment:missing.png)\n'
     p.write_text(json.dumps({'cells': [{'cell_type': 'markdown', 'source': src.splitlines(True), 'metadata': {}, 'id': 'c0',
         'attachments': {'a.png': {'image/png': base64.b64encode(DOT).decode()}}}],
         'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
     async def go(pg):
+        raw = []
+        pg.on('request', lambda r: raw.append(r.url) if '/file/raw' in r.url else None)
         await pg.evaluate(f'leeOpenFile({str(p)!r})')
-        await pg.wait_for_function(f'(({IMGS})()).length === 3')
-        try: await pg.wait_for_function(f'(({IMGS})()).every(i => i.done && i.w > 0)', timeout=5000)
+        await pg.wait_for_function(f'(({IMGS})()).length === 4')
+        try: await pg.wait_for_function(f'(({IMGS})()).slice(0, 3).every(i => i.done && i.w > 0)', timeout=5000)
         except Exception: pass
-        return await pg.evaluate(IMGS)
-    got = _run(go, roots=[tmp_path])
+        return await pg.evaluate(IMGS), raw
+    got, raw = _run(go, roots=[tmp_path])
     folder = str(tmp_path/'images'/'dot.png')
-    assert all(i['w'] > 0 for i in got), got
+    assert all(i['w'] > 0 for i in got[:3]), got
+    assert got[3]['src'] == 'attachment:missing.png', 'a missing attachment became a request'
+    assert raw and not [u for u in raw if 'missing' in u], raw
     assert all(folder in __import__('urllib.parse').parse.unquote(i['src']) for i in got[:2]), got
     assert got[2]['src'].startswith('data:image/png;base64,'), got

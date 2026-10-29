@@ -47,6 +47,12 @@ ATTACKS = {
     'ui class': fence('<div class="lee-modal lee-cell keep-out language-x">x</div>'),
     'textarea select': fence('<textarea>x</textarea><select><option>x</option></select>'),
     'math svg': fence('<math><mi xlink:href="javascript:alert(1)">x</mi></math>'),
+    'attachment markdown link': '[x](attachment:a.png)',
+    'attachment href': fence('<a href="attachment:a.png">x</a>'),
+    'attachment upper href': fence('<a href="ATTACHMENT:a.png">x</a>'),
+    'attachment entity tab href': fence('<a href="attach&#9;ment:a.png">x</a>'),
+    'attachment space href': fence('<a href=" attachment:a.png">x</a>'),
+    'attachment image link': '[![a](attachment:a.png)](attachment:a.png)',
 }
 
 def render(text, **kw):
@@ -75,7 +81,7 @@ def violations(html):
             elif k in ('href', 'src'):
                 u = re.sub(r'[\x00-\x20]+', '', v).lower()
                 if re.match(r'^[a-z][a-z0-9+.-]*:', u):
-                    ok = u.startswith(('http:', 'https:', 'mailto:')) or (e.name == 'img' and k == 'src' and DATA_IMG.match(u))
+                    ok = u.startswith(('http:', 'https:', 'mailto:')) or (e.name == 'img' and k == 'src' and (DATA_IMG.match(u) or u.startswith('attachment:')))
                     if not ok: out.append(f'{k} scheme {v!r}')
     return out
 
@@ -88,6 +94,18 @@ def test_no_attack_survives_the_render(name, kw):
 def test_obfuscated_schemes_are_dropped_not_decoded_into_links():
     html = render(ATTACKS['entity tab scheme'] + '\n\n' + ATTACKS['mixed case scheme'], allow_raw=True)
     assert not [e for e in walk(fast5ever.parse_fragment(html).children) if e.name == 'a' and 'href' in dict(e.attrs)], html
+
+def _srcs(html): return [str(dict(e.attrs).get('src')) for e in walk(fast5ever.parse_fragment(html).children) if e.name == 'img']
+
+@pytest.mark.parametrize('kw', [{'allow_raw': True}, {}], ids=['allow_raw', 'default'])
+def test_a_notebook_attachment_keeps_its_image_src(kw):
+    "nh3 dropped `attachment:`, so the client never saw the name it resolves from the cell's attachments."
+    assert _srcs(render('![a](attachment:a.png)\n\ntext ![b](attachment:b.png)', **kw)) == ['attachment:a.png', 'attachment:b.png']
+
+def test_a_raw_attachment_img_keeps_its_src_and_stored_text_drops_it():
+    from leela.core.text import md_html
+    assert _srcs(render(fence('<img src="attachment:a.png">'), allow_raw=True)) == ['attachment:a.png']
+    assert 'attachment:' not in md_html('![a](attachment:a.png)'), 'stored text has no attachments to resolve'
 
 def test_a_ui_class_is_dropped_and_a_code_class_kept():
     html = render(ATTACKS['ui class'], allow_raw=True)

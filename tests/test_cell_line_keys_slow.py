@@ -110,13 +110,15 @@ def test_a_cell_editor_takes_line_chords_and_the_cell_versions_keep_their_own(tm
         assert r['ran'] and r['prevented'], f'{name}: the cell-level chord is gone in command mode: {r}'
 
 
-def test_keys_json_swaps_the_editing_chords_inside_a_cell(tmp_path):
+def test_keys_json_swaps_the_editing_chords_inside_a_cell(tmp_path, monkeypatch):
     "CodeMirror's own keymap answered Cmd+D and Alt+Shift+Down, so `keys.json` could not move either."
     import leela.core.keys as keymap
     nb = tmp_path/'n.ipynb'; _nb(nb)
     over = tmp_path/'keys.json'
     over.write_text(json.dumps({'keys': {'copy_line_down': 'mod+d', 'select_next_occurrence': 'mod+shift+d'}}))
-    keymap.reload(over); notes = list(keymap.NOTES)
+    # The watcher reloads from `keymap_path()`, so a file passed to `reload` alone is undone at the first poll.
+    monkeypatch.setenv('LEELA_KEYMAP', str(over))
+    keymap.reload(); notes = list(keymap.NOTES)
 
     async def go(pg):
         await pg.evaluate('p => leeOpenFile(p)', str(nb))

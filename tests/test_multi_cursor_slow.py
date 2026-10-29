@@ -58,10 +58,10 @@ async def _checks(pg, view):
     async def definition():
         await reset(); p = await pg.evaluate("(document.querySelector('#status').textContent = '', _xy(1, 0))")
         await pg.keyboard.down(hold); await pg.mouse.click(p['x'], p['y']); await pg.keyboard.up(hold)
-        await pg.wait_for_function("() => /definition/.test(document.querySelector('#status').textContent)", timeout=3000)
+        # On its own declaration the click lists the usages; either answer arrives as a modal list, which owns the keyboard until it closes.
+        await pg.wait_for_function("() => /(definitions|usages) of x/.test(document.querySelector('#status').textContent)", timeout=3000)
         r = {'status': await pg.evaluate("document.querySelector('#status').textContent.includes(' of x')"), 'ranges': await pg.evaluate('_ranges().length')}
-        # Several hits arrive as a modal list, which owns the keyboard until it closes.
-        if await pg.evaluate("!/ 1 definition/.test(document.querySelector('#status').textContent)"):
+        if await pg.evaluate("!!document.querySelector('.lee-modal')"):
             await pg.wait_for_selector('.lee-modal', timeout=3000); await pg.keyboard.press('Escape')
             await pg.wait_for_selector('.lee-modal', state='detached', timeout=3000)
         return r
