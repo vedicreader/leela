@@ -110,6 +110,27 @@ def test_every_image_goes_into_the_store_or_is_dropped(tmp_path):
     none = {}; s2, _ = slide_html(md, str(root), KEY, none)   # no workspace: no local file is read
     assert len(none) == 1 and len(_srcs(s2)) == 1
 
+def test_a_cell_attachment_goes_into_the_store_or_is_dropped(monkeypatch):
+    "A slide showed `attachment:NAME` as a broken image: the server dropped its source in both copies."
+    import hashlib
+    import leela.blocks.nb.show as show
+    png, other, b64 = _img(colour=(7, 7, 7)), _img(colour=(8, 8, 8)), lambda b: base64.b64encode(b).decode()
+    att = {'p.png': {'image/png': b64(png)}, 'lines.png': {'image/png': [b64(png)[:9], b64(png)[9:]]}, 'o.png': {'image/png': b64(other)},
+           'v.svg': {'image/svg+xml': b64(b'<svg onload="x()"/>')}, 'lie.png': {'image/png': b64(_img('JPEG'))}, 'bad.png': {'image/png': 'not base64!'}}
+    md = ' '.join(f'![{n}](attachment:{n})' for n in ['p.png', 'lines.png', 'missing.png', 'v.svg', 'lie.png', 'bad.png'])
+    cells = [dict(_cell('m0', 'markdown', md), attachments=att)]
+    pres, room, imgs = decks([{'items': [{'i': 0}]}], cells, '', KEY, 'T', {})
+    for d in (pres, room):
+        s = d['slides'][0]['blocks'][0]['html']
+        assert [OURS.match(x).group(1) for x in _srcs(s)] == [hashlib.sha256(png).hexdigest()] * 2, s
+        assert 'attachment:' not in s and 'data:' not in s and 'onload' not in s
+    assert list(imgs.values()) == [('image/png', png)]
+    assert _srcs(slide_html(md, '', KEY, {})[0]) == [], 'no cell, no attachment'
+    monkeypatch.setattr(show, 'IMG_MOST', 1)
+    cells = [dict(_cell('m0', 'markdown', '![a](attachment:p.png) ![b](attachment:o.png)'), attachments=att)]
+    _, room, imgs = decks([{'items': [{'i': 0}]}], cells, '', KEY, 'T', {})
+    assert len(imgs) == 1 and len(_srcs(room['slides'][0]['blocks'][0]['html'])) == 1
+
 def test_clean_out_keeps_text_and_images_only():
     png, jpg, webp = _img(), _img('JPEG'), _img('WEBP')
     outs = [{'output_type': 'stream', 'name': 'stdout', 'text': 'tick 0 \x1b[32mgreen\x1b[0m <b>&\n'},

@@ -101,13 +101,14 @@ JS_VALUES = json.dumps([4, 4.0, '4', 0.5, -0.0, 1e21, 1e-7, 1.5e-7, 123456789.12
                         [1, 2], [1, [2, [3]]], [None, 'a', True], [], {'a': 1}, [{'a': 1}], 'x,y'])
 
 def test_js_is_the_runtimes_string():
-    "`_js` gives what `String(v)` gives in the rupaka runtime for every JSON value the page can send."
-    from leela.blocks.nb.lesson import _js
+    "Leela files `String(v)` through rupaka's `js_str`, which matches the runtime for every JSON value the page can send."
+    import rupaka.spec, leela.blocks.nb.lesson as lesson
+    assert lesson.js_str is rupaka.spec.js_str and not {'_js', '_num'} & set(vars(lesson))
     node = shutil.which('node')
     if not node: pytest.skip('node is not installed')
     r = subprocess.run([node, '-e', 'console.log(JSON.stringify(JSON.parse(process.argv[1]).map(String)))', JS_VALUES], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
-    assert [_js(v) for v in json.loads(JS_VALUES)] == json.loads(r.stdout)
+    assert [lesson.js_str(v) for v in json.loads(JS_VALUES)] == json.loads(r.stdout)
 
 def test_predict_forged_ok_is_ignored(rig):
     assert post(rig, picked=6, ok=True, ans=6).json()['logged']

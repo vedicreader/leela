@@ -525,7 +525,7 @@ async function codeSearch() {
       `</select></label>` +
       `<label class="lee-settings-toggle"><input type="checkbox" data-signal="snippets"${d.snippets ? ' checked' : ''}><span>keep matched text</span></label>` +
       `<button class="lee-btn" data-signals-purge type="button">purge log</button></div>` +
-      `<div class="lee-dim lee-weight-note">${esc(s.searches || 0)} searches · ${esc(s.opens || 0)} opened · ` +
+      `<div class="lee-dim lee-weight-note">${esc(plural(s.searches || 0, 'search', 'searches'))} · ${esc(s.opens || 0)} opened · ` +
       `MRR ${esc(s.mrr || 0)} · abandoned ${Math.round((s.abandon_rate || 0) * 100)}% · retyped ${Math.round((s.refine_rate || 0) * 100)}%` +
       `${legs ? ' · won/found ' + esc(legs) : ''}<br>${esc(d.dir || '')}${d.telemetry === 'vault' ? ' · vault ' + esc(d.vault || '') : ''}</div></div>` +
       // What was recorded, not just how much of it: a log you cannot read is a log you cannot
@@ -604,14 +604,14 @@ async function codeSearch() {
   $('#cslog', m).onclick = () => showPanel('log');
   api('/code/status').then(d => {
     const el = $('#koshastatus', m); if (!el) return;
-    el.innerHTML = d.ok ? `<span class="ok">Kosha connected</span><span>${Number(d.files || 0).toLocaleString()} files</span>` +
-      `<span>${Number(d.packages || 0).toLocaleString()} packages</span><span>${Number(d.graph_nodes || 0).toLocaleString()} graph nodes</span>` +
-      `${d.stale_files ? `<span class="warn">${d.stale_files} stale files</span>` : ''}` : `<span class="warn">${esc(d.note || 'Kosha unavailable')}</span>`;
+    el.innerHTML = d.ok ? `<span class="ok">Kosha connected</span><span>${plural(Number(d.files || 0).toLocaleString(), 'file')}</span>` +
+      `<span>${plural(Number(d.packages || 0).toLocaleString(), 'package')}</span><span>${plural(Number(d.graph_nodes || 0).toLocaleString(), 'graph node')}</span>` +
+      `${d.stale_files ? `<span class="warn">${esc(plural(d.stale_files, 'stale file'))}</span>` : ''}` : `<span class="warn">${esc(d.note || 'Kosha unavailable')}</span>`;
   }).catch(() => {});
   api('/search/signals?days=30').then(d => {
     weightKeys = d.keys || {}; weightDefaults = d.defaults || {}; setWeights(d.weights || {});
     const s = d.summary || {}, el = $('#cssignals', m);
-    if (el && s.searches) el.textContent = `${s.searches} searches recorded · ${Math.round((s.open_rate || 0) * 100)}% opened`;
+    if (el && s.searches) el.textContent = `${plural(s.searches, 'search', 'searches')} recorded · ${Math.round((s.open_rate || 0) * 100)}% opened`;
   }).catch(() => {});
   $('#kosharefresh', m).onclick = async () => {
     const button = $('#kosharefresh', m); button.disabled = true; button.textContent = 'syncing…';
@@ -681,10 +681,10 @@ async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   const hits = d.hits || [];
   if (!hits.length) return status(`nothing found for ${name}`, 'err');
   if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
-  const label = d.kind === 'usages' ? 'usages' : 'definitions';
-  hitList(hits, `${d.backend} — ${d.note}`, `${label} of ${name}`, openLocation);
+  const word = d.kind === 'usages' ? 'usage' : 'definition';
+  hitList(hits, `${d.backend} — ${d.note}`, `${word}s of ${name}`, openLocation);
   // `finding…` is a busy toast and waits to be clicked, so the answer has to replace it.
-  status(`${hits.length} ${label} of ${name}`, 'ok');
+  status(`${plural(hits.length, word)} of ${name}`, 'ok');
 }
 /* The mouse saying what mod+b says. CodeMirror owns the click, so this takes the event in the
    capture phase: letting it through would move the caret and select a word.

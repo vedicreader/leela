@@ -192,6 +192,40 @@ def test_a_notebook_presents_as_slides_and_leaves_the_ide_as_it_found_it(tmp_pat
     assert out['file_after_runs'] == before, 'Task 7: Run in a presentation saves nothing, the unsaved edit included'
 
 
+IMGS = '''s => [...document.querySelectorAll(s)].map(i => [i.getAttribute('src'), i.alt, i.complete && i.naturalWidth > 0])'''
+
+def test_a_cell_attachment_shows_on_both_screens_through_the_store(tmp_path):
+    "A slide showed `attachment:NAME` as a broken image; a missing attachment shows nothing and asks for nothing."
+    att = md('# Pic\n\n![dot](attachment:dot.png) ![gone](attachment:missing.png)', 'slide', 'p0')
+    att['attachments'] = {'dot.png': {'image/png': base64.b64encode(DOT).decode()}}
+    _nb(tmp_path/'deck.ipynb', [att])
+    async def go(pg):
+        out, asked = {}, []
+        pg.context.on('request', lambda r: asked.append(r.url))
+        await _open(pg, tmp_path/'deck.ipynb', 1)
+        await pg.wait_for_timeout(500); asked.clear()   # the notebook render; the slides start here
+        await _start(pg)
+        ok = f'() => [...document.querySelectorAll("{SLIDE} img")].some(i => i.naturalWidth > 0)'
+        try: await pg.wait_for_function(ok, timeout=8000)
+        except Exception: pass
+        out['pres'] = await pg.evaluate(IMGS, f'{SLIDE} img')
+        async with pg.context.expect_page() as pop:
+            await pg.click('.lee-present-strip [data-audience]')
+        aud = await pop.value
+        await aud.wait_for_function('() => document.querySelector(".lee-stage .lee-slide")?.textContent.includes("Pic")', timeout=20000)
+        try: await aud.wait_for_function('() => [...document.querySelectorAll(".lee-slide img")].some(i => i.naturalWidth > 0)', timeout=8000)
+        except Exception: pass
+        out['aud'] = await aud.evaluate(IMGS, '.lee-slide img')
+        out['asked'] = list(asked)
+        await _end(pg)
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    for side in ('pres', 'aud'):
+        imgs = out[side]
+        assert len(imgs) == 1 and imgs[0][0].startswith('/present/img/') and imgs[0][1] == 'dot' and imgs[0][2], (side, imgs)
+    assert not [u for u in out['asked'] if u.startswith(('attachment:', 'data:')) or 'missing.png' in u], out['asked']
+
+
 LONG = '# Long\n\n' + '\n\n'.join(f'line {i} of a slide written far longer than one page holds' for i in range(20))
 TEXT = f"() => parseFloat(getComputedStyle(document.querySelector('{SLIDE} p')).fontSize)"
 ALIGN = f"() => [...document.querySelectorAll('{SLIDE} h1, {SLIDE} p')].slice(0, 2).map(e => getComputedStyle(e).textAlign)"
