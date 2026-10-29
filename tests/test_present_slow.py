@@ -56,6 +56,21 @@ async def _start(pg, key='Alt+KeyR'):
     await pg.keyboard.press(key)
     await pg.wait_for_function(READY, timeout=20000)
 
+SEEN = '''() => ({blocks: [...document.querySelectorAll('.lee-present .lee-slide .lee-block')].map(b => [b.dataset.cell, b.textContent]),
+  notes: document.querySelector('.lee-present [data-notes-body]').textContent})'''
+
+async def _slides(pg):
+    "The blocks and notes drawn at each place of the open presentation, first step to last, walked with its own arrow keys."
+    seen, edge = [], 'e => document.querySelector(`.lee-present-strip [data-${e}]`).disabled'
+    for key, e in (('ArrowLeft', 'prev'), ('ArrowRight', 'next')):
+        while True:
+            if e == 'next': seen.append(await pg.evaluate(SEEN))
+            if await pg.evaluate(edge, e): break
+            at = await pg.evaluate(AT)
+            await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press(key)
+            await pg.wait_for_function(f'a => JSON.stringify(({AT})()) !== JSON.stringify(a)', arg=at)
+    return seen
+
 async def _end(pg):
     await pg.click('.lee-present-strip [data-end]')
     assert await pg.text_content('.lee-present-strip [data-end]') == 'End now?'

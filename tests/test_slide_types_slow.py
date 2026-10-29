@@ -9,7 +9,7 @@ import asyncio, json
 pytest.importorskip('playwright.async_api')
 
 from test_completion_caret_slow import _real_page   # noqa: E402
-from test_present_slow import READY   # noqa: E402
+from test_present_slow import READY, _end, _slides   # noqa: E402
 
 CELLS = [{'cell_type': 'markdown', 'id': 'm0', 'metadata': {'slideshow': {'slide_type': 'slide'}}, 'source': '# One'},
          *[{'cell_type': 'markdown', 'id': i, 'metadata': {}, 'source': s}
@@ -19,7 +19,14 @@ TYPES = '() => lee.cells.map(c => c.extra?.slideshow?.slide_type || null)'
 MARK = '''id => { const el = document.querySelector(`.lee-cell[data-id="${id}"]`), b = el.querySelector('.lee-cell-slide');
   return {text: b.textContent, type: b.dataset.type, shown: getComputedStyle(b).visibility,
           dim: +getComputedStyle(el.querySelector('.lee-cellmain')).opacity < 1}; }'''
-DECK = '''() => ({slides: document.querySelector('.lee-present .slides').textContent})'''
+
+async def _deck(pg):
+    "The slide text and the speaker notes of every place of the deck that `presentNotebook()` starts, then End."
+    await pg.evaluate('() => presentNotebook()')
+    await pg.wait_for_function(READY, timeout=20000)
+    seen = await _slides(pg)
+    await _end(pg)
+    return {'slides': ' '.join(t for s in seen for _, t in s['blocks']), 'notes': ' '.join(s['notes'] for s in seen)}
 
 async def _walk(pg, root):
     out = {}
@@ -62,27 +69,14 @@ async def _walk(pg, root):
     await until(3, 'slide')
     await pg.evaluate("() => leeAct('slide_notes')")
     await until(3, 'notes')
-    await pg.evaluate('() => presentNotebook()')
-    await pg.wait_for_function(READY, timeout=20000)
-    out['deck'] = await pg.evaluate(DECK)
-    for _ in range(100):
-        st = await pg.evaluate("fetch('/present/state').then(r => r.json())")
-        if st.get('live'): break
-        await pg.wait_for_timeout(100)
-    out['notes'] = ' '.join(s.get('notes', '') for s in st.get('slides', []))
-    await pg.keyboard.press('Escape')
-    await pg.wait_for_function('() => !document.querySelector(".lee-present")')
+    out['deck'] = await _deck(pg)
     await pg.evaluate("() => { selectCell(2); openMenu('cell', 120, 120); }")
     await pg.click('.lee-ctxmenu [data-action="slide_none"]')
     await until(2, None)
     out['none'] = await pg.evaluate('() => lee.cells[2].extra')
     await pg.evaluate('() => selectCell(0)')
     out['none_mark'] = await pg.evaluate(MARK, 'm2')
-    await pg.evaluate('() => presentNotebook()')
-    await pg.wait_for_function(READY, timeout=20000)
-    out['deck2'] = await pg.evaluate(DECK)
-    await pg.keyboard.press('Escape')
-    await pg.wait_for_function('() => !document.querySelector(".lee-present")')
+    out['deck2'] = await _deck(pg)
     await pg.evaluate("() => leeAct('save')")
     for _ in range(100):
         disk = json.loads((root/'deck.ipynb').read_text())['cells']
@@ -103,7 +97,7 @@ def test_a_slide_type_set_from_any_route_shows_on_the_cell_reaches_the_deck_and_
     assert 'I' in out['typed'][0] and out['typed'][1] is None, f'Shift+I in a cell editor changed the type: {out["typed"]}'
     assert out['after_undo'] == ['slide', 'slide', 'skip', 'notes', 'fragment'], out['after_undo']
     assert 'VISIBLE-BODY' in out['deck']['slides'] and 'TO-SKIP' not in out['deck']['slides'], out['deck']
-    assert 'TO-NOTES' not in out['deck']['slides'] and 'TO-NOTES' in out['notes'], (out['deck'], out['notes'])
+    assert 'TO-NOTES' not in out['deck']['slides'] and 'TO-NOTES' in out['deck']['notes'], out['deck']
     assert out['none'] == {} and out['none_mark']['type'] == 'none' and not out['none_mark']['dim'], out
     assert 'TO-SKIP' in out['deck2']['slides'], 'the next deck reads the cleared type'
     assert [m.get('slideshow', {}).get('slide_type') for m in out['disk']] == ['slide', 'slide', None, 'notes', 'fragment'], out['disk']
