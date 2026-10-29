@@ -411,7 +411,6 @@ async function runSnippet(surface, button, code) {
   }
 }
 function mountCodeSurface(host, code, lang = 'python', promote = false, run = false) {
-  // Not a `section`: reveal.js reads any section inside a slide as a stack of slides.
   const shell = document.createElement('div'); shell.className = 'lee-code-surface';
   const head = document.createElement('header'); head.className = 'lee-code-head';
   head.innerHTML = `<span>${esc(lang)}</span><span class="lee-spacer"></span>` +

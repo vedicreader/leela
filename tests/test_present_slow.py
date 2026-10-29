@@ -515,6 +515,7 @@ def test_esc_never_ends_the_presentation(tmp_path):
         await press('nothing')
         await pg.keyboard.press('KeyN')
         await pg.evaluate('() => showHelp()'); await pg.wait_for_selector('.lee-modal')
+        out['help'] = await pg.evaluate("() => ({top: document.querySelector('.lee-modal .lee-dim').textContent, notes: Object.fromEntries([...document.querySelectorAll('.lee-modal .lee-help-scope')].map(s => [s.querySelector('h4').firstChild.textContent, s.querySelector('.lee-help-note')?.textContent || '']))})")
         await press('modal')
         out['modal'] = await pg.evaluate("() => !!document.querySelector('.lee-modal')")
         await pg.keyboard.press('KeyX')
@@ -547,6 +548,10 @@ def test_esc_never_ends_the_presentation(tmp_path):
     assert out['stray'] == [True, 1, False], out['stray']
     assert out['under'] is True, 'an Esc handler underneath the presentation acted'
     assert out['deck'] == 200
+    h = out['help']
+    assert h['top'] == 'Every key outside the present section can be rebound. Each of those keys also has a button.', h
+    assert h['notes'].pop('present') == 'These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.', h
+    assert h['notes'] and not any(h['notes'].values()), h
 
 LASER = [md('# Alpha\n\nbody a', 'slide', 'l0'), md('# Beta\n\nbody b', 'slide', 'l1'), md('# Gamma', 'slide', 'l2')]
 BOX = "s => { const r = document.querySelector(s).getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }"

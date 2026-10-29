@@ -61,7 +61,7 @@ function presentSlides(cells, src = c => String(c.source || '')) {
   return deck.map(s => s.filter(x => x.items.length || x.notes.length)).filter(s => s.length);
 }
 
-//: Where cell `i` is shown, or the nearest visible cell above it: `{h, v, f}` for `Reveal.slide`.
+//: Where cell `i` is in the grouped deck, or the nearest visible cell above it: slide `h`, subslide `v`, fragment `f`.
 function presentAt(deck, i) {
   for (let j = i; j >= 0; j--)
     for (const [h, stack] of deck.entries()) for (const [v, s] of stack.entries()) {
@@ -101,7 +101,7 @@ function presentMove(line, {slide, step}, d) {
 }
 
 
-//: The RISE setting that still counts: where the presentation starts. reveal.js and its options left with the one mode.
+//: The one RISE setting Leela reads: where the presentation starts. Every other `rise` key is ignored.
 function riseConfig(rise) {
   const r = rise && typeof rise === 'object' && !Array.isArray(rise) ? rise : {};
   return {start: r.start_slideshow_at === 'beginning' ? 'beginning' : 'selected'};

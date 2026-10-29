@@ -517,7 +517,10 @@ class Notebook:
             def receive(o):
                 row = {k: v for k, v in o.items() if not k.startswith('_')}
                 display_id = o.get('_display_id')
-                if o.get('_update') and display_id in display_at: c.outputs[display_at[display_id]] = row
+                if row.get('output_type') == 'clear_output':
+                    c.outputs = []
+                    display_at.clear()
+                elif o.get('_update') and display_id in display_at: c.outputs[display_at[display_id]] = row
                 else:
                     c.outputs.append(row)
                     if display_id: display_at[display_id] = len(c.outputs) - 1
