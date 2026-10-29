@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio, base64, json, time
+import asyncio, base64, json
 
-from fasthtml.common import HTMLResponse, StreamingResponse
+from fasthtml.common import StreamingResponse
 from fastcore.all import first
 from starlette.routing import WebSocketRoute
 
@@ -12,13 +12,14 @@ from ... import errstr
 from pathlib import Path
 
 from ...core.text import did_you_mean
-from ...core.web import NOT_OBJECT, asset_dir, fail, json_obj, off_loop, sse
+from ...core.web import NOT_OBJECT, fail, json_obj, off_loop, sse
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
+from . import presentation
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
@@ -51,7 +52,6 @@ def _rebase_notebook(tab, payload, docs):
     docs[key] = disk
     return []
 
-NAV = ('next', 'prev', 'left', 'right', 'up', 'down')
 #: Messages one page's widget socket holds while it falls behind; past it the page reloads widget state instead.
 COMM_BACKLOG = 2000
 #: Seconds between checks of which kernel a notebook's widget socket follows: a run starts one, a picker switches it.
@@ -99,26 +99,6 @@ class CommRelay:
         ph = m.get('parent_header') or {}
         if (mine := self.alias.get(ph.get('msg_id'))): ph = {**ph, 'msg_id': mine}
         return json.dumps({**m, 'parent_header': ph, 'buffers': [base64.b64encode(b).decode() for b in m.get('buffers') or ()]}, default=str)
-
-class Show:
-    "The one presentation running: what its notes page shows, and every page listening for it."
-    def __init__(self): self.state, self.subs = {'live': False}, set()
-    def now(self): return {**self.state, 'now': time.time()}
-    def push(self, event, data):
-        for q in self.subs: q.put_nowait((event, data))
-    def update(self, d):
-        "Apply the deck's `start`, `move` or `end`, and tell every listener."
-        op, st = d.get('op'), self.state
-        if op == 'start':
-            st = {'live': True, 'title': str(d.get('title') or ''), 'started': time.time(),
-                  'slides': [{'title': str(s.get('title') or ''), 'notes': str(s.get('notes') or '')} for s in d.get('slides') or []]}
-        elif op == 'end': st = {'live': False, 'ended': True, 'title': st.get('title', '')}
-        elif op != 'move': raise ValueError(f'{op!r} is not a presentation step')
-        elif not st['live']: raise ValueError('no presentation is running')
-        if st['live']: st['index'] = max(0, min(int(d.get('index') or 0), len(st['slides']) - 1))
-        self.state = st
-        self.push('state', self.now())
-        return self.now()
 
 def connect(app, ctx):
     rt = app.route
@@ -189,10 +169,11 @@ def connect(app, ctx):
             return fail('that cell is no longer at this position', 409)
         c = nb[i]
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
-        # The notebook about to run is one stat; its tree is a walk, and that is once per root.
-        if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
-            doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
-        await off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
+        # The notebook about to run is one stat; its tree is a walk, and that is once per root. `save: false` (a presentation) writes neither.
+        if d.get('save') is not False:
+            if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
+                doc_versions[owner_tab.path] = _disk_version(owner_tab.path)
+            await off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
         except BaseException:
@@ -711,33 +692,4 @@ def connect(app, ctx):
             try: await sock.close()
             except Exception: pass
     app.routes.append(WebSocketRoute('/nb/comm/ws', nb_comm_ws))
-    show = Show()
-    @rt('/present/notes')
-    def present_notes():
-        "The speaker's page, opened in the machine's own browser beside the deck."
-        return HTMLResponse((asset_dir('static')/'present-notes.html').read_text())
-    @rt('/present/state', methods=['GET', 'POST'])
-    async def present_state(req):
-        "Where the deck is: posted by the deck as it moves, read by the notes page."
-        if req.method == 'GET': return show.now()
-        try: return {'ok': True, **show.update(await req.json())}
-        except (ValueError, TypeError, AttributeError) as e: return fail(str(e), 409)
-    @rt('/present/nav', methods=['POST'])
-    async def present_nav(req):
-        "A key pressed on the notes page, passed on to the deck."
-        cmd = (await req.json()).get('cmd')
-        if cmd not in NAV: return fail(f'{cmd!r} is not a way to move through slides')
-        if not show.state['live']: return fail('no presentation is running', 409)
-        show.push('nav', {'cmd': cmd})
-        return {'ok': True}
-    @rt('/present/events')
-    async def present_events():
-        "The presentation pushed as it changes: `state` for the notes page, `nav` for the deck."
-        async def events():
-            q = asyncio.Queue(); show.subs.add(q)
-            try:
-                yield sse('state', show.now())
-                while True: yield sse(*await q.get())
-            finally: show.subs.discard(q)
-        return StreamingResponse(events(), media_type='text/event-stream',
-            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    presentation.connect(app, ctx)

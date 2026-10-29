@@ -44,6 +44,9 @@ PACKAGES = [
     # rupaka finds its blocks, functions and demos with `Path.glob` over its own folder, which sees
     # nothing inside the zip, so the validator knew no functions and every `add_demo` was refused.
     'rupaka',
+    # For `abhyasa/core/stage.js`, which `/present/stage.js` reads through `importlib.resources`. Scanned, abhyasa
+    # is bytecode alone in the zip, and the 0.1.10 bundle's zip held no `abhyasa/core` at all.
+    'abhyasa',
     'laghu_rs',                     # laghu's optional Rust core, imported inside a try and shipped as a .so
     # `readability` falls back to `chardet`, whose accelerator is a top-level extension the
     # scanner never sees, and whose models are data files a zip import cannot read. Without it

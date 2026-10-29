@@ -532,7 +532,7 @@ window.addEventListener('lee-inline-open', e => openValueLens(e.detail?.item, e.
 document.addEventListener('pointerdown', e => {
   if ($('.lee-inline-popover') && !e.target.closest('.lee-inline-popover, .cm-lee-inline-value')) closeInlinePopover();
 }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeInlinePopover(); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !lee.present) closeInlinePopover(); }, true);
 
 function outputTone(o) {
   if (o.output_type === 'error') return 'error';
@@ -672,7 +672,9 @@ function focusCellPage(direction) {
     Math.abs(el.getBoundingClientRect().top - target) < Math.abs(best.getBoundingClientRect().top - target) ? el : best);
   focusCell(+next.dataset.i);
 }
-function autoSaveEnabled() { return (lee.filePrefs.autoSave || 'afterDelay') !== 'off'; }
+//: The autosave mode in effect: `off` while a presentation is open, which writes no file; the setting does not change.
+const autoSaveMode = () => lee.present ? 'off' : lee.filePrefs.autoSave || 'afterDelay';
+function autoSaveEnabled() { return autoSaveMode() !== 'off'; }
 function normalizeSavedText(text) {
   const prefs=lee.filePrefs||{}; let out=String(text??'');
   if(prefs.trimTrailingWhitespace)out=out.split('\n').map(line=>line.replace(/[ \t]+$/,'')).join('\n');
@@ -694,9 +696,10 @@ function setTabSaveState(tab, state, detail = '') {
 }
 function scheduleAutoSave() {
   clearTimeout(lee.autoSaveTimer);
-  if ((lee.filePrefs.autoSave || 'afterDelay') !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
+  if (autoSaveMode() !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
   const version = lee.editVersion;
   lee.autoSaveTimer = setTimeout(async () => {
+    if (autoSaveMode() !== 'afterDelay') return;
     if (lee.saving || version !== lee.editVersion) return scheduleAutoSave();
     lee.saving = true;
     setTabSaveState($('.lee-tab.active'), 'saving');
@@ -704,8 +707,8 @@ function scheduleAutoSave() {
     finally { lee.saving = false; if (version !== lee.editVersion) scheduleAutoSave(); }
   }, Math.max(100, Number(lee.filePrefs.autoSaveDelay) || 900));
 }
-document.addEventListener('focusout',e=>{if(lee.filePrefs.autoSave==='onFocusChange'&&!lee.heldSaveConflicts.has(lee.path)&&e.target.closest?.('.cm-editor')&&$('.lee-tab.active.dirty'))saveTab(true);});
-window.addEventListener('blur',()=>{if(lee.filePrefs.autoSave==='onWindowChange'&&!lee.heldSaveConflicts.has(lee.path)&&$('.lee-tab.active.dirty'))saveTab(true);});
+document.addEventListener('focusout',e=>{if(autoSaveMode()==='onFocusChange'&&!lee.heldSaveConflicts.has(lee.path)&&e.target.closest?.('.cm-editor')&&$('.lee-tab.active.dirty'))saveTab(true);});
+window.addEventListener('blur',()=>{if(autoSaveMode()==='onWindowChange'&&!lee.heldSaveConflicts.has(lee.path)&&$('.lee-tab.active.dirty'))saveTab(true);});
 function markDirty() {
   lee.editVersion += 1; lee.tabEdits.set(lee.tabKey, (lee.tabEdits.get(lee.tabKey) || 0) + 1);
   const t = $('.lee-tab.active');

@@ -34,6 +34,7 @@ PACKAGES = [
     'ipykernel', 'ipymini', 'jupyter_client', 'jupyter_core', 'zmq', 'traitlets',
     'kosha', 'litesearch', 'vishalakshi', 'exhash', 'mdhtml', 'nh3', 'yaml',
     'rupaka',   # its blocks, functions and demos are found with `Path.glob`, which sees nothing in a zip
+    'abhyasa',  # for `abhyasa/core/stage.js`, which `/present/stage.js` reads; see the macOS definition
     # `readability` falls back to `chardet`, whose accelerator is a top-level extension the
     # scanner never sees, and whose models are data files a zip import cannot read. Without it
     # the agent's web tool, research and `to_md` all die in the bundle and nowhere else.

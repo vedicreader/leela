@@ -7,6 +7,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 - [browser-workbench.md](browser-workbench.md): settings, notebooks, runtime and debugging, history, the language service.
 - [desktop.md](desktop.md): the packaged application. Processes, browser lifecycle, folder selection, the macOS menu bar.
 - [languages.md](languages.md): Rust and JavaScript notebooks, and what stays Python.
+- [present.md](present.md): present a notebook as slides. Keys, the audience window, live runs, what the room can see, and recovery.
 - [search.md](search.md): the code search dialog, its modes and its keys.
 - [vault.md](vault.md): shelves, imports, feeds and the workbench.
 

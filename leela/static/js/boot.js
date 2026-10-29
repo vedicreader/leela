@@ -90,6 +90,8 @@ async function boot() {
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
   bootStep('approvals', approvalLoop);                       // catches Rishi approvals raised outside an agent SSE stream
   bootStep('theme', () => applyTheme(readTheme()));   // also rewrites a pre-family value into `family:mode`
+  // after the theme, so a theme set at boot is not a look move; a reload of the presenting tab comes back from the server's state
+  bootStep('presentation', presentResume);
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
   if ($('#leerecent')) bootStep('recent folders', paintRecent);

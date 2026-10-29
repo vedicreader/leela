@@ -1,6 +1,6 @@
-"Presenting a notebook as RISE-style slides: grouping, settings, the notes channel, and every way in."
+"Presenting a notebook as RISE-style slides: grouping, settings, the routes that left, and every way in."
 
-import asyncio, importlib.util, json, shutil, subprocess
+import importlib.util, json, shutil, subprocess
 from pathlib import Path
 
 import pytest
@@ -60,23 +60,111 @@ def test_a_skip_or_notes_mark_alone_leaves_every_other_cell_its_own_slide():
     got = _js(f'presentSlides({json.dumps(cells)}).map(s => s.map(x => ({{items: x.items.map(y => y.i), notes: x.notes}})))')
     assert got == [[{'items': [0], 'notes': []}], [{'items': [2], 'notes': [3]}], [{'items': [4, 5, 6], 'notes': []}]], got
 
-def test_rise_settings_reach_reveal_by_name_and_nothing_else_does():
-    got = _js('[riseConfig({theme: "black", transition: "linear", width: "100%", height: 768, controls: false,'
-              ' progress: true, slideNumber: "c/t", center: false, header: "<b>h</b>", footer: "  ", overlay: "o",'
-              ' start_slideshow_at: "beginning", autolaunch: true, keyboard: {}, plugins: ["x"]}),'
-              ' riseConfig("rise"), riseConfig([1]), riseConfig(null),'
-              ' riseConfig({theme: "nope", width: "wide", height: -3, transition: "spin", slideNumber: "x", controls: "no"}),'
-              ' riseConfig({width: "1280", height: "75 %"})]')
-    full, *empty, bad, digits = got
-    assert full['reveal'] == {'transition': 'slide', 'width': '100%', 'height': 768, 'controls': False,
-                              'progress': True, 'slideNumber': 'c/t', 'center': False}
-    assert (full['theme'], full['header'], full['footer'], full['overlay'], full['start']) == ('black', '<b>h</b>', '', 'o', 'beginning')
-    for e in empty + [bad]: assert (e['reveal'], e['theme'], e['start']) == ({}, 'simple', 'selected'), e
-    assert digits['reveal'] == {'width': 1280}
+CASES = json.loads((ROOT/'tests'/'data'/'rise_cases.json').read_text())
+_LINE = 'cs => presentLine(presentSlides(cs, c => c.live ?? String(c.source || ""))).map(s => ({...s, items: s.items.map(x => [x.i, x.frag])}))'
+
+def _lines(cases):
+    "Each case's flat line and its start places, from the page's own grouping."
+    return _js(f'''Object.fromEntries(Object.entries({json.dumps(cases)}).map(([k, c]) => {{
+      const l = presentLine(presentSlides(c.cells, x => x.live ?? String(x.source || "")));
+      return [k, {{line: ({_LINE})(c.cells), place: (c.place || []).map(([i]) => {{ const p = presentPlace(l, i); return [i, p.slide, p.step]; }})}}];
+    }}))''')
+
+def test_the_slide_line_follows_the_case_table():
+    got = _lines(CASES)
+    for k, c in CASES.items():
+        assert got[k]['line'] == c['line'], k
+        assert got[k]['place'] == c.get('place', []), k
+
+def test_the_case_table_holds_cells_the_way_the_editor_writes_them():
+    "The editor's `none` removes `slide_type`; only a file holds `-`, and an approval cell takes no slide type from the editor."
+    from leela.blocks.nb.nb import Cell, Notebook
+    for k, c in CASES.items():
+        nb = Notebook([Cell(cell_type=x['cell_type'], source=x['source'], outputs=list(x.get('outputs', [])), reply=x.get('reply', ''),
+                            approval=x.get('approval')) for x in c['cells']])
+        for i, x in enumerate(c['cells']):
+            t = x['extra'].get('slideshow', {}).get('slide_type')
+            if t == '-' or 'approval' in x: nb.cells[i].extra = json.loads(json.dumps(x['extra']))
+            elif t: nb.set_slide([i], t)
+            else: nb.set_slide([i], 'slide'); nb.set_slide([i], 'none')
+        page = [{**cl.dict(), 'live': x.get('live')} for cl, x in zip(nb.cells, c['cells'])]
+        assert [p['extra'] for p in page] == [x['extra'] for x in c['cells']], k
+        assert _js(f'({_LINE})({json.dumps(page, default=str)})') == c['line'], k
+
+def test_h2_cuts_slides_only_without_slide_metadata():
+    plain = [_cell(None, '## A\ntext'), _cell(None, 'x', 'code'), _cell(None, '## B'), _cell(None, 'y')]
+    typed = [_cell('slide', '## A'), _cell(None, '## B')]
+    marks = [_cell(None, '## A'), _cell('fragment', 'f'), _cell('notes', '## n'), _cell('skip', '## s'), _cell(None, '## B')]
+    got = _js(f'[{json.dumps(plain)}, {json.dumps(typed)}, {json.dumps(marks)}].map(c => presentLine(presentSlides(c)).map(s => s.items.map(x => x.i)))')
+    assert got == [[[0, 1], [2, 3]], [[0, 1]], [[0, 1], [4]]]
+
+def test_move_and_place_walk_fragments_in_one_line():
+    cells = [_cell('slide', 'a'), _cell('fragment', 'b'), _cell('subslide', 'c'), _cell('notes', 'n'), _cell('slide', 'd')]
+    got = _js(f'''(() => {{ const l = presentLine(presentSlides({json.dumps(cells)})), m = presentMove;
+      let a = {{slide: 0, step: 0}}, walk = [a];
+      for (const d of [1, 1, 1, 1, -1, -1, -1, -1]) walk.push(a = m(l, a, d));
+      return {{n: l.length, walk, place: [1, 3, 4].map(i => presentPlace(l, i))}}; }})()''')
+    assert got['n'] == 3
+    assert [(w['slide'], w['step']) for w in got['walk']] == [(0, 0), (0, 1), (1, 0), (2, 0), (2, 0), (1, 0), (0, 1), (0, 0), (0, 0)]
+    assert got['place'] == [{'slide': 0, 'step': 0}, {'slide': 1, 'step': 0}, {'slide': 2, 'step': 0}]
+    walk = _js(f'''(() => {{ const l = presentLine(presentSlides({json.dumps(CASES["frags_subs"]["cells"])})); let a = {{slide: 0, step: 0}}, w = [];
+      for (const d of [1, 1, 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1]) w.push(a = presentMove(l, a, d)); return w.map(x => [x.slide, x.step]); }})()''')
+    assert walk == [[0, 1], [0, 2], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2], [2, 2], [2, 1], [2, 0], [1, 1], [1, 0], [0, 2], [0, 1]]
+    assert _js('[presentPlace([], 3), presentMove([], {slide: 0, step: 0}, 1)]') == [{'slide': 0, 'step': 0}] * 2
+
+def test_49_fragment_groups_fit_and_the_rest_show_with_the_49th():
+    def go(n): return _js(f'''(() => {{ const l = presentLine(presentSlides({json.dumps([_cell('slide', 'a')] + [_cell('fragment', f'f{i}') for i in range(n)] + [_cell('slide', 'z')])}));
+      return {{s: l[0], last: presentPlace(l, {n}), end: presentMove(l, {{slide: 0, step: 49}}, 1), back: presentMove(l, {{slide: 1, step: 0}}, -1)}}; }})()''')
+    full, over, far = go(49), go(50), go(52)
+    assert (full['s']['groups'], full['s']['warn']) == (49, False)
+    assert [x['frag'] for x in full['s']['items']] == list(range(-1, 49))
+    for g, n in ((over, 50), (far, 52)):
+        assert (g['s']['groups'], g['s']['warn']) == (49, True), n
+        assert [x['frag'] for x in g['s']['items']] == list(range(-1, 49)) + [48]*(n - 49), n
+        assert g['last'] == {'slide': 0, 'step': 48} and g['back'] == {'slide': 0, 'step': 49}, n
+        assert g['end'] == {'slide': 1, 'step': 0}, n
+
+def test_rise_settings_keep_only_the_start():
+    "Task 4 on purpose: reveal.js left, so `rise.theme` and every reveal option are dropped (decision 6); only where to start is read."
+    got = _js('[riseConfig({theme: "black", transition: "linear", width: "100%", header: "<b>h</b>", start_slideshow_at: "beginning"}),'
+              ' riseConfig("rise"), riseConfig([1]), riseConfig(null), riseConfig({start_slideshow_at: "x", theme: "night"})]')
+    assert got == [{'start': 'beginning'}] + [{'start': 'selected'}] * 4
 
 def test_the_text_size_moves_in_tenths_between_half_and_two_and_a_half():
     assert _js('[presentStep(1, 1), presentStep(1, -1), presentStep(1.2, 1), presentStep(.5, -1), presentStep(2.5, 1), presentStep(.7000001, 1)]') \
         == [1.1, .9, 1.3, .5, 2.5, .8]
+
+STARTS = '''const log = []; let release;
+globalThis.lee = {kind: 'notebook', cells: [{id: 'a', cell_type: 'markdown', source: '# A', extra: {}}], sel: 0, path: 'd.ipynb'};
+globalThis.status = () => {}; globalThis.mdSource = c => c.source;
+globalThis.post = url => { log.push(url); return url === '/present/end' ? new Promise(r => { release = () => r({ok: true}); }) : Promise.resolve({key: 'k' + log.length}); };
+%s
+presentOpen = r => { log.push('open ' + r.key); lee.present = {chain: Promise.resolve(), key: r.key}; };
+closePresentation = () => { lee.present = null; };
+const ticks = () => new Promise(r => setTimeout(r, 10));
+(async () => {
+  presentEnd({chain: Promise.resolve(), key: 'old'}); presentNotebook(); presentNotebook(); await ticks();
+  const held = [...log]; release(); await ticks();
+  process.stdout.write(JSON.stringify([held, log]));
+})();'''
+
+def test_a_page_sends_one_start_at_a_time_after_the_last_end():
+    "The server keeps the start it reads last and refuses one an end overtakes, so two quick starts after End once opened nothing."
+    if not shutil.which('node'): pytest.skip('node is not installed')
+    out = subprocess.run(['node', '-'], input=STARTS % PRESENT_JS.read_text(), capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [['/present/end'], ['/present/end', '/present/start', 'open k2']]
+
+def test_present_keys_are_listed_and_bind_nothing():
+    "The keys help lists each key `present.js` binds, from display rows that are no binding of the keymap."
+    import re
+    from leela.core.keys import DEFAULTS, PRESENT_KEYS, SCOPES, _dupes, help_rows, web_key, web_keymap
+    body = re.search(r'p\.keys = \{(.*?)\};', PRESENT_JS.read_text(), re.S)[1]
+    bound = set(re.findall(r"'?((?:Shift\+)?[A-Z][A-Za-z]+)'?\s*:", body))
+    listed = {('Shift+' if (w := web_key(c))['shift'] else '') + w['code'] for chords, _ in PRESENT_KEYS for c in chords.split()}
+    assert bound == listed and {'KeyX', 'KeyB', 'KeyN', 'KeyF', 'Escape'} <= bound, (bound, listed)
+    assert help_rows()['present'] == list(PRESENT_KEYS)
+    assert 'present' not in SCOPES and not [k for k in web_keymap() if k['scope'] == 'present'] and _dupes(DEFAULTS) == []
 
 def _nb(path, meta, cells=None):
     cells = cells or [{'cell_type': 'markdown', 'id': 'm1', 'metadata': {'slideshow': {'slide_type': 'slide'}}, 'source': '# hi'}]
@@ -115,49 +203,75 @@ def test_present_is_one_action_with_the_same_name_everywhere_it_appears():
     js = (ROOT/'leela'/'static'/'js'/'actions.js').read_text()
     assert 'present_notebook:' in js and 'present_from_cell:' in js
 
-def test_the_notes_page_follows_the_deck_and_says_when_it_has_ended(tmp_path):
-    from leela.blocks.nb.app import Show
-    async def go():
-        show, q = Show(), asyncio.Queue()
-        show.subs.add(q)
-        with pytest.raises(ValueError): show.update({'op': 'move', 'index': 1})
-        st = show.update({'op': 'start', 'title': 't.ipynb', 'index': 9,
-                          'slides': [{'title': 'one', 'notes': 'say one'}, {'title': 'two', 'notes': ''}]})
-        assert (st['live'], st['index'], st['slides'][0]['notes']) == (True, 1, 'say one')
-        show.update({'op': 'move', 'index': 0})
-        show.update({'op': 'end'})
-        got = [q.get_nowait() for _ in range(q.qsize())]
-        assert [(e, d['live'], d.get('index')) for e, d in got] == [('state', True, 1), ('state', True, 0), ('state', False, None)]
-        assert got[-1][1]['ended'] and got[-1][1]['title'] == 't.ipynb'
-    asyncio.run(go())
+def test_the_notes_page_and_its_routes_are_gone(tmp_path):
+    "Task 4 on purpose: the notes drawer replaces the notes page, and the room stream replaces `/present/state` and `/present/nav`."
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
-        page = c.get('/present/notes')
-        assert page.status_code == 200 and 'EventSource' in page.text and '/present/nav' in page.text
-        assert c.post('/present/nav', json={'cmd': 'next'}).status_code == 409, 'nothing to move yet'
-        assert c.post('/present/state', json={'op': 'start', 'slides': [{'title': 'a'}]}).json()['live']
-        assert c.post('/present/nav', json={'cmd': 'next'}).json()['ok']
-        assert c.post('/present/nav', json={'cmd': 'jump'}).status_code == 400
-        assert c.post('/present/state', json={'op': 'move', 'index': 'x'}).status_code == 409
-        assert c.post('/present/state', json={'op': 'end'}).json()['ended']
-        assert c.get('/present/state').json()['live'] is False
+        for m, p in (('get', '/present/notes'), ('get', '/present/state'), ('post', '/present/state'), ('post', '/present/nav')):
+            assert getattr(c, m)(p).status_code in (404, 405), p
+    assert not (ROOT/'leela'/'static'/'present-notes.html').exists() and not (ROOT/'leela'/'vendor'/'reveal').exists()
 
 def _setup(rel):
     spec = importlib.util.spec_from_file_location(f'pkg_{Path(rel).parent.name}', ROOT/rel)
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     return m
 
-@pytest.mark.parametrize('rel', ['packaging/macos/setup.py', 'packaging/windows/setup.py'])
-def test_the_desktop_builds_carry_reveal_and_its_licence(rel):
-    shipped = {str(Path(f).relative_to(ROOT)) for _, fs in _setup(rel).DATA_FILES for f in fs}
-    for f in ('LICENSE', 'reveal.js', 'reveal.css', 'theme/simple.css', 'theme/black.css'):
-        assert f'leela/vendor/reveal/{f}' in shipped, f
-    assert 'leela/static/present-notes.html' in shipped
+AUDIENCE = ('leela/static/present-audience.html', 'leela/static/lee-slides.css', 'leela/static/lee-slides.js')
 
-def test_the_wheel_carries_reveal_and_the_notes_page():
+@pytest.mark.parametrize('rel', ['packaging/macos/setup.py', 'packaging/windows/setup.py'])
+def test_the_desktop_builds_carry_the_audience_page_and_no_reveal(rel):
+    "Task 4 on purpose: reveal.js and the notes page left; the audience page and the shared renderer replace them."
+    shipped = {str(Path(f).relative_to(ROOT)) for _, fs in _setup(rel).DATA_FILES for f in fs}
+    for f in AUDIENCE: assert f in shipped, f
+    assert not [f for f in shipped if f.startswith('leela/vendor/reveal/') or f.endswith('present-notes.html')]
+
+def test_the_wheel_carries_the_audience_page_and_no_reveal():
     import zipfile
     wheels = sorted((ROOT/'dist').glob('leela-*.whl'))
     if not wheels: pytest.skip('no wheel in dist/ — run python -m build --wheel first')
     with zipfile.ZipFile(wheels[-1]) as z: names = set(z.namelist())
-    for f in ('leela/vendor/reveal/LICENSE', 'leela/vendor/reveal/reveal.js', 'leela/vendor/reveal/theme/simple.css',
-              'leela/static/present-notes.html'):
-        assert f in names, f
+    for f in AUDIENCE: assert f in names, f
+    assert not [f for f in names if f.startswith('leela/vendor/reveal/') or f.endswith('present-notes.html')]
+
+def test_run_knows_when_a_cell_no_longer_matches_the_stored_deck():
+    "Task 7 disables Run with `presentStale`: a code cell that was edited, is gone, or is in another notebook no longer matches the server's deck."
+    got = _js("""(() => { globalThis.mdSource = c => c.source; const p = {src: {c1: 'print(1)', c2: 'x'}};
+      globalThis.lee = {cells: [{id: 'c1', source: 'print(1)'}, {id: 'c2', source: 'y'}]};
+      const a = ['c1', 'c2', 'c3', 'm0'].map(i => presentStale(p, i)); globalThis.lee = {cells: []};
+      return [...a, presentStale(p, 'c1')]; })()""")
+    assert got == [False, True, True, True, True]
+
+def _node(src):
+    if not shutil.which('node'): pytest.skip('node is not installed')
+    out = subprocess.run(['node', '-'], input=src, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+def test_stage_messages_never_carry_an_answer():
+    "The demo move built from a mirror snapshot takes the stage fields only, `abhyasaStage.valid` passes it, and one over 65536 is not built."
+    from importlib.resources import files
+    stage = (files('abhyasa.core')/'stage.js').read_text()
+    got = _node(stage + PRESENT_JS.read_text() + """
+      const snap = {state: {x: 3}, gates: {g1: 'done'}, pick: {g1: 1}, said: {g1: 'ANSWER-7731'}, answer: 'ANSWER-7731'};
+      const m = presentDemoMove('d1', snap), big = presentDemoMove('d1', {state: {t: 'y'.repeat(70000)}, gates: {}, pick: {}});
+      process.stdout.write(JSON.stringify({m, ok: abhyasaStage.valid({v: 1, ...m}), big}));""")
+    assert 'ANSWER-7731' not in json.dumps(got['m']) and got['ok'] is True and got['big'] is None, got
+    assert got['m'] == {'t': 'demo', 'slug': 'd1', 'state': {'x': 3}, 'gates': {'g1': 'done'}, 'pick': {'g1': 1}}
+
+COALESCE = '''globalThis.lee = {present: null}; const sent = [], wait = [];
+globalThis.presentPost = (p, url, body) => { sent.push([url, body.seq, body.gen, body.outputs, body.done]); return new Promise(r => wait.push(() => r({ok: true, msg: {html: ''}}))); };
+%s
+presentShown = () => {};
+const p = lee.present = {outq: {}, floor: 0};
+presentOut(p, 'c1', 1, ['a'], false); presentOut(p, 'c1', 1, ['a', 'b'], false); presentOut(p, 'c1', 1, ['a', 'b', 'c'], false); presentOut(p, 'c1', 1, ['final'], true);
+presentOut(p, 'c2', 1, ['other'], true);
+const tick = () => new Promise(r => setTimeout(r, 5));
+(async () => { const first = sent.length; wait.shift()(); await tick(); wait.shift()(); await tick(); wait.shift()(); await tick();
+  p.floor = 2; presentOut(p, 'c1', 1, ['late'], false); presentOut(p, 'c1', 2, ['the restart itself'], false); presentOut(p, 'c1', 3, ['after the restart'], true); await tick();
+  process.stdout.write(JSON.stringify({first, sent})); })();'''
+
+def test_streamed_output_coalesces_so_no_old_snapshot_waits_in_the_post_chain():
+    "While one output post of a cell is out, newer snapshots replace each other; a run older than the last restart sends nothing."
+    got = _node(COALESCE % PRESENT_JS.read_text())
+    assert got['first'] == 2, 'one post for each cell at a time'
+    assert got['sent'] == [['/present/out', 1, 1, ['a'], False], ['/present/out', 1, 1, ['other'], True], ['/present/out', 2, 1, ['final'], True],
+                           ['/present/out', 1, 3, ['after the restart'], True]], got['sent']

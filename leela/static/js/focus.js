@@ -190,7 +190,7 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
 /* The panel's own `onkeydown` only fires while the focus is inside it, which the first click
    elsewhere ends. Escape closes it from anywhere, and defers to a modal above it. */
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  if (e.key !== 'Escape' || $$('.lee-modal').length || lee.present) return;
   const panel = $('.lee-selection-reply'); if (!panel) return;
   abandonReply(panel); panel.remove(); e.stopPropagation();
 }, true);

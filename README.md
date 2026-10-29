@@ -99,6 +99,10 @@ in the command palette switches a notebook over. See
 
 ![The borrow checker, in a notebook cell](docs/screenshots/rust-borrow-checker.png)
 
+### Presenting a notebook
+
+Alt+R presents the open notebook as slides, from the selected cell, with unsaved edits. Slides come from RISE cell metadata. An optional audience window shows the slides on a projector, and code cells run live on both screens. A presentation writes no file. See [present a notebook](docs/present.md).
+
 ### Staging a folder of a language you have just met
 
 `git add` honours `.gitignore`. A folder you have just created has no `.gitignore`, and `target/`

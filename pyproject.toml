@@ -16,9 +16,9 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]==0.2.88",
-    "abhyasa>=0.0.11,<0.1",
-    "rupaka==0.0.3",   # the vendored bundle is written from this wheel
+    "ramabana[cli]==0.2.90",
+    "abhyasa>=0.0.12,<0.1",
+    "rupaka==0.0.6",   # the vendored bundle is written from this wheel
     "shalya>=0.1.22",
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",
@@ -33,6 +33,7 @@ dependencies = [
     "koshas>=0.1.20",
     "litesearch>=0.1.61",
     "mdhtml>=0.1.38",
+    "beautifulsoup4>=4.15.0",   # the room copy finds rupaka demos in rendered markdown (blocks/nb/show.py)
     "nh3==0.3.7",
     "rgapi>=0.1.22",
     "python-fasthtml>=0.14.9",
@@ -65,7 +66,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ipymini = []
-local = ["rishi[mlx,llama]==0.1.56"]
+local = ["rishi[mlx,llama]==0.1.57"]
 desktop = ["kavacha[window]>=0.0.10"]
 macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.10"]
 windows = ["leela[desktop]", "kavacha[windows]>=0.0.10"]
@@ -91,14 +92,14 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",
     "leela[local]",
-    "rishi[all]==0.1.56",
+    "rishi[all]==0.1.57",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.56",
+    "rishi==0.1.57",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",

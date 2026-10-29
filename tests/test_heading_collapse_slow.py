@@ -8,6 +8,7 @@ pytestmark = pytest.mark.slow
 pytest.importorskip('playwright.async_api')
 
 import test_web_slow as web   # noqa: E402
+import test_present_slow as present   # noqa: E402
 
 BROWSERS = pytest.mark.parametrize('browser', ['chromium', 'webkit'])
 
@@ -97,8 +98,8 @@ def test_run_all_runs_folded_cells_and_slides_keep_them(tmp_path, browser):
         await pg.evaluate("leeAct('run_all')")
         await pg.wait_for_function('lee.cells[6].execution_count != null', timeout=30000)
         ran = [await pg.evaluate('lee.cells[3].execution_count'), await pg.evaluate(HIDDEN)]
-        await pg.evaluate('presentNotebook()'); await pg.wait_for_selector('.lee-present-cell', state='attached')
-        shown = await pg.evaluate("[...document.querySelectorAll('.lee-present-cell')].map(e => e.dataset.cellId)")
+        await pg.evaluate('presentNotebook()'); await pg.wait_for_function(present.READY, timeout=20000)
+        shown = [c for s in await present._slides(pg) for c, _ in s['blocks']]
         return ran, shown
     ran, shown = web._run(go, roots=[tmp_path], browser=browser)
     assert ran[0] is not None and ran[1] == [3, 4], ran

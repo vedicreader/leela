@@ -26,6 +26,8 @@ Chrome renders pages. Leela sends JPEG frames to a canvas and forwards input thr
 
 The driven Chrome is for ramabana and fossick. A link you click in a feed item, an agent reply or a vault document goes to your own browser instead, through `openExternal`: `window.open` where there is a tab strip, and `/browser/external` where there is not, which hands the URL to the machine's default browser. The automation profile carries none of your sessions. A story read through it meets a bot wall. The same story in your own Chrome does not. `/browser/open` stays the deliberate "put this page in a Leela tab" action.
 
+The audience window of a presentation also goes to the system browser through `openExternal`. The packaged app opens no audience window of its own. Move the browser window to the projector and press F there. See [present.md](present.md#the-audience-window).
+
 CDP constraints:
 
 - use a socket only from its creating loop

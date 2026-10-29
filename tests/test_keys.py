@@ -15,6 +15,18 @@ def test_new_lesson_is_an_unbound_palette_command_in_the_file_menu():
     actions = [r.action for title, rows in BAR if title == 'File' for r in rows]
     assert actions[actions.index('new_notebook') + 1] == 'new_lesson'
 
+HELP_PRESENT = 'These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.'
+HELP_TOP = 'Every key outside the present section can be rebound. Each of those keys also has a button.'
+
+def test_the_keys_help_says_the_presentation_keys_cannot_be_rebound():
+    "The help said every key in it could be rebound; the `present` rows are display rows, not bindings."
+    from pathlib import Path
+    from leela.core.keys import help_rows
+    js = (Path(__file__).parents[1]/'leela'/'static'/'js'/'overlays.js').read_text()
+    body = js[js.index('function showHelp'):]; body = body[:body.index('\n}\n')]
+    assert 'every one of these can be rebound' not in body and HELP_TOP in body
+    assert "scope === 'present'" in body and HELP_PRESENT in body and 'present' in help_rows()
+
 def test_no_default_chord_lands_on_one_the_browser_will_not_deliver():
     reserved = {'ctrl+up', 'ctrl+down', 'ctrl+left', 'ctrl+right'}
     landed = [(k.action, c) for k in DEFAULTS for c in k.keys if c in reserved]

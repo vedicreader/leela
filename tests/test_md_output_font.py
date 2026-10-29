@@ -87,12 +87,11 @@ def test_the_cursor_theme_and_state_pane_use_the_body_stack_variables():
     assert '--lee-sans: var(--lee-sans-cursor)' in _decls(css, ':root[data-theme="cursor"]')
     assert 'system-ui' not in css and 'var(--lee-sans)' in _decls(css, '.lee-state-ref-pane.lee-md')
 
-def test_reveal_themes_fetch_no_web_fonts():
-    "A theme that imports Google Fonts needs the network, so presenting offline fell back unpredictably."
-    from assets import ROOT
-    themes = ('sky', 'night', 'simple', 'league', 'moon', 'beige', 'blood', 'solarized')
-    bad = [t for t in themes if 'fonts.googleapis.com' in (ROOT/f'leela/vendor/reveal/theme/{t}.css').read_text() or '@import' in (ROOT/f'leela/vendor/reveal/theme/{t}.css').read_text()]
-    assert not bad, bad
+def test_slides_fetch_no_web_fonts():
+    "Task 4 on purpose: reveal.js and its themes are deleted; the slide stylesheet that replaces them imports no font from the network either."
+    from assets import read
+    css = read('leela/static/lee-slides.css')
+    assert '.lee-slide' in css and '@import' not in css and 'fonts.googleapis.com' not in css and 'url(http' not in css
 
 def test_the_terminal_reads_the_code_size_variable():
     from assets import read

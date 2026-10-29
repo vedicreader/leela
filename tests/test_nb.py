@@ -256,6 +256,34 @@ def test_a_hanging_inspector_does_not_hold_back_the_done_event(tmp_path, monkeyp
         took = time.perf_counter() - began; stop.set(); t.join(5)
     assert any('event: done' in l for l in lines) and took < 8, f'the stream had no done after {took:.1f}s'
 
+def _streamed(events):
+    "What `Notebook.run` holds and what it passes on after each event from the kernel, before the kernel's own final list replaces it."
+    from leela.blocks.runtime.kernels import ExecOutcome
+    c, held, sent = Cell(source='x', id='c'), [], []
+    class K:
+        async def execute(self, code, on_output=None, **kw):
+            for o in events: on_output(dict(o)); held.append([dict(x) for x in c.outputs])
+            return ExecOutcome(ok=True, execution_count=1, outputs=[])
+    asyncio.run(Notebook([c]).run(0, K(), on_output=lambda i, row: sent.append(row)))
+    return held, sent
+
+def test_a_clear_output_event_empties_the_streamed_outputs_and_their_display_ids():
+    "kunda 0.0.10 sends `clear_output` to `on_output`; the receiver appended it, so a cleared output stayed on the page and in the room."
+    a, b = ({'output_type': 'stream', 'name': 'stdout', 'text': t} for t in 'ab')
+    d = {'output_type': 'display_data', 'data': {'text/plain': 'd0'}, 'metadata': {}, '_display_id': 'd'}
+    d1 = {'output_type': 'display_data', 'data': {'text/plain': 'd1'}, 'metadata': {}, '_display_id': 'd', '_update': True}
+    held, sent = _streamed([a, {'output_type': 'clear_output'}, b])
+    assert held == [[a], [], [b]] and sent[1] == {'output_type': 'clear_output'}
+    held, _ = _streamed([d, {'output_type': 'clear_output', 'wait': True}, b, d1])
+    assert held[-1] == [b, {k: v for k, v in d1.items() if not k.startswith('_')}]
+
+def test_outputs_with_no_clear_stream_as_before():
+    a, b = ({'output_type': 'stream', 'name': 'stdout', 'text': t} for t in 'ab')
+    d = {'output_type': 'display_data', 'data': {'text/plain': 'd0'}, 'metadata': {}, '_display_id': 'd'}
+    d1 = dict(d, data={'text/plain': 'd1'}, _update=True)
+    held, sent = _streamed([a, d, b, d1])
+    assert held[-1] == [a, {'output_type': 'display_data', 'data': {'text/plain': 'd1'}, 'metadata': {}}, b] and len(sent) == 4
+
 
 def test_outputs_still_queued_when_the_cell_ends_do_not_swallow_its_done(tmp_path):
     """A slow reader let outputs and the end of the run pile up together, and the drain took the end for one more output."""

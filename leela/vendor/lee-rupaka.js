@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.3', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.6', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -28,8 +28,12 @@
   Object.assign(R, {el, sv, get, fmt, show, hide, block: (name, f) => { R.blocks[name] = f; }, fn: (name, f) => { R.fns[name] = f; }});
   R.label = (b, ...more) => b.label ? el('span', {class: 'rk-lbl', text: b.label}, ...more) : null;
 
-  function store(spec) {
-    const st = structuredClone(spec.state || {}), subs = [];
+  // The input keys are the keys of spec.state. `save(state)` runs after a change of one of them, with the value that Rupaka.state gives.
+  const inputs = spec => Object.keys(spec.state || {});
+  const snap = s => Object.fromEntries(inputs(s.spec).map(k => [k, structuredClone(s.st[k])]));
+
+  function store(spec, save) {
+    const st = structuredClone(spec.state || {}), subs = [], ins = new Set(inputs(spec));
     st.gate = {};
     const derive = () => (spec.derive || []).forEach(d => {
       const f = R.fns[d.fn];
@@ -39,7 +43,13 @@
     derive();
     const s = {st, spec, derive, get: p => get(st, p), on: f => { subs.push(f); },
                emit: k => subs.forEach(f => f(k)),
-               set(k, v) { st[k] = v; derive(); s.emit(k); }};
+               set(k, v) {
+                 const was = save && ins.has(k) ? JSON.stringify(st[k]) : null;
+                 st[k] = v; derive(); s.emit(k);
+                 if (was !== null && JSON.stringify(st[k]) !== was) {
+                   try { save(snap(s)); } catch (e) { console.error('rupaka: save', e); }
+                 }
+               }};
     return s;
   }
 
@@ -62,11 +72,13 @@
   }
 
   R.build = build;
-  R.mount = (host, spec) => {
+  const CTX = new WeakMap();   // store -> ctx, for Rupaka.settle, Rupaka.open and Rupaka.options
+  R.mount = (host, spec, opts) => {
+    const save = opts?.save;
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('the spec is not an object');
     const v = spec.rupaka ?? R.schema;
     if (!(v === R.schema || v === R.schema - 1)) throw new Error(`schema ${v} is not supported; this runtime draws ${R.schema - 1} and ${R.schema}`);
-    const s = store(spec), root = el('div', {class: 'rk', 'data-rk': spec.id || ''});
+    const s = store(spec, typeof save === 'function' ? save : null), root = el('div', {class: 'rk', 'data-rk': spec.id || ''});
     const ctx = {s, spec, root, live: g => !g || s.get(`gate.${g}`) === 'done'};
     ctx.build = b => build(b, ctx);
     ctx.put = (b, k, val) => { if (!ctx.live(b.lock)) return false; s.set(k, val); return true; };   // a locked control refuses
@@ -80,7 +92,43 @@
     s.emit('*');
     root.dataset.rkReady = host.dataset.rkReady = '1';
     host.rupaka = s;
+    CTX.set(s, ctx);
     return s;
+  };
+
+  // The host API. A host mirrors a demo into a second copy with state and set, closes a gate there with settle and opens it again with open.
+  // options maps a pick between an index and a value. None of them fires a gate, sends rk-predict, adds to st.log or calls save.
+  const mounted = host => {
+    const s = host?.rupaka;
+    if (!s || !CTX.has(s)) throw new Error('no rupaka demo is mounted in this element');
+    return s;
+  };
+  R.state = host => snap(mounted(host));
+  R.set = (host, state) => {
+    const s = mounted(host), ks = inputs(s.spec).filter(k => state && Object.hasOwn(state, k));
+    if (!ks.length) return;
+    for (const k of ks) s.st[k] = structuredClone(state[k]);
+    s.derive(); s.emit('*');
+  };
+  const gateOf = (s, gate) => (CTX.get(s).gates || []).find(g => g.id === gate);
+  R.options = (host, gate) => {
+    const s = mounted(host), g = gateOf(s, gate);
+    return g ? structuredClone(g.options()) : null;
+  };
+  // `opts.answer` draws the verdict when the spec of this copy has no answer. It is not written into the spec or the state.
+  R.settle = (host, gate, pick, opts) => {
+    const s = mounted(host), g = gateOf(s, gate);
+    if (!g) return false;
+    g.settle(pick, opts?.answer); s.emit('*');
+    return true;
+  };
+  // Opens a closed gate again, as its Try another button does, with one draw. It does not move the focus. An open gate does not change.
+  // A gate that waits for the host to save its prediction ('pending') is not opened, and the call gives false.
+  R.open = (host, gate) => {
+    const s = mounted(host), g = gateOf(s, gate);
+    if (!g || s.get(`gate.${gate}`) === 'pending') return false;
+    g.open();
+    return true;
   };
 
   // The gate tells the page about each prediction; the event crosses a shadow root. It gives false when a listener called preventDefault.
@@ -300,13 +348,17 @@ Rupaka.block('choice', (b, ctx) => {
 /* gate: predict, then reveal. Keys 1-9 pick, ←/→ or A/D move, ⌘↩ locks in. Blocks with `after: id` wait for it.
    The verdict names the inputs it was for (`context`), because the inputs can change after the reveal.
    A host that saves the prediction calls preventDefault on rk-predict. The gate then waits ('pending') until the host calls
-   detail.settle(saved, message): true reveals, false opens the gate again and shows the message as text. Only the first call counts. */
+   detail.settle(saved, message): true reveals, false opens the gate again and shows the message as text. Only the first call counts.
+   Rupaka.settle(host, id, pick, {answer}) closes the gate from the host: no rk-predict, no log. A null pick reveals with no verdict.
+   `answer` draws the verdict when the spec has none (a copy for a room has its answers taken out); it is never stored.
+   With no answer at all, the gate reveals with no verdict. Rupaka.options(host, id) reads the options as opts() gives them.
+   Rupaka.open(host, id) opens a closed gate again with reopen(), as Try another does, but it does not move the focus. */
 Rupaka.block('gate', (b, ctx) => {
   const {el, fmt, show} = Rupaka, s = ctx.s, id = b.id;
   s.st.gate[id] = 'open';
   let picked = null, said = '', seen = '';
   const opts = () => Array.isArray(b.options) ? b.options : (s.get(b.options.from) || []);
-  const ans = () => b.answer && typeof b.answer === 'object' ? b.answer.is : s.get(b.answer);
+  const ans = (a = b.answer) => a && typeof a === 'object' ? a.is : s.get(a);   // {is: value} or a path in the state
   const done = () => s.get(`gate.${id}`) === 'done', open = () => s.get(`gate.${id}`) === 'open';
   const q = el('p', {class: 'q', id: `rk-${ctx.spec.id || 'd'}-${id}-q`});
   const box = el('div', {class: 'opts', role: 'radiogroup', 'aria-labelledby': q.id});
@@ -325,9 +377,14 @@ Rupaka.block('gate', (b, ctx) => {
       box.replaceChildren(...os.map((o, i) => el('button', {type: 'button', role: 'radio', onclick: () => pick(o)}, show(o), i < 9 ? el('kbd', {text: i + 1}) : null)));
     }
     [...box.children].forEach((x, i) => { x.setAttribute('aria-checked', String(os[i] === picked)); x.disabled = !open(); x.tabIndex = os[i] === picked || (picked == null && i === 0) ? 0 : -1; });
-    go.disabled = picked == null || !open(); go.hidden = done(); again.hidden = !(done() && b.again); verdict.hidden = !done();
+    go.disabled = picked == null || !open(); go.hidden = done(); again.hidden = !(done() && b.again); verdict.hidden = !done() || !verdict.childNodes.length;
     stale.hidden = !done() || !b.context || fmt(b.context, s.st) === said;
   }
+  const tell = (c, ok, a) => {
+    said = c; say('');
+    verdict.replaceChildren(said ? `${said} ` : '', 'You said ', el('b', {class: ok ? 'ok' : 'no', text: show(picked)}), '. ',
+      ok ? el('span', {class: 'ok', text: 'That is right.'}) : el('span', {}, 'It is ', el('b', {class: 'ok', text: show(a)}), '.'), stale);
+  };
   function commit() {
     if (picked == null || !open()) return false;
     const a = ans(), ok = String(picked) === String(a), c = b.context ? fmt(b.context, s.st) : '';
@@ -337,9 +394,7 @@ Rupaka.block('gate', (b, ctx) => {
       if (settled) return;
       settled = true;
       if (!saved) { s.st.gate[id] = 'open'; say(String(message ?? '')); paint(); return; }
-      said = c; say('');
-      verdict.replaceChildren(said ? `${said} ` : '', 'You said ', el('b', {class: ok ? 'ok' : 'no', text: show(picked)}), '. ',
-        ok ? el('span', {class: 'ok', text: 'That is right.'}) : el('span', {}, 'It is ', el('b', {class: 'ok', text: show(a)}), '.'), stale);
+      tell(c, ok, a);
       s.st.gate[id] = 'done';
       s.st.log = [...(s.st.log || []), detail];
       s.set('_', (s.st._ || 0) + 1);
@@ -350,8 +405,22 @@ Rupaka.block('gate', (b, ctx) => {
     return true;
   }
   go.onclick = commit;
-  again.onclick = () => { picked = null; said = ''; if (why) why.value = ''; s.st.gate[id] = 'open'; s.set('_', (s.st._ || 0) + 1); box.querySelector('button')?.focus(); };
-  (ctx.gates ||= []).push({id, commit, done});
+  // Open a closed gate again: no pick, no reason, no verdict. One draw hides the blocks that wait for the gate. An open gate does not change.
+  const reopen = () => {
+    if (!done()) return;
+    picked = null; said = ''; if (why) why.value = ''; verdict.replaceChildren();
+    s.st.gate[id] = 'open'; s.set('_', (s.st._ || 0) + 1);
+  };
+  again.onclick = () => { reopen(); box.querySelector('button')?.focus(); };   // only the learner's button moves the focus
+  // The host closes the gate. The caller (Rupaka.settle) draws once after it. The answer of the spec comes first.
+  const settle = (p, answer) => {
+    const w = b.answer ?? answer;
+    if (p != null) picked = p;
+    if (p == null || w == null) { said = ''; say(''); verdict.replaceChildren(); }
+    else { const a = ans(w); tell(b.context ? fmt(b.context, s.st) : '', String(p) === String(a), a); }
+    s.st.gate[id] = 'done';
+  };
+  (ctx.gates ||= []).push({id, commit, done, settle, open: reopen, options: opts});
   ctx.commit ||= () => { const g = ctx.gates.find(g => !g.done()); return g ? g.commit() : false; };
   const root = el('div', {}, q, box, why, verdict, note, el('div', {class: 'acts'}, go, again));
   root.addEventListener('keydown', e => {

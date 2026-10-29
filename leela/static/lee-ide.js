@@ -122,7 +122,7 @@ window.leeLeaveFullScreen = leeLeaveFullScreen;
 // Full screen hides the layout you would otherwise click back from, so Escape is the way out, except
 // in a terminal, where Escape belongs to the program running there. `leave_full_screen` works anywhere.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || leeExpandState().mode !== 'full') return;
+  if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || lee.present || leeExpandState().mode !== 'full') return;
   if ((e.composedPath?.() || [e.target]).some(n => n.matches?.('#termwrap, .xterm'))) return;
   e.preventDefault(); e.stopPropagation(); leeExpand('');
 }, true);
@@ -235,7 +235,7 @@ document.addEventListener('mousedown', e => leeAutoClosePanes(e.target), true);
 // Escape from inside an unpinned pane puts you back in the editor, the only way out that does not
 // need the mouse.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || lee.present) return;
   for (const [which, sel] of Object.entries(DOCKABLE)) {
     if (leePinned(which) || !$(sel)?.contains(e.target)) continue;
     leePane(which, false, false);
@@ -3970,13 +3970,13 @@ function showHelp() {
     a === lee.scope ? -1 : b === lee.scope ? 1 : a === 'global' ? -1 : b === 'global' ? 1 : 0);
   const body = scopes.map(([scope, rows]) =>
     `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
-    `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` + rows.map(([k, l]) =>
+    `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` +
+    (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') + rows.map(([k, l]) =>
       `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
     (lee.keyNotes || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('') +
-    `<div class="lee-dim">every one of these can be rebound, and every one of them also has a ` +
-    `button — nothing here is reachable only by a chord.</div>` +
+    `<div class="lee-dim">Every key outside the present section can be rebound. Each of those keys also has a button.</div>` +
     `<div class="lee-help">${body}</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="gokeys">edit keybindings</button></div>`);
   m.querySelector('#gokeys').onclick = () => { m.remove(); editKeys(); };
@@ -6223,6 +6223,8 @@ async function boot() {
   setInterval(watchOpenFile, 10000);   // a backstop: /fs/events is what actually reports a write
   bootStep('approvals', approvalLoop);                       // catches Rishi approvals raised outside an agent SSE stream
   bootStep('theme', () => applyTheme(readTheme()));   // also rewrites a pre-family value into `family:mode`
+  // after the theme, so a theme set at boot is not a look move; a reload of the presenting tab comes back from the server's state
+  bootStep('presentation', presentResume);
   // The first paint is server-rendered, so the welcome screen is already on the page when
   // Leela opens on no folder; only its recent list needs filling in.
   if ($('#leerecent')) bootStep('recent folders', paintRecent);

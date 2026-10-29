@@ -7,7 +7,7 @@ document.addEventListener('pointerdown', e => {
   closeDismissableDisclosures(inside);
 }, true);
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  if (e.key !== 'Escape' || $$('.lee-modal').length || lee.present) return;
   const open = $$('details.lee-dismissable[open]').at(-1);
   if (!open) return;
   e.preventDefault(); e.stopPropagation(); open.open = false;

@@ -40,6 +40,7 @@ from .core.text import did_you_mean
 from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
 from .blocks.nb.nb import Notebook
+from .blocks.nb.presentation import stage_src
 from .blocks.term.term import TerminalGate, colorfgbg, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
 
@@ -850,7 +851,9 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             Meta(name='lee-katex-css', content=_asset('katex/katex.min.css')),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
+            Link(rel='stylesheet', href=_asset('lee-slides.css')),
             Link(rel='stylesheet', href=_asset('lee-hl.css')),
+            Script(src=stage_src(), defer=True),   # `abhyasaStage.mirror` for the presenter's demos; the IDE opens no stage channel
             *[Script(src=_asset(b), defer=True) for b in IDE_BUNDLES])
     def _term_cwd(ref=None): return term_cwd(ws, ref)
     def _term_settings(session):
