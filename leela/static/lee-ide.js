@@ -122,7 +122,7 @@ window.leeLeaveFullScreen = leeLeaveFullScreen;
 // Full screen hides the layout you would otherwise click back from, so Escape is the way out, except
 // in a terminal, where Escape belongs to the program running there. `leave_full_screen` works anywhere.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || leeExpandState().mode !== 'full') return;
+  if (e.key !== 'Escape' || $$('.lee-modal, .lee-ctxmenu').length || lee.present || leeExpandState().mode !== 'full') return;
   if ((e.composedPath?.() || [e.target]).some(n => n.matches?.('#termwrap, .xterm'))) return;
   e.preventDefault(); e.stopPropagation(); leeExpand('');
 }, true);
@@ -235,7 +235,7 @@ document.addEventListener('mousedown', e => leeAutoClosePanes(e.target), true);
 // Escape from inside an unpinned pane puts you back in the editor, the only way out that does not
 // need the mouse.
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
+  if (e.key !== 'Escape' || lee.present) return;
   for (const [which, sel] of Object.entries(DOCKABLE)) {
     if (leePinned(which) || !$(sel)?.contains(e.target)) continue;
     leePane(which, false, false);

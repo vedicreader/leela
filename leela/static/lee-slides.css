@@ -33,6 +33,8 @@ body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; backgro
 .stage-blank { position: absolute; inset: 0; z-index: 2; display: none; align-items: center; justify-content: center;
   background: var(--lee-bg); color: var(--lee-fg4); font: 28px var(--lee-sans); }
 .lee-slide.blank .stage-blank { display: flex; }
+.lee-slide.blank .stage-dot { display: none; }
+.lee-present.lee-laser .lee-present-main .lee-slide { cursor: none; }
 .lee-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
   padding: 48px 64px; box-sizing: border-box; text-align: center; background: var(--lee-bg); color: var(--lee-fg2); font-family: var(--lee-sans); }
 .lee-end h1 { margin: 0; font-size: 44px; font-weight: 600; line-height: 1.2; color: var(--lee-fg); }

@@ -523,6 +523,21 @@ def test_laser_moves_are_coalesced(bare):
         await _stop(stop, t)
     asyncio.run(go())
 
+def test_a_room_that_connects_again_gets_blank_and_no_laser(bare):
+    "The server keeps blank in `at` and never keeps a laser point, so a fresh or reconnecting audience draws blank and no stale dot."
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', body(root)))[1]; k = a['key']
+        await _post(app, '/present/at', dict(k=k, slide='s1', step=0, blank=True, size=10))
+        assert (await _post(app, '/present/move', dict(t='point', x=.5, y=.5, k=k)))[0] == 200
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        ev, st = got[0]
+        assert ev == 'state' and st['at']['blank'] is True and 'point' not in json.dumps(st) and set(st) == {'title', 'at', 'look', 'demo', 'answers'}
+        await _stop(stop, t)
+    asyncio.run(go())
+
 BAD_MOVES = [dict(t='go', slide='s1', beat=1), dict(t='point', x=1.5, y=0), dict(t='point', x=.1), dict(t='point', x=.1, y=.1, z=1), dict(t='point', off=False),
              dict(t='point', x=True, y=0), dict(t='point', x=float('nan'), y=0),
              dict(t='demo', slug='Bad Slug', state={}, gates={}), dict(t='demo', slug='d2', state={}, gates={}), dict(t='demo', slug='d1', state=[], gates={}),

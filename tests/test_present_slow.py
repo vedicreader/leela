@@ -370,6 +370,290 @@ def test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict(tmp_path):
     assert (p['body'], p['rk'], p['button'], p['lbl']) == (a['body'], a['rk'], a['button'], a['lbl']), ('the presenter demo has the room sizes', p, a)
 
 
+KEY_CELLS = [md('# One', 'slide', 'k0'), md('# Two', 'slide', 'k1'), md('two a', 'fragment', 'k2'), md('two b', 'fragment', 'k3'),
+             md('# Three', 'slide', 'k4'), md('three a', 'fragment', 'k5'), md('# Four', 'slide', 'k6'),
+             md(f'# Demo\n\n```rupaka\n{json.dumps(SPEC)}\n```', 'slide', 'k7')]
+#: the place on the server, read from the `state` of a new room stream after this presenter's posts
+SERVER = '''async () => { const p = lee.present; await p.chain; return await new Promise(ok => { const es = new EventSource('/present/room?k=' + p.ak);
+  es.addEventListener('state', e => { es.close(); const a = JSON.parse(e.data).at; ok([+a.slide.slice(1) - 1, a.step, a.blank]); }); }); }'''
+LOOK = '''() => { const p = lee.present, c = p.root.querySelector('.lee-slide'), a = document.activeElement;
+  return {at: [p.at.slide, p.at.step], blank: c.classList.contains('blank'), laser: p.root.classList.contains('lee-laser'),
+          notes: !p.root.querySelector('.lee-present-notes').hidden, full: !!document.fullscreenElement,
+          focus: a === p.root ? 'root' : a?.matches?.('[data-notes]') ? 'notes' : a?.closest?.('.lee-rupaka') ? 'demo' : a?.tagName || ''}; }'''
+#: a synthetic keydown, for pairs a real keyboard cannot type; true when nothing called `preventDefault`
+KEY = "o => lee.present.root.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, cancelable: true, composed: true, ...o}))"
+CLICKS = '''() => { const c = window._clicks ||= {prev: 0, next: 0};
+  if (!window._counted) { window._counted = 1; for (const n of ['prev', 'next']) document.querySelector(`.lee-present-strip [data-${n}]`).addEventListener('click', () => c[n]++); }
+  return {...c}; }'''
+FIELDS = '''() => { const d = lee.present.root.appendChild(document.createElement('div')); d.className = 't-fields';
+  d.innerHTML = '<input value="i"><textarea>t</textarea><select><option>a</option><option>b</option></select>' +
+    '<div contenteditable="true"><p>c<span tabindex="-1" data-nested>n</span></p></div>'; }'''
+SLIDER = "() => document.querySelector('.lee-present .lee-rupaka').shadowRoot.querySelector('input')"
+
+async def _to(pg, slide):
+    await pg.evaluate('() => lee.present.root.focus()')
+    for _ in range(12):
+        if (await pg.evaluate(AT))[0] == slide: return
+        await pg.keyboard.press('ArrowRight')
+    raise AssertionError(f'never reached slide {slide}')
+
+def test_clicker_keys(tmp_path):
+    "Each key of the key map moves one step or toggles one thing; a held key, a focused button, a field, a demo, a modifier and the editor underneath do not move."
+    _nb(tmp_path/'deck.ipynb', KEY_CELLS)
+    async def go(pg):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', 8)
+        src = await pg.evaluate('() => ensureCellMounted(0).state.doc.toString()')
+        await _start(pg)
+        await pg.keyboard.press('ArrowRight'); await pg.keyboard.press('ArrowRight')
+        out['interior'] = await pg.evaluate(AT)
+        out['walk'] = []
+        for k in ('PageDown', 'PageUp', 'Space', 'Shift+Space', 'ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'):
+            await pg.keyboard.press(k); out['walk'].append([k, await pg.evaluate(AT), (await pg.evaluate(SERVER))[:2]])
+        for _ in range(3): await pg.keyboard.down('ArrowRight')
+        await pg.keyboard.up('ArrowRight')
+        out['held'] = [await pg.evaluate(AT), (await pg.evaluate(SERVER))[:2]]
+        await pg.keyboard.press('ArrowLeft')
+        await pg.evaluate(CLICKS)
+        await pg.focus('.lee-present-strip [data-next]')
+        for _ in range(3): await pg.keyboard.down('Enter')
+        await pg.keyboard.up('Enter')
+        out['enter_held'] = [await pg.evaluate(AT), await pg.evaluate(CLICKS)]
+        await pg.focus('.lee-present-strip [data-prev]'); await pg.keyboard.press('Space')
+        out['space_prev'] = [await pg.evaluate(AT), await pg.evaluate(CLICKS)]
+        out['shift_space'] = [await pg.evaluate(AT), await pg.evaluate(CLICKS)]
+        await pg.focus('.lee-present-strip [data-next]'); await pg.keyboard.press('Shift+Space')
+        out['shift_space'] += [await pg.evaluate(AT), await pg.evaluate(CLICKS)]
+        await pg.evaluate('() => lee.present.root.focus()')
+        out['code_not_key'] = [await pg.evaluate(KEY, {'code': 'KeyB', 'key': 'x'}), await pg.evaluate(LOOK)]
+        await pg.evaluate(KEY, {'code': 'KeyB', 'key': 'x'})
+        out['browser_owned'] = [await pg.evaluate(KEY, {'code': c, 'key': c[-1].lower(), m: True}) for c in ('KeyW', 'KeyR', 'KeyL') for m in ('metaKey', 'ctrlKey')]
+        before = await pg.evaluate(LOOK)
+        out['ignored'] = [await pg.evaluate(KEY, o) for o in (
+            {'code': 'KeyB', 'key': 'B', 'shiftKey': True}, {'code': 'KeyN', 'key': 'N', 'shiftKey': True}, {'code': 'KeyF', 'key': 'F', 'shiftKey': True},
+            {'code': 'KeyB', 'key': 'b', 'altKey': True}, {'code': 'KeyB', 'key': 'b', 'modifierAltGraph': True}, {'code': 'KeyB', 'key': 'b', 'isComposing': True},
+            {'code': 'KeyB', 'key': 'Process'}, {'code': 'KeyB', 'key': 'b', 'repeat': True})]
+        out['ignored_look'] = [before, await pg.evaluate(LOOK)]
+        await pg.evaluate(FIELDS)
+        out['fields'] = {}
+        for sel in ('input', 'textarea', 'select', '[data-nested]'):
+            await pg.focus(f'.t-fields {sel}')
+            if sel == '[data-nested]': await pg.evaluate("() => getSelection().collapse(document.querySelector('.t-fields [data-nested]').firstChild, 1)")
+            was = await pg.evaluate(LOOK)
+            # Space on a select opens the browser's own picker, which takes the keys after it
+            for k in ('ArrowRight', 'PageDown', 'KeyB', 'KeyX', 'KeyN', 'KeyF') + (() if sel == 'select' else ('Space',)): await pg.keyboard.press(k)
+            now = await pg.evaluate(LOOK)
+            await pg.keyboard.press('Escape')
+            out['fields'][sel] = [was, now, await pg.evaluate(LOOK)]
+        out['typed'] = await pg.evaluate("() => [document.querySelector('.t-fields input').value, document.querySelector('.t-fields [data-nested]').textContent]")
+        await pg.evaluate("() => document.querySelector('.t-fields').remove()")
+        await _to(pg, 4)
+        await pg.wait_for_function(f'() => ({SLIDER})()', timeout=20000)
+        await pg.evaluate(f'() => ({SLIDER})().focus()')
+        was = [await pg.evaluate(f'() => ({SLIDER})().value'), await pg.evaluate(LOOK)]
+        for k in ('ArrowRight', 'KeyB', 'KeyX', 'Space'): await pg.keyboard.press(k)
+        out['demo'] = was + [await pg.evaluate(f'() => ({SLIDER})().value'), await pg.evaluate(LOOK)]
+        await pg.evaluate('() => { lee.present.root.focus(); ensureCellMounted(0).focus(); }')
+        await pg.keyboard.type('zz'); await pg.keyboard.press('Backspace'); await pg.keyboard.press('Enter'); await pg.keyboard.press('KeyQ')
+        out['editor'] = [src, await pg.evaluate('() => ensureCellMounted(0).state.doc.toString()'), await pg.evaluate('() => lee.present.root.contains(document.activeElement)')]
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['interior'] == [1, 1]
+    for (k, at, server), want in zip(out['walk'], [[1, 2], [1, 1]] * 4):
+        assert at == server == want, (k, at, server)
+    assert out['held'] == [[1, 2], [1, 2]], 'a held key moves once'
+    at, clicks = out['enter_held']
+    assert (at, clicks['next']) == ([1, 2], 1), ('Enter held on a focused button presses it once', out['enter_held'])
+    assert out['space_prev'] == [[1, 1], {'prev': 1, 'next': 1}], 'Space on a focused button presses only the button'
+    a0, c0, a1, c1 = out['shift_space']
+    assert a1[1] - a0[1] == c1['next'] - c0['next'] <= 1 and c1['prev'] == c0['prev'], ('Shift+Space on a focused button never also moves back', out['shift_space'])
+    prevented, look = out['code_not_key']
+    assert prevented is False and look['blank'] and not look['laser'], ('the key is its e.code, not its e.key', out['code_not_key'])
+    assert out['browser_owned'] == [True] * 6, 'Cmd or Ctrl with W, R and L stay with the browser'
+    assert out['ignored'] == [True] * 7 + [False], out['ignored']
+    b, a = out['ignored_look']
+    assert a == b and not (a['blank'] or a['notes'] or a['full'] or a['laser']), out['ignored_look']
+    for sel, (was, now, esc) in out['fields'].items():
+        assert now['at'] == was['at'] and not (now['blank'] or now['laser'] or now['notes'] or now['full']), (sel, was, now)
+        assert esc['focus'] == 'root', ('Esc leaves the field', sel, esc)
+    assert out['typed'][0] != 'i' and out['typed'][1] != 'n', ('the keys reached the fields', out['typed'])
+    v0, l0, v1, l1 = out['demo']
+    assert v1 != v0 and l1['at'] == l0['at'] == [4, 0] and not (l1['blank'] or l1['laser']) and l1['focus'] == 'demo', out['demo']
+    src, now, inside = out['editor']
+    assert now == src and inside, ('no key reaches the editor under the presentation', out['editor'])
+
+PROBE = '''(() => { const E = window.EventSource; if (!E) return;
+  window.EventSource = class extends E { constructor(...a) { super(...a); window._leeES = this;
+    queueMicrotask(() => this.addEventListener('state', () => (window._leeAtState ||= []).push(!!document.querySelector('.lee-stage > .lee-slide .stage-dot.on')))); } };
+  window._leeShown = 0;
+  const tick = () => { const c = document.querySelector('body[data-page="audience"] .lee-stage > .lee-slide');
+    if (c && c.querySelector('.lee-slide-body') && !c.classList.contains('blank')) window._leeShown++;
+    requestAnimationFrame(tick); };
+  requestAnimationFrame(tick); })()'''
+
+def test_esc_never_ends_the_presentation(tmp_path):
+    "Esc closes one thing at a time, in the key map order, and gives focus back; nothing underneath sees it; F leaves full screen; no stray key ends the show."
+    _nb(tmp_path/'deck.ipynb', KEY_CELLS)
+    async def go(pg):
+        out, esc = {}, {}
+        await _open(pg, tmp_path/'deck.ipynb', 8)
+        await pg.evaluate("""() => { const d = document.body.appendChild(document.createElement('details')); d.className = 'lee-dismissable'; d.id = 't-details';
+          d.innerHTML = '<summary>s</summary>x'; d.open = true; }""")
+        await _start(pg)
+        async def press(name, key='Escape'):
+            await pg.keyboard.press(key); await pg.wait_for_timeout(50); esc[name] = await pg.evaluate(LOOK)
+        await pg.keyboard.press('KeyN'); await pg.keyboard.press('KeyX')
+        await pg.focus('.lee-present-notes [data-close]')
+        await press('notes')
+        await press('laser')
+        await _to(pg, 4)
+        await pg.wait_for_function(f'() => ({SLIDER})()', timeout=20000)
+        await pg.evaluate(f'() => ({SLIDER})().focus()')
+        await press('demo')
+        await press('nothing')
+        await pg.keyboard.press('KeyN')
+        await pg.evaluate('() => showHelp()'); await pg.wait_for_selector('.lee-modal')
+        await press('modal')
+        out['modal'] = await pg.evaluate("() => !!document.querySelector('.lee-modal')")
+        await pg.keyboard.press('KeyX')
+        await pg.keyboard.press('KeyF'); await pg.wait_for_function('() => !!document.fullscreenElement')
+        await press('in_full')
+        if await pg.evaluate('() => !!document.fullscreenElement'):
+            await pg.keyboard.press('KeyF'); await pg.wait_for_function('() => !document.fullscreenElement')
+        await pg.keyboard.press('KeyF'); await pg.wait_for_function('() => !!document.fullscreenElement')
+        await pg.keyboard.press('KeyF'); await pg.wait_for_function('() => !document.fullscreenElement')
+        await pg.keyboard.press('Escape'); esc['just_left'] = await pg.evaluate(LOOK)
+        await pg.wait_for_timeout(450)
+        await press('later')
+        for k in ('Alt+KeyR', 'Alt+KeyW', 'Alt+KeyT', 'Slash', 'ControlOrMeta+Shift+KeyP'): await pg.keyboard.press(k)
+        await pg.wait_for_timeout(300)
+        out['stray'] = await pg.evaluate("() => [!!lee.present, document.querySelectorAll('.lee-present').length, !!document.querySelector('.lee-modal, #cp')]")
+        out['under'] = await pg.evaluate("() => document.getElementById('t-details').open")
+        out['deck'] = await pg.evaluate('() => fetch("/present/deck?k=" + lee.present.ak).then(r => r.status)')
+        out['esc'] = esc
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    e = out['esc']
+    assert e['notes']['notes'] is False and e['notes']['laser'] is True and e['notes']['focus'] == 'notes', ('Esc closes Notes first', e['notes'])
+    assert e['laser']['laser'] is False and e['laser']['notes'] is False and e['laser']['focus'] == 'notes', ('then the laser', e['laser'])
+    assert e['demo']['focus'] == 'root' and e['demo']['at'] == [4, 0], ('then focus leaves the demo', e['demo'])
+    assert e['nothing'] == e['demo'], 'with nothing open, nothing happens'
+    assert out['modal'] is False and e['modal']['notes'] is True and e['modal']['focus'] == 'root', ('a dialog takes Esc for itself', e['modal'])
+    assert e['in_full']['notes'] is True and e['in_full']['laser'] is True, ('Esc in full screen belongs to the browser', e['in_full'])
+    assert e['just_left']['notes'] is True and e['just_left']['laser'] is True, ('Esc just after leaving full screen does nothing', e['just_left'])
+    assert e['later']['notes'] is False and e['later']['laser'] is True, e['later']
+    assert out['stray'] == [True, 1, False], out['stray']
+    assert out['under'] is True, 'an Esc handler underneath the presentation acted'
+    assert out['deck'] == 200
+
+LASER = [md('# Alpha\n\nbody a', 'slide', 'l0'), md('# Beta\n\nbody b', 'slide', 'l1'), md('# Gamma', 'slide', 'l2')]
+BOX = "s => { const r = document.querySelector(s).getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }"
+DOTS = '''r => { const d = document.querySelector(r + ' .lee-slide > .stage-dot'), b = document.querySelector(r + ' .lee-slide > .stage-blank');
+  return {on: !!d?.classList.contains('on'), shown: !!d && getComputedStyle(d).display !== 'none' && +getComputedStyle(d).opacity > 0 && d.classList.contains('on'),
+          left: d?.style.left, top: d?.style.top, blank: document.querySelector(r + ' .lee-slide').classList.contains('blank'),
+          card: b && getComputedStyle(b).display !== 'none' ? b.textContent : null}; }'''
+
+def test_laser_and_blank_reach_both_windows(tmp_path):
+    "The laser follows the scaled slide, coalesces behind a slow server and goes off on every way out; blank shows on both windows and survives a reconnect."
+    _nb(tmp_path/'deck.ipynb', LASER)
+    async def go(pg):
+        out, moves = {}, []
+        pg.on('request', lambda r: moves.append(json.loads(r.post_data)) if r.method == 'POST' and r.url.endswith('/present/move') else None)
+        pts = lambda: [m for m in moves if m.get('t') == 'point']
+        async def settle(n=None, quiet=.6):
+            for _ in range(100):
+                k = len(moves); await asyncio.sleep(quiet)
+                if len(moves) == k and (n is None or k > n): return
+            raise AssertionError('no new move reached the server, or the moves never stopped')
+        await pg.context.add_init_script(PROBE)
+        await pg.set_viewport_size({'width': 1000, 'height': 700})
+        await _open(pg, tmp_path/'deck.ipynb', 3)
+        await _start(pg)
+        async with pg.context.expect_page() as pop:
+            await pg.click('.lee-present-strip [data-audience]')
+        aud = await pop.value
+        await aud.wait_for_function('() => document.querySelector(".lee-stage .lee-slide")?.textContent.includes("Alpha")', timeout=20000)
+        await pg.wait_for_function('() => document.querySelector(".lee-present-strip [data-conn]").textContent === "Audience window: connected"')
+        await pg.evaluate('() => lee.present.root.focus()')
+        x, y, w, h = await pg.evaluate(BOX, SLIDE)
+        at = lambda fx, fy: (x + w*fx, y + h*fy)
+        out['scale'] = await pg.evaluate("() => +getComputedStyle(document.querySelector('.lee-present .lee-stage')).getPropertyValue('--slide-scale')")
+        await pg.keyboard.press('KeyX')
+        n = len(moves); await pg.mouse.move(*at(.25, .75)); await settle(n)
+        out['point'] = pts()[-1]
+        await aud.wait_for_function("() => document.querySelector('.lee-slide > .stage-dot.on')")
+        out['dots'] = [await pg.evaluate(DOTS, '.lee-present'), await aud.evaluate(DOTS, '.lee-stage')]
+        async def slow(route): await asyncio.sleep(.5); await route.continue_()
+        await pg.route('**/present/move', slow)
+        n = len(pts())
+        for i in range(30): await pg.mouse.move(*at(.1 + i*.02, .5))
+        await settle(quiet=1.2)
+        out['slow'] = [len(pts()) - n, pts()[-1]]
+        await pg.unroute('**/present/move')
+        n = len(moves)
+        await pg.evaluate('''() => { const c = document.querySelector('.lee-present .lee-slide'), r = c.getBoundingClientRect();
+          c.dispatchEvent(new PointerEvent('pointermove', {clientX: r.right + 40, clientY: r.top - 40, bubbles: true})); }''')
+        await settle(n); out['clamp'] = moves[-1]
+        off = {}
+        async def way(name, act):
+            n = len(moves); await pg.mouse.move(*at(.5, .5)); await settle(n)
+            n = len(moves); await act(); await settle(n)
+            off[name] = [moves[-1], await pg.evaluate('() => lee.present.root.classList.contains("lee-laser")')]
+            await aud.wait_for_function("() => !document.querySelector('.lee-slide > .stage-dot.on')")
+        sx, sy, sw, sh = await pg.evaluate(BOX, '.lee-present-strip')
+        await way('leave', lambda: pg.mouse.move(sx + sw/2, sy + sh/2))
+        await way('cancel', lambda: pg.evaluate("() => document.querySelector('.lee-present .lee-slide').dispatchEvent(new PointerEvent('pointercancel', {bubbles: true}))"))
+        await way('blur', lambda: pg.evaluate("() => dispatchEvent(new Event('blur'))"))
+        await way('esc', lambda: pg.keyboard.press('Escape'))
+        await pg.keyboard.press('KeyX')
+        await way('toggle', lambda: pg.keyboard.press('KeyX'))
+        out['off'] = off
+        await pg.keyboard.press('KeyX')
+        n = len(moves); await pg.mouse.move(*at(.4, .4)); await settle(n)
+        await pg.keyboard.press('KeyB')
+        await aud.wait_for_function("() => document.querySelector('.lee-stage > .lee-slide').classList.contains('blank')")
+        n = len(pts()); await pg.mouse.move(*at(.6, .6)); await pg.mouse.move(*at(.7, .3)); await asyncio.sleep(.5)
+        out['blank'] = [await pg.evaluate(DOTS, '.lee-present'), await aud.evaluate(DOTS, '.lee-stage'), [m for m in pts()[n:] if 'x' in m]]
+        await pg.keyboard.press('ArrowRight')
+        await aud.wait_for_function("() => document.querySelector('.lee-stage > .lee-slide').textContent.includes('Beta')")
+        await pg.set_viewport_size({'width': 900, 'height': 650}); await pg.wait_for_timeout(300)
+        out['moved_blank'] = [await pg.evaluate(DOTS, '.lee-present'), await aud.evaluate(DOTS, '.lee-stage')]
+        await aud.reload()
+        await aud.wait_for_function("() => document.querySelector('.lee-stage > .lee-slide')?.textContent.includes('Beta')", timeout=20000)
+        await aud.wait_for_timeout(300)
+        out['reload'] = [await aud.evaluate(DOTS, '.lee-stage'), await aud.evaluate('() => window._leeShown')]
+        await pg.keyboard.press('KeyB')
+        await aud.wait_for_function("() => !document.querySelector('.lee-stage > .lee-slide').classList.contains('blank')")
+        out['unblank'] = [await pg.evaluate(DOTS, '.lee-present'), await aud.evaluate(DOTS, '.lee-stage')]
+        x, y, w, h = await pg.evaluate(BOX, SLIDE)
+        for i in range(6): await pg.mouse.move(*at(.3 + i*.05, .5))
+        await aud.wait_for_function("() => document.querySelector('.lee-slide > .stage-dot.on')")
+        k = len(await aud.evaluate('() => window._leeAtState || []'))
+        await aud.evaluate("() => { window._leeES.close(); window._leeES.dispatchEvent(new Event('error')); }")
+        await aud.wait_for_function(f'() => (window._leeAtState || []).length > {k}', timeout=20000)
+        out['again'] = await aud.evaluate('() => window._leeAtState.at(-1)')
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['scale'] != 1, out['scale']
+    p = out['point']
+    assert abs(p['x'] - .25) < .01 and abs(p['y'] - .75) < .01 and set(p) == {'t', 'x', 'y', 'k'}, ('the point is relative to the scaled slide', p)
+    assert all(len(str(v).split('.')[-1]) <= 4 for v in (p['x'], p['y'])), ('points are rounded', p)
+    for d in out['dots']: assert d['shown'] and abs(float(d['left'].rstrip('%')) - p['x']*100) < .01, ('both windows show the dot', out['dots'])
+    n, last = out['slow']
+    assert 1 <= n <= 4 and abs(last['x'] - .68) < .01 and abs(last['y'] - .5) < .01, ('only the newest unsent point goes, behind a slow server', out['slow'])
+    assert (out['clamp']['x'], out['clamp']['y']) == (1, 0), out['clamp']
+    for name, (m, laser) in out['off'].items():
+        assert m.get('off') is True, (name, m)
+        assert laser is (name not in ('esc', 'toggle')), (name, laser)
+    pd, ad, sent = out['blank']
+    assert pd['blank'] and ad['blank'] and pd['card'] == ad['card'] == 'deck', ('blank shows on both windows', out['blank'])
+    assert not pd['shown'] and not ad['shown'] and sent == [], ('blank hides the laser', out['blank'])
+    assert all(d['blank'] for d in out['moved_blank']), 'a move and a resize keep blank'
+    d, shown = out['reload']
+    assert d['blank'] and not d['on'] and shown == 0, ('a reloaded audience is blank at once and shows no dot', out['reload'])
+    assert not any(d['blank'] for d in out['unblank'])
+    assert out['again'] is False, 'a reconnecting audience drops the dot it had'
+
 def test_an_external_link_opens_one_tab_in_a_browser(tmp_path):
     "`window.open(..., 'noopener')` returns null even when the tab opened, so a browser also asked the server to open it: two tabs, the notes page among them."
     async def go(pg):

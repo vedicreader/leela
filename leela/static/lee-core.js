@@ -3144,7 +3144,7 @@ window.addEventListener('lee-inline-open', e => openValueLens(e.detail?.item, e.
 document.addEventListener('pointerdown', e => {
   if ($('.lee-inline-popover') && !e.target.closest('.lee-inline-popover, .cm-lee-inline-value')) closeInlinePopover();
 }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeInlinePopover(); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !lee.present) closeInlinePopover(); }, true);
 
 function outputTone(o) {
   if (o.output_type === 'error') return 'error';
@@ -4395,7 +4395,7 @@ function slidesAudience() {
   const keep = m => { held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug); };
   const on = {
     state: d => { at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
-                  slidesTheme(d.look?.theme, deck.look?.mono); draw(); emit({t: 'blank', on: !!at.blank}); },
+                  slidesTheme(d.look?.theme, deck.look?.mono); emit({t: 'point', off: true}); emit({t: 'blank', on: !!at.blank}); draw(); },
     at: d => { if (d.slide !== at.slide) held.answers = {}; at = d; emit({t: 'go', slide: d.slide, beat: Math.min(50, d.step + 1)}); emit({t: 'blank', on: !!d.blank}); },
     point: d => emit({t: 'point', ...d}),
     demo: d => emit({t: 'demo', ...d}),
@@ -4429,6 +4429,11 @@ const PRESENT_KINDS = new Set(['markdown', 'code', 'raw', 'prompt']);
 const PRESENT_LARGE = /characters of (output|source)|larger than 32 MB|at most 2,000 cells/;
 const PRESENT_GONE = /^This presentation (has ended|link is not valid)\.$/;
 const PRESENT_HINT = 'Move the audience window to the projector. In that window, press F for full screen.';
+//: Laser points go at most once in this many ms, one at a time behind the other posts; the dot fades as `stage.js` fades it; Esc this soon after full screen ends is the browser's.
+const PRESENT_POINT_MS = 33, PRESENT_FADE = 1500, PRESENT_FULL_MS = 400;
+//: What Space or Enter presses by itself when it has focus.
+const PRESENT_PRESSES = 'button, summary, [role="button"], input[type="checkbox"], input[type="radio"], input[type="button"], input[type="submit"], input[type="reset"]';
+const presentClamp = v => Math.round(Math.min(1, Math.max(0, v))*1e4)/1e4;
 
 //: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
 const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
@@ -4597,8 +4602,12 @@ function presentOpen(r, line, at) {
   const root = Object.assign(document.createElement('div'), {className: 'lee-present', tabIndex: -1, innerHTML: PRESENT_HTML});
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Presentation');
   const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]'), notesBtn = q('[data-notes]');
+  const dot = canvas.appendChild(Object.assign(document.createElement('div'), {className: 'stage-dot'}));
+  dot.setAttribute('aria-hidden', 'true');
+  canvas.appendChild(Object.assign(document.createElement('div'), {className: 'stage-blank', textContent: String(r.presenter?.title || '').replace(/\.ipynb$/i, '')}));
   const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, audience: r.audience, deck: r.presenter, line, at, text: presentStored(), blank: false,
-                           outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now(), win: null, look: presentTheme()};
+                           outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now(), win: null, look: presentTheme(),
+                           laser: false, pt: null, frame: 0, busy: false, lit: false, sent: 0, dotT: 0, left: -Infinity, inert: []};
   const demo = spec => { const e = rupakaDraw(spec); e.done.then(() => slidesRk(e.host.shadowRoot)); return e.host; };
   const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, demo(spec)).get(id);
   const stuck = d => { const a = presentMove(p.line, p.at, d); return a.slide === p.at.slide && a.step === p.at.step; };
@@ -4634,19 +4643,58 @@ function presentOpen(r, line, at) {
     if (!open && inside) notesBtn.focus({preventScroll: true});
   };
   const toggleNotes = () => setNotes(notes.hidden);
+  // the newest point waits here; at most one is in the post chain, so slow replies queue nothing behind them
+  const send = () => {
+    p.frame = 0;
+    if (lee.present !== p || !p.laser || p.blank || !p.pt || p.busy) return;
+    if (performance.now() - p.sent < PRESENT_POINT_MS) return void (p.frame = requestAnimationFrame(send));
+    const [x, y] = p.pt; p.pt = null; p.busy = p.lit = true; p.sent = performance.now();
+    presentPost(p, '/present/move', {t: 'point', x, y}).finally(() => { p.busy = false; if (p.pt) p.frame ||= requestAnimationFrame(send); });
+  };
+  const point = e => {
+    if (!p.laser || p.blank) return;
+    const b = canvas.getBoundingClientRect(); if (!b.width || !b.height) return;
+    const [x, y] = p.pt = [presentClamp((e.clientX - b.left)/b.width), presentClamp((e.clientY - b.top)/b.height)];
+    dot.style.left = x*100 + '%'; dot.style.top = y*100 + '%'; dot.classList.add('on');
+    clearTimeout(p.dotT); p.dotT = setTimeout(() => dot.classList.remove('on'), PRESENT_FADE);
+    p.frame ||= requestAnimationFrame(send);
+  };
+  // the dot off on both screens; the laser stays on for the next move
+  const dark = () => {
+    cancelAnimationFrame(p.frame); p.frame = 0; p.pt = null; clearTimeout(p.dotT); dot.classList.remove('on');
+    if (p.lit) { p.lit = false; presentPost(p, '/present/move', {t: 'point', off: true}); }
+  };
+  const laser = (on = !p.laser) => { if (!on) dark(); p.laser = on; root.classList.toggle('lee-laser', on); };
+  const blank = () => { p.blank = !p.blank; canvas.classList.toggle('blank', p.blank); if (p.blank) dark(); presentPost(p, '/present/at', presentAtBody(p)); };
+  const esc = () => {
+    if ($('.lee-modal')) return false;
+    if (document.fullscreenElement) return false;
+    if (performance.now() - p.left < PRESENT_FULL_MS) return true;
+    if (!notes.hidden) return setNotes(false), true;
+    if (p.laser) return laser(false), true;
+    const a = document.activeElement;
+    if (a !== root && root.contains(a) && (a.closest('.lee-rupaka') || isTextEntry(a))) root.focus({preventScroll: true});
+    return true;
+  };
   p.keys = {ArrowRight: () => go(1), ArrowDown: () => go(1), Space: () => go(1), PageDown: () => go(1),
             ArrowLeft: () => go(-1), ArrowUp: () => go(-1), 'Shift+Space': () => go(-1), PageUp: () => go(-1),
-            KeyN: toggleNotes, KeyF: full, Escape: () => setNotes(false)};
-  // the rules of `abhyasaStage.presenter`, which the IDE page does not load: no held, Alt, Cmd or Ctrl key, no key in a text box or a demo but Esc
+            KeyN: toggleNotes, KeyF: full, KeyX: () => laser(), KeyB: blank, Escape: esc};
+  // the rules of `abhyasaStage.presenter`, which the IDE page does not load: a key is its `e.code`; no Alt, AltGraph, Cmd or Ctrl key, no held key,
+  // no key in a field or a demo but Esc; Space or Enter presses a focused button and nothing else; a function that gives false lets the key go on
   p.onKey = e => {
-    if (lee.present !== p || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || $('.lee-modal')) return;
-    const a = document.activeElement;
-    if (a && (a.matches('textarea, input, select, [contenteditable]:not([contenteditable="false"])') || a.isContentEditable)) return;
-    if (e.key !== 'Escape' && a?.closest('.lee-rupaka')) return;
-    if ((e.code === 'Space' || e.code === 'Enter') && a?.matches('button') && (strip.contains(a) || notes.contains(a))) return;
-    const fn = p.keys[(e.shiftKey ? 'Shift+' : '') + e.code]; if (!fn) return;
-    e.preventDefault(); e.stopPropagation(); fn();
+    if (lee.present !== p || e.metaKey || e.ctrlKey || e.altKey || e.getModifierState?.('AltGraph') || e.isComposing || e.key === 'Process') return;
+    const a = document.activeElement, t = keyTarget(e);
+    if (a && a !== document.body && !root.contains(a)) return;
+    if (e.code !== 'Escape' && (isTextEntry(t) || a?.closest('.lee-rupaka'))) return;
+    if ((e.code === 'Space' || e.code === 'Enter') && t?.matches?.(PRESENT_PRESSES)) { if (e.repeat) e.preventDefault(); return; }
+    const name = (e.shiftKey ? 'Shift+' : '') + e.code, fn = Object.hasOwn(p.keys, name) && p.keys[name]; if (!fn) return;
+    if (!e.repeat && fn(e) === false) return;
+    e.preventDefault(); e.stopPropagation();
   };
+  p.onFull = () => { if (!document.fullscreenElement) p.left = performance.now(); };
+  p.onFocus = e => { if (lee.present === p && !root.contains(e.target) && !e.target.closest?.('.lee-modal')) root.focus({preventScroll: true}); };
+  p.onBlur = () => dark();
+  canvas.addEventListener('pointermove', point); canvas.addEventListener('pointerleave', dark); canvas.addEventListener('pointercancel', dark);
   p.onOutput = e => { if (lee.present === p && e.detail.id in p.outs) presentOuts(p, e.detail.id, p.outs[e.detail.id] = e.detail.outputs || []); };
   q('[data-prev]').onclick = () => go(-1); q('[data-next]').onclick = () => go(1);
   q('[data-smaller]').onclick = () => resize(-1); q('[data-bigger]').onclick = () => resize(1);
@@ -4687,8 +4735,13 @@ function presentOpen(r, line, at) {
     q('[data-clock]').textContent = `Time: ${Math.floor(s/60)}:${String(s % 60).padStart(2, '0')}`;
   }, 1000);
   document.addEventListener('keydown', p.onKey, true); addEventListener('lee-cell-output', p.onOutput);
+  document.addEventListener('fullscreenchange', p.onFull); document.addEventListener('focusin', p.onFocus, true); addEventListener('blur', p.onBlur);
   document.documentElement.classList.add('talk');
-  closeInlinePopover(); document.body.appendChild(root); slidesScale(q('.lee-stage')); root.focus({preventScroll: true});
+  closeInlinePopover(); document.body.appendChild(root); slidesScale(q('.lee-stage'));
+  // the page under the presentation takes no focus and no key; a dialog opened later still can
+  p.inert = [...document.body.children].filter(el => el !== root && !el.inert && !el.matches('.lee-modal'));
+  for (const el of p.inert) el.inert = true;
+  root.focus({preventScroll: true});
   const m = root.appendChild(Object.assign(document.createElement('div'), {className: 'lee-slide lee-measure'}));
   const long = p.deck.slides.map((s, i) => slidesDraw(m, p.deck, i, s.groups, {key: p.ak, size: Math.round(p.text*10)}).fits ? 0 : i + 1).filter(Boolean);
   m.remove();
@@ -4703,6 +4756,9 @@ function closePresentation() {
   const p = lee.present; if (!p) return;
   lee.present = null;
   document.removeEventListener('keydown', p.onKey, true); removeEventListener('lee-cell-output', p.onOutput);
+  document.removeEventListener('fullscreenchange', p.onFull); document.removeEventListener('focusin', p.onFocus, true); removeEventListener('blur', p.onBlur);
+  cancelAnimationFrame(p.frame); clearTimeout(p.dotT);
+  for (const el of p.inert || []) el.inert = false;
   p.events?.close(); p.watch?.disconnect(); clearTimeout(p.idle); clearTimeout(p.endT); clearInterval(p.clock);
   document.documentElement.classList.remove('talk');
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -5357,7 +5413,7 @@ async function runSelectionHelp(view, selected, rect, mode, instruction = '') {
 /* The panel's own `onkeydown` only fires while the focus is inside it, which the first click
    elsewhere ends. Escape closes it from anywhere, and defers to a modal above it. */
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || $$('.lee-modal').length) return;
+  if (e.key !== 'Escape' || $$('.lee-modal').length || lee.present) return;
   const panel = $('.lee-selection-reply'); if (!panel) return;
   abandonReply(panel); panel.remove(); e.stopPropagation();
 }, true);

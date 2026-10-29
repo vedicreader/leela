@@ -532,7 +532,7 @@ window.addEventListener('lee-inline-open', e => openValueLens(e.detail?.item, e.
 document.addEventListener('pointerdown', e => {
   if ($('.lee-inline-popover') && !e.target.closest('.lee-inline-popover, .cm-lee-inline-value')) closeInlinePopover();
 }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeInlinePopover(); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !lee.present) closeInlinePopover(); }, true);
 
 function outputTone(o) {
   if (o.output_type === 'error') return 'error';

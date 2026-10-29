@@ -6,7 +6,7 @@ from fastcore.all import L, Path, first, ifnone
 
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
-           'help_rows', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
+           'help_rows', 'PRESENT_KEYS', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload',
            'changed', 'refresh', 'VERSION']
 
@@ -367,9 +367,13 @@ def web_keymap():
     "The whole table as JSON-ready rows for the browser handler."
     return [{**asdict(k), 'chords': [web_key(c) for c in k.keys]} for k in KEYS]
 
+#: The presenter's keys as `(chords, label)`, for the keys help only. `present.js` binds them while a presentation is open; no row is a binding.
+PRESENT_KEYS = (('right down space pagedown', 'next step'), ('left up shift+space pageup', 'previous step'), ('n', 'speaker notes'),
+                ('f', 'full screen on or off'), ('x', 'laser on or off'), ('b', 'blank screen on or off'), ('escape', 'close one thing'))
+
 def help_rows():
-    "Every binding grouped by scope, for the full help overlay: {scope: [(chord_display, label)]}."
-    return {s: [(chord_display(k), k.label) for k in by_scope(s) if k.label] for s in SCOPES}
+    "Every binding grouped by scope, and the presenter's keys as `present`, for the full help overlay: {scope: [(chord_display, label)]}."
+    return {**{s: [(chord_display(k), k.label) for k in by_scope(s) if k.label] for s in SCOPES}, 'present': list(PRESENT_KEYS)}
 
 def toast_rows():
     "The short cheatsheet for the left sidebar: keys that earn space but are not in the footer."

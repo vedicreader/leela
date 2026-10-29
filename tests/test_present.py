@@ -155,6 +155,17 @@ def test_a_page_sends_one_start_at_a_time_after_the_last_end():
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == [['/present/end'], ['/present/end', '/present/start', 'open k2']]
 
+def test_present_keys_are_listed_and_bind_nothing():
+    "The keys help lists each key `present.js` binds, from display rows that are no binding of the keymap."
+    import re
+    from leela.core.keys import DEFAULTS, PRESENT_KEYS, SCOPES, _dupes, help_rows, web_key, web_keymap
+    body = re.search(r'p\.keys = \{(.*?)\};', PRESENT_JS.read_text(), re.S)[1]
+    bound = set(re.findall(r"'?((?:Shift\+)?[A-Z][A-Za-z]+)'?\s*:", body))
+    listed = {('Shift+' if (w := web_key(c))['shift'] else '') + w['code'] for chords, _ in PRESENT_KEYS for c in chords.split()}
+    assert bound == listed and {'KeyX', 'KeyB', 'KeyN', 'KeyF', 'Escape'} <= bound, (bound, listed)
+    assert help_rows()['present'] == list(PRESENT_KEYS)
+    assert 'present' not in SCOPES and not [k for k in web_keymap() if k['scope'] == 'present'] and _dupes(DEFAULTS) == []
+
 def _nb(path, meta, cells=None):
     cells = cells or [{'cell_type': 'markdown', 'id': 'm1', 'metadata': {'slideshow': {'slide_type': 'slide'}}, 'source': '# hi'}]
     path.write_text(json.dumps({'cells': cells, 'metadata': meta, 'nbformat': 4, 'nbformat_minor': 5}))
