@@ -147,6 +147,38 @@ def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
         assert c.get('/file/raw', params={'path': '/etc/passwd'}).json()['error']
 
 
+def test_no_url_reads_a_file_from_the_server_folder_or_above_it(tmp_path, monkeypatch):
+    "FastHTML's `static_route_exts` served the working folder by extension, and an encoded `..` climbed out of it."
+    import re
+    from urllib.parse import quote
+    root, out = tmp_path/'ws', tmp_path/'outside'
+    root.mkdir(); out.mkdir()
+    probe = out/'p.txt'; probe.write_text(f'leela-probe-{tmp_path.name}')
+    (root/'inside.txt').write_text(f'leela-inside-{tmp_path.name}')
+    shot = root/'shot.png'; shot.write_bytes(b'\x89PNG\r\n\x1a\n')
+    # A packaged app runs in the user's data folder or home, so the server folder is one a person keeps files in.
+    monkeypatch.chdir(root)
+    assert Path.cwd() == root.resolve()
+    rel = str(probe.resolve()).lstrip('/')
+    urls = ['/' + up*30 + rel.replace('/', sep) for up, sep in
+            [('..%2F', '%2F'), ('%2e%2e%2f', '%2f'), ('%2E%2E%2F', '%2F'), ('%252e%252e%252f', '%252f'),
+             ('..%5C', '%5C'), ('..%5c', '%5c'), ('%2e%2e%5c', '%5c'), ('..\\', '\\')]]
+    urls += ['/' + quote('../'*30 + rel, safe=''), '/inside.txt', '/' + quote(str(root.resolve()/'inside.txt'), safe='')]
+    with TestClient(ide_app(Workspace(roots=[root]))) as c:
+        got = [(r.status_code, r.text[:60], u[:40]) for u in urls for r in [c.get(u)]]
+        leaks = [g for g in got if 'leela-probe-' in g[1] or 'leela-inside-' in g[1]]
+        assert not leaks, leaks
+        page = c.get('/').text
+        assets = set(re.findall(r'"(/leestatic/[^"?]+)', page))
+        assert '/leestatic/favicon.svg' in assets and '/leestatic/favicon-dark.svg' in assets
+        for a in sorted(assets):
+            if a.endswith(('.js', '.css')): assets |= {u for u in re.findall(r'/leestatic/[\w./-]+', c.get(a).text) if not u.endswith('/')}
+        missing = [(a, s) for a in sorted(assets) if (s := c.get(a).status_code) != 200]
+        assert not missing, missing
+        r = c.get('/file/raw/shot.png', params={'path': str(shot)})
+        assert r.status_code == 200 and r.headers['content-type'] == 'image/png'
+
+
 def _md_render(text):
     "One document through the real renderer, exactly as the browser asks for it."
     with TestClient(ide_app(Workspace(roots=[]))) as client:
