@@ -4349,26 +4349,43 @@ function slidesMath(el) {
   slidesMath.p.then(k => k && todo.forEach(m => { try { k.render(m.textContent, m, {displayMode: m.classList.contains('display'), throwOnError: false, trust: false}); } catch {} }));
 }
 
+//: The audience window waits this long before it asks again after a failure, doubling from the first to the most.
+const SLIDES_WAIT = [1000, 15000];
 /* The audience window: the room copy and the room stream, with abhyasa's `stage.js` for the laser dot, the blank screen and the mirrored demos.
-   The audience key stays in the address, because a reload asks the server for the page with it. It uses GET only. */
+   The audience key stays in the address, because a reload asks the server for the page with it. It uses GET only. One room stream at a time,
+   one retry at a time with a growing wait, and nothing after the end. */
 function slidesAudience() {
   const k = new URLSearchParams(location.search).get('k') || '';
+  // a window the IDE opened gets a copy of the IDE tab's storage, the presenter record among it
+  for (const n of Object.keys(sessionStorage)) if (n.startsWith('lee-present:')) sessionStorage.removeItem(n);
   sessionStorage.setItem('lee-present-k', k);
   const root = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'lee-stage'}));
   const canvas = root.appendChild(Object.assign(document.createElement('div'), {className: 'lee-slide'}));
   const q = `?k=${encodeURIComponent(k)}`, demos = new Map(), fns = {};
   let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}}, es = null, stage = null, done = false;
+  let boot = '', wait = 0, timer = 0;
   slidesScale(root);
   const name = () => String(deck?.title || '').replace(/\.ipynb$/i, '');
   const card = (text, title = name()) => {
-    done = true; es?.close(); stage?.stop();
+    done = true; es?.close(); es = null; clearTimeout(timer); stage?.stop();
     const c = Object.assign(document.createElement('div'), {className: 'lee-end'});
     c.append(Object.assign(document.createElement('h1'), {textContent: text}));
     if (title) c.append(Object.assign(document.createElement('p'), {textContent: title}));
     root.replaceChildren(c);
   };
-  const ended = () => card('The presentation has ended.');
-  const refused = r => r.status === 410 ? ended() : card('This presentation link is not valid.');
+  const ended = (b = '') => card('The presentation has ended.', b && boot && b !== boot ? 'Leela restarted. The presenter can start again.' : name());
+  // only the server's 403 means a bad link and its 410 the end; any other failure asks again later
+  const ask = then => fetch('/present/deck' + q).then(r => {
+    if (done) return;
+    if (r.status === 410) return ended(r.headers.get('X-Leela-Boot') || '');
+    if (r.status === 403) return card('This presentation link is not valid.');
+    return r.ok ? then(r) : again(then);
+  }).catch(() => again(then));
+  const again = then => {
+    if (done || timer) return;
+    timer = setTimeout(() => { timer = 0; ask(then); }, wait);
+    wait = Math.min(SLIDES_WAIT[1], wait ? wait*2 : SLIDES_WAIT[0]);
+  };
   const ch = {on(t, f) { (fns[t] ||= []).push(f); return () => { fns[t] = fns[t].filter(x => x !== f); }; }, send() {}, close() {}};
   const emit = m => { m = {v: 1, ...m}; if (abhyasaStage.valid(m)) for (const f of fns[m.t] || []) f(m); };
   const show = (d, slug) => {
@@ -4394,7 +4411,7 @@ function slidesAudience() {
   };
   const keep = m => { held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug); };
   const on = {
-    state: d => { at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
+    state: d => { wait = 0; at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
                   slidesTheme(d.look?.theme, deck.look?.mono); emit({t: 'point', off: true}); emit({t: 'blank', on: !!at.blank}); draw(); },
     at: d => { if (d.slide !== at.slide) held.answers = {}; at = d; emit({t: 'go', slide: d.slide, beat: Math.min(50, d.step + 1)}); emit({t: 'blank', on: !!d.blank}); },
     point: d => emit({t: 'point', ...d}),
@@ -4403,20 +4420,25 @@ function slidesAudience() {
     look: d => slidesTheme(d.theme, deck.look?.mono),
     end: () => emit({t: 'end'}),
   };
+  // the browser connects an open stream again by itself; a closed one is asked about first, so a 403 or 410 shows its card
   const listen = () => {
-    es = new EventSource('/present/room' + q);
-    for (const [t, f] of Object.entries(on)) es.addEventListener(t, e => { try { f(JSON.parse(e.data)); } catch {} });
-    es.onerror = () => { if (!done && es.readyState === EventSource.CLOSED) fetch('/present/deck' + q).then(r => r.ok ? setTimeout(listen, 1000) : refused(r)).catch(() => setTimeout(listen, 2000)); };
+    if (done) return;
+    es?.close();
+    const s = es = new EventSource('/present/room' + q);
+    for (const [t, f] of Object.entries(on)) s.addEventListener(t, e => { if (s === es) try { f(JSON.parse(e.data)); } catch {} });
+    s.onerror = () => { if (s === es && s.readyState === EventSource.CLOSED) again(listen); };
   };
   addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey && !e.altKey) document.documentElement.requestFullscreen?.().catch(() => {}); });
   addEventListener('dblclick', () => document.documentElement.requestFullscreen?.().catch(() => {}));
-  fetch('/present/deck' + q).then(async r => {
-    if (!r.ok) return refused(r);
-    deck = await r.json(); document.title = name() || 'Presentation';
+  const load = async r => {
+    boot = r.headers.get('X-Leela-Boot') || '';
+    try { deck = await r.json(); } catch { return again(load); }
+    document.title = name() || 'Presentation';
     slidesTheme(deck.look?.theme, deck.look?.mono);
     stage = abhyasaStage.audience(canvas, {ch, title: name(), draw: m => m.t === 'go' ? draw() : m.t === 'end' ? ended() : (m.t === 'demo' || m.t === 'answers') && keep(m)});
     listen();
-  }).catch(() => card('The presentation could not be loaded. Reload this window.', ''));
+  };
+  ask(load);
 }
 
 if (typeof document !== 'undefined' && document.body?.dataset.page === 'audience') slidesAudience();
@@ -4429,6 +4451,10 @@ const PRESENT_KINDS = new Set(['markdown', 'code', 'raw', 'prompt']);
 const PRESENT_LARGE = /characters of (output|source)|larger than 32 MB|at most 2,000 cells/;
 const PRESENT_GONE = /^This presentation (has ended|link is not valid)\.$/;
 const PRESENT_HINT = 'Move the audience window to the projector. In that window, press F for full screen.';
+const PRESENT_ENDED = 'This presentation has ended.', PRESENT_RESTARTED = 'Leela restarted, so the presentation stopped.';
+const PRESENT_AWAY = 'Leela is not reachable, so the presentation is closed on this screen. Reload this page to try again.';
+//: This tab's presenter record lives in `sessionStorage` under the presentation id, so another IDE tab never gets the key by itself.
+const PRESENT_REC = 'lee-present:';
 //: Laser points go at most once in this many ms, one at a time behind the other posts; the dot fades as `stage.js` fades it; Esc this soon after full screen ends is the browser's.
 const PRESENT_POINT_MS = 33, PRESENT_FADE = 1500, PRESENT_FULL_MS = 400;
 //: What Space or Enter presses by itself when it has focus.
@@ -4527,6 +4553,14 @@ function riseConfig(rise) {
 const presentError = m => { try { return JSON.parse(m).error || m; } catch { return m; } };
 const presentRefused = e => PRESENT_LARGE.test(e.message || '') ? `${e.message} Clear large outputs, then try again.` : `slides could not start: ${e.message || e}`;
 const presentAtBody = p => ({slide: `s${p.at.slide + 1}`, step: p.at.step, blank: p.blank, size: Math.round(p.text*10)});
+const presentIndex = at => ({slide: +String(at.slide).slice(1) - 1, step: at.step});
+//: Place `at` moved onto `line`: a slide past the end is the last one, a step past the groups is the last group.
+function presentNear(line, at) {
+  const slide = Math.max(0, Math.min(line.length - 1, at.slide | 0));
+  return {slide, step: Math.max(0, Math.min(line[slide].groups, at.step | 0))};
+}
+//: Whether code cell `id` no longer matches the stored deck: gone from the open notebook, or edited since the start. Task 7 disables Run for it.
+const presentStale = (p, id) => { const c = (lee.cells || []).find(x => x.id === id); return !c || !Object.hasOwn(p.src, id) || mdSource(c) !== p.src[id]; };
 const presentTheme = () => lee.theme ? `${lee.theme.family}:${lee.theme.mode}:${lee.theme.density}` : '';
 
 function presentSay(text) {
@@ -4538,9 +4572,91 @@ function presentSay(text) {
 function presentPost(p, url, body = {}, always = false) {
   return p.chain = p.chain.then(() => (always || lee.present === p) && post(url, {...body, k: p.key})).catch(e => {
     if (lee.present !== p) return;
-    if (PRESENT_GONE.test(e.message || '')) { closePresentation(); status('This presentation has ended.', 'err'); }
+    if (e.message === PRESENT_ENDED) { closePresentation(); presentGone(p); }
+    else if (PRESENT_GONE.test(e.message || '')) { closePresentation(); presentForget(p.id); status(PRESENT_ENDED, 'err'); }
     else presentSay('Moves are not reaching the audience window.');
   });
+}
+//: Post the place; the server's reply is the place a reload of this tab promises.
+const presentGo = p => presentPost(p, '/present/at', presentAtBody(p)).then(r => { if (r?.at && lee.present === p) { p.acked = presentIndex(r.at); presentKeep(p); } });
+
+function presentRecs() {
+  try { return Object.keys(sessionStorage).filter(n => n.startsWith(PRESENT_REC)).map(n => ({...JSON.parse(sessionStorage.getItem(n)), id: n.slice(PRESENT_REC.length)})); }
+  catch { return []; }
+}
+//: Keep `p`'s key, boot, notebook and last acknowledged place for a reload of this tab; the history entry keeps the same without the key, for a tab whose storage was cleared.
+function presentKeep(p) {
+  const rec = JSON.stringify({key: p.key, boot: p.boot, path: p.path, at: p.acked}); if (rec === p.kept) return;
+  p.kept = rec;
+  try { for (const r of presentRecs()) if (r.id !== p.id) sessionStorage.removeItem(PRESENT_REC + r.id); sessionStorage.setItem(PRESENT_REC + p.id, rec); } catch {}
+  try { history.replaceState({...history.state, leePresent: {id: p.id, path: p.path, at: p.acked}}, ''); } catch {}
+}
+function presentForget(id) {
+  try { sessionStorage.removeItem(PRESENT_REC + id); } catch {}
+  try { if (history.state?.leePresent?.id === id) { const {leePresent, ...s} = history.state; history.replaceState(s, ''); } } catch {}
+}
+//: A presenter POST that tells a refusal from a network failure: `{ok, status, body, boot}`. A network failure throws.
+async function presentAsk(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  return {ok: r.ok, status: r.status, body: await r.json().catch(() => ({})), boot: r.headers.get('X-Leela-Boot') || ''};
+}
+//: The live presentation `{id, boot, holder}` from the first event of `/present/events`; null when the server does not answer in 5 s.
+const presentLive = () => new Promise(ok => {
+  const es = new EventSource('/present/events'), t = setTimeout(() => { es.close(); ok(null); }, 5000);
+  es.addEventListener('presentation', e => { clearTimeout(t); es.close(); try { ok(JSON.parse(e.data)); } catch { ok(null); } });
+});
+
+//: At page load. A reload of this tab brings its presenter screen back from the server's state; a tab that copied the record asks first; a tab that lost its key says so.
+async function presentResume() {
+  const rec = presentRecs()[0], mark = history.state?.leePresent;
+  if (!rec) return mark?.id && presentLost(mark);
+  if (performance.getEntriesByType?.('navigation')[0]?.type === 'reload') return presentRecover(rec);
+  if ((await presentLive())?.id !== rec.id) return presentForget(rec.id);
+  const take = await confirmDialog('Present from this tab?', 'This presentation is open in another tab. Take over to control it from this tab. The other tab stops presenting.', 'Take over');
+  take ? presentRecover(rec) : presentForget(rec.id);
+}
+async function presentRecover(rec) {
+  const ticket = lee.presentTicket = (lee.presentTicket || 0) + 1;
+  let r; try { r = await presentAsk('/present/resume', {k: rec.key}); } catch { return status(PRESENT_AWAY, 'err'); }
+  if (ticket !== lee.presentTicket || lee.present) return;
+  if (r.ok) return presentOpen(r.body, false, rec.path);
+  presentForget(rec.id);
+  if (r.status === 410) presentAgain(rec, !!r.boot && r.boot !== rec.boot);
+}
+//: The server holds no presentation for `p`: ask once with its key; only a confirmed 410 offers Start again, never a network failure.
+async function presentGone(p) {
+  const m = {id: p.id, key: p.key, boot: p.boot, path: p.path, at: p.acked};
+  let r; try { r = await presentAsk('/present/resume', {k: m.key}); } catch { return status(PRESENT_AWAY, 'err'); }
+  if (r.ok) return lee.present || presentOpen(r.body, false, m.path);
+  presentForget(m.id);
+  if (r.status === 410) return presentAgain(m, !!r.boot && r.boot !== m.boot);
+  status('Another presentation started.', 'err');
+}
+async function presentAgain(m, restarted) {
+  status(restarted ? PRESENT_RESTARTED : PRESENT_ENDED, 'err');
+  const why = restarted ? 'The presentation stopped when Leela restarted.' : 'The server no longer holds this presentation.';
+  if (await confirmDialog(restarted ? 'Leela restarted' : 'The presentation has ended',
+    `${why} Start again to present from slide ${(m.at?.slide || 0) + 1}. The audience window must open again.`, 'Start again')) presentRestart(m);
+}
+async function presentLost(mark) {
+  if ((await presentLive())?.id !== mark.id) return presentForget(mark.id);
+  const go = await confirmDialog('This tab lost its presenter key', 'The presentation is still running, but this tab can no longer control it. ' +
+    `Start again to present from slide ${(mark.at?.slide || 0) + 1} in this tab. This ends the running presentation, and the audience window must open again.`, 'Start again');
+  presentForget(mark.id);
+  if (go) presentRestart(mark);
+}
+//: A new presentation of notebook `m.path`, from the live cells, at its last acknowledged place.
+async function presentRestart(m) {
+  if (m.path && m.path !== (lee.path || lee.tabKey)) try { await leeOpenFile(m.path); } catch (e) { return status(String(e.message || e), 'err'); }
+  presentNotebook(m.at || '');
+}
+//: What `/present/events` says on each connect and for each new holder: another id or another holder closes this presenter screen at once.
+function presentCheck(p, d) {
+  if (lee.present !== p || d.id === p.id && (!d.holder || d.holder === p.holder)) return;
+  closePresentation();
+  if (d.id === p.id) { presentForget(p.id); return status('The presentation moved to another tab.', 'err'); }
+  if (d.id) { presentForget(p.id); return status('Another presentation started.', 'err'); }
+  presentGone(p);
 }
 //: The cell's live outputs in place of the server's copy, on the presenter screen only.
 function presentOuts(p, id, outs) {
@@ -4560,7 +4676,7 @@ async function presentRun(p, id) {
   if (button()) button().disabled = false;
   presentSay(err ? `${err.ename}: ${err.evalue}` : r.ok ? '' : presentError(r.error));
 }
-function presentEnd(p) { lee.presentWait = presentPost(p, '/present/end', {}, true); closePresentation(); }
+function presentEnd(p) { presentForget(p.id); lee.presentWait = presentPost(p, '/present/end', {}, true); closePresentation(); }
 
 async function presentNotebook(start = '') {
   if (lee.kind !== 'notebook') return status(PRESENT_NOT_NOTEBOOK, 'err');
@@ -4568,7 +4684,7 @@ async function presentNotebook(start = '') {
   if (!line.length) return status(PRESENT_NOTHING, 'err');
   closePresentation();
   const ticket = lee.presentTicket = (lee.presentTicket || 0) + 1, name = lee.path || lee.tabKey;
-  const at = (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
+  const at = typeof start === 'object' ? presentNear(line, start) : (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
   status('Preparing slides…');
   const body = {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
     cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))};
@@ -4579,7 +4695,7 @@ async function presentNotebook(start = '') {
   try { r = await sent; } catch (e) { if (ticket === lee.presentTicket) status(presentRefused(e), 'err'); return; }
   if (!r || ticket !== lee.presentTicket || lee.present) return;
   status('');
-  presentOpen(r, line, at);
+  presentOpen(r, true, name);
 }
 
 const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div class="lee-slide"></div></div>' +
@@ -4597,17 +4713,21 @@ const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div 
   '<button type="button" data-full title="Full screen (F)">Full screen</button></span><span class="lee-gap"></span>' +
   '<button type="button" data-end title="End the presentation">End</button></div>';
 
-//: The presenter screen for the started presentation `r`, at place `at` of `line`.
-function presentOpen(r, line, at) {
+/* The presenter screen for presentation `r` of notebook `path`, as the server holds it: place, blank, size, look, clock and the stored deck.
+   A `fresh` start then posts this page's text size and theme; a resumed one posts nothing until the presenter acts. */
+function presentOpen(r, fresh, path) {
   const root = Object.assign(document.createElement('div'), {className: 'lee-present', tabIndex: -1, innerHTML: PRESENT_HTML});
   root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Presentation');
   const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]'), notesBtn = q('[data-notes]');
   const dot = canvas.appendChild(Object.assign(document.createElement('div'), {className: 'stage-dot'}));
   dot.setAttribute('aria-hidden', 'true');
   canvas.appendChild(Object.assign(document.createElement('div'), {className: 'stage-blank', textContent: String(r.presenter?.title || '').replace(/\.ipynb$/i, '')}));
-  const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, audience: r.audience, deck: r.presenter, line, at, text: presentStored(), blank: false,
-                           outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now(), win: null, look: presentTheme(),
-                           laser: false, pt: null, frame: 0, busy: false, lit: false, sent: 0, dotT: 0, left: -Infinity, inert: []};
+  const at = presentIndex(r.at), ide = presentTheme();
+  const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, boot: r.boot, holder: r.holder, path, src: r.src || {}, audience: r.audience, deck: r.presenter,
+                           line: r.presenter.slides.map(s => ({groups: s.groups || 0})), at, acked: at, text: fresh ? presentStored() : r.at.size/10,
+                           blank: !fresh && !!r.at.blank, outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now() - (r.elapsed || 0)*1000, win: null,
+                           ide, look: fresh ? ide : r.look?.theme || '', laser: false, pt: null, frame: 0, busy: false, lit: false, sent: 0, dotT: 0, left: -Infinity, inert: []};
+  canvas.classList.toggle('blank', p.blank);
   const demo = spec => { const e = rupakaDraw(spec); e.done.then(() => slidesRk(e.host.shadowRoot)); return e.host; };
   const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, demo(spec)).get(id);
   const stuck = d => { const a = presentMove(p.line, p.at, d); return a.slide === p.at.slide && a.step === p.at.step; };
@@ -4628,12 +4748,12 @@ function presentOpen(r, line, at) {
   };
   const go = d => {
     const a = presentMove(p.line, p.at, d); if (a.slide === p.at.slide && a.step === p.at.step) return;
-    p.at = a; p.draw(); presentPost(p, '/present/at', presentAtBody(p));
+    p.at = a; p.draw(); presentGo(p);
   };
   const resize = d => {
     p.text = presentStep(p.text, d);
     try { localStorage.setItem(presentKey(), String(p.text)); } catch {}
-    p.draw(); presentSay(`text ${Math.round(p.text*100)}%`); presentPost(p, '/present/at', presentAtBody(p));
+    p.draw(); presentSay(`text ${Math.round(p.text*100)}%`); presentGo(p);
   };
   const full = () => document.fullscreenElement ? document.exitFullscreen().catch(() => {})
     : root.requestFullscreen ? root.requestFullscreen().catch(() => presentSay('Use View › Enter Full Screen to fill the screen.')) : presentSay('Use View › Enter Full Screen to fill the screen.');
@@ -4665,7 +4785,7 @@ function presentOpen(r, line, at) {
     if (p.lit) { p.lit = false; presentPost(p, '/present/move', {t: 'point', off: true}); }
   };
   const laser = (on = !p.laser) => { if (!on) dark(); p.laser = on; root.classList.toggle('lee-laser', on); };
-  const blank = () => { p.blank = !p.blank; canvas.classList.toggle('blank', p.blank); if (p.blank) dark(); presentPost(p, '/present/at', presentAtBody(p)); };
+  const blank = () => { p.blank = !p.blank; canvas.classList.toggle('blank', p.blank); if (p.blank) dark(); presentGo(p); };
   const esc = () => {
     if ($('.lee-modal')) return false;
     if (document.fullscreenElement) return false;
@@ -4720,15 +4840,23 @@ function presentOpen(r, line, at) {
   root.addEventListener('pointermove', e => { if (innerHeight - e.clientY <= Math.max(80, strip.offsetHeight + 24)) wake(); });
   strip.addEventListener('focusin', wake); strip.addEventListener('pointerdown', wake);
   root.addEventListener('lee-markdown-rendered', e => $$('.lee-reply-actions', e.target).forEach(x => x.remove()));
-  p.events = new EventSource('/present/events');
-  p.events.addEventListener('audience', e => {
-    const d = JSON.parse(e.data); if (d.id === p.id) q('[data-conn]').textContent = d.n ? 'Audience window: connected' : 'Audience window: not connected';
-  });
-  p.events.addEventListener('presentation-ended', e => {
-    const d = JSON.parse(e.data); if (d.id !== p.id || lee.present !== p) return;
-    closePresentation(); status(d.reason === 'replaced' ? 'Another presentation started.' : 'This presentation has ended.', 'err');
-  });
-  p.watch = new MutationObserver(() => { const t = presentTheme(); if (t && t !== p.look) presentPost(p, '/present/move', {t: 'look', theme: p.look = t}); });
+  // one stream; the browser connects it again by itself, and a closed one opens again with a growing wait; each connect starts with the live id
+  const listen = () => {
+    const s = p.events = new EventSource('/present/events'), on = (t, f) => s.addEventListener(t, e => { if (p.events === s) f(JSON.parse(e.data)); });
+    on('presentation', d => { p.wait = 0; presentCheck(p, d); }); on('presenter', d => presentCheck(p, d));
+    on('audience', d => { if (d.id === p.id) q('[data-conn]').textContent = d.n ? 'Audience window: connected' : 'Audience window: not connected'; });
+    on('presentation-ended', d => {
+      if (d.id !== p.id || lee.present !== p) return;
+      presentForget(p.id); closePresentation(); status(d.reason === 'replaced' ? 'Another presentation started.' : PRESENT_ENDED, 'err');
+    });
+    s.onerror = () => {
+      if (p.events !== s || s.readyState !== EventSource.CLOSED || lee.present !== p || p.again) return;
+      p.again = setTimeout(() => { p.again = 0; if (lee.present === p && p.events === s) listen(); }, p.wait = Math.min(15000, (p.wait || 500)*2));
+    };
+  };
+  listen();
+  // the IDE theme changing during the show is a look move; the look the server holds at a resume is kept until then
+  p.watch = new MutationObserver(() => { const t = presentTheme(); if (t && t !== p.ide) presentPost(p, '/present/move', {t: 'look', theme: p.ide = p.look = t}); });
   p.watch.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density']});
   p.clock = setInterval(() => {
     const s = Math.floor((Date.now() - p.started)/1000);
@@ -4747,8 +4875,8 @@ function presentOpen(r, line, at) {
   m.remove();
   p.draw(); wake();
   if (long.length) presentSay(long.length === 1 ? `Slide ${long[0]} has more than fits. Split it or trim it.` : `Slides ${long.join(', ')} have more than fits. Split them or trim them.`);
-  presentPost(p, '/present/at', presentAtBody(p));
-  if (p.look) presentPost(p, '/present/move', {t: 'look', theme: p.look});
+  if (fresh) { presentGo(p); if (p.look) presentPost(p, '/present/move', {t: 'look', theme: p.look}); }
+  presentKeep(p);
   root.dataset.ready = '';
 }
 
@@ -4759,7 +4887,7 @@ function closePresentation() {
   document.removeEventListener('fullscreenchange', p.onFull); document.removeEventListener('focusin', p.onFocus, true); removeEventListener('blur', p.onBlur);
   cancelAnimationFrame(p.frame); clearTimeout(p.dotT);
   for (const el of p.inert || []) el.inert = false;
-  p.events?.close(); p.watch?.disconnect(); clearTimeout(p.idle); clearTimeout(p.endT); clearInterval(p.clock);
+  p.events?.close(); clearTimeout(p.again); p.watch?.disconnect(); clearTimeout(p.idle); clearTimeout(p.endT); clearInterval(p.clock);
   document.documentElement.classList.remove('talk');
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $$('[data-markdown]', p.root).forEach(el => {

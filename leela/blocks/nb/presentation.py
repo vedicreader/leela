@@ -54,8 +54,8 @@ class Room(asyncio.Queue):
         super().put_nowait(x)
 
 class Presentation:
-    "The live presentation, if any, as `cur`: `key`, `ak`, `id`, `path`, `title`, `presenter`, `room`, `images`, `at`, `groups`, `slugs`, `live`, `rooms` and `started`. Only the event loop changes it."
-    def __init__(self): self.cur, self.n, self.subs = None, 0, set()
+    "The live presentation, if any, as `cur`: `key`, `ak`, `id`, `path`, `title`, `presenter`, `room`, `images`, `at`, `groups`, `slugs`, `src`, `live`, `rooms`, `holder` and `started`. Only the event loop changes it."
+    def __init__(self): self.cur, self.n, self.subs, self.boot = None, 0, set(), secrets.token_hex(8)
     @property
     def id(self): return self.cur and self.cur['id']
     def push(self, event, data):
@@ -68,7 +68,8 @@ class Presentation:
         if cur is self.cur: self.push('audience', dict(id=cur['id'], n=len(cur['rooms'])))
     def check(self, k, read=False):
         "None for the presenter key, or with `read` for the audience key too; else the refusal: 410 with nothing live, 403 for any other key."
-        if self.cur is None: return _no(ENDED, 410)
+        if self.cur is None:
+            r = _no(ENDED, 410); r.headers['X-Leela-Boot'] = self.boot; return r
         if not isinstance(k, str) or not k: return _no(BAD_KEY, 403)
         b = k.encode('utf-8', 'surrogatepass')
         if not any(secrets.compare_digest(b, self.cur[n].encode()) for n in (('key', 'ak') if read else ('key',))): return _no(BAD_KEY, 403)
@@ -76,6 +77,11 @@ class Presentation:
         "What a room stream sends first: the place, the theme, each demo state and the answers so far."
         live = cur['live']
         return dict(title=cur['title'], at=cur['at'], look=cur['room']['look'], demo=list(live['demo'].values()), answers=list(live['answers'].values()))
+    def mine(self, cur):
+        "What the presenter page needs to draw `cur`: both keys, the presenter copy, the place, the look, the live state and the code sources. Never on a stream."
+        return dict(ok=True, key=cur['key'], ak=cur['ak'], id=cur['id'], boot=self.boot, holder=cur['holder'], presenter=cur['presenter'], at=cur['at'],
+                    look=cur['presenter']['look'], live=cur['live'], src=cur['src'], title=cur['title'], audience=f"/present/audience?k={cur['ak']}",
+                    elapsed=max(0., time.time() - cur['started']))
     def begin(self, cur):
         "Hold `cur` in one step, and announce the one it replaces."
         old, self.cur = self.cur, cur
@@ -220,9 +226,19 @@ def connect(app, ctx):
         except Exception as e: return _no(e, 500)
         if n != pres.n: return _no(NEWER, 409)
         at = dict(slide=f"s{s['slide'] + 1}", step=s['step'], blank=False, size=10)
-        pres.begin(dict(key=key, ak=ak, id=pid, path=s['path'], title=s['title'], presenter=p, room=r, images=imgs, at=at, groups=s['groups'],
-                        slugs=_slugs(r), live=dict(outs={}, demo={}, answers={}), rooms=set(), started=time.time()))
-        return JSONResponse(dict(ok=True, key=key, ak=ak, id=pid, presenter=p, at=at, audience=f'/present/audience?k={ak}'), headers=SHUT)
+        cells = s['cells']; src = {cells[x['i']]['id']: cells[x['i']].get('source', '') for sl in s['line'] for x in sl['items'] if cells[x['i']]['cell_type'] == 'code'}
+        pres.begin(cur := dict(key=key, ak=ak, id=pid, path=s['path'], title=s['title'], presenter=p, room=r, images=imgs, at=at, groups=s['groups'], slugs=_slugs(r),
+                               src=src, live=dict(outs={}, demo={}, answers={}), rooms=set(), holder=secrets.token_hex(8), started=time.time()))
+        return JSONResponse(pres.mine(cur), headers=SHUT)
+    @rt('/present/resume', methods=['POST'])
+    async def present_resume(req):
+        "The live presentation for a presenter page that reloaded or takes over: the server's state and the same keys. It changes no place, look or room, and names a new holder."
+        d, no = await _body(req)
+        if no: return no
+        if no := pres.check(d.get('k')): return no
+        c = pres.cur; c['holder'] = secrets.token_hex(8)
+        pres.push('presenter', dict(id=c['id'], holder=c['holder']))
+        return JSONResponse(pres.mine(c), headers=SHUT)
     @rt('/present/audience', methods=['GET'])
     async def present_audience(req):
         "The audience window: a page alone that draws the room copy."
@@ -230,7 +246,8 @@ def connect(app, ctx):
     @rt('/present/deck', methods=['GET'])
     async def present_deck(req):
         "The room copy: no notes, no answers, no paths."
-        return pres.check(req.query_params.get('k'), True) or JSONResponse(pres.cur['room'], headers=PAGE)
+        r = pres.check(req.query_params.get('k'), True) or JSONResponse(pres.cur['room'], headers=PAGE)
+        r.headers['X-Leela-Boot'] = pres.boot; return r
     @rt('/present/img/{h}', methods=['GET'])
     async def present_img(req):
         "One image of the live presentation, by the key first and then by its SHA-256."
@@ -293,11 +310,11 @@ def connect(app, ctx):
         return StreamingResponse(events(), media_type='text/event-stream', headers=STREAM)
     @rt('/present/events')
     async def present_events():
-        "Presentation changes for the IDE pages: `presentation` (the live id) first, then `audience` (room streams), and `presentation-ended`."
+        "Presentation changes for the IDE pages: `presentation` (the live id, the server's boot and the holder) first, then `audience` (room streams), `presenter` (a new holder) and `presentation-ended`."
         async def events():
             q = Drop(EVENTS_MOST); pres.subs.add(q)
             try:
-                yield sse('presentation', {'id': pres.id})
+                yield sse('presentation', dict(id=pres.id, boot=pres.boot, holder=pres.cur and pres.cur['holder']))
                 if c := pres.cur: yield sse('audience', dict(id=c['id'], n=len(c['rooms'])))
                 while True: yield sse(*await q.get())
             finally: pres.subs.discard(q)

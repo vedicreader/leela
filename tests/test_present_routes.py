@@ -30,7 +30,8 @@ CELLS = [dict(id='m0', cell_type='markdown', source='# Intro\nUNSAVED-EDIT ![p](
          dict(id='m3', cell_type='markdown', source='## Two', outputs=[])]
 LINE = [dict(items=[dict(i=0, frag=-1), dict(i=2, frag=0)], notes=[1], groups=1), dict(items=[dict(i=3, frag=-1)], notes=[], groups=0)]
 #: every keyed route that changes the presentation; `/present/start` is the one unkeyed mutation, because it makes the key
-MUTATIONS = [('/present/at', dict(slide='s2', step=0, blank=False, size=10)), ('/present/move', dict(t='look', theme='leela:dark:relaxed')), ('/present/end', {})]
+MUTATIONS = [('/present/at', dict(slide='s2', step=0, blank=False, size=10)), ('/present/move', dict(t='look', theme='leela:dark:relaxed')), ('/present/resume', {}),
+             ('/present/end', {})]
 SHUT = {'cache-control': 'no-store', 'x-content-type-options': 'nosniff'}
 
 def body(root, **kw):
@@ -340,11 +341,12 @@ def test_a_second_start_ends_the_first(bare):
         one, two, stop = [], [], asyncio.Event()
         t1 = asyncio.create_task(_listen(app, one, stop))
         await _until(lambda: one)
-        assert one[0] == ('presentation', {'id': None})
+        # Task 6 on purpose: the first event also names the server's boot and the page that holds the presenter screen
+        assert one[0] == ('presentation', {'id': None, 'boot': pres.boot, 'holder': None})
         a = (await _post(app, '/present/start', body(root)))[1]
         t2 = asyncio.create_task(_listen(app, two, stop))
         await _until(lambda: two)
-        assert two[0] == ('presentation', {'id': a['id']}) and len(pres.subs) == 2
+        assert two[0] == ('presentation', {'id': a['id'], 'boot': pres.boot, 'holder': a['holder']}) and len(pres.subs) == 2
         b = (await _post(app, '/present/start', body(root)))[1]
         ended = lambda g: [d for e, d in g if e == 'presentation-ended']
         await _until(lambda: ended(one) and ended(two))
@@ -606,7 +608,7 @@ def test_the_audience_count_follows_the_room_streams(bare):
         ev, stop = [], asyncio.Event()
         te = asyncio.create_task(_listen(app, ev, stop))
         await _until(lambda: len(ev) >= 2)
-        assert ev[:2] == [('presentation', {'id': a['id']}), ('audience', {'id': a['id'], 'n': 0})]
+        assert ev[:2] == [('presentation', {'id': a['id'], 'boot': pres.boot, 'holder': a['holder']}), ('audience', {'id': a['id'], 'n': 0})]
         rooms, rstop = [[], []], asyncio.Event()
         ts = [asyncio.create_task(_listen(app, g, rstop, _room(a['ak']))) for g in rooms]
         await _until(lambda: ('audience', {'id': a['id'], 'n': 2}) in ev)
@@ -614,4 +616,51 @@ def test_the_audience_count_follows_the_room_streams(bare):
         await _until(lambda: ev[-1] == ('audience', {'id': a['id'], 'n': 0}))
         assert a['key'] not in json.dumps(ev) and a['ak'] not in json.dumps(ev)
         await _stop(stop, te)
+    asyncio.run(go())
+
+def test_resume_returns_the_servers_state_without_a_new_key_and_writes_nothing(rig):
+    "A reloaded presenter gets the stored place, blank, size, look, deck, keys and code sources; the place, the look and the room do not change."
+    c, root, app = rig
+    a = start(c, root).json(); k = a['key']
+    assert c.post('/present/at', json=dict(k=k, slide='s1', step=1, blank=True, size=12)).status_code == 200
+    assert c.post('/present/move', json=dict(k=k, t='look', theme='leela:dark:relaxed')).status_code == 200
+    cur = held(app).cur; before = copy.deepcopy({x: cur[x] for x in ('at', 'room', 'presenter', 'live', 'key', 'ak', 'id')})
+    r = c.post('/present/resume', json=dict(k=k))
+    assert r.status_code == 200 and _shut(r), r.text
+    d = r.json()
+    assert (d['key'], d['ak'], d['id'], d['audience']) == (k, a['ak'], a['id'], a['audience'])
+    assert d['at'] == dict(slide='s1', step=1, blank=True, size=12) and d['look']['theme'] == d['presenter']['look']['theme'] == 'leela:dark:relaxed'
+    assert d['presenter']['slides'] == a['presenter']['slides'] and d['live'] == dict(outs={}, demo={}, answers={})
+    assert d['src'] == a['src'] == {'c2': 'print(1)'} and d['title'] == 'a' and 0 <= d['elapsed'] < 60
+    assert d['boot'] == a['boot'] == held(app).boot and d['holder'] != a['holder'] and held(app).cur['holder'] == d['holder']
+    assert held(app).cur is cur and {x: cur[x] for x in before} == before, 'resume writes nothing the room sees'
+    for bad in (a['ak'], '0' * 32, ''):
+        assert c.post('/present/resume', json=dict(k=bad)).status_code == 403, bad
+    b = start(c, root).json()
+    assert c.post('/present/resume', json=dict(k=k)).status_code == 403 and c.post('/present/resume', json=dict(k=b['key'])).status_code == 200
+    c.post('/present/end', json=dict(k=b['key']))
+    r = c.post('/present/resume', json=dict(k=b['key']))
+    assert (r.status_code, r.json()) == (410, dict(ok=False, error=ENDED)) and r.headers['x-leela-boot'] == held(app).boot
+
+def test_the_deck_names_the_servers_boot_so_a_window_can_tell_a_restart(rig):
+    c, root, app = rig
+    ak = start(c, root).json()['ak']
+    assert c.get('/present/deck', params=dict(k=ak)).headers['x-leela-boot'] == held(app).boot
+    assert c.get('/present/deck', params=dict(k='0' * 32)).headers['x-leela-boot'] == held(app).boot
+    from leela.blocks.nb.presentation import Presentation
+    assert re.fullmatch('[0-9a-f]{16}', held(app).boot) and held(app).boot != Presentation().boot, 'a new server has a new boot'
+
+def test_a_resume_tells_the_other_pages_who_holds_the_presenter_screen(bare):
+    "A takeover or a reload names a new holder on `/present/events`, so an old presenter page closes; no event holds a key."
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', body(root)))[1]
+        ev, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, ev, stop))
+        await _until(lambda: ev)
+        s, r = await _post(app, '/present/resume', dict(k=a['key']))
+        assert s == 200
+        await _until(lambda: ('presenter', dict(id=a['id'], holder=r['holder'])) in ev)
+        assert a['key'] not in json.dumps(ev) and a['ak'] not in json.dumps(ev)
+        await _stop(stop, t)
     asyncio.run(go())

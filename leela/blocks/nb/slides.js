@@ -124,26 +124,43 @@ function slidesMath(el) {
   slidesMath.p.then(k => k && todo.forEach(m => { try { k.render(m.textContent, m, {displayMode: m.classList.contains('display'), throwOnError: false, trust: false}); } catch {} }));
 }
 
+//: The audience window waits this long before it asks again after a failure, doubling from the first to the most.
+const SLIDES_WAIT = [1000, 15000];
 /* The audience window: the room copy and the room stream, with abhyasa's `stage.js` for the laser dot, the blank screen and the mirrored demos.
-   The audience key stays in the address, because a reload asks the server for the page with it. It uses GET only. */
+   The audience key stays in the address, because a reload asks the server for the page with it. It uses GET only. One room stream at a time,
+   one retry at a time with a growing wait, and nothing after the end. */
 function slidesAudience() {
   const k = new URLSearchParams(location.search).get('k') || '';
+  // a window the IDE opened gets a copy of the IDE tab's storage, the presenter record among it
+  for (const n of Object.keys(sessionStorage)) if (n.startsWith('lee-present:')) sessionStorage.removeItem(n);
   sessionStorage.setItem('lee-present-k', k);
   const root = document.body.appendChild(Object.assign(document.createElement('div'), {className: 'lee-stage'}));
   const canvas = root.appendChild(Object.assign(document.createElement('div'), {className: 'lee-slide'}));
   const q = `?k=${encodeURIComponent(k)}`, demos = new Map(), fns = {};
   let deck = null, at = {slide: 's1', step: 0, blank: false, size: 10}, held = {demo: {}, answers: {}}, es = null, stage = null, done = false;
+  let boot = '', wait = 0, timer = 0;
   slidesScale(root);
   const name = () => String(deck?.title || '').replace(/\.ipynb$/i, '');
   const card = (text, title = name()) => {
-    done = true; es?.close(); stage?.stop();
+    done = true; es?.close(); es = null; clearTimeout(timer); stage?.stop();
     const c = Object.assign(document.createElement('div'), {className: 'lee-end'});
     c.append(Object.assign(document.createElement('h1'), {textContent: text}));
     if (title) c.append(Object.assign(document.createElement('p'), {textContent: title}));
     root.replaceChildren(c);
   };
-  const ended = () => card('The presentation has ended.');
-  const refused = r => r.status === 410 ? ended() : card('This presentation link is not valid.');
+  const ended = (b = '') => card('The presentation has ended.', b && boot && b !== boot ? 'Leela restarted. The presenter can start again.' : name());
+  // only the server's 403 means a bad link and its 410 the end; any other failure asks again later
+  const ask = then => fetch('/present/deck' + q).then(r => {
+    if (done) return;
+    if (r.status === 410) return ended(r.headers.get('X-Leela-Boot') || '');
+    if (r.status === 403) return card('This presentation link is not valid.');
+    return r.ok ? then(r) : again(then);
+  }).catch(() => again(then));
+  const again = then => {
+    if (done || timer) return;
+    timer = setTimeout(() => { timer = 0; ask(then); }, wait);
+    wait = Math.min(SLIDES_WAIT[1], wait ? wait*2 : SLIDES_WAIT[0]);
+  };
   const ch = {on(t, f) { (fns[t] ||= []).push(f); return () => { fns[t] = fns[t].filter(x => x !== f); }; }, send() {}, close() {}};
   const emit = m => { m = {v: 1, ...m}; if (abhyasaStage.valid(m)) for (const f of fns[m.t] || []) f(m); };
   const show = (d, slug) => {
@@ -169,7 +186,7 @@ function slidesAudience() {
   };
   const keep = m => { held[m.t][m.slug] = m; for (const d of demos.values()) if (d.slug === m.slug && canvas.contains(d.host)) show(d, d.slug); };
   const on = {
-    state: d => { at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
+    state: d => { wait = 0; at = d.at; held = {demo: Object.fromEntries(d.demo.map(x => [x.slug, {t: 'demo', ...x}])), answers: Object.fromEntries(d.answers.map(x => [x.slug, {t: 'answers', ...x}]))};
                   slidesTheme(d.look?.theme, deck.look?.mono); emit({t: 'point', off: true}); emit({t: 'blank', on: !!at.blank}); draw(); },
     at: d => { if (d.slide !== at.slide) held.answers = {}; at = d; emit({t: 'go', slide: d.slide, beat: Math.min(50, d.step + 1)}); emit({t: 'blank', on: !!d.blank}); },
     point: d => emit({t: 'point', ...d}),
@@ -178,20 +195,25 @@ function slidesAudience() {
     look: d => slidesTheme(d.theme, deck.look?.mono),
     end: () => emit({t: 'end'}),
   };
+  // the browser connects an open stream again by itself; a closed one is asked about first, so a 403 or 410 shows its card
   const listen = () => {
-    es = new EventSource('/present/room' + q);
-    for (const [t, f] of Object.entries(on)) es.addEventListener(t, e => { try { f(JSON.parse(e.data)); } catch {} });
-    es.onerror = () => { if (!done && es.readyState === EventSource.CLOSED) fetch('/present/deck' + q).then(r => r.ok ? setTimeout(listen, 1000) : refused(r)).catch(() => setTimeout(listen, 2000)); };
+    if (done) return;
+    es?.close();
+    const s = es = new EventSource('/present/room' + q);
+    for (const [t, f] of Object.entries(on)) s.addEventListener(t, e => { if (s === es) try { f(JSON.parse(e.data)); } catch {} });
+    s.onerror = () => { if (s === es && s.readyState === EventSource.CLOSED) again(listen); };
   };
   addEventListener('keydown', e => { if (e.code === 'KeyF' && !e.metaKey && !e.ctrlKey && !e.altKey) document.documentElement.requestFullscreen?.().catch(() => {}); });
   addEventListener('dblclick', () => document.documentElement.requestFullscreen?.().catch(() => {}));
-  fetch('/present/deck' + q).then(async r => {
-    if (!r.ok) return refused(r);
-    deck = await r.json(); document.title = name() || 'Presentation';
+  const load = async r => {
+    boot = r.headers.get('X-Leela-Boot') || '';
+    try { deck = await r.json(); } catch { return again(load); }
+    document.title = name() || 'Presentation';
     slidesTheme(deck.look?.theme, deck.look?.mono);
     stage = abhyasaStage.audience(canvas, {ch, title: name(), draw: m => m.t === 'go' ? draw() : m.t === 'end' ? ended() : (m.t === 'demo' || m.t === 'answers') && keep(m)});
     listen();
-  }).catch(() => card('The presentation could not be loaded. Reload this window.', ''));
+  };
+  ask(load);
 }
 
 if (typeof document !== 'undefined' && document.body?.dataset.page === 'audience') slidesAudience();

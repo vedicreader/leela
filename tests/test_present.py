@@ -231,3 +231,11 @@ def test_the_wheel_carries_the_audience_page_and_no_reveal():
     with zipfile.ZipFile(wheels[-1]) as z: names = set(z.namelist())
     for f in AUDIENCE: assert f in names, f
     assert not [f for f in names if f.startswith('leela/vendor/reveal/') or f.endswith('present-notes.html')]
+
+def test_run_knows_when_a_cell_no_longer_matches_the_stored_deck():
+    "Task 7 disables Run with `presentStale`: a code cell that was edited, is gone, or is in another notebook no longer matches the server's deck."
+    got = _js("""(() => { globalThis.mdSource = c => c.source; const p = {src: {c1: 'print(1)', c2: 'x'}};
+      globalThis.lee = {cells: [{id: 'c1', source: 'print(1)'}, {id: 'c2', source: 'y'}]};
+      const a = ['c1', 'c2', 'c3', 'm0'].map(i => presentStale(p, i)); globalThis.lee = {cells: []};
+      return [...a, presentStale(p, 'c1')]; })()""")
+    assert got == [False, True, True, True, True]

@@ -665,3 +665,281 @@ def test_an_external_link_opens_one_tab_in_a_browser(tmp_path):
         await pg.wait_for_timeout(300)
         return await pg.evaluate('() => window._posts')
     assert asyncio.run(_real_page(go, tmp_path, 'chromium')) == []
+
+import re, socket, sys, threading   # noqa: E402
+from playwright.async_api import async_playwright   # noqa: E402
+from test_web_slow import _free_port, _launch, _started, fake_model   # noqa: E402
+from leela.app import ide_app   # noqa: E402
+from leela.workspace import Workspace   # noqa: E402
+
+RELOAD = KEY_CELLS[:7]
+#: frames in which the presenter canvas shows a slide while it is not blank
+LIT = '''(() => { window._leeLit = 0; const tick = () => { const c = document.querySelector('.lee-present .lee-slide:not(.lee-measure)');
+  if (c && c.querySelector('.lee-slide-body') && !c.classList.contains('blank')) window._leeLit++; requestAnimationFrame(tick); };
+  requestAnimationFrame(tick); })()'''
+#: every room stream the page opened, to count the ones still open
+ROOMS = '''(() => { const E = window.EventSource; if (!E) return; window._leeRooms = [];
+  window.EventSource = class extends E { constructor(...a) { super(...a); if (String(a[0]).includes('/present/room')) window._leeRooms.push(this); } }; })()'''
+#: the server's place and look, read from the `state` of a new room stream after this presenter's posts
+STATE = '''async () => { const p = lee.present; await p.chain; return await new Promise(ok => { const es = new EventSource('/present/room?k=' + p.ak);
+  es.addEventListener('state', e => { es.close(); const d = JSON.parse(e.data); ok({at: d.at, theme: d.look.theme}); }); }); }'''
+#: what `/present/events` says first: the live id, and the count of room streams
+LIVE = '''() => new Promise(ok => { const es = new EventSource('/present/events'), got = {};
+  setTimeout(() => { es.close(); ok({stalled: true}); }, 8000);
+  es.addEventListener('presentation', e => { got.id = JSON.parse(e.data).id; if (!got.id) { es.close(); ok(got); } });
+  es.addEventListener('audience', e => { got.n = JSON.parse(e.data).n; es.close(); ok(got); }); })'''
+OFFER = "() => { const m = document.querySelector('.lee-modal'); return m && [m.querySelector('.lee-mhead').textContent, m.querySelector('.lee-dialogcopy').textContent, m.querySelector('#dialogyes').textContent]; }"
+AUD_BLANK = "() => document.querySelector('.lee-stage > .lee-slide')?.classList.contains('blank')"
+
+async def _audience(pg, text):
+    async with pg.context.expect_page() as pop:
+        await pg.click('.lee-present-strip [data-audience]')
+    aud = await pop.value
+    await aud.wait_for_function(f'() => document.querySelector(".lee-stage .lee-slide")?.textContent.includes("{text}")', timeout=20000)
+    await pg.wait_for_function('() => document.querySelector(".lee-present-strip [data-conn]").textContent === "Audience window: connected"')
+    return aud
+
+async def _tab(pg, copy=False):
+    "A second IDE tab of the same browser; `copy` opens it with an opener, so the browser copies this tab's `sessionStorage` into it."
+    async with pg.context.expect_page() as pop:
+        await pg.evaluate('c => { window.open(location.href, "_blank", c ? "" : "noopener"); }', copy)
+    t = await pop.value
+    await t.wait_for_load_state('networkidle'); await t.wait_for_function('window.lee && lee.keys.length', timeout=20000)
+    return t
+
+def test_a_reloaded_presenter_comes_back_as_the_server_holds_it(tmp_path):
+    "Mid-beat, blank, a size and a look the presenter never drew: a reload shows the server's state, posts nothing, keeps the stored deck, and the audience follows the next key."
+    _nb(tmp_path/'deck.ipynb', RELOAD)
+    async def go(pg):
+        out, posts = {}, []
+        for s in (PROBE, LIT): await pg.context.add_init_script(s)
+        await _open(pg, tmp_path/'deck.ipynb', 7)
+        await _start(pg)
+        aud = await _audience(pg, 'One')
+        await pg.evaluate('() => lee.present.root.focus()')
+        await pg.keyboard.press('ArrowRight'); await pg.keyboard.press('ArrowRight')
+        await pg.click('.lee-present-strip [data-bigger]')
+        await pg.evaluate('() => applyTheme("leela:dark:relaxed")')
+        await pg.wait_for_function('async () => (await (' + STATE + ')()).theme === "leela:dark:relaxed"')
+        # the server's last acknowledged state differs from what this page drew: blank, size 13 and another look
+        await pg.evaluate('''async () => { const p = lee.present; await p.chain; const k = p.key, j = b => fetch(b[0], {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...b[1], k})});
+          await j(['/present/at', {slide: 's2', step: 1, blank: true, size: 13}]); await j(['/present/move', {t: 'look', theme: 'cursor:dark:tight'}]); }''')
+        await aud.wait_for_function(AUD_BLANK)
+        out['before'] = await pg.evaluate(STATE)
+        key, t0 = await pg.evaluate('() => lee.present.key'), await pg.evaluate('() => Date.now()')
+        _nb(tmp_path/'deck.ipynb', RELOAD + [md('# Added on disk', 'slide', 'k9')])
+        pg.on('request', lambda r: posts.append(r.url) if r.method == 'POST' and '/present/' in r.url else None)
+        await pg.reload()
+        await pg.wait_for_function(READY, timeout=20000)
+        await pg.wait_for_timeout(600)
+        out['after'] = await pg.evaluate('''() => { const p = lee.present; return {at: [p.at.slide, p.at.step], blank: p.root.querySelector('.lee-slide').classList.contains('blank'),
+          text: p.text, look: p.look, slides: p.deck.slides.length, where: p.root.querySelector('[data-where]').textContent, lit: window._leeLit,
+          conn: p.root.querySelector('[data-conn]').textContent}; }''')
+        out['same_key'], out['older'] = await pg.evaluate('() => lee.present.key') == key, await pg.evaluate('() => lee.present.started') < t0
+        out['posts'], out['server'] = list(posts), await pg.evaluate(STATE)
+        await aud.evaluate('() => sessionStorage.clear()')   # the audience key comes from the address, not from storage
+        await aud.reload()
+        await aud.wait_for_function(f'() => ({AUD_BLANK})() && document.querySelector(".lee-stage .lee-slide").textContent.includes("Two")', timeout=20000)
+        await aud.wait_for_timeout(300)
+        out['aud_shown'] = await aud.evaluate('() => window._leeShown')
+        await pg.evaluate('() => lee.present.root.focus()')
+        await pg.keyboard.press('KeyB'); await pg.keyboard.press('ArrowRight')
+        await aud.wait_for_function(f'() => !({AUD_BLANK})() && !document.querySelector(".lee-stage .lee-frag-hidden") && document.querySelector(".lee-stage .lee-slide").textContent.includes("two b")')
+        out['next'] = await pg.evaluate(STATE)
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['before'] == {'at': {'slide': 's2', 'step': 1, 'blank': True, 'size': 13}, 'theme': 'cursor:dark:tight'}, out['before']
+    a = out['after']
+    assert a['at'] == [1, 1] and a['blank'] and a['text'] == 1.3 and a['look'] == 'cursor:dark:tight', a
+    assert a['slides'] == 4 and a['where'] == '2 / 4 · step 2 / 3', ('navigation comes from the stored deck, not the changed notebook', a)
+    assert a['lit'] == 0, 'the reloaded presenter never drew the slide unblanked'
+    assert a['conn'] == 'Audience window: connected' and out['same_key'] and out['older'], out
+    assert out['posts'] == [u for u in out['posts'] if u.endswith('/present/resume')] and len(out['posts']) == 1, ('a reload writes nothing first', out['posts'])
+    assert out['server'] == out['before'], 'the server keeps blank, size and look'
+    assert out['aud_shown'] == 0, 'a reloaded audience never paints a slide while blank'
+    assert out['next'] == {'at': {'slide': 's2', 'step': 2, 'blank': False, 'size': 13}, 'theme': 'cursor:dark:tight'}, out['next']
+
+def test_another_tab_gets_presenter_control_only_by_taking_over(tmp_path):
+    "A new IDE tab gets nothing; a tab that copied this tab's storage asks first; Take over moves the presenter screen and closes the old one."
+    _nb(tmp_path/'deck.ipynb', LASER)
+    async def go(pg):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', 3)
+        await _start(pg)
+        fresh = await _tab(pg); await fresh.wait_for_timeout(1500)
+        out['fresh'] = await fresh.evaluate("() => [!!document.querySelector('.lee-present'), !!document.querySelector('.lee-modal')]")
+        await fresh.close()
+        cp = await _tab(pg, copy=True)
+        await cp.wait_for_selector('.lee-modal #dialogyes', timeout=20000)
+        out['offer'] = [await cp.evaluate(OFFER), await cp.evaluate("() => !!document.querySelector('.lee-present')")]
+        await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press('ArrowRight')
+        out['still'] = (await pg.evaluate(SERVER))[:2]
+        await cp.click('#dialogyes')
+        await cp.wait_for_function(READY, timeout=20000)
+        out['taken'] = await cp.evaluate(AT)
+        await pg.wait_for_function('() => !lee.present', timeout=20000)
+        await pg.wait_for_function(f'() => ({STATUS})() === "The presentation moved to another tab."')
+        await cp.evaluate('() => lee.present.root.focus()'); await cp.keyboard.press('ArrowRight')
+        out['moves'] = (await cp.evaluate(SERVER))[:2]
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['fresh'] == [False, False], 'a new tab has no presenter key and asks nothing'
+    (head, copy, yes), shown = out['offer']
+    assert head == 'Present from this tab?' and yes == 'Take over' and 'other tab stops presenting' in copy and not shown, out['offer']
+    assert out['still'] == [1, 0], 'the first tab keeps control while the copy asks'
+    assert out['taken'] == [1, 0] and out['moves'] == [2, 0]
+
+def test_a_stale_presenter_closes_on_reconnect_when_it_missed_the_end(tmp_path):
+    "A presenter that slept through the replacing start learns the new id when its event stream connects again, and closes without touching the new show."
+    _nb(tmp_path/'deck.ipynb', LASER)
+    async def go(pg):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', 3)
+        await _start(pg)
+        await pg.evaluate('() => lee.present.events.close()')
+        other = await _tab(pg)
+        await _open(other, tmp_path/'deck.ipynb', 3); await _start(other)
+        await other.evaluate('() => lee.present.root.focus()'); await other.keyboard.press('ArrowRight')
+        out['other'] = (await other.evaluate(SERVER))[:2]
+        out['missed'] = await pg.evaluate('() => !!lee.present')
+        await pg.evaluate("() => lee.present.events.dispatchEvent(new Event('error'))")
+        await pg.wait_for_function('() => !lee.present', timeout=20000)
+        await pg.wait_for_function(f'() => ({STATUS})() === "Another presentation started."')
+        await pg.wait_for_timeout(500)
+        out['offer'] = await pg.evaluate(OFFER)
+        out['kept'] = [(await other.evaluate(SERVER))[:2], await other.evaluate('() => !!lee.present')]
+        out['records'] = await pg.evaluate('() => Object.keys(sessionStorage).filter(k => k.startsWith("lee-present:"))')
+        # a stale record, as a tab holds after a sleep: the reload asks once, gets 403, drops the record and touches nothing
+        await pg.evaluate('''() => sessionStorage.setItem('lee-present:0123456789abcdef', JSON.stringify({key: '0'.repeat(32), boot: '', path: '', at: {slide: 2, step: 0}}))''')
+        await pg.reload(); await pg.wait_for_function('window.lee && lee.keys.length'); await pg.wait_for_timeout(1500)
+        out['stale'] = await pg.evaluate("() => [!!lee.present, Object.keys(sessionStorage).filter(k => k.startsWith('lee-present:')), !!document.querySelector('.lee-modal')]")
+        out['kept'] += [(await other.evaluate(SERVER))[:2], await other.evaluate('() => !!lee.present')]
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['other'] == [1, 0] and out['missed'] is True, out
+    assert out['offer'] is None and out['records'] == [], 'no restart is offered while another presentation is live, and the record is gone'
+    assert out['stale'] == [False, [], False], out['stale']
+    assert out['kept'] == [[1, 0], True, [1, 0], True]
+
+def test_reconnect_storms_keep_one_audience_connection(tmp_path):
+    "Many errors at once give one room stream; a failed deck fetch is not a bad link; nothing connects after the end; the count stays right."
+    _nb(tmp_path/'deck.ipynb', LASER)
+    async def go(pg):
+        out, failed = {}, []
+        for s in (PROBE, ROOMS): await pg.context.add_init_script(s)
+        await _open(pg, tmp_path/'deck.ipynb', 3)
+        await _start(pg)
+        aud = await _audience(pg, 'Alpha')
+        async def once(route):
+            if failed: return await route.continue_()
+            failed.append(1); await route.fulfill(status=503, body='busy')
+        await aud.route(re.compile(r'/present/deck\?'), once)
+        await aud.evaluate("() => { const s = window._leeES; s.close(); for (let i = 0; i < 6; i++) s.dispatchEvent(new Event('error')); }")
+        await aud.wait_for_timeout(4000)
+        out['storm'] = [*await aud.evaluate("() => [window._leeRooms.filter(e => e.readyState !== 2).length, !!document.querySelector('.lee-end')]"), len(failed)]
+        # checked here: leaked streams take the browser's six connections to the host, and every later step would stall
+        assert out['storm'] == [1, False, 1], ('one room stream after the storm, and a 503 deck is no bad link', out['storm'])
+        out['live'] = await pg.evaluate(LIVE)
+        await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press('ArrowRight')
+        await aud.wait_for_function("() => document.querySelector('.lee-stage .lee-slide').textContent.includes('Beta')")
+        await _end(pg)
+        await aud.wait_for_function("() => document.querySelector('.lee-end')")
+        n = await aud.evaluate('() => window._leeRooms.length')
+        await aud.evaluate("() => window._leeRooms.at(-1).dispatchEvent(new Event('error'))")
+        await aud.wait_for_timeout(2500)
+        out['after_end'] = await aud.evaluate(f"() => [window._leeRooms.filter(e => e.readyState !== 2).length, window._leeRooms.length - {n}]")
+        out['card'] = await aud.text_content('.lee-end')
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out['live'] == {'id': out['live']['id'], 'n': 1}, out['live']
+    assert out['after_end'] == [0, 0] and 'The presentation has ended.' in out['card'], out
+
+def test_a_lost_presenter_key_says_so_and_offers_a_deliberate_restart(tmp_path):
+    "With the tab's storage cleared, a reload cannot control the live show: it says so, changes nothing, and Start again begins a new one at the same slide."
+    _nb(tmp_path/'deck.ipynb', LASER)
+    async def go(pg):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', 3)
+        await _start(pg)
+        await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press('ArrowRight')
+        await pg.evaluate(SERVER)
+        id0 = await pg.evaluate('() => lee.present.id')
+        await pg.evaluate('() => sessionStorage.clear()')
+        await pg.reload(); await pg.wait_for_function('window.lee && lee.keys.length')
+        await pg.wait_for_selector('.lee-modal #dialogyes', timeout=20000)
+        out['offer'] = [await pg.evaluate(OFFER), await pg.evaluate('() => !!lee.present'), (await pg.evaluate(LIVE))['id'] == id0]
+        await pg.click('#dialogyes')
+        await pg.wait_for_function(READY, timeout=20000)
+        out['again'] = [await pg.evaluate(AT), await pg.evaluate('() => lee.present.id') != id0]
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    (head, copy, yes), shown, live = out['offer']
+    assert head == 'This tab lost its presenter key' and yes == 'Start again' and 'from slide 2' in copy and not shown and live, out['offer']
+    assert out['again'] == [[1, 0], True]
+
+def _serve_loop(ws, port):
+    "`_serve` with its loop kept, so a test can drop every open connection the way a stopped server does."
+    import uvicorn
+    srv, box = uvicorn.Server(uvicorn.Config(ide_app(ws), host='127.0.0.1', port=port, log_level='error')), {}
+    async def main(): box['loop'] = asyncio.get_running_loop(); await srv.serve()
+    threading.Thread(target=asyncio.run, args=(main(),), daemon=True).start()
+    return srv, box
+
+def _listening(port):
+    with socket.socket() as s: return s.connect_ex(('127.0.0.1', port)) == 0
+
+async def _restartable(fn, root):
+    "`_real_page` whose `fn(pg, restart)` can stop the server and start a new one on the same port, as a restart of Leela does."
+    (root/'.venv').symlink_to(Path(sys.prefix))
+    wss, port, cur = [], _free_port(), {}
+    async def up():
+        ws = Workspace(roots=[str(root)], approvals='auto'); fake_model(ws); wss.append(ws)
+        cur['srv'], cur['box'] = _serve_loop(ws, port); await _started(cur['srv'])
+    async def restart():
+        srv, loop = cur['srv'], cur['box']['loop']
+        srv.should_exit = True
+        for _ in range(500):
+            if not _listening(port): break
+            await asyncio.sleep(.02)
+        # no new connection reaches it now; the open streams drop, as they do when the process ends
+        loop.call_soon_threadsafe(lambda: [c.transport.abort() for c in list(srv.server_state.connections)])
+        await asyncio.sleep(.5); await up()
+    await up()
+    try:
+        async with async_playwright() as pw:
+            b = await _launch(pw)
+            try:
+                pg = await b.new_page()
+                await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
+                await pg.wait_for_function('window.lee && lee.keys.length')
+                return await fn(pg, restart)
+            finally: await b.close()
+    finally:
+        cur['srv'].should_exit = True
+        for ws in wss: ws.shutdown_now()
+
+def test_a_server_restart_says_so_in_both_windows(tmp_path):
+    "The restarted server holds no show: the presenter closes at once and offers Start again after a confirmed 410; the audience says Leela restarted."
+    _nb(tmp_path/'deck.ipynb', LASER)
+    async def go(pg, restart):
+        out = {}
+        await _open(pg, tmp_path/'deck.ipynb', 3)
+        await _start(pg)
+        aud = await _audience(pg, 'Alpha')
+        await pg.evaluate('() => lee.present.root.focus()'); await pg.keyboard.press('ArrowRight')
+        await pg.evaluate(SERVER)
+        id0 = await pg.evaluate('() => lee.present.id')
+        await restart()
+        await pg.wait_for_selector('.lee-modal #dialogyes', timeout=30000)
+        out['pres'] = [await pg.evaluate(OFFER), await pg.evaluate('() => !!lee.present')]
+        await aud.wait_for_function("() => document.querySelector('.lee-end')", timeout=30000)
+        out['aud'] = await aud.text_content('.lee-end')
+        await pg.click('#dialogyes')
+        await pg.wait_for_function(READY, timeout=20000)
+        out['again'] = [await pg.evaluate(AT), await pg.evaluate('() => lee.present.id') != id0]
+        return out
+    out = asyncio.run(_restartable(go, tmp_path))
+    (head, copy, yes), shown = out['pres']
+    assert head == 'Leela restarted' and 'from slide 2' in copy and 'audience window must open again' in copy and yes == 'Start again' and not shown, out['pres']
+    assert 'The presentation has ended.' in out['aud'] and 'Leela restarted' in out['aud'], out['aud']
+    assert out['again'] == [[1, 0], True]

@@ -301,6 +301,7 @@ GET /present/stage.js
 POST /present/at
 POST /present/end
 POST /present/move
+POST /present/resume
 POST /present/start
 GET,POST /project/fastship
 GET,POST /project/fastship/action
