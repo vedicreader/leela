@@ -294,10 +294,13 @@ GET,POST /nb/save
 GET,POST /outline
 GET /present/audience
 GET /present/deck
+GET /present/events
 GET /present/img/{h}
+GET /present/room
 GET /present/stage.js
 POST /present/at
 POST /present/end
+POST /present/move
 POST /present/start
 GET,POST /project/fastship
 GET,POST /project/fastship/action

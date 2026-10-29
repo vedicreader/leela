@@ -850,6 +850,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             Meta(name='lee-katex-css', content=_asset('katex/katex.min.css')),
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
+            Link(rel='stylesheet', href=_asset('lee-slides.css')),
             Link(rel='stylesheet', href=_asset('lee-hl.css')),
             *[Script(src=_asset(b), defer=True) for b in IDE_BUNDLES])
     def _term_cwd(ref=None): return term_cwd(ws, ref)

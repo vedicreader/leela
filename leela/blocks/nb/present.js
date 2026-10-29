@@ -1,42 +1,18 @@
-/* The open notebook as reveal.js slides, laid over Leela's window. Cells group the way RISE and
-   nbconvert group them, from `metadata.slideshow.slide_type`. Speaker notes are never on a slide:
-   they go to a page in the machine's own browser, which `/present/events` keeps on the current one. */
-const REVEAL_THEMES = new Set(['beige', 'black', 'blood', 'dracula', 'league', 'moon', 'night', 'serif',
-                               'simple', 'sky', 'solarized', 'white']);
-//: RISE took `linear` from reveal.js 3, which renamed it `slide`.
-const RISE_TRANSITIONS = {none: 'none', fade: 'fade', slide: 'slide', convex: 'convex', concave: 'concave',
-                          zoom: 'zoom', linear: 'slide'};
-const SLIDE_NUMBERS = new Set(['h.v', 'h/v', 'c', 'c/t']);
-const NAV_CMDS = new Set(['next', 'prev', 'left', 'right', 'up', 'down']);
+/* The open notebook presented as slides. Cells group the way RISE groups them, from `metadata.slideshow.slide_type`, into one line.
+   The server builds the presenter copy and the room copy; `slides.js` draws them; each move goes to the server, which sends it to the audience windows. */
 const PRESENT_NOT_NOTEBOOK = 'only a notebook can be presented as slides';
 const PRESENT_NOTHING = 'this notebook has nothing to present: every cell is empty or skipped';
-//: Below this a slide scrolls rather than shrink past reading.
-const PRESENT_MIN_ZOOM = .35;
+const PRESENT_KINDS = new Set(['markdown', 'code', 'raw', 'prompt']);
+//: A start the server refused because the notebook is too large to send.
+const PRESENT_LARGE = /characters of (output|source)|larger than 32 MB|at most 2,000 cells/;
+const PRESENT_GONE = /^This presentation (has ended|link is not valid)\.$/;
+const PRESENT_HINT = 'Drag this window to the projector, then press F.';
 
 //: The text scale after one press of A- (`d = -1`) or A+ (`d = 1`): tenths, from half to two and a half.
 const presentStep = (s, d) => Math.min(2.5, Math.max(.5, Math.round((s + d/10)*10)/10));
 const presentKey = (what = 'text') => `lee-present-${what}:${lee.path || lee.tabKey}`;
-//: `left`: text left and headings centred, the default; `center`: everything centred, as reveal's themes do.
-function presentAlign() {
-  try { return localStorage.getItem(presentKey('align')) === 'center' ? 'center' : 'left'; } catch { return 'left'; }
-}
 function presentStored() {
   try { const s = +localStorage.getItem(presentKey()); return s >= .5 && s <= 2.5 ? s : 1; } catch { return 1; }
-}
-
-//: Zoom each slide reveal has laid out (far ones are `display: none`) until its content fits the slide's height.
-function presentFit(p) {
-  const h = p.reveal.getComputedSlideSize().height, scale = p.reveal.getScale() || 1;
-  for (const s of $$('.slides section:not(.stack)', p.root)) {
-    if (getComputedStyle(s).display === 'none') continue;
-    s.style.zoom = s.style.maxHeight = s.style.overflowY = '';
-    const tall = () => s.getBoundingClientRect().height/scale;
-    let need = tall(), z = 1;
-    for (let k = 0; k < 4 && need > h + 1 && z > PRESENT_MIN_ZOOM; k++) {
-      z = Math.max(PRESENT_MIN_ZOOM, z*h/need); s.style.zoom = z; need = tall();
-    }
-    if (need > h + 1) { s.style.maxHeight = `${h/z}px`; s.style.overflowY = 'auto'; }
-  }
 }
 
 //: Whether markdown text has an H2 line outside a backtick or tilde fence.
@@ -115,217 +91,188 @@ function presentMove(line, {slide, step}, d) {
   return {slide, step};
 }
 
-//: RISE settings as reveal.js options, by name. Nothing else reaches reveal.js.
+
+//: The RISE setting that still counts: where the presentation starts. reveal.js and its options left with the one mode.
 function riseConfig(rise) {
   const r = rise && typeof rise === 'object' && !Array.isArray(rise) ? rise : {};
-  const bool = v => typeof v === 'boolean' ? v : undefined;
-  const size = v => typeof v === 'number' && v > 0 ? v : typeof v !== 'string' ? undefined
-    : /^\d+(\.\d+)?%$/.test(v.trim()) ? v.trim() : /^\d+$/.test(v.trim()) ? +v : undefined;
-  const html = v => typeof v === 'string' && v.trim() ? v : '';
-  const reveal = {transition: RISE_TRANSITIONS[r.transition], width: size(r.width), height: size(r.height),
-    controls: bool(r.controls), progress: bool(r.progress), center: bool(r.center),
-    slideNumber: typeof r.slideNumber === 'boolean' || SLIDE_NUMBERS.has(r.slideNumber) ? r.slideNumber : undefined};
-  for (const k of Object.keys(reveal)) if (reveal[k] === undefined) delete reveal[k];
-  return {reveal, theme: REVEAL_THEMES.has(r.theme) ? r.theme : 'simple',
-          header: html(r.header), footer: html(r.footer), overlay: html(r.overlay),
-          start: r.start_slideshow_at === 'beginning' ? 'beginning' : 'selected'};
-}
-
-let revealLoading = null;
-function loadReveal() {
-  if (window.Reveal) return Promise.resolve(window.Reveal);
-  return revealLoading ||= new Promise((ok, no) => {
-    const s = document.createElement('script'); s.src = '/leestatic/reveal/reveal.js';
-    s.onload = () => window.Reveal ? ok(window.Reveal) : no(new Error('reveal.js loaded but defined no Reveal'));
-    s.onerror = () => { revealLoading = null; s.remove(); no(new Error('reveal.js could not be loaded')); };
-    document.head.appendChild(s);
-  });
-}
-const presentCss = href => new Promise(ok => {
-  const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; l.dataset.leePresent = '';
-  l.onload = l.onerror = () => ok(l); document.head.appendChild(l);
-});
-
-function presentMarkdown(host, text, cell) {
-  host.dataset.mdBase = nbBase();
-  renderMarkdown(host, text, true, mdPaint(cell, false));
-}
-function presentOutputs(box, outputs) {
-  $$('[data-markdown]', box).forEach(el => { for (const v of el._leeCodeViews || []) try { LeeCM.destroy(v); } catch {} });
-  box.replaceChildren(...(outputs || []).map(outputEl));
+  return {start: r.start_slideshow_at === 'beginning' ? 'beginning' : 'selected'};
 }
 const presentError = m => { try { return JSON.parse(m).error || m; } catch { return m; } };
-const presentFence = (src, lang) => {
-  const ticks = '`'.repeat(Math.max(3, ...(src.match(/`+/g) || []).map(s => s.length + 1)));
-  return `${ticks}${lang}\n${src}\n${ticks}`;
-};
+const presentRefused = e => PRESENT_LARGE.test(e.message || '') ? `${e.message} Clear large outputs, then try again.` : `slides could not start: ${e.message || e}`;
+const presentAtBody = p => ({slide: `s${p.at.slide + 1}`, step: p.at.step, blank: p.blank, size: Math.round(p.text*10)});
+const presentTheme = () => lee.theme ? `${lee.theme.family}:${lee.theme.mode}:${lee.theme.density}` : '';
 
-//: One cell on a slide. The host is on the page already: a render that lands on a detached one is dropped.
-function presentCell(host, c) {
-  host.className = `lee-present-cell ${c.cell_type}`; host.dataset.cellId = c.id;
-  if (c.cell_type === 'markdown') return presentMarkdown(host, mdSource(c), c);
-  if (c.cell_type === 'raw') return void (host.appendChild(document.createElement('pre')).textContent = mdSource(c));
-  if (c.cell_type === 'prompt') {
-    host.innerHTML = '<div class="lee-present-question"></div><div class="lee-reply"></div><div class="lee-present-out"></div>';
-    presentMarkdown(host.firstChild, mdSource(c));
-    if (c.reply) presentMarkdown(host.children[1], (c.calls || []).length ? stripWorkLog(c.reply) : c.reply);
-    return presentOutputs(host.lastChild, c.outputs);
-  }
-  host.innerHTML = '<div class="lee-present-src"></div><div class="lee-present-run">' +
-    '<button type="button" title="run this cell" aria-label="run this cell">▶</button><span></span></div>' +
-    '<div class="lee-present-out"></div>';
-  presentMarkdown(host.firstChild, presentFence(mdSource(c), nbLang()));
-  $('button', host).onclick = () => presentRun(host, c.id);
-  presentOutputs(host.lastChild, c.outputs);
-}
-async function presentRun(host, id) {
-  const button = $('.lee-present-run button', host), say = $('.lee-present-run span', host);
-  const i = lee.cells.findIndex(c => c.id === id);
-  if (i < 0) return void (say.textContent = 'this cell is no longer in the notebook');
-  button.disabled = true; say.textContent = 'running…'; host.classList.remove('failed'); host.classList.add('running');
-  const r = await runCell(i, false);
-  if (!host.isConnected) return;
-  button.disabled = false; host.classList.remove('running'); host.classList.toggle('failed', !r.ok);
-  say.textContent = r.ok ? '' : presentError(r.error);
-  const c = lee.cells.find(x => x.id === id); if (c) presentOutputs($('.lee-present-out', host), c.outputs);
-  lee.present?.fit?.();
-}
-
-function presentTitle(cells, slide) {
-  for (const {i} of slide.items) {
-    const h = cells[i].cell_type === 'markdown' && mdSource(cells[i]).match(/^ {0,3}#{1,6}\s+(.+?)[\s#]*$/m);
-    if (h) return h[1];
-  }
-  return slide.items.length ? mdSource(cells[slide.items[0].i]).trim().split('\n')[0].slice(0, 80) : '';
-}
 function presentSay(text) {
   const m = lee.present && $('.lee-present-msg', lee.present.root); if (!m) return;
   m.textContent = text; m.hidden = !text;
   clearTimeout(m._leeTimer); if (text) m._leeTimer = setTimeout(() => { m.hidden = true; }, 6000);
 }
-const presentSync = data => post('/present/state', data).catch(e => presentSay(`notes page not updated: ${e.message || e}`));
-const presentNotesPage = () => openExternal(location.origin + '/present/notes');
+//: Post to the server in order with this presenter's other posts; a refused key closes the presenter screen.
+function presentPost(p, url, body = {}, always = false) {
+  return p.chain = p.chain.then(() => (always || lee.present === p) && post(url, {...body, k: p.key})).catch(e => {
+    if (lee.present !== p) return;
+    if (PRESENT_GONE.test(e.message || '')) { closePresentation(); status('This presentation has ended.', 'err'); }
+    else presentSay('Moves are not reaching the audience window.');
+  });
+}
+//: The cell's live outputs in place of the server's copy, on the presenter screen only.
+function presentOuts(p, id, outs) {
+  const box = $(`.lee-slide .lee-block[data-cell="${CSS.escape(id)}"] .lee-out`, p.root); if (!box) return;
+  $$('[data-markdown]', box).forEach(el => { for (const v of el._leeCodeViews || []) try { LeeCM.destroy(v); } catch {} });
+  box.replaceChildren(...(outs || []).map(outputEl));
+}
+async function presentRun(p, id) {
+  const i = lee.cells.findIndex(c => c.id === id), button = () => $(`[data-run="${CSS.escape(id)}"]`, p.root);
+  if (i < 0) return presentSay('This cell is no longer in the notebook.');
+  if (button()) button().disabled = true;
+  p.outs[id] = lee.cells[i].outputs || []; presentSay('Running…');
+  const r = await runCell(i, false);
+  if (lee.present !== p) return;
+  const c = lee.cells.find(x => x.id === id), err = (c?.outputs || []).find(o => o.output_type === 'error');
+  if (c) presentOuts(p, id, p.outs[id] = c.outputs || []);
+  if (button()) button().disabled = false;
+  presentSay(err ? `${err.ename}: ${err.evalue}` : r.ok ? '' : presentError(r.error));
+}
+function presentEnd(p) { presentPost(p, '/present/end', {}, true); closePresentation(); }
 
 async function presentNotebook(start = '') {
   if (lee.kind !== 'notebook') return status(PRESENT_NOT_NOTEBOOK, 'err');
-  const cells = lee.cells, deck = presentSlides(cells, mdSource);
-  if (!deck.length) return status(PRESENT_NOTHING, 'err');
+  const cells = lee.cells, line = presentLine(presentSlides(cells, mdSource));
+  if (!line.length) return status(PRESENT_NOTHING, 'err');
   closePresentation();
-  const cfg = riseConfig(lee.rise), root = document.createElement('div');
-  root.className = 'lee-present'; root.tabIndex = -1; root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'slides');
-  root.innerHTML = '<div class="reveal"><div class="slides"></div></div>' +
-    '<div class="lee-present-header"></div><div class="lee-present-footer"></div><div class="lee-present-overlay"></div>' +
-    '<div class="lee-present-bar"><button type="button" data-smaller title="smaller text" aria-label="smaller text">A−</button>' +
-    '<button type="button" data-bigger title="larger text" aria-label="larger text">A+</button>' +
-    '<button type="button" data-align title="centre all text" aria-label="centre all text">↔</button>' +
-    '<button type="button" data-notes title="open the speaker notes in your browser">notes</button>' +
-    '<button type="button" data-full title="fill the screen">⛶</button>' +
-    '<button type="button" data-close title="stop presenting (escape)" aria-label="stop presenting">×</button></div>' +
-    '<div class="lee-present-msg" role="status" hidden></div>';
-  const p = lee.present = {root, reveal: null, fsExit: 0, text: presentStored(), base: 0, align: presentAlign()};
-  const aligned = () => {
-    root.dataset.align = p.align;
-    const b = $('[data-align]', root), left = p.align === 'left';
-    b.textContent = left ? '↔' : '⇤';
-    b.title = b.ariaLabel = left ? 'centre all text' : 'text left, headings centred';
+  const ticket = lee.presentTicket = (lee.presentTicket || 0) + 1, name = lee.path || lee.tabKey;
+  const at = (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
+  status('Preparing slides…');
+  let r;
+  try {
+    r = await post('/present/start', {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
+      cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))});
+  } catch (e) { if (ticket === lee.presentTicket) status(presentRefused(e), 'err'); return; }
+  if (ticket !== lee.presentTicket || lee.present) return;
+  status('');
+  presentOpen(r, line, at);
+}
+
+const PRESENT_HTML = '<div class="lee-stage"><div class="lee-slide"></div></div>' +
+  '<aside class="lee-present-notes" aria-label="Notes" hidden><p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
+  '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside>' +
+  '<div class="lee-present-strip" role="toolbar" aria-label="Presentation controls">' +
+  '<button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +
+  '<span data-where></span><span data-runs></span><span class="lee-gap"></span>' +
+  '<button type="button" data-audience title="Open a window to show on the projector">Audience window</button><span data-conn role="status">Audience window: not connected</span>' +
+  '<button type="button" data-notes title="Notes (N)">Notes</button>' +
+  '<button type="button" data-smaller title="Smaller text" aria-label="Smaller text">A−</button><button type="button" data-bigger title="Larger text" aria-label="Larger text">A+</button>' +
+  '<button type="button" data-full title="Full screen (F)">Full screen</button><button type="button" data-end title="End the presentation">End</button></div>' +
+  '<div class="lee-present-msg" role="status" hidden></div>';
+
+//: The presenter screen for the started presentation `r`, at place `at` of `line`.
+function presentOpen(r, line, at) {
+  const root = Object.assign(document.createElement('div'), {className: 'lee-present', tabIndex: -1, innerHTML: PRESENT_HTML});
+  root.setAttribute('role', 'dialog'); root.setAttribute('aria-label', 'Presentation');
+  const q = s => $(s, root), canvas = q('.lee-slide'), notes = q('.lee-present-notes'), strip = q('.lee-present-strip'), end = q('[data-end]');
+  const p = lee.present = {root, key: r.key, ak: r.ak, id: r.id, audience: r.audience, deck: r.presenter, line, at, text: presentStored(), blank: false,
+                           outs: {}, demos: new Map(), chain: Promise.resolve(), started: Date.now(), win: null, look: presentTheme()};
+  const mount = (spec, id) => p.demos.get(id) || p.demos.set(id, rupakaDraw(spec).host).get(id);
+  const run = b => { const e = Object.assign(document.createElement('button'), {type: 'button', title: 'Run this code cell', onclick: () => presentRun(p, b.cell)}); e.dataset.run = b.cell; return e; };
+  p.draw = () => {
+    const s = p.deck.slides[p.at.slide] || {}, {fits} = slidesDraw(canvas, p.deck, p.at.slide, p.at.step, {key: p.ak, size: Math.round(p.text*10), mount, math: renderMath});
+    for (const [id, outs] of Object.entries(p.outs)) presentOuts(p, id, outs);
+    q('[data-where]').textContent = `${p.at.slide + 1} / ${p.deck.slides.length}`;
+    q('[data-notes-body]').replaceChildren(slidesSafe(s.notes || '', p.ak));
+    q('[data-upcoming]').textContent = s.next ? `Next: ${s.next}` : 'This is the last slide.';
+    const code = (s.blocks || []).filter(b => b.kind === 'code');
+    q('[data-runs]').replaceChildren(...code.map((b, n) => Object.assign(run(b), {textContent: code.length > 1 ? `Run ${n + 1}` : 'Run'})));
+    if (!fits) presentSay(`Slide ${p.at.slide + 1} has more than fits. Split it or trim it.`);
   };
-  aligned();
-  closeInlinePopover(); document.body.appendChild(root); root.focus({preventScroll: true});
-  const slidesEl = $('.slides', root), flat = [];
-  deck.forEach((stack, h) => {
-    const outer = stack.length > 1 ? slidesEl.appendChild(document.createElement('section')) : slidesEl;
-    stack.forEach((slide, v) => {
-      const sec = outer.appendChild(document.createElement('section'));
-      for (const {i, frag} of slide.items) {
-        const host = sec.appendChild(document.createElement('div'));
-        presentCell(host, cells[i]);
-        if (frag >= 0) { host.classList.add('fragment'); host.dataset.fragmentIndex = frag; }
-      }
-      flat.push({h, v, title: presentTitle(cells, slide), notes: slide.notes.map(i => mdSource(cells[i])).join('\n\n')});
-    });
-  });
-  for (const k of ['header', 'footer', 'overlay']) if (cfg[k]) renderMarkdown($(`.lee-present-${k}`, root), cfg[k], true);
-  let fitting = false;
-  const layout = p.fit = () => requestAnimationFrame(() => {
-    if (!p.reveal || fitting) return;
-    fitting = true;
-    try { presentFit(p); p.reveal.layout(); } finally { fitting = false; }
-  });
-  const sized = () => { if (p.base) root.style.setProperty('--r-main-font-size', `${p.base*p.text}px`); };
+  const go = d => {
+    const a = presentMove(p.line, p.at, d); if (a.slide === p.at.slide && a.step === p.at.step) return;
+    p.at = a; p.draw(); presentPost(p, '/present/at', presentAtBody(p));
+  };
   const resize = d => {
     p.text = presentStep(p.text, d);
     try { localStorage.setItem(presentKey(), String(p.text)); } catch {}
-    sized(); layout(); presentSay(`text ${Math.round(p.text*100)}%`);
+    p.draw(); presentSay(`text ${Math.round(p.text*100)}%`); presentPost(p, '/present/at', presentAtBody(p));
   };
-  $('[data-smaller]', root).onclick = () => resize(-1);
-  $('[data-bigger]', root).onclick = () => resize(1);
-  $('[data-align]', root).onclick = () => {
-    p.align = p.align === 'left' ? 'center' : 'left';
-    try { localStorage.setItem(presentKey('align'), p.align); } catch {}
-    aligned(); layout(); presentSay(p.align === 'left' ? 'text left, headings centred' : 'all text centred');
-  };
-  // a bar button left focused would take reveal's Space and arrows
-  $('.lee-present-bar', root).addEventListener('click', () => root.focus({preventScroll: true}));
-  root.addEventListener('lee-markdown-rendered', e => { $$('.lee-reply-actions', e.target).forEach(x => x.remove()); layout(); });
-  root.addEventListener('load', layout, true);
-  root.addEventListener('click', e => { if (e.target.closest('.lee-output-fold')) layout(); });
-  $('[data-close]', root).onclick = closePresentation;
-  $('[data-notes]', root).onclick = presentNotesPage;
-  $('[data-full]', root).onclick = () => {
-    if (document.fullscreenElement) return document.exitFullscreen().catch(() => {});
-    if (!root.requestFullscreen) return presentSay('use View › Enter Full Screen to fill the screen');
-    root.requestFullscreen().catch(() => presentSay('use View › Enter Full Screen to fill the screen'));
-  };
-  p.onFs = () => { if (!document.fullscreenElement) p.fsExit = performance.now(); layout(); };
-  // Chromium spends the first Escape leaving fullscreen, and may deliver it as well.
+  const full = () => document.fullscreenElement ? document.exitFullscreen().catch(() => {})
+    : root.requestFullscreen ? root.requestFullscreen().catch(() => presentSay('Use View › Enter Full Screen to fill the screen.')) : presentSay('Use View › Enter Full Screen to fill the screen.');
+  const toggleNotes = () => { notes.hidden = !notes.hidden; };
+  p.keys = {ArrowRight: () => go(1), ArrowDown: () => go(1), Space: () => go(1), PageDown: () => go(1),
+            ArrowLeft: () => go(-1), ArrowUp: () => go(-1), 'Shift+Space': () => go(-1), PageUp: () => go(-1),
+            KeyN: toggleNotes, KeyF: full, Escape: () => { notes.hidden = true; }};
+  // the rules of `abhyasaStage.presenter`, which the IDE page does not load: no held, Alt, Cmd or Ctrl key, no key in a text box or a demo but Esc
   p.onKey = e => {
-    if (e.key !== 'Escape' || $('.lee-modal') || document.fullscreenElement || performance.now() - p.fsExit < 400) return;
-    e.preventDefault(); e.stopPropagation(); closePresentation();
+    if (lee.present !== p || e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || $('.lee-modal')) return;
+    const a = document.activeElement;
+    if (a && (a.matches('textarea, input, select, [contenteditable]:not([contenteditable="false"])') || a.isContentEditable)) return;
+    if (e.key !== 'Escape' && a?.closest('.lee-rupaka')) return;
+    if ((e.code === 'Space' || e.code === 'Enter') && a?.matches('button') && strip.contains(a)) return;
+    const fn = p.keys[(e.shiftKey ? 'Shift+' : '') + e.code]; if (!fn) return;
+    e.preventDefault(); e.stopPropagation(); fn();
   };
-  p.onOutput = e => $$(`.lee-present-cell[data-cell-id="${CSS.escape(e.detail.id)}"] .lee-present-out`, root)
-    .forEach(box => { presentOutputs(box, e.detail.outputs); layout(); });
-  addEventListener('keydown', p.onKey, true); addEventListener('lee-cell-output', p.onOutput);
-  document.addEventListener('fullscreenchange', p.onFs);
-  try {
-    const [R] = await Promise.all([loadReveal(), presentCss('/leestatic/reveal/reveal.css'),
-                                   presentCss(`/leestatic/reveal/theme/${cfg.theme}.css`)]);
-    if (lee.present !== p) return;
-    p.base = parseFloat(getComputedStyle(root).getPropertyValue('--r-main-font-size')) || 40; sized();
-    p.reveal = new R($('.reveal', root), {embedded: true, hash: false, history: false, respondToHashChanges: false,
-      fragmentInURL: false, help: false, scrollActivationWidth: null,
-      keyboardCondition: () => lee.present === p && !$('.lee-modal'), ...cfg.reveal});
-    await p.reveal.initialize();
-    if (lee.present !== p) return;
-  } catch (e) {
-    if (lee.present === p) closePresentation();
-    return status(`slides could not start: ${e.message || e}`, 'err');
-  }
-  const at = (start || cfg.start) === 'selected' ? presentAt(deck, lee.sel) : {h: 0, v: 0, f: -1};
-  p.reveal.slide(at.h, at.v, at.f);
-  p.reveal.on('slidechanged', layout); p.reveal.on('resize', layout); layout();
-  const index = () => { const s = p.reveal.getIndices(); return Math.max(0, flat.findIndex(x => x.h === s.h && x.v === (s.v || 0))); };
-  p.reveal.on('slidechanged', () => presentSync({op: 'move', index: index()}));
-  await presentSync({op: 'start', title: (lee.path || lee.tabKey).split('/').pop(), slides: flat, index: index()});
-  if (lee.present !== p) return;
+  p.onOutput = e => { if (lee.present === p && e.detail.id in p.outs) presentOuts(p, e.detail.id, p.outs[e.detail.id] = e.detail.outputs || []); };
+  q('[data-prev]').onclick = () => go(-1); q('[data-next]').onclick = () => go(1);
+  q('[data-smaller]').onclick = () => resize(-1); q('[data-bigger]').onclick = () => resize(1);
+  q('[data-notes]').onclick = toggleNotes; q('[data-full]').onclick = full;
+  q('[data-audience]').onclick = () => {
+    const url = location.origin + p.audience;
+    if (inDesktopShell()) { openExternal(url); return presentSay(PRESENT_HINT); }
+    const w = p.win && !p.win.closed ? p.win : window.open('', 'leela-audience', 'popup,width=1280,height=720');
+    if (!w) return presentSay('The browser blocked the window. Click again.');
+    let mine = false; try { mine = w.location.pathname === '/present/audience' && w.sessionStorage.getItem('lee-present-k') === p.ak; } catch {}
+    if (!mine) w.location.href = url;
+    p.win = w; w.focus(); presentSay(PRESENT_HINT);
+  };
+  end.onclick = () => {
+    if (end.dataset.armed) return presentEnd(p);
+    end.dataset.armed = '1'; end.textContent = 'End now?';
+    clearTimeout(p.endT); p.endT = setTimeout(() => { delete end.dataset.armed; end.textContent = 'End'; }, 3000);
+  };
+  const wake = () => {
+    root.classList.remove('lee-idle'); clearTimeout(p.idle);
+    p.idle = setTimeout(() => { if (!strip.contains(document.activeElement)) root.classList.add('lee-idle'); }, 3000);
+  };
+  root.addEventListener('pointermove', e => { if (innerHeight - e.clientY <= 80) wake(); });
+  strip.addEventListener('focusin', wake); strip.addEventListener('pointerdown', wake);
+  root.addEventListener('lee-markdown-rendered', e => $$('.lee-reply-actions', e.target).forEach(x => x.remove()));
   p.events = new EventSource('/present/events');
-  p.events.addEventListener('nav', e => { const {cmd} = JSON.parse(e.data); if (NAV_CMDS.has(cmd)) p.reveal[cmd](); });
-  presentNotesPage();
+  p.events.addEventListener('audience', e => {
+    const d = JSON.parse(e.data); if (d.id === p.id) q('[data-conn]').textContent = d.n ? 'Audience window: connected' : 'Audience window: not connected';
+  });
+  p.events.addEventListener('presentation-ended', e => {
+    const d = JSON.parse(e.data); if (d.id !== p.id || lee.present !== p) return;
+    closePresentation(); status(d.reason === 'replaced' ? 'Another presentation started.' : 'This presentation has ended.', 'err');
+  });
+  p.watch = new MutationObserver(() => { const t = presentTheme(); if (t && t !== p.look) presentPost(p, '/present/move', {t: 'look', theme: p.look = t}); });
+  p.watch.observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density']});
+  p.clock = setInterval(() => {
+    const s = Math.floor((Date.now() - p.started)/1000);
+    q('[data-clock]').textContent = `Time: ${Math.floor(s/60)}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+  document.addEventListener('keydown', p.onKey, true); addEventListener('lee-cell-output', p.onOutput);
+  document.documentElement.classList.add('talk');
+  closeInlinePopover(); document.body.appendChild(root); slidesScale(q('.lee-stage')); root.focus({preventScroll: true});
+  const m = root.appendChild(Object.assign(document.createElement('div'), {className: 'lee-slide lee-measure'}));
+  const long = p.deck.slides.map((s, i) => slidesDraw(m, p.deck, i, s.groups, {key: p.ak, size: Math.round(p.text*10)}).fits ? 0 : i + 1).filter(Boolean);
+  m.remove();
+  p.draw(); wake();
+  if (long.length) presentSay(long.length === 1 ? `Slide ${long[0]} has more than fits. Split it or trim it.` : `Slides ${long.join(', ')} have more than fits. Split them or trim them.`);
+  presentPost(p, '/present/at', presentAtBody(p));
+  if (p.look) presentPost(p, '/present/move', {t: 'look', theme: p.look});
+  root.dataset.ready = '';
 }
 
 function closePresentation() {
   const p = lee.present; if (!p) return;
   lee.present = null;
-  removeEventListener('keydown', p.onKey, true); removeEventListener('lee-cell-output', p.onOutput);
-  document.removeEventListener('fullscreenchange', p.onFs);
-  p.events?.close();
+  document.removeEventListener('keydown', p.onKey, true); removeEventListener('lee-cell-output', p.onOutput);
+  p.events?.close(); p.watch?.disconnect(); clearTimeout(p.idle); clearTimeout(p.endT); clearInterval(p.clock);
+  document.documentElement.classList.remove('talk');
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   $$('[data-markdown]', p.root).forEach(el => {
     clearTimeout(el._leeMarkdownTimer); if (el._leeCodeFrame) cancelAnimationFrame(el._leeCodeFrame);
     for (const v of el._leeCodeViews || []) try { LeeCM.destroy(v); } catch {}
   });
   $$('iframe', p.root).forEach(f => f.remove());
-  try { p.reveal?.destroy(); } catch {}
-  p.root.remove(); $$('link[data-lee-present]').forEach(l => l.remove());
-  if (p.reveal) presentSync({op: 'end'});
+  p.root.remove();
   if (lee.kind === 'notebook' && lee.cells.length) focusCell(lee.sel);
 }

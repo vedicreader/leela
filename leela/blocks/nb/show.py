@@ -14,9 +14,11 @@ from rupaka.spec import validate
 from ...core.text import MD_HIGHLIGHT, _HTML_ATTRS, _HTML_DROP, _HTML_TAGS, _html_attr, clean_html
 
 MOST, MOST_GROUPS, ROOM_LONG = 65536, 49, '<p>Output is too long for the room screen.</p>'
+NOT_SHOWN = '<p class="nb-none">This output type is not shown in presentations.</p>'
 IMG_MOST, IMG_BYTES, IMG_TOTAL, IMG_SIDE, IMG_PIXELS = 100, 8 << 20, 64 << 20, 16384, 40_000_000
 _RASTER = (ImageFormat.png, ImageFormat.jpeg, ImageFormat.gif, ImageFormat.webp)
 _ROOM_ATTRS = {k: v - {'id', 'title', 'data-id'} for k, v in _HTML_ATTRS.items()}
+_SHOWN = {RUPAKA_MIME, 'text/html', 'text/markdown', 'text/plain', *(f.mime_type for f in _RASTER)}
 _VOID = frozenset('area base br col embed hr img input link meta source track wbr'.split())
 
 # copy: importing abhyasa.blocks.talk.app builds the talk app; drop this when abhyasa moves room_spec into abhyasa.talk or core
@@ -115,6 +117,7 @@ def _one(o, base, key, images, fs, room):
     "`(html, specs)` of output `o`: its first kind that gives something, as the IDE ranks them; never script, widget, SVG or Plotly."
     if o.get('output_type') == 'stream': return _pre(o.get('text')), []
     d, meta = o.get('data') or {}, o.get('metadata') or {}
+    if not _SHOWN & set(d): return NOT_SHOWN, []
     if RUPAKA_MIME in d:   # the demo, never the HTML page `rupaka.show` sends beside it
         return room_html(_fence(s), base, key, images, fs, room) if (s := _demo(d[RUPAKA_MIME])) else ('', [])
     for f in _RASTER:

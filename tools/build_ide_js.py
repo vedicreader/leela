@@ -25,7 +25,7 @@ LAYERS = {
     'lee-core.js': [
         'static/js/core.js', 'blocks/keys/keymap.js', 'static/js/actions.js',
         'blocks/editor/markdown.js', 'blocks/editor/tabs.js', 'blocks/editor/mount.js',
-        'blocks/nb/cells.js', 'blocks/nb/lesson.js', 'blocks/nb/exercise.js', 'blocks/nb/widgets.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js', 'blocks/nb/present.js',
+        'blocks/nb/cells.js', 'blocks/nb/lesson.js', 'blocks/nb/exercise.js', 'blocks/nb/widgets.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js', 'blocks/nb/slides.js', 'blocks/nb/present.js',
         'blocks/runs/runfile.js', 'blocks/runtime/kernel.js', 'blocks/keys/bind.js',
         'static/js/focus.js', 'blocks/nb/diffs.js', 'blocks/runtime/exec.js',
         'blocks/vars/vars.js'
@@ -52,7 +52,7 @@ LAYERS = {
 }
 
 #: copy -> the one module it is, for a page outside the IDE that loads that module alone. The wheel ships no block module.
-ALONE = {'lee-pane.js': 'blocks/learn/pane.js'}
+ALONE = {'lee-pane.js': 'blocks/learn/pane.js', 'lee-slides.js': 'blocks/nb/slides.js'}
 
 assert tuple(LAYERS) == IDE_BUNDLES, f'{tuple(LAYERS)} is not what `core.web` serves: {IDE_BUNDLES}'
 

@@ -1,6 +1,6 @@
-"Presenting a notebook as RISE-style slides: grouping, settings, the notes channel, and every way in."
+"Presenting a notebook as RISE-style slides: grouping, settings, the routes that left, and every way in."
 
-import asyncio, importlib.util, json, shutil, subprocess
+import importlib.util, json, shutil, subprocess
 from pathlib import Path
 
 import pytest
@@ -124,19 +124,11 @@ def test_49_fragment_groups_fit_and_the_rest_show_with_the_49th():
         assert g['last'] == {'slide': 0, 'step': 48} and g['back'] == {'slide': 0, 'step': 49}, n
         assert g['end'] == {'slide': 1, 'step': 0}, n
 
-def test_rise_settings_reach_reveal_by_name_and_nothing_else_does():
-    got = _js('[riseConfig({theme: "black", transition: "linear", width: "100%", height: 768, controls: false,'
-              ' progress: true, slideNumber: "c/t", center: false, header: "<b>h</b>", footer: "  ", overlay: "o",'
-              ' start_slideshow_at: "beginning", autolaunch: true, keyboard: {}, plugins: ["x"]}),'
-              ' riseConfig("rise"), riseConfig([1]), riseConfig(null),'
-              ' riseConfig({theme: "nope", width: "wide", height: -3, transition: "spin", slideNumber: "x", controls: "no"}),'
-              ' riseConfig({width: "1280", height: "75 %"})]')
-    full, *empty, bad, digits = got
-    assert full['reveal'] == {'transition': 'slide', 'width': '100%', 'height': 768, 'controls': False,
-                              'progress': True, 'slideNumber': 'c/t', 'center': False}
-    assert (full['theme'], full['header'], full['footer'], full['overlay'], full['start']) == ('black', '<b>h</b>', '', 'o', 'beginning')
-    for e in empty + [bad]: assert (e['reveal'], e['theme'], e['start']) == ({}, 'simple', 'selected'), e
-    assert digits['reveal'] == {'width': 1280}
+def test_rise_settings_keep_only_the_start():
+    "Task 4 on purpose: reveal.js left, so `rise.theme` and every reveal option are dropped (decision 6); only where to start is read."
+    got = _js('[riseConfig({theme: "black", transition: "linear", width: "100%", header: "<b>h</b>", start_slideshow_at: "beginning"}),'
+              ' riseConfig("rise"), riseConfig([1]), riseConfig(null), riseConfig({start_slideshow_at: "x", theme: "night"})]')
+    assert got == [{'start': 'beginning'}] + [{'start': 'selected'}] * 4
 
 def test_the_text_size_moves_in_tenths_between_half_and_two_and_a_half():
     assert _js('[presentStep(1, 1), presentStep(1, -1), presentStep(1.2, 1), presentStep(.5, -1), presentStep(2.5, 1), presentStep(.7000001, 1)]') \
@@ -179,49 +171,31 @@ def test_present_is_one_action_with_the_same_name_everywhere_it_appears():
     js = (ROOT/'leela'/'static'/'js'/'actions.js').read_text()
     assert 'present_notebook:' in js and 'present_from_cell:' in js
 
-def test_the_notes_page_follows_the_deck_and_says_when_it_has_ended(tmp_path):
-    from leela.blocks.nb.app import Show
-    async def go():
-        show, q = Show(), asyncio.Queue()
-        show.subs.add(q)
-        with pytest.raises(ValueError): show.update({'op': 'move', 'index': 1})
-        st = show.update({'op': 'start', 'title': 't.ipynb', 'index': 9,
-                          'slides': [{'title': 'one', 'notes': 'say one'}, {'title': 'two', 'notes': ''}]})
-        assert (st['live'], st['index'], st['slides'][0]['notes']) == (True, 1, 'say one')
-        show.update({'op': 'move', 'index': 0})
-        show.update({'op': 'end'})
-        got = [q.get_nowait() for _ in range(q.qsize())]
-        assert [(e, d['live'], d.get('index')) for e, d in got] == [('state', True, 1), ('state', True, 0), ('state', False, None)]
-        assert got[-1][1]['ended'] and got[-1][1]['title'] == 't.ipynb'
-    asyncio.run(go())
+def test_the_notes_page_and_its_routes_are_gone(tmp_path):
+    "Task 4 on purpose: the notes drawer replaces the notes page, and the room stream replaces `/present/state` and `/present/nav`."
     with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
-        page = c.get('/present/notes')
-        assert page.status_code == 200 and 'EventSource' in page.text and '/present/nav' in page.text
-        assert c.post('/present/nav', json={'cmd': 'next'}).status_code == 409, 'nothing to move yet'
-        assert c.post('/present/state', json={'op': 'start', 'slides': [{'title': 'a'}]}).json()['live']
-        assert c.post('/present/nav', json={'cmd': 'next'}).json()['ok']
-        assert c.post('/present/nav', json={'cmd': 'jump'}).status_code == 400
-        assert c.post('/present/state', json={'op': 'move', 'index': 'x'}).status_code == 409
-        assert c.post('/present/state', json={'op': 'end'}).json()['ended']
-        assert c.get('/present/state').json()['live'] is False
+        for m, p in (('get', '/present/notes'), ('get', '/present/state'), ('post', '/present/state'), ('post', '/present/nav')):
+            assert getattr(c, m)(p).status_code in (404, 405), p
+    assert not (ROOT/'leela'/'static'/'present-notes.html').exists() and not (ROOT/'leela'/'vendor'/'reveal').exists()
 
 def _setup(rel):
     spec = importlib.util.spec_from_file_location(f'pkg_{Path(rel).parent.name}', ROOT/rel)
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     return m
 
-@pytest.mark.parametrize('rel', ['packaging/macos/setup.py', 'packaging/windows/setup.py'])
-def test_the_desktop_builds_carry_reveal_and_its_licence(rel):
-    shipped = {str(Path(f).relative_to(ROOT)) for _, fs in _setup(rel).DATA_FILES for f in fs}
-    for f in ('LICENSE', 'reveal.js', 'reveal.css', 'theme/simple.css', 'theme/black.css'):
-        assert f'leela/vendor/reveal/{f}' in shipped, f
-    assert 'leela/static/present-notes.html' in shipped
+AUDIENCE = ('leela/static/present-audience.html', 'leela/static/lee-slides.css', 'leela/static/lee-slides.js')
 
-def test_the_wheel_carries_reveal_and_the_notes_page():
+@pytest.mark.parametrize('rel', ['packaging/macos/setup.py', 'packaging/windows/setup.py'])
+def test_the_desktop_builds_carry_the_audience_page_and_no_reveal(rel):
+    "Task 4 on purpose: reveal.js and the notes page left; the audience page and the shared renderer replace them."
+    shipped = {str(Path(f).relative_to(ROOT)) for _, fs in _setup(rel).DATA_FILES for f in fs}
+    for f in AUDIENCE: assert f in shipped, f
+    assert not [f for f in shipped if f.startswith('leela/vendor/reveal/') or f.endswith('present-notes.html')]
+
+def test_the_wheel_carries_the_audience_page_and_no_reveal():
     import zipfile
     wheels = sorted((ROOT/'dist').glob('leela-*.whl'))
     if not wheels: pytest.skip('no wheel in dist/ — run python -m build --wheel first')
     with zipfile.ZipFile(wheels[-1]) as z: names = set(z.namelist())
-    for f in ('leela/vendor/reveal/LICENSE', 'leela/vendor/reveal/reveal.js', 'leela/vendor/reveal/theme/simple.css',
-              'leela/static/present-notes.html'):
-        assert f in names, f
+    for f in AUDIENCE: assert f in names, f
+    assert not [f for f in names if f.startswith('leela/vendor/reveal/') or f.endswith('present-notes.html')]

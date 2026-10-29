@@ -30,7 +30,7 @@ CELLS = [dict(id='m0', cell_type='markdown', source='# Intro\nUNSAVED-EDIT ![p](
          dict(id='m3', cell_type='markdown', source='## Two', outputs=[])]
 LINE = [dict(items=[dict(i=0, frag=-1), dict(i=2, frag=0)], notes=[1], groups=1), dict(items=[dict(i=3, frag=-1)], notes=[], groups=0)]
 #: every keyed route that changes the presentation; `/present/start` is the one unkeyed mutation, because it makes the key
-MUTATIONS = [('/present/at', dict(slide='s2', step=0, blank=False, size=10)), ('/present/end', {})]
+MUTATIONS = [('/present/at', dict(slide='s2', step=0, blank=False, size=10)), ('/present/move', dict(t='look', theme='leela:dark:relaxed')), ('/present/end', {})]
 SHUT = {'cache-control': 'no-store', 'x-content-type-options': 'nosniff'}
 
 def body(root, **kw):
@@ -58,7 +58,9 @@ def test_a_presentation_starts_from_the_live_cells_and_writes_nothing(rig):
     assert r.status_code == 200 and _shut(r), r.text
     d = r.json()
     assert re.fullmatch('[0-9a-f]{32}', d['key']) and re.fullmatch('[0-9a-f]{16}', d['id']) and d['id'] != d['key']
-    assert d['ok'] and d['at'] == dict(slide='s1', step=0, blank=False, size=10) and d['audience'] == '/present/audience?k=' + d['key']
+    # Task 4 on purpose: the audience URL and every image URL hold the audience key `ak`, so the audience page never sees the presenter key
+    assert re.fullmatch('[0-9a-f]{32}', d['ak']) and d['ak'] != d['key']
+    assert d['ok'] and d['at'] == dict(slide='s1', step=0, blank=False, size=10) and d['audience'] == '/present/audience?k=' + d['ak']
     ps = json.dumps(d['presenter'])
     assert 'SECRET-NOTE' in ps and 'UNSAVED-EDIT' in ps and [s['id'] for s in d['presenter']['slides']] == ['s1', 's2']
     deck = c.get('/present/deck', params=dict(k=d['key']))
@@ -66,7 +68,7 @@ def test_a_presentation_starts_from_the_live_cells_and_writes_nothing(rig):
     room = deck.json(); rs = json.dumps(room)
     assert 'SECRET-NOTE' not in rs and 'UNSAVED-EDIT' in rs and str(root) not in rs and [s['id'] for s in room['slides']] == ['s1', 's2']
     code = room['slides'][0]['blocks'][1]
-    assert code['cell'] == 'c2' and 'UNSAVED-OUT' in code['out'] and f'/present/img/{_sha(RED)}?k=' + d['key'] in code['out']
+    assert code['cell'] == 'c2' and 'UNSAVED-OUT' in code['out'] and f'/present/img/{_sha(RED)}?k=' + d['ak'] in code['out'] and d['key'] not in rs + ps
     assert set(held(app).cur['images']) == {_sha(RED), _sha(BLUE)}
     assert sorted((p, p.stat().st_mtime_ns) for p in root.rglob('*')) == before
 
@@ -267,7 +269,8 @@ def test_audience_page_headers(rig):
     p = _Page(); p.feed(r.text)
     assert p.inline == [] and all(set(s) <= {'src', 'defer'} for s in p.scripts) and p.body == {'data-page': 'audience'}
     assert [s['src'] for s in p.scripts] == [f'/present/stage.js?v={_sha(STAGE)[:16]}', _asset('lee-rupaka.js'), _asset('lee-slides.js')]
-    assert [l['href'] for l in p.links if l.get('rel') == 'stylesheet'] == [_asset('lee-ide.css'), _asset('lee-slides.css')]
+    # Task 4 on purpose: code on a slide needs the highlight colours of `lee-hl.css`
+    assert [l['href'] for l in p.links if l.get('rel') == 'stylesheet'] == [_asset('lee-ide.css'), _asset('lee-slides.css'), _asset('lee-hl.css')]
     assert k not in r.text
 
 def test_stage_js_is_abhyasas_own_file_without_a_key(rig):
@@ -288,8 +291,9 @@ def test_a_bounded_queue_drops_the_oldest():
     assert [q.get_nowait() for _ in range(q.qsize())] == [2, 3, 4]
 
 def _scope(method, path, headers=()):
+    path, _, q = path.partition('?')
     return {'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1', 'method': method, 'scheme': 'http', 'path': path, 'raw_path': path.encode(),
-            'query_string': b'', 'root_path': '', 'headers': [(b'host', b'127.0.0.1'), *headers], 'client': ('127.0.0.1', 50000), 'server': ('127.0.0.1', 80)}
+            'query_string': q.encode(), 'root_path': '', 'headers': [(b'host', b'127.0.0.1'), *headers], 'client': ('127.0.0.1', 50000), 'server': ('127.0.0.1', 80)}
 
 async def _post(app, path, b):
     raw, msgs, sent = json.dumps(b).encode(), [], False
@@ -301,8 +305,8 @@ async def _post(app, path, b):
     await app(_scope('POST', path, [(b'content-type', b'application/json'), (b'content-length', str(len(raw)).encode())]), receive, send)
     return msgs[0]['status'], json.loads(b''.join(m.get('body', b'') for m in msgs if m['type'] == 'http.response.body'))
 
-async def _listen(app, got, stop):
-    "Read `/present/events` into `got` as `(event, data)` until `stop` is set, then hang up."
+async def _listen(app, got, stop, path='/present/events'):
+    "Read the SSE stream at `path` into `got` as `(event, data)` until `stop` is set or the stream ends, then hang up."
     sent, buf = False, ['']
     async def receive():
         nonlocal sent
@@ -312,9 +316,9 @@ async def _listen(app, got, stop):
         if m['type'] != 'http.response.body' or not m.get('body'): return
         *done, buf[0] = (buf[0] + m['body'].decode()).split('\n\n')
         for f in done:
-            ev = dict(l.split(': ', 1) for l in f.split('\n') if ': ' in l)
-            got.append((ev['event'], json.loads(ev['data'])))
-    await app(_scope('GET', '/present/events'), receive, send)
+            ev = dict(l.split(': ', 1) for l in f.split('\n') if ': ' in l and not l.startswith(':'))
+            if 'event' in ev: got.append((ev['event'], json.loads(ev['data'])))
+    await app(_scope('GET', path), receive, send)
 
 async def _until(cond, t=10):
     for _ in range(int(t / .01)):
@@ -405,3 +409,194 @@ def test_the_desktop_builds_carry_abhyasas_stage_js(rel):
     "`/present/stage.js` reads the file through `importlib.resources`; a scanned package keeps only bytecode in the freezer's zip."
     assert 'abhyasa' in _setup(rel).PACKAGES
     assert (Path(importlib.util.find_spec('abhyasa').submodule_search_locations[0])/'core'/'stage.js').read_bytes() == STAGE
+
+from rupaka.spec import demo, gate, is_, slider   # noqa: E402
+
+SPEC = demo('d1', title='Weights', state={'x': 2}, blocks=[slider('x', label='x', min=0, max=4, step=1), gate('g1', 'Which one?', ['one', 'two'], is_('two'), why='because')])
+DEMO_CELLS = CELLS + [dict(id='m4', cell_type='markdown', source=f'## Demo\n\n```rupaka\n{json.dumps(SPEC)}\n```', outputs=[])]
+DEMO_LINE = LINE + [dict(items=[dict(i=4, frag=-1)], notes=[], groups=0)]
+MOVES = [dict(t='point', x=.25, y=.5), dict(t='demo', slug='d1', state={'x': 3}, gates={'g1': 'done'}, pick={'g1': 1}),
+         dict(t='answers', slide='s3', slug='d1', gates={'g1': {'is': 'two'}}), dict(t='look', theme='leela:dark:relaxed'), dict(t='point', off=True)]
+def _room(k): return f'/present/room?k={k}'
+def _demo_body(root): return body(root, cells=copy.deepcopy(DEMO_CELLS), line=copy.deepcopy(DEMO_LINE))
+def _bare(m): return {x: v for x, v in m.items() if x != 't'}
+
+async def _stop(stop, *ts):
+    stop.set(); await asyncio.wait_for(asyncio.gather(*ts), 10)
+
+def test_presenter_moves_reach_the_room_and_a_reload_gets_the_state(bare):
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', _demo_body(root)))[1]; k = a['key']
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        ev, st = got[0]
+        assert ev == 'state' and st['at'] == dict(slide='s1', step=0, blank=False, size=10) and st['title'] == 'a'
+        assert st['demo'] == [] and st['answers'] == [] and st['look']['theme']
+        assert (await _post(app, '/present/at', dict(k=k, slide='s3', step=0, blank=True, size=12)))[0] == 200
+        for m in MOVES: assert (await _post(app, '/present/move', dict(m, k=k))) == (200, dict(ok=True)), m
+        await _until(lambda: len(got) == 2 + len(MOVES))
+        assert got[1] == ('at', dict(slide='s3', step=0, blank=True, size=12))
+        assert got[2:] == [(m['t'], _bare(m)) for m in MOVES]
+        again, stop2 = [], asyncio.Event()
+        t2 = asyncio.create_task(_listen(app, again, stop2, _room(a['ak'])))
+        await _until(lambda: again)
+        ev, st = again[0]
+        assert ev == 'state' and st['at'] == dict(slide='s3', step=0, blank=True, size=12) and st['look']['theme'] == 'leela:dark:relaxed'
+        assert st['demo'] == [_bare(MOVES[1])] and st['answers'] == [_bare(MOVES[2])]
+        assert k not in json.dumps(got + again) and a['ak'] not in json.dumps(got + again)
+        await _stop(stop, t); await _stop(stop2, t2)
+        assert not pres.cur['rooms']
+    asyncio.run(go())
+
+def test_a_new_slide_and_a_reopened_gate_drop_the_stored_answers(bare):
+    app, pres, root = bare
+    async def go():
+        k = (await _post(app, '/present/start', _demo_body(root)))[1]['key']
+        await _post(app, '/present/at', dict(k=k, slide='s3', step=0, blank=False, size=10))
+        for m in MOVES[1:3]: await _post(app, '/present/move', dict(m, k=k))
+        assert list(pres.cur['live']['answers'])
+        await _post(app, '/present/move', dict(MOVES[1], gates={}, pick={}, k=k))
+        assert not pres.cur['live']['answers']
+        for m in MOVES[1:3]: await _post(app, '/present/move', dict(m, k=k))
+        await _post(app, '/present/at', dict(k=k, slide='s3', step=0, blank=False, size=10))
+        assert pres.cur['live']['answers'], 'the same slide keeps them'
+        await _post(app, '/present/at', dict(k=k, slide='s1', step=0, blank=False, size=10))
+        assert not pres.cur['live']['answers']
+    asyncio.run(go())
+
+def test_the_room_stream_refuses_bad_keys_with_no_state(rig):
+    c, root, _ = rig
+    old = start(c, root).json()['key']; d = start(c, root).json(); k = d['key']
+    for q in ({}, dict(k=''), dict(k='0' * 32), dict(k=old), dict(k=k.upper())):
+        r = c.get('/present/room', params=q)
+        assert (r.status_code, r.json()) == (403, dict(ok=False, error=BAD_KEY)) and _shut(r) and 'event:' not in r.text, q
+    assert c.get('/present/room', params=dict(k=k), headers={'sec-fetch-site': 'cross-site'}).status_code == 421
+    c.post('/present/end', json=dict(k=k))
+    for q in (dict(k=k), dict(k=d['ak']), {}):
+        r = c.get('/present/room', params=q)
+        assert (r.status_code, r.json()) == (410, dict(ok=False, error=ENDED)) and 'event:' not in r.text, q
+
+def test_the_audience_key_reads_and_never_moves(rig):
+    c, root, app = rig
+    d = start(c, root).json(); ak, cur = d['ak'], held(app).cur; at = dict(cur['at'])
+    for p in ('/present/audience', '/present/deck', f'/present/img/{_sha(RED)}'): assert c.get(p, params=dict(k=ak)).status_code == 200, p
+    for p, b in MUTATIONS:
+        r = c.post(p, json=dict(b, k=ak))
+        assert (r.status_code, r.json()) == (403, dict(ok=False, error=BAD_KEY)), p
+    assert held(app).cur is cur and cur['at'] == at and d['key'] not in c.get('/present/deck', params=dict(k=ak)).text
+
+def test_the_audience_cannot_post(rig):
+    c, root, _ = rig
+    ak = start(c, root).json()['ak']
+    for p in ('/present/room', '/present/deck', '/present/audience', f'/present/img/{_sha(RED)}'):
+        assert c.post(p, params=dict(k=ak), json={}).status_code == 405, p
+    js = (ROOT/'leela'/'blocks'/'nb'/'slides.js').read_text()
+    assert not re.search(r'method\s*:|POST|sendBeacon|XMLHttpRequest|WebSocket', js)
+    assert not re.search(r'/present/(move|at|end|start|resume|out|show-error)\b', js)
+
+def test_laser_moves_are_coalesced(bare):
+    from leela.blocks.nb.presentation import Room
+    q = Room(64)
+    for i in range(5): q.put_nowait(('point', dict(x=i / 10, y=0)))
+    q.put_nowait(('at', {'n': 1})); q.put_nowait(('point', dict(off=True))); q.put_nowait(('point', dict(x=.9, y=.9)))
+    assert [q.get_nowait() for _ in range(q.qsize())] == [('point', dict(x=.4, y=0)), ('at', {'n': 1}), ('point', dict(x=.9, y=.9))]
+    q = Room(3)
+    for i in range(3): q.put_nowait(('demo', {'n': i}))
+    q.put_nowait(('demo', {'n': 3}))
+    q.put_nowait(('demo', {'n': 4}))
+    assert q.stale and [q.get_nowait() for _ in range(q.qsize())] == [('stale', None)], 'a full queue closes the stream, so the page connects again for a new state'
+    q = Room(3)
+    for i in range(3): q.put_nowait(('demo', {'n': i}))
+    q.put_nowait(('end', {}))
+    assert [q.get_nowait() for _ in range(q.qsize())] == [('end', {})], 'an end is never dropped'
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', body(root)))[1]
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        for i in range(20): assert (await _post(app, '/present/move', dict(t='point', x=i / 20, y=.5, k=a['key'])))[0] == 200
+        await _until(lambda: got[-1] == ('point', dict(x=19 / 20, y=.5)))
+        assert 1 <= sum(e == 'point' for e, _ in got) <= 20
+        await _stop(stop, t)
+    asyncio.run(go())
+
+BAD_MOVES = [dict(t='go', slide='s1', beat=1), dict(t='point', x=1.5, y=0), dict(t='point', x=.1), dict(t='point', x=.1, y=.1, z=1), dict(t='point', off=False),
+             dict(t='point', x=True, y=0), dict(t='point', x=float('nan'), y=0),
+             dict(t='demo', slug='Bad Slug', state={}, gates={}), dict(t='demo', slug='d2', state={}, gates={}), dict(t='demo', slug='d1', state=[], gates={}),
+             dict(t='demo', slug='d1', state={}, gates={'g1': 'open'}), dict(t='demo', slug='d1', state={}, gates={}, pick={'g1': 0}),
+             dict(t='demo', slug='d1', state={'__proto__': 1}, gates={}), dict(t='demo', slug='d1', state={'a': {'b': {'c': {'d': {'e': {'f': {'g': {'h': 1}}}}}}}}, gates={}),
+             dict(t='demo', slug='d1', state={'s': '\U0001F600' * 32760}, gates={}),
+             dict(t='answers', slide='s1', slug='d1', gates={'g1': {'no': 1}}), dict(t='answers', slide='s9', slug='d1', gates={'g1': {'is': 1}}),
+             dict(t='look', theme='x'), dict(t='look', theme='leela:dark:relaxed', extra=1), dict(slug='d1')]
+
+def test_a_bad_move_sends_nothing(bare):
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', _demo_body(root)))[1]
+        got, stop = [], asyncio.Event()
+        t = asyncio.create_task(_listen(app, got, stop, _room(a['ak'])))
+        await _until(lambda: got)
+        live = copy.deepcopy(pres.cur['live'])
+        for m in BAD_MOVES:
+            s, r = await _post(app, '/present/move', dict(m, k=a['key']))
+            assert s == 400 and not r['ok'], m
+        assert pres.cur['live'] == live
+        assert (await _post(app, '/present/move', dict(MOVES[3], k=a['key'])))[0] == 200
+        await _until(lambda: len(got) > 1)
+        assert got[1:] == [('look', _bare(MOVES[3]))]
+        await _stop(stop, t)
+    asyncio.run(go())
+
+def test_a_move_just_under_the_limit_is_sent(bare):
+    "The limit counts UTF-16 units, as `JSON.stringify` does: an astral character is two."
+    from leela.blocks.nb.show import _size
+    app, pres, root = bare
+    async def go():
+        k = (await _post(app, '/present/start', _demo_body(root)))[1]['key']
+        m = dict(t='demo', slug='d1', state={'s': ''}, gates={})
+        m['state']['s'] = '\U0001F600' * ((65536 - _size({'v': 1, **m})) // 2)
+        assert 65534 <= _size({'v': 1, **m}) <= 65536
+        assert (await _post(app, '/present/move', dict(m, k=k)))[0] == 200
+        m['state']['s'] += 'xyz'
+        assert (await _post(app, '/present/move', dict(m, k=k)))[0] == 400
+    asyncio.run(go())
+
+def test_end_and_replace_send_end_without_the_key(bare):
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', body(root)))[1]
+        one, stop = [], asyncio.Event()
+        t1 = asyncio.create_task(_listen(app, one, stop, _room(a['ak'])))
+        await _until(lambda: one)
+        b = (await _post(app, '/present/start', body(root)))[1]
+        await asyncio.wait_for(t1, 10)
+        assert one[-1] == ('end', {}) and [e for e, _ in one] == ['state', 'end']
+        two = []
+        t2 = asyncio.create_task(_listen(app, two, stop, _room(b['key'])))
+        await _until(lambda: two)
+        assert (await _post(app, '/present/end', dict(k=b['key'])))[0] == 200
+        await asyncio.wait_for(t2, 10)
+        assert two[-1] == ('end', {})
+        s = json.dumps(one + two)
+        assert all(x not in s for x in (a['key'], a['ak'], b['key'], b['ak']))
+    asyncio.run(go())
+
+def test_the_audience_count_follows_the_room_streams(bare):
+    app, pres, root = bare
+    async def go():
+        a = (await _post(app, '/present/start', body(root)))[1]
+        ev, stop = [], asyncio.Event()
+        te = asyncio.create_task(_listen(app, ev, stop))
+        await _until(lambda: len(ev) >= 2)
+        assert ev[:2] == [('presentation', {'id': a['id']}), ('audience', {'id': a['id'], 'n': 0})]
+        rooms, rstop = [[], []], asyncio.Event()
+        ts = [asyncio.create_task(_listen(app, g, rstop, _room(a['ak']))) for g in rooms]
+        await _until(lambda: ('audience', {'id': a['id'], 'n': 2}) in ev)
+        await _stop(rstop, *ts)
+        await _until(lambda: ev[-1] == ('audience', {'id': a['id'], 'n': 0}))
+        assert a['key'] not in json.dumps(ev) and a['ak'] not in json.dumps(ev)
+        await _stop(stop, te)
+    asyncio.run(go())

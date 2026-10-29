@@ -1,0 +1,64 @@
+/* Slides: the 1280x720 canvas in Leela's tokens and fonts, the audience page, and the presenter screen in the IDE.
+   The laser dot and the blank screen replace abhyasa's stage.css, which Leela does not serve. */
+body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; background: var(--lee-bg); color: var(--lee-fg); }
+.lee-stage { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--lee-bg); }
+.lee-slide { --slide-size: 1; --slide-fit: 1; --u: calc(var(--slide-size) * var(--slide-fit));
+  position: absolute; left: 50%; top: 50%; width: 1280px; height: 720px; box-sizing: border-box; padding: 48px 64px; overflow: hidden;
+  transform: translate(-50%, -50%) scale(var(--slide-scale, 1)); background: var(--lee-bg); color: var(--lee-fg);
+  font: calc(28px * var(--u))/1.4 var(--lee-sans); text-align: left; }
+.lee-slide-body > .lee-block { margin: 0 0 calc(16px * var(--u)); }
+.lee-slide :is(h1, h2, h3, h4, h5, h6) { margin: 0 0 calc(20px * var(--u)); font-family: var(--lee-sans); font-weight: 600; line-height: 1.2; text-align: left; color: var(--lee-fg); }
+.lee-slide h1 { font-size: calc(46px * var(--u)); }
+.lee-slide h2 { font-size: calc(44px * var(--u)); }
+.lee-slide h3 { font-size: calc(34px * var(--u)); }
+.lee-slide :is(h4, h5, h6) { font-size: calc(30px * var(--u)); }
+.lee-slide :is(p, ul, ol, blockquote, table, figure) { margin: 0 0 calc(14px * var(--u)); }
+.lee-slide :is(pre, code, kbd, .lee-out) { font-family: var(--lee-mono); }
+.lee-slide :is(pre, .lee-out) { margin: 0 0 calc(10px * var(--u)); font-size: max(calc(18px * var(--slide-size)), calc(24px * var(--u))); line-height: 1.35; white-space: pre-wrap; }
+.lee-slide pre { padding: .45em .7em; background: var(--lee-bg1); border: 1px solid var(--lee-border); border-radius: 6px; }
+.lee-slide .lee-out { color: var(--lee-output, var(--lee-fg)); }
+.lee-slide .lee-out pre { padding: 0; font-size: inherit; background: none; border: 0; }
+.lee-slide :is(p, li, td, th) code { font-size: .88em; }
+.lee-slide :is(figcaption, .nb-none) { font: calc(20px * var(--u))/1.4 var(--lee-sans); color: var(--lee-fg2); }
+.lee-slide img { max-width: 100%; max-height: calc(520px * var(--slide-size)); }
+.lee-slide a { color: var(--lee-accent); }
+.lee-slide table { border-collapse: collapse; }
+.lee-slide :is(th, td) { padding: .2em .5em; border: 1px solid var(--lee-border); }
+.lee-slide blockquote { padding-left: .8em; border-left: 4px solid var(--lee-border); color: var(--lee-fg2); }
+.lee-slide .lee-rupaka { margin: 0 0 calc(14px * var(--u)); font-size: calc(22px * var(--u)); }
+.lee-frag-hidden { visibility: hidden; }
+.stage-dot { position: absolute; z-index: 3; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; pointer-events: none;
+  background: var(--lee-red); box-shadow: 0 0 12px var(--lee-red); opacity: 0; transition: opacity .2s; }
+.stage-dot.on { opacity: .9; }
+.stage-blank { position: absolute; inset: 0; z-index: 2; display: none; align-items: center; justify-content: center;
+  background: var(--lee-bg); color: var(--lee-fg4); font: 28px var(--lee-sans); }
+.lee-slide.blank .stage-blank { display: flex; }
+.lee-end { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  background: var(--lee-bg); color: var(--lee-fg2); font-family: var(--lee-sans); }
+.lee-end h1 { margin: 0; font-size: 32px; font-weight: 600; color: var(--lee-fg); }
+.lee-end p { margin: 0; font-size: 18px; }
+/* The presenter screen: above the IDE and its popovers, below `.lee-modal` so a save conflict still shows. */
+.lee-present { position: fixed; inset: 0; z-index: 49; display: flex; flex-direction: column; background: var(--lee-bg); color: var(--lee-fg); font-family: var(--lee-sans); }
+.lee-present:focus { outline: none; }
+.lee-present > .lee-stage { flex: 1; min-height: 0; }
+.lee-present-strip { flex: none; display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 16px; box-sizing: border-box;
+  background: var(--lee-bg1); border-top: 1px solid var(--lee-border); font-size: 14px; transition: opacity .25s, transform .25s; }
+.lee-present.lee-idle .lee-present-strip { opacity: 0; transform: translateY(8px); }
+.lee-present-strip button { min-width: 32px; min-height: 32px; padding: 0 12px; font: 14px var(--lee-sans); color: var(--lee-fg);
+  background: var(--lee-bg); border: 1px solid var(--lee-border); border-radius: 6px; cursor: pointer; }
+.lee-present-strip button:hover { border-color: var(--lee-accent); }
+.lee-present-strip button:focus-visible { outline: 2px solid var(--lee-accent); outline-offset: 1px; }
+.lee-present-strip button:disabled { opacity: .5; cursor: default; }
+.lee-present-strip :is([data-where], [data-conn]) { padding: 0 4px; color: var(--lee-fg2); white-space: nowrap; }
+.lee-present-strip [data-runs] { display: contents; }
+.lee-present-strip .lee-gap { flex: 1; }
+.lee-present-strip [data-end] { color: var(--lee-red); }
+.lee-present-strip [data-end][data-armed] { color: var(--lee-bg); background: var(--lee-red); border-color: var(--lee-red); }
+.lee-present-notes { position: absolute; top: 0; right: 0; bottom: 56px; z-index: 5; width: 340px; box-sizing: border-box; padding: 20px 24px; overflow: auto;
+  background: var(--lee-bg1); border-left: 1px solid var(--lee-border); color: var(--lee-fg); font-size: 18px; line-height: 1.5; }
+.lee-present-notes[hidden] { display: none; }
+.lee-present-notes :is(.lee-present-warn, [data-next], [data-clock]) { margin: 0 0 12px; font-size: 14px; color: var(--lee-fg2); }
+.lee-present-msg { position: absolute; left: 50%; bottom: 68px; z-index: 6; max-width: 70%; padding: 8px 14px; transform: translateX(-50%);
+  background: var(--lee-bg1); color: var(--lee-fg); border: 1px solid var(--lee-border); border-radius: 6px; font: 14px/1.4 var(--lee-sans); }
+.lee-present-msg[hidden] { display: none; }
+.lee-slide.lee-measure { position: fixed; left: -99999px; top: 0; visibility: hidden; transform: none; }

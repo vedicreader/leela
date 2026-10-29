@@ -249,3 +249,12 @@ def test_clip_counts_the_whole_message():
     over = _msg(edge['html'].replace('<p>', '<p>x'))
     assert clip_msg(over)['html'].endswith(ROOM_LONG) and _node([clip_msg(over)])[0][0]
     with pytest.raises(ValueError): clip_msg(dict(_msg('<p>x</p>' * 10), cell='c' * 65500))
+
+def test_an_output_the_room_cannot_show_says_so():
+    "An output with no type the room shows vanished from the slide; it now says so, in both copies."
+    from leela.blocks.nb.show import NOT_SHOWN
+    outs = [{'output_type': 'display_data', 'data': {'application/vnd.jupyter.widget-view+json': {'model_id': 'm'}}},
+            {'output_type': 'display_data', 'data': {'image/svg+xml': '<svg/>'}}]
+    for room in (True, False): assert clean_out(outs, KEY, {}, room=room)[0] == NOT_SHOWN * 2
+    assert NOT_SHOWN == '<p class="nb-none">This output type is not shown in presentations.</p>'
+    assert clean_out([{'output_type': 'display_data', 'data': {'image/svg+xml': '<svg/>', 'text/plain': 'fallback'}}], KEY, {})[0] == '<pre>fallback</pre>'
