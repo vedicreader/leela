@@ -918,7 +918,6 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
                    on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
                    routes=(Mount('/leestatic', Assets(*static_dirs())),
                            WebSocketRoute('/term/ws', term_ws)))
-    app.static_route_exts()
     rt = app.route
     _docstore = DocStore(ws)
     ws.docstore = _docstore   # `Workspace.restart_kernel` marks its outputs stale, for the route and the agent alike

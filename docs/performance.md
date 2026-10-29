@@ -366,9 +366,10 @@ actually the right call.
 
 One line. `fast_app` runs `from .pico import picolink` unconditionally, before it looks at
 `pico=`, and `fasthtml.pico` ends in `try: from IPython import display`. That is 212ms and 402
-modules for a stylesheet link this app passes `pico=False` to refuse. `FastHTML` directly, plus
-the `static_route_exts()` call `fast_app` would have made, skips it. Every other default of the
-two is identical, which is checkable and was checked.
+modules for a stylesheet link this app passes `pico=False` to refuse. `FastHTML` directly skips
+it. Every other default of the two is identical, which is checkable and was checked, except the
+`static_route_exts()` call `fast_app` makes: it served the working folder by extension with no
+containment, so Leela leaves it out and serves its own files from `/leestatic` and `/file/raw`.
 
 Idle traffic, from `tools/profile_web.py`, measured over twelve seconds of nobody touching
 anything:

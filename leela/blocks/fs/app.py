@@ -262,10 +262,6 @@ def connect(app, ctx):
     def file_raw_named(name: str, path: str = '', download: bool = False):
         "The same bytes, with the filename in the URL for the viewer's title. `name` is never resolved."
         return _serve_raw(path, download)
-    _routes = app.router.routes
-    _named = _routes.pop(next(i for i, r in enumerate(_routes) if getattr(r, 'path', '') == '/file/raw/{name}'))
-    _static = next((i for i, r in enumerate(_routes) if '{ext:static}' in getattr(r, 'path', '')), len(_routes))
-    _routes.insert(_static, _named)
     @rt('/fs/find')
     async def fs_find(req, q: str = '', limit: int = 200, scope: str = '', dirs: bool = False, more: bool = False):
         "Fuzzy match over the open folders, best match first; `more` searches only what the walk leaves out."
