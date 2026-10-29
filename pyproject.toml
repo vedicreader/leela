@@ -66,7 +66,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ipymini = []
-local = ["rishi[mlx,llama]==0.1.57"]
+local = ["rishi[mlx,llama]==0.1.58"]
 desktop = ["kavacha[window]>=0.0.10"]
 macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.10"]
 windows = ["leela[desktop]", "kavacha[windows]>=0.0.10"]
@@ -92,14 +92,14 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",
     "leela[local]",
-    "rishi[all]==0.1.57",
+    "rishi[all]==0.1.58",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.57",
+    "rishi==0.1.58",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
