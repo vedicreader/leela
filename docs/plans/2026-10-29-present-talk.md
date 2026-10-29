@@ -783,6 +783,11 @@ Gate: `uv run pytest -q -x --ignore-glob='*_slow.py'`. Read `write_prose` before
   - Not done here: the release guard against `[tool.uv.sources] abhyasa` (decision 11) and a non-skippable wheel check. The review asked for both; they belong to the release task, and the brief for Task 8 did not include them.
   - `Notebook.run` applies a `clear_output` event (Follow-up A). No pin changed.
   - Tests: `tests/test_present_docs.py` (guide linked, one mode, reveal options ignored, limits and the notes warning, no Later item offered outside its section, no em dash); `test_the_keys_help_says_the_presentation_keys_cannot_be_rebound` (`tests/test_keys.py`) and the rendered help in `test_esc_never_ends_the_presentation`; `test_a_clear_output_event_empties_the_streamed_outputs_and_their_display_ids` and `test_outputs_with_no_clear_stream_as_before` (`tests/test_nb.py`).
+  - Final design review, error panel: the warning reads `The audience window does not show this error. The room can see it when you share this screen.` and the button reads `Show error to audience`. `test_a_run_in_a_presentation_writes_no_file_and_streams_to_the_room` pins both.
+  - Final design review, room gate: `SLIDES_ROOM` hides `.rk-gate .acts`, so the room copy shows no Lock in or Try another. The choices and the verdict stay. `test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict` checks the open gate, the settled gate and a reloaded audience.
+  - Final design review, Stop slot: `presentStrip` puts each Run and Stop in a `.lee-present-run` group. An idle Stop keeps its `hidden` attribute and takes its space with `visibility: hidden`. `test_a_run_in_a_presentation_writes_no_file_and_streams_to_the_room` checks that the Audience window button keeps its x position during a run.
+  - Final design review, 1024px strip: the strip uses an 8px column gap below 1100px. One row at 1024px is not reachable: the strip wraps after Audience window, and Notes, A-, A+, Full screen and End share the second row. `test_the_audience_window_follows` keeps the no-clipping check and checks that no button sits alone on a row.
+  - Final design review, key hints: `SLIDES_RK` sets `.rk kbd` to `0.6em` in `var(--lee-fg2)`. The choice text stays at slide-body size. `test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict` checks both on the presenter copy.
 
 ---
 

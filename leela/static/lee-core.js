@@ -4242,10 +4242,10 @@ const SLIDES_FLOOR = 20/28;
 //: rupaka's sizes are fixed px for a reading page; on a slide a demo takes the slide's text size and Leela's colours, in both windows.
 const SLIDES_RK = `:host{display:block}.rk{font-size:inherit;line-height:1.45;max-width:100%;font-family:var(--lee-sans)}.rk-title{font-size:1.1em}
 .rk button,.rk-gate textarea,.rk-gate .verdict,.rk-note{font:inherit}.rk button{padding:.3em .6em;line-height:1.2}.rk-gate .verdict .stale{font-size:inherit}
-.rk-lbl,.rk-slider output,.rk kbd{font-size:.85em;letter-spacing:normal;text-transform:none}.rk-lbl{color:var(--lee-fg)}.rk-note,.rk-gate .note{color:var(--lee-fg2)}
+.rk-lbl,.rk-slider output,.rk kbd{font-size:.85em;letter-spacing:normal;text-transform:none}.rk kbd{font-size:.6em;color:var(--lee-fg2)}.rk-lbl{color:var(--lee-fg)}.rk-note,.rk-gate .note{color:var(--lee-fg2)}
 .rk-slider input{font-size:inherit;max-width:24em;accent-color:var(--lee-accent)}.rk-gate{border-color:var(--lee-border)}.rk-gate .verdict .ok{color:var(--lee-green)}`;
-//: The room copy has no keys to press and no box to type in: an explanation shows as text, an empty one not at all.
-const SLIDES_ROOM = `.rk kbd{display:none}.rk-gate textarea{border:0;padding:0;resize:none;background:none;color:var(--lee-fg);overflow:hidden}.rk-gate textarea.lee-empty{display:none}`;
+//: The room copy has no keys to press, no box to type in and no gate button: an explanation shows as text, an empty one not at all.
+const SLIDES_ROOM = `.rk kbd,.rk-gate .acts{display:none}.rk-gate textarea{border:0;padding:0;resize:none;background:none;color:var(--lee-fg);overflow:hidden}.rk-gate textarea.lee-empty{display:none}`;
 
 //: Server HTML as a fragment with only the tags, classes, links and image sources a slide may have; `key` names the images of this presentation.
 function slidesSafe(html, key = '') {
@@ -4735,7 +4735,7 @@ function presentShowError(p) {
     if (p.err === e) presentErr(p, null);
     if (r.stale) return presentSay('A newer run of this cell replaced that error.');
     if (slidesNewer(r.msg, p.outs[e.cell])) { p.outs[e.cell] = r.msg; presentBox(p, e.cell); }
-    presentSay('The room can see the error.');
+    presentSay('The audience window shows the error.');
   });
 }
 //: The kernel restarted, died or was stopped by force: every code cell of the deck empty on both screens, no private error, and each older run stale.
@@ -4786,7 +4786,7 @@ async function presentStop(p, id) {
     if ((await post('/nb/interrupt', {path: p.path, id})).forced) kernelRestarted();
   } catch (e) { presentSay(String(e.message || e)); }
 }
-//: Run and Stop for each code cell of the slide: Stop shows while the cell runs, and Run is off while it runs or no longer matches the deck.
+//: Run and Stop for each code cell of the slide, in one group each: Stop shows while the cell runs and keeps its slot while idle, and Run is off while it runs or no longer matches the deck.
 function presentStrip(p) {
   const s = p.deck.slides[p.at.slide] || {}, code = (s.blocks || []).filter(b => b.kind === 'code'), n = code.length > 1;
   const btn = (text, title, fn) => Object.assign(document.createElement('button'), {type: 'button', textContent: text, title, onclick: fn});
@@ -4795,7 +4795,8 @@ function presentStrip(p) {
     const run = btn('Run' + tag, stale ? 'Run is off: this cell changed or left the notebook after the presentation started.' : 'Run this code cell', () => presentRun(p, id));
     const stop = btn('Stop' + tag, 'Stop this code cell', () => presentStop(p, id));
     run.dataset.run = stop.dataset.stop = id; run.disabled = on || stale; stop.hidden = !on;
-    return [run, stop];
+    const g = Object.assign(document.createElement('span'), {className: 'lee-present-run'}); g.append(run, stop);
+    return [g];
   }));
   if (document.activeElement === document.body && lee.present === p) p.root.focus({preventScroll: true});
 }
@@ -4888,9 +4889,9 @@ const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div 
   '<button type="button" data-close title="Close the notes (Esc)">Close</button></div>' +
   '<p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
   '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside>' +
-  '<div class="lee-present-err" role="alert" hidden><p data-err-sum></p><p class="lee-present-warn">The room cannot see this error.</p>' +
+  '<div class="lee-present-err" role="alert" hidden><p data-err-sum></p><p class="lee-present-warn">The audience window does not show this error. The room can see it when you share this screen.</p>' +
   '<details><summary>Traceback</summary><pre data-err-tb></pre></details><div class="lee-present-err-acts">' +
-  '<button type="button" data-show-error title="Show this error on the room screen">Show error</button><button type="button" data-err-close title="Close (Esc)">Close</button></div></div>' +
+  '<button type="button" data-show-error title="Show this error in the audience window">Show error to audience</button><button type="button" data-err-close title="Close (Esc)">Close</button></div></div>' +
   '<div class="lee-present-msg" role="status" hidden></div></div>' +
   '<div class="lee-present-strip" role="toolbar" aria-label="Presentation controls">' +
   '<span class="lee-present-group"><button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +

@@ -59,7 +59,10 @@ body[data-page="audience"] { margin: 0; height: 100vh; overflow: hidden; backgro
   color: var(--lee-selection-fg); background: var(--lee-sel); border-color: var(--lee-sel); }
 .lee-present-strip :is([data-where], [data-conn], [data-size]) { padding: 0 4px; color: var(--lee-fg2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lee-present-strip [data-runs] { display: contents; }
+.lee-present-run { display: flex; align-items: center; gap: 8px; }
 .lee-present-strip button[hidden] { display: none; }
+.lee-present-strip [data-stop][hidden] { display: inline-block; visibility: hidden; }
+@media (max-width: 1099px) { .lee-present-strip { column-gap: 8px; } }
 .lee-present-strip .lee-gap { flex: 1; }
 .lee-present-strip [data-end] { margin-left: auto; color: var(--lee-red); }
 .lee-present-strip [data-end][data-armed] { color: var(--lee-bg); background: var(--lee-red); border-color: var(--lee-red); }

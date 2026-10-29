@@ -10,10 +10,10 @@ const SLIDES_FLOOR = 20/28;
 //: rupaka's sizes are fixed px for a reading page; on a slide a demo takes the slide's text size and Leela's colours, in both windows.
 const SLIDES_RK = `:host{display:block}.rk{font-size:inherit;line-height:1.45;max-width:100%;font-family:var(--lee-sans)}.rk-title{font-size:1.1em}
 .rk button,.rk-gate textarea,.rk-gate .verdict,.rk-note{font:inherit}.rk button{padding:.3em .6em;line-height:1.2}.rk-gate .verdict .stale{font-size:inherit}
-.rk-lbl,.rk-slider output,.rk kbd{font-size:.85em;letter-spacing:normal;text-transform:none}.rk-lbl{color:var(--lee-fg)}.rk-note,.rk-gate .note{color:var(--lee-fg2)}
+.rk-lbl,.rk-slider output,.rk kbd{font-size:.85em;letter-spacing:normal;text-transform:none}.rk kbd{font-size:.6em;color:var(--lee-fg2)}.rk-lbl{color:var(--lee-fg)}.rk-note,.rk-gate .note{color:var(--lee-fg2)}
 .rk-slider input{font-size:inherit;max-width:24em;accent-color:var(--lee-accent)}.rk-gate{border-color:var(--lee-border)}.rk-gate .verdict .ok{color:var(--lee-green)}`;
-//: The room copy has no keys to press and no box to type in: an explanation shows as text, an empty one not at all.
-const SLIDES_ROOM = `.rk kbd{display:none}.rk-gate textarea{border:0;padding:0;resize:none;background:none;color:var(--lee-fg);overflow:hidden}.rk-gate textarea.lee-empty{display:none}`;
+//: The room copy has no keys to press, no box to type in and no gate button: an explanation shows as text, an empty one not at all.
+const SLIDES_ROOM = `.rk kbd,.rk-gate .acts{display:none}.rk-gate textarea{border:0;padding:0;resize:none;background:none;color:var(--lee-fg);overflow:hidden}.rk-gate textarea.lee-empty{display:none}`;
 
 //: Server HTML as a fragment with only the tags, classes, links and image sources a slide may have; `key` names the images of this presentation.
 function slidesSafe(html, key = '') {

@@ -264,7 +264,7 @@ function presentShowError(p) {
     if (p.err === e) presentErr(p, null);
     if (r.stale) return presentSay('A newer run of this cell replaced that error.');
     if (slidesNewer(r.msg, p.outs[e.cell])) { p.outs[e.cell] = r.msg; presentBox(p, e.cell); }
-    presentSay('The room can see the error.');
+    presentSay('The audience window shows the error.');
   });
 }
 //: The kernel restarted, died or was stopped by force: every code cell of the deck empty on both screens, no private error, and each older run stale.
@@ -315,7 +315,7 @@ async function presentStop(p, id) {
     if ((await post('/nb/interrupt', {path: p.path, id})).forced) kernelRestarted();
   } catch (e) { presentSay(String(e.message || e)); }
 }
-//: Run and Stop for each code cell of the slide: Stop shows while the cell runs, and Run is off while it runs or no longer matches the deck.
+//: Run and Stop for each code cell of the slide, in one group each: Stop shows while the cell runs and keeps its slot while idle, and Run is off while it runs or no longer matches the deck.
 function presentStrip(p) {
   const s = p.deck.slides[p.at.slide] || {}, code = (s.blocks || []).filter(b => b.kind === 'code'), n = code.length > 1;
   const btn = (text, title, fn) => Object.assign(document.createElement('button'), {type: 'button', textContent: text, title, onclick: fn});
@@ -324,7 +324,8 @@ function presentStrip(p) {
     const run = btn('Run' + tag, stale ? 'Run is off: this cell changed or left the notebook after the presentation started.' : 'Run this code cell', () => presentRun(p, id));
     const stop = btn('Stop' + tag, 'Stop this code cell', () => presentStop(p, id));
     run.dataset.run = stop.dataset.stop = id; run.disabled = on || stale; stop.hidden = !on;
-    return [run, stop];
+    const g = Object.assign(document.createElement('span'), {className: 'lee-present-run'}); g.append(run, stop);
+    return [g];
   }));
   if (document.activeElement === document.body && lee.present === p) p.root.focus({preventScroll: true});
 }
@@ -417,9 +418,9 @@ const PRESENT_HTML = '<div class="lee-present-main"><div class="lee-stage"><div 
   '<button type="button" data-close title="Close the notes (Esc)">Close</button></div>' +
   '<p class="lee-present-warn">The room can see these notes when you share this screen.</p>' +
   '<div data-notes-body></div><p data-upcoming></p><p data-clock></p></aside>' +
-  '<div class="lee-present-err" role="alert" hidden><p data-err-sum></p><p class="lee-present-warn">The room cannot see this error.</p>' +
+  '<div class="lee-present-err" role="alert" hidden><p data-err-sum></p><p class="lee-present-warn">The audience window does not show this error. The room can see it when you share this screen.</p>' +
   '<details><summary>Traceback</summary><pre data-err-tb></pre></details><div class="lee-present-err-acts">' +
-  '<button type="button" data-show-error title="Show this error on the room screen">Show error</button><button type="button" data-err-close title="Close (Esc)">Close</button></div></div>' +
+  '<button type="button" data-show-error title="Show this error in the audience window">Show error to audience</button><button type="button" data-err-close title="Close (Esc)">Close</button></div></div>' +
   '<div class="lee-present-msg" role="status" hidden></div></div>' +
   '<div class="lee-present-strip" role="toolbar" aria-label="Presentation controls">' +
   '<span class="lee-present-group"><button type="button" data-prev title="Previous (Left arrow)">Previous</button><button type="button" data-next title="Next (Right arrow or Space)">Next</button>' +

@@ -229,6 +229,8 @@ async def _shot(pg, aud, name):
 RECT = "s => { const r = document.querySelector(s).getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom].map(Math.round); }"
 FITS = '''() => { const s = document.querySelector('.lee-present-strip'), w = innerWidth;
   return {over: s.scrollWidth > s.clientWidth + 1, out: [...s.querySelectorAll('button')].filter(b => b.getBoundingClientRect().right > w + .5).map(b => b.textContent)}; }'''
+ROWS = '''() => { const rows = {}; for (const b of document.querySelectorAll('.lee-present-strip button'))
+  if (b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden') (rows[Math.round(b.getBoundingClientRect().top)] ||= []).push(b.textContent); return rows; }'''
 
 def test_the_audience_window_follows(tmp_path):
     cells = [md('# Intro\n\nbody text', 'slide', 'a0'), md('FRAG-TEXT', 'fragment', 'a1'), md('SPEAKER-SECRET', 'notes', 'a2'),
@@ -278,7 +280,7 @@ def test_the_audience_window_follows(tmp_path):
         for w in (1024, 720):
             await pg.set_viewport_size({'width': w, 'height': 640}); await pg.wait_for_timeout(300)
             out['narrow'][w] = await pg.evaluate(FITS)
-            if w == 1024: await _shot(pg, None, 'narrow-1024')
+            if w == 1024: out['rows'] = await pg.evaluate(ROWS); await _shot(pg, None, 'narrow-1024')
         await pg.set_viewport_size({'width': 1280, 'height': 720})
         await pg.evaluate('() => lee.present.root.focus()')
         await pg.keyboard.press('ArrowRight')
@@ -309,6 +311,7 @@ def test_the_audience_window_follows(tmp_path):
     assert a0 == a1, 'the audience canvas does not change when notes open'
     assert p1[2] <= n1[0] and p1[2] - p1[0] < p0[2] - p0[0] and p1[0] >= 0 and n1[2] <= w, ('the drawer makes room and the slide scales', out['geo'])
     assert out['narrow'] == {1024: {'over': False, 'out': []}, 720: {'over': False, 'out': []}}, ('the strip wraps instead of clipping', out['narrow'])
+    assert all(len(r) > 1 for r in out['rows'].values()), ('at 1024px no strip button sits alone on a row', out['rows'])
     (search, (ak, key)) = out['address']
     assert search == f'?k={ak}' and key not in search, 'the audience window holds the audience key only'
     assert out['same0'] and out['same1'], 'both windows draw the same slide markup'
@@ -332,7 +335,15 @@ DEMO_PX = '''r => { const host = document.querySelector(r + ' .lee-slide .lee-ru
   const ta = sr.querySelector('.rk-gate textarea');
   return {body: parseFloat(getComputedStyle(document.querySelector(r + ' .lee-slide')).fontSize), rk: px('.rk'), button: px('.rk-gate .opts button'), verdict: px('.verdict'),
           readout: px('.rk-readout, .rk-b:last-child'), lbl: px('.rk-lbl'), kbd: sr.querySelector('kbd') ? getComputedStyle(sr.querySelector('kbd')).display : 'none',
-          why: !ta || getComputedStyle(ta).display === 'none'}; }'''
+          why: !ta || getComputedStyle(ta).display === 'none', hint: hint(sr)}; }'''
+#: the key hint of the first choice of a gate against its choice's text, and the colour `--lee-fg2` resolves to in that shadow root
+HINT_JS = '''sr => { const b = sr.querySelector('.rk-gate .opts button'), k = b?.querySelector('kbd'); if (!k) return null;
+  const t = sr.querySelector('.rk').appendChild(document.createElement('span')); t.style.color = 'var(--lee-fg2)'; const fg2 = getComputedStyle(t).color; t.remove();
+  return {ratio: Math.round(parseFloat(getComputedStyle(k).fontSize) / parseFloat(getComputedStyle(b).fontSize) * 100) / 100, color: getComputedStyle(k).color, fg2}; }'''
+DEMO_PX = DEMO_PX.replace("r => {", f"r => {{ const hint = {HINT_JS};", 1)
+#: the gate buttons a room copy shows besides its choices, and whether its verdict shows
+GATE_ACTS = '''() => { const sr = document.querySelector('.lee-stage .lee-rupaka').shadowRoot, g = sr.querySelector('.rk-gate'), seen = e => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  return {buttons: [...g.querySelectorAll('button')].filter(b => !b.closest('.opts') && seen(b)).map(b => b.textContent), verdict: seen(g.querySelector('.verdict'))}; }'''
 
 def test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict(tmp_path):
     _nb(tmp_path/'deck.ipynb', [md(f'# Demo\n\n```rupaka\n{json.dumps(SPEC)}\n```', 'slide', 'd0')])
@@ -345,6 +356,7 @@ def test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict(tmp_path):
             await pg.click('.lee-present-strip [data-audience]')
         aud = await pop.value
         await aud.wait_for_function(f'() => ({SHADOW})(".rk-gate")', timeout=20000)
+        out['acts0'] = await aud.evaluate(GATE_ACTS)
         out['deck'] = await aud.evaluate('() => fetch("/present/deck?k=" + sessionStorage.getItem("lee-present-k")).then(r => r.text())')
         out['inert'] = await aud.evaluate(f'() => ({SHADOW})(".rk-gate").inert')
         move = 'm => fetch("/present/move", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({...m, k: lee.present.key})}).then(r => r.status)'
@@ -354,9 +366,11 @@ def test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict(tmp_path):
         out['posts'].append(await pg.evaluate(move, dict(t='answers', slide='s1', slug='d1', gates={'g1': {'is': 'two'}})))
         await aud.wait_for_function(f'() => ({SHADOW})(".verdict:not([hidden])")?.textContent.includes("You said")')
         out['verdict'] = await aud.evaluate(f'() => ({SHADOW})(".verdict").textContent')
+        out['acts1'] = await aud.evaluate(GATE_ACTS)
         await aud.reload()
         await aud.wait_for_function(f'() => ({SHADOW})(".verdict:not([hidden])")?.textContent.includes("You said")', timeout=20000)
         await aud.wait_for_timeout(300)
+        out['acts2'] = await aud.evaluate(GATE_ACTS)
         out['aud_px'] = await aud.evaluate(DEMO_PX, '.lee-stage')
         out['pres_px'] = await pg.evaluate(DEMO_PX, '.lee-present')
         SHOTS.mkdir(parents=True, exist_ok=True); await aud.screenshot(path=str(SHOTS/'audience-demo-light.png'))
@@ -369,6 +383,11 @@ def test_a_demo_in_the_room_has_no_answers_and_shows_the_verdict(tmp_path):
     a, p = out['aud_px'], out['pres_px']
     assert all(v >= a['body'] - .5 for v in (a['rk'], a['button'], a['verdict'], a['readout'])), ('demo text is at least slide-body size', a)
     assert a['kbd'] == 'none' and a['why'] is True, ('the room copy has no key labels and no empty explanation box', a)
+    assert out['acts0'] == {'buttons': [], 'verdict': False}, ('the open room gate shows its choices and no Lock in', out['acts0'])
+    assert out['acts1'] == out['acts2'] == {'buttons': [], 'verdict': True}, ('the settled room gate shows its verdict and no gate button', out['acts1'], out['acts2'])
+    h = p['hint']
+    assert h['ratio'] == .6 and h['color'] == h['fg2'], ('a presenter key hint is small and muted beside its answer', h)
+    assert abs(p['button'] - p['body']) < .5, ('the answer text stays at slide-body size', p)
     assert (p['body'], p['rk'], p['button'], p['lbl']) == (a['body'], a['rk'], a['button'], a['lbl']), ('the presenter demo has the room sizes', p, a)
 
 
@@ -994,15 +1013,18 @@ def test_a_run_in_a_presentation_writes_no_file_and_streams_to_the_room(tmp_path
           f.autoSave = 'onFocusChange'; document.querySelector('.cm-editor').dispatchEvent(new FocusEvent('focusout', {bubbles: true})); await wait(300);
           f.autoSave = 'onWindowChange'; dispatchEvent(new Event('blur')); await wait(300); f.autoSave = 'afterDelay'; }''')
         aud = await _audience(pg, 'Run')
+        out['x'] = [(await pg.evaluate(RECT, '.lee-present-strip [data-audience]'))[0]]
         await _run(pg, 'r1')
         await aud.wait_for_function(AUD_HAS, arg='tick 0', timeout=60000)
         out['streaming'] = [await aud.evaluate(AUD_HAS, 'tick 3'), await pg.evaluate('''() => !document.querySelector('.lee-present-strip [data-stop="r1"]').hidden''')]
+        out['x'].append((await pg.evaluate(RECT, '.lee-present-strip [data-audience]'))[0])
         await aud.wait_for_function(AUD_HAS, arg='tick 3', timeout=60000)
         await _to(pg, 1)
         await _run(pg, 'r3')
         await pg.wait_for_function(f'() => ({ERRP})().includes("RUN-1")', timeout=60000)
         await aud.wait_for_function(AUD_HAS, arg='before 1')
         out['room'], out['panel'] = await aud.evaluate(AUD_TEXT), await pg.evaluate(ERRP)
+        out['label'] = await pg.text_content('.lee-present-err [data-show-error]')
         out['pres'] = await pg.evaluate("() => document.querySelector('.lee-present .lee-slide:not(.lee-measure)').textContent")
         await _to(pg, 5)
         await _run(pg, 'r11')
@@ -1014,8 +1036,10 @@ def test_a_run_in_a_presentation_writes_no_file_and_streams_to_the_room(tmp_path
         return out
     out = asyncio.run(_real_page(go, tmp_path))
     assert out['streaming'] == [False, True], ('the room sees the first line while the cell still runs, and Stop shows', out['streaming'])
+    assert out['x'][0] == out['x'][1], ('Stop takes a slot that was kept for it, so the Audience window button stays put', out['x'])
     assert 'before 1' in out['room'] and not any(x in out['room'] or x in out['pres'] for x in ('RUN-1', 'Traceback', 'ValueError: ')), out['room']
-    assert 'ValueError: RUN-1' in out['panel'] and 'The room cannot see this error.' in out['panel'], out['panel']
+    assert 'ValueError: RUN-1' in out['panel'] and 'The audience window does not show this error. The room can see it when you share this screen.' in out['panel'], out['panel']
+    assert out['label'] == 'Show error to audience', out['label']
     assert out['disk'] == out['before'], 'no Run, autosave or audience window wrote the notebook or the placeholder'
     assert out['saves'] == [] and out['pref'] == 'afterDelay', (out['saves'], out['pref'])
     bold, hit, clipped, n = out['big']

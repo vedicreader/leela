@@ -113,11 +113,11 @@ A- and A+ change the text size on both screens. Each press is a step of 10%. The
 
 Each code cell on the slide has a Run button in the strip. Run runs the cell in the notebook's kernel. The output shows live on both screens.
 
-Stop shows while the cell runs. Stop interrupts that cell. When the kernel ignores the interrupt, Stop restarts the kernel. Leela does not see a kernel that dies during a run. Press Stop to restart it.
+Stop shows while the cell runs. Its place in the strip stays empty while the cell does not run. The other buttons do not move when a run starts or stops. Stop interrupts that cell. When the kernel ignores the interrupt, Stop restarts the kernel. Leela does not see a kernel that dies during a run. Press Stop to restart it.
 
 Run in a presentation writes no file. Autosave pauses during a presentation. Leela schedules it again when the presentation ends. Files that your own code writes are not covered. A cell with side effects runs in front of the room.
 
-When a run fails, the room sees the other outputs of that run, possibly none. The room does not see the traceback. The presenter sees a panel with the error name, the message and the traceback. The panel says `The room cannot see this error.` Click Show error to send the error to the room. Esc or Close closes the panel. A new run of the cell closes it too. On one shared screen, the room can see the panel while it is open.
+When a run fails, the room sees the other outputs of that run, possibly none. The room does not see the traceback. The presenter sees a panel with the error name, the message and the traceback. The panel says `The audience window does not show this error. The room can see it when you share this screen.` Click Show error to audience to send the error to the audience window. Esc or Close closes the panel. A new run of the cell closes it too. On one shared screen, the room can see the panel while it is open.
 
 A kernel restart clears the output of every code cell on both screens. Run is then available again.
 
@@ -127,7 +127,7 @@ The room screen shows text and images from outputs. Other output types show `Thi
 
 ## Demos
 
-A rupaka demo on a slide runs on the presenter screen. The audience window shows a copy that follows the presenter's demo. The audience copy takes no input. The answer of a gate goes to the room only after you settle the gate. A demo state that is too large is not sent. The presenter then sees `The demo is too large for the room screen.`
+A rupaka demo on a slide runs on the presenter screen. The audience window shows a copy that follows the presenter's demo. The audience copy takes no input. It shows the choices of a gate, and the verdict after you settle the gate. It does not show Lock in or Try another. The answer of a gate goes to the room only after you settle the gate. A demo state that is too large is not sent. The presenter then sees `The demo is too large for the room screen.`
 
 ## What the room never sees
 
@@ -135,7 +135,7 @@ The server builds a separate copy of the slides for the room. That copy never ho
 
 - notes cells and skipped cells, with their source, outputs, demos and images
 - the title of the next slide
-- a traceback, until you click Show error
+- a traceback, until you click Show error to audience
 - the `answer` of a demo gate before you settle it, from a markdown fence, a `text/markdown` or `text/html` output, or an `application/vnd.rupaka+json` output
 - the HTML page fallback of a rupaka output
 - HTML comments, and `id`, `data-id` and `title` attributes
