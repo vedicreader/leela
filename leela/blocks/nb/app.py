@@ -17,7 +17,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import lock, prediction_filing, record_card, record_prediction
+from .lesson import EnvGone, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -148,7 +148,8 @@ def connect(app, ctx):
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         async with run_lock:
             if place(nb, c) < 0: return fail('that cell is no longer in the notebook', 409)
-            k = await runtime_for(owner_tab)
+            try: k = await runtime_for(owner_tab)
+            except EnvGone as e: return fail(str(e), 409)
             owner_tab.running += 1
             try: c, lost = await run_watched(nb, c, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
@@ -176,8 +177,9 @@ def connect(app, ctx):
             await off_loop(ws.initialize_empty_notebooks, ws.cwd_for(owner_tab))
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
-        except BaseException:
+        except BaseException as e:
             run_lock.release()
+            if isinstance(e, EnvGone): return fail(str(e), 409)
             raise
         if place(nb, c) < 0:
             run_lock.release()
@@ -241,7 +243,7 @@ def connect(app, ctx):
         if not take_seq(store.seqs_for(owner_tab), c.id, d.get('seq')): return fail(JUDGE['stale'], 409)
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab), ws.jobs)
-        except Refused as e: return fail(str(e), 409)
+        except (Refused, EnvGone) as e: return fail(str(e), 409)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         if (now := first(x for x in nb if x.id == c.id)) is None: return fail('that cell is no longer in the notebook', 409)
@@ -261,8 +263,9 @@ def connect(app, ctx):
         if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
-        except BaseException:
+        except BaseException as e:
             run_lock.release()
+            if isinstance(e, EnvGone): return fail(str(e), 409)
             raise
         if getattr(k, 'kernel_kind', None) != 'ipykernel' or not hasattr(k, 'debug_start'):
             run_lock.release()

@@ -7,8 +7,8 @@ from abhyasa import check
 from ... import errstr
 from .learn import PKG, _NAME
 
-__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_indexed', 'install_cmds', 'make_tool_env', 'index_env', 'tool_job',
-           'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
+__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_kernel', 'tool_indexed', 'kernel_reqs', 'install_cmds', 'make_tool_env',
+           'index_env', 'tool_job', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
 TOO_LONG = 'The install took too long. Try again.'
@@ -43,6 +43,10 @@ def tool_python(key):
     p = _python(d)
     return p if (d/'ready').is_file() and p.is_file() and os.access(p, os.X_OK) else None
 
+def tool_kernel(key):
+    "The Python of the tool environment `key` when it is ready and holds the kernel packages, so a notebook kernel can start from it; else None."
+    return p if (p := tool_python(key)) and (tool_dir(key)/'kernel').is_file() else None
+
 def tool_indexed(key):
     "True when kosha last indexed the packages of the tool environment `key` without an error."
     try: return (tool_dir(key)/'indexed').is_file()
@@ -56,10 +60,15 @@ def _index(key):
     d.touch()
     return ''
 
+def kernel_reqs() -> list[str]:
+    "The kernel packages a lesson kernel starts from, ipykernel and ipymini, at the versions Leela runs."
+    from kunda.support import as_installed
+    return as_installed(('ipykernel', 'ipymini'))
+
 def install_cmds(names, d, uv:str, py=sys.version_info) -> list[list[str]]:
-    "The `uv venv` and `uv pip install` argv lists that make the environment for `names` in `d`, wheels only."
+    "The `uv venv` and `uv pip install` argv lists that make the environment for `names` and `kernel_reqs` in `d`, wheels only."
     return [[uv, 'venv', str(d/'.venv'), '--python', f'{py[0]}.{py[1]}'],
-            [uv, 'pip', 'install', '--python', str(_python(d)), '--only-binary', ':all:', *tool_names(names)]]
+            [uv, 'pip', 'install', '--python', str(_python(d)), '--only-binary', ':all:', *tool_names(names), *kernel_reqs()]]
 
 def _uv_error(names, r):
     err = r.stderr or ''
@@ -71,7 +80,7 @@ def _uv_error(names, r):
 
 def make_tool_env(names, run=subprocess.run, uv=None,
                   budget=600):  # seconds for both commands together
-    "Make the tool environment for `names` once, then index it: `AttrDict(key, ok, python, error)`, plus `index_error` when the index fails. `ready` is written after the index; a failed index runs again on the next call."
+    "Make the tool environment for `names` once, then index it: `AttrDict(key, ok, python, error)`, plus `index_error` when the index fails. `ready` is written after the index; a failed index runs again on the next call. A ready environment with no `kernel` file gets only the install."
     from ...workspace import _session_lock
     names = tool_names(names)
     key = tool_key(names)
@@ -79,15 +88,18 @@ def make_tool_env(names, run=subprocess.run, uv=None,
     def res(ok, error='', index_error=''):
         p = tool_python(key)
         return AttrDict(key=key, ok=ok, python=str(p) if p else None, error=error, **({'index_error': index_error} if index_error else {}))
-    if tool_python(key) and tool_indexed(key): return res(True)
+    if tool_kernel(key) and tool_indexed(key): return res(True)
     with _session_lock(d, timeout=budget) as held:
         if not held: return res(False, BUSY)
-        if tool_python(key): return res(True, index_error='' if tool_indexed(key) else _index(key))
+        if tool_kernel(key): return res(True, index_error='' if tool_indexed(key) else _index(key))
         if not (uv := uv or shutil.which('uv')): return res(False, NO_UV)
-        shutil.rmtree(d, ignore_errors=True)
-        d.mkdir(parents=True)
+        cmds = install_cmds(names, d, uv)
+        if tool_python(key): cmds = cmds[1:]
+        else:
+            shutil.rmtree(d, ignore_errors=True)
+            d.mkdir(parents=True)
         end = monotonic() + budget
-        for cmd in install_cmds(names, d, uv):
+        for cmd in cmds:
             if (left := end - monotonic()) <= 0: return res(False, TOO_LONG)
             try: r = run(cmd, capture_output=True, text=True, timeout=left, stdin=subprocess.DEVNULL)
             except subprocess.TimeoutExpired: return res(False, TOO_LONG)
@@ -95,6 +107,7 @@ def make_tool_env(names, run=subprocess.run, uv=None,
             if r.returncode: return res(False, _uv_error(names, r))
         p = _python(d)
         if not (p.is_file() and os.access(p, os.X_OK)): return res(False, NO_PY)
+        with atomic_save(d/'kernel', mode='w') as f: f.write('\n'.join(kernel_reqs()) + '\n')
         why = _index(key)
         with atomic_save(d/'ready', mode='w') as f: f.write('\n'.join(names) + '\n')
         return res(True, index_error=why)

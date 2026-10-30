@@ -32,7 +32,8 @@ def test_names_key_and_commands():
     d = tool_dir(tool_key(['httpx'], (3, 13)))
     assert install_cmds(['httpx'], d, '/u/uv', (3, 13)) == [
         ['/u/uv', 'venv', str(d/'.venv'), '--python', '3.13'],
-        ['/u/uv', 'pip', 'install', '--python', str(d/'.venv'/'bin'/'python'), '--only-binary', ':all:', 'httpx']]
+        ['/u/uv', 'pip', 'install', '--python', str(d/'.venv'/'bin'/'python'), '--only-binary', ':all:', 'httpx', *tools.kernel_reqs()]]
+    assert [r.split('==')[0] for r in tools.kernel_reqs()] == ['ipykernel', 'ipymini']
 
 @pytest.mark.parametrize('key', ['../x', '0123456789ABCDEF', '0123', '', None])
 def test_a_bad_key_is_not_a_folder(key):
@@ -125,7 +126,7 @@ def test_a_second_install_waits_and_finds_it_ready():
         t.start(); time.sleep(.3)
         assert t.is_alive() and run.calls == []
         p = d/'.venv'/'bin'/'python'                                                         # the other process finishes
-        p.parent.mkdir(parents=True); p.write_text(''); p.chmod(0o755); (d/'ready').write_text('httpx')
+        p.parent.mkdir(parents=True); p.write_text(''); p.chmod(0o755); (d/'ready').write_text('httpx'); (d/'kernel').write_text('ipykernel')
     t.join(5)
     assert out and out[0].ok and run.calls == []
 
@@ -234,10 +235,10 @@ GOOD, WRONG = 'def double(x):\n    return x * 2', 'def double(x):\n    return 99
 SECRET = 'def double(x):\n    # SECRET_REFERENCE_SOLUTION_7f9c\n    return x*2'
 
 def ready_env(names=('six',)):
-    "A ready tool environment for `names` whose Python is this one, so a check needs no install."
+    "A ready tool environment for `names` whose Python is this one, so a check or a kernel needs no install."
     key = tool_key(list(names))
     d = tool_dir(key); p = d/'.venv'/'bin'/'python'
-    p.parent.mkdir(parents=True); p.symlink_to(sys.executable); (d/'ready').write_text('\n'.join(names) + '\n')
+    p.parent.mkdir(parents=True); p.symlink_to(sys.executable); (d/'ready').write_text('\n'.join(names) + '\n'); (d/'kernel').write_text('ipykernel\n')
     return key
 
 def no_install(*a, **kw): pytest.fail('a check must never install')
@@ -440,16 +441,17 @@ def test_a_step_that_requires_packages_asks_once_and_installs_only_on_yes(rig, m
     monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
     key = tool_key(['torch', 'diffusers'])
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
-    assert 'This lesson needs torch, diffusers. Make the environment?' in t and f'data-key="{key}"' in t and 'action="/learn/env"' in t
+    assert 'This lesson needs torch, diffusers.</p>' in t and f'data-key="{key}"' in t and 'action="/learn/env"' in t and '>Set up the environment</button>' in t
     assert runs == [] and ws.jobs.all(kind='tool_env') == [], 'no install before the yes'
     r = c.post('/learn/env', data=dict(walk=NB_JID, step='0'))
-    assert r.status_code == 200 and 'Leela is making the environment for this lesson.' in r.text
+    assert r.status_code == 200 and 'Leela is setting up the environment for this lesson. When it is ready, the lesson kernel restarts in it.' in r.text
     jobs = ws.jobs.all(kind='tool_env')
     assert len(jobs) == 1 and jobs[0].target == key and wait(ws, jobs[0].id).status == 'complete' and tool_python(key)
-    assert [cmd[1] for cmd in runs] == ['venv', 'pip'] and runs[1][-2:] == ['diffusers', 'torch']
-    assert 'Make the environment?' not in c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert [cmd[1] for cmd in runs] == ['venv', 'pip'] and runs[1][-2 - len(tools.kernel_reqs()):] == ['diffusers', 'torch', *tools.kernel_reqs()]
+    t = c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert 'Set up the environment' not in t and '>Open as a lesson</button>' in t
     assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
     code = next(x for x in Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').cells if 'tests' in x.extra.get('exercise', {}))
-    assert code.extra['exercise']['env'] == key
+    assert code.extra['exercise']['env'] == key and Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').meta['lesson']['env'] == key
     assert c.post('/learn/env', data=dict(walk='attention-ab12', step='0')).status_code == 400, 'a step with no requires installs nothing'
     assert len(ws.jobs.all(kind='tool_env')) == 1

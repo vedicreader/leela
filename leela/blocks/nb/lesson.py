@@ -10,6 +10,7 @@ import abhyasa.tutor
 from abhyasa.method import METHODS, TEXT_WAYS
 from abhyasa.prompts import prompt, register
 from abhyasa.tutor import HINTS
+from ..runtime.kernels import KernelStartError
 from .nb import Cell, Notebook, src_hash
 from .exercise import exercise_cells, exercise_meta
 
@@ -56,6 +57,30 @@ def lesson_step(memory, nb) -> dict|None:
     if not (w := walk_meta(nb)) or w['step'] < 0: return None
     vault = memory._store('learning')   # before the lock: `_store` takes it too
     with _open_lock(memory.path): return step_brief(learn.find_step(Learning(vault), AttrDict(walk=w['walk'], step=w['step'], topic='')))
+
+ENV_GONE = 'The environment for this lesson is missing or broken. Open the step and press Set up the environment.'
+
+class EnvGone(KernelStartError): "The tool environment a lesson names is not ready, so its kernel does not start."
+
+def lesson_key(nb) -> str|None:
+    "The tool environment key of the walk-step lesson `nb`: its meta's `env`, else `tool_key` of the one `requires` its exercise cells name; None for any other notebook, or for `requires` that are not package names."
+    from ..learn.tools import tool_key
+    m = nb.meta.get('lesson')
+    if not (isinstance(m, dict) and walk_meta(nb)): return None
+    if m.get('env'): return m['env']
+    try:
+        reqs = {tuple(x['requires']) for c in nb.cells if (x := exercise_meta(c)) and x.get('requires')}
+        return tool_key(list(first(reqs))) if len(reqs) == 1 else None
+    except (TypeError, ValueError): return None
+
+def bind_env(fs, path, key, live=None):
+    "Record `key` as the lesson's tool environment in the meta of `live`, the open copy of the lesson, else of the file at `path` through the sandbox `fs`. Cells, code and outputs stay as they are."
+    if live is not None:
+        live.meta['lesson']['env'], live.dirty = key, True
+        return
+    d = json.loads(Path(path).read_text(encoding='utf-8'))
+    d['metadata']['lesson']['env'] = key
+    fs.write(path, json.dumps(d, indent=1, ensure_ascii=False) + '\n')
 
 def lesson_env(nb) -> str|None:
     "The one tool environment key the exercise cells of `nb` name; None for none or more than one."
@@ -124,15 +149,17 @@ def setup_source(nb, result) -> str:
     data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') for d in nb['data']]
     return '\n'.join(['import json', 'from pathlib import Path', dev, *data, f'RESULT = Path({result!r})']) + '\n' + SAVE_RESULT
 
-def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb') -> Notebook:
+def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb', setup=None) -> Notebook:
     """The lesson for a walk step with the checked notebook spec `nb`: header, passages with their source lines and the tutor's note, the
-    demo spec `demo`, setup, the exercise (with the ready tool environment `env`), the prediction, the run and the card."""
+    demo spec `demo`, setup, the exercise, the prediction, the run and the card. The ready tool environment `env` goes in the exercise
+    and the lesson meta. With `setup`, the URL of the step page, the header asks to set up the environment."""
     r = nb['run']
     run = Cell(source='\n'.join(f'# {x}' for x in (r['say'], r['makes'] and f"It makes {r['makes']}.", f"About {r['minutes']:g} min (an estimate).",
                                                   'At the end, call save_result(metrics, images).') if x), extra={'lesson': {'role': 'run'}})
     read = '\n\n'.join(f"{_passage(dict(text=p.text))}\n\n{source_line(p)}".strip() for p in passages)
     note = f"**The tutor's note**\n\n{step['note']}" if step.get('note') else ''
     head = f'# {name}\n\n{INTRO}' + (f"\n\n{runs_on(nb['requires'])}" if nb.get('requires') else '')
+    if setup and nb.get('requires'): head += f"\n\nThis lesson needs {', '.join(map(md_literal, nb['requires']))}. [Set up the environment](<{setup}>)"
     ex = {k: nb[k] for k in ('task', 'fname', 'stub', 'tests')} | ({'requires': nb['requires']} if nb.get('requires') else {}) | ({'env': env} if env else {})
     return Notebook([
         Cell(source=head, cell_type='markdown'),
@@ -143,7 +170,7 @@ def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file
         Cell(source=f"**Before the run:** {r['predict']}" if r['predict'] else '', cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': run.id}}),
         run,
         Cell(source=CARD, cell_type='markdown', extra={'lesson': {'role': 'card', 'for': run.id}}),
-    ], meta={'lesson': {'v': 1, 'name': name, 'walk': {k: step.get(k, '') for k in ('walk', 'step', 'section')}}})
+    ], meta={'lesson': {'v': 1, 'name': name, 'walk': {k: step.get(k, '') for k in ('walk', 'step', 'section')}, **({'env': env} if env else {})}})
 
 def walk_meta(nb) -> dict:
     "The attempt meta for a check in `nb`: its walk, step, `from`, `app` and a non-empty section; empty with no walk."

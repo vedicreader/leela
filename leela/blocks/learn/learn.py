@@ -84,17 +84,20 @@ def lessons_folder(session, fs) -> tuple[Path, bool]:
     return LESSONS, True
 
 def open_step(session, fs, v, q) -> Path:
-    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A refusal or a failed write closes a `LESSONS` root it opened."
+    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it there. A refusal or a failed write closes a `LESSONS` root it opened."
     from ..nb.lesson import lesson_notebook, save_lesson
     from ..nb.nb import Notebook
+    ready = None
     if v.kind == 'step':
         r, what, file = v.step.get('read') or {}, 'step', f'{q.walk}-{v.i}.ipynb'
         step = dict(walk=q.walk, step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=v.step.get('note') or '')
         if v.get('nb'):
-            from .tools import tool_key, tool_python
+            from abhyasa.contract import handoff
+            from .tools import tool_key, tool_kernel
             from ..nb.lesson import step_lesson
             env = tool_key(v.nb['requires']) if v.nb.get('requires') else None
-            nb = step_lesson(v.name, step, v.nb, passages(v.j, r), demo=v.demo, env=env if env and tool_python(env) else None, file=file)
+            ready = env if env and tool_kernel(env) else None
+            nb = step_lesson(v.name, step, v.nb, passages(v.j, r), demo=v.demo, env=ready, file=file, setup=handoff(q.walk, v.i, v=q.v) if env and not ready else None)
         else: nb = lesson_notebook(v.name, step=step)
         mine = lambda m: isinstance(w := m.get('walk'), dict) and (w.get('walk'), w.get('step')) == (q.walk, v.i)
     else:
@@ -112,10 +115,15 @@ def open_step(session, fs, v, q) -> Path:
         if isinstance(m, dict) and mine(m): return p
         raise Taken(f'{p.name} is in the lessons folder and is not the lesson for this {what}. Move it or rename it, then open the lesson again.')
     folder, made = lessons_folder(session, fs)
-    try: return save_lesson(fs, folder, pick, nb)
+    try: p = save_lesson(fs, folder, pick, nb)
     except Exception:
         if made: session.drop_root(folder, closed=False)
         raise
+    if ready and Notebook.load(p).meta['lesson'].get('env') != ready:
+        from ..nb.lesson import bind_env
+        docs = getattr(session, 'docstore', None)
+        bind_env(fs, p, ready, docs.docs.get(str(p)) if docs else None)
+    return p
 
 PKG = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}(\[[A-Za-z0-9._,-]{1,64}\])?((==|>=|<=|~=|<|>)[A-Za-z0-9.*+!-]{1,32})?')
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')

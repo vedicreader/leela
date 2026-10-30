@@ -12,7 +12,7 @@ from .blocks.agent.ai import Assistant, at_cell, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
 from .blocks.memory.memory import PrivacyBlocked, pii_gate, withheld_why
-from .blocks.runtime.kernels import KernelPool
+from .blocks.runtime.kernels import KernelPool, KernelStartError
 from .blocks.nb.nb import Notebook, media_outputs, read_cells
 from .blocks.research.research import Research
 from .blocks.runs.runs import Run, Runs
@@ -943,20 +943,48 @@ class Workspace:
         t = tab or self.tab
         fallback = str(self.project_root) if self.project_root is not None else 'default'
         if t is None: return fallback
-        if t.private_kernel: return f'tab:{t.path or t.title}'
+        if t.private_kernel or self._lesson(t)[1]: return f'tab:{t.path or t.title}'
         if not t.path: return fallback
         try: return str(self.fs.root_of(t.path))
         except Unsafe: return 'default'
+    def _lesson(self, t):
+        "`(notebook, key)` for a walk-step lesson tab `t` and the tool environment `lesson_key` gives it; `(None, None)` for any other tab."
+        if t is None or t.kind != 'notebook' or not t.path: return None, None
+        from .blocks.nb.lesson import lesson_key
+        if (docs := getattr(self, 'docstore', None)) is not None: nb = docs.doc_for(t)
+        else:
+            try: nb = Notebook.load(t.path)
+            except Exception: nb = None
+        return (nb, key) if nb is not None and (key := lesson_key(nb)) else (None, None)
+    def lesson_python(self, tab=None):
+        "The Python of the ready tool environment of a lesson tab, recorded in its meta when it was not; None for any other tab or an environment not set up yet. `EnvGone` when the meta names one that is not ready."
+        from .blocks.learn.tools import tool_kernel
+        from .blocks.nb.lesson import ENV_GONE, EnvGone, bind_env
+        nb, key = self._lesson(tab or self.tab)
+        if key is None: return None
+        p = tool_kernel(key)
+        if nb.meta['lesson'].get('env') != key:
+            if p is None: return None
+            bind_env(self.fs, nb.path, key, nb)
+        elif p is None: raise EnvGone(ENV_GONE)
+        return str(p)
     async def kernel(self, tab=None):
-        "The live kernel for a tab, started in its folder's interpreter."
+        "The live kernel for a tab, started in its folder's interpreter; a lesson's in its tool environment. An idle kernel of that lesson on another Python closes first, and the lesson's outputs go stale."
         t = tab or self.tab
         key, cwd = self.kernel_key(t), self.cwd_for(t)
         from .blocks.runtime.kernels import python_for
         try: name = self.fs.root_of(t.path).name if t and t.path else Path(cwd).name
         except Exception: name = Path(cwd).name if cwd else None
-        return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
-                                   python=python_for(cwd, self),
-                                   lang=(t.nb_lang if t else '') or 'python')
+        if (python := self.lesson_python(t)) and (k := self.pool.peek(key)) is not None and not k.busy and str(getattr(k, 'python', '')) != python:
+            await self.pool.close(key)
+            for c in self._lesson(t)[0].cells: c.fresh = False
+        try: return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
+                                        python=python or python_for(cwd, self),
+                                        lang=(t.nb_lang if t else '') or 'python')
+        except KernelStartError as e:
+            if not python: raise
+            from .blocks.nb.lesson import ENV_GONE, EnvGone
+            raise EnvGone(ENV_GONE) from e
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
         "What to call the runtime a tab runs in, alive or not."
@@ -1048,7 +1076,9 @@ class Workspace:
         t = tab or self.tab
         k = self.kernel_peek(t)
         # What this tab's kernel is actually started under. `Workspace.kernel` resolves it the same way.
-        cur_py = python_for(self.cwd_for(t), self)
+        from .blocks.nb.lesson import EnvGone
+        try: cur_py = self.lesson_python(t) or python_for(self.cwd_for(t), self)
+        except EnvGone: cur_py = None
         return {
             'key': self.kernel_key(t),
             'alive': bool(k and k.alive),

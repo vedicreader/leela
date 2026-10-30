@@ -126,6 +126,12 @@ The contract is the docstring of `abhyasa-walk/abhyasa/core/pane.py`. Leela is a
 - The install runs as a Leela job (`ws.jobs`, kind `tool_env`), outside the learner's code: `uv venv`, then `uv pip install --only-binary :all:`. Each name is a separate argument. No shell. This is the only network use of tool learning.
 - A package with no wheel fails the install. The lesson says "<name> has no wheel for this computer, so Leela cannot install it."
 - A half-made folder (no `ready`) is removed before the next try.
+- The install also puts in `ipykernel` and `ipymini` at the versions that Leela runs, so a notebook kernel can start from the environment. A `kernel` file in the folder records them. An environment that has `ready` and no `kernel` file gets only the `uv pip install` again.
+- A walk-step lesson records its environment key at `metadata.lesson.env` when the environment is ready. In a lesson file that exists, Leela changes only that key. The cells, the code and the outputs stay as they are.
+- A lesson that names a ready environment starts its kernel from the Python of that environment, in a kernel of its own. Other notebooks use the project Python.
+- When the environment that a lesson names is missing or broken, a run says "The environment for this lesson is missing or broken. Open the step and press Set up the environment." Leela never uses the project Python in its place.
+- When the environment becomes ready, the next run closes the idle lesson kernel and starts one in the environment. The outputs of that lesson become stale. A kernel that is running a cell is not closed.
+- A new lesson whose environment is not ready says "This lesson needs <names>." in its header, with the link "Set up the environment". The link opens the step page beside the notebook. The button on the step page starts the install.
 
 ### 6.2 Library code checks
 

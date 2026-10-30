@@ -133,10 +133,10 @@ def connect(app, ctx):
         if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
         key = tools.tool_key(names)
-        if tools.tool_python(key) and tools.tool_indexed(key): return say('The environment for this lesson is ready.')
-        if not tools.tool_python(key) and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
+        if tools.tool_kernel(key) and tools.tool_indexed(key): return say('The environment for this lesson is ready.')
+        if not tools.tool_kernel(key) and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
         tools.start_tool_job(ctx.jobs, names)   # no await since the check: one event loop starts one job for a key
-        return say('Leela is making the environment for this lesson. Open the lesson when it is ready.')
+        return say('Leela is setting up the environment for this lesson. When it is ready, the lesson kernel restarts in it.')
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names
@@ -172,15 +172,15 @@ def connect(app, ctx):
         try: names = tools.tool_names(d.get('names') if isinstance(d, dict) else None)
         except ValueError as e: return fail(str(e))
         key = tools.tool_key(names)
-        if tools.tool_python(key) and tools.tool_indexed(key): return {'ok': True, 'key': key, 'ready': True}
-        if not tools.tool_python(key) and not tools.shutil.which('uv'): return fail(tools.NO_UV, 503)
+        if tools.tool_kernel(key) and tools.tool_indexed(key): return {'ok': True, 'key': key, 'ready': True}
+        if not tools.tool_kernel(key) and not tools.shutil.which('uv'): return fail(tools.NO_UV, 503)
         # no await between the check and the start, so one event loop starts one job for a key
         return {'ok': True, 'key': key, 'job': tools.start_tool_job(ctx.jobs, names).dict()}
     @app.route('/learn/tool', methods=['GET'])
     async def learn_tool(req):
-        from .tools import tool_dir, tool_python
+        from .tools import tool_dir, tool_kernel
         key = req.query_params.get('key', '')
         try: tool_dir(key)
         except ValueError as e: return fail(str(e))
-        p = tool_python(key)
+        p = tool_kernel(key)
         return {'ok': True, 'ready': p is not None, 'python': str(p) if p else None}

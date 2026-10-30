@@ -750,6 +750,7 @@ function routeMarkdownLinks(el) {
       if (web && !inDesktopShell() && (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)) return;
       e.preventDefault(); e.stopPropagation();
       if (web) return openExternal(href);
+      if (/^\/learn(?:[?#\/]|$)/.test(href)) return window.leeSidePage?.open(href) || status(`could not open ${href}`, 'err');
       if (/^[a-z][a-z\d+.-]*:/i.test(href) || /^[\/\\]{2}/.test(href)) return status(`will not open ${href}`, 'err');
       let path = href;
       try {
@@ -860,7 +861,11 @@ const post = (url, data) => api(url, {method: 'POST', headers: {'Content-Type': 
 async function postEvents(url, data, onEvent, signal = null, idle = 0) {
   const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                               body: JSON.stringify(data || {}), signal}).catch(e => { throw Object.assign(e, {unsent: true}); });
-  if (!r.ok) throw Object.assign(new Error((await r.text()) || r.statusText), {unsent: true});
+  if (!r.ok) {
+    const text = await r.text(); let said = text;
+    try { const b = JSON.parse(text); said = b.error || b.message || text; } catch (_) {}
+    throw Object.assign(new Error(said || r.statusText), {unsent: true});
+  }
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';
   while (true) {

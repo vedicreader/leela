@@ -34,11 +34,11 @@ def _Source(p):
 
 def _Env(v, q, pane):
     "The ask that makes the tool environment of a step whose `nb` has `requires`; None when there is none or it is ready."
-    from .tools import tool_indexed, tool_key, tool_python
-    if not (names := (v.get('nb') or {}).get('requires')) or (tool_python(key := tool_key(names)) and tool_indexed(key)): return None
-    return Form(P(f"This lesson needs {', '.join(names)}. Make the environment?", cls='lee-learn-line'), Hidden(name='walk', value=q.walk), Hidden(name='step', value=str(v.i)),
+    from .tools import tool_indexed, tool_kernel, tool_key
+    if not (names := (v.get('nb') or {}).get('requires')) or (tool_kernel(key := tool_key(names)) and tool_indexed(key)): return None
+    return Form(P(f"This lesson needs {', '.join(names)}.", cls='lee-learn-line'), Hidden(name='walk', value=q.walk), Hidden(name='step', value=str(v.i)),
                 Hidden(name='v', value=q.v), Hidden(name='pane', value='1') if pane else None,
-                Button('Make the environment', type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
+                Button('Set up the environment', type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
 
 def StepPage(v, q, pane:bool=False, root=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane."
