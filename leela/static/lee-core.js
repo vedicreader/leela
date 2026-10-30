@@ -640,14 +640,31 @@ function loadKatex() {
     document.head.appendChild(s);
   }).catch(e => { console.warn('Leela math:', e); return null; });
 }
-//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. A promise while any is pending, else nothing.
+const texLoad = {p: null};
+//: One promise, failure included, as `loadKatex`; without abhyasa's file a lesson formula is drawn plain.
+function loadTexparts() {
+  return texLoad.p ||= new Promise((ok, no) => {
+    if (window.abhyasaTex) return ok(window.abhyasaTex);
+    const s = document.createElement('script');
+    s.src = $('meta[name="lee-texparts-src"]')?.content || '/leestatic/lee-texparts.js';
+    s.onload = () => window.abhyasaTex ? ok(window.abhyasaTex) : no(new Error('texparts.js defined no abhyasaTex'));
+    s.onerror = () => { s.remove(); no(new Error('texparts.js could not be loaded')); };
+    document.head.appendChild(s);
+  }).catch(e => { console.warn('Leela math parts:', e); return null; });
+}
+//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. In a lesson's markdown cell a formula gets `\htmlId` around its parts, and carries them in `data-parts` and its number in `data-guide-id`. A promise while any is pending, else nothing.
 function renderMath(el) {
   const todo = $$('span.math:not([data-mathed]), div.math:not([data-mathed])', el);
   if (!todo.length) return null;
-  return loadKatex().then(k => k && todo.forEach(m => {
+  const cell = el.matches('.lee-md-cell') && el.closest('.lee-cell[data-id]'), lesson = cell && lessonNotebook(), all = lesson ? $$('span.math, div.math', el) : [];
+  return Promise.all([loadKatex(), lesson ? loadTexparts() : null]).then(([k, tex]) => k && todo.forEach(m => {
     if (!m.isConnected || m.dataset.mathed) return;
     m.dataset.mathed = '1';
-    k.render(m.textContent, m, {displayMode: m.classList.contains('display'), throwOnError: false, trust: false});
+    const opts = {displayMode: m.classList.contains('display'), throwOnError: false, trust: false};
+    if (!tex) return k.render(m.textContent, m, opts);
+    const n = all.indexOf(m) + 1, [marked, parts] = tex.texParts(m.textContent, (+cell.dataset.i + 1) * 1000 + n);
+    k.render(marked, m, {...opts, trust: tex.trust});
+    m.dataset.parts = JSON.stringify(parts); m.dataset.guideId = `f${n}`;
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
@@ -2557,6 +2574,7 @@ function patchNotebook(host, before, cells, op = '') {
     }
     host.appendChild(el); // appending an existing node reorders it without remounting
     if (c.extra?.lesson) { paintLessonCell(el, c); renderLessonReveal(c); }
+    paintGuideButton(el, c);
     if (isExercise(c)) renderExercise(c, el);
   });
   paintHeadings(cells);
@@ -2745,7 +2763,7 @@ function cellEl(c, i) {
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
     `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div>` +
-    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${c.id}"></div>` : ''}</div>`;
+    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${c.id}" data-guide-id="check"></div>` : ''}</div>`;
   paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
@@ -2778,6 +2796,7 @@ function cellEl(c, i) {
     if (indices.length > 1) moveCellsTo(indices, +d.dataset.i); else moveCellTo(from, +d.dataset.i);
   });
   if (c.extra?.lesson) paintLessonCell(d, c);
+  paintGuideButton(d, c);
   if (isExercise(c)) renderExercise(c, d);
   return d;
 }
@@ -3452,6 +3471,92 @@ async function lessonPredict(e) {
 }
 // The Node harnesses load this file with no `document`.
 globalThis.document?.addEventListener('rk-predict', lessonPredict);
+//: "I don't get…" on a lesson cell: one line goes to the screen guide, and its steps and sources show as plain text in the cell's output area until the board is drawn.
+const GUIDE_START = "I don't get ";
+const lessonNotebook = () => lee.cells.some(c => c.extra?.lesson);
+const guideCell = c => c.cell_type === 'markdown' ? !['prediction', 'card'].includes(c.extra?.lesson?.role) : isExercise(c);
+const guideText = d => [...(d.steps || []).map(s => s.say), ...(d.sources || []).map(s => `Source ${s.n}: ${s.label}, ${s.title}`), d.end].filter(Boolean).join('\n');
+const boardLoad = {p: null};
+//: abhyasa's board, loaded on the first guide: `abhyasaBoard`, or null after one warning, and the next guide tries again.
+function loadBoard() {
+  if (window.abhyasaBoard) return Promise.resolve(window.abhyasaBoard);
+  return boardLoad.p ||= (async () => {
+    const meta = n => $(`meta[name="${n}"]`)?.content;
+    document.head.appendChild(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: meta('lee-board-css') || '/leestatic/lee-board.css'}));
+    await new Promise((ok, no) => {
+      const s = document.createElement('script');
+      s.src = meta('lee-board-src') || '/leestatic/lee-board.js'; s.onload = ok;
+      s.onerror = () => { s.remove(); no(new Error('board.js could not be loaded')); };
+      document.head.appendChild(s);
+    });
+    return window.abhyasaBoard || Promise.reject(new Error('board.js defined no abhyasaBoard'));
+  })().catch(e => { console.warn('Leela guide:', e); return null; }).finally(() => { boardLoad.p = null; });
+}
+const GUIDE_ID = /^[A-Za-z0-9:_-]{1,40}$/, GUIDE_INPUTS = ['slider', 'toggle', 'choice'];
+const guideBlocks = bs => (Array.isArray(bs) ? bs : []).flatMap(b => b && typeof b === 'object' && !Array.isArray(b) ? [b, ...guideBlocks(b.blocks)] : []);
+//: Gives the parts of a lesson cell the ids `guide_context` names them by; the demo's inputs and readouts by their place in its spec, as `_demo_anchors` counts them.
+function guideStamp(cell, c) {
+  const tag = (e, id) => { if (e) e.dataset.guideId = id; }, md = $('.lee-md-cell', cell);
+  if (!md) return;
+  tag(md, c.extra?.exercise?.role === 'task' ? 'check' : 'passage');
+  $$('img', md).forEach((img, n) => tag(img, `img${n + 1}`));
+  const host = $('.lee-rupaka', md), root = host?.shadowRoot, spec = [...(root?.children || [])].find(n => n.rupaka)?.rupaka.spec;
+  tag(host, 'demo');
+  if (!spec) return;
+  const bs = guideBlocks(spec.blocks), inputs = $$('input[type=range], button[role=switch], .opts[aria-label]', root), outs = $$('.big', root);
+  bs.filter(b => GUIDE_INPUTS.includes(b.type)).forEach((b, n) => { if (typeof b.bind === 'string' && GUIDE_ID.test(b.bind)) tag(inputs[n], `in:${b.bind}`.slice(0, 40)); });
+  let k = 0;
+  bs.filter(b => b.type === 'readout').forEach((b, n) => { if (b.label || b.text) tag(outs[n], `out${++k}`); });
+}
+globalThis.document?.addEventListener('lee-markdown-rendered', e => {
+  const cell = e.target.closest?.('.lee-cell[data-id]'), c = cell && lee.cells.find(x => x.id === cell.dataset.id);
+  if (c && lessonNotebook() && guideCell(c)) guideStamp(cell, c);
+});
+const guideParts = cell => Object.fromEntries($$('[data-guide-id]', cell).filter(e => /^f\d+$/.test(e.dataset.guideId) && e.dataset.parts).map(e => [e.dataset.guideId, JSON.parse(e.dataset.parts).map(p => p[0])]));
+const guideFind = (cell, id) => { const q = `[data-guide-id="${CSS.escape(id)}"]`; return $(q, cell) || $$('.lee-rupaka', cell).map(h => h.shadowRoot && $(q, h.shadowRoot)).find(Boolean) || null; };
+const guideDemo = (cell, open) => set => { const inner = open && [...(guideFind(cell, 'demo')?.shadowRoot?.children || [])].find(n => n.rupaka); if (inner) Rupaka.set(inner, set); };
+//: Draws the board in the cell it was asked from; false when the board is missing or fails, so the plain text stays.
+async function guidePlay(d, cell, board) {
+  if (!board) return false;
+  const assets = $('meta[name="lee-board-assets"]')?.content || '/leestatic/board/';
+  try { await board.play(d, {host: {resolve: i => guideFind(cell, i), demo: guideDemo(cell, d.demo_open), assets}}); return true; }
+  catch (e) { console.warn('Leela guide:', e); return false; }
+}
+async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim()) {
+  const said = await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
+  if (!said) return;
+  const path = lee.path, tabKey = lee.tabKey, find = () => lee.tabKey === tabKey && $(`.lee-cell[data-id="${CSS.escape(id)}"]`);
+  try {
+    status('Asking the tutor…', 'ok');
+    await lee.nbQueue;
+    const asked = find();
+    if (!asked) return status('', 'ok');
+    const tokens = guideParts(asked), board = loadBoard();
+    const d = await post('/nb/guide', {path, cell_id: id, said, tokens});
+    const b = await board, cell = find();
+    if (cell) {
+      $('.lee-guide-out', cell)?.remove();
+      if (!await guidePlay(d, cell, b)) {
+        const el = document.createElement('div'); el.className = 'lee-guide-out'; el.textContent = guideText(d);
+        $('#out-' + id, cell).after(el);
+      }
+    }
+    status('', 'ok');
+  } catch (e) { status(lessonSaid(e), 'err'); }
+}
+function lessonGuideSelected(picked) {
+  const c = lee.cells[lee.sel];
+  if (!lessonNotebook() || !c || !guideCell(c)) return status('Pick a lesson cell first.', 'err');
+  return lessonGuide(c.id, picked);
+}
+function paintGuideButton(cell, c) {
+  $('.lee-guide', cell)?.remove();
+  if (!lessonNotebook() || !guideCell(c)) return;
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'lee-btn lee-guide'; button.textContent = GUIDE_START.trim() + '…';
+  button.onmousedown = e => { e.preventDefault(); e.stopPropagation(); };
+  button.onclick = () => lessonGuide(c.id);
+  $('.lee-cellmain', cell).appendChild(button);
+}
 function paintLessonCell(cell, c) {
   const role = c.cell_type === 'markdown' ? c.extra?.lesson?.role : '';
   cell.dataset.lessonRole = role || '';

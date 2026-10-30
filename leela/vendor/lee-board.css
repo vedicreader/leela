@@ -1,0 +1,63 @@
+/* The board of the screen guide (board.js): a layer over the page that never takes a click, its pointer, glows, marker,
+   chips, and the strip. The inks follow the colour scheme (light-dark) in each theme. */
+:root { --board-ink: light-dark(#b5551c, #f0a36b); --board-lead-dark: #24211d; --board-lead-light: #ece6da; }
+#board-host { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 60; pointer-events: none; }
+#board-layer, .board-hl { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.board-fill, #board-pointer path { fill: var(--board-ink); }
+.board-axis { fill: none; stroke: #8c877c; stroke-width: 1.2; stroke-linecap: round; }
+
+/* The marker: outside the host, so its blend mode mixes with the page. Multiply on a light surface, screen on a dark one. */
+.board-hl { z-index: 59; }
+.board-hl[data-blend=multiply] { mix-blend-mode: multiply; }
+.board-hl[data-blend=screen] { mix-blend-mode: screen; }
+.board-hl[data-blend=multiply] .board-marker { fill: rgb(246 190 60 / .45); }
+.board-hl[data-blend=screen] .board-marker { fill: rgb(255 205 100 / .30); }
+
+/* The glow on a target: a thin ring and a soft halo that blooms, then settles (board.js sets the box shadow each frame). */
+.board-glow { position: absolute; border-radius: 12px; opacity: 0; background: color-mix(in srgb, var(--board-ink) 6%, transparent); }
+.board-glow.on-dark { background: color-mix(in srgb, var(--board-ink) 9%, transparent); }
+
+/* The pointer: a small triangle in the ink, with a glow of the same hue (Clicky's halo). */
+#board-pointer { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; --glow: 8px;
+                 filter: drop-shadow(0 0 var(--glow) color-mix(in srgb, var(--board-ink) 70%, transparent)) drop-shadow(0 1px 1px rgb(0 0 0 / .18)); }
+#board-pointer svg { position: absolute; left: -8px; top: -8px; width: 16px; height: 16px; overflow: visible; }
+#board-pointer path { stroke: var(--board-ink); stroke-width: 1.5; stroke-linejoin: round; }
+@media (prefers-color-scheme: dark) { :root:not([data-mode=light]) #board-pointer { filter: drop-shadow(0 0 var(--glow) color-mix(in srgb, var(--board-ink) 85%, transparent)) drop-shadow(0 1px 1px rgb(0 0 0 / .3)); } }
+[data-mode=dark] #board-pointer { filter: drop-shadow(0 0 var(--glow) color-mix(in srgb, var(--board-ink) 85%, transparent)) drop-shadow(0 1px 1px rgb(0 0 0 / .3)); }
+
+/* A label chip: pastel, a coloured bar at the left, dark text in a clean sans. The fill is near solid, so it reads on any page. */
+.board-label { position: absolute; font: 500 13px/1 -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Segoe UI', sans-serif; letter-spacing: .01em;
+               white-space: nowrap; padding: 6px 10px 6px 12px; border-radius: 6px; color: #23201c; opacity: 0;
+               --tint: #fbe3ea; --bar: #e0607e; background: color-mix(in srgb, var(--tint) 92%, transparent);
+               border: 1px solid color-mix(in srgb, var(--bar) 30%, transparent); box-shadow: inset 3px 0 0 var(--bar), 0 1px 1.5px rgb(0 0 0 / .08), 0 8px 18px -8px rgb(30 20 10 / .32);
+               -webkit-backdrop-filter: blur(10px) saturate(1.5); backdrop-filter: blur(10px) saturate(1.5); }
+.board-label[data-tint=green]  { --tint: #e0f3e2; --bar: #3fa25a; }
+.board-label[data-tint=blue]   { --tint: #e1ecfb; --bar: #3f78c9; }
+.board-label[data-tint=yellow] { --tint: #fbf1cf; --bar: #d6a21e; }
+.board-label[data-tint=violet] { --tint: #ece5fa; --bar: #8a64d0; }
+.board-label[data-tint=peach]  { --tint: #fde6d6; --bar: #e07a3a; }
+.board-lead path { fill: none; stroke: var(--board-lead-dark); stroke-width: 1.2; stroke-linecap: round; }
+.board-lead circle { fill: var(--board-lead-dark); }
+.board-lead.on-dark path { stroke: var(--board-lead-light); }
+.board-lead.on-dark circle { fill: var(--board-lead-light); }
+
+/* The strip at the foot of the window, while a board shows: frosted, with the spoken line read out word by word. */
+.guide-strip { position: fixed; left: 0; right: 0; bottom: 0; z-index: 62; max-height: 40vh; overflow: auto; padding: var(--s3, 12px) var(--s5, 28px);
+               background: color-mix(in oklab, var(--raised, var(--bg)) 74%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
+               border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); box-shadow: 0 -12px 30px -18px rgb(40 25 10 / .35); }
+.guide-strip[hidden] { display: none; }
+.guide-strip p { margin: 0 0 var(--s1, 4px); }
+.board-top { display: flex; gap: var(--s2, 8px); align-items: center; font-size: var(--t-meta, 14px); color: var(--mute); }
+.board-dots { display: inline-flex; gap: 4px; align-items: center; }
+.board-dots i { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--line, var(--rule)); transition: width .25s, background-color .25s; }
+.board-dots i.on { width: 16px; background: var(--board-ink); }
+.board-say { font-size: 1.15em; font-weight: 500; color: var(--fg); }
+.board-say span { color: color-mix(in srgb, var(--fg) 38%, transparent); transition: color .12s ease-out; }
+.board-say span.on { color: var(--fg); }
+.board-quote q { font-style: italic; }
+.board-end, .board-keys, .board-note { font-size: var(--t-meta, 14px); color: var(--mute); }
+.board-src { margin-left: var(--s1, 4px); }
+.pill.tier-vault { border-color: var(--good, #3e6e52); }
+.pill.tier-web { border-color: var(--acc); }
+@media (prefers-reduced-motion: reduce) { .board-dots i, .board-say span { transition: none; } }
+@media print { #board-host, .board-hl, .guide-strip { display: none; } }

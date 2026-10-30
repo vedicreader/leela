@@ -2089,11 +2089,12 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-md-cell > :last-child { margin-bottom: 0; }
 .lee-md-cell.empty::before { content: 'double-click to edit'; color: var(--lee-fg4); font-style: italic; opacity: .7; }
 .lee-cell[data-lesson-role="prediction"] .lee-md-cell.empty::before { content: 'Your guess: what will the code below print?'; }
-.lee-reveal, .lee-cell[data-lesson-role="card"] .lee-md-cell, .lee-lesson-review-card {
+.lee-reveal, .lee-guide-out, .lee-cell[data-lesson-role="card"] .lee-md-cell, .lee-lesson-review-card {
   border-left: 2px solid color-mix(in srgb, var(--lee-accent) 28%, transparent);
   padding: 10px 16px; margin: 10px 0; line-height: 1.65;
 }
-.lee-reveal { font-family: inherit; white-space: pre-wrap; }
+.lee-reveal, .lee-guide-out { font-family: inherit; white-space: pre-wrap; }
+.lee-guide { margin: 4px 0 8px; }
 .lee-lesson-review { font-family: inherit; }
 .lee-lesson-review-body { overflow: auto; padding: 16px; }
 .lee-lesson-review-card { overflow-wrap: anywhere; }

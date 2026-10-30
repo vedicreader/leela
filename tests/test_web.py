@@ -169,7 +169,7 @@ def test_no_url_reads_a_file_from_the_server_folder_or_above_it(tmp_path, monkey
         leaks = [g for g in got if 'leela-probe-' in g[1] or 'leela-inside-' in g[1]]
         assert not leaks, leaks
         page = c.get('/').text
-        assets = set(re.findall(r'"(/leestatic/[^"?]+)', page))
+        assets = {a for a in re.findall(r'"(/leestatic/[^"?]+)', page) if not a.endswith('/')}
         assert '/leestatic/favicon.svg' in assets and '/leestatic/favicon-dark.svg' in assets
         for a in sorted(assets):
             if a.endswith(('.js', '.css')): assets |= {u for u in re.findall(r'/leestatic/[\w./-]+', c.get(a).text) if not u.endswith('/')}

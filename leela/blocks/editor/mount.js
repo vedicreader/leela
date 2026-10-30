@@ -450,6 +450,7 @@ function patchNotebook(host, before, cells, op = '') {
     }
     host.appendChild(el); // appending an existing node reorders it without remounting
     if (c.extra?.lesson) { paintLessonCell(el, c); renderLessonReveal(c); }
+    paintGuideButton(el, c);
     if (isExercise(c)) renderExercise(c, el);
   });
   paintHeadings(cells);

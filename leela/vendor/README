@@ -20,3 +20,13 @@ katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 
 
 katex/katex.min.js SHA-256 a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48
 katex/katex.min.css SHA-256 0289a02cf451a44dd73add683a09644252363871ac11713a647b732cee8b1ee3
+
+lee-texparts.js, lee-board.js, lee-board.css, board/rough.js and board/perfect-freehand.mjs: the screen guide's formula parts and board, copied unchanged from the abhyasa checkout at abhyasa commit 66d3daf1c14472a38f7ea8d46d8e0b158bbc36ad (branch v0014-yt): abhyasa/core/texparts.js, abhyasa/core/board.js, abhyasa/core/board.css, abhyasa/core/vendor/rough.js and abhyasa/core/vendor/perfect-freehand.mjs. tests/test_vendor_board.py compares each file with `git show` of that commit and skips when the checkout or the commit is absent. When abhyasa 0.0.14 is released, its wheel is the source: this entry then names the wheel and its SHA-256, and the test compares against the files in the wheel. board/ is the folder the page passes to the board as `host.assets`, served at /leestatic/board/; board/LICENSES.md is abhyasa's licence file for the two libraries.
+
+    git -C <abhyasa> show 66d3daf1c14472a38f7ea8d46d8e0b158bbc36ad:abhyasa/core/board.js > leela/vendor/lee-board.js
+
+lee-texparts.js SHA-256 e556af9d936b0b9ec58f74d9048ba64a45d447f8a65e6f6fb44afece94d9e585
+lee-board.js SHA-256 c984e17923f558f61871cc6385c9bcff15bcc5281815d7e0caa81f271ad8b6fd
+lee-board.css SHA-256 ab9b3cfc9a1a03a7bf7ecfd721b038fed6958c0b7f351522a3b414a0c1c0174c
+board/rough.js SHA-256 6853af8619532f3939b156cd16824d2e14f31e71d3df306ad5558eeafacab194
+board/perfect-freehand.mjs SHA-256 0ddf0e44c727ab39d7211af95685bf12234236f0e2eca376091e5791a71626e4

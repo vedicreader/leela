@@ -119,7 +119,7 @@ function cellEl(c, i) {
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
     `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div>` +
-    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${c.id}"></div>` : ''}</div>`;
+    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${c.id}" data-guide-id="check"></div>` : ''}</div>`;
   paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
@@ -152,6 +152,7 @@ function cellEl(c, i) {
     if (indices.length > 1) moveCellsTo(indices, +d.dataset.i); else moveCellTo(from, +d.dataset.i);
   });
   if (c.extra?.lesson) paintLessonCell(d, c);
+  paintGuideButton(d, c);
   if (isExercise(c)) renderExercise(c, d);
   return d;
 }

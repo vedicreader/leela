@@ -640,14 +640,31 @@ function loadKatex() {
     document.head.appendChild(s);
   }).catch(e => { console.warn('Leela math:', e); return null; });
 }
-//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. A promise while any is pending, else nothing.
+const texLoad = {p: null};
+//: One promise, failure included, as `loadKatex`; without abhyasa's file a lesson formula is drawn plain.
+function loadTexparts() {
+  return texLoad.p ||= new Promise((ok, no) => {
+    if (window.abhyasaTex) return ok(window.abhyasaTex);
+    const s = document.createElement('script');
+    s.src = $('meta[name="lee-texparts-src"]')?.content || '/leestatic/lee-texparts.js';
+    s.onload = () => window.abhyasaTex ? ok(window.abhyasaTex) : no(new Error('texparts.js defined no abhyasaTex'));
+    s.onerror = () => { s.remove(); no(new Error('texparts.js could not be loaded')); };
+    document.head.appendChild(s);
+  }).catch(e => { console.warn('Leela math parts:', e); return null; });
+}
+//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. In a lesson's markdown cell a formula gets `\htmlId` around its parts, and carries them in `data-parts` and its number in `data-guide-id`. A promise while any is pending, else nothing.
 function renderMath(el) {
   const todo = $$('span.math:not([data-mathed]), div.math:not([data-mathed])', el);
   if (!todo.length) return null;
-  return loadKatex().then(k => k && todo.forEach(m => {
+  const cell = el.matches('.lee-md-cell') && el.closest('.lee-cell[data-id]'), lesson = cell && lessonNotebook(), all = lesson ? $$('span.math, div.math', el) : [];
+  return Promise.all([loadKatex(), lesson ? loadTexparts() : null]).then(([k, tex]) => k && todo.forEach(m => {
     if (!m.isConnected || m.dataset.mathed) return;
     m.dataset.mathed = '1';
-    k.render(m.textContent, m, {displayMode: m.classList.contains('display'), throwOnError: false, trust: false});
+    const opts = {displayMode: m.classList.contains('display'), throwOnError: false, trust: false};
+    if (!tex) return k.render(m.textContent, m, opts);
+    const n = all.indexOf(m) + 1, [marked, parts] = tex.texParts(m.textContent, (+cell.dataset.i + 1) * 1000 + n);
+    k.render(marked, m, {...opts, trust: tex.trust});
+    m.dataset.parts = JSON.stringify(parts); m.dataset.guideId = `f${n}`;
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));

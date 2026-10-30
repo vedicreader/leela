@@ -1,4 +1,6 @@
 function palette() {
+  const picked = String(getSelection?.() ?? '').trim();
+  const lessonCommands = [{name: "Lesson: I don't get…", scope: 'editor', run: () => lessonGuideSelected(picked)}];
   const agentCommands = [
     {name: 'Agent: autopilot mode', scope: 'agent', run: () => leeAgentControl('autopilot')},
     {name: 'Agent: guided mode', scope: 'agent', run: () => leeAgentControl('guided')},
@@ -17,7 +19,7 @@ function palette() {
     {name: 'Agent: shape what the model remembers', scope: 'agent', run: () => leeAgentShape()},
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
-  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands);
+  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands, lessonCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" autofocus>
                    <div class="lee-modallist" id="cplist"></div>`,

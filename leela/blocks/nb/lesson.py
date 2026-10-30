@@ -403,3 +403,76 @@ def record_run(memory, f):
                       **{k: f[k] for k in ('metrics', 'images', 'secs', 'device', 'notebook', 'makes', 'walk', 'step', 'app', 'from', 'section') if k in f})
     m, n, link = first(f['metrics'].items()), len(f['images']), walk_url(f['walk'], f['step'])
     return f"Sent to your walk: done, {f'{m[0]} {m[1]:g}, ' if m else ''}{n} image{'s' * (n != 1)}." + (f' [Back to the walk ↗](<{link}>)' if link else '')
+
+INPUTS = ('slider', 'toggle', 'choice')
+ANCHOR_ID = re.compile(r'\A[A-Za-z0-9:_-]{1,40}\Z')
+MATH = re.compile(r'\$\$(.+?)\$\$|\$(?=\S)([^$\n]+?)(?<=\S)\$', re.S)
+IMAGE = re.compile(r'!\[([^\]]*)\]\(')
+
+def _cut(s, spans):
+    out, at = [], 0
+    for a, b in sorted(spans): out.append(s[at:a]); at = b
+    return ''.join(out + [s[at:]])
+
+def _blocks(bs):
+    for b in bs if isinstance(bs, list) else []:
+        if isinstance(b, dict): yield b; yield from _blocks(b.get('blocks'))
+
+def _demo_anchors(cell, spec, filed):
+    "`(anchors, demo)` of the `rupaka` `spec` in `cell`: the demo, its inputs and readouts, and whether every gate is locked in (`filed` holds the keys of the predictions filed)."
+    st, bs, ins, anchors, reads = spec.get('state') or {}, list(_blocks(spec.get('blocks'))), {}, [], []
+    for b in bs:
+        k = b.get('bind')
+        if b.get('type') not in INPUTS or not isinstance(k, str) or not ANCHOR_ID.match(k): continue
+        ins[k] = {f: b[f] for f in ('min', 'max', 'step', 'label') if b.get(f) is not None} | ({'value': st[k]} if k in st else {})
+        anchors.append(dict(id=f'in:{k}'[:40], kind='input', text=str(b.get('label') or k)))
+    for b in bs:
+        if b.get('type') == 'readout' and (t := ': '.join(str(x) for x in (b.get('label'), b.get('text')) if x)): reads.append(t)
+    anchors += [dict(id=f'out{i}', kind='readout', text=t) for i, t in enumerate(reads, 1)]
+    keys = [f"{cell.id}:{src_hash(cell.source)}:{spec.get('id') or ''}:{g.get('id')}" for g in _gates(spec.get('blocks'))]
+    demo = dict(slug=str(spec.get('id') or ''), inputs=ins, open=all(k in filed for k in keys), readouts=reads)
+    return [dict(id='demo', kind='demo', text=str(spec.get('title') or spec.get('id') or 'demo')), *anchors], demo
+
+def guide_context(meta, cell, path='', filed=(), tokens=None) -> dict:
+    "The raw context for abhyasa's screen guide from the lesson `meta` and one `cell`; `filed` holds the keys of the demo predictions filed, `tokens` the parts of each formula by anchor id as the page split them."
+    w = meta.get('walk') or {}
+    ctx = dict(page=str(path), title=meta.get('name') or '', step=f"Step {w['step']}" + (f": {w['section']}" if w.get('section') else '') if 'step' in w else '',
+               concept=w.get('concept') or '', slug=_slug(meta.get('name') or '', w), anchors=[])
+    if (ex := cell.extra.get('exercise')) and cell.cell_type == 'markdown' and ex.get('role') == 'task':
+        ctx['anchors'] = [dict(id='check', kind='check', text=cell.source)]
+    elif m := exercise_meta(cell):
+        ctx['anchors'] = [dict(id='check', kind='check', text=f"Write {m['fname']}: " + '; '.join(t['say'] for t in m['tests']))]
+    elif cell.cell_type == 'markdown':
+        src, specs, prose = cell.source, [], []
+        for info, body, a, b in fenced_blocks(src) + fenced_blocks(src, ch='~'):
+            prose.append((a, b))
+            if info != 'rupaka': continue
+            try: s = json.loads(body)
+            except ValueError: continue
+            if isinstance(s, dict): specs.append((s, (a, b)))
+        text = _cut(src, [sp for _, sp in specs]).strip()
+        math = [(m[1] or m[2]).strip() for m in MATH.finditer(_cut(src, prose))]
+        ctx['anchors'] = ([dict(id='passage', kind='passage', text=text)] if text else [])
+        ctx['anchors'] += [dict(id=f'f{i}', kind='formula', text=t, **({'tokens': list(tokens[f'f{i}'])} if (tokens or {}).get(f'f{i}') else {})) for i, t in enumerate(math, 1)]
+        ctx['anchors'] += [dict(id=f'img{i}', kind='figure', text=m[1]) for i, m in enumerate(IMAGE.finditer(_cut(src, prose)), 1)]
+        if specs:
+            anchors, ctx['demo'] = _demo_anchors(cell, specs[0][0], set(filed))
+            ctx['anchors'] += anchors
+    return ctx
+
+GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.14 or newer. Upgrade abhyasa, then try again.'
+
+def guide_board(memory, nb, cell, path, said, note=None, tokens=None) -> dict:
+    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `tokens` are the formula parts the page sent, by anchor id. `ImportError` when abhyasa has no guide."
+    from abhyasa.guide import explain, norm_tex
+    from abhyasa.ground import VaultSource
+    from abhyasa.llm import Router, route_ask
+    from abhyasa.store import Learning
+    from ..memory.memory import _open_lock
+    meta = nb.meta['lesson']
+    vault = memory._store('learning')
+    with _open_lock(memory.path):
+        lr = Learning(vault)
+        filed = {a.get('card_key') for a in lr.attempts(_slug(meta['name'], meta.get('walk') or {}), limit=10000)}
+    ctx = guide_context(meta, cell, path, filed, {k: [norm_tex(t) for t in v] for k, v in (tokens or {}).items()})
+    return dict(explain(Router(route_ask()), ctx, said, sources=[VaultSource(lr)], note=note, lr=lr), demo_open=bool(ctx.get('demo', {}).get('open')))
