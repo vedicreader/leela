@@ -39,6 +39,12 @@ function themeFrom(el) {
   };
 }
 
+// The kitty keyboard protocol, as far as a prompt needs it. A program pushes flags with `CSI > n u`
+// and pops them with `CSI < n u`. While flag 1 is on top, Shift+Enter and Cmd+A reach it as `CSI u`
+// instead of a bare Enter and xterm's select-all. A shell that never pushes keeps xterm's keys.
+const kittyKey = e => e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey ? '\x1b[13;2u'
+  : e.key === 'a' && e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey ? '\x1b[97;9u' : '';
+
 class LeeTerminal {
   constructor(el, {token, url, cwd, kind, id, onExit, onStatus}) {
     this.el = el;
@@ -55,6 +61,19 @@ class LeeTerminal {
     this.term.loadAddon(this.fit);
     this.term.open(el);
     this.refit();
+
+    this.kitty = [];
+    const csi = (prefix, f) => this.term.parser.registerCsiHandler({prefix, final: 'u'}, ps => (f(ps[0] || 0), true));
+    csi('>', n => this.kitty.push(n));
+    csi('<', n => this.kitty.splice(-(n || 1)));
+    csi('?', () => this.raw(`\x1b[?${this.kitty.at(-1) || 0}u`));
+    this.term.attachCustomKeyEventHandler(e => {
+      const s = this.kitty.at(-1) & 1 && kittyKey(e);
+      if (!s) return true;
+      if (e.type === 'keydown') this.raw(s);
+      e.preventDefault();
+      return false;
+    });
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.ws = new WebSocket(`${proto}//${location.host}${url || '/term/ws'}`);

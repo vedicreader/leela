@@ -23,7 +23,9 @@ globalThis.status = () => {}; globalThis.post = async () => ({});
 globalThis.lee = {terms: new Map(), prefs: {}};
 globalThis.prefGet = (s, k, d) => lee.prefs[s]?.[k] ?? d;
 globalThis.prefSet = async (s, k, v) => { lee.prefs = {...lee.prefs, [s]: {...lee.prefs[s], [k]: v}}; };
-globalThis.Terminal = class { constructor(o) { this.options = {...o}; this.cols = 80; this.rows = 24; }
+globalThis.Terminal = class { constructor(o) { this.options = {...o}; this.cols = 80; this.rows = 24; this.csi = {};
+    this.parser = {registerCsiHandler: (id, f) => { this.csi[(id.prefix || '') + id.final] = f; }}; }
+  attachCustomKeyEventHandler(f) { this.keyFn = f; }
   loadAddon() {} open() {} onData() {} focus() {} clear() {} dispose() {} };
 globalThis.FitAddon = class { fit() {} };
 globalThis.getComputedStyle = () => ({getPropertyValue: () => ''});
@@ -55,6 +57,28 @@ def test_option_is_meta_by_default_and_the_toggle_reaches_open_and_new_terminals
               saved: lee.prefs.terminal.macOptionIsMeta, mode: hello.mode};
     })()""")
     assert got == {'first': True, 'open': False, 'later': False, 'saved': False, 'mode': 'light'}
+
+
+def test_shift_enter_and_cmd_a_reach_a_program_only_while_it_has_pushed_the_kitty_keyboard_mode():
+    "A shell keeps xterm's keys; a prompt that pushes `CSI > 1 u` gets them as `CSI u`, as in Ghostty or kitty."
+    got = _node("""(() => {
+      const x = LeeTerm.create({}, {token: 't', id: 'k'}).term;
+      const key = (o, type = 'keydown') => x.keyFn({type, key: '', shiftKey: false, metaKey: false, ctrlKey: false,
+        altKey: false, ...o, preventDefault() {}});
+      const bytes = () => sent.splice(0).filter(b => typeof b !== 'string').map(b => new TextDecoder().decode(b));
+      const se = {key: 'Enter', shiftKey: true}, ca = {key: 'a', metaKey: true};
+      sent.splice(0);
+      const off = [key(se), key(ca)], offBytes = bytes();
+      x.csi['?u']([]); const askedOff = bytes();
+      x.csi['>u']([1]);
+      const on = [key(se), key(ca), key(se, 'keyup'), key({key: 'Enter'})], onBytes = bytes();
+      x.csi['?u']([]); const askedOn = bytes();
+      x.csi['<u']([]);
+      return {off, offBytes, askedOff, on, onBytes, askedOn, popped: key(se), poppedBytes: bytes()};
+    })()""")
+    assert got == {'off': [True, True], 'offBytes': [], 'askedOff': ['\x1b[?0u'],
+                   'on': [False, False, False, True], 'onBytes': ['\x1b[13;2u', '\x1b[97;9u'], 'askedOn': ['\x1b[?1u'],
+                   'popped': True, 'poppedBytes': []}
 
 
 def test_escape_with_terminal_focus_reaches_the_terminal_and_the_chord_leaves_full_screen():
