@@ -107,22 +107,16 @@ function loadBoard() {
     return window.abhyasaBoard || Promise.reject(new Error('board.js defined no abhyasaBoard'));
   })().catch(e => { console.warn('Leela guide:', e); return null; }).finally(() => { boardLoad.p = null; });
 }
-const GUIDE_ID = /^[A-Za-z0-9:_-]{1,40}$/, GUIDE_INPUTS = ['slider', 'toggle', 'choice'];
-const guideBlocks = bs => (Array.isArray(bs) ? bs : []).flatMap(b => b && typeof b === 'object' && !Array.isArray(b) ? [b, ...guideBlocks(b.blocks)] : []);
-//: Gives the parts of a lesson cell the ids `guide_context` names them by; the demo's inputs and readouts by their place in its spec, as `_demo_anchors` counts them.
+//: Gives the parts of a lesson cell the ids `guide_context` names them by. The demo's inputs and readouts get theirs from abhyasa's `demoAnchors` when the guide asks.
 function guideStamp(cell, c) {
   const tag = (e, id) => { if (e) e.dataset.guideId = id; }, md = $('.lee-md-cell', cell);
   if (!md) return;
   tag(md, c.extra?.exercise?.role === 'task' ? 'check' : 'passage');
   $$('img', md).forEach((img, n) => tag(img, `img${n + 1}`));
-  const host = $('.lee-rupaka', md), root = host?.shadowRoot, spec = [...(root?.children || [])].find(n => n.rupaka)?.rupaka.spec;
-  tag(host, 'demo');
-  if (!spec) return;
-  const bs = guideBlocks(spec.blocks), inputs = $$('input[type=range], button[role=switch], .opts[aria-label]', root), outs = $$('.big', root);
-  bs.filter(b => GUIDE_INPUTS.includes(b.type)).forEach((b, n) => { if (typeof b.bind === 'string' && GUIDE_ID.test(b.bind)) tag(inputs[n], `in:${b.bind}`.slice(0, 40)); });
-  let k = 0;
-  bs.filter(b => b.type === 'readout').forEach((b, n) => { if (b.label || b.text) tag(outs[n], `out${++k}`); });
+  tag($('.lee-rupaka', md), 'demo');
 }
+//: The rupaka demo in `cell` as `{anchors, demo}` from the board's `demoAnchors`, which also stamps its ids; null with no demo or an older board.
+const guideDemoAnchors = (cell, b) => { const inner = [...($('.lee-rupaka', cell)?.shadowRoot?.children || [])].find(n => n.rupaka); return inner && b?.demoAnchors ? b.demoAnchors(inner) : null; };
 globalThis.document?.addEventListener('lee-markdown-rendered', e => {
   const cell = e.target.closest?.('.lee-cell[data-id]'), c = cell && lee.cells.find(x => x.id === cell.dataset.id);
   if (c && lessonNotebook() && guideCell(c)) guideStamp(cell, c);
@@ -164,7 +158,7 @@ async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? ''
     await lee.nbQueue;
     const asked = find();
     if (!asked) return status('', 'ok');
-    const anchors = guideAnchors(asked), board = loadBoard();
+    const anchors = guideAnchors(asked), board = loadBoard(), demo = guideDemoAnchors(asked, await board);
     const on = async (ev, d) => {
       if (!mine()) return;
       if (ev === 'error') { failed = d.error; return; }
@@ -178,7 +172,7 @@ async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? ''
         else if (await live && mine() && b.state?.streaming) b.add(d.step);
       } else if (ev === 'board') { whole = true; status('', 'ok'); await guideShow(d, id, cell, b, live, mine); }
     };
-    await postEvents('/nb/guide/stream', {path, cell_id: id, said, anchors}, (ev, d) => { chain = chain.then(() => on(ev, d)).catch(e => console.warn('Leela guide:', e)); }, ctl.signal);
+    await postEvents('/nb/guide/stream', {path, cell_id: id, said, anchors, ...(demo && {demo})}, (ev, d) => { chain = chain.then(() => on(ev, d)).catch(e => console.warn('Leela guide:', e)); }, ctl.signal);
     await chain;
     const b = await board;
     if (!mine()) return;

@@ -23,7 +23,7 @@ def _lesson(tmp_path, monkeypatch, source):
     path = tmp_path/'noise.ipynb'; nb.save(path)
     return path
 
-async def _ask(pg, path, board, posted, formulas=True, streamed=False):
+async def _ask(pg, path, board, posted, formulas=True, streamed=False, ready=''):
     await pg.set_viewport_size({'width': 1440, 'height': 1100})
     pg.set_default_timeout(15000)
     await pg.evaluate('p => leeOpenFile(p)', str(path))
@@ -37,6 +37,7 @@ async def _ask(pg, path, board, posted, formulas=True, streamed=False):
         await route.fulfill(status=200, content_type='text/event-stream', body=''.join(f'event: {e}\ndata: {json.dumps(d)}\n\n' for e, d in steps + [('board', board)]))
     await pg.route('**/nb/guide/stream', fake)
     if formulas: await pg.wait_for_function("[...document.querySelectorAll('.lee-cell[data-i=\"1\"] [data-guide-id^=f]')].every(e => e.dataset.parts)")
+    if ready: await pg.wait_for_function(ready)
     await cell.locator('.lee-guide').click()
     await pg.locator('.lee-modal input').fill(ASK)
     await pg.locator('.lee-modal input').press('Enter')
@@ -104,6 +105,24 @@ def test_the_page_sends_the_anchors_it_drew_when_code_and_escapes_hold_dollars(t
         mx0, my0, mx1, my1 = got['mark']
         assert abs(mx0 - px0) < 20 and abs(mx1 - px1) < 20 and my0 < py1 and my1 > py0, 'the marker lies over the part of the second formula'
         assert (px1 - px0) < (wx1 - wx0) * .8, 'the mark is on the part, not the whole second formula'
+    asyncio.run(_real_page(go, tmp_path))
+
+def test_the_page_sends_the_demo_ids_that_board_js_gives_the_rupaka_demo(tmp_path, monkeypatch):
+    from leela.blocks.nb.lesson import fence
+    spec = dict(id='noise', state=dict(t=500), blocks=[dict(type='slider', bind='t', label='Step t', min=0, max=1000, step=10), dict(type='readout', label='Now', text='t is {t}')])
+    path = _lesson(tmp_path, monkeypatch, f'Move the slider.\n\n{fence(spec)}')
+    posted = []
+    rendered = "[...(document.querySelector('.lee-cell[data-i=\"1\"] .lee-rupaka')?.shadowRoot?.children || [])].some(n => n.rupaka && n.querySelector('[data-rk-type=readout]'))"
+    async def go(pg):
+        cell = await _ask(pg, path, _board([]), posted, formulas=False, ready=rendered)
+        await pg.wait_for_function('window.abhyasaBoard?.state')
+        sent = posted[0]['demo']
+        assert [a['id'] for a in sent['anchors']] == ['demo', 'in:t', 'out:1'], sent
+        assert sent['demo']['inputs']['t']['value'] == 500 and len(sent['demo']['readouts']) == 1, sent
+        from leela.blocks.nb.lesson import check_demo
+        assert check_demo(sent)['anchors'] == sent['anchors'], 'the server takes what board.js sends as it is'
+        ids = await cell.evaluate("c => [...c.querySelector('.lee-rupaka').shadowRoot.querySelectorAll('[data-guide-id]')].map(e => e.dataset.guideId)")
+        assert {'in:t', 'out:1'} <= set(ids), ids
     asyncio.run(_real_page(go, tmp_path))
 
 def test_typing_a_s_d_in_a_lesson_editor_while_a_board_plays_types_and_does_not_drive_the_board(tmp_path, monkeypatch):

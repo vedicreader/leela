@@ -404,10 +404,25 @@ def record_run(memory, f):
     m, n, link = first(f['metrics'].items()), len(f['images']), walk_url(f['walk'], f['step'])
     return f"Sent to your walk: done, {f'{m[0]} {m[1]:g}, ' if m else ''}{n} image{'s' * (n != 1)}." + (f' [Back to the walk ↗](<{link}>)' if link else '')
 
-INPUTS = ('slider', 'toggle', 'choice')
-ANCHOR_ID = re.compile(r'\A[A-Za-z0-9:_-]{1,40}\Z')
 PAGE_ANCHOR = re.compile(r'\A(f|img)[1-9][0-9]{0,3}\Z')
-PAGE_MAX, TEXT_MAX, PARTS_MAX = 200, 4000, 200
+DEMO_ID = re.compile(r'\A(?:demo|in:[A-Za-z0-9:_-]{1,37}|out:[1-9][0-9]{0,3})\Z')
+PAGE_MAX, TEXT_MAX, PARTS_MAX, DEMO_MAX = 200, 4000, 200, 60
+
+def check_demo(raw) -> dict|None:
+    "The demo the page sent, `{anchors, demo}` as abhyasa's `abhyasaBoard.demoAnchors` gives it, with each anchor dropped whose id is not `demo`, `in:<bind>` or `out:<n>` or came before, and each text cut to `TEXT_MAX`; None for none; ValueError for any other shape."
+    if raw is None: return None
+    bad = ValueError('The demo must be {anchors: [{id, kind, text}], demo: {inputs, readouts}}, as abhyasaBoard.demoAnchors gives it.')
+    if not isinstance(raw, dict) or not isinstance(anchors := raw.get('anchors'), list) or len(anchors) > DEMO_MAX or not isinstance(d := raw.get('demo'), dict): raise bad
+    if not isinstance(d.get('inputs', {}), dict) or len(d.get('inputs', {})) > DEMO_MAX: raise bad
+    if not isinstance(rs := d.get('readouts', []), list) or len(rs) > DEMO_MAX or not all(isinstance(t, str) and len(t) <= TEXT_MAX for t in rs): raise bad
+    seen, kept = set(), []
+    for a in anchors:
+        if not isinstance(a, dict) or not isinstance(i := a.get('id'), str) or not isinstance(t := a.get('text'), str): raise bad
+        if i in seen or not DEMO_ID.match(i): continue
+        seen.add(i)
+        if a.get('kind') != ('demo' if i == 'demo' else 'input' if i.startswith('in:') else 'readout'): raise bad
+        kept.append(dict(a, text=t[:TEXT_MAX]))
+    return dict(raw, anchors=kept)
 
 def check_anchors(raw) -> list:
     "The formula and figure anchors the page sent, `id`, `text` and for a formula `parts`, as a list of dicts; ValueError for any other shape."
@@ -430,27 +445,15 @@ def _cut(s, spans):
     for a, b in sorted(spans): out.append(s[at:a]); at = b
     return ''.join(out + [s[at:]])
 
-def _blocks(bs):
-    for b in bs if isinstance(bs, list) else []:
-        if isinstance(b, dict): yield b; yield from _blocks(b.get('blocks'))
-
-def _demo_anchors(cell, spec, filed):
-    "`(anchors, demo)` of the `rupaka` `spec` in `cell`: the demo, its inputs and readouts, and whether every gate is locked in (`filed` holds the keys of the predictions filed)."
-    st, bs, ins, anchors, reads = spec.get('state') or {}, list(_blocks(spec.get('blocks'))), {}, [], []
-    for b in bs:
-        k = b.get('bind')
-        if b.get('type') not in INPUTS or not isinstance(k, str) or not ANCHOR_ID.match(k): continue
-        ins[k] = {f: b[f] for f in ('min', 'max', 'step', 'label') if b.get(f) is not None} | ({'value': st[k]} if k in st else {})
-        anchors.append(dict(id=f'in:{k}'[:40], kind='input', text=str(b.get('label') or k)))
-    for b in bs:
-        if b.get('type') == 'readout' and (t := ': '.join(str(x) for x in (b.get('label'), b.get('text')) if x)): reads.append(t)
-    anchors += [dict(id=f'out{i}', kind='readout', text=t) for i, t in enumerate(reads, 1)]
+def _demo(cell, spec, filed, page):
+    "`(anchors, demo)` of the `rupaka` `spec` in `cell`: the page's demo ids, inputs and readouts (`page`, from `check_demo`), else the `demo` anchor alone, and whether every gate is locked in (`filed` holds the keys of the predictions filed)."
     keys = [f"{cell.id}:{src_hash(cell.source)}:{spec.get('id') or ''}:{g.get('id')}" for g in _gates(spec.get('blocks'))]
-    demo = dict(slug=str(spec.get('id') or ''), inputs=ins, open=all(k in filed for k in keys), readouts=reads)
-    return [dict(id='demo', kind='demo', text=str(spec.get('title') or spec.get('id') or 'demo')), *anchors], demo
+    d, offered = (page or {}).get('demo') or {}, {a['id'] for a in (page or {}).get('anchors', [])}
+    demo = dict(slug=str(spec.get('id') or ''), inputs={k: v for k, v in d.get('inputs', {}).items() if f'in:{k}' in offered}, readouts=d.get('readouts', []), open=all(k in filed for k in keys))
+    return (page['anchors'] if page else [dict(id='demo', kind='demo', text=str(spec.get('title') or spec.get('id') or 'demo'))]), demo
 
-def guide_context(meta, cell, path='', filed=(), anchors=None) -> dict:
-    "The raw context for abhyasa's screen guide from the lesson `meta` and one `cell`; `filed` holds the keys of the demo predictions filed, `anchors` the formulas and figures the page drew, as `check_anchors` returns them."
+def guide_context(meta, cell, path='', filed=(), anchors=None, demo=None) -> dict:
+    "The raw context for abhyasa's screen guide from the lesson `meta` and one `cell`; `filed` holds the keys of the demo predictions filed, `anchors` the formulas and figures the page drew, as `check_anchors` returns them, and `demo` the page's demo, as `check_demo` returns it."
     w = meta.get('walk') or {}
     ctx = dict(page=str(path), title=meta.get('name') or '', step=f"Step {w['step']}" + (f": {w['section']}" if w.get('section') else '') if 'step' in w else '',
                concept=w.get('concept') or '', slug=_slug(meta.get('name') or '', w), anchors=[])
@@ -470,15 +473,15 @@ def guide_context(meta, cell, path='', filed=(), anchors=None) -> dict:
         ctx['anchors'] += [dict(id=a['id'], kind='formula', text=a['text'], **({'tokens': list(a['parts'])} if a.get('parts') else {})) if a['id'][0] == 'f'
                            else dict(id=a['id'], kind='figure', text=a['text']) for a in anchors or []]
         if specs:
-            anchors, ctx['demo'] = _demo_anchors(cell, specs[0][0], set(filed))
+            anchors, ctx['demo'] = _demo(cell, specs[0][0], set(filed), demo)
             ctx['anchors'] += anchors
     return ctx
 
 GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.14 or newer. Upgrade abhyasa, then try again.'
 GUIDE_STREAM_NEEDS = 'The screen guide draws each step as it comes with abhyasa 0.0.15 or newer. Upgrade abhyasa, then try again.'
 
-def guide_board(memory, nb, cell, path, said, note=None, anchors=None, **kw) -> dict:
-    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`. `kw` goes to `explain`; its `on_step` gets `(step, k, demo_open)`. `ImportError` when abhyasa has no guide."
+def guide_board(memory, nb, cell, path, said, note=None, anchors=None, demo=None, **kw) -> dict:
+    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`, and `demo` its demo, checked by `check_demo`. `kw` goes to `explain`; its `on_step` gets `(step, k, demo_open)`. `ImportError` when abhyasa has no guide."
     from abhyasa.guide import explain, norm_tex
     from abhyasa.ground import VaultSource
     from abhyasa.llm import Router, route_ask
@@ -489,7 +492,7 @@ def guide_board(memory, nb, cell, path, said, note=None, anchors=None, **kw) -> 
     with _open_lock(memory.path):
         lr = Learning(vault)
         filed = {a.get('card_key') for a in lr.attempts(_slug(meta['name'], meta.get('walk') or {}), limit=10000)}
-    ctx = guide_context(meta, cell, path, filed, [a | {'parts': [norm_tex(t) for t in a['parts']]} if a.get('parts') else a for a in anchors or []])
+    ctx = guide_context(meta, cell, path, filed, [a | {'parts': [norm_tex(t) for t in a['parts']]} if a.get('parts') else a for a in anchors or []], demo)
     opened = bool(ctx.get('demo', {}).get('open'))
     if on_step := kw.get('on_step'): kw['on_step'] = lambda s, k: on_step(s, k, opened)
     return dict(explain(Router(route_ask()), ctx, said, sources=[VaultSource(lr)], note=note, lr=lr, **kw), demo_open=opened)

@@ -17,7 +17,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -555,10 +555,10 @@ def connect(app, ctx):
             except Exception as e: return _vault_fail(e)
             return dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
     def guide_said(d):
-        "`(said, anchors)` of the guide request `d`, or its fail reply."
+        "`(said, anchors, demo)` of the guide request `d`, or its fail reply."
         said = str(d.get('said') or '').strip()
         if not said: return fail('Say what you do not get.')
-        try: return said, check_anchors(d.get('anchors'))
+        try: return said, check_anchors(d.get('anchors')), check_demo(d.get('demo'))
         except ValueError as e: return fail(str(e))
     def guide_cell(d):
         "`(tab, nb, cell)` of the guide request `d`, or its fail reply. Call it under `lesson_lock`."
@@ -575,7 +575,7 @@ def connect(app, ctx):
         try: from abhyasa.guide import stream_board  # noqa: F401
         except ImportError: return fail(GUIDE_STREAM_NEEDS)
         if not isinstance(asked := guide_said(d), tuple): return asked
-        said, anchors = asked
+        said, anchors, demo = asked
         await lesson_lock.acquire()
         try: g = guide_cell(d)
         except BaseException: lesson_lock.release(); raise
@@ -585,7 +585,7 @@ def connect(app, ctx):
         def state(e):
             if 'saved' not in e: q.put(('wait', e))   # a saved page needs an undo route, which Leela does not have
         def run():
-            try: q.put(('board', guide_board(ctx.memory, nb, cell, tab.path, said, None, anchors, stop=stop, on_state=state,
+            try: q.put(('board', guide_board(ctx.memory, nb, cell, tab.path, said, None, anchors, demo, stop=stop, on_state=state,
                                              on_step=lambda s, k, o: q.put(('step', dict(step=s, k=k, tier='tutor', demo_open=o))))))
             except ImportError as e: q.put(('error', dict(error=GUIDE_STREAM_NEEDS if (e.name or '').startswith('abhyasa') else errstr(e))))
             except Exception as e: q.put(('error', dict(error=errstr(e))))
@@ -606,12 +606,12 @@ def connect(app, ctx):
         "The screen guide's board for what the learner does not get in one cell of a lesson."
         if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
         if not isinstance(asked := guide_said(d), tuple): return asked
-        said, anchors = asked
+        said, anchors, demo = asked
         async with lesson_lock:
             if not isinstance(g := guide_cell(d), tuple): return g
             tab, nb, cell = g
             notes = []
-            try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors)
+            try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors, demo)
             except ImportError as e:
                 if (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail(GUIDE_NEEDS)
                 return fail(errstr(e))

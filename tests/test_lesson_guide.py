@@ -2,7 +2,7 @@ import re
 from fastcore.basics import AttrDict
 from leela.blocks.nb.exercise import exercise_cells
 import leela.blocks.nb.lesson as lesson_mod
-from leela.blocks.nb.lesson import check_anchors, fence, guide_context
+from leela.blocks.nb.lesson import check_anchors, check_demo, fence, guide_context
 from leela.blocks.nb.nb import Cell, src_hash
 
 ID = re.compile(r'\A[A-Za-z0-9:_-]{1,40}\Z')
@@ -14,6 +14,9 @@ DEMO = dict(id='noise', state=dict(t=500, flag=False), blocks=[dict(type='stack'
     dict(type='slider', bind='bad id!', min=0, max=1),
     dict(type='readout', text='alpha bar = {abar}', label='Share left'),
     dict(type='row', blocks=[dict(type='gate', id='g1', prompt='Does it fall?', options=['yes', 'no'], answer={'is': 'yes'})])])])
+
+PAGE_DEMO = dict(anchors=[dict(id='demo', kind='demo', text='Noise. Does it fall?'), dict(id='in:t', kind='input', text='Step t = 500'), dict(id='out:1', kind='readout', text='alpha bar = 0.5')],
+                 demo=dict(slug='noise', inputs={'t': dict(value=500, label='Step t', min=0, max=1000, step=10)}, readouts=['alpha bar = 0.5'], open=True))
 
 def md(src): return Cell(source=src, cell_type='markdown')
 def by_id(c): return {a['id']: a for a in c['anchors']}
@@ -56,19 +59,34 @@ def test_a_cell_with_no_walk_files_under_the_lesson_name():
     c = guide_context(dict(v=1, name='Half of eight'), md('Text.'))
     assert (c['step'], c['concept'], c['slug'], c['page']) == ('', '', 'half-of-eight', '')
 
-def test_demo_comes_from_the_rupaka_spec_and_opens_with_the_lock_in():
+def test_the_demo_ids_come_from_the_page_and_the_server_only_opens_the_gate():
     cell = md(f'Move the slider.\n\n{fence(DEMO)}')
     c = guide_context(META, cell)
     a = by_id(c)
-    assert all(ID.match(i) for i in a)
     assert 'rupaka' not in a['passage']['text'] and a['passage']['text'] == 'Move the slider.'
-    assert (a['demo']['kind'], a['in:t']['kind'], a['in:t']['text'], a['out1']['kind'], a['out1']['text']) == ('demo', 'input', 'Step t', 'readout', 'Share left: alpha bar = {abar}')
-    d = c['demo']
-    assert d['slug'] == 'noise' and d['open'] is False and d['readouts'] == ['Share left: alpha bar = {abar}']
-    assert d['inputs'] == {'t': dict(value=500, min=0, max=1000, step=10, label='Step t'), 'flag': dict(value=False, label='Show noise')}
+    assert list(a) == ['passage', 'demo'] and a['demo']['kind'] == 'demo', 'with no demo from the page the server numbers no input and no readout'
+    assert c['demo'] == dict(slug='noise', inputs={}, readouts=[], open=False)
+    c = guide_context(META, cell, demo=check_demo(PAGE_DEMO))
+    a = by_id(c)
+    assert list(a) == ['passage', 'demo', 'in:t', 'out:1'] and a['demo']['text'] == 'Noise. Does it fall?' and all(ID.match(i) for i in a)
+    assert c['demo'] == dict(slug='noise', inputs=PAGE_DEMO['demo']['inputs'], readouts=['alpha bar = 0.5'], open=False), "the page's open is not the gate"
     key = f'{cell.id}:{src_hash(cell.source)}:noise:g1'
-    assert guide_context(META, cell, filed={key})['demo']['open'] is True
-    assert guide_context(META, cell, filed={'other:key'})['demo']['open'] is False
+    assert guide_context(META, cell, filed={key}, demo=PAGE_DEMO)['demo']['open'] is True
+    assert guide_context(META, cell, filed={'other:key'}, demo=PAGE_DEMO)['demo']['open'] is False
+    assert 'demo' not in guide_context(META, md('Text.'), demo=PAGE_DEMO), 'a cell with no rupaka spec has no demo'
+    hidden = dict(PAGE_DEMO, demo=dict(PAGE_DEMO['demo'], inputs=PAGE_DEMO['demo']['inputs'] | {'secret': dict(value=1, min=0, max=9)}))
+    assert list(guide_context(META, cell, demo=check_demo(hidden))['demo']['inputs']) == ['t'], 'an input the page gave no anchor cannot be set by the tutor'
+
+def test_check_demo_keeps_the_agreed_ids_and_refuses_a_bad_shape():
+    assert check_demo(None) is None and check_demo(PAGE_DEMO) == PAGE_DEMO
+    odd = dict(PAGE_DEMO, anchors=PAGE_DEMO['anchors'] + [dict(id=i, kind='readout', text='x') for i in ('out1', 'out:0', 'f1', 'in:' + 'a' * 38, 'in:a b')] + [dict(id='in:t', kind='input', text='again')])
+    assert [a['id'] for a in check_demo(odd)['anchors']] == ['demo', 'in:t', 'out:1'], 'an id outside the grammar is dropped, and a bind two blocks share is kept once'
+    long = check_demo(dict(anchors=[dict(id='in:t', kind='input', text='a' * 5000)], demo={}))
+    assert len(long['anchors'][0]['text']) == 4000, 'a long state value is cut, not refused'
+    for bad in ('x', dict(anchors='x', demo={}), dict(anchors=[], demo='x'), dict(anchors=[dict(id='in:t', kind='input')], demo={}),
+                dict(anchors=[dict(id='out:1', kind='input', text='a')], demo={}), dict(anchors=[], demo=dict(inputs=[])),
+                dict(anchors=[], demo=dict(readouts=[1])), dict(anchors=[dict(id=f'out:{i}', kind='readout', text='a') for i in range(1, 100)], demo={})):
+        with pytest.raises(ValueError): check_demo(bad)
 
 def test_a_demo_with_no_gate_is_open():
     spec = dict(id='free', state=dict(n=1), blocks=[dict(type='slider', bind='n', min=0, max=9)])
@@ -135,6 +153,8 @@ def test_guide_stream_sends_each_step_before_the_board_and_frees_the_lock(serve,
     assert ev[-1][1]['steps'] == EXPLAINED['steps'] and ev[-1][1]['demo_open'] is False
     assert guide.thread is not threading.main_thread() and guide.kw['stop'].is_set() and guide.ctx['demo']['open'] is False
     assert ask_guide(r).status_code == 200, 'the lesson lock is free once the model call ends'
+    res = r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said='why?', demo=PAGE_DEMO))
+    assert res.status_code == 200 and [a['id'] for a in guide.ctx.anchors][-3:] == ['demo', 'in:t', 'out:1'] and guide.ctx['demo']['inputs'] == PAGE_DEMO['demo']['inputs']
 
 def test_guide_stream_reports_a_failed_explain_as_an_event_and_refuses_before_the_stream(serve, guide, monkeypatch):
     r = serve(lesson())
@@ -147,7 +167,7 @@ def test_guide_stream_reports_a_failed_explain_as_an_event_and_refuses_before_th
     def gone(*a, **k): raise ImportError('cannot import name VaultSource', name='abhyasa.ground')
     monkeypatch.setattr(sys.modules['abhyasa.guide'], 'explain', gone)
     assert [d['error'] for e, d in events(stream())] == [lesson_mod.GUIDE_STREAM_NEEDS], 'a missing part of abhyasa names the version the guide needs'
-    for bad in (dict(said=' '), dict(cell_id='missing'), dict(anchors='f1')):
+    for bad in (dict(said=' '), dict(cell_id='missing'), dict(anchors='f1'), dict(demo='x')):
         res = stream(**bad)
         assert res.status_code == 400 and res.json()['error'], bad
     monkeypatch.delattr(sys.modules['abhyasa.guide'], 'stream_board')
@@ -236,7 +256,7 @@ const ctx = {said: [], reply: null, selection: '', typed: null, CSS: {escape: s 
 ctx.document = {createElement: el, addEventListener() {}, head: {appendChild(n) { loads.push(n); if (n.src) setTimeout(() => n.onerror()); return n; }}};
 ctx.window = ctx; ctx.Rupaka = {set: (inner, s) => sets.push([inner, s])};
 ctx.getSelection = () => ctx.selection;
-ctx.$ = (sel, root) => sel === '.lee-cellmain' ? main : sel === '#out-b' ? out : sel.startsWith('.lee-cell[') ? cell : sel === '[data-guide-id="demo"]' ? demoHost : sel.startsWith('[data-guide-id=') ? target : null;
+ctx.$ = (sel, root) => sel === '.lee-rupaka' ? ctx.rupakaHost : sel === '.lee-cellmain' ? main : sel === '#out-b' ? out : sel.startsWith('.lee-cell[') ? cell : sel === '[data-guide-id="demo"]' ? demoHost : sel.startsWith('[data-guide-id=') ? target : null;
 ctx.$$ = (sel, root) => sel === '[data-guide-id]' ? root.guideEls : [];
 ctx.status = (t, k) => ctx.said.push([k, t]);
 ctx.isExercise = c => c?.cell_type === 'code' && !!c.extra?.exercise?.tests;
@@ -289,6 +309,9 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
   ctx.typed = 'first'; const p3 = ctx.lessonGuide('b'); await new Promise(r => setTimeout(r, 20));
   ctx.typed = 'second'; await ctx.lessonGuide('b'); open(); await p3; ctx.gate = null; ctx.buffered = false;
   r.buffered = [b.log.map(x => x.slice(0, 3)), ctx.said.at(-1)];
+  const inner = {rupaka: {spec: {}}}; ctx.rupakaHost = {shadowRoot: {children: [{}, inner]}};
+  b = await run([['board', whole]], b => { b.demoAnchors = h => ({anchors: [{id: 'in:t', kind: 'input', text: h === inner ? 'inner' : 'host'}], demo: {inputs: {}, readouts: []}}); });
+  r.pageDemo = posts.at(-1)[1].demo; ctx.rupakaHost = undefined;
   console.log(JSON.stringify(r)); })();'''
     r = subprocess.run([node, '-e', harness, str(Path(__file__).parents[1]/'leela/blocks/nb/lesson.js')], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -311,4 +334,6 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     assert got['ended'] == [['play', 1, True, 2], ['add', 'two'], ['finish', 2, '']], 'a stream with steps and no board ends the board with no end line'
     assert got['errored'] == [[['play', 1, True, 1], ['finish', 1, '']], ['err', 'The tutor could not answer.']], 'an error after a step ends the board and says why'
     assert got['superseded'] == [['play', 1, True], ['finish', 2, 'End.']], 'a newer question aborts the older one, whose events go nowhere'
+    assert got['pageDemo'] == dict(anchors=[dict(id='in:t', kind='input', text='inner')], demo=dict(inputs={}, readouts=[])), 'the page sends the demo ids that board.js gives the rupaka element'
+    assert 'demo' not in got['post'][1], 'a cell with no rupaka demo sends no demo'
     assert got['buffered'] == [[['play', 1, True], ['finish', 2, 'End.']], ['ok', '']], 'frames of the older question that come after its abort draw nothing'
