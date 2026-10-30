@@ -283,17 +283,17 @@ def test_a_step_page_draws_its_maths_and_moves_between_steps(tmp_path, monkeypat
         await pg.wait_for_selector('blockquote .katex'); await pg.wait_for_selector('blockquote .katex-display')
         assert await pg.locator('blockquote pre code').inner_text() == 'print(1 < 2)\n'
         assert await pg.locator('.lee-learn-note strong').inner_text() == 'the sum'
-        assert await pg.locator('.lee-learn-steps span').inner_text() == 'Step 1 of 2' and await pg.get_by_role('link', name='Previous step').count() == 0
+        assert await pg.locator('.lee-learn-steps span').inner_text() == 'Idea 1 of 2' and await pg.get_by_role('link', name='Previous idea').count() == 0
         await _shoot(pg, 'step-maths')
         await _ide(pg, base)
         frame = await _side(pg, tmp_path)
         await frame.wait_for_selector('blockquote .katex')
-        await frame.get_by_role('link', name='Next step').click()
+        await frame.get_by_role('link', name='Next idea').click()
         await frame.wait_for_url('**step=1**pane=1**'); await frame.wait_for_load_state('load')
         assert 'Attention mixes values.' in await frame.locator('blockquote').inner_text()
-        assert await frame.locator('.lee-learn-steps span').inner_text() == 'Step 2 of 2'
+        assert await frame.locator('.lee-learn-steps span').inner_text() == 'Idea 2 of 2'
         await pg.wait_for_function(f"(JSON.parse({SAVED} || 'null') || {{}}).page?.includes('step=1')")
-        await frame.get_by_role('link', name='Previous step').click()
+        await frame.get_by_role('link', name='Previous idea').click()
         await frame.wait_for_url('**step=0**pane=1**')
     asyncio.run(_on_learn(go, ws, ide=False))
 

@@ -1,9 +1,6 @@
-import ast, base64, html, io, json, re, subprocess
-from copy import deepcopy
+import base64, html, io, json, re, subprocess
 from html.parser import HTMLParser
 from importlib.resources import files
-from importlib.util import find_spec
-from pathlib import Path
 import pytest
 from PIL import Image
 from rupaka.spec import demo, gate, is_, readout, slider, validate
@@ -46,16 +43,6 @@ class _Tags(HTMLParser):
 
 def _balanced(s):
     p = _Tags(); p.feed(s); p.close(); return not p.stack
-
-def test_room_spec_matches_abhyasa():
-    src = (Path(find_spec('abhyasa').submodule_search_locations[0])/'core'/'stage.py').read_text()   # read, not imported: importing abhyasa.core loads its web UI
-    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == 'room_spec')
-    ns = {'deepcopy': deepcopy}; exec(compile(ast.Module([fn], []), 'abhyasa_room_spec', 'exec'), ns)
-    cases = [_spec(), _spec(answer='x'), {'blocks': [{'type': 'row', 'blocks': [{'type': 'gate', 'id': 'a', 'answer': 'p.0'}, {'type': 'stack', 'answer': 1}]}]},
-             [{'type': 'gate', 'answer': {'is': [1, {'type': 'gate', 'answer': 2}]}}], {'answer': 3, 'type': 'readout'}, 'text', 7, None]
-    for c in cases:
-        before = deepcopy(c)
-        assert room_spec(c) == ns['room_spec'](c) and c == before
 
 def test_room_spec_hides_the_gate_answer_and_keeps_the_rest():
     s = _spec(); r = room_spec(s)

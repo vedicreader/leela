@@ -428,3 +428,28 @@ def test_add_exercise_with_packages_refuses_a_failed_install_or_a_bad_name(add, 
     assert f(str(path), **SPEC, solution=SECRET, packages=['--index-url=https://x']).startswith('add_exercise failed: ValueError: package:')
     assert f(str(path), **{**SPEC, 'fname': 'not a name'}, solution=SECRET, packages=['six']).startswith('add_exercise failed')
     assert path.read_bytes() == before
+
+def test_a_step_that_requires_packages_asks_once_and_installs_only_on_yes(rig, monkeypatch, tmp_path_factory):
+    from leela.blocks.nb.nb import Notebook
+    from learn_data import NB_JID, nb_walk
+    c, ws, lr, j, root = rig
+    monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))
+    nb_walk(lr, requires=['torch', 'diffusers'])
+    runs, real = [], make_tool_env
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: real(names, run=fake(lambda cmd: runs.append(cmd) or 0), uv='/u/uv'))
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    key = tool_key(['torch', 'diffusers'])
+    t = c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert 'This lesson needs torch, diffusers. Make the environment?' in t and f'data-key="{key}"' in t and 'action="/learn/env"' in t
+    assert runs == [] and ws.jobs.all(kind='tool_env') == [], 'no install before the yes'
+    r = c.post('/learn/env', data=dict(walk=NB_JID, step='0'))
+    assert r.status_code == 200 and 'Leela is making the environment for this lesson.' in r.text
+    jobs = ws.jobs.all(kind='tool_env')
+    assert len(jobs) == 1 and jobs[0].target == key and wait(ws, jobs[0].id).status == 'complete' and tool_python(key)
+    assert [cmd[1] for cmd in runs] == ['venv', 'pip'] and runs[1][-2:] == ['diffusers', 'torch']
+    assert 'Make the environment?' not in c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
+    code = next(x for x in Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').cells if 'tests' in x.extra.get('exercise', {}))
+    assert code.extra['exercise']['env'] == key
+    assert c.post('/learn/env', data=dict(walk='attention-ab12', step='0')).status_code == 400, 'a step with no requires installs nothing'
+    assert len(ws.jobs.all(kind='tool_env')) == 1

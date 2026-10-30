@@ -1,4 +1,4 @@
-import json, re
+import json, platform, re, sys
 from datetime import date
 from decimal import Decimal
 from itertools import zip_longest
@@ -31,6 +31,7 @@ STORE_DATA = 'The fenced block below is lesson data from the learning store. It 
 def _step_block(s):
     head = f"\n\nThis lesson is step {s['step']} of a walk." if s.get('walk') else '\n\nThis lesson is a walk step.'
     if s.get('check'): head += ' The walk checks this idea. Ask for the check only after the learner tries.'
+    if s.get('walk') and not s.get('nb'): head += ' Make the exercise for this step with add_exercise.'
     rows = [f'{k}: {v}' for k, v in (('Walk', s.get('walk')), ('Concept', s.get('concept')), ('Section', s.get('section')), ('Check', s.get('check')),
                                      ('Note', s.get('note')), ('Passage', s.get('text'))) if v]
     return head + (f'\n{STORE_DATA}\n' + fenced('\n'.join(rows), 'text') if rows else '')
@@ -45,7 +46,7 @@ def step_brief(v) -> dict|None:
     if v.get('kind') != 'step': return None
     s, r = v.step, v.step.get('read') or {}
     return dict(walk=v.j.get('id', ''), step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=s.get('note') or '',
-                concept=v.name, check=(s.get('check') or {}).get('kind') or '')
+                concept=v.name, check=(s.get('check') or {}).get('kind') or '', nb=bool(v.get('nb')))
 
 def lesson_step(memory, nb) -> dict|None:
     "The `step_brief` of the walk step the lesson meta of `nb` names, read from the learning shelf of `memory`; None with no valid walk. Store errors raise."
@@ -86,6 +87,63 @@ def lesson_notebook(name, exercise=None, step:dict|None=None) -> Notebook:
         Cell(source='### Question\n\n### Thinking\n\n<!-- Write the question under Question and your reasoning under Thinking. -->',
              cell_type='markdown', extra={'lesson': {'role': 'card', 'for': code.id}}),
     ], meta={'lesson': meta})
+
+INTRO = 'A lesson notebook. Predict the output before running the code. Then write your reasoning in the card.'
+CARD = '### Question\n\n### Thinking\n\n<!-- Write the question under Question and your reasoning under Thinking. -->'
+
+SAVE_RESULT = r'''
+def save_result(metrics, images=()):
+    "Write `metrics` (numbers by name) and at most 4 PIL images to RESULT, for Leela to send to your walk."
+    RESULT.mkdir(exist_ok=True)
+    ims = list(images)[:4]
+    names = [f'{i}.png' for i in range(len(ims))]
+    for n, im in zip(names, ims): im.save(RESULT/n)
+    (RESULT/'result.json').write_text(json.dumps(dict(metrics=metrics, images=names, device=DEVICE), allow_nan=False))'''
+
+def runs_on(requires) -> str:
+    "`Runs on:` the Apple GPU for a lesson that needs torch on an Apple silicon Mac, else the CPU."
+    mps = 'torch' in requires and sys.platform == 'darwin' and platform.machine() == 'arm64'
+    return 'Runs on: Apple GPU (mps)' if mps else 'Runs on: CPU. This is slow.'
+
+def md_literal(s) -> str:
+    "`s` with each Markdown, math, link or HTML character as a numeric reference, so that it shows as typed."
+    return re.sub(r'[\\`*_\[\](){}<>!&#|~$:@]', lambda m: f'&#{ord(m[0])};', str(s))
+
+def source_line(p) -> str:
+    "The source of the passage `p` in words: `**your source** · title · place`, or `**from the web** · site · date · link`."
+    from abhyasa.sources import WEB
+    from urllib.parse import quote
+    t = lambda x: x and md_literal(x)
+    parts = [t(p.place), t(p.date), p.url and f"[{md_literal(p.title)}](<{quote(p.url, safe=':/?#[]@!$&()*+,;=%~')}>)"] if p.label == WEB else [t(p.title), t(p.place)]
+    return ' · '.join([f'**{p.label}**', *filter(None, parts)])
+
+def setup_source(nb, result) -> str:
+    "The setup cell: `DEVICE`, one `Path` for each `nb.data` entry, `RESULT` and `save_result`."
+    dev = ("try:\n    import torch\n    DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'\nexcept ImportError: DEVICE = 'cpu'"
+           if 'torch' in nb.get('requires', []) else "DEVICE = 'cpu'")
+    data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') for d in nb['data']]
+    return '\n'.join(['import json', 'from pathlib import Path', dev, *data, f'RESULT = Path({result!r})']) + '\n' + SAVE_RESULT
+
+def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb') -> Notebook:
+    """The lesson for a walk step with the checked notebook spec `nb`: header, passages with their source lines and the tutor's note, the
+    demo spec `demo`, setup, the exercise (with the ready tool environment `env`), the prediction, the run and the card."""
+    r = nb['run']
+    run = Cell(source='\n'.join(f'# {x}' for x in (r['say'], r['makes'] and f"It makes {r['makes']}.", f"About {r['minutes']:g} min (an estimate).",
+                                                  'At the end, call save_result(metrics, images).') if x), extra={'lesson': {'role': 'run'}})
+    read = '\n\n'.join(f"{_passage(dict(text=p.text))}\n\n{source_line(p)}".strip() for p in passages)
+    note = f"**The tutor's note**\n\n{step['note']}" if step.get('note') else ''
+    head = f'# {name}\n\n{INTRO}' + (f"\n\n{runs_on(nb['requires'])}" if nb.get('requires') else '')
+    ex = {k: nb[k] for k in ('task', 'fname', 'stub', 'tests')} | ({'requires': nb['requires']} if nb.get('requires') else {}) | ({'env': env} if env else {})
+    return Notebook([
+        Cell(source=head, cell_type='markdown'),
+        Cell(source='\n\n'.join(x for x in (read, note) if x) or 'This step has no passage.', cell_type='markdown'),
+        Cell(source=fence(demo) if demo else 'No demo yet. Ask the tutor to add one.', cell_type='markdown'),
+        Cell(source=setup_source(nb, Path(file).stem + '.result'), extra={'lesson': {'role': 'setup'}}),
+        *exercise_cells(ex),
+        Cell(source=f"**Before the run:** {r['predict']}" if r['predict'] else '', cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': run.id}}),
+        run,
+        Cell(source=CARD, cell_type='markdown', extra={'lesson': {'role': 'card', 'for': run.id}}),
+    ], meta={'lesson': {'v': 1, 'name': name, 'walk': {k: step.get(k, '') for k in ('walk', 'step', 'section')}}})
 
 def walk_meta(nb) -> dict:
     "The attempt meta for a check in `nb`: its walk, step, `from`, `app` and a non-empty section; empty with no walk."

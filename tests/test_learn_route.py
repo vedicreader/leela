@@ -1,4 +1,4 @@
-import asyncio, html, re, sys
+import asyncio, html, json, os, re, subprocess, sys
 from contextlib import contextmanager
 from unittest.mock import Mock
 import pytest
@@ -9,7 +9,7 @@ from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import lesson_notebook
 from leela.blocks.nb.nb import Notebook
 from leela.workspace import Workspace
-from learn_data import JID, rig, walk  # noqa: F401
+from learn_data import JID, NB_JID, nb_walk, rig, walk  # noqa: F401
 
 def headers_ok(r):
     csp = r.headers['content-security-policy']
@@ -600,6 +600,49 @@ def test_a_step_says_where_it_is_in_the_walk_and_links_its_neighbours(rig, pane)
     c = rig[0]
     tail = '&amp;pane=1' if pane else ''
     first, last = c.get(f'/learn?walk={JID}&step=0&pane={pane}').text, c.get(f'/learn?walk={JID}&step=1&pane={pane}').text
-    assert 'Step 1 of 2' in first and f'href="/learn?walk={JID}&amp;step=1{tail}"' in first and 'Previous step' not in first
-    assert 'Step 2 of 2' in last and f'href="/learn?walk={JID}&amp;step=0{tail}"' in last and 'Next step' not in last
-    assert 'Step ' not in c.get('/learn?topic=Softmax').text, 'a topic is not in a walk'
+    assert 'Idea 1 of 2' in first and f'href="/learn?walk={JID}&amp;step=1{tail}"' in first and 'Previous idea' not in first and 'Next idea' in first
+    assert 'Idea 2 of 2' in last and f'href="/learn?walk={JID}&amp;step=0{tail}"' in last and 'Next idea' not in last and 'Previous idea' in last
+    assert ' of 2' not in c.get('/learn?topic=Softmax').text and 'Step ' not in first, 'a topic is not in a walk'
+
+def test_a_step_names_its_sources_in_words(rig, tmp_path_factory, monkeypatch):
+    c, ws, lr = rig[:3]
+    monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))
+    nb_walk(lr)
+    t = c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert re.search(r'<strong>your source</strong>\s*· Comic notes · section 2', t) and 'A caption names who acts.' in t
+    assert re.search(r'<strong>from the web</strong>\s*· example\.org · \d+ \w+ 2026 · <a href="https://example\.org/c"[^>]*>Captions</a>', t)
+    assert '<strong>your source</strong>' in c.get(f'/learn?walk={JID}&step=0').text and 'href="/v/' not in t
+
+def _abhyasa_at(monkeypatch, d, **addr):
+    "Point the address file at `d`, with `addr` in it; no `addr` leaves no file."
+    monkeypatch.delenv('ABHYASA_ADDRESS_FILE', raising=False); monkeypatch.setenv('XDG_CONFIG_HOME', str(d))
+    if addr: (d/'abhyasa').mkdir(exist_ok=True); (d/'abhyasa'/'serving.json').write_text(json.dumps(addr))
+
+def test_a_link_from_another_vault_says_so_and_reads_nothing(rig, monkeypatch, tmp_path_factory):
+    from abhyasa.contract import vault_key
+    c, ws, lr = rig[:3]
+    mine, there = vault_key(ws.memory.path), tmp_path_factory.mktemp('cfg')
+    other = next(k for k in ('0a1b2c3d', '0a1b2c3e') if k != mine)
+    _abhyasa_at(monkeypatch, there, url='http://127.0.0.1:5099', pid=os.getpid(), vault='/x/abhyasa.db')
+    monkeypatch.setattr('leela.blocks.learn.app.read_step', lambda *a: pytest.fail('a link from another vault read the store'))
+    line = f'abhyasa uses the vault at /x/abhyasa.db. Leela uses {ws.memory.path}. Start both with the same vault.'
+    one_line(c.get(f'/learn?walk={JID}&step=0&v={other}'), 200, line)
+    one_line(c.post('/learn/open', data=dict(walk=JID, step='0', v=other)), 200, line)
+    p = subprocess.Popen([sys.executable, '-c', '']); p.wait()   # a pid that has ended: abhyasa was killed and left its file
+    _abhyasa_at(monkeypatch, there, url='http://127.0.0.1:5099', pid=p.pid, vault='/x/abhyasa.db')
+    one_line(c.get(f'/learn?walk={JID}&v={other}'), 200, f'abhyasa uses another vault. Leela uses {ws.memory.path}. Start both with the same vault.')
+    for bad in (dict(pid=0, vault='/x'), dict(pid=True, vault='/x'), dict(pid='1', vault='/x'), dict(pid=10**100, vault='/x'), dict(vault='/x')):
+        _abhyasa_at(monkeypatch, there, url='http://127.0.0.1:5099', **bad)
+        assert 'abhyasa uses another vault.' in c.get(f'/learn?walk={JID}&v={other}').text
+
+def test_a_link_from_the_same_vault_opens_and_keeps_its_key(rig, monkeypatch, tmp_path_factory):
+    from abhyasa.contract import vault_key
+    c, ws = rig[:2]
+    _abhyasa_at(monkeypatch, tmp_path_factory.mktemp('cfg'))
+    v = vault_key(ws.memory.path)
+    t = c.get(f'/learn?walk={JID}&step=0&v={v}').text
+    assert 'Softmax maps scores to weights.' in t and len(re.findall(rf'<input type="hidden" value="{v}" name="v">', t)) == 1 and f'href="/learn?walk={JID}&amp;step=1&amp;v={v}"' in t
+    one_line(c.get(f'/learn?walk=gone-0000&v={v}'), 200, f'This walk is not in the vault at {ws.memory.path}. abhyasa and Leela must use the same vault.')
+    one_line(c.post('/learn/open', data=dict(walk='gone-0000', v=v)), 200, f'This walk is not in the vault at {ws.memory.path}. abhyasa and Leela must use the same vault.')
+    one_line(c.get('/learn?walk=gone-0000'), 200, 'This walk is not in your learning store.')
+    one_line(c.get(f'/learn?walk={JID}&v=0A1B2C3D'), 400, 'v is not a vault key: give 8 characters from 0-9 and a-f')

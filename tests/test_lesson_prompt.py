@@ -77,7 +77,7 @@ def test_the_step_brief_holds_no_answer_rubric_or_solution(abhyasa_cfg):
     s = dict(slug='tool-calls', read=dict(section='2 Tools', text='Agents call tools.'), note='Look.',
              check=dict(kind='short', way='words', answer='SECRET_ANSWER', rubric='SECRET_RUBRIC', solution='SECRET_SOLUTION'))
     b = step_brief(AttrDict(kind='step', j=AttrDict(id='a-1'), i=0, step=s, name='Tool calls'))
-    assert b == dict(walk='a-1', step=0, section='2 Tools', text='Agents call tools.', note='Look.', concept='Tool calls', check='short')
+    assert b == dict(walk='a-1', step=0, section='2 Tools', text='Agents call tools.', note='Look.', concept='Tool calls', check='short', nb=False)
     assert 'SECRET' not in lesson_charter(b)
     assert step_brief(AttrDict(kind='missing')) is None and step_brief(AttrDict(kind='done', j={})) is None
 
@@ -92,7 +92,7 @@ def test_lesson_step_reads_the_saved_step_from_the_store(tmp_path):
     m = Memory(path=tmp_path/'vault.db', offline=True)
     walk(Learning(m._store('learning')))
     nb = lambda i, w=JID: lesson_notebook('x', step=dict(walk=w, step=i))
-    assert lesson_step(m, nb(0)) == dict(walk=JID, step=0, section='2 Background', text='Softmax maps scores to weights.', note='Watch the sum.', concept='Softmax', check='short')
+    assert lesson_step(m, nb(0)) == dict(walk=JID, step=0, section='2 Background', text='Softmax maps scores to weights.', note='Watch the sum.', concept='Softmax', check='short', nb=False)
     assert lesson_step(m, nb(1))['concept'] == 'Attention'
     assert lesson_step(m, nb(0, 'nope-1')) is None and lesson_step(m, nb(-1)) is None and lesson_step(m, lesson_notebook('x')) is None
     with pytest.raises(ValueError): lesson_step(m, nb(9))

@@ -79,30 +79,30 @@ def connect(app, ctx):
         except Exception as e: return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
     @app.route('/learn', methods=['GET'])
     async def learn(req):
-        from abhyasa.journey import read_handoff
+        from abhyasa.contract import read_handoff
+        from .learn import not_found, other_vault
         root = ctx.session.project_root
         try: q = read_handoff(req.url.query)
         except ValueError as e: return said(req, root, str(e), 400)
+        if t := other_vault(q, ctx.memory.path): return said(req, root, t)
         try: v = await off_loop(read_step, ctx.memory, q)
         except ValueError as e: return said(req, root, str(e), 400)
         except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
-        if v.kind == 'missing': return said(req, root, 'This walk is not in your learning store.')
+        if v.kind == 'missing': return said(req, root, not_found(q, ctx.memory.path))
         if v.kind == 'done': return said(req, root, 'This walk is done.')
         return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root), headers=HEADERS)
     @app.route('/learn/open', methods=['POST'])
     async def learn_open(req):
-        from urllib.parse import urlencode
-        from abhyasa.journey import handoff, read_handoff
+        from abhyasa.contract import handoff
         from ..fs.fs import Unsafe
-        from .learn import Taken, open_step
+        from .learn import Taken, not_found, open_step
         f, root = await req.form(), ctx.session.project_root
         say = lambda text, code=200: said(req, root, text, code, pane=f.get('pane') == '1')
-        try: q = read_handoff(urlencode({k: f[k] for k in ('walk', 'step', 'topic') if f.get(k)}))
-        except ValueError as e: return say(str(e), 400)
-        try: v = await off_loop(read_step, ctx.memory, q)
+        try: q, v = await posted_step(f)
         except ValueError as e: return say(str(e), 400)
         except Exception: return say('The learning store is locked or cannot be read.', 503)
-        if v.kind == 'missing': return say('This walk is not in your learning store.')
+        if isinstance(v, str): return say(v)
+        if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v.kind == 'done': return say('This walk is done.')
         try: ctx.session.open_external(open_step(ctx.session, ctx.fs, v, q))
         except Taken as e: return say(str(e), 409)
@@ -111,7 +111,32 @@ def connect(app, ctx):
         except OSError as e: return say(f'Leela could not write the lesson. {os_why(e)}'.strip(), 500)
         except Exception: return say('Leela could not open the lesson.', 500)
         # the pane keeps the step's own URL, so a reload does not GET this POST route
-        return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic), pane=f.get('pane') == '1', root=root), headers=HEADERS)
+        return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic, v=q.v), pane=f.get('pane') == '1', root=root), headers=HEADERS)
+    async def posted_step(f):
+        "The handoff in the form `f` and its `find_step` result, or the one line for another vault in place of the result. `ValueError` for a bad form."
+        from urllib.parse import urlencode
+        from abhyasa.contract import read_handoff
+        from .learn import other_vault
+        q = read_handoff(urlencode({k: f[k] for k in ('walk', 'step', 'topic', 'v') if f.get(k)}))
+        if t := other_vault(q, ctx.memory.path): return q, t
+        return q, await off_loop(read_step, ctx.memory, q)
+    @app.route('/learn/env', methods=['POST'])
+    async def learn_env(req):
+        from . import tools
+        from .learn import not_found
+        f, root = await req.form(), ctx.session.project_root
+        say = lambda text, code=200: said(req, root, text, code, pane=f.get('pane') == '1')
+        try: q, v = await posted_step(f)
+        except ValueError as e: return say(str(e), 400)
+        except Exception: return say('The learning store is locked or cannot be read.', 503)
+        if isinstance(v, str): return say(v)
+        if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
+        if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
+        key = tools.tool_key(names)
+        if tools.tool_python(key) and tools.tool_indexed(key): return say('The environment for this lesson is ready.')
+        if not tools.tool_python(key) and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
+        tools.start_tool_job(ctx.jobs, names)   # no await since the check: one event loop starts one job for a key
+        return say('Leela is making the environment for this lesson. Open the lesson when it is ready.')
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names

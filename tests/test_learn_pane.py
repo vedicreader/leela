@@ -9,12 +9,9 @@ PANE_JS = ROOT/'leela'/'blocks'/'learn'/'pane.js'
 GOOD = ['/learn?walk=a-1&step=0', '/learn/lookup?q=Agent', '/learn?pane=0&walk=a-1#x']
 BAD = ['https://evil.example/x', '//evil.example', '/\\evil.example', 'javascript:alert(1)', 'w/g', '', None, '/learn\x00x', '/learn\nx']
 
-def test_is_local_matches_abhyasa():
-    from abhyasa.core.pane import is_local as theirs, pane_url as their_url
-    for u in GOOD + BAD: assert is_local(u) == theirs(u) and pane_url(u) == their_url(u), u
+def test_pane_url_and_no_abhyasa_core():
+    assert [is_local(u) for u in GOOD + BAD] == [True] * len(GOOD) + [False] * len(BAD)
     assert pane_url('/learn?walk=a-1') == '/learn?walk=a-1&pane=1' and pane_url('//evil.example') is None
-    src = (ROOT/'leela'/'blocks'/'learn'/'learn.py').read_text()
-    assert "# a copy of abhyasa.core.pane.is_local: abhyasa.core imports abhyasa's web UI (leela-reuse.md 5)" in src
     imports = re.compile(r'^\s*(from|import)\s+abhyasa\.core\b', re.M)
     assert not [p for p in (ROOT/'leela').rglob('*.py') if imports.search(p.read_text())]   # runtime code never imports it
 

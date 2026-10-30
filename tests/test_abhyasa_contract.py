@@ -24,7 +24,7 @@ def test_six_hint_rungs():
 
 def test_pure_imports_in_isolated_python():
     src = '''import sys, json
-import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.check, abhyasa.talk, abhyasa.core.stage, rupaka.spec
+import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.check, abhyasa.talk, abhyasa.contract, abhyasa.stagekit, abhyasa.sources, abhyasa.demo, rupaka.spec
 print(json.dumps([n for n in sys.modules if n == 'ipywidgets' or n.startswith('ipywidgets.') or n == 'abhyasa.app' or n == 'abhyasa.blocks' or n.startswith('abhyasa.blocks.')]))
 '''
     p = subprocess.run([sys.executable, '-I', '-c', src], capture_output=True, text=True, timeout=60)
@@ -42,11 +42,11 @@ def test_rupaka_vendor_version():
 def test_abhyasa_dependency_floor():
     t = tomllib.loads((ROOT/'pyproject.toml').read_text())
     deps = t['project']['dependencies']
-    assert 'abhyasa>=0.0.12,<0.1' in deps and 'rupaka==0.0.6' in deps
+    assert 'abhyasa>=0.0.13,<0.1' in deps and 'rupaka==0.0.6' in deps
     assert 'abhyasa' not in t['tool']['uv']['sources']
 
 def test_room_spec_contract():
-    from abhyasa.core.stage import room_spec
+    from abhyasa.stagekit import room_spec
     s = {'state': {'x': 2}, 'blocks': [{'type': 'row', 'blocks': [{'type': 'gate', 'id': 'g', 'answer': {'is': 'two'}, 'why': 'w'}]}, {'type': 'readout', 'answer': 1}]}
     assert room_spec(s) == {'state': {'x': 2}, 'blocks': [{'type': 'row', 'blocks': [{'type': 'gate', 'id': 'g', 'why': 'w'}]}, {'type': 'readout', 'answer': 1}]}
     assert s['blocks'][0]['blocks'][0]['answer'] == {'is': 'two'}
@@ -68,14 +68,26 @@ def test_stage_contract():
     assert got == [ok for _, ok in STAGE_CASES]
 
 def test_learn_handoff():
-    from abhyasa.journey import LEELA_ROUTE, HANDOFF_CASES, handoff, read_handoff
-    assert LEELA_ROUTE == '/learn'
+    from abhyasa.contract import LEELA_ROUTE, HANDOFF_CASES, HANDOFF_BAD, handoff, read_handoff
+    assert LEELA_ROUTE == '/learn' and any(kw.get('v') for kw, _ in HANDOFF_CASES)
     for kw, path in HANDOFF_CASES:
         assert handoff(**kw) == path
         q = read_handoff(path.split('?', 1)[1])
-        assert (q.walk, q.step, q.topic) == (kw.get('jid', ''), kw.get('i'), kw.get('topic', ''))
-    for bad in ('walk=../x', 'walk=a-1&step=-1', ''):
+        assert (q.walk, q.step, q.topic, q.v) == (kw.get('jid', ''), kw.get('i'), kw.get('topic', ''), kw.get('v', ''))
+    for bad in HANDOFF_BAD:
         with pytest.raises(ValueError): read_handoff(bad)
+
+def test_nb_spec_cases(tmp_path, monkeypatch):
+    from abhyasa.contract import NB_SPEC_CASES, validate_nb_spec
+    monkeypatch.setenv('HOME', str(tmp_path))   # `path_why` reads the home folder: a linked ~/code must not change a case
+    for spec, key in NB_SPEC_CASES:
+        if key is None: assert validate_nb_spec(spec)['run']
+        else:
+            with pytest.raises(ValueError, match=f'^{key}:'): validate_nb_spec(spec)
+
+def test_run_cases():
+    from abhyasa.contract import RUN_CASES, run_ok
+    assert [run_ok(a) for a, _ in RUN_CASES] == [ok for _, ok in RUN_CASES]
 
 def test_prompts_contract(abhyasa_cfg):
     import abhyasa.tutor

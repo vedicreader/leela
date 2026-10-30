@@ -19,24 +19,41 @@ def Page(title, *body, pane:bool=False, js:bool=False, math:bool=False, root=Non
                 Body(Main(H1(title), *body, cls='lee-learn')), cls='lee-learn-page in-pane' if pane else 'lee-learn-page', data_rh_url=here)
 
 def _Steps(q, i, n, pane):
-    "`Step N of M`, with links to the steps before and after `i`."
-    from abhyasa.journey import handoff
-    to = lambda k: handoff(q.walk, k) + ('&pane=1' if pane else '')
-    return Nav(A('Previous step', href=to(i - 1)) if i > 0 else None, Span(f'Step {i + 1} of {n}'), A('Next step', href=to(i + 1)) if i + 1 < n else None, cls='lee-learn-steps')
+    "`Idea N of M`, with links to the ideas before and after `i` that keep the vault key `q.v`."
+    from abhyasa.contract import handoff
+    to = lambda k: handoff(q.walk, k, v=q.v) + ('&pane=1' if pane else '')
+    return Nav(A('Previous idea', href=to(i - 1)) if i > 0 else None, Span(f'Idea {i + 1} of {n}'), A('Next idea', href=to(i + 1)) if i + 1 < n else None, cls='lee-learn-steps')
+
+def _Source(p):
+    "The source line of the passage `p` in words: your source, title and place; or from the web, site, date and a link."
+    from abhyasa.sources import WEB
+    parts = [p.place, p.date, A(p.title, href=p.url, target='_blank', rel='noopener noreferrer') if p.url else None] if p.label == WEB else [p.title, p.place]
+    out = [Strong(p.label)]
+    for x in filter(None, parts): out += [' · ', x]
+    return P(*out, cls='lee-learn-source')
+
+def _Env(v, q, pane):
+    "The ask that makes the tool environment of a step whose `nb` has `requires`; None when there is none or it is ready."
+    from .tools import tool_indexed, tool_key, tool_python
+    if not (names := (v.get('nb') or {}).get('requires')) or (tool_python(key := tool_key(names)) and tool_indexed(key)): return None
+    return Form(P(f"This lesson needs {', '.join(names)}. Make the environment?", cls='lee-learn-line'), Hidden(name='walk', value=q.walk), Hidden(name='step', value=str(v.i)),
+                Hidden(name='v', value=q.v), Hidden(name='pane', value='1') if pane else None,
+                Button('Make the environment', type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
 
 def StepPage(v, q, pane:bool=False, root=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane."
     if v.kind == 'step':
+        from .learn import passages
         r = v.step.get('read') or {}
         title, step = v.j.title, str(v.i)
         body = [P(r['section'], cls='lee-learn-section') if r.get('section') else None,
-                Blockquote(NotStr(md_html(r['text']))) if r.get('text') else None,
+                *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(p.text))), _Source(p))],
                 Div(NotStr(md_html(v.step['note'])), cls='lee-learn-note') if v.step.get('note') else None,
-                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane)]
+                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Env(v, q, pane)]
     else:
         title, step = v.name, ''
         body = [P(v.concept.get('statement') or '') if v.concept else P('This idea is not in your learning store.', cls='lee-learn-line')]
-    return Page(title, *body, Form(Hidden(name='walk', value=q.walk), Hidden(name='step', value=step), Hidden(name='topic', value=q.topic),
+    return Page(title, *body, Form(Hidden(name='walk', value=q.walk), Hidden(name='step', value=step), Hidden(name='topic', value=q.topic), Hidden(name='v', value=q.v),
                                    Hidden(name='pane', value='1') if pane else None,
                                    Button('Open as a lesson', type='submit', cls='lee-btn'), method='post', action='/learn/open'), pane=pane, math=v.kind == 'step', root=root)
 

@@ -1,6 +1,5 @@
 "The two copies of a presentation: slide markup, cleaned outputs, clipped stage messages and demos without answers."
 import base64, binascii, hashlib, html, json, re, struct
-from copy import deepcopy
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote
@@ -11,6 +10,7 @@ from fastcore.xtras import fenced
 from IPython.core.display import ImageFormat
 from rupaka.render import MIME as RUPAKA_MIME
 from rupaka.spec import validate
+from abhyasa.stagekit import room_spec
 from ...core.text import MD_HIGHLIGHT, _HTML_ATTRS, _HTML_DROP, _HTML_TAGS, _html_attr, clean_html
 
 MOST, MOST_GROUPS, ROOM_LONG = 65536, 49, '<p>Output is too long for the room screen.</p>'
@@ -20,15 +20,6 @@ _RASTER = (ImageFormat.png, ImageFormat.jpeg, ImageFormat.gif, ImageFormat.webp)
 _ROOM_ATTRS = {k: v - {'id', 'title', 'data-id'} for k, v in _HTML_ATTRS.items()}
 _SHOWN = {RUPAKA_MIME, 'text/html', 'text/markdown', 'text/plain', *(f.mime_type for f in _RASTER)}
 _VOID = frozenset('area base br col embed hr img input link meta source track wbr'.split())
-
-# copy: importing abhyasa.blocks.talk.app builds the talk app; drop this when abhyasa moves room_spec into abhyasa.talk or core
-def room_spec(spec):
-    "A copy of a demo spec for the audience window: no gate has its `answer`, so the HTML has no answer before the presenter shows it."
-    def strip(x):
-        if isinstance(x, list): return [strip(v) for v in x]
-        if not isinstance(x, dict): return x
-        return {k: strip(v) for k, v in x.items() if not (k == 'answer' and x.get('type') == 'gate')}
-    return strip(deepcopy(spec))
 
 def render_md(md):
     "`/markdown/render` with `allow_raw` off: an `{=html}` fence shows as code, then the same mdhtml calls and `clean_html`."

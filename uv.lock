@@ -18,7 +18,7 @@ constraints = [
 
 [[package]]
 name = "abhyasa"
-version = "0.0.12"
+version = "0.0.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -32,9 +32,9 @@ dependencies = [
     { name = "vidyut" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/29/d3/fcf4a0d465824db2badf7e3a9ba5a27168adcf963e5ba2693a97f16fdc96/abhyasa-0.0.12.tar.gz", hash = "sha256:b3cdf30ec7369d5492842698cc2ffdf997252b2aaefe799805fb97452dcccab5", size = 1265767, upload-time = "2026-10-29T08:38:08.035Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/06/61427b310fac3352e6e9dc09bcef56263edef8debbac3551e183bb54eaef/abhyasa-0.0.13.tar.gz", hash = "sha256:ae5a7719d893c1e46a708775ce677591fd1bd96bebc1e30cfa1c70a8e0306f1a", size = 1305300, upload-time = "2026-10-29T23:51:52.037Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/f3/699f18f6d292520dc60f50dbf3e6de7607e3fa1ed54489ea21fa2f28713e/abhyasa-0.0.12-py3-none-any.whl", hash = "sha256:98fb58bc465a86ca805c762c0cdaffafe58e7cbb052b5bcca230e3b86820a5c1", size = 1327657, upload-time = "2026-10-29T08:38:06.337Z" },
+    { url = "https://files.pythonhosted.org/packages/10/49/764b91e7fbd03021d2fe12648267791661feced0a598739b07a6de75e9fb/abhyasa-0.0.13-py3-none-any.whl", hash = "sha256:8742d7453f1809069af8347d88b121b733bbedeb2c06134c59deb1ae42959779", size = 1367264, upload-time = "2026-10-29T23:51:50.362Z" },
 ]
 
 [[package]]
@@ -2599,7 +2599,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abhyasa", specifier = ">=0.0.12,<0.1" },
+    { name = "abhyasa", specifier = ">=0.0.13,<0.1" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.10" },
