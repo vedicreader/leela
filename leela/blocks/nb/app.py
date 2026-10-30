@@ -17,7 +17,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import GUIDE_NEEDS, EnvGone, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import GUIDE_NEEDS, EnvGone, check_anchors, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -560,9 +560,8 @@ def connect(app, ctx):
         if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
         said = str(d.get('said') or '').strip()
         if not said: return fail('Say what you do not get.')
-        tokens = d.get('tokens')
-        if tokens is not None and not (isinstance(tokens, dict) and all(isinstance(v, list) and all(isinstance(t, str) for t in v) for v in tokens.values())):
-            return fail('The formula tokens must map each formula id to a list of TeX strings.')
+        try: anchors = check_anchors(d.get('anchors'))
+        except ValueError as e: return fail(str(e))
         async with lesson_lock:
             tab, nb, _ = run_owner(d)
             if nb is None: return fail('Return to the lesson notebook, then try.')
@@ -570,7 +569,7 @@ def connect(app, ctx):
             cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
             if cell is None: return fail('That cell is no longer in the notebook.')
             notes = []
-            try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, tokens)
+            try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors)
             except ImportError as e:
                 if (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail(GUIDE_NEEDS)
                 return fail(errstr(e))

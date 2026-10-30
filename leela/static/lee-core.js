@@ -652,11 +652,12 @@ function loadTexparts() {
     document.head.appendChild(s);
   }).catch(e => { console.warn('Leela math parts:', e); return null; });
 }
-//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. In a lesson's markdown cell a formula gets `\htmlId` around its parts, and carries them in `data-parts` and its number in `data-guide-id`. A promise while any is pending, else nothing.
+//: Fills each `span.math` and `div.math` of `el` in place, so the carriers a diff counts stay the same nodes. In a lesson's markdown cell a formula gets `\htmlId` around its parts, and carries them in `data-parts`. At once, before KaTeX loads, each formula of a lesson gets its number in `data-guide-id` and its TeX in `data-tex`, which the guide sends as the one list of formulas. A promise while any is pending, else nothing.
 function renderMath(el) {
   const todo = $$('span.math:not([data-mathed]), div.math:not([data-mathed])', el);
   if (!todo.length) return null;
   const cell = el.matches('.lee-md-cell') && el.closest('.lee-cell[data-id]'), lesson = cell && lessonNotebook(), all = lesson ? $$('span.math, div.math', el) : [];
+  if (lesson) todo.forEach(m => { m.dataset.guideId = `f${all.indexOf(m) + 1}`; m.dataset.tex = m.textContent; });
   return Promise.all([loadKatex(), lesson ? loadTexparts() : null]).then(([k, tex]) => k && todo.forEach(m => {
     if (!m.isConnected || m.dataset.mathed) return;
     m.dataset.mathed = '1';
@@ -664,7 +665,7 @@ function renderMath(el) {
     if (!tex) return k.render(m.textContent, m, opts);
     const n = all.indexOf(m) + 1, [marked, parts] = tex.texParts(m.textContent, (+cell.dataset.i + 1) * 1000 + n);
     k.render(marked, m, {...opts, trust: tex.trust});
-    m.dataset.parts = JSON.stringify(parts); m.dataset.guideId = `f${n}`;
+    m.dataset.parts = JSON.stringify(parts);
   }));
 }
 const rupakaRendered = el => el.dispatchEvent(new CustomEvent('lee-markdown-rendered', {bubbles: true}));
@@ -3512,7 +3513,9 @@ globalThis.document?.addEventListener('lee-markdown-rendered', e => {
   const cell = e.target.closest?.('.lee-cell[data-id]'), c = cell && lee.cells.find(x => x.id === cell.dataset.id);
   if (c && lessonNotebook() && guideCell(c)) guideStamp(cell, c);
 });
-const guideParts = cell => Object.fromEntries($$('[data-guide-id]', cell).filter(e => /^f\d+$/.test(e.dataset.guideId) && e.dataset.parts).map(e => [e.dataset.guideId, JSON.parse(e.dataset.parts).map(p => p[0])]));
+//: The formulas and figures Leela drew in `cell`, in page order, as the one list the server takes them from: `{id, text, parts}` for each `f<n>`, `{id, text}` for each `img<n>`. A figure on its own line has an empty `alt` and its text in the `figcaption`.
+const guideAnchors = cell => $$('[data-guide-id]', cell).flatMap(e => { const id = e.dataset.guideId;
+  return /^f\d+$/.test(id) ? [{id, text: (e.dataset.tex || '').trim(), parts: JSON.parse(e.dataset.parts || '[]').map(p => p[0])}] : /^img\d+$/.test(id) ? [{id, text: (e.alt || e.closest('figure')?.querySelector('figcaption')?.textContent || '').trim()}] : []; });
 const guideFind = (cell, id) => { const q = `[data-guide-id="${CSS.escape(id)}"]`; return $(q, cell) || $$('.lee-rupaka', cell).map(h => h.shadowRoot && $(q, h.shadowRoot)).find(Boolean) || null; };
 const guideDemo = (cell, open) => set => { const inner = open && [...(guideFind(cell, 'demo')?.shadowRoot?.children || [])].find(n => n.rupaka); if (inner) Rupaka.set(inner, set); };
 //: Draws the board in the cell it was asked from; false when the board is missing or fails, so the plain text stays.
@@ -3531,8 +3534,8 @@ async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? ''
     await lee.nbQueue;
     const asked = find();
     if (!asked) return status('', 'ok');
-    const tokens = guideParts(asked), board = loadBoard();
-    const d = await post('/nb/guide', {path, cell_id: id, said, tokens});
+    const anchors = guideAnchors(asked), board = loadBoard();
+    const d = await post('/nb/guide', {path, cell_id: id, said, anchors});
     const b = await board, cell = find();
     if (cell) {
       $('.lee-guide-out', cell)?.remove();

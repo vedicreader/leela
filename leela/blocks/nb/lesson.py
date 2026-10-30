@@ -406,8 +406,24 @@ def record_run(memory, f):
 
 INPUTS = ('slider', 'toggle', 'choice')
 ANCHOR_ID = re.compile(r'\A[A-Za-z0-9:_-]{1,40}\Z')
-MATH = re.compile(r'\$\$(.+?)\$\$|\$(?=\S)([^$\n]+?)(?<=\S)\$', re.S)
-IMAGE = re.compile(r'!\[([^\]]*)\]\(')
+PAGE_ANCHOR = re.compile(r'\A(f|img)[1-9][0-9]{0,3}\Z')
+PAGE_MAX, TEXT_MAX, PARTS_MAX = 200, 4000, 200
+
+def check_anchors(raw) -> list:
+    "The formula and figure anchors the page sent, `id`, `text` and for a formula `parts`, as a list of dicts; ValueError for any other shape."
+    if raw is None: return []
+    bad = ValueError('The anchors must be a list of {id, text, parts} for formulas f1, f2, ... and {id, text} for figures img1, img2, ..., each id once.')
+    if not isinstance(raw, list) or len(raw) > PAGE_MAX: raise bad
+    seen = set()
+    for a in raw:
+        if not isinstance(a, dict) or not isinstance(i := a.get('id'), str) or not (m := PAGE_ANCHOR.match(i)) or i in seen: raise bad
+        seen.add(i)
+        if not isinstance(t := a.get('text'), str) or len(t) > TEXT_MAX: raise bad
+        p = a.get('parts')
+        if m[1] == 'img': ok = p is None
+        else: ok = p is None or (isinstance(p, list) and len(p) <= PARTS_MAX and all(isinstance(x, str) and len(x) <= TEXT_MAX for x in p))
+        if not ok: raise bad
+    return raw
 
 def _cut(s, spans):
     out, at = [], 0
@@ -433,8 +449,8 @@ def _demo_anchors(cell, spec, filed):
     demo = dict(slug=str(spec.get('id') or ''), inputs=ins, open=all(k in filed for k in keys), readouts=reads)
     return [dict(id='demo', kind='demo', text=str(spec.get('title') or spec.get('id') or 'demo')), *anchors], demo
 
-def guide_context(meta, cell, path='', filed=(), tokens=None) -> dict:
-    "The raw context for abhyasa's screen guide from the lesson `meta` and one `cell`; `filed` holds the keys of the demo predictions filed, `tokens` the parts of each formula by anchor id as the page split them."
+def guide_context(meta, cell, path='', filed=(), anchors=None) -> dict:
+    "The raw context for abhyasa's screen guide from the lesson `meta` and one `cell`; `filed` holds the keys of the demo predictions filed, `anchors` the formulas and figures the page drew, as `check_anchors` returns them."
     w = meta.get('walk') or {}
     ctx = dict(page=str(path), title=meta.get('name') or '', step=f"Step {w['step']}" + (f": {w['section']}" if w.get('section') else '') if 'step' in w else '',
                concept=w.get('concept') or '', slug=_slug(meta.get('name') or '', w), anchors=[])
@@ -443,18 +459,16 @@ def guide_context(meta, cell, path='', filed=(), tokens=None) -> dict:
     elif m := exercise_meta(cell):
         ctx['anchors'] = [dict(id='check', kind='check', text=f"Write {m['fname']}: " + '; '.join(t['say'] for t in m['tests']))]
     elif cell.cell_type == 'markdown':
-        src, specs, prose = cell.source, [], []
+        src, specs = cell.source, []
         for info, body, a, b in fenced_blocks(src) + fenced_blocks(src, ch='~'):
-            prose.append((a, b))
             if info != 'rupaka': continue
             try: s = json.loads(body)
             except ValueError: continue
             if isinstance(s, dict): specs.append((s, (a, b)))
         text = _cut(src, [sp for _, sp in specs]).strip()
-        math = [(m[1] or m[2]).strip() for m in MATH.finditer(_cut(src, prose))]
         ctx['anchors'] = ([dict(id='passage', kind='passage', text=text)] if text else [])
-        ctx['anchors'] += [dict(id=f'f{i}', kind='formula', text=t, **({'tokens': list(tokens[f'f{i}'])} if (tokens or {}).get(f'f{i}') else {})) for i, t in enumerate(math, 1)]
-        ctx['anchors'] += [dict(id=f'img{i}', kind='figure', text=m[1]) for i, m in enumerate(IMAGE.finditer(_cut(src, prose)), 1)]
+        ctx['anchors'] += [dict(id=a['id'], kind='formula', text=a['text'], **({'tokens': list(a['parts'])} if a.get('parts') else {})) if a['id'][0] == 'f'
+                           else dict(id=a['id'], kind='figure', text=a['text']) for a in anchors or []]
         if specs:
             anchors, ctx['demo'] = _demo_anchors(cell, specs[0][0], set(filed))
             ctx['anchors'] += anchors
@@ -462,8 +476,8 @@ def guide_context(meta, cell, path='', filed=(), tokens=None) -> dict:
 
 GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.14 or newer. Upgrade abhyasa, then try again.'
 
-def guide_board(memory, nb, cell, path, said, note=None, tokens=None) -> dict:
-    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `tokens` are the formula parts the page sent, by anchor id. `ImportError` when abhyasa has no guide."
+def guide_board(memory, nb, cell, path, said, note=None, anchors=None) -> dict:
+    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`. `ImportError` when abhyasa has no guide."
     from abhyasa.guide import explain, norm_tex
     from abhyasa.ground import VaultSource
     from abhyasa.llm import Router, route_ask
@@ -474,5 +488,5 @@ def guide_board(memory, nb, cell, path, said, note=None, tokens=None) -> dict:
     with _open_lock(memory.path):
         lr = Learning(vault)
         filed = {a.get('card_key') for a in lr.attempts(_slug(meta['name'], meta.get('walk') or {}), limit=10000)}
-    ctx = guide_context(meta, cell, path, filed, {k: [norm_tex(t) for t in v] for k, v in (tokens or {}).items()})
+    ctx = guide_context(meta, cell, path, filed, [a | {'parts': [norm_tex(t) for t in a['parts']]} if a.get('parts') else a for a in anchors or []])
     return dict(explain(Router(route_ask()), ctx, said, sources=[VaultSource(lr)], note=note, lr=lr), demo_open=bool(ctx.get('demo', {}).get('open')))

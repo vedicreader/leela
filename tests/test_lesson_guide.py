@@ -2,7 +2,7 @@ import re
 from fastcore.basics import AttrDict
 from leela.blocks.nb.exercise import exercise_cells
 import leela.blocks.nb.lesson as lesson_mod
-from leela.blocks.nb.lesson import fence, guide_context
+from leela.blocks.nb.lesson import check_anchors, fence, guide_context
 from leela.blocks.nb.nb import Cell, src_hash
 
 ID = re.compile(r'\A[A-Za-z0-9:_-]{1,40}\Z')
@@ -23,7 +23,8 @@ def test_the_tokenizer_moved_to_the_page():
 
 def test_markdown_cell_gives_passage_formulas_and_figures():
     src = f'Noise is added in one jump.\n\n$$ {DDPM} $$\n\nHere $\\bar\\alpha_t$ is the share left.\n\n![A noisy cat](cat.png)\n\n```python\nprice = "$5"; cost = "$7"\n```'
-    c = guide_context(META, md(src), path='/w/diffusion.ipynb', tokens={'f1': [r'\bar\alpha_t', r'\mathbf{x}_0'], 'f9': ['x']})
+    page = [dict(id='f1', text=DDPM, parts=[r'\bar\alpha_t', r'\mathbf{x}_0']), dict(id='f2', text=r'\bar\alpha_t', parts=[]), dict(id='img1', text='A noisy cat')]
+    c = guide_context(META, md(src), path='/w/diffusion.ipynb', anchors=page)
     a = by_id(c)
     assert list(a) == ['passage', 'f1', 'f2', 'img1'] and all(ID.match(i) for i in a)
     assert c['page'] == '/w/diffusion.ipynb' and c['title'] == 'Diffusion noise'
@@ -33,6 +34,23 @@ def test_markdown_cell_gives_passage_formulas_and_figures():
     assert a['f2']['text'] == r'\bar\alpha_t' and 'tokens' not in a['f2'], 'a formula the page sent no parts for has no tokens'
     assert (a['img1']['kind'], a['img1']['text']) == ('figure', 'A noisy cat') and 'labels' not in a['img1']
     assert 'demo' not in c
+
+def test_formula_and_figure_anchors_come_only_from_the_page_list():
+    src = 'Price `$5 and $7`, cost \\$3, code `![x](y.png)`.\n\n$a$ then $$b$$\n\n```\n$c$ ![z](q.png)\n```'
+    page = [dict(id='f1', text='a', parts=['a']), dict(id='f2', text='b', parts=[])]
+    assert list(by_id(guide_context(META, md(src), anchors=page))) == ['passage', 'f1', 'f2']
+    assert list(by_id(guide_context(META, md(src)))) == ['passage'], 'with no list the server counts nothing'
+    assert list(by_id(guide_context(META, md(src), anchors=[dict(id='img1', text='x')]))) == ['passage', 'img1']
+
+def test_check_anchors_refuses_a_bad_list():
+    assert check_anchors(None) == []
+    ok = [dict(id='f1', text='a', parts=['a']), dict(id='img2', text='')]
+    assert check_anchors(ok) == ok
+    for bad in ('f1', {'id': 'f1'}, [1], [dict(text='a')], [dict(id='passage', text='a')], [dict(id='f0', text='a')], [dict(id='f1', text=1)],
+                [dict(id='f1', text='a', parts='a')], [dict(id='f1', text='a', parts=[1])], [dict(id='img1', text='a', parts=['a'])],
+                [dict(id='f1', text='a'), dict(id='f1', text='b')], [dict(id='f1', text='a' * 5000)], [dict(id='f1', text='a', parts=['a'] * 300)],
+                [dict(id=f'f{i}', text='a') for i in range(1, 300)]):
+        with pytest.raises(ValueError): check_anchors(bad)
 
 def test_a_cell_with_no_walk_files_under_the_lesson_name():
     c = guide_context(dict(v=1, name='Half of eight'), md('Text.'))
@@ -97,7 +115,7 @@ def ask_guide(r, i=1, said="I don't get alpha bar", **kw):
 
 def test_guide_route_builds_the_context_and_returns_the_board(serve, guide):
     r = serve(lesson(f'Alpha bar is the share left.\n\n$\\bar\\alpha_t$'))
-    res = ask_guide(r)
+    res = ask_guide(r, anchors=[dict(id='f1', text=r'\bar\alpha_t', parts=[])])
     assert res.status_code == 200, res.text
     d = res.json()
     assert d['steps'] == EXPLAINED['steps'] and d['tier'] == 'tutor' and d['notes'] == ['The tutor looks in your vault.']
@@ -114,15 +132,17 @@ def test_guide_route_opens_the_demo_after_the_lock_in(serve, guide):
     second = ask_guide(r)
     assert second.status_code == 200 and guide.ctx['demo']['open'] is True and second.json()['demo_open'] is True
 
-def test_guide_route_passes_the_formula_parts_the_page_sent_through_norm_tex(serve, guide):
-    r = serve(lesson('$a_t$ and $b$'))
-    assert ask_guide(r, tokens={'f1': [' \\bar\\alpha_t ', 'a_t'], 'f7': ['lost']}).status_code == 200
+def test_guide_route_takes_formulas_and_figures_from_the_page_list_through_norm_tex(serve, guide):
+    r = serve(lesson('Price `$5 and $7`, cost \\$3.\n\n$a_t$ and $b$ ![x](y.png)'))
+    page = [dict(id='f1', text='a_t', parts=[' \\bar\\alpha_t ', 'a_t']), dict(id='f2', text='b', parts=[]), dict(id='img1', text='x')]
+    assert ask_guide(r, anchors=page).status_code == 200
     a = {x['id']: x for x in guide.ctx.anchors}
-    assert a['f1']['tokens'] == ['n:\\bar\\alpha_t', 'n:a_t'] and 'tokens' not in a['f2'] and 'f7' not in a
-    assert ask_guide(r).status_code == 200 and 'tokens' not in {x['id']: x for x in guide.ctx.anchors}['f1']
-    for bad in ('f1', [['a']], {'f1': 'a_t'}, {'f1': [1]}):
-        res = ask_guide(r, tokens=bad)
-        assert res.status_code == 400 and 'tokens' in res.json()['error'], bad
+    assert list(a) == ['passage', 'f1', 'f2', 'img1'] and a['f1']['tokens'] == ['n:\\bar\\alpha_t', 'n:a_t'] and 'tokens' not in a['f2']
+    assert (a['f1']['kind'], a['f1']['text'], a['img1']['kind'], a['img1']['text']) == ('formula', 'a_t', 'figure', 'x')
+    assert ask_guide(r).status_code == 200 and [x['id'] for x in guide.ctx.anchors] == ['passage']
+    for bad in ('f1', [['a']], [dict(id='f1', text='a', parts='a_t')], [dict(id='f1', text='a', parts=[1])], [dict(id='f1')], [dict(id='x', text='a')]):
+        res = ask_guide(r, anchors=bad)
+        assert res.status_code == 400 and 'anchors' in res.json()['error'], bad
 
 def test_guide_route_needs_the_norm_tex_of_abhyasa_0014(serve, guide, monkeypatch):
     monkeypatch.delattr(sys.modules['abhyasa.guide'], 'norm_tex')
@@ -168,7 +188,7 @@ def test_guide_entry_asks_one_line_and_shows_the_steps_and_sources():
 const el = tag => ({tag, children: [], dataset: {}, classList: {contains: () => false}, appendChild(c) { this.children.push(c); return c; }, remove() { this.gone = true; },
   after(n) { this.next = n; }});
 const main = el('div'), out = el('div'), cell = el('div'), posts = [], dialogs = [], loads = [], plays = [], sets = [], target = el('span'), demoHost = {shadowRoot: {children: [{rupaka: {}}]}};
-cell.guideEls = [{dataset: {guideId: 'f1', parts: JSON.stringify([['a_t', 'g-1001-0'], ['b', 'g-1001-1']])}}, {dataset: {guideId: 'img1'}}, {dataset: {guideId: 'f2', parts: '[]'}}];
+cell.guideEls = [{dataset: {guideId: 'f1', tex: ' a_t b ', parts: JSON.stringify([['a_t', 'g-1001-0'], ['b', 'g-1001-1']])}}, {dataset: {guideId: 'img1'}, alt: '', closest: () => ({querySelector: () => ({textContent: ' A cat '})})}, {dataset: {guideId: 'img2'}, alt: 'inline', closest: () => null}, {dataset: {guideId: 'f2'}}, {dataset: {guideId: 'demo'}}];
 const ctx = {said: [], reply: null, selection: '', typed: null, CSS: {escape: s => s}, lee: {path: '/n.ipynb', nbQueue: Promise.resolve(), sel: 1,
   cells: [{id: 'a', cell_type: 'markdown', extra: {lesson: {role: 'prediction'}}}, {id: 'b', cell_type: 'markdown', extra: {}},
           {id: 'c', cell_type: 'code', extra: {exercise: {tests: []}}}, {id: 'd', cell_type: 'code', extra: {}}]}};
@@ -207,7 +227,7 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     got = json.loads(r.stdout)
     assert got['buttons'] == [[], ["I don't get…"], ["I don't get…"], []], 'a markdown or exercise cell, never a prediction, a card or a plain code cell'
     assert got['plain'] == [], 'a notebook with no lesson cell is not a lesson'
-    assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", tokens={'f1': ['a_t', 'b'], 'f2': []})]
+    assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", anchors=[dict(id='f1', text='a_t b', parts=['a_t', 'b']), dict(id='img1', text='A cat'), dict(id='img2', text='inline'), dict(id='f2', text='', parts=[])])]
     assert any('lee-board.js' in s for s in got['loaded']) and any('lee-board.css' in s for s in got['loaded'])
     assert got['played'] == [1, 2, ['assets', 'demo', 'resolve'], '/leestatic/board/', True, True, True], 'the board is drawn, not the text, with no speak hook'
     assert got['closed'] == 0 and got['open'] == [{'t': 2}], 'the demo moves only when every gate is filed'

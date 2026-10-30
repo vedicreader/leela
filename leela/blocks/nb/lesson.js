@@ -127,7 +127,9 @@ globalThis.document?.addEventListener('lee-markdown-rendered', e => {
   const cell = e.target.closest?.('.lee-cell[data-id]'), c = cell && lee.cells.find(x => x.id === cell.dataset.id);
   if (c && lessonNotebook() && guideCell(c)) guideStamp(cell, c);
 });
-const guideParts = cell => Object.fromEntries($$('[data-guide-id]', cell).filter(e => /^f\d+$/.test(e.dataset.guideId) && e.dataset.parts).map(e => [e.dataset.guideId, JSON.parse(e.dataset.parts).map(p => p[0])]));
+//: The formulas and figures Leela drew in `cell`, in page order, as the one list the server takes them from: `{id, text, parts}` for each `f<n>`, `{id, text}` for each `img<n>`. A figure on its own line has an empty `alt` and its text in the `figcaption`.
+const guideAnchors = cell => $$('[data-guide-id]', cell).flatMap(e => { const id = e.dataset.guideId;
+  return /^f\d+$/.test(id) ? [{id, text: (e.dataset.tex || '').trim(), parts: JSON.parse(e.dataset.parts || '[]').map(p => p[0])}] : /^img\d+$/.test(id) ? [{id, text: (e.alt || e.closest('figure')?.querySelector('figcaption')?.textContent || '').trim()}] : []; });
 const guideFind = (cell, id) => { const q = `[data-guide-id="${CSS.escape(id)}"]`; return $(q, cell) || $$('.lee-rupaka', cell).map(h => h.shadowRoot && $(q, h.shadowRoot)).find(Boolean) || null; };
 const guideDemo = (cell, open) => set => { const inner = open && [...(guideFind(cell, 'demo')?.shadowRoot?.children || [])].find(n => n.rupaka); if (inner) Rupaka.set(inner, set); };
 //: Draws the board in the cell it was asked from; false when the board is missing or fails, so the plain text stays.
@@ -146,8 +148,8 @@ async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? ''
     await lee.nbQueue;
     const asked = find();
     if (!asked) return status('', 'ok');
-    const tokens = guideParts(asked), board = loadBoard();
-    const d = await post('/nb/guide', {path, cell_id: id, said, tokens});
+    const anchors = guideAnchors(asked), board = loadBoard();
+    const d = await post('/nb/guide', {path, cell_id: id, said, anchors});
     const b = await board, cell = find();
     if (cell) {
       $('.lee-guide-out', cell)?.remove();

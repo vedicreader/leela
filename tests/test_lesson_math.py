@@ -38,5 +38,6 @@ def test_lesson_formulas_carry_their_parts_and_trust_only_our_ids():
     assert r'\htmlId{g-3001-1}{\bar\alpha_t}' in les['tex'][0] and les['trust'] == [True, True] and les['display'] == [False, True] and les['ids'] == ['f1', 'f2']
     assert r'\bar\alpha_t' in [p[0] for p in les['parts'][0]] and all(i.startswith('g-3001-') for _, i in les['parts'][0]) and all(i.startswith('g-3002-') for _, i in les['parts'][1])
     assert got['rule'] == [True, False, False]
-    for name in ('outside', 'notLesson', 'noParts'):
+    for name in ('outside', 'notLesson'):
         assert got[name] == dict(tex='a_t', trust=False, parts=None, id=None), name
+    assert got['noParts'] == dict(tex='a_t', trust=False, parts=None, id='f1'), 'a lesson formula keeps its id for the guide when texparts did not load, and has no parts'
