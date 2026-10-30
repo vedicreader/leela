@@ -180,7 +180,9 @@ def test_the_title_is_painted_once_per_change_and_sent_to_the_native_window():
         'debounced to the last scope, an overlay keeps the scope under it, and an unchanged title is not sent again'
     assert got['title'] == '1⚙ · leela — orgs · vault', 'a browser without pywebview still gets the title'
 
-def test_option_s_is_free_in_every_scope():
-    "abhyasa 0.0.13 asks for Option+S on Open as a lesson and on Check my work, only where no binding holds it."
+def test_option_s_checks_the_exercise_in_the_editor_and_nothing_else():
+    "abhyasa 0.0.13 asks for Option+S on Check my work. On a Mac Option+S types ß, so the chord matches the physical key."
     from leela.core.keys import _signature
-    assert not [(k.scope, k.action) for k in DEFAULTS for c in k.keys if _signature(c) == (("alt",), "s")]
+    assert [(k.scope, k.action) for k in DEFAULTS for c in k.keys if _signature(c) == (('alt',), 's')] == [('editor', 'check_exercise')]
+    k = lookup('check_exercise')
+    assert k.label == 'check my work' and first(web_keymap(), lambda r: r['action'] == 'check_exercise')['chords'][0]['code'] == 'KeyS'

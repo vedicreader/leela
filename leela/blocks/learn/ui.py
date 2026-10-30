@@ -55,7 +55,7 @@ def StepPage(v, q, pane:bool=False, root=None):
         body = [P(v.concept.get('statement') or '') if v.concept else P('This idea is not in your learning store.', cls='lee-learn-line')]
     return Page(title, *body, Form(Hidden(name='walk', value=q.walk), Hidden(name='step', value=step), Hidden(name='topic', value=q.topic), Hidden(name='v', value=q.v),
                                    Hidden(name='pane', value='1') if pane else None,
-                                   Button('Open as a lesson', type='submit', cls='lee-btn'), method='post', action='/learn/open'), pane=pane, math=v.kind == 'step', root=root)
+                                   Button('Open as a lesson', type='submit', cls='lee-btn'), method='post', action='/learn/open'), pane=pane, js=True, math=v.kind == 'step', root=root)
 
 def OpenedPage(title, here, pane:bool=False, root=None):
     "The page after a lesson opens: the step's title, the line `Opened in Leela.` and a link back to the step at `here`."

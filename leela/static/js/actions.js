@@ -47,6 +47,13 @@ const ACTIONS = {
   run_advance:  () => lee.kind === 'text' ? runFile() : runCell(lee.sel, true),
   run_insert:   () => lee.kind === 'text' ? runFile() : runCell(lee.sel, 'insert'),
   stop_cell:    () => stopCell(lee.sel),
+  check_exercise: () => {
+    if (lee.kind !== 'notebook' || lee.activeEditor === 'secondary') return;
+    const at = document.activeElement?.closest?.('#editor .lee-cell[data-id]');
+    const c = at ? lee.cells.find(x => x.id === at.dataset.id) : lee.cells[lee.sel], ex = c?.extra?.exercise;
+    const id = isExercise(c) ? c.id : ex?.role === 'task' ? ex.for : '';
+    if (id && isExercise(lee.cells.find(x => x.id === id))) return checkExercise(id);
+  },
   run_above:    () => runRange(0, lee.sel, 'cells above'),
   run_below:    () => runRange(lee.sel, lee.cells.length, 'this cell and below'),
   run_all:      () => runAll(),

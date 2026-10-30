@@ -225,6 +225,22 @@ def test_open_as_a_lesson_from_the_pane(tmp_path, monkeypatch):
         assert await frame.get_by_role('button', name='Open as a lesson').count() == 1
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
 
+def test_option_s_opens_the_lesson_in_a_tab_and_in_the_pane(tmp_path, monkeypatch):
+    p = str((tmp_path/'lessons'/f'{JID}-0.ipynb').resolve())
+    OPENED = 'main.lee-learn > p.lee-learn-line'
+    async def go(pg, base):
+        await pg.goto(base + STEP0, wait_until='networkidle')
+        await pg.locator('blockquote').click(); await pg.keyboard.press('Alt+s')
+        await pg.wait_for_url('**/learn/open'); await pg.wait_for_load_state('load')
+        assert await pg.locator(OPENED).inner_text() == 'Opened in Leela.'
+        await _ide(pg, base)
+        frame = await _side(pg, tmp_path)
+        await frame.locator('blockquote').click(); await frame.locator('body').press('Alt+s')
+        await frame.wait_for_url('**/learn/open'); await frame.wait_for_load_state('load')
+        assert await frame.locator(OPENED).inner_text() == 'Opened in Leela.'
+        await pg.wait_for_function('p => lee.path === p', arg=p)
+    asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch), ide=False))
+
 SCRATCH = """p => fetch('/learn/scratch', {method: 'POST', headers: {'Content-Type': 'application/json'},
   body: JSON.stringify({path: p, snippet: 'print("scratch 7c1")'})}).then(r => r.status)"""
 

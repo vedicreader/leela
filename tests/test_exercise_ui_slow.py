@@ -33,3 +33,17 @@ def test_check_lists_one_row_per_check_and_hides_the_hidden_expectation(tmp_path
     rows, enabled, ask, focused = asyncio.run(_real_page(go, tmp_path))
     assert [r[0] for r in rows] == ['fail', 'fail'] and 'A positive number' in rows[0][1] and 'A negative number' in rows[1][1]
     assert '-246' not in rows[1][1] and enabled and ask and focused == 'check'
+
+def test_option_s_in_the_exercise_code_checks_it_and_types_nothing(tmp_path):
+    task, code = exercise_cells(SPEC)
+    Notebook([task, code]).save(tmp_path/'lesson.ipynb')
+    async def go(pg):
+        await pg.evaluate('p => leeOpenFile(p)', str(tmp_path/'lesson.ipynb'))
+        await pg.get_by_role('button', name='Check my code').wait_for()
+        await pg.locator('.lee-cell[data-i="1"] .cm-content').click()
+        await pg.keyboard.press('Alt+s')
+        await pg.wait_for_function("() => document.querySelectorAll('.lee-exercise .lee-ex-row').length === 2", timeout=60000)
+        return await pg.evaluate(ROWS), await pg.evaluate('() => LeeCM.getDoc(lee.editors.get(lee.cells[1].id))'), await pg.evaluate('lee.lastKeyEvent')
+    rows, doc, last = asyncio.run(_real_page(go, tmp_path))
+    assert [r[0] for r in rows] == ['fail', 'fail'] and doc == SPEC['stub'], doc
+    assert last['code'] == 'KeyS' and last['action'] == 'check_exercise', last

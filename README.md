@@ -259,6 +259,9 @@ Control+Alt+Shift elsewhere.
 
 Notebook keys follow PyCharm and Jupyter. `mod+enter` runs the cell. `shift+enter` runs and
 selects below. `alt+enter` runs and inserts below. `alt+shift+up/down` moves a cell.
+`alt+s` (Option+S) checks the exercise that has the cursor. On a `/learn` page, `alt+s` opens
+the step as a lesson. That key on the `/learn` page cannot be rebound. In an editor, `alt+s`
+never types the character ß.
 `mod+shift+enter` runs everything. Rarer actions ship unbound with a button and a palette
 entry, because the chords that survive your browser are yours to pick.
 

@@ -175,6 +175,7 @@ DEFAULTS = L(
     Key('run_advance',      'shift+enter',     'editor', 'run and select below',  'footer'),
     Key('run_insert',       'alt+enter',       'editor', 'run and insert below'),
     Key('stop_cell',        'alt+shift+c',     'editor', 'stop running cell'),
+    Key('check_exercise',   'alt+s',           'editor', 'check my work'),
     Key('run_above',        'hyper+enter',     'editor', 'run all cells above'),
     Key('run_below',        'hyper+pageDown',  'editor', 'run this cell and below'),
     Key('run_all',          'mod+shift+enter', 'editor', 'run every cell'),
