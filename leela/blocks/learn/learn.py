@@ -1,6 +1,6 @@
 import json, os, re
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 from fastcore.basics import AttrDict
 from fastcore.xdg import xdg_config_home
 from packaging.utils import canonicalize_name
@@ -13,7 +13,7 @@ from abhyasa.stagekit import is_local
 from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
 
-__all__ = ['LESSONS', 'PKG', 'Taken', 'abhyasa_vault', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
+__all__ = ['LESSONS', 'PKG', 'Taken', 'abhyasa_address', 'abhyasa_vault', 'walk_url', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
            'lookup', 'scratch_cell']
 
 LESSONS = Path.home()/'Learning'/'Leela lessons'
@@ -25,16 +25,26 @@ def pane_url(url) -> str|None:
     q = [x for x in p.query.split('&') if x and not x.startswith('pane=')] + ['pane=1']
     return urlunsplit(('', '', p.path, '&'.join(q), p.fragment))
 
-def abhyasa_vault() -> str:
-    "The `vault` in abhyasa's address file when the process that wrote it still runs; '' for no file, a dead pid or a bad file."
+def abhyasa_address() -> dict:
+    "Abhyasa's address file when the process that wrote it still runs; empty for no file, a dead pid or a bad file."
     f = os.getenv('ABHYASA_ADDRESS_FILE') or xdg_config_home()/'abhyasa'/'serving.json'
     try: d = json.loads(Path(f).read_text())
-    except (OSError, ValueError): return ''
-    if not (isinstance(d, dict) and type(pid := d.get('pid')) is int and pid > 0 and isinstance(d.get('vault'), str)): return ''
+    except (OSError, ValueError): return {}
+    if not (isinstance(d, dict) and type(pid := d.get('pid')) is int and pid > 0 and isinstance(d.get('vault'), str)): return {}
     try: os.kill(pid, 0)   # a SIGKILL leaves the file
     except PermissionError: pass
-    except (OSError, OverflowError): return ''
-    return d['vault']
+    except (OSError, OverflowError): return {}
+    return d
+
+def abhyasa_vault() -> str:
+    "The `vault` in abhyasa's address file when the process that wrote it still runs; '' for no file, a dead pid or a bad file."
+    return abhyasa_address().get('vault', '')
+
+def walk_url(walk, step) -> str|None:
+    "The link to `step` of `walk` on the abhyasa that runs; None when it does not run or its `url` is not http on this computer, with a port."
+    try: u = urlsplit(url := abhyasa_address().get('url')); ok = u.scheme == 'http' and u.hostname in ('127.0.0.1', 'localhost', '::1') and u.port is not None
+    except (ValueError, TypeError, AttributeError): ok = False
+    return ok and f"{url.rstrip('/')}/w/{quote(walk, safe='')}/{step}" or None
 
 def other_vault(q, path) -> str|None:
     "The one line for a link `q` whose `v` is not the key of Leela's vault `path`; None for no `v` or the same key."
@@ -90,14 +100,14 @@ def open_step(session, fs, v, q) -> Path:
     ready = None
     if v.kind == 'step':
         r, what, file = v.step.get('read') or {}, 'step', f'{q.walk}-{v.i}.ipynb'
-        step = dict(walk=q.walk, step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=v.step.get('note') or '')
+        step = dict(walk=q.walk, step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=v.step.get('note') or '', slug=v.step.get('slug') or '')
         if v.get('nb'):
             from abhyasa.contract import handoff
             from .tools import tool_key, tool_kernel
             from ..nb.lesson import step_lesson
             env = tool_key(v.nb['requires']) if v.nb.get('requires') else None
             ready = env if env and tool_kernel(env) else None
-            nb = step_lesson(v.name, step, v.nb, passages(v.j, r), demo=v.demo, env=ready, file=file, setup=handoff(q.walk, v.i, v=q.v) if env and not ready else None)
+            nb = step_lesson(v.name, step, v.nb, passages(v.j, r), demo=v.demo, env=ready, file=file, setup=handoff(q.walk, v.i, v=q.v) if env and not ready else None, back=walk_url(q.walk, v.i))
         else: nb = lesson_notebook(v.name, step=step)
         mine = lambda m: isinstance(w := m.get('walk'), dict) and (w.get('walk'), w.get('step')) == (q.walk, v.i)
     else:

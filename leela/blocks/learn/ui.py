@@ -43,13 +43,14 @@ def _Env(v, q, pane):
 def StepPage(v, q, pane:bool=False, root=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane."
     if v.kind == 'step':
-        from .learn import passages
-        r = v.step.get('read') or {}
+        from .learn import passages, walk_url
+        r, back = v.step.get('read') or {}, walk_url(q.walk, v.i)
         title, step = v.j.title, str(v.i)
         body = [P(r['section'], cls='lee-learn-section') if r.get('section') else None,
                 *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(p.text))), _Source(p))],
                 Div(NotStr(md_html(v.step['note'])), cls='lee-learn-note') if v.step.get('note') else None,
-                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Env(v, q, pane)]
+                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Env(v, q, pane),
+                P(A('Back to the walk ↗', href=back, target='_blank', rel='noopener', cls='lee-learn-back'), cls='lee-learn-line') if back else None]
     else:
         title, step = v.name, ''
         body = [P(v.concept.get('statement') or '') if v.concept else P('This idea is not in your learning store.', cls='lee-learn-line')]

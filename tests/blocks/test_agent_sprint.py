@@ -97,9 +97,9 @@ def test_a_background_answer_reaches_the_model_in_the_next_tool_result(tmp_path)
     "A delegation that finishes mid-turn rides on the next tool result, so the model needs no `delegate_result` poll."
     from tests.fakemodel import Step, install
     ws = Workspace(roots=[tmp_path]); t = ws.threads.active
-    be = install(ws, [Step(tool=('ls', {}), pause=1.0), Step(text='done')], token_delay=0)
+    be = install(ws, [Step(tool=('ls', {}), pause=3.0), Step(text='done')], token_delay=0)
     run = Run('run_mid', 'background', 'what is x', 'fake', log=t.ai.runs_dir/'run_mid.log')
-    t.ai.background.start(lambda r: time.sleep(.3) or 'x is 42', run)
+    t.ai.background.start(lambda r: _until(lambda: be.sent) and 'x is 42', run)   # it finishes once the prompt is out, not after a fixed wait
     t.ai.ask('go')
     tool_out = next(m['content'] for m in be.hist_ if m['role'] == 'tool')
     assert '<background-results>' in tool_out and 'run_mid' in tool_out and 'x is 42' in tool_out, tool_out

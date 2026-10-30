@@ -1,4 +1,4 @@
-import json, platform, re, sys
+import hashlib, json, platform, re, sys
 from datetime import date
 from itertools import zip_longest
 from pathlib import Path
@@ -98,10 +98,14 @@ def _passage(step):
     quote = '\n'.join(f'> {x}'.rstrip() for x in (step.get('text') or '').splitlines())
     return ''.join(f'\n\n{x}' for x in (quote, step.get('note') or '') if x)
 
+def _walk_of(step) -> dict:
+    "The walk, step, section and, when the step has a `slug`, the `concept` that a lesson's meta keeps."
+    return {k: step.get(k, '') for k in ('walk', 'step', 'section')} | ({'concept': step['slug']} if step.get('slug') else {})
+
 def lesson_notebook(name, exercise=None, step:dict|None=None) -> Notebook:
-    "A lesson notebook for `name`; with the walk `step` (`walk`, `step`, `section`, `text`, `note`), its first cell quotes the passage and the note, and its meta names the step."
+    "A lesson notebook for `name`; with the walk `step` (`walk`, `step`, `section`, `slug`, `text`, `note`), its first cell quotes the passage and the note, and its meta names the step."
     code, meta = Cell(source='pass'), {'v': 1, 'name': name}
-    if step is not None: meta['walk'] = {k: step.get(k, '') for k in ('walk', 'step', 'section')}
+    if step is not None: meta['walk'] = _walk_of(step)
     return Notebook([
         Cell(source=f'# {name}\n\nA lesson notebook. Predict the output before running the code. Then write your reasoning in the card.' + (_passage(step) if step else ''),
              cell_type='markdown'),
@@ -149,10 +153,10 @@ def setup_source(nb, result) -> str:
     data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') for d in nb['data']]
     return '\n'.join(['import json', 'from pathlib import Path', dev, *data, f'RESULT = Path({result!r})']) + '\n' + SAVE_RESULT
 
-def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb', setup=None) -> Notebook:
+def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb', setup=None, back=None) -> Notebook:
     """The lesson for a walk step with the checked notebook spec `nb`: header, passages with their source lines and the tutor's note, the
     demo spec `demo`, setup, the exercise, the prediction, the run and the card. The ready tool environment `env` goes in the exercise
-    and the lesson meta. With `setup`, the URL of the step page, the header asks to set up the environment."""
+    and the lesson meta. With `setup`, the URL of the step page, the header asks to set up the environment; with `back`, it links to the walk."""
     r = nb['run']
     run = Cell(source='\n'.join(f'# {x}' for x in (r['say'], r['makes'] and f"It makes {r['makes']}.", f"About {r['minutes']:g} min (an estimate).",
                                                   'At the end, call save_result(metrics, images).') if x), extra={'lesson': {'role': 'run'}})
@@ -160,6 +164,7 @@ def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file
     note = f"**The tutor's note**\n\n{step['note']}" if step.get('note') else ''
     head = f'# {name}\n\n{INTRO}' + (f"\n\n{runs_on(nb['requires'])}" if nb.get('requires') else '')
     if setup and nb.get('requires'): head += f"\n\nThis lesson needs {', '.join(map(md_literal, nb['requires']))}. [Set up the environment](<{setup}>)"
+    if back: head += f'\n\n[Back to the walk ↗](<{back}>)'
     ex = {k: nb[k] for k in ('task', 'fname', 'stub', 'tests')} | ({'requires': nb['requires']} if nb.get('requires') else {}) | ({'env': env} if env else {})
     return Notebook([
         Cell(source=head, cell_type='markdown'),
@@ -170,13 +175,21 @@ def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file
         Cell(source=f"**Before the run:** {r['predict']}" if r['predict'] else '', cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': run.id}}),
         run,
         Cell(source=CARD, cell_type='markdown', extra={'lesson': {'role': 'card', 'for': run.id}}),
-    ], meta={'lesson': {'v': 1, 'name': name, 'walk': {k: step.get(k, '') for k in ('walk', 'step', 'section')}, **({'env': env} if env else {})}})
+    ], meta={'lesson': {'v': 1, 'name': name, 'walk': _walk_of(step), **({'env': env} if env else {}), **({'makes': r['makes']} if r['makes'] else {})}})
 
 def walk_meta(nb) -> dict:
-    "The attempt meta for a check in `nb`: its walk, step, `from`, `app` and a non-empty section; empty with no walk."
+    "The attempt meta for a check in `nb`: its walk, step, `from`, `app`, and a non-empty section and `concept`; empty with no walk."
     w = (nb.meta.get('lesson') or {}).get('walk')
     if not isinstance(w, dict) or not w.get('walk') or not isinstance(w.get('step'), int): return {}
-    return dict(walk=w['walk'], step=w['step'], app='leela', **{'from': f"{w['walk']}/{w['step']}"}, **({'section': w['section']} if w.get('section') else {}))
+    return dict(walk=w['walk'], step=w['step'], app='leela', **{'from': f"{w['walk']}/{w['step']}"}, **({'section': w['section']} if w.get('section') else {}),
+                **({'concept': w['concept']} if w.get('concept') else {}))
+
+def _slug(name, walk) -> str:
+    "The concept an attempt files under: the step's `concept` from `walk_meta`, else the slug of the lesson `name`."
+    from abhyasa.store import slugify
+    return walk.get('concept') or slugify(name)
+
+def _rest(walk) -> dict: return {k: v for k, v in walk.items() if k != 'concept'}
 
 def save_lesson(fs, folder, pick, nb) -> Path:
     "Write `nb` through the sandbox `fs` at `pick(folder)` in the checked lessons folder `folder`, unless that path is taken; `ValueError` for a symbolic-link folder."
@@ -226,15 +239,15 @@ def lesson_feedback(cell):
     return '\n'.join(lines)
 
 def record_card(memory, nb, cell, path):
-    from abhyasa.store import Learning, slugify
+    from abhyasa.store import Learning
     from abhyasa.model import update
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
     vault = memory._store('learning')
     with _open_lock(memory.path):
         lr = Learning(vault)
-        lesson, name = cell.extra['lesson'], nb.meta['lesson']['name']
-        slug, key = slugify(name), f'{cell.id}:{cell.execution_count}'
+        lesson, name, walk = cell.extra['lesson'], nb.meta['lesson']['name'], walk_meta(nb)
+        slug, key = _slug(name, walk), f'{cell.id}:{cell.execution_count}'
         with write_txn(lr.v.db):
             attempt = first(a for a in lr.attempts(slug, limit=10000) if a.get('card_key') == key)
             c = lr.concept(slug)
@@ -253,7 +266,7 @@ def record_card(memory, nb, cell, path):
                 c = lr.update(slug, **u)
                 attempt = lr.record(concept=slug, question=card['question'] or next(iter(cell.source.splitlines()), ''),
                     answer=guess, thinking=card['thinking'], correct=correct, confidence=confidence, depth=1, kind='predict',
-                    feedback=lesson_feedback(cell), actual=actual, notebook=path, card_key=key, **walk_meta(nb))
+                    feedback=lesson_feedback(cell), actual=actual, notebook=path, card_key=key, **_rest(walk))
             return _saved(c)
 
 def _saved(c):
@@ -262,19 +275,20 @@ def _saved(c):
     return f"Saved. Next review {'today' if days <= 0 else 'tomorrow' if days == 1 else f'in {days} days'}."
 
 def exercise_filing(nb, cell, path):
-    "What `record_exercise` files, copied now so a later edit cannot change it."
+    "What `record_exercise` files, copied now so a later edit cannot change it. `tries` is the checks the learner ran up to and with the passing one, so a first-try pass is 1."
+    state = exercise_meta(cell)['state']
     task = first(c for c in nb.cells if c.extra.get('exercise', {}).get('role') == 'task' and c.extra['exercise'].get('for') == cell.id)
     name = nb.meta.get('lesson', {}).get('name') or Path(path).stem
     return dict(name=name, question=task.source.split('\n\n')[0] if task else name, answer=cell.source, path=str(path),
-                key=f'{cell.id}:{src_hash(cell.source)}', walk=walk_meta(nb), **exercise_meta(cell)['state']['grade'])
+                key=f'{cell.id}:{src_hash(cell.source)}', walk=walk_meta(nb), tries=state.get('checks') or 1, **state['grade'])
 
 def record_exercise(memory, f):
     "File a graded full pass as one `code` attempt at depth 4 per source version; a new grade of the same source replaces the note."
-    from abhyasa.store import Learning, slugify
+    from abhyasa.store import Learning
     from abhyasa.model import update
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
-    slug = slugify(f['name'])
+    slug = _slug(f['name'], f.get('walk', {}))
     vault = memory._store('learning')
     with _open_lock(memory.path):
         lr = Learning(vault)
@@ -287,7 +301,7 @@ def record_exercise(memory, f):
                 c = lr.update(slug, **u)
             if attempt is None:
                 lr.record(concept=slug, question=f['question'], answer=f['answer'], correct=True, depth=4, kind='code',
-                          grade=f['score'], feedback=f['note'], notebook=f['path'], card_key=f['key'], **f.get('walk', {}))
+                          grade=f['score'], feedback=f['note'], notebook=f['path'], card_key=f['key'], tries=f['tries'], **_rest(f.get('walk', {})))
             else: lr.mark_attempt(attempt.id, grade=f['score'], feedback=f['note'])
             return _saved(c)
 
@@ -323,11 +337,11 @@ def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=N
 
 def record_prediction(memory, f):
     "File one rupaka prediction through abhyasa once per source version; None when its key is already filed."
-    from abhyasa.store import Learning, slugify
+    from abhyasa.store import Learning
     import abhyasa.demo  # adds Learning.put_demo and Learning.record_prediction
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
-    slug = slugify(f['name'])
+    slug = _slug(f['name'], f.get('walk', {}))
     vault = memory._store('learning')
     with _open_lock(memory.path):
         lr = Learning(vault)
@@ -335,8 +349,56 @@ def record_prediction(memory, f):
             if any(x.get('card_key') == f['card_key'] for x in lr.attempts(slug, limit=10000)): return None
             if lr.concept(slug) is None: lr.put(f['name'], slug=slug)
             d = lr.put_demo(f['spec'], slug, by='leela:lesson')
-            lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'], **f.get('walk', {}))
+            lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'], **_rest(f.get('walk', {})))
             return _saved(lr.concept(slug))
 
 def fence(spec): return fenced(json.dumps(spec, ensure_ascii=False), 'rupaka')
 def demo_refusal(errors): return '\n'.join(errors)
+
+PNG_MAGIC, PNG_MAX = b'\x89PNG\r\n\x1a\n', 1_000_000
+
+def _png(root, name) -> bytes|None:
+    "The bytes of the PNG file `name` directly in the folder `root`; None for a link, a file over `PNG_MAX`, a non-PNG or a path elsewhere."
+    try:
+        p = Path(root)/name
+        if p.is_symlink() or not p.is_file() or p.parent.resolve() != Path(root).resolve() or p.stat().st_size > PNG_MAX: return None
+        b = p.read_bytes()
+    except (OSError, TypeError, ValueError): return None
+    return b if p.suffix == '.png' and b.startswith(PNG_MAGIC) else None
+
+def run_filing(nb, path, result):
+    """What `record_run` files for the result folder `result` of the lesson `nb` at `path`, copied now: the run attempt and the bytes of its images, at most
+    `RUN_IMAGES` PNG files. None for a lesson with no walk, an unreadable `result.json` or a result that `run_ok` refuses."""
+    from abhyasa.contract import RUN_IMAGES
+    from abhyasa.walk import run_ok
+    if not (w := walk_meta(nb)): return None
+    try: raw = (Path(result)/'result.json').read_bytes(); d = json.loads(raw)
+    except (OSError, ValueError): return None
+    if not isinstance(d, dict): return None
+    names = d.get('images') if isinstance(d.get('images'), list) else []
+    pngs = [b for n in names if (b := _png(result, n)) is not None][:RUN_IMAGES]
+    run, meta = first(c for c in nb.cells if c.extra.get('lesson', {}).get('role') == 'run'), nb.meta['lesson']
+    f = dict(kind='run', **w, name=meta['name'], metrics=d.get('metrics', {}), images=[f"leela/{w['walk']}/{w['step']}/{i}.png" for i in range(len(pngs))],
+             device=d.get('device', ''), notebook=str(path), makes=meta.get('makes', ''), pngs=pngs,
+             key='run:' + hashlib.sha256(raw + b''.join(pngs)).hexdigest()[:16], **({'secs': run.execution_ms / 1000} if run and run.execution_ms is not None else {}))
+    return f if run_ok(f) else None
+
+def record_run(memory, f):
+    "File one `run` attempt through abhyasa and copy its images into the vault assets, once per content; None when its key is already filed. Never writes the walk."
+    from abhyasa.store import Learning
+    from litesearch.core import write_txn
+    from ..learn.learn import walk_url
+    from ..memory.memory import _open_lock
+    slug = _slug(f['name'], f)
+    vault = memory._store('learning')
+    with _open_lock(memory.path):
+        lr = Learning(vault)
+        with write_txn(lr.v.db):
+            if any(a.get('card_key') == f['key'] for a in lr.attempts(slug, limit=10000)): return None
+            if lr.concept(slug) is None: lr.put(f['name'], slug=slug)
+            root = Path(lr.vault.assets())
+            for p, b in zip(f['images'], f['pngs']): (root/p).parent.mkdir(parents=True, exist_ok=True); (root/p).write_bytes(b)
+            lr.record(concept=slug, question=f"Run of {f['name']}", kind='run', card_key=f['key'],
+                      **{k: f[k] for k in ('metrics', 'images', 'secs', 'device', 'notebook', 'makes', 'walk', 'step', 'app', 'from', 'section') if k in f})
+    m, n, link = first(f['metrics'].items()), len(f['images']), walk_url(f['walk'], f['step'])
+    return f"Sent to your walk: done, {f'{m[0]} {m[1]:g}, ' if m else ''}{n} image{'s' * (n != 1)}." + (f' [Back to the walk ↗](<{link}>)' if link else '')

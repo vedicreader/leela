@@ -71,7 +71,7 @@ def test_a_step_with_nb_builds_the_lesson_from_the_step(rig, tmp_path_factory, m
     assert 'How many episodes have no place?' in pred.source and pred.extra['lesson']['for'] == run.id == card.extra['lesson']['for']
     assert not [x for x in nb.cells if x.source.strip() == 'pass'] and 'Runs on:' in head.source
     compile(setup.source, 'setup', 'exec'); compile(run.source, 'run', 'exec')
-    assert nb.meta['lesson']['walk'] == dict(walk=NB_JID, step=0, section='2 Captions')
+    assert nb.meta['lesson']['walk'] == dict(walk=NB_JID, step=0, section='2 Captions', concept='caption')
     with_nb, plain = lesson_step(ws.memory, nb), lesson_step(ws.memory, lesson_notebook('Softmax', step=dict(walk=JID, step=0)))
     assert 'add_exercise' not in lesson_charter(with_nb).split('This lesson is step')[1]
     assert 'Make the exercise for this step with add_exercise.' in lesson_charter(plain)

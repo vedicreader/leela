@@ -1,4 +1,4 @@
-import time
+import asyncio, time
 from pathlib import Path
 from fastcore.basics import first
 from fasthtml.common import FtResponse, JSONResponse, P
@@ -67,7 +67,30 @@ def notebook_tab(docs, path):
         except (OSError, ValueError, RuntimeError): t = None
     return t if t is not None and t.kind == 'notebook' else None
 
+def file_result(memory, path, folder):
+    "File the run result in `folder` for the lesson notebook at `path`; the status line, or None when nothing is filed."
+    from ..nb.lesson import record_run, run_filing
+    from ..nb.nb import Notebook
+    f = run_filing(Notebook.load(path), path, folder)
+    return f and record_run(memory, f)
+
 def connect(app, ctx):
+    async def file_results():
+        q = ctx.fs_watch.subscribe()
+        try:
+            while True:
+                item = await q.get()
+                for p in map(Path, item[0] if isinstance(item, tuple) and len(item) == 2 else ()):
+                    if p.name != 'result.json' or p.parent.suffix != '.result': continue
+                    try: await off_loop(file_result, ctx.memory, p.parent.with_suffix('.ipynb'), p.parent)
+                    except Exception as e: print(f'  run result not filed: {errstr(e)}')
+        finally: ctx.fs_watch.unsubscribe(q)
+    watching = []
+    async def start_watching(): watching.append(asyncio.create_task(file_results()))
+    async def stop_watching():
+        for t in watching: t.cancel()
+    app.on_event('startup')(start_watching)
+    app.on_event('shutdown')(stop_watching)
     def pane_only(req):
         "The one-line refusal for a `pane=1` request outside `/learn`; None for every other request."
         p = req.url.path

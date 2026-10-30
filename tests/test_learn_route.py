@@ -330,7 +330,7 @@ def test_open_makes_one_lesson_and_reopens_it(rig, announced, monkeypatch):
     assert f'data-rh-url="/learn?walk={JID}&amp;step=0"' in r.text      # the pane keeps the step, not this POST route
     p = root/'lessons'/f'{JID}-0.ipynb'
     nb = Notebook.load(p)
-    assert nb.meta['lesson']['walk'] == dict(walk=JID, step=0, section='2 Background') and nb.meta['lesson']['name'] == 'Softmax'
+    assert nb.meta['lesson']['walk'] == dict(walk=JID, step=0, section='2 Background', concept='softmax') and nb.meta['lesson']['name'] == 'Softmax'
     assert '> Softmax maps scores to weights.' in nb[0].source and 'Watch the sum.' in nb[0].source
     assert ws.tab.path == str(p) and announced == [str(p)]
     t, n = p.stat().st_mtime_ns, len(ws.tabs)
@@ -338,7 +338,7 @@ def test_open_makes_one_lesson_and_reopens_it(rig, announced, monkeypatch):
     assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p] and len(ws.tabs) == n and announced == [str(p)] * 2
     one_line(opened(c, walk=JID, step='', topic='Attention'), 200, 'Opened in Leela.')   # no step: the current one; a walk wins over a topic
     assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p]
-    assert opened(c, walk=JID, step='1').status_code == 200 and Notebook.load(root/'lessons'/f'{JID}-1.ipynb').meta['lesson']['walk'] == dict(walk=JID, step=1, section='')
+    assert opened(c, walk=JID, step='1').status_code == 200 and Notebook.load(root/'lessons'/f'{JID}-1.ipynb').meta['lesson']['walk'] == dict(walk=JID, step=1, section='', concept='attention')
     assert lr.journey(JID) == before and list(ws.fs.roots) == roots and len(lr.attempts(limit=10**6)) == 0
 
 @pytest.mark.parametrize('topic, name, file', [('Softmax', 'Softmax', 'softmax'), ('Agents & tools + more', 'Agents & tools + more', 'agents-and-tools-plus-more'),
@@ -646,3 +646,21 @@ def test_a_link_from_the_same_vault_opens_and_keeps_its_key(rig, monkeypatch, tm
     one_line(c.post('/learn/open', data=dict(walk='gone-0000', v=v)), 200, f'This walk is not in the vault at {ws.memory.path}. abhyasa and Leela must use the same vault.')
     one_line(c.get('/learn?walk=gone-0000'), 200, 'This walk is not in your learning store.')
     one_line(c.get(f'/learn?walk={JID}&v=0A1B2C3D'), 400, 'v is not a vault key: give 8 characters from 0-9 and a-f')
+
+def test_learn_and_the_lesson_header_link_back_to_the_walk_only_while_abhyasa_runs(rig, tmp_path_factory, monkeypatch):
+    c, ws, lr = rig[:3]
+    monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))
+    f = tmp_path_factory.mktemp('abhyasa')/'serving.json'
+    monkeypatch.setenv('ABHYASA_ADDRESS_FILE', str(f))
+    nb_walk(lr, requires=())
+    url, at = f'/learn?walk={JID}&step=0', lambda **a: f.write_text(json.dumps(dict(url='http://127.0.0.1:5012', pid=os.getpid(), vault='/x/abhyasa.db') | a))
+    assert 'Back to the walk' not in c.get(url).text
+    at()
+    t = c.get(url).text
+    assert f'href="http://127.0.0.1:5012/w/{JID}/0"' in t and 'Back to the walk ↗' in t
+    assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
+    assert f'[Back to the walk ↗](<http://127.0.0.1:5012/w/{NB_JID}/0>)' in Notebook.load(rig[4]/'lessons'/f'{NB_JID}-0.ipynb')[0].source
+    dead = subprocess.Popen([sys.executable, '-c', 'pass']); dead.wait()
+    at(pid=dead.pid)
+    assert 'Back to the walk' not in c.get(url).text
+    for bad in ('http://evil.example:5012', 'https://127.0.0.1:5012', 'javascript:alert(1)', '/w'): at(url=bad); assert 'Back to the walk' not in c.get(url).text, bad
