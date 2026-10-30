@@ -23,7 +23,7 @@ def _lesson(tmp_path, monkeypatch, source):
     path = tmp_path/'noise.ipynb'; nb.save(path)
     return path
 
-async def _ask(pg, path, board, posted, formulas=True):
+async def _ask(pg, path, board, posted, formulas=True, streamed=False):
     await pg.set_viewport_size({'width': 1440, 'height': 1100})
     pg.set_default_timeout(15000)
     await pg.evaluate('p => leeOpenFile(p)', str(path))
@@ -31,10 +31,11 @@ async def _ask(pg, path, board, posted, formulas=True):
     cell = pg.locator('.lee-cell[data-i="1"]')
     if formulas: await cell.locator('[data-guide-id="f1"]').wait_for()
     else: await cell.locator('[data-guide-id="passage"]').wait_for(state='attached')
+    steps = [('step', dict(step=s, k=k, tier='tutor', demo_open=False)) for k, s in enumerate(board['steps'], 1)] if streamed else []
     async def fake(route):
         posted.append(json.loads(route.request.post_data))
-        await route.fulfill(status=200, content_type='application/json', body=json.dumps(board))
-    await pg.route('**/nb/guide', fake)
+        await route.fulfill(status=200, content_type='text/event-stream', body=''.join(f'event: {e}\ndata: {json.dumps(d)}\n\n' for e, d in steps + [('board', board)]))
+    await pg.route('**/nb/guide/stream', fake)
     if formulas: await pg.wait_for_function("[...document.querySelectorAll('.lee-cell[data-i=\"1\"] [data-guide-id^=f]')].every(e => e.dataset.parts)")
     await cell.locator('.lee-guide').click()
     await pg.locator('.lee-modal input').fill(ASK)
@@ -55,13 +56,13 @@ def test_the_board_draws_a_mark_over_the_formula_part_the_tutor_names(tmp_path, 
     posted = []
     board = _board([dict(op='circle', at=dict(a='f1', tex=TOKEN))])
     async def go(pg):
-        cell = await _ask(pg, path, board, posted)
+        cell = await _ask(pg, path, board, posted, streamed=True)
         formula = cell.locator('[data-guide-id="f1"]')
         ids = await cell.evaluate("c => [...c.querySelectorAll('[data-guide-id]')].map(e => e.dataset.guideId)")
         assert {'passage', 'f1', 'img1'} <= set(ids) and len(ids) == len(set(ids)), ids
         parts = json.loads(await formula.get_attribute('data-parts'))
         part_id = next(i for t, i in parts if t == TOKEN)
-        await pg.wait_for_function('window.abhyasaBoard?.state?.done === true')
+        await pg.wait_for_function('window.abhyasaBoard?.state?.done === true && window.abhyasaBoard.state.streaming === false')
         assert [a['id'] for a in posted[0]['anchors']] == ['f1', 'img1'] and posted[0]['said'] == ASK
         assert TOKEN in posted[0]['anchors'][0]['parts'] and posted[0]['anchors'][1]['text'] == 'A noisy cat'
         got = await pg.evaluate(GEOM.replace('arguments[1]', "'f1'"), part_id)

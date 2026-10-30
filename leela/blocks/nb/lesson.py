@@ -475,9 +475,10 @@ def guide_context(meta, cell, path='', filed=(), anchors=None) -> dict:
     return ctx
 
 GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.14 or newer. Upgrade abhyasa, then try again.'
+GUIDE_STREAM_NEEDS = 'The screen guide draws each step as it comes with abhyasa 0.0.15 or newer. Upgrade abhyasa, then try again.'
 
-def guide_board(memory, nb, cell, path, said, note=None, anchors=None) -> dict:
-    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`. `ImportError` when abhyasa has no guide."
+def guide_board(memory, nb, cell, path, said, note=None, anchors=None, **kw) -> dict:
+    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`. `kw` goes to `explain`; its `on_step` gets `(step, k, demo_open)`. `ImportError` when abhyasa has no guide."
     from abhyasa.guide import explain, norm_tex
     from abhyasa.ground import VaultSource
     from abhyasa.llm import Router, route_ask
@@ -489,4 +490,6 @@ def guide_board(memory, nb, cell, path, said, note=None, anchors=None) -> dict:
         lr = Learning(vault)
         filed = {a.get('card_key') for a in lr.attempts(_slug(meta['name'], meta.get('walk') or {}), limit=10000)}
     ctx = guide_context(meta, cell, path, filed, [a | {'parts': [norm_tex(t) for t in a['parts']]} if a.get('parts') else a for a in anchors or []])
-    return dict(explain(Router(route_ask()), ctx, said, sources=[VaultSource(lr)], note=note, lr=lr), demo_open=bool(ctx.get('demo', {}).get('open')))
+    opened = bool(ctx.get('demo', {}).get('open'))
+    if on_step := kw.get('on_step'): kw['on_step'] = lambda s, k: on_step(s, k, opened)
+    return dict(explain(Router(route_ask()), ctx, said, sources=[VaultSource(lr)], note=note, lr=lr, **kw), demo_open=opened)

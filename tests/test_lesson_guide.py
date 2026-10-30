@@ -85,25 +85,28 @@ def test_exercise_task_and_check_are_check_anchors():
 def test_other_cells_give_no_anchor_but_the_page():
     c = guide_context(META, Cell(source='print(1)'))
     assert c['anchors'] == [] and c['title'] == 'Diffusion noise'
-import sys, threading, types
+import json, sys, threading, types
 import abhyasa, pytest
 from leela.blocks.nb.nb import Notebook
 from test_lesson_predict import DEMO as GATE_DEMO, lesson, post as predict, serve, shelf
 
-EXPLAINED = dict(tier='tutor', steps=[dict(n=1, say='It is the share left.', strokes=[])], sources=[dict(n=1, title='DDPM', url='', label='your vault', quoted=False)],
+EXPLAINED = dict(tier='tutor', steps=[dict(n=1, say='It is the share left.', strokes=[]), dict(n=2, say='It falls with t.', strokes=[])], sources=[dict(n=1, title='DDPM', url='', label='your vault', quoted=False)],
                  sure=0.9, failed=False, dropped=0, end="In the tutor's own words. No source found.", ms=3)
 
 @pytest.fixture
 def guide(monkeypatch):
-    "A stand-in for `abhyasa.guide`, which abhyasa 0.0.14 adds: `calls` holds what `explain` was given."
+    "A stand-in for `abhyasa.guide`: `calls` holds what `explain` was given. With the keywords of abhyasa 0.0.15 it sends a state event, a saved page and each step."
     import abhyasa.llm
     calls = AttrDict(thread=None)
-    def explain(ask, ctx, said, sources=(), search=None, fetch=None, web=None, note=None, lr=None):
-        calls.update(ask=ask, ctx=mod.clean_context(ctx), said=said, sources=list(sources), web=web, lr=lr, thread=threading.current_thread())
-        note('The tutor looks in your vault.')
+    def explain(ask, ctx, said, sources=(), search=None, fetch=None, web=None, note=None, lr=None, **kw):
+        calls.update(ask=ask, ctx=mod.clean_context(ctx), said=said, sources=list(sources), web=web, lr=lr, thread=threading.current_thread(), kw=kw)
+        if note: note('The tutor looks in your vault.')
+        if on_state := kw.get('on_state'): on_state(dict(wait='The tutor reads this page.', state='reading')); on_state(dict(saved=dict(title='A page', url='https://x.org')))
+        if on_step := kw.get('on_step'):
+            for k, s in enumerate(EXPLAINED['steps'], 1): on_step(s, k)
         return AttrDict(EXPLAINED)
     mod = types.ModuleType('abhyasa.guide')
-    mod.explain, mod.clean_context, mod.norm_tex = explain, (lambda raw: AttrDict(raw, cleaned=True)), (lambda s: 'n:' + s.strip())
+    mod.explain, mod.clean_context, mod.norm_tex, mod.stream_board = explain, (lambda raw: AttrDict(raw, cleaned=True)), (lambda s: 'n:' + s.strip()), None
     monkeypatch.setitem(sys.modules, 'abhyasa.guide', mod)
     monkeypatch.setattr(abhyasa, 'guide', mod, raising=False)
     monkeypatch.setattr(abhyasa.llm, 'route_ask', lambda model=None: 'the ask')
@@ -112,6 +115,44 @@ def guide(monkeypatch):
 def ask_guide(r, i=1, said="I don't get alpha bar", **kw):
     cell = r.nb[i] if isinstance(i, int) else None
     return r.c.post('/nb/guide', json=dict(path=str(r.p), cell_id=cell.id if cell else i, said=said, **kw))
+
+def events(res):
+    "The `(event, data)` pairs of a server-sent event reply."
+    out = []
+    for frame in res.text.split('\n\n'):
+        lines = dict(l.split(': ', 1) for l in frame.splitlines() if ': ' in l)
+        if 'data' in lines: out.append((lines.get('event', 'message'), json.loads(lines['data'])))
+    return out
+
+def test_guide_stream_sends_each_step_before_the_board_and_frees_the_lock(serve, guide):
+    r = serve(lesson())
+    res = r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said="I don't get alpha bar"))
+    assert res.status_code == 200 and res.headers['content-type'].startswith('text/event-stream'), res.text
+    ev = events(res)
+    assert [e for e, _ in ev] == ['wait', 'step', 'step', 'board'], 'the saved page is not sent: Leela has no undo route for it'
+    assert ev[0][1] == dict(wait='The tutor reads this page.', state='reading')
+    assert [(d['k'], d['step']['say'], d['tier'], d['demo_open']) for e, d in ev if e == 'step'] == [(1, 'It is the share left.', 'tutor', False), (2, 'It falls with t.', 'tutor', False)]
+    assert ev[-1][1]['steps'] == EXPLAINED['steps'] and ev[-1][1]['demo_open'] is False
+    assert guide.thread is not threading.main_thread() and guide.kw['stop'].is_set() and guide.ctx['demo']['open'] is False
+    assert ask_guide(r).status_code == 200, 'the lesson lock is free once the model call ends'
+
+def test_guide_stream_reports_a_failed_explain_as_an_event_and_refuses_before_the_stream(serve, guide, monkeypatch):
+    r = serve(lesson())
+    def boom(*a, **k): raise RuntimeError('The guide task got no answer from the model.')
+    monkeypatch.setattr(sys.modules['abhyasa.guide'], 'explain', boom)
+    stream = lambda **kw: r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said='why?') | kw)
+    ev = events(stream())
+    assert [e for e, _ in ev] == ['error'] and 'no answer' in ev[0][1]['error']
+    assert stream().status_code == 200, 'a failed model call frees the lesson lock'
+    def gone(*a, **k): raise ImportError('cannot import name VaultSource', name='abhyasa.ground')
+    monkeypatch.setattr(sys.modules['abhyasa.guide'], 'explain', gone)
+    assert [d['error'] for e, d in events(stream())] == [lesson_mod.GUIDE_STREAM_NEEDS], 'a missing part of abhyasa names the version the guide needs'
+    for bad in (dict(said=' '), dict(cell_id='missing'), dict(anchors='f1')):
+        res = stream(**bad)
+        assert res.status_code == 400 and res.json()['error'], bad
+    monkeypatch.delattr(sys.modules['abhyasa.guide'], 'stream_board')
+    res = stream()
+    assert res.status_code == 400 and '0.0.15' in res.json()['error'], 'abhyasa 0.0.14 cannot stream a board'
 
 def test_guide_route_builds_the_context_and_returns_the_board(serve, guide):
     r = serve(lesson(f'Alpha bar is the share left.\n\n$\\bar\\alpha_t$'))
@@ -200,7 +241,12 @@ ctx.$$ = (sel, root) => sel === '[data-guide-id]' ? root.guideEls : [];
 ctx.status = (t, k) => ctx.said.push([k, t]);
 ctx.isExercise = c => c?.cell_type === 'code' && !!c.extra?.exercise?.tests;
 ctx.inputDialog = async (...a) => { dialogs.push(a); return ctx.typed; };
-ctx.post = async (url, body) => { posts.push([url, body]); if (ctx.reply instanceof Error) throw ctx.reply; return ctx.reply; };
+ctx.AbortController = AbortController; ctx.delivered = [];
+ctx.postEvents = async (url, body, onEvent, signal) => { posts.push([url, body]); if (ctx.reply instanceof Error) throw ctx.reply;
+  for (const [e, d] of ctx.stream || [['board', ctx.reply]]) {
+    if (ctx.gate && body.said === 'first') await ctx.gate;
+    if (signal.aborted && !(ctx.buffered && body.said === 'first')) throw Object.assign(new Error('aborted'), {name: 'AbortError'});
+    ctx.delivered.push(e); onEvent(e, d); await new Promise(r => setTimeout(r, 5)); } };
 vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx);
 (async () => { const r = {};
   const painted = c => { main.children = []; ctx.paintGuideButton(el('div'), c); return main.children.map(b => b.textContent); };
@@ -221,13 +267,35 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
   ctx.typed = 'why?'; ctx.reply = Object.assign(new Error('x'), {body: {ok: false, error: 'The screen guide needs abhyasa 0.0.14 or newer.'}}); await ctx.lessonGuide('b'); r.failed = ctx.said.at(-1);
   ctx.said = []; ctx.lee.sel = 3; await ctx.lessonGuideSelected('alpha'); r.notCell = ctx.said;
   ctx.lee.sel = 1; ctx.typed = null; dialogs.length = 0; await ctx.lessonGuideSelected('beta'); r.picked = dialogs[0].slice(2, 3);
+  const S1 = {n: 1, say: 'one', strokes: []}, S2 = {n: 2, say: 'two', strokes: []}, whole = {tier: 'tutor', steps: [S1, S2], sources: [], end: 'End.'};
+  const mk = () => { const b = {log: [], st: null, ok: true,
+    play: async (bd, o) => { b.log.push(['play', bd.steps.length, !!bd.streaming, ctx.delivered.length]); b.st = {streaming: !!bd.streaming}; b.host = o.host; },
+    add: s => { b.log.push(['add', s.say]); return true; },
+    finish: d => { b.log.push(['finish', d.steps.length, d.end]); if (b.ok) b.st.streaming = false; return b.ok; },
+    get state() { return b.st; }}; return b; };
+  const run = async (stream, set) => { const b = ctx.abhyasaBoard = mk(); set?.(b); ctx.stream = stream; ctx.delivered = []; ctx.reply = null; ctx.typed = 'why?'; out.next = undefined; ctx.said = []; await ctx.lessonGuide('b'); return b; };
+  const steps = [['wait', {wait: 'The tutor reads this page.'}], ['step', {step: S1, k: 1, tier: 'tutor', demo_open: true}], ['step', {step: S2, k: 2, tier: 'tutor', demo_open: true}]];
+  let b = await run([...steps, ['board', whole]]); r.streamed = b.log; r.streamUrl = posts.at(-1)[0]; r.waitSaid = ctx.said[1];
+  b.host.demo({t: 3}); r.streamDemo = sets.at(-1)[1];
+  b = await run([...steps, ['board', whole]], b => { b.ok = false; }); r.refused = b.log;
+  b = await run([steps[1], steps[2], ['board', whole]], b => { const play = b.play; b.play = async (...a) => { await play(...a); b.st = null; }; }); r.stopped = [b.log, out.next === undefined];
+  b = await run(steps); r.ended = b.log;
+  b = await run([steps[1], ['error', {error: 'The tutor could not answer.'}]]); r.errored = [b.log, ctx.said.at(-1)];
+  ctx.abhyasaBoard = b = mk(); ctx.delivered = []; let open; ctx.gate = new Promise(o => { open = o; }); ctx.stream = [steps[1], ['board', whole]];
+  ctx.typed = 'first'; const p1 = ctx.lessonGuide('b'); await new Promise(r => setTimeout(r, 20));
+  ctx.typed = 'second'; await ctx.lessonGuide('b'); open(); await p1; ctx.gate = null;
+  r.superseded = b.log.map(x => x.slice(0, 3));
+  ctx.abhyasaBoard = b = mk(); ctx.delivered = []; ctx.gate = new Promise(o => { open = o; }); ctx.buffered = true; ctx.said = [];
+  ctx.typed = 'first'; const p3 = ctx.lessonGuide('b'); await new Promise(r => setTimeout(r, 20));
+  ctx.typed = 'second'; await ctx.lessonGuide('b'); open(); await p3; ctx.gate = null; ctx.buffered = false;
+  r.buffered = [b.log.map(x => x.slice(0, 3)), ctx.said.at(-1)];
   console.log(JSON.stringify(r)); })();'''
     r = subprocess.run([node, '-e', harness, str(Path(__file__).parents[1]/'leela/blocks/nb/lesson.js')], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
     assert got['buttons'] == [[], ["I don't get…"], ["I don't get…"], []], 'a markdown or exercise cell, never a prediction, a card or a plain code cell'
     assert got['plain'] == [], 'a notebook with no lesson cell is not a lesson'
-    assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", anchors=[dict(id='f1', text='a_t b', parts=['a_t', 'b']), dict(id='img1', text='A cat'), dict(id='img2', text='inline'), dict(id='f2', text='', parts=[])])]
+    assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide/stream', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", anchors=[dict(id='f1', text='a_t b', parts=['a_t', 'b']), dict(id='img1', text='A cat'), dict(id='img2', text='inline'), dict(id='f2', text='', parts=[])])]
     assert any('lee-board.js' in s for s in got['loaded']) and any('lee-board.css' in s for s in got['loaded'])
     assert got['played'] == [1, 2, ['assets', 'demo', 'resolve'], '/leestatic/board/', True, True, True], 'the board is drawn, not the text, with no speak hook'
     assert got['closed'] == 0 and got['open'] == [{'t': 2}], 'the demo moves only when every gate is filed'
@@ -235,3 +303,12 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     assert got['out'].splitlines() == ['It is the share left.', 'It falls with t.', 'Source 1: your vault, DDPM', "In the tutor's own words."]
     assert got['cancel'] == 0 and got['failed'] == ['err', 'The screen guide needs abhyasa 0.0.14 or newer.']
     assert got['notCell'] == [['err', 'Pick a lesson cell first.']] and got['picked'] == ["I don't get beta"]
+    assert got['streamUrl'] == '/nb/guide/stream' and got['waitSaid'] == ['ok', 'The tutor reads this page.']
+    assert got['streamed'] == [['play', 1, True, 2], ['add', 'two'], ['finish', 2, 'End.']], 'step 1 draws after two events, before the board event, and the board event finishes it'
+    assert got['streamDemo'] == {'t': 3}, 'a step says whether the demo is open, so a streamed board can move it'
+    assert got['refused'][-1] == ['play', 2, False, 4], 'a board that does not begin with the steps shown plays whole'
+    assert got['stopped'] == [[['play', 1, True, 1]], True], 'a board the learner stopped takes no later step, no finish and no text'
+    assert got['ended'] == [['play', 1, True, 2], ['add', 'two'], ['finish', 2, '']], 'a stream with steps and no board ends the board with no end line'
+    assert got['errored'] == [[['play', 1, True, 1], ['finish', 1, '']], ['err', 'The tutor could not answer.']], 'an error after a step ends the board and says why'
+    assert got['superseded'] == [['play', 1, True], ['finish', 2, 'End.']], 'a newer question aborts the older one, whose events go nowhere'
+    assert got['buffered'] == [[['play', 1, True], ['finish', 2, 'End.']], ['ok', '']], 'frames of the older question that come after its abort draw nothing'

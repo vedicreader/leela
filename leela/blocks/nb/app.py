@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, base64, json
+import asyncio, base64, json, queue, threading
 
 from fasthtml.common import StreamingResponse
 from fastcore.all import first
@@ -17,7 +17,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import GUIDE_NEEDS, EnvGone, check_anchors, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -554,20 +554,62 @@ def connect(app, ctx):
             try: message = await off_loop(record_prediction, ctx.memory, f)
             except Exception as e: return _vault_fail(e)
             return dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
+    def guide_said(d):
+        "`(said, anchors)` of the guide request `d`, or its fail reply."
+        said = str(d.get('said') or '').strip()
+        if not said: return fail('Say what you do not get.')
+        try: return said, check_anchors(d.get('anchors'))
+        except ValueError as e: return fail(str(e))
+    def guide_cell(d):
+        "`(tab, nb, cell)` of the guide request `d`, or its fail reply. Call it under `lesson_lock`."
+        tab, nb, _ = run_owner(d)
+        if nb is None: return fail('Return to the lesson notebook, then try.')
+        if not isinstance(lesson := nb.meta.get('lesson'), dict) or not lesson.get('name'): return fail('This is not a lesson notebook.')
+        cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
+        if cell is None: return fail('That cell is no longer in the notebook.')
+        return tab, nb, cell
+    @rt('/nb/guide/stream', methods=['POST'])
+    async def nb_guide_stream(req):
+        "The screen guide's board as events: `wait` while it works, `step` for each step of a sure tutor board as soon as it is whole, then `board` or `error`. The lesson lock is held until the model call ends, not while the page reads."
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        try: from abhyasa.guide import stream_board  # noqa: F401
+        except ImportError: return fail(GUIDE_STREAM_NEEDS)
+        if not isinstance(asked := guide_said(d), tuple): return asked
+        said, anchors = asked
+        await lesson_lock.acquire()
+        try: g = guide_cell(d)
+        except BaseException: lesson_lock.release(); raise
+        if not isinstance(g, tuple): lesson_lock.release(); return g
+        tab, nb, cell = g
+        q, stop = queue.Queue(), threading.Event()
+        def state(e):
+            if 'saved' not in e: q.put(('wait', e))   # a saved page needs an undo route, which Leela does not have
+        def run():
+            try: q.put(('board', guide_board(ctx.memory, nb, cell, tab.path, said, None, anchors, stop=stop, on_state=state,
+                                             on_step=lambda s, k, o: q.put(('step', dict(step=s, k=k, tier='tutor', demo_open=o))))))
+            except ImportError as e: q.put(('error', dict(error=GUIDE_STREAM_NEEDS if (e.name or '').startswith('abhyasa') else errstr(e))))
+            except Exception as e: q.put(('error', dict(error=errstr(e))))
+        asyncio.ensure_future(off_loop(run)).add_done_callback(lambda _: lesson_lock.release())
+        async def events():
+            try:
+                while True:
+                    try: kind, m = await off_loop(q.get, True, .25)
+                    except queue.Empty:
+                        if await req.is_disconnected(): return
+                        continue
+                    yield sse(kind, m)
+                    if kind in ('board', 'error'): return
+            finally: stop.set()
+        return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
     @rt('/nb/guide', methods=['POST'])
     async def nb_guide(req):
         "The screen guide's board for what the learner does not get in one cell of a lesson."
         if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
-        said = str(d.get('said') or '').strip()
-        if not said: return fail('Say what you do not get.')
-        try: anchors = check_anchors(d.get('anchors'))
-        except ValueError as e: return fail(str(e))
+        if not isinstance(asked := guide_said(d), tuple): return asked
+        said, anchors = asked
         async with lesson_lock:
-            tab, nb, _ = run_owner(d)
-            if nb is None: return fail('Return to the lesson notebook, then try.')
-            if not isinstance(lesson := nb.meta.get('lesson'), dict) or not lesson.get('name'): return fail('This is not a lesson notebook.')
-            cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
-            if cell is None: return fail('That cell is no longer in the notebook.')
+            if not isinstance(g := guide_cell(d), tuple): return g
+            tab, nb, cell = g
             notes = []
             try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors)
             except ImportError as e:

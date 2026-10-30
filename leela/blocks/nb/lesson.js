@@ -139,27 +139,55 @@ async function guidePlay(d, cell, board) {
   try { await board.play(d, {host: {resolve: i => guideFind(cell, i), demo: guideDemo(cell, d.demo_open), assets}}); return true; }
   catch (e) { console.warn('Leela guide:', e); return false; }
 }
+//: The board of the stream (`live`, the promise of its first play) gets the whole board: `finish` when its steps begin that board, else the whole board plays; a board the learner stopped stays stopped. With no board drawn, the plain text shows.
+async function guideShow(d, id, cell, b, live, mine) {
+  const drawn = live && await live, s = drawn && b.state;
+  if (!mine() || (drawn && (!s || !s.streaming || b.finish(d)))) return;
+  $('.lee-guide-out', cell)?.remove();
+  if (await guidePlay(d, cell, b) || !mine()) return;
+  const el = document.createElement('div'); el.className = 'lee-guide-out'; el.textContent = guideText(d);
+  $('#out-' + id, cell).after(el);
+}
+const guideAsk = {n: 0, ctl: null};
+globalThis.document?.addEventListener('board:stop', e => { if (e.detail?.by === 'learner') guideAsk.ctl?.abort(); });
+//: Asks with events: the first step starts a streaming board and each next step is added to it, so step 1 draws before the model ends. A newer question aborts the older one, whose events then go nowhere.
 async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim()) {
   const said = await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
   if (!said) return;
   const path = lee.path, tabKey = lee.tabKey, find = () => lee.tabKey === tabKey && $(`.lee-cell[data-id="${CSS.escape(id)}"]`);
+  guideAsk.ctl?.abort();
+  const n = ++guideAsk.n, ctl = guideAsk.ctl = new AbortController(), mine = () => n === guideAsk.n;
+  let live = null, whole = false, failed = '', chain = Promise.resolve();
+  const got = [];
   try {
     status('Asking the tutor…', 'ok');
     await lee.nbQueue;
     const asked = find();
     if (!asked) return status('', 'ok');
     const anchors = guideAnchors(asked), board = loadBoard();
-    const d = await post('/nb/guide', {path, cell_id: id, said, anchors});
-    const b = await board, cell = find();
-    if (cell) {
-      $('.lee-guide-out', cell)?.remove();
-      if (!await guidePlay(d, cell, b)) {
-        const el = document.createElement('div'); el.className = 'lee-guide-out'; el.textContent = guideText(d);
-        $('#out-' + id, cell).after(el);
-      }
-    }
-    status('', 'ok');
-  } catch (e) { status(lessonSaid(e), 'err'); }
+    const on = async (ev, d) => {
+      if (!mine()) return;
+      if (ev === 'error') { failed = d.error; return; }
+      if (ev === 'wait') return status(d.wait, 'ok');
+      if (ev === 'step') got.push(d.step);
+      const b = await board, cell = mine() && find();
+      if (!cell) return;
+      if (ev === 'step') {
+        if (!b) return;
+        if (!live) { $('.lee-guide-out', cell)?.remove(); status('', 'ok'); live = guidePlay({steps: [d.step], tier: d.tier, sources: [], streaming: true, demo_open: d.demo_open}, cell, b); }
+        else if (await live && mine() && b.state?.streaming) b.add(d.step);
+      } else if (ev === 'board') { whole = true; status('', 'ok'); await guideShow(d, id, cell, b, live, mine); }
+    };
+    await postEvents('/nb/guide/stream', {path, cell_id: id, said, anchors}, (ev, d) => { chain = chain.then(() => on(ev, d)).catch(e => console.warn('Leela guide:', e)); }, ctl.signal);
+    await chain;
+    const b = await board;
+    if (!mine()) return;
+    if (live && !whole && await live && mine() && b.state?.streaming) b.finish({steps: got, tier: 'tutor', sources: [], end: ''});
+    status(failed, failed ? 'err' : 'ok');
+  } catch (e) {
+    if (e.name === 'AbortError') { if (mine()) status('', 'ok'); return; }
+    status(lessonSaid(e, e.body ?? e.message), 'err');
+  }
 }
 function lessonGuideSelected(picked) {
   const c = lee.cells[lee.sel];
