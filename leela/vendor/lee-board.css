@@ -5,6 +5,12 @@
 #board-layer, .board-hl { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .board-fill, #board-pointer path { fill: var(--board-ink); }
 .board-axis { fill: none; stroke: #8c877c; stroke-width: 1.2; stroke-linecap: round; }
+/* A point mark (guide.point): weaker than a circle in each look, so a circle stays the main mark of a step. */
+.board-weak { fill: var(--board-ink); }
+#board-layer g[data-look=tick] path { fill-opacity: .7; stroke-opacity: .7; }
+#board-layer g[data-look=dot] .board-dot { fill-opacity: .8; }
+#board-layer g[data-look=ring] path { fill-opacity: .5; stroke-opacity: .5; }
+.board-pulse { fill: none; stroke: var(--board-ink); stroke-width: 1.5; opacity: 0; }
 
 /* The marker: outside the host, so its blend mode mixes with the page. Multiply on a light surface, screen on a dark one. */
 .board-hl { z-index: 59; }
@@ -52,8 +58,8 @@
 .board-dots i { display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--line, var(--rule)); transition: width .25s, background-color .25s; }
 .board-dots i.on { width: 16px; background: var(--board-ink); }
 .board-say { font-size: 1.15em; font-weight: 500; color: var(--fg); }
-.board-say span { color: color-mix(in srgb, var(--fg) 38%, transparent); transition: color .12s ease-out; }
-.board-say span.on { color: var(--fg); }
+.board-say > span { color: color-mix(in srgb, var(--fg) 38%, transparent); transition: color .12s ease-out; }
+.board-say > span.on { color: var(--fg); }
 .board-quote q { font-style: italic; }
 .board-end, .board-keys, .board-note { font-size: var(--t-meta, 14px); color: var(--mute); }
 .board-src { margin-left: var(--s1, 4px); }
@@ -78,5 +84,5 @@
                     animation: board-ring 1.5s ease-out forwards; }
 .board-trail-ring.point { border-radius: 50%; }
 @keyframes board-ring { 0% { opacity: 0; transform: scale(.92); } 15% { opacity: 1; transform: scale(1); } 60% { opacity: 1; } 100% { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .board-dots i, .board-say span { transition: none; } .board-trail-ring { animation: none; } #board-trail polyline { display: none; } }
+@media (prefers-reduced-motion: reduce) { .board-dots i, .board-say > span { transition: none; } .board-trail-ring { animation: none; } #board-trail polyline { display: none; } }
 @media print { #board-host, .board-hl, .guide-strip, #board-trail { display: none; } }

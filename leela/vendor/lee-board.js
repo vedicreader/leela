@@ -9,18 +9,27 @@
 // marker under the glyphs (multiply on a light surface, screen on a dark one). Rings, underlines and sketches are
 // perfect-freehand strokes with pressure, drawn on as a pen does. Arrows are one light Rough.js stroke with a filled head.
 // Labels are pastel chips with a coloured bar and a thin leader line; a chip never covers its target. Marks of earlier steps
-// fade to 45 %. The words of the spoken line light up as they are said. With prefers-reduced-motion, the pointer jumps, and
+// fade to 45 %. A point is always weaker than a circle, so the circle stays the main mark of a step: see `point` in the API.
+// The words of the spoken line light up as they are said. With prefers-reduced-motion, the pointer jumps, and
 // marks and chips fade in for 150 ms.
 //
 // API (window.abhyasaBoard):
-//   play(board, {labels, fast, quiet, auto, host, who, onVoice})   play a checked board; it stops the board that shows now.
+//   play(board, {labels, fast, quiet, auto, host, who, onVoice, point, voiceAt, notice})   play a checked board; it stops the board that shows now.
 //     labels  {anchorId: {label: [x0, y0, x1, y1]}}, the label boxes of a figure, 0 to 1000 of the anchor. Default {}.
 //     fast    draw each step at once, with no voice and no pointer flight. Default false.
 //     quiet   no voice: the words are timed by their letters. host.speak is not called. Default false.
 //     auto    go to the next step 1.2 s after the line is said. Default true (false when fast).
-//     who     {model, where, who}: the model that wrote the board, shown in the strip as "Claude Sonnet · hosted". Default none.
+//     who     {model, where, who}: the model that wrote the board, shown in the strip as "Claude Sonnet · hosted · Anthropic", with the
+//             words of the chip of the state line. Default none.
 //     onVoice onVoice(on) when the learner turns the voice off or on in the strip. With it, the strip has a Voice button, and the
 //             first board with a voice says once: "The guide speaks its steps. Turn the voice off here." Default none.
+//     point   the look of a point mark (the setting guide.point), each one weaker than a circle. Default 'tick'.
+//               'tick'  a short thin arrow that stops just before the target, with no ring.
+//               'dot'   a small filled dot under the target, that pulses one time (no pulse with reduced motion).
+//               'ring'  a short arrow and a ring on the target, thinner and smaller than a circle, at half the ink.
+//             An unknown look gives the default.
+//     voiceAt {model, where, who}: the voice that speaks the board, shown after the Voice button as "Kokoro · on this Mac". Default none.
+//     notice  {text, href, link}: one quiet line in the strip for this board, with a local link when `href` is a local path. Default none.
 //     host    the hooks of the page that shows the board. Each one is optional:
 //       resolve(id) -> Element|null   the element of anchor `id`. Default: document.querySelector('[data-guide-id="<id>"]').
 //                                     A formula element names its parts in data-parts: JSON [[tex, elementId], ...]; the
@@ -30,8 +39,9 @@
 //                                     at the end. It can return a function that stops the speech. The board ignores calls
 //                                     after the step changes. Default: speechSynthesis, timed by letters when it has no voice.
 //       demo(set)                     move the demo to `set` ({input: value}). Default: Rupaka.set on [data-guide-id="demo"],
-//                                     only when each gate of the demo is done (never show the result first). A host demo
-//                                     must do its own gate check.
+//                                     only when each gate of the demo is done (never show the result first), with each value
+//                                     made to fit its input first (fitDemo). A host demo must do its own gate check, and can
+//                                     use abhyasaBoard.fitDemo(spec, set).
 //       assets                        the URL folder of rough.js and perfect-freehand.mjs. Default '/vendor/'.
 //     A board with `streaming: true` waits for more steps: it can start with step 1 only. The strip shows no step count and
 //     no end line until finish(board).
@@ -42,6 +52,8 @@
 //                        streaming board shows, or when its steps are not the first steps of `board` (then play `board`).
 //                        An `end` of '' shows no end line: the stream ended with no whole board.
 //   stop()  note(text)  next()  back()  again()  seekVideo(t)  boxOf(at)  normTex(tex)
+//   speakBrowser(text, onWord, done)   the default speak (speechSynthesis), for a host speak that falls back to it.
+//   notice({text, href, link})          set the quiet line of the board that shows now (see play).
 //   status(event)        the state line in the strip while the guide works: the `wait` text of a state event of the guide route
 //                        ({wait, state, model, where, who, query, sources}), a chip "on this Mac" or "hosted · <who>", the seconds
 //                        after 3 s while it asks, and Stop.
@@ -55,7 +67,7 @@
 // Events on document: board:first (the first mark shows), board:stop (detail.by is 'learner' after Esc or Stop, else '').
 (() => {
   if (window.abhyasaBoard) return;
-  const NS = 'http://www.w3.org/2000/svg', WAIT = 1200;
+  const NS = 'http://www.w3.org/2000/svg', WAIT = 1200, LOOKS = ['tick', 'dot', 'ring'];
   let pf = null, st = null;   // the pen module, and the board that shows now
   const script = src => new Promise((ok, no) => document.head.append(Object.assign(document.createElement('script'), {src, onload: ok, onerror: no})));
   const libs = async base => {
@@ -216,15 +228,15 @@
     let target = b && {x: b.x, y: b.y, w: b.w, h: b.h};
     for (const e of [m.g, m.hl, m.el, m.lead]) if (e) e.style.display = '';
     const pathIn = (g, cls) => { const p = svgEl('path', cls); g.append(p); return p; };
-    const arrow = (from, to, at = 0) => {   // one light Rough.js stroke, then a filled head that springs in
+    const arrow = (from, to, at = 0, w = 1, cls = 'board-fill') => {   // one light Rough.js stroke, then a filled head that springs in; `w` scales its weight
       const c = [(from[0] + to[0]) / 2 + (to[1] - from[1]) * .18, (from[1] + to[1]) / 2 - (to[0] - from[0]) * .18];
-      const shaft = rc.curve([from, c, to], {stroke: ink, strokeWidth: 1.8, roughness: .7, bowing: .6, disableMultiStroke: true, preserveVertices: true, seed: m.seed});
+      const shaft = rc.curve([from, c, to], {stroke: ink, strokeWidth: 1.8 * w, roughness: .7, bowing: .6, disableMultiStroke: true, preserveVertices: true, seed: m.seed});
       m.g.append(shaft);
       const line = shaft.querySelector('path'), L = line ? line.getTotalLength() : 0, dur = clamp(L * 1.4, 380, 640);
       if (line) { line.setAttribute('stroke-linecap', 'round'); parts.push({kind: 'dash', el: line, L, at, dur}); }
       let tip = to, a = Math.atan2(to[1] - c[1], to[0] - c[0]);
       if (L) { const P = line.getPointAtLength(L), Q = line.getPointAtLength(Math.max(0, L - 10)); tip = [P.x, P.y]; a = Math.atan2(P.y - Q.y, P.x - Q.x); }   // the head turns with the end of the line
-      parts.push({kind: 'head', el: pathIn(m.g, 'board-fill'), tip, a, at: at + dur * .92});
+      parts.push({kind: 'head', el: pathIn(m.g, cls), tip, a, w, at: at + dur * .92});
       return at + dur;
     };
     if (o.op === 'circle') {
@@ -234,7 +246,7 @@
         const inset = Math.min(size * .42, b.w / 2 - 1);
         parts.push(stroke(m.hl, press(dense([[b.x + inset, b.y + b.h * .55], [b.x + b.w - inset, b.y + b.h * .5]]), .9, 1, .9), {size, thin: 0, dur: 420}));
       }
-      parts.push(stroke(pathIn(m.g, 'board-fill'), press(ring(b, b.glyphs ? 9 : 12, m.seed)), {size: 3.3, at: b.glyphs ? 160 : 0}));
+      parts.push(stroke(pathIn(m.g, 'board-fill board-ring'), press(ring(b, b.glyphs ? 9 : 12, m.seed)), {size: 3.3, at: b.glyphs ? 160 : 0}));
     }
     if (o.op === 'underline') parts.push(stroke(pathIn(m.g, 'board-fill'), press(dense([[b.x - 3, b.y + b.h + 5], [b.x + b.w * .5, b.y + b.h + 7], [b.x + b.w + 4, b.y + b.h + 3]])), {size: 3.5}));
     if (o.op === 'box') {   // a soft glow that blooms, then settles: no frame on the text
@@ -244,11 +256,25 @@
       m.el.classList.toggle('on-dark', m.dark);
       parts.push({kind: 'glow', el: m.el, at: 0, dur: 1200});
     }
-    if (o.op === 'point') {
-      if (!m.off) m.off = freePlace(b);
-      const cx = b.x + b.w / 2, cy = b.y + b.h / 2, r = Math.max(b.w, b.h) / 2 + 9, a = Math.atan2(m.off[1], m.off[0]);
-      const end = arrow([cx + m.off[0], cy + m.off[1]], [cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
-      parts.push(stroke(pathIn(m.g, 'board-fill'), press(ring(b, 6, m.seed)), {size: 2.8, at: end - 80}));   // the ring is the last child: it is on the target
+    if (o.op === 'point') {   // weaker than a circle in each look (see `point` in the API), so a circle stays the main mark
+      const look = st.point, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      m.g.dataset.look = look;
+      if (look === 'dot') {   // a small dot under the target; one soft pulse goes out from it
+        const x = cx, y = b.pt ? cy : b.y + b.h + 7, dot = svgEl('circle', 'board-weak board-dot');
+        dot.setAttribute('cx', x.toFixed(1)); dot.setAttribute('cy', y.toFixed(1)); m.g.append(dot);
+        parts.push({kind: 'dot', el: dot, at: 0, dur: 260});
+        if (!reduced() && !m.still) { const p = svgEl('circle', 'board-pulse'); p.setAttribute('cx', x.toFixed(1)); p.setAttribute('cy', y.toFixed(1)); m.g.append(p); parts.push({kind: 'pulse', el: p, at: 120, dur: 700}); }
+      } else {
+        if (!m.off) m.off = freePlace(b);
+        const a = Math.atan2(m.off[1], m.off[0]), ca = Math.cos(a), sa = Math.sin(a);
+        if (look === 'tick') {   // a short thin arrow that stops 6 px before the edge of the target: no ring, so it never looks like a circle
+          const e = Math.min(Math.abs(ca) > 1e-6 ? b.w / 2 / Math.abs(ca) : 1e9, Math.abs(sa) > 1e-6 ? b.h / 2 / Math.abs(sa) : 1e9) + 6;
+          arrow([cx + ca * (e + 30), cy + sa * (e + 30)], [cx + ca * e, cy + sa * e], 0, .75, 'board-weak');
+        } else {   // 'ring': a short arrow and a ring, thinner and smaller than a circle, at half the ink
+          const r = Math.max(b.w, b.h) / 2 + 7, end = arrow([cx + ca * (r + 36), cy + sa * (r + 36)], [cx + ca * r, cy + sa * r], 0, .7, 'board-weak');
+          parts.push(stroke(pathIn(m.g, 'board-weak board-ring'), press(ring(b, 4, m.seed)), {size: 1.8, at: end - 80}));   // the ring is the last child: it is on the target
+        }
+      }
     }
     if (o.op === 'arrow') {
       const f = locate(o.from), t = locate(o.to);
@@ -331,9 +357,11 @@
       }
       if (p.kind === 'dash') { p.el.style.strokeDasharray = p.L; p.el.style.strokeDashoffset = p.L * (1 - f); p.el.style.opacity = f > 0 ? 1 : 0; }
       if (p.kind === 'head') {
-        const s = still ? (k >= 0 ? 1 : 0) : spring(q, .32, .55), [ex, ey] = p.tip, a = p.a, L = 12 * s, W = 6.5 * s, c = Math.cos(a), si = Math.sin(a);
+        const s = (still ? (k >= 0 ? 1 : 0) : spring(q, .32, .55)) * (p.w || 1), [ex, ey] = p.tip, a = p.a, L = 12 * s, W = 6.5 * s, c = Math.cos(a), si = Math.sin(a);
         p.el.setAttribute('d', s <= 0 ? '' : `M${ex + c * 2} ${ey + si * 2} L${ex - L * c + W * si} ${ey - L * si - W * c} Q${ex - L * .7 * c} ${ey - L * .7 * si} ${ex - L * c - W * si} ${ey - L * si + W * c} Z`);
       }
+      if (p.kind === 'dot') p.el.setAttribute('r', (3.2 * (still ? (k >= 0 ? 1 : 0) : spring(q, .32, .55))).toFixed(2));
+      if (p.kind === 'pulse') { const u = clamp(q / p.dur); p.el.setAttribute('r', (3.2 + 11 * smooth(u)).toFixed(2)); p.el.style.opacity = q < 0 || u >= 1 ? 0 : (.55 * (1 - u)).toFixed(3); }
       if (p.kind === 'glow') {   // Clicky's bubble glow: strong at first, then it settles
         const settle = still ? 0 : Math.exp(-Math.max(0, q) / 380), a = still ? fade : clamp(q / 220), d = m.dark;
         Object.assign(p.el.style, {opacity: op * a, boxShadow: `0 0 0 1.5px color-mix(in srgb, var(--board-ink) ${(38 + 30 * settle).toFixed(0)}%, transparent), ` +
@@ -467,9 +495,9 @@
     const top = el('div', 'board-top'), dots = el('span', 'board-dots');
     b.steps.forEach((_, k) => dots.append(el('i', k === st.i ? 'on' : '')));
     top.append(el('span', 'pill tier-' + b.tier, TIER[b.tier] || 'tutor'), dots, el('span', 'board-n', st.streaming ? `Step ${st.i + 1}` : `Step ${st.i + 1} of ${b.steps.length}`));
-    if (st.who && st.who.model) top.append(el('span', 'board-who', `${st.who.model} · ${st.who.where === HERE ? HERE : 'hosted'}`));
-    const say = el('p', 'board-say');   // each word in its own span, so it can light up when it is said
-    step.say.split(/\s+/).filter(Boolean).forEach((w, k) => { if (k) say.append(' '); say.append(el('span', k <= st.lit ? 'on' : '', w)); });
+    if (st.who && st.who.model) top.append(el('span', 'board-who', `${st.who.model} · ${(chip(st.who) || {textContent: 'hosted'}).textContent}`));   // the words of the chip of the state line
+    const say = el('p', 'board-say');   // each word (or formula) in its own span, so it can light up when it is said
+    sayParts(step.say).forEach((w, k) => { if (k) say.append(' '); say.append(texInto(el('span', k <= st.lit ? 'on' : '', null), w)); });
     const parts = [top, say];
     if (step.quote) {
       const src = b.sources[step.quote.src - 1] || {}, q = el('p', 'board-quote');
@@ -495,18 +523,52 @@
     }
     if (st.onVoice && !st.quiet && !st.told) {   // the first board with a voice says how to turn it off, one time
       st.told = true;
-      if (!localStorage.getItem('board-voice-told')) { localStorage.setItem('board-voice-told', '1'); parts.push(el('p', 'board-tell', 'The guide speaks its steps. Turn the voice off here.')); }
+      if (!localStorage.getItem('board-voice-told')) { localStorage.setItem('board-voice-told', '1'); st.tellAt = st.i; }
+    }
+    if (st.tellAt === st.i && !st.quiet) parts.push(el('p', 'board-tell', 'The guide speaks its steps. Turn the voice off here.'));   // it stays until the step changes
+    else st.tellAt = null;
+    if (st.notice && st.notice.text) {   // one quiet line for this board: the voice fell back, or a natural voice is ready
+      const n = el('p', 'board-tell board-notice', st.notice.text + ' ');
+      if (st.notice.link && /^\/(?!\/)/.test(String(st.notice.href || ''))) { const a = el('a', '', st.notice.link); a.href = st.notice.href; n.append(a); }
+      parts.push(n);
     }
     const keys = el('p', 'board-keys', 'A again · S back · D next · Esc stop');
     if (st.onVoice) keys.append(' ', button(st.quiet ? 'Voice on' : 'Voice off', 'board-voice', () => setVoice(st.quiet)));
+    if (st.voiceAt && st.voiceAt.model && !st.quiet) { const c = chip(st.voiceAt); keys.append(' ', el('span', 'board-voice-at', st.voiceAt.model), ...(c ? [' ', c] : [])); }
     keys.append(' ', button('Stop', 'board-stop', () => stop('learner')));
     parts.push(keys);
     s.replaceChildren(...parts);
   }
+  // The words of a step, with its maths: `$…$` is one part, and a bare W_Q or d_{k} (one letter with a short subscript) is maths too.
+  // A part with maths is drawn by KaTeX where the page loaded it (trust off), else as text with <sub> elements. Model text never goes in as HTML.
+  const BARE = /^([A-Za-z])_(\{[^{}\s]{1,12}\}|[A-Za-z0-9]{1,3})([.,;:!?)]*)$/;
+  function sayParts(text) {
+    const out = [];
+    for (const m of String(text || '').matchAll(/\$([^$]+)\$([.,;:!?)]*)|(\S+)/g)) {
+      if (m[1] != null) { out.push({tex: m[1], after: m[2]}); continue; }
+      const b = m[3].match(BARE);
+      out.push(b ? {tex: `${b[1]}_${b[2]}`, after: b[3]} : m[3]);
+    }
+    return out;
+  }
+  function texInto(span, w) {
+    if (typeof w === 'string') { span.textContent = w; return span; }
+    const m = el('span', 'board-tex', null);
+    try { if (!window.katex) throw 0; katex.render(w.tex, m, {throwOnError: false, trust: false, strict: false}); }
+    catch (e) {   // no KaTeX: each _x or _{xy} is a <sub> with its text
+      m.replaceChildren();
+      let at = 0;
+      for (const s of w.tex.matchAll(/_(\{([^{}]*)\}|(.))/g)) { m.append(w.tex.slice(at, s.index)); m.append(el('sub', '', s[2] ?? s[3])); at = s.index + s[0].length; }
+      m.append(w.tex.slice(at));
+    }
+    span.append(m);
+    if (w.after) span.append(w.after);
+    return span;
+  }
   function light(k) {
     if (!st || k <= st.lit) return;
     st.lit = k;
-    document.querySelectorAll('#guide-strip .board-say span').forEach((w, n) => w.classList.toggle('on', n <= k));
+    document.querySelectorAll('#guide-strip .board-say > span').forEach((w, n) => w.classList.toggle('on', n <= k));
   }
   function link(src) {
     if (!src || !src.title) return el('span', '', '');
@@ -647,7 +709,32 @@
     const walk = bs => (bs || []).forEach(b => { if (b.type === 'gate') gates.push(b.id); walk(b.blocks); });
     walk(s.spec.blocks);
     if (!gates.every(g => s.st.gate && s.st.gate[g] === 'done')) return;   // the gate is still closed: never show the result first
-    Rupaka.set(h, set);
+    const fit = fitDemo(s.spec, set);
+    if (Object.keys(fit).length) Rupaka.set(h, fit);
+  }
+  // A value from the model in the range of its input, as the demo itself allows: Rupaka.set copies a value as it is given. A number
+  // of a slider or a point goes to its min or max and to its step. A choice or a wheel item that is not one of its options, a toggle
+  // that is not true or false, a number input with no number, and a key that no input binds are dropped.
+  const SLIDER = {min: 0, max: 100, step: 1};
+  function fitDemo(spec, set) {
+    const by = {}, walk = bs => (bs || []).forEach(b => { for (const k of [b.bind, b.x, b.y, b.angle]) if (typeof k === 'string' && !(k in by)) by[k] = b; walk(b.blocks); });
+    walk(spec && spec.blocks);
+    const out = {};
+    for (const [k, v] of Object.entries(set || {})) {
+      const b = by[k];
+      if (!b) continue;
+      if (b.type === 'choice' || (b.type === 'wheel' && k === b.bind)) { if ((b.type === 'choice' ? b.options : b.items || []).some(o => JSON.stringify(o) === JSON.stringify(v))) out[k] = v; }
+      else if (b.type === 'toggle') { if (typeof v === 'boolean') out[k] = v; }
+      else if (typeof v === 'number' && Number.isFinite(v)) {
+        const d = b.type === 'slider' ? SLIDER : {}, lo = b.min ?? d.min, hi = b.max ?? d.max, step = b.step ?? d.step;
+        let x = v;
+        if (lo != null) x = Math.max(lo, x);
+        if (hi != null) x = Math.min(hi, x);
+        if (step > 0) { const o = lo ?? 0; x = +(o + Math.round((x - o) / step) * step).toFixed(10); if (hi != null && x > hi) x -= step; }
+        out[k] = x;
+      } else if (!['slider', 'point'].includes(b.type) && k !== b.angle) out[k] = v;   // a number input takes only a number; a list goes as it is
+    }
+    return out;
   }
   function seekVideo(t) {   // the YouTube player API by postMessage: the embed has enablejsapi=1, and no autoplay
     const f = document.querySelector('#guide-video iframe');
@@ -691,7 +778,7 @@
   }
 
   // Play a checked board. See the API at the top of this file.
-  async function play(board, {labels = {}, fast = false, quiet: q = false, auto = true, host: hk = {}, who = null, onVoice = null} = {}) {
+  async function play(board, {labels = {}, fast = false, quiet: q = false, auto = true, host: hk = {}, who = null, onVoice = null, point = 'tick', voiceAt = null, notice = null} = {}) {
     if (st) stop();
     const h = {...HOST};
     for (const k of ['resolve', 'speak', 'demo']) if (typeof (hk || {})[k] === 'function') h[k] = hk[k];
@@ -701,7 +788,8 @@
     if (board.streaming) board = {...board, steps: [...board.steps]};   // add() grows the steps of its own copy
     st = {board, labels, host: h, fast, quiet: q || fast, auto: auto && !fast, i: 0, gen: 0, lit: -1, timers: [], rate: +(localStorage.getItem('board-rate') || 1), first: null,
           t0: performance.now(), stepAt: 0, ptr: {pos: null, f: null}, streaming: !!board.streaming, wait: false,
-          who: who && typeof who === 'object' ? who : null, onVoice: !fast && typeof onVoice === 'function' ? onVoice : null,
+          who: who && typeof who === 'object' ? who : null, point: LOOKS.includes(point) ? point : LOOKS[0], onVoice: !fast && typeof onVoice === 'function' ? onVoice : null,
+          voiceAt: voiceAt && typeof voiceAt === 'object' ? voiceAt : null, notice: notice && typeof notice === 'object' ? notice : null,
           marks: board.steps.flatMap(marksOf)};
     // An empty answer box with the focus (a check takes it when it loads) lets go of it, so A, S and D work. A box with your text
     // keeps it: then the keys type, and a click outside the box gives them to the board. Esc gives the focus back.
@@ -726,7 +814,10 @@
   }).observe(document.body, {childList: true, subtree: true});
   if (document.body) watch(); else addEventListener('DOMContentLoaded', watch);
   const view = p => [p[0] - scrollX, p[1] - scrollY];
-  window.abhyasaBoard = {play, add, finish, stop: () => stop(), note, status, seekVideo, demoAnchors, next: () => st && show(st.i + 1), back: () => st && show(st.i - 1), again: () => st && show(st.i), boxOf, normTex,
+  window.abhyasaBoard = {play, add, finish, stop: () => stop(), note, status, seekVideo, demoAnchors, fitDemo,
+                         speakBrowser: (text, onWord, done) => st ? voice(text, onWord, done) : undefined,
+                         notice: n => { if (st && n && typeof n === 'object') { st.notice = n; caption(); } },
+                         next: () => st && show(st.i + 1), back: () => st && show(st.i - 1), again: () => st && show(st.i), boxOf, normTex,
                          get state() {
                            if (!st) return null;
                            const t = performance.now(), mine = st.marks.filter(m => m.step === st.i && !/^(clear|demo_set|video_at)$/.test(m.o.op));
