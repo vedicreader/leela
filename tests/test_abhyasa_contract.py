@@ -42,7 +42,7 @@ def test_rupaka_vendor_version():
 def test_abhyasa_dependency_floor():
     t = tomllib.loads((ROOT/'pyproject.toml').read_text())
     deps = t['project']['dependencies']
-    assert 'abhyasa>=0.0.13,<0.1' in deps and 'rupaka==0.0.7' in deps
+    assert 'abhyasa>=0.0.14,<0.1' in deps and 'rupaka==0.0.7' in deps
     assert 'abhyasa' not in t['tool']['uv']['sources']
 
 def test_room_spec_contract():
