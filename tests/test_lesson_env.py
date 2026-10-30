@@ -4,7 +4,7 @@ import pytest
 from abhyasa.contract import validate_nb_spec
 from leela.blocks.learn import tools
 from leela.blocks.learn.tools import make_tool_env, tool_dir, tool_key, tool_kernel, tool_python
-from leela.blocks.nb.lesson import ENV_GONE, EnvGone, bind_env, step_lesson
+from leela.blocks.nb.lesson import ENV_GONE, ENV_NEEDED, EnvGone, bind_env, step_lesson
 from leela.blocks.nb.nb import Notebook
 from leela.blocks.runtime.kernels import python_for
 from leela.workspace import Workspace
@@ -58,22 +58,23 @@ def test_a_bound_lesson_runs_in_its_environment_and_a_plain_notebook_in_the_proj
             assert seen == [str(tool_python(key)), python_for(ws.cwd_for(ws.tab), ws)] and seen[0] != seen[1]
         finally: ws.shutdown_now()
 
-def test_a_lesson_made_before_the_environment_binds_it_when_ready_and_restarts_its_kernel(tmp_path):
+def test_a_lesson_made_before_the_environment_refuses_to_run_then_binds_it_when_ready_and_restarts_its_kernel(tmp_path):
     from leela.core.session import DocStore
     p = lesson(tmp_path)
     ws = Workspace(roots=[tmp_path], python=sys.executable)
     ws.docstore = DocStore(ws)
     try:
         seen = capture(ws)
-        kernel(ws, p)
-        assert seen == [python_for(ws.cwd_for(ws.tab), ws)], 'no environment yet: the project Python'
+        with pytest.raises(EnvGone) as e: kernel(ws, p)
+        assert str(e.value) == ENV_NEEDED and seen == [], 'no environment yet: no kernel, and never the project Python'
+        assert ws.kernel_options(ws.tab)['key'], 'the kernel picker still answers'
         closed = []
         async def shutdown(): closed.append(True)
         k = ws.kernel_key(ws.tab)
-        ws.pool.kernels[k] = SimpleNamespace(python=seen[0], alive=True, busy=True, shutdown=shutdown)
+        ws.pool.kernels[k] = SimpleNamespace(python=python_for(ws.cwd_for(ws.tab), ws), alive=True, busy=True, shutdown=shutdown)
         key = ready_env(['six'])
         kernel(ws, p)
-        assert closed == [] and len(seen) == 1, 'a busy kernel is not taken from its run'
+        assert closed == [] and seen == [], 'a busy kernel is not taken from its run'
         ws.pool.kernels[k].busy = False
         kernel(ws, p)
         assert closed == [True] and seen[-1] == str(tool_python(key)) and ws.kernel_key(ws.tab).startswith('tab:')

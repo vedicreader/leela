@@ -4,6 +4,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 ## Using Leela
 
+- [guide.md](guide.md): starting Leela, what each part does, watching a running process, the keys, and what it costs to run.
 - [browser-workbench.md](browser-workbench.md): settings, notebooks, runtime and debugging, history, the language service.
 - [desktop.md](desktop.md): the packaged application. Processes, browser lifecycle, folder selection, the macOS menu bar.
 - [languages.md](languages.md): Rust and JavaScript notebooks, and what stays Python.
@@ -13,6 +14,7 @@ Design rationale and reference, kept out of the source. The README is the produc
 
 ## Building on Leela
 
+- [develop.md](develop.md): the code layout, the desktop builds, cutting a release, and the test suite.
 - [blocks.md](blocks.md): the block contract. `CAPS`, `connect(app, ctx)`, wiring order, and where a block's JavaScript goes.
 - [integration.md](integration.md): the capability groups `WorkspaceHost` declares, and the block backing each one.
 - [decisions.md](decisions.md): why a symbol has the shape it has. Read the entry before rewriting the symbol.

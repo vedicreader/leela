@@ -59,8 +59,9 @@ def lesson_step(memory, nb) -> dict|None:
     with _open_lock(memory.path): return step_brief(learn.find_step(Learning(vault), AttrDict(walk=w['walk'], step=w['step'], topic='')))
 
 ENV_GONE = 'The environment for this lesson is missing or broken. Open the step and press Set up the environment.'
+ENV_NEEDED = 'This lesson runs in its own environment, which is not set up yet. Open the step and press Set up the environment.'
 
-class EnvGone(KernelStartError): "The tool environment a lesson names is not ready, so its kernel does not start."
+class EnvGone(KernelStartError): "The tool environment a lesson needs is not ready, so its kernel does not start."
 
 def lesson_key(nb) -> str|None:
     "The tool environment key of the walk-step lesson `nb`: its meta's `env`, else `tool_key` of the one `requires` its exercise cells name; None for any other notebook, or for `requires` that are not package names."

@@ -957,14 +957,14 @@ class Workspace:
             except Exception: nb = None
         return (nb, key) if nb is not None and (key := lesson_key(nb)) else (None, None)
     def lesson_python(self, tab=None):
-        "The Python of the ready tool environment of a lesson tab, recorded in its meta when it was not; None for any other tab or an environment not set up yet. `EnvGone` when the meta names one that is not ready."
+        "The Python of the ready tool environment of a lesson tab, recorded in its meta when it was not; None for any other tab. `EnvGone` when the environment is not set up yet, or the meta names one that is not ready."
         from .blocks.learn.tools import tool_kernel
-        from .blocks.nb.lesson import ENV_GONE, EnvGone, bind_env
+        from .blocks.nb.lesson import ENV_GONE, ENV_NEEDED, EnvGone, bind_env
         nb, key = self._lesson(tab or self.tab)
         if key is None: return None
         p = tool_kernel(key)
         if nb.meta['lesson'].get('env') != key:
-            if p is None: return None
+            if p is None: raise EnvGone(ENV_NEEDED)
             bind_env(self.fs, nb.path, key, nb)
         elif p is None: raise EnvGone(ENV_GONE)
         return str(p)

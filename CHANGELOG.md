@@ -2,9 +2,24 @@
 
 <!-- do not remove -->
 
-## Unreleased
+## 0.1.11
 
-Needs vishalakshi 0.1.33, shalya 0.1.19, uraiyadal 0.0.16, rahasya 0.0.4, varga 0.0.7, litesearch 0.1.51, kunda 0.0.5, kavacha 0.0.8, dhrishti 0.1.8, fossick 0.1.20, koshas 0.1.11, dhrona 0.1.15, gheasy 0.0.14, pullup 0.0.11, dockeasy 0.0.10, vpseasy 0.0.24 and cfeasy 0.0.6. Pins ramabana 0.2.62 and rishi 0.1.54.
+Pins ramabana 0.2.95, rishi 0.1.61 and rupaka 0.0.7. Needs abhyasa 0.0.13, kunda 0.0.10, kavacha 0.0.10, litesearch 0.1.61, koshas 0.1.20, vishalakshi 0.1.35, dhrishti 0.1.10 and dhrona 0.1.18.
+
+- The server no longer serves files from its working folder. FastHTML's static route is removed. Before, an encoded `../` in a URL could read any file with a static extension.
+- Learn from abhyasa. A `/learn` link opens a walk step or a topic. A step opens as a lesson notebook. A lesson runs in its own uv environment, made from the requirements it declares. A lesson whose environment is not set up yet, or is missing or broken, refuses to run. It says to open the step and press Set up the environment. It never runs in the project's Python. Exercise cells have a Check button and a results list. The agent grades a checked exercise from 0 to 10. A run result is filed to the walk, with the number of tries and the step's concept (abhyasa 0.0.13).
+- Option+S (`alt+s`) checks the exercise that has the cursor. On a `/learn` page it opens the step as a lesson. In an editor it never types ß.
+- The assistant merges, rebases and settles merge conflicts with the git tools `git_sync` and `git_conflicts`. Each needs approval and gives an undo token. No reset is offered. `run_shell` refuses `git merge` and `git rebase` (ramabana 0.2.95, shalya 0.1.26).
+- Text that a model writes after its last tool call no longer reaches the assistant. That text was often an invented tool result (rishi 0.1.61).
+- ipywidgets render and run in notebook cells.
+- The editor has multiple cursors. A column mode adds cursors with the arrow keys.
+- Notebook headings collapse their sections.
+- Notebook edits, runs, outputs and diffs act on their own notebook and cell, in order. A save never clears a later change.
+- Open With Leela opens a single file as well as a folder.
+- Cmd-click into the standard library opens the definition, read-only.
+- A link in a reply or in Markdown never navigates the app window. A file opens as a tab, and a web link opens in the browser.
+- Rendered Markdown is sanitized with nh3. Dollar maths renders with a vendored KaTeX, with no CDN.
+- In the terminal, Option acts as Meta by default. A palette entry turns it off.
 
 - Leela has one presentation mode. Alt+R, the Present button and "Present from this cell" present the open notebook from the selected cell, with unsaved edits, on Leela's own slide renderer in Leela's themes and fonts. A presentation writes no file. Run skips the save, and autosave pauses. Slides come from RISE cell metadata in one line, with fragments. An H2 heading starts a slide when no cell is marked `slide` or `subslide`. reveal.js, its themes, `rise.theme` and the other reveal options, vertical navigation and the separate notes page are removed. The optional audience window follows the presenter through the server and opens in the system browser in the Mac app. Code cells run live on both screens. A failed run shows its traceback to the presenter only, until Show error. Esc never ends a presentation, and a reload comes back at the same place. See `docs/present.md`.
 - A cell output cleared during a run (`clear_output`) leaves the streamed output on the page and in a presentation once kunda 0.0.10 sends the clear. Before, the receiver would have appended it as one more output.
