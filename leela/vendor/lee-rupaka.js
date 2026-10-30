@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.6', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.7', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -144,7 +144,8 @@
 /* fns/expr.js */
 /* expr: a formula in a tiny safe grammar: numbers, names, + - * / ^, parentheses, and the functions
    sin cos tan exp log sqrt abs min max floor ceil round. Names are state keys; `over: {x: [min, max, n]}` gives a series of {x, y}.
-   There is no eval: the text is parsed to a tree, and only own state keys can be read. */
+   There is no eval: the text is parsed to a tree, and only own state keys can be read.
+   `Rupaka.expr(src, fns)` also allows the functions in `fns`, by name; `field` adds noise this way. */
 (() => {
   const FN = {sin: Math.sin, cos: Math.cos, tan: Math.tan, exp: Math.exp, log: Math.log, sqrt: Math.sqrt, abs: Math.abs,
               min: Math.min, max: Math.max, floor: Math.floor, ceil: Math.ceil, round: Math.round};
@@ -162,8 +163,8 @@
     }
     return out;
   };
-  const parse = src => {
-    const ts = lex(src); let p = 0;
+  const parse = (src, fns) => {
+    const ts = lex(src), fs = fns ? {...FN, ...fns} : FN; let p = 0;
     const peek = () => ts[p], eat = v => { const t = ts[p]; if (!t || (v && t.v !== v)) throw new Error(`expr: "${src}" needs ${v || 'more'}`); p++; return t; };
     const binl = (next, ops) => () => { let a = next(); while (peek()?.t === 'op' && ops.includes(peek().v)) { const o = eat().v, l = a, r = next(); a = o === '+' ? e => l(e) + r(e) : o === '-' ? e => l(e) - r(e) : o === '*' ? e => l(e) * r(e) : e => l(e) / r(e); } return a; };
     const atom = () => {
@@ -173,9 +174,9 @@
       if (t.t === 'id') {
         if (t.v.startsWith('_') || ['constructor', 'prototype'].includes(t.v)) throw new Error(`expr: the name "${t.v}" is not allowed`);
         if (peek()?.v === '(') {
-          if (!Object.hasOwn(FN, t.v)) throw new Error(`expr: no function "${t.v}"`);
+          if (!Object.hasOwn(fs, t.v)) throw new Error(`expr: no function "${t.v}"`);
           eat('('); const args = [add()]; while (peek()?.v === ',') { eat(','); args.push(add()); } eat(')');
-          const f = FN[t.v]; return e => f(...args.map(a => a(e)));
+          const f = fs[t.v]; return e => f(...args.map(a => a(e)));
         }
         if (Object.hasOwn(K, t.v)) return () => K[t.v];
         return e => { if (!Object.hasOwn(e, t.v)) throw new Error(`expr: no value "${t.v}"`); return +e[t.v]; };
@@ -196,6 +197,26 @@
     if (!d.over) return f(st);
     const [name, [lo, hi, n = 101]] = Object.entries(d.over)[0];
     return Array.from({length: n}, (_, i) => { const x = lo + (hi - lo) * i / (n - 1); return {x, y: f({...st, [name]: x})}; });
+  });
+})();
+
+/* fns/field.js */
+/* field: an expr formula on each cell of an n x n grid, as a list of n rows. Row i and column j go from 0 to n - 1.
+   The formula can call noise(i, j): a value with mean 0 and variance 1, the same for the same seed, i and j.
+   noise is a sum of four uniform hashes (murmur3 fmix32), so Python gives the same bits. */
+(() => {
+  const mix = h => { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); return (h ^ h >>> 16) >>> 0; };
+  const step = (h, x) => mix(((h ^ x) + 0x9e3779b9) >>> 0);
+  const noise = (seed, i, j) => {
+    const h = step(step(seed >>> 0, i >>> 0), j >>> 0);
+    return ((step(h, 0) + step(h, 1) + step(h, 2) + step(h, 3)) / 4294967296 - 2) * Math.sqrt(3);
+  };
+  const cache = {};
+  Rupaka.fn('field', (d, st) => {
+    const n = d.n ?? 16, seed = d.seed ?? 0;
+    if (!(Number.isInteger(n) && n >= 1 && n <= 64)) throw new Error('field: n must be an int from 1 to 64');
+    const f = cache[`${seed}|${d.expr}`] ||= Rupaka.expr(d.expr, {noise: (i, j) => noise(seed, i, j)});
+    return Array.from({length: n}, (_, i) => Array.from({length: n}, (_, j) => f({...st, i, j})));
   });
 })();
 
@@ -485,6 +506,37 @@ Rupaka.block('grid', (b, ctx) => {
   }
   s.on(paint);
   return el('div', {}, Rupaka.label(b), svg, say, b.note ? el('div', {class: 'rk-note', text: b.note}) : null);
+});
+
+/* blocks/pixels/pixels.js */
+/* pixels: a grey image of a list of rows of numbers, one square per cell. Read-only.
+   The ramp goes from --rk-bg at lo to --rk-fg at hi, so it follows the theme. The label fills {path} from the state;
+   it is the aria-label of the canvas and shows above it. */
+Rupaka.block('pixels', (b, ctx) => {
+  const {el, fmt} = Rupaka, s = ctx.s;
+  const cv = el('canvas', {role: 'img', width: 0, height: 0, style: `width: ${b.size ?? 256}px`});
+  const lbl = b.label ? el('span', {class: 'rk-lbl', 'aria-hidden': 'true'}) : null;
+  const probe = el('canvas', {width: 1, height: 1}).getContext('2d', {willReadFrequently: true});
+  const rgb = v => {
+    cv.style.color = `var(${v})`; probe.clearRect(0, 0, 1, 1); probe.fillStyle = getComputedStyle(cv).color; cv.style.color = '';
+    probe.fillRect(0, 0, 1, 1); return probe.getImageData(0, 0, 1, 1).data;
+  };
+  s.on(() => {
+    const text = fmt(b.label || b.bind, s.st), v = s.get(b.bind) || [], m = Array.isArray(v[0]) ? v : [v];
+    cv.setAttribute('aria-label', text); if (lbl) lbl.textContent = text;
+    const nr = m.length, nc = m[0]?.length || 0, vs = m.flat();
+    if (cv.width !== nc || cv.height !== nr) { cv.width = nc; cv.height = nr; }
+    if (!nr || !nc) return;
+    const lo = b.lo ?? Math.min(...vs), hi = b.hi ?? Math.max(...vs), bg = rgb('--rk-bg'), fg = rgb('--rk-fg');
+    const img = new ImageData(nc, nr), px = img.data;
+    vs.forEach((x, k) => {
+      const t = hi > lo ? Math.min(1, Math.max(0, (x - lo) / (hi - lo))) : 0;
+      for (let c = 0; c < 3; c++) px[4 * k + c] = bg[c] + (fg[c] - bg[c]) * t;
+      px[4 * k + 3] = 255;
+    });
+    cv.getContext('2d').putImageData(img, 0, 0);
+  });
+  return el('div', {}, lbl, cv);
 });
 
 /* blocks/plot/plot.js */

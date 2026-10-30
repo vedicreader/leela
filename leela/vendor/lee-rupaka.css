@@ -86,6 +86,9 @@
 .rk-grid svg:focus-visible { outline: none; }
 .rk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* blocks/pixels/pixels.css */
+.rk-pixels canvas { display: block; max-width: 100%; height: auto; image-rendering: pixelated; }
+
 /* blocks/plot/plot.css */
 .rk-plot .ln { fill: none; stroke: var(--rk-acc); stroke-width: 2; stroke-linejoin: round; }
 .rk-plot .dots circle { fill: var(--rk-acc); }

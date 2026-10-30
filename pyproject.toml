@@ -18,7 +18,7 @@ classifiers = [
 dependencies = [
     "ramabana[cli]==0.2.94",
     "abhyasa>=0.0.13,<0.1",
-    "rupaka==0.0.6",   # the vendored bundle is written from this wheel
+    "rupaka==0.0.7",   # the vendored bundle is written from this wheel
     "shalya>=0.1.22",
     "gheasy>=0.0.14",
     "fastcore>=1.7.0",

@@ -8,10 +8,10 @@ lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scr
 
 fonts/fa-solid-900.woff2 and fonts/LICENSE-Font-Awesome.txt: @fortawesome/fontawesome-free@5.15.4, the version html-manager 1.0.15 depends on.
 
-lee-rupaka.js and lee-rupaka.css: rupaka 0.0.6 from PyPI, wheel rupaka-0.0.6-py3-none-any.whl, SHA-256 12bfaae4f9e9f3359c66c054b1af0e6feae534b1dfe364660d14a49fb790207d. Download the wheel into an empty folder, check the digest, then write the two bundles with the wheel's own renderer:
+lee-rupaka.js and lee-rupaka.css: rupaka 0.0.7 from PyPI, wheel rupaka-0.0.7-py3-none-any.whl, SHA-256 6beeebc98e17dd2d25205c6fcb08feb7799d31aa819b37848099e531dbd8f28b. Download the wheel into an empty folder, check the digest, then write the two bundles with the wheel's own renderer:
 
-    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.6-py3-none-any.whl" https://files.pythonhosted.org/packages/4f/de/5206d74f85b0eff695bcab874e4120f2ea793e69a20f9058057c059482f0/rupaka-0.0.6-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.6-py3-none-any.whl"
-    uv run --no-project --with "$d/rupaka-0.0.6-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
+    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.7-py3-none-any.whl" https://files.pythonhosted.org/packages/40/5c/5745e721b416ab9acb4e730a1607fef44ea0fa3abce0b2102658f9854de8/rupaka-0.0.7-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.7-py3-none-any.whl"
+    uv run --no-project --with "$d/rupaka-0.0.7-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
 
 katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375 (the registry's own sha1 0a13a42c2deb4f74e61f162d440b9165a548030f and sha512 Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg== both match). Download into an empty folder, check the digests, extract into another, and copy dist/katex.min.js, dist/katex.min.css and dist/fonts/*.woff2 (the stylesheet lists woff and ttf after woff2; no browser Leela runs in fetches them) with LICENSE as LICENSE-KaTeX.txt:
 

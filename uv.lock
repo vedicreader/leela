@@ -2643,7 +2643,7 @@ requires-dist = [
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.60" },
-    { name = "rupaka", specifier = "==0.0.6" },
+    { name = "rupaka", specifier = "==0.0.7" },
     { name = "shalya", specifier = ">=0.1.22" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
@@ -5293,14 +5293,14 @@ wheels = [
 
 [[package]]
 name = "rupaka"
-version = "0.0.6"
+version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/96/22/378d832be8bab97982a96df7ae6310b087a2b6547b698b4d6cbcd06c58a1/rupaka-0.0.6.tar.gz", hash = "sha256:e6b4498a8b8ddd9dcec2df20ece56d4cc4dde26164703d70f7ce485754fa10bf", size = 293892, upload-time = "2026-10-29T01:50:24.959Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/b9/a03abec42abfece24e9edac8aa631d9bc7b9e2eb8486d7b16377c94c42dc/rupaka-0.0.7.tar.gz", hash = "sha256:a623e2d18fbb6340368d89bc113223b6682fc2b55be047a035acb2e7ccd8eb2d", size = 297169, upload-time = "2026-10-30T02:50:19.605Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/de/5206d74f85b0eff695bcab874e4120f2ea793e69a20f9058057c059482f0/rupaka-0.0.6-py3-none-any.whl", hash = "sha256:12bfaae4f9e9f3359c66c054b1af0e6feae534b1dfe364660d14a49fb790207d", size = 321971, upload-time = "2026-10-29T01:50:23.248Z" },
+    { url = "https://files.pythonhosted.org/packages/40/5c/5745e721b416ab9acb4e730a1607fef44ea0fa3abce0b2102658f9854de8/rupaka-0.0.7-py3-none-any.whl", hash = "sha256:6beeebc98e17dd2d25205c6fcb08feb7799d31aa819b37848099e531dbd8f28b", size = 327349, upload-time = "2026-10-30T02:50:18.044Z" },
 ]
 
 [[package]]
