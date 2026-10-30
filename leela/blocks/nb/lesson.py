@@ -1,6 +1,5 @@
 import json, platform, re, sys
 from datetime import date
-from decimal import Decimal
 from itertools import zip_longest
 from pathlib import Path
 from fastcore.xtras import fenced, fenced_blocks
@@ -11,6 +10,7 @@ from abhyasa.method import METHODS, TEXT_WAYS
 from abhyasa.prompts import prompt, register
 from abhyasa.tutor import HINTS
 from ..runtime.kernels import KernelStartError
+from rupaka.spec import js_str
 from .nb import Cell, Notebook, src_hash
 from .exercise import exercise_cells, exercise_meta
 
@@ -311,35 +311,14 @@ def demo_gate(cell, demo, gate):
     if len(hits) > 1: raise ValueError(f'This cell has more than one gate {gate!r}. Give each gate its own id.')
     return hits[0]
 
-def _num(x):
-    "JavaScript's `Number.prototype.toString` of the float `x`."
-    if x != x: return 'NaN'
-    if x in (float('inf'), float('-inf')): return ('-' if x < 0 else '') + 'Infinity'
-    if x == 0: return '0'
-    t = Decimal(repr(abs(x))).normalize().as_tuple()
-    d, k = ''.join(map(str, t.digits)), len(t.digits)
-    n, sign = t.exponent + k, '-' if x < 0 else ''
-    if k <= n <= 21: return sign + d + '0'*(n - k)
-    if 0 < n <= 21: return sign + d[:n] + '.' + d[n:]
-    if -6 < n <= 0: return sign + '0.' + '0'*-n + d
-    return sign + (d if k == 1 else d[0] + '.' + d[1:]) + f'e{"+" if n > 0 else "-"}{abs(n - 1)}'
-
-def _js(v, top=True):
-    "`String(v)` as the rupaka runtime makes it, for any JSON value."
-    if isinstance(v, bool): return str(v).lower()
-    if v is None: return 'null' if top else ''
-    if isinstance(v, (int, float)): return _num(float(v))
-    if isinstance(v, list): return ','.join(_js(x, False) for x in v)
-    return '[object Object]' if isinstance(v, dict) else str(v)
-
 def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=None):
     "What `record_prediction` files for one gate, copied now; ValueError for a bad gate, or for a state-path gate without a valid `ans` and `ok`."
     spec, g = demo_gate(cell, demo, gate)
     if not spec.get('id'): raise ValueError('This demo has no id. Give it one, then try.')
-    if isinstance(a := g.get('answer'), dict): ans, ok = a.get('is'), _js(picked) == _js(a.get('is'))
+    if isinstance(a := g.get('answer'), dict): ans, ok = a.get('is'), js_str(picked) == js_str(a.get('is'))
     elif type(ok) is not bool: raise ValueError('This check needs ok as true or false.')
     elif ans is not None and not isinstance(ans, (str, int, float)): raise ValueError('This check needs ans as one value: a string, a number, true, false or null.')
-    return dict(name=nb.meta['lesson']['name'], spec=spec, gate=gate, picked=_js(picked), ans=_js(ans), ok=ok, why=str(why or ''),
+    return dict(name=nb.meta['lesson']['name'], spec=spec, gate=gate, picked=js_str(picked), ans=js_str(ans), ok=ok, why=str(why or ''),
                 notebook=str(path or ''), card_key=f'{cell.id}:{src_hash(cell.source)}:{spec["id"]}:{gate}', walk=walk_meta(nb))
 
 def record_prediction(memory, f):

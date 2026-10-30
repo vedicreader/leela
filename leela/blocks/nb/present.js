@@ -402,7 +402,8 @@ async function presentNotebook(start = '') {
   const at = typeof start === 'object' ? presentNear(line, start) : (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
   status('Preparing slides…');
   const body = {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
-    cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))};
+    cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || [],
+      attachments: c.cell_type === 'markdown' && c.attachments || {}}))};
   // the server keeps the start whose body it reads last and refuses a start an end overtakes, so one start at a time, after the last end
   const sent = (lee.presentWait || Promise.resolve()).then(() => ticket === lee.presentTicket ? post('/present/start', body) : null);
   lee.presentWait = sent.catch(() => {});

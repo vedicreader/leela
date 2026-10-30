@@ -2631,7 +2631,7 @@ const LANG_TAGS = {python: 'py', rust: 'rs', javascript: 'js', typescript: 'ts'}
 const cellKind = (c) => c.cell_type === 'code' ? (LANG_TAGS[nbLang()] || nbLang())
   : ({markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n, word, many = word + 's') => `${n} ${+n === 1 ? word : many}`;
 function cellMetaTitle(c, i) {
   const src = String(c.source || '');
   const rows = [`cell ${i + 1} of ${lee.cells.length} · ${c.cell_type} · ${plural(cellLines(c), 'line')}, ${src.length} chars`];
@@ -4885,7 +4885,8 @@ async function presentNotebook(start = '') {
   const at = typeof start === 'object' ? presentNear(line, start) : (start || riseConfig(lee.rise).start) === 'selected' ? presentPlace(line, lee.sel) : {slide: 0, step: 0};
   status('Preparing slides…');
   const body = {path: name, title: String(name).split('/').pop(), start: at, line: line.map(({items, notes, groups}) => ({items, notes, groups})),
-    cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || []}))};
+    cells: cells.map(c => ({id: c.id, cell_type: PRESENT_KINDS.has(c.cell_type) ? c.cell_type : 'raw', source: mdSource(c), outputs: c.outputs || [],
+      attachments: c.cell_type === 'markdown' && c.attachments || {}}))};
   // the server keeps the start whose body it reads last and refuses a start an end overtakes, so one start at a time, after the last end
   const sent = (lee.presentWait || Promise.resolve()).then(() => ticket === lee.presentTicket ? post('/present/start', body) : null);
   lee.presentWait = sent.catch(() => {});

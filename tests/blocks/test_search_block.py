@@ -204,6 +204,27 @@ def test_the_jump_route_carries_the_dotted_chain(ws, tmp_path, no_index):
         assert bare['hits'][0]['path'].endswith('rich/style.py'), 'no chain, no module'
 
 
+def test_the_jump_toast_counts_in_the_singular():
+    "Cmd-click on a declaration with one usage said `1 usages of f`."
+    import json, shutil, subprocess
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    root = Path(__file__).parents[2]/'leela'/'blocks'
+    harness = r'''const vm = require('vm'), fs = require('fs'), [cells, search] = process.argv.slice(1).map(p => fs.readFileSync(p, 'utf8'));
+const start = search.indexOf('async function gotoDeclaration'), fn = search.slice(start, search.indexOf('\n}\n', start) + 3);
+const ctx = {said: [], reply: null, hitList() {}, openLocation() {}, cursorWord: () => '', editorPlace: () => ({})};
+ctx.status = (t, k) => ctx.said.push(t); ctx.api = async () => ctx.reply;
+vm.createContext(ctx); vm.runInContext(cells.match(/^const plural = .*;$/m)[0] + '\n' + fn + '; globalThis.go = gotoDeclaration;', ctx);
+(async () => { const out = [];
+  for (const [kind, n] of [['usages', 1], ['usages', 2], ['definition', 2], ['other', 1]]) {
+    ctx.said = []; ctx.reply = {kind, hits: Array(n).fill({}), backend: 'b', note: 'n'};
+    await ctx.go('f', {path: '', line: 0, cellIndex: -1, dotted: ''}); out.push(ctx.said.at(-1)); }
+  console.log(JSON.stringify(out)); })();'''
+    r = subprocess.run([node, '-e', harness, str(root/'nb'/'cells.js'), str(root/'search'/'search.js')], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == ['1 usage of f', '2 usages of f', '2 definitions of f', '1 definition of f']
+
+
 def test_an_indexed_package_path_is_remapped_to_this_project_copy(ws, tmp_path, no_index):
     """One Kosha index serves every checkout, so a row can name another project's virtualenv."""
     site = _venv(tmp_path, {'fastcore/aio.py': 'def run_sync(): pass\n'})

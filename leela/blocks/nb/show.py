@@ -76,8 +76,12 @@ def _local(src, base, fs):
         return f.read_bytes() if f.is_file() and f.stat().st_size <= IMG_BYTES else None
     except Exception: return None
 
-def _img_src(v, base, key, images, fs):
-    "The store URL for image source `v`: a raster `data:` URL or a workspace file; None for anything else."
+def _img_src(v, base, key, images, fs, att=None):
+    "The store URL for image source `v`: a raster `data:` URL, a workspace file or `attachment:NAME` of the cell's `att`; None for anything else."
+    if v.startswith('attachment:'):
+        a = att.get(v[11:]) if isinstance(att, dict) else None
+        if not (isinstance(a, dict) and (t := next(iter(a), None))): return None
+        v = f'data:{t};base64,{_text(a[t])}'
     if m := re.match(r'data:(image/[a-z]+);base64,(.*)$', re.sub(r'\s+', '', v), re.I | re.S):
         if len(m[2]) > IMG_BYTES * 4 // 3 + 4: return None
         try: b = base64.b64decode(m[2], validate=True)
@@ -86,20 +90,20 @@ def _img_src(v, base, key, images, fs):
     else: sha = put_img(_local(v, base, fs), images)
     return sha and f'/present/img/{sha}?k={key}'
 
-def room_html(s, base, key, images, fs=None, room=True):
+def room_html(s, base, key, images, fs=None, room=True, att=None):
     "`clean_html` of `s`, demos redrawn by `demo_fences`, then no comments, ids or titles, links to the web only, and each image from the store."
     s, specs = demo_fences(clean_html(s), room)
     def attr(tag, a, v):
-        if tag == 'img' and a == 'src': return _img_src(v, base, key, images, fs)
+        if tag == 'img' and a == 'src': return _img_src(v, base, key, images, fs, att)
         if a == 'href': return v if re.match(r'(https?://|mailto:|#)', v, re.I) else None
         return _html_attr(tag, a, v)
     return nh3.clean(s, tags=_HTML_TAGS, clean_content_tags=_HTML_DROP, attributes=_ROOM_ATTRS, attribute_filter=attr, strip_comments=True,
-                     url_schemes={'http', 'https', 'mailto', 'data'}, link_rel='noopener noreferrer', url_relative='pass_through',
+                     url_schemes={'http', 'https', 'mailto', 'data', 'attachment'}, link_rel='noopener noreferrer', url_relative='pass_through',
                      tag_attribute_values={'input': {'type': {'checkbox'}}}, set_tag_attribute_values={'input': {'disabled': 'disabled'}}), specs
 
-def slide_html(md, base, key, images, fs=None, room=True):
-    "Markdown `md` as slide markup by `render_md` and `room_html`, and its demo specs."
-    return room_html(render_md(md), base, key, images, fs, room)
+def slide_html(md, base, key, images, fs=None, room=True, att=None):
+    "Markdown `md` as slide markup by `render_md` and `room_html`, and its demo specs; `att` is the cell's attachments."
+    return room_html(render_md(md), base, key, images, fs, room, att)
 
 def _text(v): return ''.join(v) if isinstance(v, list) else str(v or '')
 def _pre(t): return f'<pre>{html.escape(strip_ansi(_text(t)), quote=False)}</pre>'
@@ -205,7 +209,7 @@ def _block(c, it, base, key, images, fs, room):
     "One cell of a slide."
     b, kind = dict(cell=str(c.get('id', '')), frag=it.get('frag', -1), kind=c.get('cell_type')), c.get('cell_type')
     if kind == 'markdown':
-        b['html'], b['demo'] = slide_html(_src(c), base, key, images, fs, room)
+        b['html'], b['demo'] = slide_html(_src(c), base, key, images, fs, room, c.get('attachments'))
         return b
     if kind != 'code': return {**b, 'html': _pre(_src(c)), 'demo': []}
     b['html'] = room_html(render_md(fenced(_src(c), 'python')), base, key, images, fs, room)[0]

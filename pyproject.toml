@@ -16,7 +16,7 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]==0.2.90",
+    "ramabana[cli]==0.2.94",
     "abhyasa>=0.0.13,<0.1",
     "rupaka==0.0.6",   # the vendored bundle is written from this wheel
     "shalya>=0.1.22",
@@ -66,7 +66,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ipymini = []
-local = ["rishi[mlx,llama]==0.1.58"]
+local = ["rishi[mlx,llama]==0.1.60"]
 desktop = ["kavacha[window]>=0.0.10"]
 macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.10"]
 windows = ["leela[desktop]", "kavacha[windows]>=0.0.10"]
@@ -92,14 +92,14 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",
     "leela[local]",
-    "rishi[all]==0.1.58",
+    "rishi[all]==0.1.60",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi==0.1.58",
+    "rishi==0.1.60",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",

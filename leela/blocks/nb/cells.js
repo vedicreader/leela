@@ -5,7 +5,7 @@ const LANG_TAGS = {python: 'py', rust: 'rs', javascript: 'js', typescript: 'ts'}
 const cellKind = (c) => c.cell_type === 'code' ? (LANG_TAGS[nbLang()] || nbLang())
   : ({markdown: 'md', prompt: 'prompt'}[c.cell_type] || c.cell_type);
 const cellLines = (c) => String(c.source || '').split('\n').length;
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n, word, many = word + 's') => `${n} ${+n === 1 ? word : many}`;
 function cellMetaTitle(c, i) {
   const src = String(c.source || '');
   const rows = [`cell ${i + 1} of ${lee.cells.length} · ${c.cell_type} · ${plural(cellLines(c), 'line')}, ${src.length} chars`];
