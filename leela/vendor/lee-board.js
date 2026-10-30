@@ -556,7 +556,7 @@
   function onKey(e) {
     if (!st || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return;
     const t = e.target;
-    if (t && t.matches && t.matches('textarea, input, select, [contenteditable]')) return;
+    if (t && t.closest && t.closest('textarea, input, select, [contenteditable]:not([contenteditable="false"]), .cm-editor')) return;
     const act = {KeyA: () => show(st.i), KeyS: () => show(st.i - 1), KeyD: () => show(st.i + 1), Escape: stop}[e.code];
     if (!act) return;
     e.preventDefault(); e.stopImmediatePropagation();

@@ -1,33 +1,33 @@
-import hashlib, re, subprocess
+import hashlib, re, tomllib
+from importlib.metadata import version
 from pathlib import Path
-import pytest
+import abhyasa
 from test_lesson_predict import lesson, serve  # noqa: F401
 
 ROOT = Path(__file__).parents[1]
 VENDOR = ROOT/'leela/vendor'
-ABHYASA = ROOT.parent/'abhyasa'
+SITE = Path(abhyasa.__file__).parents[1]
 FILES = {'lee-texparts.js': 'abhyasa/core/texparts.js', 'lee-board.js': 'abhyasa/core/board.js', 'lee-board.css': 'abhyasa/core/board.css',
          'board/rough.js': 'abhyasa/core/vendor/rough.js', 'board/perfect-freehand.mjs': 'abhyasa/core/vendor/perfect-freehand.mjs'}
 README = (VENDOR/'README').read_text()
-COMMIT = re.search(r'abhyasa commit ([0-9a-f]{40})', README)
+WHEEL = re.search(r'wheel abhyasa-(\S+)-py3-none-any\.whl, SHA-256 ([0-9a-f]{64})', README)
 
-def test_readme_records_the_commit_and_the_digest_of_each_vendored_file():
-    assert COMMIT, 'leela/vendor/README names no abhyasa commit'
+def test_readme_records_the_wheel_and_the_digest_of_each_vendored_file():
+    assert WHEEL, 'leela/vendor/README names no abhyasa wheel'
     for name in FILES:
         m = re.search(rf'^{re.escape(name)} SHA-256 ([0-9a-f]{{64}})$', README, re.M)
         assert m, f'leela/vendor/README has no SHA-256 for {name}'
         assert hashlib.sha256((VENDOR/name).read_bytes()).hexdigest() == m[1], f'{name} is not the file the README records'
-    assert 'wheel' in README.split('abhyasa commit')[1].split('\n\n')[0], 'the README must say the 0.0.14 wheel is the later source'
 
-def test_vendored_files_equal_abhyasa_at_the_recorded_commit():
-    assert COMMIT, 'leela/vendor/README names no abhyasa commit'
-    if not (ABHYASA/'.git').exists(): pytest.skip(f'no abhyasa checkout at {ABHYASA}; once 0.0.14 is released the wheel is the source to compare')
-    git = lambda *a: subprocess.run(['git', '-C', str(ABHYASA), *a], capture_output=True)
-    if git('cat-file', '-e', f'{COMMIT[1]}^{{commit}}').returncode: pytest.skip(f'abhyasa checkout at {ABHYASA} has no commit {COMMIT[1]}')
+def test_abhyasa_is_pinned_to_the_vendored_wheel():
+    assert WHEEL, 'leela/vendor/README names no abhyasa wheel'
+    deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
+    assert f'abhyasa=={WHEEL[1]}' in deps, f'pyproject.toml must pin abhyasa=={WHEEL[1]}, the wheel the board is vendored from'
+    assert version('abhyasa') == WHEEL[1], f'installed abhyasa {version("abhyasa")}, vendored from {WHEEL[1]}'
+
+def test_vendored_files_equal_the_installed_wheel():
     for name, src in FILES.items():
-        shown = git('show', f'{COMMIT[1]}:{src}')
-        assert shown.returncode == 0, shown.stderr
-        assert (VENDOR/name).read_bytes() == shown.stdout, f'{name} differs from {src} at {COMMIT[1][:7]}'
+        assert (VENDOR/name).read_bytes() == (SITE/src).read_bytes(), f'{name} differs from {src} in abhyasa {version("abhyasa")}: copy it again (leela/vendor/README)'
 
 def test_the_page_names_the_board_files_and_the_app_serves_them_as_javascript(serve):
     r = serve(lesson())
