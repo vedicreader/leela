@@ -16,7 +16,7 @@ from ..nb.nb import Cell
 __all__ = ['LESSONS', 'PKG', 'Taken', 'abhyasa_address', 'abhyasa_vault', 'walk_url', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
            'lookup', 'scratch_cell']
 
-LESSONS = Path.home()/'Learning'/'Leela lessons'
+LESSONS = Path(os.getenv('LEELA_LESSONS') or Path.home()/'Learning'/'Leela lessons').expanduser().absolute()
 
 def pane_url(url) -> str|None:
     "`url` with `pane=1` in its query, when it is a local path; else None."

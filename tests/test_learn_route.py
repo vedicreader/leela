@@ -688,3 +688,12 @@ def test_learn_and_the_lesson_header_link_back_to_the_walk_only_while_abhyasa_ru
     at(pid=dead.pid)
     assert 'Back to the walk' not in c.get(url).text
     for bad in ('http://evil.example:5012', 'https://127.0.0.1:5012', 'javascript:alert(1)', '/w'): at(url=bad); assert 'Back to the walk' not in c.get(url).text, bad
+
+def test_leela_lessons_moves_the_fixed_lessons_folder(tmp_path):
+    "A test with no project folder wrote its lesson to the owner's ~/Learning/Leela lessons."
+    code = 'from leela.blocks.learn.learn import LESSONS; print(LESSONS)'
+    run = lambda **env: subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env={**os.environ, **env}, cwd=tmp_path, check=True).stdout.strip()
+    assert run(LEELA_LESSONS=str(tmp_path/'lessons')) == str(tmp_path/'lessons')
+    assert run(LEELA_LESSONS='rel') == str(tmp_path/'rel'), 'a relative folder is fixed at import'
+    home = tmp_path/'home'
+    assert run(LEELA_LESSONS='', HOME=str(home)) == str(home/'Learning'/'Leela lessons')
