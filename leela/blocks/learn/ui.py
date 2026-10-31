@@ -32,13 +32,19 @@ def _Source(p):
     for x in filter(None, parts): out += [' · ', x]
     return P(*out, cls='lee-learn-source')
 
-def _Env(v, q, pane):
-    "The ask that makes the tool environment of a step whose `nb` has `requires`; None when there is none or it is ready."
-    from .tools import tool_indexed, tool_kernel, tool_key
-    if not (names := (v.get('nb') or {}).get('requires')) or (tool_kernel(key := tool_key(names)) and tool_indexed(key)): return None
-    return Form(P(f"This lesson needs {', '.join(names)}.", cls='lee-learn-line'), Hidden(name='walk', value=q.walk), Hidden(name='step', value=str(v.i)),
+INDEXING = 'The environment for this lesson is ready. Leela is still building the code index for Look up code.'
+INSTALLING = 'Leela is setting up the environment for this lesson. When it is ready, the lesson kernel restarts in it.'
+
+def _Env(v, q, pane, jobs=None):
+    "The state of the tool environment of a step whose `nb` has `requires`, with the button that makes it or builds its code index; None when there is none or it is ready."
+    from .tools import env_state, tool_key
+    if not (names := (v.get('nb') or {}).get('requires')) or (st := env_state(jobs, key := tool_key(names))) == 'ready': return None
+    if st in ('indexing', 'installing'): return P(INDEXING if st == 'indexing' else INSTALLING, cls='lee-learn-line lee-learn-env')
+    say, press = (('The environment for this lesson is ready. Its code index for Look up code is not built.', 'Build the code index') if st == 'unindexed' else
+                  (f"This lesson needs {', '.join(names)}.", 'Set up the environment'))
+    return Form(P(say, cls='lee-learn-line'), Hidden(name='walk', value=q.walk), Hidden(name='step', value=str(v.i)),
                 Hidden(name='v', value=q.v), Hidden(name='pane', value='1') if pane else None,
-                Button('Set up the environment', type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
+                Button(press, type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
 
 def _Data(v):
     "The line that names each data entry of the step whose path is not on this computer; None when all are."
@@ -47,8 +53,8 @@ def _Data(v):
     if not (gone := [f"{d['name']} ({d['path']})" for d in (v.get('nb') or {}).get('data') or [] if not Path(d['path']).expanduser().exists()]): return None
     return P(f"These data entries are not on this computer: {', '.join(gone)}. {MISSING_DATA.replace(' here', ' in the setup cell of the lesson')}", cls='lee-learn-line')
 
-def StepPage(v, q, pane:bool=False, root=None):
-    "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane."
+def StepPage(v, q, pane:bool=False, root=None, jobs=None):
+    "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane; `jobs` tells a running setup."
     if v.kind == 'step':
         from .learn import passages, walk_url
         r, back = v.step.get('read') or {}, walk_url(q.walk, v.i)
@@ -56,7 +62,7 @@ def StepPage(v, q, pane:bool=False, root=None):
         body = [P(r['section'], cls='lee-learn-section') if r.get('section') else None,
                 *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(p.text))), _Source(p))],
                 Div(NotStr(md_html(v.step['note'])), cls='lee-learn-note') if v.step.get('note') else None,
-                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Data(v), _Env(v, q, pane),
+                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Data(v), _Env(v, q, pane, jobs),
                 P(A('Back to the walk ↗', href=back, target='_blank', rel='noopener', cls='lee-learn-back'), cls='lee-learn-line') if back else None]
     else:
         title, step = v.name, ''

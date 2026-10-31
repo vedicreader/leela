@@ -8,7 +8,7 @@ from ... import errstr
 from .learn import PKG, _NAME
 
 __all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_kernel', 'tool_indexed', 'kernel_reqs', 'install_cmds', 'make_tool_env',
-           'index_env', 'tool_job', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
+           'index_env', 'tool_job', 'env_state', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
 TOO_LONG = 'The install took too long. Try again.'
@@ -80,7 +80,7 @@ def _uv_error(names, r):
 
 def make_tool_env(names, run=subprocess.run, uv=None,
                   budget=600):  # seconds for both commands together
-    "Make the tool environment for `names` once, then index it: `AttrDict(key, ok, python, error)`, plus `index_error` when the index fails. `ready` is written after the index; a failed index runs again on the next call. A ready environment with no `kernel` file gets only the install."
+    "Make the tool environment for `names` once, then index it: `AttrDict(key, ok, python, error)`, plus `index_error` when the index fails. `ready` is written before the index, so a lesson runs while it builds; a failed index runs again on the next call, and a call while another builds it does not wait. A ready environment with no `kernel` file gets only the install."
     from ...workspace import _session_lock
     names = tool_names(names)
     key = tool_key(names)
@@ -89,8 +89,8 @@ def make_tool_env(names, run=subprocess.run, uv=None,
         p = tool_python(key)
         return AttrDict(key=key, ok=ok, python=str(p) if p else None, error=error, **({'index_error': index_error} if index_error else {}))
     if tool_kernel(key) and tool_indexed(key): return res(True)
-    with _session_lock(d, timeout=budget) as held:
-        if not held: return res(False, BUSY)
+    with _session_lock(d, timeout=0 if tool_kernel(key) else budget) as held:
+        if not held: return res(True) if tool_kernel(key) else res(False, BUSY)
         if tool_kernel(key): return res(True, index_error='' if tool_indexed(key) else _index(key))
         if not (uv := uv or shutil.which('uv')): return res(False, NO_UV)
         cmds = install_cmds(names, d, uv)
@@ -108,9 +108,8 @@ def make_tool_env(names, run=subprocess.run, uv=None,
         p = _python(d)
         if not (p.is_file() and os.access(p, os.X_OK)): return res(False, NO_PY)
         with atomic_save(d/'kernel', mode='w') as f: f.write('\n'.join(kernel_reqs()) + '\n')
-        why = _index(key)
         with atomic_save(d/'ready', mode='w') as f: f.write('\n'.join(names) + '\n')
-        return res(True, index_error=why)
+        return res(True, index_error=_index(key))
 
 def library_check(spec, source, key:str) -> dict:
     "The `run_isolated` report for `source` against `spec`'s tests, closed, in the Python of the tool environment `key`. `ValueError` when it is not ready."
@@ -132,6 +131,12 @@ def tool_job(job, report):
     r = make_tool_env(names)
     if not r.ok: raise JobError(r.error)
     return dict(r)
+
+def env_state(jobs, key) -> str:
+    "`ready`, `indexing` while a job builds the code index of a ready environment, `unindexed`, `installing`, or `missing`."
+    busy = jobs is not None and active_job(jobs, key)
+    if tool_kernel(key): return 'ready' if tool_indexed(key) else 'indexing' if busy else 'unindexed'
+    return 'installing' if busy else 'missing'
 
 def active_job(jobs, key):
     "The queued or running `tool_env` job for `key` whose process is alive, or None."

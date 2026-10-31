@@ -143,7 +143,8 @@ def test_the_job_indexes_and_keeps_an_index_failure(monkeypatch, indexed):
     from leela.blocks.vault.jobs import JobError
     with pytest.raises(JobError, match='has no wheel'): tool_job(SimpleNamespace(params=dict(names=['sdist-only'])), report)
 
-def test_make_tool_env_indexes_before_ready_and_retries_a_failed_index(monkeypatch):
+def test_make_tool_env_marks_ready_before_the_index_and_retries_a_failed_index(monkeypatch):
+    "The torch lesson waited 6 min for the kosha index after an 8 s install."
     seen, fails = [], ['database is locked']
     def index(key):
         seen.append((key, (tool_dir(key)/'ready').exists()))
@@ -151,10 +152,19 @@ def test_make_tool_env_indexes_before_ready_and_retries_a_failed_index(monkeypat
     monkeypatch.setattr(tools, 'index_env', index)
     r = make_tool_env(['httpx'], run=fake(lambda c: 0), uv='/u/uv')
     assert r.ok and tool_python(r.key) is not None and 'database is locked' in r.index_error, r
-    assert seen == [(r.key, False)] and not tools.tool_indexed(r.key), 'the index runs before ready, and a failed one leaves the mark off'
+    assert seen == [(r.key, True)] and tools.tool_kernel(r.key) and not tools.tool_indexed(r.key), 'the lesson runs before the index, and a failed one leaves the mark off'
     again = make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv')
-    assert again.ok and 'index_error' not in again and seen == [(r.key, False), (r.key, True)] and tools.tool_indexed(r.key), 'the next call indexes again, with no install'
+    assert again.ok and 'index_error' not in again and seen == [(r.key, True), (r.key, True)] and tools.tool_indexed(r.key), 'the next call indexes again, with no install'
     assert make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv').ok and len(seen) == 2, 'an indexed environment is done'
+
+def test_a_call_while_another_builds_the_index_does_not_wait(monkeypatch):
+    from leela.workspace import _session_lock
+    key = ready_env(['httpx'])
+    (tool_dir(key)/'indexed').unlink(missing_ok=True)
+    with _session_lock(tool_dir(key), timeout=1) as held:
+        t = time.monotonic()
+        r = make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv')
+        assert held and r.ok and r.python and time.monotonic() - t < 1, 'the agent waited for the index of a ready environment'
 
 def test_post_starts_a_job_for_a_ready_environment_that_needs_its_index(rig, monkeypatch):
     c, ws = rig[:2]
@@ -183,7 +193,7 @@ def test_routes_start_one_job_for_a_key_and_then_say_ready(rig, monkeypatch):
     monkeypatch.setattr(tools, 'index_env', lambda key: None)
     monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
     key = tool_key(['httpx'])
-    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=False, python=None)
+    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=False, python=None, indexed=False)
     a = c.post('/learn/tool', json=dict(names=['httpx'])).json()
     b = c.post('/learn/tool', json=dict(names=['httpx'])).json()
     assert a['ok'] and a['key'] == key and a['job']['id'] == b['job']['id'] and a['job']['target'] == key
@@ -191,7 +201,7 @@ def test_routes_start_one_job_for_a_key_and_then_say_ready(rig, monkeypatch):
     go.set()
     assert wait(ws, a['job']['id']).status == 'complete'
     assert c.post('/learn/tool', json=dict(names=['httpx'])).json() == dict(ok=True, key=key, ready=True)
-    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=True, python=str(tool_dir(key)/'.venv'/'bin'/'python'))
+    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=True, python=str(tool_dir(key)/'.venv'/'bin'/'python'), indexed=True)
     assert len(ws.jobs.all(kind='tool_env')) == 1
 
 @pytest.mark.parametrize('body', [dict(names=['--index-url=https://x']), dict(names=[]), dict(names='httpx'), dict(), dict(names=None)])
@@ -455,3 +465,23 @@ def test_a_step_that_requires_packages_asks_once_and_installs_only_on_yes(rig, m
     assert code.extra['exercise']['env'] == key and Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').meta['lesson']['env'] == key
     assert c.post('/learn/env', data=dict(walk='attention-ab12', step='0')).status_code == 400, 'a step with no requires installs nothing'
     assert len(ws.jobs.all(kind='tool_env')) == 1
+
+def test_the_step_page_and_its_route_say_the_index_still_builds_and_offer_it_again_when_it_failed(rig, monkeypatch):
+    from learn_data import NB_JID, nb_walk
+    c, ws, lr = rig[:3]
+    nb_walk(lr, requires=['httpx'])
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    key, go, real = ready_env(['httpx']), threading.Event(), make_tool_env
+    page, env = (lambda: c.get(f'/learn?walk={NB_JID}&step=0').text), (lambda: c.post('/learn/env', data=dict(walk=NB_JID, step='0')))
+    t = page()
+    assert 'Its code index for Look up code is not built.' in t and '>Build the code index</button>' in t and 'Set up the environment' not in t
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 1), uv='/u/uv'))
+    r = env()
+    assert r.status_code == 200 and 'Leela is building the code index for this lesson. The lesson runs already.' in r.text
+    say = 'The environment for this lesson is ready. Leela is still building the code index for Look up code.'
+    t = page()
+    assert f'{say}</p>' in t and '<button type="submit" class="lee-btn" data-key' not in t and say in env().text
+    assert len(ws.jobs.all(kind='tool_env')) == 1
+    go.set()
+    assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'complete' and tools.tool_indexed(key)
+    assert 'lee-learn-env' not in page() and 'The environment for this lesson is ready.' in env().text

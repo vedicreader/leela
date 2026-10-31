@@ -113,7 +113,7 @@ def connect(app, ctx):
         except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
         if v.kind == 'missing': return said(req, root, not_found(q, ctx.memory.path))
         if v.kind == 'done': return said(req, root, 'This walk is done.')
-        return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root), headers=HEADERS)
+        return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root, jobs=ctx.jobs), headers=HEADERS)
     @app.route('/learn/open', methods=['POST'])
     async def learn_open(req):
         from abhyasa.contract import handoff
@@ -155,11 +155,12 @@ def connect(app, ctx):
         if isinstance(v, str): return say(v)
         if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
-        key = tools.tool_key(names)
-        if tools.tool_kernel(key) and tools.tool_indexed(key): return say('The environment for this lesson is ready.')
-        if not tools.tool_kernel(key) and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
+        from .ui import INDEXING, INSTALLING
+        if (st := tools.env_state(ctx.jobs, key := tools.tool_key(names))) == 'ready': return say('The environment for this lesson is ready.')
+        if st == 'indexing': return say(INDEXING)
+        if st == 'missing' and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
         tools.start_tool_job(ctx.jobs, names)   # no await since the check: one event loop starts one job for a key
-        return say('Leela is setting up the environment for this lesson. When it is ready, the lesson kernel restarts in it.')
+        return say('Leela is building the code index for this lesson. The lesson runs already.' if st == 'unindexed' else INSTALLING)
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names
@@ -201,9 +202,9 @@ def connect(app, ctx):
         return {'ok': True, 'key': key, 'job': tools.start_tool_job(ctx.jobs, names).dict()}
     @app.route('/learn/tool', methods=['GET'])
     async def learn_tool(req):
-        from .tools import tool_dir, tool_kernel
+        from .tools import tool_dir, tool_indexed, tool_kernel
         key = req.query_params.get('key', '')
         try: tool_dir(key)
         except ValueError as e: return fail(str(e))
         p = tool_kernel(key)
-        return {'ok': True, 'ready': p is not None, 'python': str(p) if p else None}
+        return {'ok': True, 'ready': p is not None, 'python': str(p) if p else None, 'indexed': tool_indexed(key)}
