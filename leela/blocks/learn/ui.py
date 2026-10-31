@@ -40,6 +40,13 @@ def _Env(v, q, pane):
                 Hidden(name='v', value=q.v), Hidden(name='pane', value='1') if pane else None,
                 Button('Set up the environment', type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
 
+def _Data(v):
+    "The line that names each data entry of the step whose path is not on this computer; None when all are."
+    from pathlib import Path
+    from ..nb.lesson import MISSING_DATA
+    if not (gone := [f"{d['name']} ({d['path']})" for d in (v.get('nb') or {}).get('data') or [] if not Path(d['path']).expanduser().exists()]): return None
+    return P(f"These data entries are not on this computer: {', '.join(gone)}. {MISSING_DATA.replace(' here', ' in the setup cell of the lesson')}", cls='lee-learn-line')
+
 def StepPage(v, q, pane:bool=False, root=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane."
     if v.kind == 'step':
@@ -49,7 +56,7 @@ def StepPage(v, q, pane:bool=False, root=None):
         body = [P(r['section'], cls='lee-learn-section') if r.get('section') else None,
                 *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(p.text))), _Source(p))],
                 Div(NotStr(md_html(v.step['note'])), cls='lee-learn-note') if v.step.get('note') else None,
-                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Env(v, q, pane),
+                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Data(v), _Env(v, q, pane),
                 P(A('Back to the walk ↗', href=back, target='_blank', rel='noopener', cls='lee-learn-back'), cls='lee-learn-line') if back else None]
     else:
         title, step = v.name, ''

@@ -147,12 +147,17 @@ def source_line(p) -> str:
     parts = [t(p.place), t(p.date), p.url and f"[{md_literal(p.title)}](<{quote(p.url, safe=':/?#[]@!$&()*+,;=%~')}>)"] if p.label == WEB else [t(p.title), t(p.place)]
     return ' · '.join([f'**{p.label}**', *filter(None, parts)])
 
+MISSING_DATA = 'Add the folder in abhyasa under Your data, or set the path here.'
+
 def setup_source(nb, result) -> str:
-    "The setup cell: `DEVICE`, one `Path` for each `nb.data` entry, `RESULT` and `save_result`."
+    "The setup cell: `DEVICE`, one `Path` for each `nb.data` entry and a line for each one not on this computer, `RESULT` and `save_result`."
     dev = ("try:\n    import torch\n    DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'\nexcept ImportError: DEVICE = 'cpu'"
            if 'torch' in nb.get('requires', []) else "DEVICE = 'cpu'")
     data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') for d in nb['data']]
-    return '\n'.join(['import json', 'from pathlib import Path', dev, *data, f'RESULT = Path({result!r})']) + '\n' + SAVE_RESULT
+    names = ', '.join(f"{d['name']}={d['name']}" for d in nb['data'])
+    check = [f"_missing = [f'{{n}} ({{p}})' for n, p in dict({names}).items() if not p.exists()]",
+             f"if _missing: print('These data entries are not on this computer: ' + ', '.join(_missing) + {'. ' + MISSING_DATA!r})"] if names else []
+    return '\n'.join(['import json', 'from pathlib import Path', dev, *data, *check, f'RESULT = Path({result!r})']) + '\n' + SAVE_RESULT
 
 def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb', setup=None, back=None) -> Notebook:
     """The lesson for a walk step with the checked notebook spec `nb`: header, passages with their source lines and the tutor's note, the

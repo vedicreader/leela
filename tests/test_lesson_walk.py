@@ -108,3 +108,18 @@ def test_the_filings_copy_the_walk_meta_when_made():
     assert prediction_filing(nb, nb[1], 'x.ipynb', 'halves', 'g1', 4)['walk'] == {'walk': 'other-0000', 'step': 3, 'from': 'other-0000/3', 'app': 'leela'}
     plain = lesson_notebook('Plain'); plain[1].source = fence(DEMO)
     assert prediction_filing(plain, plain[1], 'x.ipynb', 'halves', 'g1', 4)['walk'] == {}
+
+def test_the_step_page_and_the_setup_cell_name_the_data_that_is_not_on_this_computer(rig, tmp_path_factory, monkeypatch, capsys):
+    "Each spec named home paths that did not exist, and neither the step page nor the setup cell said so."
+    c, ws, lr, j, root = rig
+    home = tmp_path_factory.mktemp('home')
+    monkeypatch.setenv('HOME', str(home))
+    nb_walk(lr)
+    say = 'These data entries are not on this computer: EPISODES (~/data/episodes.json). Add the folder in abhyasa under Your data, or set the path in the setup cell of the lesson.'
+    assert f'<p class="lee-learn-line">{say}</p>' in c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
+    setup = next(x for x in Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').cells if 'EPISODES = Path(' in x.source)
+    run = lambda: exec(setup.source.split('RESULT =')[0], {}) or capsys.readouterr().out
+    assert run() == f"These data entries are not on this computer: EPISODES ({home}/data/episodes.json). Add the folder in abhyasa under Your data, or set the path here.\n"
+    (home/'data').mkdir(); (home/'data'/'episodes.json').write_text('[]')
+    assert run() == '' and 'not on this computer' not in c.get(f'/learn?walk={NB_JID}&step=0').text
