@@ -25,7 +25,7 @@ def due_cards(memory):
                 why=f'due for review: recall about {recall(c, now):.0%}', reason=first(understanding(c, now).reasons) or ''))
         return rows
 
-HEADERS = {'Content-Security-Policy': "frame-ancestors 'self'; img-src 'self' data:", 'Referrer-Policy': 'no-referrer'}
+HEADERS = {'Content-Security-Policy': "frame-ancestors 'self'; img-src 'self' data:", 'Referrer-Policy': 'same-origin'}
 PANE_ONLY = 'The side pane shows only Learn pages.'
 
 def read_step(memory, q):

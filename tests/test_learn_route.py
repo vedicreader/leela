@@ -13,7 +13,7 @@ from learn_data import JID, NB_JID, nb_walk, rig, walk  # noqa: F401
 
 def headers_ok(r):
     csp = r.headers['content-security-policy']
-    assert "frame-ancestors 'self'" in csp and "img-src 'self' data:" in csp and r.headers['referrer-policy'] == 'no-referrer'
+    assert "frame-ancestors 'self'" in csp and "img-src 'self' data:" in csp and r.headers['referrer-policy'] == 'same-origin'
 
 def one_line(r, code, text, exact=True):
     "`r` is a styled `learn` page of the muted line `text` with the status `code` and both headers."
@@ -305,6 +305,30 @@ def test_guard_lets_a_post_from_the_pane_frame_in():
     h = {'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe', 'origin': 'http://127.0.0.1:5011'}
     assert guard('/learn/open', h, 'POST') == 'passed' and guard('/learn/open', {**h, 'sec-fetch-dest': 'document'}, 'POST') == 'passed'
     assert guard('/learn/open', {**h, 'origin': 'https://evil.example'}, 'POST') == 421
+
+@pytest.mark.parametrize('path', ['/learn/open', '/learn/env'])
+def test_guard_lets_a_same_origin_post_with_a_null_origin_in_and_nothing_else(path):
+    "Chromium posted both step page buttons with `Origin: null`, and the guard refused them with 421."
+    h = {'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document', 'origin': 'null'}
+    assert guard(path, h, 'POST') == 'passed'
+    assert guard(path, {**h, 'sec-fetch-site': 'cross-site'}, 'POST') == 421
+    assert guard(path, {**h, 'sec-fetch-site': 'same-site'}, 'POST') == 421
+    assert guard(path, {**h, 'sec-fetch-site': 'none'}, 'POST') == 421
+    assert guard(path, {k: v for k, v in h.items() if k != 'sec-fetch-site'}, 'POST') == 421
+    assert guard(path, {**h, 'origin': 'https://evil.example'}, 'POST') == 421
+    assert guard(path, {**h, 'host': 'evil.example:5011'}, 'POST') == 421
+
+def test_both_step_page_buttons_pass_the_real_guard_with_a_null_origin(rig):
+    from leela.hub import LoopbackHostGuard
+    from learn_data import NB_JID, nb_walk
+    c, ws, lr, j, root = rig
+    nb_walk(lr, requires=['httpx'])
+    g = TestClient(LoopbackHostGuard(c.app), base_url='http://127.0.0.1:5011')
+    h = {'origin': 'null', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}
+    r = g.post('/learn/open', data=dict(walk=NB_JID, step='0'), headers=h)
+    assert r.status_code == 200 and 'Opened in Leela.' in r.text and (root/'lessons'/f'{NB_JID}-0.ipynb').is_file()
+    assert g.post('/learn/env', data=dict(walk=NB_JID, step='0'), headers={**h, 'sec-fetch-site': 'cross-site'}).status_code == 421
+    assert g.post('/learn/open', data=dict(walk=NB_JID, step='0'), headers={**h, 'origin': 'https://evil.example'}).status_code == 421
 
 def opened(c, **form): return c.post('/learn/open', data=form)
 

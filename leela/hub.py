@@ -140,8 +140,10 @@ class LoopbackHostGuard:
         allowed = not host or host in LOOPBACK or host.endswith('.localhost')
         origin = headers.get(b'origin', b'').decode()
         origin_host = _name(urlsplit(origin).hostname) if origin else ''
-        origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost')
-        browser_ok = headers.get(b'sec-fetch-site', b'').decode().lower() != 'cross-site' or learn_navigation(scope, headers)
+        site = headers.get(b'sec-fetch-site', b'').decode().lower()
+        # a page with `Referrer-Policy: no-referrer` posts to itself with `Origin: null`
+        origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost') or (origin == 'null' and site == 'same-origin')
+        browser_ok = site != 'cross-site' or learn_navigation(scope, headers)
         if allowed and origin_ok and browser_ok:
             await self.app(scope, receive, send)
             return

@@ -52,12 +52,12 @@ async def _ide(pg, base):
     await pg.wait_for_function('window.lee && lee.keys.length')
     if await pg.locator('.lee-modal').count(): await pg.keyboard.press('Escape')
 
-async def _on_learn(fn, ws, ide=True):
-    "`_on_page` for a prepared workspace: headless, local requests only, one browser closed in a finally."
+async def _on_learn(fn, ws, ide=True, serve=_serve):
+    "`_on_page` for a prepared workspace: headless, local requests only, one browser closed in a finally. `serve(ws, port)` starts the server."
     if test_web_slow.CHROMIUM and 'Google Chrome' in test_web_slow.CHROMIUM: pytest.skip('LEELA_CHROMIUM names a Chrome install')
     real_kernels = fake_kernels(); fake_model(ws)
     port = _free_port(); base = f'http://127.0.0.1:{port}'
-    srv = _serve(ws, port)
+    srv = serve(ws, port)
     try:
         await _started(srv)
         async with async_playwright() as pw:
@@ -398,3 +398,32 @@ def test_an_ide_chord_pressed_in_the_pane_runs_in_the_ide(tmp_path, monkeypatch)
         await pg.wait_for_function("lee.lastKeyEvent?.action === 'palette'")
         assert await pg.locator('.lee-modal').count() >= 1, 'the palette did not open'
     asyncio.run(_on_learn(go, _ws(tmp_path, monkeypatch)))
+
+def _guarded(ws, port):
+    "`_serve` behind the `LoopbackHostGuard` that `leela` itself puts in front of the app."
+    import threading, uvicorn
+    from leela.app import ide_app
+    from leela.hub import LoopbackHostGuard
+    srv = uvicorn.Server(uvicorn.Config(LoopbackHostGuard(ide_app(ws)), host='127.0.0.1', port=port, log_level='error'))
+    threading.Thread(target=srv.run, daemon=True).start()
+    return srv
+
+def test_both_step_page_buttons_pass_the_guard_in_a_browser(tmp_path, monkeypatch):
+    "Chromium posted both buttons with `Origin: null`, and the guard answered 421 invalid Host header."
+    from leela.blocks.learn import tools
+    from learn_data import NB_JID, nb_walk
+    ws = _ws(tmp_path, monkeypatch)
+    nb_walk(Learning(ws.memory._store('learning')), requires=['httpx'])
+    started = []
+    monkeypatch.setattr(tools, 'start_tool_job', lambda jobs, names: started.append(names))
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    async def go(pg, base):
+        step = f'{base}/learn?walk={NB_JID}&step=0'
+        await pg.goto(step, wait_until='networkidle')
+        async with pg.expect_response(lambda r: r.url.endswith('/learn/env')) as r: await pg.get_by_role('button', name='Set up the environment').click()
+        assert (await r.value).status == 200 and started == [['httpx']]
+        await pg.goto(step, wait_until='networkidle')
+        async with pg.expect_response(lambda r: r.url.endswith('/learn/open')) as r: await pg.get_by_role('button', name='Open as a lesson').click()
+        assert (await r.value).status == 200 and await pg.locator('p.lee-learn-line').first.inner_text() == 'Opened in Leela.'
+        assert (tmp_path/'lessons'/f'{NB_JID}-0.ipynb').is_file()
+    asyncio.run(_on_learn(go, ws, ide=False, serve=_guarded))
