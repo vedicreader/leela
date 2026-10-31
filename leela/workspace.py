@@ -965,7 +965,7 @@ class Workspace:
         p = tool_kernel(key)
         if nb.meta['lesson'].get('env') != key:
             if p is None: raise EnvGone(ENV_NEEDED)
-            bind_env(self.fs, nb.path, key, nb)
+            bind_env(self.fs, nb.path, key, self)
         elif p is None: raise EnvGone(ENV_GONE)
         return str(p)
     async def kernel(self, tab=None):

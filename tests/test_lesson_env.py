@@ -79,22 +79,48 @@ def test_a_lesson_made_before_the_environment_refuses_to_run_then_binds_it_when_
         kernel(ws, p)
         assert closed == [True] and seen[-1] == str(tool_python(key)) and ws.kernel_key(ws.tab).startswith('tab:')
         live = ws.docstore.doc_for(ws.tab)
-        assert live.meta['lesson']['env'] == key and live.dirty and 'env' not in Notebook.load(p).meta['lesson'], 'the open copy takes the key; its save writes it'
+        assert live.meta['lesson']['env'] == key == Notebook.load(p).meta['lesson']['env'] and not live.dirty, 'the file and the open copy take the key; the copy needs no save'
         assert all(not c.fresh for c in live.cells if c.cell_type == 'code'), 'its outputs came from the old kernel'
     finally: ws.shutdown_now()
 
-def test_binding_an_existing_lesson_changes_only_its_metadata(tmp_path):
+def ex_env(cells): return [(c.get('metadata') or {}).get('exercise', {}).get('env') for c in cells if 'tests' in (c.get('metadata') or {}).get('exercise', {})]
+
+def test_binding_an_existing_lesson_changes_its_metadata_and_drops_the_setup_line(tmp_path):
     from leela.blocks.fs.fs import Sandbox
-    p, key = lesson(tmp_path), ready_env(['six'])
+    nb = step_lesson('Caption', STEP, spec(), file='w-0.ipynb', setup='/learn?walk=w&step=0')
+    nb.save(p := tmp_path/'w-0.ipynb')
+    key = ready_env(['six'])
     before = json.loads(p.read_text())
+    assert 'Set up the environment' in ''.join(before['cells'][0]['source'])
     bind_env(Sandbox([tmp_path]), p, key)
     after = json.loads(p.read_text())
-    assert json.dumps(after['cells']) == json.dumps(before['cells']) and after['cells'][-2]['outputs'][0]['text'] == ['learner output\n']
+    assert ''.join(after['cells'][0]['source']) == ''.join(before['cells'][0]['source']).split('\n\nThis lesson needs')[0]
+    assert ex_env(after['cells']) == [key] and ex_env(before['cells']) == [None], 'the check runs in the environment, closed'
+    strip = lambda cs: json.dumps([{**c, 'metadata': {k: v for k, v in c['metadata'].items() if k != 'exercise'}} for c in cs[1:]])
+    assert strip(after['cells']) == strip(before['cells'])
     assert after['metadata']['lesson'] == before['metadata']['lesson'] | {'env': key}
     assert {k: v for k, v in after['metadata'].items() if k != 'lesson'} == {k: v for k, v in before['metadata'].items() if k != 'lesson'}
-    live = Notebook.load(p); live.meta['lesson'].pop('env'); was = p.read_bytes()
-    bind_env(Sandbox([tmp_path]), p, key, live)
-    assert live.meta['lesson']['env'] == key and live.dirty and p.read_bytes() == was, 'an open copy takes the key, and the file waits for its save'
+
+def test_binding_writes_the_file_and_the_open_copy_and_tells_the_tab(tmp_path):
+    "The environment went only into the open tab, so the lesson file still said Set up the environment."
+    from leela.core.session import DocStore
+    from leela.blocks.tabs.app import disk_version
+    nb = step_lesson('Caption', STEP, spec(), file='w-0.ipynb', setup='/learn?walk=w&step=0')
+    nb.save(p := tmp_path/'w-0.ipynb')
+    ws = Workspace(roots=[tmp_path], python=sys.executable)
+    ws.docstore = DocStore(ws)
+    try:
+        ws.open(p); live = ws.docstore.doc_for(ws.tab)
+        told = []
+        ws.fs_watch.changed = told.append
+        key = ready_env(['six'])
+        bind_env(ws.fs, p, key, ws)
+        disk = Notebook.load(p)
+        for x in (disk, live):
+            assert x.meta['lesson']['env'] == key and 'Set up the environment' not in x.cells[0].source and 'Runs on:' in x.cells[0].source
+            assert [c.extra['exercise'].get('env') for c in x.cells if 'tests' in c.extra.get('exercise', {})] == [key]
+        assert not live.dirty and ws.docstore.versions[ws.tab.path] == disk_version(ws.tab.path) and told == [[p]]
+    finally: ws.shutdown_now()
 
 def test_reopening_a_lesson_from_the_step_binds_the_ready_environment_in_its_metadata(rig, monkeypatch, tmp_path_factory):
     c, ws, lr, j, root = rig
@@ -109,7 +135,8 @@ def test_reopening_a_lesson_from_the_step_binds_the_ready_environment_in_its_met
     key = ready_env(['six'])
     assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
     after = json.loads(p.read_text())
-    assert after['metadata']['lesson']['env'] == key and json.dumps(after['cells']) == json.dumps(before)
+    assert after['metadata']['lesson']['env'] == key and 'Set up the environment' not in ''.join(after['cells'][0]['source'])
+    assert after['cells'][-2]['outputs'] == before[-2]['outputs'] and ex_env(after['cells']) == [key]
 
 def test_a_missing_or_broken_environment_says_one_line_and_never_uses_the_project_python(tmp_path):
     key = tool_key(['six'])

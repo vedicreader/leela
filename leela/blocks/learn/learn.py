@@ -94,7 +94,7 @@ def lessons_folder(session, fs) -> tuple[Path, bool]:
     return LESSONS, True
 
 def open_step(session, fs, v, q) -> Path:
-    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it there. A refusal or a failed write closes a `LESSONS` root it opened."
+    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it in the file and the open tab. A refusal or a failed write closes a `LESSONS` root it opened."
     from ..nb.lesson import lesson_notebook, save_lesson
     from ..nb.nb import Notebook
     ready = None
@@ -131,8 +131,7 @@ def open_step(session, fs, v, q) -> Path:
         raise
     if ready and Notebook.load(p).meta['lesson'].get('env') != ready:
         from ..nb.lesson import bind_env
-        docs = getattr(session, 'docstore', None)
-        bind_env(fs, p, ready, docs.docs.get(str(p)) if docs else None)
+        bind_env(fs, p, ready, session)
     return p
 
 PKG = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}(\[[A-Za-z0-9._,-]{1,64}\])?((==|>=|<=|~=|<|>)[A-Za-z0-9.*+!-]{1,32})?')

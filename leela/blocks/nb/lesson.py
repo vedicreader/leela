@@ -74,14 +74,30 @@ def lesson_key(nb) -> str|None:
         return tool_key(list(first(reqs))) if len(reqs) == 1 else None
     except (TypeError, ValueError): return None
 
-def bind_env(fs, path, key, live=None):
-    "Record `key` as the lesson's tool environment in the meta of `live`, the open copy of the lesson, else of the file at `path` through the sandbox `fs`. Cells, code and outputs stay as they are."
-    if live is not None:
-        live.meta['lesson']['env'], live.dirty = key, True
-        return
+SETUP_LINE = re.compile(r'\n\nThis lesson needs [^\n]*\. \[Set up the environment\]\(<[^>\n]*>\)')
+
+def _bind(meta, exercises, key):
+    "Put `key` in the lesson `meta` and in each of the `exercises` meta whose `requires` it is the key of."
+    from ..learn.tools import tool_key
+    meta['lesson']['env'] = key
+    for m in exercises:
+        try: mine = bool(m.get('requires')) and tool_key(m['requires']) == key
+        except (TypeError, ValueError): mine = False
+        if mine: m['env'] = key
+
+def bind_env(fs, path, key, ws=None):
+    "Record `key` as the lesson's tool environment in the file at `path` through the sandbox `fs`, and in the open copy the workspace `ws` holds; the setup line goes from its head. Code and outputs stay as they are."
+    from ..tabs.app import disk_version
     d = json.loads(Path(path).read_text(encoding='utf-8'))
-    d['metadata']['lesson']['env'] = key
+    _bind(d['metadata'], [ex for c in d['cells'] if isinstance(ex := (c.get('metadata') or {}).get('exercise'), dict) and 'tests' in ex], key)
+    if (h := first(d['cells'])) and h.get('cell_type') == 'markdown' and (src := SETUP_LINE.sub('', ''.join(h['source']))) != ''.join(h['source']): h['source'] = src.splitlines(True)
     fs.write(path, json.dumps(d, indent=1, ensure_ascii=False) + '\n')
+    docs = getattr(ws, 'docstore', None)
+    if docs is None or (live := docs.docs.get(str(path))) is None: return
+    _bind(live.meta, [m for c in live.cells if (m := exercise_meta(c))], key)
+    if live.cells and live.cells[0].cell_type == 'markdown': live.cells[0].source = SETUP_LINE.sub('', live.cells[0].source)
+    docs.versions[str(path)] = disk_version(path)   # the open copy holds what the file now says
+    if (w := getattr(ws, 'fs_watch', None)) is not None: w.changed([path])
 
 def lesson_env(nb) -> str|None:
     "The one tool environment key the exercise cells of `nb` name; None for none or more than one."
