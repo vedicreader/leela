@@ -39,6 +39,27 @@ def asset(name):
     p = first(d/name for d in static_dirs() if (d/name).is_file())
     return f'/leestatic/{name}?v={p.stat().st_mtime_ns if p else 0}'
 
+HAND, HAND_URL = 'Patrick Hand', '/leefonts/'   # the hand font of the board's paper (OFL), from Leela's own rupaka, as abhyasa serves it
+
+def hand_css() -> str:
+    "rupaka's `@font-face` rules of the hand font, linked from `HAND_URL`."
+    from rupaka.render import font_css
+    return '\n'.join(l for l in font_css(base=HAND_URL).splitlines() if f"'{HAND}'" in l)
+
+def hand_url() -> str:
+    "The URL of `hand_css`, which changes with rupaka's version."
+    import rupaka
+    return f'{HAND_URL}hand.css?v={rupaka.__version__}'
+
+def hand_routes():
+    "The routes of `HAND_URL`: `hand.css`, and rupaka's font files."
+    from rupaka.render import assets
+    from starlette.responses import Response
+    from starlette.routing import Mount, Route
+    css = hand_css()
+    return [Route(HAND_URL + 'hand.css', lambda req: Response(css, media_type='text/css', headers={'Cache-Control': 'max-age=86400'})),
+            Mount(HAND_URL.rstrip('/'), StaticFiles(directory=str(assets().fonts), check_dir=False))]
+
 class Assets:
     "Serve one URL prefix from several directories, first match winning."
     def __init__(self, *dirs):

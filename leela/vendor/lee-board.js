@@ -11,7 +11,8 @@
 // Labels are pastel chips with a coloured bar and a thin leader line; a chip never covers its target. Marks of earlier steps
 // fade to 45 %. A point is always weaker than a circle, so the circle stays the main mark of a step: see `point` in the API.
 // The words of the spoken line light up as they are said. With prefers-reduced-motion, the pointer jumps, and
-// marks and chips fade in for 150 ms.
+// marks and chips fade in for 150 ms. A sketch marks a part of a figure only. A picture of an idea is the side panel: a card on
+// warm paper at the top right of the window, that the rows of the board fill step by step, each linked to its thing on the page.
 //
 // API (window.abhyasaBoard):
 //   play(board, {labels, fast, quiet, auto, host, who, onVoice, point, voiceAt, notice})   play a checked board; it stops the board that shows now.
@@ -22,13 +23,13 @@
 //     who     {model, where, who}: the model that wrote the board, shown in the strip as "Claude Sonnet · hosted · Anthropic", with the
 //             words of the chip of the state line. Default none.
 //     onVoice onVoice(on) when the learner turns the voice off or on in the strip. With it, the strip has a Voice button, and the
-//             first board with a voice says once: "The guide speaks its steps. Turn the voice off here." Default none.
+//             first board with a voice says once: "The tutor speaks each step aloud. Voice off stops the voice." Default none.
 //     point   the look of a point mark (the setting guide.point), each one weaker than a circle. Default 'tick'.
 //               'tick'  a short thin arrow that stops just before the target, with no ring.
 //               'dot'   a small filled dot under the target, that pulses one time (no pulse with reduced motion).
 //               'ring'  a short arrow and a ring on the target, thinner and smaller than a circle, at half the ink.
 //             An unknown look gives the default.
-//     voiceAt {model, where, who}: the voice that speaks the board, shown after the Voice button as "Kokoro · on this Mac". Default none.
+//     voiceAt {model, where, who}: the voice that speaks the board, shown after the Voice button as "Pocket TTS · on this Mac". Default none.
 //     notice  {text, href, link}: one quiet line in the strip for this board, with a local link when `href` is a local path. Default none.
 //     host    the hooks of the page that shows the board. Each one is optional:
 //       resolve(id) -> Element|null   the element of anchor `id`. Default: document.querySelector('[data-guide-id="<id>"]').
@@ -45,15 +46,19 @@
 //       assets                        the URL folder of rough.js and perfect-freehand.mjs. Default '/vendor/'.
 //     A board with `streaming: true` waits for more steps: it can start with step 1 only. The strip shows no step count and
 //     no end line until finish(board).
-//   add(step) -> bool    add one checked step to the streaming board that shows now. When that board waits at its last step
+//   add(step) -> bool    add one checked step to the streaming board that shows now. A step with the `n` of a step that is here
+//                        grows it: its new strokes draw at their word (the server sends a step with its first mark, then again). When that board waits at its last step
 //                        with auto on, it goes on to the new step. False when no streaming board shows.
 //   finish(board) -> bool   the whole checked board for the streaming board that shows now: it adds the steps that are not
 //                        there yet, takes the tier, sources and end of `board`, and stops the wait for steps. False when no
 //                        streaming board shows, or when its steps are not the first steps of `board` (then play `board`).
 //                        An `end` of '' shows no end line: the stream ended with no whole board.
 //   stop()  note(text)  next()  back()  again()  seekVideo(t)  boxOf(at)  normTex(tex)
+//   room(on)    the page column makes room for the picture of an idea at the top right, or takes its place back (see has-panel above)
+//   timeline()  [op, part, ms] for each part of each mark of the step that shows: the order in which they draw
 //   speakBrowser(text, onWord, done)   the default speak (speechSynthesis), for a host speak that falls back to it.
 //   notice({text, href, link})          set the quiet line of the board that shows now (see play).
+//   voiceAt({model, where, who})        name the voice that speaks the board that shows now, as after a fallback to the browser voice.
 //   status(event)        the state line in the strip while the guide works: the `wait` text of a state event of the guide route
 //                        ({wait, state, model, where, who, query, sources}), a chip "on this Mac" or "hosted · <who>", the seconds
 //                        after 3 s while it asks, and Stop.
@@ -64,6 +69,22 @@
 //                        spec order). It sets data-guide-id on each one. An id of more than 40 characters is dropped, never cut.
 //   state    {i, steps, tier, first, done, streaming} or null. `done` is true when each mark of the step shows in full.
 //   pointer  {tip, to, flying} in window pixels, or null: where the tip of the pointer is, and the point that it flies to.
+// Strokes (see abhyasa.guide.OPS) are the ops of the server, plus these rules of the page:
+//   sketch   {at, pts}: drawn only when the element of its anchor is a figure (an img, svg, canvas or video, or inside a figure or
+//            [data-guide-id="figure"]). A sketch on any other anchor is dropped: it never draws over the words.
+//   panel    {title, head, cols, numbered}: starts the side panel, fixed at the top right of the window (#board-panel). The panel
+//            is the place of the tutor's small concrete example. A new panel line starts a new beat: its rows replace the rows before.
+//   row      {cells, to, at, chain}: one row of the panel that shows with its step and stays for the next steps. Each cell is a box;
+//            `to` comes after an arrow, in the accent. With `at`, the row draws its own circle on that thing at its word, a hand-drawn
+//            curve from it 120 ms later, then the row when the curve lands, each cell 80 ms after the one before (the circle and the
+//            curve hide when the thing is not on the page; the row stays). With `chain`, the cells are words with arrows between.
+//            On D next the panel and its rows stay as they are; only the rows of the new step come. While the panel shows, the
+//            body has the class `has-panel`, and the page column moves left with its width kept. Below 1100 px the panel stands in the page, under
+//            the thing that its first row marks.
+//   Before a step draws, the page scrolls its first mark into view when it is off screen or under the strip.
+//   note     {text}: one quiet line of the panel.
+//   A circle, box, underline or label needs a thing under it: on a bare point, on a box of no size, or on a part of its anchor
+//   with no text and no picture in it, it is not drawn (it would be an empty mark). The server drops a bare point too.
 // Events on document: board:first (the first mark shows), board:stop (detail.by is 'learner' after Esc or Stop, else '').
 (() => {
   if (window.abhyasaBoard) return;
@@ -217,28 +238,54 @@
   }
 
   // --- marks: `place` reads the page and builds the parts; `paint` sets them for one moment ------------------------------------
-  const PASTEL = ['pink', 'green', 'blue', 'yellow', 'violet', 'peach'];
+  const PASTEL = ['pink', 'green', 'blue', 'yellow', 'violet', 'peach'], MARKS = ['circle', 'box', 'underline', 'label'], PANEL = ['panel', 'row', 'note'];
+  // Whether the box `b` of a mark holds a thing to mark: words, a formula part or a picture. A mark on empty space is not drawn.
+  const REPLACED = /^(IMG|SVG|CANVAS|VIDEO|INPUT|TEXTAREA|SELECT|BUTTON|IFRAME|PICTURE)$/i;
+  const meets = (r, b) => r.width > 0 && r.height > 0 && r.left + scrollX < b.x + b.w && b.x < r.right + scrollX && r.top + scrollY < b.y + b.h && b.y < r.bottom + scrollY;
+  function inked(b) {
+    if (b.pt || b.w < 2 || b.h < 2) return false;
+    if (b.glyphs) return true;
+    const el = b.el;
+    if (!el) return false;
+    if (REPLACED.test(el.tagName) || el.ownerSVGElement) return meets(el.getBoundingClientRect(), b);
+    const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT), r = document.createRange();
+    for (let n, k = 0; (n = tw.nextNode()) && k < 3000; k++) {
+      if (n.nodeType === 1) { if ((REPLACED.test(n.tagName) || n.tagName.toLowerCase() === 'svg') && seen(n) && meets(n.getBoundingClientRect(), b)) return true; continue; }
+      if (!n.data.trim()) continue;
+      r.selectNodeContents(n);
+      if ([...r.getClientRects()].some(q => meets(q, b))) return true;
+    }
+    return false;
+  }
+  // One light Rough.js stroke from `from` to `to` in the group of mark `m`, then a filled head that springs in. `w` scales its weight. It adds its parts and gives when it ends.
+  function inkArrow(m, parts, from, to, at = 0, w = 1, cls = 'board-fill') {
+    const rc = rough.svg(layer()), ink = css('--board-ink') || '#b5551c';
+    const c = [(from[0] + to[0]) / 2 + (to[1] - from[1]) * .18, (from[1] + to[1]) / 2 - (to[0] - from[0]) * .18];
+    const shaft = rc.curve([from, c, to], {stroke: ink, strokeWidth: 1.8 * w, roughness: .7, bowing: .6, disableMultiStroke: true, preserveVertices: true, seed: m.seed});
+    m.g.append(shaft);
+    const line = shaft.querySelector('path'), L = line ? line.getTotalLength() : 0, dur = clamp(L * 1.4, 380, 640);
+    if (line) { line.setAttribute('stroke-linecap', 'round'); parts.push({kind: 'dash', el: line, L, at, dur}); }
+    let tip = to, a = Math.atan2(to[1] - c[1], to[0] - c[0]);
+    if (L) { const P = line.getPointAtLength(L), Q = line.getPointAtLength(Math.max(0, L - 10)); tip = [P.x, P.y]; a = Math.atan2(P.y - Q.y, P.x - Q.x); }   // the head turns with the end of the line
+    const head = svgEl('path', cls); m.g.append(head);
+    parts.push({kind: 'head', el: head, tip, a, w, at: at + dur * .92});
+    return at + dur;
+  }
   function place(m) {
-    const o = m.o, svg = layer(), rc = rough.svg(svg), ink = css('--board-ink') || '#b5551c';
+    const o = m.o;
+    if (PANEL.includes(o.op)) return placePanel(m);
+    const svg = layer();
     const b = o.at !== undefined ? locate(o.at) : null;
     if (o.at !== undefined && !b) return hide(m);
+    if (MARKS.includes(o.op) && !inked(b)) { m.skip = true; return hide(m); }   // no thing under it: no empty mark
+    if (o.op === 'sketch' && !onFigure(b.el)) return hide(m);   // a sketch marks a part of a figure only: never a shape over the words
     if (!m.g && o.op !== 'label' && o.op !== 'box') { m.g = svgEl('g'); m.g.dataset.op = o.op; m.g.dataset.step = m.step; svg.append(m.g); }
     if (m.g) { m.g.replaceChildren(); m.g.style.display = ''; }
     const parts = [];
     let target = b && {x: b.x, y: b.y, w: b.w, h: b.h};
     for (const e of [m.g, m.hl, m.el, m.lead]) if (e) e.style.display = '';
     const pathIn = (g, cls) => { const p = svgEl('path', cls); g.append(p); return p; };
-    const arrow = (from, to, at = 0, w = 1, cls = 'board-fill') => {   // one light Rough.js stroke, then a filled head that springs in; `w` scales its weight
-      const c = [(from[0] + to[0]) / 2 + (to[1] - from[1]) * .18, (from[1] + to[1]) / 2 - (to[0] - from[0]) * .18];
-      const shaft = rc.curve([from, c, to], {stroke: ink, strokeWidth: 1.8 * w, roughness: .7, bowing: .6, disableMultiStroke: true, preserveVertices: true, seed: m.seed});
-      m.g.append(shaft);
-      const line = shaft.querySelector('path'), L = line ? line.getTotalLength() : 0, dur = clamp(L * 1.4, 380, 640);
-      if (line) { line.setAttribute('stroke-linecap', 'round'); parts.push({kind: 'dash', el: line, L, at, dur}); }
-      let tip = to, a = Math.atan2(to[1] - c[1], to[0] - c[0]);
-      if (L) { const P = line.getPointAtLength(L), Q = line.getPointAtLength(Math.max(0, L - 10)); tip = [P.x, P.y]; a = Math.atan2(P.y - Q.y, P.x - Q.x); }   // the head turns with the end of the line
-      parts.push({kind: 'head', el: pathIn(m.g, cls), tip, a, w, at: at + dur * .92});
-      return at + dur;
-    };
+    const arrow = (from, to, at, w, cls) => inkArrow(m, parts, from, to, at, w, cls);
     if (o.op === 'circle') {
       if (b.glyphs) {   // a marker through the middle of the glyphs: they stay sharp and get a tint
         const blend = dark(b.el) ? 'screen' : 'multiply', size = Math.max(8, b.h * .92);
@@ -251,8 +298,8 @@
     if (o.op === 'underline') parts.push(stroke(pathIn(m.g, 'board-fill'), press(dense([[b.x - 3, b.y + b.h + 5], [b.x + b.w * .5, b.y + b.h + 7], [b.x + b.w + 4, b.y + b.h + 3]])), {size: 3.5}));
     if (o.op === 'box') {   // a soft glow that blooms, then settles: no frame on the text
       if (!m.el) { m.el = Object.assign(document.createElement('div'), {className: 'board-glow'}); m.el.dataset.op = 'box'; m.el.dataset.step = m.step; host().querySelector('.board-glows').append(m.el); }
-      const pad = 10; m.el.hidden = false; m.dark = dark(b.el);
-      Object.assign(m.el.style, {left: b.x - pad + 'px', top: b.y - pad + 'px', width: b.w + 2 * pad + 'px', height: b.h + 2 * pad + 'px'});
+      const pad = 10, py = b.glyphs ? Math.min(pad, b.h * .25) : pad; m.el.hidden = false; m.dark = dark(b.el);   // on words: at most a quarter line above and below, so it stays inside its line
+      Object.assign(m.el.style, {left: b.x - pad + 'px', top: b.y - py + 'px', width: b.w + 2 * pad + 'px', height: b.h + 2 * py + 'px'});
       m.el.classList.toggle('on-dark', m.dark);
       parts.push({kind: 'glow', el: m.el, at: 0, dur: 1200});
     }
@@ -294,14 +341,101 @@
     m.life = parts.reduce((s, p) => Math.max(s, p.at + (p.dur || 300)), 0) + (parts.some(p => p.kind === 'head') ? 500 : 0);
     return true;
   }
+  // The side panel: one card at the top right of the window that the rows of the board fill, step by step (see the API).
+  const INLINE = 1100;   // below this window width the panel stands in the page
+  function panelEl() {
+    let p = document.getElementById('board-panel');
+    if (!p) {
+      p = el('div', 'board-panel', null); p.id = 'board-panel'; p.setAttribute('role', 'region'); p.setAttribute('aria-label', 'The example of the tutor');
+      p.append(el('p', 'board-panel-title', ''), el('p', 'board-panel-head', ''), el('div', 'board-panel-cols', null), el('div', 'board-panel-rows', null));
+      host().append(p);
+      room(true);
+      requestAnimationFrame(() => st && into(st.marks.filter(m => m.step === st.i && m.drawn).slice(-1)));   // after the layout settles: the newest mark of the step is in view
+    }
+    return p;
+  }
+  function panelGone() { const p = document.getElementById('board-panel'); if (p) p.remove(); room(!!document.getElementById('guide-show')); }
+  // One place for a picture of an idea (this panel, or the Show card of the guide): while it shows, the body has `has-panel`, and the page
+  // column moves left into the free gutter with its width kept, so no line wraps again and no mark moves down. Only when the gutter is
+  // too small does the column get narrower. Below 1100 px the picture stands in the page, so the column stays.
+  function room(on) {
+    const main = document.querySelector('main'), pic = document.getElementById('board-panel') || document.getElementById('guide-show');
+    document.body.classList.toggle('has-panel', !!on);
+    if (!main) return;
+    main.style.marginLeft = main.style.maxWidth = '';
+    if (!on || innerWidth < INLINE || (pic && pic.classList.contains('inline'))) return;
+    const left = pic ? pic.getBoundingClientRect().left : innerWidth - 16 - Math.min(440, innerWidth * .36);   // before the panel comes: its place (board.css --panel-w)
+    const r = main.getBoundingClientRect(), over = r.right - (left - 24);
+    if (over <= 0) return;
+    const shift = Math.min(over, Math.max(0, r.left - 16));
+    main.style.marginLeft = r.left - shift + 'px';   // the right margin stays auto: the width stays
+    if (over > shift) main.style.maxWidth = r.width - (over - shift) + 'px';
+  }
+  function dockPanel(p, b) {   // in the page under the marked thing below 1100 px; else fixed at the top right (board.css)
+    const inline = innerWidth < INLINE && b && b.el;
+    p.classList.toggle('inline', !!inline);
+    if (inline) { const after = b.el.closest('pre, p, li, figure, section, .check') || b.el; if (after.nextElementSibling !== p) after.after(p); }
+    else if (p.parentElement !== host()) host().append(p);
+  }
+  const beatOf = m => { const k = st.marks.indexOf(m); return st.marks.slice(0, k + 1).filter(x => x.o.op === 'panel').length; };
+  function placePanel(m) {
+    const o = m.o, p = panelEl(), beat = String(beatOf(m)), parts = [];
+    if (o.op === 'panel') {
+      if (p.dataset.beat !== beat) {   // a new beat: its own title, heading and columns, and none of the rows before
+        p.dataset.beat = beat; p.classList.toggle('numbered', !!o.numbered);
+        const [t, h, cs, rs] = p.children;
+        t.textContent = o.title || ''; h.textContent = o.head || '';
+        cs.replaceChildren(...(o.cols || []).map(c => el('span', '', c)));
+        [...rs.children].forEach(r => { if (r.dataset.beat !== beat) r.remove(); });
+      }
+      parts.push({kind: 'node', el: p, at: 0, dur: 260});   // also when the board places it again (a scroll, a resize): the pop-in keeps its own clock
+      m.parts = parts; m.aim = null; m.ok = true; m.life = 300;
+      return true;
+    }
+    if (!p.dataset.beat) p.dataset.beat = beat;
+    if (p.dataset.beat !== beat) return hide(m);   // a row of an older beat
+    const b = o.at !== undefined ? locate(o.at) : null;
+    if (!p.dataset.docked || (b && m === st.marks.find(x => x.o.op === 'row' && x.o.at !== undefined))) { dockPanel(p, b); p.dataset.docked = '1'; }
+    if (!m.el || !m.el.isConnected) {
+      m.el = el('div', o.op === 'note' ? 'board-panel-note' : 'board-row' + (o.chain ? ' chain' : ''), o.op === 'note' ? o.text : null);
+      m.el.dataset.step = m.step; m.el.dataset.beat = beat;
+      if (o.op === 'row') {
+        const n = [...p.querySelectorAll('.board-row')].length + 1;
+        if (p.classList.contains('numbered')) m.el.append(el('span', 'board-row-n', String(n)));
+        o.cells.forEach((c, k) => { if (k && o.chain) m.el.append(el('span', 'board-row-arrow', '→')); m.el.append(el('span', o.chain ? 'board-word' : 'board-cell', c)); });
+        if (o.to != null) m.el.append(el('span', 'board-row-arrow long', '⟶'), el('span', 'board-cell board-target', o.to));
+      }
+      p.lastElementChild.append(m.el);
+    }
+    m.el.style.display = '';
+    const r = m.el.getBoundingClientRect(), box = {x: r.left + scrollX, y: r.top + scrollY, w: r.width, h: r.height};
+    for (const e of [m.g, m.ring]) if (e) { e.replaceChildren(); e.style.display = ''; }
+    let land = 0;
+    const twin = b && st.marks.some(x => x !== m && x.step === m.step && x.o.op === 'circle' && JSON.stringify(x.o.at) === JSON.stringify(o.at));
+    if (b && inked(b)) {   // its own circle on the thing at its word (none when a circle line has it), then the curve 120 ms later, from the circle to the first cell
+      if (!m.ring) { m.ring = svgEl('g'); m.ring.dataset.op = 'circle'; m.ring.dataset.step = m.step; layer().append(m.ring); }
+      if (!m.g) { m.g = svgEl('g'); m.g.dataset.op = 'link'; m.g.dataset.step = m.step; layer().append(m.g); }
+      if (!twin) { const rp = svgEl('path', 'board-fill board-ring'); m.ring.append(rp); parts.push(stroke(rp, press(ring(b, b.glyphs ? 9 : 12, m.seed)), {size: 3.3})); }
+      const c0 = (m.el.querySelector('.board-cell, .board-word') || m.el).getBoundingClientRect();
+      const inline = p.classList.contains('inline'), x0 = c0.left + scrollX, under = inline && x0 < b.x + b.w && b.x < c0.right + scrollX;
+      const to = [x0 + Math.min(18, c0.width / 2), c0.top + scrollY - 3], from = inline ? [b.x + b.w / 2, b.y + b.h + 8] : [b.x + b.w + 10, b.y + b.h / 2];
+      if (!under) land = inkArrow(m, parts, from, to, 120, .8);   // in the page, a curve goes down from the ring, never back up across the text
+    } else for (const e of [m.g, m.ring]) if (e) e.style.display = 'none';
+    if (o.op === 'note') parts.push({kind: 'node', el: m.el, at: land, dur: 260});
+    else [...m.el.children].forEach((c, k) => parts.push({kind: 'node', el: c, at: land + 80 * k, dur: 260}));   // the row when the curve lands, then each cell
+    m.parts = parts; m.aim = box; m.box = box; m.ok = true;
+    m.life = parts.reduce((t, q) => Math.max(t, q.at + (q.dur || 300)), 0) + 500;
+    return true;
+  }
   function hide(m) {
     m.ok = false;
-    for (const e of [m.g, m.hl, m.el, m.lead]) if (e) e.style.display = 'none';
+    for (const e of [m.g, m.hl, m.el, m.lead, m.ring]) if (e) e.style.display = 'none';
     return false;
   }
   function unmount(m) {
-    for (const e of [m.g, m.hl, m.el, m.lead]) if (e) e.remove();
-    m.g = m.hl = m.el = m.lead = null; m.parts = []; m.drawn = false; m.ok = false;
+    for (const e of [m.g, m.hl, m.el, m.lead, m.ring]) if (e) e.remove();
+    m.g = m.hl = m.el = m.lead = m.ring = null; m.parts = []; m.drawn = false; m.ok = false;
+    m.box = null; m.skip = false;
   }
 
   // A chip: pastel, with a coloured bar, near its target and never on it. A thin leader line ends with a dot on the part.
@@ -342,6 +476,8 @@
     return true;
   }
 
+  const onFigure = e => !!e && (/^(img|canvas|video|svg|picture)$/i.test(e.tagName) || !!e.closest('figure, svg, canvas, [data-guide-id="figure"]'));
+
   // Each part of a mark at time `t` (ms, performance.now).
   function paint(m, t) {
     if (!m.ok) return;
@@ -359,6 +495,10 @@
       if (p.kind === 'head') {
         const s = (still ? (k >= 0 ? 1 : 0) : spring(q, .32, .55)) * (p.w || 1), [ex, ey] = p.tip, a = p.a, L = 12 * s, W = 6.5 * s, c = Math.cos(a), si = Math.sin(a);
         p.el.setAttribute('d', s <= 0 ? '' : `M${ex + c * 2} ${ey + si * 2} L${ex - L * c + W * si} ${ey - L * si - W * c} Q${ex - L * .7 * c} ${ey - L * .7 * si} ${ex - L * c - W * si} ${ey - L * si + W * c} Z`);
+      }
+      if (p.kind === 'node') {   // a part of the side panel: it pops in on a spring
+        const s = still ? 1 : spring(q, .32, .6);
+        Object.assign(p.el.style, {opacity: still ? (k >= 0 ? 1 : 0) : clamp(q / 200), transform: still || q >= p.dur * 3 ? '' : `scale(${(.9 + .1 * s).toFixed(3)})`});
       }
       if (p.kind === 'dot') p.el.setAttribute('r', (3.2 * (still ? (k >= 0 ? 1 : 0) : spring(q, .32, .55))).toFixed(2));
       if (p.kind === 'pulse') { const u = clamp(q / p.dur); p.el.setAttribute('r', (3.2 + 11 * smooth(u)).toFixed(2)); p.el.style.opacity = q < 0 || u >= 1 ? 0 : (.55 * (1 - u)).toFixed(3); }
@@ -378,6 +518,8 @@
     }
     if (m.g) m.g.style.opacity = op;
     if (m.hl) m.hl.style.opacity = op;
+    if (m.o.op === 'row' && m.g) m.g.style.opacity = op * (st && m.step < st.i ? .3 / .45 : 1);   // the curves of earlier rows go to 30 %
+    if (m.ring) m.ring.style.opacity = op;
   }
   // Marks of earlier steps step back to 45 %, and a glow goes. A mark of the step before fades; the others are there at once.
   function dim(m, t) {
@@ -437,7 +579,10 @@
     if (!st) { ticking = false; return; }
     const t = performance.now();
     paintPointer(t);
-    for (const m of st.marks) if (m.drawn && (m.dirty || t - m.t0 < m.life + 50 || t - st.stepAt < 400)) { paint(m, t); m.dirty = false; }
+    for (const m of st.marks) if (m.drawn) {
+      if (m.dirty || t - m.t0 < m.life + 50 || t - st.stepAt < 400) { paint(m, t); m.dirty = false; m.settled = false; }
+      else if (!m.settled) { paint(m, t + 1e6); m.settled = true; }   // the end state of each part, also when the last frames came late (a faint panel)
+    }
     requestAnimationFrame(tick);
   }
   const clock = () => { if (!ticking) { ticking = true; requestAnimationFrame(tick); } };
@@ -452,8 +597,9 @@
       if (!st || !pf) return;
       host();
       const ms = st.marks.filter(m => m.drawn), t = performance.now();
-      const ok = ms.map(m => { const r = place(m); paint(m, t); return r; });
-      if (ms.length && !ok.some(Boolean)) note('The page changed. Ask again.');
+      ms.forEach(m => { place(m); paint(m, t); });
+      const live = ms.filter(m => !m.skip);   // a mark with no thing under it is not a lost mark
+      if (live.length && !live.some(m => m.ok)) note('The page changed. Ask again.');
     });
   }
 
@@ -514,7 +660,7 @@
       if (b.saved && b.saved.title) {   // a thing that stays after the board: say it, with Undo
         const sv = el('p', 'board-saved', `Saved to your vault: ${b.saved.title}. `), u = String(b.saved.undo || '');
         if (/^\/(?!\/)/.test(u)) sv.append(button('Undo', 'board-undo', async () => {
-          try { const r = await fetch(u, {method: 'POST'}); sv.textContent = (await r.text()).slice(0, 200); } catch (e) { sv.textContent = 'abhyasa could not undo this. Try again.'; }
+          try { const r = await fetch(u, {method: 'POST'}); sv.textContent = (await r.text()).slice(0, 200); } catch (e) { sv.textContent = 'abhyasa could not remove it. Try again, or remove it in your vault.'; }
           if (st) st.board.saved = null;
         }));
         parts.push(sv);
@@ -525,7 +671,7 @@
       st.told = true;
       if (!localStorage.getItem('board-voice-told')) { localStorage.setItem('board-voice-told', '1'); st.tellAt = st.i; }
     }
-    if (st.tellAt === st.i && !st.quiet) parts.push(el('p', 'board-tell', 'The guide speaks its steps. Turn the voice off here.'));   // it stays until the step changes
+    if (st.tellAt === st.i && !st.quiet) parts.push(el('p', 'board-tell', 'The tutor speaks each step aloud. Voice off stops the voice.'));   // it stays until the step changes
     else st.tellAt = null;
     if (st.notice && st.notice.text) {   // one quiet line for this board: the voice fell back, or a natural voice is ready
       const n = el('p', 'board-tell board-notice', st.notice.text + ' ');
@@ -568,6 +714,7 @@
   function light(k) {
     if (!st || k <= st.lit) return;
     st.lit = k;
+    if (st.later && st.later.length) { const now = st.later.filter(m => (m.o.w ?? 0) <= k); st.later = st.later.filter(m => !now.includes(m)); now.forEach(late); }
     document.querySelectorAll('#guide-strip .board-say > span').forEach((w, n) => w.classList.toggle('on', n <= k));
   }
   function link(src) {
@@ -626,8 +773,11 @@
     i = Math.max(0, Math.min(st.board.steps.length - 1, i));
     const forward = i === st.i + 1, t = performance.now();
     st.i = i; st.stepAt = t; st.lit = -1; st.wait = false;
-    for (const m of st.marks) unmount(m);
+    for (const m of st.marks) if (!(forward && PANEL.includes(m.o.op) && m.step < i)) unmount(m);   // on D next the panel and its rows stay
+    if (!forward) panelGone();   // else the panel is built again from the marks of the steps up to this one
     st.video = null;
+    if (innerWidth >= INLINE && st.marks.some(m => m.step <= i && PANEL.includes(m.o.op))) room(true);   // the column makes room first, so the scroll below is the last one
+    into(st.marks.filter(m => m.step === i));
     const run = (m, live) => {   // a mark that starts: `clear` takes away the marks before it
       if (m.o.op === 'clear') { st.marks.filter(x => x.drawn && (m.o.n == null || x.step === m.o.n - 1)).forEach(unmount); return; }
       if (m.o.op === 'demo_set') return demo(m.o.set);
@@ -639,6 +789,7 @@
       if (live) { const land = fly(m, now); if (!first) m.t0 = Math.max(now, land - 120); }   // the mark draws from the tip of the pointer
       m.dirty = true; paint(m, now);
     };
+    st.run = run; st.later = [];   // a stroke of this step that comes later (grow) starts with `run` at its word
     st.marks.filter(m => m.step < i).forEach(m => { if (m.o.op !== 'demo_set' && m.o.op !== 'video_at') run(m, false); });
     const step = st.board.steps[i], mine = st.marks.filter(m => m.step === i), started = new Set();
     caption();
@@ -655,19 +806,44 @@
       else if (st && st.auto && st.streaming) st.wait = true;   // the last step so far is said: the next step that comes plays at once
     });
   }
+  // Scroll the marks of `ms` (the marks of one step) into view before they draw, when one of them is off screen, just above the top
+  // bar or under the strip: all of them when they fit in the window, else the first one.
+  function into(ms) {
+    const bs = ms.map(m => m.o.at ?? m.o.from).filter(a => a !== undefined).map(locate).filter(Boolean);
+    if (!bs.length) return;
+    const s = document.getElementById('guide-strip'), low = innerHeight - (s && !s.hidden ? s.offsetHeight : 0) - 8, nav = document.querySelector('body > nav');
+    const high = (nav ? Math.max(0, nav.getBoundingClientRect().bottom) : 0) + 8;
+    const top = Math.min(...bs.map(b => b.y)), bot = Math.max(...bs.map(b => b.y + b.h)), b = bot - top <= low - high ? {y: top, h: bot - top} : bs[0];
+    const y = b.y - scrollY;
+    if (y >= high && y + Math.min(b.h, low - high) <= low) return;
+    scrollTo({top: Math.max(0, b.y - high - Math.max(0, (low - high - b.h) / 2)), behavior: reduced() || st.fast ? 'auto' : 'smooth'});
+  }
   function marksOf(s, k) { return s.strokes.map((o, n) => ({o, step: k, seed: 1 + k * 10 + n, parts: []})); }
   function add(step) {   // see the API at the top of this file
     if (!st || !st.streaming || !step || typeof step.say !== 'string' || !Array.isArray(step.strokes)) return false;
+    if (step.n >= 1 && step.n <= st.board.steps.length) return grow(step.n - 1, step);   // a step that is here: it has more strokes now
     const k = st.board.steps.length;
     st.board.steps.push(step); st.marks.push(...marksOf(step, k));
     if ((st.fast || st.wait) && st.i === k - 1) show(k); else caption();
     return true;
   }
+  // Step `k` again, with more strokes: the server sends a step as soon as its first mark is in, then again as it grows (a panel and its
+  // rows). The strokes that are new draw at their word, or at once when the line passed it.
+  function grow(k, step) {
+    const have = st.board.steps[k];
+    if (have.say !== step.say) return false;
+    const old = new Set(have.strokes.map(o => JSON.stringify(o))), more = step.strokes.filter(o => !old.has(JSON.stringify(o)));
+    const ms = more.map((o, j) => ({o, step: k, seed: 1 + k * 10 + have.strokes.length + j, parts: []}));
+    have.strokes.push(...more); st.marks.push(...ms);
+    if (st.i === k && st.run) for (const m of ms) ((m.o.w ?? 0) <= st.lit ? late(m) : st.later.push(m));
+    return true;
+  }
+  function late(m) { into([m]); st.run(m, true); }   // a stroke that came late: out of view, it scrolls in first, as the first mark does
   function finish(board) {   // see the API at the top of this file
     if (!st || !st.streaming || !board || !Array.isArray(board.steps)) return false;
     const have = st.board.steps;
     if (board.steps.length < have.length || have.some((s, k) => s.say !== board.steps[k].say)) return false;
-    board.steps.slice(have.length).forEach(add);
+    board.steps.forEach((s, k) => k < have.length ? grow(k, s) : add({...s, n: undefined}));   // the strokes that a step here does not have yet, and the steps that are not here
     Object.assign(st.board, board, {steps: have});
     st.streaming = false;
     caption();
@@ -773,6 +949,7 @@
     st = null;
     if (back && back.isConnected && !document.activeElement.matches('textarea, input, select, [contenteditable]')) back.focus({preventScroll: true});
     for (const e of document.querySelectorAll('#board-host, .board-hl')) e.remove();
+    panelGone();
     const s = document.getElementById('guide-strip'); if (s) { s.hidden = true; s.replaceChildren(); }
     document.dispatchEvent(new CustomEvent('board:stop', {detail: {by: by === 'learner' ? 'learner' : ''}}));
   }
@@ -784,7 +961,7 @@
     for (const k of ['resolve', 'speak', 'demo']) if (typeof (hk || {})[k] === 'function') h[k] = hk[k];
     if (hk && typeof hk.assets === 'string' && hk.assets) h.assets = hk.assets.endsWith('/') ? hk.assets : hk.assets + '/';
     await libs(h.assets);
-    if (!board || !board.steps || !board.steps.length) { note(board && board.failed ? "The tutor's drawing failed. Say it again or type it." : 'The tutor did not answer. Try again.'); return; }
+    if (!board || !board.steps || !board.steps.length) { note(board && board.failed ? 'The tutor could not draw this board. Ask again.' : 'The tutor did not answer. Try again.'); return; }
     if (board.streaming) board = {...board, steps: [...board.steps]};   // add() grows the steps of its own copy
     st = {board, labels, host: h, fast, quiet: q || fast, auto: auto && !fast, i: 0, gen: 0, lit: -1, timers: [], rate: +(localStorage.getItem('board-rate') || 1), first: null,
           t0: performance.now(), stepAt: 0, ptr: {pos: null, f: null}, streaming: !!board.streaming, wait: false,
@@ -805,19 +982,22 @@
   addEventListener('keydown', onKey, true);
   addEventListener('scroll', follow, {capture: true, passive: true});
   addEventListener('resize', follow);
+  addEventListener('resize', () => { if (document.body.classList.contains('has-panel')) room(true); });
   if (window.ResizeObserver) new ResizeObserver(follow).observe(document.documentElement);
   // A new page (an htmx swap of the body) takes the layer away: the board stops. A change inside the page moves the marks.
   const watch = () => new MutationObserver(ms => {
     if (!st) return;
     if (!document.getElementById('board-host')) return stop();
-    if (ms.some(m => !(m.target.closest && m.target.closest('#board-host, #guide-strip, .board-hl, #board-trail')))) follow();
+    if (ms.some(m => !(m.target.closest && m.target.closest('#board-host, #board-panel, #guide-strip, .board-hl, #board-trail')))) follow();
   }).observe(document.body, {childList: true, subtree: true});
   if (document.body) watch(); else addEventListener('DOMContentLoaded', watch);
   const view = p => [p[0] - scrollX, p[1] - scrollY];
-  window.abhyasaBoard = {play, add, finish, stop: () => stop(), note, status, seekVideo, demoAnchors, fitDemo,
+  window.abhyasaBoard = {play, add, finish, stop: () => stop(), note, status, room, seekVideo, demoAnchors, fitDemo,
                          speakBrowser: (text, onWord, done) => st ? voice(text, onWord, done) : undefined,
                          notice: n => { if (st && n && typeof n === 'object') { st.notice = n; caption(); } },
+                         voiceAt: v => { if (st && v && typeof v === 'object') { st.voiceAt = v; caption(); } },
                          next: () => st && show(st.i + 1), back: () => st && show(st.i - 1), again: () => st && show(st.i), boxOf, normTex,
+                         timeline: () => st ? st.marks.filter(m => m.step === st.i && m.drawn).flatMap(m => m.parts.map(p => [m.o.op, p.kind, Math.round(p.at)])) : [],   // the parts of this step and when each starts, in ms
                          get state() {
                            if (!st) return null;
                            const t = performance.now(), mine = st.marks.filter(m => m.step === st.i && !/^(clear|demo_set|video_at)$/.test(m.o.op));
