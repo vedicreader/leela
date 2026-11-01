@@ -408,8 +408,8 @@ def _guarded(ws, port):
     threading.Thread(target=srv.run, daemon=True).start()
     return srv
 
-def test_set_up_goes_back_to_the_step_page_which_turns_ready_by_itself_and_open_passes_the_guard(tmp_path, monkeypatch):
-    "Chromium posted both buttons with `Origin: null` and got 421; then Set up gave a static page that never said when it was done."
+def test_set_up_turns_the_step_page_ready_by_itself_and_open_ends_on_the_ide_with_the_lesson(tmp_path, monkeypatch):
+    "Chromium posted both buttons with `Origin: null` and got 421; Set up gave a static page that never said when it was done; Open opened nothing on screen."
     import threading
     from leela.blocks.learn import tools
     from test_learn_tools import fake
@@ -434,6 +434,9 @@ def test_set_up_goes_back_to_the_step_page_which_turns_ready_by_itself_and_open_
         main = pg.get_by_role('button', name='Open as a lesson')
         assert 'go' in (await main.get_attribute('class')).split()
         async with pg.expect_response(lambda r: r.url.endswith('/learn/open')) as r: await main.click()
-        assert (await r.value).status == 200 and await pg.locator('p.lee-learn-line').first.inner_text() == 'Opened in Leela.'
-        assert (tmp_path/'lessons'/f'{NB_JID}-0.ipynb').is_file()
+        assert (await r.value).status == 303
+        await pg.wait_for_url(base + '/')
+        lesson = str((tmp_path/'lessons'/f'{NB_JID}-0.ipynb').resolve())
+        await pg.wait_for_function('p => window.lee && lee.tabKey === p', arg=lesson)
+        assert f'{NB_JID}-0' in await pg.locator('.lee-tab.active').inner_text() and ws.tab.path == lesson
     asyncio.run(_on_learn(go_, ws, ide=False, serve=_guarded))

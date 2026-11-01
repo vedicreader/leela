@@ -133,6 +133,8 @@ def connect(app, ctx):
         except Unsafe as e: return say(f'Leela could not write the lesson. {e}', 403)
         except OSError as e: return say(f'Leela could not write the lesson. {os_why(e)}'.strip(), 500)
         except Exception: return say('Leela could not open the lesson.', 500)
+        # in a tab of its own the learner goes to the IDE, where the lesson is now the active tab
+        if f.get('pane') != '1': return RedirectResponse('/', 303)
         # the pane keeps the step's own URL, so a reload does not GET this POST route
         return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic, v=q.v), pane=f.get('pane') == '1', root=root), headers=HEADERS)
     async def posted_step(f):

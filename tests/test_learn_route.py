@@ -326,11 +326,16 @@ def test_both_step_page_buttons_pass_the_real_guard_with_a_null_origin(rig):
     g = TestClient(LoopbackHostGuard(c.app), base_url='http://127.0.0.1:5011')
     h = {'origin': 'null', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}
     r = g.post('/learn/open', data=dict(walk=NB_JID, step='0'), headers=h)
-    assert r.status_code == 200 and 'Opened in Leela.' in r.text and (root/'lessons'/f'{NB_JID}-0.ipynb').is_file()
+    assert [x.status_code for x in r.history] == [303] and r.status_code == 200 and r.url.path == '/' and (root/'lessons'/f'{NB_JID}-0.ipynb').is_file()
     assert g.post('/learn/env', data=dict(walk=NB_JID, step='0'), headers={**h, 'sec-fetch-site': 'cross-site'}).status_code == 421
     assert g.post('/learn/open', data=dict(walk=NB_JID, step='0'), headers={**h, 'origin': 'https://evil.example'}).status_code == 421
 
-def opened(c, **form): return c.post('/learn/open', data=form)
+def opened(c, **form): return c.post('/learn/open', data=form, follow_redirects=False)
+
+def to_ide(r):
+    "`r` sends a step page in a tab of its own to the IDE, where the lesson is the active tab."
+    assert r.status_code == 303 and r.headers['location'] == '/', (r.status_code, r.text)
+    return r
 
 def state(ws, lr, root):
     "Everything an open must not change when it refuses."
@@ -348,21 +353,18 @@ def test_open_makes_one_lesson_and_reopens_it(rig, announced, monkeypatch):
     for k in ('put_journey', 'walk_step', 'journey_step'):
         if hasattr(Learning, k): monkeypatch.setattr(Learning, k, lambda *a, **kw: pytest.fail('Leela wrote the journey'))
     before, roots = lr.journey(JID), list(ws.fs.roots)
-    r = opened(c, walk=JID, step='0', topic='')
-    one_line(r, 200, 'Opened in Leela.')
-    assert '<html class="lee-learn-page"' in r.text and 'in-pane' not in r.text
-    assert f'data-rh-url="/learn?walk={JID}&amp;step=0"' in r.text      # the pane keeps the step, not this POST route
+    to_ide(opened(c, walk=JID, step='0', topic=''))
     p = root/'lessons'/f'{JID}-0.ipynb'
     nb = Notebook.load(p)
     assert nb.meta['lesson']['walk'] == dict(walk=JID, step=0, section='2 Background', concept='softmax') and nb.meta['lesson']['name'] == 'Softmax'
     assert '> Softmax maps scores to weights.' in nb[0].source and 'Watch the sum.' in nb[0].source
     assert ws.tab.path == str(p) and announced == [str(p)]
     t, n = p.stat().st_mtime_ns, len(ws.tabs)
-    one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+    to_ide(opened(c, walk=JID, step='0'))
     assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p] and len(ws.tabs) == n and announced == [str(p)] * 2
-    one_line(opened(c, walk=JID, step='', topic='Attention'), 200, 'Opened in Leela.')   # no step: the current one; a walk wins over a topic
+    to_ide(opened(c, walk=JID, step='', topic='Attention'))   # no step: the current one; a walk wins over a topic
     assert p.stat().st_mtime_ns == t and list((root/'lessons').glob('*.ipynb')) == [p]
-    assert opened(c, walk=JID, step='1').status_code == 200 and Notebook.load(root/'lessons'/f'{JID}-1.ipynb').meta['lesson']['walk'] == dict(walk=JID, step=1, section='', concept='attention')
+    assert opened(c, walk=JID, step='1').status_code == 303 and Notebook.load(root/'lessons'/f'{JID}-1.ipynb').meta['lesson']['walk'] == dict(walk=JID, step=1, section='', concept='attention')
     assert lr.journey(JID) == before and list(ws.fs.roots) == roots and len(lr.attempts(limit=10**6)) == 0
 
 @pytest.mark.parametrize('topic, name, file', [('Softmax', 'Softmax', 'softmax'), ('Agents & tools + more', 'Agents & tools + more', 'agents-and-tools-plus-more'),
@@ -370,12 +372,12 @@ def test_open_makes_one_lesson_and_reopens_it(rig, announced, monkeypatch):
 def test_open_makes_a_topic_lesson_and_reopens_it(rig, topic, name, file):
     c, ws, lr, j, root = rig
     assert html.escape(topic) in c.get('/learn', params=dict(topic=topic)).text
-    one_line(opened(c, walk='', step='', topic=topic), 200, 'Opened in Leela.')
+    to_ide(opened(c, walk='', step='', topic=topic))
     p = root/'lessons'/f'{file}.ipynb'
     nb = Notebook.load(p)
     assert nb.meta['lesson'] == {'v': 1, 'name': name, 'topic': file} and nb[0].source.startswith(f'# {name}\n')
     t = p.stat().st_mtime_ns
-    assert opened(c, topic=topic).status_code == 200 and p.stat().st_mtime_ns == t and ws.tab.path == str(p)
+    assert opened(c, topic=topic).status_code == 303 and p.stat().st_mtime_ns == t and ws.tab.path == str(p)
     assert list((root/'lessons').iterdir()) == [p]
 
 def _plain(p): Notebook.blank().save(p)
@@ -454,7 +456,7 @@ def test_open_reads_the_journey_under_the_lock(rig, monkeypatch):
         assert _open_lock(ws.memory.path).locked()
         return journey(self, jid)
     monkeypatch.setattr(Learning, 'journey', locked)
-    assert opened(c, walk=JID, step='0').status_code == 200
+    assert opened(c, walk=JID, step='0').status_code == 303
 
 def test_open_says_when_the_store_cannot_be_read(rig, monkeypatch):
     def locked(*a): raise PermissionError('locked')
@@ -539,13 +541,13 @@ def bare(tmp_path, monkeypatch, *roots, loose=None):
 def test_open_with_no_folder_uses_the_fixed_folder_twice(tmp_path, monkeypatch):
     with bare(tmp_path, monkeypatch) as (c, ws, fixed, seen):
         assert ws.project_root is None
-        one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+        to_ide(opened(c, walk=JID, step='0'))
         p = fixed/f'{JID}-0.ipynb'
         assert p.is_file() and list(ws.fs.roots) == [fixed] and ws.tab.path == str(p) and seen == [str(p)]
         t = p.stat().st_mtime_ns
-        one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+        to_ide(opened(c, walk=JID, step='0'))
         assert p.stat().st_mtime_ns == t and not (fixed/'lessons').exists() and list(ws.fs.roots) == [fixed] and len(ws.tabs) == 1
-        assert opened(c, topic='Softmax').status_code == 200 and (fixed/'softmax.ipynb').is_file()
+        assert opened(c, topic='Softmax').status_code == 303 and (fixed/'softmax.ipynb').is_file()
         assert sorted(x.name for x in fixed.iterdir()) == [f'{JID}-0.ipynb', 'softmax.ipynb']
 
 @pytest.mark.parametrize('case', ['loose', 'loose_and_fixed', 'loose_and_parent', 'fixed_alone'])
@@ -554,7 +556,7 @@ def test_open_with_the_fixed_folder_already_open_or_covered(tmp_path, monkeypatc
     roots = dict(loose=(), loose_and_fixed=(fixed,), loose_and_parent=(tmp_path/'home',), fixed_alone=(fixed,))[case]
     with bare(tmp_path, monkeypatch, *roots, loose=None if case == 'fixed_alone' else loose) as (c, ws, fixed, seen):
         before = list(ws.fs.roots)
-        for _ in range(2): one_line(opened(c, walk=JID, step='0'), 200, 'Opened in Leela.')
+        for _ in range(2): to_ide(opened(c, walk=JID, step='0'))
         p = fixed/f'{JID}-0.ipynb'
         assert p.is_file() and ws.tab.path == str(p) and not (fixed/'lessons').exists() and len(ws.tabs) == 1
         assert list(ws.fs.roots) == (before + [fixed] if case == 'loose' else before) and len(set(ws.fs.roots)) == len(ws.fs.roots)
@@ -588,15 +590,14 @@ def test_open_with_no_folder_says_when_the_fixed_folder_cannot_be_made(tmp_path,
             if block in ('link', 'parent_link'): assert list((tmp_path/'away').iterdir()) == []
         finally: fixed.parent.parent.chmod(0o755)
 
-@pytest.mark.parametrize('pane', ['', '1'])
-def test_an_opened_lesson_keeps_the_step_title_and_a_way_back(rig, pane):
+def test_an_opened_lesson_in_the_pane_keeps_the_step_title_and_a_way_back(rig):
     c = rig[0]
-    r = opened(c, walk=JID, step='0', pane=pane)
+    r = opened(c, walk=JID, step='0', pane='1')
     one_line(r, 200, 'Opened in Leela.')
-    back = f'/learn?walk={JID}&amp;step=0' + ('&amp;pane=1' if pane else '')
-    assert '<title>Attention</title>' in r.text and f'<a href="{back}" class="lee-learn-back">Back to the step</a>' in r.text, r.text
-    r = opened(c, walk='', step='', topic='Softmax')
-    assert '<title>Softmax</title>' in r.text and 'href="/learn?topic=Softmax" class="lee-learn-back"' in r.text, r.text
+    assert '<html class="lee-learn-page in-pane"' in r.text and f'data-rh-url="/learn?walk={JID}&amp;step=0"' in r.text   # the pane keeps the step, not this POST route
+    assert '<title>Attention</title>' in r.text and f'<a href="/learn?walk={JID}&amp;step=0&amp;pane=1" class="lee-learn-back">Back to the step</a>' in r.text, r.text
+    r = opened(c, walk='', step='', topic='Softmax', pane='1')
+    assert '<title>Softmax</title>' in r.text and 'href="/learn?topic=Softmax&amp;pane=1" class="lee-learn-back"' in r.text, r.text
     assert '<title>Learn</title>' in opened(c, walk='nope').text, 'a refusal keeps the plain title'
 
 def test_lookup_keeps_the_tool_for_the_next_search(rig, monkeypatch):
@@ -697,3 +698,11 @@ def test_leela_lessons_moves_the_fixed_lessons_folder(tmp_path):
     assert run(LEELA_LESSONS='rel') == str(tmp_path/'rel'), 'a relative folder is fixed at import'
     home = tmp_path/'home'
     assert run(LEELA_LESSONS='', HOME=str(home)) == str(home/'Learning'/'Leela lessons')
+
+def test_open_in_a_tab_of_its_own_goes_to_the_ide_with_the_lesson_active(rig):
+    "Open as a lesson said Opened in Leela, and nothing the learner saw opened: the lesson was a tab in an IDE page that was not on screen."
+    c, ws, lr, j, root = rig
+    (root/'other.py').write_text('x = 1\n'); ws.open(root/'other.py')
+    r = to_ide(opened(c, walk=JID, step='0'))
+    assert ws.tab.path == str(root/'lessons'/f'{JID}-0.ipynb')
+    assert c.get(r.headers['location']).status_code == 200 and c.get('/tab/state').json()['path'] == ws.tab.path
