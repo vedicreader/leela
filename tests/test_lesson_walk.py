@@ -1,4 +1,5 @@
 "Walk lessons: the passage in the first cell, the walk in the meta, and the walk meta on each check filed from one."
+import pytest
 from fastcore.basics import AttrDict, first
 from abhyasa.store import Learning
 from leela.blocks.memory.memory import Memory
@@ -115,11 +116,42 @@ def test_the_step_page_and_the_setup_cell_name_the_data_that_is_not_on_this_comp
     home = tmp_path_factory.mktemp('home')
     monkeypatch.setenv('HOME', str(home))
     nb_walk(lr)
-    say = 'These data entries are not on this computer: EPISODES (~/data/episodes.json). Add the folder in abhyasa under Your data, or set the path in the setup cell of the lesson.'
+    say = 'These data entries are missing: EPISODES (~/data/episodes.json). Add the folder in abhyasa under Your data, or set the path in the setup cell of the lesson.'
     assert f'<p class="lee-learn-line">{say}</p>' in c.get(f'/learn?walk={NB_JID}&step=0').text
     assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
     setup = next(x for x in Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').cells if 'EPISODES = Path(' in x.source)
     run = lambda: exec(setup.source.split('RESULT =')[0], {}) or capsys.readouterr().out
-    assert run() == f"These data entries are not on this computer: EPISODES ({home}/data/episodes.json). Add the folder in abhyasa under Your data, or set the path here.\n"
+    assert run() == f"These data entries are missing: EPISODES ({home}/data/episodes.json). Add the folder in abhyasa under Your data, or set the path here.\n"
     (home/'data').mkdir(); (home/'data'/'episodes.json').write_text('[]')
-    assert run() == '' and 'not on this computer' not in c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert run() == '' and 'data entries are missing' not in c.get(f'/learn?walk={NB_JID}&step=0').text
+
+def test_an_entry_with_no_path_is_missing_and_is_none_in_the_setup_cell(tmp_path, monkeypatch, capsys):
+    "abhyasa sends `path: ''` for a folder that Your data lacks; `Path('')` is the current folder, which always exists."
+    from types import SimpleNamespace
+    from leela.blocks.learn.ui import _Data
+    from leela.blocks.nb.lesson import missing_data, setup_source
+    from fasthtml.common import to_xml
+    monkeypatch.setenv('HOME', str(tmp_path))
+    (tmp_path/'here.txt').write_text('x')
+    data = [dict(name='EPISODES', path='', what='episodes', need=True), dict(name='IMAGES', what='', need=True),
+            dict(name='HERE', path='~/here.txt', what='', need=False), dict(name='GONE', path='~/gone', what='', need=False)]
+    assert missing_data(data) == ['EPISODES (episodes, no path set)', 'IMAGES (no path set)', 'GONE (~/gone)']
+    src = setup_source(dict(requires=[], data=data), 'x.result')
+    assert "Path('')" not in src and "EPISODES = None  # set the path to episodes, as Path('~/folder').expanduser()" in src and 'IMAGES = None  # set the path, as' in src
+    g = {}; exec(src.split('RESULT =')[0], g)
+    assert g['EPISODES'] is None and g['HERE'] == tmp_path/'here.txt'
+    assert capsys.readouterr().out == (f'These data entries are missing: GONE ({tmp_path}/gone), EPISODES (episodes, no path set), IMAGES (no path set). '
+                                       'Add the folder in abhyasa under Your data, or set the path here.\n')
+    line = to_xml(_Data(SimpleNamespace(get=lambda k, d=None: dict(data=data) if k == 'nb' else d)))
+    assert 'EPISODES (episodes, no path set), IMAGES (no path set), GONE (~/gone). Add the folder in abhyasa under Your data, or set the path in the setup cell of the lesson.' in line
+    assert _Data(SimpleNamespace(get=lambda k, d=None: dict(data=data[2:3]) if k == 'nb' else d)) is None
+
+@pytest.mark.parametrize('requires, minutes, mac, said', [
+    (['numpy'], 2, True, 'Runs on: CPU.'), (['numpy'], 20, True, 'Runs on: CPU. This is slow.'), (['torch'], 2, True, 'Runs on: Apple GPU (mps)'),
+    (['torch'], 2, False, 'Runs on: CPU. This is slow.'), (['numpy'], 2, False, 'Runs on: CPU.')])
+def test_runs_on_says_slow_only_for_torch_on_the_cpu_or_a_long_run(monkeypatch, requires, minutes, mac, said):
+    "A small numpy exercise said: Runs on: CPU. This is slow."
+    from leela.blocks.nb import lesson
+    monkeypatch.setattr(lesson.sys, 'platform', 'darwin' if mac else 'linux')
+    monkeypatch.setattr(lesson.platform, 'machine', lambda: 'arm64')
+    assert lesson.runs_on(requires, minutes) == said

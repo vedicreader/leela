@@ -146,10 +146,12 @@ def save_result(metrics, images=()):
     for n, im in zip(names, ims): im.save(RESULT/n)
     (RESULT/'result.json').write_text(json.dumps(dict(metrics=metrics, images=names, device=DEVICE), allow_nan=False))'''
 
-def runs_on(requires) -> str:
-    "`Runs on:` the Apple GPU for a lesson that needs torch on an Apple silicon Mac, else the CPU."
-    mps = 'torch' in requires and sys.platform == 'darwin' and platform.machine() == 'arm64'
-    return 'Runs on: Apple GPU (mps)' if mps else 'Runs on: CPU. This is slow.'
+SLOW_MINUTES = 20   # a CPU run this long or longer is called slow
+
+def runs_on(requires, minutes=0) -> str:
+    "`Runs on:` the Apple GPU for a lesson that needs torch on an Apple silicon Mac, else the CPU; slow for torch on the CPU or a run of `SLOW_MINUTES` or more."
+    if 'torch' in requires and sys.platform == 'darwin' and platform.machine() == 'arm64': return 'Runs on: Apple GPU (mps)'
+    return 'Runs on: CPU. This is slow.' if 'torch' in requires or minutes >= SLOW_MINUTES else 'Runs on: CPU.'
 
 def md_literal(s) -> str:
     "`s` with each Markdown, math, link or HTML character as a numeric reference, so that it shows as typed."
@@ -164,15 +166,23 @@ def source_line(p) -> str:
     return ' · '.join([f'**{p.label}**', *filter(None, parts)])
 
 MISSING_DATA = 'Add the folder in abhyasa under Your data, or set the path here.'
+MISSING_HEAD = 'These data entries are missing: '
+
+def _unset(d) -> str: return f"{d['name']} ({d['what'] + ', ' if d.get('what') else ''}no path set)"
+
+def missing_data(data) -> list[str]:
+    "Each entry of the spec's `data` with no path, or a path that is not on this computer, as its name and its path or `what`."
+    return [_unset(d) if not d.get('path') else f"{d['name']} ({d['path']})" for d in data if not d.get('path') or not Path(d['path']).expanduser().exists()]
 
 def setup_source(nb, result) -> str:
-    "The setup cell: `DEVICE`, one `Path` for each `nb.data` entry and a line for each one not on this computer, `RESULT` and `save_result`."
+    "The setup cell: `DEVICE`, one `Path` for each `nb.data` entry, or None for one with no path, a line for each one missing, `RESULT` and `save_result`."
     dev = ("try:\n    import torch\n    DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'\nexcept ImportError: DEVICE = 'cpu'"
            if 'torch' in nb.get('requires', []) else "DEVICE = 'cpu'")
-    data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') for d in nb['data']]
-    names = ', '.join(f"{d['name']}={d['name']}" for d in nb['data'])
-    check = [f"_missing = [f'{{n}} ({{p}})' for n, p in dict({names}).items() if not p.exists()]",
-             f"if _missing: print('These data entries are not on this computer: ' + ', '.join(_missing) + {'. ' + MISSING_DATA!r})"] if names else []
+    data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') if d.get('path') else
+            f"{d['name']} = None  # set the path{' to ' + d['what'] if d.get('what') else ''}, as Path('~/folder').expanduser()" for d in nb['data']]
+    names, unset = ', '.join(f"{d['name']}={d['name']}" for d in nb['data'] if d.get('path')), [_unset(d) for d in nb['data'] if not d.get('path')]
+    check = [f"_missing = [f'{{n}} ({{p}})' for n, p in dict({names}).items() if not p.exists()] + {unset!r}",
+             f"if _missing: print({MISSING_HEAD!r} + ', '.join(_missing) + {'. ' + MISSING_DATA!r})"] if nb['data'] else []
     return '\n'.join(['import json', 'from pathlib import Path', dev, *data, *check, f'RESULT = Path({result!r})']) + '\n' + SAVE_RESULT
 
 def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file='lesson.ipynb', setup=None, back=None) -> Notebook:
@@ -184,7 +194,7 @@ def step_lesson(name, step:dict, nb:dict, passages=(), demo=None, env=None, file
                                                   'At the end, call save_result(metrics, images).') if x), extra={'lesson': {'role': 'run'}})
     read = '\n\n'.join(f"{_passage(dict(text=p.text))}\n\n{source_line(p)}".strip() for p in passages)
     note = f"**The tutor's note**\n\n{step['note']}" if step.get('note') else ''
-    head = f'# {name}\n\n{INTRO}' + (f"\n\n{runs_on(nb['requires'])}" if nb.get('requires') else '')
+    head = f'# {name}\n\n{INTRO}' + (f"\n\n{runs_on(nb['requires'], r['minutes'])}" if nb.get('requires') else '')
     if setup and nb.get('requires'): head += f"\n\nThis lesson needs {', '.join(map(md_literal, nb['requires']))}. [Set up the environment](<{setup}>)"
     if back: head += f'\n\n[Back to the walk ↗](<{back}>)'
     ex = {k: nb[k] for k in ('task', 'fname', 'stub', 'tests')} | ({'requires': nb['requires']} if nb.get('requires') else {}) | ({'env': env} if env else {})

@@ -64,11 +64,10 @@ def _Env(v, q, pane, key, st, job=None):
                 method='post', action='/learn/env', cls='lee-learn-env')
 
 def _Data(v):
-    "The line that names each data entry of the step whose path is not on this computer; None when all are."
-    from pathlib import Path
-    from ..nb.lesson import MISSING_DATA
-    if not (gone := [f"{d['name']} ({d['path']})" for d in (v.get('nb') or {}).get('data') or [] if not Path(d['path']).expanduser().exists()]): return None
-    return P(f"These data entries are not on this computer: {', '.join(gone)}. {MISSING_DATA.replace(' here', ' in the setup cell of the lesson')}", cls='lee-learn-line')
+    "The line that names each data entry of the step with no path or a path that is not on this computer; None when there is none."
+    from ..nb.lesson import MISSING_DATA, MISSING_HEAD, missing_data
+    if not (gone := missing_data((v.get('nb') or {}).get('data') or [])): return None
+    return P(f"{MISSING_HEAD}{', '.join(gone)}. {MISSING_DATA.replace(' here', ' in the setup cell of the lesson')}", cls='lee-learn-line')
 
 def StepPage(v, q, pane:bool=False, root=None, jobs=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane; `jobs` tells a running setup."
