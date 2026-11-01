@@ -2095,6 +2095,8 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 }
 .lee-reveal, .lee-guide-out { font-family: inherit; white-space: pre-wrap; }
 .lee-guide { margin: 4px 0 8px; }
+/* The board's side panel (vendored lee-board.css) is fixed at the top right of the window. In the IDE it stands in the notebook area, under its tab bar and left of the side panes: lesson.js `guideRoom` measures that area. */
+body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); right: var(--lee-panel-right, 16px); max-height: calc(100vh - var(--lee-panel-top, var(--panel-top)) - 200px); }
 .lee-lesson-review { font-family: inherit; }
 .lee-lesson-review-body { overflow: auto; padding: 16px; }
 .lee-lesson-review-card { overflow-wrap: anywhere; }

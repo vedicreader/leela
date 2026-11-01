@@ -1,4 +1,4 @@
-import asyncio, json
+import asyncio, json, os
 from pathlib import Path
 import pytest
 from test_completion_caret_slow import _real_page
@@ -154,9 +154,13 @@ def test_the_new_board_builds_its_panel_from_the_code_the_page_sends(tmp_path, m
         code = [a for a in posted[0]['anchors'] if a['id'].startswith('code')]
         assert code == [dict(id='code1', text='x = tensor([18, 47, 56])')], posted[0]['anchors']
         assert await cell.locator('.lee-md-cell [data-guide-id="code1"]').count() == 1
-        p = await pg.evaluate("""() => { const p = document.getElementById('board-panel'), b = p.getBoundingClientRect();
-            return {title: p.querySelector('.board-panel-title')?.textContent, rows: [...p.querySelectorAll('.board-row')].map(r => r.textContent), right: b.right, top: b.top,
+        p = await pg.evaluate("""() => { const p = document.getElementById('board-panel'), b = p.getBoundingClientRect(), e = document.getElementById('editorstage').getBoundingClientRect();
+            return {title: p.querySelector('.board-panel-title')?.textContent, rows: [...p.querySelectorAll('.board-row')].map(r => r.textContent), box: [b.left, b.top, b.right, b.bottom], stage: [e.left, e.top, e.right, e.bottom],
                     hand: getComputedStyle(p).getPropertyValue('--hand'), font: [...document.fonts].some(f => f.family.replace(/["']/g, '') === 'Patrick Hand')}; }""")
-        assert p['title'] == 'tensors and targets' and p['rows'] == ['[18]⟶47'] and p['right'] > 1150 and p['top'] < 200, p
+        if (shot := os.environ.get('LEELA_SHOTS')): await pg.screenshot(path=f'{shot}/board-panel-in-the-ide.png')
+        (l, t, r, b), (sl, st, sr, sb) = p['box'], p['stage']
+        assert p['title'] == 'tensors and targets' and p['rows'] == ['[18]⟶47'], p
+        assert sl <= l and r <= sr and st <= t < st + 40 and r > (sl + sr) / 2, 'the panel stands at the top right of the notebook area, under its tab bar, not over the side panes' 
         assert 'Patrick Hand' in p['hand'] and p['font'], 'the hand font of the paper comes from /leefonts/hand.css'
+        assert 'Browser voice' in (strip := await pg.locator('#guide-strip').inner_text()) and 'on this Mac' in strip and 'hosted' not in strip, strip
     asyncio.run(_real_page(go, tmp_path))

@@ -133,8 +133,8 @@ const guideAnchors = cell => $$('[data-guide-id]', cell).flatMap(e => { const id
 const guideFind = (cell, id) => { const q = `[data-guide-id="${CSS.escape(id)}"]`; return $(q, cell) || $$('.lee-rupaka', cell).map(h => h.shadowRoot && $(q, h.shadowRoot)).find(Boolean) || null; };
 const guideDemo = (cell, open) => set => { const inner = open && [...(guideFind(cell, 'demo')?.shadowRoot?.children || [])].find(n => n.rupaka); if (inner) Rupaka.set(inner, set); };
 //: Draws the board in the cell it was asked from; false when the board is missing or fails, so the plain text stays.
-//: Leela speaks with the browser's voice; the board's strip names it after the Voice button.
-const GUIDE_VOICE = {model: 'Browser voice', where: 'on this computer'};
+//: Leela speaks with the browser's voice; the board's strip names it after the Voice button. The board calls only "on this Mac" local, and any other place "hosted", so off a Mac the strip names no place.
+const GUIDE_VOICE = /Mac/.test(globalThis.navigator?.platform || '') ? {model: 'Browser voice', where: 'on this Mac'} : undefined;
 //: "Show me …" to the guide: the hand-off to the demo of this idea in abhyasa, in place of a board.
 function guideShowCard(sh, cell, id) {
   $('.lee-guide-out', cell)?.remove();
@@ -143,8 +143,19 @@ function guideShowCard(sh, cell, id) {
   else el.append('Start abhyasa to see the demo of this idea.');
   $('#out-' + id, cell).after(el);
 }
+//: Puts the board's side panel in the notebook area: under its tab bar, left of the side panes, and at most 45 % of its width (lee-ide.css).
+function guideRoom() {
+  const r = $('#editorstage')?.getBoundingClientRect();
+  if (!r?.width) return;
+  const s = document.documentElement.style;
+  s.setProperty('--lee-panel-top', `${Math.round(r.top + 8)}px`);
+  s.setProperty('--lee-panel-right', `${Math.round(innerWidth - r.right + 12)}px`);
+  s.setProperty('--panel-w', `${Math.round(Math.min(440, r.width * .45))}px`);
+}
+globalThis.addEventListener?.('resize', () => { if (document.getElementById('board-panel')) guideRoom(); });
 async function guidePlay(d, cell, board) {
   if (!board) return false;
+  guideRoom();
   const assets = $('meta[name="lee-board-assets"]')?.content || '/leestatic/board/';
   try { await board.play(d, {host: {resolve: i => guideFind(cell, i), demo: guideDemo(cell, d.demo_open), assets}, voiceAt: GUIDE_VOICE}); return true; }
   catch (e) { console.warn('Leela guide:', e); return false; }

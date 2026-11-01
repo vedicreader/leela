@@ -254,7 +254,7 @@ const ctx = {said: [], reply: null, selection: '', typed: null, CSS: {escape: s 
   cells: [{id: 'a', cell_type: 'markdown', extra: {lesson: {role: 'prediction'}}}, {id: 'b', cell_type: 'markdown', extra: {}},
           {id: 'c', cell_type: 'code', extra: {exercise: {tests: []}}}, {id: 'd', cell_type: 'code', extra: {}}]}};
 ctx.document = {createElement: el, addEventListener() {}, head: {appendChild(n) { loads.push(n); if (n.src) setTimeout(() => n.onerror()); return n; }}};
-ctx.window = ctx; ctx.Rupaka = {set: (inner, s) => sets.push([inner, s])};
+ctx.window = ctx; ctx.navigator = {platform: 'MacIntel'}; ctx.Rupaka = {set: (inner, s) => sets.push([inner, s])};
 ctx.getSelection = () => ctx.selection;
 ctx.$ = (sel, root) => sel === '.lee-rupaka' ? ctx.rupakaHost : sel === '.lee-cellmain' ? main : sel === '#out-b' ? out : sel.startsWith('.lee-cell[') ? cell : sel === '[data-guide-id="demo"]' ? demoHost : sel.startsWith('[data-guide-id=') ? target : null;
 ctx.$$ = (sel, root) => sel === '[data-guide-id]' ? root.guideEls : [];
@@ -327,7 +327,7 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide/stream', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", anchors=[dict(id='f1', text='a_t b', parts=['a_t', 'b']), dict(id='img1', text='A cat'), dict(id='img2', text='inline'), dict(id='f2', text='', parts=[])])]
     assert any('lee-board.js' in s for s in got['loaded']) and any('lee-board.css' in s for s in got['loaded'])
     assert got['played'] == [1, 2, ['assets', 'demo', 'resolve'], '/leestatic/board/', True, True, True], 'the board is drawn, not the text, with no speak hook'
-    assert got['voiceAt'] == dict(model='Browser voice', where='on this computer'), 'the strip names the voice that speaks'
+    assert got['voiceAt'] == dict(model='Browser voice', where='on this Mac'), 'the strip names the voice that speaks, and that it speaks on this Mac'
     assert got['closed'] == 0 and got['open'] == [{'t': 2}], 'the demo moves only when every gate is filed'
     assert got['broke'] == 'It is the share left.', 'a board that fails to draw leaves the plain text'
     assert got['out'].splitlines() == ['It is the share left.', 'It falls with t.', 'Source 1: your vault, DDPM', "In the tutor's own words."]
