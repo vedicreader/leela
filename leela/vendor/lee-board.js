@@ -343,6 +343,8 @@
   }
   // The side panel: one card at the top right of the window that the rows of the board fill, step by step (see the API).
   const INLINE = 1100;   // below this window width the panel stands in the page
+  // The side pane (pane.js) owns the right side: while it is open, the panel and the Show card stand in the page, as below 1100 px.
+  const inPage = () => innerWidth < INLINE || document.documentElement.classList.contains('rh-open');
   function panelEl() {
     let p = document.getElementById('board-panel');
     if (!p) {
@@ -363,7 +365,7 @@
     document.body.classList.toggle('has-panel', !!on);
     if (!main) return;
     main.style.marginLeft = main.style.maxWidth = '';
-    if (!on || innerWidth < INLINE || (pic && pic.classList.contains('inline'))) return;
+    if (!on || inPage() || (pic && pic.classList.contains('inline'))) return;
     const left = pic ? pic.getBoundingClientRect().left : innerWidth - 16 - Math.min(440, innerWidth * .36);   // before the panel comes: its place (board.css --panel-w)
     const r = main.getBoundingClientRect(), over = r.right - (left - 24);
     if (over <= 0) return;
@@ -371,12 +373,26 @@
     main.style.marginLeft = r.left - shift + 'px';   // the right margin stays auto: the width stays
     if (over > shift) main.style.maxWidth = r.width - (over - shift) + 'px';
   }
-  function dockPanel(p, b) {   // in the page under the marked thing below 1100 px; else fixed at the top right (board.css)
-    const inline = innerWidth < INLINE && b && b.el;
+  function dockPanel(p, b) {   // in the page under the marked thing below 1100 px or beside the pane; else fixed at the top right (board.css)
+    if (b !== undefined) p._at = b;
+    b = p._at;
+    const at = b && b.el && b.el.isConnected ? b.el : document.documentElement.classList.contains('rh-open') && document.querySelector('main h1');
+    const inline = inPage() && at;
     p.classList.toggle('inline', !!inline);
-    if (inline) { const after = b.el.closest('pre, p, li, figure, section, .check') || b.el; if (after.nextElementSibling !== p) after.after(p); }
+    if (inline) { const after = at.closest('pre, p, li, figure, section, .check') || at; if (after.nextElementSibling !== p) after.after(p); }
     else if (p.parentElement !== host()) host().append(p);
   }
+  // The pane opens or closes: the panel and the Show card go into the page, or back to the top right.
+  new MutationObserver(() => {
+    const p = document.getElementById('board-panel'), c = document.getElementById('guide-show');
+    if (p) dockPanel(p);
+    if (c) {
+      const main = document.querySelector('main'), h1 = main && main.querySelector('h1'), inline = inPage() && main;
+      c.classList.toggle('inline', !!inline);
+      if (inline && !main.contains(c)) h1 ? h1.after(c) : main.prepend(c); else if (!inline && c.parentElement !== document.body) document.body.append(c);
+    }
+    if (p || c) room(true);
+  }).observe(document.documentElement, {attributes: true, attributeFilter: ['class']});
   const beatOf = m => { const k = st.marks.indexOf(m); return st.marks.slice(0, k + 1).filter(x => x.o.op === 'panel').length; };
   function placePanel(m) {
     const o = m.o, p = panelEl(), beat = String(beatOf(m)), parts = [];
@@ -776,7 +792,7 @@
     for (const m of st.marks) if (!(forward && PANEL.includes(m.o.op) && m.step < i)) unmount(m);   // on D next the panel and its rows stay
     if (!forward) panelGone();   // else the panel is built again from the marks of the steps up to this one
     st.video = null;
-    if (innerWidth >= INLINE && st.marks.some(m => m.step <= i && PANEL.includes(m.o.op))) room(true);   // the column makes room first, so the scroll below is the last one
+    if (!inPage() && st.marks.some(m => m.step <= i && PANEL.includes(m.o.op))) room(true);   // the column makes room first, so the scroll below is the last one
     into(st.marks.filter(m => m.step === i));
     const run = (m, live) => {   // a mark that starts: `clear` takes away the marks before it
       if (m.o.op === 'clear') { st.marks.filter(x => x.drawn && (m.o.n == null || x.step === m.o.n - 1)).forEach(unmount); return; }

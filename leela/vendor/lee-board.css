@@ -48,7 +48,7 @@
 .board-lead.on-dark circle { fill: var(--board-lead-light); }
 
 /* The strip at the foot of the window, while a board shows: frosted, with the spoken line read out word by word. */
-.guide-strip { position: fixed; left: 0; right: 0; bottom: 0; z-index: 62; max-height: 40vh; overflow: auto; padding: var(--s3, 12px) var(--s5, 28px);
+.guide-strip { position: fixed; left: 0; right: var(--rh-gap, 0px); bottom: 0; z-index: 62; max-height: 40vh; overflow: auto; padding: var(--s3, 12px) var(--s5, 28px);
                background: color-mix(in oklab, var(--raised, var(--bg)) 74%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6);
                border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent); box-shadow: 0 -12px 30px -18px rgb(40 25 10 / .35); }
 .guide-strip[hidden] { display: none; }
