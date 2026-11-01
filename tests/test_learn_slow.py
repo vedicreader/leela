@@ -231,8 +231,7 @@ def test_option_s_opens_the_lesson_in_a_tab_and_in_the_pane(tmp_path, monkeypatc
     async def go(pg, base):
         await pg.goto(base + STEP0, wait_until='networkidle')
         await pg.locator('blockquote').click(); await pg.keyboard.press('Alt+s')
-        await pg.wait_for_url('**/learn/open'); await pg.wait_for_load_state('load')
-        assert await pg.locator(OPENED).inner_text() == 'Opened in Leela.'
+        await pg.wait_for_url(base + '/'); await pg.wait_for_function('p => window.lee && lee.path === p', arg=p)   # a tab of its own goes to the IDE
         await _ide(pg, base)
         frame = await _side(pg, tmp_path)
         await frame.locator('blockquote').click(); await frame.locator('body').press('Alt+s')
