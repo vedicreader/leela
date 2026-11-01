@@ -12,8 +12,8 @@ def test_record_parameters():
     assert params['meta'].kind is inspect.Parameter.VAR_KEYWORD
 
 def test_exercise_pure_contract():
-    from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
-    assert callable(safe_test) and callable(validate_exercise)
+    from abhyasa.contract import SAFE_NAMES, check_exercise, safe_test
+    assert callable(safe_test) and callable(check_exercise)
     assert isinstance(SAFE_NAMES, (list, tuple)) and 'len' in SAFE_NAMES
     assert safe_test('assert double(2) == 4', 'double')
     assert not safe_test('assert double.__globals__', 'double')
@@ -24,7 +24,7 @@ def test_six_hint_rungs():
 
 def test_pure_imports_in_isolated_python():
     src = '''import sys, json
-import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.check, abhyasa.talk, abhyasa.contract, abhyasa.stagekit, abhyasa.sources, abhyasa.demo, rupaka.spec
+import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.talk, abhyasa.contract, abhyasa.stagekit, abhyasa.sources, abhyasa.demo, rupaka.spec
 print(json.dumps([n for n in sys.modules if n == 'ipywidgets' or n.startswith('ipywidgets.') or n == 'abhyasa.app' or n == 'abhyasa.blocks' or n.startswith('abhyasa.blocks.')]))
 '''
     p = subprocess.run([sys.executable, '-I', '-c', src], capture_output=True, text=True, timeout=60)
@@ -94,8 +94,32 @@ def test_prompts_contract(abhyasa_cfg):
     from abhyasa.prompts import PROMPTS, prompt
     assert 'tutor' in PROMPTS and prompt('tutor') == PROMPTS['tutor'].dflt
 
+def abhyasa_imports():
+    "Each `(module, name)` that Leela's source imports from abhyasa; `name` is None for `import abhyasa.x`."
+    import ast
+    seen = set()
+    for f in (ROOT/'leela').rglob('*.py'):
+        for n in ast.walk(ast.parse(f.read_text(), str(f))):
+            if isinstance(n, ast.ImportFrom) and n.level == 0 and (n.module or '').split('.')[0] == 'abhyasa': seen |= {(n.module, a.name) for a in n.names}
+            elif isinstance(n, ast.Import): seen |= {(a.name, None) for a in n.names if a.name.split('.')[0] == 'abhyasa'}
+    return sorted(seen, key=str)
+
+def test_every_name_leela_imports_from_abhyasa_is_there():
+    "abhyasa main removed `abhyasa.check`, and Leela did not start: `from abhyasa import check` raised ImportError."
+    import importlib
+    got = abhyasa_imports()
+    assert ('abhyasa.contract', 'handoff') in got and len(got) > 20, got
+    gone = []
+    for mod, name in got:
+        try: m = importlib.import_module(mod)
+        except ImportError as e: gone.append(f'{mod}: {e}'); continue
+        if name is not None and not hasattr(m, name):
+            try: importlib.import_module(f'{mod}.{name}')
+            except ImportError: gone.append(f'{mod}.{name}')
+    assert gone == [], gone
+
 def test_run_isolated_contract():
-    from abhyasa.check import run_isolated
+    from leela.blocks.nb.check import run_isolated
     ps = inspect.signature(run_isolated).parameters
     assert list(ps)[:4] == ['kind', 'fname', 'source', 'tests'] and {'total', 'setup', 'sandbox', 'python', 'unix'} <= ps.keys()
 
