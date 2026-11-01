@@ -60,6 +60,24 @@ def hand_routes():
     return [Route(HAND_URL + 'hand.css', lambda req: Response(css, media_type='text/css', headers={'Cache-Control': 'max-age=86400'})),
             Mount(HAND_URL.rstrip('/'), StaticFiles(directory=str(assets().fonts), check_dir=False))]
 
+BOARD_URL = '/leeboard/'   # the screen guide's board, from Leela's own rupaka (`rupaka.board`)
+
+def board_url(name) -> str:
+    "The URL of the board file `name` (`board.js`, `board.css`, `texparts.js`), which changes with rupaka's version; `libs/` for the folder of the pens."
+    import rupaka
+    return BOARD_URL + name + ('' if name.endswith('/') else f'?v={rupaka.__version__}')
+
+def board_routes():
+    "The routes of `BOARD_URL`: rupaka's board bundles, its formula parts and the folder of its pens (`host.assets`)."
+    from rupaka.board import assets, bundle
+    from starlette.responses import Response
+    from starlette.routing import Mount, Route
+    a, cache = assets(), {'Cache-Control': 'max-age=86400'}
+    js, css, tex = bundle('js'), bundle('css'), a.tex.read_text()
+    page = lambda text, mime: lambda req: Response(text, media_type=mime, headers=cache)
+    return [Route(BOARD_URL + 'board.js', page(js, 'text/javascript')), Route(BOARD_URL + 'board.css', page(css, 'text/css')),
+            Route(BOARD_URL + 'texparts.js', page(tex, 'text/javascript')), Mount(BOARD_URL + 'libs', StaticFiles(directory=str(a.libs), check_dir=False))]
+
 class Assets:
     "Serve one URL prefix from several directories, first match winning."
     def __init__(self, *dirs):

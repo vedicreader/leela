@@ -646,7 +646,7 @@ function loadTexparts() {
   return texLoad.p ||= new Promise((ok, no) => {
     if (window.abhyasaTex) return ok(window.abhyasaTex);
     const s = document.createElement('script');
-    s.src = $('meta[name="lee-texparts-src"]')?.content || '/leestatic/lee-texparts.js';
+    s.src = $('meta[name="lee-texparts-src"]')?.content || '/leeboard/texparts.js';
     s.onload = () => window.abhyasaTex ? ok(window.abhyasaTex) : no(new Error('texparts.js defined no abhyasaTex'));
     s.onerror = () => { s.remove(); no(new Error('texparts.js could not be loaded')); };
     document.head.appendChild(s);
@@ -3483,10 +3483,10 @@ function loadBoard() {
   if (window.abhyasaBoard) return Promise.resolve(window.abhyasaBoard);
   return boardLoad.p ||= (async () => {
     const meta = n => $(`meta[name="${n}"]`)?.content;
-    document.head.appendChild(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: meta('lee-board-css') || '/leestatic/lee-board.css'}));
+    document.head.appendChild(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: meta('lee-board-css') || '/leeboard/board.css'}));
     await new Promise((ok, no) => {
       const s = document.createElement('script');
-      s.src = meta('lee-board-src') || '/leestatic/lee-board.js'; s.onload = ok;
+      s.src = meta('lee-board-src') || '/leeboard/board.js'; s.onload = ok;
       s.onerror = () => { s.remove(); no(new Error('board.js could not be loaded')); };
       document.head.appendChild(s);
     });
@@ -3519,8 +3519,8 @@ const guideAnchors = cell => $$('[data-guide-id]', cell).flatMap(e => { const id
 const guideFind = (cell, id) => { const q = `[data-guide-id="${CSS.escape(id)}"]`; return $(q, cell) || $$('.lee-rupaka', cell).map(h => h.shadowRoot && $(q, h.shadowRoot)).find(Boolean) || null; };
 const guideDemo = (cell, open) => set => { const inner = open && [...(guideFind(cell, 'demo')?.shadowRoot?.children || [])].find(n => n.rupaka); if (inner) Rupaka.set(inner, set); };
 //: Draws the board in the cell it was asked from; false when the board is missing or fails, so the plain text stays.
-//: Leela speaks with the browser's voice; the board's strip names it after the Voice button. The board calls only "on this Mac" local, and any other place "hosted", so off a Mac the strip names no place.
-const GUIDE_VOICE = /Mac/.test(globalThis.navigator?.platform || '') ? {model: 'Browser voice', where: 'on this Mac'} : undefined;
+//: Leela speaks with the browser's voice, on this computer: the board's strip names it after the Voice button, with `local` so that it is never called hosted.
+const GUIDE_VOICE = {model: 'Browser voice', local: true};
 //: "Show me …" to the guide: the hand-off to the demo of this idea in abhyasa, in place of a board.
 function guideShowCard(sh, cell, id) {
   $('.lee-guide-out', cell)?.remove();
@@ -3542,7 +3542,7 @@ globalThis.addEventListener?.('resize', () => { if (document.getElementById('boa
 async function guidePlay(d, cell, board) {
   if (!board) return false;
   guideRoom();
-  const assets = $('meta[name="lee-board-assets"]')?.content || '/leestatic/board/';
+  const assets = $('meta[name="lee-board-assets"]')?.content || '/leeboard/libs/';
   try { await board.play(d, {host: {resolve: i => guideFind(cell, i), demo: guideDemo(cell, d.demo_open), assets}, voiceAt: GUIDE_VOICE}); return true; }
   catch (e) { console.warn('Leela guide:', e); return false; }
 }

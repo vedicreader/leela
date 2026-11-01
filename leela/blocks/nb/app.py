@@ -588,7 +588,7 @@ def connect(app, ctx):
     async def nb_guide_stream(req):
         "The screen guide's board as events: `wait` while it works, `step` for each step of a sure tutor board as soon as it is whole, then `board` or `error`; or one `show`, the hand-off to abhyasa, for a \"show me …\". The lesson lock is held until the model call ends, not while the page reads."
         if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
-        try: from abhyasa.guide import stream_board  # noqa: F401
+        try: from rupaka.board import stream_board  # noqa: F401   the stream of steps; abhyasa's `explain` calls it with abhyasa's quote check
         except ImportError: return fail(GUIDE_STREAM_NEEDS)
         if not isinstance(asked := guide_said(d), tuple): return asked
         said, anchors, demo = asked
@@ -606,7 +606,7 @@ def connect(app, ctx):
         def run():
             try: q.put(('board', guide_board(ctx.memory, nb, cell, tab.path, said, None, anchors, demo, stop=stop, on_state=state,
                                              on_step=lambda s, k, o: q.put(('step', dict(step=s, k=k, tier='tutor', demo_open=o))))))
-            except ImportError as e: q.put(('error', dict(error=GUIDE_STREAM_NEEDS if (e.name or '').startswith('abhyasa') else errstr(e))))
+            except ImportError as e: q.put(('error', dict(error=GUIDE_STREAM_NEEDS if (e.name or '').startswith(('abhyasa', 'rupaka')) else errstr(e))))
             except Exception as e: q.put(('error', dict(error=errstr(e))))
         asyncio.ensure_future(off_loop(run)).add_done_callback(lambda _: lesson_lock.release())
         async def events():
@@ -633,7 +633,7 @@ def connect(app, ctx):
             notes = []
             try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors, demo)
             except ImportError as e:
-                if (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail(GUIDE_NEEDS)
+                if (getattr(e, 'name', '') or '').startswith(('abhyasa', 'rupaka')): return fail(GUIDE_NEEDS)
                 return fail(errstr(e))
             except Exception as e: return fail(errstr(e))
             return dict(board, notes=notes, ok=True)

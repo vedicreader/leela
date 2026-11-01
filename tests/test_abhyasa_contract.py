@@ -37,12 +37,12 @@ def test_rupaka_vendor_version():
     version = re.search(r"\bversion:\s*'([^']+)'", text).group(1)
     assert version == rupaka.__version__, f'vendored rupaka {version}, installed {rupaka.__version__}: write the bundle again (leela/vendor/README)'
     deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
-    assert f'rupaka=={version}' in deps
+    assert 'rupaka>=0.0.10' in deps, 'the floor is the rupaka with the board'
 
 def test_abhyasa_dependency_floor():
     t = tomllib.loads((ROOT/'pyproject.toml').read_text())
     deps = t['project']['dependencies']
-    assert 'abhyasa==0.0.15' in deps and 'rupaka==0.0.9' in deps
+    assert 'abhyasa>=0.0.16' in deps and 'rupaka>=0.0.10' in deps
     assert 'abhyasa' not in t['tool']['uv']['sources']
 
 def test_room_spec_contract():

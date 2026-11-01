@@ -1,3 +1,13 @@
+/* static/paper.css */
+/* The paper: one look for every picture of an idea. The paper theme of a demo (rupaka.css) and the side panel of the board
+   (board.css) take these tokens, with the hand font Patrick Hand (OFL): a host loads it with font_css(). The paper is always light. */
+:root {
+  --rk-paper: hsl(42 62% 96%); --rk-paper-ink: hsl(28 16% 15%); --rk-paper-ink2: hsl(28 12% 26%); --rk-paper-mute: hsl(30 10% 36%);
+  --rk-paper-line: hsl(38 28% 82%); --rk-paper-in: hsl(207 62% 46%); --rk-paper-out: hsl(4 72% 56%);
+  --rk-paper-acc: hsl(210 60% 36%); --rk-paper-ok: hsl(130 42% 25%); --rk-paper-no: hsl(4 64% 40%);
+  --rk-hand: 'Patrick Hand', 'Comic Neue', ui-rounded, system-ui, sans-serif;
+}
+
 /* static/rupaka.css */
 /* rupaka core style. Blocks use only the --rk-* vars. Each var maps to the host's vars in this order:
    abhyasa (--fg, --acc, ...), vedicreader (--mh-*), leela (--lee-*), then system colours. So a demo takes the look of its page. */
@@ -24,10 +34,10 @@
 }
 /* The paper theme: a warm paper ground, light boxes, sketch lines and a hand font (Patrick Hand, OFL). It is always light.
    A host puts data-rk-theme="paper" on the demo element or on a parent, and loads the font with font_css(). */
-[data-rk-theme="paper"] .rk {
-  --rk-bg: hsl(42 62% 96%); --rk-fg: hsl(28 16% 15%); --rk-ink2: hsl(28 12% 26%); --rk-mute: hsl(30 10% 36%); --rk-line: hsl(38 28% 82%);
-  --rk-acc: hsl(210 60% 36%); --rk-ok: hsl(130 42% 25%); --rk-no: hsl(4 64% 40%); --rk-in: hsl(207 62% 46%); --rk-out: hsl(4 72% 56%);
-  --rk-serif: 'Patrick Hand', 'Comic Neue', ui-rounded, system-ui, sans-serif; --rk-head: var(--rk-serif);
+[data-rk-theme="paper"] .rk {   /* paper.css has the tokens: the side panel of the board uses them too */
+  --rk-bg: var(--rk-paper); --rk-fg: var(--rk-paper-ink); --rk-ink2: var(--rk-paper-ink2); --rk-mute: var(--rk-paper-mute); --rk-line: var(--rk-paper-line);
+  --rk-acc: var(--rk-paper-acc); --rk-ok: var(--rk-paper-ok); --rk-no: var(--rk-paper-no); --rk-in: var(--rk-paper-in); --rk-out: var(--rk-paper-out);
+  --rk-serif: var(--rk-hand); --rk-head: var(--rk-serif);
   --rk-r-box: 14px 4px 12px 5px / 5px 12px 4px 14px; --rk-sketch: inline;
   color-scheme: light; background: var(--rk-bg); font-size: 19px; padding: var(--rk-s5); border-radius: var(--rk-r);
   box-shadow: 0 0 0 1px hsl(38 30% 84%), 0 10px 28px hsl(30 30% 20% / .10);

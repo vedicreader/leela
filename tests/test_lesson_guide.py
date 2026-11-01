@@ -128,6 +128,7 @@ def guide(monkeypatch):
     monkeypatch.setitem(sys.modules, 'abhyasa.guide', mod)
     monkeypatch.setattr(abhyasa, 'guide', mod, raising=False)
     monkeypatch.setattr(abhyasa.llm, 'route_ask', lambda model=None: 'the ask')
+    monkeypatch.setattr('rupaka.board.norm_tex', lambda s: 'n:' + s.strip())
     return calls
 
 def ask_guide(r, i=1, said="I don't get alpha bar", **kw):
@@ -170,9 +171,9 @@ def test_guide_stream_reports_a_failed_explain_as_an_event_and_refuses_before_th
     for bad in (dict(said=' '), dict(cell_id='missing'), dict(anchors='f1'), dict(demo='x')):
         res = stream(**bad)
         assert res.status_code == 400 and res.json()['error'], bad
-    monkeypatch.delattr(sys.modules['abhyasa.guide'], 'stream_board')
+    monkeypatch.delattr('rupaka.board.stream_board')
     res = stream()
-    assert res.status_code == 400 and '0.0.15' in res.json()['error'], 'abhyasa 0.0.14 cannot stream a board'
+    assert res.status_code == 400 and res.json()['error'] == lesson_mod.GUIDE_STREAM_NEEDS, 'a rupaka with no board cannot stream one'
 
 def test_guide_route_builds_the_context_and_returns_the_board(serve, guide):
     r = serve(lesson(f'Alpha bar is the share left.\n\n$\\bar\\alpha_t$'))
@@ -205,10 +206,10 @@ def test_guide_route_takes_formulas_and_figures_from_the_page_list_through_norm_
         res = ask_guide(r, anchors=bad)
         assert res.status_code == 400 and 'anchors' in res.json()['error'], bad
 
-def test_guide_route_needs_the_norm_tex_of_abhyasa_0014(serve, guide, monkeypatch):
-    monkeypatch.delattr(sys.modules['abhyasa.guide'], 'norm_tex')
+def test_guide_route_needs_the_norm_tex_of_rupaka_0010(serve, guide, monkeypatch):
+    monkeypatch.delattr('rupaka.board.norm_tex')
     res = ask_guide(serve(lesson()))
-    assert res.status_code == 400 and '0.0.14' in res.json()['error']
+    assert res.status_code == 400 and res.json()['error'] == lesson_mod.GUIDE_NEEDS and '0.0.10' in res.json()['error']
 
 def test_vault_sources_find_a_paper_and_never_an_attempt(serve):
     "The guide's sources are `VaultSource(lr)`: a paper on the `papers` shelf is quoted, and what the learner answered on the `learning` shelf never is."
@@ -223,7 +224,7 @@ def test_vault_sources_find_a_paper_and_never_an_attempt(serve):
 def test_guide_route_names_the_abhyasa_it_needs_when_the_guide_is_missing(serve, monkeypatch):
     monkeypatch.setitem(sys.modules, 'abhyasa.guide', None)
     res = ask_guide(serve(lesson()))
-    assert res.status_code == 400 and '0.0.14' in res.json()['error'] and 'abhyasa' in res.json()['error']
+    assert res.status_code == 400 and '0.0.16' in res.json()['error'] and 'abhyasa' in res.json()['error']
 
 def test_guide_route_refuses_what_it_cannot_explain(serve, guide):
     r = serve(lesson())
@@ -254,7 +255,7 @@ const ctx = {said: [], reply: null, selection: '', typed: null, CSS: {escape: s 
   cells: [{id: 'a', cell_type: 'markdown', extra: {lesson: {role: 'prediction'}}}, {id: 'b', cell_type: 'markdown', extra: {}},
           {id: 'c', cell_type: 'code', extra: {exercise: {tests: []}}}, {id: 'd', cell_type: 'code', extra: {}}]}};
 ctx.document = {createElement: el, addEventListener() {}, head: {appendChild(n) { loads.push(n); if (n.src) setTimeout(() => n.onerror()); return n; }}};
-ctx.window = ctx; ctx.navigator = {platform: 'MacIntel'}; ctx.Rupaka = {set: (inner, s) => sets.push([inner, s])};
+ctx.window = ctx; ctx.Rupaka = {set: (inner, s) => sets.push([inner, s])};
 ctx.getSelection = () => ctx.selection;
 ctx.$ = (sel, root) => sel === '.lee-rupaka' ? ctx.rupakaHost : sel === '.lee-cellmain' ? main : sel === '#out-b' ? out : sel.startsWith('.lee-cell[') ? cell : sel === '[data-guide-id="demo"]' ? demoHost : sel.startsWith('[data-guide-id=') ? target : null;
 ctx.$$ = (sel, root) => sel === '[data-guide-id]' ? root.guideEls : [];
@@ -325,9 +326,9 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     assert got['buttons'] == [[], ["I don't get…"], ["I don't get…"], []], 'a markdown or exercise cell, never a prediction, a card or a plain code cell'
     assert got['plain'] == [], 'a notebook with no lesson cell is not a lesson'
     assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide/stream', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", anchors=[dict(id='f1', text='a_t b', parts=['a_t', 'b']), dict(id='img1', text='A cat'), dict(id='img2', text='inline'), dict(id='f2', text='', parts=[])])]
-    assert any('lee-board.js' in s for s in got['loaded']) and any('lee-board.css' in s for s in got['loaded'])
-    assert got['played'] == [1, 2, ['assets', 'demo', 'resolve'], '/leestatic/board/', True, True, True], 'the board is drawn, not the text, with no speak hook'
-    assert got['voiceAt'] == dict(model='Browser voice', where='on this Mac'), 'the strip names the voice that speaks, and that it speaks on this Mac'
+    assert any('/leeboard/board.js' in s for s in got['loaded']) and any('/leeboard/board.css' in s for s in got['loaded'])
+    assert got['played'] == [1, 2, ['assets', 'demo', 'resolve'], '/leeboard/libs/', True, True, True], 'the board is drawn, not the text, with no speak hook'
+    assert got['voiceAt'] == dict(model='Browser voice', local=True), 'the strip names the voice that speaks, and that it is local'
     assert got['closed'] == 0 and got['open'] == [{'t': 2}], 'the demo moves only when every gate is filed'
     assert got['broke'] == 'It is the share left.', 'a board that fails to draw leaves the plain text'
     assert got['out'].splitlines() == ['It is the share left.', 'It falls with t.', 'Source 1: your vault, DDPM', "In the tutor's own words."]

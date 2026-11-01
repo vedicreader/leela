@@ -1,6 +1,7 @@
 import json, shutil, subprocess
 from pathlib import Path
 import pytest
+from rupaka.board import assets
 
 ROOT = Path(__file__).parents[1]
 HARNESS = r'''const vm = require('vm'), fs = require('fs'), [core, texparts] = process.argv.slice(1);
@@ -30,7 +31,7 @@ const host = (ms, md = true) => ({ms, matches: s => md && s === '.lee-md-cell', 
 def test_lesson_formulas_carry_their_parts_and_trust_only_our_ids():
     node = shutil.which('node')
     if not node: pytest.skip('node is not installed')
-    r = subprocess.run([node, '-e', HARNESS, str(ROOT/'leela/static/js/core.js'), str(ROOT/'leela/vendor/lee-texparts.js')], capture_output=True, text=True, timeout=60)
+    r = subprocess.run([node, '-e', HARNESS, str(ROOT/'leela/static/js/core.js'), str(assets().tex)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     got = json.loads(r.stdout)
     les = got['lesson']

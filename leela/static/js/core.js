@@ -646,7 +646,7 @@ function loadTexparts() {
   return texLoad.p ||= new Promise((ok, no) => {
     if (window.abhyasaTex) return ok(window.abhyasaTex);
     const s = document.createElement('script');
-    s.src = $('meta[name="lee-texparts-src"]')?.content || '/leestatic/lee-texparts.js';
+    s.src = $('meta[name="lee-texparts-src"]')?.content || '/leeboard/texparts.js';
     s.onload = () => window.abhyasaTex ? ok(window.abhyasaTex) : no(new Error('texparts.js defined no abhyasaTex'));
     s.onerror = () => { s.remove(); no(new Error('texparts.js could not be loaded')); };
     document.head.appendChild(s);

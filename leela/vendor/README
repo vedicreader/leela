@@ -8,10 +8,10 @@ lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scr
 
 fonts/fa-solid-900.woff2 and fonts/LICENSE-Font-Awesome.txt: @fortawesome/fontawesome-free@5.15.4, the version html-manager 1.0.15 depends on.
 
-lee-rupaka.js and lee-rupaka.css: rupaka 0.0.9 from PyPI, wheel rupaka-0.0.9-py3-none-any.whl, SHA-256 5da51a8efdac7914adec51f8cc846702cbfa85ef506df6749e937353552ec0b9. Download the wheel into an empty folder, check the digest, then write the two bundles with the wheel's own renderer:
+lee-rupaka.js and lee-rupaka.css: rupaka 0.0.10, wheel rupaka-0.0.10-py3-none-any.whl, SHA-256 TODO. rupaka 0.0.10 is not released yet: the two bundles are written now from the source of rupaka branch `board`, commit c4e4850, with its own renderer. TODO at the release: download the wheel into an empty folder, check its digest, put the digest and the download URL here, then write the two bundles again with the wheel's own renderer:
 
-    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.9-py3-none-any.whl" https://files.pythonhosted.org/packages/a2/1c/6e969bf16737500d11d17ef60231d8e5ccd96072d0f9f2c1f2b654c63b22/rupaka-0.0.9-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.9-py3-none-any.whl"
-    uv run --no-project --with "$d/rupaka-0.0.9-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
+    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.10-py3-none-any.whl" <URL TODO> && shasum -a 256 "$d/rupaka-0.0.10-py3-none-any.whl"
+    uv run --no-project --with "$d/rupaka-0.0.10-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
 
 katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375 (the registry's own sha1 0a13a42c2deb4f74e61f162d440b9165a548030f and sha512 Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg== both match). Download into an empty folder, check the digests, extract into another, and copy dist/katex.min.js, dist/katex.min.css and dist/fonts/*.woff2 (the stylesheet lists woff and ttf after woff2; no browser Leela runs in fetches them) with LICENSE as LICENSE-KaTeX.txt:
 
@@ -21,19 +21,5 @@ katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 
 katex/katex.min.js SHA-256 a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48
 katex/katex.min.css SHA-256 0289a02cf451a44dd73add683a09644252363871ac11713a647b732cee8b1ee3
 
-lee-texparts.js, lee-board.js, lee-board.css, board/rough.js and board/perfect-freehand.mjs: the screen guide's formula parts and board, copied unchanged from abhyasa main, commit d340862, which is released as abhyasa 0.0.16, wheel abhyasa-0.0.16-py3-none-any.whl, SHA-256 TODO. TODO at release: put the wheel's SHA-256 and its download URL here, check the five digests below against the files in the wheel, and move the pin in pyproject.toml to abhyasa==0.0.16. Until then, test_abhyasa_is_pinned_to_the_vendored_wheel and test_readme_records_the_digest_of_the_wheel fail, and test_vendored_files_equal_the_installed_wheel fails against the 0.0.15 pin. The source files are abhyasa/core/texparts.js, abhyasa/core/board.js, abhyasa/core/board.css, abhyasa/core/vendor/rough.js and abhyasa/core/vendor/perfect-freehand.mjs. tests/test_vendor_board.py compares each file with the file in the installed abhyasa. board/ is the folder the page passes to the board as `host.assets`, served at /leestatic/board/. board/LICENSES.md is abhyasa's licence file for the two libraries. Before the release, copy the files from a clean checkout of that commit:
+The screen guide's board is not copied. Leela serves it from the rupaka that pyproject.toml asks for: `rupaka.board.bundle('js')` and `bundle('css')` at /leeboard/board.js and /leeboard/board.css, `rupaka.board.assets().tex` at /leeboard/texparts.js, and the folder of the pens (rough.js, perfect-freehand.mjs and their licences) at /leeboard/libs/, which the page passes to the board as `host.assets`. The board's paper uses the hand font Patrick Hand (OFL). It is not copied either: Leela serves rupaka's font files and their `@font-face` rules (`rupaka.render.font_css`) at /leefonts/.
 
-    a=<abhyasa checkout> && for f in texparts.js:lee-texparts.js board.js:lee-board.js board.css:lee-board.css vendor/rough.js:board/rough.js vendor/perfect-freehand.mjs:board/perfect-freehand.mjs vendor/LICENSES.md:board/LICENSES.md; do git -C "$a" show "d340862:abhyasa/core/${f%%:*}" > "leela/vendor/${f##*:}"; done
-
-After the release, download the wheel into an empty folder, check the digest, extract it into another folder, then copy the files:
-
-    d=$(mktemp -d) && curl -sS -o "$d/abhyasa-0.0.16-py3-none-any.whl" <URL TODO> && shasum -a 256 "$d/abhyasa-0.0.16-py3-none-any.whl"
-    e=$(mktemp -d) && unzip -q "$d/abhyasa-0.0.16-py3-none-any.whl" -d "$e" && c="$e/abhyasa/core" && cp "$c/texparts.js" leela/vendor/lee-texparts.js && cp "$c/board.js" leela/vendor/lee-board.js && cp "$c/board.css" leela/vendor/lee-board.css && cp "$c/vendor/rough.js" "$c/vendor/perfect-freehand.mjs" "$c/vendor/LICENSES.md" leela/vendor/board/
-
-The board's paper uses the hand font Patrick Hand (OFL). It is not copied: Leela serves rupaka's font files and their `@font-face` rules (`rupaka.render.font_css`) at /leefonts/, from the rupaka that pyproject.toml pins, as abhyasa serves /assets/hand.css.
-
-lee-texparts.js SHA-256 e556af9d936b0b9ec58f74d9048ba64a45d447f8a65e6f6fb44afece94d9e585
-lee-board.js SHA-256 4aa0ef1476882b70ac987cf7ae1e58ebfa94a407f259f1b249c90334cb4ae308
-lee-board.css SHA-256 fdf8c7257f7c137c5d5099af8b8fdee9339056dd749d14354c27918de13d730b
-board/rough.js SHA-256 6853af8619532f3939b156cd16824d2e14f31e71d3df306ad5558eeafacab194
-board/perfect-freehand.mjs SHA-256 0ddf0e44c727ab39d7211af95685bf12234236f0e2eca376091e5791a71626e4

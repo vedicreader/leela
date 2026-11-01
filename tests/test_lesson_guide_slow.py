@@ -162,5 +162,6 @@ def test_the_new_board_builds_its_panel_from_the_code_the_page_sends(tmp_path, m
         assert p['title'] == 'tensors and targets' and p['rows'] == ['[18]⟶47'], p
         assert sl <= l and r <= sr and st <= t < st + 40 and r > (sl + sr) / 2, 'the panel stands at the top right of the notebook area, under its tab bar, not over the side panes' 
         assert 'Patrick Hand' in p['hand'] and p['font'], 'the hand font of the paper comes from /leefonts/hand.css'
+        assert await pg.evaluate("!!window.rupakaBoard && window.abhyasaBoard === window.rupakaBoard && !!document.querySelector('script[src^=\"/leeboard/board.js\"]')"), 'the board comes from rupaka, at /leeboard/'
         assert 'Browser voice' in (strip := await pg.locator('#guide-strip').inner_text()) and 'on this Mac' in strip and 'hosted' not in strip, strip
     asyncio.run(_real_page(go, tmp_path))

@@ -524,12 +524,13 @@ def guide_context(meta, cell, path='', filed=(), anchors=None, demo=None) -> dic
     ctx['anchors'] += [dict(id=a['id'], kind='code', text=a['text']) for a in anchors or [] if a['id'].startswith('code')]
     return ctx
 
-GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.14 or newer. Upgrade abhyasa, then try again.'
-GUIDE_STREAM_NEEDS = 'The screen guide draws each step as it comes with abhyasa 0.0.15 or newer. Upgrade abhyasa, then try again.'
+GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.16 and rupaka 0.0.10 or newer. Upgrade them, then try again.'
+GUIDE_STREAM_NEEDS = 'The screen guide draws each step as it comes with abhyasa 0.0.16 and rupaka 0.0.10 or newer. Upgrade them, then try again.'
 
 def guide_board(memory, nb, cell, path, said, note=None, anchors=None, demo=None, **kw) -> dict:
     "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`, and `demo` its demo, checked by `check_demo`. `kw` goes to `explain`; its `on_step` gets `(step, k, demo_open)`. `ImportError` when abhyasa has no guide."
-    from abhyasa.guide import explain, norm_tex
+    from abhyasa.guide import explain
+    from rupaka.board import norm_tex
     from abhyasa.ground import VaultSource
     from abhyasa.llm import Router, route_ask
     from abhyasa.store import Learning

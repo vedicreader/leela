@@ -35,7 +35,7 @@ from .core.web import asset as _asset
 from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
-from .core.web import Assets, IDE_BUNDLES, JsonBody, hand_routes, hand_url, static_dirs
+from .core.web import Assets, IDE_BUNDLES, JsonBody, board_routes, board_url, hand_routes, hand_url, static_dirs
 from .core.text import did_you_mean
 from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
@@ -849,10 +849,10 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             Meta(name='lee-rupaka-css', content=_asset('lee-rupaka.css')),
             Meta(name='lee-katex-src', content=_asset('katex/katex.min.js')),
             Meta(name='lee-katex-css', content=_asset('katex/katex.min.css')),
-            Meta(name='lee-texparts-src', content=_asset('lee-texparts.js')),
-            Meta(name='lee-board-src', content=_asset('lee-board.js')),
-            Meta(name='lee-board-css', content=_asset('lee-board.css')),
-            Meta(name='lee-board-assets', content='/leestatic/board/'),
+            Meta(name='lee-texparts-src', content=board_url('texparts.js')),
+            Meta(name='lee-board-src', content=board_url('board.js')),
+            Meta(name='lee-board-css', content=board_url('board.css')),
+            Meta(name='lee-board-assets', content=board_url('libs/')),
             Link(rel='stylesheet', href=hand_url()),   # board.css and rupaka's cards name the hand font
             Link(rel='stylesheet', href=_asset('lee-term.css')),
             Link(rel='stylesheet', href=_asset('lee-ide.css')),
@@ -924,7 +924,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
                    middleware=(Middleware(GZipMiddleware, minimum_size=512), Middleware(JsonBody)),
                    on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
-                   routes=(Mount('/leestatic', Assets(*static_dirs())), *hand_routes(),
+                   routes=(Mount('/leestatic', Assets(*static_dirs())), *hand_routes(), *board_routes(),
                            WebSocketRoute('/term/ws', term_ws)))
     rt = app.route
     _docstore = DocStore(ws)
