@@ -32,19 +32,36 @@ def _Source(p):
     for x in filter(None, parts): out += [' · ', x]
     return P(*out, cls='lee-learn-source')
 
-INDEXING = 'The environment for this lesson is ready. Leela is still building the code index for Look up code.'
-INSTALLING = 'Leela is setting up the environment for this lesson. When it is ready, the lesson kernel restarts in it.'
+READY = 'The environment for this lesson is ready. The lesson runs now.'
+INDEXING = READY + ' Leela is still building the code index for Look up code.'
+WATCHED = ('installing', 'indexing')
 
-def _Env(v, q, pane, jobs=None):
-    "The state of the tool environment of a step whose `nb` has `requires`, with the button that makes it or builds its code index; None when there is none or it is ready."
-    from .tools import env_state, tool_key
-    if not (names := (v.get('nb') or {}).get('requires')) or (st := env_state(jobs, key := tool_key(names))) == 'ready': return None
-    if st in ('indexing', 'installing'): return P(INDEXING if st == 'indexing' else INSTALLING, cls='lee-learn-line lee-learn-env')
-    say, press = (('The environment for this lesson is ready. Its code index for Look up code is not built.', 'Build the code index') if st == 'unindexed' else
-                  (f"This lesson needs {', '.join(names)}.", 'Set up the environment'))
+def took(secs) -> str:
+    "`secs` as `M min S s`, or `S s` under a minute."
+    m, s = divmod(max(0, int(secs)), 60)
+    return f'{m} min {s} s' if m else f'{s} s'
+
+def _failed(job) -> str:
+    "The sentence for a `tool_env` job that ended in an error; empty for any other."
+    return f" The last setup did not finish: {job.error.removeprefix('JobError: ')}" if job and job.status == 'error' and job.error else ''
+
+def env_say(st, job=None) -> str:
+    "The line for the tool environment state `st` of `env_state`; `job` is its newest `tool_env` job."
+    import time
+    if st == 'installing': return f"Leela is setting up the environment for this lesson. {took(time.time() - (job.started_at or job.created_at) if job else 0)} so far. This page changes when it is ready."
+    if st == 'unindexed': return 'The environment for this lesson is ready. Its code index for Look up code is not built.'
+    if st == 'missing': return 'The environment for this lesson is not set up.' + _failed(job)
+    return INDEXING if st == 'indexing' else READY
+
+def _Env(v, q, pane, key, st, job=None):
+    "The state `st` of the tool environment `key` of a step: a status line the page keeps asking about, or the button that makes it or builds its code index."
+    if st in ('ready', *WATCHED): return P(env_say(st, job), cls='lee-learn-line lee-learn-env', role='status', aria_live='polite', data_env_key=key, data_env_state=st)
+    names = v.nb['requires']
+    say = env_say(st, job) if st == 'unindexed' else f"This lesson needs {', '.join(names)}." + _failed(job)
     return Form(P(say, cls='lee-learn-line'), Hidden(name='walk', value=q.walk), Hidden(name='step', value=str(v.i)),
                 Hidden(name='v', value=q.v), Hidden(name='pane', value='1') if pane else None,
-                Button(press, type='submit', cls='lee-btn', data_key=key), method='post', action='/learn/env', cls='lee-learn-env')
+                Button('Build the code index' if st == 'unindexed' else 'Set up the environment', type='submit', cls='lee-btn', data_key=key),
+                method='post', action='/learn/env', cls='lee-learn-env')
 
 def _Data(v):
     "The line that names each data entry of the step whose path is not on this computer; None when all are."
@@ -55,21 +72,24 @@ def _Data(v):
 
 def StepPage(v, q, pane:bool=False, root=None, jobs=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane; `jobs` tells a running setup."
+    st = None
     if v.kind == 'step':
+        from .tools import env_job, env_state, tool_key
+        if names := (v.get('nb') or {}).get('requires'): st = env_state(jobs, key := tool_key(names))
         from .learn import passages, walk_url
         r, back = v.step.get('read') or {}, walk_url(q.walk, v.i)
         title, step = v.j.title, str(v.i)
         body = [P(r['section'], cls='lee-learn-section') if r.get('section') else None,
                 *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(p.text))), _Source(p))],
                 Div(NotStr(md_html(v.step['note'])), cls='lee-learn-note') if v.step.get('note') else None,
-                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Data(v), _Env(v, q, pane, jobs),
+                P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Data(v), st and _Env(v, q, pane, key, st, env_job(jobs, key)),
                 P(A('Back to the walk ↗', href=back, target='_blank', rel='noopener', cls='lee-learn-back'), cls='lee-learn-line') if back else None]
     else:
         title, step = v.name, ''
         body = [P(v.concept.get('statement') or '') if v.concept else P('This idea is not in your learning store.', cls='lee-learn-line')]
     return Page(title, *body, Form(Hidden(name='walk', value=q.walk), Hidden(name='step', value=step), Hidden(name='topic', value=q.topic), Hidden(name='v', value=q.v),
                                    Hidden(name='pane', value='1') if pane else None,
-                                   Button('Open as a lesson', type='submit', cls='lee-btn'), method='post', action='/learn/open'), pane=pane, js=True, math=v.kind == 'step', root=root)
+                                   Button('Open as a lesson', type='submit', cls='lee-btn go' if st in ('ready', 'indexing', 'unindexed') else 'lee-btn'), method='post', action='/learn/open'), pane=pane, js=True, math=v.kind == 'step', root=root)
 
 def OpenedPage(title, here, pane:bool=False, root=None):
     "The page after a lesson opens: the step's title, the line `Opened in Leela.` and a link back to the step at `here`."

@@ -193,7 +193,7 @@ def test_routes_start_one_job_for_a_key_and_then_say_ready(rig, monkeypatch):
     monkeypatch.setattr(tools, 'index_env', lambda key: None)
     monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
     key = tool_key(['httpx'])
-    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=False, python=None, indexed=False)
+    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=False, python=None, indexed=False, state='missing', say='The environment for this lesson is not set up.')
     a = c.post('/learn/tool', json=dict(names=['httpx'])).json()
     b = c.post('/learn/tool', json=dict(names=['httpx'])).json()
     assert a['ok'] and a['key'] == key and a['job']['id'] == b['job']['id'] and a['job']['target'] == key
@@ -201,7 +201,8 @@ def test_routes_start_one_job_for_a_key_and_then_say_ready(rig, monkeypatch):
     go.set()
     assert wait(ws, a['job']['id']).status == 'complete'
     assert c.post('/learn/tool', json=dict(names=['httpx'])).json() == dict(ok=True, key=key, ready=True)
-    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=True, python=str(tool_dir(key)/'.venv'/'bin'/'python'), indexed=True)
+    assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=True, python=str(tool_dir(key)/'.venv'/'bin'/'python'), indexed=True, state='ready',
+                                                           say='The environment for this lesson is ready. The lesson runs now.')
     assert len(ws.jobs.all(kind='tool_env')) == 1
 
 @pytest.mark.parametrize('body', [dict(names=['--index-url=https://x']), dict(names=[]), dict(names='httpx'), dict(), dict(names=None)])
@@ -453,35 +454,70 @@ def test_a_step_that_requires_packages_asks_once_and_installs_only_on_yes(rig, m
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
     assert 'This lesson needs torch, diffusers.</p>' in t and f'data-key="{key}"' in t and 'action="/learn/env"' in t and '>Set up the environment</button>' in t
     assert runs == [] and ws.jobs.all(kind='tool_env') == [], 'no install before the yes'
-    r = c.post('/learn/env', data=dict(walk=NB_JID, step='0'))
-    assert r.status_code == 200 and 'Leela is setting up the environment for this lesson. When it is ready, the lesson kernel restarts in it.' in r.text
+    r = c.post('/learn/env', data=dict(walk=NB_JID, step='0'), follow_redirects=False)
+    assert r.status_code == 303 and r.headers['location'] == f'/learn?walk={NB_JID}&step=0'
     jobs = ws.jobs.all(kind='tool_env')
     assert len(jobs) == 1 and jobs[0].target == key and wait(ws, jobs[0].id).status == 'complete' and tool_python(key)
     assert [cmd[1] for cmd in runs] == ['venv', 'pip'] and runs[1][-2 - len(tools.kernel_reqs()):] == ['diffusers', 'torch', *tools.kernel_reqs()]
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
-    assert 'Set up the environment' not in t and '>Open as a lesson</button>' in t
+    assert 'Set up the environment' not in t and '<button type="submit" class="lee-btn go">Open as a lesson</button>' in t
     assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
     code = next(x for x in Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').cells if 'tests' in x.extra.get('exercise', {}))
     assert code.extra['exercise']['env'] == key and Notebook.load(root/'lessons'/f'{NB_JID}-0.ipynb').meta['lesson']['env'] == key
     assert c.post('/learn/env', data=dict(walk='attention-ab12', step='0')).status_code == 400, 'a step with no requires installs nothing'
     assert len(ws.jobs.all(kind='tool_env')) == 1
 
-def test_the_step_page_and_its_route_say_the_index_still_builds_and_offer_it_again_when_it_failed(rig, monkeypatch):
+def test_the_step_page_says_the_index_still_builds_and_offers_it_again_when_it_failed(rig, monkeypatch):
     from learn_data import NB_JID, nb_walk
     c, ws, lr = rig[:3]
     nb_walk(lr, requires=['httpx'])
     monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
     key, go, real = ready_env(['httpx']), threading.Event(), make_tool_env
-    page, env = (lambda: c.get(f'/learn?walk={NB_JID}&step=0').text), (lambda: c.post('/learn/env', data=dict(walk=NB_JID, step='0')))
+    page, env = (lambda: c.get(f'/learn?walk={NB_JID}&step=0').text), (lambda: c.post('/learn/env', data=dict(walk=NB_JID, step='0'), follow_redirects=False))
     t = page()
     assert 'Its code index for Look up code is not built.' in t and '>Build the code index</button>' in t and 'Set up the environment' not in t
     monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 1), uv='/u/uv'))
-    r = env()
-    assert r.status_code == 200 and 'Leela is building the code index for this lesson. The lesson runs already.' in r.text
-    say = 'The environment for this lesson is ready. Leela is still building the code index for Look up code.'
+    assert env().status_code == 303
+    say = 'The environment for this lesson is ready. The lesson runs now. Leela is still building the code index for Look up code.'
     t = page()
-    assert f'{say}</p>' in t and '<button type="submit" class="lee-btn" data-key' not in t and say in env().text
-    assert len(ws.jobs.all(kind='tool_env')) == 1
+    assert f'data-env-state="indexing" class="lee-learn-line lee-learn-env">{say}</p>' in t and 'Build the code index' not in t and 'class="lee-btn go">Open as a lesson' in t
+    assert env().status_code == 303 and len(ws.jobs.all(kind='tool_env')) == 1
     go.set()
     assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'complete' and tools.tool_indexed(key)
-    assert 'lee-learn-env' not in page() and 'The environment for this lesson is ready.' in env().text
+    assert 'data-env-state="ready" class="lee-learn-line lee-learn-env">The environment for this lesson is ready. The lesson runs now.</p>' in page()
+
+def test_through_the_guard_set_up_goes_back_to_the_step_page_which_says_installing_then_ready(rig, monkeypatch):
+    "The owner pressed Set up and got a static page that never changed: how do I know Leela is done?"
+    from leela.hub import LoopbackHostGuard
+    from starlette.testclient import TestClient
+    from learn_data import NB_JID, nb_walk
+    c, ws, lr = rig[:3]
+    nb_walk(lr, requires=['httpx'])
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    go, real, key = threading.Event(), make_tool_env, tool_key(['httpx'])
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 0), uv='/u/uv'))
+    g = TestClient(LoopbackHostGuard(c.app), base_url='http://127.0.0.1:5011')
+    h = {'origin': 'null', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}
+    r = g.post('/learn/env', data=dict(walk=NB_JID, step='0'), headers=h)
+    assert [x.status_code for x in r.history] == [303] and r.status_code == 200 and r.url.path == '/learn'
+    assert f'data-env-key="{key}" data-env-state="installing" class="lee-learn-line lee-learn-env">Leela is setting up the environment for this lesson. ' in r.text and ' s so far.' in r.text
+    assert 'class="lee-btn">Open as a lesson' in r.text and 'Set up the environment</button>' not in r.text
+    d = g.get(f'/learn/tool?key={key}').json()
+    assert d['state'] == 'installing' and d['say'].startswith('Leela is setting up') and not d['ready']
+    go.set()
+    assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'complete'
+    t = g.get(f'/learn?walk={NB_JID}&step=0').text
+    assert 'data-env-state="ready" class="lee-learn-line lee-learn-env">The environment for this lesson is ready. The lesson runs now.</p>' in t
+    assert '<button type="submit" class="lee-btn go">Open as a lesson</button>' in t and g.get(f'/learn/tool?key={key}').json()['state'] == 'ready'
+
+def test_a_failed_setup_says_why_and_offers_the_button_again(rig, monkeypatch):
+    from learn_data import NB_JID, nb_walk
+    c, ws, lr = rig[:3]
+    nb_walk(lr, requires=['sdist-only'])
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    real = make_tool_env
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: real(names, run=fake(lambda c: 1 if c[1] == 'pip' else 0), uv='/u/uv'))
+    c.post('/learn/env', data=dict(walk=NB_JID, step='0'))
+    assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'error'
+    t = c.get(f'/learn?walk={NB_JID}&step=0').text
+    assert 'This lesson needs sdist-only. The last setup did not finish: sdist-only has no wheel for this computer, so Leela cannot install it.' in t and '>Set up the environment</button>' in t

@@ -8,7 +8,7 @@ from ... import errstr
 from .learn import PKG, _NAME
 
 __all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_kernel', 'tool_indexed', 'kernel_reqs', 'install_cmds', 'make_tool_env',
-           'index_env', 'tool_job', 'env_state', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
+           'index_env', 'tool_job', 'env_state', 'env_job', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
 TOO_LONG = 'The install took too long. Try again.'
@@ -137,6 +137,10 @@ def env_state(jobs, key) -> str:
     busy = jobs is not None and active_job(jobs, key)
     if tool_kernel(key): return 'ready' if tool_indexed(key) else 'indexing' if busy else 'unindexed'
     return 'installing' if busy else 'missing'
+
+def env_job(jobs, key):
+    "The newest `tool_env` job for `key`, or None."
+    return None if jobs is None else first(j for j in jobs.all(limit=100, kind='tool_env') if j.target == key)
 
 def active_job(jobs, key):
     "The queued or running `tool_env` job for `key` whose process is alive, or None."

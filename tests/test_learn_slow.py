@@ -408,22 +408,32 @@ def _guarded(ws, port):
     threading.Thread(target=srv.run, daemon=True).start()
     return srv
 
-def test_both_step_page_buttons_pass_the_guard_in_a_browser(tmp_path, monkeypatch):
-    "Chromium posted both buttons with `Origin: null`, and the guard answered 421 invalid Host header."
+def test_set_up_goes_back_to_the_step_page_which_turns_ready_by_itself_and_open_passes_the_guard(tmp_path, monkeypatch):
+    "Chromium posted both buttons with `Origin: null` and got 421; then Set up gave a static page that never said when it was done."
+    import threading
     from leela.blocks.learn import tools
+    from test_learn_tools import fake
     from learn_data import NB_JID, nb_walk
     ws = _ws(tmp_path, monkeypatch)
     nb_walk(Learning(ws.memory._store('learning')), requires=['httpx'])
-    started = []
-    monkeypatch.setattr(tools, 'start_tool_job', lambda jobs, names: started.append(names))
+    go, real = threading.Event(), tools.make_tool_env
+    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(30) and real(names, run=fake(lambda c: 0), uv='/u/uv'))
+    monkeypatch.setattr(tools, 'index_env', lambda key: None)
     monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
-    async def go(pg, base):
+    async def go_(pg, base):
         step = f'{base}/learn?walk={NB_JID}&step=0'
         await pg.goto(step, wait_until='networkidle')
         async with pg.expect_response(lambda r: r.url.endswith('/learn/env')) as r: await pg.get_by_role('button', name='Set up the environment').click()
-        assert (await r.value).status == 200 and started == [['httpx']]
-        await pg.goto(step, wait_until='networkidle')
-        async with pg.expect_response(lambda r: r.url.endswith('/learn/open')) as r: await pg.get_by_role('button', name='Open as a lesson').click()
+        assert (await r.value).status == 303
+        await pg.wait_for_url(step)
+        env = pg.locator('[data-env-state]')
+        assert await env.get_attribute('data-env-state') == 'installing' and 'so far' in await env.inner_text()
+        go.set()
+        await pg.wait_for_selector('[data-env-state=ready]', timeout=15000)
+        assert await env.inner_text() == 'The environment for this lesson is ready. The lesson runs now.' and pg.url == step
+        main = pg.get_by_role('button', name='Open as a lesson')
+        assert 'go' in (await main.get_attribute('class')).split()
+        async with pg.expect_response(lambda r: r.url.endswith('/learn/open')) as r: await main.click()
         assert (await r.value).status == 200 and await pg.locator('p.lee-learn-line').first.inner_text() == 'Opened in Leela.'
         assert (tmp_path/'lessons'/f'{NB_JID}-0.ipynb').is_file()
-    asyncio.run(_on_learn(go, ws, ide=False, serve=_guarded))
+    asyncio.run(_on_learn(go_, ws, ide=False, serve=_guarded))

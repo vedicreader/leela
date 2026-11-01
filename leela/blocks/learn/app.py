@@ -1,7 +1,7 @@
 import asyncio, time
 from pathlib import Path
 from fastcore.basics import first
-from fasthtml.common import FtResponse, JSONResponse, P
+from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
 from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
@@ -155,12 +155,12 @@ def connect(app, ctx):
         if isinstance(v, str): return say(v)
         if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
-        from .ui import INDEXING, INSTALLING
-        if (st := tools.env_state(ctx.jobs, key := tools.tool_key(names))) == 'ready': return say('The environment for this lesson is ready.')
-        if st == 'indexing': return say(INDEXING)
+        from abhyasa.contract import handoff
+        back = RedirectResponse(handoff(q.walk, v.i, v=q.v) + ('&pane=1' if f.get('pane') == '1' else ''), 303)
+        if (st := tools.env_state(ctx.jobs, tools.tool_key(names))) in ('ready', 'indexing'): return back
         if st == 'missing' and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
         tools.start_tool_job(ctx.jobs, names)   # no await since the check: one event loop starts one job for a key
-        return say('Leela is building the code index for this lesson. The lesson runs already.' if st == 'unindexed' else INSTALLING)
+        return back
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
         from .learn import pkg_names
@@ -202,9 +202,11 @@ def connect(app, ctx):
         return {'ok': True, 'key': key, 'job': tools.start_tool_job(ctx.jobs, names).dict()}
     @app.route('/learn/tool', methods=['GET'])
     async def learn_tool(req):
-        from .tools import tool_dir, tool_indexed, tool_kernel
+        from .tools import env_job, env_state, tool_dir, tool_indexed, tool_kernel
+        from .ui import env_say
         key = req.query_params.get('key', '')
         try: tool_dir(key)
         except ValueError as e: return fail(str(e))
         p = tool_kernel(key)
-        return {'ok': True, 'ready': p is not None, 'python': str(p) if p else None, 'indexed': tool_indexed(key)}
+        st = env_state(ctx.jobs, key)
+        return {'ok': True, 'ready': p is not None, 'python': str(p) if p else None, 'indexed': tool_indexed(key), 'state': st, 'say': env_say(st, env_job(ctx.jobs, key))}

@@ -175,3 +175,18 @@ def test_a_safe_alignment_has_a_plain_one_before_it():
     css = (ROOT/'leela'/'static'/'lee-ide.css').read_text()
     rules = [r for r in re.findall(r'\{[^{}]*\}', css) if 'safe flex-end' in r]
     assert rules and all(re.search(r'justify-content:\s*flex-end;[^}]*justify-content:\s*safe flex-end', r) for r in rules), rules
+
+ENV_NEXT = r'''
+global.document = {addEventListener: () => {}};
+eval(require('fs').readFileSync(process.argv[1], 'utf8'));
+const r = [leeEnvNext('installing', {ok: true, state: 'installing', say: 'x'}), leeEnvNext('installing', {ok: true, state: 'ready'}),
+           leeEnvNext('indexing', {ok: true, state: 'ready'}), leeEnvNext('installing', {ok: true, state: 'missing'}),
+           leeEnvNext('installing', null), leeEnvNext('installing', {ok: false, error: 'x'}), leeEnvNext('installing', {ok: true})];
+console.log(JSON.stringify(r));
+'''
+
+def test_the_step_page_reloads_when_its_environment_changes_state():
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    r = subprocess.run([node, '-e', ENV_NEXT, str(PANE_JS)], capture_output=True, text=True, timeout=30)
+    assert json.loads(r.stdout) == ['say', 'reload', 'reload', 'reload', 'wait', 'wait', 'wait'], r.stderr

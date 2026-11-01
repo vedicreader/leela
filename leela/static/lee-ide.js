@@ -366,8 +366,27 @@ function leeLearnMath() {
   for (const e of document.querySelectorAll('.lee-learn .math'))
     try { katex.render(e.textContent, e, {displayMode: e.classList.contains('display'), throwOnError: false}); } catch (_) {}
 }
+function leeEnvNext(was, d) {
+  "What a step page does with a `/learn/tool` answer `d` while its environment was in the state `was`: `reload`, `say` or `wait`.";
+  if (!d || !d.ok || typeof d.state !== 'string') return 'wait';
+  return d.state !== was ? 'reload' : 'say';
+}
+function leeEnvWatch(every = 2000) {
+  "While the step's environment installs or indexes, ask `/learn/tool` every `every` ms, say its state, and reload the page when the state changes.";
+  const e = document.querySelector('[data-env-state]');
+  if (!e || !['installing', 'indexing'].includes(e.dataset.envState)) return;
+  const tick = async () => {
+    let d = null;
+    try { d = await (await fetch('/learn/tool?key=' + encodeURIComponent(e.dataset.envKey), {cache: 'no-store'})).json(); } catch (_) {}
+    const next = leeEnvNext(e.dataset.envState, d);
+    if (next === 'reload') { location.reload(); return; }
+    if (next === 'say' && typeof d.say === 'string') e.textContent = d.say;
+    setTimeout(tick, every);
+  };
+  setTimeout(tick, every);
+}
 function leePaneBoot() {
-  if (document.documentElement.classList.contains('lee-learn-page')) { leeLearnMath(); document.addEventListener('click', leePaneLink); document.addEventListener('auxclick', leePaneLink); document.addEventListener('keydown', leeLearnKey); }
+  if (document.documentElement.classList.contains('lee-learn-page')) { leeLearnMath(); document.addEventListener('click', leePaneLink); document.addEventListener('auxclick', leePaneLink); document.addEventListener('keydown', leeLearnKey); leeEnvWatch(); }
   if (document.documentElement.classList.contains('in-pane')) { leePaneAt(); document.addEventListener('keydown', leePaneKey); return; }
   if (typeof lee === 'undefined') return;   // a learn page in a tab of its own: no split editor to host a pane
   window.leeSidePage = {open: leeSidePageOpen, close: leeSidePageClose};
