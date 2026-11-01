@@ -688,3 +688,20 @@ def test_a_git_diff_carries_its_code_coloured_line_for_line(repo_git):
     added = lines.index('+value = "a<b"')
     assert '&lt;' in d['text_hl'][added]
     assert all(d['text_hl'][i] is None for i, l in enumerate(lines) if l.startswith(('diff ', 'index ', '@@', '---', '+++')))
+
+def test_a_notebook_in_no_repository_has_no_changes_and_no_error(tmp_path):
+    "Smoke round 4: each lesson that opened in a folder with no Git gave the page a 400 from /git/notebook."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.blocks.nb.nb import Notebook
+    from leela.workspace import Workspace
+    from gheasy.repo import repo_root
+    assert repo_root(tmp_path) is None
+    Notebook.blank().save(p := tmp_path/'lesson.ipynb')
+    ws = Workspace(roots=[tmp_path])
+    try:
+        with TestClient(ide_app(ws), base_url='http://127.0.0.1:5011') as c:
+            r = c.get('/git/notebook', params=dict(path=str(p)))
+            assert r.status_code == 200 and r.json() == dict(path=str(p), git=False, changed=False, cells={}, lines={})
+            assert c.get('/git/notebook', params=dict(path='/etc/hosts')).status_code == 400, 'a path outside the open folders is still refused'
+    finally: ws.shutdown_now()

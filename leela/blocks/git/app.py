@@ -576,8 +576,11 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/git/notebook')
     async def git_notebook(path: str = ''):
-        "The open notebook's changed cells, by cell id. Same repository rule as `/git/file`."
+        "The open notebook's changed cells, by cell id. Same repository rule as `/git/file`; a notebook in no repository has no changes and `git: false`."
         try:
-            r, relative = repo_relative(path, 'notebook')
+            try: r, relative = repo_relative(path, 'notebook')
+            except GitError:
+                if repo_root(Path(path).parent) is None: return {'path': path, 'git': False, 'changed': False, 'cells': {}, 'lines': {}}
+                raise
             return await off_loop(r.notebook_changes, relative)
         except Exception as e: return fail(e)

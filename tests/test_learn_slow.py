@@ -34,8 +34,8 @@ def _ws(root, monkeypatch):
 
 def _watch(pg, base):
     "The console errors, page errors, failed requests and error responses of Leela's own pages."
-    # `/git/file` and `/git/notebook` answer 400 for a file outside any repository, as every file in `tmp_path` is; the editor catches it
-    bad, own = [], lambda u: (u or '').startswith(base) and 'favicon' not in u and '/git/file?' not in u and '/git/notebook?' not in u
+    # `/git/file` answers 400 for a file outside any repository, as every file in `tmp_path` is; the editor catches it. `/git/notebook` answers 200 there.
+    bad, own = [], lambda u: (u or '').startswith(base) and 'favicon' not in u and '/git/file?' not in u
     def con(m):
         u = (m.location or {}).get('url', '')
         if m.type == 'error' and (not u or own(u)): bad.append(f'console: {m.text} at {u}')
