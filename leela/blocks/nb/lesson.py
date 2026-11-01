@@ -168,7 +168,9 @@ def source_line(p) -> str:
 MISSING_DATA = 'Add the folder in abhyasa under Your data, or set the path here.'
 MISSING_HEAD = 'These data entries are missing: '
 
-def _unset(d) -> str: return f"{d['name']} ({d['what'] + ', ' if d.get('what') else ''}no path set)"
+def _what(d) -> str: return (d.get('what') or '').strip().rstrip('.').rstrip()   # a `what` can end with a stop; the line around it puts its own
+
+def _unset(d) -> str: return f"{d['name']} ({_what(d) + ', ' if _what(d) else ''}no path set)"
 
 def missing_data(data) -> list[str]:
     "Each entry of the spec's `data` with no path, or a path that is not on this computer, as its name and its path or `what`."
@@ -179,7 +181,7 @@ def setup_source(nb, result) -> str:
     dev = ("try:\n    import torch\n    DEVICE = 'mps' if torch.backends.mps.is_available() else 'cpu'\nexcept ImportError: DEVICE = 'cpu'"
            if 'torch' in nb.get('requires', []) else "DEVICE = 'cpu'")
     data = [f"{d['name']} = Path({d['path']!r}).expanduser()" + (f"  # {d['what']}" if d['what'] else '') if d.get('path') else
-            f"{d['name']} = None  # set the path{' to ' + d['what'] if d.get('what') else ''}, as Path('~/folder').expanduser()" for d in nb['data']]
+            f"{d['name']} = None  # set the path{' to ' + _what(d) if _what(d) else ''}, as Path('~/folder').expanduser()" for d in nb['data']]
     names, unset = ', '.join(f"{d['name']}={d['name']}" for d in nb['data'] if d.get('path')), [_unset(d) for d in nb['data'] if not d.get('path')]
     check = [f"_missing = [f'{{n}} ({{p}})' for n, p in dict({names}).items() if not p.exists()] + {unset!r}",
              f"if _missing: print({MISSING_HEAD!r} + ', '.join(_missing) + {'. ' + MISSING_DATA!r})"] if nb['data'] else []

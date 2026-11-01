@@ -155,3 +155,12 @@ def test_runs_on_says_slow_only_for_torch_on_the_cpu_or_a_long_run(monkeypatch, 
     monkeypatch.setattr(lesson.sys, 'platform', 'darwin' if mac else 'linux')
     monkeypatch.setattr(lesson.platform, 'machine', lambda: 'arm64')
     assert lesson.runs_on(requires, minutes) == said
+
+def test_a_what_that_ends_with_a_stop_is_not_stopped_twice(tmp_path, monkeypatch):
+    "Smoke round 4: the missing-data line read 'from this text., no path set'."
+    from leela.blocks.nb.lesson import missing_data, setup_source
+    monkeypatch.setenv('HOME', str(tmp_path))
+    data = [dict(name='EPISODES', path='', what='Text file of the comic episodes, made from this text.', need=True), dict(name='IMAGES', path='', what='Comic images. ', need=True)]
+    assert missing_data(data) == ['EPISODES (Text file of the comic episodes, made from this text, no path set)', 'IMAGES (Comic images, no path set)']
+    src = setup_source(dict(requires=[], data=data), 'x.result')
+    assert '., ' not in src and "EPISODES = None  # set the path to Text file of the comic episodes, made from this text, as Path('~/folder').expanduser()" in src
