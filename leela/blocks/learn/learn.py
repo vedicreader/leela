@@ -13,7 +13,7 @@ from abhyasa.stagekit import is_local
 from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
 
-__all__ = ['LESSONS', 'PKG', 'Taken', 'abhyasa_address', 'abhyasa_vault', 'walk_url', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
+__all__ = ['LESSONS', 'PKG', 'Taken', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
            'lookup', 'scratch_cell']
 
 LESSONS = Path(os.getenv('LEELA_LESSONS') or Path.home()/'Learning'/'Leela lessons').expanduser().absolute()
@@ -40,11 +40,20 @@ def abhyasa_vault() -> str:
     "The `vault` in abhyasa's address file when the process that wrote it still runs; '' for no file, a dead pid or a bad file."
     return abhyasa_address().get('vault', '')
 
-def walk_url(walk, step) -> str|None:
-    "The link to `step` of `walk` on the abhyasa that runs; None when it does not run or its `url` is not http on this computer, with a port."
+def abhyasa_url(path) -> str|None:
+    "The link to the local `path` on the abhyasa that runs; None when it does not run or its `url` is not http on this computer, with a port."
     try: u = urlsplit(url := abhyasa_address().get('url')); ok = u.scheme == 'http' and u.hostname in ('127.0.0.1', 'localhost', '::1') and u.port is not None
     except (ValueError, TypeError, AttributeError): ok = False
-    return ok and f"{url.rstrip('/')}/w/{quote(walk, safe='')}/{step}" or None
+    return ok and f"{url.rstrip('/')}{path}" or None
+
+def walk_url(walk, step) -> str|None:
+    "The link to `step` of `walk` on the abhyasa that runs, as `abhyasa_url`."
+    return abhyasa_url(f"/w/{quote(walk, safe='')}/{step}")
+
+def show_link(said, slug, name) -> dict|None:
+    "For a \"show me …\" to the guide, abhyasa's `show_reply`, the hand-off to the demo of the idea `slug` in abhyasa: `{title, href}`, `href` None when abhyasa does not run; None for any other line, or an abhyasa with no `show_reply`."
+    if (reply := getattr(abhyasa.demo, 'show_reply', None)) is None or (words := reply(said)) is None: return None
+    return dict(title=name, href=abhyasa_url(f"/c/{quote(slug, safe='')}?show={quote(words)}"))
 
 def other_vault(q, path) -> str|None:
     "The one line for a link `q` whose `v` is not the key of Leela's vault `path`; None for no `v` or the same key."

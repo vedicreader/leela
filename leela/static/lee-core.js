@@ -3501,22 +3501,38 @@ function guideStamp(cell, c) {
   $$('img', md).forEach((img, n) => tag(img, `img${n + 1}`));
   tag($('.lee-rupaka', md), 'demo');
 }
+//: The code and the output in `cell`, as `code1` to `code4` in page order: the values that the board's panel copies. A markdown cell gives its code blocks; a code cell its code and its text outputs.
+function guideCode(cell, c) {
+  $$('[data-guide-id^="code"]', cell).forEach(e => delete e.dataset.guideId);
+  $$(c?.cell_type === 'markdown' ? '.lee-md-cell pre, .lee-md-cell .cm-content' : '.cm-content, [id^="out-"] pre', cell).filter(e => e.textContent.trim()).slice(0, 4).forEach((e, n) => { e.dataset.guideId = `code${n + 1}`; });
+}
 //: The rupaka demo in `cell` as `{anchors, demo}` from the board's `demoAnchors`, which also stamps its ids; null with no demo or an older board.
 const guideDemoAnchors = (cell, b) => { const inner = [...($('.lee-rupaka', cell)?.shadowRoot?.children || [])].find(n => n.rupaka); return inner && b?.demoAnchors ? b.demoAnchors(inner) : null; };
 globalThis.document?.addEventListener('lee-markdown-rendered', e => {
   const cell = e.target.closest?.('.lee-cell[data-id]'), c = cell && lee.cells.find(x => x.id === cell.dataset.id);
   if (c && lessonNotebook() && guideCell(c)) guideStamp(cell, c);
 });
-//: The formulas and figures Leela drew in `cell`, in page order, as the one list the server takes them from: `{id, text, parts}` for each `f<n>`, `{id, text}` for each `img<n>`. A figure on its own line has an empty `alt` and its text in the `figcaption`.
+//: The formulas, figures and code Leela drew in `cell`, in page order, as the one list the server takes them from: `{id, text, parts}` for each `f<n>`, `{id, text}` for each `img<n>` and `code<n>`. A figure on its own line has an empty `alt` and its text in the `figcaption`.
 const guideAnchors = cell => $$('[data-guide-id]', cell).flatMap(e => { const id = e.dataset.guideId;
-  return /^f\d+$/.test(id) ? [{id, text: (e.dataset.tex || '').trim(), parts: JSON.parse(e.dataset.parts || '[]').map(p => p[0])}] : /^img\d+$/.test(id) ? [{id, text: (e.alt || e.closest('figure')?.querySelector('figcaption')?.textContent || '').trim()}] : []; });
+  return /^f\d+$/.test(id) ? [{id, text: (e.dataset.tex || '').trim(), parts: JSON.parse(e.dataset.parts || '[]').map(p => p[0])}] : /^img\d+$/.test(id) ? [{id, text: (e.alt || e.closest('figure')?.querySelector('figcaption')?.textContent || '').trim()}]
+    : /^code[1-4]$/.test(id) ? [{id, text: e.textContent.trim().slice(0, 300)}] : []; });
 const guideFind = (cell, id) => { const q = `[data-guide-id="${CSS.escape(id)}"]`; return $(q, cell) || $$('.lee-rupaka', cell).map(h => h.shadowRoot && $(q, h.shadowRoot)).find(Boolean) || null; };
 const guideDemo = (cell, open) => set => { const inner = open && [...(guideFind(cell, 'demo')?.shadowRoot?.children || [])].find(n => n.rupaka); if (inner) Rupaka.set(inner, set); };
 //: Draws the board in the cell it was asked from; false when the board is missing or fails, so the plain text stays.
+//: Leela speaks with the browser's voice; the board's strip names it after the Voice button.
+const GUIDE_VOICE = {model: 'Browser voice', where: 'on this computer'};
+//: "Show me …" to the guide: the hand-off to the demo of this idea in abhyasa, in place of a board.
+function guideShowCard(sh, cell, id) {
+  $('.lee-guide-out', cell)?.remove();
+  const el = document.createElement('div'); el.className = 'lee-guide-out lee-guide-show'; el.textContent = `Show: ${sh.title}. `;
+  if (sh.href) el.append(Object.assign(document.createElement('a'), {href: sh.href, target: '_blank', rel: 'noopener', textContent: 'Open in abhyasa ↗'}));
+  else el.append('Start abhyasa to see the demo of this idea.');
+  $('#out-' + id, cell).after(el);
+}
 async function guidePlay(d, cell, board) {
   if (!board) return false;
   const assets = $('meta[name="lee-board-assets"]')?.content || '/leestatic/board/';
-  try { await board.play(d, {host: {resolve: i => guideFind(cell, i), demo: guideDemo(cell, d.demo_open), assets}}); return true; }
+  try { await board.play(d, {host: {resolve: i => guideFind(cell, i), demo: guideDemo(cell, d.demo_open), assets}, voiceAt: GUIDE_VOICE}); return true; }
   catch (e) { console.warn('Leela guide:', e); return false; }
 }
 //: The board of the stream (`live`, the promise of its first play) gets the whole board: `finish` when its steps begin that board, else the whole board plays; a board the learner stopped stays stopped. With no board drawn, the plain text shows.
@@ -3544,14 +3560,16 @@ async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? ''
     await lee.nbQueue;
     const asked = find();
     if (!asked) return status('', 'ok');
+    guideCode(asked, lee.cells.find(x => x.id === id));
     const anchors = guideAnchors(asked), board = loadBoard(), demo = guideDemoAnchors(asked, await board);
     const on = async (ev, d) => {
       if (!mine()) return;
       if (ev === 'error') { failed = d.error; return; }
       if (ev === 'wait') return status(d.wait, 'ok');
-      if (ev === 'step') got.push(d.step);
+      if (ev === 'step') { const k = (d.step.n || got.length + 1) - 1; if (k < got.length) got[k] = d.step; else got.push(d.step); }   // a step comes again as it grows
       const b = await board, cell = mine() && find();
       if (!cell) return;
+      if (ev === 'show') { whole = true; b?.stop(); status('', 'ok'); return guideShowCard(d.show, cell, id); }
       if (ev === 'step') {
         if (!b) return;
         if (!live) { $('.lee-guide-out', cell)?.remove(); status('', 'ok'); live = guidePlay({steps: [d.step], tier: d.tier, sources: [], streaming: true, demo_open: d.demo_open}, cell, b); }

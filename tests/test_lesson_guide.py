@@ -247,7 +247,7 @@ def test_guide_entry_asks_one_line_and_shows_the_steps_and_sources():
     if not node: pytest.skip('node is not installed')
     harness = r'''const vm = require('vm'), fs = require('fs');
 const el = tag => ({tag, children: [], dataset: {}, classList: {contains: () => false}, appendChild(c) { this.children.push(c); return c; }, remove() { this.gone = true; },
-  after(n) { this.next = n; }});
+  after(n) { this.next = n; }, append(...n) { this.children.push(...n); }});
 const main = el('div'), out = el('div'), cell = el('div'), posts = [], dialogs = [], loads = [], plays = [], sets = [], target = el('span'), demoHost = {shadowRoot: {children: [{rupaka: {}}]}};
 cell.guideEls = [{dataset: {guideId: 'f1', tex: ' a_t b ', parts: JSON.stringify([['a_t', 'g-1001-0'], ['b', 'g-1001-1']])}}, {dataset: {guideId: 'img1'}, alt: '', closest: () => ({querySelector: () => ({textContent: ' A cat '})})}, {dataset: {guideId: 'img2'}, alt: 'inline', closest: () => null}, {dataset: {guideId: 'f2'}}, {dataset: {guideId: 'demo'}}];
 const ctx = {said: [], reply: null, selection: '', typed: null, CSS: {escape: s => s}, lee: {path: '/n.ipynb', nbQueue: Promise.resolve(), sel: 1,
@@ -278,7 +278,7 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
   await ctx.lessonGuide('b'); r.dialog = dialogs[0].slice(2, 3); r.post = posts[0]; r.out = out.next.textContent; r.said = ctx.said; r.loaded = loads.map(n => n.src || n.href);
   out.next = undefined; plays.length = 0; ctx.abhyasaBoard = {play: async (b, o) => { plays.push([b, o]); }};
   await ctx.lessonGuide('b'); const [board, opts] = plays[0], host = opts.host;
-  r.played = [plays.length, board.steps.length, Object.keys(host).sort(), host.assets, out.next === undefined, host.resolve('f1') === target, host.resolve('demo') === demoHost];
+  r.played = [plays.length, board.steps.length, Object.keys(host).sort(), host.assets, out.next === undefined, host.resolve('f1') === target, host.resolve('demo') === demoHost]; r.voiceAt = opts.voiceAt;
   host.demo({t: 1}); r.closed = sets.length; ctx.reply = Object.assign({}, ctx.reply, {demo_open: true});
   await ctx.lessonGuide('b'); plays.at(-1)[1].host.demo({t: 2}); r.open = sets.map(s => s[1]);
   out.next = undefined; ctx.abhyasaBoard = {play: async () => { throw new Error('rough.js'); }}; await ctx.lessonGuide('b'); r.broke = out.next.textContent.split('\n')[0];
@@ -312,6 +312,12 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
   const inner = {rupaka: {spec: {}}}; ctx.rupakaHost = {shadowRoot: {children: [{}, inner]}};
   b = await run([['board', whole]], b => { b.demoAnchors = h => ({anchors: [{id: 'in:t', kind: 'input', text: h === inner ? 'inner' : 'host'}], demo: {inputs: {}, readouts: []}}); });
   r.pageDemo = posts.at(-1)[1].demo; ctx.rupakaHost = undefined;
+  const S1b = {n: 1, say: 'one', strokes: [{op: 'circle', at: 'f1'}]};
+  b = await run([steps[1], ['step', {step: S1b, k: 1, tier: 'tutor'}], steps[2]], b => { b.add = s => { b.log.push(['add', s.say, s.strokes.length]); return true; }; const f = b.finish; b.finish = d => { b.log.push(['finished', d.steps.map(x => x.strokes.length)]); return f(d); }; });
+  r.grown = b.log;
+  b = await run([['show', {show: {title: 'Halves', href: 'http://127.0.0.1:5126/c/halves?show=alpha'}}]], b => { b.stop = () => b.log.push(['stop']); });
+  r.show = [b.log, out.next.textContent, out.next.children.map(c => c.href || c), ctx.said.at(-1)];
+  b = await run([['show', {show: {title: 'Halves', href: null}}]], b => { b.stop = () => {}; }); r.showOff = [out.next.textContent, out.next.children];
   console.log(JSON.stringify(r)); })();'''
     r = subprocess.run([node, '-e', harness, str(Path(__file__).parents[1]/'leela/blocks/nb/lesson.js')], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -321,6 +327,7 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     assert got['dialog'] == ["I don't get alpha bar"] and got['post'] == ['/nb/guide/stream', dict(path='/n.ipynb', cell_id='b', said="I don't get alpha bar", anchors=[dict(id='f1', text='a_t b', parts=['a_t', 'b']), dict(id='img1', text='A cat'), dict(id='img2', text='inline'), dict(id='f2', text='', parts=[])])]
     assert any('lee-board.js' in s for s in got['loaded']) and any('lee-board.css' in s for s in got['loaded'])
     assert got['played'] == [1, 2, ['assets', 'demo', 'resolve'], '/leestatic/board/', True, True, True], 'the board is drawn, not the text, with no speak hook'
+    assert got['voiceAt'] == dict(model='Browser voice', where='on this computer'), 'the strip names the voice that speaks'
     assert got['closed'] == 0 and got['open'] == [{'t': 2}], 'the demo moves only when every gate is filed'
     assert got['broke'] == 'It is the share left.', 'a board that fails to draw leaves the plain text'
     assert got['out'].splitlines() == ['It is the share left.', 'It falls with t.', 'Source 1: your vault, DDPM', "In the tutor's own words."]
@@ -337,3 +344,33 @@ vm.createContext(ctx); vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'),
     assert got['pageDemo'] == dict(anchors=[dict(id='in:t', kind='input', text='inner')], demo=dict(inputs={}, readouts=[])), 'the page sends the demo ids that board.js gives the rupaka element'
     assert 'demo' not in got['post'][1], 'a cell with no rupaka demo sends no demo'
     assert got['buffered'] == [[['play', 1, True], ['finish', 2, 'End.']], ['ok', '']], 'frames of the older question that come after its abort draw nothing'
+    assert got['grown'] == [['play', 1, True, 1], ['add', 'one', 1], ['add', 'two', 0], ['finished', [1, 0]], ['finish', 2, '']], 'a step that comes again with its `n` grows in place, and the end keeps the grown step once'
+    assert got['show'] == [[['stop']], 'Show: Halves. ', ['http://127.0.0.1:5126/c/halves?show=alpha'], ['ok', '']], '"show me" hands off to the demo in abhyasa, with no board'
+    assert got['showOff'] == ['Show: Halves. ', ['Start abhyasa to see the demo of this idea.']]
+
+def test_code_anchors_come_from_the_page_for_any_cell():
+    "abhyasa main's board copies values from code and its output (code1 to code4) into its panel."
+    page = [dict(id='code1', text='def double(x): return 2 * x'), dict(id='code2', text='4'), dict(id='f1', text='a', parts=['a'])]
+    assert check_anchors(page) == page
+    for bad in ([dict(id='code5', text='x')], [dict(id='code0', text='x')], [dict(id='code1', text='x', parts=['x'])]):
+        with pytest.raises(ValueError): check_anchors(bad)
+    a = by_id(guide_context(META, Cell(source='print(1)'), anchors=page))
+    assert list(a) == ['code1', 'code2'] and a['code1'] == dict(id='code1', kind='code', text='def double(x): return 2 * x')
+    assert list(by_id(guide_context(META, md('Text.'), anchors=page))) == ['passage', 'f1', 'code1', 'code2']
+    task, code = exercise_cells(dict(task='Double a number.', fname='double', stub='def double(x):\n    pass', uses=[],
+        tests=[dict(say='Two doubles to four', test='assert double(2) == 4', shown=True)]))
+    assert list(by_id(guide_context(META, code, anchors=page[:2]))) == ['check', 'code1', 'code2']
+
+@pytest.mark.parametrize('running', [True, False])
+def test_show_me_hands_off_to_the_demo_in_abhyasa_and_asks_no_model(serve, guide, monkeypatch, running):
+    "abhyasa main answers \"show me …\" with Show, never a board; in Leela that is a link to the idea's demo in abhyasa."
+    import abhyasa.demo
+    from leela.blocks.learn import learn
+    monkeypatch.setattr(abhyasa.demo, 'show_reply', lambda said, thread=(): said.removeprefix('show me ').strip() if said.startswith('show me') else None, raising=False)
+    monkeypatch.setattr(learn, 'abhyasa_address', lambda: dict(url='http://127.0.0.1:5126', vault='v', pid=1) if running else {})
+    r = serve(lesson())
+    res = r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said='show me alpha bar'))
+    href = 'http://127.0.0.1:5126/c/halves?show=alpha%20bar' if running else None
+    assert events(res) == [('show', dict(show=dict(title='Halves', href=href)))] and 'ask' not in guide, 'Show asks no model'
+    assert ask_guide(r, said='show me alpha bar').json() == dict(ok=True, show=dict(title='Halves', href=href))
+    assert [e for e, _ in events(r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said="I don't get alpha bar")))][-1] == 'board'

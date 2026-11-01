@@ -141,3 +141,22 @@ def test_typing_a_s_d_in_a_lesson_editor_while_a_board_plays_types_and_does_not_
         assert got['text'] == 'passasd', got
         assert got['shown'] and got['i'] == before == 0, got
     asyncio.run(_real_page(go, tmp_path))
+
+def test_the_new_board_builds_its_panel_from_the_code_the_page_sends(tmp_path, monkeypatch):
+    "abhyasa main's board: the page sends code1, and a panel row that marks the code draws in the side panel at the top right."
+    path = _lesson(tmp_path, monkeypatch, 'The targets are the next tokens.\n\n$$ q=' + TOKEN + ' $$\n\n```python\nx = tensor([18, 47, 56])\n```')
+    posted = []
+    board = _board([dict(op='panel', title='tensors and targets', head='Make a question and its answer', cols=['Input', 'Target']),
+                    dict(op='row', cells=['[18]'], to='47', at=dict(a='code1', text='tensor([18, 47, 56])'))], say='Each line makes one question.')
+    async def go(pg):
+        cell = await _ask(pg, path, board, posted, streamed=True)
+        await pg.wait_for_function("window.abhyasaBoard?.state?.done === true && document.querySelector('#board-panel .board-row')")
+        code = [a for a in posted[0]['anchors'] if a['id'].startswith('code')]
+        assert code == [dict(id='code1', text='x = tensor([18, 47, 56])')], posted[0]['anchors']
+        assert await cell.locator('.lee-md-cell [data-guide-id="code1"]').count() == 1
+        p = await pg.evaluate("""() => { const p = document.getElementById('board-panel'), b = p.getBoundingClientRect();
+            return {title: p.querySelector('.board-panel-title')?.textContent, rows: [...p.querySelectorAll('.board-row')].map(r => r.textContent), right: b.right, top: b.top,
+                    hand: getComputedStyle(p).getPropertyValue('--hand'), font: [...document.fonts].some(f => f.family.replace(/["']/g, '') === 'Patrick Hand')}; }""")
+        assert p['title'] == 'tensors and targets' and p['rows'] == ['[18]⟶47'] and p['right'] > 1150 and p['top'] < 200, p
+        assert 'Patrick Hand' in p['hand'] and p['font'], 'the hand font of the paper comes from /leefonts/hand.css'
+    asyncio.run(_real_page(go, tmp_path))

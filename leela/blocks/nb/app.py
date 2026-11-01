@@ -568,9 +568,15 @@ def connect(app, ctx):
         cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
         if cell is None: return fail('That cell is no longer in the notebook.')
         return tab, nb, cell
+    def guide_show(nb, said):
+        "The Show hand-off to abhyasa for a \"show me …\" on the lesson `nb`, or None."
+        from ..learn.learn import show_link
+        from .lesson import _slug
+        m = nb.meta['lesson']
+        return show_link(said, _slug(m['name'], m.get('walk') or {}), m['name'])
     @rt('/nb/guide/stream', methods=['POST'])
     async def nb_guide_stream(req):
-        "The screen guide's board as events: `wait` while it works, `step` for each step of a sure tutor board as soon as it is whole, then `board` or `error`. The lesson lock is held until the model call ends, not while the page reads."
+        "The screen guide's board as events: `wait` while it works, `step` for each step of a sure tutor board as soon as it is whole, then `board` or `error`; or one `show`, the hand-off to abhyasa, for a \"show me …\". The lesson lock is held until the model call ends, not while the page reads."
         if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
         try: from abhyasa.guide import stream_board  # noqa: F401
         except ImportError: return fail(GUIDE_STREAM_NEEDS)
@@ -581,6 +587,9 @@ def connect(app, ctx):
         except BaseException: lesson_lock.release(); raise
         if not isinstance(g, tuple): lesson_lock.release(); return g
         tab, nb, cell = g
+        if sh := guide_show(nb, said):
+            lesson_lock.release()
+            return StreamingResponse(iter([sse('show', dict(show=sh))]), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
         q, stop = queue.Queue(), threading.Event()
         def state(e):
             if 'saved' not in e: q.put(('wait', e))   # a saved page needs an undo route, which Leela does not have
@@ -610,6 +619,7 @@ def connect(app, ctx):
         async with lesson_lock:
             if not isinstance(g := guide_cell(d), tuple): return g
             tab, nb, cell = g
+            if sh := guide_show(nb, said): return dict(ok=True, show=sh)
             notes = []
             try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors, demo)
             except ImportError as e:

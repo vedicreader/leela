@@ -435,7 +435,7 @@ def record_run(memory, f):
     m, n, link = first(f['metrics'].items()), len(f['images']), walk_url(f['walk'], f['step'])
     return f"Sent to your walk: done, {f'{m[0]} {m[1]:g}, ' if m else ''}{n} image{'s' * (n != 1)}." + (f' [Back to the walk ↗](<{link}>)' if link else '')
 
-PAGE_ANCHOR = re.compile(r'\A(f|img)[1-9][0-9]{0,3}\Z')
+PAGE_ANCHOR = re.compile(r'\A(?:(f|img)[1-9][0-9]{0,3}|(code)[1-4])\Z')   # code1 to code4: the code and the output that the board's panel copies
 DEMO_ID = re.compile(r'\A(?:demo|in:[A-Za-z0-9:_-]{1,37}|out:[1-9][0-9]{0,3})\Z')
 PAGE_MAX, TEXT_MAX, PARTS_MAX, DEMO_MAX = 200, 4000, 200, 60
 
@@ -456,9 +456,9 @@ def check_demo(raw) -> dict|None:
     return dict(raw, anchors=kept)
 
 def check_anchors(raw) -> list:
-    "The formula and figure anchors the page sent, `id`, `text` and for a formula `parts`, as a list of dicts; ValueError for any other shape."
+    "The formula, figure and code anchors the page sent, `id`, `text` and for a formula `parts`, as a list of dicts; ValueError for any other shape."
     if raw is None: return []
-    bad = ValueError('The anchors must be a list of {id, text, parts} for formulas f1, f2, ... and {id, text} for figures img1, img2, ..., each id once.')
+    bad = ValueError('The anchors must be a list of {id, text, parts} for formulas f1, f2, ..., {id, text} for figures img1, img2, ... and for code code1 to code4, each id once.')
     if not isinstance(raw, list) or len(raw) > PAGE_MAX: raise bad
     seen = set()
     for a in raw:
@@ -466,7 +466,7 @@ def check_anchors(raw) -> list:
         seen.add(i)
         if not isinstance(t := a.get('text'), str) or len(t) > TEXT_MAX: raise bad
         p = a.get('parts')
-        if m[1] == 'img': ok = p is None
+        if m[1] != 'f': ok = p is None
         else: ok = p is None or (isinstance(p, list) and len(p) <= PARTS_MAX and all(isinstance(x, str) and len(x) <= TEXT_MAX for x in p))
         if not ok: raise bad
     return raw
@@ -502,10 +502,11 @@ def guide_context(meta, cell, path='', filed=(), anchors=None, demo=None) -> dic
         text = _cut(src, [sp for _, sp in specs]).strip()
         ctx['anchors'] = ([dict(id='passage', kind='passage', text=text)] if text else [])
         ctx['anchors'] += [dict(id=a['id'], kind='formula', text=a['text'], **({'tokens': list(a['parts'])} if a.get('parts') else {})) if a['id'][0] == 'f'
-                           else dict(id=a['id'], kind='figure', text=a['text']) for a in anchors or []]
+                           else dict(id=a['id'], kind='figure', text=a['text']) for a in anchors or [] if not a['id'].startswith('code')]
         if specs:
-            anchors, ctx['demo'] = _demo(cell, specs[0][0], set(filed), demo)
-            ctx['anchors'] += anchors
+            page, ctx['demo'] = _demo(cell, specs[0][0], set(filed), demo)
+            ctx['anchors'] += page
+    ctx['anchors'] += [dict(id=a['id'], kind='code', text=a['text']) for a in anchors or [] if a['id'].startswith('code')]
     return ctx
 
 GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.14 or newer. Upgrade abhyasa, then try again.'
