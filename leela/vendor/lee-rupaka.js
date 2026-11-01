@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.7', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.9', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -27,6 +27,35 @@
 
   Object.assign(R, {el, sv, get, fmt, show, hide, block: (name, f) => { R.blocks[name] = f; }, fn: (name, f) => { R.fns[name] = f; }});
   R.label = (b, ...more) => b.label ? el('span', {class: 'rk-lbl', text: b.label}, ...more) : null;
+
+  // The [r, g, b] (0 to 255) of a CSS colour or a --rk-* var, as it is in effect on `node`. A 1 x 1 canvas reads any colour syntax.
+  let probe;
+  R.rgb = (node, c) => {
+    node.style.color = c.startsWith('--') ? `var(${c})` : c;
+    const v = getComputedStyle(node).color;
+    node.style.color = '';
+    probe ??= el('canvas', {width: 1, height: 1}).getContext('2d', {willReadFrequently: true});
+    probe.clearRect(0, 0, 1, 1); probe.fillStyle = v; probe.fillRect(0, 0, 1, 1);
+    return [...probe.getImageData(0, 0, 1, 1).data.slice(0, 3)];
+  };
+
+  // A vendored library that only some blocks need (three.js for a scene). page() puts it in the page when a spec needs it.
+  // Else it loads one time from `R.base` (the folder of rupaka.js, or a path that the host sets), never from another site.
+  const SRC = document.currentScript?.src || '', LIBS = {three: 'RupakaTHREE'}, loading = {};
+  R.base = SRC ? SRC.replace(/[?#].*$/, '').replace(/[^/]*$/, '') : '';
+  const query = SRC.match(/\?[^#]*/)?.[0] || '';
+  R.need = name => {
+    const g = LIBS[name];
+    if (!g) return Promise.reject(new Error(`unknown library "${name}"`));
+    if (window[g]) return Promise.resolve(window[g]);
+    return loading[name] ??= new Promise((ok, no) => {
+      if (!R.base) { delete loading[name]; return no(new Error(`${name}.js is not on this page`)); }
+      const s = el('script', {src: `${R.base}${name}.js${query}`});
+      s.onload = () => window[g] ? ok(window[g]) : no(new Error(`${name}.js did not load`));
+      s.onerror = () => { delete loading[name]; no(new Error(`${name}.js did not load`)); };
+      document.head.append(s);
+    });
+  };
 
   // The input keys are the keys of spec.state. `save(state)` runs after a change of one of them, with the value that Rupaka.state gives.
   const inputs = spec => Object.keys(spec.state || {});
@@ -53,21 +82,27 @@
     return s;
   }
 
+  // In an explainer, a block with `step` shows from that step of the state key `step`. These blocks use `step` for their own meaning.
+  // A Python test keeps this list equal to the manifests that have a `step` prop.
+  R.ownStep = new Set(['body', 'force', 'grid', 'label3d', 'point', 'shot', 'slider', 'wheel']);
   function build(b, ctx) {
     const f = R.blocks[b.type];
     if (!f) throw new Error(`unknown block "${b.type}"`);
-    const node = f(b, ctx);
+    const node = f(b, ctx), from = ctx.learn && b.step != null && !R.ownStep.has(b.type) ? +b.step : null;
     node.classList.add('rk-b', `rk-${b.type}`);
     node.setAttribute('data-rk-type', b.type);
     if (b.after) node.setAttribute('data-rk-after', b.after);
     if (b.lock) node.setAttribute('data-rk-lock', b.lock);
-    if (b.after) { const sync = () => hide(node, !ctx.live(b.after)); ctx.s.on(sync); sync(); }
+    if (from != null) node.setAttribute('data-rk-step', from);
+    if (ctx.ids?.has(b)) node.setAttribute('data-rk-id', ctx.id(b));
+    if (b.after || from != null) { const sync = () => hide(node, !ctx.live(b.after) || (from != null && ctx.step() < from)); ctx.s.on(sync); sync(); }
     if (b.lock && !(node instanceof SVGElement)) {
       const note = el('div', {class: 'rk-note rk-locknote', text: 'Locked until you lock in your prediction.'});
       node.append(note);
       const sync = () => { const l = !ctx.live(b.lock); node.classList.toggle('rk-locked', l); note.hidden = !l; };
       ctx.s.on(sync); sync();
     }
+    ctx.nodes?.set(b, node);
     return node;
   }
 
@@ -79,9 +114,15 @@
     const v = spec.rupaka ?? R.schema;
     if (!(v === R.schema || v === R.schema - 1)) throw new Error(`schema ${v} is not supported; this runtime draws ${R.schema - 1} and ${R.schema}`);
     const s = store(spec, typeof save === 'function' ? save : null), root = el('div', {class: 'rk', 'data-rk': spec.id || ''});
-    const ctx = {s, spec, root, live: g => !g || s.get(`gate.${g}`) === 'done'};
+    const ctx = {s, spec, root, nodes: new WeakMap(), ids: new WeakMap(), live: g => !g || s.get(`gate.${g}`) === 'done', learn: spec.mode === 'learn',
+                 step: () => s.st.step == null ? Infinity : +s.st.step};   // with no step key, each part shows
     ctx.build = b => build(b, ctx);
+    // Each block has a stable id: its path in the spec, such as 'blocks.2' or 'blocks.0.blocks.1'. A part adds its own path: 'blocks.2.cells.0'.
+    ctx.tag = (b, p) => { if (b && typeof b === 'object') { ctx.ids.set(b, p); (b.blocks || []).forEach((k, i) => ctx.tag(k, `${p}.blocks.${i}`)); } };
+    ctx.id = (b, part) => { const p = ctx.ids.get(b); return p == null ? null : part == null ? p : `${p}.${part}`; };
+    (spec.blocks || []).forEach((b, i) => ctx.tag(b, `blocks.${i}`));
     ctx.put = (b, k, val) => { if (!ctx.live(b.lock)) return false; s.set(k, val); return true; };   // a locked control refuses
+    if (spec.mode === 'learn') { root.dataset.rkMode = 'learn'; root.append(el('p', {class: 'rk-mode', text: 'Explainer'})); }   // no gate, so no prediction step
     if (spec.title) root.append(el('h3', {class: 'rk-title', text: spec.title}));
     if (spec.ask) root.append(el('p', {class: 'rk-ask', text: spec.ask}));
     root.append(...(spec.blocks || []).map(ctx.build));
@@ -104,6 +145,23 @@
     return s;
   };
   R.state = host => snap(mounted(host));
+  // Add one block to a mounted demo with no rebuild, so a stream can grow a panel. The block goes at the end, or at the end of the
+  // stack or row at the path `opts.into` (for example 'blocks.0'). The parts that show stay as they are. It gives the path of the new block.
+  // The host checks the block first (rupaka.spec.append in Python): the runtime only refuses an unknown type or a bad place.
+  const GROUPS = new Set(['stack', 'row']);
+  R.append = (host, block, opts) => {
+    const s = mounted(host), ctx = CTX.get(s), into = opts?.into;
+    const box = into ? get(s.spec, into) : s.spec, at = into ? ctx.nodes.get(box) : ctx.root;
+    if (!box || (into && !GROUPS.has(box.type)) || !at) throw new Error(`${into} is not a stack or a row of this demo`);
+    const b = structuredClone(block), list = box.blocks ||= [], path = `${into ? into + '.' : ''}blocks.${list.length}`;
+    ctx.tag(b, path);
+    const node = ctx.build(b);
+    list.push(b); at.append(node); s.emit('*');
+    return path;
+  };
+  // The element of a block or of a part at `path` (its data-rk-id), or null. A host draws a curve from a mark on its page to this element.
+  // The element can be hidden, for example a part of a later step: check it before you draw.
+  R.anchor = (host, path) => CTX.get(mounted(host)).root.querySelector(`[data-rk-id="${CSS.escape(String(path))}"]`);
   R.set = (host, state) => {
     const s = mounted(host), ks = inputs(s.spec).filter(k => state && Object.hasOwn(state, k));
     if (!ks.length) return;
@@ -335,6 +393,83 @@ Rupaka.block('bars', (b, ctx) => {
   return el('div', {}, Rupaka.label(b), svg, key);
 });
 
+/* blocks/body/body.js */
+/* body: one part of a scene. A primitive shape, or a group that holds other bodies. `in` puts it inside another body, so it
+   moves and turns with that body. `at` is in the frame of its parent. `rot` (degrees about x, y and z) turns it about `pivot`.
+   An item of `rot` can be a state key, so a slider turns the part; the turn eases, or cuts with prefers-reduced-motion. */
+(() => {
+  const SIZE = {box: [1, 1, 1], cylinder: [.5, 1], cone: [.5, 1], sphere: [.5], capsule: [.25, 1], torus: [.5, .15], group: []};
+  const rad = d => d * Math.PI / 180;
+
+  // A box with round edges: a rounded square, pushed out with a bevel. The normals are smooth, so the bands of light curve.
+  function rounded(T, [x, y, z], r) {
+    const s = new T.Shape(), e = 1e-5, w = x - 2 * r, h = y - 2 * r;
+    s.absarc(e, e, e, -Math.PI / 2, -Math.PI, true);
+    s.absarc(e, h, e, Math.PI, Math.PI / 2, true);
+    s.absarc(w, h, e, Math.PI / 2, 0, true);
+    s.absarc(w, e, e, 0, -Math.PI / 2, true);
+    const g = new T.ExtrudeGeometry(s, {depth: Math.max(e, z - 2 * r), bevelEnabled: true, bevelSegments: 4, steps: 1,
+                                        bevelSize: r - e, bevelThickness: r, curveSegments: 4});
+    g.center();
+    return smooth(T, g);
+  }
+  // Join the corners that share a place, then find the normals again.
+  function smooth(T, g) {
+    const p = g.attributes.position, seen = new Map(), pos = [], idx = [];
+    for (let i = 0; i < p.count; i++) {
+      const k = `${p.getX(i).toFixed(4)},${p.getY(i).toFixed(4)},${p.getZ(i).toFixed(4)}`;
+      let j = seen.get(k);
+      if (j === undefined) { j = pos.length / 3; seen.set(k, j); pos.push(p.getX(i), p.getY(i), p.getZ(i)); }
+      idx.push(j);
+    }
+    const out = new T.BufferGeometry();
+    out.setAttribute('position', new T.Float32BufferAttribute(pos, 3)); out.setIndex(idx); out.computeVertexNormals();
+    return out;
+  }
+  function shape(T, b) {
+    const z = Object.assign([...SIZE[b.kind]], b.size || []);
+    switch (b.kind) {
+      case 'box': {
+        const r = Math.min(...z) * Math.min(.5, b.round ?? .14);
+        return r > 1e-3 ? rounded(T, z, r) : new T.BoxGeometry(...z);
+      }
+      case 'cylinder': return z.length > 2 ? new T.CylinderGeometry(z[0], z[1], z[2], 40) : new T.CylinderGeometry(z[0], z[0], z[1], 40);
+      case 'cone': return new T.ConeGeometry(z[0], z[1], 40);
+      case 'sphere': return new T.SphereGeometry(z[0], 40, 24);
+      case 'capsule': return new T.CapsuleGeometry(z[0], z[1], 8, 32);
+      case 'torus': return new T.TorusGeometry(z[0], z[1], 20, 56);
+    }
+  }
+
+  Rupaka.block('body', (b, ctx) => {
+    const S = ctx.scene;
+    if (!S) throw new Error('a body must be inside a scene');
+    if (!Object.hasOwn(SIZE, b.kind)) throw new Error(`"${b.kind}" is not a body kind; use one of: ${Object.keys(SIZE).join(', ')}`);
+    if (b.in && !S.ids.has(b.in)) throw new Error(`the body "${b.id}" is in "${b.in}", which is not a body`);
+    return S.part(b, {
+      make(T, P) {
+        const outer = new T.Group(), frame = new T.Group(), at = S.vec(b.at), pv = b.pivot ? S.vec(b.pivot) : at;
+        outer.position.set(...pv); frame.position.set(at[0] - pv[0], at[1] - pv[1], at[2] - pv[2]);
+        outer.add(frame);
+        if (b.kind !== 'group') frame.add(new T.Mesh(shape(T, b), S.mat(b.color || 'body')));
+        (b.in ? S.bodies[b.in].frame : S.world).add(outer);
+        S.bodies[b.id] = {outer, frame, b, P};
+        P.rot = S.vec(b.rot).map(rad); outer.rotation.set(...P.rot);
+        P.outer = outer;
+        return outer;
+      },
+      sync(P, live) {
+        S.show(P, P.outer, live);
+        const to = S.vec(b.rot).map(rad), o = P.outer;
+        if (to.every((x, i) => x === P.rot[i])) return;
+        const from = [o.rotation.x, o.rotation.y, o.rotation.z];
+        P.rot = to;
+        S.anim(P, b.turn ?? 700, k => o.rotation.set(...from.map((x, i) => x + (to[i] - x) * k)));
+      },
+    }, Rupaka.el('li', {text: `${b.id}: a ${b.kind}`}));
+  });
+})();
+
 /* blocks/caption/caption.js */
 /* caption: the explain text. Only **bold** and {path} are special; all text goes in with textContent, so no HTML runs. */
 Rupaka.block('caption', (b, ctx) => {
@@ -364,6 +499,106 @@ Rupaka.block('choice', (b, ctx) => {
   });
   return el('div', {}, Rupaka.label(b), box);
 });
+
+/* blocks/flow/flow.js */
+/* flow: a few nodes and the arrows between them, left to right (row) or as a loop (cycle), for example guess → compare → adjust. */
+Rupaka.block('flow', (b, ctx) => {
+  const {el, sv} = Rupaka, ns = b.nodes || [], n = ns.length, cyc = b.layout === 'cycle', W = 600, LH = 19;
+  const at = Object.fromEntries(ns.map((x, i) => [x.id, i]));
+  const es = b.edges ?? ns.slice(cyc ? 0 : 1).map((x, i) => ({from: ns[i].id, to: ns[(i + 1) % n].id}));   // no edges: each node points to the next
+  // The words of a node in at most two lines that fit `w`, at about 8 px a letter.
+  const wrap = (t, w) => { const per = Math.max(4, Math.floor((w - 20) / 8)), out = [''];
+    for (const wd of String(t).split(/\s+/)) { const l = out.length - 1; if (out[l] && (out[l] + ' ' + wd).length > per && out.length < 2) out.push(wd); else out[l] = out[l] ? `${out[l]} ${wd}` : wd; }
+    return out; };
+  const slot = cyc ? 170 : W / Math.max(n, 1), boxes = ns.map(x => { const ls = wrap(x.text, slot - 28);
+    return {ls, w: Math.min(slot - 28, Math.max(64, 8 * Math.max(...ls.map(l => l.length)) + 26)), h: LH * ls.length + 16}; });
+  const hmax = Math.max(...boxes.map(x => x.h), 0), arcs = es.map(e => at[e.to] - at[e.from]);
+  const up = !cyc && arcs.some(d => d > 1) ? 56 : 8, down = !cyc && arcs.some(d => d < 0) ? 56 : 8;
+  const H = cyc ? 300 : up + hmax + down, ry = (H - hmax) / 2 - 14, rx = W / 2 - 90;
+  const ctr = i => cyc ? [W / 2 + rx * Math.cos(-Math.PI / 2 + 2 * Math.PI * i / n), H / 2 + ry * Math.sin(-Math.PI / 2 + 2 * Math.PI * i / n)] : [slot * (i + .5), up + hmax / 2];
+  // The point where the line from the centre of box i toward [x, y] leaves the box, 5 px out.
+  const edge = (i, [x, y]) => { const [cx, cy] = ctr(i), dx = x - cx, dy = y - cy, bx = boxes[i];
+    const t = Math.min(Math.abs((bx.w / 2 + 5) / (dx || 1e-9)), Math.abs((bx.h / 2 + 5) / (dy || 1e-9))); return [cx + dx * t, cy + dy * t]; };
+  const f = v => +v.toFixed(1), q = (a, c, z) => `M${f(a[0])} ${f(a[1])}Q${f(c[0])} ${f(c[1])} ${f(z[0])} ${f(z[1])}`;
+  const head = (c, z) => { const a = Math.atan2(z[1] - c[1], z[0] - c[0]), p = s => [z[0] - 9 * Math.cos(a + s), z[1] - 9 * Math.sin(a + s)];
+    const [l, r] = [p(.45), p(-.45)]; return `M${f(l[0])} ${f(l[1])}L${f(z[0])} ${f(z[1])}L${f(r[0])} ${f(r[1])}`; };
+  const svg = sv('svg', {viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': [b.label, ...es.map(e => `${ns[at[e.from]].text} to ${ns[at[e.to]].text}`)].filter(Boolean).join('; ')});
+  es.forEach((e, j) => {
+    const i = at[e.from], k = at[e.to], A = ctr(i), Z = ctr(k), d = k - i;
+    let c, out = [0, d < 0 ? 1 : -1];   // the side of the line that the words go on
+    if (cyc) { const m = [(A[0] + Z[0]) / 2, (A[1] + Z[1]) / 2], ox = m[0] - W / 2, oy = m[1] - H / 2, l = Math.hypot(ox, oy) || 1;
+      out = [ox / l, oy / l]; c = [m[0] + 30 * out[0], m[1] + 30 * out[1]]; }   // bend out from the middle, so the arrows make a loop
+    else if (d === 1) c = [(A[0] + Z[0]) / 2, A[1]];
+    else c = [(A[0] + Z[0]) / 2, d > 0 ? up - 48 : up + hmax + 48 - 8];   // a skip goes over the row, a step back goes under it
+    const a = edge(i, d === 1 && !cyc ? Z : c), z = edge(k, d === 1 && !cyc ? A : c), mid = [(a[0] + 2 * c[0] + z[0]) / 4, (a[1] + 2 * c[1] + z[1]) / 4];
+    const jog = [c[0] + 2, c[1] - 2.5];
+    svg.append(sv('g', {class: 'edge', style: `--i: ${n + j}`, 'data-rk-id': ctx.id(b, `edges.${j}`)},
+      sv('path', {class: 'ln', d: q(a, c, z) + head(c, z), pathLength: 1}),
+      sv('path', {class: 'sk', d: q([a[0] + 1, a[1] + 1.5], jog, [z[0] - 1, z[1] + 1]), pathLength: 1}),
+      e.text ? sv('text', {class: 'et', x: f(mid[0] + 10 * out[0]), y: f(mid[1] + 12 * out[1] + 4), text: e.text,
+                           'text-anchor': out[0] > .3 ? 'start' : out[0] < -.3 ? 'end' : 'middle'}) : null));
+  });
+  ns.forEach((x, i) => { const [cx, cy] = ctr(i), bx = boxes[i], x0 = cx - bx.w / 2, y0 = cy - bx.h / 2;
+    svg.append(sv('g', {class: 'node', style: `--i: ${i}`, 'data-rk-id': ctx.id(b, `nodes.${i}`)},
+      sv('rect', {x: f(x0), y: f(y0), width: f(bx.w), height: f(bx.h), rx: 6}),
+      sv('rect', {class: 'sk', x: f(x0 + 1.5), y: f(y0 - 1), width: f(bx.w - 2), height: f(bx.h + 1.5), rx: 8}),
+      bx.ls.map((l, r) => sv('text', {x: f(cx), y: f(cy + (r - (bx.ls.length - 1) / 2) * LH + 5), 'text-anchor': 'middle', text: l})))); });
+  return el('div', {}, Rupaka.label(b), svg);
+});
+
+/* blocks/force/force.js */
+/* force: an arrow in a scene. Its length is |mag| times the scene scale, so arrows in one scene compare. `at` is a point in the
+   frame of the body `on` (or in the world), so the arrow moves with the body. `dir` is in the world. With `tip`, the arrow ends at
+   the point (a push); else it starts there (a pull). The arrow grows when it shows or when its mag changes. */
+(() => {
+  const tone = d => d[1] > .5 ? 'up' : d[1] < -.5 ? 'down' : 'side';
+  Rupaka.block('force', (b, ctx) => {
+    const S = ctx.scene;
+    if (!S) throw new Error('a force must be inside a scene');
+    if (b.on && !S.ids.has(b.on)) throw new Error(`the force is on "${b.on}", which is not a body`);
+    const name = b.tone || tone(S.vec(b.dir, [0, 1, 0]));
+    const node = b.label ? S.chip(b, b.label, name) : Rupaka.el('li');
+    if (!b.label) ctx.s.on(() => { node.textContent = `A force, ${Rupaka.show(S.num(b.mag), 2)}`; });
+    let T;
+    const len = P => Math.abs(S.num(b.mag)) * S.scale || 0;
+    const way = P => {   // the unit direction; a negative mag turns it round
+      const d = P.dir.set(...S.vec(b.dir, [0, 1, 0]));
+      if (d.lengthSq() < 1e-9) d.set(0, 1, 0);
+      return S.num(b.mag) < 0 ? d.normalize().negate() : d.normalize();
+    };
+    return S.part(b, {
+      make(lib, P) {
+        T = lib;
+        const g = new T.Group(), mat = S.mat(name);
+        const shaft = new T.Mesh(new T.CylinderGeometry(1, 1, 1, 24).translate(0, .5, 0), mat);
+        const head = new T.Mesh(new T.ConeGeometry(1, 1, 32).translate(0, .5, 0), mat);
+        g.add(shaft, head); S.world.add(g);
+        Object.assign(P, {g, shaft, head, len: len(P), dir: new T.Vector3(0, 1, 0), base: new T.Vector3()});
+        return g;
+      },
+      sync(P, live) {
+        S.show(P, P.g, live);
+        const to = len(P), from = P.len;
+        if (to !== P.to) { P.to = to; S.anim(P, 600, k => { P.len = from + (to - from) * k; }); }
+      },
+      // Each frame: put the arrow at its point, along its direction, at its length now.
+      frame(P) {
+        const d = way(P), L = Math.max(P.len, 1e-3), r = S.unit * .55, hr = r * 2.6, hl = Math.min(hr * 2.4, L * .45);
+        P.base.copy(S.point(b.on, b.at)); if (b.tip) P.base.addScaledVector(d, -L);
+        P.g.position.copy(P.base);
+        P.g.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), d);
+        P.shaft.scale.set(r, Math.max(1e-3, L - hl), r);
+        P.head.scale.set(hr, hl, hr); P.head.position.y = L - hl;
+      },
+      // The chip goes on the arrow, at its full length.
+      anchor(P) {
+        if (!P.g) return null;
+        const L = P.to ?? P.len;
+        return S.point(b.on, b.at).addScaledVector(way(P), b.tip ? -L * .6 : L * .6);
+      },
+    }, node);
+  });
+})();
 
 /* blocks/gate/gate.js */
 /* gate: predict, then reveal. Keys 1-9 pick, ←/→ or A/D move, ⌘↩ locks in. Blocks with `after: id` wait for it.
@@ -508,6 +743,29 @@ Rupaka.block('grid', (b, ctx) => {
   return el('div', {}, Rupaka.label(b), svg, say, b.note ? el('div', {class: 'rk-note', text: b.note}) : null);
 });
 
+/* blocks/label3d/label3d.js */
+/* label3d: a chip pinned to a point of a scene, with a thin leader line that ends in a dot at the point. `at` is in the frame of
+   the body `on` (or in the world). The text fills {path} from the state, as a readout does. The scene places the chips so that
+   they never overlap: a chip that has no free place does not show. */
+Rupaka.block('label3d', (b, ctx) => {
+  const S = ctx.scene;
+  if (!S) throw new Error('a label3d must be inside a scene');
+  if (b.on && !S.ids.has(b.on)) throw new Error(`the label is on "${b.on}", which is not a body`);
+  return S.part(b, {anchor: () => S.T ? S.point(b.on, b.at) : null}, S.chip(b, b.text));
+});
+
+/* blocks/pair/pair.js */
+/* pair: input cells, an arrow and the answer, as one row of a worked example: [18] → 47. The parts come in one by one. */
+Rupaka.block('pair', (b, ctx) => {
+  const {el, fmt} = Rupaka, cells = b.cells || [];
+  const part = (cls, i, id) => el('span', {class: cls, style: `--i: ${i}`, 'data-rk-id': ctx.id(b, id)});
+  const cs = cells.map((_, i) => part('cell', i, `cells.${i}`)), to = part('to', cells.length + 1, 'to');
+  ctx.s.on(() => { cs.forEach((c, i) => { c.textContent = fmt(cells[i], ctx.s.st); }); to.textContent = fmt(b.to, ctx.s.st); });
+  const heads = b.heads ? el('div', {class: 'heads'}, el('span', {text: b.heads[0]}), el('span', {text: b.heads[1]})) : null;
+  return el('div', {}, heads, el('div', {class: 'line'}, b.n ? el('span', {class: 'n', text: b.n}) : null,
+    el('span', {class: 'cells'}, cs), el('span', {class: 'arrow', style: `--i: ${cells.length}`, role: 'img', 'aria-label': 'gives'}), to));
+});
+
 /* blocks/pixels/pixels.js */
 /* pixels: a grey image of a list of rows of numbers, one square per cell. Read-only.
    The ramp goes from --rk-bg at lo to --rk-fg at hi, so it follows the theme. The label fills {path} from the state;
@@ -516,11 +774,7 @@ Rupaka.block('pixels', (b, ctx) => {
   const {el, fmt} = Rupaka, s = ctx.s;
   const cv = el('canvas', {role: 'img', width: 0, height: 0, style: `width: ${b.size ?? 256}px`});
   const lbl = b.label ? el('span', {class: 'rk-lbl', 'aria-hidden': 'true'}) : null;
-  const probe = el('canvas', {width: 1, height: 1}).getContext('2d', {willReadFrequently: true});
-  const rgb = v => {
-    cv.style.color = `var(${v})`; probe.clearRect(0, 0, 1, 1); probe.fillStyle = getComputedStyle(cv).color; cv.style.color = '';
-    probe.fillRect(0, 0, 1, 1); return probe.getImageData(0, 0, 1, 1).data;
-  };
+  const rgb = v => Rupaka.rgb(cv, v);
   s.on(() => {
     const text = fmt(b.label || b.bind, s.st), v = s.get(b.bind) || [], m = Array.isArray(v[0]) ? v : [v];
     cv.setAttribute('aria-label', text); if (lbl) lbl.textContent = text;
@@ -652,6 +906,492 @@ Rupaka.block('readout', (b, ctx) => {
 /* blocks/row/row.js */
 /* row: child blocks side by side; they wrap on a narrow page. */
 Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.build)));
+
+/* blocks/scene/scene.js */
+/* scene: a 3D view in a toon style, drawn with three.js. Its child blocks (body, force, label3d, shot) are its parts.
+   three.js loads only for a spec that has a scene (Rupaka.need). The look: flat colour in three soft bands, ink outlines from
+   one edge pass on depth and normals, a soft floor with contact shadows, and label chips in screen space that never overlap.
+   Colours come from the --rk-* vars. The camera moves between named shots with easing; with prefers-reduced-motion it cuts.
+   `bind` is the step: a part with `step: n` shows from step n. Keys on the view: A/D back and next, 1-9 a step, Q/E turn, W/S tilt. */
+(() => {
+  const R = Rupaka, {el, sv, fmt} = R;
+  const SHOTS = {wide: {az: 30, el: 18, fov: 30}, side: {az: 0, el: 4, fov: 12}, front: {az: 90, el: 4, fov: 12},
+                 top: {az: 0, el: 89, fov: 12}, close: {az: 30, el: 18, fov: 28}};
+  const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+  const inout = t => (t = clamp(t, 0, 1)) < .5 ? 4 * t ** 3 : 1 - (2 - 2 * t) ** 3 / 2;
+  const settle = t => { t = clamp(t, 0, 1) - 1; return 1 + 2.4 * t ** 3 + 1.4 * t ** 2; };   // a small overshoot, then rest
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const rad = d => d * Math.PI / 180;
+  const lum = c => .2126 * c[0] + .7152 * c[1] + .0722 * c[2];
+  const mix = (a, b, t) => a.map((x, i) => x + (b[i] - x) * t);
+  const scenes = new WeakMap();   // store -> its scenes, for Rupaka.cam
+  // One watch on the theme for all scenes: a change of the OS scheme, or of a class, data-theme or style on <html>.
+  // Each scene in `themed` gives false when its view has left the page; then it frees its WebGL context and drops out.
+  const themed = new Set();
+  let watch = null;
+  const retheme = () => themed.forEach(f => { if (!f()) themed.delete(f); });
+  const onTheme = f => {
+    themed.add(f);
+    if (watch) return;
+    watch = new MutationObserver(retheme);
+    watch.observe(document.documentElement, {attributes: true, attributeFilter: ['class', 'data-theme', 'style']});
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', retheme);
+  };
+  R.SHOTS = Object.keys(SHOTS).filter(k => k !== 'close');
+
+  // A shot name: wide, side, front, top, or close:<body id>.
+  const isShot = (v, ids) => typeof v === 'string' && (R.SHOTS.includes(v) || (v.startsWith('close:') && ids.has(v.slice(6))));
+
+  // The board's `cam` operation: set the key that a shot block binds. It gives false for a bad name or a scene with no such key.
+  R.cam = (host, shot) => {
+    const s = host?.rupaka;
+    if (!s) throw new Error('no rupaka demo is mounted in this element');
+    for (const S of scenes.get(s) || []) {
+      const k = S.shotKey();
+      if (k && isShot(shot, S.ids)) { R.set(host, {[k]: shot}); return true; }
+    }
+    return false;
+  };
+
+  const TOON_V = `varying vec3 vN;
+    void main() { vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`;
+  // Three bands of light with soft edges, so a flat colour stays true in the light band and a round part still reads as round.
+  const TOON_F = `uniform vec3 color; uniform vec3 light; varying vec3 vN;
+    void main() {
+      vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+      float d = dot(n, light), a = fwidth(d) + .11;
+      float band = .66 + .16 * smoothstep(-.3 - a, -.3 + a, d) + .18 * smoothstep(.3 - a, .3 + a, d);
+      gl_FragColor = vec4(color * band, 1.);
+      #include <colorspace_fragment>
+    }`;
+  const FLAT_V = `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }`;
+  // The floor fades into the page at its rim. A contact shadow is dark at its middle and soft at its edge.
+  const FLOOR_F = `uniform vec3 color; varying vec2 vUv;
+    void main() { float r = length(vUv - .5) * 2., a = 1. - smoothstep(0., 1., r); gl_FragColor = vec4(color, a * a); }`;
+  // The contact shadow: the scene seen from under the floor, dark where a part is near the floor, then blurred.
+  const DARK_V = `varying float vY; void main() { vec4 p = modelMatrix * vec4(position, 1.); vY = p.y; gl_Position = projectionMatrix * viewMatrix * p; }`;
+  const DARK_F = `uniform float floor, fade; varying float vY;
+    void main() { float a = 1. - clamp((vY - floor) / fade, 0., 1.); gl_FragColor = vec4(0., 0., 0., a * a); }`;
+  const BLUR_F = `uniform sampler2D map; uniform vec2 step; varying vec2 vUv;
+    void main() {
+      float w[5]; w[0] = .227; w[1] = .194; w[2] = .121; w[3] = .054; w[4] = .016;
+      float a = texture2D(map, vUv).a * w[0];
+      for (int i = 1; i < 5; i++) a += (texture2D(map, vUv + step * float(i)).a + texture2D(map, vUv - step * float(i)).a) * w[i];
+      gl_FragColor = vec4(0., 0., 0., a);
+    }`;
+  const SHADOW_F = `uniform vec3 color; uniform float alpha; uniform sampler2D map; varying vec2 vUv;
+    void main() { float r = length(vUv - .5) * 2.; gl_FragColor = vec4(color, alpha * texture2D(map, vec2(vUv.x, 1. - vUv.y)).a * (1. - smoothstep(.7, 1., r))); }`;
+  const POST_V = `varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`;
+  // The ink: a line where the depth steps toward the viewer (the outline) or where the normal turns fast (a crease).
+  // Where no part draws, the floor and its shadow fade into the page near the edges of the view, so the ground has no edge.
+  const POST_F = `uniform sampler2D tC; uniform sampler2D tN; uniform sampler2D tD; uniform vec2 texel; uniform float w, near, far; uniform vec3 ink, bg;
+    varying vec2 vUv;
+    float lin(float d) { float z = d * 2. - 1.; return 2. * near * far / (far + near - z * (far - near)); }
+    void main() {
+      vec3 col = texture2D(tC, vUv).rgb;
+      float d0 = texture2D(tD, vUv).x, l0 = lin(d0), de = 0., ne = 0.;
+      vec3 n0 = texture2D(tN, vUv).xyz * 2. - 1.;
+      for (int i = 0; i < 8; i++) {
+        float a = float(i) * .7853982;
+        vec2 uv = vUv + vec2(cos(a), sin(a)) * texel * w;
+        float d = texture2D(tD, uv).x;
+        de += min(lin(d) - l0, l0);
+        if (d0 < 1. && d < 1.) ne = max(ne, 1. - dot(n0, texture2D(tN, uv).xyz * 2. - 1.));
+      }
+      vec2 q = abs(vUv - .5) * 2.;
+      if (d0 >= 1.) col = mix(col, bg, smoothstep(.55, 1., max(q.x, q.y)));
+      float e = d0 < 1. ? max(smoothstep(.05, .16, de / l0), smoothstep(.3, .6, ne)) : 0.;
+      gl_FragColor = vec4(mix(col, ink, e * .92), 1.);
+      #include <colorspace_fragment>
+    }`;
+
+  Rupaka.block('scene', (b, ctx) => {
+    const s = ctx.s, parts = [], specs = Object.fromEntries((b.blocks || []).filter(k => k.type === 'body').map(k => [k.id, k]));
+    const ids = new Set(Object.keys(specs)), S = {b, s, ids, bodies: {}, anims: new Map()};
+    S.part = (pb, impl, node) => { parts.push({b: pb, impl, node}); return node; };
+    S.num = v => typeof v === 'number' ? v : +s.get(v);
+    S.vec = (v, d = [0, 0, 0]) => Array.isArray(v) ? v.map((x, i) => { const n = S.num(x); return Number.isFinite(n) ? n : d[i]; }) : d;
+    S.step = () => b.bind ? (+s.get(b.bind) || 1) : Infinity;
+    const own = pb => ctx.live(pb.after) && (pb.step == null || S.step() >= pb.step) && (pb.show == null || !!s.get(pb.show));
+    S.seen = id => !!specs[id] && own(specs[id]) && (!specs[id].in || S.seen(specs[id].in));   // a body and each body that holds it
+    S.live = pb => own(pb) && (pb.on == null || S.seen(pb.on));
+    S.shotKey = () => parts.find(p => p.b.type === 'shot' && p.b.bind)?.b.bind;
+    // A chip: a label in screen space with a leader line to its point. Its text fills {path} from the state.
+    S.chip = (pb, tpl, tone) => {
+      const t = el('span', {class: 'txt'}), n = el('div', {class: 'rk-chip off', 'data-tone': pb.tone || tone || 'ink'}, t);
+      s.on(() => { t.textContent = fmt(tpl, s.st); });
+      return n;
+    };
+    // An animation of one thing (`key`). A new one for the same key takes its place. f(k) gets k from 0 to 1.
+    S.anim = (key, ms, f, ease = inout) => {
+      if (still() || !ms || !S.T) { S.anims.delete(key); f(1); return; }
+      S.anims.set(key, {t0: performance.now(), ms, f, ease, k: 0}); f(0); kick();
+    };
+    // Show or hide an object: it grows in with a small overshoot, or shrinks out.
+    S.show = (P, o, live) => {
+      if (P.on === live) return;
+      const first = P.on === undefined; P.on = live;
+      if (first || !S.T) { o.visible = live; o.scale.setScalar(1); return; }
+      o.visible = true;
+      if (live) S.anim(o, 420, k => { o.scale.setScalar(Math.max(1e-3, k)); }, settle);
+      else S.anim(o, 220, k => { o.scale.setScalar(Math.max(1e-3, 1 - k)); if (k >= 1) o.visible = false; });
+    };
+    S.point = (on, at) => {
+      const v = new S.T.Vector3(...S.vec(at));
+      return on ? S.bodies[on].frame.localToWorld(v) : v;
+    };
+
+    const c2 = Object.assign(Object.create(ctx), {scene: S});
+    const nodes = (b.blocks || []).map(k => R.build(k, c2));
+    const cv = el('canvas', {class: 'gl'}), leads = sv('svg', {class: 'leads', 'aria-hidden': 'true'}), chips = el('div', {class: 'chips'});
+    const msg = el('p', {class: 'rk-note msg', hidden: true});
+    const stage = el('div', {class: 'stage', tabindex: 0, role: 'group', 'aria-roledescription': '3D scene',
+                             'aria-label': b.label || 'A 3D scene', style: `height: ${b.height ?? 380}px`}, cv, leads, chips, msg);
+    const sr = el('ul', {class: 'rk-sr'});
+    nodes.forEach(n => (n.classList.contains('rk-chip') ? chips : sr).append(n));
+
+    const N = b.steps?.length || Math.max(1, ...(b.blocks || []).map(k => k.step || 1));
+    const say = el('p', {class: 'say', 'aria-live': 'polite'}), count = el('span', {class: 'count'});
+    const go = d => { if (b.bind) { const v = clamp(S.step() + d, 1, N); if (v !== S.step()) ctx.put(b, b.bind, v); } };
+    const prev = el('button', {type: 'button', onclick: () => go(-1)}, 'Back', el('kbd', {text: 'A'}));
+    const next = el('button', {type: 'button', onclick: () => go(1)}, 'Next', el('kbd', {text: 'D'}));
+    const bar = b.bind ? el('div', {class: 'bar'}, prev, count, next) : null;
+
+    const user = {az: 0, el: 0};
+    const turn = (daz, del, now) => { user.az += daz; user.el = clamp(user.el + del, -20, 60); if (S.T) aim(frameOf(S.shot), now ? 0 : 260); };
+    stage.addEventListener('keydown', e => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'a' || k === 'arrowleft') go(-1);
+      else if (k === 'd' || k === 'arrowright') go(1);
+      else if (k === 'q') turn(-20, 0); else if (k === 'e') turn(20, 0);
+      else if (k === 'w') turn(0, 10); else if (k === 's') turn(0, -10);
+      else if (/^[1-9]$/.test(k) && b.bind && +k <= N) ctx.put(b, b.bind, +k);
+      else return;
+      e.preventDefault();
+    });
+    let held = null;
+    stage.addEventListener('pointerdown', e => { held = [e.clientX, e.clientY]; stage.setPointerCapture(e.pointerId); });
+    stage.addEventListener('pointermove', e => {
+      if (!held) return;
+      turn((e.clientX - held[0]) * .4, (e.clientY - held[1]) * .3, true); held = [e.clientX, e.clientY];
+    });
+    stage.addEventListener('pointerup', () => { held = null; });
+
+    // three.js parts, made when the library is there.
+    let rtM, mask, MW = 96, MH = 48;
+    let T, gl, world, cam, post, postCam, rtC, rtN, floor, W = 0, H = 0, raf = 0, sig = '', pal;
+    const view = {az: 35, el: 22, fov: 32, dist: 10, tx: 0, ty: 0, tz: 0};
+    let tw = null;
+    const kick = () => { if (!raf && gl) raf = requestAnimationFrame(frame); };
+
+    function palette() {
+      const g = v => R.rgb(stage, v).map(x => x / 255);
+      const bg = g('--rk-bg'), fg = g('--rk-fg'), acc = g('--rk-acc'), ok = g('--rk-ok'), no = g('--rk-no');
+      // On a dark page the parts take a dimmed paper, so a light part does not glare.
+      const night = lum(bg) < lum(fg), paper = night ? mix(fg, bg, .25) : bg, ink = night ? bg : fg;
+      const tint = c => mix(c, paper, night ? .35 : .62), deep = c => mix(c, paper, night ? .12 : .3);
+      return {night, bg, floor: mix(bg, fg, night ? .07 : .05), shade: mix(ink, [0, 0, 0], .5), line: mix(ink, [0, 0, 0], night ? .7 : .3),
+              body: mix(paper, ink, night ? .2 : .12), light: night ? mix(paper, fg, .3) : mix(paper, [1, 1, 1], .35), dark: mix(paper, ink, .4),
+              glass: mix(mix(paper, ink, .45), acc, .12), acc: tint(acc), ok: tint(ok), no: tint(no), up: deep(ok), down: deep(no), side: deep(acc)};
+    }
+    const mats = {};
+    const col = c => new T.Color().setRGB(c[0], c[1], c[2], T.SRGBColorSpace);
+    const LIGHT = {value: null};
+    S.mat = name => mats[name] ??= new T.ShaderMaterial({uniforms: {color: {value: col(pal[name] || pal.body)}, light: LIGHT},
+                                                         vertexShader: TOON_V, fragmentShader: TOON_F});
+    function recolor() {
+      if (!T) return;
+      pal = palette();
+      for (const [k, m] of Object.entries(mats)) m.uniforms.color.value = col(pal[k] || pal.body);
+      floor.material.uniforms.color.value = col(pal.floor);
+      shadow.material.uniforms.color.value = col(pal.shade);
+      post.material.uniforms.ink.value = col(pal.line); post.material.uniforms.bg.value = col(pal.bg);
+      kick();
+    }
+
+    // The box of what shows: each visible mesh at its end state (animations at k = 1), without the floor and the shadows.
+    const tmp = () => new T.Box3();
+    function boxes(o, out = []) {
+      o.updateWorldMatrix(true, true);
+      o.traverseVisible(m => {
+        if (!m.isMesh || m.userData.flat) return;
+        m.geometry.boundingBox ?? m.geometry.computeBoundingBox();
+        out.push(tmp().copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld));
+      });
+      return out;
+    }
+    const boxOf = o => boxes(o).reduce((a, x) => a.union(x), tmp());
+    const corners = bx => [...Array(8)].map((_, i) => new T.Vector3(i & 1 ? bx.max.x : bx.min.x, i & 2 ? bx.max.y : bx.min.y, i & 4 ? bx.max.z : bx.min.z));
+    function atEnd(f) {
+      const as = [...S.anims.values()];
+      as.forEach(a => a.f(1)); const r = f(); as.forEach(a => a.f(a.k));
+      return r;
+    }
+    // The camera for a shot: its angles, and the distance at which what shows fits the view, with a margin for the chips.
+    // It fits the corners of the box of each mesh (not one box of all), so a long, thin shape fills the view.
+    function frameOf(name) {
+      const close = name.startsWith('close:'), p = SHOTS[close ? 'close' : name] || SHOTS.wide;
+      const pts = atEnd(() => {
+        let bs = close && S.bodies[name.slice(6)] ? boxes(S.bodies[name.slice(6)].outer) : [];
+        if (bs.length) bs = [bs.reduce((a, x) => a.union(x), tmp()).expandByScalar(S.size * .1)];   // a close shot keeps some room
+        if (!bs.length) bs = boxes(world);
+        const out = bs.flatMap(corners);
+        if (!close) for (const q of parts) { const a = q.impl.anchor?.(q); if (a && S.live(q.b)) out.push(a); }
+        return out;
+      });
+      if (!pts.length) pts.push(new T.Vector3(-1, -1, -1), new T.Vector3(1, 1, 1));
+      const az = p.az + user.az, elv = clamp(p.el + user.el, -10, 89), a = rad(az), e = rad(elv);
+      const c = pts.reduce((m, x) => m.add(x), new T.Vector3()).divideScalar(pts.length);
+      const dir = new T.Vector3(Math.cos(e) * Math.sin(a), Math.sin(e), Math.cos(e) * Math.cos(a));
+      const right = new T.Vector3().crossVectors(new T.Vector3(0, 1, 0), dir).normalize(), up = new T.Vector3().crossVectors(dir, right);
+      const tv = Math.tan(rad(p.fov) / 2) * .8, th = tv * (W / H || 1);
+      const fit = () => pts.reduce((D, x) => {
+        const v = x.clone().sub(c), z = v.dot(dir);
+        return Math.max(D, z + Math.abs(v.dot(right)) / th, z + Math.abs(v.dot(up)) / tv);
+      }, .1);
+      for (let i = 0; i < 2; i++) {   // move the centre to the middle of what shows, then fit again
+        const D = fit(), xs = pts.map(x => { const v = x.clone().sub(c), z = D - v.dot(dir); return [v.dot(right) / z, v.dot(up) / z]; });
+        const mid = k => (Math.min(...xs.map(q => q[k])) + Math.max(...xs.map(q => q[k]))) / 2;
+        c.addScaledVector(right, mid(0) * D).addScaledVector(up, mid(1) * D);
+      }
+      return {az, el: elv, fov: p.fov, dist: fit(), tx: c.x, ty: c.y, tz: c.z};
+    }
+    function aim(to, ms) {
+      if (still() || !ms || !W) { Object.assign(view, to); tw = null; }
+      else tw = {from: {...view}, to, t0: performance.now(), ms};
+      kick();
+    }
+    function place() {
+      const a = rad(view.az), e = rad(view.el), size = view.dist;
+      cam.fov = view.fov; cam.aspect = W / H || 1;
+      cam.position.set(view.tx + size * Math.cos(e) * Math.sin(a), view.ty + size * Math.sin(e), view.tz + size * Math.cos(e) * Math.cos(a));
+      cam.up.set(0, 1, 0); cam.lookAt(view.tx, view.ty, view.tz);
+      cam.near = Math.max(.01, size - S.size * 3); cam.far = size + S.size * 6;
+      cam.updateProjectionMatrix();
+    }
+
+    // The contact shadow: draw the parts from under the floor into a small target, blur it two times, and lay it on the floor.
+    let shadow, shCam, shRT, shRT2, dark, blur, blurCam;
+    function shade() {
+      if (b.ground === false) return;
+      const flat = [floor, shadow], vis = flat.map(o => o.visible);
+      flat.forEach(o => { o.visible = false; });
+      world.overrideMaterial = dark; gl.setRenderTarget(shRT); gl.setClearColor(0, 0); gl.clear(); gl.render(world, shCam);
+      world.overrideMaterial = null;
+      flat.forEach((o, i) => { o.visible = vis[i]; });
+      const u = blur.children[0].material.uniforms;
+      for (const r of [1.6, .8]) {
+        u.map.value = shRT.texture; u.step.value.set(r / 512, 0); gl.setRenderTarget(shRT2); gl.render(blur, blurCam);
+        u.map.value = shRT2.texture; u.step.value.set(0, r / 512); gl.setRenderTarget(shRT); gl.render(blur, blurCam);
+      }
+    }
+
+    // Chips: each one goes to the first free place around its point, and keeps its place while that stays free.
+    const DIRS = [-45, -135, 0, 180, 45, 135, -90, 90].map(d => [Math.cos(rad(d)), Math.sin(rad(d))]);
+    const hit = (p, q, m) => p.x < q.x + q.w + m && q.x < p.x + p.w + m && p.y < q.y + q.h + m && q.y < p.y + p.h + m;
+    // The leader of a chip: from its point to the nearest point of its box. Two leaders that cross are hard to follow.
+    const lead = (it, bx) => [[it.x, it.y], [clamp(it.x, bx.x, bx.x + bx.w), clamp(it.y, bx.y, bx.y + bx.h)]];
+    const side = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+    const cross = ([a, b], [c, d]) => side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0;
+    function layout() {
+      const placed = [], items = [], segs = [];
+      for (const q of parts) {
+        if (!q.node.classList.contains('rk-chip')) continue;
+        const a = q.node.hidden || !S.live(q.b) ? null : q.impl.anchor?.(q);
+        let it = null;
+        if (a) {
+          const v = a.clone().project(cam);
+          if (v.z > -1 && v.z < 1) it = {q, x: (v.x + 1) / 2 * W, y: (1 - v.y) / 2 * H, w: q.node.offsetWidth, h: q.node.offsetHeight};
+        }
+        if (it && it.w) items.push(it); else off(q);
+      }
+      const free = (bx, it, strict) => bx.x >= 4 && bx.y >= 4 && bx.x + bx.w <= W - 4 && bx.y + bx.h <= H - 4 && !placed.some(p => hit(bx, p, 6))
+        && (!strict || (!items.some(o => o !== it && o.x > bx.x - 5 && o.x < bx.x + bx.w + 5 && o.y > bx.y - 5 && o.y < bx.y + bx.h + 5)
+                        && !segs.some(s => cross(s, lead(it, bx)))));
+      const mid = new T.Vector3(view.tx, view.ty, view.tz).project(cam), mx = (mid.x + 1) / 2 * W, my = (1 - mid.y) / 2 * H;
+      for (const it of items) {
+        const at = ([dx, dy]) => ({x: it.x + dx - it.w / 2, y: it.y + dy - it.h / 2, w: it.w, h: it.h, d: [dx, dy]});
+        const tries = [], ox = it.x - mx, oy = it.y - my, on = Math.hypot(ox, oy) || 1;
+        const out = d => (d[0] * ox + d[1] * oy) / on - d[1] * .35;   // away from the middle, and a little up
+        const dirs = [...DIRS].sort((p, q) => out(q) - out(p));
+        if (it.q.d) tries.push(it.q.d);
+        for (const r of [30, 54, 84, 124, 170]) for (const [cx, cy] of dirs) {
+          const ext = Math.abs(cx) * it.w / 2 + Math.abs(cy) * it.h / 2;
+          tries.push([cx * (r + ext), cy * (r + ext)]);
+        }
+        // A chip must not cover a part. So the first free place that covers almost no part wins, and a place with no dot
+        // under it and no crossed leader wins over one with them. If each free place covers a part, the one that covers the least wins.
+        const ok = tries.map(at).filter(x => free(x, it, false)), cs = ok.map(cover), clear = ok.filter((x, i) => cs[i] < .03);
+        const bx = clear.find(x => free(x, it, true)) || clear[0] || ok[cs.indexOf(Math.min(...cs))];
+        if (!bx) { off(it.q); continue; }
+        placed.push(bx); segs.push(lead(it, bx)); it.q.d = bx.d;
+        it.q.node.style.transform = `translate(${bx.x.toFixed(1)}px, ${bx.y.toFixed(1)}px)`;
+        it.q.node.classList.remove('off');
+        const ln = it.q.ln ??= leads.appendChild(sv('g', {}, sv('line'), sv('circle', {r: 2.6})));
+        const [, [ex, ey]] = lead(it, bx), [l, c] = ln.children;
+        l.setAttribute('x1', it.x); l.setAttribute('y1', it.y); l.setAttribute('x2', ex); l.setAttribute('y2', ey);
+        c.setAttribute('cx', it.x); c.setAttribute('cy', it.y);
+        ln.style.display = '';
+      }
+    }
+    // The share of a box that covers a part, from a small mask of the parts that draw() reads each frame.
+    function cover(bx) {
+      if (!mask) return 0;
+      const sx = MW / W, sy = MH / H, i0 = Math.max(0, Math.floor(bx.x * sx)), i1 = Math.min(MW, Math.ceil((bx.x + bx.w) * sx));
+      const j0 = Math.max(0, Math.floor(bx.y * sy)), j1 = Math.min(MH, Math.ceil((bx.y + bx.h) * sy));
+      let n = 0, t = 0;
+      for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) { t++; if (mask[((MH - 1 - j) * MW + i) * 4] > 127) n++; }
+      return t ? n / t : 0;
+    }
+    function off(q) { q.node.classList.add('off'); q.d = null; if (q.ln) q.ln.style.display = 'none'; }
+
+    function frame(now) {
+      raf = 0;
+      if (!stage.isConnected) { gone(); return; }
+      for (const [k, a] of S.anims) {
+        a.k = a.ease((now - a.t0) / a.ms); a.f(a.k);
+        if (now - a.t0 >= a.ms) S.anims.delete(k);
+      }
+      if (tw) {
+        const k = inout((now - tw.t0) / tw.ms), f = tw.from, t = tw.to, daz = ((t.az - f.az) % 360 + 540) % 360 - 180;
+        for (const key of ['el', 'fov', 'dist', 'tx', 'ty', 'tz']) view[key] = f[key] + (t[key] - f[key]) * k;
+        view.az = f.az + daz * k;
+        if (k >= 1) tw = null;
+      }
+      draw();
+      if (S.anims.size || tw) kick();
+      stage.dataset.rkStill = S.anims.size || tw ? '0' : '1';
+    }
+    function draw() {
+      if (!W || !H) return;
+      place();
+      world.updateMatrixWorld(true);
+      for (const q of parts) q.impl.frame?.(q);
+      world.updateMatrixWorld(true);
+      shade();
+      LIGHT.value.set(-.45, .78, .45).normalize();
+      const flat = [floor, shadow], vis = flat.map(o => o.visible);
+      flat.forEach(o => { o.visible = false; });
+      world.overrideMaterial = S.normal; gl.setRenderTarget(rtN); gl.setClearColor(0, 0); gl.clear(); gl.render(world, cam);
+      world.overrideMaterial = S.white; gl.setRenderTarget(rtM); gl.setClearColor(0, 1); gl.clear(); gl.render(world, cam);
+      gl.readRenderTargetPixels(rtM, 0, 0, MW, MH, mask);
+      flat.forEach((o, i) => { o.visible = vis[i]; });
+      world.overrideMaterial = null; gl.setRenderTarget(rtC); gl.setClearColor(col(pal.bg), 1); gl.clear(); gl.render(world, cam);
+      const u = post.material.uniforms;
+      u.near.value = cam.near; u.far.value = cam.far;
+      gl.setRenderTarget(null); gl.render(S.pass, postCam);
+      layout();
+    }
+    function gone() { if (gl) { gl.dispose(); gl.forceContextLoss(); gl = null; } }
+    function resize() {
+      const pr = Math.min(2, devicePixelRatio || 1);
+      W = stage.clientWidth; H = stage.clientHeight;
+      if (!W || !H || !gl) return;
+      gl.setPixelRatio(pr); gl.setSize(W, H, false);
+      rtC.setSize(W * pr, H * pr); rtN.setSize(W * pr, H * pr);
+      MH = Math.max(8, Math.round(MW * H / W)); rtM.setSize(MW, MH); mask = new Uint8Array(MW * MH * 4);
+      post.material.uniforms.texel.value.set(1 / (W * pr), 1 / (H * pr)); post.material.uniforms.w.value = 1.1 * pr;
+      aim(frameOf(S.shot), 0);
+    }
+
+    function start(lib) {
+      T = S.T = lib;
+      gl = new T.WebGLRenderer({canvas: cv, antialias: false, preserveDrawingBuffer: true, powerPreference: 'low-power'});
+      LIGHT.value = new T.Vector3();
+      pal = palette();
+      world = new T.Scene(); S.world = world;
+      cam = new T.PerspectiveCamera(32, 1, .1, 100);
+      S.normal = new T.MeshNormalMaterial(); S.white = new T.MeshBasicMaterial({color: 0xffffff});
+      rtM = new T.WebGLRenderTarget(MW, MH);
+      for (const q of parts) q.obj = q.impl.make?.(T, q) ?? null;
+      world.updateMatrixWorld(true);
+      const all = boxOf(world);
+      if (all.isEmpty()) all.set(new T.Vector3(-1, -1, -1), new T.Vector3(1, 1, 1));
+      S.size = all.getSize(new T.Vector3()).length();
+      S.floor = b.floor ?? all.min.y;
+      S.unit = S.size / 40;
+      const mags = parts.filter(q => q.b.type === 'force').map(q => Math.abs(S.num(q.b.mag))).filter(Number.isFinite);
+      S.scale = b.scale ?? (mags.length && Math.max(...mags) ? S.size * .3 / Math.max(...mags) : 1);
+      const flatMat = (frag, u) => new T.ShaderMaterial({uniforms: u, vertexShader: FLAT_V, fragmentShader: frag, transparent: true, depthWrite: false});
+      floor = new T.Mesh(new T.PlaneGeometry(1, 1), flatMat(FLOOR_F, {color: {value: col(pal.floor)}}));
+      floor.rotation.x = -Math.PI / 2; floor.userData.flat = true;
+      const c = all.getCenter(new T.Vector3()), r = Math.max(all.max.x - all.min.x, all.max.z - all.min.z, S.size * .5) * 2.4;
+      floor.position.set(c.x, S.floor, c.z); floor.scale.set(r * 1.4, r * 1.4, 1); floor.visible = b.ground !== false;
+      world.add(floor);
+      const sr = r * .5, fade = S.size * .35;
+      shRT = new T.WebGLRenderTarget(512, 512); shRT2 = new T.WebGLRenderTarget(512, 512);
+      shCam = new T.OrthographicCamera(-sr, sr, sr, -sr, 0, fade);
+      shCam.position.set(c.x, S.floor, c.z); shCam.rotation.x = Math.PI / 2; shCam.updateMatrixWorld();
+      dark = new T.ShaderMaterial({uniforms: {floor: {value: S.floor}, fade: {value: fade}}, vertexShader: DARK_V, fragmentShader: DARK_F, side: T.DoubleSide});
+      shadow = new T.Mesh(new T.PlaneGeometry(2 * sr, 2 * sr),
+                          flatMat(SHADOW_F, {color: {value: col(pal.shade)}, alpha: {value: .62}, map: {value: shRT.texture}}));
+      shadow.rotation.x = -Math.PI / 2; shadow.position.set(c.x, S.floor + S.size * 1e-3, c.z);
+      shadow.userData.flat = true; shadow.renderOrder = 1; shadow.visible = b.ground !== false;
+      world.add(shadow);
+      const quad = new T.Mesh(new T.PlaneGeometry(2, 2), new T.ShaderMaterial({uniforms: {map: {value: null}, step: {value: new T.Vector2()}},
+        vertexShader: POST_V, fragmentShader: BLUR_F, depthTest: false, depthWrite: false}));
+      quad.frustumCulled = false; blur = new T.Scene(); blur.add(quad); blurCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      rtC = new T.WebGLRenderTarget(1, 1, {samples: 4, type: T.HalfFloatType});
+      rtN = new T.WebGLRenderTarget(1, 1, {depthTexture: new T.DepthTexture(1, 1)});
+      post = new T.Mesh(new T.PlaneGeometry(2, 2), new T.ShaderMaterial({
+        uniforms: {tC: {value: rtC.texture}, tN: {value: rtN.texture}, tD: {value: rtN.depthTexture}, texel: {value: new T.Vector2()},
+                   w: {value: 1}, near: {value: .1}, far: {value: 100}, ink: {value: col(pal.line)}, bg: {value: col(pal.bg)}},
+        vertexShader: POST_V, fragmentShader: POST_F, depthTest: false, depthWrite: false}));
+      postCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      const pass = new T.Scene(); pass.add(post); post.frustumCulled = false; S.pass = pass;
+      sync();
+      new ResizeObserver(() => { resize(); kick(); }).observe(stage);
+      onTheme(() => { if (stage.isConnected) { recolor(); return true; } gone(); return false; });
+      stage.dataset.rkGl = 'ready';
+    }
+
+    // On each change of the state: the step bar, then each part, then the shot.
+    function sync() {
+      if (b.bind) {
+        const k = S.step();
+        count.textContent = `Step ${Math.min(k, N)} of ${N}`;
+        prev.disabled = k <= 1 || !ctx.live(b.lock); next.disabled = k >= N || !ctx.live(b.lock);
+        if (b.steps) say.textContent = fmt(b.steps[clamp(k, 1, N) - 1], s.st);
+      }
+      if (!T) return;
+      for (const q of parts) { q.impl.sync?.(q, S.live(q.b)); q.node.toggleAttribute('aria-hidden', !S.live(q.b)); }
+      // The newest shot wins: a shot that starts to show, or a bound shot whose name changes. When it goes, the last shot that shows wins.
+      const shots = parts.filter(q => q.b.type === 'shot');
+      for (const q of shots) { const v = S.live(q.b) ? q.impl.name() : null; if (v !== q.was && v != null) S.cur = q; q.was = v; }
+      if (!S.cur || !S.live(S.cur.b)) S.cur = shots.findLast(q => S.live(q.b));
+      const shot = S.cur?.impl.name(), name = isShot(shot, ids) ? shot : (S.shot || 'wide');
+      const now = parts.map(q => S.live(q.b) ? 1 : 0).join('') + name;
+      if (now !== sig) {
+        const moved = name !== S.shot;
+        if (moved) { user.az = 0; user.el = 0; }
+        S.shot = name; stage.dataset.rkShot = name;
+        aim(frameOf(name), sig ? (moved ? 1300 : 800) : 0);
+        sig = now;
+      }
+      kick();
+    }
+    s.on(sync);
+    (scenes.get(s) || scenes.set(s, []).get(s)).push(S);
+
+    R.need('three').then(lib => {
+      try { start(lib); }
+      catch (e) { console.error('rupaka: scene', e); msg.hidden = false; msg.textContent = 'This browser cannot draw the 3D view.'; stage.dataset.rkGl = 'error'; }
+    }, e => { console.error('rupaka: scene', e); msg.hidden = false; msg.textContent = `The 3D view could not load: ${e.message}`; stage.dataset.rkGl = 'error'; });
+    return el('div', {}, R.label(b), stage, b.steps ? say : null, bar, sr);
+  });
+})();
+
+/* blocks/shot/shot.js */
+/* shot: the camera of a scene. `name` is a fixed shot, or `bind` is the state key that holds the shot name. The scene uses the
+   last shot that shows, and it moves the camera to it with easing. The scene finds the framing from the bounds of what shows. */
+Rupaka.block('shot', (b, ctx) => {
+  const S = ctx.scene;
+  if (!S) throw new Error('a shot must be inside a scene');
+  const name = () => b.name ?? ctx.s.get(b.bind), node = Rupaka.el('li');
+  ctx.s.on(() => { node.textContent = `The camera: ${name()}`; });
+  return S.part(b, {name}, node);
+});
 
 /* blocks/slider/slider.js */
 /* slider: a number in a range. ←/→ (native) or A/D move one step; ⇧A/⇧D move ten. */
