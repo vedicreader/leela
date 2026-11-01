@@ -415,6 +415,19 @@ def run_filing(nb, path, result):
              key='run:' + hashlib.sha256(raw + b''.join(pngs)).hexdigest()[:16], **({'secs': run.execution_ms / 1000} if run and run.execution_ms is not None else {}))
     return f if run_ok(f) else None
 
+def result_sig(path):
+    "What a write of the `result.json` beside the lesson at `path` changes; None for none."
+    try: st = (Path(path).with_suffix('.result')/'result.json').stat()
+    except (OSError, ValueError): return None
+    return st.st_mtime_ns, st.st_size, st.st_ino
+
+def file_result(memory, path, folder=None):
+    "File the run result in `folder`, else the `.result` folder beside it, for the lesson notebook at `path`; the status line, or None when nothing is filed or it is filed already."
+    folder = Path(folder or Path(path).with_suffix('.result'))
+    if not (folder/'result.json').is_file(): return None
+    f = run_filing(Notebook.load(path), path, folder)
+    return f and record_run(memory, f)
+
 def record_run(memory, f):
     "File one `run` attempt through abhyasa and copy its images into the vault assets, once per content; None when its key is already filed. Never writes the walk."
     from abhyasa.store import Learning

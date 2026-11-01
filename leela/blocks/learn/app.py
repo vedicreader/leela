@@ -67,23 +67,32 @@ def notebook_tab(docs, path):
         except (OSError, ValueError, RuntimeError): t = None
     return t if t is not None and t.kind == 'notebook' else None
 
-def file_result(memory, path, folder):
-    "File the run result in `folder` for the lesson notebook at `path`; the status line, or None when nothing is filed."
-    from ..nb.lesson import record_run, run_filing
-    from ..nb.nb import Notebook
-    f = run_filing(Notebook.load(path), path, folder)
-    return f and record_run(memory, f)
+SWEEP = 10.   # seconds between two looks at the result of each open lesson
 
 def connect(app, ctx):
+    filed = {}   # lesson path -> the `result_sig` last filed, or found filed already
+    async def file_one(path):
+        "File the result beside the lesson at `path` once for each write; a failure is said, and the next look tries again."
+        from ..nb.lesson import file_result, result_sig
+        if (sig := result_sig(path)) is None or filed.get(str(path)) == sig: return
+        try: await off_loop(file_result, ctx.memory, path)
+        except Exception as e: return print(f'  run result not filed: {errstr(e)}')
+        filed[str(path)] = sig
+    def lessons():
+        "The notebook paths of the open tabs."
+        return [t.path for t in ctx.docs.session.tabs if t.kind == 'notebook' and t.path]
     async def file_results():
-        q = ctx.fs_watch.subscribe()
+        q, last = ctx.fs_watch.subscribe(), time.monotonic()
         try:
             while True:
-                item = await q.get()
-                for p in map(Path, item[0] if isinstance(item, tuple) and len(item) == 2 else ()):
-                    if p.name != 'result.json' or p.parent.suffix != '.result': continue
-                    try: await off_loop(file_result, ctx.memory, p.parent.with_suffix('.ipynb'), p.parent)
-                    except Exception as e: print(f'  run result not filed: {errstr(e)}')
+                try: item = await asyncio.wait_for(q.get(), SWEEP)
+                except TimeoutError: item = None
+                paths = [item] if isinstance(item, str) else []   # a tab another process opened
+                if isinstance(item, tuple) and len(item) == 2:
+                    paths = [Path(p).parent.with_suffix('.ipynb') for p in map(Path, item[0]) if p.name == 'result.json' and p.parent.suffix == '.result']
+                # the safety net, every SWEEP s and after a batch too big to name its paths: an event the watcher lost, a result written before Leela ran, or a failed try
+                if item is None or (isinstance(item, tuple) and item[1:] == (True,)) or time.monotonic() - last >= SWEEP: paths, last = paths + lessons(), time.monotonic()
+                for p in dict.fromkeys(map(str, paths)): await file_one(p)
         finally: ctx.fs_watch.unsubscribe(q)
     watching = []
     async def start_watching(): watching.append(asyncio.create_task(file_results()))
@@ -127,12 +136,13 @@ def connect(app, ctx):
         if isinstance(v, str): return say(v)
         if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v.kind == 'done': return say('This walk is done.')
-        try: ctx.session.open_external(open_step(ctx.session, ctx.fs, v, q))
+        try: ctx.session.open_external(opened := open_step(ctx.session, ctx.fs, v, q))
         except Taken as e: return say(str(e), 409)
         except ValueError as e: return say(str(e), 400)
         except Unsafe as e: return say(f'Leela could not write the lesson. {e}', 403)
         except OSError as e: return say(f'Leela could not write the lesson. {os_why(e)}'.strip(), 500)
         except Exception: return say('Leela could not open the lesson.', 500)
+        await file_one(opened)   # a result written before this lesson opened
         # in a tab of its own the learner goes to the IDE, where the lesson is now the active tab
         if f.get('pane') != '1': return RedirectResponse('/', 303)
         # the pane keeps the step's own URL, so a reload does not GET this POST route

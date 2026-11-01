@@ -95,3 +95,52 @@ def test_a_result_saved_beside_a_lesson_is_filed_by_the_file_watcher(rig):
         time.sleep(.1)
     a, = lr.attempts(limit=5)
     assert run_ok(a) and a.kind == 'run'
+
+def _ide(tmp_path, monkeypatch, sweep):
+    "A lesson with its result already on disk, then the IDE over its folder: the watcher starts after the write. `sweep` is the seconds between two looks."
+    import sys
+    from contextlib import contextmanager
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.blocks.learn import app as learn_app
+    from leela.workspace import Workspace
+    monkeypatch.setattr(learn_app, 'SWEEP', sweep)
+    nb = step_lesson('Caption', STEP, NB, file='comic-ab12-0.ipynb'); nb.save(p := tmp_path/'comic-ab12-0.ipynb')
+    folder = tmp_path/'comic-ab12-0.result'; folder.mkdir(); result(folder)
+    ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable)
+    monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'vault.db', offline=True))
+    @contextmanager
+    def up():
+        try:
+            with TestClient(ide_app(ws), base_url='http://127.0.0.1:5011') as c: yield c, ws, p, nb, Learning(ws.memory._store('learning'))
+        finally: ws.shutdown_now()
+    return up()
+
+def _until(f, secs=10):
+    import time
+    end = time.monotonic() + secs
+    while not (got := f()) and time.monotonic() < end: time.sleep(.05)
+    return got
+
+def test_a_result_written_before_the_watcher_starts_is_filed_once_when_its_lesson_is_open(tmp_path, monkeypatch):
+    "Smoke round 4: the first result.json of a lesson was not filed; the same file written again was."
+    import time
+    with _ide(tmp_path, monkeypatch, .1) as (c, ws, p, nb, lr):
+        assert lr.attempts(limit=5) == [], 'no lesson is open yet'
+        ws.open(p)
+        a, = _until(lambda: lr.attempts(limit=5))
+        assert run_ok(a) and a.kind == 'run'
+        time.sleep(.5)
+        assert len(lr.attempts(limit=5)) == 1, 'the next looks file nothing more'
+
+def test_a_lesson_files_its_result_when_its_kernel_goes_idle(tmp_path, monkeypatch):
+    import time
+    with _ide(tmp_path, monkeypatch, 1000.) as (c, ws, p, nb, lr):
+        ws.open(p)
+        i = next(k for k, x in enumerate(nb.cells) if x.cell_type == 'markdown' and x.extra.get('lesson', {}).get('role') == 'prediction')
+        assert c.post('/nb/run', json=dict(path=str(p), i=i, id=nb[i].id)).status_code == 200
+        a, = _until(lambda: lr.attempts(limit=5))
+        assert run_ok(a)
+        assert c.post('/nb/run', json=dict(path=str(p), i=i, id=nb[i].id)).status_code == 200
+        time.sleep(.5)
+        assert len(lr.attempts(limit=5)) == 1, 'the same result files once'

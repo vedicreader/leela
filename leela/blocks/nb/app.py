@@ -154,11 +154,20 @@ def connect(app, ctx):
             try: c, lost = await run_watched(nb, c, k)
             finally: owner_tab.running = max(0, owner_tab.running - 1)
             if c.cell_type == 'code': lock(c, d.get('prediction', ''), d.get('confidence'))
+        file_after_run(owner_tab)
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         rows, result = await cell_extras(k, c)
         return {'ok': not c.has_error, 'lost': lost, 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
                 'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
+    def file_after_run(tab):
+        "When the kernel of a lesson goes idle, file the run result beside it, off the loop. Filed once for each content; the learn block's sweep tries again after a failure."
+        from .lesson import file_result, result_sig
+        if not (tab and tab.path and result_sig(tab.path)): return
+        async def go():
+            try: await off_loop(file_result, ctx.memory, tab.path)
+            except Exception as e: print(f'  run result not filed: {errstr(e)}')
+        asyncio.ensure_future(go())
     @rt('/nb/run/stream')
     async def nb_run_stream(req):
         "Run a cell while streaming its evolving Jupyter outputs as SSE."
@@ -189,6 +198,7 @@ def connect(app, ctx):
         async def run():
             _, lost = await run_watched(nb, c, k, on_output=emitted)
             if c.cell_type == 'code': lock(c, d.get('prediction', ''), d.get('confidence'))
+            file_after_run(owner_tab)
             note_origin(owner_tab, c)
             if owner_tab: owner_tab.dirty = True
             rows, result = await cell_extras(k, c)
