@@ -1,6 +1,6 @@
 from copy import deepcopy
 import pytest
-from abhyasa.nb import validate_exercise
+from leela.blocks.nb.check import validate_exercise
 from leela.blocks.nb.exercise import exercise_cells, validate_exercise_spec
 from leela.blocks.nb.lesson import lesson_notebook
 from leela.blocks.nb.nb import Cell
@@ -113,11 +113,12 @@ def test_check_solution_source_errors_do_not_echo_source(spec, source):
 
 
 def test_check_solution_delegates_to_the_closed_runner_isolated_and_silent(spec, monkeypatch, abhyasa_cfg):
-    import abhyasa.check, json
+    import json
+    from leela.blocks.nb import check as nbcheck
     from leela.blocks.nb.exercise import check_solution
     source = 'print("SECRET_SOURCE_TOKEN")\nimport os, sys\nassert sys.flags.isolated and os.getcwd() == os.environ["HOME"]\ndef double(x): return x*2'
-    calls, real = [], abhyasa.check.run_isolated
-    monkeypatch.setattr(abhyasa.check, 'run_isolated', lambda *a, **kw: calls.append((a, kw)) or real(*a, **kw))
+    calls, real = [], nbcheck.run_isolated
+    monkeypatch.setattr(nbcheck, 'run_isolated', lambda *a, **kw: calls.append((a, kw)) or real(*a, **kw))
     result = check_solution(spec, source, timeout=5)
     tests = [t['test'] for t in spec['tests']]
     assert calls == [(('assert', 'double', source, tests), dict(total=5, sandbox=True)),

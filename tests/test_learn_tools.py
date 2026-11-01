@@ -264,9 +264,9 @@ def test_library_check_needs_a_ready_environment(monkeypatch):
     with pytest.raises(ValueError, match='not ready'): library_check(SPEC, GOOD, key)
 
 def test_library_check_runs_the_tool_python_closed_with_hidden_rows(monkeypatch, abhyasa_cfg):
-    import abhyasa.check
-    key, seen, real = ready_env(), [], abhyasa.check.run_isolated
-    monkeypatch.setattr(abhyasa.check, 'run_isolated', lambda *a, **kw: seen.append((a, kw)) or real(*a, **kw))
+    from leela.blocks.nb import check as nbcheck
+    key, seen, real = ready_env(), [], nbcheck.run_isolated
+    monkeypatch.setattr(nbcheck, 'run_isolated', lambda *a, **kw: seen.append((a, kw)) or real(*a, **kw))
     r = library_check(SPEC, GOOD, key)
     [(a, kw)] = seen
     assert a[:3] == ('assert', 'double', GOOD) and kw == dict(total=LIBRARY_TOTAL, sandbox=True, python=str(tool_python(key)), unix=True)

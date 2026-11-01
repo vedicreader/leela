@@ -3,7 +3,7 @@ from time import monotonic
 from fastcore.basics import AttrDict, first
 from fastcore.xdg import xdg_data_home
 from fastcore.xtras import atomic_save
-from abhyasa import check
+from ..nb import check
 from ... import errstr
 from .learn import PKG, _NAME
 

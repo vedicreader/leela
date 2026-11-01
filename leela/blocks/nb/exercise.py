@@ -1,6 +1,6 @@
 import asyncio, json
-from abhyasa import check
-from abhyasa.nb import SAFE_NAMES, safe_test, validate_exercise
+from . import check
+from .check import SAFE_NAMES, safe_test, validate_exercise
 from ...core.web import off_loop
 from ..learn import tools
 from ..learn.tools import library_check, tool_dir, tool_names

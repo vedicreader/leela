@@ -83,7 +83,7 @@ def test_keyboard_interrupt_stops_the_run():
     assert r == dict(found=True, checks=[dict(i=i, status='timeout', got=None, error='TimeoutError') for i in range(3)])
 
 def test_safe_names_come_from_abhyasa():
-    from abhyasa.nb import SAFE_NAMES
+    from leela.blocks.nb.check import SAFE_NAMES
     k = CheckKernel()
     asyncio.run(run_checks(k, 'double', ['assert double(2) == 4']))
     assert json.dumps(list(SAFE_NAMES)) in k.sent[0][0]
@@ -92,9 +92,9 @@ SPEC = dict(task='Double it.', fname='double', stub='def double(x): pass',
             tests=[dict(say='doubles 2', test='assert double(2) == 4', shown=True)])
 
 def test_check_solution_uses_the_closed_runner(monkeypatch, abhyasa_cfg):
-    import abhyasa.check
-    seen, real = [], abhyasa.check.run_isolated
-    monkeypatch.setattr(abhyasa.check, 'run_isolated', lambda *a, **kw: seen.append((a, kw)) or real(*a, **kw))
+    from leela.blocks.nb import check as nbcheck
+    seen, real = [], nbcheck.run_isolated
+    monkeypatch.setattr(nbcheck, 'run_isolated', lambda *a, **kw: seen.append((a, kw)) or real(*a, **kw))
     r = check_solution(SPEC, 'def double(x): return 2 * x')
     assert r['solution']['found'] and [c['status'] for c in r['solution']['checks']] == ['pass']
     assert r['stub']['checks'][0]['status'] == 'fail'
