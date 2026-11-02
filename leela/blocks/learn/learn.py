@@ -102,10 +102,23 @@ def lessons_folder(session, fs) -> tuple[Path, bool]:
     session.add_root(LESSONS)
     return LESSONS, True
 
+def notebook_copy(j) -> Path|None:
+    "abhyasa's learning copy of the notebook of walk `j`, or None."
+    try: from abhyasa.contract import notebook_copy as copy_of
+    except ImportError: return None
+    return copy_of(j)
+
+def copy_root(session, fs, copy) -> Path:
+    "`copy`, with its folder made a root when no root covers it."
+    if _linked(copy): raise ValueError('The learning copy is in a symbolic link. Leela does not open a lesson through a link.')
+    if not fs.covers(copy.parent.resolve()): session.add_root(copy.parent)
+    return copy
+
 def open_step(session, fs, v, q) -> Path:
-    "The path of the lesson for the `find_step` result `v` of the handoff `q`, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it in the file and the open tab. A refusal or a failed write closes a `LESSONS` root it opened."
+    """The path of the lesson for the `find_step` result `v` of the handoff `q`: abhyasa's learning copy for a notebook walk, else the lesson, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it in the file and the open tab. A refusal or a failed write closes a `LESSONS` root it opened."""
     from ..nb.lesson import lesson_notebook, save_lesson
     from ..nb.nb import Notebook
+    if v.kind == 'step' and (copy := notebook_copy(v.j)): return copy_root(session, fs, copy)
     ready = None
     if v.kind == 'step':
         r, what, file = v.step.get('read') or {}, 'step', f'{q.walk}-{v.i}.ipynb'
