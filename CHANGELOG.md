@@ -2,6 +2,19 @@
 
 <!-- do not remove -->
 
+## 0.1.12
+
+Needs abhyasa 0.0.16 and rupaka 0.0.12.
+
+- Open a notebook from abhyasa at once, at its cell. A `/learn` link with `go=1` opens the notebook and selects the cell of its section, also a section heading, and keeps it in view while the outputs above it draw.
+- A notebook walk of abhyasa opens its learning copy as the lesson. The copy runs in the folder and the environment of the notebook that it comes from: the kernel starts in that folder and uses the nearest `.venv` of that project. A folder of copies never gets an environment of its own. The copy starts with a link back to the walk.
+- The screen guide's board comes from rupaka 0.0.12 (`rupaka.board`): one shape for each panel, flows of boxes, follow-ups that build on the board before, and labels that never cover each other. `lee-rupaka.js` and `lee-rupaka.css` are written from the 0.0.12 wheel.
+- Leela imports abhyasa from its six new modules, and a test checks each name that Leela imports.
+- The closed code runner moved from abhyasa into Leela.
+- The lesson environment: Set up goes back to the step page and shows the state until it is ready. The ready environment is saved into the lesson file. `LEELA_LESSONS` moves the lessons folder. The step page names the data entries that are not on this computer.
+- `/git/notebook` answers for a notebook in no repository with no changes, not a 400.
+- `tools/ship_cask.sh` writes the version and the sha256 of a release into the Homebrew cask of Leela.
+
 ## 0.1.11
 
 Pins ramabana 0.2.95, rishi 0.1.61 and rupaka 0.0.7. Needs abhyasa 0.0.13, kunda 0.0.10, kavacha 0.0.10, litesearch 0.1.61, koshas 0.1.20, vishalakshi 0.1.35, dhrishti 0.1.10 and dhrona 0.1.18.
