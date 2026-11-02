@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.11', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.12', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
