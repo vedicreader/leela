@@ -2,8 +2,7 @@
 import sys
 import pytest
 from starlette.testclient import TestClient
-import abhyasa.journey  # adds Learning.journey and Learning.put_journey
-from abhyasa.store import Learning
+from abhyasa.learner import Learning
 from leela.app import ide_app
 from leela.blocks.memory.memory import Memory
 from leela.workspace import Workspace

@@ -81,7 +81,7 @@ def connect(app, ctx):
         return tab_bar(session)
     @rt('/lesson/new', methods=['POST'])
     async def lesson_new(req, name: str = ''):
-        from abhyasa.store import slugify
+        from abhyasa.learner import slugify
         from ..nb.lesson import lesson_notebook, save_lesson
         def free(folder):
             slug, n = slugify(name), 1

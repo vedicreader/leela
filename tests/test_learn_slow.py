@@ -12,7 +12,7 @@ from playwright.async_api import async_playwright   # noqa: E402
 
 import test_web_slow   # noqa: E402
 from test_web_slow import _free_port, _serve, _launch, _started, fake_kernels, fake_model   # noqa: E402
-from abhyasa.store import Learning   # noqa: E402
+from abhyasa.learner import Learning   # noqa: E402
 from leela.blocks.memory.memory import Memory   # noqa: E402
 from leela.workspace import Workspace   # noqa: E402
 from learn_data import JID, walk   # noqa: E402

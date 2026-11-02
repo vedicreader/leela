@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 import pytest
 from fastcore.basics import first
-from abhyasa.prompts import PROMPTS, set_prompt
+from abhyasa.learner import PROMPTS, set_prompt
 from rupaka.spec import gallery, validate
 from leela.blocks.agent.ai import Interventions, WorkspaceHost, WRITE_TOOLS, _session_tools
 from leela.blocks.fs.fs import Sandbox
@@ -178,7 +178,7 @@ def test_a_saved_tutor_prompt_reaches_the_live_backend_on_the_next_turn(tmp_path
 @pytest.fixture
 def walks(tmp_path, monkeypatch, abhyasa_cfg, request):
     "A workspace over a learning store with the test walk; lesson A is step 0, lesson B is step 1 with a `pydantic-ai-slim` exercise."
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     from leela.blocks.learn import learn
     from leela.blocks.learn.tools import tool_dir, tool_key
     from leela.blocks.memory.memory import Memory

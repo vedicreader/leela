@@ -109,7 +109,7 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
 
 def test_lesson_due_review_question_before_last_answer(tmp_path, monkeypatch):
     import time
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     from leela.blocks.memory.memory import Memory
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
     home = tmp_path/'home'
@@ -164,7 +164,7 @@ def test_lesson_due_review_question_before_last_answer(tmp_path, monkeypatch):
     asyncio.run(_real_page(go, tmp_path))
 
 def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     from leela.blocks.memory.memory import Memory
     from leela.blocks.nb.lesson import fence, lesson_notebook
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))

@@ -1,7 +1,7 @@
 import json, re
 from copy import deepcopy
 import pytest
-from abhyasa.method import METHODS, TEXT_WAYS
+from abhyasa.learner import METHODS, TEXT_WAYS
 from abhyasa.tutor import HINTS, TUTOR_SP
 from fastcore.xtras import fenced_blocks
 from rupaka.spec import validate

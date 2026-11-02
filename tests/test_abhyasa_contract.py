@@ -5,7 +5,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 def test_record_parameters():
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     params = inspect.signature(Learning.record).parameters
     assert list(params) == ['self', 'concept', 'question', 'answer', 'thinking', 'correct', 'confidence', 'depth',
                             'kind', 'hints', 'dont_know', 'grade', 'feedback', 'first_error', 'misconception', 'session', 'meta']
@@ -24,7 +24,7 @@ def test_six_hint_rungs():
 
 def test_pure_imports_in_isolated_python():
     src = '''import sys, json
-import abhyasa.store, abhyasa.model, abhyasa.method, abhyasa.tutor, abhyasa.journey, abhyasa.prompts, abhyasa.talk, abhyasa.contract, abhyasa.stagekit, abhyasa.sources, abhyasa.demo, rupaka.spec
+import abhyasa.learner, abhyasa.tutor, abhyasa.path, abhyasa.show, abhyasa.contract, abhyasa.stagekit, abhyasa.sources, rupaka.spec
 print(json.dumps([n for n in sys.modules if n == 'ipywidgets' or n.startswith('ipywidgets.') or n == 'abhyasa.app' or n == 'abhyasa.blocks' or n.startswith('abhyasa.blocks.')]))
 '''
     p = subprocess.run([sys.executable, '-I', '-c', src], capture_output=True, text=True, timeout=60)
@@ -52,7 +52,7 @@ def test_room_spec_contract():
     assert s['blocks'][0]['blocks'][0]['answer'] == {'is': 'two'}
 
 def test_talk_contract():
-    from abhyasa.talk import TALK_SCHEMA, TALK_CASES, check_talk, new_run
+    from abhyasa.show import TALK_SCHEMA, TALK_CASES, check_talk, new_run
     assert TALK_SCHEMA == 1
     for t, want in TALK_CASES: assert check_talk(t) == want
     run = new_run(TALK_CASES[0][0], now=1.)
@@ -91,7 +91,7 @@ def test_run_cases():
 
 def test_prompts_contract(abhyasa_cfg):
     import abhyasa.tutor
-    from abhyasa.prompts import PROMPTS, prompt
+    from abhyasa.learner import PROMPTS, prompt
     assert 'tutor' in PROMPTS and prompt('tutor') == PROMPTS['tutor'].dflt
 
 def abhyasa_imports():
@@ -124,7 +124,7 @@ def test_run_isolated_contract():
     assert list(ps)[:4] == ['kind', 'fname', 'source', 'tests'] and {'total', 'setup', 'sandbox', 'python', 'unix'} <= ps.keys()
 
 def test_journey_contract():
-    from abhyasa.journey import walk_state
-    from abhyasa.store import Learning
+    from abhyasa.path import walk_state
+    from abhyasa.learner import Learning
     assert all(hasattr(Learning, n) for n in ('put_journey', 'journey', 'journeys'))
     assert walk_state(dict(steps=[dict(slug='a', status='done'), dict(slug='b')])).current == 1

@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from unittest.mock import Mock
 import pytest
 from starlette.testclient import TestClient
-from abhyasa.store import Learning
+from abhyasa.learner import Learning
 from leela.app import ide_app
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import lesson_notebook

@@ -1,7 +1,7 @@
 import json, shutil, subprocess
 from pathlib import Path
 import pytest
-from abhyasa.store import slugify
+from abhyasa.learner import slugify
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.blocks.nb.lesson import lesson_notebook

@@ -4,11 +4,10 @@ from urllib.parse import quote, urlsplit, urlunsplit
 from fastcore.basics import AttrDict
 from fastcore.xdg import xdg_config_home
 from packaging.utils import canonicalize_name
-import abhyasa.journey  # adds Learning.journey
-import abhyasa.demo  # adds Learning.demo
+import abhyasa.show  # adds Learning.demo
 from abhyasa.contract import validate_nb_spec, vault_key
-from abhyasa.journey import walk_state
-from abhyasa.store import slugify
+from abhyasa.path import walk_state
+from abhyasa.learner import slugify
 from abhyasa.stagekit import is_local
 from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
@@ -51,8 +50,9 @@ def walk_url(walk, step) -> str|None:
     return abhyasa_url(f"/w/{quote(walk, safe='')}/{step}")
 
 def show_link(said, slug, name) -> dict|None:
-    "For a \"show me …\" to the guide, abhyasa's `show_reply`, the hand-off to the demo of the idea `slug` in abhyasa: `{title, href}`, `href` None when abhyasa does not run; None for any other line, or an abhyasa with no `show_reply`."
-    if (reply := getattr(abhyasa.demo, 'show_reply', None)) is None or (words := reply(said)) is None: return None
+    "For a \"show me …\" to the guide, abhyasa's `show_reply`, the hand-off to the demo of the idea `slug` in abhyasa: `{title, href}`, `href` None when abhyasa does not run; None for any other line."
+    from abhyasa.show import show_reply
+    if (words := show_reply(said)) is None: return None
     return dict(title=name, href=abhyasa_url(f"/c/{quote(slug, safe='')}?show={quote(words)}"))
 
 def other_vault(q, path) -> str|None:

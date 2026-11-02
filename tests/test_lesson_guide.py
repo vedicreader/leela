@@ -113,21 +113,17 @@ EXPLAINED = dict(tier='tutor', steps=[dict(n=1, say='It is the share left.', str
 
 @pytest.fixture
 def guide(monkeypatch):
-    "A stand-in for `abhyasa.guide`: `calls` holds what `explain` was given. With the keywords of abhyasa 0.0.15 it sends a state event, a saved page and each step."
-    import abhyasa.llm
+    "A stand-in for `abhyasa.show.explain`: `calls` holds what it was given. With the keywords of abhyasa 0.0.15 it sends a state event, a saved page and each step."
     calls = AttrDict(thread=None)
     def explain(ask, ctx, said, sources=(), search=None, fetch=None, web=None, note=None, lr=None, **kw):
-        calls.update(ask=ask, ctx=mod.clean_context(ctx), said=said, sources=list(sources), web=web, lr=lr, thread=threading.current_thread(), kw=kw)
+        calls.update(ask=ask, ctx=AttrDict(ctx, cleaned=True), said=said, sources=list(sources), web=web, lr=lr, thread=threading.current_thread(), kw=kw)
         if note: note('The tutor looks in your vault.')
         if on_state := kw.get('on_state'): on_state(dict(wait='The tutor reads this page.', state='reading')); on_state(dict(saved=dict(title='A page', url='https://x.org')))
         if on_step := kw.get('on_step'):
             for k, s in enumerate(EXPLAINED['steps'], 1): on_step(s, k)
         return AttrDict(EXPLAINED)
-    mod = types.ModuleType('abhyasa.guide')
-    mod.explain, mod.clean_context, mod.norm_tex, mod.stream_board = explain, (lambda raw: AttrDict(raw, cleaned=True)), (lambda s: 'n:' + s.strip()), None
-    monkeypatch.setitem(sys.modules, 'abhyasa.guide', mod)
-    monkeypatch.setattr(abhyasa, 'guide', mod, raising=False)
-    monkeypatch.setattr(abhyasa.llm, 'route_ask', lambda model=None: 'the ask')
+    monkeypatch.setattr('abhyasa.show.explain', explain)
+    monkeypatch.setattr('abhyasa.models.route_ask', lambda model=None: 'the ask')
     monkeypatch.setattr('rupaka.board.norm_tex', lambda s: 'n:' + s.strip())
     return calls
 
@@ -160,13 +156,13 @@ def test_guide_stream_sends_each_step_before_the_board_and_frees_the_lock(serve,
 def test_guide_stream_reports_a_failed_explain_as_an_event_and_refuses_before_the_stream(serve, guide, monkeypatch):
     r = serve(lesson())
     def boom(*a, **k): raise RuntimeError('The guide task got no answer from the model.')
-    monkeypatch.setattr(sys.modules['abhyasa.guide'], 'explain', boom)
+    monkeypatch.setattr('abhyasa.show.explain', boom)
     stream = lambda **kw: r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said='why?') | kw)
     ev = events(stream())
     assert [e for e, _ in ev] == ['error'] and 'no answer' in ev[0][1]['error']
     assert stream().status_code == 200, 'a failed model call frees the lesson lock'
-    def gone(*a, **k): raise ImportError('cannot import name VaultSource', name='abhyasa.ground')
-    monkeypatch.setattr(sys.modules['abhyasa.guide'], 'explain', gone)
+    def gone(*a, **k): raise ImportError('cannot import name VaultSource', name='abhyasa.sources')
+    monkeypatch.setattr('abhyasa.show.explain', gone)
     assert [d['error'] for e, d in events(stream())] == [lesson_mod.GUIDE_STREAM_NEEDS], 'a missing part of abhyasa names the version the guide needs'
     for bad in (dict(said=' '), dict(cell_id='missing'), dict(anchors='f1'), dict(demo='x')):
         res = stream(**bad)
@@ -213,7 +209,7 @@ def test_guide_route_needs_the_norm_tex_of_rupaka_0010(serve, guide, monkeypatch
 
 def test_vault_sources_find_a_paper_and_never_an_attempt(serve):
     "The guide's sources are `VaultSource(lr)`: a paper on the `papers` shelf is quoted, and what the learner answered on the `learning` shelf never is."
-    from abhyasa.ground import VaultSource
+    from abhyasa.sources import VaultSource
     r = serve(lesson())
     r.ws.memory._store('papers').add('Alpha bar is the cumulative product of one minus beta in the diffusion forward process.', title='DDPM paper', source='https://arxiv.org/abs/2006.11239', kind='paper')
     lr = shelf(r)
@@ -222,8 +218,9 @@ def test_vault_sources_find_a_paper_and_never_an_attempt(serve):
     assert [(h.src, h.title) for h in hits] == [('vault:papers', 'DDPM paper')]
 
 def test_guide_route_names_the_abhyasa_it_needs_when_the_guide_is_missing(serve, monkeypatch):
-    monkeypatch.setitem(sys.modules, 'abhyasa.guide', None)
-    res = ask_guide(serve(lesson()))
+    r = serve(lesson())   # the learn block imports abhyasa.show when the app starts
+    monkeypatch.setitem(sys.modules, 'abhyasa.show', None)
+    res = ask_guide(r)
     assert res.status_code == 400 and '0.0.16' in res.json()['error'] and 'abhyasa' in res.json()['error']
 
 def test_guide_route_refuses_what_it_cannot_explain(serve, guide):
@@ -236,7 +233,7 @@ def test_guide_route_refuses_what_it_cannot_explain(serve, guide):
 
 def test_guide_route_reports_a_failed_explain(serve, guide, monkeypatch):
     def boom(*a, **k): raise RuntimeError('The guide task got no answer from the model.')
-    monkeypatch.setattr(sys.modules['abhyasa.guide'], 'explain', boom)
+    monkeypatch.setattr('abhyasa.show.explain', boom)
     res = ask_guide(serve(lesson()))
     assert res.status_code == 400 and 'no answer' in res.json()['error']
 
@@ -365,9 +362,9 @@ def test_code_anchors_come_from_the_page_for_any_cell():
 @pytest.mark.parametrize('running', [True, False])
 def test_show_me_hands_off_to_the_demo_in_abhyasa_and_asks_no_model(serve, guide, monkeypatch, running):
     "abhyasa main answers \"show me …\" with Show, never a board; in Leela that is a link to the idea's demo in abhyasa."
-    import abhyasa.demo
+    import abhyasa.show
     from leela.blocks.learn import learn
-    monkeypatch.setattr(abhyasa.demo, 'show_reply', lambda said, thread=(): said.removeprefix('show me ').strip() if said.startswith('show me') else None, raising=False)
+    monkeypatch.setattr(abhyasa.show, 'show_reply', lambda said, thread=(): said.removeprefix('show me ').strip() if said.startswith('show me') else None)
     monkeypatch.setattr(learn, 'abhyasa_address', lambda: dict(url='http://127.0.0.1:5126', vault='v', pid=1) if running else {})
     r = serve(lesson())
     res = r.c.post('/nb/guide/stream', json=dict(path=str(r.p), cell_id=r.nb[1].id, said='show me alpha bar'))

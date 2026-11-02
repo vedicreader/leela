@@ -1,8 +1,8 @@
 import shutil, subprocess, time
 from pathlib import Path
 import pytest
-from abhyasa.model import recall, understanding
-from abhyasa.store import Learning
+from abhyasa.learner import recall, understanding
+from abhyasa.learner import Learning
 from leela.blocks.memory.memory import Memory, _open_lock
 from test_lesson_run import lesson_client
 

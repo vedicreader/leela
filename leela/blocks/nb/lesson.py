@@ -6,8 +6,8 @@ from fastcore.xtras import fenced, fenced_blocks
 from fastcore.ansi import strip_ansi
 from fastcore.basics import AttrDict, first
 import abhyasa.tutor
-from abhyasa.method import METHODS, TEXT_WAYS
-from abhyasa.prompts import prompt, register
+from abhyasa.learner import METHODS, TEXT_WAYS
+from abhyasa.learner import prompt, register
 from abhyasa.tutor import HINTS
 from ..runtime.kernels import KernelStartError
 from rupaka.spec import js_str
@@ -51,7 +51,7 @@ def step_brief(v) -> dict|None:
 
 def lesson_step(memory, nb) -> dict|None:
     "The `step_brief` of the walk step the lesson meta of `nb` names, read from the learning shelf of `memory`; None with no valid walk. Store errors raise."
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     from ..learn import learn
     from ..memory.memory import _open_lock
     if not (w := walk_meta(nb)) or w['step'] < 0: return None
@@ -220,7 +220,7 @@ def walk_meta(nb) -> dict:
 
 def _slug(name, walk) -> str:
     "The concept an attempt files under: the step's `concept` from `walk_meta`, else the slug of the lesson `name`."
-    from abhyasa.store import slugify
+    from abhyasa.learner import slugify
     return walk.get('concept') or slugify(name)
 
 def _rest(walk) -> dict: return {k: v for k, v in walk.items() if k != 'concept'}
@@ -273,8 +273,8 @@ def lesson_feedback(cell):
     return '\n'.join(lines)
 
 def record_card(memory, nb, cell, path):
-    from abhyasa.store import Learning
-    from abhyasa.model import update
+    from abhyasa.learner import Learning
+    from abhyasa.learner import update
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
     vault = memory._store('learning')
@@ -318,8 +318,8 @@ def exercise_filing(nb, cell, path):
 
 def record_exercise(memory, f):
     "File a graded full pass as one `code` attempt at depth 4 per source version; a new grade of the same source replaces the note."
-    from abhyasa.store import Learning
-    from abhyasa.model import update
+    from abhyasa.learner import Learning
+    from abhyasa.learner import update
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
     slug = _slug(f['name'], f.get('walk', {}))
@@ -371,8 +371,8 @@ def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=N
 
 def record_prediction(memory, f):
     "File one rupaka prediction through abhyasa once per source version; None when its key is already filed."
-    from abhyasa.store import Learning
-    import abhyasa.demo  # adds Learning.put_demo and Learning.record_prediction
+    from abhyasa.learner import Learning
+    import abhyasa.show  # adds Learning.put_demo and Learning.record_prediction
     from litesearch.core import write_txn
     from ..memory.memory import _open_lock
     slug = _slug(f['name'], f.get('walk', {}))
@@ -404,7 +404,7 @@ def run_filing(nb, path, result):
     """What `record_run` files for the result folder `result` of the lesson `nb` at `path`, copied now: the run attempt and the bytes of its images, at most
     `RUN_IMAGES` PNG files. None for a lesson with no walk, an unreadable `result.json` or a result that `run_ok` refuses."""
     from abhyasa.contract import RUN_IMAGES
-    from abhyasa.walk import run_ok
+    from abhyasa.contract import run_ok
     if not (w := walk_meta(nb)): return None
     try: raw = (Path(result)/'result.json').read_bytes(); d = json.loads(raw)
     except (OSError, ValueError): return None
@@ -432,7 +432,7 @@ def file_result(memory, path, folder=None):
 
 def record_run(memory, f):
     "File one `run` attempt through abhyasa and copy its images into the vault assets, once per content; None when its key is already filed. Never writes the walk."
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     from litesearch.core import write_txn
     from ..learn.learn import walk_url
     from ..memory.memory import _open_lock
@@ -528,12 +528,12 @@ GUIDE_NEEDS = 'The screen guide needs abhyasa 0.0.16 and rupaka 0.0.10 or newer.
 GUIDE_STREAM_NEEDS = 'The screen guide draws each step as it comes with abhyasa 0.0.16 and rupaka 0.0.10 or newer. Upgrade them, then try again.'
 
 def guide_board(memory, nb, cell, path, said, note=None, anchors=None, demo=None, **kw) -> dict:
-    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.guide.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`, and `demo` its demo, checked by `check_demo`. `kw` goes to `explain`; its `on_step` gets `(step, k, demo_open)`. `ImportError` when abhyasa has no guide."
-    from abhyasa.guide import explain
+    "The board of the screen guide for `said` on `cell` of the lesson `nb`: the reply of `abhyasa.show.explain`, with the learning vault as its sources, and `demo_open`, whether the demo's gates are all locked in. `anchors` are the formulas and figures the page sent, checked by `check_anchors`, and `demo` its demo, checked by `check_demo`. `kw` goes to `explain`; its `on_step` gets `(step, k, demo_open)`. `ImportError` when abhyasa has no guide."
+    from abhyasa.show import explain
     from rupaka.board import norm_tex
-    from abhyasa.ground import VaultSource
-    from abhyasa.llm import Router, route_ask
-    from abhyasa.store import Learning
+    from abhyasa.sources import VaultSource
+    from abhyasa.models import Router, route_ask
+    from abhyasa.learner import Learning
     from ..memory.memory import _open_lock
     meta = nb.meta['lesson']
     vault = memory._store('learning')

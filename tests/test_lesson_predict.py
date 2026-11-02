@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from fastcore.basics import AttrDict
 from starlette.testclient import TestClient
-from abhyasa.store import Learning
-import abhyasa.demo  # adds Learning.demo and Learning.demos
+from abhyasa.learner import Learning
+import abhyasa.show  # adds Learning.demo and Learning.demos
 from leela.app import ide_app
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import demo_gate, fence, lesson_notebook
@@ -234,7 +234,7 @@ def test_predict_reports_store_failure_and_allows_retry(rig, monkeypatch, failur
         if failure == 'missing':
             original = builtins.__import__
             def unavailable(name, *args, **kwargs):
-                if name == 'abhyasa.store': raise ModuleNotFoundError("No module named 'abhyasa'", name='abhyasa')
+                if name == 'abhyasa.learner': raise ModuleNotFoundError("No module named 'abhyasa'", name='abhyasa')
                 return original(name, *args, **kwargs)
             patch.setattr(builtins, '__import__', unavailable)
         else:

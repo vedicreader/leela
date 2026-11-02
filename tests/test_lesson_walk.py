@@ -1,7 +1,7 @@
 "Walk lessons: the passage in the first cell, the walk in the meta, and the walk meta on each check filed from one."
 import pytest
 from fastcore.basics import AttrDict, first
-from abhyasa.store import Learning
+from abhyasa.learner import Learning
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import exercise_filing, lesson_charter, lesson_notebook, lesson_step, lock, prediction_filing, record_card, walk_meta
 from leela.blocks.nb.nb import Notebook
@@ -52,7 +52,7 @@ def _kind(c):
     return 'header' if s.startswith('# ') else 'passage' if '> A caption is one line.' in s else 'demo' if '```rupaka' in s else 'markdown'
 
 def test_a_step_with_nb_builds_the_lesson_from_the_step(rig, tmp_path_factory, monkeypatch, abhyasa_cfg):
-    import abhyasa.demo  # adds Learning.put_demo
+    import abhyasa.show  # adds Learning.put_demo
     from rupaka.spec import demo, gate, is_, slider
     c, ws, lr, j, root = rig
     monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))   # a data path is checked against the home folder

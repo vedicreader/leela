@@ -780,7 +780,7 @@ def test_the_palette_creates_a_lesson_notebook_and_cancel_creates_nothing(tmp_pa
         await pg.wait_for_function("() => lee.path.includes('/lessons/') && lee.cells.length === 5")
         return await pg.evaluate('({path: lee.path, count: lee.cells.length, kind: lee.kind})')
     got = _run(go, roots=[tmp_path])
-    from abhyasa.store import slugify
+    from abhyasa.learner import slugify
     path = tmp_path/'lessons'/f'{slugify("सॉफ्टमैक्स")}.ipynb'
     assert got == {'path': str(path), 'count': 5, 'kind': 'notebook'}
     assert path.is_file()

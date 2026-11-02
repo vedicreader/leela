@@ -2,7 +2,7 @@
 import json
 from fastcore.basics import first
 from abhyasa.contract import run_ok
-from abhyasa.store import Learning
+from abhyasa.learner import Learning
 from leela.blocks.memory.memory import Memory
 from learn_data import rig  # noqa: F401
 from leela.blocks.nb.lesson import exercise_filing, lesson_notebook, lock, record_card, record_exercise, record_run, run_filing, step_lesson

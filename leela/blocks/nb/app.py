@@ -579,11 +579,14 @@ def connect(app, ctx):
         if cell is None: return fail('That cell is no longer in the notebook.')
         return tab, nb, cell
     def guide_show(nb, said):
-        "The Show hand-off to abhyasa for a \"show me …\" on the lesson `nb`, or None."
+        "The Show hand-off to abhyasa for a \"show me …\" on the lesson `nb`, or None; None too with no abhyasa guide, whose board then says what it needs."
         from ..learn.learn import show_link
         from .lesson import _slug
         m = nb.meta['lesson']
-        return show_link(said, _slug(m['name'], m.get('walk') or {}), m['name'])
+        try: return show_link(said, _slug(m['name'], m.get('walk') or {}), m['name'])
+        except ImportError as e:
+            if (e.name or '').startswith('abhyasa'): return None
+            raise
     @rt('/nb/guide/stream', methods=['POST'])
     async def nb_guide_stream(req):
         "The screen guide's board as events: `wait` while it works, `step` for each step of a sure tutor board as soon as it is whole, then `board` or `error`; or one `show`, the hand-off to abhyasa, for a \"show me …\". The lesson lock is held until the model call ends, not while the page reads."

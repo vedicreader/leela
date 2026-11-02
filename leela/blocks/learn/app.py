@@ -12,8 +12,8 @@ __all__ = ['CAPS', 'connect']
 CAPS = ('memory', 'search', 'docs', 'jobs', 'fs', 'fs_watch')
 
 def due_cards(memory):
-    from abhyasa.store import Learning
-    from abhyasa.model import recall, understanding
+    from abhyasa.learner import Learning
+    from abhyasa.learner import recall, understanding
     vault = memory._store('learning')
     with _open_lock(memory.path):
         lr, now = Learning(vault), time.time()
@@ -29,7 +29,7 @@ HEADERS = {'Content-Security-Policy': "frame-ancestors 'self'; img-src 'self' da
 PANE_ONLY = 'The side pane shows only Learn pages.'
 
 def read_step(memory, q):
-    from abhyasa.store import Learning
+    from abhyasa.learner import Learning
     from .learn import find_step
     vault = memory._store('learning')
     with _open_lock(memory.path): return find_step(Learning(vault), q)

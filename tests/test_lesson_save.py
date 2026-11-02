@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 import pytest
-from abhyasa.store import Learning, slugify
+from abhyasa.learner import Learning, slugify
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import lesson_actual, lesson_feedback, lock
 from leela.blocks.nb.nb import Notebook
@@ -90,7 +90,7 @@ def test_save_reports_store_failure_and_allows_retry(saved_lesson, monkeypatch, 
         if failure == 'missing':
             original = builtins.__import__
             def unavailable(name, *args, **kwargs):
-                if name == 'abhyasa.store': raise ModuleNotFoundError("No module named 'abhyasa'", name='abhyasa')
+                if name == 'abhyasa.learner': raise ModuleNotFoundError("No module named 'abhyasa'", name='abhyasa')
                 return original(name, *args, **kwargs)
             patch.setattr(builtins, '__import__', unavailable)
         else:

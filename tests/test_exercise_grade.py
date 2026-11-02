@@ -1,7 +1,7 @@
 import json, re, sys
 import pytest
 from starlette.testclient import TestClient
-from abhyasa.store import Learning
+from abhyasa.learner import Learning
 from leela.app import ide_app
 from leela.blocks.agent.ai import WRITE_TOOLS, _session_tools
 from leela.blocks.memory.memory import Memory

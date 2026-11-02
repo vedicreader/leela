@@ -2,9 +2,9 @@ import importlib, json
 from pathlib import Path
 import pytest
 from fastcore.basics import AttrDict
-import abhyasa.settings, abhyasa.tutor
-from abhyasa.prompts import PROMPTS, prompt, set_prompt
-from abhyasa.store import Learning
+import abhyasa.learner, abhyasa.tutor
+from abhyasa.learner import PROMPTS, prompt, set_prompt
+from abhyasa.learner import Learning
 import leela.blocks.nb.lesson
 from leela.blocks.learn.tools import tool_dir, tool_key
 from leela.blocks.memory.memory import Memory
@@ -44,7 +44,7 @@ def test_unreadable_settings_give_the_default(abhyasa_cfg, monkeypatch, meth):
     def deny(self, *a, **kw):
         if self == p: raise PermissionError(13, 'Permission denied', str(self))
         return real(self, *a, **kw)
-    monkeypatch.setattr(abhyasa.settings, '_cache', {})
+    monkeypatch.setattr(abhyasa.learner, '_cache', {})
     monkeypatch.setattr(Path, meth, deny)
     assert lesson_charter() == DFLT + CHARTER_TAIL
 
