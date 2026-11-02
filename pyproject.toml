@@ -18,7 +18,7 @@ classifiers = [
 dependencies = [
     "ramabana[cli]==0.2.96",
     "abhyasa>=0.0.16",   # the tutor of the screen guide; its board is rupaka's
-    "rupaka>=0.0.10",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from this version
+    "rupaka>=0.0.11",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from this version
     "shalya>=0.1.27",
     "gheasy>=0.0.19",
     "fastcore>=1.7.0",
