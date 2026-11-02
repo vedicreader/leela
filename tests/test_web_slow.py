@@ -1687,4 +1687,12 @@ def test_a_hand_off_to_a_heading_cell_brings_it_into_view(tmp_path):
             pg.wait_for_function(seen, arg=30, timeout=5000)
             pg.goto(f'{url}/?cell=99', wait_until='networkidle'); pg.wait_for_timeout(500)
             assert not [e for e in errs if 'state' in e], errs
+            # A disk reload at boot (`takeDiskVersion`) mounts the tab again while the first mount runs: the place stays.
+            again = b.new_context(viewport={'width': 1440, 'height': 900})
+            again.add_init_script("document.addEventListener('DOMContentLoaded', () => { const g = window.api; let n = 0;"   # the second mount starts while the first one waits for its drafts
+                                  " window.api = function(u) { const r = g.apply(this, arguments); if (String(u).startsWith('/tab/state') && !n++) r.then(() => setTimeout(() => window.mountTab(), 0)); return r; }; });")
+            p2 = again.new_page(); p2.goto(f'{url}/?cell=30', wait_until='networkidle')
+            p2.wait_for_function("() => document.querySelector('.lee-cell.sel')?.dataset.i === '30'", timeout=15000)
+            p2.wait_for_timeout(800)
+            assert p2.evaluate(seen, 30)
         finally: b.close()

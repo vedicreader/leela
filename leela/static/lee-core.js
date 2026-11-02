@@ -2025,7 +2025,8 @@ async function mountTab(expectedPath = '') {
     status('restored an unsaved browser draft · autosave will persist it', 'ok');
     scheduleAutoSave();
   }
-  if (lee.pendingLocation && (!lee.pendingLocation.path || lee.pendingLocation.path === st.path)) {
+  // Only the newest mount takes the place: a mount that started after this one (a disk reload at boot) draws the cells again and would lose it.
+  if (lee.pendingLocation && mountVersion === mountTabVersion && (!lee.pendingLocation.path || lee.pendingLocation.path === st.path)) {
     const loc = lee.pendingLocation; lee.pendingLocation = null;
     requestAnimationFrame(() => {
       // A notebook is a column of editors, each with its own line 1, so a location has to name
