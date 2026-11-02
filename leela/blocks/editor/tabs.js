@@ -151,13 +151,14 @@ async function mountTab(expectedPath = '') {
         let i = loc.cellId ? lee.cells.findIndex(c => c.id === loc.cellId) : -1;
         if (i < 0 && loc.cellIndex >= 0 && loc.cellIndex < lee.cells.length) i = loc.cellIndex;
         if (i >= 0) {
-          unfoldTo(i); selectCell(i); const view = ensureCellMounted(i);
-          if (loc.debug) {
+          // `focusCell` scrolls `#editor` to the cell: `jumpToLine` below scrolls only a code cell, so a hand-off to a section heading stayed off screen.
+          focusCell(i); const view = ensureCellMounted(i);
+          if (loc.debug && view) {
             LeeCM.setDebugLine(view, loc.line);
             paintDebugInlineValues(view, loc.line, lee.debugState?.variables);
           }
           jumpToLine(loc.line);
-          if (loc.column) { const at = view.state.doc.line(loc.line).from + loc.column; LeeCM.setSelection(view, at, at + String(loc.symbol || '').length); }
+          if (loc.column && view) { const at = view.state.doc.line(loc.line).from + loc.column; LeeCM.setSelection(view, at, at + String(loc.symbol || '').length); }
         }
       } else {
         jumpToLine(loc.line);

@@ -1664,3 +1664,27 @@ def test_a_refresh_that_changes_one_variable_leaves_an_expanded_row_open_and_fil
     assert got['idle'] == 0, 'an unchanged poll must not touch the panel'
     assert got['m']['emptied'] == 0, 'the expanded row emptied while its children were fetched again'
     assert got['same'] and got['kids'] == 35
+
+
+def test_a_hand_off_to_a_heading_cell_brings_it_into_view(tmp_path):
+    """abhyasa opens a notebook at `/?cell=N`, the heading of an idea. The cell is selected and in view: `jumpToLine` scrolls only a code cell, so a heading stayed off screen. An index past the end changes nothing."""
+    import json
+    from playwright.sync_api import sync_playwright
+    md = lambda k: dict(cell_type='markdown', metadata={}, id=f'c{k}', source=f'## Part {k}\n\nSome words about part {k}.')
+    code = lambda k: dict(cell_type='code', metadata={}, id=f'c{k}', source='x = 1\n' * 8, outputs=[], execution_count=None)
+    nb = tmp_path/'lesson.ipynb'
+    nb.write_text(json.dumps(dict(cells=[code(k) if k % 2 else md(k) for k in range(40)], metadata={}, nbformat=4, nbformat_minor=5)))
+    ws = Workspace(roots=[tmp_path]); ws.open(nb)
+    seen = ("i => { const h = document.getElementById('editor').getBoundingClientRect(), c = document.querySelector(`.lee-cell[data-i=\"${i}\"]`);"
+            " if (!c) return false; const r = c.getBoundingClientRect(); return r.top >= h.top && r.top < h.bottom; }")
+    with serve(ws) as url, sync_playwright() as pw:
+        b = pw.chromium.launch(headless=True)
+        try:
+            pg = b.new_page(viewport={'width': 1440, 'height': 900}); errs = []
+            pg.on('pageerror', lambda e: errs.append(str(e)))
+            pg.goto(f'{url}/?cell=30', wait_until='networkidle')
+            pg.wait_for_function("() => document.querySelector('.lee-cell.sel')?.dataset.i === '30'", timeout=15000)
+            pg.wait_for_function(seen, arg=30, timeout=5000)
+            pg.goto(f'{url}/?cell=99', wait_until='networkidle'); pg.wait_for_timeout(500)
+            assert not [e for e in errs if 'state' in e], errs
+        finally: b.close()
