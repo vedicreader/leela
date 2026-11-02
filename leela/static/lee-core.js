@@ -2039,6 +2039,10 @@ async function mountTab(expectedPath = '') {
         if (i >= 0) {
           // `focusCell` scrolls `#editor` to the cell: `jumpToLine` below scrolls only a code cell, so a hand-off to a section heading stayed off screen.
           focusCell(i); const view = ensureCellMounted(i);
+          // The outputs and late cells above it still grow, so the cell is shown again while they settle, until the learner scrolls, types or moves on.
+          let moved = false; const off = () => { moved = true; };
+          $('#editor')?.addEventListener('wheel', off, {once: true, passive: true}); addEventListener('keydown', off, {once: true});
+          for (const ms of [150, 400, 900, 1800]) setTimeout(() => { if (!moved && lee.sel === i) revealCell($(`.lee-cell[data-i="${i}"]`)); }, ms);
           if (loc.debug && view) {
             LeeCM.setDebugLine(view, loc.line);
             paintDebugInlineValues(view, loc.line, lee.debugState?.variables);

@@ -1671,7 +1671,8 @@ def test_a_hand_off_to_a_heading_cell_brings_it_into_view(tmp_path):
     import json
     from playwright.sync_api import sync_playwright
     md = lambda k: dict(cell_type='markdown', metadata={}, id=f'c{k}', source=f'## Part {k}\n\nSome words about part {k}.')
-    code = lambda k: dict(cell_type='code', metadata={}, id=f'c{k}', source='x = 1\n' * 8, outputs=[], execution_count=None)
+    code = lambda k: dict(cell_type='code', metadata={}, id=f'c{k}', source='x = 1\n' * 8, execution_count=1,   # a long warning, as torchvision gives, draws late
+                          outputs=[dict(output_type='stream', name='stderr', text='UserWarning: the default value will change.\n' * 25)])
     nb = tmp_path/'lesson.ipynb'
     nb.write_text(json.dumps(dict(cells=[code(k) if k % 2 else md(k) for k in range(40)], metadata={}, nbformat=4, nbformat_minor=5)))
     ws = Workspace(roots=[tmp_path]); ws.open(nb)
