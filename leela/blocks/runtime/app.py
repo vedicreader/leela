@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os, shutil
+from pathlib import Path
 
 from ... import errstr
 from ...core.web import fail, off_loop, pipeline_socket
@@ -11,6 +12,13 @@ from kunda.support import INSPECTOR
 __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs', 'pool', 'terms', 'dev', 'tab', 'runs', 'docs', 'gate')
+
+def copy_folder(root) -> bool:
+    "Whether `root` is a walk folder of abhyasa's learning copies (`.../walks/<walk id>/`)."
+    try: from abhyasa.contract import COPY_DIR, copy_home
+    except ImportError: return False
+    root = Path(root)
+    return root.parent.name == COPY_DIR and any(copy_home(f) for f in root.glob('*.ipynb'))
 
 def connect(app, ctx):
     rt = app.route
@@ -71,6 +79,7 @@ def connect(app, ctx):
         # The checkout in hand, not the folder that holds it: a panel offering to create an
         # environment has to offer it where the work is, and name the one already there.
         root = session.project_repo
+        if root and copy_folder(root): root = None   # a folder of abhyasa's learning copies is never a project: the copy runs in the learner's project
         py = project_python([root]) if root else None
         support = await off_loop(lambda: probed(f'support:{py}', lambda: kernel_support(py))) if py else {}
         # Its own cache, not `probed`: an install has to be able to drop this one answer, and
@@ -106,6 +115,7 @@ def connect(app, ctx):
         "Create a .venv in the checkout in hand, and install only its kernel transport, never Leela itself."
         root = session.project_repo
         if root is None: return fail('open a folder first')
+        if copy_folder(root): return fail('this folder holds learning copies from abhyasa; each copy runs in the environment of its own project')
         target = root/'.venv'
         if target.exists(): return fail(f'{target} already exists')
         def create():

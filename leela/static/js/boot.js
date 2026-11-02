@@ -78,6 +78,9 @@ async function boot() {
   bootStep('agent composer', initAgentComposer);
   // The agent pane is client-owned, so a reload starts it blank; the turns are on disk.
   bootStep('agent pane', rehydrateAgentLive);
+  // `/?cell=N`: a hand-off from abhyasa (`/learn`) opens the notebook at that cell; the address drops it, so a reload keeps the place.
+  const handCell = new URLSearchParams(location.search).get('cell');
+  if (handCell !== null && /^\d{1,5}$/.test(handCell)) { lee.pendingLocation = {cellIndex: +handCell, line: 1}; history.replaceState(null, '', location.pathname); }
   await bootStep('editor', mountTab);
   bootStep('tab strip', layoutTabs);
   bootStep('header layout', () => new ResizeObserver(layoutTabs).observe($('#header')));

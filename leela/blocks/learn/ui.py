@@ -3,7 +3,7 @@ from ...core.text import md_html
 from ...core.web import asset
 from ..settings.settings import theme_boot
 
-__all__ = ['Page', 'StepPage', 'OpenedPage', 'LookupPage']
+__all__ = ['Page', 'StepPage', 'DocPage', 'OpenedPage', 'LookupPage']
 
 # A frame takes the IDE's theme over its own saved one, and follows it when it changes.
 FOLLOW = """try { if (window.parent !== window) { const d = document.documentElement, p = window.parent.document.documentElement;
@@ -87,13 +87,21 @@ def StepPage(v, q, pane:bool=False, root=None, jobs=None):
         title, step = v.name, ''
         body = [P(v.concept.get('statement') or '') if v.concept else P('This idea is not in your learning store.', cls='lee-learn-line')]
     return Page(title, *body, Form(Hidden(name='walk', value=q.walk), Hidden(name='step', value=step), Hidden(name='topic', value=q.topic), Hidden(name='v', value=q.v),
+                                   Hidden(name='cell', value=str(q.cell)) if q.get('cell') is not None else None,
                                    Hidden(name='pane', value='1') if pane else None,
                                    Button('Open as a lesson', type='submit', cls='lee-btn go' if st in ('ready', 'indexing', 'unindexed') else 'lee-btn'), method='post', action='/learn/open'), pane=pane, js=True, math=v.kind == 'step', root=root)
 
+def DocPage(nb, q, pane:bool=False, root=None):
+    "The page for the notebook `nb` from abhyasa's vault, for a link that does not open it at once: where it runs, and the button that opens it."
+    return Page(nb.name, P(f'Leela opens {nb.name} in its own project and runs it in {nb.parent}.', cls='lee-learn-line'),
+                Form(*[Hidden(name=k, value=str(x)) for k, x in (('doc', q.doc), ('shelf', q.shelf), ('cell', q.cell), ('v', q.v)) if x not in ('', None)],
+                     Hidden(name='pane', value='1') if pane else None, Button('Open the notebook', type='submit', cls='lee-btn go'), method='post', action='/learn/open'),
+                pane=pane, root=root)
+
 def OpenedPage(title, here, pane:bool=False, root=None):
-    "The page after a lesson opens: the step's title, the line `Opened in Leela.` and a link back to the step at `here`."
-    back = here + '&pane=1' if pane else here
-    return Page(title, P('Opened in Leela.', cls='lee-learn-line'), P(A('Back to the step', href=back, cls='lee-learn-back')), pane=pane, root=root, here=here)
+    "The page after a lesson opens: the step's title, the line `Opened in Leela.` and a link back to the step at `here`, when there is one."
+    back = here + '&pane=1' if pane and here else here
+    return Page(title, P('Opened in Leela.', cls='lee-learn-line'), P(A('Back to the step', href=back, cls='lee-learn-back')) if here else None, pane=pane, root=root, here=here or None)
 
 def _Hit(r, path):
     return Section(P(Strong(r['name']), ' ', Span(r['package'], cls='lee-learn-line'), ' ', Code(f"{r['path']}:{r['line']}")),

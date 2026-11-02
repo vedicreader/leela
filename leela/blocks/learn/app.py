@@ -5,7 +5,7 @@ from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
 from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
-from .ui import LookupPage, OpenedPage, Page, StepPage
+from .ui import DocPage, LookupPage, OpenedPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect']
 
@@ -33,6 +33,20 @@ def read_step(memory, q):
     from .learn import find_step
     vault = memory._store('learning')
     with _open_lock(memory.path): return find_step(Learning(vault), q)
+
+def read_doc(memory, q):
+    from abhyasa.learner import Learning
+    from .learn import doc_notebook
+    vault = memory._store('learning')
+    with _open_lock(memory.path): return doc_notebook(Learning(vault), q)
+
+def go_now(req, q) -> bool:
+    "Whether the link `q` opens its notebook at once: it asks to (`go`), and the browser does not mark it as from another site. A link from another site gets the page with the button."
+    return q.go and req.headers.get('sec-fetch-site', '').lower() != 'cross-site'
+
+def at_cell(q) -> str:
+    "The IDE, at the cell `q.cell` of the notebook that opened."
+    return '/' if q.cell is None else f'/?cell={q.cell}'
 
 def said(req, root, text, code=200, title='Learn', pane=None, here=None):
     "A `learn` page of the one line `text`, with the status `code`; `pane` defaults to the query's `pane=1`."
@@ -117,44 +131,61 @@ def connect(app, ctx):
         try: q = read_handoff(req.url.query)
         except ValueError as e: return said(req, root, str(e), 400)
         if t := other_vault(q, ctx.memory.path): return said(req, root, t)
+        pane = req.query_params.get('pane') == '1'
+        if q.doc:
+            if go_now(req, q) and not pane: return await open_now(req, q, None, root)
+            try: nb = await off_loop(read_doc, ctx.memory, q)
+            except ValueError as e: return said(req, root, str(e), 404)
+            except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
+            return FtResponse(DocPage(nb, q, pane=pane, root=root), headers=HEADERS)
         try: v = await off_loop(read_step, ctx.memory, q)
         except ValueError as e: return said(req, root, str(e), 400)
         except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
         if v.kind == 'missing': return said(req, root, not_found(q, ctx.memory.path))
         if v.kind == 'done': return said(req, root, 'This walk is done.')
+        if go_now(req, q) and not pane: return await open_now(req, q, v, root)
         return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root, jobs=ctx.jobs), headers=HEADERS)
     @app.route('/learn/open', methods=['POST'])
     async def learn_open(req):
-        from abhyasa.contract import handoff
-        from ..fs.fs import Unsafe
-        from .learn import Taken, not_found, open_step
         f, root = await req.form(), ctx.session.project_root
         say = lambda text, code=200: said(req, root, text, code, pane=f.get('pane') == '1')
         try: q, v = await posted_step(f)
         except ValueError as e: return say(str(e), 400)
         except Exception: return say('The learning store is locked or cannot be read.', 503)
+        return await open_now(req, q, v, root, f.get('pane') == '1')
+    async def open_now(req, q, v, root, pane=False):
+        "Open the lesson of the `find_step` result `v`, or abhyasa's learning copy of its notebook, or the vault notebook `q.doc`, each in the project of the learner's notebook; then the IDE at the cell `q.cell`, or the opened page in the pane."
+        from abhyasa.contract import handoff
+        from ..fs.fs import Unsafe
+        from .learn import Taken, not_found, open_step, project_root
+        say = lambda text, code=200: said(req, root, text, code, pane=pane)
+        what = 'open the notebook' if q.doc else 'write the lesson'
         if isinstance(v, str): return say(v)
-        if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
-        if v.kind == 'done': return say('This walk is done.')
-        try: ctx.session.open_external(opened := open_step(ctx.session, ctx.fs, v, q))
+        if v is not None and v.kind == 'missing': return say(not_found(q, ctx.memory.path))
+        if v is not None and v.kind == 'done': return say('This walk is done.')
+        try:
+            if q.doc: path = project_root(ctx.session, ctx.fs, await off_loop(read_doc, ctx.memory, q))
+            else: path = open_step(ctx.session, ctx.fs, v, q)
+            ctx.session.open_external(opened := path)
         except Taken as e: return say(str(e), 409)
         except ValueError as e: return say(str(e), 400)
-        except Unsafe as e: return say(f'Leela could not write the lesson. {e}', 403)
-        except OSError as e: return say(f'Leela could not write the lesson. {os_why(e)}'.strip(), 500)
+        except Unsafe as e: return say(f'Leela could not {what}. {e}', 403)
+        except OSError as e: return say(f'Leela could not {what}. {os_why(e)}'.strip(), 500)
         except Exception: return say('Leela could not open the lesson.', 500)
-        await file_one(opened)   # a result written before this lesson opened
+        if not q.doc: await file_one(opened)   # a result written before this lesson opened
         # in a tab of its own the learner goes to the IDE, where the lesson is now the active tab
-        if f.get('pane') != '1': return RedirectResponse('/', 303)
+        if not pane: return RedirectResponse(at_cell(q), 303)
         # the pane keeps the step's own URL, so a reload does not GET this POST route
-        return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic, v=q.v), pane=f.get('pane') == '1', root=root), headers=HEADERS)
+        if q.doc: return FtResponse(OpenedPage(opened.name, '', pane=True, root=root), headers=HEADERS)
+        return FtResponse(OpenedPage(v.j.title if v.kind == 'step' else v.name, handoff(q.walk, v.get('i', q.step), q.topic, v=q.v), pane=True, root=root), headers=HEADERS)
     async def posted_step(f):
         "The handoff in the form `f` and its `find_step` result, or the one line for another vault in place of the result. `ValueError` for a bad form."
         from urllib.parse import urlencode
         from abhyasa.contract import read_handoff
         from .learn import other_vault
-        q = read_handoff(urlencode({k: f[k] for k in ('walk', 'step', 'topic', 'v') if f.get(k)}))
+        q = read_handoff(urlencode({k: f[k] for k in ('walk', 'step', 'topic', 'doc', 'shelf', 'cell', 'v') if f.get(k)}))
         if t := other_vault(q, ctx.memory.path): return q, t
-        return q, await off_loop(read_step, ctx.memory, q)
+        return q, None if q.doc and not q.walk else await off_loop(read_step, ctx.memory, q)
     @app.route('/learn/env', methods=['POST'])
     async def learn_env(req):
         from . import tools
@@ -165,6 +196,7 @@ def connect(app, ctx):
         except ValueError as e: return say(str(e), 400)
         except Exception: return say('The learning store is locked or cannot be read.', 503)
         if isinstance(v, str): return say(v)
+        if v is None: return say('This step needs no packages.', 400)
         if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
         from abhyasa.contract import handoff

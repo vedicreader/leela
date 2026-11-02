@@ -12,7 +12,7 @@ from abhyasa.stagekit import is_local
 from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
 
-__all__ = ['LESSONS', 'PKG', 'Taken', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
+__all__ = ['LESSONS', 'PKG', 'Taken', 'project_root', 'copy_root', 'doc_notebook', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
            'lookup', 'scratch_cell']
 
 LESSONS = Path(os.getenv('LEELA_LESSONS') or Path.home()/'Learning'/'Leela lessons').expanduser().absolute()
@@ -108,11 +108,29 @@ def notebook_copy(j) -> Path|None:
     except ImportError: return None
     return copy_of(j)
 
+def project_root(session, fs, nb) -> Path:
+    "The project of the learner's notebook `nb` (its checkout, else its folder), made a root when no root covers it: Leela runs the notebook there, in that project's environment."
+    from ...core.projects import workspace_for
+    nb = Path(nb).resolve()
+    if not nb.is_file() or nb.suffix != '.ipynb': raise ValueError(f'{nb.name} is not a notebook on this computer.')
+    if not fs.covers(nb):
+        if (d := workspace_for(nb)) is None: raise ValueError(f'Leela does not open a folder as large as the one that holds {nb.name}.')
+        session.add_root(d)
+    return nb
+
 def copy_root(session, fs, copy) -> Path:
-    "`copy`, with its folder made a root when no root covers it."
+    "`copy`, with its folder made a root when no root covers it, and the project of the notebook it copies made a root too, so the copy runs in that folder."
+    from abhyasa.contract import copy_home
     if _linked(copy): raise ValueError('The learning copy is in a symbolic link. Leela does not open a lesson through a link.')
+    if (home := copy_home(copy)) is not None: project_root(session, fs, home/copy.name)
     if not fs.covers(copy.parent.resolve()): session.add_root(copy.parent)
     return copy
+
+def doc_notebook(lr, q) -> Path:
+    "The file of the notebook `q.doc` on vault shelf `q.shelf`. `ValueError` when it is not a notebook on this computer."
+    from abhyasa.path import nb_file
+    if not (f := nb_file(lr, q.doc, q.shelf or 'store')): raise ValueError('This notebook is not in your learning store, or its file is not on this computer.')
+    return Path(f[1])
 
 def open_step(session, fs, v, q) -> Path:
     """The path of the lesson for the `find_step` result `v` of the handoff `q`: abhyasa's learning copy for a notebook walk, else the lesson, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it in the file and the open tab. A refusal or a failed write closes a `LESSONS` root it opened."""

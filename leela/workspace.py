@@ -536,15 +536,25 @@ class Workspace:
         if self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()) and not self.fs.read_only(a): self.fs.admit(a)
         p = self.fs._check(path, must_exist=True, reading=True)
         if not openable(p): raise Unsafe(f'{p.name} is not a text file')
-        try: self.active_root = self.fs.root_of(p)
+        home = self.copy_home(p)
+        try: self.active_root = self.fs.root_of(home or p)
         except Unsafe: pass
         if (i := self.find(p)) is not None:
             self.active = i
+            if home and not self.tabs[i].cwd: self.tabs[i].cwd = str(home)
             self.watch_env(None)
             return self.tabs[i]
-        return self._add_tab(Tab(path=str(p), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
+        return self._add_tab(Tab(path=str(p), cwd=str(home or ''), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
                                                                 'pdf' if p.suffix.lower() == '.pdf' else
                                                                 'image' if p.suffix.lower() in IMAGE_EXTS else 'text')))
+    def copy_home(self, p):
+        "The open folder of the learner's notebook when `p` is abhyasa's learning copy of it, else None: the copy runs there, in that project's environment, and the project surfaces follow it."
+        if Path(p).suffix != '.ipynb': return None
+        try: from abhyasa.contract import copy_home
+        except ImportError: return None
+        try: home = copy_home(p)
+        except Exception: return None
+        return home.resolve() if home is not None and self.fs.covers(home.resolve()) else None
     def open_external(self, path):
         "Open a file another process handed over: focus it, keep the tab strip, and tell any page showing this workspace."
         t = self.open(path)
