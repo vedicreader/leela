@@ -373,6 +373,24 @@ def test_the_third_identical_gated_call_is_put_to_the_person_even_under_auto():
     stop()
 
 
+def test_auto_raises_no_card_for_what_it_allows_whatever_the_default_control(tmp_path):
+    "`guided`, the default control, still paused web_search, read_url and research under `--approvals auto`."
+    from leela.blocks.agent.ai import Interventions
+    calls = {'web_search': {'query': 'x'}, 'read_url': {'url': 'https://example.com'}, 'research': {'question': 'q'},
+             'edit_file': {'path': 'a.py', 'commands': '[]'}, 'run_cell': {'path': 'a.ipynb', 'cell_id': 'c1'},
+             'run_shell': {'command': 'make'}}
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    for ap in (Interventions(tools=WRITE_TOOLS, mode='auto', timeout=.2), ws.approvals, ws._notebook_approvals):
+        asked = []; stop = ap.listen(on_ask=asked.append)
+        try: got = {n: ap.request(n, a) for n, a in calls.items()}
+        finally: stop()
+        assert ap.control == 'guided' and asked == [] and all(got.values()), (asked, {n: a.note for n, a in got.items()})
+    ap = Interventions(tools=WRITE_TOOLS, mode='auto', timeout=.2); stop = ap.listen()
+    try: assert [bool(ap.request('run_shell', {'command': 'make'})) for _ in range(3)] == [True, True, False], 'the repeat guard still asks'
+    finally: stop()
+    ws.shutdown_now()
+
+
 def test_the_name_a_prompt_asks_for_survives_the_way_people_write_it():
     for prompt, want in [('scale the numeric columns as df_norm', 'df_norm'),
                          ('Scale the numeric columns of `df` to 0..1 as `df_norm`.', 'df_norm'),

@@ -214,8 +214,9 @@ class Interventions(Approvals):
         # the mode or run policy says; a read between neither counts nor resets the streak
         loop = (force or required) and self._looping(name, args)
         bypassed = not force and self._policy_bypasses(name, args)
+        # under auto, guided's extra network pauses go: only directed, chosen to step through, still pauses
         control_checkpoint = not bypassed and (self.control == 'directed' or
-            (self.control == 'guided' and (name in GUIDED_TOOLS or path_write(name, args))))
+            (self.control == 'guided' and self.mode != 'auto' and (name in GUIDED_TOOLS or path_write(name, args))))
         checkpoint = force or loop or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, shown := _hidden(name, args)),
             preview=preview_for(name, shown, self.host), control=self.control,
