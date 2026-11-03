@@ -30,7 +30,7 @@ def test_cooldown_holds_across_windows(tmp_path):
 def test_keeps_newest_twenty(tmp_path):
     for i in range(25): (tmp_path/f'cpu-20200101-0000{i:02}.txt').write_text('')
     reps = _run(tmp_path, 1.0)
-    assert len(reps) == 20 and 'spin_here' in reps[-1].read_text()
+    assert len(reps) == 20   # what a report names is test_busy_thread_is_named_in_one_report's; here start-up CPU can fire the one report first
     assert not (tmp_path/'cpu-20200101-000005.txt').exists() and (tmp_path/'cpu-20200101-000006.txt').exists()
 
 def test_setting_off_starts_nothing(tmp_path):

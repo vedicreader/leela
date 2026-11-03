@@ -844,7 +844,10 @@ def test_a_watcher_queues_nothing_for_the_same_bytes_and_one_event_for_other_byt
             keyfile.write_text('{"keys": {}}')
             with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(qs[0].get(), .4)
             keyfile.write_text('{"keys": {"run_cell": "ctrl+y"}}')
-            return [await asyncio.wait_for(q.get(), 3) for q in qs]
+            async def keymap(q):   # a slow runner can queue an event of the project folder first
+                while (e := await asyncio.wait_for(q.get(), 3)) is not KEYMAP: pass
+                return e
+            return [await keymap(q) for q in qs]
         finally:
             for w in ws: w.close()
     got = asyncio.run(run())
