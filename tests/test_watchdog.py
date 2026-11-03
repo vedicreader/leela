@@ -17,8 +17,22 @@ def _run(tmp_path, *spins, gap=.6, **kw):
     finally: stop()
     return sorted(tmp_path.glob('cpu-*.txt'))
 
+def _busy(tmp_path, secs=30):
+    "Spin from before the watchdog starts until it writes a report, so any report names the spin and a slow runner only takes longer."
+    done = threading.Event()
+    def spin_here():
+        while not done.is_set(): pass
+    t = threading.Thread(target=spin_here); t.start()
+    stop = watch_cpu(folder=tmp_path, settings=Settings(user_path=tmp_path/'settings.json'), **{**FAST, 'threshold': 20})
+    try:
+        end = time.monotonic() + secs
+        while time.monotonic() < end and not [p for p in tmp_path.glob('cpu-*.txt') if not p.name.startswith('cpu-2020')]: time.sleep(.05)
+        time.sleep(.6)
+    finally: stop(); done.set(); t.join()
+    return sorted(tmp_path.glob('cpu-*.txt'))
+
 def test_busy_thread_is_named_in_one_report(tmp_path):
-    (rep,) = _run(tmp_path, 1.2)
+    (rep,) = _busy(tmp_path)
     assert 'spin_here' in rep.read_text()
 
 def test_idle_writes_nothing(tmp_path):
@@ -29,8 +43,8 @@ def test_cooldown_holds_across_windows(tmp_path):
 
 def test_keeps_newest_twenty(tmp_path):
     for i in range(25): (tmp_path/f'cpu-20200101-0000{i:02}.txt').write_text('')
-    reps = _run(tmp_path, 1.0)
-    assert len(reps) == 20   # what a report names is test_busy_thread_is_named_in_one_report's; here start-up CPU can fire the one report first
+    reps = _busy(tmp_path)
+    assert len(reps) == 20
     assert not (tmp_path/'cpu-20200101-000005.txt').exists() and (tmp_path/'cpu-20200101-000006.txt').exists()
 
 def test_setting_off_starts_nothing(tmp_path):
