@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 0.1.13
+
+Pins ramabana 0.2.103 and rishi 0.1.66.
+
+- Autopilot raises no approval cards. It sets the conversation's approvals to auto, also when Leela starts with `--approvals ask`. Stop, Pause after current, the third same call in a row, a peer question for a person and a host policy that asks still stop the agent. Approvals switched off stay off. Leaving autopilot or edits gives back the earlier mode, and "Trust changes for this session" stays.
+- Auto approvals raise no guided network checkpoint.
+- An approval card that you do not change runs as approved, not as edited, and its waiting label clears.
+- The terminal sets `TERM` and `COLORTERM`. The agent shell sets `TERM=dumb`.
+- Always allow on a prompt-cell card works. Prompt cells read the saved allow rules.
+- `make ship V=<version>` builds, signs, notarizes and staples the Mac DMG, puts it on the release and pushes the Homebrew cask.
+
 ## 0.1.12
 
 Pins ramabana 0.2.103 and rishi 0.1.66. Needs abhyasa 0.0.16 and rupaka 0.0.12.
