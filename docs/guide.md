@@ -92,6 +92,20 @@ providers it can use (OpenAI, Azure OpenAI, AWS Bedrock, Anthropic, Gemini, Open
 Code, Codex, a local model) and what each needs, and **+ model** adds one; see
 [docs/integration.md](integration.md#providers-azure-openai-and-aws-bedrock).
 
+### Lessons from abhyasa
+
+Learn a topic step by step from [abhyasa](https://github.com/vedicreader/abhyasa) lessons, with exercises the agent checks. In abhyasa, Open in Leela on a step sends a `/learn` link to Leela. A link with `go=1` opens the notebook at once, at the cell of its section. Other links show the step page, and **Open as a lesson** opens it.
+
+- A step opens as a lesson notebook: the passage from the source, the tutor's note, a task, its tests, and the run.
+- A lesson runs in its own uv environment, made from the requirements it declares. A lesson whose environment is not set up, missing or broken refuses to run. It never runs in the project's Python. Press Set up the environment on the step page.
+- A notebook walk of abhyasa opens its learning copy. The copy runs in the folder and the `.venv` of the notebook that it comes from.
+- Exercise cells have a Check button and a results list. `alt+s` checks the exercise that has the cursor. The agent grades a checked exercise from 0 to 10.
+- `LEELA_LESSONS` moves the lessons folder.
+
+### The screen guide
+
+Each lesson cell has an **I don't get…** button. Say what you do not understand, in one line. The screen guide explains it in steps and draws a board on the cell: one shape for each panel, flows of boxes, and labels that never cover each other. The strip under the page shows each step, with keys to go back, go on and stop. The guide needs abhyasa 0.0.16 and rupaka 0.0.10 or newer, and it uses abhyasa's model (`ABHYASA_MODEL`, or the setting `models.default`).
+
 ### Search and memory
 
 Code goes through [kosha](https://pypi.org/project/koshas/): FTS5, embeddings, a call graph

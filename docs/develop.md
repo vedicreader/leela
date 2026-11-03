@@ -2,6 +2,17 @@
 
 The code layout, the desktop builds, a release, and the test suite.
 
+## Get the code
+
+```sh
+git clone https://github.com/vedicreader/leela && cd leela
+uv sync --group dev
+uv run leela .
+uv run pytest tests -q
+```
+
+Leela uses these packages from the same authors: [ramabana](https://github.com/vedicreader/ramabana) (the agent), [shalya](https://github.com/vedicreader/shalya) (the agent's tools), [kunda](https://github.com/vedicreader/kunda) (kernels), [dhrishti](https://github.com/vedicreader/dhrishti) (live variables), [gheasy](https://github.com/vedicreader/gheasy) (git), [kavacha](https://github.com/vedicreader/kavacha) (the app window) and [pullup](https://github.com/vedicreader/pullup) (releases and deploys).
+
 ## Layout
 
 ```
@@ -105,6 +116,8 @@ the release environment.
 
 `python tools/build_release.py upload` finds the release under either tag spelling and refuses
 with the command to run when there is none.
+
+The Mac DMG that the Homebrew cask installs is signed and notarized on a Mac. Run `make ship V=<version>` after the release exists. `tools/ship.sh` builds Leela.app, signs it with the Developer ID in the keychain, notarizes and staples the DMG, puts it on release `V` in place of the one that CI attached, and pushes the cask with `tools/ship_cask.sh`. It never moves a tag or a release, so it can run again.
 
 The window needs no build. From a checkout:
 
