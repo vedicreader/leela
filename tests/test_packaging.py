@@ -238,7 +238,7 @@ def test_the_bundle_path_follows_the_python_that_built_it(tmp_path):
     assert _stdlib(tmp_path/'Leela.app') == [str(lib/'python312.zip'), str(lib/'python3.12'), str(lib/'python3.12'/'lib-dynload')]
 
 @pytest.mark.parametrize('identity,want', [('', '-'), ('Developer ID Application: X', 'Developer ID Application: X')])
-def test_a_release_build_is_always_sealed(monkeypatch, identity, want):
+def test_a_release_build_is_always_sealed(tmp_path, monkeypatch, identity, want):
     """Without a Developer ID nothing signed the bundle after the graft and the stamp, so its py2app seal was broken."""
     sys.path.insert(0, str(ROOT/'tools'))
     import build_release
@@ -248,7 +248,9 @@ def test_a_release_build_is_always_sealed(monkeypatch, identity, want):
     monkeypatch.setattr(build_release, 'run', lambda *a, **kw: None)
     monkeypatch.setattr(build_release, 'build_app', lambda *a: None)
     monkeypatch.setattr(build_release, 'notary_args', lambda: [])
-    monkeypatch.setattr(build_release.Path, 'is_dir', lambda self: True)
+    # A temporary root: `mac_release` replaces `dist/Leela-macOS.dmg`, and once deleted the one the smoke step was to upload.
+    monkeypatch.setattr(build_release, 'ROOT', tmp_path)
+    (tmp_path/'dist'/'Leela.app').mkdir(parents=True)
     monkeypatch.setattr(build_release.shutil, 'copytree', lambda *a, **kw: None)
     monkeypatch.setattr(build_release.shutil, 'copy2', lambda *a, **kw: None)
     build_release.mac_release()
