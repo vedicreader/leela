@@ -4,8 +4,9 @@
 
 ## 0.1.12
 
-Needs abhyasa 0.0.16 and rupaka 0.0.12.
+Pins ramabana 0.2.103 and rishi 0.1.66. Needs abhyasa 0.0.16 and rupaka 0.0.12.
 
+- A quick call with no thinking sends no reasoning effort, so a model such as GPT-6.1 Sol runs at its default and answers on the first try (rishi 0.1.66).
 - Open a notebook from abhyasa at once, at its cell. A `/learn` link with `go=1` opens the notebook and selects the cell of its section, also a section heading, and keeps it in view while the outputs above it draw.
 - A notebook walk of abhyasa opens its learning copy as the lesson. The copy runs in the folder and the environment of the notebook that it comes from: the kernel starts in that folder and uses the nearest `.venv` of that project. A folder of copies never gets an environment of its own. The copy starts with a link back to the walk.
 - The screen guide's board comes from rupaka 0.0.12 (`rupaka.board`): one shape for each panel, flows of boxes, follow-ups that build on the board before, and labels that never cover each other. `lee-rupaka.js` and `lee-rupaka.css` are written from the 0.0.12 wheel.
