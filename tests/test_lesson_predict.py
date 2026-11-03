@@ -89,7 +89,7 @@ def test_predict_compares_as_the_runtime_does(serve):
     r = serve(lesson(fence(spec(gate=g))))
     assert post(r, picked='4').json()['logged']
     a = attempts(r)[0]
-    assert bool(a.correct) and a.feedback == 'The answer is 4.'
+    assert bool(a.correct) and 'why' in a.feedback   # abhyasa 0.0.16 asks a right pick for its reason
 
 def test_predict_compares_a_list_answer_as_the_runtime_does(serve):
     r = serve(lesson(fence(spec(gate=dict(GATE, options=[[1, 2], [2, 1]], answer={'is': [1, 2]})))))
