@@ -225,6 +225,35 @@ def test_every_package_a_tool_schema_is_read_from_ships_its_source():
                          'packaging/macos/setup.py, or every tool schema raises OSError')
 
 
+def _stdlib(app):
+    "The bundle's own `sys.path`: its zip, `lib/python3.X` and `lib-dynload`, for whichever Python built it."
+    lib = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3.*[0-9]')))
+    assert lib is not None, f'{app} has no lib/python3.x'
+    return [str(lib.parent/f"python{lib.name[6:].replace('.', '')}.zip"), str(lib), str(lib/'lib-dynload')]
+
+def test_the_bundle_path_follows_the_python_that_built_it(tmp_path):
+    """The runner builds with 3.12, and a path fixed at `python3.13` put no grafted package on `sys.path`."""
+    lib = tmp_path/'Leela.app'/'Contents'/'Resources'/'lib'
+    (lib/'python3.12'/'lib-dynload').mkdir(parents=True); (lib/'python312.zip').touch()
+    assert _stdlib(tmp_path/'Leela.app') == [str(lib/'python312.zip'), str(lib/'python3.12'), str(lib/'python3.12'/'lib-dynload')]
+
+@pytest.mark.parametrize('identity,want', [('', '-'), ('Developer ID Application: X', 'Developer ID Application: X')])
+def test_a_release_build_is_always_sealed(monkeypatch, identity, want):
+    """Without a Developer ID nothing signed the bundle after the graft and the stamp, so its py2app seal was broken."""
+    sys.path.insert(0, str(ROOT/'tools'))
+    import build_release
+    monkeypatch.setenv('LEELA_CODESIGN_IDENTITY', identity)
+    signed = []
+    monkeypatch.setattr(build_release, 'sign', lambda app, identity: signed.append(identity))
+    monkeypatch.setattr(build_release, 'run', lambda *a, **kw: None)
+    monkeypatch.setattr(build_release, 'build_app', lambda *a: None)
+    monkeypatch.setattr(build_release, 'notary_args', lambda: [])
+    monkeypatch.setattr(build_release.Path, 'is_dir', lambda self: True)
+    monkeypatch.setattr(build_release.shutil, 'copytree', lambda *a, **kw: None)
+    monkeypatch.setattr(build_release.shutil, 'copy2', lambda *a, **kw: None)
+    build_release.mac_release()
+    assert signed == [want]
+
 #: What the bundle has to be able to import for a feature a person uses on their first day. Every one
 #: of these was shipped and unusable at some point because the scanner cannot see how it is reached:
 #: `cmath` through a Cython module, `ipykernel_launcher` through a `-m` string, `chardet`'s
@@ -240,11 +269,7 @@ def test_the_bundle_can_import_what_its_features_need():
     python = app/'Contents'/'MacOS'/'python'
     if not python.exists(): pytest.skip('the bundle ships no interpreter helper')
     src = 'import ' + ', '.join(BUNDLED_IMPORTS)
-    env = {'PYTHONHOME': str(app/'Contents'/'Resources'),
-           'PYTHONPATH': ':'.join([str(app/'Contents'/'Resources'/'lib'/'python313.zip'),
-                                   str(app/'Contents'/'Resources'/'lib'/'python3.13'),
-                                   str(app/'Contents'/'Resources'/'lib'/'python3.13'/'lib-dynload'),
-                                   str(_pyskills())])}
+    env = {'PYTHONHOME': str(app/'Contents'/'Resources'), 'PYTHONPATH': ':'.join(_stdlib(app) + [str(_pyskills())])}
     # `-B` and the pyskills dir, as the app has them: a `.pyc` or `pyskills.pth` written here unseals the bundle.
     r = subprocess.run([str(python), '-B', '-c', src], capture_output=True, text=True, timeout=180, env=env)
     assert r.returncode == 0, f'the bundle cannot import what it ships:\n{r.stderr.strip()[-1500:]}'
@@ -258,8 +283,7 @@ def test_the_bundle_validates_a_rupaka_demo():
     python = app/'Contents'/'MacOS'/'python'
     if not python.exists(): pytest.skip('the bundle ships no interpreter helper')
     res = app/'Contents'/'Resources'
-    env = {'PYTHONHOME': str(res), 'PYTHONPATH': ':'.join([str(res/'lib'/'python313.zip'), str(res/'lib'/'python3.13'),
-                                                            str(res/'lib'/'python3.13'/'lib-dynload')])}
+    env = {'PYTHONHOME': str(res), 'PYTHONPATH': ':'.join(_stdlib(app))}
     src = ('from rupaka.spec import gallery, validate; g = gallery(); assert g, "the gallery is empty"; '
            'errs = validate(next(iter(g.values()))); assert not errs, errs; print(len(g))')
     r = subprocess.run([str(python), '-B', '-c', src], capture_output=True, text=True, timeout=180, env=env)
@@ -349,8 +373,9 @@ def test_signing_signs_a_hardlinked_driver_once_and_keeps_it_one_file(tmp_path, 
 def test_the_bundles_zip_holds_no_code_notarisation_would_refuse():
     """Apple's notary reads inside `python313.zip`, and a Mach-O file there is unsigned: 19 of them made a submission Invalid."""
     import zipfile
-    z = ROOT/'dist'/'Leela.app'/'Contents'/'Resources'/'lib'/'python313.zip'
-    if not z.is_file(): pytest.skip('dist/Leela.app is not built')
+    app = ROOT/'dist'/'Leela.app'
+    if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
+    z = Path(_stdlib(app)[0])
     with zipfile.ZipFile(z) as f:
         code = [n for n in f.namelist() if not n.endswith('/') and '.dSYM/' not in n and f.read(n)[:4] in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xce\xfa\xed\xfe')]
     assert not code, code[:10]
@@ -361,8 +386,7 @@ def test_the_bundle_parses_a_pdf(tmp_path):
     if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
     from PIL import Image
     Image.new('RGB', (40, 20), 'white').save(pdf := tmp_path/'one.pdf', 'PDF')
-    res = app/'Contents'/'Resources'
-    src = (f"import sys; sys.path[:] = {[str(res/'lib'/'python313.zip'), str(res/'lib'/'python3.13'), str(res/'lib'/'python3.13'/'lib-dynload')]}\n"
+    src = (f"import sys; sys.path[:] = {_stdlib(app)}\n"
            f"from liteparse import LiteParse; LiteParse().parse({str(pdf)!r}); print('ok')")
     r = subprocess.run([str(app/'Contents'/'MacOS'/'python'), '-I', '-S', '-B', '-c', src], capture_output=True, text=True, timeout=120)
     assert r.stdout.strip().endswith('ok'), r.stderr[-1500:]

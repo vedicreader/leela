@@ -22,9 +22,8 @@ def mac_release():
     build_app()
     app, out = ROOT/'dist'/'Leela.app', ROOT/'dist'/'Leela-macOS.dmg'
     if not app.is_dir(): raise SystemExit(f'{app} was not built')
-    # Distribution signing is opt-in: it needs the developer's identity and notarization
-    # credentials, and a local py2app build is already linker-signed and launchable.
-    if (identity := os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip()): sign(app, identity)
+    # Ad hoc without a Developer ID: py2app's seal is older than the grafted bytecode and the build stamp.
+    sign(app, os.environ.get('LEELA_CODESIGN_IDENTITY', '').strip() or '-')
     # Staged outside the repository, and gone when the image is written. The drag-to-install
     # shortcut a DMG wants is a symlink to `/Applications`, and one of those left behind under
     # `build/` is a path from this checkout into the real folder: a tool resolving `leela` by name
