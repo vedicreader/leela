@@ -39,8 +39,7 @@ or `deno jupyter`. Where none exists they run on Leela's own runner. A Rust cell
 a scratch cargo crate that grows. Rustc's diagnostics then arrive as the cell's error output,
 named `E0382`, with the compiler's own rendering underneath. JavaScript cells run against one
 long-lived node context, and a binding made in one cell survives into the next. `notebook language`
-in the command palette switches a notebook over. See
-[a notebook that is not Python](languages.md).
+in the command palette switches a notebook over.
 
 ![The borrow checker, in a notebook cell](screenshots/rust-borrow-checker.png)
 
@@ -120,7 +119,6 @@ search the live web again.
 Tools > Vault opens a workbench tab for shelves, search, imports, feeds, API specifications, and topics.
 Paste a page, paper, repository, video, or folder. Folder imports show their plan before indexing.
 `@` completes vault documents. Search results and document rows can attach sections to an agent question.
-See [the vault](vault.md).
 
 ![Searching the vault, and attaching what it found](screenshots/vault-workbench.png)
 

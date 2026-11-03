@@ -45,9 +45,23 @@ leela_app.py      what py2app and py2exe freeze: server on a thread, window on t
 packaging/        the platform build definitions and the mark
 ```
 
-A block imports `leela.core` and never another block. [docs/blocks.md](blocks.md) has
-the contract. [docs/integration.md](integration.md) says what belongs in a dependency
-rather than here. [docs/](README.md) indexes the rest.
+The reasons behind this shape are in [decisions.md](decisions.md). The agent host and its groups are in [integration.md](integration.md).
+
+## Blocks
+
+```text
+leela/blocks/git/
+    __init__.py   lazy-loads the routes: `__getattr__ = lazy_app(globals())`
+    git.py        the domain module, with no web imports
+    ui.py         FastHTML fragments
+    app.py        `CAPS` and `connect(app, ctx)`, which registers the routes
+    *.js          the browser half, joined into a served bundle
+```
+
+- A block imports `leela.core` and never another block.
+- `CAPS` names exactly what `app.py` and `ui.py` read as `ctx.<name>`. `tests/test_core.py` runs every GET route with only the declared capabilities. Session state that is not a capability, such as `project_root`, comes through `ctx.session`.
+- To add a block, make the folder and add its name to `NAMES` in `leela/blocks/__init__.py`. The order of `NAMES` is the wiring order.
+- To add a `.js` module, name it in `LAYERS` in `tools/build_ide_js.py` and run the tool.
 
 ## Standalone desktop builds
 
@@ -56,9 +70,7 @@ beside it. The window is [pywebview](https://pywebview.flowrl.com/) over the pla
 webview: WKWebView on macOS, WebView2 on Windows. It points at a loopback port chosen at
 launch. Chrome is not in the bundle. `--app` and the inline browser both drive the persistent
 CDP profile fossick keeps in `~/.cache/fastcdp`. It is the copy of Chrome the machine already
-has, with the logins it already has.
-
-![The packaged app](screenshots/desktop-window.png)
+has, with the logins it already has. The processes, the browser and the menu bar are in [desktop.md](desktop.md).
 
 ```sh
 uv sync --extra desktop --extra macapp --group dev
