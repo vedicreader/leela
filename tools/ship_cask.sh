@@ -33,5 +33,6 @@ grep -E '^  (version|sha256|url) ' "$C"
 git -C "$TAP" add Casks/leela.rb
 git -C "$TAP" diff --cached --quiet || git -C "$TAP" commit -m "Leela $V"
 test "${PUSH:-}" = 1 || { echo "The tap is committed. To publish it: PUSH=1 V=$V tools/ship_cask.sh"; exit 0; }
-git -C "$TAP" -c credential.helper= -c "credential.helper=!gh auth git-credential" push
+# over HTTPS with the gh keyring: the tap remote is SSH, and SSH can be refused
+git -C "$TAP" -c credential.helper= -c "credential.helper=!gh auth git-credential" push https://github.com/vedicreader/homebrew-tap.git HEAD:main
 echo "Leela $V is in the tap."
