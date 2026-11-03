@@ -117,3 +117,100 @@ def test_the_host_runs_commands_in_the_background(tmp_path):
     p, log = host._bg[slow]
     host.close()
     assert host._bg == {} and p.poll() is not None and not log.exists()
+
+
+def _asked(ap):
+    "The tools that raised a card on `ap`."
+    seen = []; ap.listen(lambda a: seen.append(a.tool))
+    return seen
+
+def _raise(ap, *a, **kw):
+    "Raise a request off this thread; returns a getter for its answer."
+    import threading
+    got = {}
+    threading.Thread(target=lambda: got.setdefault('a', ap.request(*a, **kw)), daemon=True).start()
+    return lambda: got.get('a')
+
+def test_autopilot_raises_no_card_and_gives_back_the_mode():
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', control='guided', timeout=.3); seen = _asked(ap)
+    ap.set_control('autopilot')
+    assert ap.mode == 'auto' and ap.chosen == 'autopilot'
+    assert ap.request('edit_file', {'path': 'a.py', 'commands': '[]'}).answer and ap.request('run_shell', {'command': 'make'}).answer
+    assert seen == [], 'autopilot shows no card'
+    ap.set_control('edits'); assert ap.mode == 'edits' and ap.control == 'autopilot' and ap.chosen == 'edits'
+    ap.set_control('guided'); assert ap.mode == 'ask' and ap.chosen == 'guided'
+    ap.set_control('directed'); assert ap.mode == 'ask'
+
+def test_autopilot_still_asks_for_the_repeat_guard_a_person_a_policy_and_a_pause():
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', control='guided', timeout=.2,
+                       policy=lambda n, a: 'ask' if a.get('command') == 'rm x' else None)
+    seen = _asked(ap); ap.set_control('autopilot')
+    for _ in range(3): ap.request('run_shell', {'command': 'make'})
+    assert seen == ['run_shell'], 'the third same call asks'
+    ap.request('run_shell', {'command': 'rm x'}); assert len(seen) == 2, 'a host policy that asks still asks'
+    ap.request('peer ask', {'question': 'ok?'}, force=True); assert seen[-1] == 'peer ask'
+    ap.set_pause_next(); ap.request('read_file', {'path': 'a.py'}); assert seen[-1] == 'read_file', 'pause after current stops a read'
+    ap.set_pause_next(); ap.request('edit_file', {'path': 'a.py', 'commands': '[]'}); assert seen[-1] == 'edit_file', 'and a write'
+    assert ap.request('edit_file', {'path': 'b.py', 'commands': '[]'}).answer and seen[-1] == 'edit_file' and len(seen) == 5
+    ap.stop(); assert not ap.request('edit_file', {'path': 'c.py', 'commands': '[]'}).answer and len(seen) == 5
+
+def test_switching_to_autopilot_leaves_a_waiting_repeat_guard_card():
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', control='guided', timeout=5); ap.listen()
+    ap.mode = 'auto'
+    for _ in range(2): ap.request('run_shell', {'command': 'make'})
+    got = _raise(ap, 'run_shell', {'command': 'make'})
+    a = _until(lambda: ap.pending)
+    ap.set_mode('ask'); ap.set_control('autopilot')
+    assert ap.pending is a and a.pending, 'the person still answers the repeat guard'
+    ap.answer(a.id, False, 'no'); assert not _until(got).answer
+
+def test_session_trust_survives_leaving_autopilot_or_edits():
+    ap = Interventions(tools=WRITE_TOOLS, mode='ask', control='guided', timeout=5); ap.listen()
+    got = _raise(ap, 'run_shell', {'command': 'make'})
+    ap.answer(_until(lambda: ap.pending).id, True, session=True); assert _until(got).answer and ap.mode == 'auto'
+    ap.set_control('edits'); ap.set_control('guided')
+    assert ap.mode == 'auto', 'trust given before edits comes back, not the launch mode'
+    ap.set_mode('ask'); ap.set_control('edits')
+    got = _raise(ap, 'run_shell', {'command': 'pytest'})
+    ap.answer(_until(lambda: ap.pending).id, True, session=True); assert _until(got).answer
+    ap.set_control('guided'); assert ap.mode == 'auto', 'trust given under edits stays'
+
+def test_approvals_switched_off_stay_off_under_autopilot_and_edits():
+    ap = Interventions(tools=WRITE_TOOLS, mode='off', control='guided', timeout=.3); seen = _asked(ap)
+    for c in ('autopilot', 'edits'):
+        ap.set_control(c); assert ap.mode == 'off'
+        assert not ap.request('edit_file', {'path': 'a.py', 'commands': '[]'}).answer and seen == []
+    ap.set_control('guided'); assert ap.mode == 'off'
+
+def test_the_control_route_gives_back_session_trust_and_threads_report_their_control(tmp_path, monkeypatch):
+    monkeypatch.setattr('leela.blocks.settings.settings.agent_cfg', lambda settings=None: tmp_path)
+    ws = Workspace(roots=[tmp_path], approvals='ask')
+    with TestClient(ide_app(ws)) as c:
+        t = ws.threads.active
+        got = _raise(t.approvals, 'run_shell', {'command': 'make'}, timeout=5)
+        a = _until(lambda: t.approvals.pending)
+        assert c.post('/agent/approve', json={'id': a.id, 'ok': True, 'session': True, 'thread': t.id}).json()['ok'] and _until(got).answer
+        d = c.post('/agent/control', json={'control': 'autopilot', 'thread': t.id}).json()
+        assert d['control'] == 'autopilot' and d['mode'] == 'auto'
+        assert c.post('/agent/control', json={'control': 'edits', 'thread': t.id}).json()['mode'] == 'edits'
+        d = c.post('/agent/control', json={'control': 'guided', 'thread': t.id}).json()
+        assert d['control'] == 'guided' and d['mode'] == 'auto'
+        c.post('/agent/control', json={'control': 'autopilot', 'thread': t.id})
+        new = c.post('/agent/thread/new', json={}).json()
+        assert new['control'] == 'guided' and ws.threads.require(new['active']).approvals.mode == 'ask'
+        assert c.post('/agent/thread/switch', json={'thread': t.id}).json()['control'] == 'autopilot'
+
+def test_always_allow_answers_a_prompt_cell_card(tmp_path, monkeypatch):
+    monkeypatch.setattr('leela.blocks.settings.settings.agent_cfg', lambda settings=None: tmp_path)
+    ws = Workspace(roots=[tmp_path], approvals='ask')
+    with TestClient(ide_app(ws)) as c:
+        t, nb = ws.threads.active, ws._notebook_approvals
+        assert nb.rules_path == tmp_path/'approvals.json'
+        got = _raise(nb, 'run_shell', {'command': 'pytest -q'}, timeout=5)
+        a = _until(lambda: nb.pending)
+        d = c.post('/agent/approval/always', json={'id': a.id, 'thread': t.id}).json()
+        assert d['ok'], d
+        assert d['rules'] == [['run_shell', 'pytest -q', 'allow']] and _until(got).answer
+        assert json.loads((tmp_path/'approvals.json').read_text()) == [['run_shell', 'pytest -q', 'allow']]
+        assert t.approvals.rules == nb.rules and t.approvals.rules is not nb.rules
+        assert nb.request('run_shell', {'command': 'pytest -q'}).answer and t.approvals.request('run_shell', {'command': 'pytest -q'}).answer

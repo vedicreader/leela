@@ -80,6 +80,10 @@ def connect(app, ctx):
         "The conversation a request names, resolved once. Omitted means the one on screen now."
         target = str(target or '').strip()
         return ws.threads.require(target) if target else ws.threads.active
+    def _holder(t, id):
+        "The approvals holding ask `id`: the conversation's, or the notebook's for a prompt cell."
+        nb = ws._notebook_approvals
+        return nb if any(a.id == id for a in nb.waiting) and not any(a.id == id for a in t.approvals.waiting) else t.approvals
     def _thread_error(e):
         "Only a refusal is a conflict. Anything else is a bad request, or a bug wearing its own name."
         from .threads import TurnError
@@ -164,7 +168,7 @@ def connect(app, ctx):
             return _thread_error(e) if isinstance(e, TurnError) else fail(e)
         # `ai.history` is the log's last 8 MB; the index reads this conversation's own byte range
         turns = [t for t in await off_loop(thread.ai.session_turns, thread.id) if t.get('model') != 'scripted']
-        return {'ok': True, 'session': thread.id, 'note': thread.ai.note,
+        return {'ok': True, 'session': thread.id, 'note': thread.ai.note, 'control': getattr(thread.approvals, 'chosen', 'guided'),
                 'turns': with_capabilities(thread.ai, ws.with_timelines(turns))}
     @rt('/agent/threads')
     def agent_threads():
@@ -188,7 +192,7 @@ def connect(app, ctx):
         except ValueError as e: return fail(e)
         try: thread = await off_loop(ws.threads.new, None, bool(d.get('warm')), optin, profile)
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'warm': thread.ai.warm, 'optin': list(thread.ai.optin),
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'control': getattr(thread.approvals, 'chosen', 'guided'), 'warm': thread.ai.warm, 'optin': list(thread.ai.optin),
                 'profile': thread.ai.profile}
     def _profile(name):
         "One of ramabana's profiles, or None for the workspace default."
@@ -217,7 +221,7 @@ def connect(app, ctx):
         d = await req.json()
         try: thread = ws.threads.switch(str(d.get('thread') or ''))
         except Exception as e: return _thread_error(e)
-        return {'ok': True, 'active': thread.id, 'thread': thread.dict()}
+        return {'ok': True, 'active': thread.id, 'thread': thread.dict(), 'control': getattr(thread.approvals, 'chosen', 'guided')}
     @rt('/agent/thread/close')
     async def agent_thread_close(req):
         d = await req.json()
@@ -1088,11 +1092,9 @@ def connect(app, ctx):
         d = await req.json()
         try: th = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
-        want = (d.get('control') or '').strip()
-        try: control = th.approvals.set_control('autopilot' if want == 'edits' else want)
+        try: note = th.approvals.set_control((d.get('control') or '').strip())
         except ValueError as e: return fail(e)
-        note = th.approvals.set_mode('edits') if want == 'edits' else (th.approvals.set_mode(ws.approvals_mode) if th.approvals.mode == 'edits' else '')
-        return {'ok': True, 'thread': th.id, 'control': want if want == 'edits' else control, 'mode': th.approvals.mode, 'note': note}
+        return {'ok': True, 'thread': th.id, 'control': th.approvals.chosen, 'mode': th.approvals.mode, 'note': note}
     @rt('/agent/run-policy')
     async def agent_run_policy(req):
         "Run through bounded future calls, or pause immediately after the current one."
@@ -1392,10 +1394,7 @@ def connect(app, ctx):
         tool = (d.get('tool') or '').strip() or None
         try: t = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
-        # answered wherever it was raised: a prompt cell's approval is held by the notebook's
-        holder = (ws._notebook_approvals
-                  if t.approvals.pending is None and ws._notebook_approvals.pending is not None
-                  else t.approvals)
+        holder = _holder(t, d.get('id'))
         choices = {c.__name__: c for c in (t.ai if holder is t.approvals else ws.inline_ai).tools}
         if tool and tool not in choices: return fail(f'unknown tool {tool}')
         if bool(d.get('ok')) and tool and args is not None:
@@ -1415,18 +1414,20 @@ def connect(app, ctx):
         tool = (d.get('tool') or '').strip() or None
         try: t = _thread(d.get('thread'))
         except Exception as e: return _thread_error(e)
-        a = t.approvals.pending
-        if a is None or a.id != (d.get('id') or ''): return fail('nothing is waiting for an answer')
-        choices = {c.__name__: c for c in t.ai.tools}
+        holder = _holder(t, d.get('id'))
+        a = first(holder.waiting, lambda x: x.id == (d.get('id') or ''))
+        if a is None: return fail('nothing is waiting for an answer')
+        choices = {c.__name__: c for c in (t.ai if holder is t.approvals else ws.inline_ai).tools}
         if tool and tool not in choices: return fail(f'unknown tool {tool}')
         if tool and args is not None:
             import inspect
             try: inspect.signature(choices[tool]).bind(**args)
             except TypeError as e: return fail(f'invalid {tool} arguments: {e}')
         name = tool or a.tool
-        rule = t.approvals.always(name, subject(name, a.args if args is None else args))
-        t.approvals.answer(a.id, True, 'always allowed', tool=tool, args=args)
-        return {'ok': True, 'thread': t.id, 'rule': rule, 'rules': t.approvals.rules}
+        rule = holder.always(name, subject(name, a.args if args is None else args))
+        for x in (ws._notebook_approvals, *(th.approvals for th in ws.threads.rows())): x.rules = list(holder.rules)
+        holder.answer(a.id, True, 'always allowed', tool=tool, args=args)
+        return {'ok': True, 'thread': t.id, 'rule': rule, 'rules': holder.rules}
     @rt('/agent/approval/rules')
     def agent_approval_rules(thread: str = ''):
         try: t = _thread(thread)
@@ -1442,7 +1443,7 @@ def connect(app, ctx):
         except ValueError: return fail('no such rule')
         if (path := t.approvals.rules_path) is not None:
             with atomic_save(path, 'w') as f: json.dump(rules, f, indent=1)
-        for th in ws.threads.rows(): th.approvals.rules = list(rules)
+        for x in (ws._notebook_approvals, *(th.approvals for th in ws.threads.rows())): x.rules = list(rules)
         return {'ok': True, 'thread': t.id, 'rules': rules}
     @rt('/agent/runs/{run_id}/log')
     def agent_run_log(run_id: str, since: int = 0, thread: str = ''):

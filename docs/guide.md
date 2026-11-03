@@ -80,7 +80,7 @@ Prefix the Variables filter with `=` to evaluate against the watched runtime.
 The turn runs on a local or a cloud model. Completions, summaries and sub-agent fan-out go
 to the local one either way. Every call is a lifecycle card. You can edit it, read its
 dry-run diff, approve and run it, reject it with steering, retry it, or roll it back.
-Autopilot, guided and directed modes decide how much of that you see. Compaction is
+The pane's control decides how much of that you see. Guided stops at writes and network calls, directed stops at every call, and edits runs file and notebook edits. Autopilot sets the conversation's approvals to auto, so no approval card shows, also when Leela starts with `--approvals ask`. Under autopilot, Stop and Pause after current still stop the agent. A card still shows for the third same call in a row, a peer question that only a person can answer, and a host policy that asks. Approvals switched off stay off. When you leave autopilot or edits, the conversation gets back the approvals mode it had before, and "Trust changes for this session" stays in effect. Compaction is
 surgical and appears in the timeline. Turns fork from any revision. A prompt cell saves the
 answer in the notebook cell, as markdown that Jupyter can still read. The charter under
 state layers context by organization, project, task and branch, then puts it in the

@@ -503,7 +503,7 @@ async function resumeLatestAgent() {
       if (lee.agentThread && lee.agentThread !== d.session) await post('/agent/thread/switch', {thread: lee.agentThread});
       return loadAgentModels().catch(() => {});
     }
-    paintResumed(d);
+    paintResumed(d); showAgentControl(d.control);
     status(`picked up ${titleText(d.title) || d.session}`, 'ok');
   } catch (_) {}
 }
@@ -532,7 +532,7 @@ async function leeAgentResume(group) {
   const picked = pickAgentThread();
   try {
     const d = await post('/agent/resume', {session: group.id});
-    paintResumed(d);
+    paintResumed(d); showAgentControl(d.control);
     $('#agentprompt')?.focus();
     status(d.note || `resumed ${d.session}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
@@ -1043,7 +1043,7 @@ async function leeAgentAccept() {
 async function leeAgentNew() {
   rememberAgentThread(); const leftBusy = lee.agentBusy, picked = pickAgentThread();
   try {
-    const d = await post('/agent/thread/new', {warm: agentWarmEnabled(), optin: agentOptins(), profile: agentFullEnabled() ? 'full' : ''}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    const d = await post('/agent/thread/new', {warm: agentWarmEnabled(), optin: agentOptins(), profile: agentFullEnabled() ? 'full' : ''}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = ''; showAgentControl(d.control);
     // the turn left behind keeps running on the server; only this pane stops drawing it
     if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; } ++lee.agentStreamGen;
     if (leftBusy) startAgentBusyWatch();
@@ -1064,6 +1064,7 @@ async function leeAgentThreadSwitch(id) {
     if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; } ++lee.agentStreamGen;
     const running = d.thread.state === 'working' || d.thread.state === 'waiting';
     lee.agentThread = d.active; lee.agentBusy = running; lee.agentTitle = titleText(d.thread.title);
+    showAgentControl(d.control);
     const input = $('#agentprompt'); if (input) input.value = lee.agentThreadDrafts.get(id) || '';
     const live = await paintAgentThread(d.active);
     await refreshAgentThreads(); updateAgentRunstrip(); loadAgentModels().catch(() => {});

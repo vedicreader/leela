@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
-from ...agent.agent import SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
+from ...agent.agent import PERSON_ONLY, SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
@@ -42,6 +42,8 @@ __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_cont
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
+CONTROL_APPROVALS = {'autopilot': 'auto', 'edits': 'edits'}   #: the approvals mode a pane control puts in place while it holds
+KEPT = ('policy', 'person', 'loop', 'pause')   #: asks a mode switch leaves for the person
 STOP_NOTE = 'the user stopped this turn'
 def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in SECRET_ARGS.get(tool, ()) if k in was}}
 def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
@@ -114,6 +116,7 @@ class Interventions(Approvals):
     def __init__(self, *a, control='guided', **kw):
         super().__init__(*a, **kw)
         self.control = control if control in CONTROL_MODES else 'guided'
+        self.chosen, self.held = self.control, None   # the pane's choice (edits too), and the mode it replaced
         self.run_policy = None
         self.pause_next = False
         self.queued_steer = ''
@@ -121,9 +124,25 @@ class Interventions(Approvals):
         self._state_lock = threading.Lock()
         self._execution_meta = []
     def set_control(self, control):
-        if control not in CONTROL_MODES: raise ValueError(f'unknown agent control mode {control!r}')
-        with self._state_lock: self.control, self.run_policy, self.pause_next = control, None, False
-        return control
+        "Set the pane's control. Autopilot and edits put their approvals mode in place; the others put back the mode they replaced."
+        base = 'autopilot' if control == 'edits' else control
+        if base not in CONTROL_MODES: raise ValueError(f'unknown agent control mode {control!r}')
+        with self._state_lock: self.control, self.chosen, self.run_policy, self.pause_next = base, control, None, False
+        want, was = CONTROL_APPROVALS.get(control), self.held
+        if want is None: self.held = None
+        elif was is None: self.held = self.mode
+        if want is None: return '' if was is None else Approvals.set_mode(self, was)
+        return 'approvals: off' if self.held == 'off' else Approvals.set_mode(self, want)
+    def set_mode(self, mode):
+        "A mode chosen outright; no control puts back an earlier one."
+        self.held = None
+        return super().set_mode(mode)
+    def _settle(self):
+        settled = [a for a in self.waiting if a.forced not in KEPT and self.mode != 'ask' and not (self.mode == 'edits' and not self.edits_cover(a.tool))]
+        if not settled: return ''
+        ok = self.mode != 'off'
+        for a in settled: self.answer(a.id, ok, f'answered by /approve {self.mode}')
+        return f' · {"approved" if ok else "refused"} what was waiting'
     def set_run_policy(self, policy='once', count=1):
         "Set a temporary run-through policy for calls after the current checkpoint."
         if policy not in {'once', 'count', 'until_write', 'reads', 'until_failure', 'completion'}:
@@ -182,11 +201,11 @@ class Interventions(Approvals):
         for p, made in a.after.items():
             if made: self.host.delete(p)
         return ', '.join(a.after)
+    def _take_pause(self):
+        with self._state_lock: paused, self.pause_next = self.pause_next, False
+        return paused
     def _policy_bypasses(self, name, args=None):
         with self._state_lock:
-            if self.pause_next:
-                self.pause_next = False
-                return False
             p = self.run_policy
             if not p: return False
             kind = p['kind']
@@ -204,7 +223,7 @@ class Interventions(Approvals):
             return kind in {'until_failure', 'completion'}
     def state(self):
         with self._state_lock:
-            return {'control': self.control, 'run_policy': dict(self.run_policy) if self.run_policy else None,
+            return {'control': self.control, 'chosen': self.chosen, 'run_policy': dict(self.run_policy) if self.run_policy else None,
                 'pause_next': self.pause_next, 'queued_steer': self.queued_steer, 'stopping': self.stopping}
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
         branch_id='main', parent_action_id=''):
@@ -213,11 +232,12 @@ class Interventions(Approvals):
         # ramabana's repeat guard: the DOOM_LOOPth identical gated call is put to the person whatever
         # the mode or run policy says; a read between neither counts nor resets the streak
         loop = (force or required) and self._looping(name, args)
-        bypassed = not force and self._policy_bypasses(name, args)
+        paused = not self.stopping and self._take_pause()
+        bypassed = not force and not paused and self._policy_bypasses(name, args)
         # under auto, guided's extra network pauses go: only directed, chosen to step through, still pauses
         control_checkpoint = not bypassed and (self.control == 'directed' or
             (self.control == 'guided' and self.mode != 'auto' and (name in GUIDED_TOOLS or path_write(name, args))))
-        checkpoint = force or loop or (required and not bypassed) or control_checkpoint
+        checkpoint = force or loop or paused or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, shown := _hidden(name, args)),
             preview=preview_for(name, shown, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
@@ -229,8 +249,11 @@ class Interventions(Approvals):
             a.before = self._shot(name, args)
         self.history.append(a)
         if self.stopping: return a.resolve(False, STOP_NOTE)
+        if name in PERSON_ONLY: a.forced = 'person'
         if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
-            if (d := self.decide(name, args, force=name not in self.tools, ask=a, loop=loop)) is not None: return d   # a path write is not in `tools`
+            # a path write is not in `tools`; a pause still lets the policy, a saved rule or mode off refuse
+            if (d := self.decide(name, args, force=name not in self.tools, ask=a, loop=loop or paused)) is not None: return d
+        if not a.forced: a.forced = 'loop' if loop else 'pause' if paused else ''
         if not checkpoint: return a.resolve(True)
         with self._lock:
             closing, heard = self.closed, self.listeners > 0 or self.no_listener == 'wait'
@@ -257,6 +280,7 @@ class Interventions(Approvals):
             if args is not None: a.args = _restore(a.tool, dict(args), a.original_tool, a.original_args)
             shown = _hidden(a.tool, a.args)
             a.summary, a.preview = _summary(a.tool, shown), preview_for(a.tool, shown, self.host)
+        if ok and session and self.held is not None: self.held = 'auto'   # session trust outlives the control
         return super().answer(id, ok, note, session=session)
     def gate(self, tool_call):
         "Pause according to the control level, then apply an approved rewrite to the live call."
@@ -1115,7 +1139,7 @@ These are loaded already — do not `api_load` them again. `api_ops(name=…, ma
 operation and `api_call` runs it; say which one answered. A spec marked local-only refuses on a
 hosted model rather than sending anything, and the refusal names what to change.""")
 
-def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None):
+def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, host=None, rules_path=None):
     "An `Approvals` that writes the whole exchange into the notebook."
     from ..nb.nb import Cell
     def _add(md, meta):
@@ -1137,7 +1161,7 @@ def notebook_approvals(get_target, tools=WRITE_TOOLS, mode='ask', timeout=300, h
         _add(md, {'kind': 'approval', 'id': a.id, 'tool': a.tool,
             'state': 'approved' if a.answer else 'refused',
             'edited': bool(getattr(a, 'edited', False))})
-    return Interventions(tools=tools, mode=mode, timeout=timeout, host=host,
+    return Interventions(tools=tools, mode=mode, timeout=timeout, host=host, rules_path=rules_path,
         on_ask=on_ask, on_answer=on_answer)
 
 def _irreversible(action):

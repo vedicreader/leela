@@ -567,11 +567,15 @@ function paintAgentChip() {
   $('#agentchipmode', chip).textContent = mode.value; chip.dataset.mode = mode.value;
 }
 window.paintAgentChip = paintAgentChip;
+/* Each conversation keeps its own control, so the select follows the one on screen. */
+function showAgentControl(control) {
+  const select = $('#agentcontrol'); if (!select || !control) return;
+  select.value = control; paintAgentChip();
+}
 async function leeAgentControl(control) {
   try {
     const d = await post('/agent/control', {control});
-    const select = $('#agentcontrol'); if (select) select.value = d.control;
-    paintAgentChip();
+    showAgentControl(d.control);
     status(`agent control: ${d.control}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }

@@ -1521,7 +1521,7 @@ async function resumeLatestAgent() {
       if (lee.agentThread && lee.agentThread !== d.session) await post('/agent/thread/switch', {thread: lee.agentThread});
       return loadAgentModels().catch(() => {});
     }
-    paintResumed(d);
+    paintResumed(d); showAgentControl(d.control);
     status(`picked up ${titleText(d.title) || d.session}`, 'ok');
   } catch (_) {}
 }
@@ -1550,7 +1550,7 @@ async function leeAgentResume(group) {
   const picked = pickAgentThread();
   try {
     const d = await post('/agent/resume', {session: group.id});
-    paintResumed(d);
+    paintResumed(d); showAgentControl(d.control);
     $('#agentprompt')?.focus();
     status(d.note || `resumed ${d.session}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
@@ -2061,7 +2061,7 @@ async function leeAgentAccept() {
 async function leeAgentNew() {
   rememberAgentThread(); const leftBusy = lee.agentBusy, picked = pickAgentThread();
   try {
-    const d = await post('/agent/thread/new', {warm: agentWarmEnabled(), optin: agentOptins(), profile: agentFullEnabled() ? 'full' : ''}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = '';
+    const d = await post('/agent/thread/new', {warm: agentWarmEnabled(), optin: agentOptins(), profile: agentFullEnabled() ? 'full' : ''}); lee.agentThread = d.active; lee.agentBusy = false; lee.agentTitle = ''; showAgentControl(d.control);
     // the turn left behind keeps running on the server; only this pane stops drawing it
     if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; } ++lee.agentStreamGen;
     if (leftBusy) startAgentBusyWatch();
@@ -2082,6 +2082,7 @@ async function leeAgentThreadSwitch(id) {
     if (lee.agentStream) { lee.agentStream._leeStopped = true; lee.agentStream.close(); lee.agentStream = null; } ++lee.agentStreamGen;
     const running = d.thread.state === 'working' || d.thread.state === 'waiting';
     lee.agentThread = d.active; lee.agentBusy = running; lee.agentTitle = titleText(d.thread.title);
+    showAgentControl(d.control);
     const input = $('#agentprompt'); if (input) input.value = lee.agentThreadDrafts.get(id) || '';
     const live = await paintAgentThread(d.active);
     await refreshAgentThreads(); updateAgentRunstrip(); loadAgentModels().catch(() => {});
@@ -3416,11 +3417,15 @@ function paintAgentChip() {
   $('#agentchipmode', chip).textContent = mode.value; chip.dataset.mode = mode.value;
 }
 window.paintAgentChip = paintAgentChip;
+/* Each conversation keeps its own control, so the select follows the one on screen. */
+function showAgentControl(control) {
+  const select = $('#agentcontrol'); if (!select || !control) return;
+  select.value = control; paintAgentChip();
+}
 async function leeAgentControl(control) {
   try {
     const d = await post('/agent/control', {control});
-    const select = $('#agentcontrol'); if (select) select.value = d.control;
-    paintAgentChip();
+    showAgentControl(d.control);
     status(`agent control: ${d.control}`, 'ok');
   } catch (e) { status(String(e.message || e), 'err'); }
 }

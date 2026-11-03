@@ -279,7 +279,8 @@ class Workspace:
         self.screen = (None, '', '')
         self.on_note = None
         self._approval_target, self.approvals_mode = None, approvals
-        self._notebook_approvals = notebook_approvals(lambda: self._approval_target, mode=approvals)
+        from .blocks.settings.settings import agent_cfg
+        self._notebook_approvals = notebook_approvals(lambda: self._approval_target, mode=approvals, rules_path=agent_cfg()/'approvals.json')
         self._stop_notebook_approvals = self._notebook_approvals.listen()
     def sync_agent_routing(self, ai=None):
         "Apply saved agent-job choices to a live assistant."

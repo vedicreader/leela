@@ -609,9 +609,8 @@ def _agent_panel(ws):
     inline_model = ws.inline_model or _env('MODEL_INLINE') or DFLT_SMALL
     completion_model = ws.completion_model or _env('MODEL_COMPLETION') or DFLT_SMALL
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())
-    control = getattr(ws.approvals, 'control', 'guided')
-    edits = getattr(ws.approvals, 'mode', '') == 'edits'
-    chip_mode = 'edits' if edits else control
+    chip_mode = getattr(ws.approvals, 'chosen', 'guided')
+    control, edits = ('autopilot', True) if chip_mode == 'edits' else (chip_mode, False)
     from .blocks.agent.models import providers, unavailable
     gone = unavailable(agent_model)
     # Nothing is chosen for the person: each provider, what it needs, and the form that adds one.
@@ -674,7 +673,7 @@ def _agent_panel(ws):
                                        Option('edits', value='edits', selected=edits),
                                        id='agentcontrol', cls='lee-select lee-composer-control',
                                        onchange='leeAgentControl(this.value)', aria_label='agent mode',
-                                       title='autopilot: writes pause · guided: writes and network pause · directed: every tool pauses · edits: file and notebook edits run, the rest pause'),
+                                       title='autopilot: tools run with no approval card. Stop, Pause after current, the third same call, a peer ask and a host policy can still ask · guided: writes and network pause · directed: every tool pauses · edits: file and notebook edits run, the rest pause'),
                                 Select(Option('automatic reasoning', value='auto'), *[Option(f'{e} reasoning', value=e) for e in EFFORTS],
                                        id='agentreasoning', cls='lee-select lee-composer-reasoning',
                                        title='reasoning effort for cloud models'),
