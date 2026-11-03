@@ -2402,6 +2402,9 @@ function mountProposalEditors(card) {
   });
 }
 function proposalArgsSafe(card) { try { return proposalArgs(card); } catch (_) { return {}; } }
+// key order and nesting aside: the form lists fields in schema order and fills in defaults
+const canonArgs = v => JSON.stringify(v, (_, x) => x && typeof x === 'object' && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map(k => [k, x[k]])) : x);
 function groupedToolOptions(schemas, selected) {
   const groups = new Map();
   for (const schema of schemas) {
@@ -2494,6 +2497,8 @@ function showApproval(a, destination = null) {
     `<button class="lee-btn" data-always title="run it, and save this command or path so it never asks again">Always allow</button>` +
     `<button class="lee-btn go" data-ok="1">Run this tool</button></footer>`;
   const raw = $('[data-args]', card); raw.value = JSON.stringify(a.args || {}, null, 2); mountProposalEditors(card);
+  // what the untouched form reads back as, so Run on an unchanged card is not an edit
+  const asProposed = new Set([canonArgs(a.args || {}), canonArgs(proposalArgsSafe(card))]);
   const switchTab = name => {
     $$('.lee-proposal-tabs button', card).forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     $$('.lee-proposal-pane', card).forEach(p => p.classList.toggle('active', p.dataset.pane === name));
@@ -2526,21 +2531,25 @@ function showApproval(a, destination = null) {
     if (ok) {
       try {
         args = argsFromUI(); tool = $('[data-tool]', card).value || a.tool;
-        changed = tool !== a.tool || JSON.stringify(args) !== JSON.stringify(a.args || {});
+        changed = tool !== a.tool || !asProposed.has(canonArgs(args));
         error.textContent = '';
       } catch (e) { switchTab('call'); error.textContent = e.message || String(e); return; }
     }
     buttons.forEach(b => b.disabled = true);
     try {
       const note = $('[data-note]', card).value || '';
+      let state = {};
       if (ok) {
         const spec = $('[data-run-policy]', card).value, [policy, count] = spec.split(':');
         if (!['once', 'approve_session'].includes(policy))
-          await post('/agent/run-policy', {policy, count: Number(count || 1)});
+          state = await post('/agent/run-policy', {policy, count: Number(count || 1)});
       }
       const session = ok && $('[data-run-policy]', card).value === 'approve_session';
-      if (always) await post('/agent/approval/always', {id: a.id, tool, args, thread: lee.agentThread || ''});
-      else await post('/agent/approve', {id: a.id, ok, note, session, tool, args, thread: lee.agentThread || ''});
+      // an unchanged call is not sent back: the server runs the call as it was proposed
+      const sent = changed ? {tool, args} : {tool: null, args: null};
+      if (always) await post('/agent/approval/always', {id: a.id, ...sent, thread: lee.agentThread || ''});
+      else await post('/agent/approve', {id: a.id, ok, note, session, ...sent, thread: lee.agentThread || ''});
+      updateAgentRunstrip(state);
       card.classList.remove('proposed'); card.classList.add(ok ? 'running' : 'refused'); if (changed) card.classList.add('edited');
       const checkpointState = $('.lee-checkpoint-title small', card);
       if (checkpointState) checkpointState.textContent = ok
