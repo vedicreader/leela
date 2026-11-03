@@ -69,7 +69,6 @@ uv tool install git+https://github.com/vedicreader/leela
 leela .
 ```
 
-- The install needs a GitHub sign-in that can read this repository (`gh auth login`).
 - The `leela` package on PyPI is a different project.
 - On Windows, export model keys such as `OPENAI_API_KEY` in the WSL shell, not in Windows, and start Leela with `leela --shell none .`.
 
