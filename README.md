@@ -1,5 +1,5 @@
 <p align="center">
-<img src="https://raw.githubusercontent.com/vedicreader/leela/main/packaging/assets/leela-logo.png" width="120" alt="Leela logo">
+<img src="https://raw.githubusercontent.com/vedicreader/leela/main/docs/media/leela-icon.png" width="120" alt="Leela logo">
 </p>
 
 <h1 align="center">Leela</h1>
