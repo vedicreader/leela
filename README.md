@@ -22,11 +22,17 @@ Leela is an editor for notebooks and code files, with a coding agent in the same
 
 On a Mac with Apple silicon and macOS 14 or later:
 
+With Homebrew:
+
+    brew install --cask vedicreader/tap/leela
+
+Or by hand:
+
 1. Download [Leela-macOS.dmg](https://github.com/vedicreader/leela/releases/latest/download/Leela-macOS.dmg).
 2. Open the file, and drag Leela into Applications.
 3. Open Leela from Applications.
 
-The repository is private, so the download needs a GitHub sign-in with access to it. The app is signed with a Developer ID but not notarized. If macOS refuses to open it the first time, open System Settings, then Privacy & Security, and click Open Anyway.
+The app is signed with a Developer ID and notarized by Apple. It needs an Apple silicon Mac with macOS 14 or later. Lessons and project environments use uv, which the Homebrew cask installs.
 
 On Linux, or on Windows inside WSL, run Leela from the command line. It opens in your browser at `http://localhost:5010`:
 
