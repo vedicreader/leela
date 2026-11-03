@@ -269,7 +269,9 @@ def test_the_bundle_can_import_what_its_features_need():
     python = app/'Contents'/'MacOS'/'python'
     if not python.exists(): pytest.skip('the bundle ships no interpreter helper')
     src = 'import ' + ', '.join(BUNDLED_IMPORTS)
-    env = {'PYTHONHOME': str(app/'Contents'/'Resources'), 'PYTHONPATH': ':'.join(_stdlib(app) + [str(_pyskills())])}
+    # `XDG_DATA_HOME` too: without it pyskills looks for its dir under the real home, misses this one and writes `pyskills.pth`.
+    env = {'PYTHONHOME': str(app/'Contents'/'Resources'), 'PYTHONPATH': ':'.join(_stdlib(app) + [str(_pyskills())]),
+           'XDG_DATA_HOME': str(_pyskills().parent)}
     # `-B` and the pyskills dir, as the app has them: a `.pyc` or `pyskills.pth` written here unseals the bundle.
     r = subprocess.run([str(python), '-B', '-c', src], capture_output=True, text=True, timeout=180, env=env)
     assert r.returncode == 0, f'the bundle cannot import what it ships:\n{r.stderr.strip()[-1500:]}'
