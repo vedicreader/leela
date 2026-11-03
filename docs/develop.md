@@ -129,7 +129,7 @@ the release environment.
 `python tools/build_release.py upload` finds the release under either tag spelling and refuses
 with the command to run when there is none.
 
-The Mac DMG that the Homebrew cask installs is signed and notarized on a Mac. Run `make ship V=<version>` after the release exists. `tools/ship.sh` builds Leela.app, signs it with the Developer ID in the keychain, notarizes and staples the DMG, puts it on release `V` in place of the one that CI attached, and pushes the cask with `tools/ship_cask.sh`. It never moves a tag or a release, so it can run again.
+The Mac DMG and zip are signed and notarized on a Mac. Run `make ship V=<version>` after the release exists. `tools/ship.sh` builds Leela.app, signs it with the Developer ID in the keychain, notarizes and staples the DMG, staples the app and zips it as `Leela-macOS.zip`, puts both on release `V` (the DMG in place of the one that CI attached), and pushes the cask with `tools/ship_cask.sh`. The cask installs the zip, because Homebrew 7 fails with a read-only file system when it unpacks the mounted DMG. It never moves a tag or a release, so it can run again.
 
 The window needs no build. From a checkout:
 

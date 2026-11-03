@@ -1,8 +1,10 @@
 #!/bin/sh
 # usage: V=<version> [TAP=<tap folder>] tools/ship.sh (make ship V=<version> does this). The Mac release of Leela, as abhyasa's
 # mac/scripts/ship.sh does it: build Leela.app on this Mac, sign it with the Developer ID in the keychain, notarize and staple
-# the DMG, put it on the GitHub release for V in place of the one that CI attached, then write its sha256 into the tap and
-# push it (tools/ship_cask.sh with PUSH=1). It never moves a tag or a release, so it can always run again.
+# the DMG, staple the app and zip it, put both on the GitHub release for V (the DMG in place of the one that CI attached),
+# then write the sha256 of the zip into the tap and push it (tools/ship_cask.sh with PUSH=1). The cask takes the zip:
+# Homebrew 7 fails with a read-only file system when it unpacks the mounted DMG. It never moves a tag or a release, so it
+# can always run again.
 # Notary credentials, first match wins: LEELA_NOTARY_PROFILE (a notarytool keychain profile), LEELA_ASC_KEY with
 # LEELA_ASC_KEY_ID and LEELA_ASC_ISSUER, then ~/.config/leela/notary.json or Sanketa's ~/.config/sanketa/notary.json
 # {"key_id","issuer_id","key_path"}, the file that abhyasa's mac/scripts/notarize.sh reads.
@@ -10,7 +12,7 @@ set -eu
 : "${V:?Give the version: make ship V=<version>}"
 echo "$V" | grep -qE '^[0-9]+(\.[0-9]+)+$' || { echo "V must be a version such as 0.1.12" >&2; exit 1; }
 cd "$(dirname "$0")/.."
-R=vedicreader/leela D=dist/Leela-macOS.dmg
+R=vedicreader/leela D=dist/Leela-macOS.dmg Z=dist/Leela-macOS.zip
 unset GITHUB_TOKEN   # the keyring of gh signs in; a stale token in the environment would win over it
 
 grep -q "^__version__ = \"$V\"" leela/__init__.py || { echo "leela/__init__.py is not version $V" >&2; exit 1; }
@@ -42,12 +44,17 @@ uv run --frozen python tools/build_release.py
 xcrun stapler validate $D
 spctl -a -t exec -vv dist/Leela.app 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID' ||
   { echo "Gatekeeper does not accept dist/Leela.app as notarized" >&2; exit 1; }
+# the ticket of the DMG covers the app in it, so the app takes a staple of its own before it goes in the zip
+xcrun stapler staple dist/Leela.app
+xcrun stapler validate dist/Leela.app
+rm -f $Z
+ditto -c -k --sequesterRsrc --keepParent dist/Leela.app $Z
 
 # desktop-artifacts attaches its own DMG to the tag; wait for it, so it cannot replace this one after the upload
 while case "$(gh run list -R $R -w desktop-artifacts -b "$tag" -L 1 --json status -q '.[0].status')" in
   queued|in_progress|waiting|pending|requested) true;; *) false;; esac; do
   echo "Waiting for desktop-artifacts on $tag"; sleep 30
 done
-gh release upload "$tag" $D --clobber -R $R
+gh release upload "$tag" $D $Z --clobber -R $R
 PUSH=1 tools/ship_cask.sh
 echo "Leela $V for Mac is shipped."

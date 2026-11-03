@@ -1,13 +1,13 @@
 #!/bin/sh
 # usage: V=<version> [TAP=<tap folder>] [PUSH=1] tools/ship_cask.sh, after `gh release create`. It updates the Leela cask.
-# It waits up to 60 minutes for desktop-artifacts to attach Leela-macOS.dmg, reads the sha256 that GitHub keeps for the
-# asset, writes the version, the tag prefix and the hash into Casks/leela.rb, and commits the tap. PUSH=1 also pushes it.
+# It waits up to 60 minutes for Leela-macOS.zip on the release (tools/ship.sh uploads it), reads the sha256 that GitHub
+# keeps for the asset, writes the version, the tag prefix and the hash into Casks/leela.rb, and commits the tap. PUSH=1 also pushes it.
 # A second run with the same V makes no new commit, so it can always run again.
 set -eu
 : "${V:?Give the version: V=<version> tools/ship_cask.sh}"
 echo "$V" | grep -qE '^[0-9]+(\.[0-9]+)+$' || { echo "V must be a version such as 0.1.12" >&2; exit 1; }
 TAP=${TAP:-$(dirname "$0")/../../homebrew-tap}
-R=vedicreader/leela A=Leela-macOS.dmg C="$TAP/Casks/leela.rb"
+R=vedicreader/leela A=Leela-macOS.zip C="$TAP/Casks/leela.rb"
 unset GITHUB_TOKEN   # the keyring of gh signs in; a stale token in the environment would win over it
 
 test -f "$C" || { echo "$C is not there" >&2; exit 1; }
@@ -28,7 +28,7 @@ sum=${sum#sha256:}
 echo "$sum" | grep -qE '^[0-9a-f]{64}$' || { echo "GitHub gave no sha256 for $A on $tag" >&2; exit 1; }
 
 sed -i '' -e "s/^  version \".*\"/  version \"$V\"/" -e "s/^  sha256 \".*\"/  sha256 \"$sum\"/" \
-  -e "s|/download/[^/]*#{version}/|/download/${tag%"$V"}#{version}/|" "$C"
+  -e "s|/download/[^/]*#{version}/|/download/${tag%"$V"}#{version}/|" -e "s|/Leela-macOS\.[a-z]*\"$|/$A\"|" "$C"
 grep -E '^  (version|sha256|url) ' "$C"
 git -C "$TAP" add Casks/leela.rb
 git -C "$TAP" diff --cached --quiet || git -C "$TAP" commit -m "Leela $V"
