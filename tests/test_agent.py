@@ -1168,3 +1168,17 @@ def test_a_context_full_that_escapes_the_stream_is_its_message_alone(monkeypatch
         acc, body = _turn(c, prompt='hi')
     errs = [json.loads(l[6:]) for l in body.splitlines() if l.startswith('data: ') and '"message"' in l]
     assert errs and errs[0]['message'] == 'this conversation does not fit scripted', body
+
+
+def test_the_agent_shell_has_a_term_even_when_leela_has_none(tmp_path, monkeypatch):
+    "No tty, so `dumb`: a tool that reads TERM must not fail on a missing one."
+    from leela.blocks.agent.ai import WorkspaceHost
+    ws = Workspace(roots=[tmp_path], approvals='auto'); h = WorkspaceHost(ws)
+    try:
+        for term in (None, ''):
+            if term is None: monkeypatch.delenv('TERM', raising=False)
+            else: monkeypatch.setenv('TERM', term)
+            assert h.run_cmd('echo "T=$TERM"') == (0, 'T=dumb\n'), term
+        monkeypatch.setenv('TERM', 'xterm-256color')
+        assert h.run_cmd('echo "T=$TERM"') == (0, 'T=xterm-256color\n'), 'an inherited TERM is kept'
+    finally: ws.shutdown_now()

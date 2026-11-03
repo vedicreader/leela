@@ -233,7 +233,9 @@ class Pty:
         "Spawn the command on a fresh pty. Needs a running loop: the ring wakes its readers on one."
         if self.alive: return self
         env = dict(os.environ if self.env is None else self.env)
-        env.setdefault('TERM', 'xterm-256color')
+        # a parent with no terminal leaves none, '' or dumb; any other TERM was set on purpose
+        if env.get('TERM', '') in ('', 'dumb'): env['TERM'] = 'xterm-256color'
+        if not env.get('COLORTERM'): env['COLORTERM'] = 'truecolor'   # xterm.js draws 24-bit colour
         env.pop('PYTHONSTARTUP', None)
         self.sess = PtySession(self.argv, cwd=self.cwd, env=env, rows=self.rows, cols=self.cols,
                                buffer_bytes=RING, keep_bundle=self.keep_bundle)

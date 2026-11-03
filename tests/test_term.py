@@ -126,3 +126,17 @@ def test_a_mac_bundle_whose_executable_is_the_helper_has_a_python(tmp_path, monk
     assert own_python() == str(macos/'python')
     monkeypatch.setattr(sys, 'executable', str(tmp_path/'Leela.exe'))
     with pytest.raises(NoPython): own_python()
+
+def test_a_terminal_shell_names_its_terminal_as_a_real_one_does(monkeypatch):
+    """Leela started from a non-terminal parent has no TERM, or an empty or `dumb` one, and nano in `nbdev-release-gh` would not open."""
+    async def run(env):
+        p = Pty(['sh', '-c', 'echo "T=$TERM C=$COLORTERM"'], env=env).start(); out = bytearray()
+        async def on_data(b): out.extend(b)
+        await asyncio.wait_for(p.stream(on_data), 10)
+        return out.decode().strip()
+    base = {k: v for k, v in os.environ.items() if k not in ('TERM', 'COLORTERM')}
+    for term in (None, '', 'dumb'):
+        assert asyncio.run(run(base if term is None else {**base, 'TERM': term})) == 'T=xterm-256color C=truecolor', term
+    assert asyncio.run(run({**base, 'TERM': 'screen-256color', 'COLORTERM': '24bit'})) == 'T=screen-256color C=24bit', 'a TERM set on purpose is kept'
+    monkeypatch.delenv('TERM', raising=False)
+    assert asyncio.run(run(None)) == 'T=xterm-256color C=truecolor', 'and the IDE terminal inherits nothing to fix it'
