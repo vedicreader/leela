@@ -2,6 +2,15 @@
 
 <!-- do not remove -->
 
+## 0.1.14
+
+Pins ramabana 0.2.104 and rishi 0.1.66.
+
+- The minimise button of the right tools is on the tab row again. The Review tab had pushed it onto a second line.
+- `ramabana tell` takes its text after an option, for example `ramabana tell abhyasa --ask build Card` (ramabana 0.2.104).
+- The Homebrew cask installs a stapled zip of the Mac app. Homebrew 7 fails when it unpacks the mounted DMG.
+- The README shows the app icon.
+
 ## 0.1.13
 
 Pins ramabana 0.2.103 and rishi 0.1.66.
