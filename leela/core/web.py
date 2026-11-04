@@ -78,6 +78,13 @@ def board_routes():
     return [Route(BOARD_URL + 'board.js', page(js, 'text/javascript')), Route(BOARD_URL + 'board.css', page(css, 'text/css')),
             Route(BOARD_URL + 'texparts.js', page(tex, 'text/javascript')), Mount(BOARD_URL + 'libs', StaticFiles(directory=str(a.libs), check_dir=False))]
 
+def three_routes():
+    "`/leestatic/three.js`, where rupaka's `R.need('three')` looks beside `lee-rupaka.js`: rupaka's three.js, built on first request."
+    from rupaka.render import bundle
+    from starlette.responses import Response
+    from starlette.routing import Route
+    return [Route('/leestatic/three.js', lambda req: Response(bundle('three'), media_type='text/javascript', headers={'Cache-Control': 'max-age=86400'}))]
+
 class Assets:
     "Serve one URL prefix from several directories, first match winning."
     def __init__(self, *dirs):

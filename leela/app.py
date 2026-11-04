@@ -35,7 +35,7 @@ from .core.web import asset as _asset
 from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .core.web import off_loop as _off_loop
-from .core.web import Assets, IDE_BUNDLES, JsonBody, board_routes, board_url, hand_routes, hand_url, static_dirs
+from .core.web import Assets, IDE_BUNDLES, JsonBody, board_routes, board_url, hand_routes, hand_url, static_dirs, three_routes
 from .core.text import did_you_mean
 from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
@@ -923,7 +923,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     app = FastHTML(default_hdrs=False, hdrs=hdrs,
                    middleware=(Middleware(GZipMiddleware, minimum_size=512), Middleware(JsonBody)),
                    on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
-                   routes=(Mount('/leestatic', Assets(*static_dirs())), *hand_routes(), *board_routes(),
+                   routes=(*three_routes(), Mount('/leestatic', Assets(*static_dirs())), *hand_routes(), *board_routes(),
                            WebSocketRoute('/term/ws', term_ws)))
     rt = app.route
     _docstore = DocStore(ws)
