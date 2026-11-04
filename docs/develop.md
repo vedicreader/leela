@@ -107,7 +107,7 @@ Leela is a fastship project, and the Release panel therefore runs `pytest`, `shi
 
 ```sh
 pytest tests -q
-ship-gh --no_changelog --no_editor --yes    # commit, push, tag, create the GitHub release
+ship-gh --no-changelog --no-editor --yes    # commit, push, tag, create the GitHub release
 ship-pypi
 python tools/build_release.py               # this platform's bundle, into dist/
 python tools/build_release.py upload        # attach it to the release for this version
