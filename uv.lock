@@ -2642,11 +2642,11 @@ requires-dist = [
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = "==0.2.104" },
+    { name = "ramabana", extras = ["cli"], specifier = ">=0.2.106" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = "==0.1.66" },
+    { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = ">=0.1.67" },
     { name = "rupaka", specifier = ">=0.0.12" },
     { name = "shalya", specifier = ">=0.1.27" },
     { name = "starlette", specifier = ">=1.6.0" },
@@ -2673,8 +2673,8 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.5.0" },
     { name = "pywebview", specifier = ">=5.3" },
-    { name = "rishi", specifier = "==0.1.66" },
-    { name = "rishi", extras = ["all"], specifier = "==0.1.66" },
+    { name = "rishi", specifier = ">=0.1.67" },
+    { name = "rishi", extras = ["all"], specifier = ">=0.1.67" },
     { name = "setuptools", specifier = ">=68.0" },
 ]
 
@@ -4854,7 +4854,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.104"
+version = "0.2.107"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -4868,9 +4868,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c1/19/01c6fcbda6ef64d8f86033cb2ee726ab545751d06dee89932dd631b2b030/ramabana-0.2.104.tar.gz", hash = "sha256:f30eca89af80d283d27d5188f78b7f780be304c36c2ab89c577e17184285b0fa", size = 396227, upload-time = "2026-11-04T00:26:37.809Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/14/4d101690ec58a676e4bcd233d44bc3b1b66940cf9285a725c5b2f25f12b0/ramabana-0.2.107.tar.gz", hash = "sha256:5d07920592795a6afacc7f94d8255ac85a40df3c5597ae7515dd96de4b2e98ae", size = 410935, upload-time = "2026-11-04T21:37:18.246Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/70/2dc67ea6ef5bb9ed27c3d3c5e318bc22385ba2649c71de1f21999a721468/ramabana-0.2.104-py3-none-any.whl", hash = "sha256:f719955838122ca070c700203a1f9a2e523b064220f17a2edfdc98409b851195", size = 398431, upload-time = "2026-11-04T00:26:35.796Z" },
+    { url = "https://files.pythonhosted.org/packages/71/f8/8fd0e39959f633e6e33835a60ab9cfd17eea35adb026b3f3c8b2833eec47/ramabana-0.2.107-py3-none-any.whl", hash = "sha256:1a75a16702f249af314e5dfbaa58ccbace655b544fc947db8dad2964d0ad2e5e", size = 413113, upload-time = "2026-11-04T21:37:16.511Z" },
 ]
 
 [package.optional-dependencies]
@@ -5151,7 +5151,7 @@ wheels = [
 
 [[package]]
 name = "rishi"
-version = "0.1.66"
+version = "0.1.67"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5167,9 +5167,9 @@ dependencies = [
     { name = "truststore" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/16/a8a12f8952616261ced70f0f0f582ddd9b26ddce56b6f70fabe60a78bf0d/rishi-0.1.66.tar.gz", hash = "sha256:ca1c08c489e35e161efb446e017e24378a318b521a678d1464085117023e4127", size = 98656, upload-time = "2026-11-03T01:36:12.331Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/65/634ce18aca368631b54e55546c9d21b4cd0bfddc254cc0ba7ba43c657c83/rishi-0.1.67.tar.gz", hash = "sha256:d48800bebcddbfebba97bf212cfada07e11f0bc0dcac6be49b1cfc5ffce7e611", size = 98682, upload-time = "2026-11-04T04:22:51.324Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/08/3d23e0351b46be68e878a630a05f003f6ffba96195203fc1d019c3496d87/rishi-0.1.66-py3-none-any.whl", hash = "sha256:36075b799f5b9736ab77bf2ab088275a42479578dc0bca665f22aecd4535a7ff", size = 107736, upload-time = "2026-11-03T01:36:10.928Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/b2/a78b064f0a0f35ce125f8c5484e66173b0b7aa8b690c85aa7f8f5c123ef9/rishi-0.1.67-py3-none-any.whl", hash = "sha256:2fa0f152e26dfdada1b941202177a4372fd2be76651ec2f6d376ce29237c725f", size = 107736, upload-time = "2026-11-04T04:22:49.523Z" },
 ]
 
 [package.optional-dependencies]
@@ -5436,7 +5436,7 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.1.28"
+version = "0.1.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -5450,9 +5450,9 @@ dependencies = [
     { name = "litesearch" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/ed/c4997ccafa722f317ae3acf52a294504e6e3bcd1f00da668fac4d3dcb1c2/shalya-0.1.28.tar.gz", hash = "sha256:a912aba59de47e311a4efc1f011f6bf89a04a74a488df65515421f66fd60f0d9", size = 67226, upload-time = "2026-11-01T09:58:52.284Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/10/31059663db595496429797898e001500e55b0ae6db712f8b4ec9f36fb565/shalya-0.1.29.tar.gz", hash = "sha256:532f9b0c8dda9b637a927eb8aa66e27df59c0728e388503da766cafd7e0947fb", size = 72099, upload-time = "2026-11-04T21:32:56.84Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/83/ef707c4796df21d2fb5d217a6482a61ed941af7c0a1f4af215a0b784d02e/shalya-0.1.28-py3-none-any.whl", hash = "sha256:10b141b8e2c137e2485b51592d901d0420ea889e204d043d4927f0ded9fe2853", size = 70767, upload-time = "2026-11-01T09:58:50.996Z" },
+    { url = "https://files.pythonhosted.org/packages/27/4e/aea713fbc4cdd6a2c965b374efae4f2f431dc7ce96e406b4de8eb3260c5a/shalya-0.1.29-py3-none-any.whl", hash = "sha256:16005f880f7e266864410a83374435c346fa255394ca76cea3f0002a9fa0378f", size = 75586, upload-time = "2026-11-04T21:32:55.627Z" },
 ]
 
 [package.optional-dependencies]
@@ -5819,7 +5819,7 @@ wheels = [
 
 [[package]]
 name = "uraiyadal"
-version = "0.0.20"
+version = "0.0.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aidialog" },
@@ -5830,9 +5830,9 @@ dependencies = [
     { name = "safepyrun" },
     { name = "truststore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/68/d56218ac296ed18df4808c70157bbc30fe5a5d2d4c249f690da468a700c2/uraiyadal-0.0.20.tar.gz", hash = "sha256:7b204400de37e59861f6f98025f79e22b62a406683ca7170967d5bac944fa05e", size = 52070, upload-time = "2026-10-30T03:35:50.657Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/58/d5b1288a1c025fb41dfa73e9464b35cdb26eaa8ee3099b13b7d2de7ed543/uraiyadal-0.0.21.tar.gz", hash = "sha256:c2c15ce2aeafcf7d3e5dca0f6ed8ec174a041bb6304bc9348f10b066f8a870ca", size = 52486, upload-time = "2026-11-04T04:10:21.1Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/11/7e43e2c488af32470bdd66228aaa6fb2c39f263fd302e1ce53df7ff28eaf/uraiyadal-0.0.20-py3-none-any.whl", hash = "sha256:6dca1ef36c0beb73db83f488911636f254e40b548a95ba89a78cd13b7a7b1931", size = 58920, upload-time = "2026-10-30T03:35:49.218Z" },
+    { url = "https://files.pythonhosted.org/packages/85/17/f94ffa5f59c57252bed1177a4f53c7f1e3ec5878f84ae966ae5959605522/uraiyadal-0.0.21-py3-none-any.whl", hash = "sha256:d514891e56df64ec7f3cc3f781f615b7f067e9d9c21a67c435f14ad80f31e767", size = 59267, upload-time = "2026-11-04T04:10:19.375Z" },
 ]
 
 [[package]]
