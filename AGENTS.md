@@ -27,3 +27,9 @@ Read the `write_docs` skill before writing docstrings, comments, READMEs, commit
 For every behavior-changing change, add or update a focused regression test that reproduces the prior fault and verifies the repaired contract. Run it and the project's relevant checks before reporting completion.
 
 Before a behavior-changing implementation, write a short plan that names the existing UI entry points, commands and shortcuts, every route or call path that reaches the changed behavior, the failure and recovery states, and the focused tests for each. Delegate that plan to an independent teacher sub-agent for a missing-cases review before editing. Do not add a new shortcut, panel or setting until the existing keymap, command palette and relevant UI controls have been audited. Do not report a recovery flow as complete until every route that can trigger it returns the same structured response.
+
+In slow browser tests built on `_real_page`, open a second IDE tab with `window.open(location.href, '_blank', 'noopener')` and `pg.context.expect_page()`. `pg.context.new_page()` fails there, because the page owns its context. Drop `noopener` when the new tab must inherit the opener's `sessionStorage`.
+
+In presentation browser tests, check a cell's output inside `.lee-out`, not in the slide text. A slide shows the code's source, so a string that the code prints matches before any output arrives.
+
+A script that serves Leela on a notebook in a temporary folder resolves the folder first, with `Path(tempfile.mkdtemp()).resolve()`. `DocStore.owner` compares the request path with the tab's path string, and macOS gives `/var` and `/private/var` for the same folder. Without the resolve, every notebook route answers 'Return to the lesson notebook, then try.' Build `ide_app(ws)` before you read `ws.docstore`.

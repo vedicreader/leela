@@ -16,7 +16,7 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]==0.2.103",
+    "ramabana[cli]==0.2.104",
     "abhyasa>=0.0.16",   # the tutor of the screen guide; its board is rupaka's
     "rupaka>=0.0.12",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from this version
     "shalya>=0.1.27",
