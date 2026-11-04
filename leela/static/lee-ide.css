@@ -547,15 +547,15 @@ body {
 .lee-files { flex: 1 1 auto; }
 .lee-keys  { flex: none; max-height: 34%; border-top: 1px solid var(--lee-border); }
 .lee-varspanel { flex: 1 1 auto; }
-/* `auto` for the pane controls rather than a fixed 28px: the pin arrived beside the minimise
-   and the two were sharing one column, which squeezed the three tab labels for the sake of
-   buttons that are 11px wide. */
+/* A flex row, not a grid with one column per child. The tabs share the width equally, and the
+   pin and minimise keep their own width. A grid had to count its children, and the Review tab
+   pushed the minimise onto a second row. */
 .lee-righttabs {
-  display: grid; grid-template-columns: 1fr 1fr 1fr auto auto; flex: none; height: 26px;
+  display: flex; flex: none; height: 26px;
   align-items: stretch; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
 .lee-righttab {
-  border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--lee-fg4);
+  flex: 1 1 0; min-width: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--lee-fg4);
   cursor: pointer; font: 600 10px/1 var(--lee-mono); letter-spacing: .04em; text-transform: uppercase;
   transition: color .18s cubic-bezier(.16,1,.3,1), background .18s cubic-bezier(.16,1,.3,1);
 }

@@ -171,6 +171,24 @@ def test_saving_the_file_in_a_split_pane_does_not_read_as_a_disk_conflict(tmp_pa
     assert b.read_text() == 'b = 2\n', 'the split pane never reached disk'
 
 
+def test_the_right_tools_minimise_sits_on_the_tab_row():
+    """The tab bar was a grid of five columns, three tabs and two buttons. The Review tab made six children, so the minimise wrapped onto a second row below the agent tab."""
+    async def go(pg):
+        await pg.evaluate('leePane("right", true)')
+        await pg.wait_for_selector('.lee-righttabs .lee-pane-min', state='visible')
+        return await pg.evaluate("""() => {
+            const bar = document.querySelector('.lee-righttabs').getBoundingClientRect();
+            return [...document.querySelectorAll('.lee-righttabs > *')].map(x => {
+                const r = x.getBoundingClientRect();
+                return {cls: x.className, top: r.top - bar.top, bottom: bar.bottom - r.bottom, clipped: x.scrollWidth > x.clientWidth};
+            });
+        }""")
+    kids = _run(go)
+    assert any('lee-pane-min' in k['cls'] for k in kids), kids
+    off = [k for k in kids if abs(k['top']) > .5 or k['bottom'] < -.5 or k['clipped']]
+    assert off == [], off
+
+
 def test_the_keymap_answers_every_chord_it_claims_in_one_browser_session():
     """One page for the whole keymap, because booting one per chord is the cost of this file."""
     async def go(pg):
