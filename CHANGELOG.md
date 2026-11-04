@@ -2,6 +2,16 @@
 
 <!-- do not remove -->
 
+## 0.1.15
+
+Needs ramabana 0.2.106 and rishi 0.1.67 or later, not one exact release.
+
+- A rupaka 3D scene demo draws in Leela. Leela serves rupaka's own copy of three.js at `/leestatic/three.js`, so the scenes in a lesson, on a slide and in the audience window load it. Before, a scene showed "three.js did not load".
+- Compaction in the agent keeps the newest messages and the session ledger: your requests, the evidence of each done step, the changed files and the commits. It calls no model by default (ramabana 0.2.106).
+- A step of the agent's plan is done only with evidence: a commit, a file or a test result (ramabana 0.2.106).
+- A sub-agent cannot send peer messages, write memory or add folders unless you grant it (ramabana 0.2.105).
+- A tool whose source file is gone is left out with a notice. Before, the model showed as unavailable (ramabana 0.2.105, rishi 0.1.67, uraiyadal 0.0.21).
+
 ## 0.1.14
 
 Pins ramabana 0.2.104 and rishi 0.1.66.
