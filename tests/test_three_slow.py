@@ -110,8 +110,6 @@ def test_the_panchanga_lesson_scenes_draw_and_follow_their_knob_in_the_lesson_an
             await pg.wait_for_function('() => document.querySelector(".lee-present[data-ready]")', timeout=30000)
             hosts = '.lee-present .lee-slide .lee-rupaka'
             await pg.wait_for_function(f'() => document.querySelectorAll("{hosts}").length >= 2', timeout=30000)
-            idx = await pg.evaluate(f'''() => [...document.querySelectorAll("{hosts}")].map(h => h.shadowRoot.querySelector('[data-rk-id], .rk')?.closest('[data-rk-id]')?.dataset.rkId || h.shadowRoot.textContent.slice(0, 40))''')
-            out['present-ids'] = idx
             n = await pg.evaluate(f'() => document.querySelectorAll("{hosts}").length')
             scenes = [j for j in range(n) if await pg.evaluate(f'(j) => !!document.querySelectorAll("{hosts}")[j].shadowRoot.querySelector("[data-rk-gl]")', j)]
             for j, (_, _, ans) in zip(scenes, SCENES.values()):
@@ -136,6 +134,6 @@ def test_the_panchanga_lesson_scenes_draw_and_follow_their_knob_in_the_lesson_an
         if isinstance(f, dict): _ok(f, k)
     assert all(out[f'lesson-{s}-knob'] for s, _, _ in SCENES.values()), 'a lesson scene does not follow its knob'
     assert out['present-knob'], 'the presenter scene does not follow its knob'
-    assert sum(k.startswith('present-') and isinstance(v, dict) for k, v in out.items()) >= 2, out['present-ids']
+    assert sum(k.startswith('present-') and isinstance(v, dict) for k, v in out.items()) >= 2, list(out)
     assert sum(k.startswith('audience-') for k in out) >= 2, [k for k in out]
     assert 'tilted 40°' in next(v['text'] for k, v in out.items() if k.startswith('audience-')), 'the audience scene does not follow the presenter knob'
