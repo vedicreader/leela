@@ -4,6 +4,7 @@ from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
 from kunda.pythons import clean_env
+from ...core.update import RELEASE_PAGE, latest_release, newer
 
 __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_model', 'runtimes',
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
@@ -214,19 +215,8 @@ def dismiss_setup(dismissed=True):
     p.write_text(json.dumps({'dismissed': bool(dismissed)}) + '\n')
     return bool(dismissed)
 
-#: The tag the desktop workflow builds from is the version.
-RELEASES = 'https://api.github.com/repos/vedicreader/leela/releases/latest'
 _latest, _latest_at = {}, 0.0
 LATEST_TTL = 3600          #: a courtesy check, not a heartbeat
-
-def _release_headers():
-    "A GitHub token where there is one; without it the private repo 404s instead of returning no releases."
-    head = {'Accept': 'application/vnd.github+json'}
-    try:
-        from ..git.seam import gh_token
-        if (tok := gh_token()): head['Authorization'] = f'Bearer {tok}'
-    except Exception: pass       # no gheasy, no token, no keyring: ask anonymously and take the 404
-    return head
 
 def _latest_versions(dists):
     "Newest published version of each distribution and of Leela. No network means no offer."
@@ -240,11 +230,8 @@ def _latest_versions(dists):
     for d in dists:
         try: out[d] = urljson(f'https://pypi.org/pypi/{d}/json', timeout=4)['info']['version']
         except Exception: pass
-    try:
-        rel = urljson(RELEASES, headers=_release_headers(), timeout=4)
-        out['leela'] = str(rel.get('tag_name') or '').lstrip('v')
-        out['leela_url'] = rel.get('html_url') or ''
-    except Exception: pass
+    rel = latest_release()
+    out['leela'], out['leela_url'] = rel.get('version'), rel.get('url') or ''
     _latest, _latest_at = out, time.time()
     return dict(out)
 
@@ -253,13 +240,6 @@ def _installed_version(dist):
     try: return md.version(dist)
     except Exception: return None
 
-def _newer(installed, latest):
-    "Whether `latest` is a later release than `installed`, by the packaging rules and not by string."
-    if not (installed and latest): return False
-    try:
-        from packaging.version import Version
-        return Version(latest) > Version(installed)
-    except Exception: return False
 
 def updates(check=True):
     "What is installed here with a newer release. The app names its own release rather than self-updating."
@@ -274,15 +254,15 @@ def updates(check=True):
 
     def movable(cur, new, spec):
         # rishi pins some of these exactly, and a release we cannot take is not an update.
-        return _newer(cur, new) and bool(new and spec.contains(new, prereleases=True))
+        return newer(new, cur) and bool(new and spec.contains(new, prereleases=True))
 
     rows = [{'runtime': rt, 'dist': name, 'installed': cur, 'latest': latest.get(name),
              'pin': str(spec) or 'any', 'outdated': movable(cur, latest.get(name), spec)}
             for name, (rt, cur, spec) in sorted(dists.items())]
     return {'backends': rows, 'outdated': [r for r in rows if r['outdated']],
             'leela': {'current': __version__, 'latest': latest.get('leela'),
-                      'url': latest.get('leela_url') or RELEASES.replace('api.github.com/repos', 'github.com'),
-                      'outdated': _newer(__version__, latest.get('leela'))},
+                      'url': latest.get('leela_url') or RELEASE_PAGE,
+                      'outdated': newer(latest.get('leela'), __version__)},
             'checked': bool(latest)}
 
 def setup_plan():
