@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatch
 from itertools import islice, zip_longest
 from fastcore.all import Path, L, atomic_save, mkdir as fc_mkdir
-from kunda.pythons import clean_env, project_python
+from kunda.pythons import clean_env, project_python, python_for
 from rgapi import fda, fd_iter
 from shalya.host import DENY
 from shalya.core import Unsafe as HostUnsafe
@@ -91,28 +91,43 @@ class Sandbox:
     "The open folders, and every filesystem operation the IDE is allowed to perform inside them."
     def __init__(self, roots=()):
         self.roots, self.admitted, self.loose = L(), L(), None
-        self._stdlib_cache = (None, L())
+        self._stdlib_cache = {}
         for r in roots: self.add_root(r)
-    def stdlib_root(self):
-        "The project interpreter's resolved standard library. Cached for the current roots."
-        key = tuple(self.roots)
-        cached_key, cached = self._stdlib_cache
-        if cached_key == key: return cached
+    def python(self, path=''):
+        "The interpreter `path` runs under, never searched past its own root; with no path, the first root's."
+        if not path: return project_python(self.roots)
+        p = Path(path).expanduser().resolve()
+        return python_for(p.parent, stop=max((r for r in self.roots if p.is_relative_to(r)), key=lambda r: len(r.parts), default=None))
+    def pythons(self):
+        "Each open root's interpreter."
+        return L(project_python([r]) for r in self.roots).filter().unique()
+    @staticmethod
+    def site_roots(py):
+        "The `site-packages` folders of the virtualenv `py` lives in."
+        lib = Path(py).parent.parent/'lib' if py else None
+        if not (lib and lib.is_dir()): return L()
+        return L(p/'site-packages' for p in lib.iterdir() if (p/'site-packages').is_dir())
+    def _stdlib(self, py):
+        "`py`'s resolved standard library, cached per interpreter."
+        if (key := (py, tuple(self.roots))) in self._stdlib_cache: return self._stdlib_cache[key]
         found = L()
-        if py := project_python(self.roots):
-            try:
-                r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'],
-                                   env=clean_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
-                if r.returncode == 0 and r.stdout.strip():
-                    p = Path(r.stdout.strip()).resolve()
-                    if (p/'os.py').is_file() and not Path.home().is_relative_to(p) and not any(root.is_relative_to(p) for root in self.roots):
-                        found = L(p)
-            except (OSError, subprocess.TimeoutExpired): pass
-        self._stdlib_cache = (key, found)
+        try:
+            r = subprocess.run([py, '-c', 'import sysconfig;print(sysconfig.get_paths()["stdlib"])'],
+                               env=clean_env(), stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                p = Path(r.stdout.strip()).resolve()
+                if (p/'os.py').is_file() and not Path.home().is_relative_to(p) and not any(root.is_relative_to(p) for root in self.roots):
+                    found = L(p)
+        except (OSError, subprocess.TimeoutExpired): pass
+        self._stdlib_cache[key] = found
         return found
+    def stdlib_root(self, path=''):
+        "The standard library of `path`'s interpreter, or of every open root's."
+        return L(r for py in ([self.python(path)] if path else self.pythons()) if py for r in self._stdlib(py)).unique()
     def read_only(self, ref):
-        "Whether a resolved path is readable as stdlib outside the open folders."
+        "Whether a resolved path is an open root interpreter's installed package, or stdlib outside the open folders."
         p = Path(ref).expanduser().resolve()
+        if any(p.is_relative_to(r.resolve()) for py in self.pythons() for r in self.site_roots(py)): return True
         return not self.covers(p) and any(p.is_relative_to(r) for r in self.stdlib_root())
     def _admits(self, p):
         "Whether `p` is an admitted loose file. A path that resolved elsewhere since it was admitted is not."
@@ -124,7 +139,7 @@ class Sandbox:
         "Allow one file outside every root, for as long as its tab stays open. Needs the loose root among the roots."
         if self.loose is None: raise Unsafe('no loose-file workspace is open')
         p = Path(p).expanduser().resolve()
-        if self.read_only(p): raise Unsafe(f'{p.name} is read-only (standard library)')
+        if self.read_only(p): raise Unsafe(f'{p.name} is read-only')
         if self.covers(p): return p
         if why := loose_refusal(p): raise Unsafe(why)
         self.admitted = self.admitted + [p]
