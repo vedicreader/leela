@@ -612,15 +612,23 @@ function rupakaSweep(p) {
   for (const [k, e] of rupaka.hosts) if (e.owner === p.owner && e.gen !== p.gen) rupaka.hosts.delete(k);
   if (rupaka.passes.get(p.owner) === p) rupaka.passes.delete(p.owner);
 }
-//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into.
-function rupakaDraw(spec, key = null, pass = null) {
+//: Closes each open gate of the demo in `inner` named in `picks`, `{gate: String of the pick, or null}`, as a host does: the pick an option whose `String` matches, else none.
+function rupakaSettle(inner, picks) {
+  for (const [id, a] of Object.entries(picks)) {
+    if (inner.rupaka?.st.gate[id] !== 'open') continue;
+    const pick = a == null ? null : (Rupaka.options(inner, id) || []).find(o => String(o) === a);
+    Rupaka.settle(inner, id, pick ?? null);
+  }
+}
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into. `restore(inner, spec)` runs once after the mount, before the host shows, and must not throw.
+function rupakaDraw(spec, key = null, pass = null, restore = null) {
   let e = key && rupaka.hosts.get(key);
   if (!e) {
     const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
     host.attachShadow({mode: 'open'}).append(inner);
-    e = {host, inner, ok: false, err: null, owner: pass?.owner};
-    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); e.ok = true; })
-      .catch(err => { e.err = err; });
+    e = {host, inner, spec, ok: false, err: null, owner: pass?.owner};
+    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); })
+      .then(async () => { if (restore) await restore(inner, spec); e.ok = true; }, err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);
   }
   if (pass) e.gen = pass.gen;
@@ -691,14 +699,14 @@ function sha256Hex(bytes) {
 }
 //: `nb.src_hash` in the page: the first 12 hex digits of the SHA-256 of `text`.
 const srcHash = async (text, b = new TextEncoder().encode(text)) => (globalThis.crypto?.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('') : sha256Hex(b)).slice(0, 12);
-//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from.
-function rupakaFences(el, owner = null, src = null) {
+//: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from, and `restore` goes to `rupakaDraw` for a new host.
+function rupakaFences(el, owner = null, src = null, restore = null) {
   const pass = owner && rupakaPass(owner), seen = new Map();
   $$('pre > code.language-rupaka', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
     const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
     let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
-    const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass);
+    const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass, restore);
     if (src != null) e.host.leeSource = src;
     const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
     if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });
@@ -3032,7 +3040,7 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
   if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
 });
 //: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
-const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); rupakaFences(el, cached && c ? `md:${c.id}` : null, cached && c ? src : null); };
+const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); const k = cached && c; rupakaFences(el, k ? `md:${c.id}` : null, k ? src : null, k ? lessonRestore(c.id, src) : null); };
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
@@ -3476,6 +3484,19 @@ async function lessonPredict(e) {
     settle(false, said);
     status(said, 'err');
   }
+}
+//: The `restore` of a lesson cell's demo: each gate with a prediction filed for source `src` is closed with its pick, so a reload shows what it hid. Null outside a lesson; after 2s, a tab change or a failure the gates stay open.
+function lessonRestore(id, src) {
+  if (!lessonNotebook()) return null;
+  const path = lee.path, tab = lee.tabKey;
+  return async (inner, spec) => {
+    try {
+      const d = await Promise.race([srcHash(src).then(h => post('/lesson/predictions', {path, cell_id: id, src: h})), new Promise(ok => setTimeout(ok, 2000))]);
+      if (!d?.picks || lee.tabKey !== tab) return;
+      const at = `${spec.id}:`, picks = Object.fromEntries(Object.entries(d.picks).filter(([k]) => k.startsWith(at)).map(([k, v]) => [k.slice(at.length), v]));
+      rupakaSettle(inner, picks);
+    } catch (e) { console.warn('Leela demo restore:', e); }
+  };
 }
 // The Node harnesses load this file with no `document`.
 globalThis.document?.addEventListener('rk-predict', lessonPredict);

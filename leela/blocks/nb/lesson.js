@@ -84,6 +84,19 @@ async function lessonPredict(e) {
     status(said, 'err');
   }
 }
+//: The `restore` of a lesson cell's demo: each gate with a prediction filed for source `src` is closed with its pick, so a reload shows what it hid. Null outside a lesson; after 2s, a tab change or a failure the gates stay open.
+function lessonRestore(id, src) {
+  if (!lessonNotebook()) return null;
+  const path = lee.path, tab = lee.tabKey;
+  return async (inner, spec) => {
+    try {
+      const d = await Promise.race([srcHash(src).then(h => post('/lesson/predictions', {path, cell_id: id, src: h})), new Promise(ok => setTimeout(ok, 2000))]);
+      if (!d?.picks || lee.tabKey !== tab) return;
+      const at = `${spec.id}:`, picks = Object.fromEntries(Object.entries(d.picks).filter(([k]) => k.startsWith(at)).map(([k, v]) => [k.slice(at.length), v]));
+      rupakaSettle(inner, picks);
+    } catch (e) { console.warn('Leela demo restore:', e); }
+  };
+}
 // The Node harnesses load this file with no `document`.
 globalThis.document?.addEventListener('rk-predict', lessonPredict);
 //: "I don't get…" on a lesson cell: one line goes to the screen guide, and its steps and sources show as plain text in the cell's output area until the board is drawn.

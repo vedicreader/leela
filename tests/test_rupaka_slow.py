@@ -76,3 +76,29 @@ def test_md_preview_draws_rupaka_fences(tmp_path):
         await _open(pg, md)
         await demos()
     asyncio.run(_page(go, tmp_path))
+
+def test_lesson_gate_stays_done_after_a_reload(tmp_path):
+    "A gate locked in a lesson comes back done after a reload, with the same pick, and the scene it hid shows."
+    from leela.blocks.nb.lesson import lesson_notebook
+    nb = lesson_notebook('Planes')
+    nb[1].source = 'Predict first.\n\n' + fence(GATED)
+    path = tmp_path/'planes.ipynb'; nb.save(path)
+    demo = '.lee-cell[data-i="1"] .lee-md-cell .lee-rupaka'
+    async def go(pg):
+        await _open(pg, path)
+        h = pg.locator(demo)
+        await h.locator('button.go').wait_for()
+        await h.locator('.opts button', has_text='At a point').dispatch_event('click')   # WebKit misses a pointer click in a shadow root in headless runs
+        async with pg.expect_response('**/lesson/predict') as got: await h.locator('button.go').click()
+        assert (await (await got.value).json())['logged']
+        await h.locator('p.verdict').wait_for()
+        await pg.reload(wait_until='networkidle')
+        await pg.wait_for_function('window.lee && lee.keys.length')
+        if not await pg.locator(demo).count(): await _open(pg, path)
+        h = pg.locator(demo)
+        await h.locator('p.verdict').wait_for()
+        assert (await h.locator('p.verdict').inner_text()).startswith('You said At a point.')
+        assert await h.locator('button.go').is_hidden()
+        assert await h.evaluate('h => [...h.shadowRoot.children].find(n => n.rupaka).rupaka.st.gate.meet') == 'done'
+        await pg.wait_for_function(f"document.querySelector({demo!r}).shadowRoot.querySelector('[data-rk-gl]')?.clientWidth > 0")
+    asyncio.run(_page(go, tmp_path))
