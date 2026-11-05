@@ -612,14 +612,26 @@ function rupakaSweep(p) {
   for (const [k, e] of rupaka.hosts) if (e.owner === p.owner && e.gen !== p.gen) rupaka.hosts.delete(k);
   if (rupaka.passes.get(p.owner) === p) rupaka.passes.delete(p.owner);
 }
-//: Closes each open gate of the demo in `inner` named in `picks`, `{gate: String of the pick, or null}`, as a host does: the pick an option whose `String` matches, else none.
+//: Closes each open gate of the demo in `inner` named in `picks`, `{gate: String of the pick, or null}`, as a host does: the pick an option whose `String` matches, else none. `inner.leePicks` keeps them for `rupakaRevive`.
 function rupakaSettle(inner, picks) {
   for (const [id, a] of Object.entries(picks)) {
     if (inner.rupaka?.st.gate[id] !== 'open') continue;
     const pick = a == null ? null : (Rupaka.options(inner, id) || []).find(o => String(o) === a);
-    Rupaka.settle(inner, id, pick ?? null);
+    if (Rupaka.settle(inner, id, pick ?? null)) (inner.leePicks ||= {})[id] = a;
   }
 }
+//: A kept demo whose 3D view lost its WebGL context is drawn again from its spec, with its inputs and its done gates. rupaka's scene drops the context when a frame or a theme change finds its stage off the page, and never makes a new one.
+function rupakaRevive(e) {
+  if (!e.ok || !e.host.isConnected) return;
+  const lost = [...e.inner.querySelectorAll('[data-rk-gl="ready"] canvas')].some(c => c.getContext('webgl2')?.isContextLost());
+  if (!lost) return;
+  const s = e.inner.rupaka, state = Rupaka.state(e.inner), picks = {...e.inner.leePicks};
+  for (const x of s.st.log || []) picks[x.gate] = x.picked == null ? null : String(x.picked);
+  Rupaka.mount(e.inner, e.spec); Rupaka.set(e.inner, state);
+  rupakaSettle(e.inner, Object.fromEntries(Object.entries(s.st.gate).filter(([, v]) => v === 'done').map(([id]) => [id, picks[id] ?? null])));
+}
+//: `rupakaRevive` for each kept demo inside `root`, which was off the page.
+const rupakaReviveIn = root => { for (const e of rupaka.hosts.values()) if (root.contains(e.host)) rupakaRevive(e); };
 //: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into. `restore(inner, spec)` runs once after the mount, before the host shows, and must not throw.
 function rupakaDraw(spec, key = null, pass = null, restore = null) {
   let e = key && rupaka.hosts.get(key);
@@ -631,6 +643,7 @@ function rupakaDraw(spec, key = null, pass = null, restore = null) {
       .then(async () => { if (restore) await restore(inner, spec); e.ok = true; }, err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);
   }
+  else if (e.ok) Promise.resolve().then(() => rupakaRevive(e));   // a kept host, which its caller puts back on the page at once
   if (pass) e.gen = pass.gen;
   return e;
 }

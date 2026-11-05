@@ -101,4 +101,40 @@ def test_lesson_gate_stays_done_after_a_reload(tmp_path):
         assert await h.locator('button.go').is_hidden()
         assert await h.evaluate('h => [...h.shadowRoot.children].find(n => n.rupaka).rupaka.st.gate.meet') == 'done'
         await pg.wait_for_function(f"document.querySelector({demo!r}).shadowRoot.querySelector('[data-rk-gl]')?.clientWidth > 0")
+        other = tmp_path/'other.py'; other.write_text('x = 1\n')
+        await _open(pg, other); await pg.wait_for_function(f'!document.querySelector({demo!r})')
+        await pg.wait_for_timeout(500)
+        await _open(pg, path)
+        h = pg.locator(demo)
+        await pg.wait_for_function(f"document.querySelector({demo!r})?.shadowRoot.querySelector('[data-rk-gl]')?.dataset.rkStill === '1'")
+        px = await h.evaluate(PIXELS)
+        assert not px['lost'] and px['ink'] > 500, px   # the scene behind a restored gate draws again after a tab switch
+        assert (await h.locator('p.verdict').inner_text()).startswith('You said At a point.')
     asyncio.run(_page(go, tmp_path))
+
+@pytest.mark.parametrize('browser', ['webkit', 'chromium'])
+def test_scene_draws_and_draws_again_after_a_tab_switch(tmp_path, browser):
+    "A scene draws pixels in WebKit and Chromium, and still draws after its notebook leaves the page and comes back, which used to leave a dead WebGL context."
+    nbp, other = tmp_path/'scene.ipynb', tmp_path/'other.py'
+    nbp.write_text(json.dumps({'cells': [{'cell_type': 'markdown', 'id': 'c0', 'metadata': {}, 'source': fence(dict(UNGATED, state=dict(step=2)))}],
+                               'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    other.write_text('x = 1\n')
+    demo = '.lee-cell[data-i="0"] .lee-md-cell .lee-rupaka'
+    async def drawn(pg):
+        await pg.wait_for_function(f"document.querySelector({demo!r})?.shadowRoot.querySelector('[data-rk-gl]')?.dataset.rkStill === '1'")
+        await pg.wait_for_timeout(300)
+        return await pg.locator(demo).evaluate(PIXELS)
+    async def go(pg):
+        await _open(pg, nbp)
+        px = await drawn(pg)
+        assert not px['lost'] and px['ink'] > 500, px
+        await _open(pg, other); await pg.wait_for_function(f'!document.querySelector({demo!r})')
+        await pg.wait_for_timeout(500)
+        await _open(pg, nbp)
+        px = await drawn(pg)
+        assert not px['lost'] and px['ink'] > 500, px
+        await pg.evaluate('leeCloseTab()'); await pg.wait_for_function(f'!document.querySelector({demo!r})')
+        await _open(pg, nbp)
+        px = await drawn(pg)
+        assert not px['lost'] and px['ink'] > 500, px
+    asyncio.run(_page(go, tmp_path, browser))

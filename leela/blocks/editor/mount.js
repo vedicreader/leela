@@ -383,6 +383,7 @@ function takeNotebookShells(host, st) {
   if (!held || held.version !== `${st.disk_version}@${st.version}` || held.ids !== st.cells.map(c => c.id).join()) return false;
   nbShells.delete(key);          // moving a fragment empties it, so it is good for one mount
   host.appendChild(held.frag);
+  rupakaReviveIn(host);
   return true;
 }
 

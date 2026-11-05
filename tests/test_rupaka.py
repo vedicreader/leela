@@ -48,6 +48,7 @@ class N {
   after(n) { n.remove(); const s = this.parentElement.children; s.splice(s.indexOf(this) + 1, 0, n); n.parentElement = this.parentElement; }
   replaceWith(n) { const p = this.parentElement, s = p.children; n.remove(); s.splice(s.indexOf(this), 1, n); n.parentElement = p; this.parentElement = null; }
   replaceChildren() { for (const c of this.children) c.parentElement = null; this.children = []; }
+  querySelectorAll() { return []; }
   attachShadow() { const r = this.shadowRoot = new N('#shadow'); r.adoptedStyleSheets = []; return r; }
   dispatchEvent(e) { calls.events = (calls.events || []).concat(e.type); return true; }
 }
