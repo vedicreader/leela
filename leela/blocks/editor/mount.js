@@ -128,7 +128,7 @@ async function mountFile(host, st) {
       rememberBuffer(key, {path: key, kind: 'text', text: txt}); markDirty();
       // The preview follows the buffer, not the file. `renderMarkdown` is debounced and drops
       // superseded renders, so this is safe on every keystroke.
-      if (isMd) renderMarkdown($('#mdpreview'), txt);
+      if (isMd) renderMarkdown($('#mdpreview'), txt, false, el => rupakaFences(el, `file:${key}`));
     },
   });
   lee.editors.set('file', v);
@@ -136,7 +136,7 @@ async function mountFile(host, st) {
     // The rendered pane carries the same change marks as the gutter, placed by block rather than
     // by line. Only this first render is annotated. See `paintMarkdownFileChanges`.
     renderMarkdown($('#mdpreview'), LeeCM.getDoc(v), false,
-                   el => paintMarkdownFileChanges(el, git.ranges || []));
+                   el => { paintMarkdownFileChanges(el, git.ranges || []); rupakaFences(el, `file:${key}`); });
     $('#mdview').onclick = e => {
       const b = e.target.closest('[data-md-view]'); if (!b) return;
       const next = b.dataset.mdView;

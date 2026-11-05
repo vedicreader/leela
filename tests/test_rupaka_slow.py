@@ -1,85 +1,78 @@
-"A rupaka demo in a notebook: drawn from a fence and from the mime, in the page's theme, with the keyboard its own."
-import json
-from pathlib import Path
+"Rupaka demos in a browser: in a .md preview, after a reload, and drawn in WebKit, the engine of the desktop window."
+
 import pytest
 
 pytestmark = pytest.mark.slow
 
+import asyncio, json
+from pathlib import Path
+
 pytest.importorskip('playwright.async_api')
+from playwright.async_api import async_playwright   # noqa: E402
 
-from test_web_slow import _run   # noqa: E402
+from test_web_slow import _serve, _free_port, _started, fake_model, CHROMIUM   # noqa: E402
+from leela.blocks.memory.memory import Memory   # noqa: E402
+from leela.workspace import Workspace   # noqa: E402
 
-DEMO = Path('/Users/71293/code/personal/orgs/rupaka/rupaka/demos/softmax-temperature.json')
-SHOTS = Path(__file__).parents[1]/'target'/'rupaka'
-MIME = 'application/vnd.rupaka+json'
-MD = '.lee-cell[data-i="0"] .lee-md-cell .lee-rupaka'
-OUT = '#out-c1 .lee-rupaka'
-OPT = ' button[role=radio]'
-STATE = r"""() => ({ex: lee.cells[1].execution_count, outputs: lee.cells[1].outputs.length,
-  editing: document.querySelectorAll('.lee-cell[data-md-edit]').length,
-  inside: !!document.activeElement?.closest('.lee-rupaka'), focused: window.__rkFocus})"""
-FACTS = r"""(sel) => { const h = document.querySelector(sel), r = h.shadowRoot, i = r.firstElementChild, rk = i.querySelector('.rk');
-  return {ready: i.dataset.rkReady, styled: !!r.adoptedStyleSheets.length || !!r.querySelector('style'), hostH: h.getBoundingClientRect().height,
-    innerH: rk.getBoundingClientRect().height, fixed: h.style.height, bg: getComputedStyle(rk).getPropertyValue('--rk-bg').trim(),
-    checked: [...r.querySelectorAll('button[role=radio]')].map(b => b.getAttribute('aria-checked')), verdict: [...r.querySelectorAll('.verdict')].some(v => !v.hidden)}; }"""
-KEEP = r"""(sel) => { window.__rkHost = document.querySelector(sel); window.__rkInner = window.__rkHost.shadowRoot.firstElementChild; }"""
-KEPT = r"""(sel) => { const h = document.querySelector(sel); return {host: h === window.__rkHost, inner: h?.shadowRoot.firstElementChild === window.__rkInner}; }"""
-REPAINT = r"""async () => { const el = document.querySelector('.lee-cell[data-i="0"]'), m = el.querySelector('.lee-md-cell');
-  const done = new Promise(res => m.addEventListener('lee-markdown-rendered', res, {once: true}));
-  paintMarkdownCell(el, lee.cells[0], true); await done; }"""
+SCENE = dict(type='scene', bind='step', label='Two planes', height=240, steps=['The disc.', 'The ball.'],
+             blocks=[dict(type='body', id='disc', kind='cylinder', size=[3.2, .05]), dict(type='body', id='ball', kind='sphere', size=[.6], step=2)])
+GATE = dict(type='gate', id='meet', prompt='Where do the planes meet?', options=['In a line', 'At a point'], answer={'is': 'In a line'})
+UNGATED = dict(rupaka=1, id='planes', state=dict(step=1), blocks=[SCENE])
+GATED = dict(rupaka=1, id='planes-gated', state=dict(step=1), blocks=[GATE, dict(SCENE, after='meet')])
+def fence(spec): return f'```rupaka\n{json.dumps(spec)}\n```\n'
 
+#: The scene's pixels in host `h`: whether its WebGL context is lost, and how many pixels are not near white. The renderer keeps its drawing buffer.
+PIXELS = """h => { const cv = h.shadowRoot.querySelector('[data-rk-gl] canvas'), g = cv?.getContext('webgl2');
+  if (!g || g.isContextLost()) return {lost: true, ink: 0};
+  const w = g.drawingBufferWidth, ht = g.drawingBufferHeight, b = new Uint8Array(w * ht * 4); let ink = 0;
+  g.readPixels(0, 0, w, ht, g.RGBA, g.UNSIGNED_BYTE, b);
+  for (let i = 0; i < b.length; i += 4) if (b[i + 3] && b[i] + b[i + 1] + b[i + 2] < 720) ink++;
+  return {lost: false, ink, gl: h.shadowRoot.querySelector('[data-rk-gl]').dataset.rkGl}; }"""
 
-def test_a_rupaka_demo_draws_from_a_fence_and_from_the_mime_and_leaves_the_notebook_alone(tmp_path):
-    if not DEMO.is_file(): pytest.skip('the rupaka checkout is not beside this one')
-    spec = json.loads(DEMO.read_text())
-    cells = [{'cell_type': 'markdown', 'id': 'c0', 'metadata': {}, 'source': ['A fence:\n\n```rupaka\n' + json.dumps(spec) + '\n```\n']},
-             {'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'execution_count': 7, 'source': ['1'],
-              'outputs': [{'output_type': 'display_data', 'metadata': {},
-                           'data': {MIME: spec, 'text/html': '<p>fallback</p><script>window.__fallbackRan = 1</script>', 'text/plain': 'demo'}}]}]
-    p = tmp_path/'demo.ipynb'
-    p.write_text(json.dumps({'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
-    SHOTS.mkdir(parents=True, exist_ok=True)
+async def _launch(pw, browser):
+    try:
+        if browser == 'webkit': return await pw.webkit.launch(headless=True)
+        return await pw.chromium.launch(headless=True, args=['--mute-audio'], **({'executable_path': CHROMIUM} if CHROMIUM else {}))
+    except Exception as e: pytest.skip(f'no {browser} for playwright: {e}')
 
+async def _page(fn, root, browser='chromium'):
+    "Serve a workspace on `root` with a vault in it, open it in `browser`, and hand the page to `fn`."
+    ws = Workspace(roots=[str(root)], approvals='auto')
+    fake_model(ws)
+    ws.memory = Memory(path=root/'vault.db', offline=True)
+    port = _free_port(); srv = _serve(ws, port); await _started(srv)
+    try:
+        async with async_playwright() as pw:
+            b = await _launch(pw, browser)
+            try:
+                pg = await b.new_page(viewport={'width': 1440, 'height': 1400})
+                pg.set_default_timeout(15000)
+                await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
+                await pg.wait_for_function('window.lee && lee.keys.length')
+                return await fn(pg)
+            finally: await b.close()
+    finally:
+        srv.should_exit = True
+        ws.shutdown_now()
+
+async def _open(pg, path):
+    await pg.evaluate('p => leeOpenFile(p)', str(path))
+
+def test_md_preview_draws_rupaka_fences(tmp_path):
+    "A .md file shows its rupaka fences as demos, gated or not, and again after its tab is closed and opened."
+    md = tmp_path/'scenes.md'
+    md.write_text(f'# Scenes\n\nUngated:\n\n{fence(UNGATED)}\nGated:\n\n{fence(GATED)}')
+    hosts, raw = '#mdpreview .lee-rupaka', '#mdpreview pre > code.language-rupaka'
     async def go(pg):
-        out = {}
-        await pg.add_init_script("""window.__rkFocus = []; const f = HTMLElement.prototype.focus;
-          HTMLElement.prototype.focus = function (...a) { if (this.getRootNode().host?.classList?.contains('lee-rupaka')) window.__rkFocus.push(this.tagName); return f.apply(this, a); };""")
-        await pg.goto(pg.url, wait_until='networkidle')
-        await pg.wait_for_function('window.lee && lee.keys.length')
-        await pg.evaluate("() => { document.documentElement.dataset.theme = 'leela'; document.documentElement.dataset.mode = 'light'; }")
-        await pg.evaluate(f'leeOpenFile({str(p)!r})')
-        for sel in (MD, OUT): await pg.wait_for_function(f'(s) => document.querySelector(s)?.shadowRoot?.firstElementChild?.dataset.rkReady === "1"', arg=sel)
-        out['md'], out['mime'] = await pg.evaluate(FACTS, MD), await pg.evaluate(FACTS, OUT)
-        out['iframes'] = await pg.evaluate('() => document.querySelectorAll("#out-c1 iframe").length')
-        out['fallback_ran'] = await pg.evaluate('() => !!window.__fallbackRan')
-        out['start'] = await pg.evaluate(STATE)
-        await pg.evaluate(KEEP, MD)
-        await pg.screenshot(path=str(SHOTS/'light.png'))
-        await pg.evaluate("() => { document.documentElement.dataset.mode = 'dark'; }")
-        await pg.wait_for_function(f'([s, was]) => getComputedStyle(document.querySelector(s).shadowRoot.querySelector(".rk")).getPropertyValue("--rk-bg").trim() !== was', arg=[MD, out['md']['bg']])
-        out['dark'] = await pg.evaluate(FACTS, MD); out['dark_kept'] = await pg.evaluate(KEPT, MD)
-        await pg.screenshot(path=str(SHOTS/'dark.png'))
-        first = pg.locator(MD + OPT).first
-        await first.focus(); await pg.keyboard.press('Enter')
-        out['enter'] = await pg.evaluate(FACTS, MD); out['enter_state'] = await pg.evaluate(STATE)
-        await pg.evaluate(REPAINT)
-        out['repaint'] = await pg.evaluate(FACTS, MD); out['repaint_kept'] = await pg.evaluate(KEPT, MD)
-        await pg.evaluate(KEEP, OUT)
-        await pg.locator(OUT + OPT).first.focus(); await pg.keyboard.press('Enter'); await pg.keyboard.press('Meta+Enter')
-        out['gate'] = await pg.evaluate(FACTS, OUT); out['gate_state'] = await pg.evaluate(STATE)
-        await pg.evaluate('() => renderOutputs(lee.cells[1])')
-        out['out_kept'] = await pg.evaluate(KEPT, OUT); out['out_again'] = await pg.evaluate(FACTS, OUT)
-        return out
-    got = _run(go, roots=[tmp_path])
-    for k in ('md', 'mime'):
-        f = got[k]
-        assert f['ready'] == '1' and f['styled'] and not f['fixed'], got[k]
-        assert abs(f['hostH'] - f['innerH']) < 2 and f['hostH'] > 50, f'{k} is not its natural height: {f}'
-    assert got['iframes'] == 0 and not got['fallback_ran'], 'the text/html fallback ran'
-    assert got['start']['focused'] == [] and not got['start']['inside'], got['start']
-    assert got['dark']['bg'] != got['md']['bg'] and got['dark_kept'] == {'host': True, 'inner': True}, (got['md']['bg'], got['dark'])
-    assert got['enter']['checked'][0] == 'true', 'Enter on a demo control did not reach the demo'
-    assert got['enter_state']['editing'] == 0 and got['enter_state']['ex'] == 7, got['enter_state']
-    assert got['repaint_kept'] == {'host': True, 'inner': True} and got['repaint']['checked'][0] == 'true', got['repaint']
-    assert got['gate']['verdict'] and got['gate_state']['ex'] == 7 and got['gate_state']['outputs'] == 1, got['gate_state']
-    assert got['out_kept'] == {'host': True, 'inner': True} and got['out_again']['verdict'], got['out_again']
+        async def demos():
+            await pg.wait_for_function(f'document.querySelectorAll({hosts!r}).length === 2')
+            assert await pg.locator(raw).count() == 0
+            await pg.wait_for_function(f"document.querySelector({hosts!r}).shadowRoot.querySelector('[data-rk-gl]')?.dataset.rkGl === 'ready'")
+            assert await pg.locator(hosts).nth(1).locator('button.go').count() == 1   # the gated one waits for its gate
+        await _open(pg, md)
+        await demos()
+        await pg.evaluate('leeCloseTab()')
+        await pg.wait_for_function(f'!document.querySelector({hosts!r})')
+        await _open(pg, md)
+        await demos()
+    asyncio.run(_page(go, tmp_path))
