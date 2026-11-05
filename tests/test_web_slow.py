@@ -1715,3 +1715,47 @@ def test_a_hand_off_to_a_heading_cell_brings_it_into_view(tmp_path):
             p2.wait_for_timeout(800)
             assert p2.evaluate(seen, 30)
         finally: b.close()
+
+
+def test_the_git_panel_follows_its_own_repository_and_the_disk(tmp_path):
+    """History for one repository sent its commit-file request to the active tab's: unknown commit. A git action blinded the next repository switch, and edits or commits on disk never reached the panel."""
+    import subprocess
+    def git(r, *a): return subprocess.run(['git', '-C', str(r), *a], check=True, capture_output=True, text=True).stdout.strip()
+    roots = {}
+    for n in 'AB':
+        r = tmp_path/f'repo{n}'; r.mkdir()
+        git(r, 'init', '-q', '-b', 'main'); git(r, 'config', 'user.email', 'a@b'); git(r, 'config', 'user.name', 'c')
+        for i in range(3): (r/f'{n.lower()}.py').write_text(f'x = {i}\n'); git(r, 'add', '.'); git(r, 'commit', '-qm', f'{n} commit {i}')
+        roots[n] = r
+    a, b = roots['A'], roots['B']
+    oid = git(a, 'rev-parse', 'HEAD~1')
+    async def at(pg, path, repo, step):
+        await pg.evaluate('p => leeOpenFile(p)', str(path))
+        try: await pg.wait_for_function('r => gitUI.snapshot?.root === r', arg=str(repo), timeout=10000)
+        except Exception: raise AssertionError(f'{step}: the panel stayed on {await pg.evaluate("() => gitUI.snapshot?.root")}')
+    async def go(pg):
+        failed = []
+        pg.on('response', lambda r: '/git/commit/file' in r.url and r.status >= 400 and failed.append(r.url))
+        await pg.evaluate('p => leeOpenFile(p)', str(a/'a.py'))
+        await pg.evaluate("() => { leeLeft('git'); gitUI.tab = 'history'; renderGitPanel(); }")
+        await pg.wait_for_function('r => gitUI.snapshot?.root === r && gitUI.history.length', arg=str(a), timeout=10000)
+        await pg.evaluate('o => loadGitCommitInspector(o)', oid)
+        await pg.wait_for_selector('[data-commit-file]')
+        await at(pg, b/'b.py', b, 'opening B')
+        await pg.wait_for_timeout(300)
+        opened = await pg.evaluate("() => ({oid: gitUI.selectedCommit?.oid, root: gitUI.selectedCommit?.root, files: $$('[data-commit-file]').length})")
+        if opened['files']:
+            await pg.click('[data-commit-file]')
+            await pg.wait_for_timeout(800)
+        await at(pg, a/'a.py', a, 'back to A')
+        await pg.evaluate("() => gitDo('fetch')")
+        await at(pg, b/'b.py', b, 'opening B after a git action')
+        await at(pg, a/'a.py', a, 'back to A again')
+        (a/'a.py').write_text('x = 99\n')
+        await pg.wait_for_function("() => (gitUI.snapshot?.changes || []).some(c => c.path === 'a.py')", timeout=10000)
+        git(a, 'commit', '-qam', 'made outside leela')
+        await pg.wait_for_function("() => gitUI.history.some(c => c.subject === 'made outside leela')", timeout=10000)
+        return failed, opened
+    failed, opened = _run(go, roots=[a, b])
+    assert not failed, f'the commit file ran in the wrong repository: {failed}'
+    assert not opened['oid'] or opened['root'] == str(a), f'the open commit closes, or still names A: {opened}'
