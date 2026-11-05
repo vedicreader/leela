@@ -6,6 +6,14 @@
 
 Needs kunda 0.0.12.
 
+- When a kernel's shell stops answering, the cell ends with "The kernel's shell stopped answering" and a Restart kernel button. Before, kunda asked again every 30 s and the cell never ended.
+- The kernel pill, the kernel picker and the project runtime check warn about ipykernel 7.0 to 7.3, which can stop answering, and offer to upgrade it. Kernel support installs ipykernel 7.4 or later, not the host's exact version.
+- Lesson environments get ipykernel 7.4 or later. An older lesson environment with ipykernel 7.0 to 7.3 is installed again.
+
+## 0.1.21
+
+Needs kunda 0.0.12.
+
 - A cell on a gateway kernel whose shell stopped answering now ends. The cell shows "The kernel's shell stopped answering" with a Restart kernel button. Before, the cell ran until the kernel restarted, with no message. ipykernel 7.0 to 7.3 can stop this way.
 - The kernel pill and the kernel picker warn when the kernel runs ipykernel 7.0 to 7.3, and the picker offers to upgrade it. The project runtime check offers the same upgrade.
 - A lesson environment gets ipykernel 7.4 or later. An older lesson environment on ipykernel 7.0 to 7.3 gets its kernel packages again the next time Leela makes it, or from the upgrade button.
