@@ -42,15 +42,16 @@ def _enabled(settings):
         return bool(((settings or Settings()).effective().get('diagnostics') or {}).get('cpu_watchdog', True))
     except Exception: return True
 
-def watch_cpu(every=5, threshold=80, sustain=30, cooldown=600, keep=20, folder=None, settings=None):
+def watch_cpu(every=5, threshold=80, sustain=30, cooldown=600, keep=20, folder=None, settings=None,
+              clock=time.monotonic, cpu=time.process_time, wait=None):  # `wait(every)` is True to stop; tests drive all three
     "Start a daemon thread that writes `cpu_report` when CPU% stays over `threshold` for `sustain` s. Returns a stop function, or None when `diagnostics.cpu_watchdog` is off."
     if not _enabled(settings): return None
     stop, folder, n = threading.Event(), Path(folder or Path(leela_cfg)/'watchdog'), max(1, round(sustain/every))
     def loop():
-        window, last, t0, c0 = deque(maxlen=n), None, time.monotonic(), time.process_time()
-        while not stop.wait(every):
+        window, last, t0, c0 = deque(maxlen=n), None, clock(), cpu()
+        while not (wait or stop.wait)(every):
             try:
-                t, c = time.monotonic(), time.process_time()
+                t, c = clock(), cpu()
                 window.append(100*(c-c0)/max(t-t0, 1e-9)); t0, c0 = t, c
                 if len(window) < n or min(window) <= threshold or (last is not None and t-last < cooldown): continue
                 last = t; _save(folder, cpu_report(list(window), every), keep); window.clear()

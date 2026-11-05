@@ -38,8 +38,27 @@ def test_busy_thread_is_named_in_one_report(tmp_path):
 def test_idle_writes_nothing(tmp_path):
     assert _run(tmp_path, 0, gap=1.5) == []
 
+def _scripted(tmp_path, busy, cooldown):
+    "Drive the watchdog through `busy`, one CPU% for each tick of a fake clock, and return its reports. Runner speed does not matter."
+    every, now, used, ticks, done = FAST['every'], [0.], [0.], iter(busy), threading.Event()
+    def wait(_):
+        try: pct = next(ticks)
+        except StopIteration: done.set(); return True
+        now[0] += every; used[0] += every*pct/100
+        return False
+    watch_cpu(folder=tmp_path, settings=Settings(user_path=tmp_path/'settings.json'), **{**FAST, 'cooldown': cooldown},
+              clock=lambda: now[0], cpu=lambda: used[0], wait=wait)
+    assert done.wait(30), 'the watchdog never took its last tick'
+    return sorted(tmp_path.glob('cpu-*.txt'))
+
 def test_cooldown_holds_across_windows(tmp_path):
-    assert len(_run(tmp_path, 1.0, 1.0)) == 1
+    "Two busy windows 1.6 s apart, inside a cooldown of an hour: one report. Before, real spins on a slow runner sometimes made none."
+    busy = [100]*5 + [0]*6 + [100]*5
+    assert len(_scripted(tmp_path, busy, 3600)) == 1
+    assert len(_scripted(tmp_path/'idle', [0]*16, 3600)) == 0, 'and the script is what made it'
+
+def test_a_report_needs_the_whole_window_busy(tmp_path):
+    assert len(_scripted(tmp_path, [100]*4 + [0] + [100]*4, 3600)) == 0
 
 def test_keeps_newest_twenty(tmp_path):
     for i in range(25): (tmp_path/f'cpu-20200101-0000{i:02}.txt').write_text('')
