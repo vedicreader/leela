@@ -84,3 +84,43 @@ def test_an_external_edit_to_a_loose_file_reaches_the_open_tab(tmp_path):
         finally: w.close()
     paths, _ = asyncio.run(run())
     assert str(f) in paths, 'rename-over is an edit'
+
+def _checkout(tmp_path):
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n')
+    return proj, a.resolve()
+
+def test_a_link_out_of_a_folder_window_adds_no_folder(tmp_path, monkeypatch):
+    "A definition, traceback or agent link in a folder window: the file is refused there, and no folder is added."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.core import projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')
+    (mine := tmp_path/'mine').mkdir(); proj, a = _checkout(tmp_path)
+    projects.note_folder(str(mine)); before = projects.session()
+    ws = Workspace(roots=[mine])
+    with TestClient(ide_app(ws)) as c: r = c.post('/tab/open', params={'path': str(a)})
+    assert 'outside the open folders' in r.text and list(ws.fs.roots) == [mine.resolve()] and projects.session() == before
+
+def test_the_agent_cannot_add_a_folder(tmp_path, monkeypatch):
+    from shalya.tools import file_tools
+    from leela.core import projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')
+    (mine := tmp_path/'mine').mkdir(); proj, a = _checkout(tmp_path)
+    ws = Workspace(roots=[mine]); h = WorkspaceHost(ws)
+    add = next(t for t in file_tools(h) if t.__name__ == 'add_root')
+    assert 'could not open' in add(str(proj)) and list(ws.fs.roots) == [mine.resolve()] and projects.session()['folders'] == []
+
+def test_a_loose_tab_offers_its_folder_until_not_now(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    proj, a = _checkout(tmp_path)
+    ws = _loose_ws()
+    with TestClient(ide_app(ws)) as c:
+        c.post('/tab/open', params={'path': str(a)})
+        assert c.get('/tab/state').json()['offer'] == str(proj)
+        assert c.post('/tab/offer/dismiss', params={'path': str(a)}).json()['ok']
+        assert 'offer' not in c.get('/tab/state').json() and list(ws.fs.roots) == [loose_root()]
+    ws.close(); ws.open(a)
+    assert ws.offers == {str(a): str(proj)}, 'opened again, it offers again'
+    ws.close()
+    assert not ws.offers, 'closing the tab drops its offer'

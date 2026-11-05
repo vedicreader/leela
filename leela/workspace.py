@@ -241,6 +241,8 @@ class Workspace:
         self.kernel_kind = kernel
         self.agent_scope = agent_scope
         self.tabs = L()
+        #: Loose tab path -> the folder it belongs to, offered once and never opened unasked.
+        self.offers = {}
         self.active = 0
         self._untitled = 0
         self._ai = self._inline_ai = self._selection_ai = None
@@ -534,8 +536,12 @@ class Workspace:
         return t
     def open(self, path, kind=None):
         "Open a file, focusing it if it is already open. Outside stdlib files are read-only."
-        if self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()) and not self.fs.read_only(a): self.fs.admit(a)
+        loose = self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()) and not self.fs.read_only(a)
+        if loose: self.fs.admit(a)
         p = self.fs._check(path, must_exist=True, reading=True)
+        if loose:
+            from .core.projects import workspace_for
+            if (d := workspace_for(p)) is not None and d != self.fs.loose: self.offers[str(p)] = str(d)
         if not openable(p): raise Unsafe(f'{p.name} is not a text file')
         home = self.copy_home(p)
         try: self.active_root = self.fs.root_of(home or p)
@@ -609,13 +615,17 @@ class Workspace:
         i = self.active if i is None else i
         if not (0 <= i < len(self.tabs)): return None
         t = self.tabs.pop(i)
+        self.offers.pop(t.path, None)
         if t.path and self.fs.admitted: self.fs.revoke(t.path)
         self.active = max(0, min(self.active if i > self.active else self.active-1, len(self.tabs)-1))
         self.watch_env(None)
         return t
     def release(self, path):
-        "Close the tab on `path` when a folder has taken that file over."
-        if (i := self.find(path)) is not None: self.close(i); self.save()
+        "Close the tabs on `path`, or under it, when a folder has taken those files over."
+        p = Path(path).expanduser().resolve()
+        gone = [i for i, t in enumerate(self.tabs) if t.path and Path(t.path).is_relative_to(p)]
+        for i in reversed(gone): self.close(i)
+        if gone: self.save()
     def move_tab(self, i, j):
         "Drag a tab to a new position, keeping the same document active afterwards."
         if not (0 <= i < len(self.tabs)): return self.tab

@@ -86,7 +86,7 @@ def _unopenable(file, root):
     if not f.is_file(): return f'not a file: {file}'
     if root == loose_root():
         if why := loose_refusal(f): return why
-    elif not f.is_relative_to(root): return f'{f} is outside {root}'
+    elif root is not None and not f.is_relative_to(root): return f'{f} is outside {root}'
     if not openable(f): return f'{f.name} is not a text file'
     return None
 
@@ -124,6 +124,8 @@ class WorkspaceSite:
     open_file: object = None
     #: `release(path)` closes that tab. Only the loose-files workspace gives one up when a folder takes the file.
     release: object = None
+    #: `covers(path)`: whether a folder this workspace has open holds `path`. Absent, `root` alone is asked.
+    covers: object = None
 
 def learn_navigation(scope, headers) -> bool:
     "True for a browser's top-level `GET /learn` navigation, the one cross-site request that the guard lets in."
@@ -176,6 +178,12 @@ class WorkspaceHub:
         "The workspace already serving `root`, or None. A folder opened twice is one window."
         root = str(root)
         return next((s for s in self.sites.values() if s.root and s.root == root), None)
+    def site_covering(self, f):
+        "The deepest folder site that already holds file `f`. The loose and welcome sites hold nothing."
+        from .core.projects import loose_root
+        f, loose = Path(f).expanduser().resolve(), str(loose_root())
+        hits = [s for s in self.sites.values() if s.root and s.root != loose and (s.covers(f) if s.covers else f.is_relative_to(s.root))]
+        return max(hits, key=lambda s: len(s.root), default=None)
     def add_site(self, site):
         "Register a workspace built after launch, and give it the lifespan the others got."
         self.sites[site.slug] = site
@@ -217,26 +225,29 @@ class WorkspaceHub:
         await site.app(scope, receive, send)
     async def _open(self, scope, send):
         "Serve a folder as its own workspace, and with `file`, open that file in it. The desktop shell then points a window at the row."
+        # A file alone never adds a folder: one no open folder holds goes to the loose window, with the folder as `offer`. `folder=1` is the person's yes.
         from .core.projects import loose_root
         q = parse_qs(scope.get('query_string', b'').decode())
-        raw, file = (q.get('path') or [''])[0], (q.get('file') or [''])[0]
+        raw, file, folder = (q.get('path') or [''])[0], (q.get('file') or [''])[0], (q.get('folder') or [''])[0] == '1'
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
         if root is None or not root.is_dir():
             return await _json(send, {'ok': False, 'error': f'not a folder: {raw}', 'config': cfg_mark()}, 400)
+        loose, site, offer = loose_root(), None, ''
+        if file and not folder and root != loose and (site := self.site_covering(file)) is None: offer, root = str(root), loose
         # Refused before anything is built, so a bad file leaves no workspace, recent entry or window behind.
-        if file and (why := _unopenable(file, root)):
-            return await _json(send, {'ok': False, 'error': why, 'config': cfg_mark()}, 400)
+        if file and (why := _unopenable(file, None if site else root)):
+            return await _json(send, {'ok': False, 'error': why, 'offer': offer, 'config': cfg_mark()}, 400)
         # Building one starts a kernel pool, which would stall every open window on the loop.
         try:
-            site = await asyncio.to_thread(self.open_folder, root)
+            if site is None: site = await asyncio.to_thread(self.open_folder, root)
             if file:
                 if site.open_file is None: raise RuntimeError('this workspace cannot open a file')
                 f = Path(file).expanduser().resolve()
                 await asyncio.to_thread(site.open_file, f)
-                if root != loose_root() and (ls := self.site_at(loose_root())) and ls.release: await asyncio.to_thread(ls.release, f)
+                if site.root != str(loose) and (ls := self.site_at(loose)) and ls.release: await asyncio.to_thread(ls.release, root if folder else f)
         except Exception as e: return await _json(send, {'ok': False, 'error': str(e), 'config': cfg_mark()}, 400)
-        await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root,
+        await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root, 'offer': offer,
                            'url': self.url_for(site.slug), 'config': cfg_mark()})
     async def _lifespan(self, scope, receive, send):
         "One startup and one shutdown, fanned out to every site and answered once."

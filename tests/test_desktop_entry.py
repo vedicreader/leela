@@ -138,7 +138,26 @@ def test_a_file_directly_in_home_opens_in_the_loose_window_named_for_it(monkeypa
     assert urls == [BARE] and 'on_ready' in kw
 
 
-def test_a_file_argument_opens_its_workspace_window_and_then_the_file(monkeypatch, tmp_path):
+def test_a_file_the_loose_window_refuses_is_asked_about_and_opens_only_on_yes(monkeypatch, tmp_path):
+    from pathlib import Path
+    import leela.desktop, leela_app as app
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (f := proj/'.env').write_text('')
+    calls, opened, asked, answers = [], [], [], iter([False, True])
+    def hub(port, path, host='127.0.0.1', timeout=60, file='', folder=False):
+        calls.append((Path(path), folder))
+        if not folder: return {'ok': False, 'error': '.env may hold credentials', 'offer': str(proj)}
+        return dict(ok=True, id='proj', name='proj', root=str(proj), url='http://proj.localhost:5010/')
+    monkeypatch.setattr(app, 'hub_open', hub)
+    monkeypatch.setattr(app, '_ask', lambda msg: asked.append(msg) or next(answers))
+    monkeypatch.setattr(leela.desktop, 'open_window', lambda url, title='leela', key=None, **kw: opened.append(key))
+    app.open_file(5010, f)
+    assert calls == [(proj.resolve(), False)] and not opened and 'Open proj as a folder?' in asked[0], 'Not now opens nothing'
+    app.open_file(5010, f)
+    assert calls[-1] == (proj, True) and opened == ['proj'], 'yes is the only way the folder opens'
+
+
+def test_a_file_argument_adds_no_folder_and_opens_once_the_windows_are_up(monkeypatch, tmp_path):
+    "A file in a checkout once made that checkout an open, remembered folder with nobody asked."
     import leela_app as app
     (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (f := proj/'a.md').write_text('')
     got = _launch(monkeypatch)
@@ -146,7 +165,7 @@ def test_a_file_argument_opens_its_workspace_window_and_then_the_file(monkeypatc
     monkeypatch.setattr(app, 'files', lambda a=None: [str(f)])
     monkeypatch.setattr(app, 'open_file', lambda port, path, **k: opened.append((port, path)))
     app.run()
-    assert got['opened'] == [(5010, str(proj.resolve()))], 'the file chose its workspace; no unrelated last folder'
+    assert got['opened'] == [] and got['remembered'] == [], 'its checkout is neither opened nor remembered'
     [(urls, titles, kw)] = got['windows']
     kw['on_ready'](); kw['on_open_file']('/elsewhere/b.md')
     assert opened == [(5010, str(f)), (5010, '/elsewhere/b.md')], 'the command-line file, then one Finder sends later'

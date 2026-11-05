@@ -91,21 +91,20 @@ def main():
 
 def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
-    from leela.core.projects import loose_root, workspace_for
     from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
     from leela.hub import assign_slugs
-    given = {f: workspace_for(f) or loose_root() for f in files()}
-    # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer. The loose window opens with its file, never at launch.
-    want = list(dict.fromkeys([*folders(), *(d for d in given.values() if Path(d) != loose_root())])) or last_folder()
+    given = files()
+    # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer. A file adds no folder: it opens where one is open, else in the loose window with an offer.
+    want = folders() or last_folder()
     cdp_port = int(os.environ.get('LEELA_CDP_PORT', 9223))
     ok, why = shell_ready()
     # A second launch is a window, not a second Leela: one server means one origin, so what the
     # first copy saved is what this one reads. It is also the only way two windows share kernels.
     live = running_leela() if ok else None
     # Nothing to open leaves the saved open set alone: `remember([])` would erase it.
-    if live is not None and not want: return attach(live, [], files=list(given))
+    if live is not None and not want: return attach(live, [], files=given)
     dirs = remember(want)
-    if live is not None: return attach(live, dirs, files=list(given))
+    if live is not None: return attach(live, dirs, files=given)
     port = free_port()
     if not ok:
         print(f'leela: {why}; opening the workspace in Chrome instead')
@@ -118,7 +117,7 @@ def run():
     slugs = assign_slugs([Path(d).expanduser().resolve() for d in dirs]) if dirs else [HOME_KEY]
     urls = ([f'http://{s}.localhost:{port}/' for s in slugs] if dirs
             else [f'http://127.0.0.1:{port}/'])
-    run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(), **_hooks(port, list(given)))
+    run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(), **_hooks(port, given))
 
 def attach(port, dirs, host=HOST, files=()):
     "Windows on the Leela already serving `port`. Opens through its own route so the slug and URL are the ones it assigned; a refused folder is reported and the rest still open."
@@ -145,12 +144,13 @@ def titles_for(dirs):
     "One window title per workspace, named after its folder."
     return [f'leela — {Path(d).name}' for d in dirs] or ['leela']
 
-def hub_open(port, path, host=HOST, timeout=60, file=''):
-    "Ask the server on `port` to serve `path` as a workspace, and with `file` to open it there. Returns its row, or the reason not; `down` marks a server that did not answer."
+def hub_open(port, path, host=HOST, timeout=60, file='', folder=False):
+    "Ask the server on `port` to serve `path` as a workspace, and with `file` to open it there; a file adds no folder unless `folder`. Returns its row, or the reason not; `down` marks a server that did not answer."
     import json, urllib.error, urllib.parse, urllib.request
     from leela.hub import OPEN_PATH
     url = f'http://{host}:{port}{OPEN_PATH}?path=' + urllib.parse.quote(str(path), safe='')
     if file: url += '&file=' + urllib.parse.quote(str(file), safe='')
+    if folder: url += '&folder=1'
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r: return json.loads(r.read())
     except urllib.error.HTTPError as e: return {'ok': False, 'error': _why(e)}
@@ -170,8 +170,12 @@ def open_file(port, path, host=HOST, wait=60, every=.5):
     d = workspace_for(path) or loose_root()
     end = time.monotonic() + wait
     while (got := hub_open(port, d, host, file=path)).get('down') and time.monotonic() < end: time.sleep(every)
+    # Shown in the loose window, the file is offered there. Refused there too (a key file, one too large), the native dialog asks.
+    if not got.get('ok') and (o := got.get('offer')):
+        if not _ask(f"Leela cannot show {Path(path).name} on its own: {got.get('error')}. It is in {Path(o).name}. Open {Path(o).name} as a folder?"): return None
+        got = hub_open(port, o, host, file=path, folder=True)
     if not got.get('ok'): return _tell(f"Leela could not open {path}: {got.get('error')}")
-    return open_window(got['url'], f"leela — {Path(path).name if Path(d) == loose_root() else got['name']}", key=got['id'])
+    return open_window(got['url'], f"leela — {Path(path).name if str(loose_root()) in (str(d), got.get('root')) else got['name']}", key=got['id'])
 
 def _tell(msg):
     "Say `msg` in a native dialog when a window can show one, and on the terminal either way."
@@ -180,6 +184,14 @@ def _tell(msg):
         import webview
         webview.windows[0].create_confirmation_dialog('Leela', msg)
     except Exception: pass
+
+def _ask(msg):
+    "Ask `msg` in a native dialog, and say whether the answer was yes. No window to ask in is a no."
+    print(f'  {msg}')
+    try:
+        import webview
+        return bool(webview.windows[0].create_confirmation_dialog('Leela', msg))
+    except Exception: return False
 
 def _why(e):
     "What a refusal said, which is the point of it. A 4xx still carries its body."

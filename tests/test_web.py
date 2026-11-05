@@ -686,7 +686,7 @@ def test_a_file_handed_to_the_hub_opens_as_the_active_tab_and_is_saved(tmp_path)
     (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
     hub, made = _real_hub(tmp_path)
     for f in (a, b):
-        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
+        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
         assert (status, d['ok']) == (200, True), d
     assert d['url'] == 'http://proj.localhost:5001/' and list(hub.sites) == ['proj'], 'both files, one workspace'
     ws = made['proj']
@@ -701,7 +701,7 @@ def test_a_file_the_workspace_cannot_show_is_refused_before_anything_is_built(tm
     (outside := other/'x.md').write_text('x\n'); (packed := proj/'a.zip').write_bytes(b'PK')
     hub, made = _real_hub(tmp_path)
     for f in (outside, packed, proj/'gone.md'):
-        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
+        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
         assert (status, d['ok']) == (400, False), f
     assert not hub.sites and not made and not projects.recent_folders(), 'a refusal leaves no workspace, no recent entry'
     status, d = _hub_get(hub, OPEN_PATH)
@@ -715,7 +715,7 @@ def _loose_hub(tmp_path):
     def build(root, slug):
         ws = made[slug] = Workspace(); ws.add_root(root, loose=Path(root) == loose_root())
         ws._state_path = tmp_path/f'{slug}.json'
-        return WorkspaceSite(slug, Path(root).name, str(root), lambda *a: None, ws.open_external, ws.release)
+        return WorkspaceSite(slug, Path(root).name, str(root), lambda *a: None, ws.open_external, ws.release, ws.fs.covers)
     return WorkspaceHub([], 5001, build=build), made
 
 
@@ -746,9 +746,53 @@ def test_opening_a_loose_file_in_a_checkout_drops_its_loose_tab(tmp_path):
     for f in (a, b): assert _hub_get(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())[1]['ok']
     lws = made[hub.site_at(loose).slug]
     assert len(lws.tabs) == 2
-    assert _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}'.encode())[1]['ok']
-    assert [t.path for t in lws.tabs] == [str(b.resolve())] and not lws.fs.covers(a.resolve())
+    assert _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}&folder=1'.encode())[1]['ok']
+    assert not lws.tabs and not lws.fs.covers(a.resolve()) and not lws.offers, 'Open takes every loose tab of that folder'
     assert [t.path for t in made['proj'].tabs] == [str(a.resolve())]
+
+
+def test_a_file_in_an_unopened_checkout_is_offered_and_adds_no_folder_until_open(tmp_path, monkeypatch):
+    """`vishalakshi` became an open, remembered folder because a file of it was opened from outside: a link, a traceback, an agent."""
+    from leela.core import projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')   # a session of its own keeps temp folders
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
+    (mine := tmp_path/'mine').mkdir()
+    hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
+    assert _hub_get(hub, OPEN_PATH, f'path={mine}'.encode())[1]['ok'], 'a folder the person opened'
+    before, roots = projects.session(), {k: list(w.fs.roots) for k, w in made.items()}
+    assert before['folders'] == [str(mine)]
+    for f in (a, b):
+        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
+        assert projects.session() == before, 'desktop.json folders and recent are unchanged'
+        assert hub.site_at(proj) is None and all(list(made[k].fs.roots) == r for k, r in roots.items()), 'no workspace, no root'
+        assert (status, d['ok'], d['root'], d['offer']) == (200, True, str(loose), str(proj)), d
+    lws = made[d['id']]
+    assert [t.path for t in lws.tabs] == [str(a.resolve()), str(b.resolve())] and lws.offers == {str(a.resolve()): str(proj), str(b.resolve()): str(proj)}
+    status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}&folder=1'.encode())
+    assert (status, d['ok'], d['offer']) == (200, True, '') and hub.site_at(proj) is not None, 'Open is the yes'
+    assert str(proj) in projects.last_folders() and projects.recent_folders()[0] == str(proj)
+    assert not lws.tabs and not lws.offers, 'and the loose window gives up every file of that folder'
+
+def test_a_file_a_window_already_holds_opens_there_and_notes_nothing(tmp_path, monkeypatch):
+    from leela.core import projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')   # a session of its own keeps temp folders
+    (mine := tmp_path/'mine').mkdir(); (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n')
+    hub, made = _loose_hub(tmp_path)
+    d = _hub_get(hub, OPEN_PATH, f'path={mine}'.encode())[1]
+    made[d['id']].add_root(proj)
+    before = projects.session()
+    status, got = _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}'.encode())
+    assert (status, got['id'], got['offer']) == (200, d['id'], ''), 'the window that added the folder later'
+    assert list(hub.sites) == [d['id']] and projects.session() == before
+    assert made[d['id']].tab.path == str(a.resolve())
+
+def test_a_file_the_loose_window_refuses_still_names_its_folder(tmp_path):
+    from leela.blocks.fs.fs import loose_refusal
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (key := proj/'.env').write_text('K=1\n')
+    assert loose_refusal(key)
+    hub, made = _loose_hub(tmp_path)
+    status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={key}'.encode())
+    assert (status, d['ok'], d['offer']) == (400, False, str(proj)) and not hub.sites and not made
 
 
 def test_a_tab_opened_by_the_shell_is_pushed_to_the_page_that_is_listening(tmp_path):
