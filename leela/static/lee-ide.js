@@ -1268,14 +1268,14 @@ function noticeGitState(d) {
   lee.gitSignature = sig;
   if (had && had !== sig) gitChanged();     // `had` empty on the first poll: nothing has moved yet
 }
-function gitChanged() {
+function gitChanged(d = null) {
   refreshOpenGitMarks();                    // the file's lines, or the notebook's cells
   const left = $('#left');
-  if (left?.classList.contains('left-git')) {
-    // The snapshot and the loaded history are both about the commit we were on.
-    gitUI.snapshot = null; gitUI.history = [];
-    renderGitPanel();
-  }
+  // The snapshot and the loaded history are both about the commit we were on, open or not: a stale
+  // snapshot would steer `gitUrl` to the repository we left.
+  if (d?.root && !gitUI.repo) gitAdopt(d.root);
+  gitUI.snapshot = null; gitUI.history = [];
+  if (left?.classList.contains('left-git')) renderGitPanel();
   // A release is measured from the last tag on this branch and a deploy from what is committed,
   // so both are answers about the branch rather than about the panel.
   if (left?.classList.contains('left-releases')) leeReleases();
@@ -1673,7 +1673,7 @@ let savedGitLists = {}, savedGitReviews = {}, savedGitNotes = {};
 try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || '{}'); } catch (_) {}
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
-const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), commitDraft: '', changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
+const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', root: '', selectedCommit: null, selectedChanges: new Set(), commitDraft: '', changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
 // The repository the panel's data came from: the pinned one, else the snapshot's. Empty means the one
 // the active tab lives in, which is what the branch pill, the file tree and the change marks mean.
 function gitRepo() { return gitUI.repo || gitUI.snapshot?.root || ''; }
@@ -1925,11 +1925,19 @@ async function gitReposDo(op, extra = {}) {
 }
 // Pinning is a scope change, not a filter: every ref, commit and review already loaded belongs to
 // the repository being left, so all of it goes rather than being shown against the wrong one.
-async function gitPinRepo(root, tab = 'changes') {
-  gitUI.repo = String(root || '');
+function gitForget() {
   gitUI.snapshot = null; gitUI.history = []; gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = '';
   gitUI.reviewBase = ''; gitUI.reviewHead = ''; gitUI.compareFrom = ''; gitUI.compareTo = '';
   gitUI.selectedCommit = null; gitUI.selectedChanges.clear();
+}
+// `gitUI.root` is the repository the loaded refs, commit and review came from. Another one drops them.
+function gitAdopt(root) {
+  if (gitUI.root && root !== gitUI.root) gitForget();
+  gitUI.root = root;
+}
+async function gitPinRepo(root, tab = 'changes') {
+  gitUI.repo = String(root || '');
+  gitForget(); gitUI.root = '';
   gitUI.tab = tab;
   await renderGitPanel();
   if (!gitUI.repo) refreshProjectPills();
@@ -2745,6 +2753,7 @@ async function renderGitPanel(snapshot = null) {
     if (c.staged) keys.add(`staged:${c.path}`);
     if (c.unstaged) keys.add(`unstaged:${c.path}`);
   }
+  gitAdopt(d.root);
   for (const key of [...gitUI.selectedChanges]) if (!keys.has(key)) gitUI.selectedChanges.delete(key);
   gitUI.snapshot = d; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);

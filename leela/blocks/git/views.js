@@ -165,11 +165,19 @@ async function gitReposDo(op, extra = {}) {
 }
 // Pinning is a scope change, not a filter: every ref, commit and review already loaded belongs to
 // the repository being left, so all of it goes rather than being shown against the wrong one.
-async function gitPinRepo(root, tab = 'changes') {
-  gitUI.repo = String(root || '');
+function gitForget() {
   gitUI.snapshot = null; gitUI.history = []; gitUI.review = null; gitUI.reviewFile = ''; gitUI.reviewPatch = '';
   gitUI.reviewBase = ''; gitUI.reviewHead = ''; gitUI.compareFrom = ''; gitUI.compareTo = '';
   gitUI.selectedCommit = null; gitUI.selectedChanges.clear();
+}
+// `gitUI.root` is the repository the loaded refs, commit and review came from. Another one drops them.
+function gitAdopt(root) {
+  if (gitUI.root && root !== gitUI.root) gitForget();
+  gitUI.root = root;
+}
+async function gitPinRepo(root, tab = 'changes') {
+  gitUI.repo = String(root || '');
+  gitForget(); gitUI.root = '';
   gitUI.tab = tab;
   await renderGitPanel();
   if (!gitUI.repo) refreshProjectPills();

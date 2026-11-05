@@ -28,6 +28,7 @@ async function renderGitPanel(snapshot = null) {
     if (c.staged) keys.add(`staged:${c.path}`);
     if (c.unstaged) keys.add(`unstaged:${c.path}`);
   }
+  gitAdopt(d.root);
   for (const key of [...gitUI.selectedChanges]) if (!keys.has(key)) gitUI.selectedChanges.delete(key);
   gitUI.snapshot = d; paintGitPill(d);
   const view = gitUI.tab === 'changes' ? gitChangesView(d) : gitUI.tab === 'review' ? gitReviewView(d) : gitUI.tab === 'branches' ? gitBranchesView(d) : gitUI.tab === 'history' ? gitHistoryView(d) : gitResourcesView(d);

@@ -156,14 +156,14 @@ function noticeGitState(d) {
   lee.gitSignature = sig;
   if (had && had !== sig) gitChanged();     // `had` empty on the first poll: nothing has moved yet
 }
-function gitChanged() {
+function gitChanged(d = null) {
   refreshOpenGitMarks();                    // the file's lines, or the notebook's cells
   const left = $('#left');
-  if (left?.classList.contains('left-git')) {
-    // The snapshot and the loaded history are both about the commit we were on.
-    gitUI.snapshot = null; gitUI.history = [];
-    renderGitPanel();
-  }
+  // The snapshot and the loaded history are both about the commit we were on, open or not: a stale
+  // snapshot would steer `gitUrl` to the repository we left.
+  if (d?.root && !gitUI.repo) gitAdopt(d.root);
+  gitUI.snapshot = null; gitUI.history = [];
+  if (left?.classList.contains('left-git')) renderGitPanel();
   // A release is measured from the last tag on this branch and a deploy from what is committed,
   // so both are answers about the branch rather than about the panel.
   if (left?.classList.contains('left-releases')) leeReleases();
