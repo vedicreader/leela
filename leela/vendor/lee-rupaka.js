@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.12', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.14', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -23,9 +23,21 @@
   const show = (v, d) => v == null ? '' : typeof v === 'number' ? String(+v.toFixed(d ?? 4)).replace('-', '−') : Array.isArray(v) ? v.join(', ') : String(v);
   // `{path}` or `{path:2}` (two digits) take a value from the state. Text goes in with textContent, never as HTML.
   const fmt = (s, st) => String(s ?? '').replace(/\{([\w.]+)(?::(\d))?\}/g, (_, p, d) => show(get(st, p), d == null ? null : +d));
+  // A rich text: **bold** goes in a <strong>, and `st` fills {path} in each part. A ** inside $maths$, or with no pair, stays as it is.
+  const rich = (s, st) => {
+    const ps = String(s ?? '').split(/(\$\$[\s\S]*?\$\$|\$[^$\n]+\$|\*\*)/), out = [], f = t => st ? fmt(t, st) : t;
+    let buf = '', at = -1;
+    ps.forEach((t, i) => {
+      if (t !== '**') { buf += t; return; }
+      if (at < 0) { if (ps.slice(i + 1).includes('**')) { if (buf) out.push(f(buf)); buf = ''; at = i; } else buf += t; return; }
+      out.push(el('strong', {text: f(buf)})); buf = ''; at = -1;
+    });
+    if (buf) out.push(f(buf));
+    return out;
+  };
   const hide = (n, h) => { if (n instanceof SVGElement) n.style.display = h ? 'none' : ''; else n.hidden = h; };
 
-  Object.assign(R, {el, sv, get, fmt, show, hide, block: (name, f) => { R.blocks[name] = f; }, fn: (name, f) => { R.fns[name] = f; }});
+  Object.assign(R, {el, sv, get, fmt, rich, show, hide, block: (name, f) => { R.blocks[name] = f; }, fn: (name, f) => { R.fns[name] = f; }});
   R.label = (b, ...more) => b.label ? el('span', {class: 'rk-lbl', text: b.label}, ...more) : null;
 
   // The [r, g, b] (0 to 255) of a CSS colour or a --rk-* var, as it is in effect on `node`. A 1 x 1 canvas reads any colour syntax.
@@ -124,8 +136,9 @@
     ctx.put = (b, k, val) => { if (!ctx.live(b.lock)) return false; s.set(k, val); return true; };   // a locked control refuses
     if (spec.mode === 'learn') { root.dataset.rkMode = 'learn'; root.append(el('p', {class: 'rk-mode', text: 'Explainer'})); }   // no gate, so no prediction step
     if (spec.title) root.append(el('h3', {class: 'rk-title', text: spec.title}));
-    if (spec.ask) root.append(el('p', {class: 'rk-ask', text: spec.ask}));
+    if (spec.ask) root.append(el('p', {class: 'rk-ask'}, rich(spec.ask)));
     root.append(...(spec.blocks || []).map(ctx.build));
+    if (askable(host, spec, opts)) root.append(ctx.asker = asker(ctx));
     root.addEventListener('keydown', e => {   // ⌘↩ anywhere in the demo locks in the first open gate
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && ctx.commit) { e.preventDefault(); ctx.commit(); }
     });
@@ -156,7 +169,7 @@
     const b = structuredClone(block), list = box.blocks ||= [], path = `${into ? into + '.' : ''}blocks.${list.length}`;
     ctx.tag(b, path);
     const node = ctx.build(b);
-    list.push(b); at.append(node); s.emit('*');
+    list.push(b); at.insertBefore(node, into ? null : ctx.asker ?? null); s.emit('*');
     return path;
   };
   // The element of a block or of a part at `path` (its data-rk-id), or null. A host draws a curve from a mark on its page to this element.
@@ -191,6 +204,46 @@
 
   // The gate tells the page about each prediction; the event crosses a shadow root. It gives false when a listener called preventDefault.
   R.predict = (ctx, detail) => ctx.root.dispatchEvent(new CustomEvent('rk-predict', {bubbles: true, composed: true, cancelable: true, detail: {demo: ctx.spec.id, ...detail}}));
+
+  // An ask carries only what the demo has now: the input keys (clipped), the step or the first open gate, and the learner's words.
+  // It never carries DOM or HTML. As with rk-predict, a host that takes the ask calls preventDefault.
+  const CLIP = {text: 500, str: 200, items: 50, depth: 3};
+  const clip = (v, d = 0) => typeof v === 'string' ? v.slice(0, CLIP.str) : typeof v === 'number' ? (Number.isFinite(v) ? v : null)
+    : typeof v === 'boolean' ? v : v == null || d >= CLIP.depth || typeof v !== 'object' ? null
+    : Array.isArray(v) ? v.slice(0, CLIP.items).map(x => clip(x, d + 1))
+    : Object.fromEntries(Object.entries(v).slice(0, CLIP.items).map(([k, x]) => [k.slice(0, CLIP.str), clip(x, d + 1)]));
+  const asked = (ctx, text) => {
+    const st = ctx.s.st, g = (ctx.gates || []).find(g => !g.done());
+    return {demo: clip(ctx.spec.id ?? null), text: String(text ?? '').trim().slice(0, CLIP.text),
+            state: Object.fromEntries(inputs(ctx.spec).slice(0, CLIP.items).map(k => [k, clip(st[k], 1)])),
+            step: st.step != null ? clip(st.step, 1) : g ? g.id : null};
+  };
+  R.ask = (host, text) => {
+    const ctx = CTX.get(mounted(host));
+    return ctx.root.dispatchEvent(new CustomEvent('rk-ask', {bubbles: true, composed: true, cancelable: true, detail: asked(ctx, text)}));
+  };
+  // The host switch (opts.askable, or data-rk-askable="true" or "false" on the host) comes first, then the spec, then on.
+  const askable = (host, spec, opts) => opts?.askable ?? {true: true, false: false}[host.dataset?.rkAskable] ?? spec.askable !== false;
+  function asker(ctx) {
+    const field = el('input', {type: 'text', maxlength: CLIP.text, 'aria-label': 'Your question', placeholder: 'What do you want to know? You can leave this empty.'});
+    const said = el('p', {class: 'rk-note', 'aria-live': 'polite', hidden: true});
+    const form = el('form', {hidden: true}, field, el('button', {type: 'submit', text: 'Ask'}));
+    const open = el('button', {type: 'button', class: 'rk-askopen', text: 'Ask about this', 'aria-expanded': 'false'});
+    const toggle = o => { form.hidden = !o; open.setAttribute('aria-expanded', String(o)); if (o) { said.hidden = true; field.focus(); } };
+    open.onclick = () => toggle(form.hidden);
+    form.onsubmit = e => {
+      e.preventDefault();
+      const took = !R.ask(ctx.root.parentNode, field.value);
+      field.value = ''; toggle(false); open.focus();
+      said.textContent = took ? 'Sent to the tutor.' : 'No tutor is on this page.'; said.hidden = false;
+    };
+    field.addEventListener('keydown', e => {
+      e.stopPropagation();   // ⌘↩ in the field sends the ask; it does not lock in a gate
+      if (e.key === 'Escape') { toggle(false); open.focus(); }
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+    });
+    return el('div', {class: 'rk-asker'}, open, form, said);
+  }
 
   R.boot = (scope = document) => scope.querySelectorAll('[data-rupaka]:not([data-rk-ready])').forEach(n => {
     const src = n.querySelector('script[type="application/json"]');
@@ -341,6 +394,25 @@ Rupaka.fn('softmax', (d, st) => {
   const nice = (lo, hi, want) => { const raw = (hi - lo) / want, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p;
     return (m < 1.5 ? 1 : m < 3 ? 2 : m < 7 ? 5 : 10) * p; };
   const ticks = (lo, hi, st) => { const out = []; for (let v = Math.ceil(lo / st - 1e-9) * st; v <= hi + 1e-9; v += st) out.push(+v.toFixed(10)); return out; };
+  // Which ticks get a label: every k-th tick from 0 (or from the first tick when 0 is not a tick), out in both directions. k is the
+  // smallest step at which no two labels meet (`size(i)` is the width of label i in SVG units) and the label step is round:
+  // 1, 2 or 5 × 10ⁿ, or a whole number when the ticks are whole. An end tick off this grid gets a label only when it has room.
+  // The SVG scales as one, so this holds at any width.
+  const every = (vs, ps, size, gap = 6) => {
+    const n = vs.length - 1, st = vs[1] - vs[0], z = vs.findIndex(v => Math.abs(v) < 1e-9), i0 = Math.max(z, 0);
+    if (n < 1) return vs.map(() => true);
+    const fits = (i, j) => Math.abs(ps[j] - ps[i]) >= (size(i) + size(j)) / 2 + gap, on = k => (i => (i - i0) % k === 0);
+    const clash = k => vs.some((_, i) => on(k)(i) && i + k <= n && !fits(i, i + k));
+    const round = k => { const q = +(k * st).toFixed(10), m = q / 10 ** Math.floor(Math.log10(q) + 1e-9);
+      return Number.isInteger(+st.toFixed(10)) || [1, 2, 5, 10].some(x => Math.abs(m - x) < 1e-6); };
+    let k = 1;
+    while (k <= n && (clash(k) || !round(k))) k++;
+    if (k > n) { k = 1; while (k < n && clash(k)) k++; }
+    const out = vs.map((_, i) => on(k)(i));
+    if (!out[0]) out[0] = fits(0, out.indexOf(true));
+    if (!out[n]) out[n] = fits(out.lastIndexOf(true), n);
+    return out;
+  };
   Rupaka.block('axis', (b, ctx) => {
     const {el, sv, show} = Rupaka, [x0, x1] = b.x || [-5, 5], line = !b.y, [y0, y1] = b.y || [0, 1];
     const W = 600, H = line ? 80 : (b.height || 360), L = line ? 16 : 40, Rm = 16, T = line ? 30 : 12, B = line ? 30 : 28;
@@ -352,10 +424,11 @@ Rupaka.fn('softmax', (d, st) => {
     const g = sv('g', {class: 'grid'});
     const xs = ticks(x0, x1, b.xstep || nice(x0, x1, 10)), ys = line ? [] : ticks(y0, y1, b.ystep || nice(y0, y1, 8));
     const ax = line ? T : Y(Math.min(y1, Math.max(y0, 0))), ay = X(Math.min(x1, Math.max(x0, 0)));
-    xs.forEach(v => { g.append(sv('line', {class: v === 0 && !line ? 'zero' : 'hair', x1: X(v), x2: X(v), y1: line ? T - 5 : T, y2: line ? T + 5 : H - B}),
-      sv('text', {class: 'num', x: X(v), y: line ? T + 22 : H - B + 18, 'text-anchor': 'middle', text: show(v, 3)})); });
-    ys.forEach(v => { g.append(sv('line', {class: v === 0 ? 'zero' : 'hair', x1: L, x2: W - Rm, y1: Y(v), y2: Y(v)}),
-      sv('text', {class: 'num', x: L - 6, y: Y(v) + 4, 'text-anchor': 'end', text: show(v, 3)})); });
+    const xl = xs.map(v => show(v, 3)), xon = every(xs, xs.map(X), i => 7.5 * xl[i].length), yon = every(ys, ys.map(Y), () => 13, 2);
+    xs.forEach((v, i) => { g.append(sv('line', {class: v === 0 && !line ? 'zero' : 'hair', x1: X(v), x2: X(v), y1: line ? T - 5 : T, y2: line ? T + 5 : H - B}),
+      ...xon[i] ? [sv('text', {class: 'num', x: X(v), y: line ? T + 22 : H - B + 18, 'text-anchor': 'middle', text: xl[i]})] : []); });
+    ys.forEach((v, i) => { g.append(sv('line', {class: v === 0 ? 'zero' : 'hair', x1: L, x2: W - Rm, y1: Y(v), y2: Y(v)}),
+      ...yon[i] ? [sv('text', {class: 'num', x: L - 6, y: Y(v) + 4, 'text-anchor': 'end', text: show(v, 3)})] : []); });
     g.append(sv('line', {class: 'main', x1: L, x2: W - Rm, y1: ax, y2: ax}));
     if (!line) g.append(sv('line', {class: 'main', x1: ay, x2: ay, y1: T, y2: H - B}));
     if (b.xlabel) g.append(sv('text', {class: 'axl', x: W - Rm, y: line ? T - 10 : ax - 8, 'text-anchor': 'end', text: b.xlabel}));
@@ -473,8 +546,8 @@ Rupaka.block('bars', (b, ctx) => {
 /* blocks/caption/caption.js */
 /* caption: the explain text. Only **bold** and {path} are special; all text goes in with textContent, so no HTML runs. */
 Rupaka.block('caption', (b, ctx) => {
-  const {el, fmt} = Rupaka, p = el('p');
-  ctx.s.on(() => p.replaceChildren(...String(b.text ?? '').split('**').map((t, i) => i % 2 ? el('b', {text: fmt(t, ctx.s.st)}) : fmt(t, ctx.s.st))));
+  const {el, rich} = Rupaka, p = el('p');
+  ctx.s.on(() => p.replaceChildren(...rich(b.text, ctx.s.st)));
   return el('div', {}, Rupaka.label(b), p);
 });
 
@@ -501,14 +574,23 @@ Rupaka.block('choice', (b, ctx) => {
 });
 
 /* blocks/flow/flow.js */
-/* flow: a few nodes and the arrows between them, left to right (row) or as a loop (cycle), for example guess → compare → adjust. */
+/* flow: a few nodes and the arrows between them, left to right (row) or as a loop (cycle), for example guess → compare → adjust.
+   A row where each arrow goes to the next node is HTML: each box grows to fit its words, each arrow has its own gap, and the row
+   wraps, or turns into a list from the top down in a narrow column. A row with skips or steps back, and a cycle, are SVG. */
 Rupaka.block('flow', (b, ctx) => {
   const {el, sv} = Rupaka, ns = b.nodes || [], n = ns.length, cyc = b.layout === 'cycle', W = 600, LH = 19;
   const at = Object.fromEntries(ns.map((x, i) => [x.id, i]));
   const es = b.edges ?? ns.slice(cyc ? 0 : 1).map((x, i) => ({from: ns[i].id, to: ns[(i + 1) % n].id}));   // no edges: each node points to the next
-  // The words of a node in at most two lines that fit `w`, at about 8 px a letter.
+  const by = new Map(es.map((e, j) => [at[e.from], [e, j]]));
+  if (!cyc && es.every(e => at[e.to] - at[e.from] === 1) && by.size === es.length) {
+    const arrow = ([e, j]) => el('div', {class: 'edge', style: `--i: ${n + j}`, 'data-rk-id': ctx.id(b, `edges.${j}`)},
+      e.text ? el('span', {class: 'et', text: e.text}) : null, el('span', {class: 'ln'}), el('span', {class: 'sk'}));
+    return el('div', {}, Rupaka.label(b), el('div', {class: 'chain'}, el('div', {class: 'line'}, ns.map((x, i) => el('div', {class: 'step'},
+      i && by.has(i - 1) ? arrow(by.get(i - 1)) : null, el('div', {class: 'node', style: `--i: ${i}`, 'data-rk-id': ctx.id(b, `nodes.${i}`), text: x.text}))))));
+  }
+  // The words of a node in lines that fit `w`, at about 8 px a letter.
   const wrap = (t, w) => { const per = Math.max(4, Math.floor((w - 20) / 8)), out = [''];
-    for (const wd of String(t).split(/\s+/)) { const l = out.length - 1; if (out[l] && (out[l] + ' ' + wd).length > per && out.length < 2) out.push(wd); else out[l] = out[l] ? `${out[l]} ${wd}` : wd; }
+    for (const wd of String(t).split(/\s+/)) { const l = out.length - 1; if (out[l] && (out[l] + ' ' + wd).length > per) out.push(wd); else out[l] = out[l] ? `${out[l]} ${wd}` : wd; }
     return out; };
   const slot = cyc ? 170 : W / Math.max(n, 1), boxes = ns.map(x => { const ls = wrap(x.text, slot - 28);
     return {ls, w: Math.min(slot - 28, Math.max(64, 8 * Math.max(...ls.map(l => l.length)) + 26)), h: LH * ls.length + 16}; });
@@ -610,7 +692,7 @@ Rupaka.block('flow', (b, ctx) => {
    With no answer at all, the gate reveals with no verdict. Rupaka.options(host, id) reads the options as opts() gives them.
    Rupaka.open(host, id) opens a closed gate again with reopen(), as Try another does, but it does not move the focus. */
 Rupaka.block('gate', (b, ctx) => {
-  const {el, fmt, show} = Rupaka, s = ctx.s, id = b.id;
+  const {el, fmt, rich, show} = Rupaka, s = ctx.s, id = b.id;
   s.st.gate[id] = 'open';
   let picked = null, said = '', seen = '';
   const opts = () => Array.isArray(b.options) ? b.options : (s.get(b.options.from) || []);
@@ -638,7 +720,7 @@ Rupaka.block('gate', (b, ctx) => {
   }
   const tell = (c, ok, a) => {
     said = c; say('');
-    verdict.replaceChildren(said ? `${said} ` : '', 'You said ', el('b', {class: ok ? 'ok' : 'no', text: show(picked)}), '. ',
+    verdict.replaceChildren(...(said ? [...rich(said), ' '] : []), 'You said ', el('b', {class: ok ? 'ok' : 'no', text: show(picked)}), '. ',
       ok ? el('span', {class: 'ok', text: 'That is right.'}) : el('span', {}, 'It is ', el('b', {class: 'ok', text: show(a)}), '.'), stale);
   };
   function commit() {
@@ -689,7 +771,7 @@ Rupaka.block('gate', (b, ctx) => {
     if (e.target.closest('.opts')) box.children[j].focus();
   });
   s.on(() => {
-    q.textContent = fmt(b.prompt, s.st);
+    q.replaceChildren(...rich(b.prompt, s.st));
     if (!Array.isArray(b.options) && open() && !opts().some(o => o === picked)) picked = null;
     paint();
   });

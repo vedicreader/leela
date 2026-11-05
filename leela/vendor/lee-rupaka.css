@@ -45,6 +45,7 @@
 [data-rk-theme="paper"] .rk .rk-title { font-size: 26px; }
 .rk-title { font: 400 22px/1.3 var(--rk-head); margin: 0 0 var(--rk-s1); color: var(--rk-fg); }
 .rk-ask { color: var(--rk-ink2); margin: 0; }
+.rk strong { color: var(--rk-fg); font-weight: 600; }   /* the **bold** of a rich text (Rupaka.rich) */
 .rk-mode { font: 500 var(--rk-t-lbl)/1.4 var(--rk-serif); letter-spacing: .14em; text-transform: uppercase; color: var(--rk-mute); margin: 0 0 var(--rk-s1); }
 .rk-b { margin: var(--rk-s4) 0; }
 .rk-title + .rk-b, .rk-ask + .rk-b { margin-top: var(--rk-s5); }
@@ -77,6 +78,16 @@
 }
 .rk button:focus-visible { outline: 2px solid var(--rk-acc); outline-offset: 2px; }
 .rk [hidden] { display: none !important; }
+/* Ask about this: a quiet link-like control at the end of a demo (Rupaka.ask) */
+.rk-asker { margin-top: var(--rk-s4); }
+.rk .rk-asker .rk-askopen { border: 0; background: none; padding: 2px 0; color: var(--rk-mute); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, var(--rk-mute) 45%, transparent); }
+.rk .rk-asker .rk-askopen:hover { background: none; color: var(--rk-fg); }
+.rk-asker form { display: flex; gap: var(--rk-s2); align-items: center; margin-top: var(--rk-s2); }
+.rk-asker form[hidden] { display: none; }
+.rk-asker input { flex: 1; min-width: 0; font: 16px/1.5 var(--rk-serif); color: var(--rk-fg); background: transparent; border: 0;
+                  border-bottom: 1px solid color-mix(in srgb, var(--rk-fg) 22%, transparent); padding: 4px 2px; }
+.rk-asker input:focus { outline: none; border-bottom-color: var(--rk-acc); }
+.rk-asker input::placeholder { color: var(--rk-mute); font-style: italic; opacity: 1; }
 
 /* blocks/axis/axis.css */
 .rk-axis .grid .hair { stroke: color-mix(in srgb, var(--rk-line) 70%, transparent); stroke-width: 1; }
@@ -99,7 +110,6 @@
 
 /* blocks/caption/caption.css */
 .rk-caption p { color: var(--rk-ink2); font-size: 16px; margin: 0; }
-.rk-caption b { color: var(--rk-fg); font-weight: 600; }
 
 /* blocks/choice/choice.css */
 .rk-choice .opts { display: flex; gap: var(--rk-s2); flex-wrap: wrap; }
@@ -119,6 +129,30 @@
 .rk-flow .node { animation: rk-rise var(--rk-dur-3) var(--rk-ease) backwards; animation-delay: calc(var(--i) * 80ms); }
 .rk-flow .edge path { stroke-dasharray: 1; animation: rk-line var(--rk-dur-3) var(--rk-ease) backwards; animation-delay: calc(var(--i) * 80ms); }
 @keyframes rk-line { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+/* The HTML row: a box grows with its words and wraps them inside; an arrow keeps its own gap. In a column under 480 px, the row is a list. */
+.rk-flow .chain { container-type: inline-size; }
+.rk-flow .line { display: flex; flex-wrap: wrap; row-gap: var(--rk-s3); }
+.rk-flow .step { display: flex; align-items: stretch; flex: 1 1 0; max-width: 16em; }
+.rk-flow .step:has(> .edge) { flex-basis: 46px; }   /* the gap of a plain arrow, so that each box gets the same width */
+.rk-flow .chain .node { flex: 1 1 auto; min-width: 5.5em; box-sizing: border-box; padding: 6px 10px; font-size: 15px; line-height: 1.35; text-align: center;
+  overflow-wrap: break-word; display: grid; place-items: center; color: var(--rk-fg); border: 1.5px solid var(--rk-in); border-radius: 6px;
+  background: color-mix(in srgb, var(--rk-in) 10%, var(--rk-bg)); }
+.rk-flow .chain .edge { flex: none; align-self: center; min-width: 30px; margin: 0 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; position: relative; }
+.rk-flow .chain .et { font-size: 13px; line-height: 1.2; color: var(--rk-ink2); white-space: nowrap; }
+.rk-flow .chain .ln { align-self: stretch; height: 1.5px; background: var(--rk-ink2); position: relative; }
+.rk-flow .chain .ln::after { content: ''; position: absolute; right: 1px; top: 50%; width: 7px; height: 7px; border: solid var(--rk-ink2); border-width: 1.5px 1.5px 0 0;
+  transform: translateY(-50%) rotate(45deg); }
+.rk-flow .chain .sk { position: absolute; left: 3px; right: 7px; bottom: -3px; height: 1px; background: var(--rk-ink2); opacity: .45; rotate: -.5deg; }
+.rk-flow .chain .node, .rk-flow .chain .edge { animation: rk-draw var(--rk-dur-2) var(--rk-ease) backwards; animation-delay: calc(var(--i) * 80ms); }
+@container (max-width: 480px) {
+  .rk-flow .line { flex-direction: column; }
+  .rk-flow .step { flex-direction: column; max-width: none; }
+  .rk-flow .chain .edge { flex-direction: row-reverse; min-width: 0; margin: 6px 0; gap: 8px; }
+  .rk-flow .chain .ln { align-self: auto; width: 1.5px; height: 20px; }
+  .rk-flow .chain .ln::after { right: auto; top: auto; left: 50%; bottom: 1px; transform: translateX(-50%) rotate(135deg); }
+  .rk-flow .chain .sk { left: auto; right: -3px; top: 3px; bottom: 7px; width: 1px; height: auto; }
+  .rk-flow .chain .et { position: absolute; left: calc(50% + 10px); }
+}
 
 /* blocks/force/force.css */
 /* force: the chip style is in label3d.css. */
