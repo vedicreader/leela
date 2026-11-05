@@ -2,6 +2,14 @@
 
 <!-- do not remove -->
 
+## 0.1.16
+
+- Leela asks before it opens another folder. When a link, a definition, a traceback, Finder or the agent opens a file from a checkout that is not open, Leela shows the file and asks: "This file is in <repo>. Open <repo> as a folder?" Only Open adds and remembers the folder. Open Folder, Add folder, the recent list and a folder dropped on the Dock still open at once. Before, Leela added the folder without a question.
+- A rupaka demo in a .md file draws in the preview, and draws again after you close and open the file. Before, the fence showed as code.
+- A demo's prediction comes back after a reload or a restart. Leela reads the predictions that it filed and settles each gate, so a gated 3D scene shows again.
+- A 3D scene draws again after a tab switch or after you close and open the notebook. Before, the box stayed white: the scene had lost its WebGL context. Leela now mounts it again with its values.
+- The test suite and the tools that serve Leela use their own config folder, never `~/.config/leela`.
+
 ## 0.1.15
 
 Needs ramabana 0.2.106 and rishi 0.1.67 or later, not one exact release.
