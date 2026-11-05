@@ -5,7 +5,7 @@ from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
 from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
-from .ui import DocPage, LookupPage, OpenedPage, Page, StepPage
+from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect']
 
@@ -154,9 +154,11 @@ def connect(app, ctx):
         except Exception: return say('The learning store is locked or cannot be read.', 503)
         return await open_now(req, q, v, root, f.get('pane') == '1')
     async def open_now(req, q, v, root, pane=False):
-        "Open the lesson of the `find_step` result `v`, or abhyasa's learning copy of its notebook, or the vault notebook `q.doc`, each in the project of the learner's notebook; then the IDE at the cell `q.cell`, or the opened page in the pane."
+        "Open the lesson of the `find_step` result `v`, or abhyasa's learning copy of its notebook, or the vault notebook `q.doc`; then the IDE at the cell `q.cell`, or the opened page in the pane. Adds no folder: one the file needs is offered beside a loose tab, or asked for on a 409 page in a folder window."
         from abhyasa.contract import handoff
         from ..fs.fs import Unsafe
+        from ...core.projects import loose_root
+        from ...hub import declined
         from .learn import Taken, not_found, open_step, project_root
         say = lambda text, code=200: said(req, root, text, code, pane=pane)
         what = 'open the notebook' if q.doc else 'write the lesson'
@@ -164,9 +166,12 @@ def connect(app, ctx):
         if v is not None and v.kind == 'missing': return say(not_found(q, ctx.memory.path))
         if v is not None and v.kind == 'done': return say('This walk is done.')
         try:
-            if q.doc: path = project_root(ctx.session, ctx.fs, await off_loop(read_doc, ctx.memory, q))
-            else: path = open_step(ctx.session, ctx.fs, v, q)
-            ctx.session.open_external(opened := path)
+            if q.doc: path, need = project_root(ctx.session, ctx.fs, await off_loop(read_doc, ctx.memory, q))
+            else: path, need = open_step(ctx.session, ctx.fs, v, q)
+            if need and ctx.fs.loose is None and ctx.fs.roots: return FtResponse(FolderPage(path.name, path, need, pane=pane, root=root), status_code=409, headers=HEADERS)
+            if need and ctx.fs.loose is None: ctx.session.add_root(loose_root(), loose=True)
+            t = ctx.session.open_external(opened := path)
+            if need and not declined(need[0]): ctx.session.offers[t.path], ctx.session.offer_also[t.path] = str(need[0]), [str(a) for a in need[1:]]
         except Taken as e: return say(str(e), 409)
         except ValueError as e: return say(str(e), 400)
         except Unsafe as e: return say(f'Leela could not {what}. {e}', 403)

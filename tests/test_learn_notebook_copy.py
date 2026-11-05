@@ -16,6 +16,9 @@ def test_open_opens_the_learning_copy_and_writes_nothing(rig, tmp_path_factory):
     copy = copy_walk(lr, j, tmp_path_factory.mktemp('vault'))
     was = copy.read_bytes()
     r = c.post('/learn/open', data=dict(walk=JID, step='0'), follow_redirects=False)
+    assert r.status_code == 409 and ws.tab is None and not ws.fs.covers(copy.parent.resolve()), 'the copies folder is asked for, not added'
+    ws.add_root(copy.parent)
+    r = c.post('/learn/open', data=dict(walk=JID, step='0'), follow_redirects=False)
     assert r.status_code == 303 and ws.tab.path == str(copy) and copy.read_bytes() == was
     assert not (root/'lessons').exists()   # no lesson of its own
     assert Notebook.load(copy)[0].source.startswith('# DDPM')

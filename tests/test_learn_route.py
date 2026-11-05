@@ -539,14 +539,17 @@ def bare(tmp_path, monkeypatch, *roots, loose=None):
     finally: ws.shutdown_now()
 
 def test_open_with_no_folder_uses_the_fixed_folder_twice(tmp_path, monkeypatch):
+    """With no folder open the lesson is a loose tab: the lessons folder is never a root, so no handoff adds a folder."""
+    from leela.core.projects import loose_root
     with bare(tmp_path, monkeypatch) as (c, ws, fixed, seen):
         assert ws.project_root is None
         to_ide(opened(c, walk=JID, step='0'))
         p = fixed/f'{JID}-0.ipynb'
-        assert p.is_file() and list(ws.fs.roots) == [fixed] and ws.tab.path == str(p) and seen == [str(p)]
+        assert p.is_file() and list(ws.fs.roots) == [loose_root()] and ws.fs.loose == loose_root() and ws.tab.path == str(p) and seen == [str(p)]
+        assert not ws.fs.covers(fixed) and ws.offers == {}, 'the lessons folder is not a root and is not offered'
         t = p.stat().st_mtime_ns
         to_ide(opened(c, walk=JID, step='0'))
-        assert p.stat().st_mtime_ns == t and not (fixed/'lessons').exists() and list(ws.fs.roots) == [fixed] and len(ws.tabs) == 1
+        assert p.stat().st_mtime_ns == t and not (fixed/'lessons').exists() and list(ws.fs.roots) == [loose_root()] and len(ws.tabs) == 1
         assert opened(c, topic='Softmax').status_code == 303 and (fixed/'softmax.ipynb').is_file()
         assert sorted(x.name for x in fixed.iterdir()) == [f'{JID}-0.ipynb', 'softmax.ipynb']
 
@@ -559,7 +562,7 @@ def test_open_with_the_fixed_folder_already_open_or_covered(tmp_path, monkeypatc
         for _ in range(2): to_ide(opened(c, walk=JID, step='0'))
         p = fixed/f'{JID}-0.ipynb'
         assert p.is_file() and ws.tab.path == str(p) and not (fixed/'lessons').exists() and len(ws.tabs) == 1
-        assert list(ws.fs.roots) == (before + [fixed] if case == 'loose' else before) and len(set(ws.fs.roots)) == len(ws.fs.roots)
+        assert list(ws.fs.roots) == before and len(set(ws.fs.roots)) == len(ws.fs.roots), 'the lessons folder is not added'
         if case != 'fixed_alone': assert ws.fs.roots[0] == loose.resolve() and ws.fs.loose == loose.resolve()
 
 def test_open_with_no_folder_leaves_no_folder_open_when_the_file_is_taken(tmp_path, monkeypatch):

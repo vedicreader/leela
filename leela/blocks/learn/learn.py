@@ -93,13 +93,12 @@ def _linked(p) -> bool:
     return any(x.is_symlink() for x in (p, *p.parents) if not Path.home().is_relative_to(x))
 
 def lessons_folder(session, fs) -> tuple[Path, bool]:
-    "`lessons` in the project folder, or `LESSONS` with no folder open or a project folder that holds it; and whether this call made `LESSONS` a root."
+    "`lessons` in the project folder, or `LESSONS` with no folder open or a project folder that holds it; and whether the lesson there is a loose file, `LESSONS` not being a root."
     root = session.project_root
     if root is not None and root != fs.loose and not LESSONS.resolve().is_relative_to(root): return root/'lessons', False
     if _linked(LESSONS): raise ValueError('The lessons folder is a symbolic link. Leela does not write a lesson through a link.')
     if fs.covers(LESSONS.resolve()): return LESSONS, False
     LESSONS.mkdir(parents=True, exist_ok=True)
-    session.add_root(LESSONS)
     return LESSONS, True
 
 def notebook_copy(j) -> Path|None:
@@ -108,23 +107,21 @@ def notebook_copy(j) -> Path|None:
     except ImportError: return None
     return copy_of(j)
 
-def project_root(session, fs, nb) -> Path:
-    "The project of the learner's notebook `nb` (its checkout, else its folder), made a root when no root covers it: Leela runs the notebook there, in that project's environment."
+def project_root(session, fs, nb) -> tuple[Path, list]:
+    "The learner's notebook `nb`, and its project (its checkout, else its folder) in a list when no root covers it: Leela runs the notebook there, in that project's environment. Adds nothing."
     from ...core.projects import workspace_for
     nb = Path(nb).resolve()
     if not nb.is_file() or nb.suffix != '.ipynb': raise ValueError(f'{nb.name} is not a notebook on this computer.')
-    if not fs.covers(nb):
-        if (d := workspace_for(nb)) is None: raise ValueError(f'Leela does not open a folder as large as the one that holds {nb.name}.')
-        session.add_root(d)
-    return nb
+    if fs.covers(nb): return nb, []
+    if (d := workspace_for(nb)) is None: raise ValueError(f'Leela does not open a folder as large as the one that holds {nb.name}.')
+    return nb, [d]
 
-def copy_root(session, fs, copy) -> Path:
-    "`copy`, with its folder made a root when no root covers it, and the project of the notebook it copies made a root too, so the copy runs in that folder."
+def copy_root(session, fs, copy) -> tuple[Path, list]:
+    "`copy`, and the folders no root covers of the project of the notebook it copies and of the copy itself, project first. Adds nothing."
     from abhyasa.contract import copy_home
     if _linked(copy): raise ValueError('The learning copy is in a symbolic link. Leela does not open a lesson through a link.')
-    if (home := copy_home(copy)) is not None: project_root(session, fs, home/copy.name)
-    if not fs.covers(copy.parent.resolve()): session.add_root(copy.parent)
-    return copy
+    need = project_root(session, fs, home/copy.name)[1] if (home := copy_home(copy)) is not None else []
+    return copy, need + ([] if fs.covers(copy.parent.resolve()) else [copy.parent.resolve()])
 
 def doc_notebook(lr, q) -> Path:
     "The file of the notebook `q.doc` on vault shelf `q.shelf`. `ValueError` when it is not a notebook on this computer."
@@ -132,8 +129,8 @@ def doc_notebook(lr, q) -> Path:
     if not (f := nb_file(lr, q.doc, q.shelf or 'store')): raise ValueError('This notebook is not in your learning store, or its file is not on this computer.')
     return Path(f[1])
 
-def open_step(session, fs, v, q) -> Path:
-    """The path of the lesson for the `find_step` result `v` of the handoff `q`: abhyasa's learning copy for a notebook walk, else the lesson, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. A reopened lesson whose tool environment is ready and not in its meta gets it in the file and the open tab. A refusal or a failed write closes a `LESSONS` root it opened."""
+def open_step(session, fs, v, q) -> tuple[Path, list]:
+    """The path of the lesson for the `find_step` result `v` of the handoff `q`, and the folders it needs that no root covers: abhyasa's learning copy for a notebook walk, else the lesson, written when missing and reopened when its meta names the same step or topic; `Taken` for any other file there. With no folder open the lesson is a loose file in `LESSONS`. A reopened lesson whose tool environment is ready and not in its meta gets it in the file and the open tab."""
     from ..nb.lesson import lesson_notebook, save_lesson
     from ..nb.nb import Notebook
     if v.kind == 'step' and (copy := notebook_copy(v.j)): return copy_root(session, fs, copy)
@@ -155,24 +152,30 @@ def open_step(session, fs, v, q) -> Path:
         what, file, nb = 'idea', f'{slug}.ipynb', lesson_notebook(v.name)
         nb.meta['lesson']['topic'] = slug
         mine = lambda m: m.get('topic') == slug and 'walk' not in m
+    folder, loose = lessons_folder(session, fs)
     def pick(folder):
         p = folder/file
         if not (p.exists() or p.is_symlink()): return p
         if p.is_file() and not p.is_symlink() and p.stat().st_size > MAX_EDIT_BYTES:
             raise Taken(f'{p.name} is in the lessons folder and is too large for Leela to check. Move it or rename it, then open the lesson again.')
-        try: m = p.is_file() and not p.is_symlink() and Notebook.load(fs._check(p, must_exist=True)).meta.get('lesson')
+        try: m = p.is_file() and not p.is_symlink() and Notebook.load(p if loose else fs._check(p, must_exist=True)).meta.get('lesson')
         except Exception: m = None
         if isinstance(m, dict) and mine(m): return p
         raise Taken(f'{p.name} is in the lessons folder and is not the lesson for this {what}. Move it or rename it, then open the lesson again.')
-    folder, made = lessons_folder(session, fs)
-    try: p = save_lesson(fs, folder, pick, nb)
-    except Exception:
-        if made: session.drop_root(folder, closed=False)
-        raise
+    if loose:
+        from ...core.projects import loose_root
+        made = fs.loose is None and session.add_root(loose_root(), loose=True)
+        try:
+            if not ((p := pick(folder)).exists() or p.is_symlink()): nb.save(p)
+            fs.admit(p)
+        except Exception:
+            if made: session.drop_root(made, closed=False)
+            raise
+    else: p = save_lesson(fs, folder, pick, nb)
     if ready and Notebook.load(p).meta['lesson'].get('env') != ready:
         from ..nb.lesson import bind_env
         bind_env(fs, p, ready, session)
-    return p
+    return p, []
 
 PKG = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}(\[[A-Za-z0-9._,-]{1,64}\])?((==|>=|<=|~=|<|>)[A-Za-z0-9.*+!-]{1,32})?')
 _NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')

@@ -1,9 +1,10 @@
 from fasthtml.common import A, Blockquote, Body, Button, Code, Div, Form, H1, Head, Hidden, Html, Input, Link, Main, Meta, Nav, NotStr, P, Pre, Script, Section, Span, Strong, Title
+from pathlib import Path
 from ...core.text import md_html
 from ...core.web import asset
 from ..settings.settings import theme_boot
 
-__all__ = ['Page', 'StepPage', 'DocPage', 'OpenedPage', 'LookupPage']
+__all__ = ['Page', 'StepPage', 'DocPage', 'OpenedPage', 'LookupPage', 'FolderPage']
 
 # A frame takes the IDE's theme over its own saved one, and follows it when it changes.
 FOLLOW = """try { if (window.parent !== window) { const d = document.documentElement, p = window.parent.document.documentElement;
@@ -102,6 +103,20 @@ def OpenedPage(title, here, pane:bool=False, root=None):
     "The page after a lesson opens: the step's title, the line `Opened in Leela.` and a link back to the step at `here`, when there is one."
     back = here + '&pane=1' if pane and here else here
     return Page(title, P('Opened in Leela.', cls='lee-learn-line'), P(A('Back to the step', href=back, cls='lee-learn-back')) if here else None, pane=pane, root=root, here=here or None)
+
+#: The Open button of `FolderPage`: the server asks the person, then the folder's window opens.
+FOLDER_OPEN = """(async b => { const r = await fetch(b.dataset.url, {method: 'POST'}), d = await r.json().catch(() => ({error: r.statusText}));
+  if (!d.ok) return b.closest('main').append(Object.assign(document.createElement('p'), {className: 'lee-learn-line', textContent: d.error}));
+  if (window.pywebview?.api?.open_folder) return window.pywebview.api.open_folder(d.root);
+  if (window.parent !== window) window.open(d.url, '_blank'); else location.href = d.url; })(this)"""
+
+def FolderPage(title, file, need, pane:bool=False, root=None):
+    "The question when the lesson `file` is in folders this window does not have open, `need` project first, and the Open button that asks to add them."
+    from urllib.parse import urlencode
+    url = '/hub/open?' + urlencode([('path', str(need[0])), ('file', str(file)), ('folder', '1'), *(('also', str(a)) for a in need[1:])])
+    name = Path(need[0]).name
+    return Page(title, P(f'This lesson is in {name}, which this window does not have open. Open {name} as a folder?', cls='lee-learn-line', title=str(need[0])),
+                P(Button('Open', type='button', cls='lee-btn go', data_url=url, onclick=FOLDER_OPEN)), pane=pane, root=root)
 
 def _Hit(r, path):
     return Section(P(Strong(r['name']), ' ', Span(r['package'], cls='lee-learn-line'), ' ', Code(f"{r['path']}:{r['line']}")),
