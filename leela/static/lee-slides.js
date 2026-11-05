@@ -105,7 +105,7 @@ function slidesMount(spec) {
   const css = document.querySelector('meta[name="lee-rupaka-css"]')?.content;
   if (css) root.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: css}));
   root.append(inner); slidesRk(root, true);
-  try { window.Rupaka.mount(inner, spec); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
+  try { window.Rupaka.mount(inner, spec, {askable: false}); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
   return {host, inner};
 }
 

@@ -453,7 +453,7 @@ function presentOpen(r, fresh, path) {
   canvas.classList.toggle('blank', p.blank);
   // the presenter's own demo, with its answers, is the source of the room copy: one mirror for each mount, once rupaka has drawn it
   const demo = spec => {
-    const e = rupakaDraw(spec), d = {host: e.host, inner: e.inner, slug: spec.id, mirror: null, kept: {gates: {}, pick: {}, answers: {}}};
+    const e = rupakaDraw(spec, null, null, null, {askable: false}), d = {host: e.host, inner: e.inner, slug: spec.id, mirror: null, kept: {gates: {}, pick: {}, answers: {}}};
     // a demo that a run's output shows is not in the deck, so the server takes no move for it; both windows draw it from the room copy
     e.done.then(() => { if (!e.ok) return; slidesRk(e.host.shadowRoot); if (lee.present === p && p.slugs.has(d.slug)) presentMirror(p, d); });
     return d;

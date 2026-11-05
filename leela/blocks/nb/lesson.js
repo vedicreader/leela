@@ -97,8 +97,28 @@ function lessonRestore(id, src) {
     } catch (e) { console.warn('Leela demo restore:', e); }
   };
 }
+//: The demo's own words for an ask: its id, its step and the values of its state, as `rk-ask` gives them.
+const askAbout = d => [d.demo && `the demo "${d.demo}"`, d.step != null && `step ${d.step}`,
+  Object.keys(d.state || {}).length && 'values ' + Object.entries(d.state).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ')].filter(Boolean).join(', ');
+//: "Ask about this" in a notebook cell's demo: in a lesson, to the screen guide; else to the agent; each with the cell as context. Only a sent ask is taken (`preventDefault`), so rupaka says "Sent to the tutor".
+function lessonAsk(e) {
+  const at = e.composedPath(), cell = at.find(n => n.matches?.('.lee-cell[data-id]')), d = e.detail || {};
+  const c = cell && at.some(n => n.classList?.contains('lee-rupaka')) && lee.cells.find(x => x.id === cell.dataset.id);
+  if (!c) return;
+  const about = askAbout(d), n = lee.cells.indexOf(c) + 1;
+  if (lessonNotebook() && guideCell(c)) { e.preventDefault(); return lessonGuide(c.id, '', `${d.text || GUIDE_START + 'this demo.'}${about ? ` (${about})` : ''}`); }
+  if (lee.agentBusy) return status('The agent is working. Ask again when it finishes.', 'err');
+  leeAct('focus_agent');
+  const prompt = $('#agentprompt');
+  if (!prompt) return;
+  if (prompt.value.trim()) return status('Send or clear your message to the agent first.', 'err');
+  e.preventDefault();
+  prompt.value = `About cell ${n} of ${lee.path ? lee.path.split('/').pop() : 'this notebook'}${about ? `, ${about}` : ''}: ${d.text || 'What does this demo show?'}`;
+  return sendAgent();
+}
 // The Node harnesses load this file with no `document`.
 globalThis.document?.addEventListener('rk-predict', lessonPredict);
+globalThis.document?.addEventListener('rk-ask', lessonAsk);
 //: "I don't get…" on a lesson cell: one line goes to the screen guide, and its steps and sources show as plain text in the cell's output area until the board is drawn.
 const GUIDE_START = "I don't get ";
 const lessonNotebook = () => lee.cells.some(c => c.extra?.lesson);
@@ -185,8 +205,8 @@ async function guideShow(d, id, cell, b, live, mine) {
 const guideAsk = {n: 0, ctl: null};
 globalThis.document?.addEventListener('board:stop', e => { if (e.detail?.by === 'learner') guideAsk.ctl?.abort(); });
 //: Asks with events: the first step starts a streaming board and each next step is added to it, so step 1 draws before the model ends. A newer question aborts the older one, whose events then go nowhere.
-async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim()) {
-  const said = await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
+async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim(), asked = null) {
+  const said = asked ?? await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
   if (!said) return;
   const path = lee.path, tabKey = lee.tabKey, find = () => lee.tabKey === tabKey && $(`.lee-cell[data-id="${CSS.escape(id)}"]`);
   guideAsk.ctl?.abort();

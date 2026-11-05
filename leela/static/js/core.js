@@ -627,19 +627,19 @@ function rupakaRevive(e) {
   if (!lost) return;
   const s = e.inner.rupaka, state = Rupaka.state(e.inner), picks = {...e.inner.leePicks};
   for (const x of s.st.log || []) picks[x.gate] = x.picked == null ? null : String(x.picked);
-  Rupaka.mount(e.inner, e.spec); Rupaka.set(e.inner, state);
+  Rupaka.mount(e.inner, e.spec, e.opts); Rupaka.set(e.inner, state);
   rupakaSettle(e.inner, Object.fromEntries(Object.entries(s.st.gate).filter(([, v]) => v === 'done').map(([id]) => [id, picks[id] ?? null])));
 }
 //: `rupakaRevive` for each kept demo inside `root`, which was off the page.
 const rupakaReviveIn = root => { for (const e of rupaka.hosts.values()) if (root.contains(e.host)) rupakaRevive(e); };
-//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into. `restore(inner, spec)` runs once after the mount, before the host shows, and must not throw.
-function rupakaDraw(spec, key = null, pass = null, restore = null) {
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into. `restore(inner, spec)` runs once after the mount, before the host shows, and must not throw. `opts` goes to `Rupaka.mount`.
+function rupakaDraw(spec, key = null, pass = null, restore = null, opts = undefined) {
   let e = key && rupaka.hosts.get(key);
   if (!e) {
     const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
     host.attachShadow({mode: 'open'}).append(inner);
-    e = {host, inner, spec, ok: false, err: null, owner: pass?.owner};
-    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); })
+    e = {host, inner, spec, opts, ok: false, err: null, owner: pass?.owner};
+    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec, opts); })
       .then(async () => { if (restore) await restore(inner, spec); e.ok = true; }, err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);
   }

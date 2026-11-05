@@ -627,19 +627,19 @@ function rupakaRevive(e) {
   if (!lost) return;
   const s = e.inner.rupaka, state = Rupaka.state(e.inner), picks = {...e.inner.leePicks};
   for (const x of s.st.log || []) picks[x.gate] = x.picked == null ? null : String(x.picked);
-  Rupaka.mount(e.inner, e.spec); Rupaka.set(e.inner, state);
+  Rupaka.mount(e.inner, e.spec, e.opts); Rupaka.set(e.inner, state);
   rupakaSettle(e.inner, Object.fromEntries(Object.entries(s.st.gate).filter(([, v]) => v === 'done').map(([id]) => [id, picks[id] ?? null])));
 }
 //: `rupakaRevive` for each kept demo inside `root`, which was off the page.
 const rupakaReviveIn = root => { for (const e of rupaka.hosts.values()) if (root.contains(e.host)) rupakaRevive(e); };
-//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into. `restore(inner, spec)` runs once after the mount, before the host shows, and must not throw.
-function rupakaDraw(spec, key = null, pass = null, restore = null) {
+//: A host is kept under `key` so a re-render hands back the one already mounted, state intact; no key mounts fresh. `inner` is the element `Rupaka.mount` drew into. `restore(inner, spec)` runs once after the mount, before the host shows, and must not throw. `opts` goes to `Rupaka.mount`.
+function rupakaDraw(spec, key = null, pass = null, restore = null, opts = undefined) {
   let e = key && rupaka.hosts.get(key);
   if (!e) {
     const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
     host.attachShadow({mode: 'open'}).append(inner);
-    e = {host, inner, spec, ok: false, err: null, owner: pass?.owner};
-    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec); })
+    e = {host, inner, spec, opts, ok: false, err: null, owner: pass?.owner};
+    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec, opts); })
       .then(async () => { if (restore) await restore(inner, spec); e.ok = true; }, err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);
   }
@@ -3512,8 +3512,28 @@ function lessonRestore(id, src) {
     } catch (e) { console.warn('Leela demo restore:', e); }
   };
 }
+//: The demo's own words for an ask: its id, its step and the values of its state, as `rk-ask` gives them.
+const askAbout = d => [d.demo && `the demo "${d.demo}"`, d.step != null && `step ${d.step}`,
+  Object.keys(d.state || {}).length && 'values ' + Object.entries(d.state).map(([k, v]) => `${k} = ${JSON.stringify(v)}`).join(', ')].filter(Boolean).join(', ');
+//: "Ask about this" in a notebook cell's demo: in a lesson, to the screen guide; else to the agent; each with the cell as context. Only a sent ask is taken (`preventDefault`), so rupaka says "Sent to the tutor".
+function lessonAsk(e) {
+  const at = e.composedPath(), cell = at.find(n => n.matches?.('.lee-cell[data-id]')), d = e.detail || {};
+  const c = cell && at.some(n => n.classList?.contains('lee-rupaka')) && lee.cells.find(x => x.id === cell.dataset.id);
+  if (!c) return;
+  const about = askAbout(d), n = lee.cells.indexOf(c) + 1;
+  if (lessonNotebook() && guideCell(c)) { e.preventDefault(); return lessonGuide(c.id, '', `${d.text || GUIDE_START + 'this demo.'}${about ? ` (${about})` : ''}`); }
+  if (lee.agentBusy) return status('The agent is working. Ask again when it finishes.', 'err');
+  leeAct('focus_agent');
+  const prompt = $('#agentprompt');
+  if (!prompt) return;
+  if (prompt.value.trim()) return status('Send or clear your message to the agent first.', 'err');
+  e.preventDefault();
+  prompt.value = `About cell ${n} of ${lee.path ? lee.path.split('/').pop() : 'this notebook'}${about ? `, ${about}` : ''}: ${d.text || 'What does this demo show?'}`;
+  return sendAgent();
+}
 // The Node harnesses load this file with no `document`.
 globalThis.document?.addEventListener('rk-predict', lessonPredict);
+globalThis.document?.addEventListener('rk-ask', lessonAsk);
 //: "I don't get…" on a lesson cell: one line goes to the screen guide, and its steps and sources show as plain text in the cell's output area until the board is drawn.
 const GUIDE_START = "I don't get ";
 const lessonNotebook = () => lee.cells.some(c => c.extra?.lesson);
@@ -3600,8 +3620,8 @@ async function guideShow(d, id, cell, b, live, mine) {
 const guideAsk = {n: 0, ctl: null};
 globalThis.document?.addEventListener('board:stop', e => { if (e.detail?.by === 'learner') guideAsk.ctl?.abort(); });
 //: Asks with events: the first step starts a streaming board and each next step is added to it, so step 1 draws before the model ends. A newer question aborts the older one, whose events then go nowhere.
-async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim()) {
-  const said = await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
+async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim(), asked = null) {
+  const said = asked ?? await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
   if (!said) return;
   const path = lee.path, tabKey = lee.tabKey, find = () => lee.tabKey === tabKey && $(`.lee-cell[data-id="${CSS.escape(id)}"]`);
   guideAsk.ctl?.abort();
@@ -4550,7 +4570,7 @@ function slidesMount(spec) {
   const css = document.querySelector('meta[name="lee-rupaka-css"]')?.content;
   if (css) root.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: css}));
   root.append(inner); slidesRk(root, true);
-  try { window.Rupaka.mount(inner, spec); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
+  try { window.Rupaka.mount(inner, spec, {askable: false}); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
   return {host, inner};
 }
 
@@ -5137,7 +5157,7 @@ function presentOpen(r, fresh, path) {
   canvas.classList.toggle('blank', p.blank);
   // the presenter's own demo, with its answers, is the source of the room copy: one mirror for each mount, once rupaka has drawn it
   const demo = spec => {
-    const e = rupakaDraw(spec), d = {host: e.host, inner: e.inner, slug: spec.id, mirror: null, kept: {gates: {}, pick: {}, answers: {}}};
+    const e = rupakaDraw(spec, null, null, null, {askable: false}), d = {host: e.host, inner: e.inner, slug: spec.id, mirror: null, kept: {gates: {}, pick: {}, answers: {}}};
     // a demo that a run's output shows is not in the deck, so the server takes no move for it; both windows draw it from the room copy
     e.done.then(() => { if (!e.ok) return; slidesRk(e.host.shadowRoot); if (lee.present === p && p.slugs.has(d.slug)) presentMirror(p, d); });
     return d;
