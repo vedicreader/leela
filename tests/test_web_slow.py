@@ -57,14 +57,14 @@ async def _launch(pw, browser='chromium'):
     kw = {}
     if browser == 'chromium':
         if CHROMIUM: kw['executable_path'] = CHROMIUM
-        if _os.geteuid() == 0: kw['args'] = ['--no-sandbox']
+        kw['args'] = ['--mute-audio'] + (['--no-sandbox'] if _os.geteuid() == 0 else [])
     try: return await getattr(pw, browser).launch(**kw)
     except Exception as e: pytest.skip(f'no {browser} for playwright: {e}')
 
 def _launch_sync(pw):
     "The blocking twin of `_launch`, for the sync-API tests."
     kw = {'executable_path': CHROMIUM} if CHROMIUM else {}
-    if _os.geteuid() == 0: kw['args'] = ['--no-sandbox']
+    kw['args'] = ['--mute-audio'] + (['--no-sandbox'] if _os.geteuid() == 0 else [])
     kw['headless'] = True
     try: return pw.chromium.launch(**kw)
     except Exception as e: pytest.skip(f'no chromium for playwright: {e}')
