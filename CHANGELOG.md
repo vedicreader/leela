@@ -2,6 +2,12 @@
 
 <!-- do not remove -->
 
+## 0.1.20
+
+Needs kunda 0.0.11 and ipykernel 7.4.
+
+- A cell no longer hangs after it runs for about 2 s. ipykernel 7.0 to 7.3 can stop reading its shell socket when a request comes at the same moment as a reply goes out (ipykernel PR #1529). Kunda's check for a lost reply sends a request about 2 s into a cell, so such a cell could hang until the kernel restarted. Leela and kunda now need ipykernel 7.4.
+
 ## 0.1.19
 
 Needs koshas 0.1.22 and litesearch 0.1.63.
