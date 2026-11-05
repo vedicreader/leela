@@ -2,6 +2,16 @@
 
 <!-- do not remove -->
 
+## 0.1.19
+
+Needs koshas 0.1.22 and litesearch 0.1.63.
+
+- The git history panel asks the repo that its list came from. Before, showing a file of a commit in another repo's list could ask the active file's repo and fail with "unknown branch, tag, or commit". When the panel moves to another repo, it closes the old repo's open commit, compare and review.
+- The git panel and the history refresh when a file changes on disk and when a commit, a checkout or a fetch happens outside Leela. A burst of saves gives one refresh.
+- After a git action from the panel, the next repo switch moves the panel. Before, the panel stayed on the old repo.
+- Go to declaration uses the interpreter of the file's own folder. Before, it used the first open folder that had a `.venv`, and it could point into another project's packages. A package in that interpreter opens read-only.
+- The search panel shows a failed Kosha sync and its error, and it repaints the index header after each sync. Before, it said "synced" when the sync had failed.
+
 ## 0.1.18
 
 Needs kavacha 0.0.11.
