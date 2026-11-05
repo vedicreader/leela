@@ -98,7 +98,7 @@ function cellEl(c, i) {
     `<div class="lee-gutter" draggable="true" title="drag to move cell">` +
     `<button class="lee-cell-fold" title="collapse cell" aria-label="collapse cell">${lee.collapsedCells.has(c.id) ? '+' : '−'}</button>` +
     (c.cell_type === 'markdown' ? `<button class="lee-heading-caret" aria-label="collapse or expand this section"></button>` : '') +
-    `<div class="lee-execution-count" id="g-${c.id}">${gutterFor(c)}</div></div>` +
+    `<div class="lee-execution-count" id="g-${esc(c.id)}">${gutterFor(c)}</div></div>` +
     `<div class="lee-cellmain"><div class="lee-cell-chrome">` +
     `<button class="lee-cell-meta" data-cell-id="${esc(c.id)}" title="${esc(cellMetaTitle(c, i))}" ` +
     `onclick="event.stopPropagation();leeCopyCellId(this)">` +
@@ -106,20 +106,20 @@ function cellEl(c, i) {
     `<span class="lee-cell-size">${esc(cellKind(c))} · ${esc(plural(cellLines(c), 'line'))}</span>` +
     `<span class="lee-cell-id">${esc(c.id)}</span></button>` +
     `<span class="lee-cell-summary">${esc(String(c.source || '').trim().split('\n')[0] || 'empty cell')}</span>` +
-    `<span class="lee-cell-state ${state}" id="state-${c.id}" ` +
+    `<span class="lee-cell-state ${state}" id="state-${esc(c.id)}" ` +
     `title="${state === 'done' ? 'ran successfully in the current kernel' : state === 'error' ? 'run failed in the current kernel' : state === 'previous' ? 'saved output from a previous kernel; run to restore variables' : 'not run'}">${stateSvg(state)}</span>` +
-    `<time class="lee-cell-time" id="time-${c.id}" title="last execution time" ` +
+    `<time class="lee-cell-time" id="time-${esc(c.id)}" title="last execution time" ` +
     `${c.execution_ms == null ? 'hidden' : ''}>${esc(formatCellTime(c.execution_ms))}</time>` +
     `<button class="lee-cell-context" data-mode="${esc(c.context_mode || 'auto')}" ` +
     `onclick="event.stopPropagation();leeCellContext(${i})">${esc(contextLabel(c.context_mode || 'auto'))}</button>` +
     `<button class="lee-cell-slide" onclick="event.stopPropagation();leeCellSlide(this)"></button>` +
-    `<div class="lee-model-running" id="model-${c.id}" role="status" aria-live="polite" hidden>` +
+    `<div class="lee-model-running" id="model-${esc(c.id)}" role="status" aria-live="polite" hidden>` +
     `<span class="lee-running-dot" aria-hidden="true">●</span>` +
     `<span class="lee-running-copy">Model is running</span>` +
     `<span class="lee-running-time"> · starting</span></div>` +
     `<div class="lee-cellbtns">${cellButtons(i)}</div></div>` +
-    `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${c.id}"></div><div id="out-${c.id}"></div>` +
-    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${c.id}" data-guide-id="check"></div>` : ''}</div>`;
+    `${c.cell_type === 'markdown' ? mdCellHost(c) + '<button class="lee-heading-badge" hidden></button>' : ''}<div class="lee-cm" id="cm-${esc(c.id)}"></div><div id="out-${esc(c.id)}"></div>` +
+    `${isExercise(c) ? `<div class="lee-exercise" id="ex-${esc(c.id)}" data-guide-id="check"></div>` : ''}</div>`;
   paintCellSlide($('.lee-cell-slide', d), c);
   if (c.cell_type === 'markdown') {
     d.tabIndex = -1; paintMarkdownCell(d, c);
@@ -381,7 +381,7 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
 });
 //: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
 const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); const k = cached && c; rupakaFences(el, k ? `md:${c.id}` : null, k ? src : null, k ? lessonRestore(c.id, src) : null); };
-const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${c.id}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
+const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${esc(c.id)}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {
   const host = $('.lee-md-cell', el); if (!host) return;
@@ -569,6 +569,62 @@ function rupakaEl(d, raw, pass, i) {
   if (!e.ok && !e.err) e.done.then(() => { if (e.err) { e.host.remove(); fail(e.err); } rupakaRendered(d); });
   return d;
 }
+//: Rich output markup that runs no script and sends no request to Leela: allowlisted HTML, SVG and MathML, no handlers, links only to other sites, images also as `data:`, and no Leela class names.
+const RICH_TAGS = new Set(('a abbr address article aside b bdi bdo blockquote br caption center cite code col colgroup data dd del details dfn div dl dt em figcaption figure font footer h1 h2 h3 h4 h5 h6 header hr i img input ins kbd label legend li main mark meter nav ol p picture pre progress q rp rt ruby s samp section small source span strike strong style sub summary sup table tbody td tfoot th thead time tr tt u ul var wbr video audio ' +
+  'svg g defs symbol use path rect circle ellipse line polyline polygon text tspan textpath title desc metadata clippath mask pattern marker image lineargradient radialgradient stop filter foreignobject switch ' +
+  'feblend fecolormatrix fecomponenttransfer fecomposite feconvolvematrix fediffuselighting fedisplacementmap fedistantlight fedropshadow feflood fefunca fefuncb fefuncg fefuncr fegaussianblur femerge femergenode femorphology feoffset fepointlight fespecularlighting fespotlight fetile feturbulence ' +
+  'math semantics annotation annotation-xml mrow mi mo mn ms mtext mspace msup msub msubsup munder mover munderover mfrac msqrt mroot mtable mtr mtd mlabeledtr mstyle mpadded mphantom menclose merror mfenced mmultiscripts mprescripts none').split(' '));
+const RICH_ATTR_GONE = new Set('srcdoc srcset is formaction formtarget form name action attributename popover popovertarget popovertargetaction commandfor command interestfor autofocus accesskey ping background codebase longdesc lowsrc dynsrc'.split(' '));
+const RICH_OURS = /^(lee-|cm-|xterm|rk|stage-)/;
+const RICH_GONE = new Set('script iframe frame frameset object embed applet noscript noembed noframes template textarea select xmp button form base meta link set animate animatemotion animatetransform discard portal dialog slot'.split(' '));
+const RICH_MEDIA = /^data:(image\/(png|jpe?g|gif|webp|avif|svg\+xml)|video\/(mp4|webm|ogg)|audio\/(mpeg|mp4|wav|ogg|webm));base64,/i;
+//: Whether URL `v` on attribute `n` of `tag` may stay: `#…` inside the output, `data:` media where it is drawn, a link or an image on a site that is not this computer.
+function richUrl(tag, n, v) {
+  const u = v.replace(/[\x00-\x20\x7f-\x9f]+/g, '');
+  if (u.startsWith('#')) return true;
+  const media = n === 'src' && ['img', 'video', 'audio', 'source'].includes(tag) || n === 'href' && tag === 'image';
+  if (/^data:/i.test(u)) return media && RICH_MEDIA.test(u);
+  if (tag === 'a' && n === 'href') return /^mailto:/i.test(u) || richSite(u);
+  return (tag === 'img' && n === 'src' || tag === 'image' && n === 'href') && richSite(u);
+}
+function richSite(u) {
+  let url; try { url = new URL(u, location.href); } catch (_) { return false; }
+  const h = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return /^https?:$/.test(url.protocol) && url.origin !== location.origin && !/^(localhost|127\.\d+\.\d+\.\d+|::1|0\.0\.0\.0)$|\.localhost$/.test(h);
+}
+//: CSS with no request in it: no `@import`, and no `url()` or `image-set()` but an in-output `#` reference or a `data:` image.
+function richCss(css) {
+  css = String(css).replace(/\\([0-9a-f]{1,6})\s?/gi, (_, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10ffff) || 0xfffd)).replace(/\\(.)/g, '$1');
+  return css.replace(/@import[^;]*;?/gi, '').replace(/(-webkit-)?image-set\s*\(/gi, 'none(')
+    .replace(/url\s*\(\s*(['"]?)([^)]*)\)/gi, (m, q, v) => /^#|^data:image\/(png|jpe?g|gif|webp|avif|svg\+xml);base64,/i.test(v.replace(/['"\s]/g, '')) ? m : 'none');
+}
+//: `html` as a clean fragment. Parsed in a `<template>`, so nothing in it loads or runs before the walk.
+function richHtml(html) {
+  const t = document.createElement('template'); t.innerHTML = html;
+  const walk = root => {
+    for (const el of [...root.children]) {
+      const tag = el.localName.toLowerCase();
+      if (RICH_GONE.has(tag)) { el.remove(); continue; }
+      if (!RICH_TAGS.has(tag)) { walk(el); el.replaceWith(...el.childNodes); continue; }
+      if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'checkbox') { el.remove(); continue; }
+      for (const a of [...el.attributes]) {
+        const n = a.localName.toLowerCase();
+        if (n.startsWith('on') || RICH_ATTR_GONE.has(n) || (['href', 'src', 'poster', 'data', 'cite'].includes(n) && !richUrl(tag, n, a.value))) el.removeAttributeNode(a);
+        else if (n === 'style') a.value = richCss(a.value);
+        else if (n === 'class') a.value = a.value.split(/\s+/).filter(c => c && !RICH_OURS.test(c)).join(' ');
+        else if (/url\s*\(/i.test(a.value) && !/^\s*url\s*\(\s*#[^)]*\)\s*$/i.test(a.value)) el.removeAttributeNode(a);
+      }
+      if (tag === 'style') el.textContent = richCss(el.textContent);
+      if (tag === 'input') el.setAttribute('disabled', '');
+      if (tag === 'a') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+      walk(el);
+    }
+  };
+  walk(t.content);
+  return document.importNode(t.content, true);
+}
+//: A mime value as text: a saved notebook may keep it as a list of lines.
+const mimeText = v => Array.isArray(v) ? v.join('') : typeof v === 'string' ? v : null;
 function outputEl(o, c = null, i = 0) {
   const d = document.createElement('div');
   const tone = outputTone(o);
@@ -584,7 +640,7 @@ function outputEl(o, c = null, i = 0) {
   if (data[PLOTLY_MIME] != null) return plotlyFrame(d, data[PLOTLY_MIME]);
   if (data['image/png']) {
     const i = document.createElement('img'), m = o.metadata?.['image/png'] || {};
-    i.src = 'data:image/png;base64,' + data['image/png'];
+    i.src = 'data:image/png;base64,' + mimeText(data['image/png']);
     // A retina figure's width and height are half its pixels.
     if (m.width) i.width = m.width;
     if (m.height) i.height = m.height;
@@ -593,16 +649,22 @@ function outputEl(o, c = null, i = 0) {
   // Presence, not truthiness. Clearing a rich display is publishing an empty one of the same type:
   // fastprogress ends a progress bar with `HTML('')`, and testing the string sent that output down
   // to its `text/plain`, which for any rich object is the placeholder `<... object>` repr.
-  const rich = data['text/html'] ?? data['image/svg+xml'];
-  if (typeof data['text/html'] === 'string' && /<script[\s>]/i.test(data['text/html'])) return sandboxFrame(d, data['text/html'], 450);
-  const svg = data['text/html'] == null && data['image/svg+xml'] != null;
+  const html = mimeText(data['text/html']), svgText = mimeText(data['image/svg+xml']), rich = html ?? svgText;
+  if (html != null && /<script[\s/>]/i.test(html)) return sandboxFrame(d, html, 450);
+  const svg = html == null && svgText != null;
   if (svg) d.classList.add('lee-out-media');
   if (rich != null) {
     // Rich reprs get their own shadow root: pandas ships a <style> block with every DataFrame and
     // `scoped` has been dead for years, so an output could restyle the IDE around it. Very large
     // HTML stays unparsed until requested, because parsing a multi-megabyte table on the main
     // thread triggers Chrome's hang dialog.
-    const show = () => { d.textContent = ''; d.attachShadow({mode: 'open'}).innerHTML = (svg ? '<style>svg{display:block;max-width:100%;height:auto}</style>' : '') + rich; };
+    // The shadow host sits inside `d`, which contains its paint: a `:host` or `position: fixed` rule cannot cover the IDE.
+    const show = () => {
+      d.textContent = ''; d.style.contain = 'paint';
+      const r = d.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out-rich'})).attachShadow({mode: 'open'});
+      if (svg) r.append(Object.assign(document.createElement('style'), {textContent: 'svg{display:block;max-width:100%;height:auto}'}));
+      r.append(richHtml(rich));
+    };
     if (rich.length > MAX_OUTPUT_CHARS) {
       const folded = document.createElement('button'); folded.className = 'lee-output-fold';
       folded.textContent = `render large rich output (${Math.round(rich.length / 1024).toLocaleString()}kb)`;

@@ -20,7 +20,7 @@ PAINT = r"""(outputs) => {
   const c = lee.cells[0]; c.outputs = outputs; renderOutputs(c);
   const box = document.getElementById('out-' + c.id);
   const hosts = [...box.querySelectorAll('.lee-out')];
-  const bars = hosts.map(h => h.shadowRoot && h.shadowRoot.querySelector('progress'));
+  const bars = hosts.map(h => h.querySelector('.lee-out-rich')?.shadowRoot?.querySelector('progress'));
   return {n: hosts.length, rendered: bars.every(Boolean), value: bars.map(b => b && b.value),
           code: box.querySelectorAll('.cm-content, pre, .lee-code-surface').length, text: box.textContent};
 }"""

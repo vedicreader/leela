@@ -313,7 +313,7 @@ function showGitFileDiff(path, patch = '', line = 0, rawPatch = '', notebook = f
   const name = String(path || '').split('/').pop(), parts = gitPatchParts(rawPatch || patch);
   const canPartial = !notebook && parts.hunks.length > 0 && options.group;
   const controls = canPartial ? `<button class="lee-btn" id="githunks">select hunks</button>` : '';
-  const m = modal(`<div class="lee-mhead">${esc(name)}<span class="sub">${options.label || 'working tree against HEAD'}${line ? ' · line ' + line : ''}</span>` +
+  const m = modal(`<div class="lee-mhead">${esc(name)}<span class="sub">${esc(options.label || 'working tree against HEAD')}${line ? ' · line ' + line : ''}</span>` +
     `<span class="lee-spacer"></span>${notebook ? '<button class="lee-btn active" id="gitcontent">cell content</button><button class="lee-btn" id="gitraw">raw notebook</button>' : ''}` +
     `${controls}<button class="lee-btn" id="gitexpand">expand</button></div>` +
     `<div class="lee-git-patch">${gitPatchHtml(patch)}</div>` +

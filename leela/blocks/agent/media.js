@@ -2,12 +2,13 @@
  * sees is a path, and a browser cannot draw a filename, so the bytes come separately. */
 function drawTurnMedia(out, media) {
   for (const m of (media || [])) {
-    const fig = document.createElement('figure');
+    // a tool names the mime type, so the URL is checked here, not trusted
+    const k = /^data:(image|video)\/[\w.+-]+;base64,[A-Za-z0-9+/=]*$/.exec(String(m.url || ''))?.[1];
+    if (!k) continue;
+    const fig = document.createElement('figure'), e = document.createElement(k === 'video' ? 'video' : 'img');
     fig.className = 'lee-agent-media';
-    fig.innerHTML = (m.mime || '').startsWith('video/')
-      ? `<video controls src="${m.url}"></video>`
-      : `<img src="${m.url}" alt="generated image">`;
-    out.after(fig);
+    if (k === 'video') e.controls = true; else e.alt = 'generated image';
+    e.src = m.url; fig.append(e); out.after(fig);
   }
 }
 

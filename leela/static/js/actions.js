@@ -507,7 +507,7 @@ async function activateGitDiffTab(key) {
 }
 function gitDiffNotebookHtml(patch, data) {
   const parts = gitPatchParts(patch);
-  if (!parts.hunks.length) return `<div class="lee-git-empty-state"><strong>No textual patch</strong><span>${data.path} has no line-level changes in this comparison.</span></div>`;
+  if (!parts.hunks.length) return `<div class="lee-git-empty-state"><strong>No textual patch</strong><span>${esc(data.path)} has no line-level changes in this comparison.</span></div>`;
   return `<div class="lee-diff-notebook">${parts.hunks.map((h, i) => { const title = h.split('\n')[0] || `hunk ${i + 1}`; return `<article class="lee-diff-cell"><header><button data-fold-diff aria-label="collapse hunk">−</button><strong>change ${i + 1}</strong><code>${esc(title)}</code><span class="lee-spacer"></span><small>${h.split('\n').filter(x => x.startsWith('+') && !x.startsWith('+++')).length} added · ${h.split('\n').filter(x => x.startsWith('-') && !x.startsWith('---')).length} removed</small></header><div class="lee-git-patch">${gitPatchHtml(h)}</div></article>`; }).join('')}</div>`;
 }
 window.openGitDiffTab = openGitDiffTab;
