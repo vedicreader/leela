@@ -4610,12 +4610,7 @@ async function codeSearch() {
   };
   $('#cstune', m).onclick = () => showPanel('weights');
   $('#cslog', m).onclick = () => showPanel('log');
-  api('/code/status').then(d => {
-    const el = $('#koshastatus', m); if (!el) return;
-    el.innerHTML = d.ok ? `<span class="ok">Kosha connected</span><span>${plural(Number(d.files || 0).toLocaleString(), 'file')}</span>` +
-      `<span>${plural(Number(d.packages || 0).toLocaleString(), 'package')}</span><span>${plural(Number(d.graph_nodes || 0).toLocaleString(), 'graph node')}</span>` +
-      `${d.stale_files ? `<span class="warn">${esc(plural(d.stale_files, 'stale file'))}</span>` : ''}` : `<span class="warn">${esc(d.note || 'Kosha unavailable')}</span>`;
-  }).catch(() => {});
+  paintKoshaStatus($('#koshastatus', m));
   api('/search/signals?days=30').then(d => {
     weightKeys = d.keys || {}; weightDefaults = d.defaults || {}; setWeights(d.weights || {});
     const s = d.summary || {}, el = $('#cssignals', m);
@@ -4623,9 +4618,11 @@ async function codeSearch() {
   }).catch(() => {});
   $('#kosharefresh', m).onclick = async () => {
     const button = $('#kosharefresh', m); button.disabled = true; button.textContent = 'syncing…';
-    try { await post('/code/sync'); button.textContent = 'synced'; status('Kosha code, notebooks and graph synced', 'ok'); if (input.value.trim()) search(); }
-    catch (e) { button.textContent = 'retry sync'; status(e.message || String(e), 'err'); }
-    finally { button.disabled = false; }
+    try {
+      const {err} = await runKoshaSync();
+      if (err) { button.textContent = 'retry sync'; status(err, 'err'); }
+      else { button.textContent = 'synced'; status('Kosha code, notebooks and graph synced', 'ok'); if (input.value.trim()) search(); }
+    } finally { button.disabled = false; }
   };
   $('#csrail', m).onclick = e => {
     const b = e.target.closest('[data-mode]'); if (!b) return;
@@ -4737,9 +4734,25 @@ async function renameSymbol() {
   }catch(e){status(e.message||String(e),'err');}
 }
 
+/* The Kosha header, repainted from `/code/status`; `err` is a failed sync, shown beside it. */
+async function paintKoshaStatus(el, err = '') {
+  if (!el) return;
+  let d; try { d = await api('/code/status'); } catch (e) { d = {ok: false, note: e.message || String(e)}; }
+  el.innerHTML = (d.ok ? `<span class="ok">Kosha connected</span><span>${plural(Number(d.files || 0).toLocaleString(), 'file')}</span>` +
+    `<span>${plural(Number(d.packages || 0).toLocaleString(), 'package')}</span><span>${plural(Number(d.graph_nodes || 0).toLocaleString(), 'graph node')}</span>` +
+    `${d.stale_files ? `<span class="warn">${esc(plural(d.stale_files, 'stale file'))}</span>` : ''}` : `<span class="warn">${esc(d.note || 'Kosha unavailable')}</span>`) +
+    (err ? `<span class="warn">${esc(err)}</span>` : '');
+}
+/* Every Kosha sync: `err` is why it failed, and the header is repainted either way. */
+async function runKoshaSync() {
+  let d; try { d = await post('/code/sync'); } catch (e) { d = {ok: false, note: e.message || String(e)}; }
+  const err = d.ok === false ? d.note || d.error || 'Kosha sync failed' : '';
+  await paintKoshaStatus($('#koshastatus'), err);
+  return {...d, err};
+}
 async function syncCodeIndex() {
   status('syncing Kosha index, notebooks and call graph…');
-  const d = await post('/code/sync'); status(d.note || 'Kosha index synced', d.ok ? 'ok' : 'err');
+  const d = await runKoshaSync(); status(d.err || d.note || 'Kosha index synced', d.err ? 'err' : 'ok');
 }
 
 async function leeSymbols() {

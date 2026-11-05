@@ -368,3 +368,40 @@ def test_the_stdlib_and_site_packages_follow_each_root(tmp_path, monkeypatch):
     fs = Sandbox([a, b])
     assert fs.python(str(b/'x.py')) == str(b/'.venv'/'bin'/'python')
     assert fs.read_only(site/'pkg'/'core.py') and not fs.read_only(b/'x.py')
+
+
+def test_a_failed_kosha_sync_says_so_and_repaints_the_header():
+    "A sync that answered `ok: false` showed 'synced', and the header kept its 675 stale files."
+    import json, shutil, subprocess
+    node = shutil.which('node')
+    if not node: pytest.skip('node is not installed')
+    root = Path(__file__).parents[2]/'leela'/'blocks'
+    harness = r'''const vm = require('vm'), fs = require('fs'), [cells, search] = process.argv.slice(1).map(p => fs.readFileSync(p, 'utf8'));
+const cut = (from, to) => { const i = search.indexOf(from); return search.slice(i, search.indexOf(to, i) + to.length); };
+const src = [cut('async function paintKoshaStatus', '\n}\n'), cut('async function runKoshaSync', '\n}\n'), cut('async function syncCodeIndex', '\n}\n'),
+             'globalThis.click = async () => {' + cut("$('#kosharefresh', m).onclick", '\n  };') + "await $('#kosharefresh').onclick(); };"].join('\n');
+const el = {innerHTML: ''}, button = {disabled: false, textContent: ''};
+const ctx = {calls: [], said: [], el, button, input: {value: ''}, m: null, search() {}, esc: s => String(s),
+  $: sel => sel === '#kosharefresh' ? button : el, status: (t, k) => ctx.said.push([t, k])};
+ctx.api = async url => { ctx.calls.push(url); return ctx.stat; };
+ctx.post = async url => { ctx.calls.push(url); if (ctx.sync instanceof Error) throw ctx.sync; ctx.stat = ctx.after; return ctx.sync; };
+vm.createContext(ctx); vm.runInContext(cells.match(/^const plural = .*;$/m)[0] + '\n' + src, ctx);
+(async () => { const out = [];
+  for (const [sync, after, how] of [[{ok: false, note: 'Kosha sync failed (boom)'}, {ok: true, stale_files: 675}, 'click'],
+      [{ok: true, note: 'index synced', status: {}}, {ok: true, stale_files: 0}, 'click'],
+      [new Error('HTTP 400: nope'), {ok: true, stale_files: 675}, 'click'],
+      [{ok: false, note: 'Kosha unavailable (x)'}, {ok: false, note: 'Kosha unavailable (x)'}, 'menu']]) {
+    Object.assign(ctx, {calls: [], said: [], sync, after, stat: {ok: true, stale_files: 675}}); el.innerHTML = '';
+    if (how === 'click') await ctx.click(); else await ctx.syncCodeIndex();
+    out.push({calls: ctx.calls, said: ctx.said.at(-1), header: el.innerHTML, button: button.textContent, disabled: button.disabled}); }
+  console.log(JSON.stringify(out)); })();'''
+    r = subprocess.run([node, '-e', harness, str(root/'nb'/'cells.js'), str(root/'search'/'search.js')], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    failed, ok, thrown, menu = json.loads(r.stdout)
+    assert failed['calls'] == ['/code/sync', '/code/status'], 'the header is fetched again after the sync'
+    assert failed['said'] == ['Kosha sync failed (boom)', 'err'] and failed['button'] == 'retry sync' and not failed['disabled']
+    assert 'Kosha sync failed (boom)' in failed['header'] and '675 stale files' in failed['header']
+    assert ok['calls'] == ['/code/sync', '/code/status'] and ok['said'][1] == 'ok' and ok['button'] == 'synced'
+    assert 'stale' not in ok['header'] and 'Kosha connected' in ok['header'], 'the stale count drops'
+    assert thrown['said'] == ['HTTP 400: nope', 'err'] and 'HTTP 400: nope' in thrown['header']
+    assert menu['said'] == ['Kosha unavailable (x)', 'err'] and menu['calls'] == ['/code/sync', '/code/status']
