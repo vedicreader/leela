@@ -18,6 +18,8 @@ Project folders come from launch arguments, saved folders, native folder pickers
 
 A folder is a workspace, and a workspace is a window. A folder opened while Leela is running goes to `/hub/open`. That builds a workspace with a state file and a kernel pool of its own, registers it with the hub, and returns the `*.localhost` URL for a new window. Open a folder that is already open and it raises the window that folder has. `add_root` is the other action: it puts a second folder in the window you are in.
 
+A file never adds a folder by itself. Finder, `open file.py`, a traceback link in a terminal or an agent hands Leela a file through `/hub/open?path=…&file=…`. When a window already has the file's folder open, the file opens there. When none does, the file opens in the loose window, and one line under the editor asks "This file is in <repo>. Open <repo> as a folder?" with Open and Not now. Only Open sends `folder=1`, which builds the workspace, writes `desktop.json` and moves the folder's loose tabs into the new window. A file that the loose window refuses, such as a `.env`, gets the same question in a native dialog. In a folder window, a link to a file outside the open folders is refused, and no folder is added. The agent has no way to add a folder: Leela's host does not implement `add_root`.
+
 The request goes over HTTP because the server owns the workspaces on another thread and another event loop. The window never goes up on the thread the request arrived on. `webview.create_window` builds nothing from the main thread once `webview.start` owns it, and the Dock menu and the `odoc` handler both arrive there.
 
 ## Inline browser
