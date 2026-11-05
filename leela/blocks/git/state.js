@@ -23,12 +23,13 @@ try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || 
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
 const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), commitDraft: '', changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
-// Which repository a panel request is about. Empty means the one the active tab lives in, which is
-// what the branch pill, the file tree and the editor's change marks always mean.
+// The repository the panel's data came from: the pinned one, else the snapshot's. Empty means the one
+// the active tab lives in, which is what the branch pill, the file tree and the change marks mean.
+function gitRepo() { return gitUI.repo || gitUI.snapshot?.root || ''; }
+// A sha or ref from the panel names its repository: the active tab can be in another by now.
 function gitUrl(path, params = {}) {
   const q = new URLSearchParams(params);
-  // A tab outlives the panel's chosen repository, so an explicit one wins.
-  if (gitUI.repo && !q.has('repo')) q.set('repo', gitUI.repo);
+  if (!q.has('repo') && gitRepo()) q.set('repo', gitRepo());
   const query = q.toString();
   return query ? `${path}?${query}` : path;
 }

@@ -1674,12 +1674,13 @@ try { savedGitLists = JSON.parse(localStorage.getItem('lee-git-changelists') || 
 try { savedGitReviews = JSON.parse(localStorage.getItem('lee-git-reviews') || '{}'); } catch (_) {}
 try { savedGitNotes = JSON.parse(localStorage.getItem('lee-git-review-notes') || '{}'); } catch (_) {}
 const gitUI = {tab: 'changes', snapshot: null, repo: '', repos: null, reposResults: [], expect: '', history: [], historyQuery: '', branchQuery: '', branchScope: 'all', compareFrom: '', compareTo: '', reviewBase: '', reviewHead: '', reviewMode: 'review', review: null, reviewFile: '', reviewPatch: '', selectedCommit: null, selectedChanges: new Set(), commitDraft: '', changeLists: savedGitLists, reviewed: savedGitReviews, reviewNotes: savedGitNotes, busy: ''};
-// Which repository a panel request is about. Empty means the one the active tab lives in, which is
-// what the branch pill, the file tree and the editor's change marks always mean.
+// The repository the panel's data came from: the pinned one, else the snapshot's. Empty means the one
+// the active tab lives in, which is what the branch pill, the file tree and the change marks mean.
+function gitRepo() { return gitUI.repo || gitUI.snapshot?.root || ''; }
+// A sha or ref from the panel names its repository: the active tab can be in another by now.
 function gitUrl(path, params = {}) {
   const q = new URLSearchParams(params);
-  // A tab outlives the panel's chosen repository, so an explicit one wins.
-  if (gitUI.repo && !q.has('repo')) q.set('repo', gitUI.repo);
+  if (!q.has('repo') && gitRepo()) q.set('repo', gitRepo());
   const query = q.toString();
   return query ? `${path}?${query}` : path;
 }
@@ -2823,7 +2824,7 @@ function wireGitPanel(host, d) {
     const spec = await inputDialog('clone repositories', 'URLs or owner/name, one per line', '', 'AnswerDotAI/fastws');
     if (spec) gitReposDo('clone', {urls: spec.split(/[\s,]+/).filter(Boolean)});
   });
-  const act = async (op, extra = {}) => renderGitPanel(await gitDo(op, extra));
+  const act = async (op, extra = {}) => renderGitPanel(await gitDo(op, {repo: gitRepo(), ...extra}));
   host.querySelectorAll('[data-operation]').forEach(b => b.onclick = async () => {
     if (b.dataset.operation === 'abort' && !await confirmDialog('abort Git operation', `Abort the active ${d.operation.active}?`, 'abort')) return;
     act('operation_' + b.dataset.operation);
@@ -2903,12 +2904,12 @@ function wireGitPanel(host, d) {
   host.querySelector('#githistoryref')?.addEventListener('change', () => { gitUI.history = []; gitUI.selectedCommit = null; loadGitHistory(); });
   host.querySelector('#gitreflog')?.addEventListener('click', showGitReflog);
   host.querySelectorAll('[data-history-commit]').forEach(b => b.onclick = () => loadGitCommitInspector(b.dataset.historyCommit));
-  host.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+  host.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit, d.root));
   host.querySelectorAll('[data-commit-file]').forEach(b => b.onclick = () => openGitCommitFile(gitUI.selectedCommit.oid, b.dataset.commitFile));
   host.querySelector('[data-close-commit]')?.addEventListener('click', () => { gitUI.selectedCommit = null; renderGitPanel(d); });
-  host.querySelector('.lee-git-commit-inspector [data-cherry]')?.addEventListener('click', () => act('cherry_pick', {ref: gitUI.selectedCommit.oid}));
-  host.querySelector('.lee-git-commit-inspector [data-revert]')?.addEventListener('click', async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${gitUI.selectedCommit.short}?`, 'revert')) act('revert', {ref: gitUI.selectedCommit.oid}); });
-  host.querySelector('.lee-git-commit-inspector [data-reset]')?.addEventListener('click', async () => { const c = gitUI.selectedCommit, mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`, 'reset')) return; act('reset', {ref: c.oid, mode}); });
+  host.querySelector('.lee-git-commit-inspector [data-cherry]')?.addEventListener('click', () => act('cherry_pick', {ref: gitUI.selectedCommit.oid, repo: gitUI.selectedCommit.root}));
+  host.querySelector('.lee-git-commit-inspector [data-revert]')?.addEventListener('click', async () => { if (await confirmDialog('revert commit', `Create a commit that reverses ${gitUI.selectedCommit.short}?`, 'revert')) act('revert', {ref: gitUI.selectedCommit.oid, repo: gitUI.selectedCommit.root}); });
+  host.querySelector('.lee-git-commit-inspector [data-reset]')?.addEventListener('click', async () => { const c = gitUI.selectedCommit, mode = await inputDialog('reset branch', 'Mode: soft keeps index; mixed keeps files; hard discards changes', 'mixed', 'soft, mixed, or hard'); if (!['soft','mixed','hard'].includes(mode)) return status('reset mode must be soft, mixed, or hard', 'err'); if (mode === 'hard' && !await confirmDialog('hard reset', `Discard tracked changes and reset to ${c.short}? This cannot be undone.`, 'reset')) return; act('reset', {ref: c.oid, mode, repo: c.root}); });
   const rememberCompare = () => { gitUI.compareFrom = $('#gitcompareleft')?.value.trim() || ''; gitUI.compareTo = $('#gitcompareright')?.value.trim() || ''; };
   host.querySelector('#gitcompareleft')?.addEventListener('change', rememberCompare);
   host.querySelector('#gitcompareright')?.addEventListener('change', rememberCompare);
@@ -3028,23 +3029,23 @@ function gitBranchMenu(anchor, branch, d, act) {
   }});
   openChromeMenu(anchor, rows);
 }
-async function loadGitCommitInspector(ref) {
-  try { gitUI.selectedCommit = await api(gitUrl('/git/commit/review', {ref})); renderGitPanel(gitUI.snapshot); }
+async function loadGitCommitInspector(ref, root = gitRepo()) {
+  try { gitUI.selectedCommit = {...await api(gitUrl('/git/commit/review', {ref, repo: root})), root}; renderGitPanel(gitUI.snapshot); }
   catch (e) { leeFail('git', 'commit', e); }
 }
-async function openGitCommitFile(ref, path) {
+async function openGitCommitFile(ref, path, c = gitUI.selectedCommit) {
+  const root = c?.root || gitRepo();
   try {
-    const d = noteHl(await api(gitUrl('/git/commit/file', {ref, path})));
-    const c = gitUI.selectedCommit;
-    return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: gitUI.snapshot.root + '/' + path});
+    const d = noteHl(await api(gitUrl('/git/commit/file', {ref, path, repo: root})));
+    return openGitDiffTab({...d, path, kind: 'commit', baseLabel: c?.parents?.[0]?.slice(0, 8) || 'empty tree', headLabel: c?.short || ref.slice(0, 8), absolutePath: root + '/' + path});
   } catch (e) { leeFail('git', 'commit file', e); }
 }
-async function showGitCommit(ref) {
+async function showGitCommit(ref, root = gitRepo()) {
   try {
-    const c = await api(gitUrl('/git/commit/review', {ref}));
+    const c = {...await api(gitUrl('/git/commit/review', {ref, repo: root})), root};
     const files = c.files.map(f => `<button class="lee-git-commit-file" data-path="${esc(f.path)}"><b>${esc(f.status)}</b><span>${esc(f.path)}</span><small>${f.binary ? 'binary' : `+${f.additions} −${f.deletions}`}</small></button>`).join('');
     const m = modal(`<div class="lee-mhead">${esc(c.short)}<span class="sub">${esc(c.author)} · ${new Date(c.timestamp * 1000).toLocaleString()}</span></div><article class="lee-git-commit-sheet"><h3>${esc(c.message)}</h3><section><b>${c.summary.files} files</b><span>+${c.summary.additions}</span><span>−${c.summary.deletions}</span></section><div>${files}</div></article>`);
-    m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); gitUI.selectedCommit = c; openGitCommitFile(c.oid, b.dataset.path); });
+    m.querySelectorAll('[data-path]').forEach(b => b.onclick = () => { m.remove(); openGitCommitFile(c.oid, b.dataset.path, c); });
   } catch (e) { leeFail('git', 'commit', e); }
 }
 async function showGitCompare(left, right) {
@@ -3055,9 +3056,9 @@ async function showGitCompare(left, right) {
 }
 async function showGitReflog() {
   try {
-    const d = await api(gitUrl('/git/reflog', {limit: 150}));
+    const root = gitRepo(), d = await api(gitUrl('/git/reflog', {limit: 150, repo: root}));
     const m = modal(`<div class="lee-mhead">reflog<span class="sub">local recovery history · newest first</span></div><div class="lee-git-history">${(d.entries || []).map(x => `<button class="lee-git-commit-row" data-commit="${x.oid}"><span class="lee-git-graph">◆</span><span><strong>${esc(x.subject)}</strong><small>${esc(x.selector)} · ${esc(x.author)} · ${gitRelative(x.timestamp)} · ${esc(x.short)}</small></span></button>`).join('') || '<div class="lee-git-empty-state"><strong>No reflog entries</strong><span>This repository has no local movement history.</span></div>'}</div>`);
-    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit, root));
   } catch (e) { leeFail('git', 'reflog', e); }
 }
 // Three-pane conflict resolution: ours, an editable result, and theirs.
@@ -3315,7 +3316,8 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await gitInfo(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
+  if (root && !lee.path.startsWith(root + '/')) root = gitUI.repo && lee.path.startsWith(gitUI.repo + '/') ? gitUI.repo : '';
+  if (!root) { try { root = (await gitInfo(gitUrl('/git/info', {repo: ''}))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;
@@ -3354,7 +3356,7 @@ function blameCells(d) {
 }
 async function showGitBlame(root, path, range = null) {
   try {
-    const params = range ? {path, start: range.start, end: range.end} : {path};
+    const params = {path, repo: root, ...(range ? {start: range.start, end: range.end} : {})};
     const d = await api(gitUrl('/git/blame', params));
     const scope = d.notebook ? `${d.cells.length} cells`
                              : range ? `lines ${range.start}–${range.end}` : 'whole file';
@@ -3364,7 +3366,7 @@ async function showGitBlame(root, path, range = null) {
     const m = modal(`<div class="lee-mhead">${esc(path)}<span class="sub">who wrote this · ${esc(scope)}</span></div>` +
       `${d.error ? `<div class="lee-dialogcopy">${esc(d.error)}</div>` : ''}${body}` +
       `${range ? '<div class="lee-mfoot"><button class="lee-btn" id="blameall">blame the whole file</button></div>' : ''}`);
-    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit, root));
     m.querySelector('#blameall')?.addEventListener('click', () => { m.remove(); showGitBlame(root, path, null); });
   } catch (e) { leeFail('git', 'blame', e); }
 }
@@ -8128,7 +8130,7 @@ function branchActions(anchor, d, b, after = (x) => x) {
 
 // Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
 async function branchPr(d) {
-  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const r = await api(gitUrl('/git/pr', {repo: gitUI.repo, branch: d.branch})).catch(() => null);
   const pr = r?.pr;
   if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
   const c = pr.checks || {};
@@ -8166,9 +8168,10 @@ function runBranchAction(id, d) {
     .then(ref => ref && gitDo('checkout', {branch: ref}));
 }
 
+// The pill is about the active tab's repository, or the pinned one, never the panel's last snapshot.
 async function leeBranchMenu(anchor) {
   let d;
-  try { d = await gitInfo(gitUrl('/git/info')); }
+  try { d = await gitInfo(gitUrl('/git/info', {repo: gitUI.repo})); }
   catch (e) { return leeFail('git', 'branches', e); }
   let recent = recentBranches(d.root);
   let search = null;
@@ -8267,7 +8270,7 @@ window.leeBranchMenu = leeBranchMenu;
 // `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
 async function showSyncPlan(d) {
   try {
-    const p = await api(gitUrl('/git/sync-plan', {fetch: 1}));
+    const p = await api(gitUrl('/git/sync-plan', {repo: gitUI.repo, fetch: 1}));
     if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
     if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
@@ -8307,7 +8310,7 @@ async function leeGitQuick(op) {
   try {
     // An unpublished branch has nowhere to push to, and saying "nothing to push" would be the
     // wrong half of the truth.
-    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
+    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info', {repo: gitUI.repo}))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
   } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }

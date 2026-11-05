@@ -117,7 +117,7 @@ function branchActions(anchor, d, b, after = (x) => x) {
 
 // Where "why is this divergent" usually starts: the PR, and whether its base moved under it.
 async function branchPr(d) {
-  const r = await api(gitUrl('/git/pr', {branch: d.branch})).catch(() => null);
+  const r = await api(gitUrl('/git/pr', {repo: gitUI.repo, branch: d.branch})).catch(() => null);
   const pr = r?.pr;
   if (!pr) return {id: 'pr', label: 'Pull request', detail: r?.note || 'unavailable', run: () => status(r?.note || 'no pull request', 'ok')};
   const c = pr.checks || {};
@@ -155,9 +155,10 @@ function runBranchAction(id, d) {
     .then(ref => ref && gitDo('checkout', {branch: ref}));
 }
 
+// The pill is about the active tab's repository, or the pinned one, never the panel's last snapshot.
 async function leeBranchMenu(anchor) {
   let d;
-  try { d = await gitInfo(gitUrl('/git/info')); }
+  try { d = await gitInfo(gitUrl('/git/info', {repo: gitUI.repo})); }
   catch (e) { return leeFail('git', 'branches', e); }
   let recent = recentBranches(d.root);
   let search = null;
@@ -256,7 +257,7 @@ window.leeBranchMenu = leeBranchMenu;
 // `pull` is --ff-only, so a diverged branch had nowhere to go. Every way out, rehearsed.
 async function showSyncPlan(d) {
   try {
-    const p = await api(gitUrl('/git/sync-plan', {fetch: 1}));
+    const p = await api(gitUrl('/git/sync-plan', {repo: gitUI.repo, fetch: 1}));
     if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
     if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
@@ -296,7 +297,7 @@ async function leeGitQuick(op) {
   try {
     // An unpublished branch has nowhere to push to, and saying "nothing to push" would be the
     // wrong half of the truth.
-    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info'))).upstream;
+    const publish = op === 'push' && !(gitUI.snapshot || await gitInfo(gitUrl('/git/info', {repo: gitUI.repo}))).upstream;
     await gitDo(op, op === 'push' ? {publish} : {});
     refreshScmIfOpen();
   } catch (_) { /* gitDo already logged it, showed the log, and said so in the status line */ }

@@ -243,6 +243,21 @@ def test_a_folder_of_checkouts_follows_the_file_from_repository_to_repository(tm
         # An explicit choice still wins: a panel pinned to one repository stays there.
         assert client.get('/git/info', params={'repo': str(a)}).json()['branch'] == 'main'
 
+def test_a_commit_file_names_its_repository_while_the_active_tab_is_in_another(tmp_path):
+    "History listed one repository and the commit file request ran in the active tab's: unknown commit."
+    a, b = _repo(tmp_path/'rupaka', 'main'), _repo(tmp_path/'vedicreader', 'main')
+    (a/'a.py').write_text('x = 1\n'); git(a, 'add', '.'); git(a, 'commit', '-m', 'a only')
+    sha = git(a, 'rev-parse', 'HEAD')
+    ws = Workspace(roots=[a, b])
+    with TestClient(ide_app(ws)) as client:
+        ws.open(str(b/'readme.md'))
+        assert client.get('/git/info').json()['root'] == str(b), 'precondition: the active tab is in B'
+        bare = client.get('/git/commit/file', params={'ref': sha, 'path': 'a.py'})
+        assert bare.status_code >= 400, 'without a repository the request runs in B, where the sha is unknown'
+        r = client.get('/git/commit/file', params={'repo': str(a), 'ref': sha, 'path': 'a.py'})
+        assert r.status_code == 200, r.text
+        assert 'x = 1' in r.json()['patch']
+
 def _outside(tmp_path, name):
     "A sibling of `tmp_path`, because the `repo` fixture *is* `tmp_path`."
     return tmp_path.parent/f'{tmp_path.name}-{name}'

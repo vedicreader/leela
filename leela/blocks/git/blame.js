@@ -17,7 +17,8 @@ function blameSelectionRange() {
 async function leeBlame() {
   if (!lee.path) return status('open a file to blame it', 'err');
   let root = gitUI.snapshot?.root;
-  if (!root) { try { root = (await gitInfo(gitUrl('/git/info'))).root; } catch (e) { return leeFail('git', 'blame', e); } }
+  if (root && !lee.path.startsWith(root + '/')) root = gitUI.repo && lee.path.startsWith(gitUI.repo + '/') ? gitUI.repo : '';
+  if (!root) { try { root = (await gitInfo(gitUrl('/git/info', {repo: ''}))).root; } catch (e) { return leeFail('git', 'blame', e); } }
   showGitBlame(root, blameRelative(root, lee.path), blameSelectionRange());
 }
 window.leeBlame = leeBlame;
@@ -56,7 +57,7 @@ function blameCells(d) {
 }
 async function showGitBlame(root, path, range = null) {
   try {
-    const params = range ? {path, start: range.start, end: range.end} : {path};
+    const params = {path, repo: root, ...(range ? {start: range.start, end: range.end} : {})};
     const d = await api(gitUrl('/git/blame', params));
     const scope = d.notebook ? `${d.cells.length} cells`
                              : range ? `lines ${range.start}–${range.end}` : 'whole file';
@@ -66,7 +67,7 @@ async function showGitBlame(root, path, range = null) {
     const m = modal(`<div class="lee-mhead">${esc(path)}<span class="sub">who wrote this · ${esc(scope)}</span></div>` +
       `${d.error ? `<div class="lee-dialogcopy">${esc(d.error)}</div>` : ''}${body}` +
       `${range ? '<div class="lee-mfoot"><button class="lee-btn" id="blameall">blame the whole file</button></div>' : ''}`);
-    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit));
+    m.querySelectorAll('[data-commit]').forEach(b => b.onclick = () => showGitCommit(b.dataset.commit, root));
     m.querySelector('#blameall')?.addEventListener('click', () => { m.remove(); showGitBlame(root, path, null); });
   } catch (e) { leeFail('git', 'blame', e); }
 }
