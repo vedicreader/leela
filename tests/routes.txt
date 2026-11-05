@@ -259,6 +259,7 @@ POST /learn/open
 POST /learn/scratch
 GET,POST /learn/tool
 POST /lesson/predict
+POST /lesson/predictions
 GET,POST /lint
 GET,POST /lsp/hover
 GET,POST /lsp/inlay-hints

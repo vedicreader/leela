@@ -345,16 +345,19 @@ def _gates(bs):
         if b.get('type') == 'gate': yield b
         yield from _gates(b.get('blocks'))
 
-def demo_gate(cell, demo, gate):
-    "`(spec, block)` of gate `gate` in demo `demo` among the `rupaka` fences of markdown `cell`; ValueError when there is none or more than one."
-    src = cell.source if cell.cell_type == 'markdown' else ''
-    specs = []
+def _specs(cell):
+    "The specs of the `rupaka` fences of markdown `cell` that parse as objects."
+    src, specs = cell.source if cell.cell_type == 'markdown' else '', []
     for info, body, *_ in fenced_blocks(src) + fenced_blocks(src, ch='~'):
         if info != 'rupaka': continue
         try: s = json.loads(body)
         except ValueError: continue
         if isinstance(s, dict): specs.append(s)
-    hits = [(s, g) for s in specs if (s.get('id') or '') == (demo or '') for g in _gates(s.get('blocks')) if g.get('id') == gate]
+    return specs
+
+def demo_gate(cell, demo, gate):
+    "`(spec, block)` of gate `gate` in demo `demo` among the `rupaka` fences of markdown `cell`; ValueError when there is none or more than one."
+    hits = [(s, g) for s in _specs(cell) if (s.get('id') or '') == (demo or '') for g in _gates(s.get('blocks')) if g.get('id') == gate]
     if not hits: raise ValueError(f'This cell has no gate {gate!r}.')
     if len(hits) > 1: raise ValueError(f'This cell has more than one gate {gate!r}. Give each gate its own id.')
     return hits[0]
@@ -385,6 +388,16 @@ def record_prediction(memory, f):
             d = lr.put_demo(f['spec'], slug, by='leela:lesson')
             lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'], **_rest(f.get('walk', {})))
             return _saved(lr.concept(slug))
+
+def filed_picks(memory, nb, cell) -> dict:
+    "`{'demo:gate': pick}` for each gate of `cell` with a prediction filed at its source now: `String` of the pick, or None for a gate whose answer is a state path."
+    from abhyasa.learner import Learning
+    from ..memory.memory import _open_lock
+    m, h, vault = nb.meta['lesson'], src_hash(cell.source), memory._store('learning')
+    with _open_lock(memory.path):
+        filed = {a.get('card_key'): a.get('answer') for a in Learning(vault).attempts(_slug(m['name'], m.get('walk') or {}), limit=10000)}
+    return {f"{s['id']}:{g['id']}": filed[k] if isinstance(g.get('answer'), dict) else None
+            for s in _specs(cell) if s.get('id') for g in _gates(s.get('blocks')) if (k := f"{cell.id}:{h}:{s['id']}:{g.get('id')}") in filed}
 
 def fence(spec): return fenced(json.dumps(spec, ensure_ascii=False), 'rupaka')
 def demo_refusal(errors): return '\n'.join(errors)

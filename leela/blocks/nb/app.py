@@ -17,7 +17,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -564,6 +564,18 @@ def connect(app, ctx):
             try: message = await off_loop(record_prediction, ctx.memory, f)
             except Exception as e: return _vault_fail(e)
             return dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
+    @rt('/lesson/predictions', methods=['POST'])
+    async def lesson_predictions(req):
+        "The picks filed for the demos of one lesson cell at its source now. No `lesson_lock`: a guide stream holds it through a model call."
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        _, nb, _ = run_owner(d)
+        if nb is None: return fail('Return to the lesson notebook, then try.')
+        if not isinstance(lesson := nb.meta.get('lesson'), dict) or not lesson.get('name'): return dict(ok=True, picks={})
+        cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
+        if cell is None: return fail('That cell is no longer in the notebook.')
+        if d.get('src') != src_hash(cell.source): return dict(ok=True, picks={})
+        try: return dict(ok=True, picks=await off_loop(filed_picks, ctx.memory, nb, cell))
+        except Exception as e: return _vault_fail(e)
     def guide_said(d):
         "`(said, anchors, demo)` of the guide request `d`, or its fail reply."
         said = str(d.get('said') or '').strip()

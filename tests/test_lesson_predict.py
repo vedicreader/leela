@@ -365,3 +365,27 @@ def test_a_gate_saves_on_a_page_with_no_crypto_subtle():
     r = subprocess.run([node, '-e', HASH, str(ROOT/'leela/static/js/core.js'), json.dumps(texts)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout) == [src_hash(t) for t in texts]
+
+def picks(r, i=1, src=None, **kw):
+    cell = r.nb[i] if isinstance(i, int) else None
+    return r.c.post('/lesson/predictions', json=dict(path=str(r.p), cell_id=cell.id if cell else i, src=src_hash(cell.source) if src is None and cell else src, **kw))
+
+def test_predictions_give_the_filed_pick_back(rig):
+    assert picks(rig).json() == {'ok': True, 'picks': {}}
+    assert post(rig, picked=2, why='').json()['logged']
+    assert post(rig, picked=4, why='').json()['logged'] is False   # "try again" files nothing, so the first pick comes back
+    assert picks(rig).json() == {'ok': True, 'picks': {'halves:g1': '2'}}
+    assert picks(rig, src='0' * 12).json() == {'ok': True, 'picks': {}}   # the page shows another source
+    assert picks(rig, i=0).json() == {'ok': True, 'picks': {}}
+    r = picks(rig, i='missing')
+    assert r.status_code == 400 and 'no longer' in r.json()['error']
+
+def test_predictions_give_no_pick_for_a_state_path_answer(serve):
+    r = serve(lesson(fence(dict(spec(gate=dict(GATE, answer='ans')), state={'ans': 4}))))
+    assert post(r, picked=4, ans=4, ok=True).json()['logged']
+    assert picks(r).json() == {'ok': True, 'picks': {'halves:g1': None}}
+
+def test_predictions_in_a_plain_notebook_are_empty(serve):
+    nb = Notebook([Cell('markdown', fence(DEMO))])
+    r = serve(nb)
+    assert picks(r, i=0).json() == {'ok': True, 'picks': {}} and not r.opened
