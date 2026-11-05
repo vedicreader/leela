@@ -30,12 +30,12 @@ def test_gateway_kernel_executes_inspects_and_reconnects_without_local_zmq(tmp_p
             gateway.stop()
     asyncio.run(run())
 
-def _run_gateway(tmp_path, srcs, during):
+def _run_gateway(tmp_path, srcs, during, gw=None):
     "Run each of `srcs` through `/nb/run/stream` on a gateway kernel; `during(client, kernel)` acts while the last one runs."
     cells = [{'cell_type': 'code', 'id': f'c{i}', 'source': s, 'metadata': {}, 'outputs': [], 'execution_count': None} for i, s in enumerate(srcs)]
     p = tmp_path/'g.ipynb'
     p.write_text(json.dumps({'cells': cells, 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
-    gw = GatewayService(port=0).start()
+    gw = (gw or GatewayService(port=0)).start()
     ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable, transport='gateway', gateway=gw); ws.open(p)
     events = []
     try:
@@ -50,20 +50,41 @@ def _run_gateway(tmp_path, srcs, during):
             t = threading.Thread(target=stream, args=(len(srcs) - 1, events), daemon=True)
             began = time.monotonic(); t.start()
             during(client, client.portal.call(ws.runtime))
-            t.join(30)
+            t.join(60)
     finally:
         ws.shutdown_now(); gw.stop()
     return first(d for e, d, _ in events if e == 'done'), events, began
 
+def _until(pred, what, timeout=30):
+    "Poll `pred` until it holds. `timeout` only stops a broken run from hanging; no step waits on it."
+    end = time.monotonic() + timeout
+    while not pred():
+        if time.monotonic() > end: raise AssertionError(f'{what} never happened')
+        time.sleep(.01)
+
 def test_a_reply_lost_with_a_dropped_gateway_socket_still_settles_the_cell(tmp_path, monkeypatch):
     """jupygate drops the frames in flight when its websocket dies, and the run waited forever on an `execute_reply` the idle kernel had already sent."""
     monkeypatch.setattr(nbmod, 'QUIET', 1)
+    import jupygate.core as jg
+    started, go, gw, sent = tmp_path/'started', tmp_path/'go', GatewayService(port=0), []
+    put = jg.ClientQueue.put_frame
+    def spy(self, msg_type, frame, iopub=True):
+        put(self, msg_type, frame, iopub)
+        if go.exists(): sent.append(msg_type)
+    monkeypatch.setattr(jg.ClientQueue, 'put_frame', spy)
+    def flushed():
+        "The gateway has handed the cell's reply to the paused socket, so the abort loses it."
+        queues = [cq.q for gk in gw.server.config.app.state.kernels.values() for cq in gk.mux.clients.values()]
+        return 'execute_reply' in sent and not any(queues)
     def drop(client, k):
-        time.sleep(1); client.portal.call(lambda: k.kc._ws.transport.pause_reading())
-        time.sleep(2.5); client.portal.call(lambda: k.kc._ws.transport.abort())
-    done, events, began = _run_gateway(tmp_path, ['x = 1', 'import time; time.sleep(2); y = 2'], drop)
-    took = next((at for e, _, at in events if e == 'done'), float('inf')) - began
-    assert took < 15, f'done came {took:.0f}s after the run began: {events}'
+        _until(started.exists, 'the cell starting')
+        client.portal.call(lambda: k.kc._ws.transport.pause_reading())
+        go.touch()
+        _until(flushed, 'the reply leaving the gateway')
+        client.portal.call(lambda: k.kc._ws.transport.abort())
+    cell = f'import os, time\nopen({str(started)!r}, "w").close()\nwhile not os.path.exists({str(go)!r}): time.sleep(.01)\ny = 2'
+    done, events, _ = _run_gateway(tmp_path, ['x = 1', cell], drop, gw)
+    assert done, f'the cell never settled: {events}'
     assert done['ok'] and done['lost'] and done['cell']['execution_count'] is not None, done
 
 def test_no_ipykernel_with_the_shell_wedge_can_be_installed():
