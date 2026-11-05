@@ -1,6 +1,6 @@
 "leela: notebooks, files and live variables in the terminal and the browser."
 
-__version__ = "0.1.20"
+__version__ = "0.1.21"
 
 __all__ = ['keys', 'errstr', 'Dictable', 'leela_cfg', 'extras_site', 'extras_bin', 'use_extras',
            'pyskills_home', 'seal_bundle', 'login_path', 'use_login_path', 'TOOL_DIRS', 'use_utf8', 'UTF8_LOCALES', 'PORT']
