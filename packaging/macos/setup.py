@@ -1,7 +1,7 @@
 "py2app definition for `dist/Leela.app`. Run it through `setup_app.py`."
 from __future__ import annotations
-import os, shutil, sys, time
-from fastcore.all import Path, first
+import sys, time
+from fastcore.all import Path
 from setuptools import setup
 
 from kavacha import App, doc_types, finish, frozen_distribution, mypyc_modules, tree
@@ -119,23 +119,6 @@ UNREACHABLE = ('claude_agent_sdk/_bundled/', 'PIL/.dylibs/')
 #: only show their source. Everything else it knows a language for, it asks to own.
 VIEW_ELSEWHERE = {'.svg', '.html', '.htm', '.pdf'}
 
-def _lib(app): return first(sorted((Path(app)/'Contents'/'Resources'/'lib').glob('python3.*[0-9]')))
-
-def drop_unreachable(app, prefixes=UNREACHABLE):
-    "Delete each of `prefixes` the freezer left on disk beside the zip, and return the megabytes saved."
-    hits = [p for x in prefixes if (p := _lib(app)/x.rstrip('/')).exists()]
-    mb = sum(f.stat().st_size for p in hits for f in [p, *p.rglob('*')] if f.is_file() and not f.is_symlink())
-    for p in hits: shutil.rmtree(p) if p.is_dir() else p.unlink()
-    return round(mb/1e6)
-
-def symlink_hardlinks(app, names=GRAFTED):
-    "Make each extra hardlink in the grafted `names` a relative symlink to the first: a zip keeps symlinks, not hardlinks."
-    lib, seen, mb = _lib(app), {}, 0
-    for f in [f for n in names for f in sorted((lib/n).rglob('*')) if f.is_file() and not f.is_symlink()]:
-        if (st := f.stat()).st_nlink < 2 or seen.setdefault(st.st_ino, f) == f: continue
-        f.unlink(); f.symlink_to(os.path.relpath(seen[st.st_ino], f.parent)); mb += st.st_size
-    return round(mb/1e6)
-
 def _doc_types():
     "One document type per language Leela edits, taken from the map the file tree already uses."
     from leela.blocks.fs.fs import LANGS
@@ -182,10 +165,8 @@ if __name__ == '__main__':
     if (built := APP.out(ROOT)).is_dir():
         got = finish(built, APP)
         for name in GRAFTED: print(f'  grafted {name} -> {got[name]}')
-        if got['stripped_mb']: print(f"  dropped {got['stripped_mb']}MB of unreachable archive entries")
-        if got['linked_mb']: print(f"  linked {got['linked_mb']}MB of duplicate grafted files")
-        if mb := drop_unreachable(built): print(f'  dropped {mb}MB of unreachable files beside the archive')
-        if mb := symlink_hardlinks(built): print(f'  made {mb}MB of hardlinks into symlinks, which the zip keeps')
+        if got['stripped_mb']: print(f"  dropped {got['stripped_mb']}MB of unreachable files, in the archive and beside it")
+        if got['linked_mb']: print(f"  linked {got['linked_mb']}MB of duplicate grafted files with relative symlinks, which the zip keeps")
         for name, paths in got['clashes'].items(): print(f"  {name} has {len(paths)} sources: {', '.join(paths)}")
         for name, src in got['mended'].items(): print(f'  mended Frameworks/{name} from {src}' if src else f'  could not mend Frameworks/{name}: no clean copy found')
         if got['modern_icon']: print(f'  Icon Composer icon installed in {built}')

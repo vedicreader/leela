@@ -373,47 +373,6 @@ def test_signing_signs_a_hardlinked_driver_once_and_keeps_it_one_file(tmp_path, 
     assert len([c for c in calls if c[-1] in (str(a), str(b))]) == 1
     assert os.stat(a).st_ino == os.stat(b).st_ino
 
-def _fake_lib(tmp_path):
-    lib = tmp_path/'Leela.app'/'Contents'/'Resources'/'lib'/'python3.13'
-    for n in ('playwright', 'patchright', 'claude_agent_sdk/_bundled'): (lib/n/'driver').mkdir(parents=True)
-    return lib
-
-def test_an_unreachable_package_the_freezer_left_unzipped_is_deleted(tmp_path, mac):
-    """py2app shipped `claude_agent_sdk` beside the zip, so stripping the zip left its 206MB `claude` in 0.1.21."""
-    lib = _fake_lib(tmp_path)
-    (lib/'claude_agent_sdk'/'_bundled'/'claude').write_bytes(bytes(2_000_000)); (lib/'claude_agent_sdk'/'__init__.py').touch()
-    assert mac.drop_unreachable(tmp_path/'Leela.app') == 2
-    assert not (lib/'claude_agent_sdk'/'_bundled').exists() and (lib/'claude_agent_sdk'/'__init__.py').exists()
-    assert mac.drop_unreachable(tmp_path/'Leela.app') == 0
-
-def test_a_hardlinked_driver_becomes_a_relative_symlink_the_zip_keeps(tmp_path, mac):
-    """A zip has no hardlinks, so the two `node` drivers kavacha linked unpacked as two 121MB files."""
-    import os
-    lib = _fake_lib(tmp_path)
-    (a := lib/'playwright'/'driver'/'node').write_bytes(b'node'); a.chmod(0o755)
-    os.link(a, b := lib/'patchright'/'driver'/'node')
-    mac.symlink_hardlinks(tmp_path/'Leela.app')
-    assert not a.is_symlink() and b.is_symlink() and os.readlink(b) == '../../playwright/driver/node'
-    assert os.access(b, os.X_OK) and b.read_bytes() == b'node'
-
-@pytest.mark.skipif(sys.platform != 'darwin' or not shutil.which('codesign'), reason='needs codesign')
-def test_a_bundle_with_a_symlinked_driver_signs_and_verifies_strictly(tmp_path, mac, monkeypatch):
-    """The symlinked `node` must survive `codesign --verify --deep --strict`, which refuses a link out of the bundle."""
-    import os
-    sys.path.insert(0, str(ROOT/'tools'))
-    import build_release
-    app = tmp_path/'Leela.app'
-    (app/'Contents'/'MacOS').mkdir(parents=True)
-    shutil.copy('/usr/bin/true', app/'Contents'/'MacOS'/'Leela')
-    (app/'Contents'/'Info.plist').write_text('<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key>'
-        '<string>Leela</string><key>CFBundleIdentifier</key><string>org.test.leela</string></dict></plist>')
-    lib = _fake_lib(tmp_path)
-    shutil.copy('/usr/bin/true', a := lib/'playwright'/'driver'/'node')
-    os.link(a, lib/'patchright'/'driver'/'node')
-    mac.symlink_hardlinks(app)
-    monkeypatch.setattr(build_release, 'ENTITLEMENTS', None)
-    build_release.sign(app, '-')
-
 @pytest.mark.slow
 def test_the_bundles_zip_holds_no_code_notarisation_would_refuse():
     """Apple's notary reads inside `python313.zip`, and a Mach-O file there is unsigned: 19 of them made a submission Invalid."""
