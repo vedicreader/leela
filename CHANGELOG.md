@@ -2,6 +2,14 @@
 
 <!-- do not remove -->
 
+## 0.1.17
+
+Needs rupaka 0.0.15.
+
+- A demo has "Ask about this" (rupaka 0.0.14). In a lesson, the question goes to the screen guide with the cell, the demo, its step and its values. Anywhere else it goes to the agent. The control is hidden in present mode and in the audience window, so the room never sees it.
+- A 3D scene draws again when its view comes back. rupaka 0.0.15 keeps the scene's renderer while it is off the page and makes a new one when the browser took the WebGL context away.
+- The vendored lee-rupaka.js and lee-rupaka.css are written from the rupaka 0.0.15 wheel.
+
 ## 0.1.16
 
 - Leela asks before it opens another folder. When a link, a definition, a traceback, Finder or the agent opens a file from a checkout that is not open, Leela shows the file and asks: "This file is in <repo>. Open <repo> as a folder?" Only Open adds and remembers the folder. Open Folder, Add folder, the recent list and a folder dropped on the Dock still open at once. Before, Leela added the folder without a question.

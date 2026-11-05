@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.14', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.15', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -1125,7 +1125,8 @@ Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.bu
 
     const c2 = Object.assign(Object.create(ctx), {scene: S});
     const nodes = (b.blocks || []).map(k => R.build(k, c2));
-    const cv = el('canvas', {class: 'gl'}), leads = sv('svg', {class: 'leads', 'aria-hidden': 'true'}), chips = el('div', {class: 'chips'});
+    let cv = el('canvas', {class: 'gl'});
+    const leads = sv('svg', {class: 'leads', 'aria-hidden': 'true'}), chips = el('div', {class: 'chips'});
     const msg = el('p', {class: 'rk-note msg', hidden: true});
     const stage = el('div', {class: 'stage', tabindex: 0, role: 'group', 'aria-roledescription': '3D scene',
                              'aria-label': b.label || 'A 3D scene', style: `height: ${b.height ?? 380}px`}, cv, leads, chips, msg);
@@ -1165,7 +1166,15 @@ Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.bu
     let T, gl, world, cam, post, postCam, rtC, rtN, floor, W = 0, H = 0, raf = 0, sig = '', pal;
     const view = {az: 35, el: 22, fov: 32, dist: 10, tx: 0, ty: 0, tz: 0};
     let tw = null;
-    const kick = () => { if (!raf && gl) raf = requestAnimationFrame(frame); };
+    const kick = () => { again(); if (!raf && gl) raf = requestAnimationFrame(frame); };
+    // A host can take the view off the page and put it back (a tab switch): the view keeps its renderer then. When it has no renderer
+    // (the browser took the WebGL context away), it makes a new one on a new canvas as soon as it is on the page again.
+    const again = () => {
+      if (gl || !T || !stage.isConnected || stage.dataset.rkGl === 'error') return;
+      try { start(T); } catch (e) { console.error('rupaka: scene', e); gl = null; msg.hidden = false; msg.textContent = 'This browser cannot draw the 3D view.'; stage.dataset.rkGl = 'error'; }
+    };
+    // A real teardown: the host mounted another demo in place of this one, so this view never comes back.
+    const over = () => !stage.isConnected && (!ctx.root?.parentNode || ctx.root.parentNode.rupaka !== s);
 
     function palette() {
       const g = v => R.rgb(stage, v).map(x => x / 255);
@@ -1330,7 +1339,7 @@ Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.bu
 
     function frame(now) {
       raf = 0;
-      if (!stage.isConnected) { gone(); return; }
+      if (!stage.isConnected || !gl) { if (over()) gone(); return; }   // only off the page: the context stays for when the view comes back
       for (const [k, a] of S.anims) {
         a.k = a.ease((now - a.t0) / a.ms); a.f(a.k);
         if (now - a.t0 >= a.ms) S.anims.delete(k);
@@ -1368,6 +1377,7 @@ Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.bu
     function gone() { if (gl) { gl.dispose(); gl.forceContextLoss(); gl = null; } }
     function resize() {
       const pr = Math.min(2, devicePixelRatio || 1);
+      again();
       W = stage.clientWidth; H = stage.clientHeight;
       if (!W || !H || !gl) return;
       gl.setPixelRatio(pr); gl.setSize(W, H, false);
@@ -1377,8 +1387,10 @@ Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.bu
       aim(frameOf(S.shot), 0);
     }
 
+    let wired = false;
     function start(lib) {
       T = S.T = lib;
+      if (wired) { const c = cv.cloneNode(); cv.replaceWith(c); cv = c; }   // a canvas whose context is lost cannot give a new one
       gl = new T.WebGLRenderer({canvas: cv, antialias: false, preserveDrawingBuffer: true, powerPreference: 'low-power'});
       LIGHT.value = new T.Vector3();
       pal = palette();
@@ -1423,9 +1435,12 @@ Rupaka.block('row', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.bu
       postCam = new T.OrthographicCamera(-1, 1, 1, -1, 0, 1);
       const pass = new T.Scene(); pass.add(post); post.frustumCulled = false; S.pass = pass;
       sync();
-      new ResizeObserver(() => { resize(); kick(); }).observe(stage);
-      onTheme(() => { if (stage.isConnected) { recolor(); return true; } gone(); return false; });
+      cv.addEventListener('webglcontextlost', () => { gl?.dispose(); gl = null; cancelAnimationFrame(raf); raf = 0; stage.dataset.rkGl = 'lost'; });
       stage.dataset.rkGl = 'ready';
+      if (wired) { resize(); return; }
+      wired = true;
+      new ResizeObserver(() => { resize(); kick(); }).observe(stage);
+      onTheme(() => { if (over()) { gone(); return false; } if (stage.isConnected && gl) recolor(); return true; });
     }
 
     // On each change of the state: the step bar, then each part, then the shot.

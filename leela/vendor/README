@@ -8,10 +8,10 @@ lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scr
 
 fonts/fa-solid-900.woff2 and fonts/LICENSE-Font-Awesome.txt: @fortawesome/fontawesome-free@5.15.4, the version html-manager 1.0.15 depends on.
 
-lee-rupaka.js and lee-rupaka.css: rupaka 0.0.14, wheel rupaka-0.0.14-py3-none-any.whl, SHA-256 7ade19f7c0544fa0711d0c1852add5041bdda29b3df993e6b202965f9c1eda3a, from https://files.pythonhosted.org/packages/20/59/61157ebbc7ab0db0817e19488086a68f60ccc3eae8f1ebe877c9c9cc79bf/rupaka-0.0.14-py3-none-any.whl. Download the wheel into an empty folder, check its digest, then write the two bundles with the wheel's own renderer:
+lee-rupaka.js and lee-rupaka.css: rupaka 0.0.15, wheel rupaka-0.0.15-py3-none-any.whl, SHA-256 04ffb9df0bfd1fcce25572f1b6369c349950df9acc3b619c595a88c752f9674c, from https://files.pythonhosted.org/packages/44/78/4c4b66c7365f2a536f078b7dec53bce4ba7b00976b273adde720e567c882/rupaka-0.0.15-py3-none-any.whl. Download the wheel into an empty folder, check its digest, then write the two bundles with the wheel's own renderer:
 
-    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.14-py3-none-any.whl" https://files.pythonhosted.org/packages/20/59/61157ebbc7ab0db0817e19488086a68f60ccc3eae8f1ebe877c9c9cc79bf/rupaka-0.0.14-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.14-py3-none-any.whl"
-    uv run --no-project --with "$d/rupaka-0.0.14-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
+    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.15-py3-none-any.whl" https://files.pythonhosted.org/packages/44/78/4c4b66c7365f2a536f078b7dec53bce4ba7b00976b273adde720e567c882/rupaka-0.0.15-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.15-py3-none-any.whl"
+    uv run --no-project --with "$d/rupaka-0.0.15-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
 
 katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375 (the registry's own sha1 0a13a42c2deb4f74e61f162d440b9165a548030f and sha512 Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg== both match). Download into an empty folder, check the digests, extract into another, and copy dist/katex.min.js, dist/katex.min.css and dist/fonts/*.woff2 (the stylesheet lists woff and ttf after woff2; no browser Leela runs in fetches them) with LICENSE as LICENSE-KaTeX.txt:
 
