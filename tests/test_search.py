@@ -332,7 +332,7 @@ def _env_symbol_search(monkeypatch, tmp_path, installs=('fastcore',), copy=True)
     s = Search(Sandbox([tmp_path/'proj']), prefer_kosha=False)
     s._kosha = lambda path=None: SimpleNamespace(code_st=store, env_st=store, env_path=[str(mine)],
                                                  root=tmp_path/'proj', pkgs=SimpleNamespace(count=1))
-    s.env_roots = lambda: [mine]
+    s.env_roots = lambda path='': [mine]
     return s, mine
 
 

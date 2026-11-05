@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from fastcore.all import Path
 from ...core.web import fail
 
 __all__ = ['CAPS', 'connect']
@@ -30,7 +31,7 @@ def connect(app, ctx):
     @rt('/cwd')
     def cwd_info():
         t, fs = ctx.tab, ctx.fs
-        root = fs.root_of(t.path) if t and t.path and not fs.read_only(t.path) else ctx.session.project_root
+        root = fs.root_of(t.path) if t and t.path and fs.covers(Path(t.path).resolve()) else ctx.session.project_root
         return {'cwd': str(ctx.session.cwd_for() or ''), 'explicit': bool(t and t.cwd), 'root': str(root or '')}
     @rt('/cwd/set')
     async def cwd_set(req):

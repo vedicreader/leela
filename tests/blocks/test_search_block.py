@@ -318,3 +318,53 @@ def test_the_matched_text_is_kept_only_when_the_setting_says_so(ws):
     assert [r.get('text') for r in Signals().read()] == [None, 'def secret_key():']
 
 
+
+
+def _two_roots(tmp_path, monkeypatch, rows):
+    "Roots [a, b]: both have a `.venv`, only b's holds `pkg`; Kosha's environment store answers `rows`."
+    import json
+    from types import SimpleNamespace
+    from leela.blocks.search.search import Search
+    from leela.workspace import Workspace
+    a, b, c = tmp_path/'a', tmp_path/'b', tmp_path/'c'
+    _venv(a, {'other/x.py': 'y = 1\n'})
+    site = _venv(b, {'pkg/__init__.py': 'from .core import *\n', 'pkg/core.py': '"doc"\n\ndef fn(): pass\n'})
+    theirs = _venv(c, {'pkg/core.py': '"doc"\n\ndef fn(): pass\n', 'gone/core.py': '"doc"\n\ndef fn(): pass\n'})
+    (b/'x.py').write_text('from pkg import fn\nfn()\n')
+    row = lambda rel, mn: dict(content='def fn(): pass', package=rel.split('/')[0],
+        metadata=json.dumps(dict(path=str(theirs/rel), mod_name=mn, lineno=3, name='fn')))
+    k = SimpleNamespace(env_st=SimpleNamespace(rows_where=lambda *x, **kw: [row(*r) for r in rows]))
+    monkeypatch.setattr(Search, '_kosha', lambda self, path=None: k)
+    return Workspace(roots=[a, b]), b, site, theirs
+
+def test_go_to_declaration_uses_the_interpreter_of_the_file(tmp_path, monkeypatch):
+    "With roots [karma, vedicreader], `vpseasy` in vedicreader opened Leela's own venv copy: karma's interpreter came first and could not map it."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    ws, b, site, theirs = _two_roots(tmp_path, monkeypatch, [('pkg/core.py', 'pkg.core.fn')])
+    with TestClient(ide_app(ws)) as client:
+        d = client.get(f'/code/jump?name=fn&path={b/"x.py"}&line=2').json()
+        assert d['kind'] == 'definition' and d['hits'][0]['path'] == str(site/'pkg'/'core.py'), d
+        assert d['hits'][0]['line'] == 3 and not any(str(theirs) in h['path'] for h in d['hits'])
+        target = d['hits'][0]['path']
+        assert ws.fs.read_only(target), "b's site-packages is read-only"
+        assert 'lee-err' not in client.post(f'/tab/open?path={target}').text, 'no gate toast'
+        assert client.get(f'/tab/state?path={target}').json()['read_only']
+        assert client.get('/cwd').json()['root'] == str(b), 'an installed file in b still belongs to b'
+
+def test_an_environment_hit_this_interpreter_lacks_is_dropped(tmp_path, monkeypatch):
+    "A row from another venv that names a module b never installed is no hit, not that venv's path."
+    ws, b, site, theirs = _two_roots(tmp_path, monkeypatch, [('gone/core.py', 'gone.core.fn')])
+    s = ws.search
+    assert [str(r) for r in s.env_roots(str(b/'x.py'))] == [str(site)]
+    assert s._here(str(theirs/'gone'/'core.py'), str(b/'x.py')) == ''
+    assert s.env_symbols('fn', path=str(b/'x.py')) == []
+
+def test_the_stdlib_and_site_packages_follow_each_root(tmp_path, monkeypatch):
+    "The read-only reach is every open root's interpreter, not the first root's."
+    from leela.blocks.fs.fs import Sandbox
+    a, b = tmp_path/'a', tmp_path/'b'
+    _venv(a, {}); site = _venv(b, {'pkg/core.py': 'x = 1\n'})
+    fs = Sandbox([a, b])
+    assert fs.python(str(b/'x.py')) == str(b/'.venv'/'bin'/'python')
+    assert fs.read_only(site/'pkg'/'core.py') and not fs.read_only(b/'x.py')

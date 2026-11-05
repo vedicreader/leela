@@ -234,7 +234,7 @@ class Search:
         for row in rows:
             m = _meta(row)
             raw = str(m.get('path') or row.get('path') or '')
-            path = self._here(raw) or raw
+            path = self._here(raw, keep=True)
             local = self._covers(path)
             package = str(row.get('package') or m.get('package') or '')
             out.append(Hit(path=path, line=int(m.get('lineno') or 1),
@@ -283,14 +283,13 @@ class Search:
         for r in rows:
             r['path'], r['line'] = self._here(str(r.pop('path', '') or '')), int(r.pop('lineno', 0) or 0)
         return rows
-    def _here(self, place):
-        "The project's own copy of an indexed package file."
+    def _here(self, place, path='', keep=False):
+        "`path`'s interpreter's copy of an indexed package file, or '' when it has none; `keep` passes any other path through."
         parts = Path(place).parts if place else ()
         if 'site-packages' in parts:
             rest = parts[len(parts) - list(reversed(parts)).index('site-packages'):]
-            for r in self.env_roots():
-                if (mine := Path(r).joinpath(*rest)).is_file(): return str(mine)
-        return place if place and Path(place).is_file() else ''
+            return first(str(m) for r in self.env_roots(path) if (m := Path(r).joinpath(*rest)).is_file()) or ''
+        return place if place and (keep or Path(place).is_file()) else ''
     def completion_patches(self, code, pos, limit=50):
         "Methods dynamically patched onto the receiver type, from Kosha's code stores."
         typ,frag,start=_receiver(code,pos)
@@ -441,7 +440,7 @@ class Search:
     def _indexed_hits(self, rows, kind, score_key=''):
         "Only indexed rows the workspace can actually open; Kosha may index a wider checkout."
         hits = L(self._hit(r, kind, (r.get(score_key) or 0.0) if score_key else 0.0) for r in rows)
-        for h in hits: h.path = self._here(h.path) or h.path
+        for h in hits: h.path = self._here(h.path, keep=True)
         return hits.filter(lambda h: self._covers(h.path))
     def _fts(self, q, limit):
         "Kosha's lexical FTS5 leg only: no embedding and no vector search hidden behind it."
@@ -490,7 +489,7 @@ class Search:
         for row, env in [*((r, False) for r in rr), *((r, True) for r in er)]:
             m = _meta(row)
             raw = str(m.get('path') or row.get('path') or '')
-            path = self._here(raw) or raw
+            path = self._here(raw, keep=True)
             if env and not self._covers(path): path = ''
             out.append(Hit(path=path,
                 line=int(m.get('lineno') or 1), text=(row.get('content') or '').strip(),
@@ -665,22 +664,17 @@ class Search:
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
         return self._place(self._rg(rf'\b{re.escape(name)}\b', limit, regex=True))
-    def env_roots(self):
-        "The project interpreter's `site-packages`, which the project walk deliberately skips."
-        from ..runtime.kernels import project_python
-        py = project_python(self.fs.roots)
-        if not py: return L()
-        lib = Path(py).parent.parent/'lib'
-        if not lib.is_dir(): return L()
-        return L(p/'site-packages' for p in lib.iterdir() if (p/'site-packages').is_dir())
-    def stdlib_root(self):
-        "The project interpreter's standard library, shared with file reads."
-        return self.fs.stdlib_root()
+    def env_roots(self, path=''):
+        "The `site-packages` of `path`'s interpreter, which the project walk deliberately skips."
+        return self.fs.site_roots(self.fs.python(path))
+    def stdlib_root(self, path=''):
+        "The standard library of `path`'s interpreter, shared with file reads."
+        return self.fs.stdlib_root(path)
     def module_roots(self, path=''):
         "Where a dotted module is looked up: the file's own folder, the environment, the stdlib, the project."
-        env = self.env_roots()
+        env = self.env_roots(path)
         return L(*([Path(path).parent] if path else []), *env, *[r.parent for r in env],
-                 *self.stdlib_root(), *self.fs.roots)
+                 *self.stdlib_root(path), *self.fs.roots)
     def module_file(self, dotted, path=''):
         "The file a dotted module name names, as a module or as a package's `__init__`."
         dotted = dotted or ''
@@ -707,7 +701,7 @@ class Search:
         return None
     def _file_hit(self, f, dotted, line=1, symbol=''):
         "A file as a jump target; one in `site-packages` carries its package and dotted module."
-        env = first(r for r in self.env_roots() if str(f).startswith(str(r)))
+        env = first(r for r in self.env_roots(f) if str(f).startswith(str(r)))
         try:
             lines = f.read_text(errors='ignore').split('\n')
             text = lines[line - 1] if line > 1 else first(l for l in lines if l.strip()) or ''
@@ -795,10 +789,10 @@ class Search:
         if (tree := self._tree(path)) is None: return []
         return list(dict.fromkeys(n.module.split('.')[0] for n in ast.walk(tree)
             if isinstance(n, ast.ImportFrom) and not n.level and n.module and any(a.name == '*' for a in n.names)))
-    def installed(self, module):
-        "Whether a module's top-level package, namespace packages included, is in the project's `site-packages`."
+    def installed(self, module, path=''):
+        "Whether a module's top-level package, namespace packages included, is in `path`'s interpreter's `site-packages`."
         top = (module or '').split('.')[0]
-        return bool(top) and any((Path(r)/top).is_dir() or (Path(r)/f'{top}.py').is_file() for r in self.env_roots())
+        return bool(top) and any((Path(r)/top).is_dir() or (Path(r)/f'{top}.py').is_file() for r in self.env_roots(path))
     def import_package(self, name, path):
         "The package a file says `name` comes from, so a lookup goes to the one that was imported."
         if not path or not name: return ''
@@ -819,7 +813,7 @@ class Search:
         name = (name or '').strip()
         if not re.match(r'^[_A-Za-z]\w*$', name): return L()
         if indexed := self.env_symbols(name, limit, path): return indexed
-        roots = scan = self.env_roots()
+        roots = scan = self.env_roots(path)
         if not roots: return L()
         if self._kosha(path or None) is not None:
             # the index holds methods too, so a miss is scanned for only in the packages the file names
@@ -844,7 +838,7 @@ class Search:
     def env_module(self, path, roots=None):
         "The dotted module a `site-packages` file is, so a hit reads `fastcore.basics`."
         p = Path(path)
-        for r in (self.env_roots() if roots is None else roots):
+        for r in (self.env_roots(p) if roots is None else roots):
             if not str(p).startswith(str(r)): continue
             try: parts = p.relative_to(r).with_suffix('').parts
             except ValueError: continue
@@ -861,11 +855,11 @@ class Search:
         except Exception as e:
             self.note = f'Kosha environment lookup failed ({errstr(e)}); scanning site-packages'
             return L()
-        out, roots, seen = L(), self.env_roots(), set()
+        out, roots, seen = L(), self.env_roots(path), set()
         for row in rows:
             m = _meta(row)
             mn, line = str(m.get('mod_name') or ''), int(m.get('lineno') or 1)
-            place = self._here(str(m.get('path') or ''))
+            place = self._here(str(m.get('path') or ''), path)
             # a row indexed from a source checkout or another machine names the copy this project installed
             if not (place and self.env_module(place, roots)) and mn and (got := self._installed_copy(mn, name, roots, line)):
                 place, line = got
@@ -939,7 +933,7 @@ class Search:
                 return 'definition', L(m)
         # an absolute import of an installed package says which `name` this is, whatever the project defines
         if src := self.absolute_source(name, path or ''):
-            if self.installed(src):
+            if self.installed(src, path or ''):
                 if (m := self.module_hit(f'{src}.{name}', path or '')) and not self.reexported_from(src, name, path or ''):
                     self.backend, self.note = 'module', f'{src}.{name} is a module'
                     return 'definition', L(m)
