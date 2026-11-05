@@ -8,11 +8,12 @@ Leela as an application. `desktop-inline-browser.png` is taken at 2x by Playwrig
     python tools/deskshots.py --inline     # just the inline browser
 """
 from __future__ import annotations
-import argparse, asyncio, os, shutil, subprocess, sys, threading, time
+import argparse, asyncio, os, shutil, subprocess, sys, threading, time, tempfile
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp(prefix='leela-tool-cfg-')   # never the person's ~/.config/leela
 
 OUT = ROOT/'docs'/'screenshots'
 PORT = 5178

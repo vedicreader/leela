@@ -22,11 +22,35 @@ _os.environ['LEELA_JOB_SWEEP'] = '0'
 #: `ai.history_path` is then a person's whole conversation log.
 REAL_CONFIG_HOME = _pathlib.Path.home()/'.config'/'leela'
 
+#: Every write this process made under `GUARDED`, as `(event, path)`. Audited, not mtime-compared: the person's own Leela writes there while the suite runs.
+REAL_WRITES, GUARDED = [], [str(REAL_CONFIG_HOME)]
+_WRITE_FLAGS = _os.O_WRONLY | _os.O_RDWR | _os.O_APPEND | _os.O_CREAT | _os.O_TRUNC
+_PATH_EVENTS = {'os.rename': 2, 'os.replace': 2, 'os.remove': 1, 'os.mkdir': 1, 'os.rmdir': 1, 'shutil.rmtree': 1,
+                'os.truncate': 1, 'os.utime': 1, 'os.chmod': 1, 'os.symlink': 2, 'os.link': 2}
+
+def _guarded(p):
+    if isinstance(p, int) or p is None: return False
+    try: p = _os.fsdecode(p)
+    except TypeError: return False
+    return any(p == g or p.startswith(g + _os.sep) for g in GUARDED)
+
+def _audit(event, args):
+    if event == 'open': paths = args[:1] if args[2] & _WRITE_FLAGS or (args[1] and any(c in args[1] for c in 'wax+')) else ()
+    elif n := _PATH_EVENTS.get(event): paths = args[:n]
+    else: return
+    REAL_WRITES.extend((event, _os.fsdecode(p)) for p in paths if _guarded(p))
+
+import sys as _sys
+_sys.addaudithook(_audit)
+
 #: The CDP port this worker's tests get in place of 9223, which on a working machine is the person's headed Chrome.
 _CDP_PORT = []
 
 def pytest_sessionfinish(session):
     if _MADE_HERE: _shutil.rmtree(TEST_CONFIG_HOME, ignore_errors=True)
+    if REAL_WRITES:
+        print(f'\nthe test run wrote under {REAL_CONFIG_HOME}: {REAL_WRITES[:20]}')
+        session.exitstatus = 1
     if not _CDP_PORT: return
     import psutil
     flag = f'--remote-debugging-port={_CDP_PORT[0]}'
@@ -37,7 +61,6 @@ def pytest_sessionfinish(session):
 
 import asyncio
 import socket as _socket
-import sys as _sys
 import threading
 import time as _time
 from contextlib import contextmanager
@@ -88,6 +111,13 @@ def _no_real_beat(monkeypatch, tmp_path_factory):
     import ramabana.monitor as rmon
     monkeypatch.setattr(rmon, 'POB_HOME', tmp_path_factory.mktemp('pob'))
     assert _pathlib.Path.home()/'.pobblebonk' not in rmon.pob_path().parents
+
+@pytest.fixture(autouse=True)
+def _no_real_config_writes():
+    "Fail the test that wrote under the person's real `~/.config/leela`."
+    n = len(REAL_WRITES)
+    yield
+    assert len(REAL_WRITES) == n, f'this test wrote under {REAL_CONFIG_HOME}: {REAL_WRITES[n:]}'
 
 @pytest.fixture(autouse=True)
 def cfg_home(monkeypatch, tmp_path_factory):

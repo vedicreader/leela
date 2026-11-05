@@ -13,6 +13,7 @@ from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp(prefix='leela-tool-cfg-')   # never the person's ~/.config/leela
 
 def rss():
     try:

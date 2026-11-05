@@ -8,10 +8,11 @@ empty and the capture shows it.
 """
 
 from __future__ import annotations
-import asyncio, os, sys, threading
+import asyncio, os, sys, threading, tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp(prefix='leela-tool-cfg-')   # never the person's ~/.config/leela
 
 from leela.blocks.runtime.kernels import KernelPool                       # noqa: E402
 from leela.app import ide_app                          # noqa: E402

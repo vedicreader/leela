@@ -8,13 +8,14 @@ editors constructed, renders asked for, and how long the main thread was blocked
     python tools/profile_agent.py --blocks 8  # a longer reply
 """
 from __future__ import annotations
-import argparse, asyncio, subprocess, sys, tempfile, threading, time
+import argparse, asyncio, subprocess, sys, tempfile, threading, time, os
 
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT/'tests'))
+os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp(prefix='leela-tool-cfg-')   # never the person's ~/.config/leela
 
 CODE = '''```python
 def step_{n}(rows, keep={n}):
