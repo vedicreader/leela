@@ -105,12 +105,31 @@ function widgetHeard(l, m) {
     else if (m.type === 'error') status(`widget: ${m.error}`, 'err');
     return;
   }
+  widgetClean(l, m);
   if (l.mgr) return l.mgr.receive(m);
   if (l.queue.length < 5000) l.queue.push(m);
   widgetManager(l);
 }
+//: The views that write a kernel string as HTML: `value` of HTML and HTMLMath, and a description with `description_allow_html`. The kernel runs code the agent can write, so the string is cleaned on its way in.
+const WIDGET_HTML = new Set(['HTMLModel', 'HTMLMathModel']);
+function widgetClean(l, m) {
+  const c = m.content || {}, all = c.data?.states;
+  // a page that loads from the kernel gets every model's state in one reply on the control comm
+  if (all && typeof all === 'object') return Object.entries(all).forEach(([id, x]) => x?.state && widgetCleanState(l, id, {_model_name: x.model_name, ...x.state}, x.state));
+  if (c.data?.state && typeof c.data.state === 'object' && c.comm_id) widgetCleanState(l, c.comm_id, c.data.state, c.data.state);
+}
+//: `st` read as model `id`'s state; the cleaned values are written to `out`.
+function widgetCleanState(l, id, st, out) {
+  const kinds = l.kinds ||= new Map(), was = kinds.get(id) || {};
+  const now = {name: st._model_name ?? was.name, html: st.description_allow_html ?? was.html, desc: typeof st.description === 'string' ? st.description : was.desc};
+  kinds.set(id, now);
+  if (WIDGET_HTML.has(now.name) && typeof st.value === 'string') out.value = richString(st.value);
+  // turning HTML on later draws the description already held, so it is cleaned then too
+  if (now.html && typeof now.desc === 'string' && ('description' in st || 'description_allow_html' in st)) out.description = richString(now.desc);
+}
 function widgetReset(l) {
   const mgr = l.mgr;
+  l.kinds = new Map();
   l.mgr = l.loading = null; l.loaded = false; l.queue = []; l.gen += 1;
   mgr?.kill().catch(() => {});
   for (const v of l.views.values()) { l.dead.add(v.id); widgetUnmount(v); }

@@ -183,3 +183,33 @@ def test_a_saved_widget_without_a_kernel_shows_its_repr_and_a_badge(tmp_path, br
     # `/agent/resume` and `/git/notebook` answer 400 here with or without widgets: no conversation, and no repository.
     mine = [e for e in errors if not e.startswith('Failed to load resource') and not any(r in e for r in ('/agent/resume', '/git/notebook'))]
     assert not mine and not loaded, (errors, loaded)
+
+PWN = "(window.top.__pwn=window.top.__pwn||[]).push"
+HTMLW = ['from ipywidgets import HTML, HTMLMath, Checkbox',
+         f'''HTML(value='<img src=x onerror="{PWN}(1)"><b>bold</b><table><tr><td>cell</td></tr></table><a href="https://example.com/">site</a>')''',
+         f'''HTMLMath(value='<svg><a class="go" href="javascript:{PWN}(2)"><text y="9">go</text></a></svg><i>math</i>')''',
+         f'''Checkbox(description='<img src=x onerror="{PWN}(3)"><b>tick</b>', description_allow_html=True)''',
+         f'''h = HTML(value='<b>first</b>'); h''', f'''h.value = '<img src=x onerror="{PWN}(4)"><u>later</u>' ''']
+
+@pytest.mark.parametrize('transport', ['direct'])
+def test_an_html_widget_runs_no_script_and_still_draws(tmp_path, transport):
+    """`ipywidgets.HTML` wrote the kernel's string with `innerHTML` in the IDE page, and the agent can run code in that kernel."""
+    p = tmp_path/'html.ipynb'; _nb(p, HTMLW)
+    async def go(pg, errors):
+        await pg.evaluate('() => { window.__pwn = []; }')
+        await _open(pg, p, len(HTMLW))
+        for i in range(len(HTMLW)): await _run(pg, i)
+        got = {'b': await _until(pg, 'c1', 'b', lambda v: v['found'] == 1, secs=90),
+               'td': await _views(pg, 'c1', 'td'), 'a': await pg.evaluate("() => document.querySelector('#out-c1 .lee-widget').shadowRoot.querySelector('a')?.getAttribute('href')"),
+               'i': await _until(pg, 'c2', 'i', lambda v: v['found'] == 1), 'tick': await _until(pg, 'c3', 'b', lambda v: v['found'] == 1),
+               'later': await _until(pg, 'c4', 'u', lambda v: v['found'] == 1)}
+        for h in await pg.query_selector_all('.lee-widget'):
+            await h.evaluate("h => h.shadowRoot && h.shadowRoot.querySelectorAll('.go').forEach(a => a.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})))")
+        await pg.wait_for_timeout(600)
+        got['pwn'] = await pg.evaluate('() => window.__pwn')
+        got['img'] = await pg.evaluate("() => [...document.querySelectorAll('.lee-widget')].flatMap(h => [...(h.shadowRoot?.querySelectorAll('img[onerror]') || [])]).length")
+        return got
+    got = asyncio.run(_page(go, tmp_path, 'chromium', transport))
+    assert got['pwn'] == [] and got['img'] == 0, got
+    assert got['b']['inner'] == 'bold' and got['td']['inner'] == 'cell' and got['a'] == 'https://example.com/', got
+    assert got['i']['inner'] == 'math' and got['tick']['inner'] == 'tick' and got['later']['inner'] == 'later', got

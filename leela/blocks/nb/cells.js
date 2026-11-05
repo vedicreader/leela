@@ -598,30 +598,38 @@ function richCss(css) {
   return css.replace(/@import[^;]*;?/gi, '').replace(/(-webkit-)?image-set\s*\(/gi, 'none(')
     .replace(/url\s*\(\s*(['"]?)([^)]*)\)/gi, (m, q, v) => /^#|^data:image\/(png|jpe?g|gif|webp|avif|svg\+xml);base64,/i.test(v.replace(/['"\s]/g, '')) ? m : 'none');
 }
+//: Clean the children of `root` in place.
+function richWalk(root) {
+  for (const el of [...root.children]) {
+    const tag = el.localName.toLowerCase();
+    if (RICH_GONE.has(tag)) { el.remove(); continue; }
+    if (!RICH_TAGS.has(tag)) { richWalk(el); el.replaceWith(...el.childNodes); continue; }
+    if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'checkbox') { el.remove(); continue; }
+    for (const a of [...el.attributes]) {
+      const n = a.localName.toLowerCase();
+      if (n.startsWith('on') || RICH_ATTR_GONE.has(n) || (['href', 'src', 'poster', 'data', 'cite'].includes(n) && !richUrl(tag, n, a.value))) el.removeAttributeNode(a);
+      else if (n === 'style') a.value = richCss(a.value);
+      else if (n === 'class') a.value = a.value.split(/\s+/).filter(c => c && !RICH_OURS.test(c)).join(' ');
+      else if (/url\s*\(/i.test(a.value) && !/^\s*url\s*\(\s*#[^)]*\)\s*$/i.test(a.value)) el.removeAttributeNode(a);
+    }
+    if (tag === 'style') el.textContent = richCss(el.textContent);
+    if (tag === 'input') el.setAttribute('disabled', '');
+    if (tag === 'a') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+    richWalk(el);
+  }
+}
 //: `html` as a clean fragment. Parsed in a `<template>`, so nothing in it loads or runs before the walk.
 function richHtml(html) {
   const t = document.createElement('template'); t.innerHTML = html;
-  const walk = root => {
-    for (const el of [...root.children]) {
-      const tag = el.localName.toLowerCase();
-      if (RICH_GONE.has(tag)) { el.remove(); continue; }
-      if (!RICH_TAGS.has(tag)) { walk(el); el.replaceWith(...el.childNodes); continue; }
-      if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'checkbox') { el.remove(); continue; }
-      for (const a of [...el.attributes]) {
-        const n = a.localName.toLowerCase();
-        if (n.startsWith('on') || RICH_ATTR_GONE.has(n) || (['href', 'src', 'poster', 'data', 'cite'].includes(n) && !richUrl(tag, n, a.value))) el.removeAttributeNode(a);
-        else if (n === 'style') a.value = richCss(a.value);
-        else if (n === 'class') a.value = a.value.split(/\s+/).filter(c => c && !RICH_OURS.test(c)).join(' ');
-        else if (/url\s*\(/i.test(a.value) && !/^\s*url\s*\(\s*#[^)]*\)\s*$/i.test(a.value)) el.removeAttributeNode(a);
-      }
-      if (tag === 'style') el.textContent = richCss(el.textContent);
-      if (tag === 'input') el.setAttribute('disabled', '');
-      if (tag === 'a') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
-      walk(el);
-    }
-  };
-  walk(t.content);
+  richWalk(t.content);
   return document.importNode(t.content, true);
+}
+//: `html` as clean markup for code that sets `innerHTML` on a `div`: parsed as that `div` parses it, in a document with no window, until it reads back the same; empty when it never does.
+function richString(html) {
+  const d = (richString.doc ||= document.implementation.createHTMLDocument('')).createElement('div');
+  let s = String(html ?? '');
+  for (let i = 0; i < 4; i++) { d.innerHTML = s; richWalk(d); if (d.innerHTML === s) return s; s = d.innerHTML; }
+  return '';
 }
 //: A mime value as text: a saved notebook may keep it as a list of lines.
 const mimeText = v => Array.isArray(v) ? v.join('') : typeof v === 'string' ? v : null;

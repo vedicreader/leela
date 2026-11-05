@@ -3272,30 +3272,38 @@ function richCss(css) {
   return css.replace(/@import[^;]*;?/gi, '').replace(/(-webkit-)?image-set\s*\(/gi, 'none(')
     .replace(/url\s*\(\s*(['"]?)([^)]*)\)/gi, (m, q, v) => /^#|^data:image\/(png|jpe?g|gif|webp|avif|svg\+xml);base64,/i.test(v.replace(/['"\s]/g, '')) ? m : 'none');
 }
+//: Clean the children of `root` in place.
+function richWalk(root) {
+  for (const el of [...root.children]) {
+    const tag = el.localName.toLowerCase();
+    if (RICH_GONE.has(tag)) { el.remove(); continue; }
+    if (!RICH_TAGS.has(tag)) { richWalk(el); el.replaceWith(...el.childNodes); continue; }
+    if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'checkbox') { el.remove(); continue; }
+    for (const a of [...el.attributes]) {
+      const n = a.localName.toLowerCase();
+      if (n.startsWith('on') || RICH_ATTR_GONE.has(n) || (['href', 'src', 'poster', 'data', 'cite'].includes(n) && !richUrl(tag, n, a.value))) el.removeAttributeNode(a);
+      else if (n === 'style') a.value = richCss(a.value);
+      else if (n === 'class') a.value = a.value.split(/\s+/).filter(c => c && !RICH_OURS.test(c)).join(' ');
+      else if (/url\s*\(/i.test(a.value) && !/^\s*url\s*\(\s*#[^)]*\)\s*$/i.test(a.value)) el.removeAttributeNode(a);
+    }
+    if (tag === 'style') el.textContent = richCss(el.textContent);
+    if (tag === 'input') el.setAttribute('disabled', '');
+    if (tag === 'a') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
+    richWalk(el);
+  }
+}
 //: `html` as a clean fragment. Parsed in a `<template>`, so nothing in it loads or runs before the walk.
 function richHtml(html) {
   const t = document.createElement('template'); t.innerHTML = html;
-  const walk = root => {
-    for (const el of [...root.children]) {
-      const tag = el.localName.toLowerCase();
-      if (RICH_GONE.has(tag)) { el.remove(); continue; }
-      if (!RICH_TAGS.has(tag)) { walk(el); el.replaceWith(...el.childNodes); continue; }
-      if (tag === 'input' && (el.getAttribute('type') || '').toLowerCase() !== 'checkbox') { el.remove(); continue; }
-      for (const a of [...el.attributes]) {
-        const n = a.localName.toLowerCase();
-        if (n.startsWith('on') || RICH_ATTR_GONE.has(n) || (['href', 'src', 'poster', 'data', 'cite'].includes(n) && !richUrl(tag, n, a.value))) el.removeAttributeNode(a);
-        else if (n === 'style') a.value = richCss(a.value);
-        else if (n === 'class') a.value = a.value.split(/\s+/).filter(c => c && !RICH_OURS.test(c)).join(' ');
-        else if (/url\s*\(/i.test(a.value) && !/^\s*url\s*\(\s*#[^)]*\)\s*$/i.test(a.value)) el.removeAttributeNode(a);
-      }
-      if (tag === 'style') el.textContent = richCss(el.textContent);
-      if (tag === 'input') el.setAttribute('disabled', '');
-      if (tag === 'a') { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
-      walk(el);
-    }
-  };
-  walk(t.content);
+  richWalk(t.content);
   return document.importNode(t.content, true);
+}
+//: `html` as clean markup for code that sets `innerHTML` on a `div`: parsed as that `div` parses it, in a document with no window, until it reads back the same; empty when it never does.
+function richString(html) {
+  const d = (richString.doc ||= document.implementation.createHTMLDocument('')).createElement('div');
+  let s = String(html ?? '');
+  for (let i = 0; i < 4; i++) { d.innerHTML = s; richWalk(d); if (d.innerHTML === s) return s; s = d.innerHTML; }
+  return '';
 }
 //: A mime value as text: a saved notebook may keep it as a list of lines.
 const mimeText = v => Array.isArray(v) ? v.join('') : typeof v === 'string' ? v : null;
@@ -3971,12 +3979,31 @@ function widgetHeard(l, m) {
     else if (m.type === 'error') status(`widget: ${m.error}`, 'err');
     return;
   }
+  widgetClean(l, m);
   if (l.mgr) return l.mgr.receive(m);
   if (l.queue.length < 5000) l.queue.push(m);
   widgetManager(l);
 }
+//: The views that write a kernel string as HTML: `value` of HTML and HTMLMath, and a description with `description_allow_html`. The kernel runs code the agent can write, so the string is cleaned on its way in.
+const WIDGET_HTML = new Set(['HTMLModel', 'HTMLMathModel']);
+function widgetClean(l, m) {
+  const c = m.content || {}, all = c.data?.states;
+  // a page that loads from the kernel gets every model's state in one reply on the control comm
+  if (all && typeof all === 'object') return Object.entries(all).forEach(([id, x]) => x?.state && widgetCleanState(l, id, {_model_name: x.model_name, ...x.state}, x.state));
+  if (c.data?.state && typeof c.data.state === 'object' && c.comm_id) widgetCleanState(l, c.comm_id, c.data.state, c.data.state);
+}
+//: `st` read as model `id`'s state; the cleaned values are written to `out`.
+function widgetCleanState(l, id, st, out) {
+  const kinds = l.kinds ||= new Map(), was = kinds.get(id) || {};
+  const now = {name: st._model_name ?? was.name, html: st.description_allow_html ?? was.html, desc: typeof st.description === 'string' ? st.description : was.desc};
+  kinds.set(id, now);
+  if (WIDGET_HTML.has(now.name) && typeof st.value === 'string') out.value = richString(st.value);
+  // turning HTML on later draws the description already held, so it is cleaned then too
+  if (now.html && typeof now.desc === 'string' && ('description' in st || 'description_allow_html' in st)) out.description = richString(now.desc);
+}
 function widgetReset(l) {
   const mgr = l.mgr;
+  l.kinds = new Map();
   l.mgr = l.loading = null; l.loaded = false; l.queue = []; l.gen += 1;
   mgr?.kill().catch(() => {});
   for (const v of l.views.values()) { l.dead.add(v.id); widgetUnmount(v); }
