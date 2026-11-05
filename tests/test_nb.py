@@ -1,6 +1,6 @@
 "The notebook document: cells, outputs, images, diagnostics and languages."
 
-import asyncio, json
+import asyncio, json, re
 import pytest
 from leela.blocks.nb.nb import Cell, Notebook
 import sys
@@ -539,3 +539,10 @@ def test_a_request_naming_its_tab_acts_on_it_and_a_move_finds_its_anchor_by_id(t
         assert _ids(r)[1:] == ['h', 'y', 'x'], r
         assert _ids(client.post('/nb/edit', json={'op': 'move_many', 'ids': ['y'], 'target_id': '', 'path': str(b)}).json())[1:] == ['h', 'x', 'y']
         assert client.post('/nb/edit', json={'op': 'move_many', 'ids': ['y'], 'target_id': 'gone', 'path': str(b)}).status_code == 409
+
+def test_a_cell_id_that_is_not_nbformats_is_replaced():
+    """The page writes the id into markup and selectors, so a saved `x"><img onerror=…>` id was markup in the IDE."""
+    from leela.blocks.nb.nb import Cell
+    for bad in ('x"><img src=x onerror=alert(1)>', 'a b', 'x' * 65, 7, ''):
+        assert re.fullmatch(r'[0-9a-f]{8}', Cell.from_nb({'cell_type': 'code', 'source': '', 'id': bad}).id), bad
+    assert Cell.from_nb({'cell_type': 'code', 'source': '', 'id': 'Ab_9-x'}).id == 'Ab_9-x'

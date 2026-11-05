@@ -34,6 +34,8 @@ MAX_UNDO = 100
 WORK_LOG = re.compile(r'\n*<details>\s*<summary>\s*what i did[^<]*</summary>[\s\S]*</details>\s*\Z', re.I)
 
 def cell_id(): return uuid.uuid4().hex[:8]
+#: nbformat 4.5's cell id. Any other is replaced, because the page puts it in markup and selectors.
+CELL_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
 
 #: One count for every notebook this process holds, so a reload outranks the copy it replaced. Microseconds
 #: since the epoch to start, so a page that outlives a restart still sees a later number, and within JS's exact integers.
@@ -223,7 +225,7 @@ class Cell(Dictable):
         held = dict(c.get('metadata') or {})
         meta = held.pop('leela', None) or {}
         return cls(source=src, outputs=list(c.get('outputs') or meta.get('outputs') or []), extra=held,
-            id=str(c.get('id') or cell_id()),
+            id=c['id'] if isinstance(c.get('id'), str) and CELL_ID.fullmatch(c['id']) else cell_id(),
             cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),
             execution_count=c.get('execution_count'), execution_ms=meta.get('execution_ms'),
             output_hash=str(meta.get('output_hash') or ''), attachments=dict(c.get('attachments') or {}),
