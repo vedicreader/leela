@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 0.1.18
+
+Needs kavacha 0.0.11.
+
+- Rich output can no longer run script in Leela. HTML, SVG and MathML from a cell, and HTML from an ipywidget, pass one allowlist before they show: no event attributes, no `javascript:` links, no frames, and no requests to Leela from images or CSS. Before, an output such as `<img onerror=…>` ran in Leela's page and could call Leela's routes. Tables, images, SVG and maths still show.
+- Cell ids from a notebook file, git paths, branch names and media links are escaped where Leela writes them into the page.
+- No request adds a folder by itself. Leela asks with a native dialog that names the folder, and only your click adds it. Open Folder, the Dock, Finder and the folder picker still need one step. A No holds for 10 minutes.
+- A request that changes something must come from Leela's own page: its Origin must match the host and the port. The routes that add a folder take POST only.
+- The lesson handoff asks before it adds a folder. One question can add both the project and its learning copy. With no folder open, a lesson opens as a loose tab.
+- In browser mode there is no native dialog. There, a request from the agent's shell can still pretend to come from the page; `docs/desktop.md` says so.
+
 ## 0.1.17
 
 Needs rupaka 0.0.15.
