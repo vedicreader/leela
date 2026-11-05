@@ -159,6 +159,26 @@ def test_a_trusted_dock_open_adds_with_no_dialog(tmp_path, folders, monkeypatch)
     app.open_folder(5001, folders[0], trusted=False)
     assert h.site_at(folders[0]) is None and len(asked.qs) == 1, 'a request from the page is asked about'
 
+def test_a_page_call_to_open_folder_is_asked_about_and_a_picked_folder_is_not(tmp_path, folders, monkeypatch):
+    """`pywebview.api.open_folder` shared the Dock's trusted callback, so a script in the page could add any folder with no question."""
+    import leela.desktop, leela_app as app
+    api = leela.desktop.shell_api()
+    for k in ('on_open_folder', 'on_page_folder', 'on_picked'): monkeypatch.setattr(api, k, None)
+    h, made = _hub(tmp_path)
+    monkeypatch.setattr(app, 'hub_open', lambda port, path, host='127.0.0.1', **kw: _call(h, OPEN_PATH, f'path={path}'.encode())[1])
+    monkeypatch.setattr(leela.desktop, 'open_window', lambda url, title='leela', key=None, **kw: None)
+    kw = app._hooks(5001)
+    api.on_open_folder, api.on_picked = kw['on_open_folder'], hub.grant
+    hub.set_confirmer(asked := Asked(False))
+    assert api.open_folder(str(folders[1])) and h.site_at(folders[1]) is None and len(asked.qs) == 1, 'the page goes through the gate'
+    import sys, types
+    pick = types.SimpleNamespace(FileDialog=types.SimpleNamespace(FOLDER=20), active_window=lambda: types.SimpleNamespace(create_file_dialog=lambda kind: [str(folders[0])]))
+    monkeypatch.setitem(sys.modules, 'webview', pick)
+    assert api.pick_folder() == str(folders[0]) and api.open_folder(str(folders[0]))
+    assert h.site_at(folders[0]) is not None and len(asked.qs) == 1, 'a folder the person picked opens with no question'
+    kw['on_open_folder'](str(folders[1]))
+    assert h.site_at(folders[1]) is not None and len(asked.qs) == 1, 'and the Dock path stays trusted'
+
 def test_a_learning_copy_opens_with_its_folder_in_one_question(tmp_path, folders):
     """`/hub/open` refused a learning copy with 400, because the copy is not inside the project."""
     (copies := tmp_path/'copies').mkdir(); (copy := copies/'15.ipynb').write_text('{}')
@@ -197,7 +217,7 @@ def test_the_desktop_app_registers_the_confirmer_and_the_picker(monkeypatch):
     import leela.desktop
     from test_desktop_entry import _launch
     api = leela.desktop.shell_api()
-    for k in ('on_picked', 'on_page_folder'): monkeypatch.setattr(api, k, None, raising=False)
+    for k in ('on_picked', 'on_page_folder'): monkeypatch.setattr(api, k, None)
     _launch(monkeypatch, live=None)
     import leela_app as app
     leela_app_run = app.run; leela_app_run()
