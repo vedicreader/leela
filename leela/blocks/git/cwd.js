@@ -219,6 +219,9 @@ async function refreshProjectPills() {
     if (cwd) { cwd.textContent = (d.explicit ? 'cwd ' : 'cwd auto ') + (d.cwd.split('/').pop() || d.cwd);
                cwd.title = d.cwd || 'choose a working directory'; }
   } catch (_) {}
+  await refreshGitPill();
+}
+async function refreshGitPill() {
   try {
     // Bare, not `gitUrl`: the pill and the tree badges describe the repository the active tab is
     // in, so a panel pinned elsewhere must not repaint them. `api`, not `gitInfo`, because that
@@ -247,6 +250,27 @@ async function refreshProjectPills() {
                git.title = 'could not read the repository: ' + ((e && e.message) || e); }
     console.error('git pill', e);
   }
+}
+
+/* A change on disk that git can see: a save, another editor, or a commit, checkout or stage made
+   outside Leela. The pill's repository is looked at, and a pinned panel's own. One look at a time,
+   at most one a second, and a burst during a look gives one more after it. */
+const GIT_DISK_GAP = 1000;
+let gitDiskBusy = null, gitDiskAgain = false, gitDiskAt = 0;
+function noticeGitDisk() {
+  if (gitDiskBusy) { gitDiskAgain = true; return gitDiskBusy; }
+  return gitDiskBusy = (async () => {
+    do {
+      gitDiskAgain = false;
+      const wait = gitDiskAt + GIT_DISK_GAP - performance.now();
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      gitDiskAt = performance.now();
+      await refreshGitPill();
+      if (!gitUI.repo || !scmPanelOpen() || !gitUI.snapshot) continue;
+      const d = await gitInfoOrNull(gitUrl('/git/info'));
+      if (d && gitUI.snapshot && gitSignature(d) !== gitSignature(gitUI.snapshot)) gitChanged();
+    } while (gitDiskAgain);
+  })().finally(() => { gitDiskBusy = null; });
 }
 
 // `/git/info` answers 200 with `repo: false` outside a checkout. A surface that only works inside

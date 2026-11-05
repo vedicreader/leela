@@ -11,13 +11,23 @@ from ... import errstr
 from ...core import keys as keymap
 from .fs import SKIP_DIRS
 
-__all__ = ['Watcher', 'KEYMAP']
+__all__ = ['Watcher', 'KEYMAP', 'git_meta']
 
 KEYMAP = ('keymap',)    # queued when the keymap file changed and `keymap.KEYS` was rebuilt
 
 MAX_BATCH = 200
 RUST_TIMEOUT = 500      # how long the watcher can take to notice it was stopped
 WAIT = 3
+
+def git_meta(p):
+    "The repository whose HEAD, index or refs `p` is, so a commit made outside Leela is seen; else None."
+    parts = Path(p).parts
+    if '.git' not in parts: return None
+    i = parts.index('.git')
+    head, rest = parts[:i], parts[i+1:]
+    if set(head) & SKIP_DIRS or not rest or rest[-1].endswith('.lock'): return None
+    if rest in (('HEAD',), ('index',), ('packed-refs',)) or rest[0] == 'refs': return str(Path(*head))
+    return None
 
 def _sig(p):
     "What an edit changes, rename-over included: a new inode. None once the file is gone."
@@ -69,7 +79,7 @@ class Watcher:
             # watcher for as long as it did, and the tree looked merely stale rather than broken.
             print(f'  the file tree will not follow the disk: {errstr(e)}')
             return
-        keep = lambda _change, p: not (set(Path(p).parts) & SKIP_DIRS)
+        keep = lambda _change, p: not (set(Path(p).parts) & SKIP_DIRS) or git_meta(p) is not None
         for batch in watch(*roots, stop_event=stop, watch_filter=keep, debounce=self.step,
                            rust_timeout=RUST_TIMEOUT):
             if stop.is_set(): return

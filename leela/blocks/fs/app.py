@@ -15,7 +15,7 @@ from .fs import lang_for
 from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
 from ..keys.app import keys_payload
-from .watch import KEYMAP
+from .watch import KEYMAP, git_meta
 from ...core.web import diff_payload
 from ..settings.settings import start_folder
 
@@ -107,10 +107,13 @@ def connect(app, ctx):
                     if isinstance(got, str): yield sse('opened', {'path': got}); continue
                     if got is KEYMAP: yield sse('keys', keys_payload()); continue
                     paths, resync = got
+                    repos = sorted({r for p in paths if (r := git_meta(p))})
+                    paths = [p for p in paths if git_meta(p) is None]
                     _freshen(ctx, paths, resync)
                     shown, tracked = await off_loop(_sort_changes, ctx, paths, hidden)
                     stale_tree(tracked)
-                    if shown or resync: yield sse('changed', {'paths': shown, 'resync': resync, 'git': bool(tracked)})
+                    if shown or resync or repos:
+                        yield sse('changed', {'paths': shown, 'resync': resync, 'git': bool(tracked or repos), 'repos': repos})
             finally: ctx.fs_watch.unsubscribe(q)
         return StreamingResponse(events(), media_type='text/event-stream',
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})

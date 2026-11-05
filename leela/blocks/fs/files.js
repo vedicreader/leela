@@ -254,7 +254,7 @@ const FS_DEBOUNCE = 250, FS_MAX_WAIT = 1000, FS_MAX_SEEN = 2000;
 function resyncFiles() {
   clearTimeout(fsWatchTimer); fsWatchSeen = []; fsWatchSince = 0;
   refreshFileTree(undefined, false).catch(() => {});
-  refreshGitTreeMarks(); watchOpenFile();
+  noticeGitDisk(); refreshGitTreeMarks(); watchOpenFile();
 }
 /* The server drops what the tree cannot show, dotfiles among them unless they are shown, so the
    stream is reopened when that toggle changes. `git` is whether any change is one git can see. */
@@ -277,7 +277,7 @@ function watchFiles() {
       const theirs = notMine(all);
       // Our own save changed no filenames, only what git thinks of one.
       if (theirs.length) await patchTree(theirs).catch(() => {});
-      if (git) await refreshGitTreeMarks();
+      if (git) { noticeGitDisk(); await refreshGitTreeMarks(); }
       if (theirs.some(p => p === lee.path)) { refreshOpenGitMarks(); watchOpenFile(); }
     }, wait);
   });

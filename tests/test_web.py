@@ -524,6 +524,30 @@ def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
     assert any(p.endswith('b.py') for p in paths)
     assert not any('node_modules' in p for p in paths), 'the skip list applies to the watcher too'
 
+def test_a_commit_made_outside_leela_reaches_the_watcher_with_its_repository(tmp_path):
+    "The watcher skipped `.git`, so a commit from a terminal changed nothing Leela could hear."
+    import subprocess
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher, git_meta
+    def git(*a): subprocess.run(['git', '-C', str(tmp_path), *a], check=True, capture_output=True)
+    git('init', '-q', '-b', 'main'); git('config', 'user.email', 'a@b'); git('config', 'user.name', 'c')
+    (tmp_path/'a.py').write_text('x = 1\n'); git('add', '.'); git('commit', '-qm', 'one')
+    assert git_meta(tmp_path/'.git'/'refs'/'heads'/'main') == str(tmp_path)
+    assert not any(git_meta(tmp_path/'.git'/p) for p in ('objects/ab/cd', 'index.lock', 'logs/HEAD', 'logs/refs/heads/main'))
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        try:
+            await asyncio.sleep(.4)
+            while not q.empty(): q.get_nowait()
+            await asyncio.to_thread(git, 'commit', '-q', '--allow-empty', '-m', 'two')
+            got = []
+            while not any(git_meta(p) for p in got): got += (await asyncio.wait_for(q.get(), 5))[0]
+            return got
+        finally: w.close()
+    paths = asyncio.run(run())
+    assert not any('/objects/' in p or p.endswith('.lock') for p in paths), paths
+
 def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_watched_again(tmp_path):
     "`unsubscribe` runs on the event loop, and the Rust watcher takes `rust_timeout` to notice."
     import asyncio, time
