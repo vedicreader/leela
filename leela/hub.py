@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio, hashlib, json, re, threading
+import asyncio, hashlib, json, re, threading, time, weakref
 from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'learn_navigation', 'OPEN_PATH', 'workspace_slug',
-           'workspace_slugs', 'assign_slugs', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls']
+           'workspace_slugs', 'assign_slugs', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls',
+           'NoWindow', 'set_confirmer', 'grant', 'declined', 'admit_folder', 'window_name', 'reset_gate']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
+SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
+GRANT_SECS, DECLINE_SECS, YES_SECS = 60, 600, 10
 #: Where a running Leela is asked for another workspace. On the hub, which the new site joins, not on any one workspace.
 OPEN_PATH = '/hub/open'
 
@@ -76,8 +79,86 @@ def workspace_urls(roots, port, store=None):
     roots = [Path(r).expanduser().resolve() for r in roots]
     return [f'http://{s}.localhost:{port}/' for s in assign_slugs(roots, store)]
 
+class NoWindow(Exception): "The confirmer has no window to ask in."
+
+#: The folder gate's state: who asks, the one-time grants and the recent Nos, each `resolved path -> monotonic deadline`.
+_gate = dict(confirm=None, grants={}, declined={}, lock=threading.Lock())
+_hubs = weakref.WeakSet()
+NO_WINDOW = 'No Leela window is open to ask in.'
+BROWSER_NO = 'Leela adds a folder only when you ask for it in a Leela page.'
+
+def reset_gate():
+    "No confirmer, no grants, no Nos."
+    _gate.update(confirm=None, grants={}, declined={})
+
+def set_confirmer(f):
+    "`f(question) -> bool` asks the person in a native dialog; it raises `NoWindow` when it cannot."
+    _gate['confirm'] = f
+
+def _key(p): return str(Path(p).expanduser().resolve())
+
+def grant(root, secs=GRANT_SECS):
+    "Let the next add of `root` within `secs` seconds pass with no question: a folder the person picked or opened from the Dock or Finder."
+    _gate['grants'][_key(root)] = time.monotonic() + secs
+
+def declined(root) -> bool:
+    "Whether the person said No to `root` in the last `DECLINE_SECS` seconds."
+    return _gate['declined'].get(_key(root), 0) > time.monotonic()
+
+def window_name(ws) -> str:
+    "The window a workspace is, as the question names it."
+    from .core.projects import loose_root
+    r = ws.project_root
+    return f'the Leela window for {Path(r).name}' if r is not None and r != loose_root() else 'this Leela window'
+
+def _hval(headers, k):
+    v = headers.get(k) if hasattr(headers, 'get') else None
+    if v is None and isinstance(headers, dict): v = headers.get(k.encode())
+    return (v.decode('latin-1') if isinstance(v, bytes) else v or '')
+
+def _same_origin(headers) -> bool:
+    "A browser's own request from a Leela page: `Sec-Fetch-Site: same-origin` and an `Origin` that is the `Host`."
+    o, host = _hval(headers, 'origin'), _hval(headers, 'host').lower()
+    return _hval(headers, 'sec-fetch-site').lower() == 'same-origin' and bool(o) and (o == 'null' or urlsplit(o).netloc.lower() == host)
+
+def _is_open(r, covers=None):
+    from .core.projects import loose_root
+    loose = str(loose_root())
+    if r == loose or (covers is not None and covers(Path(r))): return True
+    return any(s.root == r or (s.covers and s.root and s.root != loose and s.covers(Path(r))) for h in list(_hubs) for s in list(h.sites.values()))
+
+def _refusal(root, error, no=False): return 403, {'ok': False, 'declined': no, 'offer': root, 'error': error}
+
+def _question(todo, into, files):
+    q = f"Add the folder {todo[0]} to {into}?" if len(todo) == 1 else f"Add the folders {' and '.join(todo)} to {into}?"
+    return q + (f"\n\nLeela then opens {', '.join(Path(f).name for f in files)}." if files else '')
+
+def admit_folder(root, into, files=(), trusted=False, covers=None, headers=None):
+    "None when the folder `root` (or each of a list) may be added to the window `into`, else `(status, body)`. Asks the person at most once."
+    roots = [_key(r) for r in ([root] if isinstance(root, (str, Path)) else root)]
+    need = lambda: [r for r in roots if not _is_open(r, covers)]
+    if not (todo := need()) or trusted: return None
+    now, g = time.monotonic(), _gate['grants']
+    if all(g.get(r, 0) > now for r in todo):
+        for r in todo: g.pop(r, None)
+        return None
+    if any(map(declined, todo)): return _refusal(todo[0], f'You said No to adding {todo[0]}. Leela does not ask again for 10 minutes.', True)
+    if _gate['confirm'] is None: return None if _same_origin(headers or {}) else _refusal(todo[0], BROWSER_NO)
+    with _gate['lock']:
+        if not (todo := need()): return None
+        now = time.monotonic()
+        if all(g.get(r, 0) > now for r in todo): return None
+        if any(map(declined, todo)): return _refusal(todo[0], f'You said No to adding {todo[0]}.', True)
+        try: yes = bool(_gate['confirm'](_question(todo, into, files)))
+        except NoWindow: return _refusal(todo[0], NO_WINDOW)
+        except Exception: yes = False
+        now = time.monotonic()
+        # a Yes covers the requests that were waiting on this dialog for the same folders
+        for r in todo: (g if yes else _gate['declined'])[r] = now + (YES_SECS if yes else DECLINE_SECS)
+        return None if yes else _refusal(todo[0], f'You said No to adding {todo[0]}.', True)
+
 def _unopenable(file, root):
-    "Why `file` cannot be opened as a tab in the workspace at `root`, or None."
+    "Why `file` cannot be opened as a tab in the workspace at `root` (a folder, or a list of them), or None."
     from .blocks.fs.fs import loose_refusal
     from .core.projects import loose_root
     from .workspace import openable
@@ -86,7 +167,7 @@ def _unopenable(file, root):
     if not f.is_file(): return f'not a file: {file}'
     if root == loose_root():
         if why := loose_refusal(f): return why
-    elif root is not None and not f.is_relative_to(root): return f'{f} is outside {root}'
+    elif root is not None and not any(f.is_relative_to(r) for r in (root if isinstance(root, list) else [root])): return f'{f} is outside {root if not isinstance(root, list) else root[0]}'
     if not openable(f): return f'{f.name} is not a text file'
     return None
 
@@ -106,11 +187,11 @@ def _name(raw):
 
 def _host(headers): return _name(headers.get(b'host', b'').decode())
 
-async def _refuse(scope, send, why):
+async def _refuse(scope, send, why, status=421):
     "Turn a request away over whichever protocol it arrived on."
     if scope.get('type') == 'websocket':
         return await send({'type': 'websocket.close', 'code': 1008, 'reason': why})
-    await send({'type': 'http.response.start', 'status': 421,
+    await send({'type': 'http.response.start', 'status': status,
                 'headers': [(b'content-type', b'text/plain; charset=utf-8')]})
     await send({'type': 'http.response.body', 'body': why.encode()})
 
@@ -126,6 +207,8 @@ class WorkspaceSite:
     release: object = None
     #: `covers(path)`: whether a folder this workspace has open holds `path`. Absent, `root` alone is asked.
     covers: object = None
+    #: `add_root(path)` adds a folder to this workspace: the second folder one question may add.
+    add_root: object = None
 
 def learn_navigation(scope, headers) -> bool:
     "True for a browser's top-level `GET /learn` navigation, the one cross-site request that the guard lets in."
@@ -146,10 +229,12 @@ class LoopbackHostGuard:
         # a page with `Referrer-Policy: no-referrer` posts to itself with `Origin: null`
         origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost') or (origin == 'null' and site == 'same-origin')
         browser_ok = site != 'cross-site' or learn_navigation(scope, headers)
-        if allowed and origin_ok and browser_ok:
-            await self.app(scope, receive, send)
-            return
-        await _refuse(scope, send, 'invalid Host header')
+        if not (allowed and origin_ok and browser_ok): return await _refuse(scope, send, 'invalid Host header')
+        # as abhyasa's `LocalOnly`: a change, or a socket, from a page on another port is another site's
+        changes = scope.get('type') == 'websocket' or scope.get('method', 'GET') not in SAFE_METHODS
+        if changes and origin and origin != 'null' and urlsplit(origin).netloc.lower() != headers.get(b'host', b'').decode().lower():
+            return await _refuse(scope, send, 'Leela does not take changes from another page.', 403)
+        await self.app(scope, receive, send)
 
 class WorkspaceHub:
     "ASGI host dispatcher for isolated workspace applications."
@@ -163,6 +248,7 @@ class WorkspaceHub:
         self._queues, self._legs = {}, []
         # Two files for one checkout arrive together on a cold launch: one site, not two.
         self._opening = threading.Lock()
+        _hubs.add(self)
     def url_for(self, slug): return f'http://{slug}.localhost:{self.port}/'
     def catalog(self):
         "Every workspace and the `*.localhost` URL that reaches it."
@@ -225,27 +311,40 @@ class WorkspaceHub:
         await site.app(scope, receive, send)
     async def _open(self, scope, send):
         "Serve a folder as its own workspace, and with `file`, open that file in it. The desktop shell then points a window at the row."
-        # A file alone never adds a folder: one no open folder holds goes to the loose window, with the folder as `offer`. `folder=1` is the person's yes.
+        # A file alone never adds a folder: one no open folder holds goes to the loose window, with the folder as `offer`. `folder=1` asks to add it.
         from .core.projects import loose_root
         q = parse_qs(scope.get('query_string', b'').decode())
         raw, file, folder = (q.get('path') or [''])[0], (q.get('file') or [''])[0], (q.get('folder') or [''])[0] == '1'
+        if scope.get('method', 'GET') != 'POST' and raw.strip():
+            return await _json(send, {'ok': False, 'error': 'Open a folder with a POST request.', 'config': cfg_mark()}, 405)
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
         if root is None or not root.is_dir():
             return await _json(send, {'ok': False, 'error': f'not a folder: {raw}', 'config': cfg_mark()}, 400)
+        try: also = [a for a in (Path(x).expanduser().resolve() for x in q.get('also') or [] if x.strip()) if a.is_dir()]
+        except (OSError, ValueError): also = []
         loose, site, offer = loose_root(), None, ''
-        if file and not folder and root != loose and (site := self.site_covering(file)) is None: offer, root = str(root), loose
+        if file and not folder and root != loose and (site := self.site_covering(file)) is None: offer, root, also = str(root), loose, []
         # Refused before anything is built, so a bad file leaves no workspace, recent entry or window behind.
-        if file and (why := _unopenable(file, None if site else root)):
+        if file and (why := _unopenable(file, None if site else [root, *also] if also else root)):
             return await _json(send, {'ok': False, 'error': why, 'offer': offer, 'config': cfg_mark()}, 400)
+        if site is None:
+            into = f'the Leela window for {root.name}' if self.site_at(root) else 'a new Leela window'
+            # off the loop: the question waits on a person, and the window it asks in needs the loop to load
+            if no := await asyncio.to_thread(admit_folder, [root, *also], into, [file] if file else (), headers=_headers(scope)):
+                return await _json(send, {**no[1], 'config': cfg_mark()}, no[0])
         # Building one starts a kernel pool, which would stall every open window on the loop.
         try:
             if site is None: site = await asyncio.to_thread(self.open_folder, root)
+            for a in also:
+                if site.add_root is None: raise RuntimeError('this workspace cannot add a folder')
+                await asyncio.to_thread(site.add_root, a)
             if file:
                 if site.open_file is None: raise RuntimeError('this workspace cannot open a file')
                 f = Path(file).expanduser().resolve()
                 await asyncio.to_thread(site.open_file, f)
-                if site.root != str(loose) and (ls := self.site_at(loose)) and ls.release: await asyncio.to_thread(ls.release, root if folder else f)
+                if site.root != str(loose) and (ls := self.site_at(loose)) and ls.release:
+                    for r in ([root, *also] if folder else [f]): await asyncio.to_thread(ls.release, r)
         except Exception as e: return await _json(send, {'ok': False, 'error': str(e), 'config': cfg_mark()}, 400)
         await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root, 'offer': offer,
                            'url': self.url_for(site.slug), 'config': cfg_mark()})

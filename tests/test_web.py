@@ -637,12 +637,15 @@ def test_a_source_changed_on_both_sides_still_refuses_and_names_the_cell(tmp_pat
         assert forced.status_code == 200, 'force still wins'
 
 
-def _hub_get(hub, path, query=b''):
+#: What a Leela page's own `fetch` sends: browser mode lets it add a folder with no confirmer.
+PAGE = [(b'host', b'127.0.0.1:5001'), (b'origin', b'http://127.0.0.1:5001'), (b'sec-fetch-site', b'same-origin')]
+
+def _hub_call(hub, path, query=b'', method='POST', headers=PAGE):
     "Drive one HTTP request through the hub and return `(status, json)`."
     sent = []
     async def send(m): sent.append(m)
     async def receive(): return {'type': 'http.request', 'body': b''}
-    asyncio.run(hub({'type': 'http', 'path': path, 'query_string': query, 'headers': []},
+    asyncio.run(hub({'type': 'http', 'method': method, 'path': path, 'query_string': query, 'headers': list(headers)},
                     receive, send))
     return sent[0]['status'], json.loads(sent[-1]['body'])
 
@@ -654,7 +657,7 @@ def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
         made.append(slug)
         return WorkspaceSite(slug, Path(root).name, str(root), lambda *a: None)
     hub = WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, build=build)
-    status, d = _hub_get(hub, OPEN_PATH, b'path=' + str(two).encode())
+    status, d = _hub_call(hub, OPEN_PATH, b'path=' + str(two).encode())
     assert (status, d['ok']) == (200, True), d
     assert d['url'] == 'http://two.localhost:5001/' and d['id'] == 'two'
     assert set(hub.sites) == {'one', 'two'}, 'and the hub now serves both'
@@ -665,7 +668,7 @@ def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
     (f := tmp_path/'notes.py').write_text('x = 1\n')
     hub = WorkspaceHub([], 5001, build=lambda root, slug: None)
     for raw in (str(f), str(tmp_path/'gone'), ''):
-        status, d = _hub_get(hub, OPEN_PATH, b'path=' + raw.encode())
+        status, d = _hub_call(hub, OPEN_PATH, b'path=' + raw.encode())
         assert (status, d['ok']) == (400, False), raw
         assert d['config'] == cfg_mark(), 'a second launch tells its own Leela from one on another config dir by this'
 
@@ -686,7 +689,7 @@ def test_a_file_handed_to_the_hub_opens_as_the_active_tab_and_is_saved(tmp_path)
     (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
     hub, made = _real_hub(tmp_path)
     for f in (a, b):
-        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
+        status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
         assert (status, d['ok']) == (200, True), d
     assert d['url'] == 'http://proj.localhost:5001/' and list(hub.sites) == ['proj'], 'both files, one workspace'
     ws = made['proj']
@@ -701,10 +704,10 @@ def test_a_file_the_workspace_cannot_show_is_refused_before_anything_is_built(tm
     (outside := other/'x.md').write_text('x\n'); (packed := proj/'a.zip').write_bytes(b'PK')
     hub, made = _real_hub(tmp_path)
     for f in (outside, packed, proj/'gone.md'):
-        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
+        status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
         assert (status, d['ok']) == (400, False), f
     assert not hub.sites and not made and not projects.recent_folders(), 'a refusal leaves no workspace, no recent entry'
-    status, d = _hub_get(hub, OPEN_PATH)
+    status, d = _hub_call(hub, OPEN_PATH)
     assert status == 400, 'the probe `leela_on` relies on still answers'
 
 
@@ -729,10 +732,10 @@ def test_finder_open_with_a_loose_file_opens_it_and_refuses_what_it_should(tmp_p
     (key := ssh/'id_ed25519').write_text('k')
     hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
     for f in (home, packed, key, home/'gone'):
-        status, d = _hub_get(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())
+        status, d = _hub_call(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())
         assert (status, d['ok']) == (400, False), f
     assert not hub.sites and not made, 'a refusal builds nothing'
-    status, d = _hub_get(hub, OPEN_PATH, f'path={loose}&file={rc}'.encode())
+    status, d = _hub_call(hub, OPEN_PATH, f'path={loose}&file={rc}'.encode())
     assert (status, d['ok']) == (200, True), d
     ws = made[d['id']]
     assert [t.path for t in ws.tabs] == [str(rc.resolve())] and ws.fs.covers(rc.resolve())
@@ -743,10 +746,10 @@ def test_opening_a_loose_file_in_a_checkout_drops_its_loose_tab(tmp_path):
     from leela.core import projects
     (proj := tmp_path/'proj').mkdir(); (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
     hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
-    for f in (a, b): assert _hub_get(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())[1]['ok']
+    for f in (a, b): assert _hub_call(hub, OPEN_PATH, f'path={loose}&file={f}'.encode())[1]['ok']
     lws = made[hub.site_at(loose).slug]
     assert len(lws.tabs) == 2
-    assert _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}&folder=1'.encode())[1]['ok']
+    assert _hub_call(hub, OPEN_PATH, f'path={proj}&file={a}&folder=1'.encode())[1]['ok']
     assert not lws.tabs and not lws.fs.covers(a.resolve()) and not lws.offers, 'Open takes every loose tab of that folder'
     assert [t.path for t in made['proj'].tabs] == [str(a.resolve())]
 
@@ -758,17 +761,17 @@ def test_a_file_in_an_unopened_checkout_is_offered_and_adds_no_folder_until_open
     (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n'); (b := proj/'b.md').write_text('b\n')
     (mine := tmp_path/'mine').mkdir()
     hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
-    assert _hub_get(hub, OPEN_PATH, f'path={mine}'.encode())[1]['ok'], 'a folder the person opened'
+    assert _hub_call(hub, OPEN_PATH, f'path={mine}'.encode())[1]['ok'], 'a folder the person opened'
     before, roots = projects.session(), {k: list(w.fs.roots) for k, w in made.items()}
     assert before['folders'] == [str(mine)]
     for f in (a, b):
-        status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
+        status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={f}'.encode())
         assert projects.session() == before, 'desktop.json folders and recent are unchanged'
         assert hub.site_at(proj) is None and all(list(made[k].fs.roots) == r for k, r in roots.items()), 'no workspace, no root'
         assert (status, d['ok'], d['root'], d['offer']) == (200, True, str(loose), str(proj)), d
     lws = made[d['id']]
     assert [t.path for t in lws.tabs] == [str(a.resolve()), str(b.resolve())] and lws.offers == {str(a.resolve()): str(proj), str(b.resolve()): str(proj)}
-    status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}&folder=1'.encode())
+    status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={a}&folder=1'.encode())
     assert (status, d['ok'], d['offer']) == (200, True, '') and hub.site_at(proj) is not None, 'Open is the yes'
     assert str(proj) in projects.last_folders() and projects.recent_folders()[0] == str(proj)
     assert not lws.tabs and not lws.offers, 'and the loose window gives up every file of that folder'
@@ -778,10 +781,10 @@ def test_a_file_a_window_already_holds_opens_there_and_notes_nothing(tmp_path, m
     monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')   # a session of its own keeps temp folders
     (mine := tmp_path/'mine').mkdir(); (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n')
     hub, made = _loose_hub(tmp_path)
-    d = _hub_get(hub, OPEN_PATH, f'path={mine}'.encode())[1]
+    d = _hub_call(hub, OPEN_PATH, f'path={mine}'.encode())[1]
     made[d['id']].add_root(proj)
     before = projects.session()
-    status, got = _hub_get(hub, OPEN_PATH, f'path={proj}&file={a}'.encode())
+    status, got = _hub_call(hub, OPEN_PATH, f'path={proj}&file={a}'.encode())
     assert (status, got['id'], got['offer']) == (200, d['id'], ''), 'the window that added the folder later'
     assert list(hub.sites) == [d['id']] and projects.session() == before
     assert made[d['id']].tab.path == str(a.resolve())
@@ -791,7 +794,7 @@ def test_a_file_the_loose_window_refuses_still_names_its_folder(tmp_path):
     (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (key := proj/'.env').write_text('K=1\n')
     assert loose_refusal(key)
     hub, made = _loose_hub(tmp_path)
-    status, d = _hub_get(hub, OPEN_PATH, f'path={proj}&file={key}'.encode())
+    status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={key}'.encode())
     assert (status, d['ok'], d['offer']) == (400, False, str(proj)) and not hub.sites and not made
 
 

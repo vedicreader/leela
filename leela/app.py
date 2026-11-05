@@ -978,11 +978,14 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         left, right = str(d.get('left') or ''), str(d.get('right') or '')
         if max(len(left), len(right)) > 1_000_000: return _fail('markdown fragment is larger than 1 MB')
         return md_block_diff(left, right)
-    @rt('/fs/add_root')
-    def add_root(path: str):
+    @rt('/fs/add_root', methods=['POST'])
+    def add_root(req, path: str):
         from .core.projects import note_folder
-        # `note_folder`: so the next launch reopens it, and the welcome screen offers it.
-        try: ws.add_root(path); ws.save(); note_folder(path)
+        from .hub import admit_folder, window_name
+        try:
+            if no := admit_folder(path, window_name(ws), covers=ws.fs.covers, headers=req.headers): return JSONResponse(no[1], status_code=no[0])
+            # `note_folder`: so the next launch reopens it, and the welcome screen offers it.
+            ws.add_root(path); ws.save(); note_folder(path)
         except Exception as e: return _fail(str(e))
         return _shell(ws, gate)
     @rt('/tabs/save-all')
@@ -1371,7 +1374,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
         if hub is not None:
             now_serving(host, port, [s.root for s in hub.sites.values()] + [str(root)])
         return WorkspaceSite(slug, root.name, str(root),
-                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()), ws.open_external, ws.release, ws.fs.covers)
+                             ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()), ws.open_external, ws.release, ws.fs.covers, ws.add_root)
     if app_window and roots:
         sites = [site_for_root(r, s) for r, s in zip(roots, assign_slugs(roots))]
         app = hub = WorkspaceHub(sites, port, build=site_for_root)

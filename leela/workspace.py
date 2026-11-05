@@ -243,6 +243,8 @@ class Workspace:
         self.tabs = L()
         #: Loose tab path -> the folder it belongs to, offered once and never opened unasked.
         self.offers = {}
+        #: Loose tab path -> more folders the same question adds with its offer: a learning copy's own folder.
+        self.offer_also = {}
         self.active = 0
         self._untitled = 0
         self._ai = self._inline_ai = self._selection_ai = None
@@ -541,7 +543,8 @@ class Workspace:
         p = self.fs._check(path, must_exist=True, reading=True)
         if loose:
             from .core.projects import workspace_for
-            if (d := workspace_for(p)) is not None and d != self.fs.loose: self.offers[str(p)] = str(d)
+            from .hub import declined
+            if (d := workspace_for(p)) is not None and d != self.fs.loose and not declined(d): self.offers[str(p)] = str(d)
         if not openable(p): raise Unsafe(f'{p.name} is not a text file')
         home = self.copy_home(p)
         try: self.active_root = self.fs.root_of(home or p)
@@ -615,7 +618,7 @@ class Workspace:
         i = self.active if i is None else i
         if not (0 <= i < len(self.tabs)): return None
         t = self.tabs.pop(i)
-        self.offers.pop(t.path, None)
+        self.offers.pop(t.path, None); self.offer_also.pop(t.path, None)
         if t.path and self.fs.admitted: self.fs.revoke(t.path)
         self.active = max(0, min(self.active if i > self.active else self.active-1, len(self.tabs)-1))
         self.watch_env(None)

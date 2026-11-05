@@ -6,6 +6,7 @@ import os, re
 from fastcore.all import Path, first
 
 from fasthtml.common import Div
+from starlette.responses import JSONResponse
 
 from ... import errstr
 from ...core.web import fail, off_loop, sse, unless_gone
@@ -113,12 +114,14 @@ def connect(app, ctx):
             finally: ctx.fs_watch.unsubscribe(q)
         return StreamingResponse(events(), media_type='text/event-stream',
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-    @rt('/fs/add-root')
+    @rt('/fs/add-root', methods=['POST'])
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."
         from ...core.projects import note_folder
+        from ...hub import admit_folder, window_name
         path = (await req.json()).get('path') or ''
         try:
+            if no := await off_loop(admit_folder, path, window_name(ctx.session), covers=ctx.fs.covers, headers=req.headers): return JSONResponse(no[1], status_code=no[0])
             ctx.session.add_root(path); ctx.session.save(); note_folder(path)
             ctx.fs_watch.start(restart=True)
         except Exception as e: return fail(e)

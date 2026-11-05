@@ -9,7 +9,7 @@ from fastcore.all import Path, first, is_port_free
 from fastcore.net import free_port as any_port
 
 __all__ = ['free_port', 'running_leela', 'leela_on', 'folders', 'files', 'leela_args', 'serve', 'main',
-           'run', 'attach', 'hub_open', 'open_folder', 'open_file', 'titles_for', 'HOME_KEY']
+           'run', 'attach', 'hub_open', 'open_folder', 'open_file', 'confirm', 'titles_for', 'HOME_KEY']
 
 HOST = '127.0.0.1'
 #: The window on the bare loopback host. A slug is `[a-z0-9-]+`, so a colon keeps this from ever being a folder's window key.
@@ -91,8 +91,8 @@ def main():
 
 def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
-    from leela.desktop import last_folder, remember, run_shell, shell_ready, warm_cdp
-    from leela.hub import assign_slugs
+    from leela.desktop import last_folder, remember, run_shell, shell_api, shell_ready, warm_cdp
+    from leela.hub import assign_slugs, grant, set_confirmer
     given = files()
     # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer. A file adds no folder: it opens where one is open, else in the loose window with an offer.
     want = folders() or last_folder()
@@ -110,6 +110,9 @@ def run():
         print(f'leela: {why}; opening the workspace in Chrome instead')
         return serve(leela_args(port, dirs, ('--shell', 'chrome', '--cdp-port', str(cdp_port))))
 
+    # The server runs in this process, so the question it asks before adding a folder is a dialog here, and a folder picked here is trusted.
+    set_confirmer(lambda q: confirm(q, port))
+    shell_api().on_picked = grant
     serve(leela_args(port, dirs, ('--shell', 'none', '--cdp-port', str(cdp_port))), background=True)
     warm_cdp(cdp_port)          # a no-op unless `$LEELA_CDP_EAGER` asks for Chrome up front
     # One window per workspace: a single window on the bare loopback host would strand the rest.
@@ -135,7 +138,9 @@ def attach(port, dirs, host=HOST, files=()):
     run_shell(urls, titles=titles, keys=[r['id'] for r in rows], icon=_icon(), **_hooks(port, files))
 
 def _hooks(port, files=()):
-    "What `run_shell` needs to take a folder or a file from Finder, and to open the files named on the command line once the windows are up."
+    "What `run_shell` needs to take a folder or a file from Finder or the Dock, and to open the files named on the command line once the windows are up. A folder the page asks for is not trusted."
+    from leela.desktop import shell_api
+    shell_api().on_page_folder = lambda p: open_folder(port, p, trusted=False)
     kw = dict(on_open_folder=lambda p: open_folder(port, p), on_open_file=lambda p: open_file(port, p))
     if files: kw['on_ready'] = lambda: [open_file(port, f) for f in files]
     return kw
@@ -144,21 +149,25 @@ def titles_for(dirs):
     "One window title per workspace, named after its folder."
     return [f'leela — {Path(d).name}' for d in dirs] or ['leela']
 
-def hub_open(port, path, host=HOST, timeout=60, file='', folder=False):
-    "Ask the server on `port` to serve `path` as a workspace, and with `file` to open it there; a file adds no folder unless `folder`. Returns its row, or the reason not; `down` marks a server that did not answer."
-    import json, urllib.error, urllib.parse, urllib.request
+def hub_open(port, path, host=HOST, timeout=600, file='', folder=False):
+    "Ask the server on `port` to serve `path` as a workspace, and with `file` to open it there; a file adds no folder unless `folder`. Returns its row, or the reason not; `down` marks a server that did not answer. The server may ask the person first, so the wait is long."
+    import json, socket, urllib.error, urllib.parse, urllib.request
     from leela.hub import OPEN_PATH
     url = f'http://{host}:{port}{OPEN_PATH}?path=' + urllib.parse.quote(str(path), safe='')
     if file: url += '&file=' + urllib.parse.quote(str(file), safe='')
     if folder: url += '&folder=1'
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r: return json.loads(r.read())
+        with urllib.request.urlopen(urllib.request.Request(url, data=b'', method='POST'), timeout=timeout) as r: return json.loads(r.read())
     except urllib.error.HTTPError as e: return {'ok': False, 'error': _why(e)}
+    # a question nobody answered in time is not a server still starting: retrying would ask again
+    except (TimeoutError, socket.timeout) as e: return {'ok': False, 'error': f'no answer in {timeout} s: {e}'}
     except Exception as e: return {'ok': False, 'down': True, 'error': f'{type(e).__name__}: {e}'}
 
-def open_folder(port, path, host=HOST):
-    "Give a folder a workspace and a window of its own, through the running server\'s own route."
+def open_folder(port, path, host=HOST, trusted=True):
+    "Give a folder a workspace and a window of its own, through the running server\'s own route. Trusted, from Finder or the Dock, it is let in with no question when the server runs in this process."
     from leela.desktop import open_window
+    from leela.hub import grant
+    if trusted: grant(path)
     d = hub_open(port, path, host)
     if not d.get('ok'): return print(f"  could not open {path}: {d.get('error')}")
     return open_window(d['url'], f"leela — {d['name']}", key=d['id'])
@@ -170,10 +179,10 @@ def open_file(port, path, host=HOST, wait=60, every=.5):
     d = workspace_for(path) or loose_root()
     end = time.monotonic() + wait
     while (got := hub_open(port, d, host, file=path)).get('down') and time.monotonic() < end: time.sleep(every)
-    # Shown in the loose window, the file is offered there. Refused there too (a key file, one too large), the native dialog asks.
-    if not got.get('ok') and (o := got.get('offer')):
-        if not _ask(f"Leela cannot show {Path(path).name} on its own: {got.get('error')}. It is in {Path(o).name}. Open {Path(o).name} as a folder?"): return None
+    # Shown in the loose window, the file is offered there. Refused there too (a key file, one too large), the server asks before it adds the folder.
+    if not got.get('ok') and (o := got.get('offer')) and not got.get('declined'):
         got = hub_open(port, o, host, file=path, folder=True)
+        if got.get('declined'): return None
     if not got.get('ok'): return _tell(f"Leela could not open {path}: {got.get('error')}")
     return open_window(got['url'], f"leela — {Path(path).name if str(loose_root()) in (str(d), got.get('root')) else got['name']}", key=got['id'])
 
@@ -185,13 +194,20 @@ def _tell(msg):
         webview.windows[0].create_confirmation_dialog('Leela', msg)
     except Exception: pass
 
-def _ask(msg):
-    "Ask `msg` in a native dialog, and say whether the answer was yes. No window to ask in is a no."
-    print(f'  {msg}')
-    try:
-        import webview
-        return bool(webview.windows[0].create_confirmation_dialog('Leela', msg))
-    except Exception: return False
+def confirm(msg, port, wait=10, every=.1):
+    "Ask `msg` in a native dialog on the window in front, and say whether the answer was yes. With no window, the home window opens first; `NoWindow` when none comes."
+    import webview
+    from leela.desktop import open_window
+    from leela.hub import NoWindow
+    shown = webview.active_window() or first(webview.windows)
+    if shown is None:
+        open_window(f'http://{HOST}:{port}/', 'leela', key=HOME_KEY)
+        end = time.monotonic() + wait
+        while (shown := first(webview.windows)) is None and time.monotonic() < end: time.sleep(every)
+    if shown is None: raise NoWindow('No Leela window is open to ask in.')
+    # a closed window is only hidden; the question must be where the person can see it
+    if webview.active_window() is None: shown.show()
+    return bool(shown.create_confirmation_dialog('Leela', msg))
 
 def _why(e):
     "What a refusal said, which is the point of it. A 4xx still carries its body."

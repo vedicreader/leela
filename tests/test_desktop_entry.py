@@ -139,19 +139,20 @@ def test_a_file_directly_in_home_opens_in_the_loose_window_named_for_it(monkeypa
 
 
 def test_a_file_the_loose_window_refuses_is_asked_about_and_opens_only_on_yes(monkeypatch, tmp_path):
+    """The shell asked in its own dialog and the server then asked again: one question, the server's."""
     from pathlib import Path
     import leela.desktop, leela_app as app
     (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (f := proj/'.env').write_text('')
-    calls, opened, asked, answers = [], [], [], iter([False, True])
+    calls, opened, answers = [], [], iter([False, True])
     def hub(port, path, host='127.0.0.1', timeout=60, file='', folder=False):
         calls.append((Path(path), folder))
         if not folder: return {'ok': False, 'error': '.env may hold credentials', 'offer': str(proj)}
+        if not next(answers): return {'ok': False, 'declined': True, 'offer': str(proj), 'error': 'You said No.'}
         return dict(ok=True, id='proj', name='proj', root=str(proj), url='http://proj.localhost:5010/')
     monkeypatch.setattr(app, 'hub_open', hub)
-    monkeypatch.setattr(app, '_ask', lambda msg: asked.append(msg) or next(answers))
     monkeypatch.setattr(leela.desktop, 'open_window', lambda url, title='leela', key=None, **kw: opened.append(key))
     app.open_file(5010, f)
-    assert calls == [(proj.resolve(), False)] and not opened and 'Open proj as a folder?' in asked[0], 'Not now opens nothing'
+    assert calls == [(proj.resolve(), False), (proj, True)] and not opened, 'No opens nothing and says nothing more'
     app.open_file(5010, f)
     assert calls[-1] == (proj, True) and opened == ['proj'], 'yes is the only way the folder opens'
 

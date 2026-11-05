@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastcore.basics import first
+from starlette.responses import JSONResponse
 from fastcore.xtras import Path
 
 from ...core.web import fail, off_loop, pipeline_socket
@@ -100,7 +101,6 @@ def fastship_new(session, name, target='', description='A Python package'):
         # Retrying must not meet the folder this attempt made. A half-written tree is left to look at.
         if not any(root.iterdir()): root.rmdir()
         raise
-    session.fs.add_root(root)
     return dict(ok=True, root=str(root), name=slug)
 
 def connect(app, ctx):
@@ -180,8 +180,12 @@ def connect(app, ctx):
             d = await req.json()
             op, repo = str(d.get('op') or ''), d.get('repo') or ''
             if op == 'new':
-                return await off_loop(fastship_new, ctx.session, d.get('name') or '', repo,
-                    d.get('description') or 'A Python package')
+                from ...hub import admit_folder, window_name
+                made = await off_loop(fastship_new, ctx.session, d.get('name') or '', repo, d.get('description') or 'A Python package')
+                if no := await off_loop(admit_folder, made['root'], window_name(ctx.session), covers=ctx.session.fs.covers, headers=req.headers):
+                    return JSONResponse({**no[1], 'root': made['root'], 'name': made['name'], 'error': f"{no[1]['error']} The package is at {made['root']}."}, status_code=no[0])
+                ctx.session.fs.add_root(made['root'])
+                return made
             return await off_loop(fastship_run, ctx.session, op, repo, d.get('part'))
         except Exception as e: return fail(e)
     pipeline_socket(app, '/pipeline/ws', ctx.gate,

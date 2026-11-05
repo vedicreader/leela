@@ -62,7 +62,7 @@ def test_opening_a_folder_in_the_app_is_remembered_for_next_launch(tmp_path, dir
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'v.db'))
     ws = Workspace(roots=[dirs[0]], port=8000)
     with TestClient(ide_app(ws)) as c:
-        c.get('/fs/add_root?path=' + dirs[1])
+        c.post('/fs/add_root?path=' + dirs[1], headers={'origin': 'http://testserver', 'sec-fetch-site': 'same-origin'})
         assert projects.last_folders() == [dirs[1]]
         c.post('/fs/remove-root', json={'path': dirs[1]})
     assert projects.last_folders() == []

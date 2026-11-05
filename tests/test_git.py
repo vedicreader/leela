@@ -277,7 +277,7 @@ def test_cloning_a_repository_into_a_folder_runs_as_a_job_and_can_then_be_opened
         assert job['status'] == 'complete', job.get('error')
         assert (landed/'src'/'app.py').read_text() == 'value = 1\n'
         assert repo_root(landed) == landed and job['result']['root'] == str(landed)
-        assert client.post('/fs/add-root', json={'path': str(landed)}).json()['ok']
+        assert client.post('/fs/add-root', json={'path': str(landed)}, headers={'origin': 'http://testserver', 'sec-fetch-site': 'same-origin'}).json()['ok']
         assert client.post('/workspace/activate', json={'path': str(landed)}).json()['ok']
         assert client.get('/git/info').json()['root'] == str(landed)
         assert client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}).json()['error']

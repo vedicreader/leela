@@ -95,6 +95,12 @@ CREDENTIAL_KEYS = ('HCLOUD_TOKEN CLOUDFLARE_API_TOKEN CF_API_TOKEN CF_TUNNEL_TOK
     'AWS_ACCESS_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN').split()
 
 @pytest.fixture(autouse=True)
+def _folder_gate():
+    "Each test starts with no confirmer, no grant and no remembered No at the folder gate."
+    from leela.hub import reset_gate
+    reset_gate(); yield; reset_gate()
+
+@pytest.fixture(autouse=True)
 def _isolate_credentials(monkeypatch):
     "Run as if none of the machine's real credentials were exported; a test that needs one sets it."
     for key in CREDENTIAL_KEYS: monkeypatch.delenv(key, raising=False)
