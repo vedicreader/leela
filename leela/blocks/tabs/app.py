@@ -112,6 +112,15 @@ def connect(app, ctx):
     @rt('/tab/state')
     def tab_state(path: str = ''):
         "Everything needed to mount the active tab, or an open tab addressed by absolute path or, with none, by title."
+        d = _tab_state(path)
+        if (o := session.offers.get(d.get('path') or '')): d['offer'] = o
+        return d
+    @rt('/tab/offer/dismiss', methods=['POST'])
+    def tab_offer_dismiss(path: str = ''):
+        "Not now: the loose tab on `path` stops offering its folder."
+        session.offers.pop(path, None)
+        return {'ok': True}
+    def _tab_state(path=''):
         t = first(session.tabs, lambda x: docs.key(x) == path) if path else ctx.tab
         if t is None and path:
             try: want = str(Path(path).expanduser().resolve())

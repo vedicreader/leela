@@ -74,6 +74,34 @@ async function openFolderWindow(path) {
 }
 window.leeOpenFolderWindow = openFolderWindow;
 
+/* A file no open folder holds lands in the loose window. Its folder is offered once, and opened only on Open. */
+function folderOffer(st) {
+  let el = $('#leeoffer');
+  if (!st?.offer || !st.path) { if (el) el.hidden = true; return; }
+  if (!el) {
+    el = document.createElement('div'); el.id = 'leeoffer'; el.className = 'lee-offer'; el.setAttribute('role', 'status');
+    document.body.append(el);
+  }
+  const repo = st.offer, file = st.path, name = repo.split('/').pop();
+  el.title = repo; el.hidden = false;
+  el.innerHTML = `<span>This file is in ${esc(name)}. Open ${esc(name)} as a folder?</span>` +
+    `<button class="lee-btn go" data-offer="open">Open</button><button class="lee-btn" data-offer="later">Not now</button>`;
+  el.querySelector('[data-offer="open"]').onclick = async () => {
+    el.hidden = true;
+    const r = await fetch('/hub/open?' + new URLSearchParams({path: repo, file, folder: '1'}), {method: 'POST'});
+    const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
+    if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+    await refreshTabStrip(); mountTab().catch(() => {});
+    if (!await shellReady()) return openExternal(d.url);
+    try { await window.pywebview.api.open_folder(repo); } catch (e) { leeFail('project', `opening ${name}`, e); }
+  };
+  el.querySelector('[data-offer="later"]').onclick = () => {
+    el.hidden = true;
+    post('/tab/offer/dismiss?path=' + encodeURIComponent(file), {}).catch(() => {});
+  };
+}
+window.leeFolderOffer = folderOffer;
+
 // The welcome screen's recent list: when Leela opens on nothing, this is the way back to work.
 async function paintRecent() {
   const host = $('#leerecent'); if (!host) return;

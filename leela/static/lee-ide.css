@@ -2397,6 +2397,12 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   .lee-status, .lee-status::before { animation: none !important; transition: none !important; }
 }
 
+.lee-offer { position: fixed; left: 50%; bottom: 80px; z-index: 23; transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
+             max-width: min(680px, calc(100vw - 32px)); padding: 6px 8px 6px 14px; border: 1px solid var(--lee-border); border-radius: 8px;
+             background: var(--lee-bg1); color: var(--lee-fg2); font: 13px/1.4 var(--lee-sans, inherit); }
+.lee-offer[hidden] { display: none; }
+.lee-offer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---- overlays ---- */
 .lee-modal {
   position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 50;
