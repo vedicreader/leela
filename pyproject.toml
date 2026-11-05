@@ -30,8 +30,8 @@ dependencies = [
     "ipykernel>=7.3.0",
     "ipymini>=0.0.1",
     "jupyter-client>=8.9.1",
-    "koshas>=0.1.20",
-    "litesearch>=0.1.61",
+    "koshas>=0.1.22",
+    "litesearch>=0.1.63",
     "mdhtml>=0.1.38",
     "beautifulsoup4>=4.15.0",   # the room copy finds rupaka demos in rendered markdown (blocks/nb/show.py)
     "nh3==0.3.7",
