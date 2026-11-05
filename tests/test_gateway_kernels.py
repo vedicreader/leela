@@ -66,6 +66,18 @@ def test_a_reply_lost_with_a_dropped_gateway_socket_still_settles_the_cell(tmp_p
     assert took < 15, f'done came {took:.0f}s after the run began: {events}'
     assert done['ok'] and done['lost'] and done['cell']['execution_count'] is not None, done
 
+def test_no_ipykernel_with_the_shell_wedge_can_be_installed():
+    "ipykernel 7.0 to 7.3 stops reading shell when the lost-reply probe lands as the reply leaves (ipykernel#1529), and the cell above then never settles."
+    import tomllib
+    from importlib.metadata import version
+    from pathlib import Path
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+    deps = tomllib.loads((Path(__file__).parents[1]/'pyproject.toml').read_text())['project']['dependencies']
+    spec = first(r for r in map(Requirement, deps) if r.name == 'ipykernel').specifier
+    assert not any(spec.contains(v) for v in ('7.0.0', '7.1.0', '7.2.0', '7.3.0')), spec
+    assert not Version('7.0') <= Version(version('ipykernel')) < Version('7.4'), version('ipykernel')
+
 def test_the_idle_probe_does_not_settle_a_long_silent_cell_early(tmp_path, monkeypatch):
     """A shell `kernel_info` waits behind a running execute, so a busy kernel's probe goes unanswered and the cell keeps running."""
     monkeypatch.setattr(nbmod, 'QUIET', .5)
