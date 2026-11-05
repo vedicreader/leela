@@ -113,10 +113,11 @@ async function refreshKernelPill() {
   try {
     const d = await api('/kernel/info');
     const pill = $('#kpill'); if (!pill) return;
-    pill.className = 'lee-pill ' + (d.api_error || d.boot_error ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
-    pill.textContent = (d.api_error ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
+    pill.className = 'lee-pill ' + (d.api_error || d.boot_error || d.notice ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
+    pill.textContent = (d.api_error || d.notice ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
-                 (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '');
+                 (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
+                 (d.notice ? ' · ' + d.notice.message : '');
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
@@ -135,7 +136,7 @@ async function checkProjectRuntime() {
   if (lee.observer) return;
   let d;
   try { d = await api('/runtime/info'); } catch (_) { return; }
-  if ((!d.needs_create && !d.needs_support && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
+  if ((!d.needs_create && !d.needs_support && !d.needs_upgrade && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
   /* A folder with no environment at all gets one, without being asked, because with uv the fix is
      one command that a deleted directory undoes. Only for a missing environment: installing
@@ -150,12 +151,13 @@ async function checkProjectRuntime() {
     } catch (e) { status(`could not create .venv — ${String(e.message || e)}`, 'err'); }
     /* fall through to the dialog, which offers choosing an interpreter instead */
   }
-  if (d.needs_support || d.needs_inspector) {
+  if (d.needs_support || d.needs_upgrade || d.needs_inspector) {
     /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
        and the variables panel cannot read the namespace without what dhrishti imports. A folder
        missing both should be asked once. */
     const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
     const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
+                   d.needs_upgrade && !d.needs_support ? `<code>ipykernel</code> 7.4 or later (${esc(d.notice.message)})` : '',
                    d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
     const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
       `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
@@ -166,7 +168,7 @@ async function checkProjectRuntime() {
     m.querySelector('#runtimeenable').onclick = async () => {
       m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
       try {
-        if (d.needs_support) await post('/runtime/support', {python: d.python});
+        if (d.needs_support || d.needs_upgrade) await post('/runtime/support', {python: d.python});
         if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
         m.remove();
         status('project runtime ready', 'ok');

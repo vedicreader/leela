@@ -85,18 +85,25 @@ def connect(app, ctx):
         # Its own cache, not `probed`: an install has to be able to drop this one answer, and
         # `forget_probes` drops every probe on the machine.
         inspector = await off_loop(inspector_support, py) if py else {}
+        notice = support.get('ipykernel', {}).get('notice')
         return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
             'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
+            'notice': notice, 'needs_upgrade': bool(notice and installable(py)),
             'support': support, 'active': ctx.pool.default_python or '',
             'inspector': inspector, 'inspector_packages': list(INSPECTOR),
             'needs_inspector': bool(py and installable(py) and not inspector.get('available')),
             'uv': bool(shutil.which('uv'))}
     @rt('/runtime/support')
     async def runtime_support(req):
+        "Install kernel support into a project interpreter; a lesson's tool environment is installed again through `make_tool_env`."
         from kunda.support import install_kernel_support
+        from ..learn.tools import tool_of, upgrade_tool_env
         d = await req.json()
         py = d.get('python') or ctx.pool.default_python
         if not py: return fail('choose a project interpreter first')
+        if key := tool_of(py):
+            r = await off_loop(upgrade_tool_env, key)
+            return {'ok': True, 'python': r.python} if r.ok else fail(f'could not install the lesson kernel again — {r.error}')
         try: return await off_loop(install_kernel_support, py)
         except Exception as e: return fail(f'could not install project kernel support — {errstr(e)}')
     @rt('/runtime/inspector')
@@ -157,6 +164,7 @@ def connect(app, ctx):
             'key': session.runtime_label(k=k),
             'boot_error': k.boot_error if k else None,
             'api_error': getattr(k, 'last_api_error', '') if k else '',
+            'notice': getattr(k, 'notice', None),
             'cwd': str(session.cwd_for() or ''),
             'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs],
             **({'evicted': evicted} if evicted else {})}

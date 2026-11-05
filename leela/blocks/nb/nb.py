@@ -531,6 +531,7 @@ class Notebook:
             c.outputs = r.outputs
             c.execution_count = r.execution_count
             c._lost = bool(getattr(r, 'lost', False))   # kunda settled a run whose reply never came
+            c._reason = getattr(r, 'reason', None)
         finally:
             c.running = False
             c.execution_ms = (time.perf_counter() - started) * 1000
@@ -848,6 +849,9 @@ print(__leela_json.dumps([(__leela_s := get_ipython()).last_execution_succeeded,
 del __leela_json, __leela_s'''
 LOST = {False: 'the cell raised, and its traceback was lost on the way from the kernel',
         None: 'the kernel finished this cell, but its reply was lost on the way, so whether it raised is unknown'}
+#: The error a cell shows when kunda found the kernel's shell no longer reads requests (ipykernel 7.0 to 7.3).
+STOPPED = {'output_type': 'error', 'ename': 'ShellStopped', 'traceback': [],
+           'evalue': "The kernel's shell stopped answering, so this cell cannot finish. Restart the kernel, then run the cell again."}
 
 async def shell_free(k):
     "Whether a gateway kernel's shell answers `kernel_info` within a second, which ipykernel does only between executes; None when it cannot be asked."
@@ -878,7 +882,8 @@ async def run_watched(nb, c, k, on_output=None):
     async def finished():
         c = task.result()
         if not getattr(c, '_lost', False): return c, False
-        await _settle_lost(c, k)
+        if getattr(c, '_reason', None) == 'shell_stopped': c.outputs.append(dict(STOPPED))   # the deaf shell would not run `_settle_lost`
+        else: await _settle_lost(c, k)
         nb.dirty = True
         return c, True
     try:

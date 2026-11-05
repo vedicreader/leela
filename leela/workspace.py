@@ -1109,6 +1109,7 @@ class Workspace:
             'pid': k.pid if k else None,
             'boot_error': k.boot_error if k else None,
             'api_error': getattr(k, 'last_api_error', '') if k else '',
+            'notice': getattr(k, 'notice', None),
             'private': bool(t and t.private_kernel),
             'cwd': str(self.cwd_for(t) or ''),
             'kinds': [{'id': n, 'current': n == self.pool.default_kernel,

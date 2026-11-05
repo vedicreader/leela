@@ -158,7 +158,7 @@ def connect(app, ctx):
         note_origin(owner_tab, c)
         if owner_tab: owner_tab.dirty = True
         rows, result = await cell_extras(k, c)
-        return {'ok': not c.has_error, 'lost': lost, 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
+        return {'ok': not c.has_error, 'lost': lost, 'reason': getattr(c, '_reason', None), 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
                 'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
     def file_after_run(tab):
         "When the kernel of a lesson goes idle, file the run result beside it, off the loop. Filed once for each content; the learn block's sweep tries again after a failure."
@@ -202,7 +202,7 @@ def connect(app, ctx):
             note_origin(owner_tab, c)
             if owner_tab: owner_tab.dirty = True
             rows, result = await cell_extras(k, c)
-            return {'ok': not c.has_error, 'lost': lost, 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
+            return {'ok': not c.has_error, 'lost': lost, 'reason': getattr(c, '_reason', None), 'i': place(nb, c), 'id': c.id, 'cell': c.dict(), 'result': result,
                     'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
         # The run outlives its stream: a page that lost the stream asks `/nb/run/state` for the outcome.
         run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', c.id)

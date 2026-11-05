@@ -3314,6 +3314,11 @@ function outputEl(o, c = null, i = 0) {
   if (o.output_type === 'stream') { outputText(d, o.text); return d; }
   if (o.output_type === 'error') {
     outputText(d, stripAnsi((o.traceback || []).join('\n')) || `${o.ename}: ${o.evalue}`);
+    if (o.ename === 'ShellStopped') {
+      const b = document.createElement('button');
+      b.className = 'lee-btn'; b.dataset.restartKernel = ''; b.textContent = 'Restart kernel'; b.onclick = () => restartKernel();
+      d.appendChild(b);
+    }
     return d;
   }
   const data = o.data || {};
@@ -4286,7 +4291,8 @@ async function runCell(i, advance, {save = true} = {}) {
       const duration = formatCellTime(elapsed), n = lee.cells.indexOf(at) + 1;
       setCellTime(at, elapsed, false);
       setCellState(at, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${n} failed after ${duration}`,
+      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}`
+             : r.reason === 'shell_stopped' ? `cell ${n}: the kernel's shell stopped answering · restart the kernel` : `cell ${n} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
       res = {ok: !!r.ok, error: r.ok ? '' : `cell ${n} failed after ${duration}`};
     } catch (e) {
@@ -5523,6 +5529,7 @@ async function pickKernel() {
     `${o.private ? 'private to this tab' : 'shared across this folder'}</span></div>` +
     (o.boot_error ? `<div class="lee-err">${esc(o.boot_error)}</div>` : '') +
     (o.api_error ? `<div class="lee-err">Inspector connection failed: ${esc(o.api_error)} <button class="lee-btn" data-kernel-reconnect>Restart kernel</button></div>` : '') +
+    (o.notice ? `<div class="lee-err">${esc(o.notice.message)} <button class="lee-btn" data-kernel-upgrade>Upgrade ipykernel</button></div>` : '') +
     `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
     `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
@@ -5537,7 +5544,9 @@ async function pickKernel() {
   const clearWeights = m.querySelector('#clearengines');
   if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
-  if (reconnect) reconnect.onclick = async () => { await post('/kernel/restart'); m.remove(); markPreviousRuns(); status('kernel restarted', 'ok'); };
+  if (reconnect) reconnect.onclick = () => { m.remove(); restartKernel(); };
+  const upgrade = $('[data-kernel-upgrade]', m);
+  if (upgrade) upgrade.onclick = () => { m.remove(); upgradeIpykernel(o.python); };
   m.querySelector('#kernel-auto-manage').onchange = async (e) => {
     try { e.target.checked = await setKernelAutoManage(e.target.checked); }
     catch (err) { e.target.checked = !e.target.checked; status(String(err.message || err), 'err'); }
@@ -5580,6 +5589,20 @@ async function pickKernel() {
   });
 }
 
+
+//: Every Restart kernel button: the saved outputs turn historical, and the pill and the variables follow.
+async function restartKernel() {
+  status('restarting the kernel…');
+  try { await post('/kernel/restart'); } catch (e) { return status(String(e.message || e), 'err'); }
+  markPreviousRuns(); status('kernel restarted', 'ok'); refreshKernelPill(); if (window.leeVars) leeVars();
+}
+
+//: Install kernel support into `python` again, which asks for ipykernel 7.4 or later, then restart the kernel onto it.
+async function upgradeIpykernel(python) {
+  status('installing ipykernel 7.4 or later…');
+  try { await post('/runtime/support', python ? {python} : {}); } catch (e) { return status(String(e.message || e), 'err'); }
+  await restartKernel();
+}
 
 /* The weights the local models are loaded into, beside the kernels: one modal for what this machine
  * is holding open. The broker is the only thing that knows, and one that cannot answer must not keep

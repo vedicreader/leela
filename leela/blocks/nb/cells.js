@@ -640,6 +640,11 @@ function outputEl(o, c = null, i = 0) {
   if (o.output_type === 'stream') { outputText(d, o.text); return d; }
   if (o.output_type === 'error') {
     outputText(d, stripAnsi((o.traceback || []).join('\n')) || `${o.ename}: ${o.evalue}`);
+    if (o.ename === 'ShellStopped') {
+      const b = document.createElement('button');
+      b.className = 'lee-btn'; b.dataset.restartKernel = ''; b.textContent = 'Restart kernel'; b.onclick = () => restartKernel();
+      d.appendChild(b);
+    }
     return d;
   }
   const data = o.data || {};

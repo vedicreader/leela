@@ -129,7 +129,8 @@ async function runCell(i, advance, {save = true} = {}) {
       const duration = formatCellTime(elapsed), n = lee.cells.indexOf(at) + 1;
       setCellTime(at, elapsed, false);
       setCellState(at, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}` : `cell ${n} failed after ${duration}`,
+      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}`
+             : r.reason === 'shell_stopped' ? `cell ${n}: the kernel's shell stopped answering · restart the kernel` : `cell ${n} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
       res = {ok: !!r.ok, error: r.ok ? '' : `cell ${n} failed after ${duration}`};
     } catch (e) {
