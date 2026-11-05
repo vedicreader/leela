@@ -154,8 +154,10 @@ function gitSignature(d) {
 function noticeGitState(d) {
   const sig = gitSignature(d), had = lee.gitSignature;
   lee.gitSignature = sig;
-  if (had && had !== sig) gitChanged();     // `had` empty on the first poll: nothing has moved yet
+  if (had && had !== sig) gitChanged(d);    // `had` empty on the first look: nothing has moved yet
 }
+// The signature is the active tab's repository. A panel pinned elsewhere leaves it alone.
+function noteGitSignature(d) { if (!gitUI.repo && d) lee.gitSignature = gitSignature(d); }
 function gitChanged(d = null) {
   refreshOpenGitMarks();                    // the file's lines, or the notebook's cells
   const left = $('#left');

@@ -54,9 +54,9 @@ async function gitDo(op, extra = {}) {
   try {
     const d = await post('/git/action', {op, repo: gitUI.repo, ...extra});
     gitUI.snapshot = d; paintGitPill(d);
-    // Immediately rather than up to one poll later. The signature is cleared so the next poll
-    // does not treat our own mutation as news and do it all again.
-    lee.gitSignature = ''; gitChanged();
+    // Immediately rather than up to one look later. The new signature is stored, so the next look
+    // does not treat our own mutation as news, and still sees a switch to another repository.
+    noteGitSignature(d); gitChanged();
     // What the operation left behind beats how long it took. A squash that staged twelve files and
     // a merge that stopped at a conflict both "complete". One call, not two, because a second
     // `status` replaces the first.

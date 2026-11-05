@@ -114,7 +114,7 @@ async function showNotebookConflict(path, d) {
     m.remove();
     const info = await api(gitUrl('/git/info'));
     gitUI.snapshot = info; paintGitPill(info);
-    lee.gitSignature = ''; gitChanged();
+    noteGitSignature(info); gitChanged();
     afterConflictResolved(info, `${path} staged`);
   };
   refresh();
