@@ -33,7 +33,8 @@ def test_names_key_and_commands():
     assert install_cmds(['httpx'], d, '/u/uv', (3, 13)) == [
         ['/u/uv', 'venv', str(d/'.venv'), '--python', '3.13'],
         ['/u/uv', 'pip', 'install', '--python', str(d/'.venv'/'bin'/'python'), '--only-binary', ':all:', 'httpx', *tools.kernel_reqs()]]
-    assert [r.split('==')[0] for r in tools.kernel_reqs()] == ['ipykernel', 'ipymini']
+    ipyk, ipym = tools.kernel_reqs()
+    assert ipyk == 'ipykernel>=7.4' and ipym.startswith('ipymini=='), 'ipykernel by its floor: 7.0 to 7.3 can stop answering'
 
 @pytest.mark.parametrize('key', ['../x', '0123456789ABCDEF', '0123', '', None])
 def test_a_bad_key_is_not_a_folder(key):

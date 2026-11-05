@@ -2,12 +2,12 @@ import hashlib, os, re, shutil, subprocess, sys
 from time import monotonic
 from fastcore.basics import AttrDict, first
 from fastcore.xdg import xdg_data_home
-from fastcore.xtras import atomic_save
+from fastcore.xtras import Path, atomic_save
 from ..nb import check
 from ... import errstr
 from .learn import PKG, _NAME
 
-__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_kernel', 'tool_indexed', 'kernel_reqs', 'install_cmds', 'make_tool_env',
+__all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_kernel', 'tool_indexed', 'tool_stale', 'tool_of', 'kernel_reqs', 'install_cmds', 'make_tool_env', 'upgrade_tool_env',
            'index_env', 'tool_job', 'env_state', 'env_job', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
@@ -60,10 +60,20 @@ def _index(key):
     d.touch()
     return ''
 
+def tool_stale(key):
+    "True when the tool environment `key` holds an ipykernel whose shell can stop answering (kunda's `ipykernel_notice`)."
+    from kunda.support import ipykernel_notice
+    return bool((p := tool_python(key)) and ipykernel_notice(p))
+
+def tool_of(python):
+    "The key of the tool environment whose Python is `python`, or None."
+    d = Path(python).parent.parent.parent
+    return d.name if d.parent == xdg_data_home()/'leela'/'tools' and tool_python(d.name) else None
+
 def kernel_reqs() -> list[str]:
-    "The kernel packages a lesson kernel starts from, ipykernel and ipymini, at the versions Leela runs."
-    from kunda.support import as_installed
-    return as_installed(('ipykernel', 'ipymini'))
+    "The kernel packages a lesson kernel starts from: ipykernel at kunda's floor, and ipymini at the version Leela runs."
+    from kunda.support import kernel_requirements
+    return kernel_requirements(('ipykernel', 'ipymini'))
 
 def install_cmds(names, d, uv:str, py=sys.version_info) -> list[list[str]]:
     "The `uv venv` and `uv pip install` argv lists that make the environment for `names` and `kernel_reqs` in `d`, wheels only."
@@ -88,10 +98,10 @@ def make_tool_env(names, run=subprocess.run, uv=None,
     def res(ok, error='', index_error=''):
         p = tool_python(key)
         return AttrDict(key=key, ok=ok, python=str(p) if p else None, error=error, **({'index_error': index_error} if index_error else {}))
-    if tool_kernel(key) and tool_indexed(key): return res(True)
+    if tool_kernel(key) and tool_indexed(key) and not tool_stale(key): return res(True)
     with _session_lock(d, timeout=0 if tool_kernel(key) else budget) as held:
         if not held: return res(True) if tool_kernel(key) else res(False, BUSY)
-        if tool_kernel(key): return res(True, index_error='' if tool_indexed(key) else _index(key))
+        if tool_kernel(key) and not tool_stale(key): return res(True, index_error='' if tool_indexed(key) else _index(key))
         if not (uv := uv or shutil.which('uv')): return res(False, NO_UV)
         cmds = install_cmds(names, d, uv)
         if tool_python(key): cmds = cmds[1:]
@@ -110,6 +120,12 @@ def make_tool_env(names, run=subprocess.run, uv=None,
         with atomic_save(d/'kernel', mode='w') as f: f.write('\n'.join(kernel_reqs()) + '\n')
         with atomic_save(d/'ready', mode='w') as f: f.write('\n'.join(names) + '\n')
         return res(True, index_error=_index(key))
+
+def upgrade_tool_env(key):
+    "Install the kernel packages again into the stale tool environment `key`, through `make_tool_env`."
+    try: names = (tool_dir(key)/'ready').read_text().split()
+    except (OSError, ValueError): return AttrDict(key=key, ok=False, python=None, error='The tool environment is not ready.')
+    return make_tool_env(names)
 
 def library_check(spec, source, key:str) -> dict:
     "The `run_isolated` report for `source` against `spec`'s tests, closed, in the Python of the tool environment `key`. `ValueError` when it is not ready."
