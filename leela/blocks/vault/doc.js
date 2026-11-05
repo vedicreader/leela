@@ -381,12 +381,10 @@ async function leeOpenVaultFile(doc, shelf = '', vault = '') {
   if (d.kind === 'url') return status('this was clipped from the web, not from a file', 'err');
   if (d.kind !== 'file') return status('this document was never a file', 'err');
   if (!d.exists) return status(`${d.path} is no longer there`, 'err');
-  // The fs sandbox refuses paths outside an open folder, and every other path is checked against that.
+  // The fs sandbox refuses paths outside an open folder. The server asks before it adds one, so there is one question.
   if (!d.inside_workspace) {
-    if (!await confirmDialog('open folder', `${d.parent} is not open in this workspace.\n\nAdd it as a folder?`, 'add'))
-      return;
     try { await post('/fs/add-root', {path: d.parent}); await refreshFileTree(d.parent); }
-    catch (e) { return status(e.message || String(e), 'err'); }
+    catch (e) { return status(e.message || String(e), e.body?.declined ? '' : 'err'); }
   }
   return leeOpenFile(d.path);
 }

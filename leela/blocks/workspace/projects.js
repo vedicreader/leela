@@ -44,12 +44,14 @@ async function openFolder(path) {
     document.body.removeEventListener('htmx:responseError', note);
     document.body.removeEventListener('htmx:sendError', note);
   }
-  if (why) leeFail('project', `opening ${name}`, new Error(jsonError(why)));
+  if (!why) return;
+  // A No in the server's question is the person's answer, not a failure.
+  if (jsonBody(why).declined) return status(jsonError(why));
+  leeFail('project', `opening ${name}`, new Error(jsonError(why)));
 }
 // A refused route answers `{"ok": false, "error": …}`; anything else is shown as it came.
-function jsonError(text) {
-  try { return JSON.parse(text).error || text; } catch (_) { return text; }
-}
+function jsonBody(text) { try { return JSON.parse(text) || {}; } catch (_) { return {}; } }
+function jsonError(text) { return jsonBody(text).error || text; }
 window.leeOpenFolder = openFolder;
 
 /* A folder is a workspace, and a workspace is a window: `add_root` puts a second folder in the
@@ -67,7 +69,7 @@ async function openFolderWindow(path) {
   }
   const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
   const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
-  if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+  if (!d.ok) return d.declined ? status(d.error) : leeFail('project', `opening ${name}`, new Error(d.error));
   // In the app window a scripted `window.open` opens nothing and returns null; `openExternal`
   // knows that and asks the server to open a real browser instead.
   openExternal(d.url);
@@ -88,9 +90,10 @@ function folderOffer(st) {
     `<button class="lee-btn go" data-offer="open">Open</button><button class="lee-btn" data-offer="later">Not now</button>`;
   el.querySelector('[data-offer="open"]').onclick = async () => {
     el.hidden = true;
-    const r = await fetch('/hub/open?' + new URLSearchParams({path: repo, file, folder: '1'}), {method: 'POST'});
+    const q = new URLSearchParams({path: repo, file, folder: '1'}); for (const a of st.also || []) q.append('also', a);
+    const r = await fetch('/hub/open?' + q, {method: 'POST'});
     const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
-    if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+    if (!d.ok) return d.declined ? status(d.error) : leeFail('project', `opening ${name}`, new Error(d.error));
     await refreshTabStrip(); mountTab().catch(() => {});
     if (!await shellReady()) return openExternal(d.url);
     try { await window.pywebview.api.open_folder(repo); } catch (e) { leeFail('project', `opening ${name}`, e); }

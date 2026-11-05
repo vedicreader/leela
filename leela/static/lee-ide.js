@@ -5798,7 +5798,7 @@ async function addRoot(find = false) {
       // root's node and a tree that has not been rebuilt does not have one yet.
       await refreshFileTree(target);
       await activateRoot(target);           // the folder you just opened is the one you mean
-    } catch (e) { status(String(e.message || e), 'err'); }
+    } catch (e) { status(String(e.message || e), e.body?.declined ? '' : 'err'); }
   };
   input.oninput = draw;
   input.onkeydown = e => {
@@ -7465,12 +7465,10 @@ async function leeOpenVaultFile(doc, shelf = '', vault = '') {
   if (d.kind === 'url') return status('this was clipped from the web, not from a file', 'err');
   if (d.kind !== 'file') return status('this document was never a file', 'err');
   if (!d.exists) return status(`${d.path} is no longer there`, 'err');
-  // The fs sandbox refuses paths outside an open folder, and every other path is checked against that.
+  // The fs sandbox refuses paths outside an open folder. The server asks before it adds one, so there is one question.
   if (!d.inside_workspace) {
-    if (!await confirmDialog('open folder', `${d.parent} is not open in this workspace.\n\nAdd it as a folder?`, 'add'))
-      return;
     try { await post('/fs/add-root', {path: d.parent}); await refreshFileTree(d.parent); }
-    catch (e) { return status(e.message || String(e), 'err'); }
+    catch (e) { return status(e.message || String(e), e.body?.declined ? '' : 'err'); }
   }
   return leeOpenFile(d.path);
 }
@@ -8346,6 +8344,7 @@ async function leeCloneRepo() {
       await activateRoot(done.root);
       status(`cloned ${done.name}`, 'ok');
     } catch (e) {
+      if (e.body?.declined) return status(e.message);   // cloned, and the person kept the folder out of this window
       go.disabled = false; say.textContent = '';
       leeFail('git', 'clone', e);
     }
@@ -8714,12 +8713,14 @@ async function openFolder(path) {
     document.body.removeEventListener('htmx:responseError', note);
     document.body.removeEventListener('htmx:sendError', note);
   }
-  if (why) leeFail('project', `opening ${name}`, new Error(jsonError(why)));
+  if (!why) return;
+  // A No in the server's question is the person's answer, not a failure.
+  if (jsonBody(why).declined) return status(jsonError(why));
+  leeFail('project', `opening ${name}`, new Error(jsonError(why)));
 }
 // A refused route answers `{"ok": false, "error": …}`; anything else is shown as it came.
-function jsonError(text) {
-  try { return JSON.parse(text).error || text; } catch (_) { return text; }
-}
+function jsonBody(text) { try { return JSON.parse(text) || {}; } catch (_) { return {}; } }
+function jsonError(text) { return jsonBody(text).error || text; }
 window.leeOpenFolder = openFolder;
 
 /* A folder is a workspace, and a workspace is a window: `add_root` puts a second folder in the
@@ -8737,7 +8738,7 @@ async function openFolderWindow(path) {
   }
   const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
   const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
-  if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+  if (!d.ok) return d.declined ? status(d.error) : leeFail('project', `opening ${name}`, new Error(d.error));
   // In the app window a scripted `window.open` opens nothing and returns null; `openExternal`
   // knows that and asks the server to open a real browser instead.
   openExternal(d.url);
@@ -8758,9 +8759,10 @@ function folderOffer(st) {
     `<button class="lee-btn go" data-offer="open">Open</button><button class="lee-btn" data-offer="later">Not now</button>`;
   el.querySelector('[data-offer="open"]').onclick = async () => {
     el.hidden = true;
-    const r = await fetch('/hub/open?' + new URLSearchParams({path: repo, file, folder: '1'}), {method: 'POST'});
+    const q = new URLSearchParams({path: repo, file, folder: '1'}); for (const a of st.also || []) q.append('also', a);
+    const r = await fetch('/hub/open?' + q, {method: 'POST'});
     const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
-    if (!d.ok) return leeFail('project', `opening ${name}`, new Error(d.error));
+    if (!d.ok) return d.declined ? status(d.error) : leeFail('project', `opening ${name}`, new Error(d.error));
     await refreshTabStrip(); mountTab().catch(() => {});
     if (!await shellReady()) return openExternal(d.url);
     try { await window.pywebview.api.open_folder(repo); } catch (e) { leeFail('project', `opening ${name}`, e); }

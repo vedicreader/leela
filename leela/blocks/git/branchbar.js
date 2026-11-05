@@ -346,6 +346,7 @@ async function leeCloneRepo() {
       await activateRoot(done.root);
       status(`cloned ${done.name}`, 'ok');
     } catch (e) {
+      if (e.body?.declined) return status(e.message);   // cloned, and the person kept the folder out of this window
       go.disabled = false; say.textContent = '';
       leeFail('git', 'clone', e);
     }

@@ -523,7 +523,7 @@ async function addRoot(find = false) {
       // root's node and a tree that has not been rebuilt does not have one yet.
       await refreshFileTree(target);
       await activateRoot(target);           // the folder you just opened is the one you mean
-    } catch (e) { status(String(e.message || e), 'err'); }
+    } catch (e) { status(String(e.message || e), e.body?.declined ? '' : 'err'); }
   };
   input.oninput = draw;
   input.onkeydown = e => {
