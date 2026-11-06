@@ -2,6 +2,22 @@
 
 <!-- do not remove -->
 
+## 0.1.25
+
+Needs kavacha 0.0.14.
+
+- Update sees a release pushed today: it makes Homebrew fetch its list first, and runs `brew update` once if Homebrew still lists the old version. If Homebrew does not list the new version yet, Leela says so, with Try again.
+- "Check for updates…" is in the Leela menu, below About, and in the palette. It checks now, past the 6-hour cache and past "Not now", and says the newest version, "up to date", or that it could not check. The Models and updates dialog runs the same Update and Restart.
+- When a new version is installed but Leela still runs the old one, Leela offers "Restart now". A second Update click does not start a second Homebrew run.
+- ⌘O "Open…" shows the Mac chooser for a file or a folder. A folder opens in its window; a file opens as a Finder open does. ⌘P is now "Go to file…" (search in the open folders).
+- A file or folder dropped on the window from Finder opens as a Finder open does.
+- ⌥⇧↩ runs "run the selection" from the menu again; before, the menu ran ⌥↩'s row.
+- Security: a page can no longer call the app's host callbacks. Before, a page script could open any folder with no question.
+
+Known issues:
+
+- A file dropped on an open editor or cell goes into the editor as text, as before.
+
 ## 0.1.24
 
 - Word, PowerPoint and Excel files open in a read-only viewer. Word shows headings, lists, tables and images; PowerPoint shows one card per slide with its speaker notes folded; Excel shows one button per sheet and 200 rows at a time, with the values the file saved. Each has "open in default app" and "copy as text". The agent reads them as text. Leela never writes to them, and older formats (.doc, .xls, .ppt) are refused instead of shown as bytes.
