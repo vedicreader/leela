@@ -248,7 +248,7 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | Window title after a file open | the folder's name, or the file's in the loose window (A:187) | the file's name | different; the page sets the title when it loads |
 | A question from the server (`/confirm`) | A:197 opens a window when none is visible | AD:196 asks on the key window, a visible one, or the last closed one brought back (W:188) | fixed: before, the sheet could go on a hidden window and wait for ever |
 | Dock menu: 8 recent folders, "No recent folders" when none, the path as tooltip | K:222 `dock_menu` | W:401 `dock`, AD:173 | fixed (it was 10 rows, an empty menu, and no tooltip) |
-| Quit stops kernels and servers | K:310 `quit_cleanly`, up to 15 s | AD:185: SIGTERM to the server, SIGKILL after 15 s; the server's shutdown stops kernels, terminals and dev servers | fixed: the wait was 3 s, shorter than a workspace's shutdown |
+| Quit stops kernels and servers | K:310 `quit_cleanly`, up to 15 s | `applicationWillTerminate` (AD): the windows go at once and drop their pages (`hideAll`), then SIGTERM to the server, SIGKILL only after 15 s. The server waits at most `QUIT_GRACE` (1 s) for open requests, then stops kernels, terminals and dev servers: about 1.3 s with two workspaces and two kernels | fixed: every window holds an endless `/fs/events` stream, so uvicorn never finished a SIGTERM; each quit took the full 15 s and ended in SIGKILL |
 | SIGTERM to the app quits as ⌘Q does | K:349 `quit_on_sigterm` | AD:188 | fixed: before, SIGTERM killed the launcher and left the server running |
 
 `menu_json` builds the launcher's menu from kavacha's vocabulary in Leela. It belongs in kavacha, next to `menu_bar`, with the shift fix in `mac_key`.

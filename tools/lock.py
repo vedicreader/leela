@@ -386,10 +386,16 @@ def smoke(env_dir, results, extras=(), wait=180):
                     except Exception: time.sleep(.5)
                 raise TimeoutError(f'no /health in {wait} s: ' + (tmp/f'server-{name}.log').read_text()[-1500:])
             good = step(f'server /health{name}', health) and checks(base, port)
-            srv.terminate()
-            try: srv.wait(15)
-            except subprocess.TimeoutExpired: srv.kill()
-            return good
+            def quit():   # an open window holds an endless /fs/events stream; the launcher kills a server still up after 15 s
+                s = socket.create_connection(('127.0.0.1', port)); s.sendall(f'GET /fs/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n'.encode())
+                time.sleep(1); t = time.monotonic(); srv.terminate()
+                try: srv.wait(15)
+                except subprocess.TimeoutExpired: srv.kill(); raise RuntimeError('SIGTERM did not stop the server in 15 s while a page stream was open')
+                finally: s.close()
+                if (secs := time.monotonic() - t) > 5: raise RuntimeError(f'the server took {secs:.1f} s to stop')
+            done = step(f'quit with a page open{name}', quit)
+            if srv.poll() is None: srv.kill()
+            return done and good
         finally:
             if host: host.close()
     def hub_open(base):

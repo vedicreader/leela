@@ -124,6 +124,17 @@ import WebKit
         #expect(ws.reuse(u("http://other.localhost:1/")) == nil)
     }
 
+    @Test func aQuitHidesEveryWindowAndDropsItsPage() async throws {
+        let ws = Windows(); ws.port = 1
+        let (a, av) = ws.make(u("http://a.localhost:1/"), title: "a"), (b, bv) = ws.make(u("http://b.localhost:1/"), title: "b")
+        defer { a.close(); b.close() }
+        ws.windows = ["a": (a, av), "b": (b, bv)]
+        ws.hideAll()
+        #expect(!a.isVisible && !b.isVisible)
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(av.url?.absoluteString ?? "about:blank" == "about:blank" && bv.url?.absoluteString ?? "about:blank" == "about:blank")
+    }
+
     @Test func eachLoadStepIsWrittenToTheWindowsLog() async throws {
         let ws = Windows(); ws.port = 1; ws.urlWait = 0.3
         let log = FileManager.default.temporaryDirectory.appending(path: "leela-windows-\(UUID().uuidString).log"); ws.log = log

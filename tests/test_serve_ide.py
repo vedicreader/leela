@@ -121,3 +121,12 @@ def test_a_dropped_image_and_then_a_docx_open_as_tabs_of_the_loose_window(tmp_pa
     r = hub_open(docx)
     assert r['ok'] and r['id'] == 'loose' and r['url'] == f'http://{host}/', 'the second drop goes to the same window, whose page shows the new tab'
     assert json.loads(get(f'http://127.0.0.1:{port}/tab/state', host=host).read())['path'] == str(docx.resolve())
+
+def test_a_quit_does_not_wait_for_the_pages_streams(monkeypatch):
+    "Every window holds an endless `/fs/events` stream; uvicorn waited for them, so the launcher's SIGTERM never ended the server and it was killed after 15 s."
+    import uvicorn
+    from leela import app as A
+    seen = {}
+    monkeypatch.setattr(uvicorn, 'run', lambda app, **kw: seen.update(kw))
+    serve_ide(port=free_port(), host='127.0.0.1', transport='direct', shell='none', open_ws=False, agent='off')
+    assert seen['timeout_graceful_shutdown'] == A.QUIT_GRACE and A.QUIT_GRACE <= 2

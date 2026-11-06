@@ -185,7 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         return true
     }
 
-    func applicationWillTerminate(_ n: Notification) { sup?.stop(grace: Self.quitGrace); control?.stop() }
+    /// the windows go at once and drop their page streams; the server then stops in about a second (its QUIT_GRACE), and `quitGrace` is only the limit
+    func applicationWillTerminate(_ n: Notification) { windows.hideAll(); sup?.stop(grace: Self.quitGrace); control?.stop() }
 
     /// SIGTERM quits as ⌘Q does, so the server is stopped; a caught signal, unlike an ignored one, is reset for the children
     func quitOnSigterm() {

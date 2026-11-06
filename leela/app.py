@@ -50,6 +50,8 @@ __all__ = ['ide_app', 'serve_ide']
 #: Seconds an idle connection stays open. uvicorn's 5 closed connections WebKit still held, and WebKit
 #: does not retry a POST sent on one: the Markdown renderer showed "Load failed" after a pause.
 KEEP_ALIVE = 75
+#: Seconds a quit waits for open requests: every window holds an endless `/fs/events` stream, so without a limit a SIGTERM never ends the server.
+QUIT_GRACE = 1
 
 def _patch_fasttransport():
     "Keep the response context as the sole owner of an SSE iterator's cleanup."
@@ -1449,5 +1451,5 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
     try: from .core.watchdog import watch_cpu; watch_cpu()
     except Exception as e: print(f'  cpu watchdog off: {e}')
     now_serving(host, port, [str(r) for r in (roots or ws.fs.roots)])
-    try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning', timeout_keep_alive=KEEP_ALIVE)
+    try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning', timeout_keep_alive=KEEP_ALIVE, timeout_graceful_shutdown=QUIT_GRACE)
     finally: served()

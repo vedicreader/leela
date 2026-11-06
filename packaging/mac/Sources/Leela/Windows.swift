@@ -179,6 +179,9 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         }
     }
 
+    /// every window off screen and its page stopped, so its streams to the server close before the server is asked to stop
+    func hideAll() { for (w, v) in windows.values { w.orderOut(nil); v.stopLoading(); v.loadHTMLString("", baseURL: nil) } }
+
     var front: WKWebView? { (NSApp.keyWindow?.contentView as? WKWebView) ?? windows.values.first { $0.0.isVisible }?.1 }
 
     /// a menu row: the page's own dispatcher in the front window
