@@ -197,15 +197,15 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 
 | Behaviour | Old app | Thin app | Status |
 |---|---|---|---|
-| Menu rows from `BAR`: keymap actions, `Std` selectors, `Js` rows, `__app__` rows in the app menu | M:82, K:650 `menu_bar`, C:1021 | `/app/menu.json` (M:142), W:309 `build`, W:365 `item` | same |
+| Menu rows from `BAR`: keymap actions, `Std` selectors, `Js` rows, `__app__` rows in the app menu | M:82, K:650 `menu_bar`, C:1021 | `/app/menu.json` (M:142), W:309 `build`, W:380 `item` | same |
 | A keymap action row runs `leeAct("<action>")` in the focused window | D:40 `_act`, K:672 `eval_js` | W:171 `run(js:)`, W:295 `MenuRunner` | same |
-| Chords onto rows, selectors onto `Std` rows (the patch `install_menu_patch` / `_decorate`) | K:687, K:707 | the server sends `key`, `mask` and `selector`; W:365 sets them, with nil target so the responder chain gets the selector | same |
-| ⇧ in a chord | K:620 `mac_key` gives a lower case key plus the shift flag | W:386 `appKit` gives the shifted character with no shift flag (`O`, `?`, `!`) | fixed. AppKit matches shift by the character it makes. With a lower case key and the shift flag, no ⇧ chord fired from the menu, and ⌥I ran ⌥⇧I (Interrupt kernel) instead of Live / isolated. The page gets each key first (WebKit), so only keys the page did not take reached the menu. The old app has the same fault: `mac_key` belongs to kavacha, fix it there. The punctuation and digit map is the US keyboard's. |
+| Chords onto rows, selectors onto `Std` rows (the patch `install_menu_patch` / `_decorate`) | K:687, K:707 | the server sends `key`, `mask` and `selector`; W:380 sets them, with nil target so the responder chain gets the selector | same |
+| ⇧ in a chord | K:620 `mac_key` gives a lower case key plus the shift flag | W:423 `appKit` gives the shifted character with no shift flag (`O`, `?`, `!`) | fixed. AppKit matches shift by the character it makes. With a lower case key and the shift flag, no ⇧ chord fired from the menu, and ⌥I ran ⌥⇧I (Interrupt kernel) instead of Live / isolated. The page gets each key first (WebKit), so only keys the page did not take reached the menu. The old app has the same fault: `mac_key` belongs to kavacha, fix it there. The punctuation and digit map is the US keyboard's. |
 | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | `Std` rows (M:90) and C:512 `keyDown_` | `Std` rows; the web view is the first responder (W:70) | same; the first responder is now set when the window opens (fixed: before, nothing was first responder until a click) |
-| Undo ⌘Z, Redo ⇧⌘Z | C:533 `keyDown_` runs the native undo manager when the page does not take the key | W:349 adds Undo and Redo to Edit, selectors `undo:` and `redo:` to the window, which uses the web view's undo manager | fixed. The page sees ⌘Z first, so the editor's and the notebook's own undo still win. |
+| Undo ⌘Z, Redo ⇧⌘Z | C:533 `keyDown_` runs the native undo manager when the page does not take the key | W:364 adds Undo and Redo to Edit, selectors `undo:` and `redo:` to the window, which uses the web view's undo manager | fixed. The page sees ⌘Z first, so the editor's and the notebook's own undo still win. |
 | Enter Full Screen ⌃⌘F | `Std` row (M:101) | `Std` row; windows are `fullScreenPrimary` (W:70) | same |
 | Minimize ⌘M, Zoom, Bring All to Front | `Std` rows (M:122) | `Std` rows; the Window menu is `NSApp.windowsMenu` | same |
-| Close Window ⌘W | C:540 `keyDown_` calls `performClose:` | W:357 adds "Close Window" to File | fixed |
+| Close Window ⌘W | C:540 `keyDown_` calls `performClose:` | W:372 adds "Close Window" to File | fixed |
 | About, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q | C:1070 `_add_app_menu` | W:314 to W:329 | fixed (Services, Hide Others and Show All were missing) |
 | "Use Previous Version", "Show Server Log" | none | W:318 | thin only |
 | A menu bar before the server answers | built before `webview.start` (K:515) | W:344 `fallback` at launch (AD:37); replaced when `/app/menu.json` comes (AD:84), kept when it does not | fixed: before, the setup window had no ⌘Q, ⌘C or ⌘H |
@@ -256,7 +256,7 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | The loose window refuses the file: ask to add its folder | A:183 | AD:150 | fixed |
 | Window title after a file open | the folder's name, or the file's in the loose window (A:187) | the file's name | different; the page sets the title when it loads |
 | A question from the server (`/confirm`) | A:197 opens a window when none is visible | AD:196 asks on the key window, a visible one, or the last closed one brought back (W:188) | fixed: before, the sheet could go on a hidden window and wait for ever |
-| Dock menu: 8 recent folders, "No recent folders" when none, the path as tooltip | K:222 `dock_menu` | W:401 `dock`, AD:173 | fixed (it was 10 rows, an empty menu, and no tooltip) |
+| Dock menu: 8 recent folders, "No recent folders" when none, the path as tooltip | K:222 `dock_menu` | W:438 `dock`, AD:173 | fixed (it was 10 rows, an empty menu, and no tooltip) |
 | Quit stops kernels and servers | K:310 `quit_cleanly`, up to 15 s | `applicationWillTerminate` (AD): the windows go at once and drop their pages (`hideAll`), then SIGTERM to the server, SIGKILL only after 15 s. The server waits at most `QUIT_GRACE` (1 s) for open requests, then stops kernels, terminals and dev servers: about 1.3 s with two workspaces and two kernels | fixed: every window holds an endless `/fs/events` stream, so uvicorn never finished a SIGTERM; each quit took the full 15 s and ended in SIGKILL |
 | SIGTERM to the app quits as ⌘Q does | K:349 `quit_on_sigterm` | AD:188 | fixed: before, SIGTERM killed the launcher and left the server running |
 

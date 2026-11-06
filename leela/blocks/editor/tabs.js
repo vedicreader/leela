@@ -133,6 +133,7 @@ async function mountTab(expectedPath = '') {
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
+  else if (st.kind === 'office') await mountOffice(host, st);
   else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
   else if (st.kind === 'notebook') { takeLate(st); mountNotebook(host, st); lee.mountedAt = mountVersion; }
   else await mountFile(host, st);

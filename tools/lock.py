@@ -315,7 +315,8 @@ from pathlib import Path
 from leela.core import host
 host._host.update(url='http://127.0.0.1:9', token='t')
 from leela.blocks.agent.ai import WorkspaceHost
-e = WorkspaceHost._env(None, Path(sys.argv[1]))
+from types import SimpleNamespace
+e = WorkspaceHost._env(SimpleNamespace(ws=None), Path(sys.argv[1]))
 r = lambda c: subprocess.run(c, shell=True, cwd=sys.argv[1], env=e, capture_output=True, text=True)
 ran = lambda n: (lambda p: f'usage: {n}' in (p.stdout + p.stderr).lower())(r(f'{n} --help'))   # kosha's --help exits 1
 print(json.dumps(dict(ramabana=ran('ramabana'), kosha=ran('kosha'), python=r('command -v python').stdout.strip(),

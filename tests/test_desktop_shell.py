@@ -135,13 +135,13 @@ def test_a_folder_is_never_opened_on_the_thread_running_the_gui():
 
 
 @pytest.mark.parametrize('chord,want', [
-    ('mod+shift+p', ('p', desktop.CMD | desktop.SHIFT)),
+    ('mod+shift+p', ('P', desktop.CMD)),                      # Shift is in the key AppKit matches
     ('mod+,',       (',', desktop.CMD)),
-    ('hyper+g',     ('g', desktop.CMD | desktop.CTRL | desktop.ALT | desktop.SHIFT)),
-    ('alt+shift+1', ('1', desktop.ALT | desktop.SHIFT)),
+    ('hyper+g',     None),                                    # AeroSpace owns Hyper
+    ('alt+shift+1', ('!', desktop.ALT)),
     ('ctrl+`',      ('`', desktop.CTRL)),
-    ('alt+shift+b hyper+left', ('b', desktop.ALT | desktop.SHIFT)),   # the first chord only
-    ('hyper+left',  ('', desktop.CMD | desktop.CTRL | desktop.ALT | desktop.SHIFT)),
+    ('alt+shift+b alt+w', ('B', desktop.ALT)),                # the first chord only
+    ('mod+shift+up', ('\uf700', desktop.CMD | desktop.SHIFT)),  # a named key keeps the Shift bit
     ('nonsense+x',  None),
     ('',            None),
 ])

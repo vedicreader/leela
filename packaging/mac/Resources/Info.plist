@@ -19,55 +19,193 @@
 			</array>
 		</dict>
 		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Text file</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.microsoft.ini</string>
+				<string>com.microsoft.typescript</string>
+				<string>com.netscape.javascript-source</string>
+				<string>com.sun.java-source</string>
+				<string>net.daringfireball.markdown</string>
+				<string>org.iso.sql</string>
+				<string>org.vedicreader.leela.cjs</string>
+				<string>org.vedicreader.leela.fish</string>
+				<string>org.vedicreader.leela.go</string>
+				<string>org.vedicreader.leela.gradle</string>
+				<string>org.vedicreader.leela.json5</string>
+				<string>org.vedicreader.leela.jsonc</string>
+				<string>org.vedicreader.leela.jsx</string>
+				<string>org.vedicreader.leela.properties</string>
+				<string>org.vedicreader.leela.pyi</string>
+				<string>org.vedicreader.leela.rs</string>
+				<string>org.vedicreader.leela.scss</string>
+				<string>public.bash-script</string>
+				<string>public.c-header</string>
+				<string>public.c-plus-plus-header</string>
+				<string>public.c-plus-plus-source</string>
+				<string>public.c-source</string>
+				<string>public.css</string>
+				<string>public.html</string>
+				<string>public.json</string>
+				<string>public.python-script</string>
+				<string>public.shell-script</string>
+				<string>public.toml</string>
+				<string>public.xml</string>
+				<string>public.yaml</string>
+				<string>public.zsh-script</string>
+			</array>
+		</dict>
+		<dict>
 			<key>CFBundleTypeExtensions</key>
 			<array>
-				<string>bash</string>
-				<string>c</string>
-				<string>cc</string>
 				<string>cfg</string>
 				<string>cjs</string>
-				<string>cpp</string>
-				<string>css</string>
 				<string>cts</string>
-				<string>cxx</string>
 				<string>fish</string>
 				<string>go</string>
 				<string>gradle</string>
-				<string>h</string>
-				<string>hpp</string>
 				<string>ini</string>
-				<string>ipynb</string>
-				<string>java</string>
-				<string>js</string>
-				<string>json</string>
 				<string>json5</string>
 				<string>jsonc</string>
 				<string>jsx</string>
 				<string>markdown</string>
 				<string>md</string>
-				<string>mjs</string>
 				<string>mts</string>
 				<string>properties</string>
-				<string>py</string>
 				<string>pyi</string>
 				<string>rs</string>
 				<string>scss</string>
-				<string>sh</string>
 				<string>sql</string>
 				<string>toml</string>
 				<string>ts</string>
 				<string>tsx</string>
-				<string>xml</string>
-				<string>yaml</string>
-				<string>yml</string>
-				<string>zsh</string>
+				<string>txt</string>
 			</array>
 			<key>CFBundleTypeName</key>
-			<string>Source file</string>
+			<string>Text file by extension</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
-			<string>Owner</string>
+			<string>Alternate</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Jupyter notebook</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.jupyter.ipynb</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>ipynb</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Jupyter notebook by extension</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.compuserve.gif</string>
+				<string>com.microsoft.bmp</string>
+				<string>com.microsoft.ico</string>
+				<string>org.webmproject.webp</string>
+				<string>public.jpeg</string>
+				<string>public.png</string>
+				<string>public.svg-image</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>PDF document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Word, PowerPoint or Excel file</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.openxmlformats.presentationml.presentation</string>
+				<string>org.openxmlformats.spreadsheetml.sheet</string>
+				<string>org.openxmlformats.spreadsheetml.sheet.macroenabled</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Audio file</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.m4a-audio</string>
+				<string>com.microsoft.waveform-audio</string>
+				<string>org.vedicreader.leela.opus</string>
+				<string>org.xiph.flac</string>
+				<string>org.xiph.ogg-audio</string>
+				<string>public.aac-audio</string>
+				<string>public.mp3</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>opus</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Audio file by extension</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Video file</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.m4v-video</string>
+				<string>com.apple.quicktime-movie</string>
+				<string>org.webmproject.webm</string>
+				<string>public.mpeg-4</string>
+			</array>
 		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
@@ -97,5 +235,319 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Apache-2.0</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>INI file</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.microsoft.ini</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ini</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>TypeScript source</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.microsoft.typescript</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>cts</string>
+					<string>mts</string>
+					<string>ts</string>
+					<string>tsx</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Markdown text</string>
+			<key>UTTypeIdentifier</key>
+			<string>net.daringfireball.markdown</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>markdown</string>
+					<string>md</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SQL source</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.iso.sql</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sql</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Jupyter notebook</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.jupyter.ipynb</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>ipynb</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>CJS file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.cjs</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>cjs</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>FISH file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.fish</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fish</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>GO file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.go</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>go</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>GRADLE file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.gradle</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>gradle</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>JSON5 file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.json5</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>json5</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>JSONC file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.jsonc</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>jsonc</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>JSX file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.jsx</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>jsx</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>OPUS file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.opus</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>opus</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>PROPERTIES file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.properties</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>properties</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>PYI file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.pyi</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>pyi</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>RS file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.rs</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>rs</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>SCSS file</string>
+			<key>UTTypeIdentifier</key>
+			<string>org.vedicreader.leela.scss</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>scss</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>TOML file</string>
+			<key>UTTypeIdentifier</key>
+			<string>public.toml</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>cfg</string>
+					<string>toml</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

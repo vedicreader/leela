@@ -11,7 +11,8 @@ from starlette.responses import JSONResponse
 from ... import errstr
 from ...core.web import fail, off_loop, sse, unless_gone
 from ...core.text import fuzzy_rank
-from .fs import lang_for
+from .fs import MEDIA_TYPES, Unsafe, is_media, lang_for
+from .office import SHEET_ROWS, is_office, office_html, office_text, open_in_app, sheet_rows
 from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
 from ..keys.app import keys_payload
@@ -23,9 +24,7 @@ __all__ = ['CAPS', 'connect', 'SERVED_TYPES']
 
 SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
     '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
-    '.bmp': 'image/bmp', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4',
-    '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.aac': 'audio/aac', '.mp4': 'video/mp4',
-    '.webm': 'video/webm', '.ogv': 'video/ogg', '.mov': 'video/quicktime'}
+    '.bmp': 'image/bmp', **MEDIA_TYPES}
 
 CAPS = ('fs', 'fs_watch', 'journal', 'docs')
 
@@ -251,7 +250,7 @@ def connect(app, ctx):
             return {'ok': True, 'closed': closed}
         except Exception as e: return fail(e)
     def _serve_raw(path, download):
-        "One file's bytes, for documents the browser renders itself. `inline` opens the viewer."
+        "One file's bytes, for documents the browser renders itself. `inline` opens the viewer; FileResponse answers a Range with 206 so media can seek."
         from starlette.responses import FileResponse
         try:
             p = ctx.fs._check(path, must_exist=True)
@@ -268,6 +267,42 @@ def connect(app, ctx):
     def file_raw_named(name: str, path: str = '', download: bool = False):
         "The same bytes, with the filename in the URL for the viewer's title. `name` is never resolved."
         return _serve_raw(path, download)
+    def _office(path):
+        p = ctx.fs._check(path, must_exist=True, reading=True)
+        if not is_office(p): raise Unsafe(f'{p.name} is not a Word, PowerPoint or Excel file')
+        return p
+    @rt('/office/view')
+    async def office_view(path: str = ''):
+        "A Word, PowerPoint or Excel file as cleaned HTML for its read-only tab."
+        try: return {'ok': True, 'html': await off_loop(office_html, _office(path))}
+        except Exception as e: return fail(e)
+    @rt('/office/rows')
+    async def office_rows(path: str = '', sheet: int = 0, start: int = 0, n: int = SHEET_ROWS):
+        "The next rows of one sheet, for show more."
+        try:
+            html, count, more = await off_loop(sheet_rows, _office(path), sheet, start, n)
+            return {'ok': True, 'html': html, 'count': count, 'more': more}
+        except Exception as e: return fail(e)
+    @rt('/office/text')
+    async def office_copy(path: str = ''):
+        "The document as Markdown, for Copy as text."
+        try: return {'ok': True, 'text': await off_loop(office_text, _office(path))}
+        except Exception as e: return fail(e)
+    @rt('/office/open', methods=['POST'])
+    def office_open(path: str = ''):
+        "Open the file in the app the system gives its type."
+        try: open_in_app(_office(path))
+        except Exception as e: return fail(e)
+        return {'ok': True}
+    @rt('/media/open', methods=['POST'])
+    def media_open(path: str = ''):
+        "Open an audio or video file in the app the system gives its type."
+        try:
+            p = ctx.fs._check(path, must_exist=True, reading=True)
+            if not is_media(p): raise Unsafe(f'{p.name} is not an audio or video file')
+            open_in_app(p)
+        except Exception as e: return fail(e)
+        return {'ok': True}
     @rt('/fs/find')
     async def fs_find(req, q: str = '', limit: int = 200, scope: str = '', dirs: bool = False, more: bool = False):
         "Fuzzy match over the open folders, best match first; `more` searches only what the walk leaves out."

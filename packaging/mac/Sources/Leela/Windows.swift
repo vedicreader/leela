@@ -332,6 +332,21 @@ final class MenuRunner: NSObject {
     @objc func menuRow(_ i: NSMenuItem) { if let js = i.representedObject as? String { run(js) } }
 }
 
+/// The menu bar. AppKit lets a row with no shift take the shifted chord of a key that has no case (⌥↩ took ⌥⇧↩), so a row whose chord is exactly the event's goes first.
+final class LeelaBar: NSMenu {
+    override func performKeyEquivalent(with e: NSEvent) -> Bool {
+        let m = e.modifierFlags.intersection([.command, .option, .control, .shift])
+        if m.contains(.shift), let c = e.charactersIgnoringModifiers, c.lowercased() == c.uppercased() {
+            for sub in items.compactMap(\.submenu) {
+                if let i = sub.items.firstIndex(where: { $0.isEnabled && $0.keyEquivalent == c && $0.keyEquivalentModifierMask.intersection([.command, .option, .control, .shift]) == m }) {
+                    sub.performActionForItem(at: i); return true
+                }
+            }
+        }
+        return super.performKeyEquivalent(with: e)
+    }
+}
+
 /// The menu bar from the server's `/app/menu.json`, and the Dock menu from `/app/recent`.
 @MainActor
 enum Menus {
@@ -340,8 +355,8 @@ enum Menus {
     static let cmd = NSEvent.ModifierFlags.command
 
     /// the bar; `app` is the target of the launcher's own rows (Use Previous Version, Show Server Log)
-    static func build(_ menus: [[String: Any]], runner: MenuRunner, app: AnyObject? = nil) -> NSMenu {
-        let bar = NSMenu()
+    static func build(_ menus: [[String: Any]], launcher: [[String: Any]] = Menus.launcher, runner: MenuRunner, app: AnyObject? = nil) -> NSMenu {
+        let bar = LeelaBar()
         let appItem = NSMenuItem(), appMenu = NSMenu(title: "Leela")
         appItem.submenu = appMenu
         bar.addItem(appItem)
@@ -370,8 +385,30 @@ enum Menus {
             if t == "Window" { NSApplication.shared.windowsMenu = sub }
             if t == "Help" { NSApplication.shared.helpMenu = sub }
         }
-        closeWindow(bar); undo(bar)
+        closeWindow(bar); undo(bar); own(bar, launcher)
         return bar
+    }
+
+    /// kavacha's LAUNCHER_ROWS, until the server's `/app/menu.json` gives them: the chords the launcher owns
+    static let launcher: [[String: Any]] = [["title": "Quit", "selector": "terminate:", "key": "q", "mask": 1 << 20], ["title": "Hide", "selector": "hide:", "key": "h", "mask": 1 << 20],
+        ["title": "Hide Others", "selector": "hideOtherApplications:", "key": "h", "mask": (1 << 20) | (1 << 19)], ["title": "Close Window", "selector": "performClose:", "key": "W", "mask": 1 << 20],
+        ["title": "Undo", "selector": "undo:", "key": "z", "mask": 1 << 20], ["title": "Redo", "selector": "redo:", "key": "Z", "mask": 1 << 20],
+        ["title": "Minimize", "selector": "performMiniaturize:", "key": "m", "mask": 1 << 20], ["title": "Enter Full Screen", "selector": "toggleFullScreen:", "key": "f", "mask": (1 << 20) | (1 << 18)]]
+
+    /// each launcher row's chord on the row with its selector, which is added where none is: the app menu, Edit or Window
+    static func own(_ bar: NSMenu, _ rows: [[String: Any]]) {
+        let subs = bar.items.compactMap(\.submenu)
+        for r in rows {
+            guard let sel = r["selector"] as? String, let k = r["key"] as? String, let mask = r["mask"] as? Int else { continue }
+            let (key, m) = appKit(k, NSEvent.ModifierFlags(rawValue: UInt(mask)))
+            // a chord another row already has stays that row's: the server's bar decides
+            if let i = subs.flatMap(\.items).first(where: { $0.action == NSSelectorFromString(sel) }) {
+                if !subs.flatMap(\.items).contains(where: { $0 !== i && $0.keyEquivalent == key && $0.keyEquivalentModifierMask == m }) { (i.keyEquivalent, i.keyEquivalentModifierMask) = (key, m) }
+                continue
+            }
+            let into = ["terminate:", "hide:", "hideOtherApplications:"].contains(sel) ? subs.first : ["undo:", "redo:"].contains(sel) ? subs.first { $0.title == "Edit" } : subs.first { $0.title == "Window" } ?? subs.first { $0.title == "File" }
+            into?.addItem(withTitle: r["title"] as? String ?? sel, action: NSSelectorFromString(sel), keyEquivalent: key).keyEquivalentModifierMask = m
+        }
     }
 
     /// the bar before the server answers, or when it does not: the app menu and the editing rows
@@ -387,13 +424,13 @@ enum Menus {
         m.insertItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z", at: 0)
     }
 
-    /// ⌘W closes the window, as the old app's web view did; the row goes in File, else Window, unless the server's bar has one
+    /// ⇧⌘W closes the window (⌘W closes a tab); the row goes in File, else Window, unless the server's bar has one
     static func closeWindow(_ bar: NSMenu) {
         let subs = bar.items.compactMap(\.submenu)
         if subs.contains(where: { $0.items.contains { $0.action == #selector(NSWindow.performClose(_:)) } }) { return }
         guard let m = subs.first(where: { $0.title == "File" }) ?? subs.first(where: { $0.title == "Window" }) else { return }
         m.addItem(.separator())
-        m.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        m.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "W")
     }
 
     static func item(_ row: [String: Any], _ runner: MenuRunner) -> NSMenuItem {

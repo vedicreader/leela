@@ -1,6 +1,7 @@
 "Host mode: the thin Mac app runs the server as its child. Health, the token, the dialogs, the env, pinned extras, the update switch."
 
 import json, os, sys, threading, time
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import pytest
@@ -431,7 +432,7 @@ def test_the_agent_shell_has_the_tools_after_the_projects_venv(monkeypatch, tmp_
     (proj := tmp_path/'p'/'.venv'/'bin').mkdir(parents=True); os.symlink(_sys.executable, proj/'python')
     monkeypatch.setattr(host, 'tools_dir', lambda prefix=None: tools)
     monkeypatch.setenv('PATH', '/usr/bin:/bin'); monkeypatch.setenv('UV_INDEX_URL', 'https://mine.example/simple')
-    assert WorkspaceHost._env(None, tmp_path/'p')['PATH'].split(os.pathsep)[0] == str(proj), 'outside host mode there is no tools folder'
+    assert WorkspaceHost._env(SimpleNamespace(ws=None), tmp_path/'p')['PATH'].split(os.pathsep)[0] == str(proj), 'outside host mode there is no tools folder'
     monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
-    e = WorkspaceHost._env(None, tmp_path/'p')
+    e = WorkspaceHost._env(SimpleNamespace(ws=None), tmp_path/'p')
     assert e['PATH'].split(os.pathsep)[:3] == [str(proj), str(tools), '/usr/bin'] and e['UV_INDEX_URL'] == 'https://mine.example/simple'

@@ -87,8 +87,8 @@ function leePaneLink(e) {
   e.preventDefault(); leePaneTell({type: 'rh:link', url: a.href});
 }
 function leePaneChord(key, mod, alt) {
-  "Whether a key is one of the IDE chords a pane page hands on: Cmd or Ctrl with P, S or W, and no Alt.";
-  return typeof key === 'string' && !!mod && !alt && ['p', 's', 'w'].includes(key.toLowerCase());
+  "Whether a key is one of the IDE chords a pane page hands on: Cmd or Ctrl with P, S, W, N, O, J or 1 to 5, and no Alt.";
+  return typeof key === 'string' && !!mod && !alt && ['p', 's', 'w', 'n', 'o', 'j', '1', '2', '3', '4', '5'].includes(key.toLowerCase());
 }
 function leePaneTyping(t) { return !!t && (t.isContentEditable || (!!t.matches && t.matches('textarea, select, input:not([type=button], [type=submit], [type=reset], [type=checkbox], [type=radio])'))); }
 function leePaneKey(e) {

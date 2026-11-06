@@ -36,10 +36,11 @@ def test_no_default_chord_lands_on_one_the_browser_will_not_deliver():
     assert not [(a, c) for a, c in chords if c.startswith('f')]
 
 
-def test_a_hyper_chord_reaches_the_browser_as_all_four_modifiers():
+def test_a_legacy_hyper_chord_reaches_the_browser_as_all_four_modifiers():
     "The page matches a KeyboardEvent, which has no hyper key: it must see command, control, option and shift together."
-    hypers = [c for r in web_keymap() for c in r['chords'] if c['hyper']]
-    assert hypers, 'no default uses hyper, so this guards nothing'
+    from leela.core.keys import legacy_rows
+    hypers = [r['chord'] for r in legacy_rows() if r['chord']['hyper']]
+    assert hypers, 'no old chord uses hyper, so this guards nothing'
     assert all(c[x] for c in hypers for x in ('mod', 'ctrl', 'alt', 'shift')), hypers
 
 
@@ -58,15 +59,15 @@ def test_a_broken_entry_costs_that_entry_and_nothing_else(tmp_path):
     by = {k.action: k for k in ks}
     assert by['run_cell'].keys[0] == 'ctrl+y'
     assert by['save'].key == lookup('save').key
-    assert by['focus_files'].key == 'alt+shift+1'
+    assert by['focus_files'].key == 'mod+1 alt+shift+1'
     assert len(notes) == 3 and all(isinstance(n, str) and n for n in notes)
 
 def test_a_rejected_override_does_not_leak_into_the_defaults(tmp_path):
     "The trial map is a copy: a refused entry must not still be sitting in the table it was tried."
     p = _keymap(tmp_path, {'focus_files': 'alt+shift+3'})
     apply_overrides(DEFAULTS, read_overrides(p, notes=[]), notes=[])
-    assert lookup('focus_files').key == 'alt+shift+1'
-    assert {k.action: k.key for k in DEFAULTS}['focus_files'] == 'alt+shift+1'
+    assert lookup('focus_files').key == 'mod+1 alt+shift+1'
+    assert {k.action: k.key for k in DEFAULTS}['focus_files'] == 'mod+1 alt+shift+1'
 
 
 def test_two_actions_can_trade_chords(tmp_path):
@@ -186,3 +187,113 @@ def test_option_s_checks_the_exercise_in_the_editor_and_nothing_else():
     assert [(k.scope, k.action) for k in DEFAULTS for c in k.keys if _signature(c) == (('alt',), 's')] == [('editor', 'check_exercise')]
     k = lookup('check_exercise')
     assert k.label == 'check my work' and first(web_keymap(), lambda r: r['action'] == 'check_exercise')['chords'][0]['code'] == 'KeyS'
+
+
+# Keys v2 lint: /tmp plan "Leela key binding plan (agreed 6 Nov 2026)". It checks the defaults; keys.json is only checked by `_dupes`.
+_MODS = {'mod', 'ctrl', 'alt'}
+#: AeroSpace's chords in ~/.aerospace.toml on 6 Nov 2026, beside what kavacha reserves.
+AEROSPACE = {*(f'hyper+{k}' for k in [*'123456789', 'tab', *'sqawhjklrftcd', 'space', *'`[]=-0', 'up', 'down', 'left', 'right']),
+             *(f'ctrl+alt+shift+{k}' for k in [*'123456789', 'left', 'right']),
+             *(f'ctrl+alt+{k}' for k in [*'123456789', *'hjkl', 'up', 'down', 'left', 'right']),
+             'alt+shift+left', 'alt+shift+right', 'alt+shift+;', 'mod+ctrl+tab', 'mod+ctrl+`'}
+
+def _chords(keys=DEFAULTS): return [(k, c) for k in keys for c in k.keys]
+
+def test_one_modifier_chord_means_one_thing_everywhere():
+    "⌥↩, ⇧⌘↩ and ⌘D meant different things in different panes."
+    from collections import defaultdict
+    from leela.core.keys import SAME_IDEA, _signature, parse_key
+    by = defaultdict(set)
+    for k, c in _chords():
+        if parse_key(c)[0] & _MODS: by[_signature(c)].add(k.action)
+    groups = [set(g) for g in SAME_IDEA]
+    bad = {s: a for s, a in by.items() if len(a) > 1 and not any(a <= g for g in groups)}
+    assert not bad, bad
+
+def test_bare_keys_are_panel_keys_and_command_mode_letters():
+    from leela.core.keys import parse_key
+    bare = [(k.scope, k.action, c) for k, c in _chords() if not parse_key(c)[0] & _MODS]
+    assert not [b for b in bare if b[0] in ('global', 'exec', 'agent', 'term') and parse_key(b[2])[1] not in ('enter', 'escape')], bare
+    named = {'enter', 'escape', 'up', 'down', 'left', 'right', 'backspace', 'pageup', 'pagedown', 'space', 'tab'}
+    cmd = [(a, c) for s, a, c in bare if s == 'editor' and parse_key(c)[1] not in named]
+    assert all(len(parse_key(c)[1]) == 1 for _, c in cmd) and len(cmd) >= 12, cmd
+
+def test_no_default_uses_hyper_a_reserved_chord_a_dead_key_or_an_f_key():
+    from kavacha import RESERVED
+    from leela.core.keys import _signature, EDITING_SCOPES, parse_key
+    allowed = {('complete', 'ctrl+space')}
+    taken = {parse_key(c) for c in RESERVED | AEROSPACE}
+    assert not [(k.action, c) for k, c in _chords() if 'hyper' in c]
+    assert not [(k.action, c) for k, c in _chords() if parse_key(c) in taken and (k.action, c) not in allowed]
+    dead = {_signature(c) for c in ('alt+e', 'alt+i', 'alt+u', 'alt+n', 'alt+`')}
+    assert not [(k.action, c) for k, c in _chords() if (k.scope in EDITING_SCOPES or k.scope == 'global') and _signature(c) in dead]
+
+def test_a_chrome_reserved_chord_always_has_a_second_chord_a_browser_tab_gets():
+    rows = [r for r in web_keymap() if r['chords'] and not r['chords'][0]['browser']]
+    assert {r['action'] for r in rows} >= {'close_tab', 'new_file', 'new_notebook', 'agent_new', 'focus_files'}
+    assert all(any(c['browser'] for c in r['chords']) for r in rows), [r['action'] for r in rows]
+
+def test_every_bound_global_action_has_a_menu_row():
+    from leela.blocks.keys.menus import BAR
+    from leela.core.keys import NO_MENU
+    rows = {r.action for _, rs in BAR for r in rs if getattr(r, 'action', '')}
+    missing = [k.action for k in DEFAULTS if k.scope == 'global' and k.bound and k.action not in rows | NO_MENU]
+    assert not missing, missing
+
+def test_a_scoped_chord_shows_in_the_menu_only_when_no_other_scope_binds_it():
+    from kavacha.window import menu_chord
+    from leela.blocks.keys.menus import menu_lookup
+    assert menu_chord('run_cell', menu_lookup) is None, '⌘↩ is three runs, so the menu cannot own it'
+    assert menu_chord('copy_line_down', menu_lookup) is not None
+    assert menu_chord('close_tab', menu_lookup) == ('w', 1 << 20)
+
+def test_menu_bar_and_launcher_chords_are_unique():
+    from kavacha import LAUNCHER_ROWS
+    from kavacha.window import menu_json
+    from leela.blocks.keys.menus import BAR, menu_lookup
+    seen = {}
+    for m in menu_json(BAR, menu_lookup) + menu_json([('launcher', LAUNCHER_ROWS)], menu_lookup):
+        for r in m['items']:
+            if 'key' not in r: continue
+            what = r.get('action') or r.get('selector') or r.get('js')
+            assert seen.setdefault((r['key'], r['mask']), what) == what, (r, seen[(r['key'], r['mask'])])
+    assert seen[('W', 1 << 20)] == 'performClose:' and seen[('w', 1 << 20)] == 'close_tab'
+
+def test_old_chords_never_shadow_a_new_default():
+    from leela.core.keys import LEGACY, lookup, parse_key
+    new = {parse_key(c) for _, c in _chords()}
+    assert not [c for c in LEGACY if parse_key(c) in new]
+    assert all(lookup(a) for a in LEGACY.values())
+
+def test_an_old_generated_snapshot_moves_to_the_v2_defaults(tmp_path):
+    "A full dump written before keys v2 froze the Hyper chords; its untouched defaults move, its edits stay."
+    import leela.core.keys as K
+    old = {k.action: k.key for k in DEFAULTS} | {a: o for a, (o, _) in K._V2_MIGRATIONS.items()}
+    old['save'] = 'mod+shift+s'
+    p = _keymap(tmp_path, {'_help': ['leela keymap: action -> chord', 'mod is Command'], 'keys': old})
+    notes = []
+    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
+    by = {k.action: k.key for k in ks}
+    assert notes == [], notes
+    assert by['toggle_scope'] == 'alt+t' and by['close_tab'] == 'mod+w alt+w' and by['save'] == 'mod+shift+s'
+    assert by['new_file'] == 'mod+n mod+alt+shift+n' and by['tree_new_file'] == 'n'
+
+def test_a_bare_key_on_new_file_moves_to_the_files_panel():
+    from leela.core.keys import _tree_moved
+    assert _tree_moved({'new_file': 'a'}) == {'tree_new_file': 'a'}
+    assert _tree_moved({'new_file': 'mod+shift+m'}) == {'new_file': 'mod+shift+m'}
+
+def test_the_page_gets_one_glyph_per_chord_from_kavacha():
+    from leela.core.keys import glyphs
+    row = first(web_keymap(), lambda r: r['action'] == 'toggle_left')
+    assert row['display'] == ['⌥⇧B']
+    assert first(web_keymap(), lambda r: r['action'] == 'cell_delete')['display'] == ['⌥⌘⌫', 'D D']
+    g = glyphs()
+    assert g['mac']['mod+shift+p'] == '⇧⌘P' and g['pc']['mod+shift+p'] == 'Ctrl+Shift+P' and g['mac']['alt+i'] == '⌥I'
+
+def test_an_overlay_swallows_menu_chords_but_keeps_the_editing_ones():
+    from leela.blocks.keys.menus import menu_chords
+    got = {(c['key'], c['mod'], c['ctrl'], c['alt'], c['shift']) for c in menu_chords()}
+    assert ('p', True, False, False, False) in got and ('w', True, False, False, False) in got
+    assert ('W', True, False, False, True) in got
+    assert not got & {('c', True, False, False, False), ('v', True, False, False, False), ('z', True, False, False, False)}

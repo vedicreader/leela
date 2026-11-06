@@ -1,16 +1,17 @@
 "Open folders, open tabs, and which kernel each tab talks to."
 
 from __future__ import annotations
-import asyncio, atexit, hashlib, json, os, threading, time
+import asyncio, atexit, hashlib, json, os, re, threading, time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from fastcore.all import AttrDict, Path, L, atomic_save, first, ifnone
+from fastcore.all import AttrDict, Path, L, atomic_save, first, groupby, ifnone
 
-from . import Dictable, leela_cfg
+from . import Dictable, errstr, leela_cfg
 from .agent.agent import Completer
 from .blocks.agent.ai import Assistant, at_cell, notebook_approvals
 from .blocks.runtime.devserver import DevServers
-from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
+from .blocks.fs.fs import MEDIA_TYPES, Sandbox, Unsafe, lang_for, is_media, is_texty
+from .blocks.fs.office import is_office, office_text
 from .blocks.memory.memory import PrivacyBlocked, pii_gate, withheld_why
 from .blocks.runtime.kernels import KernelPool, KernelStartError
 from .blocks.nb.nb import Notebook, media_outputs, read_cells
@@ -19,7 +20,7 @@ from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
 from .blocks.term.term import Terminals
 
-__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window', 'openable']
+__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window', 'openable', 'doc_types', 'imported_types']
 
 class _EnvClient:
     "Read-only access to some *other* process's inspector, in the shape `Kernel.api` has."
@@ -133,12 +134,70 @@ def budget_value(v, lo, hi):
     return n if lo <= n <= hi else 'auto'
 
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
-AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
-VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
+AUDIO_EXTS = {e for e, m in MEDIA_TYPES.items() if m.startswith('audio/')}
+VIDEO_EXTS = {e for e, m in MEDIA_TYPES.items() if m.startswith('video/')}
 
 def openable(p):
-    "Whether a tab can show this file: text, a notebook, a PDF or an image."
-    return is_texty(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
+    "Whether a tab can show this file: text, a notebook, a PDF, an image, audio, video, or a Word, PowerPoint or Excel file."
+    return is_texty(p) or is_office(p) or is_media(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
+
+def kind_for(path):
+    "The tab kind a file opens as."
+    sfx = Path(path).suffix.lower()
+    if str(path).endswith('.ipynb'): return 'notebook'
+    return 'pdf' if sfx == '.pdf' else 'office' if is_office(path) else 'image' if sfx in IMAGE_EXTS else 'audio' if sfx in AUDIO_EXTS else 'video' if sfx in VIDEO_EXTS else 'text'
+
+#: tab kinds that follow from the file's extension alone
+FILE_KINDS = ('text', 'pdf', 'image', 'office', 'audio', 'video')
+
+#: macOS's own type for an extension Leela opens, each declared by CoreTypes
+MAC_UTIS = {'.py': 'public.python-script', '.js': 'com.netscape.javascript-source', '.mjs': 'com.netscape.javascript-source',
+    '.json': 'public.json', '.html': 'public.html', '.htm': 'public.html', '.css': 'public.css', '.yaml': 'public.yaml', '.yml': 'public.yaml',
+    '.sh': 'public.shell-script', '.bash': 'public.bash-script', '.zsh': 'public.zsh-script', '.c': 'public.c-source', '.h': 'public.c-header',
+    '.cc': 'public.c-plus-plus-source', '.cpp': 'public.c-plus-plus-source', '.cxx': 'public.c-plus-plus-source', '.hpp': 'public.c-plus-plus-header',
+    '.java': 'com.sun.java-source', '.xml': 'public.xml', '.svg': 'public.svg-image', '.png': 'public.png',
+    '.jpg': 'public.jpeg', '.jpeg': 'public.jpeg', '.gif': 'com.compuserve.gif', '.webp': 'org.webmproject.webp', '.ico': 'com.microsoft.ico',
+    '.bmp': 'com.microsoft.bmp', '.pdf': 'com.adobe.pdf', '.docx': 'org.openxmlformats.wordprocessingml.document',
+    '.pptx': 'org.openxmlformats.presentationml.presentation', '.xlsx': 'org.openxmlformats.spreadsheetml.sheet',
+    '.xlsm': 'org.openxmlformats.spreadsheetml.sheet.macroenabled', '.mp3': 'public.mp3', '.wav': 'com.microsoft.waveform-audio',
+    '.m4a': 'com.apple.m4a-audio', '.aac': 'public.aac-audio', '.flac': 'org.xiph.flac', '.ogg': 'org.xiph.ogg-audio',
+    '.oga': 'org.xiph.ogg-audio', '.mp4': 'public.mpeg-4', '.m4v': 'com.apple.m4v-video',
+    '.mov': 'com.apple.quicktime-movie', '.webm': 'org.webmproject.webm'}
+#: ids Xcode and Notes import too, for extensions macOS has no type for; any other extension gets `org.vedicreader.leela.<ext>`
+SHARED_UTIS = {'.ipynb': ('org.jupyter.ipynb', 'Jupyter notebook'), '.md': ('net.daringfireball.markdown', 'Markdown text'),
+    '.markdown': ('net.daringfireball.markdown', 'Markdown text'), '.toml': ('public.toml', 'TOML file'), '.cfg': ('public.toml', 'TOML file'),
+    '.ini': ('com.microsoft.ini', 'INI file'), '.sql': ('org.iso.sql', 'SQL source'), **dict.fromkeys(('.ts', '.tsx', '.mts', '.cts'),
+    ('com.microsoft.typescript', 'TypeScript source'))}
+#: named by extension alone: `public.plain-text`, their type, takes every text type macOS knows, `.pkl` pickles among them
+BY_EXTENSION = {'.txt'}
+#: tab kind -> Finder's name and role for it
+DOC_KINDS = {'text': ('Text file', 'Editor'), 'notebook': ('Jupyter notebook', 'Editor'), 'image': ('Image', 'Viewer'),
+    'pdf': ('PDF document', 'Viewer'), 'office': ('Word, PowerPoint or Excel file', 'Viewer'), 'audio': ('Audio file', 'Viewer'),
+    'video': ('Video file', 'Viewer')}
+
+def doc_exts():
+    "Every extension Finder offers to open in Leela."
+    from .blocks.fs.fs import LANGS
+    from .blocks.fs.office import OFFICE
+    return sorted({*LANGS, *IMAGE_EXTS, *OFFICE, *MEDIA_TYPES, '.pdf'})
+
+def _uti(e): return MAC_UTIS.get(e) or SHARED_UTIS.get(e, (f'org.vedicreader.leela.{e[1:]}',))[0]
+
+def imported_types():
+    "`UTImportedTypeDeclarations` for the extensions macOS has no type for."
+    by = groupby([e for e in doc_exts() if e not in MAC_UTIS and e not in BY_EXTENSION], _uti)
+    return [{'UTTypeIdentifier': u, 'UTTypeDescription': SHARED_UTIS.get(es[0], ('', f'{es[0][1:].upper()} file'))[1],
+             'UTTypeConformsTo': ['public.json' if es == ['.ipynb'] else 'public.plain-text'],
+             'UTTypeTagSpecification': {'public.filename-extension': [e[1:] for e in es]}} for u, es in sorted(by.items())]
+
+def doc_types():
+    "`CFBundleDocumentTypes`: folders, then each tab kind by type, and by extension where another app's type can win over an imported one."
+    row = lambda name, role, **kw: {'CFBundleTypeName': name, 'CFBundleTypeRole': role, 'LSHandlerRank': 'Alternate', **kw}
+    by, out = groupby(doc_exts(), lambda e: kind_for(f'x{e}')), [row('Folder', 'Viewer', LSItemContentTypes=['public.folder'])]
+    for k, (name, role) in DOC_KINDS.items():
+        out.append(row(name, role, LSItemContentTypes=sorted({_uti(e) for e in by[k] if e not in BY_EXTENSION})))
+        if bare := [e[1:] for e in by[k] if e not in MAC_UTIS]: out.append(row(f'{name} by extension', role, CFBundleTypeExtensions=bare))
+    return out
 
 #: What the inline panel promises, said to the model that keeps it. The tools are gone, so this describes the situation, not a rule.
 SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
@@ -171,14 +230,17 @@ class Tab(Dictable):
     nb_lang: str = ''
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
-        if self.path.endswith('.ipynb'): self.kind = 'notebook'
-        elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
-        elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
-        elif Path(self.path).suffix.lower() in AUDIO_EXTS: self.kind = 'audio'
-        elif Path(self.path).suffix.lower() in VIDEO_EXTS: self.kind = 'video'
+        if (k := kind_for(self.path)) != 'text': self.kind = k
         if self.private_kernel is None: self.private_kernel = self.kind == 'notebook'
     @property
     def lang(self): return (self.nb_lang or 'python') if self.kind == 'notebook' else lang_for(self.path)
+
+def _venv_version(py):
+    "The `major.minor` a venv's `pyvenv.cfg` names, or ''."
+    try: cfg = (Path(py).parent.parent/'pyvenv.cfg').read_text()
+    except OSError: return ''
+    m = re.search(r'^version(?:_info)?\s*=\s*(\d+\.\d+)', cfg, re.M)
+    return m[1] if m else ''
 
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
@@ -201,9 +263,8 @@ class Workspace:
         from .blocks.git.git import wire_env
         wire_env()
         self.fs_watch = Watcher(self.fs)
-        from .blocks.runtime.kernels import project_python
-        runtime_python = python or project_python(self.fs.roots)
-        self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
+        self.chosen_python, self.venv_made, self.venv_notes, self._own, self._own_lock = {}, {}, [], None, None   # project folder -> the interpreter the person picked; Leela's own kernel
+        self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
         from .blocks.memory.memory import Memory, memory_shelf
@@ -469,14 +530,12 @@ class Workspace:
         rest = Path(tab.path).relative_to(Path(old)) if tab.path != str(old) else None
         tab.path = str(Path(new)/rest) if rest is not None else str(new)
         tab.title = Path(tab.path).name or tab.title
+        if tab.kind in FILE_KINDS and (k := kind_for(tab.path)) in FILE_KINDS: tab.kind = k
         return tab
     def add_root(self, p, loose=False):
         r = self.fs.add_root(p, loose=loose)
         self._owns_session = True
         self.rebind_journal()
-        if not self.pool.kernels and self.pool.default_python is None:
-            from .blocks.runtime.kernels import project_python
-            if (py := project_python([r])): self.pool.choose(python=py)
         self._rebrief_agents()
         self.fs_watch.start(restart=True)
         return r
@@ -554,9 +613,7 @@ class Workspace:
             if home and not self.tabs[i].cwd: self.tabs[i].cwd = str(home)
             self.watch_env(None)
             return self.tabs[i]
-        return self._add_tab(Tab(path=str(p), cwd=str(home or ''), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
-                                                                'pdf' if p.suffix.lower() == '.pdf' else
-                                                                'image' if p.suffix.lower() in IMAGE_EXTS else 'text')))
+        return self._add_tab(Tab(path=str(p), cwd=str(home or ''), kind=ifnone(kind, kind_for(p))))
     def copy_home(self, p):
         "The open folder of the learner's notebook when `p` is abhyasa's learning copy of it, else None: the copy runs there, in that project's environment, and the project surfaces follow it."
         if Path(p).suffix != '.ipynb': return None
@@ -827,7 +884,8 @@ class Workspace:
                     self.vault_screened(None, chk, p.name)
                     sound.append(Attachment(p))
                     continue
-                raw = p.read_bytes()[:max_file]
+                if is_media(p): raise ValueError(f'{p.name} is a video or audio file the model cannot take')
+                raw = office_text(p).encode()[:max_file] if is_office(p) else p.read_bytes()[:max_file]
                 body = self.vault_screened(raw.decode('utf-8', 'replace'), chk, p.name)
             except PrivacyBlocked as e:
                 e.attachments = [ref]
@@ -1002,13 +1060,56 @@ class Workspace:
         if (python := self.lesson_python(t)) and (k := self.pool.peek(key)) is not None and not k.busy and str(getattr(k, 'python', '')) != python:
             await self.pool.close(key)
             for c in self._lesson(t)[0].cells: c.fresh = False
+        lang = (t.nb_lang if t else '') or 'python'
         try: return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
-                                        python=python or python_for(cwd, self),
-                                        lang=(t.nb_lang if t else '') or 'python')
+                                        python=python or python_for(cwd, self) or (await self.project_venv(cwd) if lang == 'python' else None),
+                                        lang=lang)
         except KernelStartError as e:
             if not python: raise
             from .blocks.nb.lesson import ENV_GONE, EnvGone
             raise EnvGone(ENV_GONE) from e
+    async def own_kernel(self):
+        "Leela's own kernel: Leela's interpreter and packages, in the project folder, apart from every project venv and tab."
+        from .blocks.runtime.kernels import Kernel, work_dir
+        if self._own_lock is None: self._own_lock = asyncio.Lock()
+        async with self._own_lock:
+            cwd, k = work_dir(self.project_repo), self._own
+            if k is None or not k.alive:
+                k = Kernel(cwd=cwd, name='leela', python=None, inspect=False)
+                await k.start()
+                self._own = k
+            elif str(k.cwd) != cwd: await k.chdir(cwd)
+            return k
+    def venv_project(self, cwd):
+        "The project whose own `.venv` user code at `cwd` runs in; None for a loose file, a learning copy, or no folder."
+        from .blocks.runtime.kernels import project_of
+        from .blocks.runtime.app import copy_folder
+        proj = project_of(cwd, self)
+        return None if proj is None or proj == self.fs.loose or copy_folder(proj) else proj
+    def venv_for(self, cwd):
+        "Make the `.venv` of the project `cwd` is in; None where no project owns `cwd`."
+        from .blocks.runtime.kernels import KernelStartError, nearest_python
+        import kunda.support as ks
+        if (proj := self.venv_project(cwd)) is None: return None
+        had = nearest_python(proj, proj)
+        try: py = ks.make_venv(proj)
+        except Exception as e: raise KernelStartError(f'could not make {proj/".venv"} for this project: {errstr(e)}') from e
+        if py and not had:
+            self.venv_made[str(proj)] = py
+            v = _venv_version(py)
+            self.venv_notes.append(f'Leela made .venv for {proj.name}{f" (Python {v})" if v else ""}. Change it in kernel settings.')
+        return py
+    def take_venv_notes(self):
+        "The notes on venvs Leela made since the last call, each given out once."
+        out, self.venv_notes = self.venv_notes, []
+        return out
+    async def project_venv(self, cwd):
+        "`venv_for` off the loop, for a notebook that has no venv and no chosen interpreter."
+        return await asyncio.to_thread(self.venv_for, cwd)
+    def user_python(self, cwd, make=True):
+        "The interpreter user code at `cwd` runs on: the chosen one, else its project's venv, made if missing when `make`; None outside every project."
+        from .blocks.runtime.kernels import python_for
+        return python_for(cwd, self) or (self.venv_for(cwd) if make else None)
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
         "What to call the runtime a tab runs in, alive or not."
@@ -1091,18 +1192,18 @@ class Workspace:
         root = self.project_repo
         cwd = r.resolved_cwd(root) if root else None
         # An app belongs in its own project's environment.
-        from .blocks.runtime.kernels import python_for
-        return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch,
-                                    env=r.resolved_env(root), python=python_for(cwd or root, self))
+        python = await asyncio.to_thread(self.user_python, cwd or root)
+        return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch, env=r.resolved_env(root), python=python)
     def kernel_options(self, tab=None):
         "Everything a kernel picker needs, so neither frontend has to know how kernels work."
-        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, python_for
+        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, project_of, python_for
         t = tab or self.tab
         k = self.kernel_peek(t)
         # What this tab's kernel is actually started under. `Workspace.kernel` resolves it the same way.
         from .blocks.nb.lesson import EnvGone
         try: cur_py = self.lesson_python(t) or python_for(self.cwd_for(t), self)
         except EnvGone: cur_py = None
+        proj = str(project_of(self.cwd_for(t), self))
         return {
             'key': self.kernel_key(t),
             'alive': bool(k and k.alive),
@@ -1120,14 +1221,25 @@ class Workspace:
             'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
                         for i, p in enumerate(find_pythons(self.fs.roots, cur_py))],
             'python': cur_py,
+            'chosen': bool(cur_py) and cur_py == self.chosen_python.get(proj),
+            'venv_made': self.venv_made.get(proj, ''),
             'auto_manage': self.kernels_auto_manage,
         }
+    def choose_python(self, python, tab=None):
+        "Run the project of `tab` on `python` from now on; a falsy `python` hands it back to its own venv."
+        from .blocks.runtime.kernels import project_of
+        if (proj := project_of(self.cwd_for(tab or self.tab), self)) is None:
+            raise ValueError('open a folder first: an interpreter is chosen for one project')
+        if python: self.chosen_python[str(proj)] = str(python)
+        else: self.chosen_python.pop(str(proj), None)
+        return str(proj)
     async def set_kernel(self, kind=None, python=False, private=None, tab=None, restart=True):
         "Point a tab at a different kernel, and start it."
         t = tab or self.tab
         old_key = self.kernel_key(t)
         self.watch_env(None)
-        self.pool.choose(kernel=kind, python=python)
+        self.pool.choose(kernel=kind)
+        if python is not False: self.choose_python(python, t)
         if private is not None and t is not None: t.private_kernel = bool(private)
         if not restart: return self.kernel_options(t)
         new_key = self.kernel_key(t)
@@ -1219,7 +1331,7 @@ class Workspace:
         self._lsp_stop.set()
         with self._lsp_lock: services, self._lsps = list(self._lsps.values()), {}
         for service in services: step(service.retire)
-        for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit()):
+        for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit(), *([self._own.shutdown()] if self._own else [])):
             try: await coro
             except Exception: pass
     async def opened(self):
@@ -1285,6 +1397,7 @@ class Workspace:
                 'completion_model': self.completion_model,
                 'local_multimodal': self.local_multimodal, 'litert_backend': self.litert_backend,
                 'kernels_auto_manage': self.kernels_auto_manage,
+                'chosen_python': dict(self.chosen_python),
                 'agent_state': self.agent_state,
                 'agent_state_layers': self.agent_state_layers,
                 'agent_memory_selection': self.agent_memory_selection,
@@ -1304,6 +1417,7 @@ class Workspace:
         """Everything a saved session holds that is not its folders or its tabs."""
         d = d if isinstance(d, dict) else {}
         self.compact_auto = bool(d.get('compact_auto', True))
+        self.chosen_python = {str(k): str(v) for k, v in (d.get('chosen_python') or {}).items() if v}
         self.compact_strategy = str(d.get('compact_strategy') or 'surgical')
         self.tool_budget = budget_value(d.get('tool_budget'), *TOOL_RANGE)
         self.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)

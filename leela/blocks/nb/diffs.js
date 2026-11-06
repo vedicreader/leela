@@ -143,8 +143,8 @@ function showSaveConflict(message) {
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
   // A document the browser renders has no editor behind it, so `getDoc` would be called on
   // nothing. Reporting success is honest: the file on disk is what is being shown.
-  if (lee.kind === 'pdf' || lee.kind === 'image') {
-    if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
+  if (['pdf', 'image', 'office', 'audio', 'video'].includes(lee.kind)) {
+    if (!quiet) status(`${{pdf: 'a PDF', image: 'an image', office: 'an office file', audio: 'an audio file', video: 'a video'}[lee.kind]} is read-only here`);
     return true;
   }
   let saveTabEl = $('.lee-tab.active');

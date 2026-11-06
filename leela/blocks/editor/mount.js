@@ -25,16 +25,25 @@ function mountImage(host, st) {
   };
 }
 
+/* The WebKit in some macOS versions plays no Ogg or WebM, so a file that fails says so and offers the
+   system's own player rather than a silent, empty control. */
 function mountMedia(host, st) {
   const name = (st.path || '').split('/').pop() || st.kind;
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
   const tag = st.kind === 'audio' ? 'audio' : 'video';
   host.innerHTML =
     `<div class="lee-doc"><div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
-    `<span class="lee-spacer"></span><a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<span class="lee-spacer"></span><button class="lee-btn" data-media-open>open in default app</button>` +
     `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
-    `<div class="lee-doc-body lee-media-body"><${tag} class="lee-media" controls src="${esc(raw)}">` +
-    `${esc(name)} could not be played by this browser.</${tag}></div></div>`;
+    `<div class="lee-doc-body lee-media-body"><${tag} class="lee-media" controls preload="metadata" src="${esc(raw)}"></${tag}></div></div>`;
+  const open = () => post('/media/open?path=' + encodeURIComponent(st.path))
+    .then(() => status('opened in the default app', 'ok')).catch(e => status(String(e.message || e), 'err'));
+  $('[data-media-open]', host).onclick = open;
+  $('.lee-media', host).onerror = () => {
+    $('.lee-media-body', host).innerHTML = `<div class="lee-err" data-media-error>${esc(name)} cannot play here. ` +
+      `Open it in the default app.<br><button class="lee-btn" data-media-open>open in default app</button></div>`;
+    $('.lee-media-body [data-media-open]', host).onclick = open;
+  };
 }
 
 /* The setting names the three views `source`, `preview` and `split`; the buttons and the stage's
@@ -169,7 +178,7 @@ async function mountFile(host, st) {
 /* What the second pane can hold. A notebook goes in as a reading copy: its cells are what a person
    compares across a merge, and the editors, the kernel and the selection all belong to one notebook
    at a time. The live surfaces are bound to the pane they were opened in and are not offered. */
-const SPLIT_KINDS = {text: 'editable', notebook: 'reading copy', pdf: 'view', image: 'view'};
+const SPLIT_KINDS = {text: 'editable', notebook: 'reading copy', pdf: 'view', image: 'view', office: 'view'};
 
 function secondaryNotebook(host, st) {
   "The cells of a notebook, to read beside something else. No editors, no outputs, no execution."
@@ -193,7 +202,7 @@ function splitStage(direction) {
 async function mountSecondary(path, direction = 'vertical') {
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
   const st=await api('/tab/state?path='+encodeURIComponent(path));
-  if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs and images can`,'err');
+  if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs, images and office files can`,'err');
   if (st.kind !== 'text') {
     splitStage(direction);
     host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path||path))}</span>` +
@@ -202,6 +211,7 @@ async function mountSecondary(path, direction = 'vertical') {
       `<div class="lee-split-body" id="filecm2"></div>`;
     if (st.kind === 'notebook') secondaryNotebook(host, st);
     else if (st.kind === 'pdf') mountPdf($('.lee-split-body', host), st);
+    else if (st.kind === 'office') mountOffice($('.lee-split-body', host), st);
     else mountImage($('.lee-split-body', host), st);
     recordDiskVersion(st.path || path, st.disk_version || '');
     lee.secondaryPath = path; lee.activeEditor = 'primary';

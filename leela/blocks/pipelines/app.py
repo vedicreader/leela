@@ -7,7 +7,7 @@ from starlette.responses import JSONResponse
 from fastcore.xtras import Path
 
 from ...core.web import fail, off_loop, pipeline_socket
-from ..runtime.kernels import python_for, venv_env
+from ..runtime.kernels import python_for, python_project, venv_env
 from .deploys import Deploy
 from ...core.envs import EnvStore
 from pullup.pipeline import resolve_script, uv_argv
@@ -36,7 +36,7 @@ def nbdev_prepare(session, target=''):
     if cfg is None: raise PipelineError(
         'no settings.ini and no [tool.nbdev] in any open folder — not an nbdev project')
     root = Path(cfg.config_path)
-    argv = uv_argv(root, ['nbdev-prepare']) or resolve_script(['nbdev-prepare'], python_for(root, session))
+    argv = uv_argv(root, ['nbdev-prepare']) or resolve_script(['nbdev-prepare'], session.user_python(root))
     if argv[0] == 'nbdev-prepare': raise PipelineError(
         f'no nbdev-prepare in {root.name}: nbdev is not installed in the environment it uses')
     # Through `venv_env`, like the pty steps: a child that keeps the bundle's `PYTHONPATH` imports
@@ -56,11 +56,11 @@ FASTSHIP_OPS = {
 def _ship(root, session, argv, timeout=900):
     "One `ship-*` command, in `root` and in `root`'s venv."
     import subprocess
-    resolved = resolve_script(argv, python_for(root, session))
+    resolved = resolve_script(argv, python := session.user_python(root))
     if resolved[0] == argv[0]:
         raise PipelineError(f'fastship is not installed in {root.name} — add it to the dev dependencies')
     r = subprocess.run(resolved, cwd=str(root), stdin=subprocess.DEVNULL, start_new_session=True, capture_output=True, text=True, timeout=timeout,
-                       env=venv_env(python_for(root, session)))
+                       env=venv_env(python))
     if r.returncode: raise PipelineError((r.stderr or r.stdout or f'{argv[0]} failed').strip()[-4000:])
     return (r.stdout or '')[-2000:]
 
@@ -106,17 +106,17 @@ def fastship_new(session, name, target='', description='A Python package'):
 def connect(app, ctx):
     rt = app.route
     live = {}
-    def pipeline(kind, target=''):
-        "The pipeline for one project and kind, made once and then kept: it has a process in it."
+    def pipeline(kind, target='', make=False):
+        "The pipeline for one project and kind, made once and then kept: it has a process in it. `make` gives a run its project's venv."
         root = repo_for(ctx.session, target)
         key = (kind, str(root))
         if key not in live: live[key] = KINDS[kind](root, env=EnvStore())
-        live[key].python = python_for(root, ctx.session)
+        live[key].python = ctx.session.user_python(root, make=make and python_project(root))
         return live[key]
     async def act(kind, d):
         "One explicit move: start, retry a step, skip it, stop, forget, or edit the plan."
         op, target = str(d.get('op') or ''), d.get('repo') or ''
-        p = pipeline(kind, target)
+        p = await off_loop(pipeline, kind, target, op in ('start', 'step'))
         if op == 'scaffold' and kind == 'deploy':
             out = await off_loop(p.scaffold, d.get('domain') or '', d.get('subdomain') or '',
                 d.get('app') or '', bool(d.get('force')), d.get('second_host') or '')

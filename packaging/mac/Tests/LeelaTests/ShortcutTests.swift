@@ -82,7 +82,7 @@ func chord(_ i: NSMenuItem) -> String { "\(i.keyEquivalent)|\(i.keyEquivalentMod
         for i in keyed(bar) where i.target !== runner { i.target = probe }
         // the launcher's own rows, and every row of the server's bar; the first in menu order with a chord is the one AppKit picks
         let own: [(String, String, NSEvent.ModifierFlags, String)] = [("Undo", "z", .command, "undo:"), ("Redo", "z", [.command, .shift], "redo:"),
-            ("Close Window", "w", .command, "performClose:"), ("Quit", "q", .command, "terminate:"), ("Hide", "h", .command, "hide:"),
+            ("Close Window", "w", [.command, .shift], "performClose:"), ("Quit", "q", .command, "terminate:"), ("Hide", "h", .command, "hide:"),
             ("Hide Others", "h", [.command, .option], "hideOtherApplications:")]
         var seen = Set<String>()
         for (title, key, mask, what) in own + chords(menus).map({ ($0.title, $0.key, $0.mask, $0.what) }) where seen.insert("\(key)|\(mask.rawValue)").inserted {
@@ -94,11 +94,16 @@ func chord(_ i: NSMenuItem) -> String { "\(i.keyEquivalent)|\(i.keyEquivalentMod
     }
 
     @Test func aChordWithoutShiftDoesNotFireItsShiftedRow() throws {
-        // ⌥I is Live / isolated; with shift spelled as a flag on a lower case key it ran ⌥⇧I, Interrupt kernel
+        // ⌘F is Find across cells and ⌘⇧F Search code; with shift spelled as a flag on a lower case key one ran the other
         var ran = [String]()
         let runner = MenuRunner { ran.append($0) }, bar = Menus.build(try menuJSON(), runner: runner)
-        #expect(bar.performKeyEquivalent(with: keyDown("i", .option)))
-        #expect(ran == [Menus.js(action: "toggle_scope")])
+        #expect(bar.performKeyEquivalent(with: keyDown("f", .command)))
+        #expect(ran == [Menus.js(action: "find_in_file")])
+        // ⌥↩ is Run and insert below and ⌥⇧↩ Run the selection: ↩ has no case, and AppKit let the first take both
+        ran = []
+        #expect(bar.performKeyEquivalent(with: keyDown("\r", [.option, .shift])) && ran == [Menus.js(action: "run_selection")])
+        ran = []
+        #expect(bar.performKeyEquivalent(with: keyDown("\r", .option)) && ran == [Menus.js(action: "run_insert")])
         #expect(Menus.appKit("o", [.command, .shift]) == ("O", .command) && Menus.appKit("/", [.command, .shift]) == ("?", .command))
         #expect(Menus.appKit("p", .command) == ("p", .command) && Menus.appKit("\u{F701}", [.command, .shift]) == ("\u{F701}", [.command, .shift]))
     }
@@ -128,9 +133,18 @@ func chord(_ i: NSMenuItem) -> String { "\(i.keyEquivalent)|\(i.keyEquivalentMod
             all.contains { $0.action == Selector((sel)) && $0.keyEquivalent == key && $0.keyEquivalentModifierMask == mask && $0.target == nil }
         }
         #expect(has("terminate:", "q", .command) && has("hide:", "h", .command) && has("hideOtherApplications:", "h", [.command, .option]))
-        #expect(has("performClose:", "w", .command) && has("undo:", "z", .command) && has("redo:", "Z", .command))
+        #expect(has("performClose:", "W", .command) && has("undo:", "z", .command) && has("redo:", "Z", .command))
         #expect(all.contains { $0.action == #selector(NSApplication.unhideAllApplications(_:)) } && all.contains { $0.title == "Services" && $0.submenu != nil })
         #expect(has("performMiniaturize:", "m", .command) && has("toggleFullScreen:", "f", [.command, .control]))
+    }
+
+    @Test func theLaunchersRowsAreKavachasLauncherRows() throws {
+        // the server's /app/menu.json carries kavacha's LAUNCHER_ROWS; the copy the launcher uses before the server answers must match
+        let p = try #require(ProcessInfo.processInfo.environment["LEELA_MENU_JSON"])
+        let d = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: p))) as? [String: Any])
+        let served = try #require(d["launcher"] as? [[String: Any]])
+        func key(_ r: [String: Any]) -> String { "\(r["selector"] ?? "")|\(r["key"] ?? "")|\(r["mask"] ?? "")" }
+        #expect(served.map(key) == Menus.launcher.map(key))
     }
 
     @Test func undoIsAnEditingRowNeverAnAction() throws {

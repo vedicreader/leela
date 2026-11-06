@@ -7,12 +7,13 @@ from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
+from ..fs.office import is_office, office_text
 from ...agent.agent import PERSON_ONLY, SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
                          WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
 from shalya.host import (ApiHost, AskHost, BrowserHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost,
-                         NotebookHost, SessionHost, ShellHost, WatchHost, WebHost)
+                         NotebookHost, OwnPythonHost, SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
 #: cannot know. Everything else above is the toolset's own, taken from where it lives.
 from ...agent.tools import PATH_WRITES, keep_media, path_write, small_tool, tools_for, write_targets
@@ -321,7 +322,7 @@ class Interventions(Approvals):
             return self._execution_meta.pop(i) if i is not None else {}
 
 class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, WatchHost, ApiHost, ShellHost,
-                    SessionHost, AskHost, GitHost, Host):
+                    SessionHost, OwnPythonHost, AskHost, GitHost, Host):
     "A `Workspace`, answering the harness's questions."
     mk_chat = None                          # `Agent.lend_model` fills this; declaring it is the opt-in
     # Leela serves the inspector from inside the kernel process, so this holds for ipykernel too.
@@ -383,7 +384,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
             hits = hits.filter(lambda h: rx.search(h.text))
         return list(hits)[:limit]
     def walk(self): return list(self.ws.fs.walk())
-    def read(self, path): return self.ws.fs.read(self.check(path))
+    def read(self, path):
+        "A file's text; a Word, PowerPoint or Excel file reads as its Markdown."
+        p = self.check(path)
+        return office_text(p) if is_office(p) else self.ws.fs.read(p)
     def check_write(self, path):
         target = self.check(path)
         active = Path(self.project).expanduser().resolve() if self.project else None
@@ -808,7 +812,17 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         if names and origins is not None and scope == 'overlay': origins.record(names, 'run_python', ok)
     def run_python(self, code):
         "Run in the agent's own layer over the user's namespace, never in the namespace itself."
-        return self._run(code, 'overlay' if 'overlay' in self.scopes else 'isolated')
+        out = self._run(code, 'overlay' if 'overlay' in self.scopes else 'isolated')
+        if (m := re.search(r"No module named '([\w]+)", out)) and m[1] in LEELA_PACKAGES:
+            out += f"\n[{m[1]} is Leela's, not the project's: run Leela's tools with own_python]"
+        return out
+    def own_python(self, code, timeout=120):
+        "Run in Leela's own kernel: Leela's interpreter and packages, the project folder as cwd, none of the user's names."
+        self._exec_gate(code)
+        if (loop := self._loop()) is None: raise RuntimeError("Leela's kernel needs the workspace loop")
+        async def go(): return await (await self.ws.own_kernel()).execute(code)
+        r = asyncio.run_coroutine_threadsafe(go(), loop).result(max(1, int(timeout)) + 60)
+        return r.text.rstrip() or (r.error or '(ok)')
     def inspect_python(self, code, scope='isolated'):
         "Read-only execution in one of `AgentSession`'s scopes; neither can change what the user made."
         if scope not in self.scopes:
@@ -907,7 +921,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return d if d.is_dir() else d.parent
     def _env(self, d):
         from ...core.host import with_tools
-        env = venv_env(python_for(d, session=None), env=with_tools())
+        env = venv_env(python_for(d, self.ws), env=with_tools())
         if not env.get('TERM'): env['TERM'] = 'dumb'   # no tty here, but a tool that reads TERM must find one
         return env
     def run_cmd_bg(self, command, cwd=None):
@@ -933,10 +947,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         import shutil, sys
         proj = self.project
         lines = [f'this process: {sys.executable}; inspect_python honours {", ".join(self.scopes)}',
-                 f'project python: {python_for(proj, session=None) if proj else "no folder is open"}',
-                 # kunda's bootstrap: dhrishti, and so the inspector, needs this process's packages in the kernel
-                 f'kernels on Python {sys.version_info.major}.{sys.version_info.minor} also import from this process\'s library path, after the project\'s own packages: '
-                 'a package that imports in a kernel can still be missing from the project environment, so check the project interpreter before relying on one']
+                 f'project python: {(python_for(proj, self.ws) or "none yet; the first notebook run makes .venv") if proj else "no folder is open"}',
+                 "run_python, inspect_python, run_cell and run_shell use the project's interpreter, which imports only the project's packages; "
+                 f"own_python runs on this process's interpreter, with Leela's packages ({', '.join(LEELA_PACKAGES)}) and the project folder as cwd"]
         lines += [f"runtime: {e['name']} ({e['kind']}, pid {e.get('pid')}){' current' if e.get('current') else ''}" for e in self.ws.envs()]
         lines += [f'{c}: {shutil.which(c) or "not on PATH"}' for c in ('python', 'uv', 'git', 'rg', 'ffmpeg')]
         return '\n'.join(lines)
@@ -947,6 +960,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         if fn:
             try: fn(text)
             except Exception: pass
+
+#: Packages that are Leela's own tools: they import in `own_python`, never in a project kernel.
+LEELA_PACKAGES = ('leela', 'ramabana', 'shalya', 'rupaka', 'abhyasa', 'kosha', 'dhrishti', 'kunda', 'vishalakshi', 'litesearch', 'fossick', 'pullup', 'gheasy', 'nbformat')
 
 def _session_tools(host):
     "The Run button and the demo inserter, as the tools Leela adds to the live session; `inspect_python('')` reads the namespace."
@@ -1169,6 +1185,7 @@ def _irreversible(action):
     "How a completed action reads in the turn's irreversible list, or None if restoring files undoes."
     if action.tool == 'memory_forget': return f"memory_forget ({action.args.get('doc_id', 'unknown document')})"
     if action.tool in {'run_python', 'run_cell'}: return f'{action.tool} (live kernel state)'
+    if action.tool == 'own_python': return "own_python (Leela's kernel state, and any file it wrote)"
     if action.tool == 'run_shell': return f"run_shell ({action.args.get('command', 'command')})"
     if action.tool in GIT_WRITE_TOOLS: return action.tool
     return None

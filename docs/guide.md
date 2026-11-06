@@ -257,6 +257,12 @@ involve no typing:
   that to the *running* application rather than through argv. `leela.desktop` answers the
   `odoc` Apple Event and gives the folder a workspace and a window of its own. To put a
   second folder in the window you are already in, use `add…` in the files bar.
+- **Open With -> Leela** on a file, and a file dropped on the Dock icon or a window. Finder offers
+  Leela for every file a tab can show: text and source files, notebooks, images, PDFs, and Word,
+  PowerPoint and Excel files. `leela.workspace.doc_types` holds the list, and both Mac apps take
+  their `Info.plist` document types from it. Leela is never the default app for a type. After an
+  update changes the list, macOS can keep the old one until the app is registered again:
+  `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Leela.app`.
 
 Windows has no such event. Explorer starts a new process with the path in argv, which the app
 already reads. To put leela on a folder's context menu:

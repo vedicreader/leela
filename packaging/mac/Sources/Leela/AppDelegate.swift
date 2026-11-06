@@ -83,7 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         windows.port = sup.port
         Task {
             for row in await get("/app/sites")?["sites"] as? [[String: Any]] ?? [] { self.windows.learn(row) }
-            if let m = await get("/app/menu.json")?["menus"] as? [[String: Any]] { NSApp.mainMenu = Menus.build(m, runner: self.runner, app: self) }
+            if let d = await get("/app/menu.json"), let m = d["menus"] as? [[String: Any]] {
+                NSApp.mainMenu = Menus.build(m, launcher: d["launcher"] as? [[String: Any]] ?? Menus.launcher, runner: self.runner, app: self)
+            }
             recent = await get("/app/recent")?["recent"] as? [String] ?? []
         }
         // what Finder sent while the server was starting, restarting or offline opens now, whatever windows there are

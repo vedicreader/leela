@@ -104,7 +104,7 @@ _patch_fasttransport()
 def _term_python(ws, cwd=None):
     "The interpreter a terminal opened at `cwd` should be inside. See `python_for`."
     from .blocks.runtime.kernels import python_for
-    return python_for(cwd, ws)
+    return python_for(cwd or ws.cwd_for(), ws)
 
 def _line_starts(text):
     "The lines of `text`, keeping their ends, and the character offset each one begins at."

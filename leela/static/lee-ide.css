@@ -1751,7 +1751,27 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
                     linear-gradient(-45deg, transparent 75%, var(--lee-bg2) 75%);
   background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
 .lee-image { display: block; image-rendering: -webkit-optimize-contrast; }
+.lee-media-body { place-items: center; padding: 12px; }
+.lee-media { max-width: 100%; max-height: 100%; }
+audio.lee-media { width: min(100%, 560px); }
 .lee-image-body.fit .lee-image { max-width: 100%; max-height: 100%; object-fit: contain; }
+.lee-office-body { display: block; overflow: auto; padding: 14px 20px 32px; color: var(--lee-fg); font: 13px/1.6 var(--lee-sans); }
+.lee-office-doc, .lee-office-slide { max-width: 80ch; }
+.lee-office-body img { max-width: 100%; height: auto; }
+.lee-office-body table { border-collapse: collapse; margin: 8px 0; }
+.lee-office-body td, .lee-office-body th { border: 1px solid var(--lee-border); padding: 3px 8px; vertical-align: top; text-align: left; }
+.lee-office-body td p { margin: 0; }
+.lee-office-noimg { color: var(--lee-fg4); font-style: italic; }
+.lee-office-slide { margin: 0 0 18px; padding: 10px 14px; border: 1px solid var(--lee-border); border-radius: 5px; background: var(--lee-bg2); }
+.lee-office-slide h2 { margin: .2em 0 .4em; }
+.lee-office-slide-no { color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
+.lee-office-slide details { margin-top: 8px; color: var(--lee-fg4); }
+.lee-sheet-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.lee-sheet-tabs [aria-selected="true"] { border-color: var(--lee-accent); color: var(--lee-accent); }
+.lee-sheet-name { font-size: 14px; margin: 0 0 6px; }
+.lee-sheet-table { font: var(--lee-size-min)/1.4 var(--lee-mono); }
+.lee-sheet-row { color: var(--lee-fg4); background: var(--lee-bg2); }
+.lee-sheet-more { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 
 /* Getting back to a project. Only ever on screen when nothing is open, which for a packaged
    app launched by double-click is the whole of the first moment. */

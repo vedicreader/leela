@@ -229,8 +229,8 @@ async def _app_route(scope, send, hub=None):
         grant(root)
         return await _json(send, {'ok': True, 'root': str(root)})
     if path == MENU_PATH:
-        from .blocks.keys.menus import menu_json
-        return await _json(send, {'ok': True, 'menus': await asyncio.to_thread(menu_json)})
+        from .blocks.keys.menus import launcher_json, menu_json
+        return await _json(send, {'ok': True, 'menus': await asyncio.to_thread(menu_json), 'launcher': launcher_json()})
     from .core.projects import recent_folders
     return await _json(send, {'ok': True, 'recent': [str(r) for r in await asyncio.to_thread(recent_folders)]})
 

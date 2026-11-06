@@ -77,13 +77,29 @@ def test_an_external_edit_to_a_loose_file_reaches_the_open_tab(tmp_path):
         w = Watcher(sb, step=50, poll=.05)
         q = w.subscribe()
         try:
-            await asyncio.sleep(.3)
-            while not q.empty(): q.get_nowait()
+            assert await w.settled()
             (new := f.with_name('rc.new')).write_text('b'); os.replace(new, f)
-            return await asyncio.wait_for(q.get(), 3)
+            async with asyncio.timeout(10):
+                while str(f) not in (got := await q.get())[0]: pass
+            return got
         finally: w.close()
     paths, _ = asyncio.run(run())
     assert str(f) in paths, 'rename-over is an edit'
+
+def test_an_edit_before_the_first_poll_tick_is_still_heard(tmp_path):
+    "The poll took its baseline on its first tick, so an edit made in the first `poll` seconds was the baseline."
+    (f := tmp_path/'rc').write_text('a')
+    sb = _loose_fs(); f = sb.admit(f)
+    async def run():
+        w = Watcher(sb, step=50, poll=1)
+        q = w.subscribe()
+        try:
+            assert await w.settled()
+            f.write_text('bb')
+            async with asyncio.timeout(10):
+                while str(f) not in (await q.get())[0]: pass
+        finally: w.close()
+    asyncio.run(run())
 
 def _checkout(tmp_path):
     (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n')

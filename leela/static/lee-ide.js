@@ -331,8 +331,8 @@ function leePaneLink(e) {
   e.preventDefault(); leePaneTell({type: 'rh:link', url: a.href});
 }
 function leePaneChord(key, mod, alt) {
-  "Whether a key is one of the IDE chords a pane page hands on: Cmd or Ctrl with P, S or W, and no Alt.";
-  return typeof key === 'string' && !!mod && !alt && ['p', 's', 'w'].includes(key.toLowerCase());
+  "Whether a key is one of the IDE chords a pane page hands on: Cmd or Ctrl with P, S, W, N, O, J or 1 to 5, and no Alt.";
+  return typeof key === 'string' && !!mod && !alt && ['p', 's', 'w', 'n', 'o', 'j', '1', '2', '3', '4', '5'].includes(key.toLowerCase());
 }
 function leePaneTyping(t) { return !!t && (t.isContentEditable || (!!t.matches && t.matches('textarea, select, input:not([type=button], [type=submit], [type=reset], [type=checkbox], [type=radio])'))); }
 function leePaneKey(e) {
@@ -4021,7 +4021,7 @@ function leeToolsMenu(anchor) {
     {label: 'fastship…', detail: 'releases for a package that is not nbdev', run: leeFastship},
     {label: 'Models and updates…', detail: 'set one up, or pull a newer backend', run: () => leeSetupModal()},
     {separator: true},
-    {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
+    {label: 'Settings…', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'settings')) || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},
     {label: 'Inline completions…', detail: 'what you asked, and what you kept', run: () => showCompletions()},
     {label: 'Keybindings…', run: () => leeAct('edit_keys')},
@@ -4032,11 +4032,11 @@ window.leeToolsMenu = leeToolsMenu;
 
 function leeEditorMenu(anchor) {
   const rows = [
-    {label: 'Run selection', detail: displayChord(lee.keys.find(k => k.action === 'run_selection')?.key || ''), run: () => leeAct('run_selection')},
-    {label: 'Run all cells', detail: displayChord(lee.keys.find(k => k.action === 'run_all')?.key || ''), run: () => leeAct('run_all')},
+    {label: 'Run selection', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'run_selection')) || ''), run: () => leeAct('run_selection')},
+    {label: 'Run all cells', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'run_all')) || ''), run: () => leeAct('run_all')},
     {label: 'Restart and run all', run: () => leeAct('restart_run_all')},
     {separator: true},
-    {label: 'Save', detail: displayChord(lee.keys.find(k => k.action === 'save')?.key || ''), run: () => leeAct('save')},
+    {label: 'Save', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'save')) || ''), run: () => leeAct('save')},
     {label: 'Show unsaved changes', run: () => leeAct('show_diff')},
     {label: 'Rename symbol…', run: () => leeAct('rename_symbol')},
     {label: 'Replace in workspace…', run: () => leeAct('replace_workspace')},
@@ -4045,7 +4045,7 @@ function leeEditorMenu(anchor) {
     {label: 'Change cell type', run: () => leeAct('cell_type')},
     {label: 'Clear all outputs', run: () => leeAct('clear_all_outputs')},
     {separator: true},
-    {label: 'All commands…', detail: displayChord(lee.keys.find(k => k.action === 'palette')?.key || ''), run: () => leeAct('palette')},
+    {label: 'All commands…', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'palette')) || ''), run: () => leeAct('palette')},
   ];
   openChromeMenu(anchor, rows);
 }
@@ -4080,7 +4080,8 @@ function showHelp() {
   const body = scopes.map(([scope, rows]) =>
     `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
     `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` +
-    (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') + rows.map(([k, l]) =>
+    (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') +
+    (scope === 'editor' ? '<p class="lee-dim lee-help-note">In a notebook, a single letter works only when you do not edit a cell. Press Escape to stop editing. Press D two times to delete a cell.</p>' : '') + rows.map(([k, l]) =>
       `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
@@ -5701,8 +5702,9 @@ async function treeDiff() {
 }
 
 async function newEntry(kind) {
-  const sel = treeSel();
-  const parent = sel ? (sel.classList.contains('lee-dir') ? sel.dataset.path
+  // ⌘N from anywhere: the folder selected in the tree, else the open file's, else the first root.
+  const sel = treeSel() || (lee.path && $$('.lee-node').find(n => n.dataset.path === lee.path)) || $('.lee-node.lee-root');
+  const parent = sel ? (sel.classList.contains('lee-dir') || sel.classList.contains('lee-root') ? sel.dataset.path
                                                         : sel.dataset.path.replace(/\/[^/]+$/, '')) : '';
   if (!parent) return status('open a folder first', 'err');
   const name = await inputDialog(kind === 'dir' ? 'new folder' : 'new file', 'name', '',
@@ -6058,6 +6060,59 @@ async function treeAddFolder() {
     await refreshFileTree(path, false);
   } catch (e) { leeFail('git', 'add folder', e); }
 }
+/* A Word, PowerPoint or Excel file, read-only. The server sends the document as cleaned HTML; this
+   file adds the head bar, the sheet buttons and the row pager. Nothing here writes the file. */
+const officeQ = (path, more = '') => '?path=' + encodeURIComponent(path) + more;
+async function mountOffice(host, st) {
+  host.innerHTML =
+    `<div class="lee-doc lee-office"><div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
+    `<span class="lee-dim">read-only</span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-office-open>open in default app</button>` +
+    `<button class="lee-btn" data-office-copy>copy as text</button></div>` +
+    `<div class="lee-doc-body lee-office-body"><div class="lee-dim">Loading…</div></div></div>`;
+  const body = $('.lee-office-body', host), path = st.path;
+  $('[data-office-open]', host).onclick = () => post('/office/open' + officeQ(path))
+    .then(() => status('opened in the default app', 'ok')).catch(e => status(String(e.message || e), 'err'));
+  $('[data-office-copy]', host).onclick = async () => {
+    try { await navigator.clipboard.writeText((await api('/office/text' + officeQ(path))).text); status('document text copied', 'ok'); }
+    catch (e) { status(String(e.message || e), 'err'); }
+  };
+  try { body.innerHTML = (await api('/office/view' + officeQ(path))).html; }
+  catch (e) { body.innerHTML = `<div class="lee-err">${esc(String(e.message || e))}</div>`; return; }
+  // A link in a document never replaces the IDE page.
+  for (const a of $$('a[href]', body)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+  officeSheets(body, path);
+}
+function officeSheets(body, path) {
+  const sheets = $$('.lee-sheet', body);
+  if (!sheets.length) return;
+  const bar = document.createElement('div');
+  bar.className = 'lee-sheet-tabs'; bar.setAttribute('role', 'tablist');
+  sheets.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.className = 'lee-btn'; b.setAttribute('role', 'tab'); b.dataset.sheetTab = i;
+    b.textContent = $('.lee-sheet-name', s)?.textContent || `Sheet ${i + 1}`;
+    b.onclick = () => { sheets.forEach((x, j) => x.hidden = j !== i); $$('[data-sheet-tab]', bar).forEach((x, j) => x.setAttribute('aria-selected', String(j === i))); };
+    bar.append(b);
+  });
+  body.prepend(bar);
+  bar.firstChild.setAttribute('aria-selected', 'true');
+  for (const more of $$('.lee-sheet-more', body)) {
+    const b = document.createElement('button');
+    b.className = 'lee-btn'; b.textContent = 'show more rows';
+    b.onclick = async () => {
+      const s = more.closest('.lee-sheet'); b.disabled = true;
+      try {
+        const d = await api('/office/rows' + officeQ(path, `&sheet=${s.dataset.sheet}&start=${more.dataset.next}`));
+        $('.lee-sheet-table tbody', s).insertAdjacentHTML('beforeend', d.html);
+        more.dataset.next = String(+more.dataset.next + d.count);
+        $('span', more).textContent = `Showing the first ${more.dataset.next} rows.`;
+        if (!d.more) more.remove(); else b.disabled = false;
+      } catch (e) { b.disabled = false; status(String(e.message || e), 'err'); }
+    };
+    more.append(b);
+  }
+}
 function initSplits() {
   const savedLeft = localStorage.getItem('lee-left-view');
   // Every panel is saved on switch, so every panel is restorable.
@@ -6179,6 +6234,7 @@ async function refreshKernelPill() {
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
+    (d.venv_notes || []).forEach(m => status(m, 'ok'));
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
       let run = tab.querySelector('.lee-tab-run');

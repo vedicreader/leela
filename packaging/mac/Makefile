@@ -14,17 +14,21 @@ KEYS ?= $(if $(filter build/dev-lock,$(LOCK)),build/dev-lock/keys.pub,../lock/ke
 ZIP := build/Leela.zip
 export SIGN_ID LOCK KEYS LOCK_SRC LOCK_DIR WORK
 
-.PHONY: test build uv-fetch dev-lock bundle app verify zip fixtures clean
+.PHONY: test build plist uv-fetch dev-lock bundle app verify zip fixtures clean
 
 # the shortcut tests read the server's menu.json fresh from the Python source, with the default keymap
 MENU_JSON := $(CURDIR)/build/menu.json
 test:
 	mkdir -p build
-	cd ../.. && uv run --frozen python -c "import os,sys,json,tempfile; os.environ['XDG_CONFIG_HOME']=tempfile.mkdtemp(); from leela.blocks.keys.menus import menu_json; json.dump({'menus': menu_json()}, open(sys.argv[1], 'w'))" "$(MENU_JSON)"
+	cd ../.. && uv run --frozen python -c "import os,sys,json,tempfile; os.environ['XDG_CONFIG_HOME']=tempfile.mkdtemp(); from leela.blocks.keys.menus import launcher_json, menu_json; json.dump({'menus': menu_json(), 'launcher': launcher_json()}, open(sys.argv[1], 'w'))" "$(MENU_JSON)"
 	LEELA_MENU_JSON="$(MENU_JSON)" swift test $(if $(value FILTER),--filter "$$FILTER")
 
 build:
 	swift build
+
+# Info.plist's document types from leela.workspace.doc_types, the old app's list; test_packaging fails until this runs after a change
+plist:
+	cd ../.. && uv run --frozen python -c "import os,sys,plistlib,tempfile; os.environ['XDG_CONFIG_HOME']=tempfile.mkdtemp(); from leela.workspace import doc_types, imported_types; f=sys.argv[1]; p=plistlib.load(open(f,'rb')); p.update(CFBundleDocumentTypes=doc_types(), UTImportedTypeDeclarations=imported_types()); open(f,'wb').write(plistlib.dumps(p))" packaging/mac/Resources/Info.plist
 
 # the pinned uv from its GitHub release, checked against packaging/uv.sha256 before it is unpacked
 uv-fetch:
