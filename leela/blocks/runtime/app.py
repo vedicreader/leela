@@ -127,8 +127,8 @@ def connect(app, ctx):
         root = session.project_repo
         if root is None: return fail('open a folder first')
         if copy_folder(root): return fail('this folder holds learning copies from abhyasa; each copy runs in the environment of its own project')
-        from . import kernels
-        try: py = await off_loop(kernels.make_venv, root)
+        import kunda.support as ks
+        try: py = await off_loop(ks.make_venv, root)
         except Exception as e: return fail(f'could not create .venv — {errstr(e)}')
         return {'ok': True, 'python': py, 'root': str(root)}
     @rt('/kernel/interrupt')
@@ -161,7 +161,7 @@ def connect(app, ctx):
             'notice': getattr(k, 'notice', None),
             'cwd': str(session.cwd_for() or ''),
             'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs],
-            **({'evicted': evicted} if evicted else {})}
+            **({'evicted': evicted} if evicted else {}), **({'venv_notes': n} if (n := session.take_venv_notes()) else {})}
     @rt('/kernel/options')
     def k_options():
         "What the kernel picker shows: the launchers, the interpreters, and what is running."

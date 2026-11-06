@@ -1,7 +1,7 @@
 "Open folders, open tabs, and which kernel each tab talks to."
 
 from __future__ import annotations
-import asyncio, atexit, hashlib, json, os, threading, time
+import asyncio, atexit, hashlib, json, os, re, threading, time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from fastcore.all import AttrDict, Path, L, atomic_save, first, ifnone
@@ -180,6 +180,13 @@ class Tab(Dictable):
     @property
     def lang(self): return (self.nb_lang or 'python') if self.kind == 'notebook' else lang_for(self.path)
 
+def _venv_version(py):
+    "The `major.minor` a venv's `pyvenv.cfg` names, or ''."
+    try: cfg = (Path(py).parent.parent/'pyvenv.cfg').read_text()
+    except OSError: return ''
+    m = re.search(r'^version(?:_info)?\s*=\s*(\d+\.\d+)', cfg, re.M)
+    return m[1] if m else ''
+
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
     def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
@@ -201,7 +208,7 @@ class Workspace:
         from .blocks.git.git import wire_env
         wire_env()
         self.fs_watch = Watcher(self.fs)
-        self.chosen_python, self.venv_made, self._own, self._own_lock = {}, {}, None, None   # project folder -> the interpreter the person picked; Leela's own kernel
+        self.chosen_python, self.venv_made, self.venv_notes, self._own, self._own_lock = {}, {}, [], None, None   # project folder -> the interpreter the person picked; Leela's own kernel
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
@@ -1018,16 +1025,36 @@ class Workspace:
                 self._own = k
             elif str(k.cwd) != cwd: await k.chdir(cwd)
             return k
-    async def project_venv(self, cwd):
-        "Make the `.venv` of the project `cwd` is in, for a notebook that has none and no chosen interpreter; None where no project owns `cwd`."
-        from .blocks.runtime import kernels as K
+    def venv_project(self, cwd):
+        "The project whose own `.venv` user code at `cwd` runs in; None for a loose file, a learning copy, or no folder."
+        from .blocks.runtime.kernels import project_of
         from .blocks.runtime.app import copy_folder
-        proj = K.project_of(cwd, self)
-        if proj is None or proj == self.fs.loose or copy_folder(proj): return None
-        try: py = await asyncio.to_thread(K.make_venv, proj)
-        except Exception as e: raise K.KernelStartError(f'could not make {proj/".venv"} for this project: {errstr(e)}') from e
-        if py: self.venv_made[str(proj)] = py
+        proj = project_of(cwd, self)
+        return None if proj is None or proj == self.fs.loose or copy_folder(proj) else proj
+    def venv_for(self, cwd):
+        "Make the `.venv` of the project `cwd` is in; None where no project owns `cwd`."
+        from .blocks.runtime.kernels import KernelStartError, nearest_python
+        import kunda.support as ks
+        if (proj := self.venv_project(cwd)) is None: return None
+        had = nearest_python(proj, proj)
+        try: py = ks.make_venv(proj)
+        except Exception as e: raise KernelStartError(f'could not make {proj/".venv"} for this project: {errstr(e)}') from e
+        if py and not had:
+            self.venv_made[str(proj)] = py
+            v = _venv_version(py)
+            self.venv_notes.append(f'Leela made .venv for {proj.name}{f" (Python {v})" if v else ""}. Change it in kernel settings.')
         return py
+    def take_venv_notes(self):
+        "The notes on venvs Leela made since the last call, each given out once."
+        out, self.venv_notes = self.venv_notes, []
+        return out
+    async def project_venv(self, cwd):
+        "`venv_for` off the loop, for a notebook that has no venv and no chosen interpreter."
+        return await asyncio.to_thread(self.venv_for, cwd)
+    def user_python(self, cwd, make=True):
+        "The interpreter user code at `cwd` runs on: the chosen one, else its project's venv, made if missing when `make`; None outside every project."
+        from .blocks.runtime.kernels import python_for
+        return python_for(cwd, self) or (self.venv_for(cwd) if make else None)
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
         "What to call the runtime a tab runs in, alive or not."
@@ -1110,9 +1137,8 @@ class Workspace:
         root = self.project_repo
         cwd = r.resolved_cwd(root) if root else None
         # An app belongs in its own project's environment.
-        from .blocks.runtime.kernels import python_for
-        return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch,
-                                    env=r.resolved_env(root), python=python_for(cwd or root, self))
+        python = await asyncio.to_thread(self.user_python, cwd or root)
+        return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch, env=r.resolved_env(root), python=python)
     def kernel_options(self, tab=None):
         "Everything a kernel picker needs, so neither frontend has to know how kernels work."
         from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, project_of, python_for

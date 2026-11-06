@@ -633,11 +633,11 @@ def test_a_chosen_interpreter_wins_and_is_the_only_way_to_borrow(tmp_path):
 
 def test_a_notebook_with_no_venv_makes_its_projects_on_first_run(tmp_path, monkeypatch):
     "A notebook in a checkout with no venv ran on whatever venv sat above it, or on Leela's own Python."
-    import leela.blocks.runtime.kernels as K
+    import leela.blocks.runtime.kernels as K, kunda.support as ks
     orgs, karma, shared = _orgs(tmp_path)
     made, got = [], {}
     def fake(root, python=None): made.append(Path(root)); return str(_venv(Path(root)))
-    monkeypatch.setattr(K, 'make_venv', fake)
+    monkeypatch.setattr(ks, 'make_venv', fake)
     ws = Workspace(roots=[orgs])
     async def get(key, **kw): got.update(kw); return None
     ws.pool.get = get
@@ -646,23 +646,11 @@ def test_a_notebook_with_no_venv_makes_its_projects_on_first_run(tmp_path, monke
     assert made == [karma] and got['python'] == str(karma/'.venv'/'bin'/'python'), 'made in karma, the checkout, never in orgs'
     assert ws.kernel_options(tab)['venv_made'] == got['python'], 'and the picker says Leela made it'
     def broken(root, python=None): raise RuntimeError('no network')
-    monkeypatch.setattr(K, 'make_venv', broken)
+    monkeypatch.setattr(ks, 'make_venv', broken)
     (other := orgs/'other'/'nbs').mkdir(parents=True); (orgs/'other'/'pyproject.toml').write_text('')
     _notebook(other/'b.ipynb')
     with pytest.raises(K.KernelStartError, match='could not make .*other/.venv.*no network'):
         asyncio.run(ws.kernel(ws.open(str(other/'b.ipynb'))))
-
-@pytest.mark.makes_venv
-@pytest.mark.skipif(not shutil.which('uv'), reason='needs uv to create an environment')
-def test_a_venv_that_fails_to_get_kernel_support_is_removed(tmp_path, monkeypatch):
-    "A half-made venv without ipykernel would be found next time and fail every run."
-    import leela.blocks.runtime.kernels as K
-    from kunda import support as S
-    monkeypatch.setattr(S, 'install_kernel_support', lambda py, packages=None: (_ for _ in ()).throw(RuntimeError('offline')))
-    with pytest.raises(RuntimeError, match='offline'): K.make_venv(tmp_path)
-    assert not (tmp_path/'.venv').exists()
-    py = _venv(tmp_path)
-    assert K.make_venv(tmp_path) == str(py), 'one that exists is kept'
 
 @pytest.mark.slow
 @pytest.mark.makes_venv
@@ -683,3 +671,118 @@ def test_a_made_venv_runs_the_notebook_on_leelas_minor_without_leelas_packages(t
             assert not r.ok and 'No module named' in (r.text + str(r.error)), f'{name} imported in the project kernel: borrowed'
         await ws.shutdown()
     asyncio.run(go())
+
+def _checkout(orgs, name, py=True):
+    "A git checkout in `orgs` with no venv: a Python project when `py`."
+    import subprocess
+    d = orgs/name; d.mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(d)], check=True)
+    if py: (d/'pyproject.toml').write_text('')
+    (d/'main.py').write_text('print(1)\n')
+    return d
+
+def _made(monkeypatch):
+    "Record each project `make_venv` is asked for, and make a stand-in venv there."
+    import kunda.support as ks
+    made = []
+    def fake(root, python=None): made.append(Path(root)); return str(_venv(Path(root)))
+    monkeypatch.setattr(ks, 'make_venv', fake)
+    return made
+
+def test_the_debugger_runs_a_script_in_its_projects_venv_and_makes_it(tmp_path, monkeypatch):
+    "The debugger ran a script with no project venv on Leela's own Python, beside Leela's packages."
+    from leela.blocks.debug.debug import DebugSession
+    orgs, karma, shared = _orgs(tmp_path)
+    made, seen = _made(monkeypatch), []
+    monkeypatch.setattr(DebugSession, 'start_adapter', lambda self: seen.append(self.python))
+    monkeypatch.setattr(DebugSession, 'launch', lambda self, config, breakpoints: None)
+    (karma/'main.py').write_text('print(1)\n')
+    ws = Workspace(roots=[orgs]); ws.open(str(karma/'main.py'))
+    with TestClient(ide_app(ws)) as c:
+        cap = c.get('/debug/capabilities').json()
+        assert cap['python'] == '' and not cap['direct'], "a probe makes nothing and offers no other project's Python"
+        r = c.post('/debug/start', json={'program': str(karma/'main.py'), 'cwd': str(karma)}).json()
+    assert made == [karma] and r['python'] == seen[0] == str(karma/'.venv'/'bin'/'python'), r
+    assert ws.kernel_options()['venv_made'] == r['python']
+
+def test_debugpy_goes_into_the_projects_venv_made_for_it(tmp_path, monkeypatch):
+    "With no venv, the install asked the person to choose an interpreter instead of making the project's."
+    import subprocess as sp
+    from types import SimpleNamespace
+    orgs, karma, shared = _orgs(tmp_path)
+    made, cmds = _made(monkeypatch), []
+    run = lambda cmd, **kw: cmds.append(cmd) or sp.CompletedProcess(cmd, 0, '', '')
+    monkeypatch.setattr('leela.blocks.debug.app.subprocess', SimpleNamespace(run=run, DEVNULL=sp.DEVNULL))
+    (karma/'main.py').write_text('print(1)\n')
+    ws = Workspace(roots=[orgs]); ws.open(str(karma/'main.py'))
+    with TestClient(ide_app(ws)) as c: r = c.post('/debug/install', json={'python': ''}).json()
+    assert made == [karma] and r['python'] == str(karma/'.venv'/'bin'/'python') and r['python'] in ' '.join(map(str, cmds[0])), (r, cmds)
+
+def test_a_dev_run_starts_in_its_projects_venv_and_makes_it(tmp_path, monkeypatch):
+    "A run configuration in a checkout with no venv ran on Leela's own Python."
+    orgs = tmp_path/'orgs'; app = _checkout(orgs, 'app')
+    made, got = _made(monkeypatch), {}
+    ws = Workspace(roots=[orgs]); ws.open(str(app/'main.py'))
+    async def start(cmd, **kw): got.update(kw)
+    ws.dev.start = start
+    asyncio.run(ws.run(str(app/'main.py')))
+    assert made == [app] and got['python'] == str(app/'.venv'/'bin'/'python')
+
+def test_a_chosen_interpreter_runs_the_debugger_and_dev_runs_with_nothing_made(tmp_path, monkeypatch):
+    "The person's choice for a project wins over making its venv."
+    from leela.blocks.debug.debug import DebugSession
+    orgs, karma, shared = _orgs(tmp_path)
+    made, seen, got = _made(monkeypatch), [], {}
+    monkeypatch.setattr(DebugSession, 'start_adapter', lambda self: seen.append(self.python))
+    monkeypatch.setattr(DebugSession, 'launch', lambda self, config, breakpoints: None)
+    (karma/'main.py').write_text('print(1)\n')
+    ws = Workspace(roots=[orgs]); ws.open(str(karma/'main.py'))
+    ws.choose_python(str(shared))
+    async def start(cmd, **kw): got.update(kw)
+    ws.dev.start = start
+    asyncio.run(ws.run(str(karma/'main.py')))
+    with TestClient(ide_app(ws)) as c: c.post('/debug/start', json={'program': str(karma/'main.py'), 'cwd': str(karma)})
+    assert made == [] and got['python'] == seen[0] == str(shared)
+
+def test_a_loose_script_keeps_leelas_python(tmp_path, monkeypatch):
+    "A file outside every project has no project venv to make."
+    from leela.blocks.runtime.kernels import runtime_python
+    made = _made(monkeypatch)
+    assert Workspace(roots=[]).user_python(tmp_path) is None and made == []
+    assert runtime_python()
+
+def test_pipelines_and_drive_make_the_venv_only_to_run_a_python_project(tmp_path, monkeypatch):
+    "A release step or a drive step in a checkout with no venv ran under Leela's own interpreter."
+    from leela.blocks.pipelines.app import PipelineError, _ship
+    asked = []
+    monkeypatch.setattr('leela.blocks.pipelines.app.resolve_script', lambda argv, python: asked.append(python) or argv)
+    orgs = tmp_path/'orgs'
+    lib, site, ship = _checkout(orgs, 'lib'), _checkout(orgs, 'site', py=False), _checkout(orgs, 'ship')
+    made = _made(monkeypatch)
+    ws = Workspace(roots=[orgs])
+    with TestClient(ide_app(ws)) as c:
+        c.get('/releases', params={'repo': str(lib)}); c.get('/drive', params={'repo': str(lib)})
+        assert made == [], 'looking at a panel makes nothing'
+        c.post('/releases/action', json={'op': 'step', 'step': 'nope', 'repo': str(lib)})
+        assert made == [lib]
+        c.post('/drive/action', json={'op': 'step', 'step': 'nope', 'repo': str(site)})
+        assert made == [lib], 'a project that is not Python gets no venv'
+    with pytest.raises(PipelineError, match='fastship is not installed'): _ship(ship, ws, ['ship-bump'])
+    assert made == [lib, ship] and asked[-1] == str(ship/'.venv'/'bin'/'python'), 'fastship is looked for in the venv made for it'
+
+def test_the_kernel_pill_says_once_that_leela_made_a_venv(tmp_path, monkeypatch):
+    "Leela made a project's .venv without a word, so the person did not know where their code ran."
+    import kunda.support as ks
+    orgs = tmp_path/'orgs'; app = _checkout(orgs, 'app')
+    def fake(root, python=None):
+        py = _venv(Path(root)); (Path(root)/'.venv'/'pyvenv.cfg').write_text('home = /x\nversion_info = 3.13.1\n')
+        return str(py)
+    monkeypatch.setattr(ks, 'make_venv', fake)
+    ws = Workspace(roots=[orgs]); ws.open(str(app/'main.py'))
+    with TestClient(ide_app(ws)) as c:
+        assert 'venv_notes' not in c.get('/kernel/info').json()
+        ws.venv_for(app)
+        assert c.get('/kernel/info').json()['venv_notes'] == ['Leela made .venv for app (Python 3.13). Change it in kernel settings.']
+        assert 'venv_notes' not in c.get('/kernel/info').json(), 'shown once'
+        ws.venv_for(app)
+        assert 'venv_notes' not in c.get('/kernel/info').json(), 'a venv that is there is not news'

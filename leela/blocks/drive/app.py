@@ -6,7 +6,7 @@ from ...core.web import fail, off_loop, pipeline_socket
 from .drive import Drive, DriveError
 from ...core.envs import EnvStore
 from ..git.repos import RepoSet, repo_for
-from ..runtime.kernels import python_for
+from ..runtime.kernels import python_project
 
 __all__ = ['CAPS', 'connect']
 
@@ -15,12 +15,12 @@ CAPS = ('fs', 'gate')
 def connect(app, ctx):
     rt = app.route
     live = {}
-    def drive(target=''):
-        "The driver for one project, made once and kept: a running step is a process."
+    def drive(target='', make=False):
+        "The driver for one project, made once and kept: a running step is a process. `make` gives a run its project's venv."
         root = repo_for(ctx.session, target)
         key = str(root)
         #: A changed interpreter builds a new `Drive`; setting `python` after build ran steps under the app, not the project.
-        python = python_for(root, ctx.session)
+        python = ctx.session.user_python(root, make=make and python_project(root))
         d = live.get(key)
         if d is None or getattr(d, 'python', None) != python:
             d = live[key] = Drive(root, python=python, env=EnvStore())
@@ -43,7 +43,7 @@ def connect(app, ctx):
         d = await req.json()
         op, target = str(d.get('op') or ''), d.get('repo') or ''
         try:
-            p = drive(target)
+            p = await off_loop(drive, target, op in ('start', 'step'))
             if op == 'step': await p.start(d.get('step') or '', False)
             elif op == 'start': await p.start(d.get('step') or '', True)
             elif op == 'stop': p.stop()

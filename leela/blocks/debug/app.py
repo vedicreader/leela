@@ -29,16 +29,19 @@ def connect(app, ctx):
     @rt('/debug/capabilities')
     def debug_capabilities():
         from .debug import debugpy_available
-        from ..runtime.kernels import python_for, runtime_python
+        from ..runtime.kernels import runtime_python
         # `runtime_python` and not `sys.executable`: in the bundle that name is Leela itself,
         # so probing it for debugpy relaunches the app.
-        python = python_for(ws.cwd_for(), ws) or runtime_python()
+        cwd = ws.cwd_for()
+        python = ws.user_python(cwd, make=False) or (None if ws.venv_project(cwd) else runtime_python())
+        if python is None: return {'python': '', 'debugpy': False, 'notebook': True, 'direct': False}
         return {'python': str(python), 'debugpy': debugpy_available(python),
                 'notebook': True, 'direct': debugpy_available(python)}
     @rt('/debug/install')
     async def debug_install(req):
-        from ..runtime.kernels import python_for
-        d = await req.json(); python = d.get('python') or python_for(ws.cwd_for(), ws)
+        d = await req.json(); python = d.get('python')
+        try: python = python if python and Path(python).exists() else await off_loop(ws.user_python, ws.cwd_for())
+        except Exception as e: return fail(e)
         if not python: return fail('choose a project interpreter first')
         def install():
             uv = shutil.which('uv')
@@ -52,7 +55,7 @@ def connect(app, ctx):
     async def debug_start(req):
         "Launch a Python file/module or attach through a direct debugpy DAP session."
         from .debug import DebugSession
-        from ..runtime.kernels import python_for, runtime_python
+        from ..runtime.kernels import runtime_python
         d = await req.json(); name = d.get('name') or ''
         run = ctx.runs.get(name) if name else None
         config = run.dict() if run else dict(d)
@@ -61,7 +64,8 @@ def connect(app, ctx):
         cwd = config.get('cwd') or str(root)
         if cwd and not Path(cwd).is_absolute(): cwd = str((root/str(cwd)).resolve())
         # Resolved after `cwd`, so the debugger uses the venv of whatever is being debugged.
-        python = d.get('python') or python_for(cwd, ws) or runtime_python()
+        try: python = d.get('python') or await off_loop(ws.user_python, cwd) or runtime_python()
+        except Exception as e: return fail(e)
         program = config.get('program') or (ctx.tab.path if ctx.tab and (ctx.tab.path or '').endswith('.py') else '')
         if program and not Path(program).is_absolute(): program = str((root/program).resolve())
         config.update(program=program, cwd=cwd, justMyCode=config.get('justMyCode', True),
