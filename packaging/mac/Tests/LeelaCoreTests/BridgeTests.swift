@@ -89,6 +89,7 @@ func req(_ method: String, _ path: String, _ body: [String: Any]? = nil, token: 
         #expect(ControlServer.parse(raw) == nil, "the body is one byte short")
         let r = ControlServer.parse(raw + Data(" ".utf8))
         #expect(r?.path == "/extras" && r?.headers["authorization"] == "Bearer t" && r?.body.count == 15)
+        #expect(ControlServer.parse(Data("GET / HTTP/1.1\r\nContent-Length: -1\r\n\r\n".utf8))?.body.isEmpty == true, "a negative length does not crash")
     }
 
     @Test func tokensCompareWhole() {

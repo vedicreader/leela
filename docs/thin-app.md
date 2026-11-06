@@ -130,7 +130,7 @@ Each lock is a release `lock-<n>` (`--latest=false --prerelease`) with the three
 
 - `channel.json` + `channel.sig`: the stable pointer.
 - `channel-test.json` + `channel-test.sig`: the test pointer. `LEELA_LOCK_CHANNEL=test` points an app at it.
-- A pointer is `{n, manifest_sha256, published}`.
+- A pointer is `{n, manifest_sha256, published, expires, channel}`. The app refuses a pointer whose `channel` is not the one it asked for (a test pointer served as stable) and a pointer past `expires` (180 days after it was published), so an old pointer cannot freeze updates.
 
 The app refuses a lock when the signature or a hash is wrong, when `n` is not above `highest_n`, or when the platform or macOS is wrong. It shows "needs a newer Leela app" when `uv_min` is above the bundled uv or `launcher_api_min` is above the app's API.
 

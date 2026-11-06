@@ -88,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
             if q.isEmpty { windows.show(base) } else { open(q) }
         } else { windows.reloadAll(port: sup.port) }
         if store.pruneDue() { Task.detached { [store] in _ = try? await Run.toEnd(store!.pruneLaunch(), log: store!.paths.logs.appending(path: "prune.log")); _ = try? store!.update { $0.pruned = Date().timeIntervalSince1970 } } }
-        _ = try? store.gc(inUse: Set([sup.hash].compactMap { $0 }))
+        _ = try? store.gc(inUse: Set([sup.hash].compactMap { $0 }), building: Set([sup.buildingHash].compactMap { $0 }))
     }
 
     // calls to the server with the token

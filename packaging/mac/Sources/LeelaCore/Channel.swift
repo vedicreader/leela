@@ -42,7 +42,7 @@ public struct Channel: Sendable {
     public func pointer() async throws -> ChannelPointer? {
         let dir = base.appending(path: "lock-channel")
         guard let d = try await get(dir.appending(path: "\(name).json")), let s = try await get(dir.appending(path: "\(name).sig")) else { return nil }
-        return try LockCheck.pointer(d, signature: s, keys: keys)
+        return try LockCheck.pointer(d, signature: s, keys: keys, name: name)
     }
 
     /// downloads lock `n` into `into` and checks it as the app does
@@ -76,10 +76,10 @@ public enum LockChoice {
             do {
                 if let p = try await ch.pointer() {
                     online = true
-                    if p.n > s.highest_n || s.current == nil {
+                    if p.n > s.highest_n {
                         let tmp = store.paths.locks.appending(path: ".dl-\(p.n)-\(UUID().uuidString)")
                         defer { try? FileManager.default.removeItem(at: tmp) }
-                        let v = try await ch.download(p, into: tmp, highest: s.current == nil ? -1 : s.highest_n, bad: s.bad)
+                        let v = try await ch.download(p, into: tmp, highest: s.highest_n, bad: s.bad)
                         let plan = LockPlan(dir: tmp, verdict: v, online: true)
                         best = LockPlan(dir: try store.keep(lock: tmp, n: plan.n), verdict: v, online: true)
                     } else if let n = s.current.flatMap({ s.locks[$0] }) {

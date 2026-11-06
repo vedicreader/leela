@@ -77,9 +77,9 @@ public enum SSHSig {
     public static func verify(message: Data, signature armored: String, keys: [SSHKey], namespace: String = namespace) throws -> SSHKey {
         var r = Reader(try blob(armored: armored))
         guard r.bytes(6) == Data("SSHSIG".utf8), r.u32() == 1, let pub = r.string(), let ns = r.string(), let reserved = r.string(),
-              let algo = r.string(), let sig = r.string() else { throw SSHSigError.format }
+              let algo = r.string(), let sig = r.string(), r.d.isEmpty else { throw SSHSigError.format }
         var pk = Reader(pub)
-        guard pk.string() == Data("ssh-ed25519".utf8), let raw = pk.string() else { throw SSHSigError.format }
+        guard pk.string() == Data("ssh-ed25519".utf8), let raw = pk.string(), raw.count == 32, pk.d.isEmpty else { throw SSHSigError.format }
         guard let key = keys.first(where: { $0.raw == raw }) else { throw SSHSigError.unknownKey }
         guard String(decoding: ns, as: UTF8.self) == namespace else { throw SSHSigError.namespace }
         let digest: Data
@@ -89,7 +89,7 @@ public enum SSHSig {
         default: throw SSHSigError.hashAlgorithm
         }
         var s = Reader(sig)
-        guard s.string() == Data("ssh-ed25519".utf8), let raw64 = s.string(), raw64.count == 64 else { throw SSHSigError.format }
+        guard s.string() == Data("ssh-ed25519".utf8), let raw64 = s.string(), raw64.count == 64, s.d.isEmpty else { throw SSHSigError.format }
         let signed = Data("SSHSIG".utf8) + sshString(ns) + sshString(reserved) + sshString(algo) + sshString(digest)
         guard let k = try? Curve25519.Signing.PublicKey(rawRepresentation: raw), k.isValidSignature(raw64, for: signed) else { throw SSHSigError.badSignature }
         return key

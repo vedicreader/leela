@@ -397,8 +397,8 @@ def check_lock_dir(d, keys_pub, highest=-1):
     d = Path(d)
     if not verify_sig(d/'manifest.json', d/'manifest.sig', keys_pub): raise SystemExit(f'{d}/manifest.sig is not a good leela-lock signature')
     m = json.loads((d/'manifest.json').read_text())
-    for f, want in m['files'].items():
-        if sha256(d/f) != want: raise SystemExit(f'{f} does not match the manifest')
+    for f in FILES:
+        if m['files'].get(f) != sha256(d/f): raise SystemExit(f'{f} does not match the manifest')
     if lock_hash(d, m['uv_min']) != m['hash']: raise SystemExit('the lock hash does not match the manifest')
     if m['platform'] != PLATFORM: raise SystemExit(f"the lock is for {m['platform']}")
     if m['n'] <= highest: raise SystemExit(f"lock {m['n']} is not newer than {highest}")
@@ -426,6 +426,13 @@ def fetch(url, dst=None):
     if dst: Path(dst).write_bytes(b)
     return b
 
+POINTER_DAYS = 180
+
+def pointer(n, manifest_sha, name, at=None):
+    "A channel pointer: it names its channel, so a test pointer served as stable is refused, and it expires, so an old one cannot freeze updates."
+    at = at or now()
+    return dict(n=n, manifest_sha256=manifest_sha, published=iso(at), expires=iso(at + timedelta(days=POINTER_DAYS)), channel=name)
+
 def channel(name='channel', keys_pub=LOCK/'keys.pub', base=f'{DL}/lock-channel'):
     "The channel pointer `name` (channel or channel-test), checked; {} when none is published."
     tmp = Path(tempfile.mkdtemp())
@@ -434,7 +441,10 @@ def channel(name='channel', keys_pub=LOCK/'keys.pub', base=f'{DL}/lock-channel')
         if e.code == 404: return {}
         raise
     if not verify_sig(tmp/'c.json', tmp/'c.sig', keys_pub): raise SystemExit(f'{name}.json has a bad signature')
-    return json.loads((tmp/'c.json').read_text())
+    c = json.loads((tmp/'c.json').read_text())
+    if c.get('channel') != name: raise SystemExit(f"{name}.json is a pointer for {c.get('channel')}")
+    if c.get('expires', '9') < iso(now()): raise SystemExit(f"{name}.json expired at {c['expires']}")
+    return c
 
 def fetch_lock(n, into, base=DL):
     into = Path(into); into.mkdir(parents=True, exist_ok=True)
@@ -479,7 +489,7 @@ def publish(d=LOCK, keys_pub=LOCK/'keys.pub', allow_downgrade=False):
     "Sign and publish this lock as lock-<n>, check what GitHub serves, then point the test channel at it."
     if why := refusals(d, None, allow_downgrade, keys_pub=keys_pub): raise SystemExit('lock-publish refuses:\n  ' + '\n  '.join(why))
     cur = channel('channel-test', keys_pub) or channel('channel', keys_pub)
-    last = json.loads(fetch(f"{DL}/lock-{cur['n']}/manifest.json")) if cur else None
+    last = check_lock_dir(fetch_lock(cur['n'], Path(tempfile.mkdtemp())/'last'), keys_pub) if cur else None
     if why := refusals(d, last, allow_downgrade, keys_pub=keys_pub): raise SystemExit('lock-publish refuses:\n  ' + '\n  '.join(why))
     n, key = (cur.get('n') or 0) + 1, key_paths()[0]
     out = Path(tempfile.mkdtemp(prefix=f'leela-lock-{n}-'))
@@ -492,7 +502,7 @@ def publish(d=LOCK, keys_pub=LOCK/'keys.pub', allow_downgrade=False):
        *sorted(map(str, out.iterdir())))
     got = check_lock_dir(fetch_lock(n, out/'check'), keys_pub)
     c = out/'channel-test.json'
-    c.write_text(dumps(dict(n=n, manifest_sha256=sha256(out/'manifest.json'), published=iso(now()))))
+    c.write_text(dumps(pointer(n, sha256(out/'manifest.json'), 'channel-test')))
     sign(c, key).rename(out/'channel-test.sig')
     gh('release', 'view', 'lock-channel', check=False) or gh('release', 'create', 'lock-channel', '--latest=false', '--prerelease', '--title', 'Lock channel', '--notes', 'Pointers to the current environment locks.')
     gh('release', 'upload', 'lock-channel', c, out/'channel-test.sig', '--clobber')
@@ -505,7 +515,7 @@ def promote(n, keys_pub=LOCK/'keys.pub'):
     if t.get('n') != n: raise SystemExit(f"the test channel points at lock {t.get('n')}, not {n}")
     out = Path(tempfile.mkdtemp())
     check_lock_dir(fetch_lock(n, out/'lock'), keys_pub)
-    (c := out/'channel.json').write_text(dumps(t | dict(published=iso(now()))))
+    (c := out/'channel.json').write_text(dumps(pointer(n, t['manifest_sha256'], 'channel')))
     sign(c, key_paths()[0]).rename(out/'channel.sig')
     gh('release', 'upload', 'lock-channel', c, out/'channel.sig', '--clobber')
     verify(keys_pub=keys_pub)

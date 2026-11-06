@@ -51,6 +51,8 @@ public final class Supervisor {
     }
 
     public var isRunning: Bool { server?.isRunning ?? false }
+    /// the env an update build writes, which gc must leave alone
+    public private(set) var buildingHash: String?
 
     func set(_ p: Phase) { phase = p; onPhase?(p) }
 
@@ -58,6 +60,7 @@ public final class Supervisor {
     public func start() async {
         stop()
         stopping = false
+        rolledBack = false
         generation += 1
         let gen = generation
         set(.setup(.checking))
@@ -100,6 +103,7 @@ public final class Supervisor {
                 if let next = Setup.phase(after: l, current: cur, done: Setup.bytes(cache) - start, total: total) { self.set(.setup(next)) }
             }
         }, started: { [weak self] r in Task { @MainActor in self?.building = r } })
+        guard gen == generation, !stopping else { throw CancellationError() }
         building = nil
         try store.adopt(h)
         return h
@@ -157,6 +161,8 @@ public final class Supervisor {
     public func buildUpdate() async {
         guard let p = offered, update.state != "running" else { return }
         update = UpdateState(state: "running", line: "getting the new packages")
+        buildingHash = try? store.hash(lock: p.dir)
+        defer { buildingHash = nil }
         do {
             let h = try await store.build(lock: p.dir, n: p.n, background: true, line: { [weak self] l in Task { @MainActor in self?.update.line = l } })
             try store.stage(h)
@@ -181,7 +187,7 @@ public final class Supervisor {
     }
 
     /// "Restart to update" and "Start again": the pending env, if any, becomes current at this start
-    public func restart() async { rolledBack = false; await start() }
+    public func restart() async { await start() }
 
     /// Leela > Use Previous Version
     public func usePrevious() async -> Bool {

@@ -160,7 +160,7 @@ public final class ControlServer: @unchecked Sendable {
         guard first.count >= 2 else { return nil }
         var h = [String: String]()
         for l in head.dropFirst() { if let i = l.firstIndex(of: ":") { h[l[..<i].lowercased()] = l[l.index(after: i)...].trimmingCharacters(in: .whitespaces) } }
-        let n = Int(h["content-length"] ?? "0") ?? 0, body = d[end.upperBound...]
+        let n = max(0, Int(h["content-length"] ?? "0") ?? 0), body = d[end.upperBound...]
         guard body.count >= n else { return nil }
         return ControlRequest(method: String(first[0]), path: String(first[1]).components(separatedBy: "?")[0], headers: h, body: Data(body.prefix(n)))
     }

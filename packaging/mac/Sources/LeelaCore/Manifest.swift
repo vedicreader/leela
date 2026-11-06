@@ -20,6 +20,8 @@ public struct ChannelPointer: Codable, Equatable, Sendable {
     public var manifest_sha256: String
     public var published: String
     public var expires: String?
+    /// `channel` or `channel-test`: a pointer served under the other name is refused
+    public var channel: String?
 }
 
 public enum LockRefusal: Error, Equatable, Sendable {
@@ -31,6 +33,7 @@ public enum LockRefusal: Error, Equatable, Sendable {
     case platform(String)
     case macOS(String)
     case bad(String)
+    case pointer(String)
 
     public var text: String {
         switch self {
@@ -42,6 +45,7 @@ public enum LockRefusal: Error, Equatable, Sendable {
         case .platform(let p): "The lock is for \(p), not this Mac."
         case .macOS(let v): "The lock needs macOS \(v) or later."
         case .bad(let h): "Lock \(h.prefix(16)) failed on this Mac before."
+        case .pointer(let why): "The channel pointer is refused (\(why))."
         }
     }
 }
@@ -100,10 +104,13 @@ public enum LockCheck {
         return versionLess(app.uv, m.uv_min) || app.api < m.launcher_api_min ? .needsApp(m) : .ok(m)
     }
 
-    /// a channel pointer, checked against its signature
-    public static func pointer(_ data: Data, signature: Data, keys: [SSHKey]) throws -> ChannelPointer {
+    /// a channel pointer, checked against its signature, its channel name and its expiry
+    public static func pointer(_ data: Data, signature: Data, keys: [SSHKey], name: String, now: Date = Date()) throws -> ChannelPointer {
         do { try SSHSig.verify(message: data, signature: String(decoding: signature, as: UTF8.self), keys: keys) }
         catch { throw LockRefusal.signature("\(error)") }
-        return try JSONDecoder().decode(ChannelPointer.self, from: data)
+        let p = try JSONDecoder().decode(ChannelPointer.self, from: data)
+        guard p.channel == name else { throw LockRefusal.pointer("it is for \(p.channel ?? "no channel"), not \(name)") }
+        if let e = p.expires.flatMap({ ISO8601DateFormatter().date(from: $0) }), e < now { throw LockRefusal.pointer("it expired at \(p.expires!)") }
+        return p
     }
 }

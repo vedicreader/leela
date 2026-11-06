@@ -69,7 +69,9 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     // the bridge
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage, replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
-        guard let o = m.frameInfo.request.url, isServer(o) else { return replyHandler(nil, "not a Leela page") }
+        let o = m.frameInfo.securityOrigin
+        guard m.frameInfo.isMainFrame, o.protocol == "http", o.port == port, o.host == "127.0.0.1" || o.host == "localhost" || o.host.hasSuffix(".localhost")
+        else { return replyHandler(nil, "not a Leela page") }
         switch Bridge.route(m.body) {
         case .openFolder(let p): app?.openFolder(p, trusted: false); replyHandler(true, nil)
         case .pickFolder: app?.pickFolder { replyHandler($0, nil) }
@@ -95,12 +97,13 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
     func webView(_ w: WKWebView, decidePolicyFor a: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         guard let u = a.request.url else { return decisionHandler(.cancel) }
         if isServer(u) || ["about", "blob", "data"].contains(u.scheme ?? "") { return decisionHandler(.allow) }
-        NSWorkspace.shared.open(u)
+        // only a click in the page leaves it, and only for the web or mail: never file:, smb: or another app's scheme
+        if a.navigationType == .linkActivated, ["http", "https", "mailto"].contains(u.scheme ?? "") { NSWorkspace.shared.open(u) }
         decisionHandler(.cancel)
     }
 
     func webView(_ w: WKWebView, createWebViewWith c: WKWebViewConfiguration, for a: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let u = a.request.url { if isServer(u) { show(u) } else { NSWorkspace.shared.open(u) } }
+        if let u = a.request.url { if isServer(u) { show(u) } else if ["http", "https", "mailto"].contains(u.scheme ?? "") { NSWorkspace.shared.open(u) } }
         return nil
     }
 

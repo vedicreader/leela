@@ -122,9 +122,9 @@ final class FakeHTTP: @unchecked Sendable {
 }
 
 /// publishes a lock folder at `lock-<n>/` and a pointer at `lock-channel/<name>.json`
-func publish(_ http: FakeHTTP, lock dir: URL, n: Int, name: String = "channel") {
+func publish(_ http: FakeHTTP, lock dir: URL, n: Int, name: String = "channel", pointerName: String? = nil, expires: String? = nil) {
     for f in LockCheck.names { http.routes["/lock-\(n)/\(Channel.asset(f))"] = (200, try! Data(contentsOf: dir.appending(path: f))) }
-    let p = ChannelPointer(n: n, manifest_sha256: sha256(try! Data(contentsOf: dir.appending(path: "manifest.json"))), published: "2026-11-06T00:00:00Z")
+    let p = ChannelPointer(n: n, manifest_sha256: sha256(try! Data(contentsOf: dir.appending(path: "manifest.json"))), published: "2026-11-06T00:00:00Z", expires: expires, channel: pointerName ?? name)
     let d = tempDir(), f = d.appending(path: "\(name).json")
     try! JSONEncoder().encode(p).write(to: f)
     http.routes["/lock-channel/\(name).json"] = (200, try! Data(contentsOf: f))

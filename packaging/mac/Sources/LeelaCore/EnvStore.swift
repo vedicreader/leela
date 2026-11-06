@@ -82,6 +82,7 @@ public final class EnvStore: @unchecked Sendable {
         let tmp = paths.support.appending(path: "state.json.tmp")
         let e = JSONEncoder(); e.outputFormatting = [.prettyPrinted, .sortedKeys]
         try e.encode(s).write(to: tmp)
+        if let h = FileHandle(forUpdatingAtPath: tmp.path) { try? h.synchronize(); try? h.close() }
         guard rename(tmp.path, paths.state.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
     }
 
