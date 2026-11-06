@@ -92,7 +92,7 @@ def tool_preview(agent, tool, args):
             before = agent.host.text_at(path)
             if before is None: raise ValueError(f'no such file: {path}')
         return {'kind': 'diff', **diff_payload(before, apply_edits(before, es), path)}
-    if tool in {'run_python', 'inspect_python'}:
+    if tool in {'run_python', 'inspect_python', 'own_python'}:
         return {'kind': 'code', 'text': str(args.get('code', '')), 'language': 'python'}
     if tool == 'run_cell':
         return {'kind': 'code', 'text': f"{args.get('path', '')}  {args.get('cell_id', '')}".strip()}
@@ -109,7 +109,7 @@ def tool_preview(agent, tool, args):
 #: shell command is the runtime.
 GROUP_LABELS = {'code': 'Repository', 'file': 'Repository', 'notebook': 'Notebook', 'web': 'Web', 'browser': 'Browser',
                 'memory': 'Memory', 'ask': 'Memory', 'watch': 'Watches', 'api': 'API',
-                'session': 'Runtime', 'shell': 'Runtime', 'git': 'Git', 'skill': 'Skills',
+                'session': 'Runtime', 'own_python': 'Runtime', 'shell': 'Runtime', 'git': 'Git', 'skill': 'Skills',
                 'image': 'Media'}
 #: The tools Leela adds to shalya's, which shalya has no way to name for us.
 LEELA_TOOLS = {'run_cell': 'Runtime', 'generate_video': 'Media', 'video_status': 'Media',

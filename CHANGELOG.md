@@ -2,6 +2,25 @@
 
 <!-- do not remove -->
 
+## 0.1.23
+
+Needs kavacha 0.0.13, kunda 0.0.14, dhrishti 0.1.12, shalya 0.1.31, ramabana 0.2.111 and rishi 0.1.68.
+
+- A notebook, a script run from the editor, the debugger, dev runs and release pipelines run on the project's own `.venv`. A project with no venv gets one on first run, and the kernel pill says so once. Leela no longer picks a venv from a folder above the project.
+- A venv you choose in kernel settings is kept for that project and wins over the project's own venv. Before, the picker did nothing in a folder that had a venv.
+- A kernel in a venv imports only that venv's packages. Before, it could import Leela's own packages when the Python versions matched, which hid missing dependencies.
+- The agent runs its own tools (rupaka, kosha, ramabana, leela) in `own_python`, on Leela's own Python. `run_python` keeps your notebook's variables.
+- New key bindings. Every Hyper chord is gone (the window manager took most of them). ⌘N, ⌘O and ⌘W work from anywhere, ⌘1 to ⌘5 focus the panels, ⌘J toggles the bottom panel, ⇧⌘A also opens the palette, ⌥I is now ⌥T. A notebook takes Jupyter letters when no cell is being edited (`a`, `b`, `dd`, `m`, `y`, `c`, `x`, `v`, `z`), and Esc leaves the cell editor. Each chord Chrome keeps has a second chord for a browser tab. For one release an old chord still works and says what replaced it.
+- Menu shortcuts with Shift run from the menu. A chord no longer runs a menu row behind an open dialog. Recording ⌥W saves ⌥W.
+- File search works with rgapi 0.2.3, which swapped the order of its first two arguments.
+- The file watcher reports an edit made in its first moments, and keeps watching when one watched folder is deleted.
+
+Known issues:
+
+- Clicking a menu row with the mouse while a dialog is open still runs the row.
+- The palette lists "new file" twice: one for anywhere, one for the file tree.
+- `.docx`, `.pptx` and `.xlsx` still open as text; viewers come next.
+
 ## 0.1.22
 
 Needs kavacha 0.0.12 and ramabana 0.2.109.

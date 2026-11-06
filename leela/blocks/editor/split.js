@@ -119,6 +119,7 @@ async function refreshKernelPill() {
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
+    (d.venv_notes || []).forEach(m => status(m, 'ok'));
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
       let run = tab.querySelector('.lee-tab-run');

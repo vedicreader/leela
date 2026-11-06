@@ -4,7 +4,11 @@
 const CHORD_BASE = {' ': 'space', 'Escape': 'esc', 'ArrowUp': 'up', 'ArrowDown': 'down',
                     'ArrowLeft': 'left', 'ArrowRight': 'right', 'Backspace': 'backspace',
                     'Enter': 'enter', 'Tab': 'tab', 'Delete': 'delete'};
-const CHORD_SKIP = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Dead']);
+const CHORD_SKIP = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
+const CHORD_CODE = {...Object.fromEntries([...'abcdefghijklmnopqrstuvwxyz'].map(c => [`Key${c.toUpperCase()}`, c])),
+  ...Object.fromEntries([...'0123456789'].map(c => [`Digit${c}`, c])), Space: 'space', Escape: 'escape',
+  BracketLeft: '[', BracketRight: ']', Slash: '/', Backslash: '\\', Backquote: '`', Minus: '-', Equal: '=',
+  Period: '.', Comma: ',', Semicolon: ';', Quote: "'"};
 function chordFromEvent(e) {
   if (CHORD_SKIP.has(e.key)) return '';
   const mac = navigator.platform.toLowerCase().includes('mac');
@@ -13,7 +17,8 @@ function chordFromEvent(e) {
   if (mac && e.ctrlKey) parts.push('ctrl');
   if (e.altKey) parts.push('alt');
   if (e.shiftKey) parts.push('shift');
-  const base = CHORD_BASE[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
+  // The physical key: Option+W types ∑ and Shift+/ types ?, but the chord is alt+w and shift+/.
+  const base = CHORD_CODE[e.code] || CHORD_BASE[e.key] || e.key.toLowerCase();
   parts.push(base);
   return parts.join('+');
 }
@@ -106,6 +111,8 @@ async function editKeys() {
   m.querySelector('#keysearch').addEventListener('input', paint);
   const applied = r => {
     lee.keys = r.keys; lee.help = r.help; lee.keyNotes = r.notes || [];
+    if (r.glyphs) lee.glyphs = r.glyphs;
+    if (r.legacy) lee.legacy = r.legacy;
     // Both are what the next save builds on, so a reset the modal outlives must not be undone by it.
     if (r.overrides) d.overrides = r.overrides;
     if (r.text) d.text = r.text;

@@ -3,12 +3,14 @@
 import json, os
 from dataclasses import dataclass, asdict, replace
 from fastcore.all import L, Path, first, ifnone
+from kavacha import chord_glyph
 
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'PRESENT_KEYS', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload',
-           'changed', 'refresh', 'VERSION']
+           'changed', 'refresh', 'VERSION', 'SAME_IDEA', 'NO_MENU', 'TWICE', 'CHROME_RESERVED', 'LEGACY',
+           'glyphs', 'legacy_rows']
 
 EDITING_SCOPES = ('editor', 'exec', 'agent', 'term')
 SCOPES = ('global', 'files', 'editor', 'exec', 'vars', 'agent', 'term', 'vault', 'review')
@@ -54,7 +56,7 @@ class Key:
     def __post_init__(self):
         if self.scope not in SCOPES: raise ValueError(f'{self.action}: unknown scope {self.scope!r}')
         if self.show not in ('footer', 'toast', 'help'): raise ValueError(f'{self.action}: bad show {self.show!r}')
-        if self.scope in EDITING_SCOPES or self.scope == 'global':
+        if self.scope in EDITING_SCOPES and self.scope != 'editor' or self.scope == 'global':
             for c in self.keys:
                 mods, base = parse_key(c)
                 if not mods and base not in _NAMED:
@@ -76,12 +78,12 @@ def web_key(k):
             'ctrl': 'ctrl' in mods, 'alt': 'alt' in mods, 'shift': 'shift' in mods}
 
 DEFAULTS = L(
-    Key('focus_files',      'alt+shift+1',   'global', 'files',               'footer'),
-    Key('focus_editor',     'alt+shift+2',   'global', 'editor',              'footer'),
-    Key('focus_exec',       'alt+shift+3',   'global', 'exec',                'footer'),
-    Key('focus_vars',       'alt+shift+4',   'global', 'variables',           'footer'),
-    Key('focus_agent',      'alt+shift+5',   'global', 'agent',               'footer'),
-    Key('palette',          'mod+shift+p',   'global', 'command palette',     'footer'),
+    Key('focus_files',      'mod+1 alt+shift+1',   'global', 'files',               'footer'),
+    Key('focus_editor',     'mod+2 alt+shift+2',   'global', 'editor',              'footer'),
+    Key('focus_exec',       'mod+3 alt+shift+3',   'global', 'exec',                'footer'),
+    Key('focus_vars',       'mod+4 alt+shift+4',   'global', 'variables',           'footer'),
+    Key('focus_agent',      'mod+5 alt+shift+5',   'global', 'agent',               'footer'),
+    Key('palette',          'mod+shift+p mod+shift+a',   'global', 'command palette',     'footer'),
     Key('settings',         'mod+,',         'global', 'settings',             'toast'),
     Key('quick_open',       'mod+p',         'global', 'open file',           'toast'),
     Key('recent_tabs',      'mod+e',         'global', 'recent files',        'toast'),
@@ -90,17 +92,17 @@ DEFAULTS = L(
     Key('find_definition',  'mod+b',          'global', 'declaration or usages', 'toast'),
     Key('find_definition_only', '',           'global', 'go to definition'),
     Key('find_in_file',     'mod+f',          'global', 'find across cells',  'toast'),
-    Key('find_usages',      'hyper+u',        'global', 'find usages',        'toast'),
+    Key('find_usages',      'alt+f',        'global', 'find usages',        'toast'),
     Key('rename_symbol',    'mod+alt+r',      'global', 'rename symbol',       'toast'),
     Key('replace_workspace','mod+shift+h',    'global', 'replace in workspace', 'toast'),
-    Key('workspace_undo',   'hyper+,',        'global', 'undo workspace operation'),
-    Key('workspace_redo',   'hyper+.',        'global', 'redo workspace operation'),
+    Key('workspace_undo',   'mod+alt+z',        'global', 'undo workspace operation'),
+    Key('workspace_redo',   'mod+alt+shift+z',        'global', 'redo workspace operation'),
     Key('extract_variable', 'mod+alt+v',      'global', 'extract variable',    'toast'),
     Key('extract_method',   'mod+alt+m',      'global', 'extract method / function'),
     Key('extract_constant', 'mod+alt+c',      'global', 'extract constant'),
     Key('inline_variable',  'mod+alt+n',      'global', 'inline variable'),
     Key('move_symbol',      'mod+alt+f',      'global', 'move function or class to a file', 'toast'),
-    Key('sync_index',       'hyper+i',        'global', 'sync Kosha index'),
+    Key('sync_index',       '',        'global', 'sync Kosha index'),
     Key('nbdev_prepare',    '',               'global', 'nbdev prepare'),
     Key('fastship',         '',               'global', 'fastship release tools'),
     Key('setup_models',     '',               'global', 'models and updates'),
@@ -108,8 +110,8 @@ DEFAULTS = L(
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),
     Key('reload_file',      '',              'global', 'reload from disk'),
-    Key('local_history',    'hyper+h',       'global', 'local file history',  'toast'),
-    Key('git_blame',        'hyper+b',       'global', 'who wrote this',      'toast'),
+    Key('local_history',    'alt+h',       'global', 'local file history',  'toast'),
+    Key('git_blame',        'alt+b',       'global', 'who wrote this',      'toast'),
     Key('git_stage',        '',              'files',  'stage selected path'),
     Key('git_unstage',      '',              'files',  'unstage selected path'),
     Key('git_discard',      '',              'files',  'discard selected changes'),
@@ -117,20 +119,20 @@ DEFAULTS = L(
     Key('complete',         'alt+/ ctrl+space', 'global', 'complete',         'toast'),
     Key('ai_complete',      'alt+shift+space', 'global', 'ai completion',     'toast'),
     Key('show_docs',        'alt+shift+h',   'global', 'docs for symbol',     'toast'),
-    Key('ask_ai',           'hyper+a',       'global', 'ask AI about the selection'),
-    Key('summarise',        'hyper+m',       'global', 'summarise the selection'),
+    Key('ask_ai',           'alt+q',       'global', 'ask AI about the selection'),
+    Key('summarise',        '',       'global', 'summarise the selection'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('agent_selection',  'alt+shift+n',   'global', 'send selection to the agent', 'toast'),
     Key('clip_to_vault',    '',              'global', 'clip into the vault'),
     Key('memory_notes',     '',              'global', 'manage memory notes'),
     Key('new_memory_note',  '',              'global', 'create a memory note'),
-    Key('open_vault',       'hyper+v',       'global', 'open the vault'),
+    Key('open_vault',       'alt+v',       'global', 'open the vault'),
     Key('vault_read',       '',              'global', 'read a file into the vault'),
     Key('vault_find',       '',              'global', 'find in the vault'),
     Key('vault_review',     '',              'global', 'vault review queue'),
     Key('learned_review',   '',              'global', 'review what the agent learned'),
     Key('vault_settings',   '',              'global', 'vault settings: vaults, privacy, cadence, tidy'),
-    Key('close_tab',        'alt+w',         'global', 'close tab',           'toast'),
+    Key('close_tab',        'mod+w alt+w',         'global', 'close tab',           'toast'),
     Key('copy_rel_path',    'alt+y',         'global', 'copy relative path',  'toast'),
     Key('copy_abs_path',    'alt+shift+y',   'global', 'copy absolute path'),
     Key('close_others',     '',              'global', 'close other tabs'),
@@ -138,31 +140,33 @@ DEFAULTS = L(
     Key('close_saved',      '',              'global', 'close saved tabs'),
     Key('next_tab',         'alt+]',         'global', 'next tab'),
     Key('prev_tab',         'alt+[',         'global', 'previous tab'),
-    Key('toggle_left',      'alt+shift+b hyper+left', 'global', 'toggle file pane'),
-    Key('toggle_right',     'alt+shift+v hyper+right', 'global', 'toggle agent / variables pane'),
-    Key('toggle_bottom',    'hyper+down',    'global', 'toggle bottom tools'),
+    Key('toggle_left',      'alt+shift+b', 'global', 'toggle file pane'),
+    Key('toggle_right',     'alt+shift+v', 'global', 'toggle agent / variables pane'),
+    Key('toggle_bottom',    'mod+j',    'global', 'toggle bottom tools'),
     Key('leave_full_screen', 'mod+shift+e',  'global', 'leave full screen pane', 'toast'),
     Key('term_option_meta', '',              'global', 'Terminal: Option key as Meta'),
-    Key('toggle_scope',     'alt+i',         'global', 'live / isolated',     'toast'),
+    Key('toggle_scope',     'alt+t',         'global', 'live / isolated',     'toast'),
     Key('interrupt',        'alt+shift+i',    'global', 'interrupt kernel',   'toast'),
-    Key('restart',          'alt+shift+r hyper+r', 'global', 'restart kernel'),
+    Key('restart',          'alt+shift+r', 'global', 'restart kernel'),
     Key('pick_kernel',      'alt+shift+k',   'global', 'choose kernel',       'toast'),
     Key('switch_env',       'alt+shift+e',   'global', 'watch another env',   'toast'),
     Key('edit_runs',        '',              'global', 'run configurations'),
     Key('run_file',         'mod+alt+enter',  'global', 'run this script',    'toast'),
-    Key('run_selection',    'hyper+s',       'global', 'run the selection in the kernel'),
-    Key('new_notebook',     'hyper+n',       'global', 'new notebook'),
+    Key('run_selection',    'alt+shift+enter',       'global', 'run the selection in the kernel'),
+    Key('new_notebook',     'mod+shift+n mod+alt+j',       'global', 'new notebook'),
     Key('new_lesson',       '',              'global', 'new lesson notebook'),
     Key('notebook_language', '',           'global', 'notebook language'),
     Key('present_notebook', 'alt+r',         'global', 'present notebook as slides'),
     Key('add_folder',       '',              'global', 'stage this folder, ignores first'),
-    Key('edit_keys',        'hyper+k',       'global', 'edit keybindings'),
+    Key('new_file',         'mod+n mod+alt+shift+n', 'global', 'new file', 'toast'),
+    Key('open_folder',      'mod+o',         'global', 'open folder in a new window', 'toast'),
+    Key('edit_keys',        'mod+alt+k',       'global', 'edit keybindings'),
     Key('run_app',          'alt+shift+a',   'global', 'run a configuration', 'toast'),
     Key('terminal',         'ctrl+`',        'global', 'terminal',            'toast'),
     Key('git',              'alt+shift+g',   'global', 'lazygit',             'toast'),
-    Key('panel_git',        'hyper+g',       'global', 'source control panel', 'toast'),
-    Key('panel_releases',   'hyper+p',       'global', 'releases panel',      'toast'),
-    Key('panel_deploys',    'hyper+l',       'global', 'deploys panel',       'toast'),
+    Key('panel_git',        'alt+g',       'global', 'source control panel', 'toast'),
+    Key('panel_releases',   'alt+p',       'global', 'releases panel',      'toast'),
+    Key('panel_deploys',    'alt+d',       'global', 'deploys panel',       'toast'),
     Key('web_search',       'alt+shift+w',   'global', 'search the web',      'toast'),
     Key('research',         'alt+shift+q',   'global', 'research a question'),
     Key('read_url',         'alt+shift+u',   'global', 'read a url'),
@@ -176,10 +180,10 @@ DEFAULTS = L(
     Key('run_insert',       'alt+enter',       'editor', 'run and insert below'),
     Key('stop_cell',        'alt+shift+c',     'editor', 'stop running cell'),
     Key('check_exercise',   'alt+s',           'editor', 'check my work'),
-    Key('run_above',        'hyper+enter',     'editor', 'run all cells above'),
-    Key('run_below',        'hyper+pageDown',  'editor', 'run this cell and below'),
+    Key('run_above',        '',     'editor', 'run all cells above'),
+    Key('run_below',        '',  'editor', 'run this cell and below'),
     Key('run_all',          'mod+shift+enter', 'editor', 'run every cell'),
-    Key('restart_run_all',  'hyper+backspace', 'editor', 'restart kernel and run all'),
+    Key('restart_run_all',  '', 'editor', 'restart kernel and run all'),
     Key('cell_select_above','ctrl+shift+up',   'editor', 'select cell above'),
     Key('cell_select_below','ctrl+shift+down', 'editor', 'select cell below'),
     Key('cell_first',       'mod+home',         'editor', 'first cell',          'toast'),
@@ -188,9 +192,9 @@ DEFAULTS = L(
     Key('cell_page_down',   'alt+pagedown',     'editor', 'next page of cells'),
     Key('cell_move_up',     'alt+shift+up alt+shift+pageup',     'editor', 'move cell up'),
     Key('cell_move_down',   'alt+shift+down alt+shift+pagedown', 'editor', 'move cell down'),
-    Key('cell_above',       'mod+alt+up',      'editor', 'insert cell above'),
-    Key('cell_below',       'mod+alt+down',    'editor', 'insert cell below'),
-    Key('cell_delete',      'mod+alt+backspace', 'editor', 'delete cell'),
+    Key('cell_above',       'mod+alt+up a',      'editor', 'insert cell above'),
+    Key('cell_below',       'mod+alt+down b',    'editor', 'insert cell below'),
+    Key('cell_delete',      'mod+alt+backspace d', 'editor', 'delete cell'),
     Key('present_from_cell', '',               'editor', 'present from this cell'),
 # RISE's own chords. Leela's router lets them through to any editor or field, so they type there.
     Key('slide_none',       '',                'editor', 'slide type: none (continue)'),
@@ -203,27 +207,29 @@ DEFAULTS = L(
 # already answers them inside an editor, and it is the same command either way.
     Key('indent_more',      'mod+]',           'editor', 'indent'),
     Key('indent_less',      'mod+[',           'editor', 'outdent'),
-    Key('indent_selection', 'hyper+]',         'editor', 're-indent to the syntax', 'toast'),
-    Key('notebook_undo',    'mod+z',           'editor', 'undo cell operation', 'toast'),
+    Key('indent_selection', 'mod+alt+l',         'editor', 're-indent to the syntax', 'toast'),
+    Key('notebook_undo',    'mod+z z',           'editor', 'undo cell operation', 'toast'),
     Key('notebook_redo',    'mod+shift+z',     'editor', 'redo cell operation'),
     Key('cell_type',        'alt+shift+m',     'editor', 'code / markdown / prompt', 'toast'),
+    Key('cell_to_markdown', 'm',               'editor', 'make a markdown cell'),
+    Key('cell_to_code',     'y',               'editor', 'make a code cell'),
     Key('cell_edit',        'enter',           'editor', 'edit markdown cell'),
-    Key('cell_render',      'escape',          'editor', 'render markdown cell'),
+    Key('cell_render',      'escape',          'editor', 'render markdown cell, or stop editing the cell'),
     Key('cell_split',       'alt+shift+-',     'editor', 'split cell'),
     Key('cell_split_symbols', 'alt+shift+/',   'editor', 'split into one cell per def', 'toast'),
-    Key('cell_collapse',    'hyper+c',         'editor', 'collapse / expand cell'),
+    Key('cell_collapse',    'o',         'editor', 'collapse / expand cell'),
     Key('heading_toggle',   '',                'editor', 'collapse / expand heading section'),
     Key('collapse_all_headings', '',           'editor', 'collapse every heading'),
     Key('expand_all_headings',   '',           'editor', 'expand every heading'),
-    Key('cell_duplicate',   'hyper+d',         'editor', 'duplicate cell below'),
-    Key('cell_comment',     'hyper+/',         'editor', 'comment the whole cell'),
-    Key('cell_copy',        'mod+c mod+shift+c', 'editor', 'copy cell'),
-    Key('cell_cut',         'mod+x mod+shift+x', 'editor', 'cut cell'),
-    Key('cell_paste_above', '',                'editor', 'paste cell above'),
-    Key('cell_paste_below', '',                'editor', 'paste cell below'),
-    Key('cell_merge_above', 'hyper+up',        'editor', 'merge cell above'),
-    Key('cell_merge_below', 'hyper+pageup',    'editor', 'merge cell below'),
-    Key('clear_cell_output','hyper+delete',    'editor', 'clear this cell output'),
+    Key('cell_duplicate',   'shift+d',         'editor', 'duplicate cell below'),
+    Key('cell_comment',     'mod+alt+/',         'editor', 'comment the whole cell'),
+    Key('cell_copy',        'mod+c mod+shift+c c', 'editor', 'copy cell'),
+    Key('cell_cut',         'mod+x mod+shift+x x', 'editor', 'cut cell'),
+    Key('cell_paste_above', 'shift+v',                'editor', 'paste cell above'),
+    Key('cell_paste_below', 'v',                'editor', 'paste cell below'),
+    Key('cell_merge_above', '',        'editor', 'merge cell above'),
+    Key('cell_merge_below', 'shift+m',    'editor', 'merge cell below'),
+    Key('clear_cell_output','',    'editor', 'clear this cell output'),
     Key('clear_all_outputs','mod+shift+backspace', 'editor', 'clear all outputs'),
     Key('move_line_up',     'alt+up',        'editor', 'move line up',        'toast'),
     Key('move_line_down',   'alt+down',      'editor', 'move line down'),
@@ -237,26 +243,26 @@ DEFAULTS = L(
     Key('select_all_occurrences', 'mod+shift+l', 'editor', 'select every occurrence'),
     Key('add_cursor_above', '',              'editor', 'add cursor above'),
     Key('add_cursor_below', '',              'editor', 'add cursor below'),
-    Key('column_mode',      'hyper+\\',      'editor', 'column mode: up and down add a cursor at the column'),
+    Key('column_mode',      '',      'editor', 'column mode: up and down add a cursor at the column'),
     Key('matching_bracket', 'mod+shift+\\',  'editor', 'go to matching bracket'),
     Key('select_parent_syntax', 'mod+i',     'editor', 'expand selection to the enclosing syntax'),
     Key('block_comment',    '',              'editor', 'toggle block comment'),
     Key('comment',          'mod+/',         'editor', 'toggle comment',      'toast'),
-    Key('find_similar',     'ctrl+shift+a',  'editor', 'code like this',      'toast'),
+    Key('find_similar',     'mod+alt+shift+a',  'editor', 'code like this',      'toast'),
     Key('code_map',         'ctrl+shift+m',  'editor', 'code map (clusters)'),
     Key('exec_run',         'mod+enter',     'exec',   'run',                  'footer'),
-    Key('exec_newline',     'alt+enter',     'exec',   'newline'),
+    Key('exec_newline',     '',     'exec',   'newline'),
     Key('exec_prev',        'ctrl+shift+up', 'exec',   'older',               'toast'),
     Key('exec_next',        'ctrl+shift+down', 'exec', 'newer',               'toast'),
     Key('exec_clear',       'alt+shift+l',   'exec',   'clear log'),
-    Key('exec_promote',     'mod+shift+g',   'exec',   'run in live namespace'),
+    Key('exec_promote',     'mod+shift+enter',   'exec',   'run in live namespace'),
     Key('open',             'enter',         'files',  'open / toggle folder','footer'),
     Key('tree_down',        'down',          'files',  'next item',           'footer'),
     Key('tree_up',          'up',            'files',  'previous item'),
     Key('tree_expand',      'right',         'files',  'expand / enter folder'),
     Key('tree_collapse',    'left',          'files',  'collapse / parent'),
     Key('up_dir',           'backspace',     'files',  'parent folder'),
-    Key('new_file',         'n',             'files',  'new file',            'toast'),
+    Key('tree_new_file',    'n',             'files',  'new file here',       'toast'),
     Key('new_dir',          'N',             'files',  'new folder',          'toast'),
     Key('rename',           'r',             'files',  'rename',              'toast'),
     # Scope-qualified, the way `mod+enter` is three different runs: `cell_copy` is editor-scoped,
@@ -270,7 +276,7 @@ DEFAULTS = L(
     Key('delete',           'd',             'files',  'delete from disk'),
     Key('refresh_files',    'R',             'files',  'refresh'),
     Key('show_hidden',      'H',             'files',  'show dotfiles',       'toast'),
-    Key('open_folder',      'o',             'files',  'open folder in a new window', 'toast'),
+    Key('tree_open_folder', 'o',             'files',  'open folder in a new window here', 'toast'),
     Key('add_root',         'O',             'files',  'add folder to this window',   'toast'),
     Key('remove_root',      '',              'files',  'remove folder from workspace'),
     Key('filter_files',     '/',             'files',  'filter'),
@@ -288,8 +294,8 @@ DEFAULTS = L(
     Key('format_doc',       'alt+shift+f',   'editor', 'format document',      'toast'),
     Key('agent_send',       'mod+enter',     'agent',  'send',                 'footer'),
     Key('agent_steer_force','mod+shift+enter','agent',  'stop and send next'),
-    Key('agent_new',        'mod+shift+n',   'agent',  'new conversation'),
-    Key('agent_threads',    'mod+shift+t',   'agent',  'all conversations'),
+    Key('agent_new',        'mod+l mod+alt+a',   'agent',  'new conversation'),
+    Key('agent_threads',    'mod+y',   'agent',  'all conversations'),
     Key('agent_stop',       'alt+shift+c',   'agent',  'stop agent'),
     Key('agent_tools',      'alt+shift+t',   'agent',  'what the agent did'),
     Key('agent_fold_turn',  'alt+shift+j',   'agent',  'fold this turn'),
@@ -332,6 +338,25 @@ DEFAULTS = L(
     Key('term_close',       'alt+shift+x',   'term',   'close terminal',      'toast'),
 )
 
+#: Actions that may share one modifier chord across scopes, because the chord means the same thing in each.
+SAME_IDEA = (('run_cell', 'exec_run', 'agent_send'), ('run_all', 'agent_steer_force', 'exec_promote'),
+             ('stop_cell', 'agent_stop'), ('cell_copy', 'file_copy'), ('cell_cut', 'file_cut'),
+             ('select_next_occurrence', 'file_duplicate'), ('cell_select_above', 'exec_prev'), ('cell_select_below', 'exec_next'))
+#: Bound global actions with no menu bar row.
+NO_MENU = frozenset(f'tab_{i}' for i in range(1, 10))
+#: Command-mode chords that run only when pressed twice in a row, as Jupyter's `d d`.
+TWICE = {'cell_delete': 'd'}
+#: Chords Chrome keeps for itself, so a binding needs another chord to work in a browser tab.
+CHROME_RESERVED = frozenset(['mod+n', 'mod+t', 'mod+w', 'mod+shift+n', 'mod+shift+t', 'mod+shift+w', 'ctrl+tab', 'mod+l',
+                             *(f'mod+{i}' for i in range(1, 9))])
+#: Old default chords, for one release: pressed with nothing bound, they run the action and say where it went.
+LEGACY = {'alt+i': 'toggle_scope', 'hyper+u': 'find_usages', 'hyper+,': 'workspace_undo', 'hyper+.': 'workspace_redo',
+          'hyper+i': 'sync_index', 'hyper+b': 'git_blame', 'hyper+m': 'summarise', 'hyper+v': 'open_vault',
+          'hyper+n': 'new_notebook', 'hyper+k': 'edit_keys', 'hyper+g': 'panel_git', 'hyper+p': 'panel_releases',
+          'hyper+l': 'panel_deploys', 'hyper+/': 'cell_comment', 'hyper+\\': 'column_mode', 'hyper+enter': 'run_above',
+          'hyper+pagedown': 'run_below', 'hyper+backspace': 'restart_run_all', 'hyper+pageup': 'cell_merge_below',
+          'hyper+delete': 'clear_cell_output', 'mod+shift+t': 'agent_threads', 'mod+shift+g': 'exec_promote'}
+
 def _signature(chord):
     "A chord as it collides: modifiers sorted, and `mod` folded into `ctrl`."
     mods, base = parse_key(chord)
@@ -358,15 +383,33 @@ def _dupes(keys):
 def by_scope(scope): return KEYS.filter(lambda k: k.scope == scope)
 def lookup(action): return first(KEYS.filter(lambda k: k.action == action))
 
+def _twice(k, c): return f'{c} {c}' if TWICE.get(k.action) == c else c
+
 def chord_display(action_or_key, sep=' / '):
     "How a binding is written for a person: every chord it answers to, or an em dash when unbound."
     k = lookup(action_or_key) if isinstance(action_or_key, str) else action_or_key
     if k is None: return ''
-    return sep.join(k.keys) if k.bound else '—'
+    return sep.join(_twice(k, c) for c in k.keys) if k.bound else '—'
+
+def _browser_safe(c):
+    try: return _signature(c) not in {_signature(r) for r in CHROME_RESERVED}
+    except ValueError: return True
 
 def web_keymap():
-    "The whole table as JSON-ready rows for the browser handler."
-    return [{**asdict(k), 'chords': [web_key(c) for c in k.keys]} for k in KEYS]
+    "The whole table as JSON-ready rows for the browser handler, each chord with its glyphs and whether a browser tab gets it."
+    return [{**asdict(k), 'display': [chord_glyph(_twice(k, c)) for c in k.keys],
+             'chords': [web_key(c) | {'browser': _browser_safe(c), 'twice': TWICE.get(k.action) == c} for c in k.keys]} for k in KEYS]
+
+def legacy_rows():
+    "LEGACY as rows the page matches when no binding does: the old chord, the action, and what to say."
+    return [{'action': a, 'chord': web_key(c), 'old': chord_glyph(c), 'now': chord_glyph(lookup(a).keys[0]) if lookup(a) and lookup(a).bound else ''}
+            for c, a in LEGACY.items() if lookup(a)]
+
+def glyphs(extra=()):
+    "Every chord the page may show, as `{'mac': {chord: glyph}, 'pc': {chord: text}}`."
+    cs = {c for k in KEYS for c in k.keys}
+    cs |= {c for ks, _ in PRESENT_KEYS for c in ks.split()} | set(LEGACY) | set(extra)
+    return {'mac': {c: chord_glyph(c) for c in cs}, 'pc': {c: chord_glyph(c, mac=False) for c in cs}}
 
 #: The presenter's keys as `(chords, label)`, for the keys help only. `present.js` binds them while a presentation is open; no row is a binding.
 PRESENT_KEYS = (('right down space pagedown', 'next step'), ('left up shift+space pageup', 'previous step'), ('n', 'speaker notes'),
@@ -451,6 +494,40 @@ _SNAPSHOT_MIGRATIONS = {
     'notebook_undo': ('mod+alt+z', 'mod+z'), 'notebook_redo': ('mod+alt+shift+z', 'mod+shift+z'),
 }
 
+#: Keys v2 (6 Nov 2026): Hyper off every default, JetBrains layout, a second chord where Chrome keeps the first.
+_V2_MIGRATIONS = {
+    **{f'focus_{n}': (f'alt+shift+{i}', f'mod+{i} alt+shift+{i}') for i, n in enumerate(['files', 'editor', 'exec', 'vars', 'agent'], 1)},
+    'palette': ('mod+shift+p', 'mod+shift+p mod+shift+a'), 'find_usages': ('hyper+u', 'alt+f'),
+    'workspace_undo': ('hyper+,', 'mod+alt+z'), 'workspace_redo': ('hyper+.', 'mod+alt+shift+z'), 'sync_index': ('hyper+i', ''),
+    'local_history': ('hyper+h', 'alt+h'), 'git_blame': ('hyper+b', 'alt+b'), 'ask_ai': ('hyper+a', 'alt+q'),
+    'summarise': ('hyper+m', ''), 'open_vault': ('hyper+v', 'alt+v'), 'close_tab': ('alt+w', 'mod+w alt+w'),
+    'toggle_left': ('alt+shift+b hyper+left', 'alt+shift+b'), 'toggle_right': ('alt+shift+v hyper+right', 'alt+shift+v'),
+    'toggle_bottom': ('hyper+down', 'mod+j'), 'toggle_scope': ('alt+i', 'alt+t'), 'restart': ('alt+shift+r hyper+r', 'alt+shift+r'),
+    'run_selection': ('hyper+s', 'alt+shift+enter'), 'new_notebook': ('hyper+n', 'mod+shift+n mod+alt+j'),
+    'edit_keys': ('hyper+k', 'mod+alt+k'), 'panel_git': ('hyper+g', 'alt+g'), 'panel_releases': ('hyper+p', 'alt+p'),
+    'panel_deploys': ('hyper+l', 'alt+d'), 'new_file': ('n', 'mod+n mod+alt+shift+n'), 'open_folder': ('o', 'mod+o'),
+    'run_above': ('hyper+enter', ''), 'run_below': ('hyper+pageDown', ''), 'restart_run_all': ('hyper+backspace', ''),
+    'cell_above': ('mod+alt+up', 'mod+alt+up a'), 'cell_below': ('mod+alt+down', 'mod+alt+down b'),
+    'cell_delete': ('mod+alt+backspace', 'mod+alt+backspace d'), 'notebook_undo': ('mod+z', 'mod+z z'),
+    'indent_selection': ('hyper+]', 'mod+alt+l'), 'cell_comment': ('hyper+/', 'mod+alt+/'), 'cell_collapse': ('hyper+c', 'o'),
+    'cell_duplicate': ('hyper+d', 'shift+d'), 'cell_copy': ('mod+c mod+shift+c', 'mod+c mod+shift+c c'),
+    'cell_cut': ('mod+x mod+shift+x', 'mod+x mod+shift+x x'), 'cell_paste_above': ('', 'shift+v'), 'cell_paste_below': ('', 'v'),
+    'cell_merge_above': ('hyper+up', ''), 'cell_merge_below': ('hyper+pageup', 'shift+m'), 'clear_cell_output': ('hyper+delete', ''),
+    'column_mode': ('hyper+\\', ''), 'find_similar': ('ctrl+shift+a', 'mod+alt+shift+a'), 'exec_newline': ('alt+enter', ''),
+    'exec_promote': ('mod+shift+g', 'mod+shift+enter'), 'agent_new': ('mod+shift+n', 'mod+l mod+alt+a'), 'agent_threads': ('mod+shift+t', 'mod+y'),
+}
+#: Actions that became global; a bare key a person gave one is the files panel's, so it moves to the tree action.
+_TREE = {'new_file': 'tree_new_file', 'open_folder': 'tree_open_folder'}
+
+def _bare(c):
+    try: return all(not parse_key(x)[0] - {'shift'} for x in c.split())
+    except ValueError: return False
+
+def _tree_moved(d):
+    "`d` with a bare chord on `new_file` or `open_folder` moved to its files-panel action."
+    mv = lambda a, c: _TREE[a] if a in _TREE and _TREE[a] not in d and isinstance(c, str) and c.strip() and _bare(c) else a
+    return {mv(a, c): c for a, c in d.items()}
+
 def _migrated(d, table):
     "`d` with every action still holding an exact old default moved onto the new one."
     return {a: table[a][1] if a in table and c == table[a][0] else c for a, c in d.items()}
@@ -472,7 +549,8 @@ def read_overrides(path=None, notes=None):
     legacy_generated = generated_snapshot and 'mod is Command' not in help_text
     if isinstance(d.get('keys'), dict): d = d['keys']
     if legacy_generated: d = _migrated(d, _GENERATED_DEFAULT_MIGRATIONS)
-    if generated_snapshot: d = _migrated(d, _SNAPSHOT_MIGRATIONS)
+    if generated_snapshot: d = _migrated(_migrated(d, _SNAPSHOT_MIGRATIONS), _V2_MIGRATIONS)
+    d = _tree_moved(d)
     out = {}
     for a, c in d.items():
         if a.startswith('_') or a == 'agent_transcript': continue

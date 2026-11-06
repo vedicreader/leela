@@ -418,8 +418,10 @@ function focusRenderedMarkdown(i) {
 const MD_KEYS = {
   cell_edit: e => { const el = e.target.closest?.('.lee-cell.markdown');
     return !!el && !el.hasAttribute('data-md-edit') && !isTextEntry(keyTarget(e)) && !keyTarget(e).closest?.('button, a, summary'); },
-  cell_render: e => { const el = e.target.closest?.('.lee-cell.markdown'), v = el && lee.editors.get(el.dataset.id);
-    return !!el && el.hasAttribute('data-md-edit') && inCellEditor(e) && !el.querySelector('.cm-panel') && !(v && LeeCM.holdsEscape(v)); },
+  // A markdown cell renders; a code cell's editor lets go, so the cell is in command mode.
+  cell_render: e => { const el = e.target.closest?.('.lee-cell'), v = el && lee.editors.get(el.dataset.id);
+    return !!el && (el.classList.contains('markdown') ? el.hasAttribute('data-md-edit') : !$('.lee-inline-popover')) &&
+      inCellEditor(e) && !el.querySelector('.cm-panel') && !(v && LeeCM.holdsEscape(v)); },
 };
 
 function renderOutputs(c) {

@@ -344,7 +344,7 @@ function leeToolsMenu(anchor) {
     {label: 'fastship…', detail: 'releases for a package that is not nbdev', run: leeFastship},
     {label: 'Models and updates…', detail: 'set one up, or pull a newer backend', run: () => leeSetupModal()},
     {separator: true},
-    {label: 'Settings…', detail: displayChord(lee.keys.find(k => k.action === 'settings')?.key || 'mod+,'), run: editorSettings},
+    {label: 'Settings…', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'settings')) || 'mod+,'), run: editorSettings},
     {label: 'Workspace history…', detail: 'conflict-safe undo', run: operationHistory},
     {label: 'Inline completions…', detail: 'what you asked, and what you kept', run: () => showCompletions()},
     {label: 'Keybindings…', run: () => leeAct('edit_keys')},
@@ -355,11 +355,11 @@ window.leeToolsMenu = leeToolsMenu;
 
 function leeEditorMenu(anchor) {
   const rows = [
-    {label: 'Run selection', detail: displayChord(lee.keys.find(k => k.action === 'run_selection')?.key || ''), run: () => leeAct('run_selection')},
-    {label: 'Run all cells', detail: displayChord(lee.keys.find(k => k.action === 'run_all')?.key || ''), run: () => leeAct('run_all')},
+    {label: 'Run selection', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'run_selection')) || ''), run: () => leeAct('run_selection')},
+    {label: 'Run all cells', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'run_all')) || ''), run: () => leeAct('run_all')},
     {label: 'Restart and run all', run: () => leeAct('restart_run_all')},
     {separator: true},
-    {label: 'Save', detail: displayChord(lee.keys.find(k => k.action === 'save')?.key || ''), run: () => leeAct('save')},
+    {label: 'Save', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'save')) || ''), run: () => leeAct('save')},
     {label: 'Show unsaved changes', run: () => leeAct('show_diff')},
     {label: 'Rename symbol…', run: () => leeAct('rename_symbol')},
     {label: 'Replace in workspace…', run: () => leeAct('replace_workspace')},
@@ -368,7 +368,7 @@ function leeEditorMenu(anchor) {
     {label: 'Change cell type', run: () => leeAct('cell_type')},
     {label: 'Clear all outputs', run: () => leeAct('clear_all_outputs')},
     {separator: true},
-    {label: 'All commands…', detail: displayChord(lee.keys.find(k => k.action === 'palette')?.key || ''), run: () => leeAct('palette')},
+    {label: 'All commands…', detail: displayChord(shownChord(lee.keys.find(k => k.action === 'palette')) || ''), run: () => leeAct('palette')},
   ];
   openChromeMenu(anchor, rows);
 }
@@ -403,7 +403,8 @@ function showHelp() {
   const body = scopes.map(([scope, rows]) =>
     `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
     `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` +
-    (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') + rows.map(([k, l]) =>
+    (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') +
+    (scope === 'editor' ? '<p class="lee-dim lee-help-note">In a notebook, a single letter works only when you do not edit a cell. Press Escape to stop editing. Press D two times to delete a cell.</p>' : '') + rows.map(([k, l]) =>
       `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
