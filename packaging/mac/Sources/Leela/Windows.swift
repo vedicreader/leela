@@ -390,7 +390,7 @@ enum Menus {
     }
 
     /// kavacha's LAUNCHER_ROWS, until the server's `/app/menu.json` gives them: the chords the launcher owns
-    static let launcher: [[String: Any]] = [["title": "Quit", "selector": "terminate:", "key": "q", "mask": 1 << 20], ["title": "Hide", "selector": "hide:", "key": "h", "mask": 1 << 20],
+    nonisolated(unsafe) static let launcher: [[String: Any]] = [["title": "Quit", "selector": "terminate:", "key": "q", "mask": 1 << 20], ["title": "Hide", "selector": "hide:", "key": "h", "mask": 1 << 20],
         ["title": "Hide Others", "selector": "hideOtherApplications:", "key": "h", "mask": (1 << 20) | (1 << 19)], ["title": "Close Window", "selector": "performClose:", "key": "W", "mask": 1 << 20],
         ["title": "Undo", "selector": "undo:", "key": "z", "mask": 1 << 20], ["title": "Redo", "selector": "redo:", "key": "Z", "mask": 1 << 20],
         ["title": "Minimize", "selector": "performMiniaturize:", "key": "m", "mask": 1 << 20], ["title": "Enter Full Screen", "selector": "toggleFullScreen:", "key": "f", "mask": (1 << 20) | (1 << 18)]]
