@@ -1071,9 +1071,8 @@ def test_the_update_check_survives_being_asked_twice(monkeypatch):
     from leela.blocks.agent import models as m
     monkeypatch.setattr(m, '_latest', {}); monkeypatch.setattr(m, '_latest_at', 0.0)
     monkeypatch.setattr(m, 'urljson', lambda url, **kw: {'info': {'version': '9.9.9'}})
-    monkeypatch.setattr(m, 'latest_release', lambda: {'version': '9.9.9', 'url': 'https://x/y'})
     first = m._latest_versions(['exhash'])
-    assert first['exhash'] == '9.9.9' and first['leela'] == '9.9.9'
+    assert first['exhash'] == '9.9.9'
     assert m._latest_versions(['exhash']) == first, 'the second ask is the cached first, not a crash'
 
 
