@@ -7,10 +7,10 @@ import Testing
 
     @Test func dropsThePythonAndUVSettingsOfTheParent() {
         let parent = ["PATH": "/usr/bin", "VIRTUAL_ENV": "/v", "PYTHONPATH": "p", "UV_INDEX_URL": "x", "CONDA_PREFIX": "c", "LEELA_HOST_TOKEN": "t", "OPENAI_API_KEY": "k"]
-        let e = spec.uvEnv(parent, home: "/h", vals: ["cache": "/c", "python": "/py", "python_version": "3.12.16", "env": "/e"])
+        let e = spec.uvEnv(parent, home: "/h", vals: ["cache": "/c", "python": "/py", "python_version": "3.13.18", "env": "/e"])
         for k in ["VIRTUAL_ENV", "PYTHONPATH", "UV_INDEX_URL", "CONDA_PREFIX", "LEELA_HOST_TOKEN"] { #expect(e[k] == nil, "\(k)") }
         #expect(e["OPENAI_API_KEY"] == "k" && e["HOME"] == "/h" && e["LANG"] == "en_US.UTF-8")
-        #expect(e["UV_PROJECT_ENVIRONMENT"] == "/e" && e["UV_PYTHON"] == "3.12.16" && e["UV_NO_CONFIG"] == "1" && e["UV_FROZEN"] == "1")
+        #expect(e["UV_PROJECT_ENVIRONMENT"] == "/e" && e["UV_PYTHON"] == "3.13.18" && e["UV_NO_CONFIG"] == "1" && e["UV_FROZEN"] == "1")
         #expect(e["UV_PYTHON_PREFERENCE"] == "only-managed" && e["UV_LINK_MODE"] == "clone" && e["UV_CACHE_DIR"] == "/c")
     }
 

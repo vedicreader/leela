@@ -12,7 +12,7 @@ public enum SetupPhase: Equatable, Sendable {
     public var title: String {
         switch self {
         case .checking: "Checking for the newest version"
-        case .python: "Getting Python 3.12"
+        case .python: "Getting Python 3.13"
         case .packages(let d, let t, _): t > 0 ? "Getting packages (\(Setup.mb(d)) of about \(Setup.mb(t)))" : "Getting packages"
         case .verifying: "Checking the packages"
         case .starting: "Starting Leela"

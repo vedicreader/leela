@@ -43,9 +43,9 @@ func makeLock(_ dir: URL, n: Int, uv: String = "0.13.6", body: String = "lock", 
     try! fm.createDirectory(at: dir, withIntermediateDirectories: true)
     try! Data("[project]\nname = \"leela-lock\"\n".utf8).write(to: dir.appending(path: "pyproject.toml"))
     try! Data("version = 1\n# \(body) \(n)\n".utf8).write(to: dir.appending(path: "uv.lock"))
-    try! Data("3.12.16\n".utf8).write(to: dir.appending(path: ".python-version"))
+    try! Data("3.13.18\n".utf8).write(to: dir.appending(path: ".python-version"))
     var m = Manifest(n: n, hash: try! LockHash.hash(dir: dir, uv: uv), files: Dictionary(uniqueKeysWithValues: LockHash.files.map { ($0, sha256(try! Data(contentsOf: dir.appending(path: $0)))) }),
-                     leela: "0.1.23", python: "3.12.16", uv_min: uv, launcher_api_min: api, platform: platform, macos_min: macos, download_bytes: 1000)
+                     leela: "0.1.23", python: "3.13.18", uv_min: uv, launcher_api_min: api, platform: platform, macos_min: macos, download_bytes: 1000)
     tamper?(&m)
     let e = JSONEncoder(); e.outputFormatting = [.sortedKeys]
     try! e.encode(m).write(to: dir.appending(path: "manifest.json"))
@@ -65,7 +65,7 @@ func fakeUV(_ dir: URL = tempDir()) -> URL {
     echo "$@" >> "$d/calls.txt"
     env | grep '^UV_' | sort > "$d/env.txt"
     mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"
-    echo "Downloading cpython-3.12.16-macos-aarch64-none (23.9MiB)"
+    echo "Downloading cpython-3.13.18-macos-aarch64-none (23.9MiB)"
     echo "Prepared 3 packages in 10ms"
     if [ -f "$d/FAIL" ]; then echo "error: Failed to fetch: no network" >&2; exit 2; fi
     printf '#!/bin/sh\\nexit 0\\n' > "$UV_PROJECT_ENVIRONMENT/bin/leela"; chmod +x "$UV_PROJECT_ENVIRONMENT/bin/leela"

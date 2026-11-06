@@ -12,7 +12,8 @@ FILES = ('pyproject.toml', 'uv.lock', '.python-version')
 REPO = 'vedicreader/leela'
 DL = f'https://github.com/{REPO}/releases/download'
 NS = 'leela-lock'
-PYTHON = '3.12.16'
+PYTHON = '3.13.18'   # the old app's minor: a kernel on a project's 3.13 borrows Leela's packages only when the minors match
+MINOR, CP = PYTHON.rsplit('.', 1)[0], 'cp' + ''.join(PYTHON.split('.')[:2])
 PLATFORM, MACOS_MIN, LAUNCHER_API = 'darwin-arm64', '14.0', 1
 COOLDOWN, RECORD_DAYS = 7, 7
 MARKER = "sys_platform == 'darwin' and platform_machine == 'arm64'"
@@ -102,7 +103,7 @@ def pyproject(v, leela, extras, owned=(), at=None, pins=()):
     return f'''[project]
 name = "leela-lock"
 version = "0"
-requires-python = "==3.12.*"
+requires-python = "=={MINOR}.*"
 dependencies = ["leela=={v}"]
 
 [project.optional-dependencies]
@@ -148,12 +149,12 @@ def _closure(pkgs, roots):
 def _wname(w): return w.get('filename') or (w.get('url') or w.get('path') or '').rsplit('/', 1)[-1]
 
 def wheel_fits(fn):
-    "Whether a wheel filename installs on CPython 3.12, macOS arm64."
+    "Whether a wheel filename installs on the pinned CPython, macOS arm64."
     if fn.count('-') < 4: return False
     py, abi, plat = fn[:-4].split('-')[-3:]
     abis = set(abi.split('.'))
-    pyok = lambda p: p in ('cp312', 'py3', 'py312') or ('abi3' in abis and re.fullmatch(r'cp3\d+', p) and int(p[3:]) <= 12)
-    return (any(map(pyok, py.split('.'))) and bool(abis & {'cp312', 'abi3', 'none'})
+    pyok = lambda p: p in (CP, 'py3', 'py' + CP[2:]) or ('abi3' in abis and re.fullmatch(r'cp3\d+', p) and int(p[3:]) <= int(CP[3:]))
+    return (any(map(pyok, py.split('.'))) and bool(abis & {CP, 'abi3', 'none'})
             and any(p == 'any' or (p.startswith('macosx') and p.endswith(('arm64', 'universal2'))) for p in plat.split('.')))
 
 def check(d, local=False):
@@ -178,7 +179,7 @@ def check(d, local=False):
         elif k == 'url': why.append(f'{n} comes from a URL')
         elif k == 'registry' and src['registry'].rstrip('/') != PYPI: why.append(f"{n} comes from {src['registry']}")
         wheels = [w for w in p.get('wheels', []) if wheel_fits(_wname(w))]
-        if not wheels and n not in SOURCE_ONLY: why.append(f'{n} {p.get("version")} has no wheel for CPython 3.12 on macOS arm64')
+        if not wheels and n not in SOURCE_ONLY: why.append(f'{n} {p.get("version")} has no wheel for CPython {MINOR} on macOS arm64')
     base = _closure(pkgs, [x['name'] for x in root.get('dependencies', [])])
     if LLAMA['name'] in base: why.append(f"{LLAMA['name']} is in the base environment; it belongs in the llama extra only")
     return why

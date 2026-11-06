@@ -108,7 +108,7 @@ public final class EnvStore: @unchecked Sendable {
     }
 
     static func python(_ lock: URL) -> String {
-        ((try? String(contentsOf: lock.appending(path: ".python-version"), encoding: .utf8)) ?? "3.12").trimmingCharacters(in: .whitespacesAndNewlines)
+        ((try? String(contentsOf: lock.appending(path: ".python-version"), encoding: .utf8)) ?? "3.13").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public func syncLaunch(lock: URL, hash: String, extras: [String], inexact: Bool = false) -> Launch {
@@ -217,7 +217,7 @@ public final class EnvStore: @unchecked Sendable {
     public func pruneDue(now: Date = Date()) -> Bool { now.timeIntervalSince1970 - load().pruned > 7 * 86400 }
 
     public func pruneLaunch() -> Launch {
-        Launch(executable: uv, args: ["cache", "prune"], env: spec.uvEnv(parent, home: home, vals: vals(env: paths.envs, python: "3.12")), cwd: paths.support)
+        Launch(executable: uv, args: ["cache", "prune"], env: spec.uvEnv(parent, home: home, vals: vals(env: paths.envs, python: "3.13")), cwd: paths.support)
     }
 
     /// copies a checked lock folder into locks/<n>, where uv reads it; the bundle stays untouched

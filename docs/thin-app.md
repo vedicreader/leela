@@ -104,13 +104,13 @@ The launcher injects `window.pywebview.api` into each page, so the page JavaScri
 
 The pinned project is `packaging/lock/`: `pyproject.toml`, `uv.lock`, `.python-version`. `tools/lock.py make` writes it.
 
-- `leela==<V>`, `requires-python = "==3.12.*"`, the exact Python in `.python-version`.
+- `leela==<V>`, `requires-python = "==3.13.*"`, the exact Python in `.python-version` (3.13.18). 3.13 is the old app's minor: kunda's kernel bootstrap gives a kernel Leela's own packages only when its Python has the same minor, and projects on 3.13 used that in the old app.
 - Leela is not on PyPI (the PyPI name `leela` belongs to another project). The lock takes the Leela wheel from GitHub release `V` (`make lock-wheel V=` builds it from the tag and attaches it), and checks its sha256 against the digest GitHub gives.
 - The extras `mlx`, `llama` and `langserver` are pinned with `==`. `llama-cpp-python` comes only in the `llama` extra, from abetlen's prebuilt Metal wheel, pinned by URL and sha256.
 - `environments` and `required-environments` are macOS arm64 only.
 - `exclude-newer` is 7 days before the lock. The owner's own packages are exempt (`exclude-newer-package` set to the lock time). `UV_NO_CONFIG=1` also drops these settings from `[tool.uv]`, so `make lock` passes them as `--exclude-newer` flags too, and `make lock` refuses a `uv.lock` that records no cooldown. A test against a local index shows both sides: an owner's release from yesterday is locked, a third-party one is held back.
 - `PIN=<constraint>` adds one constraint, such as `PIN=ramabana==0.2.109`.
-- `make lock` refuses another index, an editable, git or path source, a package with no wheel for CPython 3.12 on macOS arm64, and `llama-cpp-python` in the base env.
+- `make lock` refuses another index, an editable, git or path source, a package with no wheel for CPython 3.13 on macOS arm64, and `llama-cpp-python` in the base env.
 
 ### The manifest
 

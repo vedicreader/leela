@@ -56,7 +56,8 @@ def test_a_good_lock_passes(tmp_path): assert L.check(_lock(tmp_path)) == []
     (_pkg('d', '{ url = "https://example.com/d.whl" }'), 'URL'),
     (_pkg('e', '{ path = "/tmp/e.whl" }'), 'local path'),
     (_pkg('f', wheels=False), 'no wheel'),
-    (_pkg('g', fn='g-1.0-cp312-cp312-manylinux_2_17_x86_64.whl'), 'no wheel'),
+    (_pkg('g', fn='g-1.0-cp313-cp313-manylinux_2_17_x86_64.whl'), 'no wheel'),
+    (_pkg('g2', fn='g2-1.0-cp312-cp312-macosx_11_0_arm64.whl'), 'no wheel'),
     (_pkg('h', fn='h-1.0-cp311-cp311-macosx_11_0_arm64.whl'), 'no wheel'),
     (_pkg(L.LLAMA['name'], f'{{ url = "{L.LLAMA["url"]}" }}'), 'not the pinned wheel'),
 ])
@@ -64,9 +65,13 @@ def test_a_lock_the_app_cannot_install_is_refused(tmp_path, pkg, why):
     got = L.check(_lock(tmp_path, pkgs=[pkg]))
     assert any(why in w for w in got), got
 
-@pytest.mark.parametrize('fn', ['a-1.0-cp312-cp312-macosx_11_0_arm64.whl', 'a-1.0-cp39-abi3-macosx_10_12_universal2.whl', 'a-1.0-py3-none-any.whl',
-                                'a-1.0-cp312-cp312-macosx_10_13_x86_64.macosx_11_0_arm64.whl'])
-def test_wheels_that_fit_cpython_312_on_arm64(fn): assert L.wheel_fits(fn)
+@pytest.mark.parametrize('fn', ['a-1.0-cp313-cp313-macosx_11_0_arm64.whl', 'a-1.0-cp39-abi3-macosx_10_12_universal2.whl', 'a-1.0-py3-none-any.whl',
+                                'a-1.0-cp313-cp313-macosx_10_13_x86_64.macosx_11_0_arm64.whl'])
+def test_wheels_that_fit_cpython_313_on_arm64(fn): assert L.wheel_fits(fn)
+
+def test_the_lock_python_is_the_old_apps_minor():
+    "A kernel on a project's own 3.13 borrowed Leela's packages in the old app; kunda's bootstrap shares them only within one minor."
+    assert L.MINOR == '3.13' and L.CP == 'cp313' and not L.wheel_fits('a-1.0-cp312-cp312-macosx_11_0_arm64.whl')
 
 def test_the_pinned_llama_wheel_is_allowed_only_in_its_extra(tmp_path):
     llama = (f'[[package]]\nname = "{L.LLAMA["name"]}"\nversion = "{L.LLAMA["version"]}"\nsource = {{ url = "{L.LLAMA["url"]}" }}\n'
@@ -89,7 +94,7 @@ def test_the_pinned_project_pins_extras_and_exempts_the_owners_packages(tmp_path
     t = L.pyproject('0.1.23', f'{L.DL}/0.1.23/leela-0.1.23-py3-none-any.whl', {'mlx': ['mlx-lm>=0.31'], 'llama': ['llama-cpp-python==0.3.30'], 'langserver': ['basedpyright>=1.39']}, ['ramabana'], at)
     import tomllib
     p = tomllib.loads(t)
-    assert p['project']['requires-python'] == '==3.12.*' and p['project']['dependencies'] == ['leela==0.1.23']
+    assert p['project']['requires-python'] == '==3.13.*' and p['project']['dependencies'] == ['leela==0.1.23']
     assert p['tool']['uv']['required-environments'] == [L.MARKER] and p['tool']['uv']['exclude-newer'] == '2026-10-30T00:00:00Z'
     assert p['tool']['uv']['exclude-newer-package'] == {'ramabana': '2026-11-06T00:00:00Z'}
     assert p['tool']['uv']['sources']['llama-cpp-python'] == {'url': L.LLAMA['url']}

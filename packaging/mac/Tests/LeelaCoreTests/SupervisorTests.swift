@@ -150,7 +150,7 @@ func py(_ port: Int, _ die: Double) -> Launch {
 @Suite struct SetupTests {
     @Test func uvLinesMoveThePhasesInOrder() {
         var p = SetupPhase.checking
-        for (line, want) in [("Using CPython 3.12.16", "packages"), ("Downloading cpython-3.12.16-macos-aarch64-none (23.9MiB)", "python"),
+        for (line, want) in [("Using CPython 3.13.18", "packages"), ("Downloading cpython-3.13.18-macos-aarch64-none (23.9MiB)", "python"),
                              ("Downloading numpy (5.1MiB)", "packages"), ("Prepared 272 packages in 30s", "packages"), ("Installed 272 packages in 2s", "verifying")] {
             p = Setup.phase(after: line, current: p, done: 10_000_000, total: 400_000_000) ?? p
             #expect("\(p)".hasPrefix(want), "\(line)")
