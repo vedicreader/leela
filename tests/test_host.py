@@ -1,0 +1,323 @@
+"Host mode: the thin Mac app runs the server as its child. Health, the token, the dialogs, the env, pinned extras, the update switch."
+
+import json, os, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+import pytest
+from leela import hub
+from leela.core import envs, host, update as U
+from leela.blocks.agent import models
+from leela.hub import WorkspaceHub
+from test_folder_gate import _call, _guard, _hub, folders  # noqa: F401
+
+TOKEN = 'tok-123'
+
+class FakeHost:
+    "The launcher's control server: answers per path, records each call and its token."
+    def __init__(self, routes, status=200):
+        self.calls, fake = [], self
+        class H(BaseHTTPRequestHandler):
+            def _do(self):
+                n = int(self.headers.get('Content-Length') or 0)
+                body = json.loads(self.rfile.read(n)) if n else None
+                fake.calls.append((self.command, self.path, body, self.headers.get('Authorization')))
+                r = routes.get((self.command, self.path), routes.get(self.path, {}))
+                raw = (r(body) if callable(r) else r)
+                raw = raw if isinstance(raw, bytes) else json.dumps(raw).encode()
+                self.send_response(status); self.send_header('Content-Length', str(len(raw))); self.end_headers(); self.wfile.write(raw)
+            do_GET = do_POST = _do
+            def log_message(self, *a): pass
+        self.srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
+        self.url = f'http://127.0.0.1:{self.srv.server_address[1]}'
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+    def close(self): self.srv.shutdown(); self.srv.server_close()
+
+@pytest.fixture
+def hosted(monkeypatch):
+    "Host mode against a fake launcher; `hosted(routes)` starts it."
+    made = []
+    def go(routes=None, status=200):
+        f = FakeHost(routes or {}, status); made.append(f)
+        monkeypatch.setattr(host, '_host', dict(url=f.url, token=TOKEN))
+        return f
+    yield go
+    for f in made: f.close()
+    hub.reset_gate()
+
+@pytest.fixture
+def off(monkeypatch): monkeypatch.setattr(host, '_host', dict(url='', token=''))
+
+# Taking the token out of the environment
+
+def test_take_moves_the_url_and_token_out_of_the_environment(monkeypatch):
+    """A kernel inherits the server's environment, so a token left there would let any cell call the launcher."""
+    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    env = dict(LEELA_HOST_URL='http://127.0.0.1:9', LEELA_HOST_TOKEN='t', LEELA_APP_VERSION='1.0.0')
+    assert host.take(env) and host.on()
+    assert 'LEELA_HOST_URL' not in env and 'LEELA_HOST_TOKEN' not in env and env['LEELA_APP_VERSION'] == '1.0.0'
+
+def test_no_url_is_no_host_mode_and_a_stray_token_still_goes(monkeypatch):
+    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    env = dict(LEELA_HOST_TOKEN='t')
+    assert not host.take(env) and 'LEELA_HOST_TOKEN' not in env
+
+def test_the_token_check_compares_whole_tokens_and_an_empty_token_matches_nothing(monkeypatch):
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=''))
+    assert not host.token_ok('') and not host.token_ok('x')
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    assert host.token_ok(TOKEN) and not host.token_ok(TOKEN[:-1]) and not host.token_ok('')
+
+@pytest.mark.parametrize('url', ['http://127.0.0.1@evil.example:80', 'https://127.0.0.1:9', 'http://localhost:9', 'http://10.0.0.1:9', 'http://127.0.0.1'])
+def test_the_client_talks_only_to_a_loopback_http_url(monkeypatch, url):
+    monkeypatch.setattr(host, '_host', dict(url=url, token=TOKEN))
+    with pytest.raises(host.HostError): host.call('/status')
+
+def test_a_proxy_in_the_environment_is_not_used(hosted, monkeypatch):
+    f = hosted({'/status': {'ok': True}})
+    monkeypatch.setenv('HTTP_PROXY', 'http://127.0.0.1:1'); monkeypatch.setenv('http_proxy', 'http://127.0.0.1:1')
+    assert host.status() == {'ok': True} and f.calls[0][3] == f'Bearer {TOKEN}'
+
+# The environment
+
+def test_import_login_env_skips_what_the_launcher_owns_only_in_host_mode(monkeypatch, off):
+    shell = dict(PYTHONPATH='/x', VIRTUAL_ENV='/v', UV_INDEX='i', CONDA_PREFIX='/c', LEELA_HOST_TOKEN='stolen', OPENAI_API_KEY='k')
+    monkeypatch.setattr(envs, 'shell_env', lambda *a, **kw: dict(shell))
+    target = {}
+    envs.import_login_env(env=target)
+    assert set(target) >= {'PYTHONPATH', 'VIRTUAL_ENV', 'UV_INDEX', 'OPENAI_API_KEY'}, 'outside host mode nothing changes'
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    target = {}
+    envs.import_login_env(env=target)
+    assert target == {'OPENAI_API_KEY': 'k'}
+
+def test_stored_values_do_not_replace_the_launchers_in_host_mode(monkeypatch):
+    monkeypatch.setattr(envs, 'stored_env', lambda: dict(VIRTUAL_ENV='/old', UV_CACHE_DIR='/c', LEELA_LOCK_N='99', OPENAI_API_KEY='k'))
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    target = dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3')
+    envs.apply_stored_env(target)
+    assert target == dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3', OPENAI_API_KEY='k')
+    with pytest.raises(envs.EnvError): envs.set_env('UV_INDEX', 'x')
+
+def test_host_setup_keeps_the_env_bin_first_and_skips_the_extras_folder(monkeypatch, tmp_path):
+    import leela
+    called = []
+    monkeypatch.setattr(leela, 'use_login_path', lambda: os.environ.__setitem__('PATH', '/opt/homebrew/bin:/usr/bin'))
+    monkeypatch.setattr(leela, 'use_extras', lambda: called.append('extras'))
+    monkeypatch.setattr(envs, 'import_login_env', lambda *a, **kw: [])
+    monkeypatch.setattr(envs, 'apply_stored_env', lambda *a, **kw: [])
+    monkeypatch.setenv('VIRTUAL_ENV', str(tmp_path/'env'))
+    host.setup()
+    assert os.environ['PATH'].split(os.pathsep)[0] == str(tmp_path/'env'/'bin') and not called
+    assert hub._gate['confirm'] is host.confirm
+    hub.reset_gate()
+
+def test_cli_in_host_mode_takes_the_token_and_never_adds_the_extras_folder(monkeypatch):
+    import leela, leela.cli, leela.app
+    seen = {}
+    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setenv('LEELA_HOST_URL', 'http://127.0.0.1:9'); monkeypatch.setenv('LEELA_HOST_TOKEN', TOKEN)
+    monkeypatch.setattr(host, 'setup', lambda: seen.setdefault('setup', True))
+    monkeypatch.setattr(leela, 'use_extras', lambda: seen.setdefault('extras', True))
+    monkeypatch.setattr(leela.app, 'serve_ide', lambda roots, **kw: seen.update(kw))
+    leela.cli.main(['--app', '--shell', 'none', '--port', '5999', '--gateway-port', '0'])
+    assert seen.get('setup') and 'extras' not in seen and seen['shell'] == 'none' and seen['app_window']
+    assert 'LEELA_HOST_TOKEN' not in os.environ and host.on()
+
+# /health and the launcher's routes
+
+def test_health_answers_status_version_and_the_lock_as_a_number(monkeypatch):
+    from leela import __version__
+    monkeypatch.setenv('LEELA_LOCK_N', '7')
+    for m in ('GET', 'HEAD'): assert _call(WorkspaceHub([], 5001), '/health', method=m) == (200, {'status': 'ok', 'version': __version__, 'lock_n': 7})
+    monkeypatch.delenv('LEELA_LOCK_N')
+    assert _call(WorkspaceHub([], 5001), '/health', method='GET')[1]['lock_n'] is None
+    assert _call(WorkspaceHub([], 5001), '/health', method='POST')[0] == 405
+
+def test_health_stays_behind_the_host_guard():
+    assert _guard('GET', {'host': 'evil.example'}, path='/health') == 421
+    assert _guard('GET', {}, path='/health') == 'passed'
+
+@pytest.mark.parametrize('path', ['/hub/grant', '/app/menu.json', '/app/recent'])
+def test_the_launchers_routes_need_its_token(hosted, path):
+    hosted()
+    for headers in ((), (('x-leela-host-token', 'wrong'),), (('x-leela-host-token', ''),)):
+        st, body = _call(WorkspaceHub([], 5001), path, b'path=/tmp', headers=headers)
+        assert st == 401 and body['ok'] is False and 'config' in body
+
+def test_the_menu_route_gives_the_bar_with_appkit_chords(hosted):
+    hosted()
+    st, body = _call(WorkspaceHub([], 5001), '/app/menu.json', method='GET', headers=(('x-leela-host-token', TOKEN),))
+    titles = [m['title'] for m in body['menus']]
+    assert st == 200 and titles[0] == '__app__' and 'Edit' in titles
+    edit = next(m for m in body['menus'] if m['title'] == 'Edit')['items']
+    assert {'title': 'Copy', 'selector': 'copy:', 'key': 'c', 'mask': 1 << 20} in edit and {'sep': True} in edit
+
+def test_a_grant_from_the_launcher_lets_the_next_page_open_pass_with_no_question(hosted, tmp_path, folders):
+    """A folder picked in the app's own dialog is trusted, as `shell_api().on_picked = grant` made it in the fat app."""
+    from test_folder_gate import Asked
+    hosted()
+    h, _ = _hub(tmp_path)
+    hub.set_confirmer(asked := Asked(False))
+    mine = folders[0]
+    assert _call(h, '/hub/grant', f'path={mine}'.encode(), headers=(('x-leela-host-token', TOKEN),))[0] == 200
+    st, body = _call(h, '/hub/open', f'path={mine}'.encode())
+    assert st == 200 and body['ok'] and not asked.qs
+
+def test_hub_open_with_the_token_is_trusted_and_with_a_wrong_token_refused(hosted, tmp_path, folders):
+    from test_folder_gate import Asked
+    hosted()
+    h, _ = _hub(tmp_path)
+    hub.set_confirmer(asked := Asked(False))
+    mine, proj = folders
+    st, body = _call(h, '/hub/open', f'path={mine}&also={proj}'.encode(), headers=(('x-leela-host-token', TOKEN),))
+    assert st == 200 and body['ok'] and not asked.qs
+    st, body = _call(h, '/hub/open', f'path={proj}'.encode(), headers=(('x-leela-host-token', 'nope'),))
+    assert st == 401 and body == {'ok': False, 'error': hub.BAD_TOKEN, 'config': hub.cfg_mark()}
+
+# The app's dialog
+
+def test_confirm_asks_the_app_and_takes_its_answer(hosted):
+    f = hosted({'/confirm': lambda b: {'answer': b['question'] == 'Add x?'}})
+    assert host.confirm('Add x?') is True and host.confirm('Add y?') is False
+    assert f.calls[0][:3] == ('POST', '/confirm', {'question': 'Add x?'}) and f.calls[0][3] == f'Bearer {TOKEN}'
+
+@pytest.mark.parametrize('answer,status', [(b'not json', 200), ({'ok': True}, 200), ({'answer': 'yes'}, 200), ({'answer': True}, 401), ({}, 500)])
+def test_every_broken_answer_is_no_window_and_records_no_decline(hosted, tmp_path, folders, answer, status):
+    """`admit_folder` takes any exception but `NoWindow` as a No and then refuses the folder for 10 minutes."""
+    hosted({'/confirm': answer}, status)
+    h, _ = _hub(tmp_path)
+    hub.set_confirmer(host.confirm)
+    st, body = _call(h, '/hub/open', f'path={folders[0]}'.encode())
+    assert st == 403 and body['error'] == hub.NO_WINDOW and not hub.declined(folders[0])
+
+def test_a_launcher_that_is_gone_is_no_window(monkeypatch, tmp_path, folders):
+    import socket
+    with socket.socket() as s: s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]
+    monkeypatch.setattr(host, '_host', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
+    t = time.monotonic()
+    with pytest.raises(hub.NoWindow): host.confirm('Add?')
+    assert time.monotonic() - t < 3
+
+# Pinned extras
+
+def test_outside_host_mode_an_install_is_pinned_and_never_upgrades(off, monkeypatch):
+    ran = []
+    monkeypatch.setattr(models.threading, 'Thread', lambda target, args, **kw: type('T', (), {'start': lambda s: ran.append(args)})())
+    monkeypatch.setitem(models._installs, 'langserver', {})
+    models._installs.pop('langserver')
+    row = models.install_runtime('langserver')
+    cmd = ran[0][1]
+    assert '--upgrade' not in cmd and 'basedpyright==1.39' in cmd and row['requirements'] == ['basedpyright==1.39']
+
+def test_pinned_keeps_an_exact_pin_and_holds_a_floor():
+    assert models.pinned(['a==1.2', 'b>=3.1', 'c[x]>=2', 'd>=1,<2']) == ['a==1.2', 'b==3.1', 'c[x]==2', 'd==1']
+    assert models.pinned(['numpy'])[0].startswith('numpy==')
+
+def test_in_host_mode_an_install_asks_the_app_and_runs_no_pip(hosted, monkeypatch):
+    seen = {'n': 0}
+    def status(_):
+        seen['n'] += 1
+        return {'extras': {'langserver': {'state': 'ok' if seen['n'] > 1 else 'running', 'log': 'Installed 1 package'}}}
+    f = hosted({('POST', '/extras'): {'ok': True}, '/status': status})
+    monkeypatch.setattr(models, '_installer', lambda t: pytest.fail('pip must not run in host mode'))
+    models._installs.pop('langserver', None)
+    row = models.install_runtime('langserver')
+    assert row['state'] == 'running' and row['via'] == 'Leela app'
+    assert models.install_runtime('langserver')['state'] == 'running', 'a second click joins the running install'
+    end = time.monotonic() + 10
+    while models.install_state('langserver')['state'] == 'running' and time.monotonic() < end: time.sleep(.1)
+    got = models.install_state('langserver')
+    assert got['state'] == 'ok' and 'Installed 1 package' in got['log'] and 'available' in got
+    assert ('POST', '/extras', {'name': 'langserver'}, f'Bearer {TOKEN}') in f.calls
+
+def test_in_host_mode_a_failed_or_silent_app_marks_the_install_error(hosted):
+    hosted({('POST', '/extras'): {'ok': True}, '/status': {'extras': {'mlx': {'state': 'error', 'log': 'no network'}}}})
+    models._installs['mlx'] = {'runtime': 'mlx', 'state': 'running'}
+    models._host_install('mlx', every=.05)
+    assert models.install_state('mlx')['state'] == 'error' and 'no network' in models.install_state('mlx')['log']
+
+def test_the_install_route_reaches_the_app_in_host_mode(hosted, monkeypatch):
+    from unittest.mock import MagicMock
+    from fasthtml.common import FastHTML
+    from starlette.testclient import TestClient
+    from leela.blocks.agent import app as agent_app
+    hosted()
+    monkeypatch.setattr(models, '_host_install', lambda r, **kw: None)
+    models._installs.pop('mlx', None)
+    agent_app.connect(a := FastHTML(), MagicMock())
+    got = TestClient(a).post('/agent/runtimes/install', json={'runtime': 'mlx'}).json()
+    assert got['ok'] and got['install']['via'] == 'Leela app' and got['install']['state'] == 'running'
+
+# The update switch
+
+def test_lock_and_app_tags_are_never_a_leela_release(monkeypatch, tmp_path):
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    for tag in ('lock-7', 'app-v1.0.0'):
+        monkeypatch.setattr(U, 'urljson', lambda *a, **kw: {'tag_name': tag, 'html_url': f'https://x/{tag}'})
+        with pytest.raises(ValueError): U._ask()
+    assert 'version' not in U.latest_release(now=1, ttl=0), 'nothing cached that hides a real release'
+
+def test_the_newest_app_skips_drafts_prereleases_and_other_tags(monkeypatch, tmp_path):
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    rows = [{'tag_name': 'lock-9', 'html_url': 'l'}, {'tag_name': 'app-v1.2.0', 'draft': True, 'html_url': 'd'},
+            {'tag_name': 'app-v1.1.0', 'prerelease': True, 'html_url': 'p'}, {'tag_name': '0.1.30', 'html_url': 'v'},
+            {'tag_name': 'app-v1.0.1', 'html_url': 'https://x/app-v1.0.1'}]
+    monkeypatch.setattr(U, 'urljson', lambda *a, **kw: rows)
+    assert U.newest_app(now=1)['version'] == '1.0.1'
+
+@pytest.mark.parametrize('app_new,lock_new,needs,brew,want', [
+    (True, False, False, True, 'app'), (True, True, True, True, 'app'),
+    (False, True, False, True, 'lock'), (False, True, False, False, 'lock'),
+    (False, True, True, True, 'app-needed'),
+    (True, False, False, False, 'download'), (False, True, True, False, 'download'), (True, True, False, False, 'download'),
+    (False, False, False, True, 'none'), (False, False, False, False, 'none')])
+def test_each_row_of_the_update_table(app_new, lock_new, needs, brew, want):
+    assert U.kind(app_new, lock_new, needs, brew) == want
+
+def _st(newer=False, needs=False, brew=True, app_min=None): return {'brew': brew, 'lock': {'current_n': 3, 'newest_n': 4 if newer else 3, 'newer': newer, 'needs_app': needs, 'app_min': app_min}}
+
+def test_host_offer_shapes_for_each_kind(monkeypatch):
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
+    rel = {'version': '1.1.0', 'url': 'https://x/app-v1.1.0'}
+    o = U._host_offer(_st(), rel)
+    assert o['kind'] == 'app' and o['notice'] and o['install'] and o['current'] == '1.0.0' and o['latest'] == '1.1.0'
+    o = U._host_offer(_st(newer=True), {'version': '1.0.0'})
+    assert o['kind'] == 'lock' and o['install'] and o['newest_lock'] == 4
+    o = U._host_offer(_st(newer=True, needs=True, app_min='1.2.0'), {'version': '1.0.0'})
+    assert o['kind'] == 'app-needed' and o['notice'] and not o['install'] and o['latest'] == '1.2.0'
+    o = U._host_offer(_st(brew=False), rel)
+    assert o['kind'] == 'download' and not o['install']
+    o = U._host_offer({}, rel)
+    assert o['kind'] == 'none' and not o['notice'], 'a silent launcher still gives a valid offer'
+
+def test_host_install_status_and_restart_go_through_the_launcher(hosted, monkeypatch):
+    f = hosted({('POST', '/update'): {'state': 'running', 'line': 'building'}, ('GET', '/update'): {'state': 'ready', 'line': ''},
+                '/status': _st(newer=True), '/restart': {'ok': True}})
+    monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
+    monkeypatch.setattr(U, 'newest_app', lambda: {'version': '1.0.0'})
+    assert U.upgrade() == {'state': 'running', 'line': 'building'}
+    assert U.upgrade_status() == {'state': 'done', 'line': ''}, "the launcher's ready is the page's done"
+    assert U.restart() is True
+    assert ('POST', '/update', {'kind': 'lock'}, f'Bearer {TOKEN}') in f.calls and any(c[1] == '/restart' for c in f.calls)
+
+def test_the_update_routes_reach_the_launcher(hosted, monkeypatch):
+    from starlette.testclient import TestClient
+    from leela.blocks.settings import app as settings_app
+    hosted({('POST', '/update'): {'state': 'ready'}, ('GET', '/update'): {'state': 'ready'}, '/status': _st(newer=True), '/restart': {'ok': True}})
+    monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
+    monkeypatch.setattr(U, 'newest_app', lambda: {'version': '1.0.0'})
+    from types import SimpleNamespace
+    from fasthtml.common import FastHTML
+    settings_app.connect(a := FastHTML(), SimpleNamespace(session=None))
+    c = TestClient(a)
+    assert c.get('/update').json()['kind'] == 'lock'
+    assert c.post('/update/install').json()['state'] == 'done'
+    assert c.post('/update/restart').json()['ok'] is True
+
+def test_host_mode_down_gives_an_error_state_not_an_exception(monkeypatch):
+    import socket
+    with socket.socket() as s: s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]
+    monkeypatch.setattr(host, '_host', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
+    assert U.upgrade_status()['state'] == 'error' and U.restart() is False
+    assert U.offer()['kind'] == 'none'

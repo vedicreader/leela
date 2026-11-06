@@ -7,26 +7,32 @@ from fastcore.xdg import xdg_data_home
 from pullup.env import strip_bundle
 from .. import __version__
 
-__all__ = ['REPO', 'RELEASES', 'RELEASE_PAGE', 'CASK', 'TTL', 'latest_release', 'newer', 'app_bundle', 'brew_for',
-           'offer', 'Upgrade', 'upgrade', 'upgrade_status', 'restart']
+__all__ = ['REPO', 'RELEASES', 'RELEASE_PAGE', 'CASK', 'TTL', 'APP_TAG', 'latest_release', 'newest_app', 'newer', 'app_bundle', 'brew_for',
+           'kind', 'offer', 'Upgrade', 'upgrade', 'upgrade_status', 'restart']
 
 REPO = 'vedicreader/leela'
 RELEASES = f'https://api.github.com/repos/{REPO}/releases/latest'
 RELEASE_PAGE = f'https://github.com/{REPO}/releases/latest'
 CASK = 'leela'
 TTL = 6*3600
+#: The thin Mac app's releases. Lock releases are `lock-<n>`; neither is a Leela release.
+APP_TAG, LOCK_TAG = 'app-v', 'lock-'
+APP_RELEASES = f'https://api.github.com/repos/{REPO}/releases?per_page=30'
 
-def _cache(): return xdg_data_home()/'leela'/'release.json'
+def _cache(name='release.json'): return xdg_data_home()/'leela'/name
+def _leela_tag(tag): return not str(tag).startswith((APP_TAG, LOCK_TAG))
 
 def _ask():
     "The newest release as `(version, url)`. The page redirect answers when the API is rate-limited."
     try:
         r = urljson(RELEASES, headers={'Accept': 'application/vnd.github+json'}, timeout=4)
-        return r['tag_name'], r['html_url']
+        tag, url = r['tag_name'], r['html_url']
     except Exception:
         with urllib.request.urlopen(urllib.request.Request(RELEASE_PAGE, method='HEAD'), timeout=4) as r: url = r.url
         if '/releases/tag/' not in url: raise ValueError(f'{RELEASE_PAGE} went to {url}')
-        return url.rsplit('/', 1)[1], url
+        tag = url.rsplit('/', 1)[1]
+    if not _leela_tag(tag): raise ValueError(f'{tag} is not a Leela release')
+    return tag, url
 
 def latest_release(ttl=TTL, now=None):
     "The newest release as `{version, url, checked}`, asked of GitHub at most once per `ttl` seconds. Offline it is the last answer, or `{}`."
@@ -40,6 +46,28 @@ def latest_release(ttl=TTL, now=None):
     try:
         (tmp := _cache().with_suffix(f'.{os.getpid()}')).parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(c)); tmp.replace(_cache())
+    except OSError: pass
+    return c
+
+def _ask_app():
+    "The newest `app-v*` release that is neither a draft nor a prerelease, as `(version, url)`."
+    r = first(x for x in urljson(APP_RELEASES, headers={'Accept': 'application/vnd.github+json'}, timeout=4)
+              if str(x.get('tag_name', '')).startswith(APP_TAG) and not x.get('draft') and not x.get('prerelease'))
+    if r is None: raise ValueError('no app release')
+    return r['tag_name'].removeprefix(APP_TAG), r['html_url']
+
+def newest_app(ttl=TTL, now=None):
+    "The newest Mac app release as `{version, url, checked}`, cached as `latest_release` is."
+    now = now or time.time()
+    try: c = json.loads(_cache('app-release.json').read_text())
+    except (OSError, ValueError): c = {}
+    if 'checked' in c and now - c['checked'] < ttl: return c
+    try: v, url = _ask_app(); c = dict(version=v, url=url)
+    except Exception: pass
+    c['checked'] = now
+    try:
+        (tmp := _cache('app-release.json').with_suffix(f'.{os.getpid()}')).parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(c)); tmp.replace(_cache('app-release.json'))
     except OSError: pass
     return c
 
@@ -61,8 +89,27 @@ def brew_for(app):
     if not app or not (b := shutil.which('brew')): return None
     return b if (Path(b).parent.parent/'Caskroom'/CASK).is_dir() and Path(app).name == 'Leela.app' else None
 
+def kind(app_newer, lock_newer, needs_app, brew):
+    "What an update is, by the table in docs/thin-app.md: app, lock, app-needed, download, or none."
+    if lock_newer and not needs_app and not app_newer: return 'lock'
+    if not (app_newer or lock_newer): return 'none'
+    if not brew: return 'download'
+    return 'app' if app_newer else 'app-needed'
+
+def _host_offer(st=None, rel=None):
+    "The offer in host mode: the app's version and lock state from the launcher, the newest app from its releases."
+    from . import host
+    st = host.status() if st is None else st
+    rel, cur, lk = newest_app() if rel is None else rel, host.app_version(), st.get('lock') or {}
+    k = kind(newer(rel.get('version'), cur), bool(lk.get('newer')), bool(lk.get('needs_app')), bool(st.get('brew'))) if st else 'none'
+    latest = dict(lock=f"package set {lk.get('newest_n')}", none=cur).get(k, lk.get('app_min') if k == 'app-needed' and lk.get('app_min') else rel.get('version'))
+    return dict(current=cur, latest=latest, url=rel.get('url') or RELEASE_PAGE, outdated=k != 'none', kind=k,
+                notice=k != 'none', install=k in ('app', 'lock'), lock=lk.get('current_n'), newest_lock=lk.get('newest_n'))
+
 def offer(rel=None, app=None):
     "What the notice offers: whether a newer release exists, and whether Leela can install it here."
+    from . import host
+    if host.on(): return _host_offer()
     rel = latest_release() if rel is None else rel
     app = app_bundle() if app is None else app
     out = dict(current=__version__, latest=rel.get('version'), url=rel.get('url') or RELEASE_PAGE, outdated=newer(rel.get('version')))
@@ -97,15 +144,35 @@ _job = None
 def upgrade(app=None):
     "Start installing the newer release, or say why not. The one step a later app can replace."
     global _job
+    from . import host
+    if host.on():
+        k = _host_offer()['kind']
+        if k not in ('app', 'lock'): return dict(state='unavailable', line='', url=RELEASE_PAGE)
+        try: return _launcher_state(host.call('/update', {'kind': k}, read=30))
+        except host.HostError as e: return dict(state='error', line=str(e))
     app = app or app_bundle()
     if not (b := brew_for(app)): return dict(state='unavailable', line='', url=RELEASE_PAGE)
     if _job is None or _job.state != 'running': _job = Upgrade(app, b)
     return _job.start()
 
-def upgrade_status(): return _job.status() if _job else dict(state='idle', line='')
+def _launcher_state(d):
+    "The launcher's update state as the page knows them: its `ready` (built, waiting for a restart) is `done`."
+    st = str(d.get('state') or 'error')
+    return dict(state={'ready': 'done'}.get(st, st), line=str(d.get('line') or ''))
+
+def upgrade_status():
+    from . import host
+    if host.on():
+        try: return _launcher_state(host.call('/update', read=10))
+        except host.HostError as e: return dict(state='error', line=str(e))
+    return _job.status() if _job else dict(state='idle', line='')
 
 def restart(app=None, pid=None, wait=60):
-    "Open `app` again once this process has quit, then quit it."
+    "Open `app` again once this process has quit, then quit it. In host mode the launcher restarts the server and swaps the lock."
+    from . import host
+    if host.on():
+        try: return bool(host.call('/restart', {}, read=10).get('ok'))
+        except host.HostError: return False
     app, pid = app or app_bundle(), pid or os.getpid()
     if not app: return False
     sh = 'i=0; while kill -0 "$0" 2>/dev/null && [ $i -lt "$2" ]; do sleep .2; i=$((i+1)); done; exec open "$1"'
