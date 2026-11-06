@@ -201,7 +201,7 @@ class Workspace:
         from .blocks.git.git import wire_env
         wire_env()
         self.fs_watch = Watcher(self.fs)
-        self.chosen_python, self.venv_made = {}, {}   # project folder -> the interpreter the person picked, and the venv Leela made
+        self.chosen_python, self.venv_made, self._own, self._own_lock = {}, {}, None, None   # project folder -> the interpreter the person picked; Leela's own kernel
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
@@ -1006,6 +1006,18 @@ class Workspace:
             if not python: raise
             from .blocks.nb.lesson import ENV_GONE, EnvGone
             raise EnvGone(ENV_GONE) from e
+    async def own_kernel(self):
+        "Leela's own kernel: Leela's interpreter and packages, in the project folder, apart from every project venv and tab."
+        from .blocks.runtime.kernels import Kernel, work_dir
+        if self._own_lock is None: self._own_lock = asyncio.Lock()
+        async with self._own_lock:
+            cwd, k = work_dir(self.project_repo), self._own
+            if k is None or not k.alive:
+                k = Kernel(cwd=cwd, name='leela', python=None, inspect=False)
+                await k.start()
+                self._own = k
+            elif str(k.cwd) != cwd: await k.chdir(cwd)
+            return k
     async def project_venv(self, cwd):
         "Make the `.venv` of the project `cwd` is in, for a notebook that has none and no chosen interpreter; None where no project owns `cwd`."
         from .blocks.runtime import kernels as K
@@ -1238,7 +1250,7 @@ class Workspace:
         self._lsp_stop.set()
         with self._lsp_lock: services, self._lsps = list(self._lsps.values()), {}
         for service in services: step(service.retire)
-        for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit()):
+        for coro in (self.dev.stop_all(), self.pool.close_all(), self.browser.quit(), *([self._own.shutdown()] if self._own else [])):
             try: await coro
             except Exception: pass
     async def opened(self):

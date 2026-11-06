@@ -1,7 +1,7 @@
 "The agent: tools, briefing, context window, routing and budgets."
 
 import json
-import threading
+import shutil, threading
 import time
 import pytest
 from leela.agent import core as models
@@ -13,7 +13,7 @@ from shalya.host import CodeHost
 from leela.agent.tools import WRITE_TOOLS
 from leela.agent.tools import failed
 import sys
-from fastcore.all import Path
+from fastcore.all import Path, first
 from starlette.testclient import TestClient
 from leela.app import ide_app
 from leela.workspace import Workspace
@@ -1182,3 +1182,46 @@ def test_the_agent_shell_has_a_term_even_when_leela_has_none(tmp_path, monkeypat
         monkeypatch.setenv('TERM', 'xterm-256color')
         assert h.run_cmd('echo "T=$TERM"') == (0, 'T=xterm-256color\n'), 'an inherited TERM is kept'
     finally: ws.shutdown_now()
+
+@pytest.mark.slow
+@pytest.mark.makes_venv
+@pytest.mark.skipif(not shutil.which('uv'), reason='needs uv to create an environment')
+def test_leelas_tools_run_on_leelas_python_in_a_project_whose_venv_lacks_them(tmp_path):
+    "Agent code imported rupaka and kosha inside the project kernel, which worked only by borrowing Leela's packages."
+    import sys
+    from leela.blocks.runtime.kernels import runtime_python
+    from leela.workspace import Workspace
+    proj = Path(tmp_path).resolve()/'proj'; proj.mkdir(); (proj/'pyproject.toml').write_text('')
+    (proj/'data.txt').write_text('hello')
+    _nb(proj/'a.ipynb', '')
+    ws = Workspace(roots=[proj], port=8471)
+    async def go():
+        await ws.opened()
+        ws.open(proj/'a.ipynb')
+        host, loop = ws.inline_ai.host, asyncio.get_running_loop()
+        async def call(f, code): return str(await loop.run_in_executor(None, lambda: f(code)))
+        k = await ws.runtime()
+        assert str(proj/'.venv') in str(k.python), 'the notebook runs in the venv made for it'
+        out = await call(host.run_python, 'import rupaka')
+        assert 'No module named' in out and 'leela_python' in out, f'the project kernel has no Leela packages, and says where they are: {out}'
+        out = await call(host.leela_python, 'import leela, rupaka, kosha, ramabana, nbformat, os, sys\nprint(sys.executable, os.getcwd(), open("data.txt").read())')
+        assert runtime_python() in out and str(proj) in out and 'hello' in out, out
+        assert '6' in await call(host.leela_python, 'mine = 6\nprint(mine)')
+        assert '6' in await call(host.leela_python, 'print(mine)'), 'its names stay for the next call'
+        assert not [e for e in ws.envs() if e.get('name') == 'leela'], "Leela's kernel is not one the variable panel offers"
+        await ws.shutdown()
+        assert ws._own is not None and not ws._own.alive, 'and it closes with the workspace'
+    asyncio.run(go())
+
+def test_leela_python_is_a_session_tool_and_run_python_points_at_it(tmp_path):
+    "The agent had one Python tool, the user's kernel, so Leela's own tools ran where only the project's packages belong."
+    from leela.blocks.agent.ai import WorkspaceHost, _session_tools
+    from leela.workspace import Workspace
+    ws = Workspace(roots=[tmp_path])
+    host = WorkspaceHost(ws)
+    tool = first(t for t in _session_tools(host) if t.__name__ == 'leela_python')
+    assert tool is not None and getattr(tool, 'writes', False), 'it runs arbitrary code, so it asks like run_python'
+    host._run = lambda code, scope: "ModuleNotFoundError: No module named 'kosha'"
+    assert 'leela_python' in host.run_python('import kosha')
+    host._run = lambda code, scope: "ModuleNotFoundError: No module named 'pandas'"
+    assert 'leela_python' not in host.run_python('import pandas'), "a project's own package gets no such hint"

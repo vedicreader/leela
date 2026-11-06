@@ -451,7 +451,7 @@ function portableToolKind(tool) {
   if (['view_file', 'view_cell', 'notebook_cells', 'read_terminal'].includes(tool)) return 'view';
   if (['edit_file', 'create_file', 'edit_cell', 'add_cell'].includes(tool)) return 'edit';
   if (['web_search', 'read_url', 'research'].includes(tool)) return 'web';
-  if (['run_python', 'inspect_python', 'run_cell'].includes(tool)) return 'run';
+  if (['run_python', 'inspect_python', 'run_cell', 'leela_python'].includes(tool)) return 'run';
   if (tool === 'read_skill') return 'skill';
   if (tool.startsWith('delegate_')) return 'delegate';
   return 'tool';
@@ -466,6 +466,7 @@ function portableToolSummary(tool, args) {
   if (tool === 'read_skill') return `Load skill · ${short(a.name)}`;
   if (tool === 'ls') return `Scan files · ${short(a.path) || '.'}${a.pattern ? ' ' + short(a.pattern) : ''}`;
   if (tool === 'run_python') return `Run Python · ${short(a.code).split(';')[0].slice(0, 82)}`;
+  if (tool === 'leela_python') return `Leela Python · ${short(a.code).split(';')[0].slice(0, 82)}`;
   if (tool === 'inspect_python') return `Inspect · ${short(a.code).split(';')[0].slice(0, 82)}`;
   if (tool === 'run_cell') return `Run cell · ${compactPath(a.path)} ${short(a.cell_id)}`;
   if (tool === 'web_search') return `Search web · ${short(a.query).slice(0, 92)}`;
