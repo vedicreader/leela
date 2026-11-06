@@ -66,19 +66,10 @@ def main(argv=None):
         print('  "keys" holds what you changed; copy a line out of "_defaults" to change one more.')
         for n in NOTES: print(f'  ⚠ {n}')
         return
-    # Put the extras directory on the path where the process starts, not only after an install.
-    from . import use_extras
-    use_extras()
-    # A window opened from Finder has launchd's environment, not a shell's, so the keys and the
-    # tools a profile exports are missing. `LEELA_SHELL_ENV=0` keeps the environment as launched.
-    if os.environ.get('LEELA_SHELL_ENV', '1') != '0' and (getattr(sys, 'frozen', False)
-                                                          or os.environ.get('LEELA_SHELL_ENV') == '1'):
-        from .core.envs import import_login_env
-        import_login_env()
-    # Leela's own, whatever the launch was, and last: a value typed into Leela is the answer for a
-    # machine where asking the shell gives the wrong one.
-    from .core.envs import apply_stored_env
-    apply_stored_env()
+    from .core import host
+    # The Mac app runs this server as its child: its env, its dialogs, and no extras folder to shadow the pinned packages.
+    if host.take(): host.setup()
+    else: _plain_setup()
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')
@@ -106,5 +97,20 @@ def main(argv=None):
     threading.Thread(target=serve, args=('none',), daemon=True, name='leela-server').start()
     warm_cdp(a.cdp_port)
     run_shell(urls, titles=titles)
+
+def _plain_setup():
+    # Put the extras directory on the path where the process starts, not only after an install.
+    from . import use_extras
+    use_extras()
+    # A window opened from Finder has launchd's environment, not a shell's, so the keys and the
+    # tools a profile exports are missing. `LEELA_SHELL_ENV=0` keeps the environment as launched.
+    if os.environ.get('LEELA_SHELL_ENV', '1') != '0' and (getattr(sys, 'frozen', False)
+                                                          or os.environ.get('LEELA_SHELL_ENV') == '1'):
+        from .core.envs import import_login_env
+        import_login_env()
+    # Leela's own, whatever the launch was, and last: a value typed into Leela is the answer for a
+    # machine where asking the shell gives the wrong one.
+    from .core.envs import apply_stored_env
+    apply_stored_env()
 
 if __name__ == '__main__': main()

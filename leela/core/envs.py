@@ -46,8 +46,9 @@ def _write(values):
 
 def apply_stored_env(env=None):
     "Put Leela's own values into the environment, over whatever the shell said. Returns the names."
+    from .host import on, steered
     target = os.environ if env is None else env
-    values = stored_env()
+    values = {k: v for k, v in stored_env().items() if not (on() and steered(k))}
     target.update(values)
     return sorted(values)
 
@@ -57,6 +58,8 @@ def set_env(key, value):
     if not _NAME.match(key): raise EnvError(
         f'{key or "a name"} is not an environment variable name: letters, digits and underscore, not starting with a digit')
     if not value: raise EnvError(f'{key} needs a value; remove it instead to unset it')
+    from .host import on, steered
+    if on() and steered(key): raise EnvError(f'{key} belongs to the Leela app and cannot be set here')
     _write({**stored_env(), key: value})
     os.environ[key] = value
     return {'key': key, 'secret': is_secret(key)}
@@ -126,8 +129,9 @@ def import_login_env(shell=None, env=None, timeout=8):
     if not exported: return []
     target = os.environ if env is None else env
     added, path = [], []
+    from .host import on, steered
     for k, v in exported.items():
-        if k in _SHELL_ONLY: continue
+        if k in _SHELL_ONLY or (on() and steered(k)): continue
         if k == 'PATH': path = [d for d in v.split(os.pathsep) if d]
         elif not target.get(k) and v: target[k], _ = v, added.append(k)   # launchd's empty value is no choice
     # A directory the shell has and this process does not can only add a tool, so it goes on the end.

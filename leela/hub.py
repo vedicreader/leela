@@ -179,6 +179,44 @@ async def _json(send, body, status=200):
 
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 
+#: The launcher's routes on the server: liveness, its folder grants, and what its menu bar and Dock menu show.
+HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH = '/health', '/hub/grant', '/app/menu.json', '/app/recent'
+APP_PATHS = (HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH)
+HOST_HEADER = 'x-leela-host-token'
+BAD_TOKEN = 'This request did not come from the Leela app.'
+
+def _host_says(scope):
+    "None with no host token header, else whether it is the launcher's token."
+    if (t := _headers(scope).get(HOST_HEADER.encode())) is None: return None
+    from .core.host import token_ok
+    return token_ok(t.decode('latin-1'))
+
+def health():
+    "What `/health` answers: the launcher waits for status ok."
+    from . import __version__
+    from .core.host import lock_n
+    return {'status': 'ok', 'version': __version__, 'lock_n': lock_n()}
+
+async def _app_route(scope, send):
+    path, method = scope.get('path'), scope.get('method', 'GET')
+    if path == HEALTH_PATH:
+        if method not in ('GET', 'HEAD'): return await _json(send, {'ok': False, 'error': 'GET only'}, 405)
+        return await _json(send, health())
+    if not _host_says(scope): return await _json(send, {'ok': False, 'error': BAD_TOKEN, 'config': cfg_mark()}, 401)
+    if path == GRANT_PATH:
+        if method != 'POST': return await _json(send, {'ok': False, 'error': 'POST only'}, 405)
+        raw = (parse_qs(scope.get('query_string', b'').decode()).get('path') or [''])[0]
+        try: root = Path(raw).expanduser().resolve() if raw.strip() else None
+        except (OSError, ValueError): root = None
+        if root is None or not root.is_dir(): return await _json(send, {'ok': False, 'error': f'not a folder: {raw}', 'config': cfg_mark()}, 400)
+        grant(root)
+        return await _json(send, {'ok': True, 'root': str(root)})
+    if path == MENU_PATH:
+        from .blocks.keys.menus import menu_json
+        return await _json(send, {'ok': True, 'menus': await asyncio.to_thread(menu_json)})
+    from .core.projects import recent_folders
+    return await _json(send, {'ok': True, 'recent': [str(r) for r in await asyncio.to_thread(recent_folders)]})
+
 def _name(raw):
     "A host name from a header or a URL: an IPv6 literal unbracketed, the port and root dot gone."
     raw = str(raw or '').lower()
@@ -304,6 +342,7 @@ class WorkspaceHub:
         # whichever answers for bare loopback: one that never hears it never stops its kernels.
         if scope.get('type') == 'lifespan': return await self._lifespan(scope, receive, send)
         if scope.get('path') == OPEN_PATH: return await self._open(scope, send)
+        if scope.get('path') in APP_PATHS: return await _app_route(scope, send)
         site = self.site_for(scope)
         if site is None: return await _refuse(scope, send, 'unknown workspace host')
         scope = dict(scope)
@@ -317,6 +356,8 @@ class WorkspaceHub:
         raw, file, folder = (q.get('path') or [''])[0], (q.get('file') or [''])[0], (q.get('folder') or [''])[0] == '1'
         if scope.get('method', 'GET') != 'POST' and raw.strip():
             return await _json(send, {'ok': False, 'error': 'Open a folder with a POST request.', 'config': cfg_mark()}, 405)
+        trusted = _host_says(scope)
+        if trusted is False: return await _json(send, {'ok': False, 'error': BAD_TOKEN, 'config': cfg_mark()}, 401)
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
         if root is None or not root.is_dir():
@@ -331,7 +372,7 @@ class WorkspaceHub:
         if site is None:
             into = f'the Leela window for {root.name}' if self.site_at(root) else 'a new Leela window'
             # off the loop: the question waits on a person, and the window it asks in needs the loop to load
-            if no := await asyncio.to_thread(admit_folder, [root, *also], into, [file] if file else (), headers=_headers(scope)):
+            if no := await asyncio.to_thread(admit_folder, [root, *also], into, [file] if file else (), trusted=bool(trusted), headers=_headers(scope)):
                 return await _json(send, {**no[1], 'config': cfg_mark()}, no[0])
         # Building one starts a kernel pool, which would stall every open window on the loop.
         try:

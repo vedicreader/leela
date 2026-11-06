@@ -5,7 +5,7 @@ from kavacha import Js, MenuItem, Std
 
 from ...core.keys import KEYS, chord_display, lookup
 
-__all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus']
+__all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus', 'menu_json']
 
 S = MenuItem
 MENUS = {
@@ -128,3 +128,17 @@ BAR = (
 _bar_acts = {r.action for _, rows in BAR for r in rows if isinstance(r, MenuItem) and r.action}
 if _missing := sorted(_bar_acts - _known):
     raise ValueError('the menu bar names actions the keymap does not declare: ' + ', '.join(_missing))
+
+def _bar_row(row):
+    from kavacha.window import mac_key, menu_chord
+    if isinstance(row, MenuItem) and not row.action: return {'sep': True}
+    if isinstance(row, Js): return {'title': row.title, 'js': row.expr}
+    if isinstance(row, Std): out, k = {'title': row.title, 'selector': row.selector}, mac_key(f'{row.mods}+{row.key}') if row.key else None
+    else:
+        b = lookup(row.action)
+        out, k = {'title': (t := b.label if b and b.label else row.action.replace('_', ' '))[:1].upper() + t[1:], 'action': row.action}, menu_chord(row.action, lookup)
+    return out | (dict(key=k[0], mask=k[1]) if k else {})
+
+def menu_json():
+    "`BAR` for the Mac app's own menu bar: rows with a keymap action, an AppKit selector or JS, and the chord as AppKit spells it."
+    return [{'title': t, 'items': [_bar_row(r) for r in rows]} for t, rows in BAR]
