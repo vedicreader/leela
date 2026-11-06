@@ -108,8 +108,18 @@ public final class Supervisor {
     }
 
     func firstBuild(_ p: LockPlan, gen: Int) async throws -> String {
-        set(.setup(.packages(done: 0, total: p.manifest.download_bytes, line: "")))
-        let cache = store.paths.uvCache, start = Setup.bytes(cache), total = p.manifest.download_bytes
+        let cache = store.paths.uvCache, start = Setup.bytes(cache), total = Setup.estimate(total: p.manifest.download_bytes, cacheAtStart: start)
+        set(.setup(.installing(count: 0, line: "")))
+        // the cache is measured between uv's lines too: uv writes nothing while a large wheel downloads
+        let ticker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, gen == self.generation, case .setup(let cur) = self.phase else { continue }
+                let done = await Task.detached { Setup.bytes(cache) - start }.value
+                if let next = Setup.tick(cur, done: done, total: total) { self.set(.setup(next)) }
+            }
+        }
+        defer { ticker.cancel() }
         let h = try await store.build(lock: p.dir, n: p.n, line: { [weak self] l in
             Task { @MainActor in
                 guard let self, gen == self.generation, case .setup(let cur) = self.phase else { return }

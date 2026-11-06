@@ -47,10 +47,23 @@ func py(_ port: Int, _ die: Double) -> Launch {
         guard case .ready(let base) = sup.phase else { Issue.record("phase \(sup.phase)"); return }
         #expect(await Health.check(base))
         #expect(seen.first == .setup(.checking) && seen.contains(.setup(.starting)))
-        #expect(seen.contains { if case .setup(.packages) = $0 { true } else { false } })
+        #expect(seen.contains(.setup(.installing(count: 3, line: "Installed 3 packages in 5ms"))) && !seen.contains { if case .setup(.packages) = $0 { true } else { false } },
+                "a warm cache installs: no megabytes")
         #expect(s.load().current == sup.hash && s.load().proven == [sup.hash!])
         sup.stop()
         #expect(!sup.isRunning && sup.phase == .idle)
+    }
+
+    @Test func aColdFirstRunShowsTheMegabytesThatDownload() async throws {
+        let uv = fakeUV(), s = store(uv: uv), lock = tempDir(); makeLock(lock, n: 1)
+        try Data().write(to: uv.deletingLastPathComponent().appending(path: "COLD"))
+        let sup = supervisor(s, lock: lock)
+        var seen = [Phase]()
+        sup.onPhase = { seen.append($0) }
+        await sup.start()
+        let got = seen.compactMap { if case .setup(.packages(let d, _, _)) = $0 { d } else { nil } }
+        #expect(got.contains { $0 >= 3_000_000 }, "\(got)")
+        sup.stop()
     }
 
     @Test func aFailedFirstBuildShowsTheReasonAndTheLog() async throws {
@@ -176,13 +189,25 @@ func py(_ port: Int, _ die: Double) -> Launch {
 }
 
 @Suite struct SetupTests {
-    @Test func uvLinesMoveThePhasesInOrder() {
+    @Test func aColdCacheShowsTheDownloadThenTheInstall() {
         var p = SetupPhase.checking
-        for (line, want) in [("Using CPython 3.13.18", "packages"), ("Downloading cpython-3.13.18-macos-aarch64-none (23.9MiB)", "python"),
-                             ("Downloading numpy (5.1MiB)", "packages"), ("Prepared 272 packages in 30s", "packages"), ("Installed 272 packages in 2s", "verifying")] {
-            p = Setup.phase(after: line, current: p, done: 10_000_000, total: 400_000_000) ?? p
-            #expect("\(p)".hasPrefix(want), "\(line)")
+        for (line, want) in [("Downloading cpython-3.13.18-macos-aarch64-none (23.9MiB)", "python"), ("Using CPython 3.13.18", "installing"),
+                             ("Downloading numpy (5.1MiB)", "packages"), ("Prepared 272 packages in 30s", "packages"), ("Installed 272 packages in 2s", "installing(count: 272")] {
+            p = Setup.phase(after: line, current: p, done: line.contains("numpy") || line.contains("Prepared") ? 10_000_000 : 0, total: 400_000_000) ?? p
+            #expect("\(p)".hasPrefix(want), "\(line): \(p)")
         }
+        #expect(p.title == "Installing packages (272)")
+    }
+
+    @Test func aWarmCacheSaysInstallingNotZeroMegabytes() {
+        // build 9 showed "Getting packages (0 MB of about 342 MB)" while uv linked every package from its cache
+        var p = SetupPhase.checking
+        for line in ["Using CPython 3.13.18", "Creating virtual environment at: envs/x"] { p = Setup.phase(after: line, current: p, done: 40_000, total: 0) ?? p }
+        #expect(p.title == "Installing packages" && p.fraction == nil)
+        #expect(Setup.tick(p, done: 900_000, total: 0) == nil, "a little metadata is not a download")
+        let moved = Setup.tick(p, done: 30_000_000, total: 0)
+        #expect(moved?.title == "Getting packages (30 MB)", "a cache that grows is a download, even with no line from uv")
+        #expect(Setup.estimate(total: 342_000_000, cacheAtStart: 2_000_000_000) == 0 && Setup.estimate(total: 342_000_000, cacheAtStart: 1_000_000) == 342_000_000)
     }
 
     @Test func thePackagesPhaseIsDeterminateWithATotal() {

@@ -66,6 +66,8 @@ func fakeUV(_ dir: URL = tempDir()) -> URL {
     env | grep '^UV_' | sort > "$d/env.txt"
     mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"
     echo "Downloading cpython-3.13.18-macos-aarch64-none (23.9MiB)"
+    echo "Using CPython 3.13.18"
+    if [ -f "$d/COLD" ]; then echo "Downloading numpy (3.0MiB)"; mkdir -p "$UV_CACHE_DIR"; head -c 3000000 /dev/zero > "$UV_CACHE_DIR/numpy.whl"; sleep 1; echo " Downloaded numpy"; fi
     echo "Prepared 3 packages in 10ms"
     if [ -f "$d/FAIL" ]; then echo "error: Failed to fetch: no network" >&2; exit 2; fi
     printf '#!/bin/sh\\nexit 0\\n' > "$UV_PROJECT_ENVIRONMENT/bin/leela"; chmod +x "$UV_PROJECT_ENVIRONMENT/bin/leela"

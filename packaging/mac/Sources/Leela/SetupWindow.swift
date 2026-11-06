@@ -43,7 +43,7 @@ final class SetupWindow {
         case .setup(let s):
             title.stringValue = s.title
             if let f = s.fraction { bar.isIndeterminate = false; bar.doubleValue = f * 100 } else { bar.isIndeterminate = true; bar.startAnimation(nil) }
-            if case .packages(_, _, let line) = s { detail.stringValue = line } else { detail.stringValue = "" }
+            switch s { case .packages(_, _, let line), .installing(_, let line): detail.stringValue = line; default: detail.stringValue = "" }
             failed = false
         case .starting, .idle: title.stringValue = "Starting Leela"; detail.stringValue = ""; bar.isIndeterminate = true; bar.startAnimation(nil); failed = false
         case .offline: title.stringValue = "Leela needs the internet"; detail.stringValue = Setup.offline; failed = true

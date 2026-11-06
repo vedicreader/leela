@@ -133,7 +133,7 @@ The pinned project is `packaging/lock/`: `pyproject.toml`, `uv.lock`, `.python-v
 | `launcher_api_min` | the lowest launcher API that can run it |
 | `platform` | `darwin-arm64` |
 | `macos_min` | the lowest macOS |
-| `download_bytes` | about how much a first install downloads |
+| `download_bytes` | about how much a first install downloads; the setup window gives it as the total only when the uv cache starts near empty. Otherwise it says "Installing packages" while uv links from its cache, and "Getting packages (n MB)" only once the cache grows by more than 2 MB (`Setup.phase`, `Setup.tick`) |
 
 ### The channel
 
