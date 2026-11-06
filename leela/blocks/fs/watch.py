@@ -39,7 +39,7 @@ class Watcher:
     "One watchfiles thread over the open roots. Subscribers get debounced batches of paths."
     def __init__(self, fs, step=200, poll=1):
         store_attr()
-        self.subs, self.stop, self.thread, self.loop, self.roots = set(), None, None, None, ()
+        self.subs, self.stop, self.thread, self.loop, self.roots, self.up = set(), None, None, None, (), ()
     def subscribe(self):
         q = asyncio.Queue(maxsize=64)
         self.subs.add(q)
@@ -60,11 +60,16 @@ class Watcher:
         if loop is None: return
         self.close(wait=False)
         self.roots, self.loop, self.stop, self.keys = roots, loop, threading.Event(), keymap.VERSION
+        polled, quiet = self.up = threading.Event(), threading.Event()
         if roots:
-            self.thread = threading.Thread(target=self._run, args=(roots, self.stop), daemon=True,
+            self.thread = threading.Thread(target=self._run, args=(roots, self.stop, quiet), daemon=True,
                                            name='leela-fs-watch')
             self.thread.start()
-        threading.Thread(target=self._poll, args=(self.stop,), daemon=True, name='leela-loose-poll').start()
+        else: quiet.set()
+        threading.Thread(target=self._poll, args=(self.stop, polled), daemon=True, name='leela-loose-poll').start()
+    async def settled(self, timeout=10):
+        "True once the poll holds its baseline and the watch has gone `RUST_TIMEOUT` without a batch."
+        return all(await asyncio.gather(*(asyncio.to_thread(e.wait, timeout) for e in self.up)))
     def close(self, wait=True):
         # The notify thread is Rust: one alive at interpreter teardown segfaults. Teardown joins.
         # A replacement does not, and the two overlap until the old one notices `stop`.
@@ -72,22 +77,27 @@ class Watcher:
         self.thread = self.stop = None
         if stop: stop.set()
         if wait and thread and thread is not threading.current_thread(): thread.join(timeout=WAIT)
-    def _run(self, roots, stop):
+    def _run(self, roots, stop, quiet):
         try: from watchfiles import watch
         except ImportError as e:
+            quiet.set()
             # Said once, on the thread: silence here is why a frozen build went without a file
             # watcher for as long as it did, and the tree looked merely stale rather than broken.
             print(f'  the file tree will not follow the disk: {errstr(e)}')
             return
         keep = lambda _change, p: not (set(Path(p).parts) & SKIP_DIRS) or git_meta(p) is not None
         for batch in watch(*roots, stop_event=stop, watch_filter=keep, debounce=self.step,
-                           rust_timeout=RUST_TIMEOUT):
+                           rust_timeout=RUST_TIMEOUT, yield_on_timeout=True):
             if stop.is_set(): return
+            if not batch:                                    # macOS replays a setup mkdir late; this follows it
+                quiet.set()
+                continue
             try: self._push(sorted({p for _change, p in batch}))
             except RuntimeError: return                      # the loop closed under us
-    def _poll(self, stop):
+    def _poll(self, stop, polled):
         "Admitted files and the keymap sit outside every watched root, so they are statted."
-        seen = {}
+        seen = {p: _sig(p) for p in self.fs.admitted}   # taken now: an edit before the first tick is still one
+        polled.set()
         while not stop.wait(self.poll):
             now = {p: _sig(p) for p in self.fs.admitted}
             try:
