@@ -309,6 +309,26 @@ def _project(tmp, py):
     (d/'probe.ipynb').write_text(json.dumps(dict(cells=[cell], metadata={}, nbformat=4, nbformat_minor=5)))
     return d
 
+_AGENT_SHELL = '''
+import json, subprocess, sys
+from pathlib import Path
+from leela.core import host
+host._host.update(url='http://127.0.0.1:9', token='t')
+from leela.blocks.agent.ai import WorkspaceHost
+e = WorkspaceHost._env(None, Path(sys.argv[1]))
+r = lambda c: subprocess.run(c, shell=True, cwd=sys.argv[1], env=e, capture_output=True, text=True)
+print(json.dumps(dict(ramabana=r('ramabana --help').returncode, kosha=r('kosha --help').returncode, python=r('command -v python').stdout.strip(),
+                      uv=r('command -v uv').stdout.strip(), linked=sorted(p.name for p in host.tools_dir().iterdir()))))
+'''
+
+def agent_shell(py, proj, env):
+    "The links the server made: an agent's shell in `proj` runs `ramabana` and `kosha` from the app's env, and its `python` is the project's."
+    got = json.loads(sh(py, '-I', '-c', _AGENT_SHELL, proj, env=env, timeout=120).splitlines()[-1])
+    bad = [f'{n} gave {got[n]}' for n in ('ramabana', 'kosha') if got[n]]
+    bad += [f'python is {got["python"]}'] if os.path.realpath(os.path.dirname(got['python'])) != os.path.realpath(proj/'.venv'/'bin') else []
+    bad += [f'{n} is linked' for n in got['linked'] if n.startswith(('python', 'pip', 'uv'))]
+    if bad: raise RuntimeError('; '.join(bad))
+
 def project_cell(base, port, proj, env_dir):
     "Through the server's routes, a cell of a notebook in `proj` runs on the project's .venv, and no app build setting reaches it."
     d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(proj))}', data=b'', timeout=120)
@@ -322,7 +342,7 @@ def project_cell(base, port, proj, env_dir):
     if not r.get('ok') or not text.strip(): raise RuntimeError(f'the cell failed: {json.dumps(outs)[-800:]}')
     got, app = json.loads(text.strip().splitlines()[-1]), os.path.realpath(env_dir)
     bad = [f'sys.prefix is {got["prefix"]}'] if os.path.realpath(got['prefix']) != os.path.realpath(proj/'.venv') else []
-    bad += [f'UV keys {got["uv"]}'] if got['uv'] else []
+    bad += [f'UV keys {got["uv"]}, not only the stored UV_INDEX_URL'] if got['uv'] != ['UV_INDEX_URL'] else []
     bad += ['PYTHONNOUSERSITE is set'] if got['nousersite'] else []
     bad += [f'VIRTUAL_ENV is the app env'] if got['venv'] and os.path.realpath(got['venv']) == app else []
     bad += ['the app env bin is on PATH'] if any(p and os.path.realpath(p) == os.path.join(app, 'bin') for p in got['path']) else []
@@ -341,6 +361,7 @@ def smoke(env_dir, results, extras=(), wait=180):
     tmp = Path(tempfile.mkdtemp(prefix='leela-smoke-')).resolve()
     (tmp/'cfg').mkdir(); (tmp/'data').mkdir(); (work := tmp/'work').mkdir()
     ok &= step('project .venv', lambda: _project(tmp, py))
+    (tmp/'cfg'/'leela').mkdir(parents=True); (tmp/'cfg'/'leela'/'env.json').write_text(json.dumps({'UV_INDEX_URL': 'https://example.invalid/simple'}))   # the person's own, set in Leela
     proj = tmp/'proj'
     def serve(name, env, checks):
         "The server in host mode under `env`, as the launcher starts it, then `checks(base, port)`."
@@ -373,6 +394,7 @@ def smoke(env_dir, results, extras=(), wait=180):
         d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(work))}', data=b'', timeout=120)
         if not d.get('ok'): raise RuntimeError(d)
     ok &= serve('', server_env(), lambda base, port: step('/hub/open', lambda: hub_open(base)) & step('project kernel cell', lambda: project_cell(base, port, proj, env_dir)))
+    ok &= step('agent shell tools', lambda: agent_shell(py, proj, server_env() | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'))))
     old = server_env_1_0(env_dir, cache='', python='', python_version=PYTHON)
     ok &= serve(' (app 1.0.0 env)', old, lambda base, port: step('project kernel cell (app 1.0.0 env)', lambda: project_cell(base, port, proj, env_dir)))
     kenv = server_env() | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), JUPYTER_DATA_DIR=str(tmp/'jd'))

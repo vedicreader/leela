@@ -1,13 +1,16 @@
 "Host mode: the Leela Mac app runs this server as its child and answers on a loopback control server. See `docs/thin-app.md`."
 import hmac, http.client, json, os, select, sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
-__all__ = ['HostError', 'OWNED', 'take', 'on', 'is_app', 'unbuild', 'steered', 'call', 'status', 'confirm', 'grant_ok', 'setup', 'app_version', 'lock_n']
+__all__ = ['HostError', 'OWNED', 'AGENT_TOOLS', 'take', 'on', 'is_app', 'unbuild', 'tools_dir', 'agent_scripts', 'link_tools', 'with_tools', 'steered', 'call', 'status', 'confirm', 'grant_ok', 'setup', 'app_version', 'lock_n']
 
 #: What the launcher sets for its child. No shell and no stored value replaces these.
 OWNED = ('LEELA_HOST_URL', 'LEELA_HOST_TOKEN', 'LEELA_APP_VERSION', 'LEELA_APP_BUNDLE', 'LEELA_LOCK_N', 'LEELA_ENV_HASH', 'LEELA_UV')
 #: Names that would move the server off the environment the launcher built.
 STEER = ('PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP', 'PYTHONUSERBASE', 'VIRTUAL_ENV', 'CONDA_PREFIX')
+#: Packages of the app's env whose console scripts an agent's shell runs by name.
+AGENT_TOOLS = ('ramabana', 'koshas', 'exhash', 'fossick', 'litesearch', 'vishalakshi', 'gheasy', 'safepyrun', 'pyskills', 'rgapi', 'mdhtml')
 
 class HostError(Exception): "The launcher did not answer, or refused."
 
@@ -49,7 +52,42 @@ def unbuild(env=None, prefix=None):
     if os.path.realpath(env.get('VIRTUAL_ENV') or '/') == prefix: del env['VIRTUAL_ENV']
     if 'PATH' in env: env['PATH'] = os.pathsep.join(p for p in env['PATH'].split(os.pathsep) if p and os.path.realpath(p) != os.path.join(prefix, 'bin'))
     return env
-def steered(k): return k in STEER or k in OWNED or k.startswith('UV_')
+
+def tools_dir(prefix=None):
+    "Where the links to the env's agent tools go: `bin` beside the launcher's `envs/`, else Leela's data folder."
+    from fastcore.xdg import xdg_data_home
+    p = Path(sys.prefix if prefix is None else prefix)
+    return p.parent.parent/'bin' if p.parent.name == 'envs' else xdg_data_home()/'leela'/'bin'
+
+def agent_scripts(pkgs=AGENT_TOOLS):
+    "The console scripts of `pkgs` in this env; never a python, pip or uv."
+    from importlib.metadata import PackageNotFoundError, distribution
+    out = []
+    for n in pkgs:
+        try: out += [e.name for e in distribution(n).entry_points if e.group == 'console_scripts']
+        except PackageNotFoundError: pass
+    return sorted(n for n in set(out) if not n.startswith(('python', 'pip', 'uv')))
+
+def link_tools(names=None, src=None, dst=None):
+    "Link `names` from the env's scripts folder `src` into `dst`, replacing what an earlier env left there. The folder."
+    import sysconfig
+    src, dst = Path(src or sysconfig.get_path('scripts')), Path(dst or tools_dir())
+    want = {n for n in (agent_scripts() if names is None else names) if (src/n).is_file()}
+    dst.mkdir(parents=True, exist_ok=True)
+    for n in want:
+        (tmp := dst/f'.{n}.{os.getpid()}').unlink(missing_ok=True)
+        tmp.symlink_to(src/n); os.replace(tmp, dst/n)
+    for p in dst.iterdir():
+        if p.name not in want and p.is_symlink(): p.unlink()
+    return dst
+
+def with_tools(env=None):
+    "`env` (this process's, by default) with the app's agent tools on PATH, in host mode."
+    env = dict(os.environ if env is None else env)
+    if on() and (d := tools_dir()).is_dir(): env['PATH'] = os.pathsep.join([str(d), *filter(None, env.get('PATH', '').split(os.pathsep))])
+    return env
+
+def steered(k): return k in STEER or k in OWNED
 def app_version(): return os.environ.get('LEELA_APP_VERSION') if on() else None
 
 def lock_n():
@@ -108,4 +146,6 @@ def setup():
     use_utf8(); use_login_path()
     if os.environ.get('LEELA_SHELL_ENV', '1') != '0': import_login_env()
     apply_stored_env()
+    try: link_tools()
+    except OSError as e: print(f'leela: the agent tools are not linked: {e}', file=sys.stderr)
     set_confirmer(confirm)

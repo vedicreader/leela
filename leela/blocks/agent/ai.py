@@ -906,7 +906,8 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         d = self.check(cwd) if cwd else self.check(self.project)
         return d if d.is_dir() else d.parent
     def _env(self, d):
-        env = venv_env(python_for(d, session=None))
+        from ...core.host import with_tools
+        env = venv_env(python_for(d, session=None), env=with_tools())
         if not env.get('TERM'): env['TERM'] = 'dumb'   # no tty here, but a tool that reads TERM must find one
         return env
     def run_cmd_bg(self, command, cwd=None):

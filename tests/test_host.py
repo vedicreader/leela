@@ -110,15 +110,15 @@ def test_import_login_env_skips_what_the_launcher_owns_only_in_host_mode(monkeyp
     monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
     target = {}
     envs.import_login_env(env=target)
-    assert target == {'OPENAI_API_KEY': 'k'}
+    assert target == {'OPENAI_API_KEY': 'k', 'UV_INDEX': 'i'}, "the person's uv settings reach their kernels, shells and project builds, as in the old app"
 
 def test_stored_values_do_not_replace_the_launchers_in_host_mode(monkeypatch):
     monkeypatch.setattr(envs, 'stored_env', lambda: dict(VIRTUAL_ENV='/old', UV_CACHE_DIR='/c', LEELA_LOCK_N='99', OPENAI_API_KEY='k'))
     monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
     target = dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3')
     envs.apply_stored_env(target)
-    assert target == dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3', OPENAI_API_KEY='k')
-    with pytest.raises(envs.EnvError): envs.set_env('UV_INDEX', 'x')
+    assert target == dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3', OPENAI_API_KEY='k', UV_CACHE_DIR='/c')
+    with pytest.raises(envs.EnvError): envs.set_env('LEELA_LOCK_N', 'x')
 
 APP_1_0 = dict(UV_NO_CONFIG='1', UV_CACHE_DIR='/c', UV_PYTHON_INSTALL_DIR='/py', UV_PYTHON_PREFERENCE='only-managed', UV_PYTHON='3.12.16',
                UV_PROJECT_ENVIRONMENT=sys.prefix, UV_FROZEN='1', UV_NO_PROGRESS='1', UV_LINK_MODE='clone', PYTHONNOUSERSITE='1', NO_COLOR='1')
@@ -136,7 +136,7 @@ def test_host_setup_takes_out_what_app_1_0_gave_and_keeps_the_persons_own(monkey
     monkeypatch.setattr(envs, 'stored_env', lambda: dict(PYTHONNOUSERSITE='1', UV_INDEX='i'))
     monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
     host.setup()
-    assert not [k for k in os.environ if k.startswith('UV_')] and 'VIRTUAL_ENV' not in os.environ and 'NO_COLOR' not in os.environ
+    assert [k for k in os.environ if k.startswith('UV_')] == ['UV_INDEX'] and 'VIRTUAL_ENV' not in os.environ and 'NO_COLOR' not in os.environ
     assert os.environ['PATH'] == '/opt/homebrew/bin:/usr/bin' and not called
     assert os.environ['PYTHONNOUSERSITE'] == '1', 'a stored value is the person\'s, and outlives the scrub'
     assert hub._gate['confirm'] is host.confirm
@@ -411,3 +411,27 @@ def test_host_mode_offers_to_remove_the_old_extras_folder_and_removes_only_it(mo
     assert TestClient(a).post('/update/old-extras').json() == {'ok': True}
     assert not (tmp_path/'leela'/'extras').exists() and (tmp_path/'leela'/'keep.json').is_file()
     assert U.old_extras() is None
+
+def test_the_agent_tools_are_linked_without_python_pip_or_uv(tmp_path):
+    src, dst = tmp_path/'env'/'bin', tmp_path/'bin'
+    src.mkdir(parents=True); dst.mkdir()
+    for n in ('ramabana', 'kosha', 'python', 'pip', 'uv'): (src/n).write_text('#!/bin/sh\n')
+    (dst/'old-tool').symlink_to(src/'kosha')
+    host.link_tools(['ramabana', 'kosha', 'gone'], src, dst)
+    assert sorted(p.name for p in dst.iterdir()) == ['kosha', 'ramabana'] and (dst/'kosha').resolve() == src/'kosha'
+    names = host.agent_scripts()
+    assert {'ramabana', 'kosha', 'exhash'} <= set(names) and not [n for n in names if n.startswith(('python', 'pip', 'uv'))]
+    assert host.tools_dir(tmp_path/'Leela'/'envs'/'abc') == tmp_path/'Leela'/'bin'
+
+def test_the_agent_shell_has_the_tools_after_the_projects_venv(monkeypatch, tmp_path):
+    "An agent's shell runs `ramabana` and `kosha` from the app's env, and `python` stays the project's."
+    import sys as _sys
+    from leela.blocks.agent.ai import WorkspaceHost
+    (tools := tmp_path/'bin').mkdir()
+    (proj := tmp_path/'p'/'.venv'/'bin').mkdir(parents=True); os.symlink(_sys.executable, proj/'python')
+    monkeypatch.setattr(host, 'tools_dir', lambda prefix=None: tools)
+    monkeypatch.setenv('PATH', '/usr/bin:/bin'); monkeypatch.setenv('UV_INDEX_URL', 'https://mine.example/simple')
+    assert WorkspaceHost._env(None, tmp_path/'p')['PATH'].split(os.pathsep)[0] == str(proj), 'outside host mode there is no tools folder'
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    e = WorkspaceHost._env(None, tmp_path/'p')
+    assert e['PATH'].split(os.pathsep)[:3] == [str(proj), str(tools), '/usr/bin'] and e['UV_INDEX_URL'] == 'https://mine.example/simple'
