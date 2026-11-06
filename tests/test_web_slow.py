@@ -776,11 +776,11 @@ def test_the_palette_lists_commands_and_hands_a_file_query_to_the_opener(tmp_pat
         await pg.wait_for_function("() => (lee.path || '').endsWith('zqxw_notes.py')", timeout=5000)
         return saved, only, asked, empty, prefilled, focused, await pg.evaluate("!!document.querySelector('#cp, #qo')")
     saved, only, asked, empty, prefilled, focused, still_open = _run(go, roots=[tmp_path])
-    assert saved[0].startswith('save') and saved[-1].startswith('Open file matching “save”'), saved
+    assert saved[0].startswith('save') and saved[-1].startswith('Go to file matching “save”'), saved
     assert not any('zqxw_notes.py' in r for r in only) and len(only) == 1, only
     assert not asked, 'the palette searched files itself'
     assert any(r.startswith('new lesson notebook') for r in empty), empty
-    assert not any(r.startswith('Open file') for r in empty), 'an empty query offers no hand-off'
+    assert not any(r.startswith('Go to file matching') for r in empty), 'an empty query offers no hand-off'
     assert (prefilled, focused) == ('zqxw', 'qo')
     assert not still_open, 'opening the file closes both'
 
@@ -1796,3 +1796,75 @@ def test_check_for_updates_answers_and_the_dialog_updates_through_brew(monkeypat
     assert got['row'] == 'update' and not got['modal']
     assert 'Leela 99.0 is installed. Restart now to use it.' in got['done'] and 'Restart Leela' in got['done']
     assert 'Restart Leela' in got['again'] and log.read_text().count('args ') == 1, 'a check after the run offers Restart, not a second brew'
+
+SHELL_FAKE = """(full) => {
+  const calls = window._shellCalls = [];
+  const api = {pick_folder: async () => (calls.push(['pick_folder']), '/picked/folder'),
+               open_folder: async p => (calls.push(['open_folder', p]), true)};
+  if (full) Object.assign(api, {pick_path: async () => (calls.push(['pick_path']), '/picked/a.png'),
+                                open_path: async p => (calls.push(['open_path', p]), true)});
+  window.pywebview = {api};
+}"""
+
+def test_open_takes_a_file_or_a_folder_in_the_app_and_asks_for_a_path_in_a_tab(tmp_path):
+    """⌘O showed the folder chooser only, so a file on the Mac could not be opened; the tree's `o` stays folder-only."""
+    (tmp_path/'notes.md').write_text('n\n')
+    async def go(pg):
+        out, asked = {}, []
+        async def hub(route):
+            asked.append(route.request.url)
+            await route.fulfill(json={'ok': False, 'declined': True, 'error': 'You said No.'})
+        await pg.route('**/hub/open*', hub)
+        await pg.evaluate("void leeAct('open_folder')")
+        await pg.wait_for_selector('#dialoginput', timeout=3000)
+        await pg.fill('#dialoginput', str(tmp_path/'notes.md'))
+        await pg.press('#dialoginput', 'Enter')
+        await pg.wait_for_function("() => /You said No/.test(document.body.innerText)", timeout=5000)
+        out['asked'] = list(asked)
+        await pg.evaluate(SHELL_FAKE, True)
+        await pg.evaluate("leeAct('open_folder')")
+        await pg.wait_for_function("() => _shellCalls.length === 2")
+        out['full'] = await pg.evaluate('_shellCalls')
+        await pg.evaluate(SHELL_FAKE, True)
+        await pg.evaluate("leeAct('tree_open_folder')")
+        await pg.wait_for_function("() => _shellCalls.length === 2")
+        out['tree'] = await pg.evaluate('_shellCalls')
+        await pg.evaluate(SHELL_FAKE, False)
+        await pg.evaluate("leeAct('open_folder')")
+        await pg.wait_for_function("() => _shellCalls.length === 2")
+        out['old'] = await pg.evaluate('_shellCalls')
+        return out
+    got = _run(go, roots=[tmp_path])
+    assert len(got['asked']) == 1 and 'path=' + str(tmp_path/'notes.md').replace('/', '%2F') in got['asked'][0], got['asked']
+    assert got['full'] == [['pick_path'], ['open_path', '/picked/a.png']], 'one chooser, then the Finder route'
+    assert got['tree'] == [['pick_folder'], ['open_folder', '/picked/folder']], 'the tree opens folders only'
+    assert got['old'] == [['pick_folder'], ['open_folder', '/picked/folder']], 'a window with no pick_path keeps the folder chooser'
+
+def test_a_file_dropped_on_the_page_opens_unless_the_page_takes_it(tmp_path):
+    """A file dropped on the app window did nothing; the editor, the tabs and the cells keep their own drops."""
+    import kavacha.window as kw
+    if not hasattr(kw, 'DROP_JS'): pytest.skip('kavacha has no DROP_JS before 0.0.14')
+    (f := tmp_path/'a.py').write_text('a = 1\n')
+    async def go(pg):
+        await pg.evaluate(f"leeOpenFile({str(f)!r})")
+        await pg.wait_for_function("() => lee.editors.get('file') && document.querySelector('.cm-content')")
+        await pg.evaluate("window._drops = []; window.pywebview = {api: {dropped: async (n, t) => (_drops.push([n, t]), [])}}")
+        await pg.evaluate(kw.DROP_JS)
+        await pg.evaluate(kw.DROP_JS)   # every page load runs it; once is what counts
+        return await pg.evaluate("""async () => {
+          const ev = (type, el, files) => {
+            const dt = new DataTransfer();
+            if (files) dt.items.add(new File(['x'], 'a.png', {type: 'image/png'})); else dt.setData('text/plain', '0');
+            const e = new DragEvent(type, {dataTransfer: dt, bubbles: true, cancelable: true});
+            el.dispatchEvent(e); return e.defaultPrevented;
+          };
+          const out = {over: ev('dragover', document.querySelector('#filetree'), true)};
+          ev('drop', document.querySelector('#filetree'), true);
+          ev('drop', document.querySelector('.cm-content'), true);
+          ev('drop', document.querySelector('.lee-tab'), false);
+          await new Promise(r => setTimeout(r, 50));
+          return {...out, drops: _drops};
+        }""")
+    got = _run(go, roots=[tmp_path])
+    assert got['over'], 'a file drag may land on the page'
+    assert got['drops'] == [[['a.png'], True], [['a.png'], False]], 'blank opens; the editor keeps its drop; a tab drag is no file'

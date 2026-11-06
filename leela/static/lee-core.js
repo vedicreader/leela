@@ -1440,7 +1440,7 @@ const ACTIONS = {
   new_dir:      () => newEntry('dir'),
   rename:       () => renameEntry(),
   delete:       () => deleteEntry(),
-  open_folder:  () => openFolderWindow(),
+  open_folder:  () => openAny(),
   tree_open_folder: () => openFolderWindow(),
   add_root:     () => addRoot(),
   find_repo:    () => findRepo(),
@@ -1448,7 +1448,7 @@ const ACTIONS = {
   refresh_files: () => refreshFileTree(),
   show_hidden:  () => toggleHidden(),
   up_dir:       () => treeCollapse(),
-  filter_files: () => status('filter the tree with ctrl+p'),
+  filter_files: () => status('find a file with go to file'),
 
   expand:       () => $('.lee-vrow.sel')?.click(),
   filter_vars:  () => $('#varfilter')?.focus(),

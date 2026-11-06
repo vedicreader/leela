@@ -44,7 +44,7 @@ function palette() {
   input.addEventListener('input', () => {
     const q = input.value.toLowerCase(), raw = input.value.trim();
     hits = cmds.filter(c => c.name.toLowerCase().includes(q) || (c.action || '').includes(q));
-    if (raw) hits = hits.concat({name: `Open file matching “${raw}”…`, scope: 'files', key: lee.keys.find(k => k.action === 'quick_open')?.key || '',
+    if (raw) hits = hits.concat({name: `Go to file matching “${raw}”…`, scope: 'files', key: lee.keys.find(k => k.action === 'quick_open')?.key || '',
                                  run: () => quickOpen(false, raw)});
     sel = 0; paint();
   });

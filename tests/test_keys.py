@@ -297,3 +297,23 @@ def test_an_overlay_swallows_menu_chords_but_keeps_the_editing_ones():
     assert ('p', True, False, False, False) in got and ('w', True, False, False, False) in got
     assert ('W', True, False, False, True) in got
     assert not got & {('c', True, False, False, False), ('v', True, False, False, False), ('z', True, False, False, False)}
+
+def test_open_is_the_mac_open_and_go_to_file_is_the_quick_open():
+    """⌘O opened folders only and ⌘P was called "open file", so the owner reached for ⌘P to open a file from the Mac."""
+    from kavacha.window import menu_json
+    from leela.blocks.keys.menus import BAR, MENUS, menu_lookup
+    from leela.core.keys import help_rows
+    from leela.core.ui import BUTTONS
+    assert (lookup('open_folder').key, lookup('open_folder').label) == ('mod+o', 'open…')
+    assert (lookup('quick_open').key, lookup('quick_open').label) == ('mod+p', 'go to file…')
+    assert lookup('tree_open_folder').key == 'o', 'the tree keeps its folder key'
+    file = first(m for m in menu_json(BAR, menu_lookup) if m['title'] == 'File')['items']
+    rows = {r.get('action'): r for r in file}
+    assert (rows['open_folder']['title'], rows['open_folder']['key'], rows['open_folder']['mask']) == ('Open…', 'o', 1 << 20)
+    assert (rows['quick_open']['title'], rows['quick_open']['key']) == ('Go to file…', 'p')
+    acts = [r.get('action') for r in file]
+    assert acts.index('open_folder') + 1 == acts.index('quick_open')
+    assert [i.action for i in MENUS['files'][:2]] == ['open_folder', 'quick_open'], 'the files panel menu shows both'
+    btns = {b.action: b.label for b in BUTTONS if b.bar in ('files', 'web_files')}
+    assert (btns['open_folder'], btns['quick_open']) == ('open…', 'go to file…'), 'and its buttons'
+    assert {('mod+o', 'open…'), ('mod+p', 'go to file…')} <= set(help_rows()['global'])
