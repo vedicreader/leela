@@ -33,7 +33,7 @@ uv-fetch:
 
 # a lock signed with a throwaway key, for local builds only; verify says so and ship-app refuses it. LOCK_SRC=<lock files>, default packaging/lock
 dev-lock:
-	cd ../.. && uv run --frozen python tools/lock.py dev-lock packaging/mac/build/dev-lock --from "$${LOCK_SRC:-packaging/lock}"
+	cd ../.. && uv run --frozen python tools/lock.py dev-lock packaging/mac/build/dev-lock --from "$${LOCK_SRC:-packaging/lock}" --n "$${DEV_N:-0}"
 
 # SSHSIG fixtures for the Swift tests, made by the real ssh-keygen with throwaway keys and a temporary HOME
 fixtures:

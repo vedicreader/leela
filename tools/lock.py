@@ -575,13 +575,13 @@ def wheel(v, upload=False):
         return w
     finally: sh('git', '-C', ROOT, 'worktree', 'remove', '--force', tmp/'src', check=False)
 
-def dev_lock(out, src=LOCK):
-    "A lock signed with a throwaway key, for a local app build: the pinned project in `src`, manifest n=0, keys.pub with the throwaway key."
+def dev_lock(out, src=LOCK, n=0):
+    "A lock signed with a throwaway key, for a local app build: the pinned project in `src`, manifest `n`, keys.pub with the throwaway key."
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
     for f in FILES: shutil.copy(Path(src)/f, out/f)
     k = Path(tempfile.mkdtemp())/'dev'
     sh('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'leela-lock-dev', '-f', k)
-    (out/'manifest.json').write_text(dumps(manifest(out, 0, pinned_version())))
+    (out/'manifest.json').write_text(dumps(manifest(out, n, pinned_version())))
     sh('ssh-keygen', '-Y', 'sign', '-n', NS, '-f', k, out/'manifest.json')
     Path(f"{out/'manifest.json'}.sig").rename(out/'manifest.sig')
     shutil.copy(f'{k}.pub', out/'keys.pub')
@@ -642,7 +642,7 @@ def main(argv=None):
     p = s.add_parser('promote'); p.add_argument('n', type=int)
     p = s.add_parser('verify'); p.add_argument('--channel', default='stable', choices=['stable', 'test'])
     p = s.add_parser('key'); p.add_argument('--keys-out', default=LOCK/'keys.pub')
-    p = s.add_parser('dev-lock'); p.add_argument('out'); p.add_argument('--from', dest='src', default=LOCK)
+    p = s.add_parser('dev-lock'); p.add_argument('out'); p.add_argument('--from', dest='src', default=LOCK); p.add_argument('--n', type=int, default=0)
     p = s.add_parser('fetch'); p.add_argument('out'); p.add_argument('--channel', default='stable', choices=['stable', 'test'])
     p = s.add_parser('wheel'); p.add_argument('version'); p.add_argument('--upload', action='store_true')
     p = s.add_parser('fixtures'); p.add_argument('out')
@@ -661,7 +661,7 @@ def main(argv=None):
         case 'promote': promote(o.n)
         case 'verify': verify('channel-test' if o.channel == 'test' else 'channel')
         case 'key': lock_key(keys_out=o.keys_out)
-        case 'dev-lock': dev_lock(o.out, o.src)
+        case 'dev-lock': dev_lock(o.out, o.src, o.n)
         case 'fetch': fetch_channel(o.out, 'channel-test' if o.channel == 'test' else 'channel')
         case 'wheel': wheel(o.version, o.upload)
         case 'fixtures': fixtures(o.out)
