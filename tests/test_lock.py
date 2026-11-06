@@ -270,14 +270,14 @@ exclude-newer = "{u['exclude-newer']}"\nexclude-newer-package = {{ ownpkg = "{u[
         assert got['thirdpkg'] == '1.1', 'UV_NO_CONFIG drops the [tool.uv] cooldown: without the flags the new release gets in'
     finally: srv.shutdown()
 
-def test_a_pointer_names_its_channel_and_expires_and_the_check_holds_both(tmp_path, monkeypatch):
+def test_a_pointer_names_its_channel_and_an_old_expires_field_is_ignored(tmp_path, monkeypatch):
     p = L.pointer(4, 'ab', 'channel-test')
-    assert p['channel'] == 'channel-test' and p['expires'] > p['published'] and p['n'] == 4
+    assert p['channel'] == 'channel-test' and p['n'] == 4 and 'expires' not in p
     monkeypatch.setattr(L, 'verify_sig', lambda *a: True)
     def serve(body): monkeypatch.setattr(L, 'fetch', lambda url, dst=None: Path(dst).write_text(json.dumps(body)) if dst else None)
     serve(p)
     with pytest.raises(SystemExit, match='pointer for channel-test'): L.channel('channel', tmp_path/'k')
     serve(p | {'expires': '2020-01-01T00:00:00Z'})
-    with pytest.raises(SystemExit, match='expired'): L.channel('channel-test', tmp_path/'k')
+    assert L.channel('channel-test', tmp_path/'k')['n'] == 4, 'a pointer with no change for months is still good'
     serve(p)
     assert L.channel('channel-test', tmp_path/'k')['n'] == 4

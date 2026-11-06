@@ -19,7 +19,6 @@ public struct ChannelPointer: Codable, Equatable, Sendable {
     public var n: Int
     public var manifest_sha256: String
     public var published: String
-    public var expires: String?
     /// `channel` or `channel-test`: a pointer served under the other name is refused
     public var channel: String?
 }
@@ -104,13 +103,12 @@ public enum LockCheck {
         return versionLess(app.uv, m.uv_min) || app.api < m.launcher_api_min ? .needsApp(m) : .ok(m)
     }
 
-    /// a channel pointer, checked against its signature, its channel name and its expiry
-    public static func pointer(_ data: Data, signature: Data, keys: [SSHKey], name: String, now: Date = Date()) throws -> ChannelPointer {
+    /// a channel pointer, checked against its signature and its channel name; an unknown key such as an old `expires` is ignored
+    public static func pointer(_ data: Data, signature: Data, keys: [SSHKey], name: String) throws -> ChannelPointer {
         do { try SSHSig.verify(message: data, signature: String(decoding: signature, as: UTF8.self), keys: keys) }
         catch { throw LockRefusal.signature("\(error)") }
         let p = try JSONDecoder().decode(ChannelPointer.self, from: data)
         guard p.channel == name else { throw LockRefusal.pointer("it is for \(p.channel ?? "no channel"), not \(name)") }
-        if let e = p.expires.flatMap({ ISO8601DateFormatter().date(from: $0) }), e < now { throw LockRefusal.pointer("it expired at \(p.expires!)") }
         return p
     }
 }

@@ -67,17 +67,15 @@ import Testing
         #expect(p?.n == 1 && why != nil)
     }
 
-    @Test func aTestPointerServedAsStableOrAnExpiredPointerIsRefused() async throws {
+    @Test func aTestPointerServedAsStableIsRefusedAndAnOldExpiresFieldIsIgnored() async throws {
         let (http, s, bundled) = try setup(); defer { http.stop() }
         let d = tempDir(); makeLock(d, n: 2, body: "channel")
         publish(http, lock: d, n: 2, name: "channel", pointerName: "channel-test")
         var (p, why) = await choose(http, s, bundled)
         #expect(p?.n == 1 && why?.contains("channel-test") == true)
-        publish(http, lock: d, n: 2, expires: "2020-01-01T00:00:00Z")
+        publish(http, lock: d, n: 2, extra: "\"expires\":\"2020-01-01T00:00:00Z\"")
         (p, why) = await choose(http, s, bundled)
-        #expect(p?.n == 1 && why?.contains("expired") == true)
-        publish(http, lock: d, n: 2, expires: "2099-01-01T00:00:00Z")
-        #expect(await choose(http, s, bundled).plan?.n == 2)
+        #expect(p?.n == 2 && why == nil, "a lock with no change for months is still good")
     }
 
     @Test func aLockBelowTheHighestIsRefusedEvenWithNoEnv() async throws {
