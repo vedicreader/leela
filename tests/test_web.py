@@ -502,6 +502,13 @@ def test_loopback_guard_rejects_dns_rebinding_and_cross_site_browser_requests():
     assert called and not absolute, 'a fully qualified loopback name is that name'
 
 
+async def _until(q, done, timeout=10):
+    "Every event off `q` up to and including the first `done` accepts. `timeout` only bounds a failure."
+    got = []
+    async with asyncio.timeout(timeout):
+        while not got or not done(got[-1]): got.append(await q.get())
+    return got
+
 def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
     "Without a watcher the tree knew only what the client itself had done."
     from leela.blocks.fs.fs import Sandbox
@@ -512,17 +519,15 @@ def test_the_tree_hears_about_a_change_leela_did_not_make(tmp_path):
         w = Watcher(Sandbox([tmp_path]), step=50)
         q = w.subscribe()
         try:
-            await asyncio.sleep(.4)
-            # macOS replays the setup mkdir as a batch of its own once the watch settles.
+            assert await w.settled()
             while not q.empty(): q.get_nowait()
             (tmp_path/'node_modules'/'junk.js').write_text('1\n')
-            with pytest.raises(asyncio.TimeoutError): await asyncio.wait_for(q.get(), .6)
             (tmp_path/'b.py').write_text('y = 2\n')
-            return (await asyncio.wait_for(q.get(), 5))[0]
+            return await _until(q, lambda b: any(p.endswith('b.py') for p in b[0]))
         finally: w.close()
-    paths = asyncio.run(run())
-    assert any(p.endswith('b.py') for p in paths)
-    assert not any('node_modules' in p for p in paths), 'the skip list applies to the watcher too'
+    batches = asyncio.run(run())
+    assert all(paths for paths, _ in batches), 'a quiet tick is not a batch'
+    assert not any('node_modules' in p for paths, _ in batches for p in paths), 'the skip list applies to the watcher too'
 
 def test_a_commit_made_outside_leela_reaches_the_watcher_with_its_repository(tmp_path):
     "The watcher skipped `.git`, so a commit from a terminal changed nothing Leela could hear."
@@ -538,7 +543,7 @@ def test_a_commit_made_outside_leela_reaches_the_watcher_with_its_repository(tmp
         w = Watcher(Sandbox([tmp_path]), step=50)
         q = w.subscribe()
         try:
-            await asyncio.sleep(.4)
+            assert await w.settled()
             while not q.empty(): q.get_nowait()
             await asyncio.to_thread(git, 'commit', '-q', '--allow-empty', '-m', 'two')
             got = []
@@ -556,21 +561,35 @@ def test_the_last_reader_leaving_does_not_stall_the_loop_and_the_next_one_is_wat
     async def run():
         w = Watcher(Sandbox([tmp_path]), step=50)
         q = w.subscribe()
-        await asyncio.sleep(.3)
+        assert await w.settled()
         at = time.monotonic()
         w.unsubscribe(q)
         spent, first = time.monotonic() - at, w.thread
         second = w.subscribe()
         try:
-            await asyncio.sleep(.3)
+            assert await w.settled()
             (tmp_path/'c.py').write_text('z = 3\n')
-            return spent, first, w.thread, (await asyncio.wait_for(second.get(), 5))[0]
+            return spent, first, w.thread, (await _until(second, lambda b: any(p.endswith('c.py') for p in b[0])))[-1][0]
         finally: w.close()
     spent, first, second, paths = asyncio.run(run())
     assert spent < .2, f'the last tab closing blocked the loop for {spent:.2f}s'
     assert second is not first, 'a stopping thread is not a running one'
     assert any(p.endswith('c.py') for p in paths), 'and the next reader is watched again'
 
+
+def test_a_settled_watcher_sends_nothing_for_its_quiet_ticks(tmp_path):
+    "`settled` rides on the watch's empty timeout batches. A subscriber must never see one."
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher, RUST_TIMEOUT
+    async def run():
+        w = Watcher(Sandbox([tmp_path]), step=50)
+        q = w.subscribe()
+        try:
+            assert await w.settled()
+            await asyncio.sleep(RUST_TIMEOUT * 2.5 / 1000)
+            return [q.get_nowait() for _ in range(q.qsize())]
+        finally: w.close()
+    assert all(paths or resync for paths, resync in asyncio.run(run()))
 
 def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_path):
     """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the tree keeps showing files that are gone until something unrelated happens to touch it."""
@@ -830,12 +849,11 @@ def test_a_tab_opened_by_the_shell_is_pushed_to_the_page_that_is_listening(tmp_p
         w = Watcher(Sandbox([tmp_path]), step=50)
         q = w.subscribe()
         try:
-            await asyncio.sleep(.3)
-            while not q.empty(): q.get_nowait()
+            assert await w.settled()
             await asyncio.to_thread(w.announce, tmp_path/'a.md')
-            return await asyncio.wait_for(q.get(), 2)
+            return [e for e in await _until(q, lambda e: isinstance(e, str)) if isinstance(e, str)]
         finally: w.close()
-    assert asyncio.run(run()) == str(tmp_path/'a.md')
+    assert asyncio.run(run()) == [str(tmp_path/'a.md')], 'a late batch of the folder is not the tab'
 
 @pytest.fixture
 def keyfile(tmp_path, monkeypatch):
@@ -909,7 +927,7 @@ def test_a_watcher_queues_nothing_for_the_same_bytes_and_one_event_for_other_byt
         ws = [Watcher(Sandbox([]), poll=.05), Watcher(Sandbox([proj]), poll=.05)]
         qs = [w.subscribe() for w in ws]
         try:
-            await asyncio.sleep(.3)
+            assert all([await w.settled() for w in ws])
             for q in qs:
                 while not q.empty(): q.get_nowait()
             keyfile.write_text('{"keys": {}}')
