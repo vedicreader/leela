@@ -106,6 +106,37 @@ import WebKit
         #expect(!web.take(text, outside: true), "text dropped from another app goes to the page")
     }
 
+    @Test func aWindowWhoseServerDoesNotAnswerSaysSoAndASecondOpenLoadsItAgain() async throws {
+        // a new window loaded at once and kept nothing on failure, so a dropped file gave a blank window that a second drop only raised
+        let ws = Windows(); ws.port = 1; ws.urlWait = 0.5
+        let url = u("http://loose.localhost:1/")
+        let w = ws.place(url, title: "leela — a.png")
+        defer { w.close() }
+        let v = try #require(ws.windows["loose"]?.1)
+        var text = ""
+        for _ in 0..<40 where !text.contains("could not show") {
+            try await Task.sleep(for: .milliseconds(250))
+            text = (try? await v.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String) ?? ""
+        }
+        #expect(text.contains("Leela could not show http://loose.localhost:1/") && ws.failed.contains(ObjectIdentifier(v)))
+        #expect(ws.reuse(url, title: "leela — b.docx") === w && w.title == "leela — b.docx")
+        #expect(!ws.failed.contains(ObjectIdentifier(v)), "the second open loads the page again")
+        #expect(ws.reuse(u("http://other.localhost:1/")) == nil)
+    }
+
+    @Test func aCancelledOrDownloadedNavigationKeepsThePage() {
+        let ws = Windows(); ws.port = 5
+        let (w, v) = ws.make(u("http://a.localhost:5/"), title: "t")
+        defer { w.close() }
+        let at = [NSURLErrorFailingURLErrorKey: u("http://a.localhost:5/")]
+        ws.gone(v, NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: at))
+        ws.gone(v, NSError(domain: "WebKitErrorDomain", code: 102, userInfo: at))
+        ws.gone(v, NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost, userInfo: [NSURLErrorFailingURLErrorKey: u("https://example.com/")]))
+        #expect(ws.failed.isEmpty)
+        ws.gone(v, NSError(domain: NSURLErrorDomain, code: NSURLErrorCannotConnectToHost, userInfo: at))
+        #expect(ws.failed.contains(ObjectIdentifier(v)))
+    }
+
     @Test func textSubstitutionKeysAreTheOldAppsList() {
         #expect(Windows.noSubstitution.count == 7 && Windows.noSubstitution.contains("NSAutomaticQuoteSubstitutionEnabled"))
     }

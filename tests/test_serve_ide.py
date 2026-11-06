@@ -99,3 +99,25 @@ def test_an_app_launch_with_no_folder_does_not_open_its_working_folder(tmp_path,
     port = serve(app_window=True, gateway_port=0)
     assert get(f'http://127.0.0.1:{port}/', host=f'leela.localhost:{port}').status == 200
     assert get(f'http://127.0.0.1:{port}/', host=f'support.localhost:{port}').status == 421
+
+def test_a_dropped_image_and_then_a_docx_open_as_tabs_of_the_loose_window(tmp_path):
+    "What the launcher's drop sends: a file in a folder no window has goes to the loose window, whose page serves it as an image tab."
+    import urllib.parse, zipfile
+    (d := tmp_path/'drop').mkdir()
+    (png := d/'Screenshot-1104-152024.png').write_bytes(bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415478da63f8ffff3f0005fe02fea7d6a4a10000000049454e44ae426082'))
+    with zipfile.ZipFile(docx := d/'notes.docx', 'w', zipfile.ZIP_DEFLATED) as z: z.writestr('word/media/x.bin', bytes(range(256)) * 64)
+    port = serve(app_window=True, gateway_port=0)
+    def hub_open(f):
+        q = urllib.parse.urlencode(dict(path=str(d), file=str(f)))
+        req = urllib.request.Request(f'http://127.0.0.1:{port}/hub/open?{q}', data=b'', method='POST')
+        try: return json.loads(urllib.request.urlopen(req, timeout=60).read())
+        except urllib.error.HTTPError as e: return json.loads(e.read())
+    r = hub_open(png)
+    assert r['ok'] and r['id'] == 'loose' and r['offer'] == str(d.resolve()), r
+    host = urllib.parse.urlsplit(r['url']).netloc
+    assert get(f'http://127.0.0.1:{port}/', host=host).status == 200
+    tab = json.loads(get(f'http://127.0.0.1:{port}/tab/state', host=host).read())
+    assert tab['kind'] == 'image' and tab['path'] == str(png.resolve())
+    r = hub_open(docx)
+    assert r['ok'] and r['id'] == 'loose' and r['url'] == f'http://{host}/', 'the second drop goes to the same window, whose page shows the new tab'
+    assert json.loads(get(f'http://127.0.0.1:{port}/tab/state', host=host).read())['path'] == str(docx.resolve())

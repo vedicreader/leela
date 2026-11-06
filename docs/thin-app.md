@@ -189,18 +189,18 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 
 | Behaviour | Old app | Thin app | Status |
 |---|---|---|---|
-| Menu rows from `BAR`: keymap actions, `Std` selectors, `Js` rows, `__app__` rows in the app menu | M:82, K:650 `menu_bar`, C:1021 | `/app/menu.json` (M:142), W:254 `build`, W:310 `item` | same |
-| A keymap action row runs `leeAct("<action>")` in the focused window | D:40 `_act`, K:672 `eval_js` | W:116 `run(js:)`, W:240 `MenuRunner` | same |
-| Chords onto rows, selectors onto `Std` rows (the patch `install_menu_patch` / `_decorate`) | K:687, K:707 | the server sends `key`, `mask` and `selector`; W:310 sets them, with nil target so the responder chain gets the selector | same |
-| ⇧ in a chord | K:620 `mac_key` gives a lower case key plus the shift flag | W:331 `appKit` gives the shifted character with no shift flag (`O`, `?`, `!`) | fixed. AppKit matches shift by the character it makes. With a lower case key and the shift flag, no ⇧ chord fired from the menu, and ⌥I ran ⌥⇧I (Interrupt kernel) instead of Live / isolated. The page gets each key first (WebKit), so only keys the page did not take reached the menu. The old app has the same fault: `mac_key` belongs to kavacha, fix it there. The punctuation and digit map is the US keyboard's. |
+| Menu rows from `BAR`: keymap actions, `Std` selectors, `Js` rows, `__app__` rows in the app menu | M:82, K:650 `menu_bar`, C:1021 | `/app/menu.json` (M:142), W:309 `build`, W:365 `item` | same |
+| A keymap action row runs `leeAct("<action>")` in the focused window | D:40 `_act`, K:672 `eval_js` | W:171 `run(js:)`, W:295 `MenuRunner` | same |
+| Chords onto rows, selectors onto `Std` rows (the patch `install_menu_patch` / `_decorate`) | K:687, K:707 | the server sends `key`, `mask` and `selector`; W:365 sets them, with nil target so the responder chain gets the selector | same |
+| ⇧ in a chord | K:620 `mac_key` gives a lower case key plus the shift flag | W:386 `appKit` gives the shifted character with no shift flag (`O`, `?`, `!`) | fixed. AppKit matches shift by the character it makes. With a lower case key and the shift flag, no ⇧ chord fired from the menu, and ⌥I ran ⌥⇧I (Interrupt kernel) instead of Live / isolated. The page gets each key first (WebKit), so only keys the page did not take reached the menu. The old app has the same fault: `mac_key` belongs to kavacha, fix it there. The punctuation and digit map is the US keyboard's. |
 | Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | `Std` rows (M:90) and C:512 `keyDown_` | `Std` rows; the web view is the first responder (W:70) | same; the first responder is now set when the window opens (fixed: before, nothing was first responder until a click) |
-| Undo ⌘Z, Redo ⇧⌘Z | C:533 `keyDown_` runs the native undo manager when the page does not take the key | W:294 adds Undo and Redo to Edit, selectors `undo:` and `redo:` to the window, which uses the web view's undo manager | fixed. The page sees ⌘Z first, so the editor's and the notebook's own undo still win. |
+| Undo ⌘Z, Redo ⇧⌘Z | C:533 `keyDown_` runs the native undo manager when the page does not take the key | W:349 adds Undo and Redo to Edit, selectors `undo:` and `redo:` to the window, which uses the web view's undo manager | fixed. The page sees ⌘Z first, so the editor's and the notebook's own undo still win. |
 | Enter Full Screen ⌃⌘F | `Std` row (M:101) | `Std` row; windows are `fullScreenPrimary` (W:70) | same |
 | Minimize ⌘M, Zoom, Bring All to Front | `Std` rows (M:122) | `Std` rows; the Window menu is `NSApp.windowsMenu` | same |
-| Close Window ⌘W | C:540 `keyDown_` calls `performClose:` | W:302 adds "Close Window" to File | fixed |
-| About, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q | C:1070 `_add_app_menu` | W:259 to W:274 | fixed (Services, Hide Others and Show All were missing) |
-| "Use Previous Version", "Show Server Log" | none | W:263 | thin only |
-| A menu bar before the server answers | built before `webview.start` (K:515) | W:289 `fallback` at launch (AD:37); replaced when `/app/menu.json` comes (AD:84), kept when it does not | fixed: before, the setup window had no ⌘Q, ⌘C or ⌘H |
+| Close Window ⌘W | C:540 `keyDown_` calls `performClose:` | W:357 adds "Close Window" to File | fixed |
+| About, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q | C:1070 `_add_app_menu` | W:314 to W:329 | fixed (Services, Hide Others and Show All were missing) |
+| "Use Previous Version", "Show Server Log" | none | W:318 | thin only |
+| A menu bar before the server answers | built before `webview.start` (K:515) | W:344 `fallback` at launch (AD:37); replaced when `/app/menu.json` comes (AD:84), kept when it does not | fixed: before, the setup window had no ⌘Q, ⌘C or ⌘H |
 | Zoom keys ⌘+ and ⌘- | none | none | same: the keymap has none |
 | Find in page | the keymap's `find_in_file` ⌘F | the same row | same |
 
@@ -209,22 +209,23 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | Behaviour | Old app | Thin app | Status |
 |---|---|---|---|
 | Size 1440×900, smallest 900×560 | K:51, K:54 | W:41, W:70 | fixed (it was 1400×900 with no minimum) |
-| Bridge: `open_folder`, `pick_folder`, `recent`, `set_background`, `set_title` | K:82 `ShellApi`, D:30 | `Bridge.route`, W:145 to W:151 | same |
-| Background repaints the window and what WebKit draws past the page | K:67 `paint_background` | W:160 `paint` | fixed (the area past the page edge was not painted) |
+| Bridge: `open_folder`, `pick_folder`, `recent`, `set_background`, `set_title` | K:82 `ShellApi`, D:30 | `Bridge.route`, W:200 to W:206 | same |
+| Background repaints the window and what WebKit draws past the page | K:67 `paint_background` | W:215 `paint` | fixed (the area past the page edge was not painted) |
 | Smart quotes, dashes and autocorrect off | K:379 `quiet_text_substitution` | W:56, called at AD:36 | fixed: before, `"` typed in the editor could become a curly quote |
 | Native context menu | empty unless debug (C:508) | empty unless `LEELA_WEBVIEW_DEBUG` (W:11) | fixed: before, it offered Reload, which drops the page |
 | Web inspector | `LEELA_WEBVIEW_DEBUG` (K:516, C:657) | `isInspectable` with the same variable (W:76) | fixed |
 | One window per folder, raised and not opened twice | K:466 `open_window`, `keyed_windows` | W:91 `show`, keyed by slug | same |
-| A window comes forward and the app activates | K:454 `bring_forward`, C:748 | W:91, W:127 call `NSApp.activate()` | fixed |
-| Closing a window hides it; the Dock icon brings the last one back as it was | K:255 `dock_delegates` | W:119 `windowShouldClose`, W:127 `reopen`, AD:180 | fixed: before, the window and its page were gone, and the Dock icon opened the home page |
+| A new window waits for its page, and a page that does not come says so | K:480 `_point`: `wait_for_http`, then the page, else an "unreachable" page | W:123 `point`, W:132 `answers`; W:148 a failed load and W:158 a crashed page are not left blank; W:100 `reuse` loads a failed page again and takes the new title on the next open | fixed: before, the window loaded at once and kept a blank page on any failure, and a second drop only raised it |
+| A window comes forward and the app activates | K:454 `bring_forward`, C:748 | W:91, W:182 call `NSApp.activate()` | fixed |
+| Closing a window hides it; the Dock icon brings the last one back as it was | K:255 `dock_delegates` | W:174 `windowShouldClose`, W:182 `reopen`, AD:180 | fixed: before, the window and its page were gone, and the Dock icon opened the home page |
 | Closing the last window keeps the app | K:392 `keep_running_in_dock` | AD:178 | same |
-| `alert()` | C:190, activates the app | W:216, activates the app | same |
-| `confirm()` | C:217 | W:220 | same |
-| `prompt()` (the agent's round name) | C:228 | W:225 | fixed: before, `prompt()` gave null and the round could not be named |
-| `<input type=file>` | C:239, takes the accepted types | W:232, takes "directories" | different: WebKit gives the accepted types only through a private API |
-| `<a download>` and attachments | `ALLOW_DOWNLOADS` is off (C:279), so a download link showed the file in place of Leela | W:171 `policy`, W:179 `saves`, W:198, W:201: a save panel in Downloads | fixed in the thin app (it also showed the file in place of Leela) |
-| Links out of the page | C:261, C:272: `target=_blank` opens the browser; a plain link changed the window | W:171: a click to http, https or mailto opens the browser; the server's pages stay; anything else is refused | different, on purpose: a plain link no longer replaces Leela |
-| `window.open` of a server page | nothing (C:261 returns nil) | W:211 opens or raises that folder's window | different; the page calls it only outside the desktop shell |
+| `alert()` | C:190, activates the app | W:271, activates the app | same |
+| `confirm()` | C:217 | W:275 | same |
+| `prompt()` (the agent's round name) | C:228 | W:280 | fixed: before, `prompt()` gave null and the round could not be named |
+| `<input type=file>` | C:239, takes the accepted types | W:287, takes "directories" | different: WebKit gives the accepted types only through a private API |
+| `<a download>` and attachments | `ALLOW_DOWNLOADS` is off (C:279), so a download link showed the file in place of Leela | W:226 `policy`, W:234 `saves`, W:253, W:256: a save panel in Downloads | fixed in the thin app (it also showed the file in place of Leela) |
+| Links out of the page | C:261, C:272: `target=_blank` opens the browser; a plain link changed the window | W:226: a click to http, https or mailto opens the browser; the server's pages stay; anything else is refused | different, on purpose: a plain link no longer replaces Leela |
+| `window.open` of a server page | nothing (C:261 returns nil) | W:266 opens or raises that folder's window | different; the page calls it only outside the desktop shell |
 | The presenter's audience popup (`window.open('', …)`) | nothing | nothing | same |
 | A file or folder dropped on the window | WebKit loads it in place of Leela | W:29 `performDragOperation`, W:77: a drop from another app goes to `application(_:open:)` (AD:111), as a Finder open: a folder opens its own window; a file opens in its folder's window or the loose window, and the server asks before it adds the folder. A drag inside the page (a tab, a cell) stays the page's. | fixed: the owner chose Finder's behaviour |
 | `window.print()` | C:394, a print panel | no print panel | different: no page calls it |
@@ -238,15 +239,15 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 
 | Behaviour | Old app | Thin app | Status |
 |---|---|---|---|
-| `open_folder` from the page asks first | A:143 `on_page_folder`, trusted false | W:145, AD:125 with no grant | same |
+| `open_folder` from the page asks first | A:143 `on_page_folder`, trusted false | W:200, AD:125 with no grant | same |
 | `pick_folder` trusts the picked folder | K:91, A:115 `on_picked = grant` | AD:159 and `/hub/grant` | same |
 | Finder and Dock open events, `application:openFile(s):` | K:272, K:551 `watch_open_events`, K:537 `open_paths` | AD:111 `application(_:open:)` | same; one path, so no two-second de-duplication is needed |
 | Opens before the server is ready | `on_ready` (A:145) | queued, then opened on every ready (AD:90) | fixed: before, a queue made during a restart was dropped |
 | A file from Finder opens in the folder that holds it, else the loose window | A:175 `open_file` | AD:145; the server finds the folder (`site_covering`) | same |
 | The loose window refuses the file: ask to add its folder | A:183 | AD:150 | fixed |
 | Window title after a file open | the folder's name, or the file's in the loose window (A:187) | the file's name | different; the page sets the title when it loads |
-| A question from the server (`/confirm`) | A:197 opens a window when none is visible | AD:196 asks on the key window, a visible one, or the last closed one brought back (W:133) | fixed: before, the sheet could go on a hidden window and wait for ever |
-| Dock menu: 8 recent folders, "No recent folders" when none, the path as tooltip | K:222 `dock_menu` | W:346 `dock`, AD:173 | fixed (it was 10 rows, an empty menu, and no tooltip) |
+| A question from the server (`/confirm`) | A:197 opens a window when none is visible | AD:196 asks on the key window, a visible one, or the last closed one brought back (W:188) | fixed: before, the sheet could go on a hidden window and wait for ever |
+| Dock menu: 8 recent folders, "No recent folders" when none, the path as tooltip | K:222 `dock_menu` | W:401 `dock`, AD:173 | fixed (it was 10 rows, an empty menu, and no tooltip) |
 | Quit stops kernels and servers | K:310 `quit_cleanly`, up to 15 s | AD:185: SIGTERM to the server, SIGKILL after 15 s; the server's shutdown stops kernels, terminals and dev servers | fixed: the wait was 3 s, shorter than a workspace's shutdown |
 | SIGTERM to the app quits as ⌘Q does | K:349 `quit_on_sigterm` | AD:188 | fixed: before, SIGTERM killed the launcher and left the server running |
 

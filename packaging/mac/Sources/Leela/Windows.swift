@@ -89,18 +89,73 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     /// shows the window for `url`, opening it when there is none
     func show(_ url: URL, title: String = "Leela") {
-        let k = Self.key(url)
-        hidden.removeAll { $0 == k }
+        hidden.removeAll { $0 == Self.key(url) }
         // a Finder open or a question while Leela is behind another app comes forward, as kavacha's bring_forward
         NSApp.activate()
-        if let (w, _) = windows[k] { w.makeKeyAndOrderFront(nil); return }
-        let (w, v) = make(url, title: title)
+        let w = reuse(url, title: title) ?? place(url, title: title)
+        w.makeKeyAndOrderFront(nil)
+    }
+
+    /// the open window for `url` with `title`, its page loaded again when it has none; nil when there is no window
+    func reuse(_ url: URL, title: String = "Leela") -> NSWindow? {
+        guard let (w, v) = windows[Self.key(url)] else { return nil }
+        if title != "Leela" { w.title = title }
+        if v.url == nil || failed.contains(ObjectIdentifier(v)) { point(v, url) }
+        return w
+    }
+
+    /// a new window for `url`, not on screen yet, its page loading
+    func place(_ url: URL, title: String) -> NSWindow {
+        let k = Self.key(url), (w, v) = make(url, title: title)
         w.setFrameAutosaveName("leela-\(k)")
         if windows.isEmpty { w.center() } else { w.cascadeTopLeft(from: NSPoint(x: 40, y: 40)) }
         windows[k] = (w, v)
-        v.load(URLRequest(url: url))
-        w.makeKeyAndOrderFront(nil)
+        point(v, url)
+        return w
     }
+
+    /// pages that failed to load; `reuse` loads them again
+    var failed = Set<ObjectIdentifier>()
+    /// seconds a new page waits for the server, as kavacha's `url_wait`
+    var urlWait = 90.0
+
+    /// loads `url` once the server answers it, as kavacha's `_point`; a server that never answers gets a page that says so
+    func point(_ v: WKWebView, _ url: URL) {
+        failed.remove(ObjectIdentifier(v))
+        Task { [urlWait] in
+            if await Self.answers(url, within: urlWait) { v.load(URLRequest(url: url)) }
+            else { self.unreachable(v, url) }
+        }
+    }
+
+    /// whether `url` gives any HTTP answer within `within` seconds
+    static func answers(_ url: URL, within: Double) async -> Bool {
+        let cfg = URLSessionConfiguration.ephemeral; cfg.connectionProxyDictionary = [:]; cfg.timeoutIntervalForRequest = 2
+        let s = URLSession(configuration: cfg), end = Date().addingTimeInterval(within)
+        repeat {
+            if let (_, r) = try? await s.data(from: url), r is HTTPURLResponse { return true }
+            try? await Task.sleep(for: .milliseconds(200))
+        } while Date() < end
+        return false
+    }
+
+    func unreachable(_ v: WKWebView, _ url: URL, why: String = "it did not answer") {
+        failed.insert(ObjectIdentifier(v))
+        let esc = { (s: String) in s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;") }
+        v.loadHTMLString("<body style='font:14px -apple-system;margin:3em'><p>Leela could not show \(esc(url.absoluteString)): \(esc(why)).</p><p>Open the file or folder again to try once more.</p></body>", baseURL: nil)
+    }
+
+    func webView(_ w: WKWebView, didFailProvisionalNavigation n: WKNavigation!, withError e: Error) { gone(w, e) }
+    func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { gone(w, e) }
+    func gone(_ w: WKWebView, _ e: Error) {
+        let e = e as NSError
+        // a download or a navigation the policy cancelled ends this way too, and the page stays
+        guard !(e.domain == "WebKitErrorDomain" && [102, 101].contains(e.code)), e.code != NSURLErrorCancelled,
+              let u = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? w.url, isServer(u) else { return }
+        unreachable(w, u, why: e.localizedDescription)
+    }
+    /// the page's process ended (memory, a crash): load it again rather than leave the window blank
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { if let u = w.url, isServer(u) { w.load(URLRequest(url: u)) } }
 
     func reloadAll(port: Int) {
         self.port = port
