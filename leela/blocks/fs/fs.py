@@ -14,6 +14,7 @@ from fastcore.shutil import move as fc_move
 from fastcore.xtras import flexicache, time_policy
 
 from ... import Dictable
+from .office import OFFICE, OFFICE_MAX_BYTES, is_office
 
 __all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'loose_refusal', 'Sandbox']
 
@@ -35,7 +36,8 @@ LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascri
 NAME_LANGS = {'Dockerfile': 'bash', 'Makefile': 'bash', 'Procfile': 'bash', 'Cargo.lock': 'toml', 'Pipfile': 'toml'}
 
 _BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.whl', '.so', '.dylib',
-    '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff', '.woff2', '.ttf', '.mp4', '.mp3', '.npy', '.npz', '.pkl'}
+    '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff', '.woff2', '.ttf', '.mp4', '.mp3', '.npy', '.npz', '.pkl',
+    *OFFICE, '.doc', '.xls', '.ppt', '.docm', '.pptm', '.odt', '.ods', '.odp'}
 
 MAX_EDIT_BYTES = 4_000_000
 
@@ -66,7 +68,7 @@ def loose_refusal(p):
     "Why a file outside every open folder may not be admitted as a loose tab, or None."
     p = Path(p)
     if not p.is_file(): return f'not a file: {p}'
-    if p.stat().st_size > MAX_EDIT_BYTES: return f'{p.name} is too large to edit'
+    if p.stat().st_size > (OFFICE_MAX_BYTES if is_office(p) else MAX_EDIT_BYTES): return f'{p.name} is too large to {"show" if is_office(p) else "edit"}'
     if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} may hold credentials'
     return None
 
@@ -221,6 +223,7 @@ class Sandbox:
     def write(self, ref, text):
         "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
+        if is_office(p): raise Unsafe(f'{p.name} is read-only here: Leela shows Word, PowerPoint and Excel files, and does not change them')
         mode = p.stat().st_mode & 0o7777 if p.exists() else None
         with atomic_save(p, mode='w', encoding='utf-8') as f:
             f.write(text)

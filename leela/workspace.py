@@ -11,6 +11,7 @@ from .agent.agent import Completer
 from .blocks.agent.ai import Assistant, at_cell, notebook_approvals
 from .blocks.runtime.devserver import DevServers
 from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
+from .blocks.fs.office import is_office, office_text
 from .blocks.memory.memory import PrivacyBlocked, pii_gate, withheld_why
 from .blocks.runtime.kernels import KernelPool, KernelStartError
 from .blocks.nb.nb import Notebook, media_outputs, read_cells
@@ -137,8 +138,14 @@ AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
 VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
 
 def openable(p):
-    "Whether a tab can show this file: text, a notebook, a PDF or an image."
-    return is_texty(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
+    "Whether a tab can show this file: text, a notebook, a PDF, an image, or a Word, PowerPoint or Excel file."
+    return is_texty(p) or is_office(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
+
+def kind_for(path):
+    "The tab kind a file opens as."
+    sfx = Path(path).suffix.lower()
+    if str(path).endswith('.ipynb'): return 'notebook'
+    return 'pdf' if sfx == '.pdf' else 'office' if is_office(path) else 'image' if sfx in IMAGE_EXTS else 'audio' if sfx in AUDIO_EXTS else 'video' if sfx in VIDEO_EXTS else 'text'
 
 #: What the inline panel promises, said to the model that keeps it. The tools are gone, so this describes the situation, not a rule.
 SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
@@ -171,11 +178,7 @@ class Tab(Dictable):
     nb_lang: str = ''
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
-        if self.path.endswith('.ipynb'): self.kind = 'notebook'
-        elif self.path.lower().endswith('.pdf'): self.kind = 'pdf'
-        elif Path(self.path).suffix.lower() in IMAGE_EXTS: self.kind = 'image'
-        elif Path(self.path).suffix.lower() in AUDIO_EXTS: self.kind = 'audio'
-        elif Path(self.path).suffix.lower() in VIDEO_EXTS: self.kind = 'video'
+        if (k := kind_for(self.path)) != 'text': self.kind = k
         if self.private_kernel is None: self.private_kernel = self.kind == 'notebook'
     @property
     def lang(self): return (self.nb_lang or 'python') if self.kind == 'notebook' else lang_for(self.path)
@@ -469,6 +472,7 @@ class Workspace:
         rest = Path(tab.path).relative_to(Path(old)) if tab.path != str(old) else None
         tab.path = str(Path(new)/rest) if rest is not None else str(new)
         tab.title = Path(tab.path).name or tab.title
+        if tab.kind in ('text', 'office'): tab.kind = 'office' if is_office(tab.path) else 'text'
         return tab
     def add_root(self, p, loose=False):
         r = self.fs.add_root(p, loose=loose)
@@ -554,9 +558,7 @@ class Workspace:
             if home and not self.tabs[i].cwd: self.tabs[i].cwd = str(home)
             self.watch_env(None)
             return self.tabs[i]
-        return self._add_tab(Tab(path=str(p), cwd=str(home or ''), kind=ifnone(kind, 'notebook' if p.suffix == '.ipynb' else
-                                                                'pdf' if p.suffix.lower() == '.pdf' else
-                                                                'image' if p.suffix.lower() in IMAGE_EXTS else 'text')))
+        return self._add_tab(Tab(path=str(p), cwd=str(home or ''), kind=ifnone(kind, kind_for(p))))
     def copy_home(self, p):
         "The open folder of the learner's notebook when `p` is abhyasa's learning copy of it, else None: the copy runs there, in that project's environment, and the project surfaces follow it."
         if Path(p).suffix != '.ipynb': return None
@@ -827,7 +829,7 @@ class Workspace:
                     self.vault_screened(None, chk, p.name)
                     sound.append(Attachment(p))
                     continue
-                raw = p.read_bytes()[:max_file]
+                raw = office_text(p).encode()[:max_file] if is_office(p) else p.read_bytes()[:max_file]
                 body = self.vault_screened(raw.decode('utf-8', 'replace'), chk, p.name)
             except PrivacyBlocked as e:
                 e.attachments = [ref]

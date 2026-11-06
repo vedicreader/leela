@@ -7,6 +7,7 @@ from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
 from ... import errstr, leela_cfg
 from ..fs.fs import Unsafe
+from ..fs.office import is_office, office_text
 from ...agent.agent import PERSON_ONLY, SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
@@ -383,7 +384,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
             hits = hits.filter(lambda h: rx.search(h.text))
         return list(hits)[:limit]
     def walk(self): return list(self.ws.fs.walk())
-    def read(self, path): return self.ws.fs.read(self.check(path))
+    def read(self, path):
+        "A file's text; a Word, PowerPoint or Excel file reads as its Markdown."
+        p = self.check(path)
+        return office_text(p) if is_office(p) else self.ws.fs.read(p)
     def check_write(self, path):
         target = self.check(path)
         active = Path(self.project).expanduser().resolve() if self.project else None

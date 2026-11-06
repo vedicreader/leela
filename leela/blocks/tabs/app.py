@@ -141,7 +141,7 @@ def connect(app, ctx):
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
                     'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version,
                     'cells': [c.dict() for c in nb.cells]}
-        if t.kind in ('pdf', 'image'):
+        if t.kind in ('pdf', 'image', 'office'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
         if t.kind == 'vault':
