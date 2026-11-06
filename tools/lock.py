@@ -1,0 +1,643 @@
+#!/usr/bin/env python3
+"The environment lock of the thin Mac app: make, check, test, diff, publish, promote, verify, and its signing keys. See docs/thin-app.md."
+import argparse, hashlib, json, os, re, shutil, socket, subprocess, sys, tempfile, threading, time, tomllib, urllib.parse, urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PKG = ROOT/'packaging'
+LOCK = PKG/'lock'
+CHILDENV = PKG/'childenv.json'
+FILES = ('pyproject.toml', 'uv.lock', '.python-version')
+REPO = 'vedicreader/leela'
+DL = f'https://github.com/{REPO}/releases/download'
+NS = 'leela-lock'
+PYTHON = '3.12.16'
+PLATFORM, MACOS_MIN, LAUNCHER_API = 'darwin-arm64', '14.0', 1
+COOLDOWN, RECORD_DAYS = 7, 7
+MARKER = "sys_platform == 'darwin' and platform_machine == 'arm64'"
+PYPI = 'https://pypi.org/simple'
+LLAMA = dict(name='llama-cpp-python', version='0.3.30', sha256='4f5b385f31dbda502d7118aff0c07c9e98961fa0402c025b89ff3250db843eb3',
+             url=f'https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl')
+#: Packages with no wheel that may still be locked; none, since llama-cpp-python comes from its pinned wheel.
+SOURCE_ONLY = set()
+EXTRAS = ('mlx', 'llama', 'langserver')
+KEYS = ('leela_lock_ed25519', 'leela_lock_emergency_ed25519')
+
+def sh(*cmd, check=True, **kw):
+    "Run `cmd`; its stdout, stripped."
+    p = subprocess.run([str(c) for c in cmd], text=True, capture_output=True, **kw)
+    if check and p.returncode: raise SystemExit(f"{Path(str(cmd[0])).name} {' '.join(map(str, cmd[1:3]))} failed: {(p.stderr or p.stdout).strip()[-2000:]}")
+    return p.stdout.strip()
+
+def sha256(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def now(): return datetime.now(timezone.utc)
+def iso(t): return t.strftime('%Y-%m-%dT%H:%M:%SZ')
+def pinned_version(): return (PKG/'uv.version').read_text().strip()
+
+def uv_version(uv): return sh(uv, '--version').split()[1]
+
+def pinned_uv():
+    "The uv the app ships, refused when it is not the pinned version."
+    uv = Path(os.environ.get('LEELA_UV') or PKG/'mac'/'build'/'uv'/'uv')
+    if not uv.is_file(): raise SystemExit(f'no uv at {uv}; run make -C packaging/mac uv-fetch')
+    if (v := uv_version(uv)) != pinned_version(): raise SystemExit(f'{uv} is uv {v}, not the pinned {pinned_version()}')
+    return uv
+
+def lock_hash(d, uv):
+    "sha256 over the names and contents of the lock files, then the uv version. The launcher computes the same."
+    h = hashlib.sha256()
+    for f in FILES: h.update(f.encode()); h.update((Path(d)/f).read_bytes())
+    h.update(b'uv'); h.update(uv.encode())
+    return h.hexdigest()
+
+def spec(): return json.loads(CHILDENV.read_text())
+
+def child_env(base=None, **vals):
+    "The environment uv gets from the app, from childenv.json: dropped keys, uv settings, `vals` filled in."
+    s, base = spec(), dict(os.environ if base is None else base)
+    e = {k: v for k, v in base.items() if k not in s['drop'] and not k.startswith(tuple(s['drop_prefixes']))}
+    return e | s['set'] | {k: v.format(**vals) for k, v in s['uv'].items()}
+
+def server_env(base=None, **vals):
+    "The server's environment: the uv one, the server keys, the env's bin first on PATH."
+    s = spec()
+    e = child_env(base, **vals) | {k: v.format(**vals) for k, v in s['server'].items()}
+    e['PATH'] = os.pathsep.join([*(p.format(**vals) for p in s['path_first']), e.get('PATH', '/usr/bin:/bin')])
+    return e
+
+def sync_args(lock, extras=()):
+    s = spec()
+    return [a.format(lock=lock) for a in s['sync']] + [a.format(name=x) for x in extras for a in s['extra']]
+
+def owners():
+    "The packages the owner publishes, from the metadata installed here; they skip the cooldown."
+    import importlib.metadata as md
+    by = lambda d: ((d.metadata.get('Author-email') or '') + (d.metadata.get('Author') or '')).lower()
+    return sorted({d.metadata['Name'].lower() for d in md.distributions() if 'karthik' in by(d)} - {'leela'})
+
+def extra_reqs():
+    "Each extra's requirements, as Leela's setup panel names them."
+    sys.path.insert(0, str(ROOT))
+    from leela.blocks.agent.models import TOOLS, runtime_requirements
+    return {'mlx': runtime_requirements('mlx'), 'llama': runtime_requirements('llama'), 'langserver': list(TOOLS['langserver'][1])}
+
+def constraints(): return tomllib.loads((ROOT/'pyproject.toml').read_text()).get('tool', {}).get('uv', {}).get('constraint-dependencies', [])
+
+def pyproject(v, leela, extras, owned=(), at=None):
+    "The pinned project's pyproject.toml. `leela` is a wheel URL, or a local wheel path for a lock that cannot be published."
+    at = at or now()
+    q = lambda xs: '[' + ', '.join(json.dumps(x) for x in xs) + ']'
+    src = f'{{ url = {json.dumps(leela)} }}' if '://' in leela else f'{{ path = {json.dumps(str(leela))} }}'
+    pkgs = ', '.join(f'{json.dumps(o)} = {json.dumps(iso(at))}' for o in owned)
+    return f'''[project]
+name = "leela-lock"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = ["leela=={v}"]
+
+[project.optional-dependencies]
+{chr(10).join(f'{k} = {q(extras[k])}' for k in EXTRAS)}
+
+[tool.uv]
+package = false
+environments = ["{MARKER}"]
+required-environments = ["{MARKER}"]
+exclude-newer = "{iso(at - timedelta(days=COOLDOWN))}"
+exclude-newer-package = {{ {pkgs} }}
+constraint-dependencies = {q(constraints())}
+
+[tool.uv.sources]
+leela = {src}
+llama-cpp-python = {{ url = "{LLAMA['url']}" }}
+'''
+
+def release_wheel(v, wait=600, every=20):
+    "The URL and sha256 of the Leela wheel on GitHub release `v`, waited for up to `wait` seconds."
+    name, end = f'leela-{v}-py3-none-any.whl', time.monotonic() + wait
+    while True:
+        try:
+            r = json.loads(urllib.request.urlopen(f'https://api.github.com/repos/{REPO}/releases/tags/{v}', timeout=10).read())
+            if a := next((a for a in r.get('assets', []) if a['name'] == name and a.get('digest')), None):
+                return a['browser_download_url'], a['digest'].removeprefix('sha256:')
+        except Exception: pass
+        if time.monotonic() > end: raise SystemExit(f'no {name} on release {v}; run make lock-wheel V={v} first')
+        print(f'waiting for {name} on release {v}'); time.sleep(every)
+
+def packages(d): return tomllib.loads((Path(d)/'uv.lock').read_text()).get('package', [])
+
+def _closure(pkgs, roots):
+    by, seen, todo = {p['name']: p for p in pkgs}, set(), list(roots)
+    while todo:
+        if (n := todo.pop()) in seen or n not in by: continue
+        seen.add(n)
+        p = by[n]
+        todo += [x['name'] for x in p.get('dependencies', [])]
+        for x in p.get('dependencies', []): todo += [y['name'] for e in x.get('extra', []) for y in p.get('optional-dependencies', {}).get(e, [])]
+    return seen
+
+def wheel_fits(fn):
+    "Whether a wheel filename installs on CPython 3.12, macOS arm64."
+    py, abi, plat = fn[:-4].split('-')[-3:]
+    abis = set(abi.split('.'))
+    pyok = lambda p: p in ('cp312', 'py3', 'py312') or ('abi3' in abis and re.fullmatch(r'cp3\d+', p) and int(p[3:]) <= 12)
+    return (any(map(pyok, py.split('.'))) and bool(abis & {'cp312', 'abi3', 'none'})
+            and any(p == 'any' or (p.startswith('macosx') and p.endswith(('arm64', 'universal2'))) for p in plat.split('.')))
+
+def check(d, local=False):
+    "Refuse a lock the app cannot install: another index, editable or git sources, no fitting wheel, llama outside its extra, no required environment."
+    pkgs, why = packages(d), []
+    proj = tomllib.loads((Path(d)/'pyproject.toml').read_text())
+    if proj.get('tool', {}).get('uv', {}).get('required-environments') != [MARKER]: why.append(f'required-environments is not [{MARKER}]')
+    root = next((p for p in pkgs if p['name'] == 'leela-lock'), None)
+    if root is None: return why + ['the lock has no leela-lock project']
+    if missing := [x for x in EXTRAS if x not in root.get('optional-dependencies', {})]: why.append(f'extras missing: {missing}')
+    for p in pkgs:
+        n, src = p['name'], p.get('source', {})
+        if n == 'leela-lock': continue
+        if (k := next(iter(src), None)) in ('editable', 'directory', 'git', 'virtual'): why.append(f'{n} comes from a {k} source')
+        elif k == 'path' and not (n == 'leela' and local): why.append(f'{n} comes from a local path')
+        elif k == 'url' and n == LLAMA['name']:
+            if src['url'] != LLAMA['url'] or not any(w.get('hash') == f"sha256:{LLAMA['sha256']}" for w in p.get('wheels', [])):
+                why.append(f"{n} is not the pinned wheel {LLAMA['url']}")
+        elif k == 'url' and n == 'leela':
+            if not src['url'].startswith(f'{DL}/'): why.append(f"leela comes from {src['url']}, not a release of {REPO}")
+        elif k == 'url': why.append(f'{n} comes from a URL')
+        elif k == 'registry' and src['registry'].rstrip('/') != PYPI: why.append(f"{n} comes from {src['registry']}")
+        wheels = [w for w in p.get('wheels', []) if wheel_fits((w.get('url') or w.get('path') or w.get('filename', '')).rsplit('/', 1)[-1])]
+        if not wheels and n not in SOURCE_ONLY: why.append(f'{n} {p.get("version")} has no wheel for CPython 3.12 on macOS arm64')
+    base = _closure(pkgs, [x['name'] for x in root.get('dependencies', [])])
+    if LLAMA['name'] in base: why.append(f"{LLAMA['name']} is in the base environment; it belongs in the llama extra only")
+    return why
+
+def _pin_extras(text, d):
+    "The extras with every requirement pinned `==` to the version the lock chose."
+    ver = {p['name']: p['version'] for p in packages(d)}
+    def pin(r):
+        name = re.split(r'[\[<>=!~; ]', r, maxsplit=1)[0]
+        extra = re.match(r'[^\[]*(\[[^\]]*\])', r)
+        mark = r.split(';', 1)[1] if ';' in r else ''
+        key = name.lower().replace('_', '-')
+        return f"{name}{extra.group(1) if extra else ''}=={ver[key]}" + (f'; {mark.strip()}' if mark else '') if key in ver else r
+    out = []
+    for line in text.splitlines():
+        if (m := re.match(r'^(mlx|llama|langserver) = (\[.*\])$', line)): line = f'{m[1]} = ' + json.dumps([pin(r) for r in json.loads(m[2])])
+        out.append(line)
+    return '\n'.join(out) + '\n'
+
+def make(v, out=LOCK, wheel=None, owned=None):
+    "Write the pinned project for Leela `v`, lock it with the pinned uv, pin the extras, check it, and print its hash."
+    uv, out = pinned_uv(), Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    leela = str(Path(wheel).resolve()) if wheel else None
+    if leela is None:
+        leela, digest = release_wheel(v)
+    (out/'.python-version').write_text(PYTHON + '\n')
+    text = pyproject(v, leela, extra_reqs(), owners() if owned is None else owned)
+    (out/'pyproject.toml').write_text(text)
+    env = child_env(cache=os.environ.get('UV_CACHE_DIR') or Path.home()/'Library'/'Caches'/'Leela'/'uv', python=out/'.python', python_version=PYTHON, env=out/'.venv')
+    env.pop('UV_FROZEN', None)
+    run = lambda: subprocess.run([uv, 'lock', '--project', out], env=env, check=True)
+    run()
+    (out/'pyproject.toml').write_text(_pin_extras(text, out))
+    run()
+    if not wheel and not any(w.get('hash') == f'sha256:{digest}' for p in packages(out) if p['name'] == 'leela' for w in p.get('wheels', [])):
+        raise SystemExit(f'the locked leela wheel does not match the sha256 GitHub gives: {digest}')
+    if why := check(out, local=bool(wheel)): raise SystemExit('the lock is refused:\n  ' + '\n  '.join(why))
+    h = lock_hash(out, uv_version(uv))
+    print(f'lock hash {h}' + ('  (local wheel: test only, cannot be published)' if wheel else ''))
+    return h
+
+def download_bytes(d):
+    "What a first install downloads: one fitting wheel per package."
+    tot = 0
+    for p in packages(d):
+        ws = [w for w in p.get('wheels', []) if wheel_fits((w.get('url') or w.get('path') or '').rsplit('/', 1)[-1])]
+        tot += max((w.get('size') or 0 for w in ws), default=0)
+    return tot
+
+def leela_version(d): return next((p['version'] for p in packages(d) if p['name'] == 'leela'), None)
+
+def manifest(d, n, uv):
+    "The manifest the app checks before it installs lock `n`."
+    return dict(n=n, hash=lock_hash(d, uv), files={f: sha256(Path(d)/f) for f in FILES}, leela=leela_version(d), python=PYTHON,
+                uv_min=uv, launcher_api_min=LAUNCHER_API, platform=PLATFORM, macos_min=MACOS_MIN, download_bytes=download_bytes(d))
+
+def dumps(o): return json.dumps(o, indent=1, sort_keys=True) + '\n'
+
+# Smoke test: what the app's build does, then the server on a temp folder
+_SMOKE_KERNEL = '''
+import sys
+from jupyter_client.manager import start_new_kernel
+km, kc = start_new_kernel(kernel_name='python3')
+try:
+    mid, got = kc.execute('1+1'), None
+    while got is None:
+        m = kc.get_iopub_msg(timeout=60)
+        if m['parent_header'].get('msg_id') == mid and m['msg_type'] == 'execute_result': got = m['content']['data']['text/plain']
+    print(got)
+finally: kc.stop_channels(); km.shutdown_kernel(now=True)
+'''
+_EXTRA_CHECK = {'mlx': ['-c', 'import mlx_lm'], 'llama': ['-c', 'import llama_cpp'],
+                'langserver': ['-c', 'import shutil,sys; sys.exit(0 if shutil.which("basedpyright-langserver") else 1)']}
+
+def test_code_hash(): return hashlib.sha256(Path(__file__).read_bytes() + CHILDENV.read_bytes()).hexdigest()
+
+def _free_port():
+    with socket.socket() as s: s.bind(('127.0.0.1', 0)); return s.getsockname()[1]
+
+class FakeHost:
+    "The launcher's control server, enough for a smoke test: every question gets Yes."
+    def __init__(self, token):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        host = self
+        self.calls = []
+        class H(BaseHTTPRequestHandler):
+            def _do(self):
+                n = int(self.headers.get('Content-Length') or 0)
+                host.calls.append((self.command, self.path, self.rfile.read(n) if n else b''))
+                ok = self.headers.get('Authorization') == f'Bearer {token}'
+                body = json.dumps({'answer': True} if self.path == '/confirm' else {'ok': True}).encode() if ok else b'{"ok":false}'
+                self.send_response(200 if ok else 401); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            do_GET = do_POST = _do
+            def log_message(self, *a): pass
+        self.srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
+        self.url = f'http://127.0.0.1:{self.srv.server_address[1]}'
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+    def close(self): self.srv.shutdown()
+
+def _get(url, data=None, headers=None, timeout=5):
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method='POST' if data is not None else 'GET')
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with op.open(req, timeout=timeout) as r: return json.loads(r.read())
+
+def smoke(env_dir, results, extras=(), wait=180):
+    "Check an installed env: pip check, imports, the server in host mode on a temp folder, one kernel cell, each extra."
+    py, uv = env_dir/'bin'/'python', pinned_uv()
+    def step(name, f):
+        t = time.monotonic()
+        try: f(); results.append(dict(step=name, ok=True, secs=round(time.monotonic()-t, 1)))
+        except Exception as e: results.append(dict(step=name, ok=False, secs=round(time.monotonic()-t, 1), error=str(e)[-1500:])); return False
+        return True
+    ok = step('pip check', lambda: sh(uv, 'pip', 'check', '--python', py))
+    ok &= step('imports', lambda: sh(py, '-I', '-c', 'import leela, leela.app, leela.core.host, ramabana, shalya, kunda, rishi, ipykernel'))
+    tmp = Path(tempfile.mkdtemp(prefix='leela-smoke-')).resolve()
+    (tmp/'cfg').mkdir(); (tmp/'data').mkdir(); (work := tmp/'work').mkdir()
+    port, token, host = _free_port(), os.urandom(16).hex(), None
+    try:
+        host = FakeHost(token)
+        env = server_env(env=env_dir, cache='', python='', python_version=PYTHON) | dict(
+            XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), LEELA_SHELL_ENV='0',
+            LEELA_HOST_URL=host.url, LEELA_HOST_TOKEN=token, LEELA_APP_VERSION='0.0.0-test', LEELA_LOCK_N='0')
+        args = [a.format(port=port) for a in spec()['server_args']]
+        with open(tmp/'server.log', 'wb') as log:
+            srv = subprocess.Popen([env_dir/'bin'/'leela', *args], env=env, cwd=tmp, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        base = f'http://127.0.0.1:{port}'
+        def health():
+            end = time.monotonic() + wait
+            while time.monotonic() < end:
+                if srv.poll() is not None: raise RuntimeError(f'the server stopped with {srv.returncode}: ' + (tmp/'server.log').read_text()[-1500:])
+                try:
+                    if _get(f'{base}/health', timeout=2).get('status') == 'ok': return
+                except Exception: time.sleep(.5)
+            raise TimeoutError(f'no /health in {wait} s: ' + (tmp/'server.log').read_text()[-1500:])
+        if step('server /health', health):
+            def hub_open():
+                d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(work))}', data=b'', timeout=120)
+                if not d.get('ok'): raise RuntimeError(d)
+            ok &= step('/hub/open', hub_open)
+        else: ok = False
+        srv.terminate()
+        try: srv.wait(15)
+        except subprocess.TimeoutExpired: srv.kill()
+    finally:
+        if host: host.close()
+    kenv = server_env(env=env_dir, cache='', python='', python_version=PYTHON) | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), JUPYTER_DATA_DIR=str(tmp/'jd'))
+    def cell():
+        if (got := sh(py, '-I', '-c', _SMOKE_KERNEL, env=kenv, cwd=tmp, timeout=180).splitlines()[-1:]) != ['2']: raise RuntimeError(f'the cell gave {got}')
+    ok &= step('kernel cell 1+1', cell)
+    for x in extras: ok &= step(f'extra {x}', lambda x=x: sh(py, *_EXTRA_CHECK[x], env=kenv))
+    shutil.rmtree(tmp, ignore_errors=True)
+    return ok
+
+def lock_test(d=LOCK, fresh=False, extras=False, record_dir=None, keep=False):
+    "Build the env as the app does, in a temp folder, smoke it, and write the test record for this lock hash."
+    uv, d = pinned_uv(), Path(d)
+    uvv, h = uv_version(uv), lock_hash(d, uv_version(uv))
+    tmp = Path(tempfile.mkdtemp(prefix='leela-lock-test-')).resolve()
+    lock = tmp/'lock'; lock.mkdir()
+    for f in FILES: shutil.copy(d/f, lock/f)
+    cache = tmp/'cache' if fresh else Path(os.environ.get('LEELA_LOCK_CACHE') or Path.home()/'Library'/'Caches'/'Leela'/'uv')
+    env_dir, results, t0 = tmp/'env', [], time.monotonic()
+    env = child_env(cache=cache, python=tmp/'python', python_version=PYTHON, env=env_dir)
+    xs = EXTRAS if extras else ()
+    print(f'building {h[:16]} in {tmp} (cache {cache})')
+    with open(tmp/'sync.log', 'wb') as log: rc = subprocess.run([uv, *sync_args(lock, xs)], env=env, stdout=log, stderr=subprocess.STDOUT).returncode
+    results.append(dict(step='uv sync', ok=rc == 0, secs=round(time.monotonic()-t0, 1), **({} if rc == 0 else {'error': (tmp/'sync.log').read_text()[-1500:]})))
+    ok = rc == 0 and smoke(env_dir, results, xs)
+    size = sum(f.stat().st_size for f in env_dir.rglob('*') if f.is_file() and not f.is_symlink()) if env_dir.exists() else 0
+    rec = dict(hash=h, passed=ok, uv=uvv, python=PYTHON, macos=platform_mac(), launcher_api=LAUNCHER_API, test_code=test_code_hash(),
+               time=iso(now()), fresh=fresh, extras=list(xs), env_bytes=size, leela=leela_version(d), results=results)
+    for r in results: print(f"  {'ok  ' if r['ok'] else 'FAIL'} {r['step']} ({r['secs']} s)" + (f"\n       {r['error'][-600:]}" if not r['ok'] else ''))
+    out = Path(record_dir or d/'tested')
+    if ok:
+        out.mkdir(parents=True, exist_ok=True)
+        (out/f'{h}.json').write_text(dumps(rec))
+        print(f'passed; record {out}/{h}.json; env {size/2**20:.0f} MB')
+    else: print('failed; no record written')
+    if not keep: shutil.rmtree(tmp, ignore_errors=True)
+    return rec
+
+def platform_mac():
+    import platform
+    return platform.mac_ver()[0]
+
+# Signing: SSH Ed25519 keys in ~/.ssh, SSHSIG with namespace leela-lock
+def key_paths(home=None): return [Path(home or Path.home())/'.ssh'/k for k in KEYS]
+
+def sign(path, key):
+    "Sign `path` with `key` (the agent signs when it holds it); the signature goes beside it as `<path>.sig`, then to `sig`."
+    Path(f'{path}.sig').unlink(missing_ok=True)
+    pub = Path(f'{key}.pub')
+    use = pub if pub.is_file() and pub.read_text().split()[1] in sh('ssh-add', '-L', check=False) else key
+    sh('ssh-keygen', '-Y', 'sign', '-n', NS, '-f', use, path)
+    return Path(f'{path}.sig')
+
+def allowed(keys_pub):
+    "An allowed_signers file for `ssh-keygen -Y verify`, from the public keys the app embeds."
+    lines = [f'{NS} namespaces="{NS}" ' + ' '.join(l.split()[:2]) for l in Path(keys_pub).read_text().splitlines() if l.strip().startswith('ssh-ed25519')]
+    if not lines: raise SystemExit(f'no ssh-ed25519 key in {keys_pub}')
+    f = Path(tempfile.mkdtemp())/'allowed_signers'
+    f.write_text('\n'.join(lines) + '\n')
+    return f
+
+def verify_sig(data, sig, keys_pub):
+    "Whether `sig` is a leela-lock signature over the file `data` by one of the keys in `keys_pub`."
+    with open(data, 'rb') as f:
+        p = subprocess.run(['ssh-keygen', '-Y', 'verify', '-f', allowed(keys_pub), '-I', NS, '-n', NS, '-s', sig], stdin=f, capture_output=True)
+    return p.returncode == 0
+
+def check_lock_dir(d, keys_pub, highest=-1):
+    "Check a downloaded or bundled lock as the app does: signature, file hashes, lock hash, platform. The manifest, or SystemExit."
+    d = Path(d)
+    if not verify_sig(d/'manifest.json', d/'manifest.sig', keys_pub): raise SystemExit(f'{d}/manifest.sig is not a good leela-lock signature')
+    m = json.loads((d/'manifest.json').read_text())
+    for f, want in m['files'].items():
+        if sha256(d/f) != want: raise SystemExit(f'{f} does not match the manifest')
+    if lock_hash(d, m['uv_min']) != m['hash']: raise SystemExit('the lock hash does not match the manifest')
+    if m['platform'] != PLATFORM: raise SystemExit(f"the lock is for {m['platform']}")
+    if m['n'] <= highest: raise SystemExit(f"lock {m['n']} is not newer than {highest}")
+    return m
+
+def lock_key(home=None, keys_out=None, passphrase=True, agent=True):
+    "Make the main and emergency signing keys in ~/.ssh, add them to the agent with the passphrase in the keychain, print the public keys."
+    paths = key_paths(home)
+    if have := [p for p in paths if p.exists() or Path(f'{p}.pub').exists()]: raise SystemExit(f'refusing to overwrite {", ".join(map(str, have))}')
+    paths[0].parent.mkdir(mode=0o700, exist_ok=True)
+    for p, who in zip(paths, ('main', 'emergency')):
+        cmd = ['ssh-keygen', '-t', 'ed25519', '-a', '100', '-f', str(p), '-C', f'leela-lock-{who}'] + ([] if passphrase else ['-N', ''])
+        if subprocess.run(cmd).returncode: raise SystemExit(f'ssh-keygen did not make {p}')
+        if agent and subprocess.run(['ssh-add', '--apple-use-keychain', str(p)]).returncode: raise SystemExit(f'ssh-add did not take {p}')
+    pubs = ''.join(Path(f'{p}.pub').read_text() for p in paths)
+    print(f'public keys to embed (packaging/lock/keys.pub):\n{pubs}')
+    if keys_out and not Path(keys_out).exists(): Path(keys_out).write_text(pubs); print(f'wrote {keys_out}; commit it')
+    return pubs
+
+def gh(*a, check=True): return sh('gh', *a, '-R', REPO, check=check, env={k: v for k, v in os.environ.items() if k != 'GITHUB_TOKEN'})
+
+def fetch(url, dst=None):
+    "The bytes at `url`, also written to `dst`."
+    with urllib.request.urlopen(url, timeout=30) as r: b = r.read()
+    if dst: Path(dst).write_bytes(b)
+    return b
+
+def channel(name='channel', keys_pub=LOCK/'keys.pub', base=f'{DL}/lock-channel'):
+    "The channel pointer `name` (channel or channel-test), checked; {} when none is published."
+    tmp = Path(tempfile.mkdtemp())
+    try: fetch(f'{base}/{name}.json', tmp/'c.json'); fetch(f'{base}/{name}.sig', tmp/'c.sig')
+    except urllib.error.HTTPError as e:
+        if e.code == 404: return {}
+        raise
+    if not verify_sig(tmp/'c.json', tmp/'c.sig', keys_pub): raise SystemExit(f'{name}.json has a bad signature')
+    return json.loads((tmp/'c.json').read_text())
+
+def fetch_lock(n, into, base=DL):
+    into = Path(into); into.mkdir(parents=True, exist_ok=True)
+    for f in ('manifest.json', 'manifest.sig', *FILES): fetch(f'{base}/lock-{n}/{asset_name(f)}', into/f)
+    return into
+
+def asset_name(f): return 'python-version' if f == '.python-version' else f
+
+def record_for(h, d=LOCK, days=RECORD_DAYS, at=None):
+    "The passing test record for hash `h`, or why it cannot be used."
+    p = Path(d)/'tested'/f'{h}.json'
+    if not p.is_file(): return None, f'no test record for {h[:16]}; run make lock-test'
+    r = json.loads(p.read_text())
+    if not r.get('passed'): return None, 'the test record did not pass'
+    age = (at or now()) - datetime.strptime(r['time'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+    if age > timedelta(days=days): return None, f'the test record is {age.days} days old; run make lock-test again'
+    if r.get('uv') != pinned_version(): return None, f"the record used uv {r.get('uv')}, not the pinned {pinned_version()}"
+    if r.get('test_code') != test_code_hash(): return None, 'tools/lock.py or childenv.json changed since the test; run make lock-test again'
+    return r, ''
+
+def tree_clean(root=ROOT):
+    "Why the git tree cannot publish, or ''."
+    if sh('git', '-C', root, 'status', '--porcelain'): return 'the git tree has changes that are not committed'
+    head, up = sh('git', '-C', root, 'rev-parse', 'HEAD'), sh('git', '-C', root, 'rev-parse', '@{u}', check=False)
+    return '' if head == up else 'HEAD is not pushed to its upstream branch'
+
+def refusals(d=LOCK, published=None, allow_downgrade=False, at=None, keys_pub=LOCK/'keys.pub'):
+    "Every reason `lock-publish` refuses this lock."
+    why, uv = [], pinned_version()
+    if not Path(keys_pub).is_file(): why.append(f'no {keys_pub}; run make lock-key and commit the public keys')
+    if not key_paths()[0].is_file(): why.append(f'no signing key {key_paths()[0]}; run make lock-key')
+    if bad := check(d): why += bad
+    if (t := tree_clean()): why.append(t)
+    h = lock_hash(d, uv)
+    if not record_for(h, d, at=at)[0]: why.append(record_for(h, d, at=at)[1])
+    if published and published.get('leela') and not allow_downgrade:
+        from packaging.version import Version
+        if Version(leela_version(d)) < Version(published['leela']): why.append(f"leela {leela_version(d)} is lower than the published {published['leela']}; ALLOW_DOWNGRADE=1 to roll back")
+    return why
+
+def publish(d=LOCK, keys_pub=LOCK/'keys.pub', allow_downgrade=False):
+    "Sign and publish this lock as lock-<n>, check what GitHub serves, then point the test channel at it."
+    if why := refusals(d, None, allow_downgrade, keys_pub=keys_pub): raise SystemExit('lock-publish refuses:\n  ' + '\n  '.join(why))
+    cur = channel('channel-test', keys_pub) or channel('channel', keys_pub)
+    last = json.loads(fetch(f"{DL}/lock-{cur['n']}/manifest.json")) if cur else None
+    if why := refusals(d, last, allow_downgrade, keys_pub=keys_pub): raise SystemExit('lock-publish refuses:\n  ' + '\n  '.join(why))
+    n, key = (cur.get('n') or 0) + 1, key_paths()[0]
+    out = Path(tempfile.mkdtemp(prefix=f'leela-lock-{n}-'))
+    for f in FILES: shutil.copy(Path(d)/f, out/asset_name(f))
+    (out/'manifest.json').write_text(dumps(manifest(d, n, pinned_version())))
+    sign(out/'manifest.json', key).rename(out/'manifest.sig')
+    rec = Path(d)/'tested'/f"{lock_hash(d, pinned_version())}.json"
+    shutil.copy(rec, out/'tested.json')
+    gh('release', 'create', f'lock-{n}', '--latest=false', '--prerelease', '--title', f'Lock {n}', '--notes', f'Environment lock {n}: leela {leela_version(d)}.',
+       *sorted(map(str, out.iterdir())))
+    got = check_lock_dir(fetch_lock(n, out/'check'), keys_pub)
+    c = out/'channel-test.json'
+    c.write_text(dumps(dict(n=n, manifest_sha256=sha256(out/'manifest.json'), published=iso(now()))))
+    sign(c, key).rename(out/'channel-test.sig')
+    gh('release', 'view', 'lock-channel', check=False) or gh('release', 'create', 'lock-channel', '--latest=false', '--prerelease', '--title', 'Lock channel', '--notes', 'Pointers to the current environment locks.')
+    gh('release', 'upload', 'lock-channel', c, out/'channel-test.sig', '--clobber')
+    if channel('channel-test', keys_pub).get('n') != n: raise SystemExit('the test channel does not point at the new lock')
+    print(f"lock {n} (leela {got['leela']}) is on the test channel; LEELA_LOCK_CHANNEL=test points an app at it; then make lock-promote N={n}")
+
+def promote(n, keys_pub=LOCK/'keys.pub'):
+    "Point the stable channel at lock `n`, which must be the one on the test channel."
+    t = channel('channel-test', keys_pub)
+    if t.get('n') != n: raise SystemExit(f"the test channel points at lock {t.get('n')}, not {n}")
+    out = Path(tempfile.mkdtemp())
+    check_lock_dir(fetch_lock(n, out/'lock'), keys_pub)
+    (c := out/'channel.json').write_text(dumps(t | dict(published=iso(now()))))
+    sign(c, key_paths()[0]).rename(out/'channel.sig')
+    gh('release', 'upload', 'lock-channel', c, out/'channel.sig', '--clobber')
+    verify(keys_pub=keys_pub)
+
+def verify(name='channel', keys_pub=LOCK/'keys.pub'):
+    "Check a published channel as the app does."
+    c = channel(name, keys_pub)
+    if not c: raise SystemExit(f'no {name}.json is published')
+    d = fetch_lock(c['n'], Path(tempfile.mkdtemp())/'lock')
+    if sha256(d/'manifest.json') != c['manifest_sha256']: raise SystemExit('the manifest does not match the channel pointer')
+    m = check_lock_dir(d, keys_pub)
+    print(f"{name}: lock {m['n']}, leela {m['leela']}, hash {m['hash'][:16]}, {m['download_bytes']/2**20:.0f} MB to download: good")
+    return m
+
+def diff(d=LOCK, keys_pub=LOCK/'keys.pub', old=None):
+    "Packages added, removed and changed against the published lock; owner versions with no git tag are flagged."
+    if old is None:
+        c = channel('channel', keys_pub)
+        old = packages(fetch_lock(c['n'], Path(tempfile.mkdtemp())/'lock')) if c else []
+    a, b = {p['name']: p['version'] for p in old}, {p['name']: p['version'] for p in packages(d)}
+    rows = [f'+ {n} {b[n]}' for n in sorted(b.keys() - a.keys())] + [f'- {n} {a[n]}' for n in sorted(a.keys() - b.keys())]
+    rows += [f'~ {n} {a[n]} -> {b[n]}' for n in sorted(a.keys() & b.keys()) if a[n] != b[n]]
+    own = set(owners())
+    for n in sorted(own & b.keys()):
+        if (n not in a or a[n] != b[n]) and not _tagged(n, b[n]): rows.append(f'! {n} {b[n]} has no git tag on vedicreader/{n}')
+    print('\n'.join(rows) or 'no change')
+    return rows
+
+def _tagged(name, v):
+    for t in (v, f'v{v}'):
+        try: urllib.request.urlopen(f'https://api.github.com/repos/vedicreader/{name}/git/ref/tags/{t}', timeout=10); return True
+        except Exception: pass
+    return False
+
+def fetch_channel(out, name='channel', keys_pub=LOCK/'keys.pub'):
+    "The published lock a channel points at, checked, into `out`: the bootstrap lock of a release build."
+    c = channel(name, keys_pub)
+    if not c: raise SystemExit(f'no {name}.json is published; publish and promote a lock first')
+    d = fetch_lock(c['n'], out)
+    if sha256(d/'manifest.json') != c['manifest_sha256']: raise SystemExit('the manifest does not match the channel pointer')
+    shutil.copy(keys_pub, Path(out)/'keys.pub')
+    m = check_lock_dir(d, keys_pub)
+    print(f"bootstrap lock {m['n']} (leela {m['leela']}) in {out}")
+
+def wheel(v, upload=False):
+    "Build the Leela wheel from tag `v` in a clean checkout, and with `upload` attach it to release `v`; `make lock` pins it by GitHub's sha256."
+    tmp = Path(tempfile.mkdtemp(prefix='leela-wheel-'))
+    sh('git', '-C', ROOT, 'worktree', 'add', '--detach', tmp/'src', v)
+    try:
+        sh('uv', 'build', '--wheel', '--out-dir', tmp/'dist', tmp/'src')
+        w = tmp/'dist'/f'leela-{v}-py3-none-any.whl'
+        if not w.is_file(): raise SystemExit(f'the build made no {w.name}')
+        if upload: gh('release', 'upload', v, w)
+        print(f'{w}' + (f' is on release {v}' if upload else ''))
+        return w
+    finally: sh('git', '-C', ROOT, 'worktree', 'remove', '--force', tmp/'src', check=False)
+
+def dev_lock(out):
+    "A lock signed with a throwaway key, for a local app build: the pinned project here, manifest n=0, keys.pub with the throwaway key."
+    out = Path(out); out.mkdir(parents=True, exist_ok=True)
+    for f in FILES: shutil.copy(LOCK/f, out/f)
+    k = Path(tempfile.mkdtemp())/'dev'
+    sh('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'leela-lock-dev', '-f', k)
+    (out/'manifest.json').write_text(dumps(manifest(out, 0, pinned_version())))
+    sh('ssh-keygen', '-Y', 'sign', '-n', NS, '-f', k, out/'manifest.json')
+    Path(f"{out/'manifest.json'}.sig").rename(out/'manifest.sig')
+    shutil.copy(f'{k}.pub', out/'keys.pub')
+    shutil.rmtree(k.parent)
+    print(f'dev lock in {out} (throwaway key; not for release)')
+
+def fixtures(out):
+    "SSHSIG fixtures for the Swift tests, made by ssh-keygen with throwaway keys under a temporary HOME."
+    out = Path(out); out.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp())
+    env = dict(PATH='/usr/bin:/bin', HOME=str(tmp))
+    for k in ('main', 'emergency', 'stranger'): sh('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', f'fixture-{k}', '-f', tmp/k, env=env)
+    msg = out/'message.json'
+    msg.write_text(dumps(dict(n=7, hash='ab'*32, platform=PLATFORM)))
+    for k, ns, name in (('main', NS, 'main'), ('emergency', NS, 'emergency'), ('stranger', NS, 'stranger'), ('main', 'other-ns', 'wrongns')):
+        sh('ssh-keygen', '-Y', 'sign', '-n', ns, '-f', tmp/k, msg, env=env)
+        Path(f'{msg}.sig').rename(out/f'{name}.sig')
+    (out/'keys.pub').write_text(''.join((tmp/f'{k}.pub').read_text() for k in ('main', 'emergency')))
+    shutil.copy(tmp/'main', out/'main.key')   # throwaway, so the Swift tests can sign manifests the same way through tools/lock.py
+    shutil.rmtree(tmp)
+    print(f'fixtures in {out}')
+
+def verify_app(app, zip_=None, max_kb=None, max_zip_kb=None):
+    "Check a built Leela.app without opening it."
+    import plistlib
+    app, why = Path(app), []
+    c = app/'Contents'
+    p = plistlib.loads((c/'Info.plist').read_bytes())
+    want = dict(CFBundleIdentifier='org.vedicreader.leela', CFBundleExecutable='Leela', CFBundlePackageType='APPL')
+    why += [f'{k} is {p.get(k)!r}, not {v!r}' for k, v in want.items() if p.get(k) != v]
+    if not p.get('NSAppTransportSecurity', {}).get('NSAllowsLocalNetworking'): why.append('no NSAllowsLocalNetworking')
+    if not p.get('CFBundleDocumentTypes'): why.append('no document types')
+    if not os.access(c/'MacOS'/'Leela', os.X_OK): why.append('no launcher')
+    uv = c/'Helpers'/'uv'
+    if not os.access(uv, os.X_OK): why.append('no Helpers/uv')
+    elif (v := uv_version(uv)) != pinned_version(): why.append(f'Helpers/uv is {v}, not {pinned_version()}')
+    try: m = check_lock_dir(c/'Resources'/'Lock', c/'Resources'/'lock-keys.pub')
+    except SystemExit as e: why.append(f'bootstrap lock: {e}'); m = {}
+    if not (c/'Resources'/'childenv.json').is_file(): why.append('no childenv.json')
+    dev = (LOCK/'keys.pub').is_file() and (c/'Resources'/'lock-keys.pub').read_text() != (LOCK/'keys.pub').read_text()
+    kb = sum(f.stat().st_size for f in app.rglob('*') if f.is_file() and not f.is_symlink()) // 1024
+    if max_kb and kb > max_kb: why.append(f'{kb/1024:.1f} MB on disk is over {max_kb/1024:.0f} MB')
+    if zip_ and max_zip_kb and (z := Path(zip_).stat().st_size // 1024) > max_zip_kb: why.append(f'{z/1024:.1f} MB zipped is over {max_zip_kb/1024:.0f} MB')
+    if why: raise SystemExit('the app is refused:\n  ' + '\n  '.join(why))
+    print(f"bundle ok: {p.get('CFBundleShortVersionString')}, uv {pinned_version()}, lock {m.get('n')} (leela {m.get('leela')})"
+          + ('' if (LOCK/'keys.pub').is_file() and not dev else ', signed with a throwaway key: not for release'))
+
+def main(argv=None):
+    a = argparse.ArgumentParser(prog='lock.py', description=__doc__)
+    s = a.add_subparsers(dest='cmd', required=True)
+    p = s.add_parser('make'); p.add_argument('version'); p.add_argument('--dir', default=LOCK); p.add_argument('--wheel')
+    p = s.add_parser('hash'); p.add_argument('--dir', default=LOCK)
+    p = s.add_parser('check'); p.add_argument('--dir', default=LOCK)
+    p = s.add_parser('test'); p.add_argument('--dir', default=LOCK); p.add_argument('--fresh', action='store_true'); p.add_argument('--extras', action='store_true')
+    p.add_argument('--records'); p.add_argument('--keep', action='store_true')
+    p = s.add_parser('diff'); p.add_argument('--dir', default=LOCK)
+    p = s.add_parser('publish'); p.add_argument('--allow-downgrade', action='store_true')
+    p = s.add_parser('promote'); p.add_argument('n', type=int)
+    p = s.add_parser('verify'); p.add_argument('--channel', default='stable', choices=['stable', 'test'])
+    p = s.add_parser('key'); p.add_argument('--keys-out', default=LOCK/'keys.pub')
+    p = s.add_parser('dev-lock'); p.add_argument('out')
+    p = s.add_parser('fetch'); p.add_argument('out'); p.add_argument('--channel', default='stable', choices=['stable', 'test'])
+    p = s.add_parser('wheel'); p.add_argument('version'); p.add_argument('--upload', action='store_true')
+    p = s.add_parser('fixtures'); p.add_argument('out')
+    p = s.add_parser('verify-app'); p.add_argument('app'); p.add_argument('--zip'); p.add_argument('--max-kb', type=int); p.add_argument('--max-zip-kb', type=int)
+    o = a.parse_args(argv)
+    match o.cmd:
+        case 'make': make(o.version, o.dir, o.wheel)
+        case 'hash': print(lock_hash(o.dir, pinned_version()))
+        case 'check':
+            if why := check(o.dir): raise SystemExit('\n'.join(why))
+            print('lock ok')
+        case 'test':
+            if not lock_test(o.dir, o.fresh, o.extras, o.records, o.keep)['passed']: raise SystemExit(1)
+        case 'diff': diff(o.dir)
+        case 'publish': publish(allow_downgrade=o.allow_downgrade)
+        case 'promote': promote(o.n)
+        case 'verify': verify('channel-test' if o.channel == 'test' else 'channel')
+        case 'key': lock_key(keys_out=o.keys_out)
+        case 'dev-lock': dev_lock(o.out)
+        case 'fetch': fetch_channel(o.out, 'channel-test' if o.channel == 'test' else 'channel')
+        case 'wheel': wheel(o.version, o.upload)
+        case 'fixtures': fixtures(o.out)
+        case 'verify-app': verify_app(o.app, o.zip, o.max_kb, o.max_zip_kb)
+
+if __name__ == '__main__': main()
