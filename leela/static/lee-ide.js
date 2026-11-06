@@ -5352,7 +5352,7 @@ function palette() {
   input.addEventListener('input', () => {
     const q = input.value.toLowerCase(), raw = input.value.trim();
     hits = cmds.filter(c => c.name.toLowerCase().includes(q) || (c.action || '').includes(q));
-    if (raw) hits = hits.concat({name: `Open file matching “${raw}”…`, scope: 'files', key: lee.keys.find(k => k.action === 'quick_open')?.key || '',
+    if (raw) hits = hits.concat({name: `Go to file matching “${raw}”…`, scope: 'files', key: lee.keys.find(k => k.action === 'quick_open')?.key || '',
                                  run: () => quickOpen(false, raw)});
     sel = 0; paint();
   });
@@ -8882,14 +8882,38 @@ async function openFolderWindow(path) {
     catch (e) { leeFail('project', `opening ${name}`, e); }
     return;
   }
+  return hubOpen(path);
+}
+window.leeOpenFolderWindow = openFolderWindow;
+
+// `/hub/open` sends a file where a Finder open sends it, and a folder to a window of its own.
+async function hubOpen(path) {
+  const name = path.split('/').pop();
   const r = await fetch('/hub/open?path=' + encodeURIComponent(path), {method: 'POST'});
   const d = await r.json().catch(() => ({ok: false, error: r.statusText}));
   if (!d.ok) return d.declined ? status(d.error) : leeFail('project', `opening ${name}`, new Error(d.error));
+  if (new URL(d.url).host === location.host) { await refreshTabStrip(); return mountTab().catch(() => {}); }
   // In the app window a scripted `window.open` opens nothing and returns null; `openExternal`
   // knows that and asks the server to open a real browser instead.
   openExternal(d.url);
 }
-window.leeOpenFolderWindow = openFolderWindow;
+
+/* Open… as a Mac app has it: one chooser takes a file or a folder. An older native window
+ * has the folder chooser only, and a browser tab has none, so it asks for the path. */
+async function openAny() {
+  if (!await shellReady()) {
+    const path = await inputDialog('open', 'path of a file or a folder', '', '~/code/notes.md');
+    return path && hubOpen(path);
+  }
+  const shell = window.pywebview.api;
+  if (!shell.pick_path) return openFolderWindow();
+  let path;
+  try { path = await shell.pick_path(); } catch (e) { return status(`file chooser: ${e.message || e}`, 'err'); }
+  if (!path) return;
+  status(`opening ${path.split('/').pop()}…`);
+  try { if (!await shell.open_path(path)) status(`Leela cannot open ${path} from here`, 'err'); }
+  catch (e) { leeFail('project', `opening ${path.split('/').pop()}`, e); }
+}
 
 /* A file no open folder holds lands in the loose window. Its folder is offered once, and opened only on Open. */
 function folderOffer(st) {
