@@ -210,8 +210,9 @@ def download_model(name=GEMMA):
         if (cur := _installs.get(name)) and cur.get('state') == 'running': return dict(cur)
         _installs[name] = row = {'runtime': name, 'state': 'running', 'log': '', 'cmd': f'download {LOCAL[name]}', 'requirements': [],
                                  'via': 'Hugging Face', 'target': '', 'size': LOCAL_SIZE.get(name, '')}
+        out = dict(row)   # before the thread starts: it changes `row` in place
     threading.Thread(target=_fetch, args=(name,), daemon=True, name=f'leela-download-{name}').start()
-    return dict(row)
+    return out
 
 def install_runtime(runtime):
     "Fetch one backend, tool or `GEMMA`'s weights, pinned to the rishi here, where a frozen app can reach it."
@@ -229,9 +230,10 @@ def install_runtime(runtime):
         _installs[runtime] = row = {'runtime': runtime, 'state': 'running', 'log': '',
                                     'cmd': ' '.join(cmd), 'requirements': reqs,
                                     'via': Path(cmd[0]).name, 'target': str(target or '')}
+        out = dict(row)
     threading.Thread(target=_run_install, args=(runtime, cmd), daemon=True,
                      name=f'leela-install-{runtime}').start()
-    return dict(row)
+    return out
 
 #: Approximate installed size, so nobody starts a 400MB download without being told.
 SETUP_SIZES = {'mlx': 400, 'llama': 120}
