@@ -108,10 +108,9 @@ HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transform
 #: and notarisation refused the unsigned copy left in the zip.
 GRAFTED = ('apsw', 'playwright', 'patchright', 'liteparse')
 
-#: Entries that can never be reached from inside `python313.zip`. `claude_agent_sdk` looks for its
-#: bundled CLI with `Path(__file__).parent.parent.parent/'_bundled'/name` and `.exists()`, which is
-#: always false for a path inside an archive. Leela reaches the real `claude` on PATH, which
-#: `use_login_path` repairs at startup, so the copy is 93MB of a 205MB zip that nothing can open.
+#: Paths nothing may reach, in `python313.zip` or beside it. py2app put `claude_agent_sdk` beside it, so
+#: 0.1.21 carried the SDK's 206MB `claude`, which the SDK prefers when `cli_path` is unset. `rishi.claude`
+#: passes `shutil.which('claude')`, and with none on PATH `ramabana` offers no Claude model and says so.
 #: `PIL/.dylibs/` is a second copy of what py2app already put in `Contents/Frameworks`, which `PIL`'s
 #: extensions load. Code in a zip cannot be signed, so notarisation refused all eighteen.
 UNREACHABLE = ('claude_agent_sdk/_bundled/', 'PIL/.dylibs/')
@@ -166,8 +165,8 @@ if __name__ == '__main__':
     if (built := APP.out(ROOT)).is_dir():
         got = finish(built, APP)
         for name in GRAFTED: print(f'  grafted {name} -> {got[name]}')
-        if got['stripped_mb']: print(f"  dropped {got['stripped_mb']}MB of unreachable archive entries")
-        if got['linked_mb']: print(f"  linked {got['linked_mb']}MB of duplicate grafted files")
+        if got['stripped_mb']: print(f"  dropped {got['stripped_mb']}MB of unreachable files, in the archive and beside it")
+        if got['linked_mb']: print(f"  linked {got['linked_mb']}MB of duplicate grafted files with relative symlinks, which the zip keeps")
         for name, paths in got['clashes'].items(): print(f"  {name} has {len(paths)} sources: {', '.join(paths)}")
         for name, src in got['mended'].items(): print(f'  mended Frameworks/{name} from {src}' if src else f'  could not mend Frameworks/{name}: no clean copy found')
         if got['modern_icon']: print(f'  Icon Composer icon installed in {built}')

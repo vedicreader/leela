@@ -305,8 +305,8 @@ def test_the_browser_driver_is_a_file_the_app_can_execute():
     for node in nodes:
         assert node.is_file(), f'{node} is not on disk, so nothing can run it'
         assert os.access(node, os.X_OK), f'{node} lost its execute bit on the way into the bundle'
-    a, b = (os.stat(n) for n in nodes)
-    assert a.st_ino == b.st_ino, 'the same 121MB binary is in the bundle twice'
+    assert nodes[1].is_symlink() and nodes[1].resolve() == nodes[0].resolve(), 'the same 121MB binary is in the bundle twice'
+    assert not (lib/'claude_agent_sdk'/'_bundled').exists(), "the SDK's 206MB claude ships, and Leela runs the one on PATH"
     z = first(sorted((app/'Contents'/'Resources'/'lib').glob('python3*.zip')))
     with zipfile.ZipFile(z) as f: names = f.namelist()
     assert not [n for n in names if n.split('/')[0] in ('playwright', 'patchright')], \

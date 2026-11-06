@@ -83,3 +83,23 @@ def connect(app, ctx):
         except FileNotFoundError as e: return fail(e, 404)
         except Exception as e: return fail(e)
         return {'ok': True, **out, 'note': 'reload the window to read the restored state'}
+    @rt('/update')
+    async def update_offer():
+        "Whether a newer Leela is out, and whether this app can install it."
+        from ...core.update import offer
+        return {'ok': True, **await off_loop(offer)}
+    @rt('/update/install')
+    def update_install():
+        "Start installing the newer release in the background."
+        from ...core.update import upgrade
+        return {'ok': True, **upgrade()}
+    @rt('/update/status')
+    def update_status():
+        from ...core.update import upgrade_status
+        return {'ok': True, **upgrade_status()}
+    @rt('/update/restart')
+    def update_restart():
+        "Quit and open the installed app, once an upgrade finished."
+        from ...core.update import restart, upgrade_status
+        if upgrade_status()['state'] != 'done': return fail('no finished update to restart into')
+        return {'ok': restart()}
