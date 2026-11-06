@@ -50,7 +50,7 @@ def _changed():
 @flexicache(time_policy(2), maxsize=16)
 def _walked(roots, hidden, limit, gen):
     # Roots take turns, so a large first root cannot spend the whole cap.
-    turns = zip_longest(*(fd_iter(r, hidden=hidden, skip_dir_re=_SKIP_RE) for r in roots))
+    turns = zip_longest(*(fd_iter(root=r, hidden=hidden, skip_dir_re=_SKIP_RE) for r in roots))
     return L(islice((p for t in turns for p in t if p is not None), limit)).sorted()
 
 def lang_for(p):
@@ -205,7 +205,7 @@ class Sandbox:
         return _walked(self._live(ref), hidden, limit, _GEN)
     async def hidden_files(self, pattern, ref=None, timeout_ms=10000):
         "Files named like `pattern` that `walk` leaves out, and whether the time limit cut the search short; cancelling stops the walk."
-        found = await fda(list(self._live(ref)), pattern, hidden=True, ignore=False, skip_dir='.git', timeout_ms=timeout_ms)
+        found = await fda(root=list(self._live(ref)), pattern=pattern, hidden=True, ignore=False, skip_dir='.git', timeout_ms=timeout_ms)
         seen = set(await asyncio.to_thread(self.walk, ref))
         return L(found).filter(lambda p: p not in seen).sorted(), found.stop_reason == 'timeout'
     def read(self, ref):
