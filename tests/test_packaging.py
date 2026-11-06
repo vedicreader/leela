@@ -525,3 +525,52 @@ def test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker(tmp_path):
         if not (left := _bundle_pids(APP.parents[2])): break
         time.sleep(.5)
     assert not left, 'processes outlived the app:\n' + '\n'.join(left)
+
+# The thin Mac app (packaging/mac, docs/thin-app.md)
+
+THIN = ROOT/'packaging'/'mac'
+
+def _lockpy():
+    spec = importlib.util.spec_from_file_location('lockpy', ROOT/'tools'/'lock.py')
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    return m
+
+def test_the_thin_app_keeps_the_bundle_id_and_document_types_of_the_old_one(mac):
+    """WebKit storage is keyed by the bundle id, and Finder's Open With list comes from the document types."""
+    import plistlib
+    p = plistlib.loads((THIN/'Resources'/'Info.plist').read_bytes())
+    assert p['CFBundleIdentifier'] == 'org.vedicreader.leela' and p['CFBundleExecutable'] == 'Leela' and p['CFBundleShortVersionString'] == '1.0.0'
+    assert p['NSAppTransportSecurity'] == {'NSAllowsLocalNetworking': True} and p['LSMinimumSystemVersion'] == '14.0'
+    assert p['CFBundleDocumentTypes'] == mac.PLIST['CFBundleDocumentTypes']
+
+def test_the_thin_app_build_checks_size_signature_and_the_pinned_uv():
+    mk = (THIN/'Makefile').read_text()
+    assert 'MAX_KB := 61440' in mk and 'MAX_ZIP_KB := 25600' in mk, 'the plan: 60 MB on disk, 25 MB zipped'
+    assert 'shasum -a 256 -c' in mk and 'codesign --verify --strict' in mk and '--options runtime' in mk
+    assert (ROOT/'packaging'/'uv.version').read_text().strip() and len((ROOT/'packaging'/'uv.sha256').read_text().strip()) == 64
+
+def test_verify_app_names_every_missing_piece(tmp_path):
+    import plistlib
+    L = _lockpy()
+    app = tmp_path/'Leela.app'
+    (app/'Contents'/'MacOS').mkdir(parents=True); (app/'Contents'/'Resources').mkdir()
+    (app/'Contents'/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'org.example.other'}))
+    (app/'Contents'/'Resources'/'lock-keys.pub').write_text('')
+    with pytest.raises(SystemExit) as e: L.verify_app(app)
+    why = str(e.value)
+    for w in ('CFBundleIdentifier', 'NSAllowsLocalNetworking', 'document types', 'no launcher', 'no Helpers/uv', 'bootstrap lock', 'childenv.json'): assert w in why, w
+
+def test_verify_app_refuses_a_bundle_over_the_size_limit(tmp_path):
+    L = _lockpy()
+    built = THIN/'build'/'Leela.app'
+    if not built.is_dir(): pytest.skip('no built app: make -C packaging/mac uv-fetch dev-lock app')
+    with pytest.raises(SystemExit, match='on disk is over'): L.verify_app(built, max_kb=1)
+
+def test_the_thin_app_cask_watches_app_tags_and_zaps_its_folders():
+    c = (THIN/'cask'/'leela.rb').read_text()
+    assert 'releases/download/app-v#{version}/Leela.zip' in c and 'strategy :github_releases' in c and 'regex(/^app-v' in c
+    assert '~/Library/Application Support/Leela' in c and '~/Library/Caches/Leela' in c and 'uninstall quit: "org.vedicreader.leela"' in c
+
+def test_ci_no_longer_builds_the_fat_mac_app():
+    y = (ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text()
+    assert re.search(r'\n  macos:\n    if: false\n', y)
