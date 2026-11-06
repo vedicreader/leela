@@ -176,7 +176,92 @@ The newest app comes from the `app-v*` releases, not from `releases/latest`. The
 - The private keys are in `~/.ssh`, encrypted with their passphrase, and the keychain keeps the passphrase. Back them up as you back up any SSH key, in a place you choose. Never put them in a git repository, a dotfiles sync, or CI.
 - A stolen main key: ship an app update that drops it, and sign with the emergency key.
 
-## Manual checks of the windows (no automated test opens a window)
+## Window parity with the old app
+
+The old app's window layer is pywebview's Cocoa backend (`webview/platforms/cocoa.py`, here C), `kavacha/window.py` (K), `leela/desktop.py` (D) and `leela_app.py` (A). The menu bar comes from `leela/blocks/keys/menus.py` (M) in both apps. The thin side is `packaging/mac/Sources/Leela/Windows.swift` (W) and `AppDelegate.swift` (AD). Status: same, fixed (it was missing or different, and now matches), or different (on purpose, with the reason).
+
+### Menus and keys
+
+| Behaviour | Old app | Thin app | Status |
+|---|---|---|---|
+| Menu rows from `BAR`: keymap actions, `Std` selectors, `Js` rows, `__app__` rows in the app menu | M:82, K:650 `menu_bar`, C:1021 | `/app/menu.json` (M:142), W:231 `build`, W:287 `item` | same |
+| A keymap action row runs `leeAct("<action>")` in the focused window | D:40 `_act`, K:672 `eval_js` | W:93 `run(js:)`, W:217 `MenuRunner` | same |
+| Chords onto rows, selectors onto `Std` rows (the patch `install_menu_patch` / `_decorate`) | K:687, K:707 | the server sends `key`, `mask` and `selector`; W:287 sets them, with nil target so the responder chain gets the selector | same |
+| ⇧ in a chord | K:620 `mac_key` gives a lower case key plus the shift flag | W:308 `appKit` gives the shifted character with no shift flag (`O`, `?`, `!`) | fixed. AppKit matches shift by the character it makes. With a lower case key and the shift flag, no ⇧ chord fired from the menu, and ⌥I ran ⌥⇧I (Interrupt kernel) instead of Live / isolated. The page gets each key first (WebKit), so only keys the page did not take reached the menu. The old app has the same fault: `mac_key` belongs to kavacha, fix it there. The punctuation and digit map is the US keyboard's. |
+| Cut ⌘X, Copy ⌘C, Paste ⌘V, Select All ⌘A | `Std` rows (M:90) and C:512 `keyDown_` | `Std` rows; the web view is the first responder (W:48) | same; the first responder is now set when the window opens (fixed: before, nothing was first responder until a click) |
+| Undo ⌘Z, Redo ⇧⌘Z | C:533 `keyDown_` runs the native undo manager when the page does not take the key | W:271 adds Undo and Redo to Edit, selectors `undo:` and `redo:` to the window, which uses the web view's undo manager | fixed. The page sees ⌘Z first, so the editor's and the notebook's own undo still win. |
+| Enter Full Screen ⌃⌘F | `Std` row (M:101) | `Std` row; windows are `fullScreenPrimary` (W:48) | same |
+| Minimize ⌘M, Zoom, Bring All to Front | `Std` rows (M:122) | `Std` rows; the Window menu is `NSApp.windowsMenu` | same |
+| Close Window ⌘W | C:540 `keyDown_` calls `performClose:` | W:279 adds "Close Window" to File | fixed |
+| About, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q | C:1070 `_add_app_menu` | W:236 to W:251 | fixed (Services, Hide Others and Show All were missing) |
+| "Use Previous Version", "Show Server Log" | none | W:240 | thin only |
+| A menu bar before the server answers | built before `webview.start` (K:515) | W:266 `fallback` at launch (AD:37); replaced when `/app/menu.json` comes (AD:84), kept when it does not | fixed: before, the setup window had no ⌘Q, ⌘C or ⌘H |
+| Zoom keys ⌘+ and ⌘- | none | none | same: the keymap has none |
+| Find in page | the keymap's `find_in_file` ⌘F | the same row | same |
+
+### Windows and the page
+
+| Behaviour | Old app | Thin app | Status |
+|---|---|---|---|
+| Size 1440×900, smallest 900×560 | K:51, K:54 | W:19, W:48 | fixed (it was 1400×900 with no minimum) |
+| Bridge: `open_folder`, `pick_folder`, `recent`, `set_background`, `set_title` | K:82 `ShellApi`, D:30 | `Bridge.route`, W:122 to W:128 | same |
+| Background repaints the window and what WebKit draws past the page | K:67 `paint_background` | W:137 `paint` | fixed (the area past the page edge was not painted) |
+| Smart quotes, dashes and autocorrect off | K:379 `quiet_text_substitution` | W:34, called at AD:36 | fixed: before, `"` typed in the editor could become a curly quote |
+| Native context menu | empty unless debug (C:508) | empty unless `LEELA_WEBVIEW_DEBUG` (W:8) | fixed: before, it offered Reload, which drops the page |
+| Web inspector | `LEELA_WEBVIEW_DEBUG` (K:516, C:657) | `isInspectable` with the same variable (W:54) | fixed |
+| One window per folder, raised and not opened twice | K:466 `open_window`, `keyed_windows` | W:68 `show`, keyed by slug | same |
+| A window comes forward and the app activates | K:454 `bring_forward`, C:748 | W:68, W:104 call `NSApp.activate()` | fixed |
+| Closing a window hides it; the Dock icon brings the last one back as it was | K:255 `dock_delegates` | W:96 `windowShouldClose`, W:104 `reopen`, AD:180 | fixed: before, the window and its page were gone, and the Dock icon opened the home page |
+| Closing the last window keeps the app | K:392 `keep_running_in_dock` | AD:178 | same |
+| `alert()` | C:190, activates the app | W:193, activates the app | same |
+| `confirm()` | C:217 | W:197 | same |
+| `prompt()` (the agent's round name) | C:228 | W:202 | fixed: before, `prompt()` gave null and the round could not be named |
+| `<input type=file>` | C:239, takes the accepted types | W:209, takes "directories" | different: WebKit gives the accepted types only through a private API |
+| `<a download>` and attachments | `ALLOW_DOWNLOADS` is off (C:279), so a download link showed the file in place of Leela | W:148 `policy`, W:156 `saves`, W:175, W:178: a save panel in Downloads | fixed in the thin app (it also showed the file in place of Leela) |
+| Links out of the page | C:261, C:272: `target=_blank` opens the browser; a plain link changed the window | W:148: a click to http, https or mailto opens the browser; the server's pages stay; anything else is refused | different, on purpose: a plain link no longer replaces Leela |
+| `window.open` of a server page | nothing (C:261 returns nil) | W:188 opens or raises that folder's window | different; the page calls it only outside the desktop shell |
+| The presenter's audience popup (`window.open('', …)`) | nothing | nothing | same |
+| A file or folder dropped on the window | WebKit loads it in place of Leela | refused (W:148) | different: nothing happens. Opening it as Finder does is a decision for the owner. |
+| `window.print()` | C:394, a print panel | no print panel | different: no page calls it |
+| Back navigation by the Delete key | turned off (C:283, C:649) | WebKit has it off by default; swipes are off | same |
+| Clipboard (`navigator.clipboard.writeText`) | WKWebView | WKWebView | same |
+| Notifications (`new Notification`) | none: WKWebView has no Notification API | none | same; the page says so |
+| Microphone and camera | none: no page uses `getUserMedia`; the voice is `speechSynthesis` | none; no `NSMicrophoneUsageDescription` and no audio entitlement | same. A feature that records needs `NSMicrophoneUsageDescription`, the `com.apple.security.device.audio-input` entitlement and `requestMediaCapturePermissionFor`. |
+| Screen capture (`getDisplayMedia`) | none in WKWebView | none | same; the page falls back |
+
+### Folders, the Dock and quitting
+
+| Behaviour | Old app | Thin app | Status |
+|---|---|---|---|
+| `open_folder` from the page asks first | A:143 `on_page_folder`, trusted false | W:122, AD:125 with no grant | same |
+| `pick_folder` trusts the picked folder | K:91, A:115 `on_picked = grant` | AD:159 and `/hub/grant` | same |
+| Finder and Dock open events, `application:openFile(s):` | K:272, K:551 `watch_open_events`, K:537 `open_paths` | AD:111 `application(_:open:)` | same; one path, so no two-second de-duplication is needed |
+| Opens before the server is ready | `on_ready` (A:145) | queued, then opened on every ready (AD:90) | fixed: before, a queue made during a restart was dropped |
+| A file from Finder opens in the folder that holds it, else the loose window | A:175 `open_file` | AD:145; the server finds the folder (`site_covering`) | same |
+| The loose window refuses the file: ask to add its folder | A:183 | AD:150 | fixed |
+| Window title after a file open | the folder's name, or the file's in the loose window (A:187) | the file's name | different; the page sets the title when it loads |
+| A question from the server (`/confirm`) | A:197 opens a window when none is visible | AD:196 asks on the key window, a visible one, or the last closed one brought back (W:110) | fixed: before, the sheet could go on a hidden window and wait for ever |
+| Dock menu: 8 recent folders, "No recent folders" when none, the path as tooltip | K:222 `dock_menu` | W:323 `dock`, AD:173 | fixed (it was 10 rows, an empty menu, and no tooltip) |
+| Quit stops kernels and servers | K:310 `quit_cleanly`, up to 15 s | AD:185: SIGTERM to the server, SIGKILL after 15 s; the server's shutdown stops kernels, terminals and dev servers | fixed: the wait was 3 s, shorter than a workspace's shutdown |
+| SIGTERM to the app quits as ⌘Q does | K:349 `quit_on_sigterm` | AD:188 | fixed: before, SIGTERM killed the launcher and left the server running |
+
+`menu_json` builds the launcher's menu from kavacha's vocabulary in Leela. It belongs in kavacha, next to `menu_bar`, with the shift fix in `mac_key`.
+
+### The automated checks
+
+`make -C packaging/mac test` writes `build/menu.json` from the Python source with an empty keymap folder, then runs the Swift tests with it. `Tests/LeelaTests` builds the launcher's menu bar from that file and, with no window on screen:
+
+- each row has its key and mask;
+- a key-down as the US keyboard sends it reaches its row through `NSMenu.performKeyEquivalent`, and the row runs `leeAct("<action>")` through a runner the test gives, or sends its selector to a probe;
+- no two different rows share a chord, and no action row takes ⌘Z;
+- Cut, Copy, Paste and Select All stop at the web view in the responder chain, and Undo and Redo at its window;
+- the navigation policy, the download rule, hiding on close, the context menu, the background and the Dock menu.
+
+`tests/test_packaging.py` checks that the launcher keeps kavacha's sizes, Dock length and text substitution keys.
+
+The tests send keys to the menu, not to a loaded page. A page that acts on a chord and does not call `preventDefault` would run the action twice, once in the page and once from the menu. Only the manual check below sees that.
+
+## Manual checks of the windows (no automated test puts a window on screen)
 
 1. A folder from Finder (drag on the Dock icon, "Open With") opens its own window with no question.
 2. "Open Folder…" in a page opens the app's folder dialog; the folder opens with no second question.
@@ -184,7 +269,13 @@ The newest app comes from the `app-v*` releases, not from `releases/latest`. The
 4. Every menu bar row runs its action in the front window; Cut, Copy and Paste work in the editor.
 5. The Dock menu lists recent folders; one opens its window.
 6. A theme change repaints the window background; a tab title change retitles the window.
-7. Closing the last window keeps the app and its server running; clicking the Dock icon opens a window.
+7. Closing the last window (⌘W or the red button) keeps the app and its server running; clicking the Dock icon brings that window back with its tabs as they were.
+8. With the editor focused, ⇧⌘P opens the palette once, ⌥I toggles Live / isolated (not Interrupt), ⌘Z undoes in the editor and in a plain text field, and ⌥⇧1 focuses Files. Each action runs once.
+9. A file's "download" button opens a save panel in Downloads, and Leela stays on screen.
+10. The agent's "round" button asks for a name in a text field.
+11. Typing `"` and `--` in the editor gives `"` and `--`, not curly quotes or a dash.
+12. A right-click on an empty part of the page shows no Reload row.
+13. `kill <launcher pid>` quits Leela, and the server and its kernels stop.
 
 `make -C packaging/mac lock-test-launcher LOCK_DIR=<lock> WORK=<empty folder>` runs the built launcher's headless `--lock-test`: it builds the env with the bundled uv and the Swift code, with no window. Its env hash equals the one `tools/lock.py` prints.
 
