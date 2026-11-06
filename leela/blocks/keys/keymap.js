@@ -1,5 +1,12 @@
 const MAC = /mac|iphone|ipad|ipod/i.test(navigator.userAgentData?.platform || navigator.platform || '');
-const displayChord = s => String(s || '').replace(/\bmod\+/g, MAC ? '⌘' : 'ctrl+');
+//: A native window gets every chord; a browser tab never sees the ones Chrome keeps (`browser: false`).
+const NATIVE = !!(window.pywebview || window.webkit?.messageHandlers);
+//: Each chord as kavacha's `chord_glyph` writes it, from the server's table; a chord it lacks keeps the old spelling.
+const displayChord = s => String(s || '').split(/(\s+)/).map(t =>
+  /^\s*$/.test(t) || t === '/' ? t : lee.glyphs?.[MAC ? 'mac' : 'pc']?.[t] || t.replace(/\bmod\+/g, MAC ? '⌘' : 'ctrl+')).join('');
+//: The chord to advertise for a row: its first, or in a browser tab its first one the tab receives.
+const shownChord = k => { const cs = (k?.key || '').split(' ').filter(Boolean);
+  return (NATIVE ? cs[0] : cs.find((c, i) => k.chords?.[i]?.browser !== false)) || ''; };
 function paintKeyLabels(root = document) {
   $$('kbd', root).forEach(k => { if (k.textContent.includes('mod+')) k.textContent = displayChord(k.textContent); });
 }
@@ -7,7 +14,7 @@ function paintKeyLabels(root = document) {
 //: The server draws the footer once; its chords follow `lee.keys` from here.
 function paintFooterKeys() {
   $$('.lee-fkey[data-action]').forEach(el => {
-    const first = (lee.keys.find(k => k.action === el.dataset.action)?.key || '').split(' ').find(Boolean);
+    const first = shownChord(lee.keys.find(k => k.action === el.dataset.action));
     el.style.display = first ? '' : 'none';
     const kbd = el.querySelector('kbd'); if (kbd && first) kbd.textContent = displayChord(first);
   });
@@ -17,7 +24,8 @@ function paintFooterKeys() {
 async function loadKeys(d) {
   d ||= await api('/keys.json');
   lee.keys = d.keys; lee.help = d.help; lee.keyPath = d.path; lee.keyNotes = d.notes || [];
-  lee.bars = d.bars || {}; lee.menus = d.menus || {};
+  lee.bars = d.bars || {}; lee.menus = d.menus || {}; lee.glyphs = d.glyphs || {}; lee.legacy = d.legacy || [];
+  lee.menuChords = d.menuChords || [];
   paintFooterKeys(); paintKeyLabels();
   const prompt = $('#agentprompt'); if (prompt) prompt.placeholder = displayChord(prompt.placeholder);
   renderContextKeys(lee.scope);
@@ -34,7 +42,7 @@ function renderContextKeys(scope = lee.scope) {
   const rows = local.concat(global);
   if (tag) tag.textContent = scope && scope !== 'global' ? `· ${scope}` : '';
   host.innerHTML = rows.length ? rows.map(k =>
-    `<div class="lee-krow${k.scope === scope ? ' contextual' : ''}"><kbd>${esc(displayChord(k.key))}</kbd>` +
+    `<div class="lee-krow${k.scope === scope ? ' contextual' : ''}"><kbd>${esc(displayChord(shownChord(k)))}</kbd>` +
     `<span>${esc(k.label)}</span></div>`).join('') : '<div class="lee-dim">no keys in this context</div>';
 }
 
@@ -105,19 +113,13 @@ function isTextEntry(el) {
 
 function chordMatches(c, e) {
   if (e.isComposing || e.key === 'Process' || e.repeat) return false;
-  // macOS reports Caps Lock remapped to Hyper as all four modifiers. Other platforms and some
-  // Karabiner or browser combinations expose only Ctrl+Alt+Shift, where the Meta bit is not
-  // portable. Hyper accepts either shape. Ordinary `mod` stays strict.
-  if (c.hyper) {
-    // Safari and Chrome occasionally omit either the synthetic Shift or the Meta bit for named
-    // keys, so require the stable Ctrl+Alt pair plus one of the two high modifiers.
-    if (!e.ctrlKey || !e.altKey || !(e.shiftKey || e.metaKey)) return false;
-  } else {
-    const wantCtrl = !!c.ctrl || (!!c.mod && !MAC);
-    const wantMeta = !!c.mod && MAC;
-    if (wantCtrl !== e.ctrlKey || wantMeta !== e.metaKey || !!c.alt !== e.altKey || !!c.shift !== e.shiftKey)
-      return false;
-  }
+  // AltGr arrives as Ctrl+Alt on Windows and Linux; in a text field it is a character, not a chord.
+  if (!MAC && e.getModifierState?.('AltGraph') && isTextEntry(keyTarget(e))) return false;
+  // Hyper is all four modifiers, the shape macOS reports. Ctrl+Alt+Shift alone is AeroSpace's.
+  const wantCtrl = !!c.ctrl || !!c.hyper || (!!c.mod && !MAC);
+  const wantMeta = (!!c.mod || !!c.hyper) && MAC;
+  if (wantCtrl !== e.ctrlKey || wantMeta !== e.metaKey || !!(c.alt || c.hyper) !== e.altKey || !!(c.shift || c.hyper) !== e.shiftKey)
+    return false;
   // Matched by physical code where there is one: Karabiner and Hyper can transform `event.key`,
   // while `event.code` stays Enter, KeyR, ArrowDown.
   if (c.code && (c.mod || c.ctrl || c.alt || c.hyper)) return c.code === e.code;
@@ -135,10 +137,24 @@ const CM_EDIT = {copy_line_up: 'copyLineUp', copy_line_down: 'copyLineDown', del
   add_cursor_below: 'addCursorBelow', matching_bracket: 'cursorMatchingBracket',
   select_parent_syntax: 'selectParentSyntax', block_comment: 'toggleBlockComment'};
 const inCellEditor = e => (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.lee-cell .cm-editor'));
-//: RISE's chords are shifted letters: a cell in command mode takes them, and every editor or field types them.
-const SLIDE_ACTIONS = new Set(['slide_none', 'slide_slide', 'slide_subslide', 'slide_fragment', 'slide_skip', 'slide_notes']);
+//: A letter or shifted letter in the editor scope is a notebook command-mode key, as RISE's slide chords and
+//: Jupyter's `a`, `b`, `d d`: a cell in command mode takes it, and every editor, field, tab or button types or keeps it.
 const typesHere = e => lee.kind !== 'notebook' || isTextEntry(keyTarget(e)) ||
   (e.composedPath?.() || [e.target]).some(n => n instanceof Element && n.matches('.cm-editor'));
+const commandChord = (k, c) => k.scope === 'editor' && !(c.mod || c.ctrl || c.alt || c.hyper) && c.key.length === 1 && c.key !== ' ';
+function commandMode(e) {
+  if (typesHere(e)) return false;
+  const t = keyTarget(e);
+  return t === document.body || (t instanceof Element && !!t.closest('.lee-cell, #editor') && !t.closest('button, a, summary, select, .lee-tab'));
+}
+//: `d d`: the first press arms, a second within the window runs. Any other key disarms.
+const TWICE_MS = 800;
+function twiceReady(k, chord, e) {
+  if (!chord.twice) return true;
+  const armed = lee.twice?.action === k.action && e.timeStamp - lee.twice.at < TWICE_MS;
+  lee.twice = armed ? null : {action: k.action, at: e.timeStamp};
+  return armed;
+}
 const firesInTextEntry = c => c.mod || c.ctrl || c.alt || /^F([1-9]|1[0-2])$/.test(c.key);
 //: Plain copy, cut and paste stay the browser's in a text field, and copy and cut also with text
 //: selected. Not a selection touching a cell's editor, which keeps one after it blurs, or the file
@@ -151,6 +167,14 @@ function nativeClipboard(e) {
   return e.code !== 'KeyV' && !!s && !s.isCollapsed && !!String(s).trim() &&
     !selTouches(s.anchorNode, own) && !selTouches(s.focusNode, own);
 }
+//: An old default chord nothing is bound to now: run its action once and say where it went. Never while typing.
+function legacyBinding(e, scope) {
+  if (scope === 'overlay' || isTextEntry(keyTarget(e)) || (scope === 'editor' && lee.kind === 'notebook' && typesHere(e))) return null;
+  const allowed = new Set(lee.keys.filter(k => k.scope === scope || k.scope === 'global').map(k => k.action));
+  return (lee.legacy || []).find(r => allowed.has(r.action) && chordMatches(r.chord, e)) || null;
+}
+//: A chord the Mac menu bar owns, pressed over an overlay. The page swallows it, so the row does not run behind the overlay.
+const menuChordOver = (e, scope) => scope === 'overlay' && (lee.menuChords || []).some(c => chordMatches(c, e));
 function findBinding(e, scope) {
   if (scope === 'overlay' || nativeClipboard(e)) return null;
   // `term` and `web` hand the keyboard to something that is not Leela, keeping only the chords
@@ -168,7 +192,9 @@ function findBinding(e, scope) {
     if (['cell_copy', 'cell_cut'].includes(k.action) && lee.kind !== 'notebook') continue;
     if (CELL_ON_CM_CHORD.has(k.action) && chord === k.chords[0] && inCellEditor(e)) continue;
     if (MD_KEYS[k.action] && !MD_KEYS[k.action](e)) continue;
-    if (SLIDE_ACTIONS.has(k.action) && !firesInTextEntry(chord) && typesHere(e)) continue;
+    if (commandChord(k, chord) && !commandMode(e)) continue;
+    // With no tab open ⌘W is the window's: the page leaves it alone and the window closes.
+    if (k.action === 'close_tab' && chord.mod && !$$('.lee-tab').length) continue;
     if (['cell_first', 'cell_last', 'cell_page_up', 'cell_page_down', 'cell_move_up', 'cell_move_down'].includes(k.action)
         && lee.kind !== 'notebook') continue;
     // The find pane searches the open document. A CodeMirror that is not one of the page's own
@@ -205,7 +231,16 @@ window.addEventListener('keydown', e => {
   lee.lastKeyEvent = {key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey,
                       shift: e.shiftKey, meta: e.metaKey, scope,
                       action: match?.binding.action || '', trusted: e.isTrusted};
-  if (!match) return;
+  if (!match) {
+    if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) lee.twice = null;
+    if (menuChordOver(e, scope)) return void e.preventDefault();
+    const old = legacyBinding(e, scope); if (!old) return;
+    e.preventDefault(); e.stopPropagation();
+    status(old.now ? `${old.old} is now ${old.now}` : `${old.old} has no key now. Use the command palette.`, 'ok');
+    return void leeAct(old.action);
+  }
+  if (!twiceReady(match.binding, match.chord, e)) return void (e.preventDefault(), e.stopPropagation());
+  if (!match.chord.twice) lee.twice = null;
   // Run on the editor under the caret; any other CodeMirror keeps its own chord for the command.
   if (CM_EDIT[match.binding.action]) {
     const v = textEditorOf(e); if (!v) return;

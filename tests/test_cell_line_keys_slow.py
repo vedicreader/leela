@@ -73,7 +73,7 @@ def test_a_cell_editor_takes_line_chords_and_the_cell_versions_keep_their_own(tm
         out['edit_cell'] = await pg.evaluate("""() => ({
           copy: _traps('cell_copy', {key: 'C', code: 'KeyC', shiftKey: true, ..._mod()}, _cm()),
           cut: _traps('cell_cut', {key: 'X', code: 'KeyX', shiftKey: true, ..._mod()}, _cm()),
-          comment: _traps('cell_comment', {key: '/', code: 'Slash', ctrlKey: true, altKey: true, shiftKey: true}, _cm()),
+          comment: _traps('cell_comment', {key: '/', code: 'Slash', altKey: true, ..._mod()}, _cm()),
           arrow_up: _traps('cell_move_up', {key: 'ArrowUp', code: 'ArrowUp', altKey: true, shiftKey: true}, _cm()),
           up: _traps('cell_move_up', {key: 'PageUp', code: 'PageUp', altKey: true, shiftKey: true}, _cm()),
           down: _traps('cell_move_down', {key: 'PageDown', code: 'PageDown', altKey: true, shiftKey: true}, _cm())})""")

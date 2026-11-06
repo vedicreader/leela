@@ -591,6 +591,38 @@ def test_a_settled_watcher_sends_nothing_for_its_quiet_ticks(tmp_path):
         finally: w.close()
     assert all(paths or resync for paths, resync in asyncio.run(run()))
 
+def test_a_deleted_root_is_dropped_and_the_rest_are_still_watched(tmp_path, capfd):
+    "A watched folder deleted before or while watching raised FileNotFoundError on the watch thread, and no folder was watched after."
+    import shutil, threading
+    from leela.blocks.fs.fs import Sandbox
+    from leela.blocks.fs.watch import Watcher
+    gone, kept, later = tmp_path/'gone', tmp_path/'kept', tmp_path/'later'
+    for d in (gone, kept, later): d.mkdir()
+    errors, hook = [], threading.excepthook
+    threading.excepthook = lambda a: errors.append(a.exc_value)
+    async def run():
+        sb = Sandbox([gone, kept])
+        w = Watcher(sb, step=50)
+        shutil.rmtree(gone)
+        q = w.subscribe()
+        try:
+            assert await w.settled()
+            (kept/'a.py').write_text('x = 1\n')
+            first = await _until(q, lambda b: any(p.endswith('a.py') for p in b[0]))
+            sb.roots.append(later); w.start(restart=True)
+            assert await w.settled()
+            shutil.rmtree(later)
+            await asyncio.sleep(.5)
+            (kept/'b.py').write_text('y = 2\n')
+            return first, await _until(q, lambda b: any(p.endswith('b.py') for p in b[0]))
+        finally: w.close()
+    try: first, second = asyncio.run(run())
+    finally: threading.excepthook = hook
+    assert not errors, errors
+    assert first and second, 'the folders left are still watched'
+    out = capfd.readouterr().out
+    assert out.count(f'no longer follows {gone}') == 1, out
+
 def test_a_batch_too_big_to_send_asks_for_a_resync_instead_of_dropping_it(tmp_path):
     """Batches are deltas, not snapshots, so a truncated or dropped one is lost for good: the tree keeps showing files that are gone until something unrelated happens to touch it."""
     from leela.blocks.fs.fs import Sandbox

@@ -100,6 +100,8 @@ const ACTIONS = {
     const r = await nbEdit({op: 'redo', i: lee.sel}); if (!r) return;
     focusCell(r.index ?? lee.sel); status('cell operation redone', 'ok');
   },
+  cell_to_markdown: () => setCellType('markdown'),
+  cell_to_code: () => setCellType('code'),
   cell_type:    async () => {
     const id = lee.cells[lee.sel]?.id;
     const r = await nbEdit({op: 'type', i: lee.sel, cycle: true}); if (!r) return;
@@ -124,7 +126,7 @@ const ACTIONS = {
   collapse_all_headings: () => setHeadings(null, true),
   expand_all_headings: () => setHeadings(null, false),
   cell_edit:    () => editMarkdownCell(lee.sel),
-  cell_render:  () => showRenderedMarkdown(lee.cells[lee.sel], true),
+  cell_render:  () => lee.cells[lee.sel]?.cell_type === 'markdown' ? showRenderedMarkdown(lee.cells[lee.sel], true) : document.activeElement?.blur(),
   cell_duplicate: async () => {
     const at = lee.sel; if (!await nbEdit({op: 'duplicate', i: at})) return;
     focusCell(at + 1); status('cell duplicated', 'ok');
@@ -218,10 +220,12 @@ const ACTIONS = {
   tree_expand:  () => treeExpand(),
   tree_collapse: () => treeCollapse(),
   new_file:     () => newEntry('file'),
+  tree_new_file: () => newEntry('file'),
   new_dir:      () => newEntry('dir'),
   rename:       () => renameEntry(),
   delete:       () => deleteEntry(),
   open_folder:  () => openFolderWindow(),
+  tree_open_folder: () => openFolderWindow(),
   add_root:     () => addRoot(),
   find_repo:    () => findRepo(),
   remove_root:  () => removeRoot(),
@@ -296,6 +300,12 @@ ACTIONS.column_mode = () => {
   if (!LeeCM.toggleColumnMode(v)) status('column mode needs an editable editor', 'err');
 };
 
+async function setCellType(t) {
+  if (lee.cells[lee.sel]?.cell_type === t) return;
+  const at = lee.sel; if (!await nbEdit({op: 'type', i: at, cell_type: t})) return;
+  selectCell(at); status(`cell ${at + 1} is now ${t}`, 'ok');
+}
+
 function leeAct(name) {
   const f = ACTIONS[name];
   if (!f) return status('no handler for ' + name);
@@ -313,7 +323,8 @@ const activeTabIndex = () => $$('.lee-tab').findIndex(t => t.classList.contains(
 async function closeTab(index = null) {
   const i = index == null ? (lee.menuTab == null ? activeTabIndex() : lee.menuTab) : Number(index);
   lee.menuTab = null;
-  if (i < 0) return;
+  // No tab left: close the window, as ⌘W does in any Mac app. A browser tab ignores a script's close.
+  if (i < 0) return void (window.pywebview || window.webkit?.messageHandlers ? window.close() : status('no tab is open'));
   const tab = $$('.lee-tab')[i];
   if (tab?.dataset.gitDiff) return closeGitDiffTab(tab.dataset.gitDiff);
   if (tab?.classList.contains('dirty') &&

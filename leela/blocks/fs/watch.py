@@ -39,7 +39,7 @@ class Watcher:
     "One watchfiles thread over the open roots. Subscribers get debounced batches of paths."
     def __init__(self, fs, step=200, poll=1):
         store_attr()
-        self.subs, self.stop, self.thread, self.loop, self.roots, self.up = set(), None, None, None, (), ()
+        self.subs, self.stop, self.thread, self.loop, self.roots, self.up, self.gone = set(), None, None, None, (), (), set()
     def subscribe(self):
         q = asyncio.Queue(maxsize=64)
         self.subs.add(q)
@@ -86,14 +86,27 @@ class Watcher:
             print(f'  the file tree will not follow the disk: {errstr(e)}')
             return
         keep = lambda _change, p: not (set(Path(p).parts) & SKIP_DIRS) or git_meta(p) is not None
-        for batch in watch(*roots, stop_event=stop, watch_filter=keep, debounce=self.step,
-                           rust_timeout=RUST_TIMEOUT, yield_on_timeout=True):
-            if stop.is_set(): return
-            if not batch:                                    # macOS replays a setup mkdir late; this follows it
-                quiet.set()
-                continue
-            try: self._push(sorted({p for _change, p in batch}))
-            except RuntimeError: return                      # the loop closed under us
+        live = [r for r in roots if r not in self.gone or os.path.isdir(r)]
+        while live and not stop.is_set():
+            try:
+                for batch in watch(*live, stop_event=stop, watch_filter=keep, debounce=self.step,
+                                   rust_timeout=RUST_TIMEOUT, yield_on_timeout=True):
+                    if stop.is_set(): return
+                    if not batch:                            # macOS replays a setup mkdir late; this follows it
+                        quiet.set()
+                        continue
+                    try: self._push(sorted({p for _change, p in batch}))
+                    except RuntimeError: return              # the loop closed under us
+                return
+            except OSError as e:
+                # A watched folder was deleted: drop it, keep the rest. Said once per folder.
+                gone = [r for r in live if not os.path.isdir(r)]
+                if new := [r for r in gone if r not in self.gone] or (not gone and live):
+                    print(f'  the file tree no longer follows {", ".join(new)}: {errstr(e)}')
+                self.gone |= set(gone)
+                if not gone: break
+                live = [r for r in live if r not in gone]
+        quiet.set()
     def _poll(self, stop, polled):
         "Admitted files and the keymap sit outside every watched root, so they are statted."
         seen = {p: _sig(p) for p in self.fs.admitted}   # taken now: an edit before the first tick is still one

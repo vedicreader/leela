@@ -272,12 +272,12 @@ def test_every_route_a_settings_control_swaps_into_still_answers_and_acts(rws):
 
 # ── keys ────────────────────────────────────────────────────────────────────
 
-def test_a_stored_unbound_open_vault_moves_onto_hyper_v(tmp_path):
+def test_a_stored_unbound_open_vault_moves_onto_option_v(tmp_path):
     from leela.core.keys import DEFAULTS, keymap_json, read_overrides
     p = tmp_path/'keys.json'
     p.write_text(json.dumps({'_help': keymap_json()['_help'],
                              'keys': {k.action: '' if k.action == 'open_vault' else k.key for k in DEFAULTS}}))
-    assert read_overrides(p, notes=[])['open_vault'] == 'hyper+v'
+    assert read_overrides(p, notes=[])['open_vault'] == 'alt+v', 'through Hyper+V, which keys v2 moved to Option+V'
 
 def test_page_ranges_are_written_one_based_and_passed_zero_based():
     from leela.blocks.memory.memory import page_list

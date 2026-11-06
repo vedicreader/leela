@@ -42,9 +42,8 @@ def _act(action):
     return eval_js(f'leeAct("{action}")')
 
 def _table():
-    from .blocks.keys.menus import BAR
-    from .core.keys import lookup
-    return BAR, lookup
+    from .blocks.keys.menus import BAR, menu_lookup
+    return BAR, menu_lookup
 
 def dock_menu(on_folder, recent=None):
     "The Dock's own menu: the folders you last had open, newest first."

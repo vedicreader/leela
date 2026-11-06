@@ -22,7 +22,7 @@ dependencies = [
     "shalya>=0.1.31",   # 0.1.31 own_python and OwnPythonHost
     "gheasy>=0.0.19",
     "fastcore>=1.7.0",
-    "kavacha>=0.0.12",
+    "kavacha>=0.0.13",
     "kunda>=0.0.14",   # 0.0.14 make_venv, and python_for borrows from roots only when asked; 0.0.12 ends a run whose kernel shell stopped answering, and warns about ipykernel 7.0 to 7.3
     "pullup>=0.0.11",
     "exhash>=0.4.10",
@@ -46,7 +46,7 @@ dependencies = [
     "packaging>=24.0",
     "rich>=13.0",
     "pyyaml>=6.0",
-    "dhrishti>=0.1.10",
+    "dhrishti>=0.1.12",
     "watchfiles>=1.0",
     "vishalakshi>=0.1.35",
     "rahasya>=0.0.4",
@@ -66,10 +66,10 @@ dependencies = [
 
 [project.optional-dependencies]
 ipymini = []
-local = ["rishi[mlx,llama]>=0.1.67"]
-desktop = ["kavacha[window]>=0.0.12"]
-macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.12"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.12"]
+local = ["rishi[mlx,llama]>=0.1.68"]
+desktop = ["kavacha[window]>=0.0.13"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.13"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.13"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"
@@ -92,14 +92,14 @@ dev = [
     "fastaistyle>=0.0.17",
     "fastship>=0.1.2",
     "leela[local]",
-    "rishi[all]>=0.1.67",
+    "rishi[all]>=0.1.68",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.5.0",
     "nbformat>=5.10.0",
     "playwright>=1.40",
     "pandas>=2.0",
-    "rishi>=0.1.67",
+    "rishi>=0.1.68",
     "pywebview>=5.3",
     "pillow>=10.0",
     "setuptools>=68.0",
