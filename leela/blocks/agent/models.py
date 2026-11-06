@@ -154,8 +154,19 @@ def _installer(target):
         # `runtime_python`: in a bundle `sys.executable` is the app, and installing a backend would
         # launch a second Leela rather than a pip.
         from ..runtime.kernels import runtime_python
-        return [runtime_python(), '-m', 'pip', 'install', '--upgrade', *into]
+        return [runtime_python(), '-m', 'pip', 'install', *into]
     raise RuntimeError('neither uv nor pip is here, so nothing can be installed for you')
+
+def pinned(reqs):
+    "Each requirement held to one version: its own `==`, else the floor its `>=` names, else the version installed here."
+    from packaging.requirements import Requirement
+    out = []
+    for r in reqs:
+        q = Requirement(r)
+        if any(s.operator in ('==', '===') for s in q.specifier): out.append(r); continue
+        v = next((s.version for s in q.specifier if s.operator == '>='), None) or (None if q.specifier else _installed_version(q.name))
+        out.append(f"{q.name}{'[' + ','.join(sorted(q.extras)) + ']' if q.extras else ''}=={v}" if v else r)
+    return out
 
 def _run_install(runtime, cmd):
     "The subprocess, on its own thread. Output is kept whole: a resolver error is the useful part."
@@ -166,6 +177,24 @@ def _run_install(runtime, cmd):
         from ... import errstr
         ok, log = False, errstr(e)
     if ok: use_extras()                       # so the new backend is importable without a restart
+    _finish(runtime, ok, log)
+
+def _host_install(runtime, every=1.0, wait=3600):
+    "The app installs the extra from its lock into the running env; this waits for its answer in `/status`."
+    from ...core import host
+    ok, log, end = False, '', time.monotonic() + wait
+    try:
+        host.call('/extras', {'name': runtime}, read=30)
+        while time.monotonic() < end:
+            got = (host.status().get('extras') or {}).get(runtime) or {}
+            if got.get('state') in ('ok', 'error'): ok, log = got['state'] == 'ok', str(got.get('log') or ''); break
+            time.sleep(every)
+        else: log = f'the Leela app did not finish installing {runtime} in {wait} s'
+    except host.HostError as e: log = str(e)
+    _finish(runtime, ok, log)
+
+def _finish(runtime, ok, log):
+    "Record how an install ended, after forgetting every cached answer that said the runtime was missing."
     import importlib
     importlib.invalidate_caches()
     from ...agent.core import runtime_available
@@ -222,6 +251,16 @@ def install_runtime(runtime):
         raise ValueError(f'{runtime} is not something a package provides; see its remedy')
     elif not (reqs := runtime_requirements(runtime)):
         raise ValueError(f'rishi declares no {runtime} backend for this platform')
+    from ...core import host
+    if host.on():
+        with _lock:
+            if (cur := _installs.get(runtime)) and cur.get('state') == 'running': return dict(cur)
+            _installs[runtime] = row = {'runtime': runtime, 'state': 'running', 'log': '', 'cmd': f'Leela app: install {runtime} from its lock',
+                                        'requirements': reqs, 'via': 'Leela app', 'target': ''}
+            out = dict(row)
+        threading.Thread(target=_host_install, args=(runtime,), daemon=True, name=f'leela-install-{runtime}').start()
+        return out
+    reqs = pinned(reqs)
     with _lock:
         if (cur := _installs.get(runtime)) and cur.get('state') == 'running': return dict(cur)
         target = extras_site() if getattr(sys, 'frozen', False) else None
