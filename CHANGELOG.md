@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 0.1.24
+
+- Word, PowerPoint and Excel files open in a read-only viewer. Word shows headings, lists, tables and images; PowerPoint shows one card per slide with its speaker notes folded; Excel shows one button per sheet and 200 rows at a time, with the values the file saved. Each has "open in default app" and "copy as text". The agent reads them as text. Leela never writes to them, and older formats (.doc, .xls, .ppt) are refused instead of shown as bytes.
+- Audio (mp3, wav, m4a, aac, flac, ogg, opus) and video (mp4, m4v, mov, webm) open in their player, from the file tree, quick open, Finder, a drop and the agent's links. Seeking works. A format the web view cannot play offers "open in default app". Media is never shown as text.
+- Finder lists Leela in "Open With" for every file it can show: source and text files, notebooks, images, PDFs, office files, audio and video. Leela is always an alternative, never the default app. After an update, run `lsregister -f /Applications/Leela.app` (in /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support) so Finder reads the new list.
+
+Known issues:
+
+- Office viewers draw Leela's own layout: no fonts, colours, charts or slide positions, and Excel dates show raw.
+- Split view does not take a media tab.
+
 ## 0.1.23
 
 Needs kavacha 0.0.13, kunda 0.0.14, dhrishti 0.1.12, shalya 0.1.31, ramabana 0.2.111 and rishi 0.1.68.
