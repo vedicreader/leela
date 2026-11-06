@@ -124,6 +124,17 @@ import WebKit
         #expect(ws.reuse(u("http://other.localhost:1/")) == nil)
     }
 
+    @Test func eachLoadStepIsWrittenToTheWindowsLog() async throws {
+        let ws = Windows(); ws.port = 1; ws.urlWait = 0.3
+        let log = FileManager.default.temporaryDirectory.appending(path: "leela-windows-\(UUID().uuidString).log"); ws.log = log
+        defer { try? FileManager.default.removeItem(at: log) }
+        let w = ws.place(u("http://loose.localhost:1/"), title: "t")
+        defer { w.close() }
+        try await Task.sleep(for: .seconds(1.5))
+        let text = try String(contentsOf: log, encoding: .utf8)
+        #expect(text.contains("loose point http://loose.localhost:1/") && text.contains("loose answers http://loose.localhost:1/ false"))
+    }
+
     @Test func aCancelledOrDownloadedNavigationKeepsThePage() {
         let ws = Windows(); ws.port = 5
         let (w, v) = ws.make(u("http://a.localhost:5/"), title: "t")

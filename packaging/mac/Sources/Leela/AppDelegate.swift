@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         store = EnvStore(paths: paths, spec: spec, uv: uv, uvVersion: uvVersion, parent: parent, home: home)
         brew = BrewUpgrade(app: bundle.bundleURL)
         windows.app = self
+        windows.log = paths.logs.appending(path: "windows.log")
         let app = AppFacts(uv: uvVersion)
         let channel = Channel(test: Channel.isTest(parent), keys: keys, app: app)
         let bundled = res.appending(path: "Lock"), store = store!
@@ -109,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
 
     // open events: Finder, the Dock, `open -a Leela`
     func application(_ a: NSApplication, open urls: [URL]) {
+        windows.note(nil, "open \(urls.map(\.path)) ready=\(sup.map { if case .ready = $0.phase { true } else { false } } ?? false)")
         guard case .ready = sup?.phase else { queued += urls; return }
         open(urls)
     }
@@ -151,6 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
                 (code, d) = await request("/hub/open", method: "POST", query: ["path": o, "file": path, "folder": "1"])
                 if d["declined"] as? Bool == true { return }
             }
+            windows.note(nil, "open file \(path) -> \(code) \(d["url"] as? String ?? "") \(d["error"] as? String ?? "")")
             guard code == 200, let s = d["url"] as? String, let u = URL(string: s) else { return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")") }
             windows.show(u, title: "leela — \((path as NSString).lastPathComponent)")
         }

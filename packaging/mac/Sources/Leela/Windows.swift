@@ -116,15 +116,25 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     /// pages that failed to load; `reuse` loads them again
     var failed = Set<ObjectIdentifier>()
+    /// where each window's load is written down (`logs/windows.log`); nil writes nothing
+    var log: URL?
+    func note(_ v: WKWebView?, _ what: String) {
+        guard let log else { return }
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(v.flatMap { v in windows.first { $0.value.1 === v }?.key } ?? "-") \(what)\n"
+        if let h = try? FileHandle(forWritingTo: log) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+        else { try? Data(line.utf8).write(to: log) }
+    }
     /// seconds a new page waits for the server, as kavacha's `url_wait`
     var urlWait = 90.0
 
     /// loads `url` once the server answers it, as kavacha's `_point`; a server that never answers gets a page that says so
     func point(_ v: WKWebView, _ url: URL) {
         failed.remove(ObjectIdentifier(v))
+        note(v, "point \(url.absoluteString)")
         Task { [urlWait] in
-            if await Self.answers(url, within: urlWait) { v.load(URLRequest(url: url)) }
-            else { self.unreachable(v, url) }
+            let ok = await Self.answers(url, within: urlWait)
+            self.note(v, "answers \(url.absoluteString) \(ok)")
+            if ok { v.load(URLRequest(url: url)) } else { self.unreachable(v, url) }
         }
     }
 
@@ -149,13 +159,17 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
     func webView(_ w: WKWebView, didFail n: WKNavigation!, withError e: Error) { gone(w, e) }
     func gone(_ w: WKWebView, _ e: Error) {
         let e = e as NSError
+        note(w, "failed \(e.domain) \(e.code) \(e.localizedDescription) \((e.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString ?? "")")
         // a download or a navigation the policy cancelled ends this way too, and the page stays
         guard !(e.domain == "WebKitErrorDomain" && [102, 101].contains(e.code)), e.code != NSURLErrorCancelled,
               let u = e.userInfo[NSURLErrorFailingURLErrorKey] as? URL ?? w.url, isServer(u) else { return }
         unreachable(w, u, why: e.localizedDescription)
     }
     /// the page's process ended (memory, a crash): load it again rather than leave the window blank
-    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { if let u = w.url, isServer(u) { w.load(URLRequest(url: u)) } }
+    func webView(_ w: WKWebView, didStartProvisionalNavigation n: WKNavigation!) { note(w, "start \(w.url?.absoluteString ?? "")") }
+    func webView(_ w: WKWebView, didCommit n: WKNavigation!) { note(w, "commit") }
+    func webView(_ w: WKWebView, didFinish n: WKNavigation!) { note(w, "finish") }
+    func webViewWebContentProcessDidTerminate(_ w: WKWebView) { note(w, "page process ended"); if let u = w.url, isServer(u) { w.load(URLRequest(url: u)) } }
 
     func reloadAll(port: Int) {
         self.port = port
@@ -236,8 +250,9 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
     }
 
     func webView(_ w: WKWebView, decidePolicyFor a: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
-        let u = a.request.url
-        switch Self.policy(u, server: u.map(isServer) ?? false, link: a.navigationType == .linkActivated, download: a.shouldPerformDownload) {
+        let u = a.request.url, p = Self.policy(u, server: u.map(isServer) ?? false, link: a.navigationType == .linkActivated, download: a.shouldPerformDownload)
+        if a.targetFrame?.isMainFrame ?? true { note(w, "policy \(u?.absoluteString ?? "nil") type=\(a.navigationType.rawValue) port=\(port) -> \(p)") }
+        switch p {
         case .allow: decisionHandler(.allow)
         case .download: decisionHandler(.download)
         case .browser: NSWorkspace.shared.open(u!); decisionHandler(.cancel)
