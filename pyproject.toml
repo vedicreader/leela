@@ -22,7 +22,7 @@ dependencies = [
     "shalya>=0.1.27",
     "gheasy>=0.0.19",
     "fastcore>=1.7.0",
-    "kavacha>=0.0.12",
+    "kavacha>=0.0.13",
     "kunda>=0.0.12",   # 0.0.12 ends a run whose kernel shell stopped answering, and warns about ipykernel 7.0 to 7.3
     "pullup>=0.0.11",
     "exhash>=0.4.10",
@@ -67,9 +67,9 @@ dependencies = [
 [project.optional-dependencies]
 ipymini = []
 local = ["rishi[mlx,llama]>=0.1.67"]
-desktop = ["kavacha[window]>=0.0.12"]
-macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.12"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.12"]
+desktop = ["kavacha[window]>=0.0.13"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.13"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.13"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"

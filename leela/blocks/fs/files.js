@@ -328,8 +328,9 @@ async function treeDiff() {
 }
 
 async function newEntry(kind) {
-  const sel = treeSel();
-  const parent = sel ? (sel.classList.contains('lee-dir') ? sel.dataset.path
+  // ⌘N from anywhere: the folder selected in the tree, else the open file's, else the first root.
+  const sel = treeSel() || (lee.path && $$('.lee-node').find(n => n.dataset.path === lee.path)) || $('.lee-node.lee-root');
+  const parent = sel ? (sel.classList.contains('lee-dir') || sel.classList.contains('lee-root') ? sel.dataset.path
                                                         : sel.dataset.path.replace(/\/[^/]+$/, '')) : '';
   if (!parent) return status('open a folder first', 'err');
   const name = await inputDialog(kind === 'dir' ? 'new folder' : 'new file', 'name', '',

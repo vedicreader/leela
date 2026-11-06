@@ -13,8 +13,8 @@ from ...core import keys as keymap
 from ...core.backups import guard
 from ...core.ui import bar as btn_bar
 from ...core.web import fail
-from ...core.keys import help_rows, keymap_json, keymap_path, web_keymap
-from .menus import web_menus
+from ...core.keys import glyphs, help_rows, keymap_json, keymap_path, legacy_rows, web_keymap
+from .menus import menu_chords, web_menus
 
 __all__ = ['CAPS', 'connect', 'keys_payload']
 
@@ -23,10 +23,14 @@ CAPS = ()
 def keys_payload():
     "The keymap, and the buttons that run the same actions, from one source in one fetch."
     from ...core.ui import BARS
-    return {'keys': web_keymap(), 'help': help_rows(), 'menus': web_menus(),
+    return {**_live(), 'menus': web_menus(), 'menuChords': menu_chords(),
             'path': str(keymap_path()), 'notes': list(keymap.NOTES),
             'bars': {n: [{'action': b.action, 'label': b.label, 'title': b.tooltip,
                           'kind': b.kind} for b in btn_bar(n)] for n in BARS}}
+
+def _live():
+    "What changes when the keymap does: the rows, the help, the glyphs and the old chords."
+    return {'keys': web_keymap(), 'help': help_rows(), 'glyphs': glyphs(), 'legacy': legacy_rows()}
 
 def connect(app, ctx):
     rt = app.route
@@ -60,7 +64,7 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
         keymap.reload()
         return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
-                'keys': web_keymap(), 'help': help_rows(), **_file(p)}
+                **_live(), **_file(p)}
     @rt('/keys/check')
     async def keys_check(req):
         "Why a proposed keymap would be refused, and the map it would produce, without writing either."
@@ -78,4 +82,4 @@ def connect(app, ctx):
         p = keymap.write_keymap(keys=keymap.DEFAULTS, keep=False)
         keymap.reload()
         return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
-                'keys': web_keymap(), 'help': help_rows(), **_file(p)}
+                **_live(), **_file(p)}

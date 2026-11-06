@@ -1,11 +1,12 @@
 "Contextual menus, as rows naming actions from the shared keymap; labels and chords come from it."
 
-from fastcore.all import L
-from kavacha import Js, MenuItem, Std
+from fastcore.all import L, first
+from kavacha import LAUNCHER_ROWS, Binding, Js, MenuItem, Std
 
-from ...core.keys import KEYS, chord_display, lookup
+from ...core import keys as K
+from ...core.keys import KEYS, chord_display, lookup, web_key
 
-__all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus']
+__all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus', 'menu_lookup', 'menu_chords']
 
 S = MenuItem
 MENUS = {
@@ -97,7 +98,7 @@ BAR = (
                   S('focus_files'), S('focus_editor'), S('focus_exec'), S('focus_vars'),
                   S('focus_agent'), S(), S('panel_git'), S('panel_releases'), S('panel_deploys'),
                   S(), S('show_diff'), S('local_history'), S('git_blame'), S('show_hidden'),
-                  S('refresh_files'), S(), S('present_notebook'),
+                  S('refresh_files'), S(), S('present_notebook'), S('leave_full_screen'),
                   Std('Enter Full Screen', 'toggleFullScreen:', 'f', 'mod+ctrl'))),
     ('Run',     L(S('run_cell'), S('run_advance'), S('run_insert'), S('run_above'), S(),
                   S('run_all'), S('run_file'), S('run_selection'), S(),
@@ -109,7 +110,7 @@ BAR = (
                   S('find_usages'), S('show_docs'), S(), S('sync_index'), S('nbdev_prepare'),
                   S('fastship'), S(), S('web_search'), S('research'), S('read_url'),
                   S('browse_url'), S('browse_tabs'), S(),
-                  S('agent_selection'), Js('Inline Completions…', 'showCompletions()'),
+                  S('ask_ai'), S('summarise'), S('agent_selection'), Js('Inline Completions…', 'showCompletions()'),
                   S('capture'), S(),
                   S('open_vault'), S('vault_read'), S('vault_find'), S('vault_review'), S('learned_review'), S('vault_settings'), S('memory_notes'), S('new_memory_note'), S('clip_to_vault'))),
     ('Debug',   L(Js('Debug This File', 'leeDebugFile()'), S('run_app'), S('edit_runs'), S(),
@@ -120,7 +121,7 @@ BAR = (
                   Js('Stop Debugger', 'leeDebugStop()'), S(),
                   S('interrupt'), S('restart'))),
     ('Window',  L(Std('Minimize', 'performMiniaturize:', 'm'), Std('Zoom', 'performZoom:'), S(),
-                  S('next_tab'), S('prev_tab'), S(), S('close_tab'), S(),
+                  S('next_tab'), S('prev_tab'), S(), S('close_tab'), Std('Close Window', 'performClose:', 'w', 'mod+shift'), S(),
                   Std('Bring All to Front', 'arrangeInFront:'))),
     ('Help',    L(S('help'), S('edit_keys'))),
 )
@@ -128,3 +129,22 @@ BAR = (
 _bar_acts = {r.action for _, rows in BAR for r in rows if isinstance(r, MenuItem) and r.action}
 if _missing := sorted(_bar_acts - _known):
     raise ValueError('the menu bar names actions the keymap does not declare: ' + ', '.join(_missing))
+
+def menu_lookup(action):
+    "The keymap row for `action` as a menu `Binding`, `shared` when another scope binds one of its chords."
+    k = K.lookup(action)
+    if k is None: return None
+    other = {K._signature(c) for o in K.KEYS if o.scope != k.scope for c in o.keys}
+    return Binding(tuple(k.keys), k.label, k.scope, shared=any(K._signature(c) in other for c in k.keys))
+
+#: Editing and app chords the page keeps while an overlay is open, so a text field still gets them.
+_KEEP = {'mod+c', 'mod+x', 'mod+v', 'mod+a', 'mod+z', 'mod+shift+z', 'mod+q', 'mod+h', 'mod+m'}
+
+def menu_chords():
+    "Every chord the Mac menu bar owns, as the page matches it, but the editing chords an overlay keeps."
+    from kavacha.window import mac_key, menu_chord
+    out = [f'{r.mods}+{r.key}' for r in [*LAUNCHER_ROWS, *(r for _, rows in BAR for r in rows if isinstance(r, Std))] if r.key]
+    for a in sorted(_bar_acts):
+        if (got := menu_chord(a, menu_lookup)): out.append(first(lookup(a).keys, lambda c: mac_key(c) == got))
+    keep = {K._signature(c) for c in _KEEP}
+    return [web_key(c) for c in dict.fromkeys(out) if c and K._signature(c) not in keep]
