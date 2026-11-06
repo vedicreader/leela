@@ -2,23 +2,25 @@
 # usage: V=<version> [TAP=<tap folder>] [PUSH=1] tools/ship_cask.sh, after `gh release create`. It updates the Leela cask.
 # It waits up to 60 minutes for Leela-macOS.zip on the release (tools/ship.sh uploads it), reads the sha256 that GitHub
 # keeps for the asset, writes the version, the tag prefix and the hash into Casks/leela.rb, and commits the tap. PUSH=1 also pushes it.
+# TAG_PREFIX=app-v is the thin app (tools/ship_app.sh): its tag is app-v<V>, nothing waits for CI, and the cask is
+# packaging/mac/cask/leela.rb (livecheck on app-v tags, the thin app's zap list) with the version and hash written in.
 # A second run with the same V makes no new commit, so it can always run again.
 set -eu
 : "${V:?Give the version: V=<version> tools/ship_cask.sh}"
 echo "$V" | grep -qE '^[0-9]+(\.[0-9]+)+$' || { echo "V must be a version such as 0.1.12" >&2; exit 1; }
 TAP=${TAP:-$(dirname "$0")/../../homebrew-tap}
-R=vedicreader/leela A=Leela-macOS.zip C="$TAP/Casks/leela.rb"
+R=vedicreader/leela A=${ASSET:-Leela-macOS.zip} C="$TAP/Casks/leela.rb" P=${TAG_PREFIX:-}
 unset GITHUB_TOKEN   # the keyring of gh signs in; a stale token in the environment would win over it
 
 test -f "$C" || { echo "$C is not there" >&2; exit 1; }
 test -z "$(git -C "$TAP" status --porcelain)" || { echo "$TAP has changes that are not committed" >&2; exit 1; }
 # ship-gh tags the bare version and gh release create takes what you give it, so try both
-tag=$(for t in "v$V" "$V"; do gh release view "$t" -R $R --json tagName -q .tagName 2>/dev/null && break; done || true)
+tag=$(for t in $(if [ -n "$P" ]; then echo "$P$V"; else echo "v$V $V"; fi); do gh release view "$t" -R $R --json tagName -q .tagName 2>/dev/null && break; done || true)
 test -n "$tag" || { echo "no release for $V on $R. Make it with gh release create first." >&2; exit 1; }
 
 n=0
 until sum=$(gh release view "$tag" -R $R --json assets -q ".assets[] | select(.name == \"$A\" and .state == \"uploaded\") | .digest") && test -n "$sum"; do
-  test "$(gh run list -R $R -w desktop-artifacts -b "$tag" -L 1 --json conclusion -q '.[0].conclusion')" != failure ||
+  test -n "$P" || test "$(gh run list -R $R -w desktop-artifacts -b "$tag" -L 1 --json conclusion -q '.[0].conclusion')" != failure ||
     { echo "desktop-artifacts failed for $tag. Run it again in GitHub Actions, then run this script again." >&2; exit 1; }
   n=$((n + 1))
   test $n -le 120 || { echo "$A is not on $tag after 60 minutes" >&2; exit 1; }
@@ -27,6 +29,7 @@ done
 sum=${sum#sha256:}
 echo "$sum" | grep -qE '^[0-9a-f]{64}$' || { echo "GitHub gave no sha256 for $A on $tag" >&2; exit 1; }
 
+test -z "$P" || cp "$(dirname "$0")/../packaging/mac/cask/leela.rb" "$C"
 sed -i '' -e "s/^  version \".*\"/  version \"$V\"/" -e "s/^  sha256 \".*\"/  sha256 \"$sum\"/" \
   -e "s|/download/[^/]*#{version}/|/download/${tag%"$V"}#{version}/|" -e "s|/Leela-macOS\.[a-z]*\"$|/$A\"|" "$C"
 grep -E '^  (version|sha256|url) ' "$C"
