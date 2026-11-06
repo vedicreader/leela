@@ -331,14 +331,27 @@ def agent_shell(py, proj, env):
     bad += [f'{n} is linked' for n in got['linked'] if n.startswith(('python', 'pip', 'uv'))]
     if bad: raise RuntimeError('; '.join(bad))
 
+_PNG = bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415478da63f8ffff3f0005fe02fea7d6a4a10000000049454e44ae426082')
+
+def windows_by_port(base, port, tmp):
+    "A folder window and a dropped image's loose window, each on a loopback port of its own: the Mac app could not reach a `*.localhost` name."
+    (d := tmp/'drop').mkdir(exist_ok=True); (png := d/'shot.png').write_bytes(_PNG)
+    (f := tmp/'folder').mkdir(exist_ok=True); (f/'a.py').write_text('x = 1\n')
+    for q, want in ((dict(path=str(f)), None), (dict(path=str(d), file=str(png)), 'image')):
+        r = _get(f'{base}/hub/open?{urllib.parse.urlencode(q)}', data=b'', timeout=120)
+        u = urllib.parse.urlsplit(r.get('url', ''))
+        if not r.get('ok') or u.hostname != '127.0.0.1' or u.port in (None, port): raise RuntimeError(f'not a port of its own: {r}')
+        if b'<html' not in _get(r['url'], raw=True, timeout=60).lower(): raise RuntimeError(f'no page at {r["url"]}')
+        if want and (t := _get(r['url'] + 'tab/state', timeout=30)).get('kind') != want: raise RuntimeError(f'the loose window shows {t}')
+
 def project_cell(base, port, proj, env_dir):
     "Through the server's routes, a cell of a notebook in `proj` runs on the project's .venv, and no app build setting reaches it."
     d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(proj))}', data=b'', timeout=120)
     if not d.get('ok'): raise RuntimeError(d)
-    h = {'Host': f"{urllib.parse.urlsplit(d['url']).hostname}:{port}", 'Content-Type': 'application/json'}
+    site, h = d['url'].rstrip('/'), {'Content-Type': 'application/json'}
     nb = str(proj/'probe.ipynb')
-    _get(f'{base}/tab/open?path={urllib.parse.quote(nb)}', headers=h, timeout=60, raw=True)
-    r = _get(f'{base}/nb/run', data=json.dumps(dict(path=nb, i=0, id='c0')).encode(), headers=h, timeout=180)
+    _get(f'{site}/tab/open?path={urllib.parse.quote(nb)}', headers=h, timeout=60, raw=True)
+    r = _get(f'{site}/nb/run', data=json.dumps(dict(path=nb, i=0, id='c0')).encode(), headers=h, timeout=180)
     outs = r.get('cell', {}).get('outputs', [])
     text = ''.join(o.get('text', '') for o in outs if o.get('output_type') == 'stream')
     if not r.get('ok') or not text.strip(): raise RuntimeError(f'the cell failed: {json.dumps(outs)[-800:]}')
@@ -387,11 +400,14 @@ def smoke(env_dir, results, extras=(), wait=180):
                 raise TimeoutError(f'no /health in {wait} s: ' + (tmp/f'server-{name}.log').read_text()[-1500:])
             good = step(f'server /health{name}', health) and checks(base, port)
             def quit():   # an open window holds an endless /fs/events stream; the launcher kills a server still up after 15 s
-                s = socket.create_connection(('127.0.0.1', port)); s.sendall(f'GET /fs/events HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n'.encode())
+                ports = {port, *(urllib.parse.urlsplit(r['url']).port for r in _get(f'{base}/app/sites').get('sites', []))}
+                socks = [socket.create_connection(('127.0.0.1', p)) for p in ports if p]
+                for s, p in zip(socks, ports): s.sendall(f'GET /fs/events HTTP/1.1\r\nHost: 127.0.0.1:{p}\r\n\r\n'.encode())
                 time.sleep(1); t = time.monotonic(); srv.terminate()
                 try: srv.wait(15)
-                except subprocess.TimeoutExpired: srv.kill(); raise RuntimeError('SIGTERM did not stop the server in 15 s while a page stream was open')
-                finally: s.close()
+                except subprocess.TimeoutExpired: srv.kill(); raise RuntimeError(f'SIGTERM did not stop the server in 15 s while page streams were open on {sorted(ports)}')
+                finally:
+                    for s in socks: s.close()
                 if (secs := time.monotonic() - t) > 5: raise RuntimeError(f'the server took {secs:.1f} s to stop')
             done = step(f'quit with a page open{name}', quit)
             if srv.poll() is None: srv.kill()
@@ -401,7 +417,8 @@ def smoke(env_dir, results, extras=(), wait=180):
     def hub_open(base):
         d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(work))}', data=b'', timeout=120)
         if not d.get('ok'): raise RuntimeError(d)
-    ok &= serve('', server_env(), lambda base, port: step('/hub/open', lambda: hub_open(base)) & step('project kernel cell', lambda: project_cell(base, port, proj, env_dir)))
+    ok &= serve('', server_env(), lambda base, port: step('/hub/open', lambda: hub_open(base)) & step('project kernel cell', lambda: project_cell(base, port, proj, env_dir))
+                & step('windows by port', lambda: windows_by_port(base, port, tmp)))
     ok &= step('agent shell tools', lambda: agent_shell(py, proj, server_env() | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'))))
     old = server_env_1_0(env_dir, cache='', python='', python_version=PYTHON)
     ok &= serve(' (app 1.0.0 env)', old, lambda base, port: step('project kernel cell (app 1.0.0 env)', lambda: project_cell(base, port, proj, env_dir)))

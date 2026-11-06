@@ -114,13 +114,14 @@ def test_a_dropped_image_and_then_a_docx_open_as_tabs_of_the_loose_window(tmp_pa
         except urllib.error.HTTPError as e: return json.loads(e.read())
     r = hub_open(png)
     assert r['ok'] and r['id'] == 'loose' and r['offer'] == str(d.resolve()), r
-    host = urllib.parse.urlsplit(r['url']).netloc
-    assert get(f'http://127.0.0.1:{port}/', host=host).status == 200
-    tab = json.loads(get(f'http://127.0.0.1:{port}/tab/state', host=host).read())
+    site = r['url'].rstrip('/')
+    assert urllib.parse.urlsplit(site).port != port, 'the loose window has a port of its own'
+    assert get(site + '/').status == 200
+    tab = json.loads(get(site + '/tab/state').read())
     assert tab['kind'] == 'image' and tab['path'] == str(png.resolve())
     r = hub_open(docx)
-    assert r['ok'] and r['id'] == 'loose' and r['url'] == f'http://{host}/', 'the second drop goes to the same window, whose page shows the new tab'
-    assert json.loads(get(f'http://127.0.0.1:{port}/tab/state', host=host).read())['path'] == str(docx.resolve())
+    assert r['ok'] and r['id'] == 'loose' and r['url'] == site + '/', 'the second drop goes to the same window, whose page shows the new tab'
+    assert json.loads(get(site + '/tab/state').read())['path'] == str(docx.resolve())
 
 def test_a_quit_does_not_wait_for_the_pages_streams(monkeypatch):
     "Every window holds an endless `/fs/events` stream; uvicorn waited for them, so the launcher's SIGTERM never ended the server and it was killed after 15 s."
@@ -130,3 +131,32 @@ def test_a_quit_does_not_wait_for_the_pages_streams(monkeypatch):
     monkeypatch.setattr(uvicorn, 'run', lambda app, **kw: seen.update(kw))
     serve_ide(port=free_port(), host='127.0.0.1', transport='direct', shell='none', open_ws=False, agent='off')
     assert seen['timeout_graceful_shutdown'] == A.QUIT_GRACE and A.QUIT_GRACE <= 2
+
+def test_each_workspace_has_its_own_port_and_no_page_reaches_another(tmp_path):
+    "The Mac app could not reach `<slug>.localhost`, so each workspace answers on a loopback port of its own."
+    import urllib.parse
+    for name in ('alpha', 'beta'): (tmp_path/name).mkdir()
+    port = serve(roots=[str(tmp_path/'alpha'), str(tmp_path/'beta')], app_window=True, gateway_port=0)
+    sites = {s['id']: s['url'] for s in json.loads(get(f'http://127.0.0.1:{port}/app/sites').read())['sites']}
+    ports = {k: urllib.parse.urlsplit(u).port for k, u in sites.items()}
+    assert set(sites) == {'alpha', 'beta'} and ports['alpha'] == port and ports['beta'] != port, sites
+    for slug, url in sites.items():
+        r = get(url)
+        assert r.status == 200 and slug in r.read().decode() and not r.headers.get_all('set-cookie'), 'no cookie: two ports on one host share them'
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw): return None
+    try: urllib.request.build_opener(NoRedirect).open(f'http://127.0.0.1:{port}/hub/go/beta', timeout=10); assert False, 'no redirect'
+    except urllib.error.HTTPError as e: assert e.code == 307 and e.headers['location'] == sites['beta']
+    assert get(f'http://127.0.0.1:{port}/hub/go/nope').status == 404
+    assert 'beta' in get(f'http://127.0.0.1:{port}/', host=f'beta.localhost:{port}').read().decode(), 'a saved *.localhost link still works'
+    req = urllib.request.Request(sites['beta'] + 'tab/close', data=b'{}', method='POST', headers={'Origin': sites['alpha'].rstrip('/'), 'Content-Type': 'application/json'})
+    try: urllib.request.urlopen(req, timeout=10); assert False, 'a page on alpha changed beta'
+    except urllib.error.HTTPError as e: assert e.code == 403
+
+def test_the_agents_browser_counts_every_workspace_port_as_leelas_own(monkeypatch, tmp_path):
+    from leela.core import projects
+    from leela.blocks.browser import browser
+    monkeypatch.setattr(projects, 'SERVING', tmp_path/'serving.json')
+    projects.now_serving('127.0.0.1', 5001, ports=[5002])
+    assert browser.own_origins() == {'http://127.0.0.1:5001', 'http://127.0.0.1:5002'}
+    assert projects.now_serving('127.0.0.1', 5001)['ports'] == [5002], 'a later write keeps the ports'

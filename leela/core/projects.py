@@ -114,11 +114,12 @@ def forget_recent(path):
         gone = _clean([path]) or [str(Path(path).expanduser())]
         return _write(d['folders'], [f for f in _clean(d['recent']) if f not in gone])
 
-def now_serving(host, port, folders=()):
-    "Write down where this workspace is answering, and return the record."
+def now_serving(host, port, folders=(), ports=None):
+    "Write down where this workspace is answering, and return the record. `ports`: each workspace's own port; None keeps what this process wrote."
     import os, time
+    if ports is None: ports = (d if (d := serving()) and d.get('pid') == os.getpid() else {}).get('ports', [])
     d = {'host': str(host), 'port': int(port), 'pid': os.getpid(), 'at': time.time(),
-         'url': f'http://{host}:{int(port)}/', 'folders': _clean(folders)}
+         'url': f'http://{host}:{int(port)}/', 'folders': _clean(folders), 'ports': sorted({int(p) for p in ports})}
     try:
         with atomic_save(SERVING, mode='w') as f: json.dump(d, f, indent=1)
     except OSError: pass

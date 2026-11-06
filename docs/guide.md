@@ -13,7 +13,7 @@ leela --shell webview .    # a native desktop window, what the packaged app runs
 ```
 
 In `--app` mode each folder gets its own `Workspace`, documents, agent, terminals and kernel
-pool at `folder.localhost:5010`. `--app` picks the workspace shape. `--shell` picks what opens on
+pool on a loopback port of its own, `http://127.0.0.1:<port>/`; the main port's `/hub/go/<folder>` sends a window there. A saved `folder.localhost:5010` link still works. `--app` picks the workspace shape. `--shell` picks what opens on
 top of it, and it takes `chrome`, the default under `--app`, or `webview` for a native window, or
 `none`. The same CDP Chrome backs [the inline browser](#the-browser-inside-leela) either way.
 `--transport direct|gateway` picks the kernel transport. `--kernel ipykernel|ipymini` picks

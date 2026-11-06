@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'learn_navigation', 'OPEN_PATH', 'workspace_slug',
-           'workspace_slugs', 'assign_slugs', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls',
+           'workspace_slugs', 'assign_slugs', 'GO_PATH', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls',
            'NoWindow', 'set_confirmer', 'grant', 'declined', 'admit_folder', 'window_name', 'reset_gate']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
@@ -36,6 +36,17 @@ def cfg_mark(cfg=None):
 def slug_store():
     from . import leela_cfg
     return leela_cfg/'workspaces'/'index.json'
+
+def _answers(host, port):
+    "Whether something listens on `host:port`."
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=.3): return True
+    except OSError: return False
+
+def port_store():
+    from . import leela_cfg
+    return leela_cfg/'workspaces'/'ports.json'
 
 def slug_map(store=None):
     "Which slug each folder has been given. A missing or corrupt file reads as none, never an error."
@@ -73,11 +84,16 @@ def assign_slugs(roots, store=None):
     if taken != before: save_slug_map(taken, store)
     return out
 
-def workspace_urls(roots, port, store=None):
-    "Where each root will be served, before `serve_ide` has built the workspaces to say so."
-    # Resolved, because `serve_ide` slugs resolved roots: a symlink would name another host.
+#: Where the main port sends a window to its workspace's own port, which is not known before the server builds it.
+GO_PATH = '/hub/go/'
+
+def _origin(host, port): return f"http://{'[' + host + ']' if ':' in host else host}:{int(port)}"
+
+def workspace_urls(roots, port, store=None, host='127.0.0.1'):
+    "Where each root will be served, before `serve_ide` has built the workspaces to say so: the main port's `/hub/go/<slug>`."
+    # Resolved, because `serve_ide` slugs resolved roots: a symlink would name another slug.
     roots = [Path(r).expanduser().resolve() for r in roots]
-    return [f'http://{s}.localhost:{port}/' for s in assign_slugs(roots, store)]
+    return [f'{_origin(host, port)}{GO_PATH}{s}' for s in assign_slugs(roots, store)]
 
 class NoWindow(Exception): "The confirmer has no window to ask in."
 
@@ -180,8 +196,8 @@ async def _json(send, body, status=200):
 def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or ())}
 
 #: The launcher's routes on the server: liveness, its folder grants, and what its menu bar and Dock menu show.
-HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH = '/health', '/hub/grant', '/app/menu.json', '/app/recent'
-APP_PATHS = (HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH)
+HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH, SITES_PATH = '/health', '/hub/grant', '/app/menu.json', '/app/recent', '/app/sites'
+APP_PATHS = (HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH, SITES_PATH)
 BAD_GRANT = 'This request did not come from the Leela app.'
 
 def _launcher_grant(scope):
@@ -197,8 +213,9 @@ def health():
     from .core.host import lock_n
     return {'status': 'ok', 'version': __version__, 'lock_n': lock_n()}
 
-async def _app_route(scope, send):
+async def _app_route(scope, send, hub=None):
     path, method = scope.get('path'), scope.get('method', 'GET')
+    if path == SITES_PATH: return await _json(send, {'ok': True, 'sites': hub.catalog() if hub else [], 'port': hub.port if hub else None})
     if path == HEALTH_PATH:
         if method not in ('GET', 'HEAD'): return await _json(send, {'ok': False, 'error': 'GET only'}, 405)
         return await _json(send, health())
@@ -275,11 +292,16 @@ class LoopbackHostGuard:
         await self.app(scope, receive, send)
 
 class WorkspaceHub:
-    "ASGI host dispatcher for isolated workspace applications."
-    def __init__(self, sites, port, default=None, build=None):
+    "ASGI dispatcher for isolated workspace applications: the default one on the main port, each other one on a loopback port of its own."
+    # A port, not a `<slug>.localhost` name: the Mac app's process could not reach a `*.localhost` name (it waited 90 s), and an IP address needs no lookup.
+    def __init__(self, sites, port, default=None, build=None, host='127.0.0.1', serve_kw=None):
         self.sites = {s.slug: s for s in sites}
-        self.port = int(port)
+        self.port, self.host = int(port), str(host)
         self.default = default or next(iter(self.sites), '')
+        #: slug -> port and back, for the server's life; `serve_kw` is what each listener's uvicorn gets beside the app
+        self.ports, self.slugs, self._listeners, self.serve_kw = {}, {}, {}, dict(serve_kw or {})
+        #: the app every listener serves: the hub behind its guard, set by `serve_ide`
+        self.outer = None
         #: `build(root, slug)` -> `WorkspaceSite`. Without one the hub serves what it launched with.
         self.build = build
         self._loop = self._scope = None
@@ -287,17 +309,66 @@ class WorkspaceHub:
         # Two files for one checkout arrive together on a cold launch: one site, not two.
         self._opening = threading.Lock()
         _hubs.add(self)
-    def url_for(self, slug): return f'http://{slug}.localhost:{self.port}/'
+    def url_for(self, slug):
+        "A workspace's own port; the main port's `/hub/go/<slug>` until it listens."
+        if slug == self.default: return _origin(self.host, self.port) + '/'
+        if (p := self.ports.get(slug)) is not None: return _origin(self.host, p) + '/'
+        return f'{_origin(self.host, self.port)}{GO_PATH}{slug}'
     def catalog(self):
-        "Every workspace and the `*.localhost` URL that reaches it."
+        "Every workspace and the URL that reaches it."
         return [{'id': s.slug, 'name': s.name, 'root': s.root, 'url': self.url_for(s.slug)}
                 for s in self.sites.values()]
     def site_for(self, scope):
-        "The workspace a request's Host header names, or None."
+        "The workspace a request reached: by the port it came in on, else a `<slug>.localhost` Host a browser link still names, else the default."
+        if (slug := self.slugs.get((scope.get('server') or (None, None))[1])) is not None: return self.sites.get(slug)
         host = _host(_headers(scope))
         if host.endswith('.localhost'): return self.sites.get(host[:-10])
         if not host or host in LOOPBACK: return self.sites.get(self.default)
         return None
+    def bind(self, slug):
+        "A listening socket for `slug`, made once; connections wait in its backlog until `listen` serves it. Its port."
+        import socket
+        if slug == self.default: return self.port
+        if (p := self.ports.get(slug)) is not None: return p
+        fam = socket.AF_INET6 if ':' in self.host else socket.AF_INET
+        # The port it had last time first, so the page's origin, and what the page keeps per origin, stays.
+        known = slug_map(port_store())
+        tries = [int(known[slug])] if str(known.get(slug, '')).isdigit() and int(known[slug]) != self.port else []
+        while True:
+            want, sock = tries.pop(0) if tries else 0, socket.socket(fam, socket.SOCK_STREAM)
+            # SO_REUSEADDR gets past the last run's TIME_WAIT; on macOS it would also share a port another process listens on, so that is asked first
+            if want and _answers(self.host, want): sock.close(); continue
+            if want: sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try: sock.bind((self.host, want))
+            except OSError: sock.close(); continue
+            if sock.getsockname()[1] != self.port: break
+            sock.close()   # the launcher picked the main port the same way; it is taken once uvicorn binds it
+        sock.listen(128); sock.setblocking(False)
+        p = sock.getsockname()[1]
+        if known.get(slug) != str(p): save_slug_map({**known, slug: str(p)}, port_store())
+        self.ports[slug], self.slugs[p], self._listeners[slug] = p, slug, [sock, None, None]
+        from .core.projects import now_serving, serving
+        if (d := serving()) and d.get('port') == self.port: now_serving(d['host'], d['port'], d.get('folders', ()), self.ports.values())
+        return p
+    async def listen(self, slug):
+        "Serve `slug`'s socket with a uvicorn server of its own on this loop; its URL."
+        self.bind(slug)
+        # no lifespan ran (a hub driven in a test): the socket is bound and nothing serves it
+        if self._loop is None or (row := self._listeners.get(slug)) is None or row[1] is not None: return self.url_for(slug)
+        import uvicorn
+        cfg = uvicorn.Config(self.outer or self, lifespan='off', log_config=None, **self.serve_kw); cfg.load()
+        srv = uvicorn.Server(cfg); srv.lifespan = cfg.lifespan_class(cfg)
+        row[1] = srv
+        await srv.startup(sockets=[row[0]])
+        row[2] = asyncio.create_task(srv.main_loop())
+        return self.url_for(slug)
+    async def _stop_listeners(self):
+        rows = [r for r in self._listeners.values() if r[1] is not None]
+        for r in rows: r[1].should_exit = True
+        async def stop(r):
+            if r[2] is not None: await r[2]
+            await r[1].shutdown()
+        await asyncio.gather(*map(stop, rows), return_exceptions=True)
     def site_at(self, root):
         "The workspace already serving `root`, or None. A folder opened twice is one window."
         root = str(root)
@@ -342,12 +413,20 @@ class WorkspaceHub:
         # whichever answers for bare loopback: one that never hears it never stops its kernels.
         if scope.get('type') == 'lifespan': return await self._lifespan(scope, receive, send)
         if scope.get('path') == OPEN_PATH: return await self._open(scope, send)
-        if scope.get('path') in APP_PATHS: return await _app_route(scope, send)
+        if scope.get('path') in APP_PATHS: return await _app_route(scope, send, self)
+        if scope.get('type') == 'http' and str(scope.get('path', '')).startswith(GO_PATH): return await self._go(scope, send)
         site = self.site_for(scope)
         if site is None: return await _refuse(scope, send, 'unknown workspace host')
         scope = dict(scope)
         scope['leela.workspace_id'] = site.slug
         await site.app(scope, receive, send)
+    async def _go(self, scope, send):
+        "A window that knows only the main port and a slug: sent on to that workspace's own port."
+        slug = scope['path'][len(GO_PATH):].strip('/')
+        if slug not in self.sites: return await _json(send, {'ok': False, 'error': f'no workspace {slug!r} is open'}, 404)
+        url = await self.listen(slug)
+        await send({'type': 'http.response.start', 'status': 307, 'headers': [(b'location', url.encode()), (b'cache-control', b'no-store')]})
+        await send({'type': 'http.response.body', 'body': b''})
     async def _open(self, scope, send):
         "Serve a folder as its own workspace, and with `file`, open that file in it. The desktop shell then points a window at the row."
         # A file alone never adds a folder: one no open folder holds goes to the loose window, with the folder as `offer`. `folder=1` asks to add it.
@@ -388,7 +467,7 @@ class WorkspaceHub:
                     for r in ([root, *also] if folder else [f]): await asyncio.to_thread(ls.release, r)
         except Exception as e: return await _json(send, {'ok': False, 'error': str(e), 'config': cfg_mark()}, 400)
         await _json(send, {'ok': True, 'id': site.slug, 'name': site.name, 'root': site.root, 'offer': offer,
-                           'url': self.url_for(site.slug), 'config': cfg_mark()})
+                           'url': await self.listen(site.slug), 'config': cfg_mark()})
     async def _lifespan(self, scope, receive, send):
         "One startup and one shutdown, fanned out to every site and answered once."
         self._loop, self._scope = asyncio.get_running_loop(), dict(scope)
@@ -401,8 +480,10 @@ class WorkspaceHub:
                 # Listed, not iterated: a folder opened while this is in flight adds a queue.
                 for q in list(self._queues.values()): q.put_nowait(message)
                 if message['type'] == 'lifespan.startup':
+                    for slug in list(self.sites): await self.listen(slug)
                     await send({'type': 'lifespan.startup.complete'})
                 elif message['type'] == 'lifespan.shutdown':
+                    await self._stop_listeners()
                     await asyncio.gather(*self._legs, return_exceptions=True)
                     return await send({'type': 'lifespan.shutdown.complete'})
         finally:

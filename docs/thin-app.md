@@ -93,6 +93,12 @@ The server maps the launcher's `ready` to the page's `done`, so "Restart to upda
 | `POST /hub/grant?path=&grant=` | a one-time `grant` | `{ok, root}`; a folder picked in the app's own dialog opens next with no question |
 | `GET /app/menu.json` | none | `{menus: [{title, items: [{title, action \| selector \| js, key, mask} \| {sep: true}]}]}` from `blocks/keys/menus.BAR` and the keymap |
 | `GET /app/recent` | none | `{recent: [path]}` for the Dock menu |
+| `GET /app/sites` | none | `{sites: [{id, name, root, url}], port}`: each workspace and its own port, for window keys and after a restart |
+| `GET /hub/go/<slug>` | none | 307 to that workspace's own port; 404 when no such workspace is open. It builds nothing |
+
+Each workspace answers on a loopback port of its own (`WorkspaceHub.bind`, `listen`): a second uvicorn server on the same loop serves the same guarded app, and `site_for` picks the workspace by the port a request came in on. A workspace gets the port it had last time (`workspaces/ports.json`) when nothing listens there, so the page's origin and what it keeps per origin (layout, theme) stay. The main port is the home window's and the launcher's. Cookies are shared by every port of one host; no Leela route reads a cookie or the session, and a test checks that no page sets one. A page cannot post to another workspace: the guard refuses a change whose `Origin` is another port.
+
+Merge plan: this hub change is Leela code the old py2app app also runs (`leela_app.run` opens its first windows at `/hub/go/<slug>`). It goes to `main` with the thin-app branch; before that merge, `make ship` builds the old app and its windows are checked by hand: open two folders, drop a file, quit and reopen, and each window keeps its layout.
 
 All of these sit behind `LoopbackHostGuard`, so a page on another host name gets 421. The launcher sends the server nothing secret: a process that takes the server's port first gets only a nonce for one path, good once, and never the token.
 
@@ -214,7 +220,8 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | Smart quotes, dashes and autocorrect off | K:379 `quiet_text_substitution` | W:56, called at AD:36 | fixed: before, `"` typed in the editor could become a curly quote |
 | Native context menu | empty unless debug (C:508) | empty unless `LEELA_WEBVIEW_DEBUG` (W:11) | fixed: before, it offered Reload, which drops the page |
 | Web inspector | `LEELA_WEBVIEW_DEBUG` (K:516, C:657) | `isInspectable` with the same variable (W:76) | fixed |
-| One window per folder, raised and not opened twice | K:466 `open_window`, `keyed_windows` | W:91 `show`, keyed by slug | same |
+| One window per folder, raised and not opened twice | K:466 `open_window`, `keyed_windows` | `show`, keyed by the workspace's slug, which `learn` takes from each `/hub/open` row and from `/app/sites` | same |
+| Where a workspace's page is | `http://<slug>.localhost:<port>/` | `http://127.0.0.1:<port>/`, a loopback port of the workspace's own; the main port is the home window. After a restart, `reopenWorkspaces` (AD) asks `/app/sites`, opens any other folder again with a grant, and loads each window's new URL | fixed: the app's process never reached a `*.localhost` name (it waited 90 s, with Local Network on); an IP address needs no lookup |
 | A new window waits for its page, and a page that does not come says so | K:480 `_point`: `wait_for_http`, then the page, else an "unreachable" page | W:123 `point`, W:132 `answers`; W:148 a failed load and W:158 a crashed page are not left blank; W:100 `reuse` loads a failed page again and takes the new title on the next open | fixed: before, the window loaded at once and kept a blank page on any failure, and a second drop only raised it |
 | A window comes forward and the app activates | K:454 `bring_forward`, C:748 | W:91, W:182 call `NSApp.activate()` | fixed |
 | Closing a window hides it; the Dock icon brings the last one back as it was | K:255 `dock_delegates` | W:174 `windowShouldClose`, W:182 `reopen`, AD:180 | fixed: before, the window and its page were gone, and the Dock icon opened the home page |

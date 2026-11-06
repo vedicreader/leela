@@ -33,8 +33,15 @@ import WebKit
     @Test func serverURLsAndKeys() {
         let ws = Windows(); ws.port = 5
         #expect(ws.isServer(u("http://x.localhost:5/")) && ws.isServer(u("http://127.0.0.1:5/")) && !ws.isServer(u("http://x.localhost:6/")))
-        #expect(!ws.isServer(u("https://127.0.0.1:5/")) && !ws.isServer(u("http://evil.com:5/")))
-        #expect(Windows.key(u("http://my-proj.localhost:5/")) == "my-proj" && Windows.key(u("http://127.0.0.1:5/")) == Windows.homeKey)
+        #expect(!ws.isServer(u("https://127.0.0.1:5/")) && !ws.isServer(u("http://evil.com:5/")) && !ws.isServer(u("http://127.0.0.1:7/")))
+        #expect(ws.key(u("http://my-proj.localhost:5/")) == "my-proj" && ws.key(u("http://127.0.0.1:5/")) == Windows.homeKey)
+        // each workspace on a port of its own: learned from the server's answer, and a go-link teaches nothing
+        ws.learn(["id": "proj", "url": "http://127.0.0.1:7/", "root": "/p"]); ws.learn(["id": "x", "url": "http://127.0.0.1:5/hub/go/x"])
+        #expect(ws.isServer(u("http://127.0.0.1:7/")) && ws.key(u("http://127.0.0.1:7/tab")) == "proj" && ws.roots["proj"] == "/p" && ws.sites.count == 1)
+        ws.learn(["id": "proj", "url": "http://127.0.0.1:8/"])
+        #expect(ws.sites == [8: "proj"], "a restarted server moved it")
+        ws.learn(["id": "home-site", "url": "http://127.0.0.1:5/"])
+        #expect(ws.key(u("http://127.0.0.1:5/")) == Windows.homeKey, "the default workspace is the home window, not a second one")
     }
 
     @Test func aWindowOpensAsTheOldAppsDidWithoutGoingOnScreen() {
@@ -109,7 +116,8 @@ import WebKit
     @Test func aWindowWhoseServerDoesNotAnswerSaysSoAndASecondOpenLoadsItAgain() async throws {
         // a new window loaded at once and kept nothing on failure, so a dropped file gave a blank window that a second drop only raised
         let ws = Windows(); ws.port = 1; ws.urlWait = 0.5
-        let url = u("http://loose.localhost:1/")
+        ws.learn(["id": "loose", "url": "http://127.0.0.1:2/"])
+        let url = u("http://127.0.0.1:2/")
         let w = ws.place(url, title: "leela — a.png")
         defer { w.close() }
         let v = try #require(ws.windows["loose"]?.1)
@@ -118,10 +126,10 @@ import WebKit
             try await Task.sleep(for: .milliseconds(250))
             text = (try? await v.evaluateJavaScript("document.body ? document.body.innerText : ''") as? String) ?? ""
         }
-        #expect(text.contains("Leela could not show http://loose.localhost:1/") && ws.failed.contains(ObjectIdentifier(v)))
+        #expect(text.contains("Leela could not show http://127.0.0.1:2/") && ws.failed.contains(ObjectIdentifier(v)))
         #expect(ws.reuse(url, title: "leela — b.docx") === w && w.title == "leela — b.docx")
         #expect(!ws.failed.contains(ObjectIdentifier(v)), "the second open loads the page again")
-        #expect(ws.reuse(u("http://other.localhost:1/")) == nil)
+        #expect(ws.reuse(u("http://other.localhost:1/")) == nil && ws.reuse(u("http://127.0.0.1:2/a")) === w)
     }
 
     @Test func aQuitHidesEveryWindowAndDropsItsPage() async throws {
@@ -135,15 +143,32 @@ import WebKit
         #expect(av.url?.absoluteString ?? "about:blank" == "about:blank" && bv.url?.absoluteString ?? "about:blank" == "about:blank")
     }
 
+    @Test func aRestartedServerSendsEachWindowToItsWorkspacesNewPort() async throws {
+        let ws = Windows(); ws.port = 1; ws.urlWait = 0.2
+        let log = FileManager.default.temporaryDirectory.appending(path: "leela-windows-\(UUID().uuidString).log"); ws.log = log
+        defer { try? FileManager.default.removeItem(at: log) }
+        ws.learn(["id": "proj", "url": "http://127.0.0.1:2/", "root": "/p"])
+        let (h, hv) = ws.make(u("http://127.0.0.1:1/"), title: "h"), (p, pv) = ws.make(u("http://127.0.0.1:2/"), title: "p")
+        defer { h.close(); p.close() }
+        ws.windows = [Windows.homeKey: (h, hv), "proj": (p, pv)]
+        ws.sites = [:]; ws.learn(["id": "proj", "url": "http://127.0.0.1:4/"])
+        ws.reload(port: 3, urls: ["proj": u("http://127.0.0.1:4/")])
+        try await Task.sleep(for: .seconds(1))
+        let text = try String(contentsOf: log, encoding: .utf8)
+        #expect(text.contains("point http://127.0.0.1:3/") && text.contains("proj point http://127.0.0.1:4/") && ws.port == 3 && ws.key(u("http://127.0.0.1:4/")) == "proj")
+        #expect(ws.ours(4) && ws.ours(3) && !ws.ours(2), "the bridge answers only the server's ports")
+    }
+
     @Test func eachLoadStepIsWrittenToTheWindowsLog() async throws {
         let ws = Windows(); ws.port = 1; ws.urlWait = 0.3
         let log = FileManager.default.temporaryDirectory.appending(path: "leela-windows-\(UUID().uuidString).log"); ws.log = log
         defer { try? FileManager.default.removeItem(at: log) }
-        let w = ws.place(u("http://loose.localhost:1/"), title: "t")
+        ws.learn(["id": "loose", "url": "http://127.0.0.1:2/"])
+        let w = ws.place(u("http://127.0.0.1:2/"), title: "t")
         defer { w.close() }
         try await Task.sleep(for: .seconds(1.5))
         let text = try String(contentsOf: log, encoding: .utf8)
-        #expect(text.contains("loose point http://loose.localhost:1/") && text.contains("loose answers http://loose.localhost:1/ false"))
+        #expect(text.contains("loose point http://127.0.0.1:2/") && text.contains("loose answers http://127.0.0.1:2/ false"))
     }
 
     @Test func aCancelledOrDownloadedNavigationKeepsThePage() {

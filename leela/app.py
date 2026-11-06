@@ -1362,6 +1362,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
     broker = RuntimeBroker()   # every shape gets the ceiling
     from .core.projects import loose_root, now_serving, served
     hub = None
+    serve_kw = dict(timeout_keep_alive=KEEP_ALIVE, timeout_graceful_shutdown=QUIT_GRACE)
     pool_ports = count(kernel_port, 100)
     def site_for_root(root, slug):
         "One independent workspace: its own state file, its own kernel pool, its own window."
@@ -1384,7 +1385,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
                              ide_app(ws, gate, workspace_catalog=lambda: hub.catalog()), ws.open_external, ws.release, ws.fs.covers, ws.add_root)
     if app_window and roots:
         sites = [site_for_root(r, s) for r, s in zip(roots, assign_slugs(roots))]
-        app = hub = WorkspaceHub(sites, port, build=site_for_root)
+        app = hub = WorkspaceHub(sites, port, build=site_for_root, host=host, serve_kw=serve_kw)
         urls = [row['url'] for row in hub.catalog()]
         print(f'leela  {len(sites)} independent workspaces on :{port}')
         for row in hub.catalog(): print(f"  {row['name']}: {row['url']}")
@@ -1431,7 +1432,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
             app = hub = WorkspaceHub(
                 [WorkspaceSite(assign_slugs([r0])[0] if r0 else 'leela',
                                r0.name if r0 else 'leela', str(r0 or ''), app, ws.open_external, covers=ws.fs.covers)],
-                port, build=site_for_root)
+                port, build=site_for_root, host=host, serve_kw=serve_kw)
         if (secs := ws.jobs.tick()): print(f'  vault watches polled every {secs}s')
         print(f'leela  http://{host}:{port}   folders: '
               + (', '.join(p.name for p in ws.fs.roots) or 'no folder open yet'))
@@ -1451,5 +1452,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
     try: from .core.watchdog import watch_cpu; watch_cpu()
     except Exception as e: print(f'  cpu watchdog off: {e}')
     now_serving(host, port, [str(r) for r in (roots or ws.fs.roots)])
-    try: uvicorn.run(LoopbackHostGuard(app), host=host, port=port, log_level='warning', timeout_keep_alive=KEEP_ALIVE, timeout_graceful_shutdown=QUIT_GRACE)
+    guarded = LoopbackHostGuard(app)
+    if hub is not None: hub.outer = guarded
+    try: uvicorn.run(guarded, host=host, port=port, log_level='warning', **serve_kw)
     finally: served()

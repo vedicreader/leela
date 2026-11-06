@@ -92,7 +92,7 @@ def main():
 def run():
     "The application: server on a thread, CDP Chrome beside it, native window on this one."
     from leela.desktop import last_folder, remember, run_shell, shell_api, shell_ready, warm_cdp
-    from leela.hub import assign_slugs, grant, set_confirmer
+    from leela.hub import assign_slugs, grant, set_confirmer, workspace_urls
     given = files()
     # One window. The rest stay in `recent`, which the Dock menu and welcome screen offer. A file adds no folder: it opens where one is open, else in the loose window with an offer.
     want = folders() or last_folder()
@@ -118,8 +118,8 @@ def run():
     # One window per workspace: a single window on the bare loopback host would strand the rest.
     # Slugged here as well as in the server because both read one remembered assignment per folder.
     slugs = assign_slugs([Path(d).expanduser().resolve() for d in dirs]) if dirs else [HOME_KEY]
-    urls = ([f'http://{s}.localhost:{port}/' for s in slugs] if dirs
-            else [f'http://127.0.0.1:{port}/'])
+    # The main port sends each window on to its workspace's own port, which the server picks when it builds it.
+    urls = workspace_urls(dirs, port) if dirs else [f'http://127.0.0.1:{port}/']
     run_shell(urls, titles=titles_for(dirs), keys=slugs, icon=_icon(), **_hooks(port, given))
 
 def attach(port, dirs, host=HOST, files=()):

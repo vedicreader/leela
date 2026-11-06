@@ -55,15 +55,30 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     static func quietTextSubstitution() { for k in noSubstitution { UserDefaults.standard.set(false, forKey: k) } }
 
-    /// the slug of a server URL (`<slug>.localhost`), else the home key
-    static func key(_ url: URL) -> String {
-        guard let h = url.host, h.hasSuffix(".localhost") else { return homeKey }
-        return String(h.dropLast(".localhost".count))
+    /// each workspace's own port and its slug, from `/hub/open` answers and `/app/sites`; the main port is the home window's
+    var sites: [Int: String] = [:]
+    /// each workspace's folder, so a restarted server can be asked for it again
+    var roots: [String: String] = [:]
+
+    /// the window a server URL belongs to: its workspace by port, a `<slug>.localhost` name, else home
+    func key(_ url: URL) -> String {
+        if let p = url.port, p != port, let s = sites[p] { return s }
+        if let h = url.host, h.hasSuffix(".localhost") { return String(h.dropLast(".localhost".count)) }
+        return Self.homeKey
     }
 
+    /// what a `/hub/open` row or a `/app/sites` row says: the workspace's port and folder
+    func learn(_ row: [String: Any]) {
+        guard let id = row["id"] as? String, let s = row["url"] as? String, let u = URL(string: s), let p = u.port, !u.path.hasPrefix("/hub/go/") else { return }
+        if p != port { sites = sites.filter { $0.value != id }; sites[p] = id }
+        if let r = row["root"] as? String, !r.isEmpty { roots[id] = r }
+    }
+
+    static func loopback(_ h: String) -> Bool { h == "127.0.0.1" || h == "localhost" || h == "::1" || h.hasSuffix(".localhost") }
+    func ours(_ p: Int?) -> Bool { p != nil && (p == port || sites[p!] != nil) }
     func isServer(_ u: URL) -> Bool {
-        guard u.scheme == "http", u.port == port, let h = u.host else { return false }
-        return h == "127.0.0.1" || h == "localhost" || h.hasSuffix(".localhost")
+        guard u.scheme == "http", ours(u.port), let h = u.host else { return false }
+        return Self.loopback(h)
     }
 
     /// a window for `url`, not loaded and not on screen
@@ -89,7 +104,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     /// shows the window for `url`, opening it when there is none
     func show(_ url: URL, title: String = "Leela") {
-        hidden.removeAll { $0 == Self.key(url) }
+        hidden.removeAll { $0 == key(url) }
         // a Finder open or a question while Leela is behind another app comes forward, as kavacha's bring_forward
         NSApp.activate()
         let w = reuse(url, title: title) ?? place(url, title: title)
@@ -98,7 +113,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     /// the open window for `url` with `title`, its page loaded again when it has none; nil when there is no window
     func reuse(_ url: URL, title: String = "Leela") -> NSWindow? {
-        guard let (w, v) = windows[Self.key(url)] else { return nil }
+        guard let (w, v) = windows[key(url)] else { return nil }
         if title != "Leela" { w.title = title }
         if v.url == nil || failed.contains(ObjectIdentifier(v)) { point(v, url) }
         return w
@@ -106,7 +121,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     /// a new window for `url`, not on screen yet, its page loading
     func place(_ url: URL, title: String) -> NSWindow {
-        let k = Self.key(url), (w, v) = make(url, title: title)
+        let k = key(url), (w, v) = make(url, title: title)
         w.setFrameAutosaveName("leela-\(k)")
         if windows.isEmpty { w.center() } else { w.cascadeTopLeft(from: NSPoint(x: 40, y: 40)) }
         windows[k] = (w, v)
@@ -171,11 +186,12 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
     func webView(_ w: WKWebView, didFinish n: WKNavigation!) { note(w, "finish") }
     func webViewWebContentProcessDidTerminate(_ w: WKWebView) { note(w, "page process ended"); if let u = w.url, isServer(u) { w.load(URLRequest(url: u)) } }
 
-    func reloadAll(port: Int) {
+    /// after a restart: the home window to the new main port, each other window to the URL `urls` gives its slug
+    func reload(port: Int, urls: [String: URL]) {
         self.port = port
         for (k, (_, v)) in windows {
-            let host = k == Self.homeKey ? "127.0.0.1" : "\(k).localhost"
-            v.load(URLRequest(url: URL(string: "http://\(host):\(port)/")!))
+            if k == Self.homeKey { point(v, URL(string: "http://127.0.0.1:\(port)/")!) }
+            else if let u = urls[k] { point(v, u) }
         }
     }
 
@@ -211,7 +227,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
     // the bridge
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage, replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
         let o = m.frameInfo.securityOrigin
-        guard m.frameInfo.isMainFrame, o.protocol == "http", o.port == port, o.host == "127.0.0.1" || o.host == "localhost" || o.host.hasSuffix(".localhost")
+        guard m.frameInfo.isMainFrame, o.protocol == "http", ours(o.port), Self.loopback(o.host)
         else { return replyHandler(nil, "not a Leela page") }
         switch Bridge.route(m.body) {
         case .openFolder(let p): app?.openFolder(p, trusted: false); replyHandler(true, nil)
@@ -221,7 +237,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
             paint(Self.colour(hexColour) ?? background)
             replyHandler(true, nil)
         case .setTitle(let t, let url):
-            let w = url.flatMap(URL.init(string:)).flatMap { windows[Self.key($0)]?.0 } ?? m.webView?.window
+            let w = url.flatMap(URL.init(string:)).flatMap { windows[self.key($0)]?.0 } ?? m.webView?.window
             w?.title = t
             replyHandler(w != nil, nil)
         case .unknown(let what): replyHandler(nil, "unknown call \(what)")

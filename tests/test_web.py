@@ -47,7 +47,7 @@ def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
     from leela.hub import workspace_urls
     (tmp_path/'real-name').mkdir()
     (tmp_path/'link').symlink_to(tmp_path/'real-name')
-    assert workspace_urls([tmp_path/'link'], 5001) == ['http://real-name.localhost:5001/']
+    assert workspace_urls([tmp_path/'link'], 5001) == ['http://127.0.0.1:5001/hub/go/real-name']
 
 
 @pytest.mark.parametrize('loose', [False, True])
@@ -694,7 +694,7 @@ def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
     hub = WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, build=build)
     status, d = _hub_call(hub, OPEN_PATH, b'path=' + str(two).encode())
     assert (status, d['ok']) == (200, True), d
-    assert d['url'] == 'http://two.localhost:5001/' and d['id'] == 'two'
+    assert d['url'] == f"http://127.0.0.1:{hub.ports['two']}/" and d['id'] == 'two', 'its own port: the Mac app could not reach a *.localhost name'
     assert set(hub.sites) == {'one', 'two'}, 'and the hub now serves both'
     assert d['config'] == cfg_mark()
 
@@ -726,7 +726,7 @@ def test_a_file_handed_to_the_hub_opens_as_the_active_tab_and_is_saved(tmp_path)
     for f in (a, b):
         status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={f}&folder=1'.encode())
         assert (status, d['ok']) == (200, True), d
-    assert d['url'] == 'http://proj.localhost:5001/' and list(hub.sites) == ['proj'], 'both files, one workspace'
+    assert d['url'] == f"http://127.0.0.1:{hub.ports['proj']}/" and list(hub.sites) == ['proj'], 'both files, one workspace'
     ws = made['proj']
     assert [t.path for t in ws.tabs] == [str(a.resolve()), str(b.resolve())] and ws.tab.path == str(b.resolve())
     again = Workspace(roots=[proj]); again._state_path = tmp_path/'proj.json'
@@ -1076,3 +1076,23 @@ def test_the_host_guard_refuses_before_the_body_is_read(tmp_path):
     scope = {'type': 'http', 'method': 'POST', 'path': '/nb/edit', 'headers': [(b'host', b'attacker.example:5001'), (b'content-type', b'application/json')]}
     asyncio.run(app(scope, receive, send))
     assert messages[0]['status'] == 421
+
+
+def test_a_workspace_gets_the_port_it_had_last_time_unless_it_is_taken(tmp_path):
+    "A page keeps its layout per origin, and the port is part of the origin."
+    import socket
+    from leela.hub import port_store, slug_map
+    (one := tmp_path/'one').mkdir()
+    hub = WorkspaceHub([WorkspaceSite('home', 'home', '', lambda *a: None), WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001)
+    p = hub.bind('one')
+    assert slug_map(port_store())['one'] == str(p) and hub.bind('one') == p and hub.bind('home') == 5001
+    hub._listeners['one'][0].close()
+    assert WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, default='x').bind('one') == p, 'the same port next launch'
+    with socket.socket() as held:
+        held.bind(('127.0.0.1', 0)); held.listen(); taken = held.getsockname()[1]
+        from leela.hub import save_slug_map
+        save_slug_map({'one': str(taken)}, port_store())
+        h3 = WorkspaceHub([WorkspaceSite('one', 'one', str(one), lambda *a: None)], 5001, default='x')
+        q = h3.bind('one')
+        assert q != taken and slug_map(port_store())['one'] == str(q)
+        h3._listeners['one'][0].close()

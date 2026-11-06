@@ -100,8 +100,8 @@ def test_a_folder_handed_to_a_running_app_gets_a_window_of_its_own(tmp_path, dir
         leela_app.open_folder(port, dirs[1])
         assert built == [dirs[1]], 'the folder got a workspace of its own'
         assert [str(r) for r in ws.fs.roots] == [dirs[0]], 'and was not added to the one already open'
-        assert opened == [(f'http://{hub.site_at(dirs[1]).slug}.localhost:{port}/',
-                           hub.site_at(dirs[1]).slug)], 'and a window was pointed at it'
+        slug = hub.site_at(dirs[1]).slug
+        assert opened == [(f'http://127.0.0.1:{hub.ports[slug]}/', slug)] and hub.ports[slug] != port, 'and a window was pointed at its own port'
         assert dirs[1] in projects.last_folders() and dirs[0] in projects.last_folders(), \
             'both are open now: the open set is a union, not a replacement'
         leela_app.open_folder(port, dirs[1])

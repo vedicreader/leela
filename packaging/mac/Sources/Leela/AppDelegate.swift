@@ -82,12 +82,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     func ready(_ base: URL) {
         windows.port = sup.port
         Task {
+            for row in await get("/app/sites")?["sites"] as? [[String: Any]] ?? [] { self.windows.learn(row) }
             if let m = await get("/app/menu.json")?["menus"] as? [[String: Any]] { NSApp.mainMenu = Menus.build(m, runner: self.runner, app: self) }
             recent = await get("/app/recent")?["recent"] as? [String] ?? []
         }
         // what Finder sent while the server was starting, restarting or offline opens now, whatever windows there are
         let q = queued; queued = []
-        if windows.windows.isEmpty { if q.isEmpty { windows.show(base) } } else { windows.reloadAll(port: sup.port) }
+        if windows.windows.isEmpty { if q.isEmpty { windows.show(base) } } else { Task { await reopenWorkspaces() } }
         open(q)
         if store.pruneDue() { Task.detached { [store] in _ = try? await Run.toEnd(store!.pruneLaunch(), log: store!.paths.logs.appending(path: "prune.log")); _ = try? store!.update { $0.pruned = Date().timeIntervalSince1970 } } }
         _ = try? store.gc(inUse: Set([sup.hash].compactMap { $0 }), building: Set([sup.buildingHash].compactMap { $0 }))
@@ -104,6 +105,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         cfg.connectionProxyDictionary = [:]
         guard let (d, resp) = try? await URLSession(configuration: cfg).data(for: r) else { return (0, [:]) }
         return ((resp as? HTTPURLResponse)?.statusCode ?? 0, (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] ?? [:])
+    }
+
+    /// after a restart each workspace has a new port: the server's list, else its folder opened again, then every window loads its new URL
+    func reopenWorkspaces() async {
+        windows.sites = [:]
+        for row in await get("/app/sites")?["sites"] as? [[String: Any]] ?? [] { windows.learn(row) }
+        var urls = [String: URL]()
+        for (p, s) in windows.sites { urls[s] = URL(string: "http://127.0.0.1:\(p)/") }
+        for k in windows.windows.keys where k != Windows.homeKey && urls[k] == nil {
+            guard let root = windows.roots[k] else { continue }
+            let (code, d) = await request("/hub/open", method: "POST", query: ["path": root, "grant": grants.issue(root)])
+            windows.note(nil, "reopen \(k) \(root) -> \(code) \(d["url"] as? String ?? "")")
+            if code == 200 { windows.learn(d); if let s = d["url"] as? String { urls[k] = URL(string: s) } }
+        }
+        windows.reload(port: sup.port, urls: urls)
     }
 
     func get(_ path: String) async -> [String: Any]? { let (c, d) = await request(path, timeout: 10); return c == 200 ? d : nil }
@@ -130,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
             guard code == 200, d["ok"] as? Bool == true, let s = d["url"] as? String, let u = URL(string: s) else {
                 return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")")
             }
+            windows.learn(d)
             windows.show(u, title: "leela — \(d["name"] as? String ?? "")")
         }
     }
@@ -155,6 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
             }
             windows.note(nil, "open file \(path) -> \(code) \(d["url"] as? String ?? "") \(d["error"] as? String ?? "")")
             guard code == 200, let s = d["url"] as? String, let u = URL(string: s) else { return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")") }
+            windows.learn(d)
             windows.show(u, title: "leela — \((path as NSString).lastPathComponent)")
         }
     }

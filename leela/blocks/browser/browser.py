@@ -44,6 +44,13 @@ def own_origin():
     if d.get('pid') != os.getpid() or not d.get('host'): return ''
     return f"http://{str(d['host']).lower()}:{int(d['port'])}"
 
+def own_origins():
+    "Every origin this process serves Leela on: the main port and each workspace's own."
+    from ...core.projects import serving
+    d, own = serving() or {}, own_origin()
+    if not own: return set()
+    return {origin_of(own), *(origin_of(f"http://{str(d['host']).lower()}:{int(p)}") for p in d.get('ports') or ())}
+
 def origin_of(url):
     "`scheme://host:port` with the port spelled out, so two spellings of one origin compare equal."
     try: u = urlparse(url); port = u.port or {'http': 80, 'https': 443}.get(u.scheme)
@@ -259,9 +266,9 @@ class Browser:
         return True
 
     def is_own(self, url):
-        "Whether `url` is on exactly the origin this Leela serves: scheme, host and port."
+        "Whether `url` is on exactly an origin this Leela serves: scheme, host, and the main port or a workspace's own."
         own = own_origin()
-        return bool(own) and origin_of(url) == origin_of(own)
+        return bool(own) and origin_of(url) in own_origins()
 
     def public(self, url):
         "Whether fossick would fetch `url`: http(s) to a public address."
@@ -279,7 +286,7 @@ class Browser:
         if not url: raise ValueError('no URL')
         if '://' not in url: url = f'https://{url}'
         # Only the root: FastHTML routes answer GET, so another path could change state on load.
-        if self.is_own(url): return f'{own_origin()}/?observer=1'
+        if self.is_own(url): return f'{origin_of(url)}/?observer=1'
         from fossick.core import check_url
         try: return check_url(url)
         except Exception as e:
