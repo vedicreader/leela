@@ -176,6 +176,8 @@ The keys are SSH Ed25519 keys:
 | no | yes | yes | yes | `app-needed` | the notice names the app version that is needed |
 | yes, or a lock that needs an app | any | any | no | `download` | the notice opens the release page |
 
+A lock that comes inside a newer app (the bundled lock, with an `n` above the env in use) is not offered: the launcher builds it at launch, behind the setup window, and runs it, with the env it had kept as previous. A failed build leaves the env in use running and offers the lock. After "Use Previous Version" the app's own lock is offered, not forced. Each choice is a line in `logs/setup.log`.
+
 The newest app comes from the `app-v*` releases, not from `releases/latest`. The server never takes a `lock-*` or `app-v*` tag as a Leela release.
 
 ## Security notes

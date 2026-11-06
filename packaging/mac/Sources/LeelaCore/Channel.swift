@@ -63,6 +63,9 @@ public struct LockPlan: Equatable, Sendable {
     public var verdict: LockVerdict
     /// whether the channel answered; offline means the bundled lock or the env on disk
     public var online: Bool
+    /// the lock this app was built with: a newer one is built and run at launch, as a channel lock is only offered
+    public var bundled = false
+    public init(dir: URL, verdict: LockVerdict, online: Bool, bundled: Bool = false) { self.dir = dir; self.verdict = verdict; self.online = online; self.bundled = bundled }
     public var n: Int { switch verdict { case .ok(let m), .needsApp(let m): m.n } }
     public var manifest: Manifest { switch verdict { case .ok(let m), .needsApp(let m): m } }
 }
@@ -92,7 +95,7 @@ public enum LockChoice {
         }
         if let v = try? LockCheck.check(dir: bundled, keys: keys, app: app, bad: s.bad) {
             let m = { switch v { case .ok(let m), .needsApp(let m): m } }()
-            if best == nil || m.n > best!.n, let kept = try? store.keep(lock: bundled, n: m.n) { best = LockPlan(dir: kept, verdict: v, online: online) }
+            if best == nil || m.n > best!.n, let kept = try? store.keep(lock: bundled, n: m.n) { best = LockPlan(dir: kept, verdict: v, online: online, bundled: true) }
         }
         if var b = best { b.online = online; return (b, why) }
         return (nil, why)

@@ -29,9 +29,9 @@ func py(_ port: Int, _ die: Double) -> Launch {
     return cond()
 }
 
-@MainActor func supervisor(_ s: EnvStore, lock: URL?, n: Int = 1, die: @escaping (String) -> Double = { _ in 0 }) -> Supervisor {
+@MainActor func supervisor(_ s: EnvStore, lock: URL?, n: Int = 1, bundled: Bool = false, die: @escaping (String) -> Double = { _ in 0 }) -> Supervisor {
     let m = lock.map { try! JSONDecoder().decode(Manifest.self, from: Data(contentsOf: $0.appending(path: "manifest.json"))) }
-    let sup = Supervisor(store: s, plan: { (lock.map { LockPlan(dir: $0, verdict: .ok(m!), online: true) }, nil) },
+    let sup = Supervisor(store: s, plan: { (lock.map { LockPlan(dir: $0, verdict: .ok(m!), online: true, bundled: bundled) }, nil) },
                          serverLaunch: { port, h in py(port, die(h)) })
     sup.healthTimeout = .seconds(10)
     return sup
@@ -130,6 +130,34 @@ func py(_ port: Int, _ die: Double) -> Launch {
         await sup.buildUpdate()
         await sup.restart()
         #expect(sup.hash != ha, "Update takes it back")
+        sup.stop()
+    }
+
+    @Test func aNewAppsOwnNewerLockIsBuiltAndRunAtLaunch() async throws {
+        // lock 7 came in the bundle with a new hash and was only offered, so build 7 kept running lock 4's server
+        let s = store(), a = tempDir(), b = tempDir()
+        makeLock(a, n: 4); makeLock(b, n: 7)
+        let ha = try await s.build(lock: a, n: 4); try s.adopt(ha)
+        let sup = supervisor(s, lock: b, n: 7, bundled: true)
+        await sup.start()
+        let st = s.load()
+        #expect(sup.hash != ha && st.current == sup.hash && st.previous == ha && st.highest_n == 7 && sup.offered == nil)
+        #expect(sup.phase == .ready(Port.base(sup.port)))
+        #expect((try? String(contentsOf: s.paths.logs.appending(path: "setup.log"), encoding: .utf8))?.contains("lock 7 built and current") == true)
+        #expect(await sup.usePrevious() && sup.hash == ha)
+        await sup.restart()
+        #expect(sup.hash == ha && sup.offered?.n == 7, "after Use Previous Version the app's own lock is offered, not forced")
+        sup.stop()
+    }
+
+    @Test func aNewAppsOwnLockThatDoesNotBuildLeavesTheEnvInUseRunning() async throws {
+        let uv = fakeUV(), s = store(uv: uv), a = tempDir(), b = tempDir()
+        makeLock(a, n: 4); makeLock(b, n: 7)
+        let ha = try await s.build(lock: a, n: 4); try s.adopt(ha)
+        try Data().write(to: uv.deletingLastPathComponent().appending(path: "FAIL"))
+        let sup = supervisor(s, lock: b, n: 7, bundled: true)
+        await sup.start()
+        #expect(sup.hash == ha && sup.offered?.n == 7 && s.load().current == ha)
         sup.stop()
     }
 

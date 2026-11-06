@@ -56,6 +56,13 @@ public final class Supervisor {
 
     func set(_ p: Phase) { phase = p; onPhase?(p) }
 
+    /// one line in logs/setup.log: which lock was chosen and why
+    func note(_ what: String) {
+        let log = store.paths.logs.appending(path: "setup.log"), line = "\(ISO8601DateFormatter().string(from: Date())) \(what)\n"
+        try? FileManager.default.createDirectory(at: store.paths.logs, withIntermediateDirectories: true)
+        if let h = try? FileHandle(forWritingTo: log) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() } else { try? Data(line.utf8).write(to: log) }
+    }
+
     /// stops a running server, then: choose the lock, build the first env if there is none, switch to a pending env, start, wait
     public func start() async {
         stop()
@@ -82,8 +89,14 @@ public final class Supervisor {
                         return set(.failed(Setup.failure(Setup.buildFailed, log: store.paths.syncLog(h))))
                     }
                 } else if h != run, (s.locks[run!] ?? -1) < m.n, !s.bad.contains(h) {
-                    if store.isBuilt(h) && !s.held.contains(h) { try? store.stage(h); update = UpdateState(state: "ready") } else { offered = p }
-                }
+                    if store.isBuilt(h) && !s.held.contains(h) { try? store.stage(h); update = UpdateState(state: "ready") }
+                    else if p.bundled && !s.held.contains(h) {
+                        // a new app brings its own lock: built and run now, with the env in use kept as previous; a failed build leaves that env running
+                        note("lock \(m.n) \(h.prefix(16)) came with the app: building it over lock \(s.locks[run!] ?? -1) \(run!.prefix(16))")
+                        do { run = try await firstBuild(p, gen: gen); note("lock \(m.n) built and current") }
+                        catch { guard gen == generation, !stopping else { return }; note("lock \(m.n) did not build: \(error); lock \(s.locks[run!] ?? -1) runs"); offered = p }
+                    } else { offered = p; note("lock \(m.n) \(h.prefix(16)) is offered: \(p.bundled ? "held after Use Previous Version" : "from the channel")") }
+                } else if h != run { note("lock \(m.n) \(h.prefix(16)) not taken: lock \(s.locks[run ?? ""] ?? -1) runs\(s.bad.contains(h) ? ", and this one failed before" : "")") }
             }
         }
         guard gen == generation, !stopping else { return }
