@@ -742,7 +742,7 @@ def test_a_folder_opened_while_leela_runs_becomes_its_own_workspace(tmp_path):
 def test_opening_something_that_is_not_a_folder_is_refused_not_served(tmp_path):
     (f := tmp_path/'notes.py').write_text('x = 1\n')
     hub = WorkspaceHub([], 5001, build=lambda root, slug: None)
-    for raw in (str(f), str(tmp_path/'gone'), ''):
+    for raw in (str(tmp_path/'gone'), ''):
         status, d = _hub_call(hub, OPEN_PATH, b'path=' + raw.encode())
         assert (status, d['ok']) == (400, False), raw
         assert d['config'] == cfg_mark(), 'a second launch tells its own Leela from one on another config dir by this'
@@ -871,6 +871,24 @@ def test_a_file_the_loose_window_refuses_still_names_its_folder(tmp_path):
     hub, made = _loose_hub(tmp_path)
     status, d = _hub_call(hub, OPEN_PATH, f'path={proj}&file={key}'.encode())
     assert (status, d['ok'], d['offer']) == (400, False, str(proj)) and not hub.sites and not made
+
+
+def test_open_with_a_file_alone_goes_where_a_finder_open_goes(tmp_path, monkeypatch):
+    """Open… sends one path, and `/hub/open` took only folders, so a file chosen in a browser tab opened nothing."""
+    from leela.core import projects
+    monkeypatch.setattr(projects, 'SESSION', tmp_path/'desktop.json')
+    (proj := tmp_path/'proj').mkdir(); (proj/'.git').mkdir(); (a := proj/'a.md').write_text('a\n'); (key := proj/'.env').write_text('K=1\n')
+    (mine := tmp_path/'mine').mkdir(); (m := mine/'m.md').write_text('m\n')
+    hub, made = _loose_hub(tmp_path); loose = projects.loose_root()
+    assert _hub_call(hub, OPEN_PATH, f'path={a}'.encode(), method='GET')[0] == 405
+    status, d = _hub_call(hub, OPEN_PATH, f'path={a}'.encode())
+    assert (status, d['ok'], d['root'], d['offer']) == (200, True, str(loose), str(proj)) and hub.site_at(proj) is None, 'offered, not added'
+    assert made[d['id']].tab.path == str(a.resolve())
+    status, d = _hub_call(hub, OPEN_PATH, f'path={key}'.encode())
+    assert (status, d['ok'], d['offer']) == (400, False, str(proj)), 'a key file is refused and still names its folder'
+    w = _hub_call(hub, OPEN_PATH, f'path={mine}'.encode())[1]
+    status, d = _hub_call(hub, OPEN_PATH, f'path={m}'.encode())
+    assert (status, d['id'], d['offer']) == (200, w['id'], '') and made[w['id']].tab.path == str(m.resolve()), 'the window that holds it'
 
 
 def test_a_tab_opened_by_the_shell_is_pushed_to_the_page_that_is_listening(tmp_path):
