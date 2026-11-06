@@ -1203,25 +1203,27 @@ def test_leelas_tools_run_on_leelas_python_in_a_project_whose_venv_lacks_them(tm
         k = await ws.runtime()
         assert str(proj/'.venv') in str(k.python), 'the notebook runs in the venv made for it'
         out = await call(host.run_python, 'import rupaka')
-        assert 'No module named' in out and 'leela_python' in out, f'the project kernel has no Leela packages, and says where they are: {out}'
-        out = await call(host.leela_python, 'import leela, rupaka, kosha, ramabana, nbformat, os, sys\nprint(sys.executable, os.getcwd(), open("data.txt").read())')
+        assert 'No module named' in out and 'own_python' in out, f'the project kernel has no Leela packages, and says where they are: {out}'
+        out = await call(host.own_python, 'import leela, rupaka, kosha, ramabana, nbformat, os, sys\nprint(sys.executable, os.getcwd(), open("data.txt").read())')
         assert runtime_python() in out and str(proj) in out and 'hello' in out, out
-        assert '6' in await call(host.leela_python, 'mine = 6\nprint(mine)')
-        assert '6' in await call(host.leela_python, 'print(mine)'), 'its names stay for the next call'
+        assert '6' in await call(host.own_python, 'mine = 6\nprint(mine)')
+        assert '6' in await call(host.own_python, 'print(mine)'), 'its names stay for the next call'
         assert not [e for e in ws.envs() if e.get('name') == 'leela'], "Leela's kernel is not one the variable panel offers"
         await ws.shutdown()
         assert ws._own is not None and not ws._own.alive, 'and it closes with the workspace'
     asyncio.run(go())
 
-def test_leela_python_is_a_session_tool_and_run_python_points_at_it(tmp_path):
+def test_own_python_is_shalyas_tool_and_run_python_points_at_it(tmp_path):
     "The agent had one Python tool, the user's kernel, so Leela's own tools ran where only the project's packages belong."
-    from leela.blocks.agent.ai import WorkspaceHost, _session_tools
+    from shalya.core import is_write
+    from leela.blocks.agent.ai import WorkspaceHost, ide_tools
     from leela.workspace import Workspace
     ws = Workspace(roots=[tmp_path])
     host = WorkspaceHost(ws)
-    tool = first(t for t in _session_tools(host) if t.__name__ == 'leela_python')
-    assert tool is not None and getattr(tool, 'writes', False), 'it runs arbitrary code, so it asks like run_python'
+    assert host.can('own_python')
+    tools = [t for t in ide_tools(ws) if t.__name__ == 'own_python']
+    assert len(tools) == 1 and is_write(tools[0]), 'shalya builds it once from the capability, and it asks like run_python'
     host._run = lambda code, scope: "ModuleNotFoundError: No module named 'kosha'"
-    assert 'leela_python' in host.run_python('import kosha')
+    assert 'own_python' in host.run_python('import kosha')
     host._run = lambda code, scope: "ModuleNotFoundError: No module named 'pandas'"
-    assert 'leela_python' not in host.run_python('import pandas'), "a project's own package gets no such hint"
+    assert 'own_python' not in host.run_python('import pandas'), "a project's own package gets no such hint"
