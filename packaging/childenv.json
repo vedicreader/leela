@@ -14,12 +14,7 @@
     "UV_NO_PROGRESS": "1",
     "UV_LINK_MODE": "clone"
   },
-  "server": {
-    "PYTHONNOUSERSITE": "1",
-    "PYTHONUNBUFFERED": "1",
-    "VIRTUAL_ENV": "{env}"
-  },
-  "path_first": ["{env}/bin"],
+  "server": {"PYTHONUNBUFFERED": "1"},
   "tool_dirs": ["~/.local/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"],
   "sync": ["sync", "--frozen", "--no-install-project", "--project", "{lock}"],
   "extra": ["--extra", "{name}"],

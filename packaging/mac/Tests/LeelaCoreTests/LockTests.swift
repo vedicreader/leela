@@ -14,11 +14,11 @@ import Testing
         #expect(e["UV_PYTHON_PREFERENCE"] == "only-managed" && e["UV_LINK_MODE"] == "clone" && e["UV_CACHE_DIR"] == "/c")
     }
 
-    @Test func theServerHasTheEnvBinFirstAndTheLaunchersValues() {
-        let e = spec.serverEnv(["PATH": "/usr/bin:/x"], home: "/h", vals: ["cache": "/c", "python": "/py", "python_version": "3.12.16", "env": "/e"],
-                               extra: ["LEELA_APP_VERSION": "1.0.0"])
-        #expect(e["PATH"]!.hasPrefix("/e/bin:/h/.local/bin:/opt/homebrew/bin") && e["PATH"]!.hasSuffix(":/x"))
-        #expect(e["VIRTUAL_ENV"] == "/e" && e["PYTHONNOUSERSITE"] == "1" && e["LEELA_APP_VERSION"] == "1.0.0")
+    @Test func theServerGetsThePersonsEnvAndNoBuildSettings() {
+        let e = spec.serverEnv(["PATH": "/usr/bin:/x", "UV_INDEX_URL": "x", "VIRTUAL_ENV": "/v", "OPENAI_API_KEY": "k"], home: "/h", extra: ["LEELA_APP_VERSION": "1.0.0"])
+        #expect(e["PATH"]!.hasPrefix("/h/.local/bin:/opt/homebrew/bin") && e["PATH"]!.hasSuffix(":/x"))
+        #expect(!e.keys.contains { $0.hasPrefix("UV_") } && e["VIRTUAL_ENV"] == nil && e["PYTHONNOUSERSITE"] == nil && e["NO_COLOR"] == nil)
+        #expect(e["PYTHONUNBUFFERED"] == "1" && e["LEELA_APP_VERSION"] == "1.0.0" && e["OPENAI_API_KEY"] == "k" && e["HOME"] == "/h")
     }
 
     @Test func theCommandsComeFromTheSameFileAsToolsLockPy() {

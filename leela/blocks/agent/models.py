@@ -379,7 +379,8 @@ def setup_plan():
     if (g := gemma_row()): offline.insert(0, g)
     ready_now = [a['value'] for a in accounts if a['ready']]
     installed = [o['value'] for o in offline if o['available']]
-    return {'frozen': bool(getattr(sys, 'frozen', False)), 'dismissed': setup_dismissed(),
+    from ...core.host import is_app
+    return {'frozen': is_app(), 'dismissed': setup_dismissed(),
             'accounts': accounts, 'offline': offline, 'tools': tool_rows(), 'ready': ready_now,
             # Set up means: something can answer a prompt. Until then the modal leads with setup;
             # after it, the same modal is where an update shows up.

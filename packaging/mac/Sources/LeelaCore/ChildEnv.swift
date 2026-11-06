@@ -8,7 +8,6 @@ public struct ChildEnv: Codable, Sendable, Equatable {
     public var set: [String: String]
     public var uv: [String: String]
     public var server: [String: String]
-    public var path_first: [String]
     public var tool_dirs: [String]
     public var sync: [String]
     public var extra: [String]
@@ -24,13 +23,12 @@ public struct ChildEnv: Codable, Sendable, Equatable {
 
     public static func expand(_ p: String, home: String) -> String { p == "~" ? home : p.hasPrefix("~/") ? home + p.dropFirst(1) : p }
 
-    /// the parent environment without the dropped names, with `set`, HOME, and a PATH of `first`, the tool folders, then the parent's
-    func base(_ parent: [String: String], home: String, first: [String]) -> [String: String] {
+    /// the parent environment without the dropped names, with HOME and a PATH of the tool folders, then the parent's
+    func base(_ parent: [String: String], home: String) -> [String: String] {
         var e = parent.filter { k, _ in !drop.contains(k) && !drop_prefixes.contains { k.hasPrefix($0) } }
-        for (k, v) in set where e[k] == nil { e[k] = v }
         e["HOME"] = home
         var seen = Set<String>(), out = [String]()
-        for d in first + tool_dirs.map({ Self.expand($0, home: home) }) + (parent["PATH"] ?? "").split(separator: ":").map(String.init)
+        for d in tool_dirs.map({ Self.expand($0, home: home) }) + (parent["PATH"] ?? "").split(separator: ":").map(String.init)
         where !d.isEmpty && seen.insert(d).inserted { out.append(d) }
         e["PATH"] = out.joined(separator: ":")
         return e
@@ -38,16 +36,16 @@ public struct ChildEnv: Codable, Sendable, Equatable {
 
     /// what uv gets: `vals` holds cache, python, python_version and env
     public func uvEnv(_ parent: [String: String], home: String, vals: [String: String]) -> [String: String] {
-        var e = base(parent, home: home, first: [])
+        var e = base(parent, home: home)
+        for (k, v) in set where e[k] == nil { e[k] = v }
         for (k, v) in uv { e[k] = Self.fill(v, vals) }
         return e
     }
 
-    /// what the server gets: the uv environment, the server keys, the env's bin first on PATH, and the launcher's own `extra`
-    public func serverEnv(_ parent: [String: String], home: String, vals: [String: String], extra: [String: String] = [:]) -> [String: String] {
-        var e = base(parent, home: home, first: path_first.map { Self.fill($0, vals) })
-        for (k, v) in uv { e[k] = Self.fill(v, vals) }
-        for (k, v) in server { e[k] = Self.fill(v, vals) }
+    /// what the server gets: the person's environment, the server keys and the launcher's own `extra`; never uv's build settings, which its kernels and shells would inherit
+    public func serverEnv(_ parent: [String: String], home: String, extra: [String: String] = [:]) -> [String: String] {
+        var e = base(parent, home: home)
+        for (k, v) in server { e[k] = v }
         for (k, v) in extra { e[k] = v }
         return e
     }

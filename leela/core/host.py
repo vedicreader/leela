@@ -2,7 +2,7 @@
 import hmac, http.client, json, os, select, sys
 from urllib.parse import urlsplit
 
-__all__ = ['HostError', 'OWNED', 'take', 'on', 'steered', 'call', 'status', 'confirm', 'grant_ok', 'setup', 'app_version', 'lock_n']
+__all__ = ['HostError', 'OWNED', 'take', 'on', 'is_app', 'unbuild', 'steered', 'call', 'status', 'confirm', 'grant_ok', 'setup', 'app_version', 'lock_n']
 
 #: What the launcher sets for its child. No shell and no stored value replaces these.
 OWNED = ('LEELA_HOST_URL', 'LEELA_HOST_TOKEN', 'LEELA_APP_VERSION', 'LEELA_APP_BUNDLE', 'LEELA_LOCK_N', 'LEELA_ENV_HASH', 'LEELA_UV')
@@ -37,6 +37,18 @@ def take(env=None, fd=0, timeout=None):
     return on()
 
 def on(): return bool(_host['url'])
+def is_app():
+    "Whether Leela runs as an app, frozen or under the launcher, so its own Python is not the person's."
+    return bool(getattr(sys, 'frozen', False)) or on()
+
+def unbuild(env=None, prefix=None):
+    "Take out what app 1.0.0's launcher gave this server and its children would inherit: uv's build settings, PYTHONNOUSERSITE, VIRTUAL_ENV and the env's bin on PATH."
+    env, prefix = os.environ if env is None else env, os.path.realpath(sys.prefix if prefix is None else prefix)
+    for k in [k for k in env if k.startswith('UV_')]: del env[k]
+    env.pop('PYTHONNOUSERSITE', None)
+    if os.path.realpath(env.get('VIRTUAL_ENV') or '/') == prefix: del env['VIRTUAL_ENV']
+    if 'PATH' in env: env['PATH'] = os.pathsep.join(p for p in env['PATH'].split(os.pathsep) if p and os.path.realpath(p) != os.path.join(prefix, 'bin'))
+    return env
 def steered(k): return k in STEER or k in OWNED or k.startswith('UV_')
 def app_version(): return os.environ.get('LEELA_APP_VERSION') if on() else None
 
@@ -86,14 +98,14 @@ def confirm(question):
     return d['answer']
 
 def setup():
-    "What a launch from the app needs, as `leela_app` does for the frozen app: UTF-8, the login PATH and keys, Leela's stored values, the app's dialogs. No extras folder: the env is the app's."
+    "What a launch from the app needs, as `leela_app` does for the frozen app: no build settings, UTF-8, the login PATH and keys, Leela's stored values, the app's dialogs. No extras folder: the env is the app's."
     from .. import use_login_path, use_utf8
     from ..hub import set_confirmer
     from .envs import apply_stored_env, import_login_env
+    # first: the login shell and stored values only fill a name that is empty
+    unbuild()
+    if os.environ.get('NO_COLOR') == '1': del os.environ['NO_COLOR']   # app 1.0.0's, for uv's log; the login shell gives back the person's own
     use_utf8(); use_login_path()
     if os.environ.get('LEELA_SHELL_ENV', '1') != '0': import_login_env()
     apply_stored_env()
-    # the login PATH replaced the launcher's, which put the env's bin first
-    if v := os.environ.get('VIRTUAL_ENV'):
-        os.environ['PATH'] = os.pathsep.join(dict.fromkeys([os.path.join(v, 'bin'), *filter(None, os.environ['PATH'].split(os.pathsep))]))
     set_confirmer(confirm)

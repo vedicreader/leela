@@ -43,8 +43,13 @@ Leela.app/Contents/
 Swift (`ChildEnv`) and `tools/lock.py` read the same file.
 
 - `drop` and `drop_prefixes`: names removed from the launcher's environment. These include `VIRTUAL_ENV`, `CONDA_PREFIX`, `PYTHONHOME`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONUSERBASE` and every `UV_*`.
-- `uv`: what uv gets. `UV_NO_CONFIG=1`, the cache, the Python folder, `UV_PYTHON_PREFERENCE=only-managed`, the exact Python, the env folder, `UV_FROZEN=1`, `UV_NO_PROGRESS=1`, `UV_LINK_MODE=clone`.
-- `server`: what the server also gets. `PYTHONNOUSERSITE=1`, `VIRTUAL_ENV`, and the env's `bin` first on `PATH`.
+- `set`: `LANG` and `NO_COLOR`, for the launcher's own uv runs only.
+- `uv`: what the launcher's own uv runs get (the build, an extra, `uv cache prune`), and nothing else. `UV_NO_CONFIG=1`, the cache, the Python folder, `UV_PYTHON_PREFERENCE=only-managed`, the exact Python, the env folder, `UV_FROZEN=1`, `UV_NO_PROGRESS=1`, `UV_LINK_MODE=clone`.
+- `server`: what the server also gets: `PYTHONUNBUFFERED=1`. The server gets the person's environment, less `drop` and `drop_prefixes`, with `tool_dirs` on `PATH`. It gets no `uv` key, no `VIRTUAL_ENV`, no `PYTHONNOUSERSITE` and not the env's `bin`, because every kernel, terminal, agent shell and project `uv` run inherits the server's environment. The launcher starts `envs/<hash16>/bin/leela` by its absolute path, and its shebang names the env's Python, so the server needs none of them.
+- App 1.0.0 gave the server all of these. A newer lock still runs under it: `leela.core.host.setup` first takes out every `UV_*`, `PYTHONNOUSERSITE`, `NO_COLOR=1`, a `VIRTUAL_ENV` that is the env, and the env's `bin` on `PATH`. The login shell and Leela's stored values then fill in the person's own.
+- The language server of the `langserver` extra is in the env's `bin`, so in host mode `find_server` also looks in the server's own scripts folder.
+- An agent's shell has no `ramabana`, `kosha` or other console script of the env on `PATH`, as in the old app. A person who wants them installs them with `uv tool install`.
+- A new launcher with an env from an older lock (Use Previous Version) runs a server that does not look in its scripts folder, so the Python language server is missing until the person updates again.
 - `sync`: the build command, `uv sync --frozen --no-install-project --project <locks/n>`. `extra` adds `--extra <name>` per extra; `inexact` adds `--inexact` when an extra goes into a running env.
 - `server_args`: `--app --shell none --port <port> --gateway-port 0`.
 
@@ -148,7 +153,7 @@ The keys are SSH Ed25519 keys:
 1. `make lock-wheel V=<leela version>`: build the wheel from the tag and attach it to the release.
 2. `make lock V=<leela version>`: write the pin, lock with the pinned uv, check, print the hash.
 3. `make lock-diff`: what changed against the published lock (`AGAINST=<folder>` compares with a local lock). It flags an owner package version with no git tag.
-4. `make lock-test` (`FRESH=1` empty cache, `EXTRAS=1` each extra): build in a temp folder with the same uv, childenv and command as the app. Then `uv pip check`, imports, the server in host mode with a temp `XDG_CONFIG_HOME` and `XDG_DATA_HOME`, `/health`, `/hub/open` on a temp folder, one kernel cell that gives 2, and each extra. A pass writes `packaging/lock/tested/<hash>.json`. Commit it.
+4. `make lock-test` (`FRESH=1` empty cache, `EXTRAS=1` each extra): build in a temp folder with the same uv, childenv and command as the app. Then `uv pip check`, imports, the server in host mode with a temp `XDG_CONFIG_HOME` and `XDG_DATA_HOME`, `/health`, `/hub/open` on a temp folder, one kernel cell that gives 2, a project with its own `.venv` (a marker module the app env lacks), whose notebook cell runs through `/hub/open`, `/tab/open` and `/nb/run` on the project's Python with no `UV_*`, `PYTHONNOUSERSITE`, app `VIRTUAL_ENV` or app `bin` in its environment, the same cell under app 1.0.0's server environment, and each extra. The project `.venv` borrows ipykernel from the app env by a `.pth`, so the test needs no network. A pass writes `packaging/lock/tested/<hash>.json`. Commit it.
 5. `make lock-publish`: refuses unless the tree is clean and pushed, a passing record for this hash is less than 7 days old, the record's uv is the pinned uv, the test code is unchanged, and Leela is not lower than the last lock (`ALLOW_DOWNGRADE=1` to roll back). Then it signs, makes `lock-<n>`, downloads and checks it, and points the test channel at it.
 6. `make lock-promote N=<n>`: copy the test pointer to the stable pointer and check it.
 7. `make lock-verify [CHANNEL=test]`: check a channel as the app does.

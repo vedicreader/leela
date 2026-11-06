@@ -1,6 +1,6 @@
 "Host mode: the thin Mac app runs the server as its child. Health, the token, the dialogs, the env, pinned extras, the update switch."
 
-import json, os, threading, time
+import json, os, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import pytest
@@ -120,19 +120,55 @@ def test_stored_values_do_not_replace_the_launchers_in_host_mode(monkeypatch):
     assert target == dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3', OPENAI_API_KEY='k')
     with pytest.raises(envs.EnvError): envs.set_env('UV_INDEX', 'x')
 
-def test_host_setup_keeps_the_env_bin_first_and_skips_the_extras_folder(monkeypatch, tmp_path):
+APP_1_0 = dict(UV_NO_CONFIG='1', UV_CACHE_DIR='/c', UV_PYTHON_INSTALL_DIR='/py', UV_PYTHON_PREFERENCE='only-managed', UV_PYTHON='3.12.16',
+               UV_PROJECT_ENVIRONMENT=sys.prefix, UV_FROZEN='1', UV_NO_PROGRESS='1', UV_LINK_MODE='clone', PYTHONNOUSERSITE='1', NO_COLOR='1')
+
+def test_host_setup_takes_out_what_app_1_0_gave_and_keeps_the_persons_own(monkeypatch):
+    "App 1.0.0's launcher gave the server uv's build settings, VIRTUAL_ENV and its env's bin first; every kernel and shell inherited them."
     import leela
     called = []
-    monkeypatch.setenv('PATH', os.environ['PATH'])   # restored after the test
-    monkeypatch.setattr(leela, 'use_login_path', lambda: os.environ.__setitem__('PATH', '/opt/homebrew/bin:/usr/bin:/bin'))
+    for k, v in APP_1_0.items(): monkeypatch.setenv(k, v)
+    monkeypatch.setenv('VIRTUAL_ENV', sys.prefix)
+    monkeypatch.setenv('PATH', os.pathsep.join([os.path.join(sys.prefix, 'bin'), '/opt/homebrew/bin', '/usr/bin']))
+    monkeypatch.setattr(leela, 'use_login_path', lambda: os.environ['PATH'])
     monkeypatch.setattr(leela, 'use_extras', lambda: called.append('extras'))
     monkeypatch.setattr(envs, 'import_login_env', lambda *a, **kw: [])
-    monkeypatch.setattr(envs, 'apply_stored_env', lambda *a, **kw: [])
-    monkeypatch.setenv('VIRTUAL_ENV', str(tmp_path/'env'))
+    monkeypatch.setattr(envs, 'stored_env', lambda: dict(PYTHONNOUSERSITE='1', UV_INDEX='i'))
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
     host.setup()
-    assert os.environ['PATH'].split(os.pathsep)[0] == str(tmp_path/'env'/'bin') and not called
+    assert not [k for k in os.environ if k.startswith('UV_')] and 'VIRTUAL_ENV' not in os.environ and 'NO_COLOR' not in os.environ
+    assert os.environ['PATH'] == '/opt/homebrew/bin:/usr/bin' and not called
+    assert os.environ['PYTHONNOUSERSITE'] == '1', 'a stored value is the person\'s, and outlives the scrub'
     assert hub._gate['confirm'] is host.confirm
     hub.reset_gate()
+
+def test_unbuild_keeps_another_venv_and_every_other_path(tmp_path):
+    e = host.unbuild(dict(VIRTUAL_ENV=str(tmp_path/'proj'), PATH=f'{tmp_path}/env/bin:/usr/bin:{tmp_path}/env/bin', UV_FROZEN='1', OPENAI_API_KEY='k'), prefix=tmp_path/'env')
+    assert e == dict(VIRTUAL_ENV=str(tmp_path/'proj'), PATH='/usr/bin', OPENAI_API_KEY='k')
+
+def test_is_app_is_frozen_or_host_mode(monkeypatch, off):
+    assert not host.is_app()
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    assert host.is_app()
+    monkeypatch.delattr(sys, 'frozen')
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    assert host.is_app()
+
+def test_the_setup_pane_shows_in_host_mode(monkeypatch, off):
+    from leela.blocks.agent import models
+    assert models.setup_plan()['frozen'] is False
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    assert models.setup_plan()['frozen'] is True
+
+def test_find_server_takes_the_envs_own_language_server_in_host_mode(monkeypatch, tmp_path, off):
+    from leela.blocks.lsp import lsp
+    (b := tmp_path/'bin').mkdir(); (s := b/'basedpyright-langserver').write_text('#!/bin/sh\n'); s.chmod(0o755)
+    monkeypatch.setattr('shutil.which', lambda name: None)
+    monkeypatch.setattr('leela.extras_bin', lambda: tmp_path/'no-extras')
+    monkeypatch.setattr(lsp.sysconfig, 'get_path', lambda name: str(b))
+    assert lsp.find_server() == (None, None), 'outside the app the dev venv is on PATH already'
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    assert lsp.find_server() == ('basedpyright-langserver', [str(s), '--stdio'])
 
 def test_cli_in_host_mode_takes_the_token_and_never_adds_the_extras_folder(monkeypatch):
     import leela, leela.cli, leela.app

@@ -1416,8 +1416,9 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
         # one ceiling for the process, so any workspace asking leela to manage it turns it on
         if ws.kernels_auto_manage: broker.auto_manage = True
         for r in roots: ws.add_root(r)
-        # A shell launch means "here". A frozen one has no such answer.
-        if not ws.fs.roots and not getattr(sys, 'frozen', False): ws.add_root(os.getcwd())
+        # A shell launch means "here". An app's has no such answer: the launcher's cwd is its own support folder.
+        from .core.host import is_app
+        if not ws.fs.roots and not is_app(): ws.add_root(os.getcwd())
         if open_ws and not ws.tabs: ws.reopen_saved_tabs()
         if ws.restore_remembered_agent_state(): ws.save()
         app = ide_app(ws, gate, workspace_catalog=lambda: hub.catalog() if hub else [])

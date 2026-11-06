@@ -1,6 +1,6 @@
 "Small managed Language Server Protocol client, one service per language."
 from __future__ import annotations
-import json, os, queue, shutil, subprocess, threading, time
+import json, os, queue, shutil, subprocess, sysconfig, threading, time
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
@@ -30,9 +30,12 @@ def _py_script(p):
 def find_server(lang='python'):
     "The first language server for `lang`, as `(name, argv)`, or `(None, None)`."
     from ... import extras_bin
+    from ...core.host import on
     from ..runtime.kernels import runtime_python
     for name, args in servers_for(lang):
         if (found := shutil.which(name)): return name, [found, *args]
+        # the launcher keeps its env's bin off PATH, so a kernel or shell never finds Leela's `python`
+        if on() and (own := Path(sysconfig.get_path('scripts'))/name).is_file() and os.access(own, os.X_OK): return name, [str(own), *args]
         here = extras_bin()/name
         if not (here.is_file() and os.access(here, os.X_OK)): continue
         return name, [runtime_python(), '-c', _RUN_EXTRA, str(here), *args] if _py_script(here) else [str(here), *args]

@@ -15,12 +15,11 @@ public struct HostInfo: Sendable {
 public enum ServerCommand {
     /// `leela --app --shell none --port <port>` from env `hash`, with the token as its first stdin line
     public static func launch(store: EnvStore, port: Int, hash: String, host: HostInfo) -> Launch {
-        let s = store.load(), n = s.locks[hash] ?? 0
-        let python = ((try? String(contentsOf: store.paths.lock(n).appending(path: ".python-version"), encoding: .utf8)) ?? "3.12").trimmingCharacters(in: .whitespacesAndNewlines)
+        let n = store.load().locks[hash] ?? 0
         let extra = ["LEELA_HOST_URL": host.url, "LEELA_APP_VERSION": host.appVersion, "LEELA_APP_BUNDLE": host.bundle,
                      "LEELA_LOCK_N": String(n), "LEELA_ENV_HASH": hash, "LEELA_UV": host.uv.path]
         return Launch(executable: store.paths.server(hash), args: store.spec.serverArgs(port: port),
-                      env: store.spec.serverEnv(store.parent, home: store.home, vals: store.vals(env: store.paths.env(hash), python: python), extra: extra),
+                      env: store.spec.serverEnv(store.parent, home: store.home, extra: extra),
                       cwd: store.paths.support, stdinLine: host.token)
     }
 }

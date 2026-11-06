@@ -31,6 +31,17 @@ def test_a_pyproject_is_annotated_from_the_venv_beside_it(tmp_path):
                 "the pills came from another project's environment"
 
 
+def test_in_the_app_a_project_with_no_venv_is_not_shown_leelas_packages(tmp_path, monkeypatch):
+    "Under the launcher, `sys.executable` is the app's env, not the project's."
+    from leela.core import host
+    (root := tmp_path/'p').mkdir()
+    (root/'pyproject.toml').write_text('[project]\nname="p"\nversion="0.1"\ndependencies=["pytest>=1"]\n')
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token='t'))
+    with TestClient(ide_app(Workspace(roots=[root]))) as client:
+        d = client.get('/editor/packages', params={'path': str(root/'pyproject.toml')}).json()
+    assert d['packages'] == [] and d['note'] == 'no interpreter for this project'
+
+
 def test_a_window_is_pointed_at_the_host_the_server_will_answer_to(tmp_path):
     "`serve_ide` slugs resolved roots, so a symlinked folder must not be slugged by its link."
     from leela.hub import workspace_urls

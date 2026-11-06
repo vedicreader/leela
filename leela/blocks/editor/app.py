@@ -131,10 +131,11 @@ def connect(app, ctx):
         try:
             p = ctx.fs._check(path, must_exist=True)
             if p.name != 'pyproject.toml': return {'packages': [], 'summary': {}}
-            # `python_for`, not `sys.executable`: in a frozen app that is the bundle, and running
-            # it relaunches Leela.
+            # `python_for`, not `sys.executable`: in an app that is Leela's own (the bundle, which relaunches
+            # Leela, or the launcher's env), not the project's.
+            from ...core.host import is_app
             python = python_for(p.parent, session=ctx)
-            if python is None and getattr(sys, 'frozen', False):
+            if python is None and is_app():
                 return {'packages': [], 'summary': {}, 'note': 'no interpreter for this project'}
             python = python or sys.executable
             rows = project_package_rows(p, python)

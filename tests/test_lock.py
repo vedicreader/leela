@@ -103,7 +103,7 @@ def test_childenv_has_what_the_plan_names():
     s = json.loads(L.CHILDENV.read_text())
     assert {'VIRTUAL_ENV', 'CONDA_PREFIX', 'PYTHONHOME', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONUSERBASE'} <= set(s['drop']) and 'UV_' in s['drop_prefixes']
     assert s['uv'] | {} == s['uv'] and {'UV_NO_CONFIG', 'UV_CACHE_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_PREFERENCE', 'UV_PYTHON', 'UV_PROJECT_ENVIRONMENT', 'UV_FROZEN', 'UV_NO_PROGRESS', 'UV_LINK_MODE'} == set(s['uv'])
-    assert s['server']['PYTHONNOUSERSITE'] == '1' and s['path_first'] == ['{env}/bin'] and s['api'] == L.LAUNCHER_API
+    assert s['server'] == {'PYTHONUNBUFFERED': '1'} and 'path_first' not in s and s['api'] == L.LAUNCHER_API
     assert s['sync'][:3] == ['sync', '--frozen', '--no-install-project'] and s['inexact'] == ['--inexact']
 
 def test_the_child_env_drops_the_parents_python_and_uv_settings():
@@ -111,8 +111,11 @@ def test_the_child_env_drops_the_parents_python_and_uv_settings():
                     cache='/c', python='/py', python_version='3.12.16', env='/e')
     assert 'VIRTUAL_ENV' not in e and 'UV_INDEX_URL' not in e and 'PYTHONPATH' not in e and 'LEELA_HOST_TOKEN' not in e
     assert e['UV_PROJECT_ENVIRONMENT'] == '/e' and e['UV_PYTHON'] == '3.12.16' and e['UV_NO_CONFIG'] == '1' and e['HOME'] == '/h'
-    s = L.server_env(dict(PATH='/usr/bin'), cache='/c', python='/py', python_version='3.12.16', env='/e')
-    assert s['PATH'].startswith('/e/bin:') and s['VIRTUAL_ENV'] == '/e' and s['PYTHONNOUSERSITE'] == '1'
+    s = L.server_env(dict(PATH='/usr/bin:/x', VIRTUAL_ENV='/v', UV_INDEX_URL='x', OPENAI_API_KEY='k'))
+    assert not [k for k in s if k.startswith('UV_')] and 'VIRTUAL_ENV' not in s and 'PYTHONNOUSERSITE' not in s and 'NO_COLOR' not in s, 'kernels and shells inherit it'
+    assert s['PATH'].startswith(os.path.expanduser('~/.local/bin') + ':/opt/homebrew/bin') and s['PATH'].endswith(':/x') and s['OPENAI_API_KEY'] == 'k'
+    o = L.server_env_1_0('/e', dict(PATH='/usr/bin'), cache='/c', python='/py', python_version='3.12.16')
+    assert o['PATH'].startswith('/e/bin:') and o['VIRTUAL_ENV'] == '/e' and o['PYTHONNOUSERSITE'] == '1' and o['UV_PROJECT_ENVIRONMENT'] == '/e'
     assert L.sync_args('/l', ['mlx', 'llama']) == ['sync', '--frozen', '--no-install-project', '--project', '/l', '--extra', 'mlx', '--extra', 'llama']
     assert L.sync_args('/l', ['mlx'], inexact=True)[-3:] == ['--inexact', '--extra', 'mlx']
 

@@ -53,18 +53,26 @@ def lock_hash(d, uv):
 
 def spec(): return json.loads(CHILDENV.read_text())
 
+def _kept(s, base):
+    base = dict(os.environ if base is None else base)
+    return {k: v for k, v in base.items() if k not in s['drop'] and not k.startswith(tuple(s['drop_prefixes']))}
+
 def child_env(base=None, **vals):
     "The environment uv gets from the app, from childenv.json: dropped keys, uv settings, `vals` filled in."
-    s, base = spec(), dict(os.environ if base is None else base)
-    e = {k: v for k, v in base.items() if k not in s['drop'] and not k.startswith(tuple(s['drop_prefixes']))}
-    return s['set'] | e | {k: v.format(**vals) for k, v in s['uv'].items()}
-
-def server_env(base=None, **vals):
-    "The server's environment: the uv one, the server keys, the env's bin first on PATH."
     s = spec()
-    e = child_env(base, **vals) | {k: v.format(**vals) for k, v in s['server'].items()}
-    e['PATH'] = os.pathsep.join([*(p.format(**vals) for p in s['path_first']), e.get('PATH', '/usr/bin:/bin')])
-    return e
+    return s['set'] | _kept(s, base) | {k: v.format(**vals) for k, v in s['uv'].items()}
+
+def server_env(base=None):
+    "The server's environment, as the launcher's `serverEnv`: the person's, minus the dropped keys, with the tool folders on PATH and the server keys."
+    s = spec()
+    e = _kept(s, base)
+    path = [os.path.expanduser(d) for d in s['tool_dirs']] + e.get('PATH', '').split(os.pathsep)
+    return e | s['server'] | dict(PATH=os.pathsep.join(dict.fromkeys(filter(None, path))))
+
+def server_env_1_0(env, base=None, **vals):
+    "The server's environment from app 1.0.0, which gave it uv's build settings, VIRTUAL_ENV and the env's bin first; a newer lock still runs under it."
+    e = server_env(base)
+    return e | child_env(base, env=env, **vals) | dict(PYTHONNOUSERSITE='1', VIRTUAL_ENV=str(env), PATH=os.pathsep.join([f'{env}/bin', e['PATH']]))
 
 def sync_args(lock, extras=(), inexact=False):
     "The build command; `inexact` adds an extra to an env without removing what it has."
@@ -254,7 +262,7 @@ try:
 finally: kc.stop_channels(); km.shutdown_kernel(now=True)
 '''
 _EXTRA_CHECK = {'mlx': ['-c', 'import mlx_lm'], 'llama': ['-c', 'import llama_cpp'],
-                'langserver': ['-c', 'import shutil,sys; sys.exit(0 if shutil.which("basedpyright-langserver") else 1)']}
+                'langserver': ['-c', 'import os, sys, sysconfig; sys.exit(0 if os.access(os.path.join(sysconfig.get_path("scripts"), "basedpyright-langserver"), os.X_OK) else 1)']}
 
 def test_code_hash(): return hashlib.sha256(Path(__file__).read_bytes() + CHILDENV.read_bytes()).hexdigest()
 
@@ -281,10 +289,43 @@ class FakeHost:
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
     def close(self): self.srv.shutdown()
 
-def _get(url, data=None, headers=None, timeout=5):
+def _get(url, data=None, headers=None, timeout=5, raw=False):
     req = urllib.request.Request(url, data=data, headers=headers or {}, method='POST' if data is not None else 'GET')
     op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with op.open(req, timeout=timeout) as r: return json.loads(r.read())
+    with op.open(req, timeout=timeout) as r: return r.read() if raw else json.loads(r.read())
+
+_PROJECT_CELL = """import json, os, sys, leela_lock_marker
+print(json.dumps(dict(prefix=sys.prefix, uv=sorted(k for k in os.environ if k.startswith('UV_')), nousersite=os.environ.get('PYTHONNOUSERSITE'),
+                      venv=os.environ.get('VIRTUAL_ENV'), path=os.environ.get('PATH', '').split(os.pathsep))))"""
+
+def _project(tmp, py):
+    "A project with its own .venv: a marker package the app env lacks, ipykernel from the app env by a .pth (offline), and one notebook."
+    d = tmp/'proj'; sh(py, '-m', 'venv', '--without-pip', d/'.venv')
+    site = next((d/'.venv'/'lib').glob('python3*/site-packages'))
+    (site/'leela_lock_marker.py').write_text('OK = 1\n')
+    (site/'zz_app_env.pth').write_text(sh(py, '-I', '-c', 'import sysconfig; print(sysconfig.get_path("purelib"))') + '\n')
+    cell = dict(cell_type='code', id='c0', metadata={}, execution_count=None, outputs=[], source=_PROJECT_CELL)
+    (d/'probe.ipynb').write_text(json.dumps(dict(cells=[cell], metadata={}, nbformat=4, nbformat_minor=5)))
+    return d
+
+def project_cell(base, port, proj, env_dir):
+    "Through the server's routes, a cell of a notebook in `proj` runs on the project's .venv, and no app build setting reaches it."
+    d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(proj))}', data=b'', timeout=120)
+    if not d.get('ok'): raise RuntimeError(d)
+    h = {'Host': f"{urllib.parse.urlsplit(d['url']).hostname}:{port}", 'Content-Type': 'application/json'}
+    nb = str(proj/'probe.ipynb')
+    _get(f'{base}/tab/open?path={urllib.parse.quote(nb)}', headers=h, timeout=60, raw=True)
+    r = _get(f'{base}/nb/run', data=json.dumps(dict(path=nb, i=0, id='c0')).encode(), headers=h, timeout=180)
+    outs = r.get('cell', {}).get('outputs', [])
+    text = ''.join(o.get('text', '') for o in outs if o.get('output_type') == 'stream')
+    if not r.get('ok') or not text.strip(): raise RuntimeError(f'the cell failed: {json.dumps(outs)[-800:]}')
+    got, app = json.loads(text.strip().splitlines()[-1]), os.path.realpath(env_dir)
+    bad = [f'sys.prefix is {got["prefix"]}'] if os.path.realpath(got['prefix']) != os.path.realpath(proj/'.venv') else []
+    bad += [f'UV keys {got["uv"]}'] if got['uv'] else []
+    bad += ['PYTHONNOUSERSITE is set'] if got['nousersite'] else []
+    bad += [f'VIRTUAL_ENV is the app env'] if got['venv'] and os.path.realpath(got['venv']) == app else []
+    bad += ['the app env bin is on PATH'] if any(p and os.path.realpath(p) == os.path.join(app, 'bin') for p in got['path']) else []
+    if bad: raise RuntimeError('; '.join(bad))
 
 def smoke(env_dir, results, extras=(), wait=180):
     "Check an installed env: pip check, imports, the server in host mode on a temp folder, one kernel cell, each extra."
@@ -298,37 +339,42 @@ def smoke(env_dir, results, extras=(), wait=180):
     ok &= step('imports', lambda: sh(py, '-I', '-c', 'import leela, leela.app, leela.core.host, ramabana, shalya, kunda, rishi, ipykernel'))
     tmp = Path(tempfile.mkdtemp(prefix='leela-smoke-')).resolve()
     (tmp/'cfg').mkdir(); (tmp/'data').mkdir(); (work := tmp/'work').mkdir()
-    port, token, host = _free_port(), os.urandom(16).hex(), None
-    try:
-        host = FakeHost(token)
-        env = server_env(env=env_dir, cache='', python='', python_version=PYTHON) | dict(
-            XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), LEELA_SHELL_ENV='0',
-            LEELA_HOST_URL=host.url, LEELA_APP_VERSION='0.0.0-test', LEELA_LOCK_N='0')
-        args = [a.format(port=port) for a in spec()['server_args']]
-        with open(tmp/'server.log', 'wb') as log:
-            srv = subprocess.Popen([env_dir/'bin'/'leela', *args], env=env, cwd=tmp, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
-        srv.stdin.write(f'{token}\n'.encode()); srv.stdin.close()   # as the launcher does: never in argv, env, a file or a log
-        base = f'http://127.0.0.1:{port}'
-        def health():
-            end = time.monotonic() + wait
-            while time.monotonic() < end:
-                if srv.poll() is not None: raise RuntimeError(f'the server stopped with {srv.returncode}: ' + (tmp/'server.log').read_text()[-1500:])
-                try:
-                    if _get(f'{base}/health', timeout=2).get('status') == 'ok': return
-                except Exception: time.sleep(.5)
-            raise TimeoutError(f'no /health in {wait} s: ' + (tmp/'server.log').read_text()[-1500:])
-        if step('server /health', health):
-            def hub_open():
-                d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(work))}', data=b'', timeout=120)
-                if not d.get('ok'): raise RuntimeError(d)
-            ok &= step('/hub/open', hub_open)
-        else: ok = False
-        srv.terminate()
-        try: srv.wait(15)
-        except subprocess.TimeoutExpired: srv.kill()
-    finally:
-        if host: host.close()
-    kenv = server_env(env=env_dir, cache='', python='', python_version=PYTHON) | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), JUPYTER_DATA_DIR=str(tmp/'jd'))
+    ok &= step('project .venv', lambda: _project(tmp, py))
+    proj = tmp/'proj'
+    def serve(name, env, checks):
+        "The server in host mode under `env`, as the launcher starts it, then `checks(base, port)`."
+        port, token, host = _free_port(), os.urandom(16).hex(), None
+        try:
+            host = FakeHost(token)
+            env = env | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), LEELA_SHELL_ENV='0',
+                             LEELA_HOST_URL=host.url, LEELA_APP_VERSION='0.0.0-test', LEELA_LOCK_N='0')
+            args = [a.format(port=port) for a in spec()['server_args']]
+            with open(tmp/f'server-{name}.log', 'wb') as log:
+                srv = subprocess.Popen([env_dir/'bin'/'leela', *args], env=env, cwd=tmp, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
+            srv.stdin.write(f'{token}\n'.encode()); srv.stdin.close()   # as the launcher does: never in argv, env, a file or a log
+            base = f'http://127.0.0.1:{port}'
+            def health():
+                end = time.monotonic() + wait
+                while time.monotonic() < end:
+                    if srv.poll() is not None: raise RuntimeError(f'the server stopped with {srv.returncode}: ' + (tmp/f'server-{name}.log').read_text()[-1500:])
+                    try:
+                        if _get(f'{base}/health', timeout=2).get('status') == 'ok': return
+                    except Exception: time.sleep(.5)
+                raise TimeoutError(f'no /health in {wait} s: ' + (tmp/f'server-{name}.log').read_text()[-1500:])
+            good = step(f'server /health{name}', health) and checks(base, port)
+            srv.terminate()
+            try: srv.wait(15)
+            except subprocess.TimeoutExpired: srv.kill()
+            return good
+        finally:
+            if host: host.close()
+    def hub_open(base):
+        d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(work))}', data=b'', timeout=120)
+        if not d.get('ok'): raise RuntimeError(d)
+    ok &= serve('', server_env(), lambda base, port: step('/hub/open', lambda: hub_open(base)) & step('project kernel cell', lambda: project_cell(base, port, proj, env_dir)))
+    old = server_env_1_0(env_dir, cache='', python='', python_version=PYTHON)
+    ok &= serve(' (app 1.0.0 env)', old, lambda base, port: step('project kernel cell (app 1.0.0 env)', lambda: project_cell(base, port, proj, env_dir)))
+    kenv = server_env() | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), JUPYTER_DATA_DIR=str(tmp/'jd'))
     def cell():
         if (got := sh(py, '-I', '-c', _SMOKE_KERNEL, env=kenv, cwd=tmp, timeout=180).splitlines()[-1:]) != ['2']: raise RuntimeError(f'the cell gave {got}')
     ok &= step('kernel cell 1+1', cell)

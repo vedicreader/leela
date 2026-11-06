@@ -89,3 +89,13 @@ def test_a_post_after_a_pause_reuses_the_connection(tmp_path):
     assert render() == 200
     time.sleep(6)
     assert render() == 200, 'the idle connection was still open'
+
+def test_an_app_launch_with_no_folder_does_not_open_its_working_folder(tmp_path, monkeypatch):
+    "The launcher starts the server in `~/Library/Application Support/Leela`; host mode took that cwd as the folder to open."
+    from leela.core import host
+    (cwd := tmp_path/'support').mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token='t'))
+    port = serve(app_window=True, gateway_port=0)
+    assert get(f'http://127.0.0.1:{port}/', host=f'leela.localhost:{port}').status == 200
+    assert get(f'http://127.0.0.1:{port}/', host=f'support.localhost:{port}').status == 421

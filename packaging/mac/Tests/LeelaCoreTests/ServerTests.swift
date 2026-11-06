@@ -12,7 +12,8 @@ import Testing
         #expect(l.stdinLine == "secret-token-123")
         #expect(!l.env.values.contains { $0.contains("secret-token-123") } && !l.args.contains { $0.contains("secret-token-123") })
         #expect(l.env["LEELA_HOST_TOKEN"] == nil && l.env["LEELA_HOST_URL"] == "http://127.0.0.1:4567" && l.env["LEELA_LOCK_N"] == "3" && l.env["LEELA_ENV_HASH"] == h)
-        #expect(l.env["UV_PYTHON"] == "3.12.16" && l.env["VIRTUAL_ENV"] == s.paths.env(h).path && l.args == ["--app", "--shell", "none", "--port", "5123", "--gateway-port", "0"])
+        #expect(!l.env.keys.contains { $0.hasPrefix("UV_") } && l.env["VIRTUAL_ENV"] == nil && !l.env["PATH"]!.contains(s.paths.env(h).path))
+        #expect(l.executable == s.paths.server(h) && l.args == ["--app", "--shell", "none", "--port", "5123", "--gateway-port", "0"])
     }
 
     @Test func aStartedChildReadsTheLineThenEndOfFile() async throws {
