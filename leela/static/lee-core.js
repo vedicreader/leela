@@ -2039,6 +2039,7 @@ async function mountTab(expectedPath = '') {
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);
   else if (st.kind === 'image') mountImage(host, st);
+  else if (st.kind === 'office') await mountOffice(host, st);
   else if (st.kind === 'audio' || st.kind === 'video') mountMedia(host, st);
   else if (st.kind === 'notebook') { takeLate(st); mountNotebook(host, st); lee.mountedAt = mountVersion; }
   else await mountFile(host, st);
@@ -2322,7 +2323,7 @@ async function mountFile(host, st) {
 /* What the second pane can hold. A notebook goes in as a reading copy: its cells are what a person
    compares across a merge, and the editors, the kernel and the selection all belong to one notebook
    at a time. The live surfaces are bound to the pane they were opened in and are not offered. */
-const SPLIT_KINDS = {text: 'editable', notebook: 'reading copy', pdf: 'view', image: 'view'};
+const SPLIT_KINDS = {text: 'editable', notebook: 'reading copy', pdf: 'view', image: 'view', office: 'view'};
 
 function secondaryNotebook(host, st) {
   "The cells of a notebook, to read beside something else. No editors, no outputs, no execution."
@@ -2346,7 +2347,7 @@ function splitStage(direction) {
 async function mountSecondary(path, direction = 'vertical') {
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
   const st=await api('/tab/state?path='+encodeURIComponent(path));
-  if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs and images can`,'err');
+  if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs, images and office files can`,'err');
   if (st.kind !== 'text') {
     splitStage(direction);
     host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path||path))}</span>` +
@@ -2355,6 +2356,7 @@ async function mountSecondary(path, direction = 'vertical') {
       `<div class="lee-split-body" id="filecm2"></div>`;
     if (st.kind === 'notebook') secondaryNotebook(host, st);
     else if (st.kind === 'pdf') mountPdf($('.lee-split-body', host), st);
+    else if (st.kind === 'office') mountOffice($('.lee-split-body', host), st);
     else mountImage($('.lee-split-body', host), st);
     recordDiskVersion(st.path || path, st.disk_version || '');
     lee.secondaryPath = path; lee.activeEditor = 'primary';
@@ -6291,8 +6293,8 @@ function showSaveConflict(message) {
 async function saveTab(quiet = false, expectedVersion = null, force = false) {
   // A document the browser renders has no editor behind it, so `getDoc` would be called on
   // nothing. Reporting success is honest: the file on disk is what is being shown.
-  if (lee.kind === 'pdf' || lee.kind === 'image') {
-    if (!quiet) status(`${lee.kind === 'pdf' ? 'a PDF' : 'an image'} is read-only here`);
+  if (lee.kind === 'pdf' || lee.kind === 'image' || lee.kind === 'office') {
+    if (!quiet) status(`${{pdf: 'a PDF', image: 'an image', office: 'an office file'}[lee.kind]} is read-only here`);
     return true;
   }
   let saveTabEl = $('.lee-tab.active');
