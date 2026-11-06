@@ -25,16 +25,25 @@ function mountImage(host, st) {
   };
 }
 
+/* The WebKit in some macOS versions plays no Ogg or WebM, so a file that fails says so and offers the
+   system's own player rather than a silent, empty control. */
 function mountMedia(host, st) {
   const name = (st.path || '').split('/').pop() || st.kind;
   const raw = '/file/raw/' + encodeURIComponent(name) + '?path=' + encodeURIComponent(st.path);
   const tag = st.kind === 'audio' ? 'audio' : 'video';
   host.innerHTML =
     `<div class="lee-doc"><div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
-    `<span class="lee-spacer"></span><a class="lee-btn" href="${esc(raw)}" target="_blank" rel="noopener noreferrer">open externally</a>` +
+    `<span class="lee-spacer"></span><button class="lee-btn" data-media-open>open in default app</button>` +
     `<a class="lee-btn" href="${esc(raw)}&download=true" download>download</a></div>` +
-    `<div class="lee-doc-body lee-media-body"><${tag} class="lee-media" controls src="${esc(raw)}">` +
-    `${esc(name)} could not be played by this browser.</${tag}></div></div>`;
+    `<div class="lee-doc-body lee-media-body"><${tag} class="lee-media" controls preload="metadata" src="${esc(raw)}"></${tag}></div></div>`;
+  const open = () => post('/media/open?path=' + encodeURIComponent(st.path))
+    .then(() => status('opened in the default app', 'ok')).catch(e => status(String(e.message || e), 'err'));
+  $('[data-media-open]', host).onclick = open;
+  $('.lee-media', host).onerror = () => {
+    $('.lee-media-body', host).innerHTML = `<div class="lee-err" data-media-error>${esc(name)} cannot play here. ` +
+      `Open it in the default app.<br><button class="lee-btn" data-media-open>open in default app</button></div>`;
+    $('.lee-media-body [data-media-open]', host).onclick = open;
+  };
 }
 
 /* The setting names the three views `source`, `preview` and `split`; the buttons and the stage's
