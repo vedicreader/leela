@@ -9,7 +9,21 @@ import pytest
 from leela.app import serve_ide
 from leela.desktop import wait_for_http
 
-pytestmark = pytest.mark.usefixtures('_fake_kernels')
+pytestmark = pytest.mark.usefixtures('_fake_kernels', '_servers_stop')
+
+@pytest.fixture
+def _servers_stop(monkeypatch):
+    "A server left up polls the keymap file of every later test on the worker, and reads it half-written."
+    import uvicorn
+    up = []
+    def run(app, **kw):
+        up.append((s := uvicorn.Server(uvicorn.Config(app, **kw)), threading.current_thread()))
+        s.run()
+    monkeypatch.setattr(uvicorn, 'run', run)
+    yield
+    for s, _ in up: s.should_exit = True
+    for _, t in up: t.join(timeout=30)
+    assert not any(t.is_alive() for _, t in up), 'a server outlived its test'
 
 @pytest.fixture
 def _fake_kernels(monkeypatch):
