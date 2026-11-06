@@ -110,7 +110,7 @@ def test_the_agent_reads_text_and_cannot_write(files):
     assert 'Quarterly report' in text and 'PK' not in text
     assert before == {k: _stamp(p) for k, p in files.items()}
 
-def test_only_office_files_open_in_the_default_app(tmp_path, monkeypatch):
+def test_only_office_and_media_files_open_in_the_default_app(tmp_path, monkeypatch):
     from leela.blocks.fs import office
     ran = []
     monkeypatch.setattr(office.subprocess, 'Popen', lambda argv, **kw: ran.append(argv))

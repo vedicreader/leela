@@ -10,7 +10,7 @@ from . import Dictable, leela_cfg
 from .agent.agent import Completer
 from .blocks.agent.ai import Assistant, at_cell, notebook_approvals
 from .blocks.runtime.devserver import DevServers
-from .blocks.fs.fs import Sandbox, Unsafe, lang_for, is_texty
+from .blocks.fs.fs import MEDIA_TYPES, Sandbox, Unsafe, lang_for, is_media, is_texty
 from .blocks.fs.office import is_office, office_text
 from .blocks.memory.memory import PrivacyBlocked, pii_gate, withheld_why
 from .blocks.runtime.kernels import KernelPool, KernelStartError
@@ -134,18 +134,21 @@ def budget_value(v, lo, hi):
     return n if lo <= n <= hi else 'auto'
 
 IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
-AUDIO_EXTS = {'.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac'}
-VIDEO_EXTS = {'.mp4', '.webm', '.ogv', '.mov'}
+AUDIO_EXTS = {e for e, m in MEDIA_TYPES.items() if m.startswith('audio/')}
+VIDEO_EXTS = {e for e, m in MEDIA_TYPES.items() if m.startswith('video/')}
 
 def openable(p):
-    "Whether a tab can show this file: text, a notebook, a PDF, an image, or a Word, PowerPoint or Excel file."
-    return is_texty(p) or is_office(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
+    "Whether a tab can show this file: text, a notebook, a PDF, an image, audio, video, or a Word, PowerPoint or Excel file."
+    return is_texty(p) or is_office(p) or is_media(p) or Path(p).suffix.lower() in ('.ipynb', '.pdf', *IMAGE_EXTS)
 
 def kind_for(path):
     "The tab kind a file opens as."
     sfx = Path(path).suffix.lower()
     if str(path).endswith('.ipynb'): return 'notebook'
     return 'pdf' if sfx == '.pdf' else 'office' if is_office(path) else 'image' if sfx in IMAGE_EXTS else 'audio' if sfx in AUDIO_EXTS else 'video' if sfx in VIDEO_EXTS else 'text'
+
+#: tab kinds that follow from the file's extension alone
+FILE_KINDS = ('text', 'pdf', 'image', 'office', 'audio', 'video')
 
 #: macOS's own type for an extension Leela opens, each declared by CoreTypes
 MAC_UTIS = {'.py': 'public.python-script', '.js': 'com.netscape.javascript-source', '.mjs': 'com.netscape.javascript-source',
@@ -156,7 +159,10 @@ MAC_UTIS = {'.py': 'public.python-script', '.js': 'com.netscape.javascript-sourc
     '.jpg': 'public.jpeg', '.jpeg': 'public.jpeg', '.gif': 'com.compuserve.gif', '.webp': 'org.webmproject.webp', '.ico': 'com.microsoft.ico',
     '.bmp': 'com.microsoft.bmp', '.pdf': 'com.adobe.pdf', '.docx': 'org.openxmlformats.wordprocessingml.document',
     '.pptx': 'org.openxmlformats.presentationml.presentation', '.xlsx': 'org.openxmlformats.spreadsheetml.sheet',
-    '.xlsm': 'org.openxmlformats.spreadsheetml.sheet.macroenabled'}
+    '.xlsm': 'org.openxmlformats.spreadsheetml.sheet.macroenabled', '.mp3': 'public.mp3', '.wav': 'com.microsoft.waveform-audio',
+    '.m4a': 'com.apple.m4a-audio', '.aac': 'public.aac-audio', '.flac': 'org.xiph.flac', '.ogg': 'org.xiph.ogg-audio',
+    '.oga': 'org.xiph.ogg-audio', '.opus': 'org.xiph.ogg-audio', '.mp4': 'public.mpeg-4', '.m4v': 'com.apple.m4v-video',
+    '.mov': 'com.apple.quicktime-movie', '.webm': 'org.webmproject.webm'}
 #: ids Xcode and Notes import too, for extensions macOS has no type for; any other extension gets `org.vedicreader.leela.<ext>`
 SHARED_UTIS = {'.ipynb': ('org.jupyter.ipynb', 'Jupyter notebook'), '.md': ('net.daringfireball.markdown', 'Markdown text'),
     '.markdown': ('net.daringfireball.markdown', 'Markdown text'), '.toml': ('public.toml', 'TOML file'), '.cfg': ('public.toml', 'TOML file'),
@@ -166,13 +172,14 @@ SHARED_UTIS = {'.ipynb': ('org.jupyter.ipynb', 'Jupyter notebook'), '.md': ('net
 BY_EXTENSION = {'.txt'}
 #: tab kind -> Finder's name and role for it
 DOC_KINDS = {'text': ('Text file', 'Editor'), 'notebook': ('Jupyter notebook', 'Editor'), 'image': ('Image', 'Viewer'),
-    'pdf': ('PDF document', 'Viewer'), 'office': ('Word, PowerPoint or Excel file', 'Viewer')}
+    'pdf': ('PDF document', 'Viewer'), 'office': ('Word, PowerPoint or Excel file', 'Viewer'), 'audio': ('Audio file', 'Viewer'),
+    'video': ('Video file', 'Viewer')}
 
 def doc_exts():
     "Every extension Finder offers to open in Leela."
     from .blocks.fs.fs import LANGS
     from .blocks.fs.office import OFFICE
-    return sorted({*LANGS, *IMAGE_EXTS, *OFFICE, '.pdf'})
+    return sorted({*LANGS, *IMAGE_EXTS, *OFFICE, *MEDIA_TYPES, '.pdf'})
 
 def _uti(e): return MAC_UTIS.get(e) or SHARED_UTIS.get(e, (f'org.vedicreader.leela.{e[1:]}',))[0]
 
@@ -517,7 +524,7 @@ class Workspace:
         rest = Path(tab.path).relative_to(Path(old)) if tab.path != str(old) else None
         tab.path = str(Path(new)/rest) if rest is not None else str(new)
         tab.title = Path(tab.path).name or tab.title
-        if tab.kind in ('text', 'office'): tab.kind = 'office' if is_office(tab.path) else 'text'
+        if tab.kind in FILE_KINDS and (k := kind_for(tab.path)) in FILE_KINDS: tab.kind = k
         return tab
     def add_root(self, p, loose=False):
         r = self.fs.add_root(p, loose=loose)
@@ -874,6 +881,7 @@ class Workspace:
                     self.vault_screened(None, chk, p.name)
                     sound.append(Attachment(p))
                     continue
+                if is_media(p): raise ValueError(f'{p.name} is a video or audio file the model cannot take')
                 raw = office_text(p).encode()[:max_file] if is_office(p) else p.read_bytes()[:max_file]
                 body = self.vault_screened(raw.decode('utf-8', 'replace'), chk, p.name)
             except PrivacyBlocked as e:

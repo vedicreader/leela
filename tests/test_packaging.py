@@ -541,11 +541,11 @@ def _declared(plist):
 
 def test_open_with_covers_every_file_a_tab_shows_and_nothing_it_refuses(mac):
     """A .png, .pdf or .docx was greyed out in Open With, because the plist named source files alone."""
-    from leela.blocks.fs.fs import LANGS, _BINARY
+    from leela.blocks.fs.fs import LANGS, MEDIA_TYPES, _BINARY
     from leela.blocks.fs.office import OFFICE
     from leela.workspace import DOC_KINDS, IMAGE_EXTS, MAC_UTIS, kind_for, openable
     p, got = mac.PLIST, _declared(mac.PLIST)
-    assert set(got) == {*LANGS, *IMAGE_EXTS, *OFFICE, '.pdf'} and {'.png', '.pdf', '.docx', '.pptx', '.xlsx', '.xlsm', '.ipynb', '.md', '.svg'} <= set(got)
+    assert set(got) == {*LANGS, *IMAGE_EXTS, *OFFICE, *MEDIA_TYPES, '.pdf'} and {'.png', '.pdf', '.docx', '.pptx', '.xlsx', '.xlsm', '.ipynb', '.md', '.svg', '.mp3', '.wav', '.mp4', '.mov'} <= set(got)
     assert all(openable(f'x{e}') for e in got), [e for e in got if not openable(f'x{e}')]
     assert not {e for e in _BINARY if not openable(f'x{e}')} & set(got)
     for e, rows in got.items():
@@ -575,4 +575,4 @@ def test_a_finder_open_of_each_declared_type_is_let_in_and_routed_to_its_viewer(
     for e in _declared(mac.PLIST):
         (f := tmp_path/f'x{e}').write_bytes(b'')
         assert _unopenable(str(f), tmp_path) is None, e
-    assert [kind_for(tmp_path/f'x{e}') for e in ('.png', '.svg', '.pdf', '.docx', '.xlsm', '.ipynb', '.ts')] == ['image', 'image', 'pdf', 'office', 'office', 'notebook', 'text']
+    assert [kind_for(tmp_path/f'x{e}') for e in ('.png', '.svg', '.pdf', '.docx', '.xlsm', '.ipynb', '.ts', '.m4a', '.webm')] == ['image', 'image', 'pdf', 'office', 'office', 'notebook', 'text', 'audio', 'video']

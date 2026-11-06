@@ -16,7 +16,7 @@ from fastcore.xtras import flexicache, time_policy
 from ... import Dictable
 from .office import OFFICE, OFFICE_MAX_BYTES, is_office
 
-__all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'lang_for', 'is_texty', 'loose_refusal', 'Sandbox']
+__all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
 
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
@@ -35,8 +35,14 @@ LANGS = {'.py': 'python', '.pyi': 'python', '.ipynb': 'python', '.js': 'javascri
 
 NAME_LANGS = {'Dockerfile': 'bash', 'Makefile': 'bash', 'Procfile': 'bash', 'Cargo.lock': 'toml', 'Pipfile': 'toml'}
 
+#: audio and video that WebKit, the Mac apps' web view, and Chrome both play, with the MIME type `/file/raw` serves them as
+MEDIA_TYPES = {'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac',
+    '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.mp4': 'video/mp4', '.m4v': 'video/mp4',
+    '.mov': 'video/quicktime', '.webm': 'video/webm'}
+
 _BINARY = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.whl', '.so', '.dylib',
-    '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff', '.woff2', '.ttf', '.mp4', '.mp3', '.npy', '.npz', '.pkl',
+    '.dll', '.pyc', '.parquet', '.db', '.sqlite', '.woff', '.woff2', '.ttf', '.npy', '.npz', '.pkl', *MEDIA_TYPES,
+    '.ogv', '.avi', '.mkv', '.wmv', '.flv', '.wma', '.mpg', '.mpeg', '.3gp', '.3g2', '.aif', '.aiff', '.caf', '.mid', '.m4b', '.m4p',
     *OFFICE, '.doc', '.xls', '.ppt', '.docm', '.pptm', '.odt', '.ods', '.odp'}
 
 MAX_EDIT_BYTES = 4_000_000
@@ -64,11 +70,13 @@ def is_texty(p):
     "Whether this can be opened in a text editor at all."
     return Path(p).suffix.lower() not in _BINARY
 
+def is_media(p): return Path(p).suffix.lower() in MEDIA_TYPES
+
 def loose_refusal(p):
-    "Why a file outside every open folder may not be admitted as a loose tab, or None."
+    "Why a file outside every open folder may not be admitted as a loose tab, or None. Media streams, so has no size cap."
     p = Path(p)
     if not p.is_file(): return f'not a file: {p}'
-    if p.stat().st_size > (OFFICE_MAX_BYTES if is_office(p) else MAX_EDIT_BYTES): return f'{p.name} is too large to {"show" if is_office(p) else "edit"}'
+    if not is_media(p) and p.stat().st_size > (OFFICE_MAX_BYTES if is_office(p) else MAX_EDIT_BYTES): return f'{p.name} is too large to {"show" if is_office(p) else "edit"}'
     if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} may hold credentials'
     return None
 
@@ -224,6 +232,7 @@ class Sandbox:
         "Write text atomically, so a crash mid-save leaves the previous file intact."
         p = self._check(ref)
         if is_office(p): raise Unsafe(f'{p.name} is read-only here: Leela shows Word, PowerPoint and Excel files, and does not change them')
+        if is_media(p): raise Unsafe(f'{p.name} is read-only here: Leela plays audio and video files, and does not change them')
         mode = p.stat().st_mode & 0o7777 if p.exists() else None
         with atomic_save(p, mode='w', encoding='utf-8') as f:
             f.write(text)

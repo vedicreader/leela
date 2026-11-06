@@ -10,6 +10,7 @@ from fasthtml.common import Div
 
 from ... import errstr
 from ...core.web import fail
+from ..fs.fs import is_media
 from ..nb.nb import Notebook, take_seq
 from .ui import tab_bar
 
@@ -29,6 +30,7 @@ def disk_version(path):
         _TOKENS.pop(path, None)
         return 'missing'
     stamp = (s.st_mtime_ns, s.st_size)
+    if is_media(path): return f'{s.st_size}:{s.st_mtime_ns}'   # a film is too large to hash on every poll
     if (hit := _TOKENS.get(path)) and hit[0] == stamp: return hit[1]
     try: digest = hashlib.blake2b(Path(path).read_bytes(), digest_size=8).hexdigest()
     except OSError: return 'missing'
@@ -141,7 +143,7 @@ def connect(app, ctx):
             return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
                     'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version,
                     'cells': [c.dict() for c in nb.cells]}
-        if t.kind in ('pdf', 'image', 'office'):
+        if t.kind in ('pdf', 'image', 'office', 'audio', 'video'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
         if t.kind == 'vault':

@@ -134,7 +134,8 @@ def office_text(p, limit=TEXT_CHARS):
     return md if len(md) <= limit else md[:limit] + '\n\n[document clipped]'
 
 def open_in_app(p):
-    "Open office file `p` in the app the system gives its type; any other file is refused, as `open` runs programs."
-    if not is_office(p): raise ValueError(f'{Path(p).name} is not a Word, PowerPoint or Excel file')
+    "Open office, audio or video file `p` in the app the system gives its type; any other file is refused, as `open` runs programs."
+    from .fs import is_media
+    if not (is_office(p) or is_media(p)): raise ValueError(f'{Path(p).name} is not a Word, PowerPoint, Excel, audio or video file')
     subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', str(p)], stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
