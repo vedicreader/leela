@@ -9,6 +9,11 @@ from .turns import edit_diffs, tool_schemas, turn_media
 
 TERMINAL_CANCEL = ('cancelled', 'detached', 'terminated')
 
+def settle(ai):
+    "Move `ai`'s turn off a model that cannot run here when nobody named it, as ramabana's CLI does; the line that says so, or ''."
+    try: return '' if getattr(ai, 'busy', False) else ai.settle() if hasattr(ai, 'settle') else ''
+    except Exception: return ''
+
 class Feed:
     "One thread's events, numbered so a browser that missed some can ask for exactly those."
     def __init__(self, thread='', maxlen=2000):
@@ -106,6 +111,7 @@ class Thread:
             history_name='agent', approvals=self.approvals, warm=warm, **({} if optin is None else {'optin': tuple(optin)}),
             **({} if profile is None else {'profile': profile}))
         if hasattr(self.ai, 'set_model'): workspace.sync_agent_routing(self.ai)
+        self.moved = settle(self.ai)
         if hasattr(self.ai, 'host'): self.approvals.host = self.ai.host
         self.id = getattr(self.ai, 'session_id', '') or f'thread_{uuid.uuid4().hex[:12]}'
         self._stop_approvals = self.approvals.listen()
@@ -521,6 +527,7 @@ class TurnRunner:
             name=f'leela-turn-pending-{ident}')
         ready['worker'] = worker
         self._reap(ai)
+        if (moved := settle(ai)) and self.thread is not None: self.thread.moved = moved   # a sign-in or download since the thread was made
         with self._lock:
             if self._pending or ai.busy: raise TurnError('thread_busy', self._busy_note(), thread)
             self._pending[ident] = ready
@@ -545,7 +552,7 @@ class TurnRunner:
             if user is None:
                 ready['gate'].set(); raise TurnError('thread_closed', 'the thread is closed', thread, run_id)
             ready['accepted'] = True; ready['gate'].set()
-        return {'ok': True, 'thread': thread, 'run': run_id, 'seq': user['seq']}
+        return {'ok': True, 'thread': thread, 'run': run_id, 'seq': user['seq'], **({'moved': moved} if moved else {})}
 
     def close(self, cancel=True):
         with self._lock:

@@ -9,7 +9,8 @@ __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_mod
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
            'install_runtime', 'probe_dir', 'probe_path', 'probed', 'catalog', 'forget_probes',
            'warm_probes', 'install_state', 'setup_plan', 'dismiss_setup', 'setup_dismissed',
-           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates', 'unavailable', 'default_model', 'providers']
+           'SETUP_SIZES', 'RECOMMENDED', 'TOOLS', 'tool_rows', 'updates', 'unavailable', 'default_model', 'providers',
+           'turn_move', 'GEMMA', 'gemma_row', 'download_model']
 
 #: What each routed job spends its model on. One copy: the settings pane renders three of these
 #: server-side and the rest from `/agent/models`, and two copies drifted apart the first time.
@@ -39,11 +40,18 @@ def providers():
     except Exception: auth = {}
     return [{**p, 'ready': provider_ready(p['key'], auth)} for p in PROVIDERS]
 
-def default_model(job='turn'):
-    "The model Ramabana's routing gives `job` when nobody chose one, so this pane and the CLI agree: config.toml's `[jobs]`, then the defaults, moved to a hosted model configured here when they cannot run."
+def turn_move():
+    "The turn a new conversation gets when nobody named one, moved as `Agent.settle` moves it, and the line that says so or ''."
     from ...agent.core import Routing, use_aliases
     use_aliases(model_path())
-    try: return Routing().name_for(job)
+    r = Routing()
+    return (alt, r.settled_line(alt)) if (alt := r.settled()) else (r.turn, '')
+
+def default_model(job='turn'):
+    "The model Ramabana's routing gives `job` when nobody chose one, so this pane and the CLI agree: config.toml's `[jobs]`, then the defaults, moved to a model ready here when the turn cannot run."
+    from ...agent.core import Routing, use_aliases
+    use_aliases(model_path())
+    try: return turn_move()[0] if job == 'turn' else Routing().name_for(job)
     except Exception: return None
 
 def _runtimes():
@@ -169,8 +177,44 @@ def _run_install(runtime, cmd):
     with _lock:
         _installs[runtime].update(state='ok' if ok else 'error', log=log[-4000:], available=here)
 
+#: The on-device model the setup panel offers to download: the smallest Gemma.
+GEMMA = 'gemma-e2b'
+
+def gemma_row():
+    "The setup row that downloads `GEMMA`, or None where LiteRT cannot run it."
+    from ...agent.core import LOCAL_SIZE, runtime_available, weights_here
+    if not runtime_available('litert'): return None
+    return {'value': GEMMA, 'label': 'Gemma 4 E2B', 'size': LOCAL_SIZE[GEMMA], 'model': True, 'requirements': [],
+            'blurb': f'Download Gemma 4 E2B ({LOCAL_SIZE[GEMMA]}) to run on this Mac. No account needed.',
+            'available': weights_here(GEMMA), 'install': install_state(GEMMA)}
+
+def _fetch(name):
+    "Download `name`'s weights into the Hugging Face cache, then forget every probe that said they were missing."
+    from ...agent.core import LOCAL, weights_here
+    log = ''
+    try:
+        from rishi.litert import get_model
+        get_model(LOCAL[name])
+    except Exception as e:
+        from ... import errstr
+        log = errstr(e)
+    forget_probes(disk=True)
+    here = weights_here(name)
+    with _lock: _installs[name].update(state='ok' if here else 'error', log=log[-4000:] or ('' if here else 'the download ended with no weights on disk'), available=here)
+
+def download_model(name=GEMMA):
+    "Start the download of a local model's weights, once, on its own thread; only ever because someone asked."
+    from ...agent.core import LOCAL, LOCAL_SIZE
+    with _lock:
+        if (cur := _installs.get(name)) and cur.get('state') == 'running': return dict(cur)
+        _installs[name] = row = {'runtime': name, 'state': 'running', 'log': '', 'cmd': f'download {LOCAL[name]}', 'requirements': [],
+                                 'via': 'Hugging Face', 'target': '', 'size': LOCAL_SIZE.get(name, '')}
+    threading.Thread(target=_fetch, args=(name,), daemon=True, name=f'leela-download-{name}').start()
+    return dict(row)
+
 def install_runtime(runtime):
-    "Fetch one backend or tool, pinned to the rishi here, where a frozen app can reach it."
+    "Fetch one backend, tool or `GEMMA`'s weights, pinned to the rishi here, where a frozen app can reach it."
+    if runtime == GEMMA: return download_model(runtime)
     if runtime in TOOLS: reqs = list(TOOLS[runtime][1])
     elif runtime not in INSTALLABLE:
         raise ValueError(f'{runtime} is not something a package provides; see its remedy')
@@ -311,6 +355,7 @@ def setup_plan():
     offline = [{**rows[v], 'mb': SETUP_SIZES.get(v), 'recommended': v == RECOMMENDED}
                for v in INSTALLABLE if v in rows and rows[v]['requirements']]
     offline.sort(key=lambda r: not r['recommended'])   # the one we recommend is the one offered first
+    if (g := gemma_row()): offline.insert(0, g)
     ready_now = [a['value'] for a in accounts if a['ready']]
     installed = [o['value'] for o in offline if o['available']]
     return {'frozen': bool(getattr(sys, 'frozen', False)), 'dismissed': setup_dismissed(),

@@ -604,25 +604,30 @@ def _agent_panel(ws):
     "Bottom centre; model choices load asynchronously after the editor can paint."
     from .agent.core import DFLT_SMALL, DFLT_TURN, EFFORTS, env as _env
     from .agent.agent import SHOWN_CHANNEL
-    from .blocks.agent.models import default_model
-    agent_model = ws.model or default_model('turn') or DFLT_TURN
+    from .blocks.agent.models import turn_move
+    try: agent_model, moved = (ws.model, '') if ws.model else turn_move()
+    except Exception: agent_model, moved = ws.model or DFLT_TURN, ''
     inline_model = ws.inline_model or _env('MODEL_INLINE') or DFLT_SMALL
     completion_model = ws.completion_model or _env('MODEL_COMPLETION') or DFLT_SMALL
     has_state = any(str(layer.get('text') or '').strip() for layer in ws.agent_state_layers.values())
     chip_mode = getattr(ws.approvals, 'chosen', 'guided')
     control, edits = ('autopilot', True) if chip_mode == 'edits' else (chip_mode, False)
-    from .blocks.agent.models import providers, unavailable
+    from .blocks.agent.models import gemma_row, providers, unavailable
     gone = unavailable(agent_model)
-    # Nothing is chosen for the person: each provider, what it needs, and the form that adds one.
+    g = gemma_row() if gone else None
+    # Nothing is chosen for the person: each provider, what it needs, the form that adds one, and a download only on a click.
     guide = (Ul(*[Li(Strong(p['label']), ' · ', 'ready' if p['ready'] else f"needs {p['needs']}", data_provider=p['key'])
                   for p in providers()], cls='lee-provider-list', data_providers='1'),
-             Button('+ model', cls='lee-btn go', type='button', onclick='leeAddModel()')) if gone else ()
-    notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1'), *guide) if gone else ()
+             Button('+ model', cls='lee-btn go', type='button', onclick='leeAddModel()'),
+             *([Button(f"Download {g['label']} ({g['size']}) to run on this Mac", cls='lee-btn', type='button',
+                       data_download=g['value'], onclick='leeGetModel(this)')] if g and not g['available'] else [])) if gone else ()
+    notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1'), *guide) if gone else (
+        (Span(moved, data_moved='1'),) if moved else ())
     setup = () if has_state else (
         Strong('Set up this workspace agent'),
         Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),
         Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()'))
-    welcome = Div(*notice, *setup, cls='lee-agent-welcome', role='status' if gone else None) if notice or setup else None
+    welcome = Div(*notice, *setup, cls='lee-agent-welcome', role='status' if notice else None) if notice or setup else None
     return Section(
         Div(Div(Span('agent', cls='lee-ptitle'),
                 Span(Span(cls='lee-agent-status-dot'), 'ready', id='agentstatus', cls='lee-agent-status ready', title='agent ready'),

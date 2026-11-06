@@ -190,7 +190,8 @@ async function sendAgent(force = false) {
   foldOlderTurns(log);            // what came before is answered; this is the one being read
   trimAgentLog(log);
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
-  status('model is working…');
+  // a turn nobody named moves to the model ready here; the line says where and why
+  if (accepted.moved) { status(accepted.moved, 'ok'); window.leeLoadModels?.(); } else status('model is working…');
   agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
 }
 

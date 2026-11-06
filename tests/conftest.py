@@ -101,15 +101,34 @@ def _folder_gate():
     reset_gate(); yield; reset_gate()
 
 @pytest.fixture(autouse=True)
-def _isolate_credentials(monkeypatch):
-    "Run as if none of the machine's real credentials were exported; a test that needs one sets it."
+def _isolate_credentials(monkeypatch, tmp_path_factory):
+    "Run as if none of the machine's real credentials were exported or signed in; a test that needs one sets it."
+    import ramabana.core as rc
     for key in CREDENTIAL_KEYS: monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('CODEX_AUTH_PATH', str(tmp_path_factory.mktemp('codex')/'auth.json'))   # a real Codex sign-in would move the turn
+    monkeypatch.setattr(rc, '_copilot_available', lambda: False)
 
 @pytest.fixture(autouse=True)
 def _curated_models_only(monkeypatch):
     "ramabana 0.1.42 lists models live from a provider once a key is set; a test that sets one must not wait on the network."
     import ramabana.models as rm
     monkeypatch.setattr(rm, 'LIVE', {})     # a test that wants a listing sets its own
+
+@pytest.fixture(autouse=True)
+def hf_cache(tmp_path_factory, monkeypatch):
+    "An empty Hugging Face cache for each test, so no test sees this machine's Gemma; `hf_cache('gemma-e2b')` puts a stand-in for its weights in it."
+    from huggingface_hub.utils import _cache_manager
+    import ramabana.core as core
+    d = tmp_path_factory.mktemp('hf')
+    monkeypatch.setattr(_cache_manager, 'HF_HUB_CACHE', str(d)); core._WEIGHTS.clear()
+    def put(*names):
+        for n in names:
+            repo = d/f"models--{core.LOCAL[n].replace('/', '--')}"
+            (repo/'refs').mkdir(parents=True, exist_ok=True); (repo/'refs'/'main').write_text('0'*40)
+            snap = repo/'snapshots'/('0'*40); snap.mkdir(parents=True, exist_ok=True)
+            (snap/f"{core.LOCAL[n].split('/')[1].removesuffix('-litert-lm')}.litertlm").write_bytes(b'weights')
+        core._WEIGHTS.clear()
+    return put
 
 @pytest.fixture(autouse=True)
 def _no_real_beat(monkeypatch, tmp_path_factory):
@@ -359,3 +378,4 @@ def _claude_on_path(request, monkeypatch):
     if request.node.get_closest_marker('slow') or request.node.get_closest_marker('no_claude'): return
     import ramabana.core as rc
     monkeypatch.setattr(rc, '_claude_available', lambda: True)
+    monkeypatch.setattr(rc, '_claude_signed_out', lambda: False)   # a second `claude` on PATH may be signed out

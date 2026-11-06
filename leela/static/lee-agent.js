@@ -421,10 +421,10 @@ function offlineRow(o) {
   // and the vault answers with it, so a bundle without it has no memory rather than a slower one.
   return `<div class="lee-setup-row" data-setup-get="${esc(o.value)}"><span><strong>${esc(o.label || o.value)}</strong>` +
     `${o.recommended ? ' <small class="lee-setup-pick">recommended</small>' : ''}` +
-    ` <small>about ${o.mb} MB</small>` +
+    ` <small>${o.size ? esc(o.size) : `about ${o.mb} MB`}</small>${o.blurb ? `<br><small>${esc(o.blurb)}</small>` : ''}` +
     `${st.state === 'error' ? `<br><small class="warn">${esc(String(st.log).split('\n').slice(-2).join(' '))}</small>` : ''}</span>` +
-    `${o.available ? '<span class="lee-dim">installed</span>'
-      : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}\u2026` : 'install'}</button>`}</div>`;
+    `${o.available ? `<span class="lee-dim">${o.model ? 'downloaded' : 'installed'}</span>`
+      : `<button class="lee-btn" ${running ? 'disabled' : ''}>${running ? `${esc(st.via || 'installing')}\u2026` : o.model ? 'download' : 'install'}</button>`}</div>`;
 }
 function toolRow(o) {
   const st = o.install || {}, running = st.state === 'running';
@@ -509,6 +509,26 @@ async function pollSetup(box) {
   } catch (e) { status(String(e.message || e), 'err'); }
 }
 window.leeSetupPane = leeSetupPane;
+
+/* The welcome's one download: a model's weights, started only by this click. The setup plan carries
+   its state, so this asks it again until the weights are here or the download failed. */
+async function leeGetModel(btn) {
+  const name = btn.dataset.download;
+  const r = await postOr('/agent/runtimes/install', {runtime: name});
+  if (!r.ok) return status(r.error || `could not download ${name}`, 'err');
+  btn.disabled = true; btn.textContent = `Downloading ${name}\u2026`;
+  status(`downloading ${name}\u2026 it continues if you close this`, 'busy');
+  while (btn.isConnected) {
+    await new Promise(ok => setTimeout(ok, 3000));
+    let d; try { d = await api('/agent/setup'); } catch (_) { continue; }
+    const row = (d.offline || []).find(o => o.value === name);
+    if ((row?.install || {}).state === 'running') continue;
+    if (row?.available) { btn.textContent = `${name} is ready`; status(`${name} is ready. Send your prompt again.`, 'ok'); return loadAgentModels(); }
+    btn.disabled = false; btn.textContent = 'Download again';
+    return status(`the download failed: ${String(row?.install?.log || 'no reason given').split('\n').slice(-1)[0]}`, 'err');
+  }
+}
+window.leeGetModel = leeGetModel;
 window.leeSetupModal = leeSetupModal;
 /* How much work one turn may do. `auto` lets ramabana size it from the prompt; a number pins it.
    The fields are written back from the answer, so a refusal leaves the box showing what is
@@ -3719,7 +3739,8 @@ async function sendAgent(force = false) {
   foldOlderTurns(log);            // what came before is answered; this is the one being read
   trimAgentLog(log);
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
-  status('model is working…');
+  // a turn nobody named moves to the model ready here; the line says where and why
+  if (accepted.moved) { status(accepted.moved, 'ok'); window.leeLoadModels?.(); } else status('model is working…');
   agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
 }
 
