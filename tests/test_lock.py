@@ -23,7 +23,7 @@ def _lock(d, extras=('mlx', 'llama', 'langserver'), pkgs=(), env=True, deps=('le
             f'dependencies = [{"{ name = " + chr(34) + L.LLAMA["name"] + chr(34) + " }" if llama_in_base else ""}]\nwheels = [{whl("leela", "0.1.23")}]\n']
     rows += [f'[[package]]\nname = "{x}-pkg"\nversion = "1.0"\nsource = {{ registry = "https://pypi.org/simple" }}\nwheels = [{whl(x, "1.0")}]\n' for x in extras]
     rows += list(pkgs)
-    (d/'uv.lock').write_text('version = 1\n' + '\n'.join(rows))
+    (d/'uv.lock').write_text('version = 1\n[options]\nexclude-newer = "2026-10-30T00:00:00Z"\n\n' + '\n'.join(rows))
     return d
 
 def _pkg(name, source='{ registry = "https://pypi.org/simple" }', wheels=True, fn=None):
@@ -212,3 +212,60 @@ def test_targets_that_need_a_value_refuse_without_it(target, msg):
 def test_ship_app_refuses_a_version_that_is_not_one():
     p = _make('ship-app', env={'V': '1.0;rm'})
     assert p.returncode != 0 and 'version such as' in p.stderr
+
+# The cooldown, against a local index: an owner's package newer than 7 days is locked, a third-party one is held back
+
+def _wheel(d, name, v):
+    import base64, hashlib, zipfile
+    fn = d/f'{name}-{v}-py3-none-any.whl'
+    meta = {f'{name}-{v}.dist-info/METADATA': f'Metadata-Version: 2.1\nName: {name}\nVersion: {v}\n',
+            f'{name}-{v}.dist-info/WHEEL': 'Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n', f'{name}/__init__.py': ''}
+    rec = ''.join(f"{k},sha256={base64.urlsafe_b64encode(hashlib.sha256(v_.encode()).digest()).rstrip(b'=').decode()},{len(v_)}\n" for k, v_ in meta.items())
+    with zipfile.ZipFile(fn, 'w') as z:
+        for k, v_ in meta.items(): z.writestr(k, v_)
+        z.writestr(f'{name}-{v}.dist-info/RECORD', rec + f'{name}-{v}.dist-info/RECORD,,\n')
+    return fn
+
+def test_the_cooldown_holds_back_a_new_third_party_release_and_not_an_owner_one(tmp_path):
+    import hashlib, threading, tomllib
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    uv = ROOT/'packaging'/'mac'/'build'/'uv'/'uv'
+    if not uv.is_file(): pytest.skip('no pinned uv: make -C packaging/mac uv-fetch')
+    at = L.now()
+    files, d, hits = {}, tmp_path/'files', []; d.mkdir()
+    for name in ('ownpkg', 'thirdpkg'):
+        for v, age in (('1.0', 30), ('1.1', 1)):
+            w = _wheel(d, name, v)
+            files.setdefault(name, []).append(dict(filename=w.name, url=f'/files/{w.name}', hashes={'sha256': hashlib.sha256(w.read_bytes()).hexdigest()},
+                                                   **{'upload-time': L.iso(at - timedelta(days=age))}))
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            parts = self.path.strip('/').split('/')
+            if parts[0] == 'simple' and parts[1] in files:
+                b, ct = json.dumps({'meta': {'api-version': '1.1'}, 'name': parts[1], 'files': files[parts[1]]}).encode(), 'application/vnd.pypi.simple.v1+json'
+            elif parts[0] == 'files' and (d/parts[1]).is_file(): b, ct = (d/parts[1]).read_bytes(), 'application/octet-stream'
+            else: self.send_response(404); self.end_headers(); return
+            self.send_response(200); self.send_header('Content-Type', ct); self.send_header('Content-Length', str(len(b))); self.end_headers()
+            if self.command == 'GET': self.wfile.write(b)
+        do_HEAD = do_GET
+        def log_message(self, *a): pass
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        u = tomllib.loads(L.pyproject('0.1.23', f'{L.DL}/x.whl', {x: [] for x in L.EXTRAS}, ['ownpkg'], at))['tool']['uv']
+        (p := tmp_path/'proj').mkdir()
+        (p/'pyproject.toml').write_text(f'''[project]\nname = "t"\nversion = "0"\nrequires-python = ">=3.12"\ndependencies = ["ownpkg", "thirdpkg"]\n[tool.uv]\npackage = false
+exclude-newer = "{u['exclude-newer']}"\nexclude-newer-package = {{ ownpkg = "{u['exclude-newer-package']['ownpkg']}" }}\n''')
+        env = L.child_env(cache=tmp_path/'cache', python=tmp_path/'py', python_version='3.12', env=tmp_path/'env') | {'UV_PYTHON_PREFERENCE': 'system', 'UV_PYTHON': sys.executable, 'NO_PROXY': '127.0.0.1,localhost', 'no_proxy': '127.0.0.1,localhost'}
+        env.pop('UV_FROZEN')
+        index = ['--default-index', f'http://127.0.0.1:{srv.server_address[1]}/simple']
+        r = subprocess.run([uv, 'lock', '--project', p, *index, *L.cooldown_args(p)], env=env, capture_output=True, text=True, timeout=120)
+        assert r.returncode == 0, (r.stderr, hits)
+        got = {x['name']: x['version'] for x in tomllib.loads((p/'uv.lock').read_text())['package']}
+        assert got['ownpkg'] == '1.1' and got['thirdpkg'] == '1.0'
+        assert tomllib.loads((p/'uv.lock').read_text())['options']['exclude-newer'], 'the lock records the cooldown'
+        r = subprocess.run([uv, 'lock', '--project', p, '--upgrade', *index], env=env, capture_output=True, text=True, timeout=120)
+        got = {x['name']: x['version'] for x in tomllib.loads((p/'uv.lock').read_text())['package']}
+        assert got['thirdpkg'] == '1.1', 'UV_NO_CONFIG drops the [tool.uv] cooldown: without the flags the new release gets in'
+    finally: srv.shutdown()

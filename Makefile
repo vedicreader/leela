@@ -1,6 +1,6 @@
 # Leela's release targets. Values reach recipes through the environment ("$$V"), so the shell never parses them.
 # The thin Mac app and its environment lock: docs/thin-app.md. The old fat app: make ship V=<version> (py2app, being retired).
-export V TAP N WHEEL DIR CHANNEL FRESH EXTRAS ALLOW_DOWNGRADE
+export V TAP N WHEEL DIR CHANNEL FRESH EXTRAS ALLOW_DOWNGRADE PIN AGAINST
 PY := uv run --frozen python
 LOCKPY := $(PY) tools/lock.py
 .PHONY: ship ship-app lock lock-wheel lock-hash lock-check lock-test lock-diff lock-publish lock-promote lock-verify lock-key
@@ -21,10 +21,10 @@ lock-wheel:
 	@test -n "$$V" || { echo "Give the Leela version: make lock-wheel V=0.1.23" >&2; exit 1; }
 	$(LOCKPY) wheel "$$V" --upload
 
-# V=<leela version> [WHEEL=<local wheel>, test only] [DIR=<folder>, default packaging/lock]
+# V=<leela version> [WHEEL=<local wheel>, test only] [DIR=<folder>, default packaging/lock] [PIN=<one constraint, such as ramabana==0.2.109>]
 lock:
 	@test -n "$$V" || { echo "Give the Leela version: make lock V=0.1.23" >&2; exit 1; }
-	$(LOCKPY) make "$$V" $(if $(value WHEEL),--wheel "$$WHEEL") $(if $(value DIR),--dir "$$DIR")
+	$(LOCKPY) make "$$V" $(if $(value WHEEL),--wheel "$$WHEEL") $(if $(value DIR),--dir "$$DIR") $(if $(value PIN),--pin "$$PIN")
 
 lock-hash:
 	$(LOCKPY) hash $(if $(value DIR),--dir "$$DIR")
@@ -37,7 +37,7 @@ lock-test:
 	$(LOCKPY) test $(if $(value DIR),--dir "$$DIR") $(if $(filter 1,$(FRESH)),--fresh) $(if $(filter 1,$(EXTRAS)),--extras)
 
 lock-diff:
-	$(LOCKPY) diff $(if $(value DIR),--dir "$$DIR")
+	$(LOCKPY) diff $(if $(value DIR),--dir "$$DIR") $(if $(value AGAINST),--against "$$AGAINST")
 
 # refuses an untested, stale or unpushed lock; ALLOW_DOWNGRADE=1 publishes an older leela as a roll back
 lock-publish:

@@ -85,7 +85,7 @@ def extra_reqs():
 
 def constraints(): return tomllib.loads((ROOT/'pyproject.toml').read_text()).get('tool', {}).get('uv', {}).get('constraint-dependencies', [])
 
-def pyproject(v, leela, extras, owned=(), at=None):
+def pyproject(v, leela, extras, owned=(), at=None, pins=()):
     "The pinned project's pyproject.toml. `leela` is a wheel URL, or a local wheel path for a lock that cannot be published."
     at = at or now()
     q = lambda xs: '[' + ', '.join(json.dumps(x) for x in xs) + ']'
@@ -106,7 +106,7 @@ environments = ["{MARKER}"]
 required-environments = ["{MARKER}"]
 exclude-newer = "{iso(at - timedelta(days=COOLDOWN))}"
 exclude-newer-package = {{ {pkgs} }}
-constraint-dependencies = {q(constraints())}
+constraint-dependencies = {q([*constraints(), *pins])}
 
 [tool.uv.sources]
 leela = {src}
@@ -137,8 +137,11 @@ def _closure(pkgs, roots):
         for x in p.get('dependencies', []): todo += [y['name'] for e in x.get('extra', []) for y in p.get('optional-dependencies', {}).get(e, [])]
     return seen
 
+def _wname(w): return w.get('filename') or (w.get('url') or w.get('path') or '').rsplit('/', 1)[-1]
+
 def wheel_fits(fn):
     "Whether a wheel filename installs on CPython 3.12, macOS arm64."
+    if fn.count('-') < 4: return False
     py, abi, plat = fn[:-4].split('-')[-3:]
     abis = set(abi.split('.'))
     pyok = lambda p: p in ('cp312', 'py3', 'py312') or ('abi3' in abis and re.fullmatch(r'cp3\d+', p) and int(p[3:]) <= 12)
@@ -150,6 +153,7 @@ def check(d, local=False):
     pkgs, why = packages(d), []
     proj = tomllib.loads((Path(d)/'pyproject.toml').read_text())
     if proj.get('tool', {}).get('uv', {}).get('required-environments') != [MARKER]: why.append(f'required-environments is not [{MARKER}]')
+    if not tomllib.loads((Path(d)/'uv.lock').read_text()).get('options', {}).get('exclude-newer'): why.append('the lock records no exclude-newer cooldown')
     root = next((p for p in pkgs if p['name'] == 'leela-lock'), None)
     if root is None: return why + ['the lock has no leela-lock project']
     if missing := [x for x in EXTRAS if x not in root.get('optional-dependencies', {})]: why.append(f'extras missing: {missing}')
@@ -165,7 +169,7 @@ def check(d, local=False):
             if not src['url'].startswith(f'{DL}/'): why.append(f"leela comes from {src['url']}, not a release of {REPO}")
         elif k == 'url': why.append(f'{n} comes from a URL')
         elif k == 'registry' and src['registry'].rstrip('/') != PYPI: why.append(f"{n} comes from {src['registry']}")
-        wheels = [w for w in p.get('wheels', []) if wheel_fits((w.get('url') or w.get('path') or w.get('filename', '')).rsplit('/', 1)[-1])]
+        wheels = [w for w in p.get('wheels', []) if wheel_fits(_wname(w))]
         if not wheels and n not in SOURCE_ONLY: why.append(f'{n} {p.get("version")} has no wheel for CPython 3.12 on macOS arm64')
     base = _closure(pkgs, [x['name'] for x in root.get('dependencies', [])])
     if LLAMA['name'] in base: why.append(f"{LLAMA['name']} is in the base environment; it belongs in the llama extra only")
@@ -186,7 +190,12 @@ def _pin_extras(text, d):
         out.append(line)
     return '\n'.join(out) + '\n'
 
-def make(v, out=LOCK, wheel=None, owned=None):
+def cooldown_args(d):
+    "The pinned project's cooldown as uv flags, which UV_NO_CONFIG does not drop."
+    u = tomllib.loads((Path(d)/'pyproject.toml').read_text())['tool']['uv']
+    return ['--exclude-newer', u['exclude-newer'], *[a for k, v in u.get('exclude-newer-package', {}).items() for a in ('--exclude-newer-package', f'{k}={v}')]]
+
+def make(v, out=LOCK, wheel=None, owned=None, pins=()):
     "Write the pinned project for Leela `v`, lock it with the pinned uv, pin the extras, check it, and print its hash."
     uv, out = pinned_uv(), Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -194,11 +203,13 @@ def make(v, out=LOCK, wheel=None, owned=None):
     if leela is None:
         leela, digest = release_wheel(v)
     (out/'.python-version').write_text(PYTHON + '\n')
-    text = pyproject(v, leela, extra_reqs(), owners() if owned is None else owned)
+    text = pyproject(v, leela, extra_reqs(), owners() if owned is None else owned, pins=pins)
     (out/'pyproject.toml').write_text(text)
-    env = child_env(cache=os.environ.get('UV_CACHE_DIR') or Path.home()/'Library'/'Caches'/'Leela'/'uv', python=out/'.python', python_version=PYTHON, env=out/'.venv')
+    cache = Path(os.environ.get('UV_CACHE_DIR') or Path.home()/'Library'/'Caches'/'Leela'/'uv')
+    env = child_env(cache=cache, python=cache.parent/'python-lock', python_version=PYTHON, env=cache.parent/'lock-venv')
     env.pop('UV_FROZEN', None)
-    run = lambda: subprocess.run([uv, 'lock', '--project', out], env=env, check=True)
+    # UV_NO_CONFIG keeps a person's uv.toml out, and with it the settings in [tool.uv]: the cooldown goes on the command line
+    run = lambda: subprocess.run([uv, 'lock', '--project', out, *cooldown_args(out)], env=env, check=True)
     run()
     (out/'pyproject.toml').write_text(_pin_extras(text, out))
     run()
@@ -213,7 +224,7 @@ def download_bytes(d):
     "What a first install downloads: one fitting wheel per package."
     tot = 0
     for p in packages(d):
-        ws = [w for w in p.get('wheels', []) if wheel_fits((w.get('url') or w.get('path') or '').rsplit('/', 1)[-1])]
+        ws = [w for w in p.get('wheels', []) if wheel_fits(_wname(w))]
         tot += max((w.get('size') or 0 for w in ws), default=0)
     return tot
 
@@ -549,10 +560,10 @@ def wheel(v, upload=False):
         return w
     finally: sh('git', '-C', ROOT, 'worktree', 'remove', '--force', tmp/'src', check=False)
 
-def dev_lock(out):
-    "A lock signed with a throwaway key, for a local app build: the pinned project here, manifest n=0, keys.pub with the throwaway key."
+def dev_lock(out, src=LOCK):
+    "A lock signed with a throwaway key, for a local app build: the pinned project in `src`, manifest n=0, keys.pub with the throwaway key."
     out = Path(out); out.mkdir(parents=True, exist_ok=True)
-    for f in FILES: shutil.copy(LOCK/f, out/f)
+    for f in FILES: shutil.copy(Path(src)/f, out/f)
     k = Path(tempfile.mkdtemp())/'dev'
     sh('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'leela-lock-dev', '-f', k)
     (out/'manifest.json').write_text(dumps(manifest(out, 0, pinned_version())))
@@ -593,7 +604,7 @@ def verify_app(app, zip_=None, max_kb=None, max_zip_kb=None):
     if not os.access(uv, os.X_OK): why.append('no Helpers/uv')
     elif (v := uv_version(uv)) != pinned_version(): why.append(f'Helpers/uv is {v}, not {pinned_version()}')
     try: m = check_lock_dir(c/'Resources'/'Lock', c/'Resources'/'lock-keys.pub')
-    except SystemExit as e: why.append(f'bootstrap lock: {e}'); m = {}
+    except (SystemExit, OSError, ValueError) as e: why.append(f'bootstrap lock: {e}'); m = {}
     if not (c/'Resources'/'childenv.json').is_file(): why.append('no childenv.json')
     dev = (LOCK/'keys.pub').is_file() and (c/'Resources'/'lock-keys.pub').read_text() != (LOCK/'keys.pub').read_text()
     kb = sum(f.stat().st_size for f in app.rglob('*') if f.is_file() and not f.is_symlink()) // 1024
@@ -606,36 +617,36 @@ def verify_app(app, zip_=None, max_kb=None, max_zip_kb=None):
 def main(argv=None):
     a = argparse.ArgumentParser(prog='lock.py', description=__doc__)
     s = a.add_subparsers(dest='cmd', required=True)
-    p = s.add_parser('make'); p.add_argument('version'); p.add_argument('--dir', default=LOCK); p.add_argument('--wheel')
+    p = s.add_parser('make'); p.add_argument('version'); p.add_argument('--dir', default=LOCK); p.add_argument('--wheel'); p.add_argument('--pin', action='append', default=[], help='an extra constraint, such as ramabana==0.2.109')
     p = s.add_parser('hash'); p.add_argument('--dir', default=LOCK)
     p = s.add_parser('check'); p.add_argument('--dir', default=LOCK)
     p = s.add_parser('test'); p.add_argument('--dir', default=LOCK); p.add_argument('--fresh', action='store_true'); p.add_argument('--extras', action='store_true')
     p.add_argument('--records'); p.add_argument('--keep', action='store_true')
-    p = s.add_parser('diff'); p.add_argument('--dir', default=LOCK)
+    p = s.add_parser('diff'); p.add_argument('--dir', default=LOCK); p.add_argument('--against', help='a local lock folder in place of the published one')
     p = s.add_parser('publish'); p.add_argument('--allow-downgrade', action='store_true')
     p = s.add_parser('promote'); p.add_argument('n', type=int)
     p = s.add_parser('verify'); p.add_argument('--channel', default='stable', choices=['stable', 'test'])
     p = s.add_parser('key'); p.add_argument('--keys-out', default=LOCK/'keys.pub')
-    p = s.add_parser('dev-lock'); p.add_argument('out')
+    p = s.add_parser('dev-lock'); p.add_argument('out'); p.add_argument('--from', dest='src', default=LOCK)
     p = s.add_parser('fetch'); p.add_argument('out'); p.add_argument('--channel', default='stable', choices=['stable', 'test'])
     p = s.add_parser('wheel'); p.add_argument('version'); p.add_argument('--upload', action='store_true')
     p = s.add_parser('fixtures'); p.add_argument('out')
     p = s.add_parser('verify-app'); p.add_argument('app'); p.add_argument('--zip'); p.add_argument('--max-kb', type=int); p.add_argument('--max-zip-kb', type=int)
     o = a.parse_args(argv)
     match o.cmd:
-        case 'make': make(o.version, o.dir, o.wheel)
+        case 'make': make(o.version, o.dir, o.wheel, pins=o.pin)
         case 'hash': print(lock_hash(o.dir, pinned_version()))
         case 'check':
             if why := check(o.dir): raise SystemExit('\n'.join(why))
             print('lock ok')
         case 'test':
             if not lock_test(o.dir, o.fresh, o.extras, o.records, o.keep)['passed']: raise SystemExit(1)
-        case 'diff': diff(o.dir)
+        case 'diff': diff(o.dir, old=packages(o.against) if o.against else None)
         case 'publish': publish(allow_downgrade=o.allow_downgrade)
         case 'promote': promote(o.n)
         case 'verify': verify('channel-test' if o.channel == 'test' else 'channel')
         case 'key': lock_key(keys_out=o.keys_out)
-        case 'dev-lock': dev_lock(o.out)
+        case 'dev-lock': dev_lock(o.out, o.src)
         case 'fetch': fetch_channel(o.out, 'channel-test' if o.channel == 'test' else 'channel')
         case 'wheel': wheel(o.version, o.upload)
         case 'fixtures': fixtures(o.out)
