@@ -221,9 +221,12 @@ def make(v, out=LOCK, wheel=None, owned=None, pins=()):
     return h
 
 def download_bytes(d):
-    "What a first install downloads: one fitting wheel per package."
-    tot = 0
-    for p in packages(d):
+    "What a first install downloads: one fitting wheel per package of the base env, no extras."
+    pkgs, tot = packages(d), 0
+    root = next((p for p in pkgs if p['name'] == 'leela-lock'), {})
+    base = _closure(pkgs, [x['name'] for x in root.get('dependencies', [])])
+    for p in pkgs:
+        if p['name'] not in base: continue
         ws = [w for w in p.get('wheels', []) if wheel_fits(_wname(w))]
         tot += max((w.get('size') or 0 for w in ws), default=0)
     return tot
