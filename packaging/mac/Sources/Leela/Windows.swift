@@ -3,9 +3,31 @@ import LeelaCore
 import WebKit
 
 /// The page's view: its native context menu is empty, as in the old app, unless the inspector is on.
+/// A file or folder dragged in from another app opens as a Finder open does; a drag inside the page stays the page's.
 final class LeelaWebView: WKWebView {
     var debug = false
+    /// what a drop from outside opens; `Windows.make` sends it to the app's open events
+    var onFiles: (([URL]) -> Void)?
     override func willOpenMenu(_ m: NSMenu, with e: NSEvent) { if !debug { m.removeAllItems() } }
+
+    /// the file URLs on a pasteboard from another app, else none
+    static func dropped(_ pb: NSPasteboard, outside: Bool) -> [URL] {
+        guard outside else { return [] }
+        return (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+    func files(_ i: NSDraggingInfo) -> [URL] { Self.dropped(i.draggingPasteboard, outside: i.draggingSource == nil) }
+    /// opens what a drop carries; false leaves the drop to WebKit
+    func take(_ pb: NSPasteboard, outside: Bool) -> Bool {
+        let urls = Self.dropped(pb, outside: outside)
+        guard !urls.isEmpty, let onFiles else { return false }
+        onFiles(urls); return true
+    }
+    override func draggingEntered(_ i: NSDraggingInfo) -> NSDragOperation { files(i).isEmpty ? super.draggingEntered(i) : .copy }
+    override func draggingUpdated(_ i: NSDraggingInfo) -> NSDragOperation { files(i).isEmpty ? super.draggingUpdated(i) : .copy }
+    override func draggingExited(_ i: NSDraggingInfo?) { if let i, !files(i).isEmpty { return }; super.draggingExited(i) }
+    override func prepareForDragOperation(_ i: NSDraggingInfo) -> Bool { files(i).isEmpty ? super.prepareForDragOperation(i) : true }
+    override func performDragOperation(_ i: NSDraggingInfo) -> Bool { take(i.draggingPasteboard, outside: i.draggingSource == nil) || super.performDragOperation(i) }
+    override func concludeDragOperation(_ i: NSDraggingInfo?) { if let i, !files(i).isEmpty { return }; super.concludeDragOperation(i) }
 }
 
 /// What a navigation does.
@@ -52,6 +74,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         c.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: Bridge.handler)
         let v = LeelaWebView(frame: .zero, configuration: c)
         v.debug = Self.debug; v.isInspectable = Self.debug
+        v.onFiles = { [weak self] urls in self?.app?.application(NSApp, open: urls) }
         v.navigationDelegate = self; v.uiDelegate = self
         v.allowsBackForwardNavigationGestures = false
         v.underPageBackgroundColor = background

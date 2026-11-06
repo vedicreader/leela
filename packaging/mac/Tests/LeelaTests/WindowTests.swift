@@ -86,6 +86,26 @@ import WebKit
         #expect(m.items.count == Menus.dockRecent && m.items[0].title == "f1" && m.items[0].toolTip == "/p/f1/" && m.items[0].representedObject as? String == "/p/f1/")
     }
 
+    @Test func aFileDroppedFromFinderGoesWhereAFinderOpenGoes() throws {
+        let app = AppDelegate(); app.windows.app = app
+        let (w, v) = app.windows.make(u("http://127.0.0.1:1/"), title: "t")
+        defer { w.close() }
+        let web = try #require(v as? LeelaWebView)
+        let dir = FileManager.default.temporaryDirectory.appending(path: "leela-drop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let f = dir.appending(path: "a.ipynb"); try Data("{}".utf8).write(to: f)
+        let pb = NSPasteboard(name: .init("leela-drop-\(UUID().uuidString)")); defer { pb.releaseGlobally() }
+        pb.clearContents(); pb.writeObjects([f as NSURL, dir as NSURL])
+        #expect(!web.take(pb, outside: false), "a drag inside the page is the page's")
+        #expect(app.queued.isEmpty)
+        // no server yet: queued as `application(_:open:)` queues a Finder open, and `open` sends a folder to its window, a file to its folder's
+        #expect(web.take(pb, outside: true))
+        #expect(app.queued.map(\.standardizedFileURL) == [f, dir].map(\.standardizedFileURL))
+        let text = NSPasteboard(name: .init("leela-drop-\(UUID().uuidString)")); defer { text.releaseGlobally() }
+        text.clearContents(); text.setString("print(1)", forType: .string)
+        #expect(!web.take(text, outside: true), "text dropped from another app goes to the page")
+    }
+
     @Test func textSubstitutionKeysAreTheOldAppsList() {
         #expect(Windows.noSubstitution.count == 7 && Windows.noSubstitution.contains("NSAutomaticQuoteSubstitutionEnabled"))
     }
