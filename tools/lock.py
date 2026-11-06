@@ -57,7 +57,7 @@ def child_env(base=None, **vals):
     "The environment uv gets from the app, from childenv.json: dropped keys, uv settings, `vals` filled in."
     s, base = spec(), dict(os.environ if base is None else base)
     e = {k: v for k, v in base.items() if k not in s['drop'] and not k.startswith(tuple(s['drop_prefixes']))}
-    return e | s['set'] | {k: v.format(**vals) for k, v in s['uv'].items()}
+    return s['set'] | e | {k: v.format(**vals) for k, v in s['uv'].items()}
 
 def server_env(base=None, **vals):
     "The server's environment: the uv one, the server keys, the env's bin first on PATH."
@@ -66,9 +66,10 @@ def server_env(base=None, **vals):
     e['PATH'] = os.pathsep.join([*(p.format(**vals) for p in s['path_first']), e.get('PATH', '/usr/bin:/bin')])
     return e
 
-def sync_args(lock, extras=()):
+def sync_args(lock, extras=(), inexact=False):
+    "The build command; `inexact` adds an extra to an env without removing what it has."
     s = spec()
-    return [a.format(lock=lock) for a in s['sync']] + [a.format(name=x) for x in extras for a in s['extra']]
+    return [a.format(lock=lock) for a in s['sync']] + (s['inexact'] if inexact else []) + [a.format(name=x) for x in extras for a in s['extra']]
 
 def owners():
     "The packages the owner publishes, from the metadata installed here; they skip the cooldown."

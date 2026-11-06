@@ -104,7 +104,7 @@ def test_childenv_has_what_the_plan_names():
     assert {'VIRTUAL_ENV', 'CONDA_PREFIX', 'PYTHONHOME', 'PYTHONPATH', 'PYTHONSTARTUP', 'PYTHONUSERBASE'} <= set(s['drop']) and 'UV_' in s['drop_prefixes']
     assert s['uv'] | {} == s['uv'] and {'UV_NO_CONFIG', 'UV_CACHE_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_PREFERENCE', 'UV_PYTHON', 'UV_PROJECT_ENVIRONMENT', 'UV_FROZEN', 'UV_NO_PROGRESS', 'UV_LINK_MODE'} == set(s['uv'])
     assert s['server']['PYTHONNOUSERSITE'] == '1' and s['path_first'] == ['{env}/bin'] and s['api'] == L.LAUNCHER_API
-    assert s['sync'][:3] == ['sync', '--frozen', '--no-install-project'] and '--inexact' in s['extra']
+    assert s['sync'][:3] == ['sync', '--frozen', '--no-install-project'] and s['inexact'] == ['--inexact']
 
 def test_the_child_env_drops_the_parents_python_and_uv_settings():
     e = L.child_env(dict(PATH='/usr/bin', VIRTUAL_ENV='/v', UV_INDEX_URL='x', PYTHONPATH='p', LEELA_HOST_TOKEN='t', HOME='/h'),
@@ -113,7 +113,8 @@ def test_the_child_env_drops_the_parents_python_and_uv_settings():
     assert e['UV_PROJECT_ENVIRONMENT'] == '/e' and e['UV_PYTHON'] == '3.12.16' and e['UV_NO_CONFIG'] == '1' and e['HOME'] == '/h'
     s = L.server_env(dict(PATH='/usr/bin'), cache='/c', python='/py', python_version='3.12.16', env='/e')
     assert s['PATH'].startswith('/e/bin:') and s['VIRTUAL_ENV'] == '/e' and s['PYTHONNOUSERSITE'] == '1'
-    assert L.sync_args('/l', ['mlx']) == ['sync', '--frozen', '--no-install-project', '--project', '/l', '--inexact', '--extra', 'mlx']
+    assert L.sync_args('/l', ['mlx', 'llama']) == ['sync', '--frozen', '--no-install-project', '--project', '/l', '--extra', 'mlx', '--extra', 'llama']
+    assert L.sync_args('/l', ['mlx'], inexact=True)[-3:] == ['--inexact', '--extra', 'mlx']
 
 def test_the_manifest_has_the_documented_keys(tmp_path):
     d = _lock(tmp_path)

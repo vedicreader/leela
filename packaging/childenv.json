@@ -22,6 +22,7 @@
   "path_first": ["{env}/bin"],
   "tool_dirs": ["~/.local/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"],
   "sync": ["sync", "--frozen", "--no-install-project", "--project", "{lock}"],
-  "extra": ["--inexact", "--extra", "{name}"],
+  "extra": ["--extra", "{name}"],
+  "inexact": ["--inexact"],
   "server_args": ["--app", "--shell", "none", "--port", "{port}", "--gateway-port", "0"]
 }

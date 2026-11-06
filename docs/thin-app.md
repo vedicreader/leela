@@ -45,7 +45,7 @@ Swift (`ChildEnv`) and `tools/lock.py` read the same file.
 - `drop` and `drop_prefixes`: names removed from the launcher's environment. These include `VIRTUAL_ENV`, `CONDA_PREFIX`, `PYTHONHOME`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONUSERBASE` and every `UV_*`.
 - `uv`: what uv gets. `UV_NO_CONFIG=1`, the cache, the Python folder, `UV_PYTHON_PREFERENCE=only-managed`, the exact Python, the env folder, `UV_FROZEN=1`, `UV_NO_PROGRESS=1`, `UV_LINK_MODE=clone`.
 - `server`: what the server also gets. `PYTHONNOUSERSITE=1`, `VIRTUAL_ENV`, and the env's `bin` first on `PATH`.
-- `sync`: the build command, `uv sync --frozen --no-install-project --project <locks/n>`. `extra` adds `--inexact --extra <name>`.
+- `sync`: the build command, `uv sync --frozen --no-install-project --project <locks/n>`. `extra` adds `--extra <name>` per extra; `inexact` adds `--inexact` when an extra goes into a running env.
 - `server_args`: `--app --shell none --port <port> --gateway-port 0`.
 
 ## The contract between the launcher and the server (API 1)
