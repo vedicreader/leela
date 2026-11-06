@@ -208,7 +208,9 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | Close Window ⌘W | C:540 `keyDown_` calls `performClose:` | W:372 adds "Close Window" to File | fixed |
 | About, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q | C:1070 `_add_app_menu` | W:314 to W:329 | fixed (Services, Hide Others and Show All were missing) |
 | "Use Previous Version", "Show Server Log" | none | W:318 | thin only |
-| A menu bar before the server answers | built before `webview.start` (K:515) | W:344 `fallback` at launch (AD:37); replaced when `/app/menu.json` comes (AD:84), kept when it does not | fixed: before, the setup window had no ⌘Q, ⌘C or ⌘H |
+| The launcher's own chords (Quit, Hide, Close Window ⇧⌘W, Undo, Minimize, Full Screen) | kavacha's `LAUNCHER_ROWS` | `/app/menu.json` gives `launcher` (`menus.launcher_json`), and `Menus.own` puts each chord on its row; `Menus.launcher` is the same list before the server answers, and a Swift test keeps the two equal | same |
+| A chord with shift on a key with no case (⌥⇧↩) | the page | `LeelaBar` fires the row whose chord is exactly the event's; AppKit let ⌥↩ take ⌥⇧↩ | fixed |
+| A menu bar before the server answers | built before `webview.start` (K:515) | W:359 `fallback` at launch (AD:37); replaced when `/app/menu.json` comes (AD:84), kept when it does not | fixed: before, the setup window had no ⌘Q, ⌘C or ⌘H |
 | Zoom keys ⌘+ and ⌘- | none | none | same: the keymap has none |
 | Find in page | the keymap's `find_in_file` ⌘F | the same row | same |
 
