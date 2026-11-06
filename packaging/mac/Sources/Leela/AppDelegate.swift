@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     var appVersion: String { bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0" }
     let net = NWPathMonitor()
     var timer: Timer?
+    var sigterm: DispatchSourceSignal?
+    lazy var runner = MenuRunner { [weak self] js in self?.windows.run(js: js) }
+    /// what the old app's workspace shutdown may take, as kavacha's quit_cleanly
+    static let quitGrace = 15.0
 
     var res: URL { bundle.resourceURL! }
 
@@ -29,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
             return NSApp.terminate(nil)
         }
         runLock = lock
+        Windows.quietTextSubstitution()
+        NSApp.mainMenu = Menus.build(Menus.fallback, runner: runner, app: self)
+        quitOnSigterm()
         let uv = bundle.bundleURL.appending(path: "Contents/Helpers/uv")
         guard let spec = try? ChildEnv.load(res.appending(path: "childenv.json")), let keys = try? SSHKey.load(res.appending(path: "lock-keys.pub")),
               let uvLine = Run.output(uv, ["--version"]), let uvVersion = uvLine.split(separator: " ").dropFirst().first.map(String.init) else {
@@ -74,13 +81,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     func ready(_ base: URL) {
         windows.port = sup.port
         Task {
-            if let m = await get("/app/menu.json")?["menus"] as? [[String: Any]] { NSApp.mainMenu = Menus.build(m, target: self) }
+            if let m = await get("/app/menu.json")?["menus"] as? [[String: Any]] { NSApp.mainMenu = Menus.build(m, runner: self.runner, app: self) }
             recent = await get("/app/recent")?["recent"] as? [String] ?? []
         }
-        if windows.windows.isEmpty {
-            let q = queued; queued = []
-            if q.isEmpty { windows.show(base) } else { open(q) }
-        } else { windows.reloadAll(port: sup.port) }
+        // what Finder sent while the server was starting, restarting or offline opens now, whatever windows there are
+        let q = queued; queued = []
+        if windows.windows.isEmpty { if q.isEmpty { windows.show(base) } } else { windows.reloadAll(port: sup.port) }
+        open(q)
         if store.pruneDue() { Task.detached { [store] in _ = try? await Run.toEnd(store!.pruneLaunch(), log: store!.paths.logs.appending(path: "prune.log")); _ = try? store!.update { $0.pruned = Date().timeIntervalSince1970 } } }
         _ = try? store.gc(inUse: Set([sup.hash].compactMap { $0 }), building: Set([sup.buildingHash].compactMap { $0 }))
     }
@@ -138,7 +145,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     func openFile(_ path: String) {
         Task {
             let dir = (path as NSString).deletingLastPathComponent
-            let (code, d) = await request("/hub/open", method: "POST", query: ["path": dir, "file": path, "grant": grants.issue(dir)])
+            var (code, d) = await request("/hub/open", method: "POST", query: ["path": dir, "file": path, "grant": grants.issue(dir)])
+            // refused in the loose window too (a key file, one too large): the server asks before it adds the folder, as leela_app.open_file
+            if code != 200, let o = d["offer"] as? String, !o.isEmpty, d["declined"] as? Bool != true {
+                (code, d) = await request("/hub/open", method: "POST", query: ["path": o, "file": path, "folder": "1"])
+                if d["declined"] as? Bool == true { return }
+            }
             guard code == 200, let s = d["url"] as? String, let u = URL(string: s) else { return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")") }
             windows.show(u, title: "leela — \((path as NSString).lastPathComponent)")
         }
@@ -154,29 +166,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     func tell(_ msg: String) { let a = NSAlert(); a.messageText = msg; a.runModal() }
 
     // menus
-    @objc func menuRow(_ i: NSMenuItem) { if let js = i.representedObject as? String { windows.run(js: js) } }
     @objc func usePrevious(_ i: Any?) { Task { if !(await sup.usePrevious()) { tell("There is no previous version to go back to.") } } }
     @objc func showLog(_ i: Any?) { NSWorkspace.shared.open(paths.serverLog) }
     @objc func openRecent(_ i: NSMenuItem) { if let p = i.representedObject as? String { openFolder(p, trusted: true) } }
 
     func applicationDockMenu(_ s: NSApplication) -> NSMenu? {
         Task { recent = await get("/app/recent")?["recent"] as? [String] ?? recent }
-        let m = NSMenu()
-        for p in recent.prefix(10) {
-            let i = NSMenuItem(title: (p as NSString).lastPathComponent, action: #selector(openRecent(_:)), keyEquivalent: "")
-            i.target = self; i.representedObject = p; m.addItem(i)
-        }
-        return m
+        return Menus.dock(recent, target: self, action: #selector(openRecent(_:)))
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
 
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows v: Bool) -> Bool {
-        if !v, case .ready(let base) = sup.phase { windows.show(base) }
+        if !v, !windows.reopen(), case .ready(let base) = sup.phase { windows.show(base) }
         return true
     }
 
-    func applicationWillTerminate(_ n: Notification) { sup?.stop(); control?.stop() }
+    func applicationWillTerminate(_ n: Notification) { sup?.stop(grace: Self.quitGrace); control?.stop() }
+
+    /// SIGTERM quits as ⌘Q does, so the server is stopped; a caught signal, unlike an ignored one, is reset for the children
+    func quitOnSigterm() {
+        signal(SIGTERM) { _ in }
+        let s = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        s.setEventHandler { NSApp.terminate(nil) }
+        s.resume(); sigterm = s
+    }
 
     // ControlHost
     func confirm(_ question: String) async -> Bool? {
@@ -184,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         let a = NSAlert()
         a.messageText = "Leela"; a.informativeText = question
         a.addButton(withTitle: "Add"); a.addButton(withTitle: "Cancel")
-        if let w = NSApp.keyWindow ?? windows.windows.values.first?.0 {
+        if let w = windows.forQuestion() {
             return await withCheckedContinuation { c in a.beginSheetModal(for: w) { c.resume(returning: $0 == .alertFirstButtonReturn) } }
         }
         return a.runModal() == .alertFirstButtonReturn

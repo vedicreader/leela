@@ -12,5 +12,7 @@ let package = Package(
         .target(name: "LeelaCore", swiftSettings: v5),
         .executableTarget(name: "Leela", dependencies: ["LeelaCore"], swiftSettings: v5),
         .testTarget(name: "LeelaCoreTests", dependencies: ["LeelaCore"], exclude: ["Fixtures"], swiftSettings: v5),
+        // the window layer: menus, key equivalents, navigation policy, the Dock menu; no window is ordered on screen
+        .testTarget(name: "LeelaTests", dependencies: ["Leela"], swiftSettings: v5),
     ]
 )

@@ -574,3 +574,17 @@ def test_the_thin_app_cask_watches_app_tags_and_zaps_its_folders():
 def test_ci_no_longer_builds_the_fat_mac_app():
     y = (ROOT/'.github'/'workflows'/'desktop-artifacts.yml').read_text()
     assert re.search(r'\n  macos:\n    if: false\n', y)
+
+def test_the_thin_launcher_keeps_kavachas_window_settings():
+    """The launcher copies these from kavacha.window, the old app's window; a change there must reach the Swift side."""
+    from kavacha.window import DEFAULT_SIZE, DOCK_RECENT, MIN_SIZE, NO_SUBSTITUTION
+    src = (THIN/'Sources'/'Leela'/'Windows.swift').read_text()
+    assert set(re.findall(r'"(NSAutomatic\w+)"', src)) == set(NO_SUBSTITUTION)
+    assert f'NSSize(width: {DEFAULT_SIZE[0]}, height: {DEFAULT_SIZE[1]})' in src and f'NSSize(width: {MIN_SIZE[0]}, height: {MIN_SIZE[1]})' in src
+    assert f'static let dockRecent = {DOCK_RECENT}' in src and '"LEELA_WEBVIEW_DEBUG"' in src
+
+def test_the_thin_app_tests_its_shortcuts_against_the_menu_the_server_serves():
+    """`make test` writes menu.json from the Python source, so a keymap or kavacha change reaches the Swift shortcut test."""
+    mk = (THIN/'Makefile').read_text()
+    assert 'from leela.blocks.keys.menus import menu_json' in mk and "os.environ['XDG_CONFIG_HOME']=tempfile.mkdtemp()" in mk
+    assert 'LEELA_MENU_JSON="$(MENU_JSON)" swift test' in mk

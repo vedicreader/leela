@@ -16,8 +16,12 @@ export SIGN_ID LOCK KEYS LOCK_SRC LOCK_DIR WORK
 
 .PHONY: test build uv-fetch dev-lock bundle app verify zip fixtures clean
 
+# the shortcut tests read the server's menu.json fresh from the Python source, with the default keymap
+MENU_JSON := $(CURDIR)/build/menu.json
 test:
-	swift test $(if $(value FILTER),--filter "$$FILTER")
+	mkdir -p build
+	cd ../.. && uv run --frozen python -c "import os,sys,json,tempfile; os.environ['XDG_CONFIG_HOME']=tempfile.mkdtemp(); from leela.blocks.keys.menus import menu_json; json.dump({'menus': menu_json()}, open(sys.argv[1], 'w'))" "$(MENU_JSON)"
+	LEELA_MENU_JSON="$(MENU_JSON)" swift test $(if $(value FILTER),--filter "$$FILTER")
 
 build:
 	swift build

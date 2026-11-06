@@ -148,11 +148,11 @@ public final class Supervisor {
         set(.failed("The Leela server stopped (exit code \(code)).\n\n" + Run.tail(store.paths.serverLog)))
     }
 
-    /// stops the server and a build that runs: SIGTERM, then SIGKILL after 3 seconds
-    public func stop() {
+    /// stops the server and a build that runs: SIGTERM, then SIGKILL after `grace` seconds
+    public func stop(grace: Double = 3) {
         stopping = true
         building?.stop(); building = nil
-        server?.stop(); server = nil
+        server?.stop(grace: grace); server = nil
         if case .ready = phase { set(.idle) }
         if case .setup = phase { set(.idle) }
     }
