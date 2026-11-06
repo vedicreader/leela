@@ -59,8 +59,8 @@ public final class EnvStore: @unchecked Sendable {
     public let spec: ChildEnv
     public let uv: URL
     public let uvVersion: String
-    let parent: [String: String]
-    let home: String
+    public let parent: [String: String]
+    public let home: String
     public static let extraNames = ["mlx", "llama", "langserver"]
     private let q = NSLock()
 

@@ -182,14 +182,14 @@ def _headers(scope): return {k.lower(): v for k, v in (scope.get('headers') or (
 #: The launcher's routes on the server: liveness, its folder grants, and what its menu bar and Dock menu show.
 HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH = '/health', '/hub/grant', '/app/menu.json', '/app/recent'
 APP_PATHS = (HEALTH_PATH, GRANT_PATH, MENU_PATH, RECENT_PATH)
-HOST_HEADER = 'x-leela-host-token'
-BAD_TOKEN = 'This request did not come from the Leela app.'
+BAD_GRANT = 'This request did not come from the Leela app.'
 
-def _host_says(scope):
-    "None with no host token header, else whether it is the launcher's token."
-    if (t := _headers(scope).get(HOST_HEADER.encode())) is None: return None
-    from .core.host import token_ok
-    return token_ok(t.decode('latin-1'))
+def _launcher_grant(scope):
+    "None with no `grant`, else whether the launcher issued it for this `path`: the launcher proves an open with a one-time nonce, so the token never leaves it."
+    q = parse_qs(scope.get('query_string', b'').decode())
+    if not (nonce := (q.get('grant') or [''])[0]): return None
+    from .core.host import grant_ok
+    return grant_ok(nonce, (q.get('path') or [''])[0])
 
 def health():
     "What `/health` answers: the launcher waits for status ok."
@@ -202,9 +202,9 @@ async def _app_route(scope, send):
     if path == HEALTH_PATH:
         if method not in ('GET', 'HEAD'): return await _json(send, {'ok': False, 'error': 'GET only'}, 405)
         return await _json(send, health())
-    if not _host_says(scope): return await _json(send, {'ok': False, 'error': BAD_TOKEN, 'config': cfg_mark()}, 401)
     if path == GRANT_PATH:
         if method != 'POST': return await _json(send, {'ok': False, 'error': 'POST only'}, 405)
+        if not await asyncio.to_thread(_launcher_grant, scope): return await _json(send, {'ok': False, 'error': BAD_GRANT, 'config': cfg_mark()}, 401)
         raw = (parse_qs(scope.get('query_string', b'').decode()).get('path') or [''])[0]
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
@@ -356,8 +356,8 @@ class WorkspaceHub:
         raw, file, folder = (q.get('path') or [''])[0], (q.get('file') or [''])[0], (q.get('folder') or [''])[0] == '1'
         if scope.get('method', 'GET') != 'POST' and raw.strip():
             return await _json(send, {'ok': False, 'error': 'Open a folder with a POST request.', 'config': cfg_mark()}, 405)
-        trusted = _host_says(scope)
-        if trusted is False: return await _json(send, {'ok': False, 'error': BAD_TOKEN, 'config': cfg_mark()}, 401)
+        trusted = await asyncio.to_thread(_launcher_grant, scope)
+        if trusted is False: return await _json(send, {'ok': False, 'error': BAD_GRANT, 'config': cfg_mark()}, 401)
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
         if root is None or not root.is_dir():

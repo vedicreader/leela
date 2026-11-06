@@ -32,6 +32,8 @@ import Testing
     func updateState() -> UpdateState { UpdateState(state: "ready") }
     func restartServer() async -> Bool { restarts += 1; return true }
     func status() -> [String: Any] { ["app_version": "1.0.0", "brew": true] }
+    let grants = GrantBook()
+    func checkGrant(_ nonce: String, path: String) -> Bool { grants.check(nonce, path: path) }
 }
 
 func req(_ method: String, _ path: String, _ body: [String: Any]? = nil, token: String? = "tok") -> ControlRequest {
@@ -65,6 +67,11 @@ func req(_ method: String, _ path: String, _ body: [String: Any]? = nil, token: 
         #expect(await ControlRouter.handle(req("POST", "/restart", [:]), token: "tok", host: h).1["ok"] as? Bool == true && h.restarts == 1)
         #expect(await ControlRouter.handle(req("GET", "/status"), token: "tok", host: h).1["brew"] as? Bool == true)
         #expect(await ControlRouter.handle(req("GET", "/nope"), token: "tok", host: h).0 == 404)
+        let n = h.grants.issue("/a")
+        #expect(await ControlRouter.handle(req("POST", "/grant", ["nonce": n, "path": "/b"]), token: "tok", host: h).1["ok"] as? Bool == false, "another path")
+        let m = h.grants.issue("/a")
+        #expect(await ControlRouter.handle(req("POST", "/grant", ["nonce": m, "path": "/a"]), token: "tok", host: h).1["ok"] as? Bool == true)
+        #expect(await ControlRouter.handle(req("POST", "/grant", ["nonce": m, "path": "/a"]), token: "tok", host: h).1["ok"] as? Bool == false, "once")
     }
 
     @Test func theServerAnswersOverHTTPOnLoopbackWithTheToken() async throws {

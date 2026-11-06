@@ -303,10 +303,11 @@ def smoke(env_dir, results, extras=(), wait=180):
         host = FakeHost(token)
         env = server_env(env=env_dir, cache='', python='', python_version=PYTHON) | dict(
             XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), LEELA_SHELL_ENV='0',
-            LEELA_HOST_URL=host.url, LEELA_HOST_TOKEN=token, LEELA_APP_VERSION='0.0.0-test', LEELA_LOCK_N='0')
+            LEELA_HOST_URL=host.url, LEELA_APP_VERSION='0.0.0-test', LEELA_LOCK_N='0')
         args = [a.format(port=port) for a in spec()['server_args']]
         with open(tmp/'server.log', 'wb') as log:
-            srv = subprocess.Popen([env_dir/'bin'/'leela', *args], env=env, cwd=tmp, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            srv = subprocess.Popen([env_dir/'bin'/'leela', *args], env=env, cwd=tmp, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
+        srv.stdin.write(f'{token}\n'.encode()); srv.stdin.close()   # as the launcher does: never in argv, env, a file or a log
         base = f'http://127.0.0.1:{port}'
         def health():
             end = time.monotonic() + wait
@@ -426,12 +427,9 @@ def fetch(url, dst=None):
     if dst: Path(dst).write_bytes(b)
     return b
 
-POINTER_DAYS = 180
-
 def pointer(n, manifest_sha, name, at=None):
-    "A channel pointer: it names its channel, so a test pointer served as stable is refused, and it expires, so an old one cannot freeze updates."
-    at = at or now()
-    return dict(n=n, manifest_sha256=manifest_sha, published=iso(at), expires=iso(at + timedelta(days=POINTER_DAYS)), channel=name)
+    "A channel pointer. It names its channel, so a test pointer served as stable is refused."
+    return dict(n=n, manifest_sha256=manifest_sha, published=iso(at or now()), channel=name)
 
 def channel(name='channel', keys_pub=LOCK/'keys.pub', base=f'{DL}/lock-channel'):
     "The channel pointer `name` (channel or channel-test), checked; {} when none is published."
@@ -443,7 +441,6 @@ def channel(name='channel', keys_pub=LOCK/'keys.pub', base=f'{DL}/lock-channel')
     if not verify_sig(tmp/'c.json', tmp/'c.sig', keys_pub): raise SystemExit(f'{name}.json has a bad signature')
     c = json.loads((tmp/'c.json').read_text())
     if c.get('channel') != name: raise SystemExit(f"{name}.json is a pointer for {c.get('channel')}")
-    if c.get('expires', '9') < iso(now()): raise SystemExit(f"{name}.json expired at {c['expires']}")
     return c
 
 def fetch_lock(n, into, base=DL):

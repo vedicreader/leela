@@ -56,6 +56,8 @@ public enum Bridge {
     func updateState() -> UpdateState
     func restartServer() async -> Bool
     func status() -> [String: Any]
+    /// whether the launcher issued `nonce` for `path` (one use)
+    func checkGrant(_ nonce: String, path: String) -> Bool
 }
 
 public struct ControlRequest: Sendable {
@@ -97,6 +99,9 @@ public enum ControlRouter {
             return (200, ["state": u.state, "line": u.line])
         case ("POST", "/restart"): return (200, ["ok": await host.restartServer()])
         case ("GET", "/status"): return (200, host.status())
+        case ("POST", "/grant"):
+            guard let n = body["nonce"] as? String, let p = body["path"] as? String else { return (400, ["ok": false, "error": "nonce and path"]) }
+            return (200, ["ok": host.checkGrant(n, path: p)])
         default: return (404, ["ok": false, "error": "no route \(r.method) \(r.path)"])
         }
     }

@@ -1,8 +1,8 @@
 "Host mode: the Leela Mac app runs this server as its child and answers on a loopback control server. See `docs/thin-app.md`."
-import hmac, http.client, json, os
+import hmac, http.client, json, os, select, sys
 from urllib.parse import urlsplit
 
-__all__ = ['HostError', 'OWNED', 'take', 'on', 'steered', 'token_ok', 'call', 'status', 'confirm', 'setup', 'app_version', 'lock_n']
+__all__ = ['HostError', 'OWNED', 'take', 'on', 'steered', 'call', 'status', 'confirm', 'grant_ok', 'setup', 'app_version', 'lock_n']
 
 #: What the launcher sets for its child. No shell and no stored value replaces these.
 OWNED = ('LEELA_HOST_URL', 'LEELA_HOST_TOKEN', 'LEELA_APP_VERSION', 'LEELA_APP_BUNDLE', 'LEELA_LOCK_N', 'LEELA_ENV_HASH', 'LEELA_UV')
@@ -12,12 +12,28 @@ STEER = ('PYTHONPATH', 'PYTHONHOME', 'PYTHONSTARTUP', 'PYTHONUSERBASE', 'VIRTUAL
 class HostError(Exception): "The launcher did not answer, or refused."
 
 _host = dict(url='', token='')
+#: Seconds the launcher has to write the token line after it starts this process.
+TOKEN_WAIT = 5
 
-def take(env=None):
-    "Move the control server's address and token out of the environment, so no kernel or shell inherits them. Whether host mode is on."
+def _read_line(fd, timeout):
+    "One line from `fd`, read a byte at a time so nothing past it is taken; '' on end of file or when it does not come in time."
+    out = b''
+    while not out.endswith(b'\n') and len(out) < 1024:
+        if not select.select([fd], [], [], timeout)[0]: return ''
+        if not (b := os.read(fd, 1)): break
+        out += b
+    return out.decode('ascii', 'replace').strip()
+
+def take(env=None, fd=0, timeout=None):
+    "Host mode: the control server's address from the environment, its token as one line on stdin, then stdin on /dev/null. Whether host mode is on."
     env = os.environ if env is None else env
-    if url := env.pop('LEELA_HOST_URL', ''): _host.update(url=url, token=env.pop('LEELA_HOST_TOKEN', ''))
-    else: env.pop('LEELA_HOST_TOKEN', None)
+    if env.pop('LEELA_HOST_TOKEN', None) is not None: print('leela: LEELA_HOST_TOKEN in the environment is ignored; the Leela app gives the token on stdin', file=sys.stderr)
+    if not (url := env.pop('LEELA_HOST_URL', '')): return on()
+    token = _read_line(fd, TOKEN_WAIT if timeout is None else timeout)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, fd); os.close(null)
+    if not token: raise SystemExit('leela: LEELA_HOST_URL is set, but no token line came on stdin. Only the Leela app starts the server this way.')
+    _host.update(url=url, token=token)
     return on()
 
 def on(): return bool(_host['url'])
@@ -27,11 +43,6 @@ def app_version(): return os.environ.get('LEELA_APP_VERSION') if on() else None
 def lock_n():
     try: return int(os.environ['LEELA_LOCK_N'])
     except (KeyError, ValueError): return None
-
-def token_ok(given):
-    "Whether `given` is the launcher's token. No token set means none is accepted."
-    t = _host['token']
-    return bool(t and given) and hmac.compare_digest(t.encode(), str(given).encode())
 
 def _where():
     u = urlsplit(_host['url'])
@@ -54,6 +65,12 @@ def call(path, body=None, read=600, connect=3):
     except HostError: raise
     except Exception as e: raise HostError(f'the Leela app did not answer {path}: {type(e).__name__}: {e}') from e
     finally: c.close()
+
+def grant_ok(nonce, path):
+    "Whether the launcher issued the one-time `nonce` for opening `path`: how a Finder or Dock open, or a picked folder, is trusted. The launcher never sends the token to the server."
+    if not (on() and nonce): return False
+    try: return call('/grant', {'nonce': str(nonce), 'path': str(path)}, read=10).get('ok') is True
+    except HostError: return False
 
 def status(read=5):
     "The launcher's `/status`, or {} when it does not answer."

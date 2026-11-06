@@ -47,25 +47,47 @@ def hosted(monkeypatch):
 @pytest.fixture
 def off(monkeypatch): monkeypatch.setattr(host, '_host', dict(url='', token=''))
 
-# Taking the token out of the environment
+# The token: one line on stdin, never in argv, env, a file or a log
 
-def test_take_moves_the_url_and_token_out_of_the_environment(monkeypatch):
-    """A kernel inherits the server's environment, so a token left there would let any cell call the launcher."""
+def _pipe(data=None):
+    "A pipe whose read end stands in for stdin; `data` is written and the write end closed, or kept open when None."
+    r, w = os.pipe()
+    if data is not None: os.write(w, data); os.close(w)
+    return r, w
+
+def test_take_reads_one_token_line_from_stdin_then_puts_stdin_on_devnull(monkeypatch):
     monkeypatch.setattr(host, '_host', dict(url='', token=''))
-    env = dict(LEELA_HOST_URL='http://127.0.0.1:9', LEELA_HOST_TOKEN='t', LEELA_APP_VERSION='1.0.0')
-    assert host.take(env) and host.on()
-    assert 'LEELA_HOST_URL' not in env and 'LEELA_HOST_TOKEN' not in env and env['LEELA_APP_VERSION'] == '1.0.0'
+    r, _ = _pipe(f'{TOKEN}\nrest of the input\n'.encode())
+    env = dict(LEELA_HOST_URL='http://127.0.0.1:9', LEELA_APP_VERSION='1.0.0')
+    assert host.take(env, fd=r, timeout=2) and host._host == dict(url='http://127.0.0.1:9', token=TOKEN)
+    assert 'LEELA_HOST_URL' not in env and env['LEELA_APP_VERSION'] == '1.0.0'
+    assert os.read(r, 100) == b'', 'stdin now reads /dev/null: the rest never reaches a kernel'
+    os.close(r)
 
-def test_no_url_is_no_host_mode_and_a_stray_token_still_goes(monkeypatch):
+@pytest.mark.parametrize('data', [b'', b'\n', None], ids=['closed', 'empty line', 'never comes'])
+def test_host_mode_refuses_to_start_with_no_token_line(monkeypatch, data):
     monkeypatch.setattr(host, '_host', dict(url='', token=''))
-    env = dict(LEELA_HOST_TOKEN='t')
-    assert not host.take(env) and 'LEELA_HOST_TOKEN' not in env
+    r, w = _pipe(data)
+    with pytest.raises(SystemExit, match='no token line came on stdin'): host.take(dict(LEELA_HOST_URL='http://127.0.0.1:9'), fd=r, timeout=.3)
+    assert not host.on()
+    os.close(r)
+    if data is None: os.close(w)
 
-def test_the_token_check_compares_whole_tokens_and_an_empty_token_matches_nothing(monkeypatch):
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=''))
-    assert not host.token_ok('') and not host.token_ok('x')
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
-    assert host.token_ok(TOKEN) and not host.token_ok(TOKEN[:-1]) and not host.token_ok('')
+def test_a_token_in_the_environment_is_ignored_with_a_warning(monkeypatch, capsys):
+    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    r, _ = _pipe(b'from-stdin\n')
+    env = dict(LEELA_HOST_URL='http://127.0.0.1:9', LEELA_HOST_TOKEN='from-env')
+    host.take(env, fd=r, timeout=2)
+    assert host._host['token'] == 'from-stdin' and 'LEELA_HOST_TOKEN' not in env
+    assert 'LEELA_HOST_TOKEN in the environment is ignored' in capsys.readouterr().err
+    os.close(r)
+
+def test_no_url_is_no_host_mode_and_stdin_is_not_read(monkeypatch):
+    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    r, w = _pipe(None)
+    assert not host.take(dict(LEELA_HOST_TOKEN='t'), fd=r, timeout=.1)
+    os.write(w, b'x'); assert os.read(r, 1) == b'x', 'stdin untouched'
+    os.close(r); os.close(w)
 
 @pytest.mark.parametrize('url', ['http://127.0.0.1@evil.example:80', 'https://127.0.0.1:9', 'http://localhost:9', 'http://10.0.0.1:9', 'http://127.0.0.1'])
 def test_the_client_talks_only_to_a_loopback_http_url(monkeypatch, url):
@@ -101,7 +123,8 @@ def test_stored_values_do_not_replace_the_launchers_in_host_mode(monkeypatch):
 def test_host_setup_keeps_the_env_bin_first_and_skips_the_extras_folder(monkeypatch, tmp_path):
     import leela
     called = []
-    monkeypatch.setattr(leela, 'use_login_path', lambda: os.environ.__setitem__('PATH', '/opt/homebrew/bin:/usr/bin'))
+    monkeypatch.setenv('PATH', os.environ['PATH'])   # restored after the test
+    monkeypatch.setattr(leela, 'use_login_path', lambda: os.environ.__setitem__('PATH', '/opt/homebrew/bin:/usr/bin:/bin'))
     monkeypatch.setattr(leela, 'use_extras', lambda: called.append('extras'))
     monkeypatch.setattr(envs, 'import_login_env', lambda *a, **kw: [])
     monkeypatch.setattr(envs, 'apply_stored_env', lambda *a, **kw: [])
@@ -115,13 +138,17 @@ def test_cli_in_host_mode_takes_the_token_and_never_adds_the_extras_folder(monke
     import leela, leela.cli, leela.app
     seen = {}
     monkeypatch.setattr(host, '_host', dict(url='', token=''))
-    monkeypatch.setenv('LEELA_HOST_URL', 'http://127.0.0.1:9'); monkeypatch.setenv('LEELA_HOST_TOKEN', TOKEN)
+    monkeypatch.setenv('LEELA_HOST_URL', 'http://127.0.0.1:9')
+    r, _ = _pipe(f'{TOKEN}\n'.encode())
+    take = host.take
+    monkeypatch.setattr(host, 'take', lambda: take(fd=r, timeout=2))
     monkeypatch.setattr(host, 'setup', lambda: seen.setdefault('setup', True))
     monkeypatch.setattr(leela, 'use_extras', lambda: seen.setdefault('extras', True))
     monkeypatch.setattr(leela.app, 'serve_ide', lambda roots, **kw: seen.update(kw))
     leela.cli.main(['--app', '--shell', 'none', '--port', '5999', '--gateway-port', '0'])
     assert seen.get('setup') and 'extras' not in seen and seen['shell'] == 'none' and seen['app_window']
-    assert 'LEELA_HOST_TOKEN' not in os.environ and host.on()
+    assert host._host['token'] == TOKEN and not any(TOKEN in v for v in os.environ.values())
+    os.close(r)
 
 # /health and the launcher's routes
 
@@ -137,42 +164,51 @@ def test_health_stays_behind_the_host_guard():
     assert _guard('GET', {'host': 'evil.example'}, path='/health') == 421
     assert _guard('GET', {}, path='/health') == 'passed'
 
-@pytest.mark.parametrize('path', ['/hub/grant', '/app/menu.json', '/app/recent'])
-def test_the_launchers_routes_need_its_token(hosted, path):
+def test_the_menu_and_recent_routes_carry_no_secret_and_need_none(hosted):
+    """The launcher sends the server nothing secret: a process that took the port first learns nothing."""
     hosted()
-    for headers in ((), (('x-leela-host-token', 'wrong'),), (('x-leela-host-token', ''),)):
-        st, body = _call(WorkspaceHub([], 5001), path, b'path=/tmp', headers=headers)
-        assert st == 401 and body['ok'] is False and 'config' in body
-
-def test_the_menu_route_gives_the_bar_with_appkit_chords(hosted):
-    hosted()
-    st, body = _call(WorkspaceHub([], 5001), '/app/menu.json', method='GET', headers=(('x-leela-host-token', TOKEN),))
+    st, body = _call(WorkspaceHub([], 5001), '/app/menu.json', method='GET')
     titles = [m['title'] for m in body['menus']]
     assert st == 200 and titles[0] == '__app__' and 'Edit' in titles
     edit = next(m for m in body['menus'] if m['title'] == 'Edit')['items']
     assert {'title': 'Copy', 'selector': 'copy:', 'key': 'c', 'mask': 1 << 20} in edit and {'sep': True} in edit
+    assert _call(WorkspaceHub([], 5001), '/app/recent', method='GET')[0] == 200
+
+def _grants(issued):
+    "A fake launcher that says yes to each `(nonce, path)` it issued, once."
+    def check(b):
+        k = (b['nonce'], b['path'])
+        return {'ok': issued.pop(k, None) is not None}
+    return {('POST', '/grant'): check}
 
 def test_a_grant_from_the_launcher_lets_the_next_page_open_pass_with_no_question(hosted, tmp_path, folders):
     """A folder picked in the app's own dialog is trusted, as `shell_api().on_picked = grant` made it in the fat app."""
     from test_folder_gate import Asked
-    hosted()
+    mine = folders[0]
+    hosted(_grants({('n1', str(mine)): True}))
     h, _ = _hub(tmp_path)
     hub.set_confirmer(asked := Asked(False))
-    mine = folders[0]
-    assert _call(h, '/hub/grant', f'path={mine}'.encode(), headers=(('x-leela-host-token', TOKEN),))[0] == 200
+    assert _call(h, '/hub/grant', f'path={mine}&grant=n1'.encode())[0] == 200
+    assert _call(h, '/hub/grant', f'path={mine}&grant=n1'.encode())[0] == 401, 'a nonce works once'
+    assert _call(h, '/hub/grant', f'path={mine}'.encode())[0] == 401
     st, body = _call(h, '/hub/open', f'path={mine}'.encode())
     assert st == 200 and body['ok'] and not asked.qs
 
-def test_hub_open_with_the_token_is_trusted_and_with_a_wrong_token_refused(hosted, tmp_path, folders):
+def test_hub_open_with_a_launcher_grant_is_trusted_and_a_forged_one_refused(hosted, tmp_path, folders):
     from test_folder_gate import Asked
-    hosted()
+    mine, proj = folders
+    f = hosted(_grants({('n2', str(mine)): True}))
     h, _ = _hub(tmp_path)
     hub.set_confirmer(asked := Asked(False))
-    mine, proj = folders
-    st, body = _call(h, '/hub/open', f'path={mine}&also={proj}'.encode(), headers=(('x-leela-host-token', TOKEN),))
+    st, body = _call(h, '/hub/open', f'path={mine}&also={proj}&grant=n2'.encode())
     assert st == 200 and body['ok'] and not asked.qs
-    st, body = _call(h, '/hub/open', f'path={proj}'.encode(), headers=(('x-leela-host-token', 'nope'),))
-    assert st == 401 and body == {'ok': False, 'error': hub.BAD_TOKEN, 'config': hub.cfg_mark()}
+    assert f.calls[-1][2] == {'nonce': 'n2', 'path': str(mine)} and f.calls[-1][3] == f'Bearer {TOKEN}', 'the server asks the launcher; the token goes only that way'
+    st, body = _call(h, '/hub/open', f'path={proj}&grant=forged'.encode())
+    assert st == 401 and body == {'ok': False, 'error': hub.BAD_GRANT, 'config': hub.cfg_mark()}
+
+def test_a_grant_with_no_launcher_is_refused(off, tmp_path, folders):
+    h, _ = _hub(tmp_path)
+    assert _call(h, '/hub/open', f'path={folders[0]}&grant=x'.encode())[0] == 401
 
 # The app's dialog
 

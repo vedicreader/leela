@@ -7,9 +7,11 @@ public struct Launch: Sendable {
     public var args: [String]
     public var env: [String: String]
     public var cwd: URL?
+    /// one line written to the child's stdin right after it starts, then stdin is closed: the server's token, never in argv or env
+    public var stdinLine: String?
 
-    public init(executable: URL, args: [String], env: [String: String], cwd: URL? = nil) {
-        self.executable = executable; self.args = args; self.env = env; self.cwd = cwd
+    public init(executable: URL, args: [String], env: [String: String], cwd: URL? = nil, stdinLine: String? = nil) {
+        self.executable = executable; self.args = args; self.env = env; self.cwd = cwd; self.stdinLine = stdinLine
     }
 
     /// the same command at background priority (`taskpolicy -b`), for an update that builds while Leela runs
@@ -84,8 +86,14 @@ public enum Run {
         let p = process(l)
         p.standardOutput = h
         p.standardError = h
+        let pipe = l.stdinLine.map { _ in Pipe() }
+        if let pipe { p.standardInput = pipe }
         p.terminationHandler = { p in try? h.close(); exited(p.terminationStatus) }
         try p.run()
+        if let pipe, let line = l.stdinLine {
+            try? pipe.fileHandleForWriting.write(contentsOf: Data((line + "\n").utf8))
+            try? pipe.fileHandleForWriting.close()
+        }
         return Running(p)
     }
 

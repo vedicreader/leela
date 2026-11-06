@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     var control: ControlServer!
     var brew: BrewUpgrade!
     let windows = Windows()
+    let grants = GrantBook()
     let setup = SetupWindow()
     var runLock: RunLock?
     var queued: [URL] = []
@@ -45,17 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
             return await ControlRouter.handle(r, token: self.control.token, host: self)
         }
         try? control.start()
-        let token = control.token, url = control.url, bundlePath = bundle.bundleURL.path, version = appVersion
+        // the control server listens before the server starts; the server calls it, and the token goes only to the child on its stdin
+        let info = HostInfo(url: control.url, token: control.token, appVersion: appVersion, bundle: bundle.bundleURL.path, uv: uv)
         sup = Supervisor(store: store, plan: { await LockChoice.choose(bundled: bundled, channel: channel, keys: keys, app: app, store: store) },
-                         serverLaunch: { port, h in
-            let s = store.load(), env = store.paths.env(h)
-            let vals = store.vals(env: env, python: (try? String(contentsOf: store.paths.lock(s.locks[h] ?? 0).appending(path: ".python-version"), encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "3.12")
-            let extra = ["LEELA_HOST_URL": url, "LEELA_HOST_TOKEN": token, "LEELA_APP_VERSION": version, "LEELA_APP_BUNDLE": bundlePath,
-                         "LEELA_LOCK_N": String(s.locks[h] ?? 0), "LEELA_ENV_HASH": h, "LEELA_UV": uv.path]
-            return Launch(executable: store.paths.server(h), args: spec.serverArgs(port: port),
-                          env: spec.serverEnv(parent, home: home, vals: vals, extra: extra), cwd: store.paths.support)
-        })
+                         serverLaunch: { port, h in ServerCommand.launch(store: store, port: port, hash: h, host: info) })
         setup.logURL = paths.serverLog
         setup.onRetry = { [weak self] in self?.begin() }
         sup.onPhase = { [weak self] p in self?.phase(p) }
@@ -97,7 +91,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         if !query.isEmpty { c.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) } }
         var r = URLRequest(url: c.url!, timeoutInterval: timeout)
         r.httpMethod = method
-        r.setValue(control.token, forHTTPHeaderField: "X-Leela-Host-Token")
         if method == "POST" { r.httpBody = Data() }
         let cfg = URLSessionConfiguration.ephemeral
         cfg.connectionProxyDictionary = [:]
@@ -124,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
 
     func openFolder(_ path: String, trusted: Bool) {
         Task {
-            let (code, d) = trusted ? await request("/hub/open", method: "POST", query: ["path": path]) : await untrusted(["path": path])
+            let (code, d) = trusted ? await request("/hub/open", method: "POST", query: ["path": path, "grant": grants.issue(path)]) : await untrusted(["path": path])
             guard code == 200, d["ok"] as? Bool == true, let s = d["url"] as? String, let u = URL(string: s) else {
                 return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")")
             }
@@ -144,7 +137,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
 
     func openFile(_ path: String) {
         Task {
-            let (code, d) = await request("/hub/open", method: "POST", query: ["path": (path as NSString).deletingLastPathComponent, "file": path])
+            let dir = (path as NSString).deletingLastPathComponent
+            let (code, d) = await request("/hub/open", method: "POST", query: ["path": dir, "file": path, "grant": grants.issue(dir)])
             guard code == 200, let s = d["url"] as? String, let u = URL(string: s) else { return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")") }
             windows.show(u, title: "leela — \((path as NSString).lastPathComponent)")
         }
@@ -154,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         let o = NSOpenPanel()
         o.canChooseDirectories = true; o.canChooseFiles = false; o.allowsMultipleSelection = false
         guard o.runModal() == .OK, let u = o.url else { return done(nil) }
-        Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path], timeout: 10); done(u.path) }
+        Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
     }
 
     func tell(_ msg: String) { let a = NSAlert(); a.messageText = msg; a.runModal() }
@@ -221,4 +215,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
     }
 
     func status() -> [String: Any] { sup.status(appVersion: appVersion, brew: brew.available) }
+
+    func checkGrant(_ nonce: String, path: String) -> Bool { grants.check(nonce, path: path) }
 }

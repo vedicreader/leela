@@ -16,9 +16,9 @@ import Testing
 
     @Test func theServerHasTheEnvBinFirstAndTheLaunchersValues() {
         let e = spec.serverEnv(["PATH": "/usr/bin:/x"], home: "/h", vals: ["cache": "/c", "python": "/py", "python_version": "3.12.16", "env": "/e"],
-                               extra: ["LEELA_HOST_TOKEN": "tok"])
+                               extra: ["LEELA_APP_VERSION": "1.0.0"])
         #expect(e["PATH"]!.hasPrefix("/e/bin:/h/.local/bin:/opt/homebrew/bin") && e["PATH"]!.hasSuffix(":/x"))
-        #expect(e["VIRTUAL_ENV"] == "/e" && e["PYTHONNOUSERSITE"] == "1" && e["LEELA_HOST_TOKEN"] == "tok")
+        #expect(e["VIRTUAL_ENV"] == "/e" && e["PYTHONNOUSERSITE"] == "1" && e["LEELA_APP_VERSION"] == "1.0.0")
     }
 
     @Test func theCommandsComeFromTheSameFileAsToolsLockPy() {

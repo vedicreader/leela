@@ -55,18 +55,17 @@ The launcher starts the server with these environment variables:
 | Name | Value |
 |---|---|
 | `LEELA_HOST_URL` | `http://127.0.0.1:<port>` of the launcher's control server |
-| `LEELA_HOST_TOKEN` | a random token for this launch |
 | `LEELA_APP_VERSION` | the app version, such as `1.0.0` |
 | `LEELA_APP_BUNDLE` | the path of `Leela.app` |
 | `LEELA_LOCK_N` | the number of the lock the env came from |
 | `LEELA_ENV_HASH` | the lock hash of the env |
 | `LEELA_UV` | the path of the bundled uv |
 
-The server takes `LEELA_HOST_URL` and `LEELA_HOST_TOKEN` out of its environment at start (`leela.core.host.take`), so no kernel, terminal or agent shell gets the token. In host mode the server does not use the old extras folder, and the login shell or a stored value cannot replace `PYTHONPATH`, `VIRTUAL_ENV`, `UV_*` or any `LEELA_HOST_*`, `LEELA_LOCK_N`, `LEELA_ENV_HASH`.
+The token is never in argv, the environment, a file or a log. The launcher starts the server with a pipe as stdin, writes one line `<token>` to it right after the start, and closes its end. In host mode the server reads that one line first (`leela.core.host.take`, 5 s at most), keeps it in memory, and reopens stdin on /dev/null. No line, an empty line or a late line stops the server with a plain error. A `LEELA_HOST_TOKEN` in the environment is ignored, with a warning. The server also takes `LEELA_HOST_URL` out of its environment, so no kernel, terminal or agent shell gets it. In host mode the server does not use the old extras folder, and the login shell or a stored value cannot replace `PYTHONPATH`, `VIRTUAL_ENV`, `UV_*` or any `LEELA_HOST_*`, `LEELA_LOCK_N`, `LEELA_ENV_HASH`.
 
 ### Control routes in the launcher
 
-Every request carries `Authorization: Bearer <token>`. A wrong token gets 401.
+The control server listens before the launcher starts the server. Only the server calls it, and every request carries `Authorization: Bearer <token>`. A wrong token gets 401.
 
 | Route | Body | Answer |
 |---|---|---|
@@ -76,20 +75,21 @@ Every request carries `Authorization: Bearer <token>`. A wrong token gets 401.
 | `GET /update` | | `{state, line}`; `state` is `idle`, `running`, `ready`, `same`, `unavailable` or `error` |
 | `POST /restart` | `{}` | `{ok}`; the launcher stops the server, switches env if one is pending, and starts it again |
 | `GET /status` | | `{app_version, api, brew, lock: {current_n, newest_n, newer, needs_app, app_min}, extras: {name: {state, log}}, env}` |
+| `POST /grant` | `{nonce, path}` | `{ok}`: true once, when the launcher issued `nonce` for `path` in the last minute |
 
 The server maps the launcher's `ready` to the page's `done`, so "Restart to update" uses the existing `/update/restart` route.
 
 ### Server routes for the launcher
 
-| Route | Token | Answer |
+| Route | Proof | Answer |
 |---|---|---|
 | `GET /health` (and `HEAD`) | no | `{status: "ok", version, lock_n}` |
-| `POST /hub/open?path=` | `X-Leela-Host-Token` | the open row; with the token the folder and each `also` folder are trusted, as a Finder or Dock open was in the old app |
-| `POST /hub/grant?path=` | `X-Leela-Host-Token` | `{ok, root}`; a folder picked in the app's own dialog opens next with no question |
-| `GET /app/menu.json` | `X-Leela-Host-Token` | `{menus: [{title, items: [{title, action \| selector \| js, key, mask} \| {sep: true}]}]}` from `blocks/keys/menus.BAR` and the keymap |
-| `GET /app/recent` | `X-Leela-Host-Token` | `{recent: [path]}` for the Dock menu |
+| `POST /hub/open?path=&grant=` | a one-time `grant` | the open row; with a grant the server asks the launcher's `/grant`, and on yes the folder and each `also` folder are trusted, as a Finder or Dock open was in the old app |
+| `POST /hub/grant?path=&grant=` | a one-time `grant` | `{ok, root}`; a folder picked in the app's own dialog opens next with no question |
+| `GET /app/menu.json` | none | `{menus: [{title, items: [{title, action \| selector \| js, key, mask} \| {sep: true}]}]}` from `blocks/keys/menus.BAR` and the keymap |
+| `GET /app/recent` | none | `{recent: [path]}` for the Dock menu |
 
-All of these sit behind `LoopbackHostGuard`, so a page on another host name gets 421.
+All of these sit behind `LoopbackHostGuard`, so a page on another host name gets 421. The launcher sends the server nothing secret: a process that takes the server's port first gets only a nonce for one path, good once, and never the token.
 
 ### The window bridge
 
@@ -130,7 +130,7 @@ Each lock is a release `lock-<n>` (`--latest=false --prerelease`) with the three
 
 - `channel.json` + `channel.sig`: the stable pointer.
 - `channel-test.json` + `channel-test.sig`: the test pointer. `LEELA_LOCK_CHANNEL=test` points an app at it.
-- A pointer is `{n, manifest_sha256, published, expires, channel}`. The app refuses a pointer whose `channel` is not the one it asked for (a test pointer served as stable) and a pointer past `expires` (180 days after it was published), so an old pointer cannot freeze updates.
+- A pointer is `{n, manifest_sha256, published, channel}`. The app refuses a pointer whose `channel` is not the one it asked for (a test pointer served as stable). Pointers do not expire: an expiry would refuse a lock that simply had no change for a long time. The replay check (`n` above `highest_n`), the channel name check and the SSH signatures stay. An old pointer with an `expires` field still parses; the field is ignored.
 
 The app refuses a lock when the signature or a hash is wrong, when `n` is not above `highest_n`, or when the platform or macOS is wrong. It shows "needs a newer Leela app" when `uv_min` is above the bundled uv or `launcher_api_min` is above the app's API.
 

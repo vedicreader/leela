@@ -6,6 +6,9 @@ from . import PORT
 __all__ = ['main']
 
 def main(argv=None):
+    from .core import host
+    # first: the Mac app writes the token on stdin right after it starts this process
+    hosted = host.take()
     p = argparse.ArgumentParser(prog='leela', description='notebooks, files and live variables')
     p.add_argument('folders', nargs='*', help='folders to open (default: the saved workspace, else cwd)')
     p.add_argument('--app', action='store_true',
@@ -66,9 +69,8 @@ def main(argv=None):
         print('  "keys" holds what you changed; copy a line out of "_defaults" to change one more.')
         for n in NOTES: print(f'  ⚠ {n}')
         return
-    from .core import host
     # The Mac app runs this server as its child: its env, its dialogs, and no extras folder to shadow the pinned packages.
-    if host.take(): host.setup()
+    if hosted: host.setup()
     else: _plain_setup()
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
