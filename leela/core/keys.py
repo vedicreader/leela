@@ -106,6 +106,7 @@ DEFAULTS = L(
     Key('nbdev_prepare',    '',               'global', 'nbdev prepare'),
     Key('fastship',         '',               'global', 'fastship release tools'),
     Key('setup_models',     '',               'global', 'models and updates'),
+    Key('check_updates',    '',               'global', 'check for updates…'),
     Key('save',             'mod+s',         'global', 'save',                'toast'),
     Key('save_all',         'alt+shift+s',   'global', 'save all'),
     Key('show_diff',        'alt+shift+d',   'global', 'what changed',        'toast'),

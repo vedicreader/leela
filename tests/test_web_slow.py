@@ -1759,3 +1759,40 @@ def test_the_git_panel_follows_its_own_repository_and_the_disk(tmp_path):
     failed, opened = _run(go, roots=[a, b])
     assert not failed, f'the commit file ran in the wrong repository: {failed}'
     assert not opened['oid'] or opened['root'] == str(a), f'the open commit closes, or still names A: {opened}'
+
+def test_check_for_updates_answers_and_the_dialog_updates_through_brew(monkeypatch, tmp_path):
+    "No way back to Update after the notice: the menu row re-checks past the cache and 'Not now', and the dialog runs the same brew step."
+    from leela.core import update as U
+    from tests.test_update import _app, _logging_brew
+    app = _app(tmp_path); b, log = _logging_brew(tmp_path, app, bump=True)
+    rel = {'version': U.__version__, 'url': 'https://x/r'}
+    monkeypatch.setattr(U, 'latest_release', lambda ttl=U.TTL: dict(rel))
+    monkeypatch.setattr(U, 'app_bundle', lambda *a, **kw: app); monkeypatch.setattr(U, '_job', None)
+    monkeypatch.setattr(U.shutil, 'which', lambda n: str(b))
+    bar = "() => { const el = document.querySelector('#leeupdate'); return el && !el.hidden ? el.innerText : ''; }"
+    async def said(pg, text):
+        await pg.wait_for_function(f"t => ({bar})().includes(t)", arg=text, timeout=15000)
+        return await pg.evaluate(bar)
+    async def go(pg):
+        await pg.evaluate("() => sessionStorage.setItem('lee-update-later', '1')")
+        out = {}
+        await pg.evaluate("() => leeAct('check_updates')"); out['same'] = await said(pg, 'up to date')
+        rel.update(failed=True, version=None)
+        await pg.evaluate("() => leeAct('check_updates')"); out['offline'] = await said(pg, 'could not check')
+        rel.update(failed=False, version='99.0')
+        await pg.evaluate("() => leeAct('check_updates')"); out['newer'] = await said(pg, 'is available')
+        await pg.evaluate("() => leeAct('setup_models')")
+        await pg.wait_for_selector('.lee-setup-modal [data-leela-update]')
+        out['row'] = await pg.inner_text('.lee-setup-modal [data-leela-update]')
+        await pg.click('.lee-setup-modal [data-leela-update]')
+        out['done'] = await said(pg, 'Restart now')   # never click it: it ends this process
+        out['modal'] = await pg.evaluate("() => !!document.querySelector('.lee-setup-modal')")
+        await pg.evaluate("() => leeAct('check_updates')"); out['again'] = await said(pg, 'Restart now')
+        return out
+    got = _run(go)
+    assert f'Leela is up to date ({U.__version__}).' in got['same']
+    assert 'Try again' in got['offline']
+    assert 'Leela 99.0 is available' in got['newer'] and 'Update' in got['newer'], 'past "Not now"'
+    assert got['row'] == 'update' and not got['modal']
+    assert 'Leela 99.0 is installed. Restart now to use it.' in got['done'] and 'Restart Leela' in got['done']
+    assert 'Restart Leela' in got['again'] and log.read_text().count('args ') == 1, 'a check after the run offers Restart, not a second brew'

@@ -1240,6 +1240,7 @@ const ACTIONS = {
   nbdev_prepare: () => leeNbdevPrepare(),
   fastship:     () => leeFastship(),
   setup_models: () => leeSetupModal(),
+  check_updates: () => leeUpdateCheck(),
   run_app:      () => runApp(),
   palette:      () => palette(),
   recent_tabs:  () => recentTabs(),
