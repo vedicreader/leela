@@ -16,13 +16,13 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]>=0.2.106",
+    "ramabana[cli]>=0.2.109",
     "abhyasa>=0.0.16",   # the tutor of the screen guide; its board is rupaka's
     "rupaka>=0.0.15",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from this version
     "shalya>=0.1.27",
     "gheasy>=0.0.19",
     "fastcore>=1.7.0",
-    "kavacha>=0.0.11",
+    "kavacha>=0.0.12",
     "kunda>=0.0.12",   # 0.0.12 ends a run whose kernel shell stopped answering, and warns about ipykernel 7.0 to 7.3
     "pullup>=0.0.11",
     "exhash>=0.4.10",
@@ -67,9 +67,9 @@ dependencies = [
 [project.optional-dependencies]
 ipymini = []
 local = ["rishi[mlx,llama]>=0.1.67"]
-desktop = ["kavacha[window]>=0.0.11"]
-macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.11"]
-windows = ["leela[desktop]", "kavacha[windows]>=0.0.11"]
+desktop = ["kavacha[window]>=0.0.12"]
+macapp = ["leela[desktop]", "kavacha[macapp]>=0.0.12"]
+windows = ["leela[desktop]", "kavacha[windows]>=0.0.12"]
 
 [project.urls]
 Repository = "https://github.com/vedicreader/leela"

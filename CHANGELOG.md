@@ -2,6 +2,22 @@
 
 <!-- do not remove -->
 
+## 0.1.22
+
+Needs kavacha 0.0.12 and ramabana 0.2.109.
+
+- A conversation that nobody gave a model moves to the model that runs here: Claude Code, then Codex, Copilot or an API key, then a Gemma already on disk. The pane says why it moved. A model named in config.toml, `/model` or the picker stays.
+- When no model runs here, the turn stops with a plain message, and the welcome offers "Download Gemma 4 E2B (3.5 GB) to run on this Mac". Nothing downloads without that click.
+- The Mac app tells you when a newer Leela is out. Update runs `brew upgrade --cask leela`, then offers Restart Leela. An app not installed from the cask shows the release link.
+- The Mac app is about 860 MB, down from 1.2 GB, and its download is about 300 MB, down from 430 MB. It no longer carries a second Claude CLI; it uses the `claude` on your PATH. The second browser driver links to the first.
+
+Known issues:
+
+- A Gemma that is not on disk yet, chosen in the picker or with `/model`, downloads on the first turn with no progress bar.
+- A model typed with `/model` in the pane is not kept for the next conversation.
+- A resumed Claude conversation keeps Claude and stays refused when Claude cannot run.
+- Between the end of an update and Restart Leela, a feature that loads late can fail, because Homebrew has replaced the app's files.
+
 ## 0.1.21
 
 Needs kunda 0.0.12.
