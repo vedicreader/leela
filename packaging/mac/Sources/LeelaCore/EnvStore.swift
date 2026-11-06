@@ -16,6 +16,8 @@ public struct EnvState: Codable, Equatable, Sendable {
     public var early_crashes: Int = 0
     /// hashes that once reached ready; only an env never proven rolls back by itself
     public var proven: [String] = []
+    /// hashes the person left with "Use Previous Version": offered again, never switched to by themselves
+    public var held: [String] = []
     public var pruned: Double = 0
     public init() {}
 
@@ -31,6 +33,7 @@ public struct EnvState: Codable, Equatable, Sendable {
         extras = try c.decodeIfPresent([String].self, forKey: .extras) ?? []
         early_crashes = try c.decodeIfPresent(Int.self, forKey: .early_crashes) ?? 0
         proven = try c.decodeIfPresent([String].self, forKey: .proven) ?? []
+        held = try c.decodeIfPresent([String].self, forKey: .held) ?? []
         pruned = try c.decodeIfPresent(Double.self, forKey: .pruned) ?? 0
     }
 }
@@ -154,7 +157,7 @@ public final class EnvStore: @unchecked Sendable {
     // switching
 
     /// a built env waits for the next launch or "Restart to update"
-    public func stage(_ hash: String) throws { _ = try update { $0.pending = hash } }
+    public func stage(_ hash: String) throws { _ = try update { $0.pending = hash; $0.held.removeAll { $0 == hash } } }
 
     /// at launch: a built, good pending env becomes current, and current becomes previous. The hash to run.
     @discardableResult
@@ -184,6 +187,7 @@ public final class EnvStore: @unchecked Sendable {
         _ = try update { s in
             guard let prev = s.previous, isBuilt(prev), let cur = s.current else { return }
             if bad && !s.bad.contains(cur) { s.bad.append(cur) }
+            if !bad && !s.held.contains(cur) { s.held.append(cur) }
             s.current = prev; s.previous = bad ? nil : cur; s.pending = nil; s.early_crashes = 0
             done = true
         }

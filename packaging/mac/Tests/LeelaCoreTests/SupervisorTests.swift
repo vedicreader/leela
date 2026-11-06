@@ -125,6 +125,11 @@ func py(_ port: Int, _ die: Double) -> Launch {
         #expect(sup.hash != ha && s.load().previous == ha)
         #expect(await sup.usePrevious())
         #expect(sup.hash == ha)
+        await sup.restart()
+        #expect(sup.hash == ha && sup.offered?.n == 2 && s.load().pending == nil, "the env left by hand is offered again, not switched to")
+        await sup.buildUpdate()
+        await sup.restart()
+        #expect(sup.hash != ha, "Update takes it back")
         sup.stop()
     }
 

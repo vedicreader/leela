@@ -79,7 +79,7 @@ public final class Supervisor {
                         return set(.failed(Setup.failure(Setup.buildFailed, log: store.paths.syncLog(h))))
                     }
                 } else if h != run, (s.locks[run!] ?? -1) < m.n, !s.bad.contains(h) {
-                    if store.isBuilt(h) { try? store.stage(h); update = UpdateState(state: "ready") } else { offered = p }
+                    if store.isBuilt(h) && !s.held.contains(h) { try? store.stage(h); update = UpdateState(state: "ready") } else { offered = p }
                 }
             }
         }
@@ -176,7 +176,7 @@ public final class Supervisor {
         case .ok(let m):
             let h = (try? store.hash(lock: p.dir)) ?? ""
             guard h != cur, m.n > (s.locks[cur] ?? -1), !s.bad.contains(h), s.pending != h else { return }
-            if store.isBuilt(h) { try? store.stage(h); update = UpdateState(state: "ready") } else { offered = p }
+            if store.isBuilt(h) && !s.held.contains(h) { try? store.stage(h); update = UpdateState(state: "ready") } else { offered = p }
         }
     }
 
