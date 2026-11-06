@@ -317,14 +317,16 @@ host._host.update(url='http://127.0.0.1:9', token='t')
 from leela.blocks.agent.ai import WorkspaceHost
 e = WorkspaceHost._env(None, Path(sys.argv[1]))
 r = lambda c: subprocess.run(c, shell=True, cwd=sys.argv[1], env=e, capture_output=True, text=True)
-print(json.dumps(dict(ramabana=r('ramabana --help').returncode, kosha=r('kosha --help').returncode, python=r('command -v python').stdout.strip(),
-                      uv=r('command -v uv').stdout.strip(), linked=sorted(p.name for p in host.tools_dir().iterdir()))))
+ran = lambda n: (lambda p: f'usage: {n}' in (p.stdout + p.stderr).lower())(r(f'{n} --help'))   # kosha's --help exits 1
+print(json.dumps(dict(ramabana=ran('ramabana'), kosha=ran('kosha'), python=r('command -v python').stdout.strip(),
+                      at=r('command -v kosha').stdout.strip(), dir=str(host.tools_dir()), linked=sorted(p.name for p in host.tools_dir().iterdir()))))
 '''
 
 def agent_shell(py, proj, env):
     "The links the server made: an agent's shell in `proj` runs `ramabana` and `kosha` from the app's env, and its `python` is the project's."
     got = json.loads(sh(py, '-I', '-c', _AGENT_SHELL, proj, env=env, timeout=120).splitlines()[-1])
-    bad = [f'{n} gave {got[n]}' for n in ('ramabana', 'kosha') if got[n]]
+    bad = [f'{n} --help printed no usage' for n in ('ramabana', 'kosha') if not got[n]]
+    bad += [f'kosha is {got["at"]}, not the linked one'] if os.path.dirname(got['at']) != got['dir'] else []
     bad += [f'python is {got["python"]}'] if os.path.realpath(os.path.dirname(got['python'])) != os.path.realpath(proj/'.venv'/'bin') else []
     bad += [f'{n} is linked' for n in got['linked'] if n.startswith(('python', 'pip', 'uv'))]
     if bad: raise RuntimeError('; '.join(bad))
