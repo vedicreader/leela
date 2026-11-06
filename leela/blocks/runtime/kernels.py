@@ -18,6 +18,8 @@ from kunda.spec import installed_spec as _installed_spec, kernelspec_for as _ker
 
 from .support import LEELA_PY
 
+import os
+from pathlib import Path
 from kunda.pythons import clean_env, strip_bundle
 
 from kunda.support import support_paths, work_dir
@@ -26,7 +28,7 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'Gatewa
            'RuntimeBroker', 'KernelLimit', 'check_gateway_deps',
            'bootstrap_src', 'output_text', 'ipymini_available', 'missing_kernel_module', 'find_pythons',
            'installed_kernels', 'kernelspec_for', 'installed_spec',
-           'project_python', 'nearest_python', 'python_for', 'venv_env', 'run_file_src']
+           'project_python', 'nearest_python', 'python_for', 'project_of', 'make_venv', 'venv_env', 'run_file_src']
 
 #: Names kunda's app and env prefix Leela's way; must run on the import other modules reach kunda through.
 use_app('leela', 'LEELA_')
@@ -51,13 +53,41 @@ def _install_for(lang):
     l = lang_named(lang)
     return l.install if l else ''
 
+def project_of(cwd, session=None):
+    "The project folder `cwd` belongs to: its nearest checkout inside the open folder, else that folder; None outside every folder."
+    from ...core.projects import project_dir
+    if not cwd or session is None: return None
+    try: root = session.fs.root_of(cwd)
+    except Exception: return None
+    return project_dir(cwd, root) or root
+
 def python_for(cwd=None, session=None, stop=None):
-    "The interpreter anything Leela spawns for `cwd` should be inside."
-    if cwd and stop is None and session is not None:
-        try: stop = session.fs.root_of(cwd)
-        except Exception: stop = None
-    if session is None: return _python_for(cwd, stop)
-    return _python_for(cwd, stop, roots=session.fs.roots, default=session.pool.default_python)
+    "The interpreter anything Leela spawns for `cwd` should be inside: the chosen one, else the project's nearest venv; None is Leela's own."
+    if session is None: return _python_for(cwd, stop or cwd)
+    proj = project_of(cwd, session)
+    if (py := (getattr(session, 'chosen_python', None) or {}).get(str(proj))): return py
+    return _python_for(cwd, stop or proj or cwd, default=session.pool.default_python)
+
+_VENV_LOCKS = {}
+
+def make_venv(root, python=None):
+    "Make `root/.venv` on `python` (Leela's minor by default) with kunda's kernel support; the interpreter. One that exists is kept; a failed one is removed."
+    import shutil, subprocess, sys, threading, venv
+    from kunda.support import install_kernel_support
+    target = Path(root)/'.venv'
+    with _VENV_LOCKS.setdefault(str(target), threading.Lock()):
+        if (py := nearest_python(root, root)): return py
+        try:
+            if uv := shutil.which('uv'):
+                subprocess.run([uv, 'venv', str(target), '--python', python or '%d.%d' % sys.version_info[:2]], check=True,
+                               stdin=subprocess.DEVNULL, capture_output=True, env=clean_env())
+            else: venv.EnvBuilder(with_pip=True).create(target)
+            py = target/VENV_BINS[os.name == 'nt']
+            install_kernel_support(py)
+            return str(py)
+        except BaseException:
+            shutil.rmtree(target, ignore_errors=True)
+            raise
 
 def find_pythons(roots=(), current=None):
     "Interpreters a kernel could be launched under, this one among them."

@@ -20,6 +20,7 @@ def _client(root):
     ws = Workspace(roots=[root])
     return TestClient(ide_app(ws)), ws
 
+@pytest.mark.makes_venv
 @pytest.mark.skipif(not shutil.which('uv'), reason='needs uv to create an environment')
 def test_creating_the_environment_produces_a_usable_interpreter(tmp_path):
     "The real thing: uv makes a venv, leela adopts it, and the route reports it."
@@ -32,7 +33,8 @@ def test_creating_the_environment_produces_a_usable_interpreter(tmp_path):
         after = c.get('/runtime/info').json()
     assert (tmp_path/'.venv').is_dir()
     assert made == project_python([tmp_path]), 'what it made is what discovery finds'
-    assert ws.pool.default_python == made, 'and the pool switched to it, not PATH'
+    from leela.blocks.runtime.kernels import python_for
+    assert python_for(tmp_path, ws) == made and ws.pool.default_python is None, 'found as the project venv, not chosen for every folder'
     assert after['needs_create'] is False
 
 def _venv(root):
@@ -48,7 +50,7 @@ def test_a_terminal_uses_the_venv_of_the_folder_it_opened_in(tmp_path):
     a, b = tmp_path/'repo-a', tmp_path/'repo-b'
     pa, pb = _venv(a), _venv(b)
     ws = Workspace(roots=[a, b])
-    assert ws.pool.default_python == str(pa), 'precondition: the pool holds the first root'
+    assert ws.pool.default_python is None, 'no folder is chosen for the others'
     assert _term_python(ws, b) == str(pb), 'a terminal in repo-b belongs in repo-b'
     assert _term_python(ws, a) == str(pa)
 
@@ -68,7 +70,7 @@ def test_a_release_runs_in_the_venv_of_the_project_being_released(tmp_path):
     a, b = tmp_path/'repo-a', tmp_path/'repo-b'
     pa, pb = _venv(a), _venv(b)
     ws = Workspace(roots=[a, b])
-    assert ws.pool.default_python == str(pa), 'precondition: the pool holds the first root'
+    assert ws.pool.default_python is None, 'no folder is chosen for the others'
     assert python_for(b, ws) == str(pb), 'a release of repo-b belongs in repo-b'
     p = Release(b, python=python_for(b, ws))
     env = p._env()
@@ -145,6 +147,7 @@ def test_the_finder_skips_the_directories_that_made_it_slow(tmp_path):
         (d/'.git').mkdir(parents=True); (d/'.git'/'HEAD').write_text('ref: x')
     assert [p.name for p in find_repos(tmp_path)] == ['real-repo']
 
+@pytest.mark.makes_venv
 def test_the_interpreter_and_a_new_venv_follow_the_chosen_folder(tmp_path):
     "With two folders open, the picker described the first one and created into it."
     a, b = tmp_path/'first', tmp_path/'second'
@@ -163,6 +166,7 @@ def test_the_interpreter_and_a_new_venv_follow_the_chosen_folder(tmp_path):
         assert created['root'] == str(b) and created['python'].startswith(str(b))
         assert (b/'.venv').is_dir() and not (a/'.venv'/'pyvenv.cfg').exists(), 'nothing landed in a'
 
+@pytest.mark.makes_venv
 def test_a_folder_of_clones_creates_the_venv_in_the_checkout_being_worked_in(tmp_path):
     """`orgs` open as one folder: the environment panel described `orgs` and offered to create a `.venv` beside the clones."""
     import subprocess
@@ -491,7 +495,7 @@ def test_a_notebook_gets_its_own_repos_venv_without_being_asked(tmp_path):
     pa, pb = _venv(a), _venv(b)
     (b/'nb.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
     ws = Workspace(roots=[a, b])
-    assert ws.pool.default_python == str(pa), 'precondition: the first folder still sets the default'
+    assert ws.pool.default_python is None, "the first folder's venv is not every folder's default"
 
     tab = ws.open(str(b/'nb.ipynb'))
     opts = ws.kernel_options(tab)
@@ -588,3 +592,94 @@ def test_a_devserver_child_borrows_leelas_path_only_on_leelas_python():
         try: assert ('/somewhere/leela' in sys.path) is borrows, minor
         finally:
             if '/somewhere/leela' in sys.path: sys.path.remove('/somewhere/leela')
+
+def _orgs(tmp_path):
+    "A folder of clones with a venv of its own, and a checkout `karma` inside it with none."
+    import subprocess
+    orgs = tmp_path/'orgs'
+    karma = orgs/'karma'; (karma/'nbs').mkdir(parents=True)
+    subprocess.run(['git', 'init', '-q', str(karma)], check=True)
+    _notebook(karma/'nbs'/'a.ipynb')
+    return orgs, karma, _venv(orgs)
+
+def test_a_checkout_never_borrows_the_venv_of_the_folder_above_it(tmp_path):
+    "`orgs/.venv` held kernel support only, and ran every checkout inside `orgs` that had no venv of its own."
+    from leela.blocks.runtime.kernels import python_for
+    orgs, karma, shared = _orgs(tmp_path)
+    ws = Workspace(roots=[orgs])
+    assert python_for(karma/'nbs', ws) is None, 'karma has no venv, and orgs/.venv is not its'
+    assert python_for(karma/'nbs', None) is None, 'nor with no workspace to ask'
+    (loose := orgs/'notes').mkdir()
+    assert python_for(loose, ws) == str(shared), 'a folder in no checkout uses the open folder\'s own venv'
+    tab = ws.open(str(karma/'nbs'/'a.ipynb'))
+    assert ws.inline_ai.host._env(karma)['PATH'].split(os.pathsep)[0] != str(shared.parent), 'run_shell does not borrow it either'
+    assert ws.kernel_options(tab)['python'] is None
+
+def test_a_chosen_interpreter_wins_and_is_the_only_way_to_borrow(tmp_path):
+    "The picker set one global default that a project's own venv then outranked, so choosing changed nothing."
+    from leela.blocks.runtime.kernels import python_for
+    orgs, karma, shared = _orgs(tmp_path)
+    own = _venv(karma)
+    ws = Workspace(roots=[orgs])
+    tab = ws.open(str(karma/'nbs'/'a.ipynb'))
+    assert python_for(ws.cwd_for(tab), ws) == str(own)
+    o = asyncio.run(ws.set_kernel(python=str(shared), tab=tab, restart=False))
+    assert o['python'] == str(shared) and o['chosen'], 'the choice beats the project venv'
+    assert ws.pool.default_python is None, 'and is held for karma, not every folder'
+    back = Workspace(roots=[orgs]); back.restore_settings(ws.state())
+    assert python_for(karma/'nbs', back) == str(shared), 'a saved session keeps it'
+    o = asyncio.run(ws.set_kernel(python='', tab=tab, restart=False))
+    assert o['python'] == str(own) and not o['chosen'], 'clearing hands karma back to its own venv'
+
+def test_a_notebook_with_no_venv_makes_its_projects_on_first_run(tmp_path, monkeypatch):
+    "A notebook in a checkout with no venv ran on whatever venv sat above it, or on Leela's own Python."
+    import leela.blocks.runtime.kernels as K
+    orgs, karma, shared = _orgs(tmp_path)
+    made, got = [], {}
+    def fake(root, python=None): made.append(Path(root)); return str(_venv(Path(root)))
+    monkeypatch.setattr(K, 'make_venv', fake)
+    ws = Workspace(roots=[orgs])
+    async def get(key, **kw): got.update(kw); return None
+    ws.pool.get = get
+    tab = ws.open(str(karma/'nbs'/'a.ipynb'))
+    asyncio.run(ws.kernel(tab))
+    assert made == [karma] and got['python'] == str(karma/'.venv'/'bin'/'python'), 'made in karma, the checkout, never in orgs'
+    assert ws.kernel_options(tab)['venv_made'] == got['python'], 'and the picker says Leela made it'
+    def broken(root, python=None): raise RuntimeError('no network')
+    monkeypatch.setattr(K, 'make_venv', broken)
+    (other := orgs/'other'/'nbs').mkdir(parents=True); (orgs/'other'/'pyproject.toml').write_text('')
+    _notebook(other/'b.ipynb')
+    with pytest.raises(K.KernelStartError, match='could not make .*other/.venv.*no network'):
+        asyncio.run(ws.kernel(ws.open(str(other/'b.ipynb'))))
+
+@pytest.mark.makes_venv
+@pytest.mark.skipif(not shutil.which('uv'), reason='needs uv to create an environment')
+def test_a_venv_that_fails_to_get_kernel_support_is_removed(tmp_path, monkeypatch):
+    "A half-made venv without ipykernel would be found next time and fail every run."
+    import leela.blocks.runtime.kernels as K
+    from kunda import support as S
+    monkeypatch.setattr(S, 'install_kernel_support', lambda py, packages=None: (_ for _ in ()).throw(RuntimeError('offline')))
+    with pytest.raises(RuntimeError, match='offline'): K.make_venv(tmp_path)
+    assert not (tmp_path/'.venv').exists()
+    py = _venv(tmp_path)
+    assert K.make_venv(tmp_path) == str(py), 'one that exists is kept'
+
+@pytest.mark.slow
+@pytest.mark.makes_venv
+@pytest.mark.skipif(not shutil.which('uv'), reason='needs uv to create an environment')
+def test_a_made_venv_runs_the_notebook_on_leelas_minor_without_leelas_packages(tmp_path):
+    "The real thing: uv makes karma/.venv on Leela's Python minor, and the notebook's kernel imports only what is in it."
+    import sys
+    orgs, karma, shared = _orgs(tmp_path)
+    ws = Workspace(roots=[orgs], port=8461)
+    async def go():
+        await ws.opened()
+        tab = ws.open(str(karma/'nbs'/'a.ipynb'))
+        k = await ws.kernel(tab)
+        r = await k.execute('import sys; print(sys.prefix, sys.version_info[:2])')
+        assert str(karma/'.venv') in r.text and str(tuple(sys.version_info[:2])) in r.text, r.text
+        for name in ('leela', 'rupaka', 'ramabana'):
+            r = await k.execute(f'import {name}')
+            assert not r.ok and 'No module named' in (r.text + str(r.error)), f'{name} imported in the project kernel: borrowed'
+        await ws.shutdown()
+    asyncio.run(go())

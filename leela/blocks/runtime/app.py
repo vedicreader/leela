@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os, shutil
+import shutil
 from pathlib import Path
 
 from ... import errstr
@@ -23,6 +23,10 @@ def copy_folder(root) -> bool:
 def connect(app, ctx):
     rt = app.route
     session = ctx.session
+    def active():
+        "The interpreter the tab in front runs on: the chosen one, else its project's venv."
+        from .kernels import python_for
+        return python_for(session.cwd_for(), session)
     @rt('/runtime/broker')
     def runtime_broker():
         from .engines import engine_broker
@@ -89,7 +93,7 @@ def connect(app, ctx):
         return {'root': str(root or ''), 'python': py or '', 'needs_create': bool(root and not py),
             'needs_support': bool(py and not support.get('ipykernel', {}).get('available')),
             'notice': notice, 'needs_upgrade': bool(notice and installable(py)),
-            'support': support, 'active': ctx.pool.default_python or '',
+            'support': support, 'active': active() or '',
             'inspector': inspector, 'inspector_packages': list(INSPECTOR),
             'needs_inspector': bool(py and installable(py) and not inspector.get('available')),
             'uv': bool(shutil.which('uv'))}
@@ -99,7 +103,7 @@ def connect(app, ctx):
         from kunda.support import install_kernel_support
         from ..learn.tools import tool_of, upgrade_tool_env
         d = await req.json()
-        py = d.get('python') or ctx.pool.default_python
+        py = d.get('python') or active()
         if not py: return fail('choose a project interpreter first')
         if key := tool_of(py):
             r = await off_loop(upgrade_tool_env, key)
@@ -111,7 +115,7 @@ def connect(app, ctx):
         "Give a project environment its own copy of what the live-variable inspector imports."
         from kunda.support import install_inspector_support, installable
         d = await req.json()
-        py = d.get('python') or ctx.pool.default_python
+        py = d.get('python') or active()
         if not py: return fail('choose a project interpreter first')
         if not installable(py):
             return fail('that is leela’s own interpreter; choose a project environment first')
@@ -123,19 +127,9 @@ def connect(app, ctx):
         root = session.project_repo
         if root is None: return fail('open a folder first')
         if copy_folder(root): return fail('this folder holds learning copies from abhyasa; each copy runs in the environment of its own project')
-        target = root/'.venv'
-        if target.exists(): return fail(f'{target} already exists')
-        def create():
-            import subprocess, venv
-            if uv := shutil.which('uv'): subprocess.run([uv, 'venv', str(target)], check=True, stdin=subprocess.DEVNULL, env=os.environ.copy())
-            else: venv.EnvBuilder(with_pip=True).create(target)
-            py = target/('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
-            from kunda.support import install_kernel_support
-            install_kernel_support(py)
-            return str(py)
-        try: py = await off_loop(create)
+        from . import kernels
+        try: py = await off_loop(kernels.make_venv, root)
         except Exception as e: return fail(f'could not create .venv — {errstr(e)}')
-        ctx.pool.choose(python=py)
         return {'ok': True, 'python': py, 'root': str(root)}
     @rt('/kernel/interrupt')
     async def k_interrupt():

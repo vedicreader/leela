@@ -179,6 +179,12 @@ def _no_real_lessons(monkeypatch, tmp_path_factory):
     monkeypatch.setattr('leela.blocks.learn.learn.LESSONS', tmp_path_factory.mktemp('home')/'Learning'/'Leela lessons')
 
 @pytest.fixture(autouse=True)
+def _no_made_venvs(request, monkeypatch):
+    "A folder without a venv runs on Leela's own Python, as before; a test marked `makes_venv` makes the real one."
+    if request.node.get_closest_marker('makes_venv'): return
+    monkeypatch.setattr('leela.blocks.runtime.kernels.make_venv', lambda root, python=None: None)
+
+@pytest.fixture(autouse=True)
 def _no_backup_threads(monkeypatch):
     """No test schedules real backups."""
     from leela.core import backups

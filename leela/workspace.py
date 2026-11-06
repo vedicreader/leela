@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from fastcore.all import AttrDict, Path, L, atomic_save, first, ifnone
 
-from . import Dictable, leela_cfg
+from . import Dictable, errstr, leela_cfg
 from .agent.agent import Completer
 from .blocks.agent.ai import Assistant, at_cell, notebook_approvals
 from .blocks.runtime.devserver import DevServers
@@ -201,9 +201,8 @@ class Workspace:
         from .blocks.git.git import wire_env
         wire_env()
         self.fs_watch = Watcher(self.fs)
-        from .blocks.runtime.kernels import project_python
-        runtime_python = python or project_python(self.fs.roots)
-        self.pool = KernelPool(port=port, default_kernel=kernel, default_python=runtime_python,
+        self.chosen_python, self.venv_made = {}, {}   # project folder -> the interpreter the person picked, and the venv Leela made
+        self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
         from .blocks.memory.memory import Memory, memory_shelf
@@ -474,9 +473,6 @@ class Workspace:
         r = self.fs.add_root(p, loose=loose)
         self._owns_session = True
         self.rebind_journal()
-        if not self.pool.kernels and self.pool.default_python is None:
-            from .blocks.runtime.kernels import project_python
-            if (py := project_python([r])): self.pool.choose(python=py)
         self._rebrief_agents()
         self.fs_watch.start(restart=True)
         return r
@@ -1002,13 +998,24 @@ class Workspace:
         if (python := self.lesson_python(t)) and (k := self.pool.peek(key)) is not None and not k.busy and str(getattr(k, 'python', '')) != python:
             await self.pool.close(key)
             for c in self._lesson(t)[0].cells: c.fresh = False
+        lang = (t.nb_lang if t else '') or 'python'
         try: return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
-                                        python=python or python_for(cwd, self),
-                                        lang=(t.nb_lang if t else '') or 'python')
+                                        python=python or python_for(cwd, self) or (await self.project_venv(cwd) if lang == 'python' else None),
+                                        lang=lang)
         except KernelStartError as e:
             if not python: raise
             from .blocks.nb.lesson import ENV_GONE, EnvGone
             raise EnvGone(ENV_GONE) from e
+    async def project_venv(self, cwd):
+        "Make the `.venv` of the project `cwd` is in, for a notebook that has none and no chosen interpreter; None where no project owns `cwd`."
+        from .blocks.runtime import kernels as K
+        from .blocks.runtime.app import copy_folder
+        proj = K.project_of(cwd, self)
+        if proj is None or proj == self.fs.loose or copy_folder(proj): return None
+        try: py = await asyncio.to_thread(K.make_venv, proj)
+        except Exception as e: raise K.KernelStartError(f'could not make {proj/".venv"} for this project: {errstr(e)}') from e
+        if py: self.venv_made[str(proj)] = py
+        return py
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
         "What to call the runtime a tab runs in, alive or not."
@@ -1096,13 +1103,14 @@ class Workspace:
                                     env=r.resolved_env(root), python=python_for(cwd or root, self))
     def kernel_options(self, tab=None):
         "Everything a kernel picker needs, so neither frontend has to know how kernels work."
-        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, python_for
+        from .blocks.runtime.kernels import KERNELS, find_pythons, ipymini_available, project_of, python_for
         t = tab or self.tab
         k = self.kernel_peek(t)
         # What this tab's kernel is actually started under. `Workspace.kernel` resolves it the same way.
         from .blocks.nb.lesson import EnvGone
         try: cur_py = self.lesson_python(t) or python_for(self.cwd_for(t), self)
         except EnvGone: cur_py = None
+        proj = str(project_of(self.cwd_for(t), self))
         return {
             'key': self.kernel_key(t),
             'alive': bool(k and k.alive),
@@ -1120,14 +1128,25 @@ class Workspace:
             'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
                         for i, p in enumerate(find_pythons(self.fs.roots, cur_py))],
             'python': cur_py,
+            'chosen': bool(cur_py) and cur_py == self.chosen_python.get(proj),
+            'venv_made': self.venv_made.get(proj, ''),
             'auto_manage': self.kernels_auto_manage,
         }
+    def choose_python(self, python, tab=None):
+        "Run the project of `tab` on `python` from now on; a falsy `python` hands it back to its own venv."
+        from .blocks.runtime.kernels import project_of
+        if (proj := project_of(self.cwd_for(tab or self.tab), self)) is None:
+            raise ValueError('open a folder first: an interpreter is chosen for one project')
+        if python: self.chosen_python[str(proj)] = str(python)
+        else: self.chosen_python.pop(str(proj), None)
+        return str(proj)
     async def set_kernel(self, kind=None, python=False, private=None, tab=None, restart=True):
         "Point a tab at a different kernel, and start it."
         t = tab or self.tab
         old_key = self.kernel_key(t)
         self.watch_env(None)
-        self.pool.choose(kernel=kind, python=python)
+        self.pool.choose(kernel=kind)
+        if python is not False: self.choose_python(python, t)
         if private is not None and t is not None: t.private_kernel = bool(private)
         if not restart: return self.kernel_options(t)
         new_key = self.kernel_key(t)
@@ -1285,6 +1304,7 @@ class Workspace:
                 'completion_model': self.completion_model,
                 'local_multimodal': self.local_multimodal, 'litert_backend': self.litert_backend,
                 'kernels_auto_manage': self.kernels_auto_manage,
+                'chosen_python': dict(self.chosen_python),
                 'agent_state': self.agent_state,
                 'agent_state_layers': self.agent_state_layers,
                 'agent_memory_selection': self.agent_memory_selection,
@@ -1304,6 +1324,7 @@ class Workspace:
         """Everything a saved session holds that is not its folders or its tabs."""
         d = d if isinstance(d, dict) else {}
         self.compact_auto = bool(d.get('compact_auto', True))
+        self.chosen_python = {str(k): str(v) for k, v in (d.get('chosen_python') or {}).items() if v}
         self.compact_strategy = str(d.get('compact_strategy') or 'surgical')
         self.tool_budget = budget_value(d.get('tool_budget'), *TOOL_RANGE)
         self.step_budget = budget_value(d.get('step_budget'), *STEP_RANGE)
