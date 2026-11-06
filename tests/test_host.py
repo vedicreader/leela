@@ -368,7 +368,7 @@ def test_host_install_status_and_restart_go_through_the_launcher(hosted, monkeyp
     f = hosted({('POST', '/update'): {'state': 'running', 'line': 'building'}, ('GET', '/update'): {'state': 'ready', 'line': ''},
                 '/status': _st(newer=True), '/restart': {'ok': True}})
     monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
-    monkeypatch.setattr(U, 'newest_app', lambda: {'version': '1.0.0'})
+    monkeypatch.setattr(U, 'newest_app', lambda ttl=U.TTL: {'version': '1.0.0'})
     assert U.upgrade() == {'state': 'running', 'line': 'building'}
     assert U.upgrade_status() == {'state': 'done', 'line': ''}, "the launcher's ready is the page's done"
     assert U.restart() is True
@@ -379,7 +379,7 @@ def test_the_update_routes_reach_the_launcher(hosted, monkeypatch):
     from leela.blocks.settings import app as settings_app
     hosted({('POST', '/update'): {'state': 'ready'}, ('GET', '/update'): {'state': 'ready'}, '/status': _st(newer=True), '/restart': {'ok': True}})
     monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
-    monkeypatch.setattr(U, 'newest_app', lambda: {'version': '1.0.0'})
+    monkeypatch.setattr(U, 'newest_app', lambda ttl=U.TTL: {'version': '1.0.0'})
     from types import SimpleNamespace
     from fasthtml.common import FastHTML
     settings_app.connect(a := FastHTML(), SimpleNamespace(session=None))
@@ -436,3 +436,24 @@ def test_the_agent_shell_has_the_tools_after_the_projects_venv(monkeypatch, tmp_
     monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
     e = WorkspaceHost._env(SimpleNamespace(ws=None), tmp_path/'p')
     assert e['PATH'].split(os.pathsep)[:3] == [str(proj), str(tools), '/usr/bin'] and e['UV_INDEX_URL'] == 'https://mine.example/simple'
+
+def test_a_fresh_check_in_host_mode_asks_github_now_and_says_whether_it_failed(hosted, monkeypatch):
+    "Check for updates… asks past the cache; the page tells a failed check from an up-to-date app, and sees a lock that waits for a restart."
+    hosted({('GET', '/update'): {'state': 'ready', 'line': ''}, '/status': _st(newer=True)})
+    monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
+    asked = []
+    monkeypatch.setattr(U, 'newest_app', lambda ttl=U.TTL: asked.append(ttl) or {'version': '1.0.0'})
+    o = U.offer(fresh=True)
+    assert asked == [U.FRESH_TTL] and o['kind'] == 'lock' and not o['failed'] and o['job']['state'] == 'done' and o['pending'] == 'package set 4'
+    monkeypatch.setattr(U, 'newest_app', lambda ttl=U.TTL: {'failed': True})
+    assert U.offer(fresh=True)['failed']
+
+def test_an_app_or_lock_tag_is_not_a_failed_check(monkeypatch, tmp_path):
+    "On the thin app's repo the newest release can be `app-v1.0.0` or `lock-3`; only a network error is a failed check."
+    monkeypatch.setattr(U, '_cache', lambda name='release.json': tmp_path/name)
+    def ask(): raise ValueError('lock-3 is not a Leela release')
+    monkeypatch.setattr(U, '_ask', ask)
+    assert not U.latest_release(ttl=0).get('failed')
+    def down(): raise OSError('offline')
+    monkeypatch.setattr(U, '_ask', down)
+    assert U.latest_release(ttl=0)['failed']

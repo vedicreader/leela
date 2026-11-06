@@ -184,6 +184,10 @@ import WebKit
         #expect(ws.failed.contains(ObjectIdentifier(v)))
     }
 
+    @Test func openPathRefusesAPathThatIsNotThere() {
+        #expect(!AppDelegate().openPath("/no/such/file-\(UUID().uuidString)"))
+    }
+
     @Test func textSubstitutionKeysAreTheOldAppsList() {
         #expect(Windows.noSubstitution.count == 7 && Windows.noSubstitution.contains("NSAutomaticQuoteSubstitutionEnabled"))
     }

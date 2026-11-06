@@ -5,6 +5,10 @@ import Network
 public enum BridgeAction: Equatable, Sendable {
     case openFolder(String)
     case pickFolder
+    /// Open…: the native chooser for one file or folder
+    case pickPath
+    /// a folder as `openFolder`, a file where a Finder open sends it
+    case openPath(String)
     case recent
     case setBackground(String)
     case setTitle(String, url: String?)
@@ -14,7 +18,7 @@ public enum BridgeAction: Equatable, Sendable {
 /// The page's native bridge: the same `window.pywebview.api` the pywebview app gave it, so the page JavaScript does not change.
 public enum Bridge {
     public static let handler = "leela"
-    public static let methods = ["open_folder", "pick_folder", "recent", "set_background", "set_title"]
+    public static let methods = ["open_folder", "pick_folder", "pick_path", "open_path", "recent", "set_background", "set_title"]
 
     /// the message `{method, args}` the shim posts, as an action
     public static func route(_ body: Any) -> BridgeAction {
@@ -24,6 +28,8 @@ public enum Bridge {
         switch m {
         case "open_folder": return s(0).map { $0.isEmpty ? .unknown(m) : .openFolder($0) } ?? .unknown(m)
         case "pick_folder": return .pickFolder
+        case "pick_path": return .pickPath
+        case "open_path": return s(0).map { $0.isEmpty ? .unknown(m) : .openPath($0) } ?? .unknown(m)
         case "recent": return .recent
         case "set_background": return s(0).flatMap { isColour($0) ? .setBackground($0) : nil } ?? .unknown(m)
         case "set_title": return s(0).map { .setTitle($0, url: s(1)) } ?? .unknown(m)
@@ -52,7 +58,7 @@ public enum Bridge {
     /// nil when no window can ask
     func confirm(_ question: String) async -> Bool?
     func installExtra(_ name: String) async -> Bool
-    func startUpdate(kind: String) async -> UpdateState
+    func startUpdate(kind: String, latest: String?) async -> UpdateState
     func updateState() -> UpdateState
     func restartServer() async -> Bool
     func status() -> [String: Any]
@@ -92,7 +98,7 @@ public enum ControlRouter {
             return (200, ["ok": await host.installExtra(n)])
         case ("POST", "/update"):
             guard let k = body["kind"] as? String, ["app", "lock"].contains(k) else { return (400, ["ok": false, "error": "kind is app or lock"]) }
-            let u = await host.startUpdate(kind: k)
+            let u = await host.startUpdate(kind: k, latest: body["latest"] as? String)
             return (200, ["state": u.state, "line": u.line])
         case ("GET", "/update"):
             let u = host.updateState()

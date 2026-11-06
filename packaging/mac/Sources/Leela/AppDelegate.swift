@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         }
         let parent = ProcessInfo.processInfo.environment, home = NSHomeDirectory()
         store = EnvStore(paths: paths, spec: spec, uv: uv, uvVersion: uvVersion, parent: parent, home: home)
-        brew = BrewUpgrade(app: bundle.bundleURL)
+        brew = BrewUpgrade(app: bundle.bundleURL, running: appVersion)
         windows.app = self
         windows.log = paths.logs.appending(path: "windows.log")
         let app = AppFacts(uv: uvVersion)
@@ -186,6 +186,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
     }
 
+    /// Open…: one file or folder; a folder gets the grant a picked folder gets, so it opens with no question
+    func pickPath(_ done: @escaping (String?) -> Void) {
+        let o = NSOpenPanel()
+        o.canChooseDirectories = true; o.canChooseFiles = true; o.allowsMultipleSelection = false
+        guard o.runModal() == .OK, let u = o.url else { return done(nil) }
+        var dir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: u.path, isDirectory: &dir), dir.boolValue else { return done(u.path) }
+        Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
+    }
+
+    /// what the page's Open… sends back: a folder opens as the page's open_folder does (the server asks unless it was picked), a file goes to `/hub/open?path=<file>`, where a Finder open goes. Whether it was taken
+    func openPath(_ path: String) -> Bool {
+        var dir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &dir) else { return false }
+        if dir.boolValue { openFolder(path, trusted: false); return true }
+        Task {
+            let (code, d) = await untrusted(["path": path])
+            windows.note(nil, "open path \(path) -> \(code) \(d["url"] as? String ?? "") \(d["error"] as? String ?? "")")
+            guard code == 200, let s = d["url"] as? String, let u = URL(string: s) else { return tell("Leela could not open \(path): \(d["error"] as? String ?? "no answer")") }
+            windows.learn(d)
+            windows.show(u, title: "leela — \((path as NSString).lastPathComponent)")
+        }
+        return true
+    }
+
     func tell(_ msg: String) { let a = NSAlert(); a.messageText = msg; a.runModal() }
 
     // menus
@@ -230,8 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
 
     func installExtra(_ name: String) async -> Bool { Task { await sup.installExtra(name) }; return true }
 
-    func startUpdate(kind: String) async -> UpdateState {
-        if kind == "app" { return brew.start(log: paths.logs.appending(path: "brew.log")) }
+    func startUpdate(kind: String, latest: String?) async -> UpdateState {
+        if kind == "app" { return brew.start(log: paths.logs.appending(path: "brew.log"), latest: latest) }
         Task { await sup.buildUpdate() }
         return UpdateState(state: "running", line: "getting the new packages")
     }

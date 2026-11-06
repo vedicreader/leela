@@ -456,7 +456,8 @@ def _empty_editor():
         P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
         # Actions before the tour: reopening a project should not mean reading past it.
         Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
-            Button('Open file', cls='lee-btn', onclick='leeAct("quick_open")'),
+            Button('Open…', cls='lee-btn', onclick='leeAct("open_folder")'),
+            Button('Go to file…', cls='lee-btn', onclick='leeAct("quick_open")'),
             Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
             Button('Open the vault', cls='lee-btn', onclick='leeVaultWorkbench()'),
             Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
@@ -468,7 +469,7 @@ def _empty_editor():
         # install chose its own dependencies already.
         Div(id='leesetup', cls='lee-empty-setup', hidden=True),
         Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
-        Small('Keyboard: ', Kbd('ctrl+p'), ' open · ', Kbd('ctrl+shift+p'), ' commands · ',
+        Small('Keyboard: ', Kbd('mod+o'), ' open · ', Kbd('mod+p'), ' go to file · ', Kbd('mod+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),
         cls='lee-empty')
 

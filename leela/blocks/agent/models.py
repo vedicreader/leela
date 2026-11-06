@@ -4,7 +4,7 @@ from fastcore.all import Path
 from fastcore.net import urljson
 from ... import extras_site, leela_cfg, use_extras
 from kunda.pythons import clean_env
-from ...core.update import RELEASE_PAGE, latest_release, newer
+from ...core.update import newer, offer
 
 __all__ = ['model_path', 'MODELS_FILE', 'load_models', 'save_model', 'delete_model', 'runtimes',
            'model_marks', 'mark_models', 'JOB_HELP', 'INSTALLABLE', 'runtime_requirements',
@@ -315,8 +315,6 @@ def _latest_versions(dists):
     for d in dists:
         try: out[d] = urljson(f'https://pypi.org/pypi/{d}/json', timeout=4)['info']['version']
         except Exception: pass
-    rel = latest_release()
-    out['leela'], out['leela_url'] = rel.get('version'), rel.get('url') or ''
     _latest, _latest_at = out, time.time()
     return dict(out)
 
@@ -335,7 +333,6 @@ def updates(check=True):
             spec = Requirement(req)
             if (v := _installed_version(spec.name)): dists.setdefault(spec.name, (r, v, spec.specifier))
     latest = _latest_versions(list(dists)) if check else {}
-    from ... import __version__
 
     def movable(cur, new, spec):
         # rishi pins some of these exactly, and a release we cannot take is not an update.
@@ -345,9 +342,7 @@ def updates(check=True):
              'pin': str(spec) or 'any', 'outdated': movable(cur, latest.get(name), spec)}
             for name, (rt, cur, spec) in sorted(dists.items())]
     return {'backends': rows, 'outdated': [r for r in rows if r['outdated']],
-            'leela': {'current': __version__, 'latest': latest.get('leela'),
-                      'url': latest.get('leela_url') or RELEASE_PAGE,
-                      'outdated': newer(latest.get('leela'), __version__)},
+            'leela': offer(None if check else {}),
             'checked': bool(latest)}
 
 def setup_plan():

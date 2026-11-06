@@ -438,10 +438,13 @@ function toolRow(o) {
 function updateRows(u) {
   if (!u) return '<div class="lee-dim">checking\u2026</div>';
   const app = u.leela || {};
-  const head = app.outdated
-    ? `<div class="lee-setup-row"><span><strong>Leela ${esc(app.latest)}</strong><br><small>you have ${esc(app.current)}</small></span>` +
-      `<a class="lee-btn go" href="${esc(app.url)}" target="_blank" rel="noreferrer">get it</a></div>`
-    : `<div class="lee-setup-row"><span><strong>Leela ${esc(app.current)}</strong><br><small>${app.latest ? 'up to date' : 'could not check'}</small></span></div>`;
+  /* The cask app updates in place, as the notice does; any other Leela gets the release page. */
+  const go = app.job?.state === 'done' ? '<button class="lee-btn go" data-leela-update>restart</button>'
+    : app.install ? '<button class="lee-btn go" data-leela-update>update</button>'
+    : `<a class="lee-btn go" href="${esc(app.url)}" target="_blank" rel="noreferrer">get it</a>`;
+  const head = app.outdated || app.job?.state === 'done'
+    ? `<div class="lee-setup-row"><span><strong>Leela ${esc(app.latest)}</strong><br><small>you have ${esc(app.current)}</small></span>${go}</div>`
+    : `<div class="lee-setup-row"><span><strong>Leela ${esc(app.current)}</strong><br><small>${app.failed ? 'could not check' : 'up to date'}</small></span></div>`;
   const rows = (u.outdated || []).map(r =>
     `<div class="lee-setup-row" data-setup-get="${esc(r.runtime)}"><span><strong>${esc(r.dist)}</strong><br>` +
     `<small>${esc(r.installed)} \u2192 ${esc(r.latest)}</small></span><button class="lee-btn">update</button></div>`).join('');
@@ -461,6 +464,8 @@ function setupBody(d, u) {
    rewritten. Replacing the box's own markup threw all three away, and the styles with them. */
 function renderSetup(box, d, u) {
   $('.lee-setup-body', box).innerHTML = setupBody(d, u);
+  /* The modal sits over the notice bar, so the run shows there once the modal closes. */
+  $('[data-leela-update]', box)?.addEventListener('click', () => { box.closest('.lee-modal')?.remove(); leeUpdateRun(u.leela); });
   box.querySelectorAll('[data-setup-get]').forEach(row => row.querySelector('button')?.addEventListener('click', async () => {
     const runtime = row.dataset.setupGet;
     const r = await post('/agent/runtimes/install', {runtime});

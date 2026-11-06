@@ -68,7 +68,7 @@ BUTTONS = L(
     Btn('new_dir',      '+dir',     'new folder',                      'files'),
     Btn('refresh_files','⟳',        'reread the tree',                 'files'),
     Btn('show_hidden',  '.*',       'show dotfiles like .gitignore and .github', 'files'),
-    Btn('open_folder',  'open…',    'open a folder in a new window',   'files'),
+    Btn('open_folder',  'open…',    'open a file or a folder', 'files'),
     Btn('add_root',     'add…',     'add a folder to this window',     'files'),
     Btn('help',         'all',      'every binding',                   'keys'),
     Btn('edit_keys',    'edit',     'change these keys',               'keys'),
@@ -85,7 +85,7 @@ BUTTONS = L(
     Btn('show_docs',    'docs',     'docs for the symbol at the cursor','web_editor'),
     Btn('find_similar', 'similar',  'code like the symbol at the cursor','web_editor'),
     Btn('code_map',     'map',      'code clusters across this project','web_editor'),
-    Btn('quick_open',   'file…',    'open a file',                     'web_files'),
+    Btn('quick_open',   'go to file…', 'go to a file in the open folders', 'web_files'),
     Btn('grid',         'grid',     'open the selected table or array','web_vars'),
 )
 

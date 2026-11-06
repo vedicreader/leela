@@ -10,7 +10,7 @@ __all__ = ['MenuItem', 'Std', 'Js', 'MENUS', 'BAR', 'menu', 'web_menus', 'menu_l
 
 S = MenuItem
 MENUS = {
-    'files': L(S('quick_open'), S('open_folder'), S('add_root'), S(), S('new_file'), S('new_notebook'),
+    'files': L(S('open_folder'), S('quick_open'), S('add_root'), S(), S('new_file'), S('new_notebook'),
                S('new_dir'), S(), S('nbdev_prepare'), S('fastship'),
                S(), S('code_search'), S('refresh_files')),
     'file': L(S('open'), S('show_diff'), S('git_blame'), S(), S('git_stage'), S('git_unstage'),
@@ -81,9 +81,9 @@ if _missing := sorted({i.action for rows in MENUS.values() for i in rows if i.ac
 #: The Mac menu bar, in the order macOS expects. `__app__` is spliced into the application menu
 #: rather than made a menu of its own. Rows are keymap actions, AppKit selectors, or JS.
 BAR = (
-    ('__app__', L(S('settings'), S('setup_models'))),
+    ('__app__', L(S('check_updates'), S(), S('settings'), S('setup_models'))),
     ('File',    L(S('new_file'), S('new_notebook'), S('new_lesson'), S('new_dir'), S(),
-                  S('quick_open'), S('open_folder'), S('add_root'), S('recent_tabs'), S(),
+                  S('open_folder'), S('quick_open'), S('add_root'), S('recent_tabs'), S(),
                   S('save'), S('save_all'), S('reload_file'), S(), S('close_tab'), S('close_others'),
                   S('close_right'), S('close_saved'), S('remove_root'), S(),
                   S('copy_rel_path'), S('copy_abs_path'))),

@@ -232,6 +232,8 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         switch Bridge.route(m.body) {
         case .openFolder(let p): app?.openFolder(p, trusted: false); replyHandler(true, nil)
         case .pickFolder: app?.pickFolder { replyHandler($0, nil) }
+        case .pickPath: app?.pickPath { replyHandler($0, nil) }
+        case .openPath(let p): replyHandler(app?.openPath(p) ?? false, nil)
         case .recent: replyHandler(app?.recent ?? [], nil)
         case .setBackground(let hexColour):
             paint(Self.colour(hexColour) ?? background)

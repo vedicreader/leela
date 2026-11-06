@@ -84,10 +84,10 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
         return {'ok': True, **out, 'note': 'reload the window to read the restored state'}
     @rt('/update')
-    async def update_offer():
-        "Whether a newer Leela is out, and whether this app can install it."
+    async def update_offer(fresh: bool = False):
+        "Whether a newer Leela is out, and whether this app can install it. `fresh` skips the six-hour cache."
         from ...core.update import offer
-        return {'ok': True, **await off_loop(offer)}
+        return {'ok': True, **await off_loop(offer, fresh=fresh)}
     @rt('/update/install')
     def update_install():
         "Start installing the newer release in the background."

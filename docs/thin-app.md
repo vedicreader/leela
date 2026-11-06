@@ -104,7 +104,7 @@ All of these sit behind `LoopbackHostGuard`, so a page on another host name gets
 
 ### The window bridge
 
-The launcher injects `window.pywebview.api` into each page, so the page JavaScript does not change: `open_folder`, `pick_folder`, `recent`, `set_background`, `set_title`. Each call goes through one `WKScriptMessageHandlerWithReply`. `BridgeRouter` maps a call to an action and is tested without a window.
+The launcher injects `window.pywebview.api` into each page, so the page JavaScript does not change: `open_folder`, `pick_folder`, `pick_path`, `open_path`, `recent`, `set_background`, `set_title`. `pick_path` (Open…) is the native chooser for one file or folder; a chosen folder gets the grant `pick_folder` gives. `open_path` opens a folder as `open_folder` does, and a file through `/hub/open?path=<file>`, where a Finder open goes. Each call goes through one `WKScriptMessageHandlerWithReply`. `BridgeRouter` maps a call to an action and is tested without a window.
 
 ## The lock
 
@@ -171,7 +171,7 @@ The keys are SSH Ed25519 keys:
 
 | Newer app | Newer lock | Lock needs newer app | Homebrew | Kind | Update does |
 |---|---|---|---|---|---|
-| yes | any | any | yes | `app` | the launcher runs `brew upgrade --cask leela`, then restarts |
+| yes | any | any | yes | `app` | the launcher runs `brew upgrade --cask leela` with `HOMEBREW_AUTO_UPDATE_SECS=0` and without Homebrew's "already updated" markers, so a cask pushed today is seen; when nothing changed it runs `brew update` and tries once more, then says Homebrew does not list the version yet. A newer app already on disk is "installed, waiting for restart". Then it restarts |
 | no | yes | no | any | `lock` | the launcher builds the new env, then "Restart to update" |
 | no | yes | yes | yes | `app-needed` | the notice names the app version that is needed |
 | yes, or a lock that needs an app | any | any | no | `download` | the notice opens the release page |
@@ -219,7 +219,7 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | Behaviour | Old app | Thin app | Status |
 |---|---|---|---|
 | Size 1440×900, smallest 900×560 | K:51, K:54 | W:41, W:70 | fixed (it was 1400×900 with no minimum) |
-| Bridge: `open_folder`, `pick_folder`, `recent`, `set_background`, `set_title` | K:82 `ShellApi`, D:30 | `Bridge.route`, W:200 to W:206 | same |
+| Bridge: `open_folder`, `pick_folder`, `pick_path`, `open_path`, `recent`, `set_background`, `set_title` | K:82 `ShellApi`, D:30 | `Bridge.route`, W:200 to W:206 | same |
 | Background repaints the window and what WebKit draws past the page | K:67 `paint_background` | W:215 `paint` | fixed (the area past the page edge was not painted) |
 | Smart quotes, dashes and autocorrect off | K:379 `quiet_text_substitution` | W:56, called at AD:36 | fixed: before, `"` typed in the editor could become a curly quote |
 | Native context menu | empty unless debug (C:508) | empty unless `LEELA_WEBVIEW_DEBUG` (W:11) | fixed: before, it offered Reload, which drops the page |

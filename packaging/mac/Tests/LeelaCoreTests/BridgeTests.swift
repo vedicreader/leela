@@ -6,6 +6,9 @@ import Testing
     @Test func eachPageCallMapsToOneAction() {
         #expect(Bridge.route(["method": "open_folder", "args": ["/a"]]) == .openFolder("/a"))
         #expect(Bridge.route(["method": "pick_folder", "args": []]) == .pickFolder)
+        // Open…: the page calls pick_path, then open_path with what was chosen
+        #expect(Bridge.route(["method": "pick_path", "args": []]) == .pickPath && Bridge.route(["method": "open_path", "args": ["/a/b.png"]]) == .openPath("/a/b.png"))
+        #expect(Bridge.route(["method": "open_path", "args": [""]]) == .unknown("open_path") && Bridge.shim.contains("\"pick_path\"") && Bridge.shim.contains("\"open_path\""))
         #expect(Bridge.route(["method": "recent"]) == .recent)
         #expect(Bridge.route(["method": "set_background", "args": ["#112233"]]) == .setBackground("#112233"))
         #expect(Bridge.route(["method": "set_title", "args": ["leela — x", "http://x.localhost:5010/"]]) == .setTitle("leela — x", url: "http://x.localhost:5010/"))
@@ -28,7 +31,7 @@ import Testing
     var asked = [String](), answer: Bool? = true, extras = [String](), kinds = [String](), restarts = 0
     func confirm(_ q: String) async -> Bool? { asked.append(q); return answer }
     func installExtra(_ name: String) async -> Bool { extras.append(name); return true }
-    func startUpdate(kind: String) async -> UpdateState { kinds.append(kind); return UpdateState(state: "running", line: "x") }
+    func startUpdate(kind: String, latest: String?) async -> UpdateState { kinds.append(kind); return UpdateState(state: "running", line: "x") }
     func updateState() -> UpdateState { UpdateState(state: "ready") }
     func restartServer() async -> Bool { restarts += 1; return true }
     func status() -> [String: Any] { ["app_version": "1.0.0", "brew": true] }
@@ -110,7 +113,7 @@ func req(_ method: String, _ path: String, _ body: [String: Any]? = nil, token: 
     @Test func onlyTheCasksLeelaAppUpgradesThroughBrew() throws {
         let d = tempDir(), brew = d.appending(path: "bin/brew")
         try FileManager.default.createDirectory(at: brew.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("#!/bin/sh\necho upgraded\n".utf8).write(to: brew)
+        try Data("#!/bin/sh\necho 'upgraded'\n".utf8).write(to: brew)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: brew.path)
         #expect(BrewUpgrade.find(app: URL(fileURLWithPath: "/Applications/Leela.app"), places: [brew.path]) == nil, "no Caskroom/leela")
         try FileManager.default.createDirectory(at: d.appending(path: "Caskroom/leela"), withIntermediateDirectories: true)
@@ -119,16 +122,52 @@ func req(_ method: String, _ path: String, _ body: [String: Any]? = nil, token: 
         #expect(BrewUpgrade(app: URL(fileURLWithPath: "/tmp/Other.app"), places: [brew.path]).start(log: d.appending(path: "log")).state == "unavailable")
     }
 
-    @Test func anUpgradeThatChangesNothingIsSame() async throws {
-        let d = tempDir(), brew = d.appending(path: "brew"), app = d.appending(path: "Leela.app")
+    /// a fake brew in its own folder: single-quoted strings, no command substitution, and an env with only that folder on PATH, so no test reaches the real brew
+    func fake(_ body: String, _ make: ((URL) -> String)? = nil) throws -> (URL, URL, [String: String]) {
+        let d = tempDir(), brew = d.appending(path: "brew"), app = d.appending(path: "Leela.app"), body = make?(app) ?? body
         try FileManager.default.createDirectory(at: app.appending(path: "Contents"), withIntermediateDirectories: true)
-        try Data("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleShortVersionString</key><string>1.0.0</string></dict></plist>".utf8).write(to: app.appending(path: "Contents/Info.plist"))
-        try Data("#!/bin/sh\necho \"Warning: leela is up to date\"\n".utf8).write(to: brew)
+        try plist(app, "1.0.0")
+        try Data("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(d.path)/calls'\n/usr/bin/env > '\(d.path)/env'\n\(body)\n".utf8).write(to: brew)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: brew.path)
-        let b = BrewUpgrade(app: app, brew: brew)
-        #expect(b.start(log: d.appending(path: "log")).state == "running")
+        return (brew, app, ["PATH": d.path, "HOME": d.path, "HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_AUTO_UPDATE_CHECKED": "1"])
+    }
+    func plist(_ app: URL, _ v: String) throws {
+        try Data("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleShortVersionString</key><string>\(v)</string></dict></plist>".utf8).write(to: app.appending(path: "Contents/Info.plist"))
+    }
+    func finish(_ b: BrewUpgrade) async throws {
         let end = Date().addingTimeInterval(10)
         while b.state.state == "running" && Date() < end { try await Task.sleep(for: .milliseconds(50)) }
-        #expect(b.state.state == "same")
+    }
+
+    @Test func anUpgradeThatChangesNothingTriesBrewUpdateThenSaysNotListedYet() async throws {
+        let (brew, app, base) = try fake("echo 'Warning: leela is up to date'")
+        let b = BrewUpgrade(app: app, brew: brew, running: "1.0.0", base: base)
+        #expect(b.start(log: brew.deletingLastPathComponent().appending(path: "log"), latest: "1.0.1").state == "running")
+        try await finish(b)
+        #expect(b.state == UpdateState(state: "same", line: "Homebrew does not list Leela 1.0.1 yet. Try again in a few minutes."))
+        let calls = try String(contentsOf: brew.deletingLastPathComponent().appending(path: "calls"), encoding: .utf8)
+        #expect(calls == "upgrade --cask leela\nupdate\nupgrade --cask leela\n")
+        let env = try String(contentsOf: brew.deletingLastPathComponent().appending(path: "env"), encoding: .utf8)
+        #expect(env.contains("HOMEBREW_AUTO_UPDATE_SECS=0") && !env.contains("HOMEBREW_NO_AUTO_UPDATE") && !env.contains("HOMEBREW_AUTO_UPDATE_CHECKED"))
+        #expect(env.contains("PATH=\(brew.deletingLastPathComponent().path)\n"), "only the fake on PATH")
+    }
+
+    @Test func anUpgradeThatPutsANewVersionInPlaceIsDone() async throws {
+        let (brew, app, base) = try fake("") { app in
+            "echo '==> Upgrading leela'\nprintf '%s' '<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleShortVersionString</key><string>1.0.1</string></dict></plist>' > '\(app.path)/Contents/Info.plist'"
+        }
+        let b = BrewUpgrade(app: app, brew: brew, running: "1.0.0", base: base)
+        b.start(log: brew.deletingLastPathComponent().appending(path: "log"), latest: "1.0.1")
+        try await finish(b)
+        #expect(b.state == UpdateState(state: "done", line: "Leela 1.0.1 is installed."))
+    }
+
+    @Test func aNewerAppAlreadyOnDiskIsInstalledAndWaitsForARestart() throws {
+        let (brew, app, base) = try fake("exit 1")
+        try plist(app, "1.0.1")
+        let b = BrewUpgrade(app: app, brew: brew, running: "1.0.0", base: base)
+        #expect(b.start(log: brew.deletingLastPathComponent().appending(path: "log"), latest: "1.0.1") == UpdateState(state: "done", line: "Leela 1.0.1 is installed."))
+        #expect(!FileManager.default.fileExists(atPath: brew.deletingLastPathComponent().appending(path: "calls").path), "brew did not run")
+        #expect(BrewUpgrade.newer("1.0.10", "1.0.9") && !BrewUpgrade.newer("1.0.0", "1.0.0") && !BrewUpgrade.newer(nil, "1"))
     }
 }

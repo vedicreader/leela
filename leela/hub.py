@@ -430,7 +430,7 @@ class WorkspaceHub:
     async def _open(self, scope, send):
         "Serve a folder as its own workspace, and with `file`, open that file in it. The desktop shell then points a window at the row."
         # A file alone never adds a folder: one no open folder holds goes to the loose window, with the folder as `offer`. `folder=1` asks to add it.
-        from .core.projects import loose_root
+        from .core.projects import loose_root, workspace_for
         q = parse_qs(scope.get('query_string', b'').decode())
         raw, file, folder = (q.get('path') or [''])[0], (q.get('file') or [''])[0], (q.get('folder') or [''])[0] == '1'
         if scope.get('method', 'GET') != 'POST' and raw.strip():
@@ -439,6 +439,8 @@ class WorkspaceHub:
         if trusted is False: return await _json(send, {'ok': False, 'error': BAD_GRANT, 'config': cfg_mark()}, 401)
         try: root = Path(raw).expanduser().resolve() if raw.strip() else None
         except (OSError, ValueError): root = None
+        # A file alone, as Open… sends it, goes where a Finder open sends it.
+        if root is not None and root.is_file() and not file: file, root = str(root), workspace_for(root) or loose_root()
         if root is None or not root.is_dir():
             return await _json(send, {'ok': False, 'error': f'not a folder: {raw}', 'config': cfg_mark()}, 400)
         try: also = [a for a in (Path(x).expanduser().resolve() for x in q.get('also') or [] if x.strip()) if a.is_dir()]
