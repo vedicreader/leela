@@ -332,6 +332,11 @@ def smoke(env_dir, results, extras=(), wait=180):
     def cell():
         if (got := sh(py, '-I', '-c', _SMOKE_KERNEL, env=kenv, cwd=tmp, timeout=180).splitlines()[-1:]) != ['2']: raise RuntimeError(f'the cell gave {got}')
     ok &= step('kernel cell 1+1', cell)
+    def find():   # rgapi 0.2.3 swapped fd's first two arguments, and an empty file list looked like a pass
+        (work/'probe.py').write_text('x = 1\n')
+        got = sh(py, '-I', '-c', f'from pathlib import Path; from leela.blocks.fs.fs import _walked; print(len(_walked([Path({str(work)!r})], False, 100, None)))', env=kenv, cwd=tmp, timeout=120)
+        if got.splitlines()[-1:] != ['1']: raise RuntimeError(f'the file walk found {got.strip()[-200:]!r} files, not 1')
+    ok &= step('file walk', find)
     for x in extras: ok &= step(f'extra {x}', lambda x=x: sh(py, *_EXTRA_CHECK[x], env=kenv))
     shutil.rmtree(tmp, ignore_errors=True)
     return ok
