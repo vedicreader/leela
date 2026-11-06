@@ -97,6 +97,11 @@ def connect(app, ctx):
     def update_status():
         from ...core.update import upgrade_status
         return {'ok': True, **upgrade_status()}
+    @rt('/update/old-extras')
+    def update_old_extras():
+        "Remove the packages the old app installed beside itself, which the Mac app never reads."
+        from ...core.update import remove_old_extras
+        return {'ok': remove_old_extras()}
     @rt('/update/restart')
     def update_restart():
         "Quit and open the installed app, once an upgrade finished."

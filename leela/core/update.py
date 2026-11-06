@@ -8,7 +8,7 @@ from pullup.env import strip_bundle
 from .. import __version__
 
 __all__ = ['REPO', 'RELEASES', 'RELEASE_PAGE', 'CASK', 'TTL', 'APP_TAG', 'latest_release', 'newest_app', 'newer', 'app_bundle', 'brew_for',
-           'kind', 'offer', 'Upgrade', 'upgrade', 'upgrade_status', 'restart']
+           'kind', 'offer', 'old_extras', 'remove_old_extras', 'Upgrade', 'upgrade', 'upgrade_status', 'restart']
 
 REPO = 'vedicreader/leela'
 RELEASES = f'https://api.github.com/repos/{REPO}/releases/latest'
@@ -104,7 +104,23 @@ def _host_offer(st=None, rel=None):
     k = kind(newer(rel.get('version'), cur), bool(lk.get('newer')), bool(lk.get('needs_app')), bool(st.get('brew'))) if st else 'none'
     latest = dict(lock=f"package set {lk.get('newest_n')}", none=cur).get(k, lk.get('app_min') if k == 'app-needed' and lk.get('app_min') else rel.get('version'))
     return dict(current=cur, latest=latest, url=rel.get('url') or RELEASE_PAGE, outdated=k != 'none', kind=k,
-                notice=k != 'none', install=k in ('app', 'lock'), lock=lk.get('current_n'), newest_lock=lk.get('newest_n'))
+                notice=k != 'none', install=k in ('app', 'lock'), lock=lk.get('current_n'), newest_lock=lk.get('newest_n'), old_extras=old_extras())
+
+def _extras_root():
+    from .. import extras_site
+    return extras_site().parents[2]
+
+def old_extras():
+    "The extras folder the old app installed into, which the Mac app's env never reads: `{path, mb}`, or None outside host mode or when it is gone."
+    from . import host
+    if not host.on() or not (p := _extras_root()).is_dir(): return None
+    return dict(path=str(p), mb=round(sum(f.stat().st_size for f in p.rglob('*') if f.is_file() and not f.is_symlink()) / 2**20))
+
+def remove_old_extras():
+    "Delete the old extras folder, and nothing else; only in host mode."
+    if not (o := old_extras()): return False
+    shutil.rmtree(o['path'])
+    return True
 
 def offer(rel=None, app=None):
     "What the notice offers: whether a newer release exists, and whether Leela can install it here."

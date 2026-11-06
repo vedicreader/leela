@@ -1129,9 +1129,15 @@ const updateLater = ['Not now', () => { $('#leeupdate').hidden = true; sessionSt
 const updateText = d => ({lock: 'A new set of Leela packages is ready. Kernels stop when Leela restarts to use it.',
   'app-needed': `The newest Leela packages need Leela app ${d.latest}. Get it from the release page.`,
   download: `Leela ${d.latest} is available. You have ${d.current}. Get it from the release page.`})[d.kind] || `Leela ${d.latest} is available. You have ${d.current}.`;
+function oldExtrasOffer(o) {
+  if (!o || sessionStorage.getItem('lee-old-extras-later')) return;
+  updateBar(`The old Leela app left ${o.mb} MB of packages in ${o.path}. This Leela does not use them.`,
+    [['Remove them', async () => { const r = await post('/update/old-extras', {}).catch(() => ({})); $('#leeupdate').hidden = true; if (!r.ok) status('Leela could not remove the old packages', 'err'); }],
+     ['Not now', () => { $('#leeupdate').hidden = true; sessionStorage.setItem('lee-old-extras-later', '1'); }]]);
+}
 async function leeUpdateNotice() {
   const d = await api('/update');
-  if (!d.notice || sessionStorage.getItem('lee-update-later') === updateKey(d)) return;
+  if (!d.notice || sessionStorage.getItem('lee-update-later') === updateKey(d)) return oldExtrasOffer(d.old_extras);
   updateShown = d;
   const notes = [d.kind === 'lock' ? 'Details' : 'Release notes', () => openExternal(d.url)];
   updateBar(updateText(d), d.install ? [['Update', () => leeUpdateRun(d)], notes, updateLater] : [notes, updateLater]);

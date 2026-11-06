@@ -28,7 +28,10 @@ permissions:
   contents: write
 
 jobs:
+  # Off: the thin Mac app ships from `make ship-app` and its packages from the lock channel (docs/thin-app.md).
+  # `make ship` still builds the old py2app DMG on the owner's Mac for one more release.
   macos:
+    if: false
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4

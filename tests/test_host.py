@@ -321,3 +321,21 @@ def test_host_mode_down_gives_an_error_state_not_an_exception(monkeypatch):
     monkeypatch.setattr(host, '_host', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
     assert U.upgrade_status()['state'] == 'error' and U.restart() is False
     assert U.offer()['kind'] == 'none'
+
+def test_host_mode_offers_to_remove_the_old_extras_folder_and_removes_only_it(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from fasthtml.common import FastHTML
+    from starlette.testclient import TestClient
+    from leela.blocks.settings import app as settings_app
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    site = tmp_path/'leela'/'extras'/'lib'/'python3.12'/'site-packages'/'mlx'
+    site.mkdir(parents=True); (site/'x.so').write_bytes(b'0' * 2**20); (tmp_path/'leela'/'keep.json').write_text('{}')
+    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    assert U.old_extras() is None and not U.remove_old_extras(), 'outside host mode the fat app still uses it'
+    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    assert U.old_extras() == {'path': str(tmp_path/'leela'/'extras'), 'mb': 1}
+    assert U._host_offer({}, {})['old_extras']['mb'] == 1
+    settings_app.connect(a := FastHTML(), SimpleNamespace(session=None))
+    assert TestClient(a).post('/update/old-extras').json() == {'ok': True}
+    assert not (tmp_path/'leela'/'extras').exists() and (tmp_path/'leela'/'keep.json').is_file()
+    assert U.old_extras() is None
