@@ -161,7 +161,7 @@ MAC_UTIS = {'.py': 'public.python-script', '.js': 'com.netscape.javascript-sourc
     '.pptx': 'org.openxmlformats.presentationml.presentation', '.xlsx': 'org.openxmlformats.spreadsheetml.sheet',
     '.xlsm': 'org.openxmlformats.spreadsheetml.sheet.macroenabled', '.mp3': 'public.mp3', '.wav': 'com.microsoft.waveform-audio',
     '.m4a': 'com.apple.m4a-audio', '.aac': 'public.aac-audio', '.flac': 'org.xiph.flac', '.ogg': 'org.xiph.ogg-audio',
-    '.oga': 'org.xiph.ogg-audio', '.opus': 'org.xiph.ogg-audio', '.mp4': 'public.mpeg-4', '.m4v': 'com.apple.m4v-video',
+    '.oga': 'org.xiph.ogg-audio', '.mp4': 'public.mpeg-4', '.m4v': 'com.apple.m4v-video',
     '.mov': 'com.apple.quicktime-movie', '.webm': 'org.webmproject.webm'}
 #: ids Xcode and Notes import too, for extensions macOS has no type for; any other extension gets `org.vedicreader.leela.<ext>`
 SHARED_UTIS = {'.ipynb': ('org.jupyter.ipynb', 'Jupyter notebook'), '.md': ('net.daringfireball.markdown', 'Markdown text'),
