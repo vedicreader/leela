@@ -4,13 +4,14 @@ import sys, time
 from fastcore.all import Path
 from setuptools import setup
 
-from kavacha import App, doc_types, finish, frozen_distribution, mypyc_modules, tree
+from kavacha import App, finish, frozen_distribution, mypyc_modules, tree
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT/'packaging'/'assets'
 sys.path.insert(0, str(ROOT))
 
 from leela import __version__  # noqa: E402
+from leela.workspace import doc_types, imported_types  # noqa: E402
 
 def build_stamp(version=__version__, now=None):
     "A CFBundleVersion that grows by one every minute and compares above `version` itself."
@@ -115,15 +116,6 @@ GRAFTED = ('apsw', 'playwright', 'patchright', 'liteparse')
 #: extensions load. Code in a zip cannot be signed, so notarisation refused all eighteen.
 UNREACHABLE = ('claude_agent_sdk/_bundled/', 'PIL/.dylibs/')
 
-#: Better opened somewhere else, whatever Leela can edit: a browser renders these and Leela would
-#: only show their source. Everything else it knows a language for, it asks to own.
-VIEW_ELSEWHERE = {'.svg', '.html', '.htm', '.pdf'}
-
-def _doc_types():
-    "One document type per language Leela edits, taken from the map the file tree already uses."
-    from leela.blocks.fs.fs import LANGS
-    return doc_types([e for e, lang in LANGS.items() if lang], VIEW_ELSEWHERE)
-
 APP = App(
     name       = 'Leela',
     entry      = str(ROOT/'leela_app.py'),
@@ -143,8 +135,8 @@ APP = App(
     grafted    = GRAFTED,
     unreachable= UNREACHABLE,
     data       = DATA_FILES,
-    plist      = {'NSHumanReadableCopyright': 'Apache-2.0'},
-    doc_types  = _doc_types(),
+    plist      = {'NSHumanReadableCopyright': 'Apache-2.0', 'UTImportedTypeDeclarations': imported_types()},
+    doc_types  = doc_types(),
     extras     = ['gateway', 'macapp'],
     # The oldest macOS the suite runs on (a macos-14 runner). numpy's wheel for a macOS 14 build needs 14. Leela never ran on kavacha's default, 11.0.
     min_macos  = '14.0',

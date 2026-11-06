@@ -525,3 +525,54 @@ def test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker(tmp_path):
         if not (left := _bundle_pids(APP.parents[2])): break
         time.sleep(.5)
     assert not left, 'processes outlived the app:\n' + '\n'.join(left)
+
+# Finder's Open With: CFBundleDocumentTypes and UTImportedTypeDeclarations, from `leela.workspace.doc_types`
+
+def _declared(plist):
+    "Each extension the plist's document types name, by UTI or by extension, mapped to the row that names it."
+    from leela.workspace import MAC_UTIS
+    tag = {**MAC_UTIS, **{f'.{e}': d['UTTypeIdentifier'] for d in plist['UTImportedTypeDeclarations'] for e in d['UTTypeTagSpecification']['public.filename-extension']}}
+    out = {}
+    for t in plist['CFBundleDocumentTypes'][1:]:
+        for e, u in tag.items():
+            if u in t.get('LSItemContentTypes', ()): out.setdefault(e, set()).add(t['CFBundleTypeName'])
+        for e in t.get('CFBundleTypeExtensions', ()): out.setdefault(f'.{e}', set()).add(t['CFBundleTypeName'])
+    return out
+
+def test_open_with_covers_every_file_a_tab_shows_and_nothing_it_refuses(mac):
+    """A .png, .pdf or .docx was greyed out in Open With, because the plist named source files alone."""
+    from leela.blocks.fs.fs import LANGS, _BINARY
+    from leela.blocks.fs.office import OFFICE
+    from leela.workspace import DOC_KINDS, IMAGE_EXTS, MAC_UTIS, kind_for, openable
+    p, got = mac.PLIST, _declared(mac.PLIST)
+    assert set(got) == {*LANGS, *IMAGE_EXTS, *OFFICE, '.pdf'} and {'.png', '.pdf', '.docx', '.pptx', '.xlsx', '.xlsm', '.ipynb', '.md', '.svg'} <= set(got)
+    assert all(openable(f'x{e}') for e in got), [e for e in got if not openable(f'x{e}')]
+    assert not {e for e in _BINARY if not openable(f'x{e}')} & set(got)
+    for e, rows in got.items():
+        name, role = DOC_KINDS[kind_for(f'x{e}')]
+        assert rows <= {name, f'{name} by extension'}, (e, rows)
+    assert {t['LSHandlerRank'] for t in p['CFBundleDocumentTypes']} == {'Alternate'}, 'Leela must never take over a default handler'
+    assert {t['CFBundleTypeName']: t['CFBundleTypeRole'] for t in p['CFBundleDocumentTypes']}['Image'] == 'Viewer'
+    known = {'public.folder', *MAC_UTIS.values(), *(d['UTTypeIdentifier'] for d in p['UTImportedTypeDeclarations'])}
+    assert {u for t in p['CFBundleDocumentTypes'] for u in t.get('LSItemContentTypes', ())} <= known, 'no broad type such as public.image or public.data'
+    assert not {u for u in known if u.startswith('org.vedicreader.')} & set(MAC_UTIS.values())
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS types')
+def test_open_with_names_macos_own_type_for_each_extension(mac):
+    """A wrong UTI greys a file out again; a declared one that a refused file conforms to puts Leela on it."""
+    UTType = pytest.importorskip('UniformTypeIdentifiers').UTType
+    from leela.blocks.fs.fs import _BINARY
+    from leela.workspace import MAC_UTIS, openable
+    assert {e: u for e, u in MAC_UTIS.items() if UTType.typeWithFilenameExtension_(e[1:]).identifier() != u} == {}
+    for e in (e for e in _BINARY if not openable(f'x{e}')):
+        t = UTType.typeWithFilenameExtension_(e[1:])
+        assert not [u for u in set(MAC_UTIS.values()) if t.conformsToType_(UTType.typeWithIdentifier_(u))], e
+
+def test_a_finder_open_of_each_declared_type_is_let_in_and_routed_to_its_viewer(mac, tmp_path):
+    """Both apps hand a Finder open to `/hub/open`, which refuses a file `_unopenable` names."""
+    from leela.hub import _unopenable
+    from leela.workspace import kind_for
+    for e in _declared(mac.PLIST):
+        (f := tmp_path/f'x{e}').write_bytes(b'')
+        assert _unopenable(str(f), tmp_path) is None, e
+    assert [kind_for(tmp_path/f'x{e}') for e in ('.png', '.svg', '.pdf', '.docx', '.xlsm', '.ipynb', '.ts')] == ['image', 'image', 'pdf', 'office', 'office', 'notebook', 'text']

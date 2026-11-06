@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio, atexit, hashlib, json, os, threading, time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from fastcore.all import AttrDict, Path, L, atomic_save, first, ifnone
+from fastcore.all import AttrDict, Path, L, atomic_save, first, groupby, ifnone
 
 from . import Dictable, leela_cfg
 from .agent.agent import Completer
@@ -20,7 +20,7 @@ from .blocks.runs.runs import Run, Runs
 from .blocks.search.search import Search
 from .blocks.term.term import Terminals
 
-__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window', 'openable']
+__all__ = ['Tab', 'Workspace', 'ws_path', 'has_own_window', 'openable', 'doc_types', 'imported_types']
 
 class _EnvClient:
     "Read-only access to some *other* process's inspector, in the shape `Kernel.api` has."
@@ -146,6 +146,51 @@ def kind_for(path):
     sfx = Path(path).suffix.lower()
     if str(path).endswith('.ipynb'): return 'notebook'
     return 'pdf' if sfx == '.pdf' else 'office' if is_office(path) else 'image' if sfx in IMAGE_EXTS else 'audio' if sfx in AUDIO_EXTS else 'video' if sfx in VIDEO_EXTS else 'text'
+
+#: macOS's own type for an extension Leela opens, each declared by CoreTypes
+MAC_UTIS = {'.py': 'public.python-script', '.js': 'com.netscape.javascript-source', '.mjs': 'com.netscape.javascript-source',
+    '.json': 'public.json', '.html': 'public.html', '.htm': 'public.html', '.css': 'public.css', '.yaml': 'public.yaml', '.yml': 'public.yaml',
+    '.sh': 'public.shell-script', '.bash': 'public.bash-script', '.zsh': 'public.zsh-script', '.c': 'public.c-source', '.h': 'public.c-header',
+    '.cc': 'public.c-plus-plus-source', '.cpp': 'public.c-plus-plus-source', '.cxx': 'public.c-plus-plus-source', '.hpp': 'public.c-plus-plus-header',
+    '.java': 'com.sun.java-source', '.xml': 'public.xml', '.svg': 'public.svg-image', '.png': 'public.png',
+    '.jpg': 'public.jpeg', '.jpeg': 'public.jpeg', '.gif': 'com.compuserve.gif', '.webp': 'org.webmproject.webp', '.ico': 'com.microsoft.ico',
+    '.bmp': 'com.microsoft.bmp', '.pdf': 'com.adobe.pdf', '.docx': 'org.openxmlformats.wordprocessingml.document',
+    '.pptx': 'org.openxmlformats.presentationml.presentation', '.xlsx': 'org.openxmlformats.spreadsheetml.sheet',
+    '.xlsm': 'org.openxmlformats.spreadsheetml.sheet.macroenabled'}
+#: ids Xcode and Notes import too, for extensions macOS has no type for; any other extension gets `org.vedicreader.leela.<ext>`
+SHARED_UTIS = {'.ipynb': ('org.jupyter.ipynb', 'Jupyter notebook'), '.md': ('net.daringfireball.markdown', 'Markdown text'),
+    '.markdown': ('net.daringfireball.markdown', 'Markdown text'), '.toml': ('public.toml', 'TOML file'), '.cfg': ('public.toml', 'TOML file'),
+    '.ini': ('com.microsoft.ini', 'INI file'), '.sql': ('org.iso.sql', 'SQL source'), **dict.fromkeys(('.ts', '.tsx', '.mts', '.cts'),
+    ('com.microsoft.typescript', 'TypeScript source'))}
+#: named by extension alone: `public.plain-text`, their type, takes every text type macOS knows, `.pkl` pickles among them
+BY_EXTENSION = {'.txt'}
+#: tab kind -> Finder's name and role for it
+DOC_KINDS = {'text': ('Text file', 'Editor'), 'notebook': ('Jupyter notebook', 'Editor'), 'image': ('Image', 'Viewer'),
+    'pdf': ('PDF document', 'Viewer'), 'office': ('Word, PowerPoint or Excel file', 'Viewer')}
+
+def doc_exts():
+    "Every extension Finder offers to open in Leela."
+    from .blocks.fs.fs import LANGS
+    from .blocks.fs.office import OFFICE
+    return sorted({*LANGS, *IMAGE_EXTS, *OFFICE, '.pdf'})
+
+def _uti(e): return MAC_UTIS.get(e) or SHARED_UTIS.get(e, (f'org.vedicreader.leela.{e[1:]}',))[0]
+
+def imported_types():
+    "`UTImportedTypeDeclarations` for the extensions macOS has no type for."
+    by = groupby([e for e in doc_exts() if e not in MAC_UTIS and e not in BY_EXTENSION], _uti)
+    return [{'UTTypeIdentifier': u, 'UTTypeDescription': SHARED_UTIS.get(es[0], ('', f'{es[0][1:].upper()} file'))[1],
+             'UTTypeConformsTo': ['public.json' if es == ['.ipynb'] else 'public.plain-text'],
+             'UTTypeTagSpecification': {'public.filename-extension': [e[1:] for e in es]}} for u, es in sorted(by.items())]
+
+def doc_types():
+    "`CFBundleDocumentTypes`: folders, then each tab kind by type, and by extension where another app's type can win over an imported one."
+    row = lambda name, role, **kw: {'CFBundleTypeName': name, 'CFBundleTypeRole': role, 'LSHandlerRank': 'Alternate', **kw}
+    by, out = groupby(doc_exts(), lambda e: kind_for(f'x{e}')), [row('Folder', 'Viewer', LSItemContentTypes=['public.folder'])]
+    for k, (name, role) in DOC_KINDS.items():
+        out.append(row(name, role, LSItemContentTypes=sorted({_uti(e) for e in by[k] if e not in BY_EXTENSION})))
+        if bare := [e[1:] for e in by[k] if e not in MAC_UTIS]: out.append(row(f'{name} by extension', role, CFBundleTypeExtensions=bare))
+    return out
 
 #: What the inline panel promises, said to the model that keeps it. The tools are gone, so this describes the situation, not a rule.
 SELECTION_SP = """You are inline editor help, working on one selected passage from one file.
