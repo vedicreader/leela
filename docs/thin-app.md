@@ -103,7 +103,8 @@ The pinned project is `packaging/lock/`: `pyproject.toml`, `uv.lock`, `.python-v
 - Leela is not on PyPI (the PyPI name `leela` belongs to another project). The lock takes the Leela wheel from GitHub release `V` (`make lock-wheel V=` builds it from the tag and attaches it), and checks its sha256 against the digest GitHub gives.
 - The extras `mlx`, `llama` and `langserver` are pinned with `==`. `llama-cpp-python` comes only in the `llama` extra, from abetlen's prebuilt Metal wheel, pinned by URL and sha256.
 - `environments` and `required-environments` are macOS arm64 only.
-- `exclude-newer` is 7 days before the lock. The owner's own packages are exempt (`exclude-newer-package` set to the lock time).
+- `exclude-newer` is 7 days before the lock. The owner's own packages are exempt (`exclude-newer-package` set to the lock time). `UV_NO_CONFIG=1` also drops these settings from `[tool.uv]`, so `make lock` passes them as `--exclude-newer` flags too, and `make lock` refuses a `uv.lock` that records no cooldown. A test against a local index shows both sides: an owner's release from yesterday is locked, a third-party one is held back.
+- `PIN=<constraint>` adds one constraint, such as `PIN=ramabana==0.2.109`.
 - `make lock` refuses another index, an editable, git or path source, a package with no wheel for CPython 3.12 on macOS arm64, and `llama-cpp-python` in the base env.
 
 ### The manifest
@@ -146,7 +147,7 @@ The keys are SSH Ed25519 keys:
 
 1. `make lock-wheel V=<leela version>`: build the wheel from the tag and attach it to the release.
 2. `make lock V=<leela version>`: write the pin, lock with the pinned uv, check, print the hash.
-3. `make lock-diff`: what changed against the published lock. It flags an owner package version with no git tag.
+3. `make lock-diff`: what changed against the published lock (`AGAINST=<folder>` compares with a local lock). It flags an owner package version with no git tag.
 4. `make lock-test` (`FRESH=1` empty cache, `EXTRAS=1` each extra): build in a temp folder with the same uv, childenv and command as the app. Then `uv pip check`, imports, the server in host mode with a temp `XDG_CONFIG_HOME` and `XDG_DATA_HOME`, `/health`, `/hub/open` on a temp folder, one kernel cell that gives 2, and each extra. A pass writes `packaging/lock/tested/<hash>.json`. Commit it.
 5. `make lock-publish`: refuses unless the tree is clean and pushed, a passing record for this hash is less than 7 days old, the record's uv is the pinned uv, the test code is unchanged, and Leela is not lower than the last lock (`ALLOW_DOWNGRADE=1` to roll back). Then it signs, makes `lock-<n>`, downloads and checks it, and points the test channel at it.
 6. `make lock-promote N=<n>`: copy the test pointer to the stable pointer and check it.
@@ -185,6 +186,8 @@ The newest app comes from the `app-v*` releases, not from `releases/latest`. The
 6. A theme change repaints the window background; a tab title change retitles the window.
 7. Closing the last window keeps the app and its server running; clicking the Dock icon opens a window.
 
+`make -C packaging/mac lock-test-launcher LOCK_DIR=<lock> WORK=<empty folder>` runs the built launcher's headless `--lock-test`: it builds the env with the bundled uv and the Swift code, with no window. Its env hash equals the one `tools/lock.py` prints.
+
 ## End-to-end checklist on a clean macOS user (step 19)
 
 1. `brew install --cask vedicreader/tap/leela` on a new macOS user with no Python and no uv. The first run is online: the setup window shows each phase, then a window opens.
@@ -195,3 +198,17 @@ The newest app comes from the `app-v*` releases, not from `releases/latest`. The
 6. Publish a lock whose server cannot start. The app goes back to the previous env by itself and marks the hash bad.
 7. Ship app 1.0.1; the notice offers it; Update runs `brew upgrade --cask leela` and restarts into 1.0.1.
 8. Uninstall with `brew uninstall --zap --cask leela`; the folders in the zap list are gone.
+
+### First lock update: ramabana 0.2.110
+
+App 1.0.0 embeds lock 1, which pins what Leela uses today (ramabana 0.2.109). Lock 2 changes only ramabana, with no new app build. This is the first real test of the channel.
+
+1. Lock 1, before `make ship-app V=1.0.0`: `make lock-wheel V=<leela version>`, then `make lock V=<leela version> PIN=ramabana==0.2.109`, `make lock-test FRESH=1 EXTRAS=1`, commit the record, `make lock-publish`, `make lock-promote N=1`, then `make ship-app V=1.0.0`.
+2. Lock 2: `make lock V=<leela version>` with no `PIN`. ramabana is the owner's package, so the 7-day cooldown does not hold back 0.2.110.
+3. `make lock-diff` shows `~ ramabana 0.2.109 -> 0.2.110` and nothing else, unless ramabana 0.2.110 pulls in new packages.
+4. `make lock-test FRESH=1 EXTRAS=1`; commit the record and push.
+5. `make lock-publish`. It makes `lock-2` and points the test channel at it. `make lock-verify CHANNEL=test`.
+6. On a Mac with app 1.0.0 installed: quit Leela, then `launchctl setenv LEELA_LOCK_CHANNEL test` and open Leela (or start `/Applications/Leela.app/Contents/MacOS/Leela` from a terminal with that variable set). The notice offers the new packages.
+7. Update builds the new env while Leela runs. "Restart to update" switches to it; `curl -s http://127.0.0.1:<port>/health` shows `"lock_n": 2`, and `import ramabana; ramabana.__version__` in a cell gives 0.2.110.
+8. "Leela > Use Previous Version" goes back to lock 1 (ramabana 0.2.109). Restart with the update again to return to lock 2.
+9. `launchctl unsetenv LEELA_LOCK_CHANNEL`, then `make lock-promote N=2` and `make lock-verify`.

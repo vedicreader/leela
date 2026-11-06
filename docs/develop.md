@@ -129,6 +129,23 @@ the release environment.
 `python tools/build_release.py upload` finds the release under either tag spelling and refuses
 with the command to run when there is none.
 
+### The thin Mac app
+
+From app 1.0 the Mac app is a Swift launcher in `packaging/mac`, and its Python packages come from a signed lock with its own channel. `docs/thin-app.md` has the contract, the lock flow and the checklists. In short:
+
+```sh
+make -C packaging/mac test                       # the launcher's tests
+make -C packaging/mac uv-fetch dev-lock app verify LOCK_SRC=<lock folder>   # a local, ad hoc signed build
+make lock-wheel V=<leela version>                # the Leela wheel on release V
+make lock V=<leela version> && make lock-diff && make lock-test FRESH=1 EXTRAS=1
+make lock-publish && make lock-promote N=<n>     # test channel first, then stable
+make ship-app V=<app version>                    # only when the launcher changes
+```
+
+CI no longer builds the Mac app; `desktop-artifacts.yml` builds Windows only.
+
+### The old Mac app
+
 The Mac DMG and zip are signed and notarized on a Mac. Run `make ship V=<version>` after the release exists. `tools/ship.sh` builds Leela.app, signs it with the Developer ID in the keychain, notarizes and staples the DMG, staples the app and zips it as `Leela-macOS.zip`, puts both on release `V` (the DMG in place of the one that CI attached), and pushes the cask with `tools/ship_cask.sh`. The cask installs the zip, because Homebrew 7 fails with a read-only file system when it unpacks the mounted DMG. It never moves a tag or a release, so it can run again.
 
 The window needs no build. From a checkout:
