@@ -720,3 +720,24 @@ def test_a_notebook_in_no_repository_has_no_changes_and_no_error(tmp_path):
             assert r.status_code == 200 and r.json() == dict(path=str(p), git=False, changed=False, cells={}, lines={})
             assert c.get('/git/notebook', params=dict(path='/etc/hosts')).status_code == 400, 'a path outside the open folders is still refused'
     finally: ws.shutdown_now()
+
+def test_a_ref_that_looks_like_an_option_is_refused_and_writes_nothing(repo_git, tmp_path_factory):
+    "`/git/history?ref=--output=<file>` wrote the log over a file outside the folders."
+    out = tmp_path_factory.mktemp('outside')/'precious.txt'; out.write_text('precious\n')
+    evil, repo = f'--output={out}', str(repo_git)
+    client, _ = served([repo_git])
+    with client:
+        gets = [('/git/history', {'ref': evil}), ('/git/commit', {'ref': evil}), ('/git/commit/review', {'ref': evil}),
+                ('/git/commit/file', {'ref': evil, 'path': 'src/app.py'}), ('/git/compare', {'left': evil, 'right': 'HEAD'}),
+                ('/git/compare', {'left': 'HEAD', 'right': evil}), ('/git/review', {'base': evil, 'head': 'HEAD'}),
+                ('/git/review/file', {'base': 'HEAD', 'head': evil, 'path': 'src/app.py'}), ('/git/merge-preview', {'incoming': evil}),
+                ('/git/rebase-preview', {'onto': evil}), ('/git/sync-plan', {'upstream': evil}), ('/git/pr', {'branch': evil})]
+        for u, q in gets:
+            r = client.get(u, params=q | {'repo': repo})
+            assert 'not a branch, tag or commit' in r.json().get('error', ''), (u, q, r.text[:200])
+        for d in ({'op': 'checkout', 'branch': evil}, {'op': 'create', 'branch': 'b', 'start': evil}, {'op': 'cherry_pick', 'ref': evil},
+                  {'op': 'reset', 'ref': evil}, {'op': 'tag', 'name': 't', 'ref': evil}, {'op': 'merge', 'branch': evil}):
+            r = gitop(client, repo=repo, **d)
+            assert 'not a branch, tag or commit' in r.json().get('error', ''), (d, r.text[:200])
+        assert client.get('/git/history', params={'repo': repo}).json()['commits'], 'the default `--all` still lists commits'
+    assert out.read_text() == 'precious\n'
