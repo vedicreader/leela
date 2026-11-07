@@ -107,7 +107,7 @@ async function editorSettings(languageScope = null) {
     section === 'agent' ? (lee.agentPrefs || {}) : lee.debugPrefs;
   const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
-    `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} — ${esc(detail)}</option>`).join('');
+    `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} · ${esc(detail)}</option>`).join('');
   const field = (section, key, label, input, help='') => `<label>${label}${input.replace('data-setting', `data-pref-section="${section}" data-pref="${key}"`)}${help ? `<small>${help}</small>` : ''}</label>`;
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
@@ -276,7 +276,7 @@ async function editorSettings(languageScope = null) {
     };
   }
   const scope=$('[data-settings-scope]',m),language=$('[data-settings-language]',m),path=$('[data-settings-path]',m),target=$('[data-settings-target]',m);
-  const paintPath=()=>{path.textContent=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
+  const paintPath=()=>{path.textContent=shownPath(lee.settingsMeta?.paths?.[scope.value]);path.title=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
   language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
   // Every click previews live; the modal's close handler puts the original back unless saved.
@@ -291,7 +291,7 @@ async function editorSettings(languageScope = null) {
   $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;for(const section of targets)await post('/settings/reset',{scope:scope.value,section,language:section==='appearance'?'':language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
-  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${shownPath(lee.settingsMeta?.paths?.[scope.value])})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
   /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
   const paintEnv=async(d=null)=>{
     const list=$('[data-env-list]',m); if(!list) return;

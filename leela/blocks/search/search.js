@@ -1,7 +1,7 @@
 async function quickOpen(searchMode, q = '') {
   let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null;
   const m = modal(
-    `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" autofocus>
+    `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" aria-label="Go to file" autofocus>
      <label><input type="checkbox" id="qoall"> include .venv and dot folders</label>
      <div class="sub" id="qonote" hidden>hidden folders took over 10 seconds, so this list is incomplete</div>
      <div class="lee-modallist" id="qolist"></div>`,
@@ -13,8 +13,9 @@ async function quickOpen(searchMode, q = '') {
   const list = m.querySelector('#qolist'), input = m.querySelector('#qo'), all = m.querySelector('#qoall'), note = m.querySelector('#qonote');
   input.value = q;
   const paint = () => {
-    list.innerHTML = hits.slice(0, 300).map((h, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(h.path)}</span></div>`).join('');
+    list.innerHTML = hits.length ? hits.slice(0, 300).map((h, i) =>
+      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}" title="${esc(h.path)}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(shownPath(h.path))}</span></div>`).join('')
+      : shown != null && input.value.trim() ? '<div class="lee-dim lee-qo-none">No file matches.</div>' : '';
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
@@ -193,7 +194,7 @@ async function codeSearch() {
        <label>in<select id="csscope">
          <option value="project">this project</option>
          <option value="workspace">every open folder</option></select></label>
-       <label>files<input class="lee-input" id="csexts" placeholder="py, ts — blank for all"
+       <label>files<input class="lee-input" id="csexts" placeholder="py, ts · empty for all"
               aria-label="restrict to file extensions"></label>
        <span class="lee-dim" id="csscopenote"></span></div>` +
     `<div class="lee-search-weights" id="csweights" hidden></div>` +
@@ -473,7 +474,7 @@ async function codeSearch() {
         const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
         $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
         counts[mode] = hits.length; paintRail();
-        paint(); signals.impression(hits); status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
+        paint(); signals.impression(hits); status(`search: ${d.backend}${d.note ? ' · ' + d.note : ''}`);
       } catch (e) {
         if (seq !== searchSeq) return;
         hits = []; backend = e.message || String(e); paint(); status(backend, 'err');
@@ -633,12 +634,12 @@ async function findDefinition(name = cursorWord()) {
   const d = await api('/code/definition?name=' + encodeURIComponent(name) + '&path=' + encodeURIComponent(lee.path || ''));
   if (!(d.hits || []).length) return status(`no definition found for ${name}`, 'err');
   if (d.hits.length === 1) return openLocation(d.hits[0]);
-  hitList(d.hits, `${d.backend} — ${d.note}`, `definitions of ${name}`, openLocation);
+  hitList(d.hits, `${d.backend} · ${d.note}`, `definitions of ${name}`, openLocation);
 }
 async function findUsages(name = cursorWord()) {
   if (!name) return status('put the cursor on a symbol first', 'err');
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
-  hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
+  hitList(d.hits || [], `${d.backend} · ${d.note}`, `usages of ${name}`, openLocation);
 }
 /* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: the last name
    alone found whichever package had a `def test`. Leftwards only, so on `fastcore` the answer is
@@ -679,7 +680,7 @@ async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   if (!hits.length) return status(`nothing found for ${name}`, 'err');
   if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
   const word = d.kind === 'usages' ? 'usage' : 'definition';
-  hitList(hits, `${d.backend} — ${d.note}`, `${word}s of ${name}`, openLocation);
+  hitList(hits, `${d.backend} · ${d.note}`, `${word}s of ${name}`, openLocation);
   // `finding…` is a busy toast and waits to be clicked, so the answer has to replace it.
   status(`${plural(hits.length, word)} of ${name}`, 'ok');
 }

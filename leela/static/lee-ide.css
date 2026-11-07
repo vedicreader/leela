@@ -543,6 +543,7 @@ body {
   display: flex; flex: none; height: 26px;
   align-items: stretch; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
+.lee-righttabs > .lee-tablist { display: flex; flex: 1 1 auto; min-width: 0; align-items: stretch; }
 .lee-righttab {
   flex: 1 1 0; min-width: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--lee-fg4);
   cursor: pointer; font: 600 10px/1 var(--lee-mono); letter-spacing: .04em; text-transform: uppercase;
@@ -622,6 +623,12 @@ body {
 .lee-node { padding: 1px 8px 1px 10px; cursor: pointer; border-radius: 3px; white-space: nowrap; }
 .lee-node:hover { background: var(--lee-bg2); }
 .lee-node.sel { background: var(--lee-sel); }
+/* A container that takes focus to route keys draws no ring; the row it acts on shows where you are. */
+.lee-tree:focus, .lee-ctxmenu:focus, .lee-modalbox:focus, .lee-editor:focus { outline: none; }
+.lee-tree:focus-visible .lee-node.sel:not(details), .lee-tree:focus-visible details.lee-node.sel > summary { box-shadow: inset 2px 0 0 var(--lee-accent); }
+/* An open folder with nothing in it says so, instead of showing nothing. */
+.lee-dir[open] > .lee-kids:empty::before { content: 'empty folder'; display: block; padding: 2px 0 4px 26px; color: var(--lee-fg4); font-style: italic; }
+.lee-tree > .lee-root[open] > .lee-kids:empty::before { content: 'This folder is empty. Use +file to make a file.'; font-style: normal; }
 .lee-file { color: var(--lee-fg2); display: flex; align-items: center; gap: 5px; }
 .lee-file.git-modified .lee-fname { color: var(--lee-orange); }
 .lee-file.git-staged .lee-fname { color: var(--lee-green); }
@@ -738,7 +745,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-empty-mark::after { content: ''; width: 7px; height: 7px; position: absolute; right: -2px; bottom: -2px;
   border-radius: 2px; background: var(--lee-accent); animation: lee-empty-dot 1.8s ease-in-out infinite; }
 @keyframes lee-empty-dot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.75); opacity: .7; } }
-.lee-empty > strong { color: var(--lee-fg); font-size: 22px; letter-spacing: -.03em; max-width: 28ch; }
+.lee-empty > h2 { margin: 0; color: var(--lee-fg); font-size: 22px; font-weight: 700; letter-spacing: -.03em; max-width: 28ch; }
 .lee-empty > p { max-width: 48ch; margin: 8px 0 16px; color: var(--lee-fg4); line-height: 1.55; }
 .lee-empty-features { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 8px; width: 100%;
   max-width: 52ch; }
@@ -801,6 +808,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-app.no-bottom .lee-bottomdock, .lee-app.no-bottom .lee-dock-split { display: none; }
 .lee-docktabs { display: flex; align-items: center; gap: 2px; height: 25px; padding: 2px 6px;
                 border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-docktabs > .lee-tablist { display: flex; align-items: center; gap: 2px; }
 .lee-docktab { padding: 2px 8px; border: 1px solid transparent; border-radius: 3px;
                background: transparent; color: var(--lee-fg4); cursor: pointer; font: 10px/1.35 var(--lee-mono); }
 .lee-docktab:hover { background: var(--lee-bg2); color: var(--lee-fg2); }
@@ -1119,7 +1127,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-agent-progress-copy { display: flex; align-items: baseline; gap: 7px; min-width: 0; line-height: 1.35; }
 .lee-agent-progress-copy strong { flex: none; color: var(--lee-fg); font-size: 11.5px; font-weight: 600; }
 .lee-agent-phase { overflow: hidden; color: var(--lee-fg4); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.lee-agent-phase::before { content: '—'; margin-right: 7px; color: var(--lee-border); }
+.lee-agent-phase::before { content: '–'; margin-right: 7px; color: var(--lee-border); }
 .lee-agent-elapsed { color: var(--lee-fg4); font: 10px/1 var(--lee-mono); font-variant-numeric: tabular-nums; }
 .lee-agent-stop {
   padding: 2px 7px; border: 1px solid var(--lee-border); border-radius: 3px;
@@ -1266,8 +1274,8 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-checkpoint-intro { display: grid; gap: 5px; padding: 10px 12px 11px 32px; border-top: 1px solid color-mix(in srgb, var(--lee-border) 74%, transparent); background: color-mix(in srgb, var(--lee-bg) 38%, var(--lee-bg1)); }
 .lee-checkpoint-intro strong { max-width: 62ch; color: var(--lee-fg); font: 600 11px/1.45 var(--lee-mono); }
 .lee-checkpoint-intro span { max-width: 76ch; color: var(--lee-fg4); font: var(--lee-size-min)/1.5 var(--lee-mono); }
-.lee-approval-summary { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 9px; padding: 8px 12px; overflow-wrap: anywhere; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font: 500 10px/1.45 var(--lee-mono); }
-.lee-approval-summary > span { color: var(--lee-fg4); font-size: var(--lee-size-min); letter-spacing: .05em; text-transform: uppercase; }
+.lee-approval-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px; padding: 8px 12px; overflow-wrap: anywhere; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font: 500 10px/1.45 var(--lee-mono); }
+.lee-approval-summary > span { color: var(--lee-fg4); font-size: var(--lee-size-min); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; overflow-wrap: normal; }
 .lee-proposal-preview, .lee-proposal-editor { border-top: 1px solid var(--lee-border); }
 .lee-proposal-preview > summary, .lee-proposal-editor > summary {
   padding: 6px 10px; cursor: pointer; color: var(--lee-fg4); font: var(--lee-size-min)/1.3 var(--lee-mono);
@@ -1320,7 +1328,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-proposal-steer label { display: grid; gap: 5px; color: var(--lee-fg4); font: var(--lee-size-min)/1.35 var(--lee-mono); }
 .lee-proposal-steer .lee-input { width: 100%; margin: 0; }
 .lee-approval-actions { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-top: 1px solid var(--lee-border); font-size: 10px; }
-.lee-run-policy-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
+.lee-run-policy-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; white-space: nowrap; color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
 .lee-approval-actions .lee-select { width: min(210px, 32vw); max-width: 210px; }
 .lee-approval-actions .lee-btn { transition: border-color .18s ease, background-color .18s ease, color .18s ease, transform .12s ease; }
 .lee-approval-actions .lee-btn:active { transform: translateY(1px); }
@@ -2396,6 +2404,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 }
 .lee-status[hidden] { display: none; }
 .lee-status.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+/* Above the terminal / exec pill, which sits at the bottom centre while the dock is closed. */
+.lee-app.no-bottom .lee-status { bottom: 60px; }
 .lee-status::before { content: ''; width: 9px; height: 9px; flex: none; border-radius: 50%;
                       background: var(--lee-accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--lee-bg) 35%, transparent); }
 .lee-status.info { border-color: color-mix(in srgb, var(--lee-accent) 42%, var(--lee-border)); }
@@ -2589,7 +2599,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-theme-choice > span:last-child { color: var(--lee-fg4); font-size: 11px; }
 .lee-settings-modal .lee-modalbox { width: min(1040px, calc(100vw - 32px)); height: min(800px, calc(100dvh - 32px)); }
 .lee-settings-scope { display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 6px 12px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
-.lee-settings-scope label { display: flex; align-items: center; gap: 7px; color: var(--lee-fg4); font-size: 10px; }
+.lee-settings-scope label { display: flex; align-items: center; gap: 7px; color: var(--lee-fg4); font-size: 10px; white-space: nowrap; }
 .lee-settings-scope .lee-select { width: auto; min-width: 120px; }
 .lee-settings-scope > span { min-width: 0; margin-left: auto; overflow: hidden; color: var(--lee-fg4); font: var(--lee-size-min)/1.2 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
 .lee-settings-layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); min-height: 0; flex: 1; }
@@ -2868,6 +2878,10 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-mrow { padding: 4px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
 .lee-mrow.sel { background: var(--lee-sel); }
 .lee-mrow .sub { color: var(--lee-fg4); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.lee-mrow kbd { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--lee-fg4); font-size: 11px; white-space: nowrap; }
+.lee-qo-none { padding: 10px 12px; }
+/* A long list scrolls inside a box that ends well above the screen's edge. */
+.lee-modalbox > #cplist, .lee-modalbox > #qolist { max-height: min(60vh, 560px); }
 .lee-mhead {
   display: flex; align-items: baseline; gap: 8px; padding: 8px 12px 4px;
   border-bottom: 1px solid var(--lee-border); font-weight: 600; color: var(--lee-fg);
@@ -2911,7 +2925,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   .lee-pane-restore.restore-left, .lee-pane-restore.restore-right { display: block; }
 }
 @media (max-width: 680px) {
-  #header .lee-wordmark, #header .lee-runs .lee-hitem-text, #header .lee-kstate { display: none; }
+  #header .lee-runs .lee-hitem-text, #header .lee-kstate { display: none; }
+  #header .lee-wordmark { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   #header .lee-workspace-name { max-width: 110px; }
   #header .lee-branch-name { max-width: 90px; }
   #header .lee-menubar { display: none; }
@@ -2941,7 +2956,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 /* ---- contextual menus + file dialogs ---- */
 .lee-ctxmenu {
   position: fixed; z-index: 60; width: max-content; min-width: 230px; max-width: min(360px, 92vw);
-  max-height: calc(100vh - 8px); overflow-y: auto;
+  max-height: min(70vh, 640px); overflow-y: auto; overscroll-behavior: contain;
   padding: 5px; border: 1px solid var(--lee-border); border-radius: 7px;
   background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.38);
 }
@@ -3056,7 +3071,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-sc-commit #screviewstaged { background: var(--lee-bg2); color: var(--lee-fg2); border: 1px solid var(--lee-border); }
 .lee-sc-commit label:first-child { display: grid; gap: 4px; color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
 .lee-sc-commit .lee-git-check { grid-column: 1 / -1; display: flex; align-items: center; gap: 5px; color: var(--lee-fg4); font-size: var(--lee-size-min); }
-.lee-git-file { display: flex; align-items: center; text-align: left; }
+.lee-git-file { display: flex; align-items: center; justify-content: flex-start; text-align: left; }
 .lee-git-change > input { flex: none; margin: 0 3px 0 1px; accent-color: var(--lee-accent); }
 .lee-git-change.selected { background: var(--lee-sel); }
 .lee-git-changelist { max-width: 74px; overflow: hidden; padding: 2px 4px; background: var(--lee-bg2); color: var(--lee-fg4); font: normal var(--lee-size-min)/1 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
@@ -3550,7 +3565,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 :root[data-density="tight"] .lee-empty-mark {
   min-width: 52px; height: 28px; margin-bottom: 12px; border-radius: 6px; font-size: 12px;
 }
-:root[data-density="tight"] .lee-empty > strong { font-size: 15px; font-weight: 600; }
+:root[data-density="tight"] .lee-empty > h2 { font-size: 15px; font-weight: 600; }
 :root[data-density="tight"] .lee-empty > p { margin: 5px 0 12px; font-size: 12px; }
 :root[data-density="tight"] .lee-empty-features { gap: 4px; margin-bottom: 12px; }
 :root[data-density="tight"] .lee-empty-features li { padding: 5px 0; }
@@ -4061,7 +4076,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 #header .lee-brand::after { content: ''; position: absolute; right: 0; top: 4px; bottom: 4px; width: 1px; background: var(--lee-hair); }
 #header .lee-mark { width: 28px; height: 28px; margin-top: -2px; flex: none; background: var(--lee-fg);
   -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
-#header .lee-wordmark { font: 600 19px/1 var(--lee-serif); letter-spacing: .005em; color: var(--lee-fg); }
+#header .lee-wordmark { margin: 0; font: 600 19px/1 var(--lee-serif); letter-spacing: .005em; color: var(--lee-fg); }
 #header .lee-hitem { display: flex; align-items: center; gap: 7px; height: 30px; min-width: 0; padding: 0 10px; border: 0; border-radius: 7px;
   background: transparent; color: var(--lee-fg2); font: 13.5px/1 var(--lee-sans); white-space: nowrap; cursor: pointer; }
 #header .lee-hitem:hover, #header .lee-git-quick:hover, #header .lee-act:hover, #header .lee-menubar-btn:hover, #header .lee-tab-overflow:hover {
@@ -4076,6 +4091,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 #header .lee-change-count[hidden], #header .lee-git-quick[hidden] { display: none; }
 #gitpill:not([data-state="branch"]) .lee-branch-glyph { display: none; }
 #gitpill[data-state="error"] { color: var(--lee-orange); }
+#gitpill[data-state="nofolder"] { display: none; }
 #header .lee-git-quickbar { display: flex; align-items: center; gap: 2px; flex: none; }
 #header .lee-git-quick { display: flex; align-items: center; gap: 3px; height: 30px; padding: 0 6px; border: 0; border-radius: 7px;
   background: transparent; color: var(--lee-fg4); font: 12.5px/1 var(--lee-sans); font-variant-numeric: tabular-nums; cursor: pointer; }

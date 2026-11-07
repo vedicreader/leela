@@ -369,6 +369,14 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+//: A path as a person reads it: `root/rel` inside an open folder, `~/rel` under home, else as given. `lee.roots` and `lee.home` come from `/workspace/info`.
+const shownPath = p => {
+  p = String(p || ''); const r = (lee.roots || []).find(r => p === r.path || p.startsWith(r.path + '/'));
+  if (r) return r.name + p.slice(r.path.length);
+  return lee.home && (p === lee.home || p.startsWith(lee.home + '/')) ? '~' + p.slice(lee.home.length) : p;
+};
+//: A menu row in sentence case. The keymap's labels are lower case; a tool named in lower case keeps it.
+const sentence = s => (s = String(s || '')) && !/^(nbdev|fastship|uv)\b/.test(s) ? s[0].toUpperCase() + s.slice(1) : s;
 
 const fmtArgs = (args) => typeof args === 'string' ? args
   : Object.entries(args || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');

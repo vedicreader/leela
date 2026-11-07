@@ -197,8 +197,8 @@ function leeSyncPin(which) {
     b.textContent = pinned ? '●' : '○';
     b.classList.toggle('pinned', pinned);
     b.setAttribute('aria-pressed', String(pinned));
-    b.title = pinned ? 'pinned open — unpin to close it when you click away'
-                     : 'auto-closing — pin to keep it open';
+    b.title = pinned ? 'pinned open. Unpin it to close it when you click away'
+                     : 'closes when you click away. Pin it to keep it open';
   });
 }
 
@@ -457,7 +457,7 @@ function leeFail(source, what, e) {
   const detail = (e && e.message) || String(e || '');
   leeLog(source, `${what} failed`, detail, 'err');
   showLog(source);
-  status(`${source} ${what} failed — ${firstLine(detail)}`, 'err');
+  status(`${source} ${what} failed: ${firstLine(detail)}`, 'err');
 }
 window.leeFail = leeFail;
 
@@ -500,7 +500,7 @@ function paintRunsPill() {
     : dead.length ? `${dead.length} stopped` : 'runs';
   const say = pill.querySelector('.lee-hitem-text'); if (say) say.textContent = text; else pill.textContent = text;
   pill.title = runs.length ? runs.map(s => `${s.label}: ${runState(s)}`).join('\n')
-                           : 'nothing running — click to start a script';
+                           : 'nothing is running. Click to start a script';
 }
 function runState(s) {
   if (s.running === false) return (s.code ? `exited ${s.code}` : 'finished') + (s.alive ? ' · still up' + (s.pid ? ' · pid ' + s.pid : '') : '');
@@ -538,7 +538,7 @@ function adoptRuns(servers) {
   lee.runsAdopted = true;
   const up = servers.filter(s => runUp(s) && s.pid && !lee.terms.has('run:' + (s.script || s.path)));
   for (const s of up) leeRunTerm(s.script || s.path, s.label, s.pid, true).catch(() => {});
-  if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still up — see the runs pill`);
+  if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still running. See the runs pill.`);
 }
 
 async function pollRunLogs() {
@@ -564,7 +564,7 @@ async function pollRunLogs() {
       lee.runFinished.add(path);
       const failed = code !== 0;
       leeLog('runs', `${srv.label || path.split('/').pop()} ${failed ? 'failed' : 'finished'} · exit ${code}`, '', failed ? 'err' : 'ok');
-      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${code}`, 'err'); }
+      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed with exit code ${code}`, 'err'); }
     }
   }
   return servers.length;
@@ -721,7 +721,7 @@ function adoptTerm(id, kind, d, project = '') {
     onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
   });
   lee.terms.set(id, record); switchTerm(id);
-  status(`${record.label} was still running — reattached`);
+  status(`${record.label} was still running. Leela connected to it again`);
 }
 
 // xterm.js cannot attach to a terminal application that is already running, because that program
@@ -875,7 +875,7 @@ async function editorSettings(languageScope = null) {
     section === 'agent' ? (lee.agentPrefs || {}) : lee.debugPrefs;
   const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
-    `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} — ${esc(detail)}</option>`).join('');
+    `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} · ${esc(detail)}</option>`).join('');
   const field = (section, key, label, input, help='') => `<label>${label}${input.replace('data-setting', `data-pref-section="${section}" data-pref="${key}"`)}${help ? `<small>${help}</small>` : ''}</label>`;
   const check = (section, key, label, help='') => `<label class="lee-settings-toggle"><input type="checkbox" data-pref-section="${section}" data-pref="${key}"${checked(section,key)}><span>${label}${help ? `<small>${help}</small>` : ''}</span></label>`;
   const select = (section, key, label, values, help='') => field(section,key,label,
@@ -1044,7 +1044,7 @@ async function editorSettings(languageScope = null) {
     };
   }
   const scope=$('[data-settings-scope]',m),language=$('[data-settings-language]',m),path=$('[data-settings-path]',m),target=$('[data-settings-target]',m);
-  const paintPath=()=>{path.textContent=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
+  const paintPath=()=>{path.textContent=shownPath(lee.settingsMeta?.paths?.[scope.value]);path.title=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
   language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
   // Every click previews live; the modal's close handler puts the original back unless saved.
@@ -1059,7 +1059,7 @@ async function editorSettings(languageScope = null) {
   $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;for(const section of targets)await post('/settings/reset',{scope:scope.value,section,language:section==='appearance'?'':language.value});saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
-  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${lee.settingsMeta?.paths?.[scope.value]||''})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
+  $('[data-save]',m).onclick=async()=>{update();let count=0;for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${shownPath(lee.settingsMeta?.paths?.[scope.value])})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
   /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
   const paintEnv=async(d=null)=>{
     const list=$('[data-env-list]',m); if(!list) return;
@@ -1392,6 +1392,7 @@ function refreshScmIfOpen(snapshot = null) {
 async function refreshProjectPills() {
   try {
     const d = await api('/workspace/info');
+    lee.roots = d.roots || []; lee.home = d.home || lee.home || '';
     const active = (d.roots || []).find(r => r.path === (gitUI.repo || d.active)) || (d.roots || [])[0];
     const name = $('#workspacename'); if (name) name.textContent = active?.name || 'open workspace';
     const workspace = $('#workspacepill');
@@ -1415,8 +1416,8 @@ async function refreshGitPill() {
     const d = await api('/git/info');
     const git = $('#gitpill'); if (!git) return;
     if (!d || d.repo === false) {
-      // With no folder open there is nothing to be inside or outside of, so the pill says neither.
-      paintBranchPill(d, d && String(d.note || '').startsWith('no folder') ? 'pending' : 'nogit');
+      // With no folder open there is nothing to be inside or outside of, so the pill hides.
+      paintBranchPill(d, d && String(d.note || '').startsWith('no folder') ? 'nofolder' : 'nogit');
       git.title = (d && d.note) || 'not inside a Git repository';
       return;
     }
@@ -1621,7 +1622,7 @@ function armChangeGutter(host) {
 }
 
 function changePopupBody(h) {
-  if (!h.old) return '<div class="lee-change-new">These lines are new — there is no committed version of them.</div>';
+  if (!h.old) return '<div class="lee-change-new">These lines are new. No commit has them yet.</div>';
   const old = h.old.replace(/\n$/, '').split('\n'), now = (h.new || '').replace(/\n$/, '').split('\n');
   return `<pre class="lee-change-old">${old.map((l, k) => tokenDiffHtml(l, now[k])).join('\n')}</pre>`;
 }
@@ -1694,7 +1695,7 @@ async function refreshFileChanges(path, fromDisk = false, had = null) {
   if (fromDisk) {
     const st = await api('/tab/state?path=' + encodeURIComponent(path)).catch(() => null);
     // Typing since `had` was read is newer than the file git just wrote, so it stays.
-    if (had !== null && LeeCM.getDoc(v) !== had) status(`${path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
+    if (had !== null && LeeCM.getDoc(v) !== had) status(`${path.split('/').pop()} changed on disk. Leela keeps your unsaved text.`, 'err');
     else if (typeof st?.text === 'string') {
       lee.dirtyBuffers.delete(path); lee.buffers.delete(path);
       if (st.text !== LeeCM.getDoc(v)) LeeCM.setDoc(v, st.text);
@@ -1793,13 +1794,13 @@ function paintGitPill(d) {
   paintGitTree(d);
 }
 /* The one painter of the branch pill and the pull and push arrows beside it. `state` is `branch`,
-   `nogit` (not a checkout), `pending` (no folder open yet) or `error` (the repository could not be
-   read). The arrows show only when there is something to pull or push. */
-const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?'};
+   `nogit` (not a checkout), `pending` (not asked yet), `nofolder` (hidden: no folder is open) or `error`
+   (the repository could not be read). The arrows show only when there is something to pull or push. */
+const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?', nofolder: ''};
 function paintBranchPill(d, state = 'branch') {
   const git = $('#gitpill'); if (!git) return;
   const n = state === 'branch' ? (d?.changes || []).length : 0;
-  const name = BRANCH_WORDS[state] || d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
+  const name = state in BRANCH_WORDS ? BRANCH_WORDS[state] : d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
   git.dataset.state = state;
   const label = git.querySelector('.lee-branch-name'), count = git.querySelector('.lee-change-count');
   if (label) label.textContent = name;
@@ -1826,7 +1827,7 @@ async function gitDo(op, extra = {}) {
     // a merge that stopped at a conflict both "complete". One call, not two, because a second
     // `status` replaces the first.
     const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
-    status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
+    status(`git ${name} · ${said}${d.outcome?.note ? '. ' + d.outcome.note : ''}`,
            d.outcome?.note ? 'err' : 'ok');
     // `recover` is the only handle on a deleted branch or a dropped stash, and a status line is
     // gone in seconds, so the log is where it has to end up.
@@ -1853,7 +1854,7 @@ function gitFilterBanner(d) {
   const f = d.filters || {};
   if (f.ok !== false || !f.explain) return '';
   return `<section class="lee-git-operation lee-git-filters"><div>` +
-    `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
+    `<strong>a filter changes files here when they are staged</strong><span>${esc(f.explain)}</span></div></section>`;
 }
 
 /* The way back from the last thing that moved this branch, because "that merge was not what I
@@ -1879,7 +1880,7 @@ function gitNav() {
 function gitSummary(d) {
   return `<header class="lee-sc-branch"><div><strong>${esc(d.branch)}</strong><span>${esc(d.upstream || 'unpublished branch')}</span></div>` +
     `<span class="lee-spacer"></span>${d.behind ? `<b>↓${d.behind}</b>` : ''}${d.ahead ? `<b>↑${d.ahead}</b>` : ''}` +
-    `<small title="Remote-derived branch data may be stale">${esc(gitFreshness(d.fetched_at))}</small></header>`;
+    `<small title="Branch data from the remote, as of the last fetch">${esc(gitFreshness(d.fetched_at))}</small></header>`;
 }
 function gitChangesView(d) {
   const staged = (d.changes || []).filter(c => c.staged), unstaged = (d.changes || []).filter(c => c.unstaged);
@@ -1995,7 +1996,7 @@ function gitReposView() {
     `<div class="lee-sc-actions"><button data-repos-op="status">refresh</button><button data-repos-op="fetch">fetch all</button>` +
     `<button data-repos-op="pull">pull all</button><button data-repos-op="push">push all</button>` +
     `<button id="gitrepoclone">clone…</button><button id="gitrepoadd">add repository…</button></div>` +
-    `<div class="lee-git-filter"><input id="gitrepoexpect" class="lee-input" value="${esc(gitUI.expect)}" placeholder="Expected branch — default: ${esc(d.expected_branch || 'the one most share')}" aria-label="Expected branch"></div>` +
+    `<div class="lee-git-filter"><input id="gitrepoexpect" class="lee-input" value="${esc(gitUI.expect)}" placeholder="Expected branch. Default: ${esc(d.expected_branch || 'the one most share')}" aria-label="Expected branch"></div>` +
     `<div class="lee-git-repo-list">${list}</div>` + results;
 }
 async function loadGitRepos() {
@@ -2022,7 +2023,7 @@ async function gitReposDo(op, extra = {}) {
     status(`workspace ${op}: ${done} done · ${skipped} skipped · ${failed} failed · ${Math.round(performance.now() - started)} ms`,
            failed ? 'err' : 'ok');
     for (const r of gitUI.reposResults) {
-      leeLog('git', `${op} · ${r.name}${r.skipped ? ' — ' + r.skipped : ''}`,
+      leeLog('git', `${op} · ${r.name}${r.skipped ? ': ' + r.skipped : ''}`,
              r.ok === false ? (r.error || 'failed') : (r.output || ''), r.ok === false ? 'err' : '');
     }
     if (failed) showLog('git');       // one repository refusing is the reason to read the log
@@ -2627,7 +2628,7 @@ function depStackRows() {
   return `<div class="lee-inf-status"><i>${d.checkouts.length} checkouts open</i></div>` +
     `<div class="lee-pkgs">${d.packages.map(p => `<article class="lee-pkg${p.shadowed ? ' shadowed' : ''}">` +
       `<div><strong>${esc(p.name)}</strong><small>${p.installed ? esc(p.version || 'no version') + ' · ' + esc(p.source) : 'not installed'}</small>` +
-      `${p.shadowed ? '<i class="warn">edits in your checkout are not what runs — reinstall it editable</i>' : ''}</div>` +
+      `${p.shadowed ? '<i class="warn">edits in your checkout are not what runs. Install it again as editable</i>' : ''}</div>` +
       `${p.checkout ? `<button data-pkg-open="${esc(p.checkout)}">open</button>` : ''}</article>`).join('')}</div>`;
 }
 async function loadInfra(force = false) {
@@ -2690,7 +2691,7 @@ function renderDeployPanel() {
     `<button data-dep-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-dep-top="edit">edit steps</button>` +
     `${t.script ? '<button data-dep-top="open">open deploy.py</button>' : ''}</div>` +
-    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the deploy terminal. The stages are idempotent — fix and continue.</span></div>` : ''}` +
+    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the deploy terminal. You can run each stage again safely. Fix the problem and continue.</span></div>` : ''}` +
     blameRow(d.blame) +
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>`;
   host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });
@@ -3020,7 +3021,7 @@ function wireGitPanel(host, d) {
   host.querySelector('#gitreviewnext')?.addEventListener('click', () => moveGitReviewFile(1));
   host.querySelector('#gitreviewmark')?.addEventListener('click', () => { const key = gitReviewKey({...gitUI.review, root: d.root}, gitUI.reviewFile); gitUI.reviewed[key] = !gitUI.reviewed[key]; saveGitWorkflowState(); renderGitPanel(d); });
   host.querySelector('#gitreviewnote')?.addEventListener('click', async () => { const key = gitReviewKey({...gitUI.review, root: d.root}, gitUI.reviewFile), note = await inputDialog('review note', `Note for ${gitUI.reviewFile}`, gitUI.reviewNotes[key] || '', 'Question, risk, or follow-up'); if (note !== null) { if (note.trim()) gitUI.reviewNotes[key] = note.trim(); else delete gitUI.reviewNotes[key]; saveGitWorkflowState(); renderGitPanel(d); } });
-  host.querySelector('#gitreviewcopynotes')?.addEventListener('click', async () => { const prefix = `${d.root}\0${gitUI.review.base}\0${gitUI.review.head}\0${gitUI.review.mode}\0`, rows = Object.entries(gitUI.reviewNotes).filter(([key]) => key.startsWith(prefix)).map(([key, note]) => `- **${key.slice(prefix.length)}** — ${note}`); if (!rows.length) return status('this review has no notes', 'err'); const text = `# Review: ${gitUI.review.head} → ${gitUI.review.base}\n\n${rows.join('\n')}\n`; try { await navigator.clipboard.writeText(text); status(`copied ${rows.length} review note${rows.length === 1 ? '' : 's'}`, 'ok'); } catch (_) { status('clipboard access failed', 'err'); } });
+  host.querySelector('#gitreviewcopynotes')?.addEventListener('click', async () => { const prefix = `${d.root}\0${gitUI.review.base}\0${gitUI.review.head}\0${gitUI.review.mode}\0`, rows = Object.entries(gitUI.reviewNotes).filter(([key]) => key.startsWith(prefix)).map(([key, note]) => `- **${key.slice(prefix.length)}**: ${note}`); if (!rows.length) return status('this review has no notes', 'err'); const text = `# Review: ${gitUI.review.head} → ${gitUI.review.base}\n\n${rows.join('\n')}\n`; try { await navigator.clipboard.writeText(text); status(`copied ${rows.length} review note${rows.length === 1 ? '' : 's'}`, 'ok'); } catch (_) { status('clipboard access failed', 'err'); } });
   host.querySelector('#gitreviewapply')?.addEventListener('click', () => showReviewHunkApply(d));
   host.querySelector('#githistorygo')?.addEventListener('click', () => { gitUI.historyQuery = $('#githistoryfilter').value.trim(); gitUI.history = []; gitUI.selectedCommit = null; loadGitHistory(); });
   host.querySelector('#githistoryfilter')?.addEventListener('keydown', e => { if (e.key === 'Enter') { gitUI.historyQuery = e.target.value.trim(); gitUI.history = []; gitUI.selectedCommit = null; loadGitHistory(); } });
@@ -3089,7 +3090,7 @@ async function showMergePreview(branch, d, act) {
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = d.branch; gitUI.reviewHead = branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
     // Never a disabled button: one that cannot be pressed cannot say why.
     m.querySelector('[data-merge]').onclick = async () => {
-      if (blocked) return status(`cannot merge — ${blocked}`, 'err');
+      if (blocked) return status(`cannot merge: ${blocked}`, 'err');
       const strategy = m.querySelector('[data-strategy]').value;
       if (!await confirmDialog('merge branch', `Merge ${branch} into ${p.current} using ${strategy}?`, 'merge')) return;
       m.remove(); act('merge', {branch, strategy});
@@ -3099,7 +3100,7 @@ async function showMergePreview(branch, d, act) {
 async function showRebasePreview(branch, d, act) {
   try {
     const p = await api(gitUrl('/git/rebase-preview', {onto: branch})), r = p.review;
-    const warning = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Conflicts may occur while replaying commits</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in the tree rehearsal</strong><span>Rebase replays commits individually, so this remains a forecast.</span></div>';
+    const warning = p.conflict_likely ? `<div class="lee-git-merge-warning"><strong>Replaying these commits is likely to conflict</strong><span>${p.conflicts.length ? p.conflicts.map(esc).join(' · ') : 'Git reports overlapping changes.'}</span></div>` : '<div class="lee-git-merge-ok"><strong>No conflicts found in the tree rehearsal</strong><span>Rebase replays commits individually, so this remains a forecast.</span></div>';
     const rbDirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
     const rbBlocked = !p.clean ? `commit or stash ${p.dirty.length} changed file${p.dirty.length === 1 ? '' : 's'} first`
                     : p.already_based ? `${p.current} already contains ${branch}`
@@ -3107,7 +3108,7 @@ async function showRebasePreview(branch, d, act) {
     const m = modal(`<div class="lee-mhead">Rebase ${esc(p.current)}<span class="sub">onto ${esc(branch)}</span></div><div class="lee-git-merge-preview"><header><strong>${p.already_based ? 'Branch already contains the target history' : `${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} will be replayed`}</strong><span>${r.summary.files} proposed files · +${r.summary.additions} −${r.summary.deletions}</span></header>${rbDirty}${warning}<div class="lee-git-rebase-commits">${p.commits.slice(0, 12).map(c => `<span><code>${esc(c.short)}</code>${esc(c.subject)}</span>`).join('')}</div><button class="lee-btn" data-review>review branch changes</button></div><div class="lee-mfoot"><button class="lee-btn go" data-rebase>start rebase</button><span class="lee-dim">The operation banner will offer continue, skip, and abort if Git pauses.</span></div>`);
     m.querySelector('[data-review]').onclick = () => { m.remove(); gitUI.reviewBase = branch; gitUI.reviewHead = d.branch; gitUI.reviewMode = 'review'; gitUI.review = null; gitUI.tab = 'review'; renderGitPanel(d); };
     m.querySelector('[data-rebase]').onclick = async () => {
-      if (rbBlocked) return status(`cannot rebase — ${rbBlocked}`, 'err');
+      if (rbBlocked) return status(`cannot rebase: ${rbBlocked}`, 'err');
       if (!await confirmDialog('rebase branch', `Replay ${p.commits.length} commit${p.commits.length === 1 ? '' : 's'} from ${p.current} onto ${branch}?`, 'rebase')) return;
       m.remove(); act('rebase', {branch});
     };
@@ -3340,7 +3341,7 @@ async function showGitConflict(path) {
         ? `conflict ${active + 1} of ${total}` : 'no conflicts left';
       m.querySelector('[data-state]').textContent = total
         ? `${done} of ${original.blocks.length} resolved`
-        : `all ${original.blocks.length} resolved — staging marks this file merged`;
+        : `all ${original.blocks.length} resolved. Stage the file to mark it merged.`;
       m.querySelectorAll('[data-take],[data-nav]').forEach(b => b.disabled = !total);
       m.querySelector('[data-resolve]').classList.toggle('go', !total);
       LeeCM.setChangedLines(views.result, marks(
@@ -3722,7 +3723,9 @@ function modalViewport() {
 function fitModal(m) {
   const box = $('.lee-modalbox', m), v = modalViewport(), gap = 8; if (!box) return;
   box.style.maxWidth = Math.max(0, v.width - gap * 2) + 'px';
-  box.style.maxHeight = Math.max(0, v.height - gap * 2) + 'px';
+  // Below where the box starts, not the whole viewport: a box 5vh down with a full-height cap ran off the bottom.
+  const top = m.classList.contains('lee-modal-moved') ? gap : Math.max(gap, box.getBoundingClientRect().top - v.top);
+  box.style.maxHeight = Math.max(0, v.height - top - gap) + 'px';
   if (!m.classList.contains('lee-modal-moved')) return;
   const r = box.getBoundingClientRect();
   box.style.left = Math.max(v.left, Math.min(r.left, v.left + v.width - Math.min(r.width, v.width) - gap)) + 'px';
@@ -3953,7 +3956,7 @@ function openMenu(surface, x, y) {
   menu.innerHTML = rows.map(r => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
     `<button class="lee-menuitem ${esc(r.kind)}" role="${r.check ? 'menuitemcheckbox' : 'menuitem'}"` +
     `${r.check ? ` aria-checked="${!!lee.menuChecks?.[r.action]?.()}"` : ''}${lee.menuOff?.[r.action]?.() ? ' disabled' : ''} data-action="${esc(r.action)}">` +
-    `<span>${esc(r.label)}</span>${r.chord && r.chord !== '—' ? `<kbd>${esc(displayChord(r.chord))}</kbd>` : ''}</button>`).join('');
+    `<span>${esc(sentence(r.label))}</span>${r.chord && r.chord !== '–' ? `<kbd>${esc(displayChord(r.chord))}</kbd>` : ''}</button>`).join('');
   document.body.appendChild(menu);
   const rect = menu.getBoundingClientRect();
   menu.style.left = Math.max(4, Math.min(x, innerWidth - rect.width - 4)) + 'px';
@@ -3986,7 +3989,7 @@ function openChromeMenu(anchor, rows) {
   const menu = document.createElement('div'); menu.className = 'lee-ctxmenu'; menu.setAttribute('role', 'menu');
   menu.innerHTML = rows.map((r, i) => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
     `<button class="lee-menuitem${r.warn ? ' warn' : ''}" role="menuitem" data-i="${i}" ${r.disabled ? 'disabled' : ''}>` +
-    `<span>${esc(r.label)}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</button>`).join('');
+    `<span>${esc(sentence(r.label))}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</button>`).join('');
   document.body.appendChild(menu);
   const a = anchor.getBoundingClientRect(), rect = menu.getBoundingClientRect();
   menu.style.left = Math.max(4, Math.min(a.left, innerWidth - rect.width - 4)) + 'px';
@@ -4135,7 +4138,7 @@ function showHelp() {
 async function quickOpen(searchMode, q = '') {
   let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null;
   const m = modal(
-    `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" autofocus>
+    `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" aria-label="Go to file" autofocus>
      <label><input type="checkbox" id="qoall"> include .venv and dot folders</label>
      <div class="sub" id="qonote" hidden>hidden folders took over 10 seconds, so this list is incomplete</div>
      <div class="lee-modallist" id="qolist"></div>`,
@@ -4147,8 +4150,9 @@ async function quickOpen(searchMode, q = '') {
   const list = m.querySelector('#qolist'), input = m.querySelector('#qo'), all = m.querySelector('#qoall'), note = m.querySelector('#qonote');
   input.value = q;
   const paint = () => {
-    list.innerHTML = hits.slice(0, 300).map((h, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(h.path)}</span></div>`).join('');
+    list.innerHTML = hits.length ? hits.slice(0, 300).map((h, i) =>
+      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}" title="${esc(h.path)}">${esc(h.name)}<span class="sub">${h.hidden ? 'hidden · ' : ''}${esc(shownPath(h.path))}</span></div>`).join('')
+      : shown != null && input.value.trim() ? '<div class="lee-dim lee-qo-none">No file matches.</div>' : '';
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
   const go = () => { const h = hits[sel]; if (h) { m.remove(); leeOpenFile(h.path); } };
@@ -4327,7 +4331,7 @@ async function codeSearch() {
        <label>in<select id="csscope">
          <option value="project">this project</option>
          <option value="workspace">every open folder</option></select></label>
-       <label>files<input class="lee-input" id="csexts" placeholder="py, ts — blank for all"
+       <label>files<input class="lee-input" id="csexts" placeholder="py, ts · empty for all"
               aria-label="restrict to file extensions"></label>
        <span class="lee-dim" id="csscopenote"></span></div>` +
     `<div class="lee-search-weights" id="csweights" hidden></div>` +
@@ -4607,7 +4611,7 @@ async function codeSearch() {
         const where = (d.searched || []).map(p => p.split('/').pop()).join(', ');
         $('#csscopenote', m).textContent = where ? `searched ${where}` : '';
         counts[mode] = hits.length; paintRail();
-        paint(); signals.impression(hits); status(`search: ${d.backend}${d.note ? ' — ' + d.note : ''}`);
+        paint(); signals.impression(hits); status(`search: ${d.backend}${d.note ? ' · ' + d.note : ''}`);
       } catch (e) {
         if (seq !== searchSeq) return;
         hits = []; backend = e.message || String(e); paint(); status(backend, 'err');
@@ -4767,12 +4771,12 @@ async function findDefinition(name = cursorWord()) {
   const d = await api('/code/definition?name=' + encodeURIComponent(name) + '&path=' + encodeURIComponent(lee.path || ''));
   if (!(d.hits || []).length) return status(`no definition found for ${name}`, 'err');
   if (d.hits.length === 1) return openLocation(d.hits[0]);
-  hitList(d.hits, `${d.backend} — ${d.note}`, `definitions of ${name}`, openLocation);
+  hitList(d.hits, `${d.backend} · ${d.note}`, `definitions of ${name}`, openLocation);
 }
 async function findUsages(name = cursorWord()) {
   if (!name) return status('put the cursor on a symbol first', 'err');
   const d = await api('/code/usages?name=' + encodeURIComponent(name));
-  hitList(d.hits || [], `${d.backend} — ${d.note}`, `usages of ${name}`, openLocation);
+  hitList(d.hits || [], `${d.backend} · ${d.note}`, `usages of ${name}`, openLocation);
 }
 /* The dotted chain the cursor ends, so `fastcore.test` reaches the server whole: the last name
    alone found whichever package had a `def test`. Leftwards only, so on `fastcore` the answer is
@@ -4813,7 +4817,7 @@ async function gotoDeclaration(name = cursorWord(), place = editorPlace()) {
   if (!hits.length) return status(`nothing found for ${name}`, 'err');
   if (d.kind === 'definition' && hits.length === 1) return openLocation(hits[0]);
   const word = d.kind === 'usages' ? 'usage' : 'definition';
-  hitList(hits, `${d.backend} — ${d.note}`, `${word}s of ${name}`, openLocation);
+  hitList(hits, `${d.backend} · ${d.note}`, `${word}s of ${name}`, openLocation);
   // `finding…` is a busy toast and waits to be clicked, so the answer has to replace it.
   status(`${plural(hits.length, word)} of ${name}`, 'ok');
 }
@@ -5162,7 +5166,7 @@ async function findSimilar() {
   status('finding similar code…');
   const d = await api(`/similar?path=${encodeURIComponent(lee.path)}&line=${cursorLine()}&mode=cluster`);
   status(`${d.hits.length} similar · ${d.backend} · ${d.note}`, d.hits.length ? 'ok' : null);
-  hitList(d.hits, `${d.backend} — ${d.note}`, 'code like this', openHit);
+  hitList(d.hits, `${d.backend} · ${d.note}`, 'code like this', openHit);
 }
 
 async function codeMap() {
@@ -5175,7 +5179,7 @@ async function codeMap() {
     symbol: `${c.label}  (${c.size})`, text: '', path: c.files[0] || '', line: 1,
     score: 0, _cluster: c,
   }));
-  hitList(rows, d.note, 'code map — clusters by shape', (r) => {
+  hitList(rows, d.note, 'code map: clusters of similar code', (r) => {
     const c = r._cluster;
     hitList(c.members, `${c.size} members across ${c.files.length} files`, `cluster: ${c.label}`, openHit);
   });
@@ -5195,7 +5199,7 @@ async function startRun(r) {
   try { s = await withPython(() => api('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
   catch (e) { return status(String(e.message || e), 'err'); }
   if (!s.ok) return status(s.error || 'failed to start', 'err');
-  agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
+  agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)}: ${esc(s.cmd)}</span></div>` +
            `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
   // A dev server's output is the thing you watch, so open the terminal it is on rather than
   // leaving it to be found under a dock tab and a filter.
@@ -5217,7 +5221,7 @@ async function runApp() {
   const opts = (d.runs || []).concat(d.here ? [d.here] : []);
   if (!opts.length) {
     editRuns();
-    return status('no run configurations yet — here is the file', 'err');
+    return status('no run configurations yet. This is the file for them', 'err');
   }
   const start = startRun;
   if (opts.length === 1) return start(opts[0]);
@@ -5282,7 +5286,7 @@ async function pickEnv() {
     `<div class="lee-modallist">${rows.map((e, i) =>
       `<div class="lee-mrow${e.current ? ' sel' : ''}" data-i="${i}">${e.current ? '● ' : '○ '}` +
       `${esc(e.name)}<span class="sub">${esc(e.kind)}${e.pid ? ' · pid ' + e.pid : ''}</span></div>`).join('')}</div>` +
-    `<div class="lee-dim">a process only appears here if it has an inspector in it — ` +
+    `<div class="lee-dim">a process shows here only when it has an inspector in it. ` +
     `<code>${esc(d.hint)}</code> puts one in yours.</div>`);
   m.addEventListener('click', async (e) => {
     const r = e.target.closest('.lee-mrow'); if (!r) return;
@@ -5383,10 +5387,10 @@ function palette() {
     {name: 'Agent: shape what the model remembers', scope: 'agent', run: () => leeAgentShape()},
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
-  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: k.key})).concat(agentCommands, lessonCommands);
+  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, lessonCommands);
   let hits = cmds, sel = 0;
-  const m = modal(`<input class="lee-input" id="cp" placeholder="command…" autofocus>
-                   <div class="lee-modallist" id="cplist"></div>`,
+  const m = modal(`<input class="lee-input" id="cp" placeholder="command…" aria-label="Command palette" role="combobox" aria-controls="cplist" aria-expanded="true" autofocus>
+                   <div class="lee-modallist" id="cplist" role="listbox" aria-label="Commands"></div>`,
     (e) => {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, hits.length - 1); paint(); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); paint(); }
@@ -5395,7 +5399,8 @@ function palette() {
   const list = m.querySelector('#cplist'), input = m.querySelector('#cp');
   const paint = () => {
     list.innerHTML = hits.slice(0, 200).map((h, i) =>
-      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(h.name)}<span class="sub">${esc(h.scope)} · ${esc(displayChord(h.key))}</span></div>`).join('');
+      `<div class="lee-mrow${i === sel ? ' sel' : ''}" data-i="${i}">${esc(sentence(h.name))}${h.scope && h.scope !== 'global' ? `<span class="sub">${esc(h.scope)}</span>` : ''}` +
+      `${h.key ? `<kbd>${esc(displayChord(h.key))}</kbd>` : ''}</div>`).join('');
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
   };
   const go = () => {
@@ -5408,7 +5413,7 @@ function palette() {
   input.addEventListener('input', () => {
     const q = input.value.toLowerCase(), raw = input.value.trim();
     hits = cmds.filter(c => c.name.toLowerCase().includes(q) || (c.action || '').includes(q));
-    if (raw) hits = hits.concat({name: `Go to file matching “${raw}”…`, scope: 'files', key: lee.keys.find(k => k.action === 'quick_open')?.key || '',
+    if (raw) hits = hits.concat({name: `Go to file matching “${raw}”…`, scope: 'files', key: shownChord(lee.keys.find(k => k.action === 'quick_open')),
                                  run: () => quickOpen(false, raw)});
     sel = 0; paint();
   });
@@ -5889,7 +5894,7 @@ async function addRoot(find = false) {
     (r.where ? `<span class="lee-dim lee-folderwhere">${esc(r.where)}</span>` : '') + `</button>`;
   const paint = (extra = '') => {
     list.innerHTML = rows.map(row).join('') + extra ||
-      '<div class="lee-dim">no folders match — Enter still opens what you typed, if it exists</div>';
+      '<div class="lee-dim">No folder matches. Enter opens what you typed, if it exists.</div>';
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
     hint.textContent = base ? `in ${base}` : '';
   };
@@ -7753,10 +7758,10 @@ async function vaultFields(st, box, go) {
   let d;
   try { d = await api('/vault/fields?' + new URLSearchParams(base)); }
   catch (e) { box.textContent = e.message || String(e); return; }
-  const shown = v => v == null || v === '' || (Array.isArray(v) && !v.length) ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  const shown = v => v == null || v === '' || (Array.isArray(v) && !v.length) ? '–' : typeof v === 'object' ? JSON.stringify(v) : String(v);
   box.innerHTML = `<div class="lee-vault-fieldshead"><strong>Fields</strong>` +
     `<small>${d.extracted ? `${esc(d.schema || '')}${d.model ? ' · ' + esc(d.model) : ''}` : 'nothing extracted yet'}</small></div>` +
-    (d.fields || []).map((f, i) => `<button class="lee-vault-field${f.errors.length ? ' warn' : ''}${shown(f.value) === '—' ? ' empty' : ''}" data-field="${i}"` +
+    (d.fields || []).map((f, i) => `<button class="lee-vault-field${f.errors.length ? ' warn' : ''}${shown(f.value) === '–' ? ' empty' : ''}" data-field="${i}"` +
       `${f.page == null ? ' disabled' : ''}><strong>${esc(f.field.replace(/_/g, ' '))}</strong><span>${esc(shown(f.value))}</span>` +
       `${f.page == null ? '' : `<small>p. ${pageNo(f.page)}</small>`}${f.quote ? `<q>${esc(f.quote)}</q>` : ''}` +
       f.errors.map(w => `<span class="warn" data-field-warn>⚠ ${esc(w)}</span>`).join('') +
@@ -8514,7 +8519,7 @@ window.leeBranchMenu = leeBranchMenu;
 async function showSyncPlan(d) {
   try {
     const p = await api(gitUrl('/git/sync-plan', {repo: gitUI.repo, fetch: 1}));
-    if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
+    if (!p.upstream) return status(`${p.branch} has no upstream. Publish it first.`, 'err');
     if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
     // Only `merge` and `rebase` are rehearsed, so only they carry `conflicts`; none carries a name.
@@ -8656,7 +8661,7 @@ function mountWeb(host, st) {
     `</div>` +
     `<div class="lee-doc-body lee-webbody" data-web="body">` +
     `<canvas class="lee-webcanvas" data-web="canvas" tabindex="0"` +
-    ` aria-label="${esc(st.title || 'web page')} — rendered by the CDP browser"></canvas>` +
+    ` aria-label="${esc(st.title || 'web page')}, drawn by the CDP browser"></canvas>` +
     `<div class="lee-webnote lee-dim" data-web="note">connecting to the browser…</div>` +
     `</div></div>`;
 
@@ -8685,7 +8690,7 @@ function mountWeb(host, st) {
     send({id: st.target, w, h, scale: webScale()});
   };
   sock.onerror = () => say('the inline browser socket failed', 'err');
-  sock.onclose = () => { if (webView === view) say('the browser disconnected — reopen the tab', 'err'); };
+  sock.onclose = () => { if (webView === view) say('the browser disconnected. Open the tab again', 'err'); };
 
   sock.onmessage = ev => {
     if (typeof ev.data !== 'string') return drawFrame(ctx, canvas, view, ev.data);
@@ -8938,11 +8943,15 @@ const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
 const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
 // pywebview injects its bridge asynchronously, so "is there a native chooser" cannot be answered
-// by one synchronous look at load.
+// by one synchronous look at load. The wait happens once: a browser tab never gets the bridge.
+let shellSettled = null;
 async function shellReady(waitMs = 1500) {
-  for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
-    await new Promise(r => setTimeout(r, 50));
-  return (lee.inShell = inShell());
+  if (inShell()) return (lee.inShell = true);
+  return shellSettled ||= (async () => {
+    for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
+      await new Promise(r => setTimeout(r, 50));
+    return (lee.inShell = inShell());
+  })();
 }
 window.leeShellReady = shellReady;
 lee.inShell = inShell();

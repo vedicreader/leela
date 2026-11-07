@@ -369,6 +369,14 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+//: A path as a person reads it: `root/rel` inside an open folder, `~/rel` under home, else as given. `lee.roots` and `lee.home` come from `/workspace/info`.
+const shownPath = p => {
+  p = String(p || ''); const r = (lee.roots || []).find(r => p === r.path || p.startsWith(r.path + '/'));
+  if (r) return r.name + p.slice(r.path.length);
+  return lee.home && (p === lee.home || p.startsWith(lee.home + '/')) ? '~' + p.slice(lee.home.length) : p;
+};
+//: A menu row in sentence case. The keymap's labels are lower case; a tool named in lower case keeps it.
+const sentence = s => (s = String(s || '')) && !/^(nbdev|fastship|uv)\b/.test(s) ? s[0].toUpperCase() + s.slice(1) : s;
 
 const fmtArgs = (args) => typeof args === 'string' ? args
   : Object.entries(args || {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
@@ -1006,7 +1014,7 @@ async function loadKeys(d) {
   paintFooterKeys(); paintKeyLabels();
   const prompt = $('#agentprompt'); if (prompt) prompt.placeholder = displayChord(prompt.placeholder);
   renderContextKeys(lee.scope);
-  if (lee.keyNotes.length) status(lee.keyNotes[0] + ' — see the keys panel', 'err');
+  if (lee.keyNotes.length) status(lee.keyNotes[0] + '. See the keys panel', 'err');
 }
 
 function renderContextKeys(scope = lee.scope) {
@@ -2117,7 +2125,7 @@ async function mountTab(expectedPath = '') {
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
   if (!st.kind) {
     host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
-    paintRecent();
+    paintKeyLabels(host); paintRecent();
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
@@ -2235,7 +2243,7 @@ function noteStaleTab(st, recoveredDraft) {
     status(`${name} changed on disk; your unsaved version is what you are looking at`, 'err');
     return;
   }
-  status(`${name} changed on disk — reloading`, 'busy');
+  status(`${name} changed on disk. Reloading…`, 'busy');
   takeDiskVersion(st.path).then(() => status(`${name} reloaded from disk`, 'ok'))
                           .catch(e => status(String(e.message || e), 'err'));
 }
@@ -3056,7 +3064,7 @@ function copyCell(i) {
   const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
   if (!cells.length) return status('select notebook cells to copy', 'err');
   lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
-  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} copied — open another notebook and paste`, 'ok');
+  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} copied. Open another notebook and paste.`, 'ok');
 }
 async function cutCell(i) {
   const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
@@ -3107,7 +3115,7 @@ function mountCell(c, i) {
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
     doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
-    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place`
+    placeholder: c.cell_type === 'prompt' ? `ask the inline model · ${displayChord('mod+enter')} answers here`
       : c.cell_type === 'markdown' && c.extra?.lesson?.role === 'prediction' ? 'Your guess: what will the code below print?' : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     lintPath: lee.path || 'scratch.ipynb',
@@ -3400,6 +3408,11 @@ function richWalk(root) {
   }
 }
 //: `html` as a clean fragment. Parsed in a `<template>`, so nothing in it loads or runs before the walk.
+//: A pandas table in the theme's colours. The output's own `<style>` comes later and wins where it says something; `border="1"` loses to any rule.
+const RICH_TABLE_CSS = 'table{border-collapse:collapse;border:0;margin:2px 0;font:12px/1.4 var(--lee-mono);color:var(--lee-output)}' +
+  'th,td{border:0;border-bottom:1px solid var(--lee-border);padding:3px 10px;text-align:right}' +
+  'thead th{border-bottom-color:var(--lee-fg4);color:var(--lee-fg2);font-weight:600}tbody th{color:var(--lee-fg2);font-weight:600}' +
+  'tbody tr:hover{background:var(--lee-active-line)}';
 function richHtml(html) {
   const t = document.createElement('template'); t.innerHTML = html;
   richWalk(t.content);
@@ -3457,6 +3470,7 @@ function outputEl(o, c = null, i = 0) {
       d.textContent = ''; d.style.contain = 'paint';
       const r = d.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out-rich'})).attachShadow({mode: 'open'});
       if (svg) r.append(Object.assign(document.createElement('style'), {textContent: 'svg{display:block;max-width:100%;height:auto}'}));
+      else r.append(Object.assign(document.createElement('style'), {textContent: RICH_TABLE_CSS}));
       r.append(richHtml(rich));
     };
     if (rich.length > MAX_OUTPUT_CHARS) {
@@ -3543,7 +3557,7 @@ function setTabSaveState(tab, state, detail = '') {
   if (!tab) return;
   const dot = $('.lee-save-state', tab); if (!dot) return;
   const labels = {
-    pending: lee.path ? 'Changes queued for autosave' : 'Unsaved — choose a filename to save',
+    pending: lee.path ? 'Changes queued for autosave' : 'Not saved. Choose a file name to save it',
     saving: 'Saving changes…', saved: 'Saved on disk', error: 'Autosave failed',
   };
   dot.className = `lee-save-state ${state}`;
@@ -4298,7 +4312,7 @@ async function openLocation(hit) {
   try {
     if (!inCell && /\.ipynb$/i.test(hit.path)) {
       await leeOpenFile(hit.path);
-      return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
+      return status(`${name}: line ${hit.line} of the notebook file is in no cell`, 'info');
     }
     const line = inCell ? Number(hit.cell_line) : hit.line;
     lee.pendingLocation = {path: hit.path, line, column: Number(hit.column || 0), symbol: hit.symbol || '',
@@ -4404,7 +4418,7 @@ async function runCell(i, advance, {save = true} = {}) {
       const duration = formatCellTime(elapsed), n = lee.cells.indexOf(at) + 1;
       setCellTime(at, elapsed, false);
       setCellState(at, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}`
+      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · some of its last outputs are lost' : ''}`
              : r.reason === 'shell_stopped' ? `cell ${n}: the kernel's shell stopped answering · restart the kernel` : `cell ${n} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
       res = {ok: !!r.ok, error: r.ok ? '' : `cell ${n} failed after ${duration}`};
@@ -4651,7 +4665,7 @@ async function askCell(i, src, el) {
     const here = (r.edits || []).some(e => e.path === lee.path);
     showProblems(r.problems);
     status((r.problems || []).length ? r.problems[r.problems.length - 1]
-           : here ? 'this notebook also changed on disk — your buffer wins until you save'
+           : here ? 'this notebook also changed on disk. Your text stays until you save'
                   : (r.note || 'answered'),
            r.ok && !here && !(r.problems || []).length ? 'ok' : 'err');
     markDirty();
@@ -5565,9 +5579,9 @@ function execLine(code, text, ok) {
  * A saved configuration for this file still wins, so `python -m x` or an argv is honoured. Scratch
  * code is `run selection`, which is still the kernel. */
 async function runFile() {
-  if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
+  if (lee.kind !== 'text') return status('this is a notebook. Run its cells, or use “▶ all”', 'err');
   const path = lee.path || '';
-  if (!path.endsWith('.py')) return status('only a .py file can be run — try “run selection”', 'err');
+  if (!path.endsWith('.py')) return status('only a .py file can run. Use “run selection” instead', 'err');
   if ($('.lee-tab.active.dirty') && !await saveTab(true))
     return status('save the file before running it', 'err');
   const here = path.split('/').pop();
@@ -5593,7 +5607,7 @@ async function runSelection() {
   catch (e) { return status(String(e.message || e), 'err'); }
   const head = code.trim().split('\n')[0].slice(0, 60);
   execLine(head + (code.trim().includes('\n') ? ' …' : ''), r.text, r.ok);
-  status(r.ok ? 'ran the selection' : 'the selection raised — see the exec log', r.ok ? 'ok' : 'err');
+  status(r.ok ? 'ran the selection' : 'the selection raised an error. See the exec log', r.ok ? 'ok' : 'err');
   leeVars();
 }
 
@@ -5607,7 +5621,7 @@ async function runRange(start, end, label) {
     if (c.cell_type !== 'code' || !(c.source || '').trim()) continue;
     status(`running cell ${i + 1}…`);
     const r = await runCell(i, false);
-    if (!r.ok) return status(`${r.error || `cell ${i + 1} failed`} — stopped there`, 'err');
+    if (!r.ok) return status(`${r.error || `cell ${i + 1} failed`}. Stopped there.`, 'err');
   }
   status(`ran ${label}`, 'ok');
 }
@@ -5648,7 +5662,7 @@ async function pickKernel() {
     (o.boot_error ? `<div class="lee-err">${esc(o.boot_error)}</div>` : '') +
     (o.api_error ? `<div class="lee-err">Inspector connection failed: ${esc(o.api_error)} <button class="lee-btn" data-kernel-reconnect>Restart kernel</button></div>` : '') +
     (o.notice ? `<div class="lee-err">${esc(o.notice.message)} <button class="lee-btn" data-kernel-upgrade>Upgrade ipykernel</button></div>` : '') +
-    `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
+    `<div class="lee-dim">choosing either of these restarts the kernel. Its variables are lost</div>` +
     `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
     engineSection(models) +
@@ -5991,7 +6005,7 @@ async function captureScreen() {
     // the display, so it can take it instead.
     if (!navigator.mediaDevices?.getDisplayMedia) {
       const r = await post('/screen/native', {});
-      return status(`screen captured (${Math.round(r.bytes / 1024)}kb) — it rides along with your next question`, 'ok');
+      return status(`screen captured (${Math.round(r.bytes / 1024)}kb). It goes with your next question.`, 'ok');
     }
     if (!lee.vtrack || lee.vtrack.readyState === 'ended') {
       const s = await navigator.mediaDevices.getDisplayMedia({video: true});
@@ -6004,7 +6018,7 @@ async function captureScreen() {
     cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
     bmp.close();
     const r = await post('/screen', {data_url: cv.toDataURL('image/png')});
-    status(`screen captured (${Math.round(r.bytes / 1024)}kb) — it rides along with your next question`, 'ok');
+    status(`screen captured (${Math.round(r.bytes / 1024)}kb). It goes with your next question.`, 'ok');
   } catch (e) { status('capture failed: ' + (e.message || e), 'err'); }
 }
 
@@ -6014,7 +6028,7 @@ async function captureScreen() {
    Resolves to the response it applied, or null, so a caller leaves focus and selection alone. */
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
-  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return null; }
+  if (lee.kind !== 'notebook') { status('this tab is a file. Cells are in notebooks only', 'err'); return null; }
   const key = lee.tabKey, cells = lee.cells, named = {path: key};
   if (!['undo', 'redo', 'clear'].includes(d.op) && cells[d.i]) named.id = cells[d.i].id;
   if (d.indices) named.ids = d.indices.map(i => cells[i]?.id).filter(Boolean);
@@ -6402,7 +6416,7 @@ async function showDiff() {
   const d = await post('/diff', {path: lee.tabKey, ...bufferBody()});
   if (!d.rows.length) return status('no unsaved changes', 'ok');
   status(`${d.label} unsaved`, 'ok');
-  diffModal('unsaved changes — ' + d.title, d.label, d.rows);
+  diffModal('unsaved changes: ' + d.title, d.label, d.rows);
 }
 
 async function openMergeConflict(conflictBox, theirs = []) {
@@ -6610,7 +6624,7 @@ function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
   const lang = lee.execLang || 'python';
   const v = createEditor(host, {
-    doc: '', lang, placeholder: `${lang} — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
+    doc: '', lang, placeholder: `${lang} · ${displayChord('mod+enter')} runs · ${displayChord('ctrl+shift+up')}/↓ history`,
     completeUrl: '/complete', onDefinition: name => findDefinition(name),
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
   });
@@ -6619,6 +6633,10 @@ function mountExec() {
   if (host.dataset.wired) return;     // a remount replaces the editor, not the box around it
   host.dataset.wired = '1';
   host.addEventListener('focusin', () => setScope('exec'));
+  // An empty box hands Tab back to the page, so a keyboard walk passes through it. With code in it, Tab indents and Escape then Tab leaves.
+  host.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && !e.altKey && !e.ctrlKey && !e.metaKey && !LeeCM.getDoc(lee.editors.get('exec')).trim()) e.stopPropagation();
+  }, true);
   api('/exec/history').then(d => { lee.hist = d.cells || []; lee.histIdx = lee.hist.length; }).catch(() => {});
 }
 

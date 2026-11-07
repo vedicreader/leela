@@ -16,7 +16,7 @@ function mountExec() {
   const host = $('#execbox'); if (!host || lee.editors.has('exec')) return;
   const lang = lee.execLang || 'python';
   const v = createEditor(host, {
-    doc: '', lang, placeholder: `${lang} — ${displayChord('mod+enter')} runs · ctrl+shift+↑/↓ history`,
+    doc: '', lang, placeholder: `${lang} · ${displayChord('mod+enter')} runs · ${displayChord('ctrl+shift+up')}/↓ history`,
     completeUrl: '/complete', onDefinition: name => findDefinition(name),
     onSelection: () => { clearTimeout(selectionHelpTimer); selectionHelpTimer = setTimeout(showSelectionHelp, 120); },
   });
@@ -25,6 +25,10 @@ function mountExec() {
   if (host.dataset.wired) return;     // a remount replaces the editor, not the box around it
   host.dataset.wired = '1';
   host.addEventListener('focusin', () => setScope('exec'));
+  // An empty box hands Tab back to the page, so a keyboard walk passes through it. With code in it, Tab indents and Escape then Tab leaves.
+  host.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && !e.altKey && !e.ctrlKey && !e.metaKey && !LeeCM.getDoc(lee.editors.get('exec')).trim()) e.stopPropagation();
+  }, true);
   api('/exec/history').then(d => { lee.hist = d.cells || []; lee.histIdx = lee.hist.length; }).catch(() => {});
 }
 

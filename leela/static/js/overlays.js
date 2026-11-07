@@ -5,7 +5,9 @@ function modalViewport() {
 function fitModal(m) {
   const box = $('.lee-modalbox', m), v = modalViewport(), gap = 8; if (!box) return;
   box.style.maxWidth = Math.max(0, v.width - gap * 2) + 'px';
-  box.style.maxHeight = Math.max(0, v.height - gap * 2) + 'px';
+  // Below where the box starts, not the whole viewport: a box 5vh down with a full-height cap ran off the bottom.
+  const top = m.classList.contains('lee-modal-moved') ? gap : Math.max(gap, box.getBoundingClientRect().top - v.top);
+  box.style.maxHeight = Math.max(0, v.height - top - gap) + 'px';
   if (!m.classList.contains('lee-modal-moved')) return;
   const r = box.getBoundingClientRect();
   box.style.left = Math.max(v.left, Math.min(r.left, v.left + v.width - Math.min(r.width, v.width) - gap)) + 'px';
@@ -236,7 +238,7 @@ function openMenu(surface, x, y) {
   menu.innerHTML = rows.map(r => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
     `<button class="lee-menuitem ${esc(r.kind)}" role="${r.check ? 'menuitemcheckbox' : 'menuitem'}"` +
     `${r.check ? ` aria-checked="${!!lee.menuChecks?.[r.action]?.()}"` : ''}${lee.menuOff?.[r.action]?.() ? ' disabled' : ''} data-action="${esc(r.action)}">` +
-    `<span>${esc(r.label)}</span>${r.chord && r.chord !== '—' ? `<kbd>${esc(displayChord(r.chord))}</kbd>` : ''}</button>`).join('');
+    `<span>${esc(sentence(r.label))}</span>${r.chord && r.chord !== '–' ? `<kbd>${esc(displayChord(r.chord))}</kbd>` : ''}</button>`).join('');
   document.body.appendChild(menu);
   const rect = menu.getBoundingClientRect();
   menu.style.left = Math.max(4, Math.min(x, innerWidth - rect.width - 4)) + 'px';
@@ -269,7 +271,7 @@ function openChromeMenu(anchor, rows) {
   const menu = document.createElement('div'); menu.className = 'lee-ctxmenu'; menu.setAttribute('role', 'menu');
   menu.innerHTML = rows.map((r, i) => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
     `<button class="lee-menuitem${r.warn ? ' warn' : ''}" role="menuitem" data-i="${i}" ${r.disabled ? 'disabled' : ''}>` +
-    `<span>${esc(r.label)}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</button>`).join('');
+    `<span>${esc(sentence(r.label))}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</button>`).join('');
   document.body.appendChild(menu);
   const a = anchor.getBoundingClientRect(), rect = menu.getBoundingClientRect();
   menu.style.left = Math.max(4, Math.min(a.left, innerWidth - rect.width - 4)) + 'px';

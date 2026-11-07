@@ -236,7 +236,7 @@ let bkPoll = 0;
 function backendRow(r) {
   const st = r.install || {}, running = st.state === 'running';
   const note = running ? `installing with ${esc(st.via || 'pip')}…`
-    : st.state === 'error' ? `${esc(st.via || 'the installer')} failed — see below`
+    : st.state === 'error' ? `${esc(st.via || 'the installer')} failed. See below.`
     : r.available ? 'ready' : esc(r.why || 'not installed');
   return `<div class="lee-setup-row" data-bk="${esc(r.value)}">` +
     `<span><strong>${esc(r.label || r.value)}</strong><br><small>${note}</small>` +
@@ -293,7 +293,7 @@ function paintRuntimes(m, rows) {
   const rtsel = $('#modelruntime', m), was = rtsel.value;
   rtsel.innerHTML = (rows.length ? rows : [REMOTE_RUNTIME]).map(r =>
     `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
-    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
+    `${r.available ? '' : ': ' + esc(r.why || 'not available here')}</option>`).join('');
   const keep = rtsel.querySelector(`option[value="${CSS.escape(was || '')}"]:not([disabled])`);
   const firstrt = keep || rtsel.querySelector('option:not([disabled])');
   if (firstrt) rtsel.value = firstrt.value;
@@ -588,7 +588,7 @@ async function paintAgentBudget() {
   const el = $('#agentbudgetstatus'); if (!el) return;
   try {
     const d = await api('/agent/status');
-    el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '—'}`;
+    el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '–'}`;
     el.title = `${d.tool_calls || 0} of ${d.tool_limit || 'unknown'} tool calls used this turn`;
   } catch (_) {}
 }
@@ -1333,7 +1333,7 @@ const COMPLETION_CODE = {kept: '', 'not kept': 'the code was not kept for this o
 /* Two causes, one shape: nothing carried an id before the browser began minting them, and an ask
    can fall outside the window this list covers while its verdict stays inside it. */
 const COMPLETION_ORPHAN = 'not joined to its ask: recorded before asks carried an id, or its ask is outside this window';
-const percent = r => r === null || r === undefined ? '—' : Math.round(r * 100) + '%';
+const percent = r => r === null || r === undefined ? '–' : Math.round(r * 100) + '%';
 const completionWhen = at => at ? new Date(at * 1000).toLocaleString() : '';
 
 function completionRow(r) {
@@ -2044,7 +2044,7 @@ function renderWarmStart(log, rep) {
   }
   if (skipped.length) {
     const ul = document.createElement('ul'); ul.className = 'lee-agent-warm-skipped';
-    for (const s of skipped) ul.insertAdjacentHTML('beforeend', `<li><code>${esc(s.name)}</code> — ${esc(s.reason)}</li>`);
+    for (const s of skipped) ul.insertAdjacentHTML('beforeend', `<li><code>${esc(s.name)}</code>: ${esc(s.reason)}</li>`);
     block.insertAdjacentHTML('beforeend', '<div class="lee-vgroup">skipped</div>'); block.appendChild(ul);
   }
   const first = $('.lee-agent-turn', log);
@@ -2060,7 +2060,7 @@ async function leeAgentAssess() {
     const d = await post('/agent/thread/assess', {thread: lee.agentThread});
     const log = $('#agentlog'); if (!log) return;
     const card = document.createElement('details'); card.className = 'lee-agent-warm lee-agent-assess'; card.open = true;
-    const rows = (d.findings || []).map(f => `<li><code>${esc(f.kind)}</code> ${esc(f.tool)} · turn ${f.turn + 1}, call ${f.index + 1} — ${esc(f.message)}</li>`).join('');
+    const rows = (d.findings || []).map(f => `<li><code>${esc(f.kind)}</code> ${esc(f.tool)} · turn ${f.turn + 1}, call ${f.index + 1}: ${esc(f.message)}</li>`).join('');
     card.innerHTML = `<summary><span class="lee-agent-step-copy">Assessment · score ${esc(d.score)} · ${esc(d.calls)} call${d.calls === 1 ? '' : 's'} over ${esc(d.turns)} turn${d.turns === 1 ? '' : 's'}</span>` +
       `<span class="lee-agent-step-chevron" aria-hidden="true"></span></summary>` +
       (rows ? `<ul class="lee-agent-warm-skipped">${rows}</ul>` : '<div class="lee-dim">no findings</div>');
@@ -2438,7 +2438,7 @@ function groupedToolOptions(schemas, selected) {
     groups.get(schema.group).push(schema);
   }
   return [...groups].map(([group, tools]) => `<optgroup label="${esc(group)}">` + tools.map(tool =>
-    `<option value="${esc(tool.name)}"${tool.name === selected ? ' selected' : ''}>${esc(tool.name)} — ${esc(tool.description)}</option>`).join('') + '</optgroup>').join('');
+    `<option value="${esc(tool.name)}"${tool.name === selected ? ' selected' : ''}>${esc(tool.name)}: ${esc(tool.description)}</option>`).join('') + '</optgroup>').join('');
 }
 function previewContent(preview) {
   if (!preview) return '<div class="lee-proposal-empty">No preview available.</div>';
@@ -2935,7 +2935,7 @@ function updateAgentSendMode(mode = 'send') {
   const label = mode === 'force' ? 'Stop and send next' : mode === 'steer' ? 'Steer after this call' : 'Send';
   button.textContent = label; button.setAttribute('aria-label', label);
   button.title = mode === 'send' ? 'send this as a turn'
-    : 'hand this to the model after the current call — shift-click to stop the run and send it now';
+    : 'send this to the model after the current call. Shift-click to stop the run and send it now';
 }
 /* A steer belongs inside the turn's timeline rather than after it, among the chunks and tool rows
    it came between. */
@@ -3979,7 +3979,7 @@ async function watchOpenFile() {
     // clean editor follows agent, terminal and git writes live.
     if ($('.lee-tab.active')?.classList.contains('dirty')) {
       if (d.disk_version !== lee.seenDiskVersion)
-        status(`${lee.path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
+        status(`${lee.path.split('/').pop()} changed on disk. Leela keeps your unsaved text.`, 'err');
       lee.seenDiskVersion = d.disk_version;
       return;
     }
@@ -4058,7 +4058,7 @@ async function reloadAfterEdits(edits) {
   bar.querySelector('#dtake').onclick = async () => {
     m.remove(); await takeDiskVersion(e.path); status('loaded the agent edit from disk', 'ok');
   };
-  bar.querySelector('#dkeep').onclick = () => { m.remove(); status('kept your buffer — ctrl+s overwrites', 'ok'); };
+  bar.querySelector('#dkeep').onclick = () => { m.remove(); status(`kept your text. ${displayChord('mod+s')} writes it over the file`, 'ok'); };
 }
 
 async function stopAgent() {
