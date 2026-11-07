@@ -290,6 +290,9 @@ def _size(p):
             except OSError: pass
     return n
 
+#: One prune at a time in this process: each works from its own listing of the trash.
+_PRUNING = threading.Lock()
+
 class Trash:
     "Where a deleted file or folder goes, so deleting either is recoverable. Emptied by age and size."
     def __init__(self, root, days=TRASH_DAYS, most=TRASH_BYTES, fresh=TRASH_FRESH):
@@ -358,6 +361,8 @@ class Trash:
         return sorted(out, key=lambda r: -r[1])
     def prune(self):
         "Forget items older than `days`, then the oldest until the rest fit in `most` bytes. A fresh item always stays."
+        with _PRUNING: self._prune()
+    def _prune(self):
         rows = self.items()
         for key, age, _ in rows:
             if age > self.days*86400: self._forget(key)

@@ -79,8 +79,10 @@ def _aged(t, key, days):
     then = time.time() - days*86400
     os.utime(t.root/key, (then, then))
 
-def test_the_trash_is_emptied_by_age_and_by_size(tmp_path):
+def test_the_trash_is_emptied_by_age_and_by_size(tmp_path, monkeypatch):
     "The trash was never emptied: every deleted folder stayed on disk for ever."
+    from leela.core.session import Trash
+    monkeypatch.setattr(Trash, '_prune_soon', lambda self: None)   # only the prunes this test asks for
     t = _trash(tmp_path, days=30, most=150, fresh=3600)
     keys = []
     for i, n in enumerate((100, 100, 100)):
