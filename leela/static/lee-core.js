@@ -1646,7 +1646,9 @@ function layoutTabs() {
   // The active file and its neighbours stay spatially meaningful, and every other open document
   // is one click away in the overflow menu.
   const breakpointCap = innerWidth >= 1700 ? 7 : innerWidth >= 1300 ? 5 : innerWidth >= 960 ? 4 : 2;
-  const cap = Math.max(1, Math.min(breakpointCap, Math.floor(bar.clientWidth / 138) || 1));
+  // The bar is only as wide as the tabs it shows; the spacer beside it holds the rest of the row's room.
+  const room = bar.clientWidth + ($(':scope > .lee-spacer', bar.parentElement)?.clientWidth || 0);
+  const cap = Math.max(1, Math.min(breakpointCap, Math.floor(room / 138) || 1));
   const keep = new Set();
   if (tabs.length <= cap) tabs.forEach((_, i) => keep.add(i));
   else {
