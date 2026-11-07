@@ -3822,7 +3822,7 @@ function agentListen(thread, since, card = null) {
         : '<strong>Failed</strong><small>The output above explains what the tool returned.</small>';
       updateAgentRunstrip();
     }
-    if (a.done && a.ok && a.kind === 'edit' && a.args?.path) scheduleAgentFileReload(a.args.path);
+    if (a.done && a.ok && (a.kind === 'edit' || NOTEBOOK_TOOLS.has(a.tool)) && a.args?.path) scheduleAgentFileReload(a.args.path);
     progress.phase(a.done ? 'Reviewing tool results' : (a.summary || `Running ${a.tool}`));
     stickAgentLog(log);
   }));
@@ -3957,13 +3957,20 @@ function whenEditorIdle(fn, key = '', tries = 40) {
   if (tries > 0) setTimeout(() => whenEditorIdle(fn, key, tries - 1), 500);
   else waitingReloads.delete(key);
 }
+/* Agent tools that change an open notebook in the server's copy, not on disk, so the tab remounts from that copy. */
+const NOTEBOOK_TOOLS = new Set(['run_cell', 'check_exercise', 'grade_exercise', 'add_demo', 'add_exercise']);
 function scheduleAgentFileReload(path) {
-  if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
+  // An open notebook's agent edit is in the server's copy of the tab, with the person's unsaved edits, so a dirty tab remounts too.
+  const held = () => lee.kind === 'notebook', dirty = () => $('.lee-tab.active')?.classList.contains('dirty');
+  if (path !== lee.path || (!held() && dirty())) return;
   clearTimeout(lee.agentReloadTimer);
   lee.agentReloadTimer = setTimeout(() => whenEditorIdle(async () => {
-    if (path !== lee.path || $('.lee-tab.active')?.classList.contains('dirty')) return;
-    try { await takeDiskVersion(path); status(`${path.split('/').pop()} updated from the agent edit`, 'ok'); }
-    catch (e) { status(String(e.message || e), 'err'); }
+    if (path !== lee.path || (!held() && dirty())) return;
+    try {
+      if (held()) { await lee.nbQueue; await mountTab(path); }
+      else await takeDiskVersion(path);
+      status(`${path.split('/').pop()} updated from the agent edit`, 'ok');
+    } catch (e) { status(String(e.message || e), 'err'); }
   }, 'agent:' + path), 90);
 }
 async function watchOpenFile() {

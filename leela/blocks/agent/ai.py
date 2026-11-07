@@ -426,7 +426,27 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
                 f'Writable: {", ".join(self.writable_roots)}. Enable workspace repository writes in '
                 'agent settings to write to the other open folders')
         return target
-    def write(self, path, text): return self.ws.write_text_at(self.check_write(path), text)
+    def write(self, path, text):
+        p = self.check_write(path)
+        if p.suffix == '.ipynb' and self._in_tab(p, lambda nb, seqs: nb.take_source_text(text))[0]: return str(p)
+        return self.ws.write_text_at(p, text)
+    def _held(self, path):
+        "`(tab, notebook, run lock)` of the open tab holding notebook `path`, else Nones: the agent works on what the person sees."
+        store = getattr(self.ws, 'docstore', None)
+        p = Path(path).expanduser().resolve()
+        tab = first(t for t in getattr(self.ws, 'tabs', []) if getattr(t, 'kind', '') == 'notebook' and getattr(t, 'path', '') and Path(t.path).resolve() == p)
+        return store.owner(store.key(tab)) if tab is not None and store is not None else (None, None, None)
+    def _in_tab(self, path, f):
+        "`(True, f(nb, seqs))` run on the workspace loop over the open tab's notebook, which is then unsaved; `(False, None)` when no tab holds it."
+        tab, nb, _ = self._held(path)
+        if nb is None: return False, None
+        def go():
+            out = f(nb, self.ws.docstore.seqs_for(tab))
+            nb.dirty = tab.dirty = True
+            return out
+        if (loop := self._loop()) is None: return True, go()   # already on the loop, or no loop runs
+        async def run(): return go()
+        return True, asyncio.run_coroutine_threadsafe(run(), loop).result(30)
     def exists(self, path):
         "Whether `path` is a file the agent may read; one outside the roots, or missing, is not."
         try: return self.check(path, reading=True).exists()
@@ -435,7 +455,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "Remove one file inside the writable roots (a `/rewind` of a created file); one already gone is not an error."
         self.ws.fs._fixed(p := self.check_write(path), 'deleted')
         p.unlink(missing_ok=True)
-    def text_at(self, path): return self.ws.text_at(path)
+    def text_at(self, path):
+        _, nb, _ = self._held(path) if str(path).endswith('.ipynb') else (None, None, None)
+        return nb.source_text() if nb is not None else self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):
         "Leela's own blend: every backend at once, each hit stamped with the legs that agreed."
@@ -606,22 +628,39 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return self.api_fetch(operation, key, **params)
     def nb_cells(self, path):
         from ..nb.nb import Notebook
-        return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
+        p = self.check(path)
+        _, nb, _ = self._held(p)
+        return [(c.id, c.cell_type, c.source) for c in (nb if nb is not None else Notebook.load(p)).cells]
+    def nb_set_cell(self, path, cell_id, source):
+        "Replace one cell's source in the open tab, stamped so an older page write cannot undo it; on disk when no tab holds it."
+        import time
+        cid, p = self.nb_cell(path, cell_id)[0], self.check(path, must_exist=True)
+        def put(nb, seqs):
+            nb.take_sources([{'id': cid, 'source': source, 'seq': int(time.time() * 1000)}], seqs)
+            return cid
+        held, out = self._in_tab(p, put)
+        return out if held else NotebookHost.nb_set_cell(self, path, cell_id, source)
     def nb_add_cell(self, path, source, index=-1, cell_type='code'):
         from ..nb.nb import Cell, Notebook
         p = self.check(path)
+        def add(nb, seqs=None):
+            c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
+            if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
+            nb.reveal(first(j for j, x in enumerate(nb.cells) if x is c))   # the fold lives in the file, so unfold it there
+            return c.id
+        held, cid = self._in_tab(p, add)
+        if held: return cid
         nb = Notebook.load(p) if p.exists() else Notebook.blank(p)
-        c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
-        if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
-        nb.reveal(first(j for j, x in enumerate(nb.cells) if x is c))   # the fold lives in the file, so unfold it there
+        cid = add(nb)
         nb.save(p, sandbox=self.ws.fs)
-        return c.id
+        return cid
     def nb_run_cell(self, path, cell_id, timeout=120):
         "Run one cell in the kernel its notebook's tab runs in, the way the Run button does."
         from ..nb.nb import Notebook, run_watched
         from ...workspace import Tab
         p = self.check(path, must_exist=True)
-        nb = Notebook.load(p)
+        held, nb, lock = self._held(p)
+        nb = nb if nb is not None else Notebook.load(p)
         i = first(i for i, c in enumerate(nb.cells) if c.id == cell_id)
         if i is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
         if nb[i].cell_type != 'code': return f'cell {cell_id} is a {nb[i].cell_type} cell; only code cells run'
@@ -637,7 +676,15 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         note = ('' if was in (None, self._cells[str(p)]) else
                 "[this notebook's kernel is not the one your last run_cell here used (it restarted, or closed and started again): names from earlier cells are gone]\n")
         before = self._var_snapshot(k)
-        try: c, _ = asyncio.run_coroutine_threadsafe(run_watched(nb, i, k), loop).result(max(1, int(timeout)))
+        async def run():
+            if lock is None: return await run_watched(nb, i, k)
+            async with lock:
+                j = first(j for j, x in enumerate(nb.cells) if x.id == cell_id)
+                if j is None: raise ValueError(f'cell {cell_id} left the notebook before it could run')
+                nb.reveal(j); held.running += 1
+                try: return await run_watched(nb, j, k)
+                finally: held.running, held.dirty = max(0, held.running - 1), True
+        try: c, _ = asyncio.run_coroutine_threadsafe(run(), loop).result(max(1, int(timeout)))
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
         if (origins := getattr(self.ws, 'origins', None)) is not None: origins.cell(c, path)
@@ -650,9 +697,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         p = self.check(path, must_exist=True)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
-        store = getattr(self.ws, 'docstore', None)
-        _, nb, lock = store.owner(str(p)) if tab and store else (None, None, None)
+        tab, nb, lock = self._held(p)
         if nb is None: nb, lock = Notebook.load(p), asyncio.Lock()
         c = first(c for c in nb.cells if c.id == cell_id)
         if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
@@ -670,9 +715,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         p = self.check(path, must_exist=True)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the notebooks here, so nothing can be graded'
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
-        store = getattr(self.ws, 'docstore', None)
-        _, nb, lock = store.owner(str(p)) if tab and store else (None, None, None)
+        tab, nb, lock = self._held(p)
         if nb is None: return f'{path} is not open in a tab. Open it, check the exercise there, then grade it.'
         c = first(c for c in nb.cells if c.id == cell_id)
         if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
@@ -1013,7 +1056,7 @@ def _session_tools(host):
     @summary(lambda a: f'Run {a.get("path","")} cell {a.get("cell_id","?")}')
     def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run one notebook cell in the user's live kernel, as pressing Run on it would.
-        The source runs as it is on disk, in that notebook tab's kernel, against the user's namespace and execution counter. The notebook file is never written. Take `cell_id` from `notebook_cells`. `run_python` is not a substitute: it runs in your own layer, not the user's.
+        The source runs as the open tab holds it, unsaved edits included, in that tab's kernel, against the user's namespace and execution counter. The output goes into the tab; the file is not written. Take `cell_id` from `notebook_cells`. `run_python` is not a substitute: it runs in your own layer, not the user's.
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
@@ -1065,14 +1108,17 @@ def _session_tools(host):
                     or 'the stub does not pass every test')
             p = host.check_write(path)
             if p.suffix != '.ipynb': return 'add_exercise failed: path must be an .ipynb notebook'
-            nb = Notebook.load(p)
-            index = first(i + 1 for i, c in enumerate(nb.cells) if c.id == after_cell_id) if after_cell_id else len(nb)
-            if index is None: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
             task_cell, code = exercise_cells(spec)
-            nb.insert(index, task_cell)
-            nb.insert(index + 1, code)
-            nb.reveal(index + 1)
-            nb.save(p, sandbox=host.ws.fs)
+            def put(nb, seqs=None):
+                index = first(i + 1 for i, c in enumerate(nb.cells) if c.id == after_cell_id) if after_cell_id else len(nb)
+                if index is None: return False
+                nb.insert(index, task_cell); nb.insert(index + 1, code); nb.reveal(index + 1)
+                return True
+            held, ok = host._in_tab(p, put)
+            if not held:
+                nb = Notebook.load(p)
+                if ok := put(nb): nb.save(p, sandbox=host.ws.fs)
+            if not ok: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
             return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; {stub}.'
         except Exception as e: return f'add_exercise failed: {errstr(e)}'
     add_exercise.secret_args = ('solution',)
