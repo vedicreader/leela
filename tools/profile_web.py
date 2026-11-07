@@ -6,7 +6,7 @@ Drives a real Chromium over a generated project.
     python tools/profile_web.py --dirs 40       # a wider tree
 """
 from __future__ import annotations
-import argparse, asyncio, subprocess, sys, tempfile, threading, time, os
+import argparse, asyncio, subprocess, sys, tempfile, threading, time
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent

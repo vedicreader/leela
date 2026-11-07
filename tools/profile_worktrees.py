@@ -7,7 +7,7 @@ per thread.
     python tools/profile_worktrees.py -n 8       # eight threads
 """
 from __future__ import annotations
-import argparse, os, shutil, subprocess, sys, tempfile, threading, time
+import argparse, shutil, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from fastcore.all import Path
 

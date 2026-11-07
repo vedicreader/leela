@@ -8,7 +8,7 @@ empty and the capture shows it.
 """
 
 from __future__ import annotations
-import asyncio, os, sys, threading
+import asyncio, sys, threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

@@ -8,7 +8,7 @@ editors constructed, renders asked for, and how long the main thread was blocked
     python tools/profile_agent.py --blocks 8  # a longer reply
 """
 from __future__ import annotations
-import argparse, asyncio, subprocess, sys, tempfile, threading, time, os
+import argparse, asyncio, subprocess, sys, tempfile, threading, time
 
 from fastcore.all import Path
 

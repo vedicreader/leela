@@ -1,6 +1,5 @@
 "On Linux the watcher lists its folders itself, so inotify has no watch inside node_modules, .venv or .git/objects."
 import os, threading
-from pathlib import Path
 from leela.blocks.fs import watch as W
 
 def _tree(root):
