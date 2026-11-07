@@ -64,7 +64,11 @@ func fakeUV(_ dir: URL = tempDir()) -> URL {
     if [ "$1" = "--version" ]; then echo "uv 0.13.6"; exit 0; fi
     echo "$@" >> "$d/calls.txt"
     env | grep '^UV_' | sort > "$d/env.txt"
-    mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"
+    if [ -f "$UV_PROJECT_ENVIRONMENT/bin/leela" ]; then echo 'SEEDED' >> "$d/seeded.txt"; if [ -f "$d/SEEDFAIL" ]; then echo 'error: broken copy' >&2; exit 2; fi; fi
+    mkdir -p "$UV_PROJECT_ENVIRONMENT/bin" "$UV_PROJECT_ENVIRONMENT/lib/site-packages/pkg/__pycache__"
+    printf 'home = /py\nversion_info = 3.13.18\n' > "$UV_PROJECT_ENVIRONMENT/pyvenv.cfg"
+    printf '#!%s/bin/python\n' "$UV_PROJECT_ENVIRONMENT" > "$UV_PROJECT_ENVIRONMENT/bin/tool"
+    printf '%s' "$UV_PROJECT_ENVIRONMENT" > "$UV_PROJECT_ENVIRONMENT/lib/site-packages/pkg/__pycache__/m.pyc"
     echo "Downloading cpython-3.13.18-macos-aarch64-none (23.9MiB)"
     echo "Using CPython 3.13.18"
     if [ -f "$d/COLD" ]; then echo "Downloading numpy (3.0MiB)"; mkdir -p "$UV_CACHE_DIR"; head -c 3000000 /dev/zero > "$UV_CACHE_DIR/numpy.whl"; sleep 1; echo " Downloaded numpy"; fi

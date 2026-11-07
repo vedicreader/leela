@@ -98,4 +98,49 @@ import Testing
         let a = RunLock(p.runLock)
         #expect(a != nil && RunLock(p.runLock) == nil)
     }
+
+    @Test func aNewLocksEnvStartsFromACopyOfTheOneInUseAndKeepsNoReferenceToIt() async throws {
+        let uv = fakeUV(), s = store(uv: uv), a = tempDir(), b = tempDir()
+        makeLock(a, n: 1); makeLock(b, n: 2)
+        let ha = try await s.build(lock: a, n: 1); try s.adopt(ha)
+        let A = s.paths.env(ha), before = try Data(contentsOf: s.paths.marker(ha)) + Data(contentsOf: A.appending(path: "bin/tool"))
+        let hb = try await s.build(lock: b, n: 2)
+        let B = s.paths.env(hb), calls = try String(contentsOf: uv.deletingLastPathComponent().appending(path: "seeded.txt"), encoding: .utf8)
+        #expect(calls.components(separatedBy: "\n").filter { $0 == "SEEDED" }.count == 1, "the second build started from a copy")
+        #expect(try String(contentsOf: B.appending(path: "bin/tool"), encoding: .utf8) == "#!\(B.path)/bin/python\n")
+        var left = [String]()
+        for case let f as URL in FileManager.default.enumerator(at: B, includingPropertiesForKeys: nil)! {
+            if let d = try? Data(contentsOf: f), d.range(of: Data(A.path.utf8)) != nil { left.append(f.path) }
+        }
+        #expect(left.isEmpty, "B still names A: \(left)")
+        #expect(s.isBuilt(hb) && s.marker(hb)?.n == 2)
+        #expect(try Data(contentsOf: s.paths.marker(ha)) + Data(contentsOf: A.appending(path: "bin/tool")) == before, "A is not touched")
+    }
+
+    @Test func aCopyThatFailsToSyncIsBuiltFresh() async throws {
+        let uv = fakeUV(), s = store(uv: uv), a = tempDir(), b = tempDir()
+        makeLock(a, n: 1); makeLock(b, n: 2)
+        let ha = try await s.build(lock: a, n: 1); try s.adopt(ha)
+        try Data().write(to: uv.deletingLastPathComponent().appending(path: "SEEDFAIL"))
+        let hb = try await s.build(lock: b, n: 2)
+        #expect(s.isBuilt(hb) && s.isBuilt(ha))
+    }
+
+    @Test func anEnvWithAnotherPythonOrNoCloneIsNotACopy() async throws {
+        let uv = fakeUV(), s = store(uv: uv), a = tempDir(), b = tempDir()
+        makeLock(a, n: 1); makeLock(b, n: 2)
+        let ha = try await s.build(lock: a, n: 1); try s.adopt(ha)
+        #expect(!s.seed(tempDir().appending(path: "x"), from: s.paths.env(ha), python: "3.12.16"), "another Python is a fresh build")
+        #expect(!s.seed(tempDir().appending(path: "x"), from: tempDir().appending(path: "missing"), python: "3.13.18"))
+        let hb = try await s.build(lock: b, n: 2)
+        #expect(s.isBuilt(hb))
+    }
+
+    @Test func theChangesBetweenTwoLocksAreSaidInAFewWords() throws {
+        let a = tempDir(), b = tempDir()
+        try Data("version = 1\n\n[[package]]\nname = \"leela-lock\"\nversion = \"0\"\n\n[[package]]\nname = \"ramabana\"\nversion = \"0.2.109\"\n\n[[package]]\nname = \"x\"\nversion = \"1\"\n".utf8).write(to: a.appending(path: "uv.lock"))
+        try Data("version = 1\n\n[[package]]\nname = \"ramabana\"\nversion = \"0.2.110\"\n\n[[package]]\nname = \"x\"\nversion = \"1\"\n".utf8).write(to: b.appending(path: "uv.lock"))
+        #expect(LockDiff.summary(LockDiff.changes(from: a, to: b)) == "Updating 1 package: ramabana 0.2.109 → 0.2.110")
+        #expect(LockDiff.summary((1...5).map { "p\($0)" }) == "Updating 5 packages: p1, p2, p3 and 2 more" && LockDiff.summary([]) == "")
+    }
 }

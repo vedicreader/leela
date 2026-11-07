@@ -127,7 +127,16 @@ public final class EnvStore: @unchecked Sendable {
         try fm.createDirectory(at: paths.envs, withIntermediateDirectories: true)
         let xs = extras ?? load().extras
         let l = syncLaunch(lock: lock, hash: h, extras: xs)
-        let code = try await Run.toEnd(background ? l.background : l, log: paths.syncLog(h), line: line, started: started)
+        // from a copy of the env in use, so uv changes only what differs; `uv sync` is exact, so it also removes what the new lock drops
+        let from = load().current.flatMap { $0 != h && isBuilt($0) ? paths.env($0) : nil }
+        let seeded = from.map { seed(env, from: $0, python: Self.python(lock)) } ?? false
+        if from != nil && !seeded { try? fm.removeItem(at: env) }
+        var code = try await Run.toEnd(background ? l.background : l, log: paths.syncLog(h), line: line, started: started)
+        if code != 0 && seeded {
+            // anything wrong with the copy: build fresh, as before
+            try? fm.removeItem(at: env)
+            code = try await Run.toEnd(background ? l.background : l, log: paths.syncLog(h), line: line, started: started)
+        }
         guard code == 0 else {
             try? fm.removeItem(at: env)
             throw BuildError.failed(code: code, tail: Run.tail(paths.syncLog(h)))
@@ -135,6 +144,29 @@ public final class EnvStore: @unchecked Sendable {
         try writeMarker(EnvMarker(hash: h, n: n, uv: uvVersion, extras: xs, built: Date().timeIntervalSince1970))
         _ = try update { $0.locks[h] = n }
         return h
+    }
+
+    /// `b` as an APFS clone of env `a` with A's path rewritten to B's where a venv writes it (bin/ and pyvenv.cfg), its marker and
+    /// bytecode dropped (a .pyc names its source path). False, and nothing to keep, when `a` has another Python or cannot be cloned.
+    func seed(_ b: URL, from a: URL, python: String) -> Bool {
+        let fm = FileManager.default
+        guard let cfg = try? String(contentsOf: a.appending(path: "pyvenv.cfg"), encoding: .utf8), cfg.contains("version_info = \(python)") else { return false }
+        guard clonefile(a.path, b.path, 0) == 0 else { return false }
+        try? fm.removeItem(at: b.appending(path: ".leela-env.json"))
+        var caches = [URL]()
+        if let e = fm.enumerator(at: b, includingPropertiesForKeys: [.isDirectoryKey]) {
+            for case let u as URL in e where u.lastPathComponent == "__pycache__" { caches.append(u); e.skipDescendants() }
+        }
+        for c in caches { try? fm.removeItem(at: c) }
+        let olds = Array(Set([a.path, a.resolvingSymlinksInPath().path])).map { Data($0.utf8) }, new = Data(b.path.utf8)
+        let texts = [b.appending(path: "pyvenv.cfg")] + ((try? fm.contentsOfDirectory(at: b.appending(path: "bin"), includingPropertiesForKeys: [.isSymbolicLinkKey])) ?? [])
+        for f in texts where (try? f.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true {
+            guard var d = try? Data(contentsOf: f), d.count < 2_000_000 else { continue }
+            var changed = false
+            for o in olds { while let r = d.range(of: o) { d.replaceSubrange(r, with: new); changed = true } }
+            if changed { do { try d.write(to: f) } catch { return false } }
+        }
+        return true
     }
 
     func writeMarker(_ m: EnvMarker) throws {

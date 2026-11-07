@@ -1127,7 +1127,7 @@ const updateKey = d => `${d.kind || 'app'}:${d.latest}`;
 let updateShown = null;
 const updateHide = () => { const el = $('#leeupdate'); if (el) el.hidden = true; };
 const updateLater = ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', updateKey(updateShown || {})); }];
-const updateText = d => ({lock: 'A new set of Leela packages is ready. Kernels stop when Leela restarts to use it.',
+const updateText = d => ({lock: `A new set of Leela packages is ready${d.changes ? ` (${d.changes})` : ''}. Kernels stop when Leela restarts to use it.`,
   'app-needed': `The newest Leela packages need Leela app ${d.latest}. Get it from the release page.`,
   download: `Leela ${d.latest} is available. You have ${d.current}. Get it from the release page.`})[d.kind] || `Leela ${d.latest} is available. You have ${d.current}.`;
 const updateNotes = d => [d.kind === 'lock' ? 'Details' : 'Release notes', () => openExternal(d.url)];

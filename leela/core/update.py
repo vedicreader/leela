@@ -108,7 +108,7 @@ def _host_offer(st=None, rel=None, fresh=False):
     k = kind(newer(rel.get('version'), cur), bool(lk.get('newer')), bool(lk.get('needs_app')), bool(st.get('brew'))) if st else 'none'
     latest = dict(lock=f"package set {lk.get('newest_n')}", none=cur).get(k, lk.get('app_min') if k == 'app-needed' and lk.get('app_min') else rel.get('version'))
     return dict(current=cur, latest=latest, url=rel.get('url') or RELEASE_PAGE, outdated=k != 'none', kind=k,
-                notice=k != 'none', install=k in ('app', 'lock'), lock=lk.get('current_n'), newest_lock=lk.get('newest_n'), old_extras=old_extras(),
+                notice=k != 'none', install=k in ('app', 'lock'), lock=lk.get('current_n'), newest_lock=lk.get('newest_n'), changes=str(lk.get('changes') or ''), old_extras=old_extras(),
                 failed=bool(rel.get('failed') or not (st and rel.get('version'))), pending=latest if job['state'] == 'done' else None, job=job)
 
 def _extras_root():

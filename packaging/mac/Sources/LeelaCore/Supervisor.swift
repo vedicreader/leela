@@ -109,7 +109,8 @@ public final class Supervisor {
 
     func firstBuild(_ p: LockPlan, gen: Int) async throws -> String {
         let cache = store.paths.uvCache, start = Setup.bytes(cache), total = Setup.estimate(total: p.manifest.download_bytes, cacheAtStart: start)
-        set(.setup(.installing(count: 0, line: "")))
+        let s = store.load(), what = s.current.flatMap { s.locks[$0] }.map { LockDiff.summary(LockDiff.changes(from: store.paths.lock($0), to: p.dir)) } ?? ""
+        set(.setup(.installing(count: 0, line: what)))
         // the cache is measured between uv's lines too: uv writes nothing while a large wheel downloads
         let ticker = Task { [weak self] in
             while !Task.isCancelled {
@@ -239,6 +240,9 @@ public final class Supervisor {
         var lock: [String: Any] = ["newer": (newest ?? -1) > (cur ?? -1), "needs_app": needsApp != nil]
         if let cur { lock["current_n"] = cur }
         if let newest { lock["newest_n"] = newest }
+        if let cur, let newest, newest > cur, let c = Optional(LockDiff.changes(from: store.paths.lock(cur), to: offered?.dir ?? store.paths.lock(newest))), !c.isEmpty {
+            lock["changes"] = LockDiff.summary(c)
+        }
         return ["app_version": appVersion, "api": LauncherAPI.version, "brew": brew, "lock": lock, "env": hash ?? "",
                 "extras": extras.mapValues { ["state": $0.state, "log": $0.line] }]
     }

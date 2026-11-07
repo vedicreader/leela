@@ -444,6 +444,69 @@ def smoke(env_dir, results, extras=(), wait=180):
     shutil.rmtree(tmp, ignore_errors=True)
     return ok
 
+def seed(a, b):
+    "`b` as an APFS clone of env `a` with `a`'s path rewritten in bin/ and pyvenv.cfg, and no bytecode: what the launcher's `EnvStore.seed` does."
+    sh('cp', '-c', '-R', a, b)
+    for c in list(Path(b).rglob('__pycache__')): shutil.rmtree(c, ignore_errors=True)
+    old, new = str(a).encode(), str(b).encode()
+    for f in [Path(b)/'pyvenv.cfg', *(Path(b)/'bin').iterdir()]:
+        if f.is_symlink() or not f.is_file() or f.stat().st_size > 2_000_000: continue
+        if old in (d := f.read_bytes()): f.write_bytes(d.replace(old, new))
+
+def _digest(env):
+    return hashlib.sha256(b''.join((env/f).read_bytes() for f in ('pyvenv.cfg', 'bin/leela'))
+                          + '\n'.join(sorted(p.name for p in (env/'bin').iterdir())).encode()).hexdigest()
+
+def _health(env_dir, tmp, wait=120):
+    "Whether the server from `env_dir` answers /health in host mode, started as the launcher starts it."
+    port, token, host = _free_port(), os.urandom(16).hex(), None
+    (d := tmp/'health'/env_dir.name).mkdir(parents=True, exist_ok=True); (d/'cfg').mkdir(exist_ok=True); (d/'data').mkdir(exist_ok=True)
+    try:
+        host = FakeHost(token)
+        env = server_env() | dict(XDG_CONFIG_HOME=str(d/'cfg'), XDG_DATA_HOME=str(d/'data'), LEELA_SHELL_ENV='0', LEELA_HOST_URL=host.url, LEELA_APP_VERSION='0.0.0-test', LEELA_LOCK_N='0')
+        srv = subprocess.Popen([env_dir/'bin'/'leela', *[a.format(port=port) for a in spec()['server_args']]], env=env, cwd=d,
+                               stdout=open(d/'server.log', 'wb'), stderr=subprocess.STDOUT, stdin=subprocess.PIPE)
+        srv.stdin.write(f'{token}\n'.encode()); srv.stdin.close()
+        end = time.monotonic() + wait
+        try:
+            while time.monotonic() < end and srv.poll() is None:
+                try:
+                    if _get(f'http://127.0.0.1:{port}/health', timeout=2).get('status') == 'ok': return True
+                except Exception: time.sleep(.5)
+            return False
+        finally:
+            srv.terminate()
+            try: srv.wait(15)
+            except subprocess.TimeoutExpired: srv.kill()
+    finally:
+        if host: host.close()
+
+def incremental(env_a, lock, cache, tmp, uv, results):
+    "The next env from a copy of this one: `uv sync` changes one thing (an extra), and the copy works and names only itself."
+    t, b = time.monotonic(), tmp/'env-b'
+    try:
+        before = _digest(env_a)
+        seed(env_a, b)
+        env = child_env(cache=cache, python=tmp/'python', python_version=PYTHON, env=b)
+        p = subprocess.run([str(uv), *sync_args(lock, ['langserver'])], env=env, capture_output=True, text=True, timeout=600)
+        if p.returncode: raise RuntimeError(f'uv sync on the copy: {(p.stderr or p.stdout)[-800:]}')
+        n = int(m.group(1)) if (m := re.search(r'Installed (\d+) packages?', p.stderr + p.stdout)) else 0
+        bad = [] if 0 < n < 20 else [f'the copy installed {n} packages, not only the extra']
+        bad += [str(f) for f in b.rglob('*') if f.is_file() and not f.is_symlink() and f.stat().st_size < 2_000_000 and str(env_a).encode() in f.read_bytes()]
+        bad += [] if (b/'bin'/'leela').read_text().startswith(f'#!{b}/bin/python') else ['bin/leela does not run the copy\'s python']
+        bad += [] if _digest(env_a) == before else ['the env in use changed']
+        py = b/'bin'/'python'
+        sh(py, '-I', '-c', 'import leela, leela.app, ramabana, kunda, ipykernel')
+        kenv = server_env() | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'), JUPYTER_DATA_DIR=str(tmp/'jd-b'))
+        if sh(py, '-I', '-c', _SMOKE_KERNEL, env=kenv, cwd=tmp, timeout=180).splitlines()[-1:] != ['2']: bad.append('the kernel cell failed on the copy')
+        if not _health(b, tmp): bad.append('the server from the copy did not answer /health')
+        if bad: raise RuntimeError('; '.join(bad[:8]))
+        results.append(dict(step=f'env from a copy ({n} installed)', ok=True, secs=round(time.monotonic()-t, 1)))
+        return True
+    except Exception as e:
+        results.append(dict(step='env from a copy', ok=False, secs=round(time.monotonic()-t, 1), error=str(e)[-1500:]))
+        return False
+
 def lock_test(d=LOCK, fresh=False, extras=False, record_dir=None, keep=False):
     "Build the env as the app does, in a temp folder, smoke it, and write the test record for this lock hash."
     uv, d = pinned_uv(), Path(d)
@@ -459,6 +522,7 @@ def lock_test(d=LOCK, fresh=False, extras=False, record_dir=None, keep=False):
     with open(tmp/'sync.log', 'wb') as log: rc = subprocess.run([uv, *sync_args(lock, xs)], env=env, stdout=log, stderr=subprocess.STDOUT).returncode
     results.append(dict(step='uv sync', ok=rc == 0, secs=round(time.monotonic()-t0, 1), **({} if rc == 0 else {'error': (tmp/'sync.log').read_text()[-1500:]})))
     ok = rc == 0 and smoke(env_dir, results, xs)
+    if ok and not xs: ok &= incremental(env_dir, lock, cache, tmp, uv, results)
     size = sum(f.stat().st_size for f in env_dir.rglob('*') if f.is_file() and not f.is_symlink()) if env_dir.exists() else 0
     rec = dict(hash=h, passed=ok, uv=uvv, python=PYTHON, macos=platform_mac(), launcher_api=LAUNCHER_API, test_code=test_code_hash(),
                time=iso(now()), fresh=fresh, extras=list(xs), env_bytes=size, leela=leela_version(d), results=results)

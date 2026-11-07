@@ -95,3 +95,38 @@ public enum SSHSig {
         return key
     }
 }
+
+/// What a new lock changes against the one in use, from the two `uv.lock` files: what the setup window and the update notice say.
+public enum LockDiff {
+    /// `name -> version` of each `[[package]]` in a uv.lock
+    public static func versions(_ lock: URL) -> [String: String] {
+        guard let t = try? String(contentsOf: lock.appending(path: "uv.lock"), encoding: .utf8) else { return [:] }
+        var out = [String: String](), name: String?
+        for l in t.split(separator: "\n", omittingEmptySubsequences: false) {
+            if l == "[[package]]" { name = nil; continue }
+            if l.hasPrefix("name = "), name == nil { name = String(l.dropFirst(7)).trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }
+            else if l.hasPrefix("version = "), let n = name, out[n] == nil { out[n] = String(l.dropFirst(10)).trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }
+        }
+        return out.filter { $0.key != "leela-lock" }
+    }
+
+    /// each changed package as `name old → new`, `name new` (added) or `name old, removed`, sorted by name
+    public static func changes(from a: URL, to b: URL) -> [String] {
+        let x = versions(a), y = versions(b)
+        return Set(x.keys).union(y.keys).sorted().compactMap { n in
+            switch (x[n], y[n]) {
+            case let (o?, v?) where o != v: "\(n) \(o) → \(v)"
+            case (nil, let v?): "\(n) \(v) (new)"
+            case (let o?, nil): "\(n) \(o) (removed)"
+            default: nil
+            }
+        }
+    }
+
+    /// "Updating 1 package: ramabana 0.2.109 → 0.2.110", a few by name, then "and N more"; "" for none
+    public static func summary(_ c: [String], shown: Int = 3) -> String {
+        guard !c.isEmpty else { return "" }
+        let head = c.prefix(shown).joined(separator: ", "), more = c.count > shown ? " and \(c.count - shown) more" : ""
+        return "Updating \(c.count) package\(c.count == 1 ? "" : "s"): \(head)\(more)"
+    }
+}
