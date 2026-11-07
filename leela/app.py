@@ -264,7 +264,7 @@ async def _explain(k, err, scope='live'):
 def _git_pill_branch(ws):
     "The branch pill's words and state before the client has asked anything: as `paintBranchPill` paints them."
     root = ws.project_repo
-    if root is None: return 'git …', 'pending'
+    if root is None: return '', 'nofolder'
     try:
         from .blocks.git.git import GitRepo, repo_root
         r = repo_root(root)
@@ -284,7 +284,7 @@ def _header(ws):
     sync = lambda op, word: Button(_hicon({'pull': 'down', 'push': 'up'}[op]), Span(cls='lee-sync-n'), id=f'git{op}', cls='lee-git-quick', title=word,
                                    aria_label=word, hidden=True, onclick=f'leeGitQuick("{op}")')
     top = Div(
-        Div(Span(cls='lee-mark pywebview-drag-region', aria_hidden='true'), Span('Leela', cls='lee-wordmark pywebview-drag-region'),
+        Div(Span(cls='lee-mark pywebview-drag-region', aria_hidden='true'), H1('Leela', cls='lee-wordmark pywebview-drag-region'),
             cls='lee-brand pywebview-drag-region'),
         Button(_hicon('folder'), Span(folder, id='workspacename', cls='lee-workspace-name'), _hicon('chev', 'lee-chev'),
                cls='lee-hitem lee-workspace-switcher', id='workspacepill', title=str(root or 'open workspace'),
@@ -388,7 +388,7 @@ def _left_workspace(ws):
                      data_left=k, title=title, aria_label=title, onclick=f'leeLeft("{k}")') for k, lbl, title in LEFT_PANES],
             Span(cls='lee-activity-spacer'),
             Button('●', cls='lee-pane-pin pinned', type='button', data_pane_pin='left',
-                   title='pinned open — unpin to close it when you click away',
+                   title='pinned open. Unpin it to close it when you click away',
                    aria_label='pin the file pane open', aria_pressed='true',
                    onclick='leePinPane("left")'),
             Button('\u2922', cls='lee-pane-min', type='button', data_pane_expand='left',
@@ -445,17 +445,17 @@ def _vars_panel(ws):
 def _empty_editor():
     "First paint with no tab: brand + one path into each main surface."
     features = (
-        ('Notebooks & files', 'CodeMirror 6 beside runnable cells; scripts get their own kernel.'),
-        ('Live variables', 'Inspect the kernel namespace while cells run — expand nested values.'),
-        ('Research & memory', 'Fossick web digests into a Vishalakshi vault; recall before re-fetching.'),
-        ('Code search', 'Kosha FTS5 + embeddings + call graph; peers and clusters when you need them.'),
-        ('Agent', 'Ramabana sees the index, open files, and live namespace — local or cloud models.'),
-        ('Git, release, deploy', 'Source control and pipeline panels without leaving the workspace.'),
+        ('Notebooks and files', 'Edit files and run notebook cells. Each script runs in its own kernel.'),
+        ('Live variables', 'See the values in your kernel while cells run. Open a value to see what is in it.'),
+        ('Research and memory', 'Keep the pages and papers you read in your library. Leela looks there before it goes to the web again.'),
+        ('Code search', 'Find code by name, by words or by meaning. See which function calls which.'),
+        ('Agent', 'The agent sees your code, your open files and your variables. It uses a local model or a cloud model.'),
+        ('Git, release and deploy', 'Commit, release and deploy from the side panes.'),
     )
     return Section(
-        Span('leela', cls='lee-empty-mark'),
-        Strong('Creative workspace that starts with coding'),
-        P('Notebooks, files, live variables, research memory, and an agent that sees what you see.'),
+        Span('leela', cls='lee-empty-mark', aria_hidden='true'),
+        H2('Code, notebooks and research'),
+        P('Edit files, run notebooks, keep what you read, and ask an agent that sees your work.'),
         # Actions before the tour: reopening a project should not mean reading past it.
         Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
             Button('Open…', cls='lee-btn', onclick='leeAct("open_folder")'),
@@ -471,7 +471,7 @@ def _empty_editor():
         # install chose its own dependencies already.
         Div(id='leesetup', cls='lee-empty-setup', hidden=True),
         Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
-        Small('Keyboard: ', Kbd('mod+o'), ' open · ', Kbd('mod+p'), ' go to file · ', Kbd('mod+shift+p'), ' commands · ',
+        Small('Keys: ', Kbd('mod+o'), ' open a folder · ', Kbd('mod+p'), ' go to a file · ', Kbd('mod+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),
         cls='lee-empty')
 
@@ -534,16 +534,25 @@ def _log_panel():
         Div(cls='lee-logbody', id='loglist'),
         cls='lee-panel lee-logpanel', id='logwrap')
 
+def _tab(label, cls, active=False, **kw):
+    "One tab of a tablist; the switcher keeps `aria-selected` and `active` in step."
+    return Button(label, cls=cls + (' active' if active else ''), role='tab', aria_selected='true' if active else 'false', type='button', **kw)
+
+def _ticks(s):
+    "Text with `code` spans as `Code`, not literal backticks."
+    return [Code(p) if i % 2 else p for i, p in enumerate(str(s).split('`')) if p]
+
 def _bottom_dock(ws, gate):
     "One bounded lower workspace: Exec, Terminal and Logs switch in place instead of stacking."
     return Section(
-        Div(Button('exec', cls='lee-docktab active', data_dock='exec', onclick='leeDock("exec")'),
-            Button('terminal', cls='lee-docktab', data_dock='term', onclick='leeDock("term")'),
-            Button('logs', cls='lee-docktab', data_dock='logs', onclick='leeDock("logs")'),
+        Div(Div(_tab('exec', 'lee-docktab', True, data_dock='exec', onclick='leeDock("exec")'),
+                _tab('terminal', 'lee-docktab', data_dock='term', onclick='leeDock("term")'),
+                _tab('logs', 'lee-docktab', data_dock='logs', onclick='leeDock("logs")'),
+                cls='lee-tablist', role='tablist', aria_label='bottom tools'),
             Span(cls='lee-spacer'),
             Button('−', cls='lee-pane-min', title='minimise bottom tools', aria_label='minimise bottom tools',
                    onclick='leePane("bottom", false)'),
-            cls='lee-docktabs', role='tablist', aria_label='bottom tools'),
+            cls='lee-docktabs'),
         Div(_exec_strip(), _term_panel(gate), _log_panel(), cls='lee-dockbody'),
         cls='lee-bottomdock dock-exec', id='bottomdock')
 
@@ -569,17 +578,18 @@ def _memory_panel():
 def _right_workspace(ws):
     "Agent, variables, memory and lesson review share the right-hand work area."
     return Aside(
-        Div(Button('agent', cls='lee-righttab active', data_right='agent', onclick='leeRight("agent")'),
-            Button('variables', cls='lee-righttab', data_right='vars', onclick='leeRight("vars")'),
-            Button('memory', cls='lee-righttab', data_right='memory', onclick='leeRight("memory")'),
-            Button('Review', cls='lee-righttab', data_right='learn', onclick='leeRight("learn")'),
+        Div(Div(_tab('agent', 'lee-righttab', True, data_right='agent', onclick='leeRight("agent")'),
+                _tab('variables', 'lee-righttab', data_right='vars', onclick='leeRight("vars")'),
+                _tab('memory', 'lee-righttab', data_right='memory', onclick='leeRight("memory")'),
+                _tab('review', 'lee-righttab', data_right='learn', onclick='leeRight("learn")'),
+                cls='lee-tablist', role='tablist', aria_label='right tools'),
             Button('●', cls='lee-pane-pin pinned', type='button', data_pane_pin='right',
-                   title='pinned open — unpin to close it when you click away',
+                   title='pinned open. Unpin it to close it when you click away',
                    aria_label='pin right tools open', aria_pressed='true',
                    onclick='leePinPane("right")'),
             Button('−', cls='lee-pane-min', title='minimise right tools',
                    aria_label='minimise right tools', onclick='leePane("right", false)'),
-            cls='lee-righttabs', role='tablist', aria_label='right tools'),
+            cls='lee-righttabs'),
         Div(_agent_panel(ws), _vars_panel(ws), _memory_panel(),
             Div(Div('Review', cls='lee-phead'), Div('Loading review…', id='lessonreviewbody', cls='lee-lesson-review-body'),
                 cls='lee-panel lee-lesson-review'), cls='lee-rightbody'),
@@ -627,8 +637,8 @@ def _agent_panel(ws):
              *([Button(f"Download {g['label']} ({g['size']}) to run on this Mac", cls='lee-btn', type='button',
                        data_download=g['value'], onclick='leeGetModel(this)')] if g and not g['available'] else [])) if gone else ()
     notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1'), *guide) if gone else (
-        (Span(moved, data_moved='1'),) if moved else ())
-    setup = () if has_state else (
+        (Span(*_ticks(moved), data_moved='1'),) if moved else ())
+    setup = () if has_state or not ws.project_root else (
         Strong('Set up this workspace agent'),
         Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),
         Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()'))
@@ -821,7 +831,7 @@ def _shell(ws, gate):
             _left_workspace(ws),
             Div(cls='lee-split', data_split='left'),
             Div(_editor_pane(ws), Div(cls='lee-hsplit lee-dock-split'),
-                _bottom_dock(ws, gate), cls='lee-centre'),
+                _bottom_dock(ws, gate), cls='lee-centre', role='main'),
             Div(cls='lee-split', data_split='right'),
             _right_workspace(ws),
             cls='lee-body'),
@@ -936,7 +946,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             except Exception: pass
     # `fast_app` imports `fasthtml.pico` whatever `pico=` says: 212ms and IPython, for a stylesheet link this app never uses.
     # Starlette's exclusion list spares `text/event-stream`. The streams stay unbuffered.
-    app = FastHTML(default_hdrs=False, hdrs=hdrs,
+    app = FastHTML(default_hdrs=False, hdrs=hdrs, htmlkw={'lang': 'en'},
                    middleware=(Middleware(GZipMiddleware, minimum_size=512), Middleware(JsonBody)),
                    on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
                    exception_handlers={NoVenv: lambda req, e: _fail(e, 409)},   # every route that needs Python gives one answer

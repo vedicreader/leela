@@ -128,7 +128,7 @@ async function mountTab(expectedPath = '') {
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
   if (!st.kind) {
     host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
-    paintRecent();
+    paintKeyLabels(host); paintRecent();
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
@@ -246,7 +246,7 @@ function noteStaleTab(st, recoveredDraft) {
     status(`${name} changed on disk; your unsaved version is what you are looking at`, 'err');
     return;
   }
-  status(`${name} changed on disk — reloading`, 'busy');
+  status(`${name} changed on disk. Reloading…`, 'busy');
   takeDiskVersion(st.path).then(() => status(`${name} reloaded from disk`, 'ok'))
                           .catch(e => status(String(e.message || e), 'err'));
 }

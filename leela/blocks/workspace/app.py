@@ -25,7 +25,7 @@ def connect(app, ctx):
         "The current multi-root project plus independently hosted workspace windows."
         catalog = ctx.catalog
         sites = catalog() if callable(catalog) else list(catalog or ())
-        return {'active': str(ctx.session.project_root or ''),
+        return {'active': str(ctx.session.project_root or ''), 'home': str(Path.home()),
                 'roots': [{'path': str(root), 'name': root.name, 'loose': root == ctx.fs.loose} for root in ctx.fs.roots],
                 'workspaces': sites}
     @rt('/cwd')
