@@ -39,14 +39,14 @@ def hosted(monkeypatch):
     made = []
     def go(routes=None, status=200):
         f = FakeHost(routes or {}, status); made.append(f)
-        monkeypatch.setattr(host, '_host', dict(url=f.url, token=TOKEN))
+        monkeypatch.setattr(host.client, 'state', dict(url=f.url, token=TOKEN))
         return f
     yield go
     for f in made: f.close()
     hub.reset_gate()
 
 @pytest.fixture
-def off(monkeypatch): monkeypatch.setattr(host, '_host', dict(url='', token=''))
+def off(monkeypatch): monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
 
 # The token: one line on stdin, never in argv, env, a file or a log
 
@@ -57,17 +57,17 @@ def _pipe(data=None):
     return r, w
 
 def test_take_reads_one_token_line_from_stdin_then_puts_stdin_on_devnull(monkeypatch):
-    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
     r, _ = _pipe(f'{TOKEN}\nrest of the input\n'.encode())
     env = dict(LEELA_HOST_URL='http://127.0.0.1:9', LEELA_APP_VERSION='1.0.0')
-    assert host.take(env, fd=r, timeout=2) and host._host == dict(url='http://127.0.0.1:9', token=TOKEN)
+    assert host.take(env, fd=r, timeout=2) and host.client.state == dict(url='http://127.0.0.1:9', token=TOKEN)
     assert 'LEELA_HOST_URL' not in env and env['LEELA_APP_VERSION'] == '1.0.0'
     assert os.read(r, 100) == b'', 'stdin now reads /dev/null: the rest never reaches a kernel'
     os.close(r)
 
 @pytest.mark.parametrize('data', [b'', b'\n', None], ids=['closed', 'empty line', 'never comes'])
 def test_host_mode_refuses_to_start_with_no_token_line(monkeypatch, data):
-    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
     r, w = _pipe(data)
     with pytest.raises(SystemExit, match='no token line came on stdin'): host.take(dict(LEELA_HOST_URL='http://127.0.0.1:9'), fd=r, timeout=.3)
     assert not host.on()
@@ -75,16 +75,16 @@ def test_host_mode_refuses_to_start_with_no_token_line(monkeypatch, data):
     if data is None: os.close(w)
 
 def test_a_token_in_the_environment_is_ignored_with_a_warning(monkeypatch, capsys):
-    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
     r, _ = _pipe(b'from-stdin\n')
     env = dict(LEELA_HOST_URL='http://127.0.0.1:9', LEELA_HOST_TOKEN='from-env')
     host.take(env, fd=r, timeout=2)
-    assert host._host['token'] == 'from-stdin' and 'LEELA_HOST_TOKEN' not in env
+    assert host.client.state['token'] == 'from-stdin' and 'LEELA_HOST_TOKEN' not in env
     assert 'LEELA_HOST_TOKEN in the environment is ignored' in capsys.readouterr().err
     os.close(r)
 
 def test_no_url_is_no_host_mode_and_stdin_is_not_read(monkeypatch):
-    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
     r, w = _pipe(None)
     assert not host.take(dict(LEELA_HOST_TOKEN='t'), fd=r, timeout=.1)
     os.write(w, b'x'); assert os.read(r, 1) == b'x', 'stdin untouched'
@@ -92,7 +92,7 @@ def test_no_url_is_no_host_mode_and_stdin_is_not_read(monkeypatch):
 
 @pytest.mark.parametrize('url', ['http://127.0.0.1@evil.example:80', 'https://127.0.0.1:9', 'http://localhost:9', 'http://10.0.0.1:9', 'http://127.0.0.1'])
 def test_the_client_talks_only_to_a_loopback_http_url(monkeypatch, url):
-    monkeypatch.setattr(host, '_host', dict(url=url, token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url=url, token=TOKEN))
     with pytest.raises(host.HostError): host.call('/status')
 
 def test_a_proxy_in_the_environment_is_not_used(hosted, monkeypatch):
@@ -108,14 +108,14 @@ def test_import_login_env_skips_what_the_launcher_owns_only_in_host_mode(monkeyp
     target = {}
     envs.import_login_env(env=target)
     assert set(target) >= {'PYTHONPATH', 'VIRTUAL_ENV', 'UV_INDEX', 'OPENAI_API_KEY'}, 'outside host mode nothing changes'
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     target = {}
     envs.import_login_env(env=target)
     assert target == {'OPENAI_API_KEY': 'k', 'UV_INDEX': 'i'}, "the person's uv settings reach their kernels, shells and project builds, as in the old app"
 
 def test_stored_values_do_not_replace_the_launchers_in_host_mode(monkeypatch):
     monkeypatch.setattr(envs, 'stored_env', lambda: dict(VIRTUAL_ENV='/old', UV_CACHE_DIR='/c', LEELA_LOCK_N='99', OPENAI_API_KEY='k'))
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     target = dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3')
     envs.apply_stored_env(target)
     assert target == dict(VIRTUAL_ENV='/app/env', LEELA_LOCK_N='3', OPENAI_API_KEY='k', UV_CACHE_DIR='/c')
@@ -135,7 +135,7 @@ def test_host_setup_takes_out_what_app_1_0_gave_and_keeps_the_persons_own(monkey
     monkeypatch.setattr(leela, 'use_extras', lambda: called.append('extras'))
     monkeypatch.setattr(envs, 'import_login_env', lambda *a, **kw: [])
     monkeypatch.setattr(envs, 'stored_env', lambda: dict(PYTHONNOUSERSITE='1', UV_INDEX='i'))
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     host.setup()
     assert [k for k in os.environ if k.startswith('UV_')] == ['UV_INDEX'] and 'VIRTUAL_ENV' not in os.environ and 'NO_COLOR' not in os.environ
     assert os.environ['PATH'] == '/opt/homebrew/bin:/usr/bin' and not called
@@ -152,13 +152,13 @@ def test_is_app_is_frozen_or_host_mode(monkeypatch, off):
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
     assert host.is_app()
     monkeypatch.delattr(sys, 'frozen')
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     assert host.is_app()
 
 def test_the_setup_pane_shows_in_host_mode(monkeypatch, off):
     from leela.blocks.agent import models
     assert models.setup_plan()['frozen'] is False
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     assert models.setup_plan()['frozen'] is True
 
 def test_find_server_takes_the_envs_own_language_server_in_host_mode(monkeypatch, tmp_path, off):
@@ -168,13 +168,13 @@ def test_find_server_takes_the_envs_own_language_server_in_host_mode(monkeypatch
     monkeypatch.setattr('leela.extras_bin', lambda: tmp_path/'no-extras')
     monkeypatch.setattr(lsp.sysconfig, 'get_path', lambda name: str(b))
     assert lsp.find_server() == (None, None), 'outside the app the dev venv is on PATH already'
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     assert lsp.find_server() == ('basedpyright-langserver', [str(s), '--stdio'])
 
 def test_cli_in_host_mode_takes_the_token_and_never_adds_the_extras_folder(monkeypatch):
     import leela, leela.cli, leela.app
     seen = {}
-    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
     monkeypatch.setenv('LEELA_HOST_URL', 'http://127.0.0.1:9')
     r, _ = _pipe(f'{TOKEN}\n'.encode())
     take = host.take
@@ -184,7 +184,7 @@ def test_cli_in_host_mode_takes_the_token_and_never_adds_the_extras_folder(monke
     monkeypatch.setattr(leela.app, 'serve_ide', lambda roots, **kw: seen.update(kw))
     leela.cli.main(['--app', '--shell', 'none', '--port', '5999', '--gateway-port', '0'])
     assert seen.get('setup') and 'extras' not in seen and seen['shell'] == 'none' and seen['app_window']
-    assert host._host['token'] == TOKEN and not any(TOKEN in v for v in os.environ.values())
+    assert host.client.state['token'] == TOKEN and not any(TOKEN in v for v in os.environ.values())
     os.close(r)
 
 # /health and the launcher's routes
@@ -266,7 +266,7 @@ def test_every_broken_answer_is_no_window_and_records_no_decline(hosted, tmp_pat
 def test_a_launcher_that_is_gone_is_no_window(monkeypatch, tmp_path, folders):
     import socket
     with socket.socket() as s: s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]
-    monkeypatch.setattr(host, '_host', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
     t = time.monotonic()
     with pytest.raises(hub.NoWindow): host.confirm('Add?')
     assert time.monotonic() - t < 3
@@ -350,7 +350,7 @@ def test_each_row_of_the_update_table(app_new, lock_new, needs, brew, want):
 def _st(newer=False, needs=False, brew=True, app_min=None): return {'brew': brew, 'lock': {'current_n': 3, 'newest_n': 4 if newer else 3, 'newer': newer, 'needs_app': needs, 'app_min': app_min}}
 
 def test_host_offer_shapes_for_each_kind(monkeypatch):
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     monkeypatch.setenv('LEELA_APP_VERSION', '1.0.0')
     rel = {'version': '1.1.0', 'url': 'https://x/app-v1.1.0'}
     o = U._host_offer(_st(), rel)
@@ -391,7 +391,7 @@ def test_the_update_routes_reach_the_launcher(hosted, monkeypatch):
 def test_host_mode_down_gives_an_error_state_not_an_exception(monkeypatch):
     import socket
     with socket.socket() as s: s.bind(('127.0.0.1', 0)); port = s.getsockname()[1]
-    monkeypatch.setattr(host, '_host', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url=f'http://127.0.0.1:{port}', token=TOKEN))
     assert U.upgrade_status()['state'] == 'error' and U.restart() is False
     assert U.offer()['kind'] == 'none'
 
@@ -403,9 +403,9 @@ def test_host_mode_offers_to_remove_the_old_extras_folder_and_removes_only_it(mo
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
     site = tmp_path/'leela'/'extras'/'lib'/'python3.12'/'site-packages'/'mlx'
     site.mkdir(parents=True); (site/'x.so').write_bytes(b'0' * 2**20); (tmp_path/'leela'/'keep.json').write_text('{}')
-    monkeypatch.setattr(host, '_host', dict(url='', token=''))
+    monkeypatch.setattr(host.client, 'state', dict(url='', token=''))
     assert U.old_extras() is None and not U.remove_old_extras(), 'outside host mode the fat app still uses it'
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     assert U.old_extras() == {'path': str(tmp_path/'leela'/'extras'), 'mb': 1}
     assert U._host_offer({}, {})['old_extras']['mb'] == 1
     settings_app.connect(a := FastHTML(), SimpleNamespace(session=None))
@@ -430,10 +430,10 @@ def test_the_agent_shell_has_the_tools_after_the_projects_venv(monkeypatch, tmp_
     from leela.blocks.agent.ai import WorkspaceHost
     (tools := tmp_path/'bin').mkdir()
     (proj := tmp_path/'p'/'.venv'/'bin').mkdir(parents=True); os.symlink(_sys.executable, proj/'python')
-    monkeypatch.setattr(host, 'tools_dir', lambda prefix=None: tools)
+    monkeypatch.setattr(host.client, 'tools_dir', lambda prefix=None: tools)
     monkeypatch.setenv('PATH', '/usr/bin:/bin'); monkeypatch.setenv('UV_INDEX_URL', 'https://mine.example/simple')
     assert WorkspaceHost._env(SimpleNamespace(ws=None), tmp_path/'p')['PATH'].split(os.pathsep)[0] == str(proj), 'outside host mode there is no tools folder'
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token=TOKEN))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token=TOKEN))
     e = WorkspaceHost._env(SimpleNamespace(ws=None), tmp_path/'p')
     assert e['PATH'].split(os.pathsep)[:3] == [str(proj), str(tools), '/usr/bin'] and e['UV_INDEX_URL'] == 'https://mine.example/simple'
 

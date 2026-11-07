@@ -109,7 +109,7 @@ def test_an_app_launch_with_no_folder_does_not_open_its_working_folder(tmp_path,
     from leela.core import host
     (cwd := tmp_path/'support').mkdir()
     monkeypatch.chdir(cwd)
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token='t'))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token='t'))
     port = serve(app_window=True, gateway_port=0)
     assert get(f'http://127.0.0.1:{port}/', host=f'leela.localhost:{port}').status == 200
     assert get(f'http://127.0.0.1:{port}/', host=f'support.localhost:{port}').status == 421

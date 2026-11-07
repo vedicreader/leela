@@ -36,7 +36,7 @@ def test_in_the_app_a_project_with_no_venv_is_not_shown_leelas_packages(tmp_path
     from leela.core import host
     (root := tmp_path/'p').mkdir()
     (root/'pyproject.toml').write_text('[project]\nname="p"\nversion="0.1"\ndependencies=["pytest>=1"]\n')
-    monkeypatch.setattr(host, '_host', dict(url='http://127.0.0.1:9', token='t'))
+    monkeypatch.setattr(host.client, 'state', dict(url='http://127.0.0.1:9', token='t'))
     with TestClient(ide_app(Workspace(roots=[root]))) as client:
         d = client.get('/editor/packages', params={'path': str(root/'pyproject.toml')}).json()
     assert d['packages'] == [] and d['note'] == 'no interpreter for this project'
