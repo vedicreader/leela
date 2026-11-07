@@ -126,7 +126,7 @@ async function leeRunsMenu(anchor) {
   for (const s of runs.filter(runUp)) rows.push({
     label: 'stop ' + (s.label || s.path), warn: true,
     run: async () => {
-      try { await api('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
+      try { await post('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
       catch (e) { return status(String(e.message || e), 'err'); }
       status(`${s.label} stopped`, 'ok'); pollRunLogs();
     },

@@ -292,3 +292,40 @@ def test_a_leela_page_in_a_browser_adds_a_folder_and_hears_a_no_quietly(tmp_path
         return ok, said
     ok, said = _run(go, roots=[tmp_path/'start'] if (tmp_path/'start').mkdir() is None else [])
     assert ok == {'ok': True} and said is True
+
+ROUTES = Path(__file__).parent/'routes.txt'
+
+def _app_routes():
+    from starlette.routing import Route
+    rs = ide_app(Workspace(roots=[])).routes
+    return sorted({f"{','.join(sorted(set(r.methods or ()) - {'HEAD'}))} {r.path}" if isinstance(r, Route) else f'{type(r).__name__} {r.path}' for r in rs})
+
+def test_routes_txt_lists_every_route():
+    "The same-site test below covers `routes.txt`, so a route missing from it would go untested."
+    assert ROUTES.read_text().split('\n')[:-1] == _app_routes(), 'regenerate tests/routes.txt from `_app_routes()`'
+
+def test_no_route_takes_a_request_from_a_page_on_another_local_port():
+    "The guard refused only `cross-site`, and 127.0.0.1:3000 is `same-site` with Leela: its page reached `/dev/start` and the other GET routes."
+    seen = []
+    for line in ROUTES.read_text().splitlines():
+        kind, path = line.split(' ', 1)
+        path = path.replace('{', '').replace('}', '') + ('/x' if kind == 'Mount' else '')
+        if kind == 'WebSocketRoute': got = {'websocket': _guard('GET', {'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'websocket'}, path, 'websocket')}
+        else: got = {f'{m} {mode}': _guard(m, {'sec-fetch-site': 'same-site', 'sec-fetch-mode': mode, 'sec-fetch-dest': dest}, path)
+                     for m in (['GET'] if kind == 'Mount' else kind.split(','))
+                     for mode, dest in (('cors', 'empty'), ('navigate', 'document'), ('no-cors', 'image'))}
+        # the abhyasa handoff on another port: the one navigation `learn_navigation` lets in
+        if path == '/learn': got.pop('GET navigate')
+        seen += [(line, k, g) for k, g in got.items() if g not in (421, 1008)]
+    assert not seen, seen
+    assert _guard('GET', {'sec-fetch-site': 'same-origin'}, '/dev/list') == 'passed'
+    assert _guard('GET', {'sec-fetch-site': 'none'}, '/') == 'passed', 'a typed address or a bookmark'
+    assert _guard('GET', {}, '/health') == 'passed', 'no header: not a browser'
+    assert _guard('GET', {'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}, '/learn') == 'passed', 'the abhyasa handoff'
+
+def test_a_state_change_takes_only_a_post():
+    "A GET to these routes changed state; a typed address or an `<img>` reached them."
+    with TestClient(ide_app(Workspace(roots=[]))) as c:
+        for p in ('/dev/start', '/dev/stop', '/vars/promote', '/term/external', '/browser/external', '/vault/watch', '/vault/unwatch',
+                  '/vault/shelf/move', '/vault/shelf/drop', '/vault/not-pii', '/vault/pii/mark'):
+            assert c.get(p).status_code == 405, p

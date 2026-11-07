@@ -6924,7 +6924,7 @@ async function liveHas(name) {
 async function promoteVar(replace) {
   const r = selVar(); if (!r) return status('select a variable first');
   let res;
-  try { res = await api('/vars/promote?accessor=' + r.dataset.acc + (replace ? '&replace=1' : '')); }
+  try { res = await post('/vars/promote?accessor=' + r.dataset.acc + (replace ? '&replace=1' : '')); }
   catch (e) {
     const refusal = String(e.message || e);
     if (replace || !await liveHas(r.dataset.name)) return status(refusal, 'err');

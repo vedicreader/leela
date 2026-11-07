@@ -51,7 +51,7 @@ def connect(app, ctx):
         try: configured = Settings(ctx.session.project_root).effective().get('terminal', {}).get('external', '')
         except Exception: configured = ''
         return external_terminal_argv(term_cwd(ctx.session), configured)
-    @rt('/term/external')
+    @rt('/term/external', methods=['POST'])
     def term_external():
         "Launch a real terminal application at the project directory, detached so it outlives the request."
         argv = _external()

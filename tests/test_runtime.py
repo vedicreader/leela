@@ -409,7 +409,7 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
     with TestClient(ide_app(ws)) as c:
         info = c.get('/term/info').json()
         if not info['enabled']: pytest.skip(info['why'])
-        r = c.get(f'/dev/start?path={p}').json()
+        r = c.post(f'/dev/start?path={p}').json()
         assert r['ok'], r
         try:
             with c.websocket_connect('/run/ws') as sock:
@@ -421,7 +421,7 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
                     frame = sock.receive()
                     assert 'bytes' in frame, frame
                     seen += frame['bytes']
-                c.get(f'/dev/stop?path={p}')
+                c.post(f'/dev/stop?path={p}')
                 for _ in range(200):
                     m = sock.receive()
                     if 'text' in m: break
@@ -429,7 +429,7 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
             listed = c.get('/dev/list').json()['servers'][0]
             assert listed['running'] is False and listed['last_url'] == 'http://127.0.0.1:8767'
             assert listed['urls'] == ['http://127.0.0.1:8767', 'http://127.0.0.1:8768']
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def test_the_stop_button_stops_a_run_when_no_kernel_is_open(tmp_path):
     "The toolbar's stop calls /kernel/interrupt. With only a run up it answered 'no running kernel' and left the server and its inspector alive."
@@ -437,13 +437,13 @@ def test_the_stop_button_stops_a_run_when_no_kernel_is_open(tmp_path):
     ws = Workspace(roots=[tmp_path], dev_port=9477)
     with TestClient(ide_app(ws)) as c:
         if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
-        assert c.get(f'/dev/start?path={p}').json()['ok']
+        assert c.post(f'/dev/start?path={p}').json()['ok']
         try:
             r = c.get('/kernel/interrupt').json()
             assert r.get('ok'), r
             listed = c.get('/dev/list').json()['servers'][0]
             assert not listed['alive'] and listed['running'] is False, listed
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def test_the_stop_button_stops_a_run_beside_an_idle_kernel(tmp_path):
     "A notebook tab's kernel open but idle: stop ends the run, and the kernel is not interrupted. It used to interrupt the idle kernel and leave the run up."
@@ -456,13 +456,13 @@ def test_the_stop_button_stops_a_run_beside_an_idle_kernel(tmp_path):
     ws.runtime_peek = lambda tab=None: Idle()
     with TestClient(ide_app(ws)) as c:
         if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
-        assert c.get(f'/dev/start?path={p}').json()['ok']
+        assert c.post(f'/dev/start?path={p}').json()['ok']
         try:
             r = c.get('/kernel/interrupt').json()
             assert r.get('ok') and 'stopped' in r.get('note', ''), r
             assert not c.get('/dev/list').json()['servers'][0]['alive']
             assert hit == [], 'the idle kernel was interrupted'
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def _alive_after(tmp_path, body, port, wait=8.0):
     "Run `body` as a script under the inspector; whether its process is still up `wait` seconds later."
@@ -471,7 +471,7 @@ def _alive_after(tmp_path, body, port, wait=8.0):
     ws = Workspace(roots=[tmp_path], dev_port=port)
     with TestClient(ide_app(ws)) as c:
         if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
-        c.get(f'/dev/start?path={p}')
+        c.post(f'/dev/start?path={p}')
         try:
             end = time.monotonic() + wait
             while time.monotonic() < end:
@@ -479,7 +479,7 @@ def _alive_after(tmp_path, body, port, wait=8.0):
                 if not s['alive']: return False
                 time.sleep(0.2)
             return True
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def test_a_command_that_exits_cleanly_takes_its_inspector_with_it(tmp_path):
     "Exit 0, as uvicorn returns on Ctrl-C: the process ends. It used to idle with the inspector up and its ports held."
@@ -661,7 +661,7 @@ def test_no_route_makes_a_venv_without_a_click(tmp_path, monkeypatch):
         _refused(c.post('/exec', json={'code': '1', 'path': str(nb)}), karma)
         ws.open(str(main))
         _refused(c.post('/run/code', json={'code': '1', 'path': str(main)}), karma)
-        _refused(c.get('/dev/start', params={'path': str(main)}), karma)
+        _refused(c.post('/dev/start', params={'path': str(main)}), karma)
         _refused(c.get('/debug/capabilities'), karma)
         _refused(c.post('/debug/install', json={'python': ''}), karma)
         _refused(c.post('/debug/start', json={'program': str(main), 'cwd': str(karma)}), karma)

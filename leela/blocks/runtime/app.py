@@ -214,7 +214,7 @@ def connect(app, ctx):
         return {'ok': True, 'watching': session.watch_env(d.get('base'))}
     @rt('/dev/list')
     def dev_list(): return {'servers': [s.state() for s in ctx.dev.all()]}
-    @rt('/dev/start')
+    @rt('/dev/start', methods=['POST'])
     async def dev_start(path: str = '', name: str = ''):
         "Start a run configuration (`name`) or a file (`path`) under a live inspector."
         # The picker's unsaved configuration for the open file carries a name no saved configuration
@@ -223,7 +223,7 @@ def connect(app, ctx):
             s = await session.run(name if ctx.runs.get(name) else (path or name))
             return {'ok': s.alive, **s.state(), 'log': s.tail(20)}
         except Exception as e: return fail(e)
-    @rt('/dev/stop')
+    @rt('/dev/stop', methods=['POST'])
     async def dev_stop(path: str):
         await ctx.dev.stop(path)
         return {'ok': True}

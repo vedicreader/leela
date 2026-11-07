@@ -521,7 +521,7 @@ async function leeRunsMenu(anchor) {
   for (const s of runs.filter(runUp)) rows.push({
     label: 'stop ' + (s.label || s.path), warn: true,
     run: async () => {
-      try { await api('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
+      try { await post('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
       catch (e) { return status(String(e.message || e), 'err'); }
       status(`${s.label} stopped`, 'ok'); pollRunLogs();
     },
@@ -5196,7 +5196,7 @@ async function startRun(r) {
   if (r.debug) return startDirectDebug(r);
   status(`starting ${r.name || (r.cmd || '').split('/').pop()}…`);
   let s;
-  try { s = await withPython(() => api('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
+  try { s = await withPython(() => post('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
   catch (e) { return status(String(e.message || e), 'err'); }
   if (!s.ok) return status(s.error || 'failed to start', 'err');
   agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)}: ${esc(s.cmd)}</span></div>` +
