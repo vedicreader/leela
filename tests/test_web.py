@@ -145,6 +145,17 @@ def test_a_pdf_opens_in_the_browsers_own_viewer(tmp_path):
         (tmp_path/'x.py').write_text('x = 1\n')
         assert c.get('/file/raw', params={'path': str(tmp_path/'x.py')}).json()['error']
         assert c.get('/file/raw', params={'path': '/etc/passwd'}).json()['error']
+        assert 'content-security-policy' not in r.headers, "Chrome's viewer shows no sandboxed PDF"
+
+def test_a_raw_svg_runs_no_script_at_leelas_origin(tmp_path):
+    "A script in an SVG opened from `/file/raw` read `/term/info` and took the terminal token."
+    (tmp_path/'logo.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/term/info")</script></svg>')
+    (tmp_path/'shot.png').write_bytes(b'\x89PNG\r\n\x1a\n')
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        for f in ('logo.svg', 'shot.png'):
+            for q in ({}, {'download': 'true'}):
+                csp = c.get(f'/file/raw/{f}', params={'path': str(tmp_path/f), **q}).headers.get('content-security-policy', '')
+                assert csp.startswith('sandbox;') and "default-src 'none'" in csp and 'script' not in csp, (f, q, csp)
 
 
 def test_no_url_reads_a_file_from_the_server_folder_or_above_it(tmp_path, monkeypatch):
