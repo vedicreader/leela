@@ -47,6 +47,9 @@ const lee = {
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
+  // This page's name and, by tab and cell, the source the server last confirmed to it: a row the page sends
+  // names both, so a cell another window changed meanwhile is a conflict and not a silent overwrite.
+  pageId: Math.random().toString(36).slice(2, 12), nbSeen: new Map(),
   editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {}, backupPrefs: {},
   theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
@@ -302,6 +305,18 @@ window.addEventListener('beforeunload', e => {
 //: A stamp on every source write the page sends, so the server keeps the newest of two that arrive out of order.
 const nextSeq = () => lee.srcSeq = Math.max(lee.srcSeq + 1, Date.now());
 const headingSynced = (key = lee.tabKey) => lee.headingSync.get(key) || Promise.resolve();
+const seenKey = (key, id) => `${key}\u0000${id}`;
+function noteSeen(key, cells) { for (const c of cells || []) if (c?.id) lee.nbSeen.set(seenKey(key, c.id), c.source); }
+//: What a source row adds so the server can tell this page's edit from a clash: the source it last saw, and who it is.
+function seenRow(key, id) {
+  const base = lee.nbSeen.get(seenKey(key, id));
+  return base === undefined ? {} : {base, page: lee.pageId};
+}
+//: The rows of the cells whose text differs from what the server last confirmed, each with that base.
+function changedRows(key, cells, seq) {
+  return cells.map((c, i) => ({i, id: c.id, seq, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))
+    .filter(r => lee.nbSeen.get(seenKey(key, r.id)) !== r.source).map(r => ({...r, ...seenRow(key, r.id)}));
+}
 async function restoreDrafts(st) {
   if (lee.observer) return false;   // the drafts are the person's, in storage this origin shares
   const documentKey = st.path || st.title || ''; if (!documentKey) return false;
@@ -331,6 +346,8 @@ async function restoreDrafts(st) {
     for (const cell of (st.cells || [])) {
       const row = byId.get(cell.id); if (!row || row.payload.text === cell.source) continue;
       lee.draftBases.set(row.key, row.baseDiskVersion || '');
+      // The draft was typed over the source it names, not over what the server holds now.
+      if (row.payload.base !== undefined) lee.nbSeen.set(seenKey(documentKey, cell.id), row.payload.base);
       cell.source = row.payload.text; recovered = true;
     }
   }
@@ -2060,8 +2077,12 @@ async function mountTab(expectedPath = '') {
       .then(d => { takeSavedVersions(d); setTabDirt(new Set(Object.keys(d.versions || {})), false); }))
     .catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
-  const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
+  // A notebook this page still holds comes back without its cells when the server's copy is the same version.
+  const have = JSON.stringify(heldNotebookVersions());
+  const st=await api('/tab/state?'+new URLSearchParams({...(expectedPath?{path:expectedPath}:{}), have}));
   if(mountVersion!==mountTabVersion)return;
+  if (st.kind === 'notebook' && st.same) st.cells = heldNotebookCells(st.path || st.title);
+  if (st.kind === 'notebook') noteSeen(st.path || st.title, st.cells);
   const recoveredDraft = await restoreDrafts(st);
   // `/tab/state` serves the cached copy and flags that the file has moved under it, which is what a
   // run of `nbdev-prepare` over an open notebook does. Nobody read the flag, so the tab showed the
@@ -2177,7 +2198,7 @@ function takeLate(st) {
   lee.nbVersions.set(key, st.version);
 }
 function rememberBuffer(key, payload) {
-  payload = {...payload, seq: nextSeq()};
+  payload = {...payload, seq: nextSeq(), ...(payload.kind === 'notebook' ? seenRow(payload.title || payload.path, payload.id) : {})};
   lee.buffers.set(key, payload.text); lee.dirtyBuffers.add(key); persistDraft(key, payload);
   clearTimeout(lee.bufferTimers.get(key));
   lee.bufferTimers.set(key, setTimeout(() => {
@@ -2334,6 +2355,7 @@ async function mountFile(host, st) {
             `<div class="lee-cm" id="filecm"></div>` +
             `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
           : '<div class="lee-cm" id="filecm"></div>');
+  if (st.note) host.insertAdjacentHTML('afterbegin', `<div class="lee-doc-head lee-readonly-note" role="note">${esc(st.note)}</div>`);
   // Nothing in the editor depends on these two answers, and awaiting them held an empty box on
   // screen for as long as they took: `/editor/packages` starts an interpreter to read version
   // metadata, and `/git/file` is four git subprocesses. Together they were 80 to 200ms of blank
@@ -2604,9 +2626,15 @@ function keepNotebookShells(host, key, version) {
   // The views are already destroyed. What they left behind is not a shell, so it goes.
   frag.querySelectorAll('.lee-cm').forEach(cm => { cm.innerHTML = ''; });
   nbShells.delete(key);
-  nbShells.set(key, {frag, version, ids: [...frag.querySelectorAll('.lee-cell')].map(el => el.dataset.id).join()});
+  nbShells.set(key, {frag, version, ids: [...frag.querySelectorAll('.lee-cell')].map(el => el.dataset.id).join(), cells: lee.cells});
   for (const stale of [...nbShells.keys()].slice(0, nbShells.size - NB_SHELLS)) nbShells.delete(stale);
 }
+
+//: `{key: version}` of each kept notebook, which `/tab/state` answers with `same` instead of its cells.
+function heldNotebookVersions() {
+  return Object.fromEntries([...nbShells].map(([key, held]) => [key, Number(held.version.split('@').pop())]));
+}
+function heldNotebookCells(key) { return nbShells.get(key)?.cells || []; }
 
 function takeNotebookShells(host, st) {
   const key = st.path || st.title, held = key && nbShells.get(key);
@@ -3924,7 +3952,7 @@ async function checkExercise(cellId) {
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) throw new Error('the notebook could not be saved first');
     const i = lee.cells.findIndex(x => x.id === cellId); if (!cur() || i < 0) throw new Error('the notebook changed before the check began');
     const v = ensureCellMounted(i), source = v ? LeeCM.getDoc(v) : lee.cells[i].source;
-    const {cell, ...verdict} = await withPython(() => post('/exercise/check', {i, id: cellId, path: runKey, source, seq: nextSeq()}));
+    const {cell, ...verdict} = await withPython(() => post('/exercise/check', {i, id: cellId, path: runKey, source, seq: nextSeq(), ...seenRow(runKey, cellId)}));
     st.result = {...verdict, source};
     const at = cur();
     if (at && cell) {
@@ -4311,6 +4339,12 @@ async function settleRun(path, id) {
    reads the outcome here and follows the outputs through `lee-cell-output`. `save: false` runs the
    live text and writes no file: no save before or after, and no placeholder made valid. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
+//: A run stream's `output` message on the outputs shown: `n` outputs, each op a stream's new text or a whole output.
+function applyOutputOps(outputs, {n, ops}) {
+  const outs = (outputs || []).slice(0, n);
+  for (const [k, kind, v] of ops) outs[k] = kind === 'append' ? {...outs[k], text: (outs[k]?.text || '') + v} : v;
+  return outs;
+}
 async function runCell(i, advance, {save = true} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
@@ -4348,11 +4382,11 @@ async function runCell(i, advance, {save = true} = {}) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await withPython(() => postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
+        await withPython(() => postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...seenRow(runKey, cellId), ...guess, ...(save ? {} : {save: false})}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();
-          if (at && event === 'output') { at.outputs = data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
+          if (at && event === 'output') { at.outputs = data.ops ? applyOutputOps(at.outputs, data) : data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
         }, null, 45000));
       } catch (e) { if (e === failed || e.unsent) throw e; }
       if (!r) r = await settleRun(runKey, cellId);
@@ -4524,7 +4558,7 @@ async function debugCell(i) {
   status(`starting ipykernel debugger for cell ${i + 1}…`);
   let done = null;
   try {
-    await withPython(() => postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
+    await withPython(() => postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), ...seenRow(key, c.id), breakpoints}, (event, data) => {
       if (event === 'ready') {
         rememberBreakpoints(c.id, data.breakpoints || breakpoints);
         LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);
@@ -4592,7 +4626,7 @@ async function askCell(i, src, el) {
     lee.promptRuns = lee.promptRuns || new Map();
     const abort = new AbortController();
     lee.promptRuns.set(cellId, abort);
-    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq()}, (event, data) => {
+    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq(), ...seenRow(runKey, cellId)}, (event, data) => {
       const shown = cur();
       if (event === 'chunk') {
         raw += data.text || '';
@@ -6006,11 +6040,16 @@ async function sendEdit(d, key) {
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
   const seq = nextSeq(), sent = new Map(lee.cells.map(c => [c.id, lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source]));
   for (const c of lee.cells) c.source = sent.get(c.id);
-  const r = await post('/nb/edit', d.op === 'source' ? {...d, seq} : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
+  // Only the cells whose text the server has not confirmed go, each with the source this page last saw.
+  const sources = changedRows(key, lee.cells, seq);
+  const r = await post('/nb/edit', d.op === 'source' ? {...d, seq, ...seenRow(key, d.id)} : {...d, sources});
+  const clash = new Set(r.clash || []);
+  noteSeen(key, r.cells.filter(c => !clash.has(c.id)));
   if (!here() || r.version < (lee.nbVersions.get(key) ?? 0)) return lateEdit(key, r);
   lee.nbVersions.set(key, r.version);
-  // A cell this edit left as it was sent keeps what was typed into it since.
-  for (const c of r.cells) { const v = lee.editors.get(c.id); if (v && c.source === sent.get(c.id)) c.source = LeeCM.getDoc(v); }
+  // A cell this edit left as it was sent keeps what was typed into it since; one that clashed keeps what was typed, for the save to offer.
+  for (const c of r.cells) { const v = lee.editors.get(c.id); if (v && (c.source === sent.get(c.id) || clash.has(c.id))) c.source = LeeCM.getDoc(v); }
+  if (clash.size) status('another window changed a cell you edited · save to choose what to keep', 'err');
   lee.cells = foldsSince(key, r.cells, r.version);
   const same = r.cells.findIndex(c => c.id === selectedId);
   if (d.op === 'undo' || d.op === 'redo') lee.sel = Math.max(0, Math.min(r.index ?? lee.sel, r.cells.length - 1));
@@ -6366,10 +6405,13 @@ async function showDiff() {
   diffModal('unsaved changes — ' + d.title, d.label, d.rows);
 }
 
-async function openMergeConflict(conflictBox) {
+async function openMergeConflict(conflictBox, theirs = []) {
   if (!lee.path) return status('save the document before merging it', 'err');
   const disk = await api('/tab/disk?path=' + encodeURIComponent(lee.path));
   if (lee.kind === 'notebook') {
+    // A clash with another window names its side of each cell; the rest of the left side is the disk.
+    const other = new Map(theirs.map(c => [c.id, c]));
+    if (other.size) disk.cells = lee.cells.map((c, i) => other.get(c.id) || disk.cells?.find(d => d.id === c.id) || disk.cells?.[i] || {source: ''});
     conflictBox?.remove(); const merges = [];
     const count = Math.max(lee.cells.length, (disk.cells || []).length);
     const m = modal(`<div class="lee-mhead">Resolve notebook conflict<span class="sub">cell-aware disk / draft merge</span></div>` +
@@ -6412,7 +6454,7 @@ async function openMergeConflict(conflictBox) {
     m.remove(); await saveTab(false, null, true); status('merged file saved', 'ok');
   };
 }
-function showSaveConflict(message) {
+function showSaveConflict(message, theirs = []) {
   if ($('.lee-save-conflict')) return;
   const box = modal(`<div class="lee-mhead">File changed on disk</div>` +
     `<div class="lee-dialogcopy">${esc(message)} Your browser draft is safe and has not been replaced.</div>` +
@@ -6426,7 +6468,7 @@ function showSaveConflict(message) {
     setTabSaveState($('.lee-tab.active'), 'pending', 'Draft kept; press Save to review the disk conflict again');
     status('kept browser draft · automatic retries paused until you save or resolve it', 'ok');
   };
-  $('[data-merge]', box).onclick = () => openMergeConflict(box);
+  $('[data-merge]', box).onclick = () => openMergeConflict(box, theirs);
   $('[data-overwrite]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await saveTab(false, null, true); };
   $('[data-disk]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await takeDiskVersion(lee.path); status('loaded disk version; browser draft discarded', 'ok'); };
 }
@@ -6464,9 +6506,10 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
     const base_disk_version = draftBaseFor(documentKey);
     if (kind === 'notebook') {
-      const seq = nextSeq(), cells = lee.cells.map((c, i) => ({i, id: c.id, seq, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
+      const cells = changedRows(tabKey, lee.cells, nextSeq());
       await headingSynced(tabKey);
       d = await post('/nb/save', {tab: tabKey, cells, base_disk_version, force});
+      noteSeen(tabKey, cells);
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
       if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);editAt=expectedVersion??lee.editVersion;tabAt=edits();}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
@@ -6500,9 +6543,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   } catch (e) {
     const message = String(e.message || e);
     setTabSaveState(saveTabEl, 'error', `Autosave failed: ${message}`);
-    if (message.includes('changed on disk after this browser draft began')) {
+    if (e.body?.kind === 'save_conflict' || message.includes('changed on disk after this browser draft began')) {
       const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
-      if (!quiet || !lee.heldSaveConflicts.has(documentKey)) showSaveConflict(message);
+      if (!quiet || !lee.heldSaveConflicts.has(documentKey)) showSaveConflict(message, e.body?.cells || []);
     }
     else status(message, 'err');
     return false;
@@ -6542,7 +6585,11 @@ async function saveAllTabs() {
       tab.classList.remove('dirty'); setTabSaveState(tab, 'saved');
     }
     status(`saved ${saved} tab${saved === 1 ? '' : 's'}`, 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) {
+    // A conflict is resolved in its own tab, where saving offers keep, merge, overwrite and load.
+    if (e.body?.kind === 'save_conflict') takeSavedVersions(e.body);
+    status(e.body?.kind === 'save_conflict' ? `${(e.body.paths || []).map(p => p.split('/').pop()).join(', ')} changed elsewhere · open the tab and save to choose what to keep` : e.message || String(e), 'err');
+  }
 }
 
 // `/exec` runs in whatever runtime the open tab runs in, so a Rust notebook makes this box Rust.

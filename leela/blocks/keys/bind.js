@@ -205,11 +205,16 @@ async function sendEdit(d, key) {
   const cursor = selectedView ? LeeCM.cursor(selectedView) : 0;
   const seq = nextSeq(), sent = new Map(lee.cells.map(c => [c.id, lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source]));
   for (const c of lee.cells) c.source = sent.get(c.id);
-  const r = await post('/nb/edit', d.op === 'source' ? {...d, seq} : {...d, sources: [...sent].map(([id, source]) => ({id, source, seq}))});
+  // Only the cells whose text the server has not confirmed go, each with the source this page last saw.
+  const sources = changedRows(key, lee.cells, seq);
+  const r = await post('/nb/edit', d.op === 'source' ? {...d, seq, ...seenRow(key, d.id)} : {...d, sources});
+  const clash = new Set(r.clash || []);
+  noteSeen(key, r.cells.filter(c => !clash.has(c.id)));
   if (!here() || r.version < (lee.nbVersions.get(key) ?? 0)) return lateEdit(key, r);
   lee.nbVersions.set(key, r.version);
-  // A cell this edit left as it was sent keeps what was typed into it since.
-  for (const c of r.cells) { const v = lee.editors.get(c.id); if (v && c.source === sent.get(c.id)) c.source = LeeCM.getDoc(v); }
+  // A cell this edit left as it was sent keeps what was typed into it since; one that clashed keeps what was typed, for the save to offer.
+  for (const c of r.cells) { const v = lee.editors.get(c.id); if (v && (c.source === sent.get(c.id) || clash.has(c.id))) c.source = LeeCM.getDoc(v); }
+  if (clash.size) status('another window changed a cell you edited · save to choose what to keep', 'err');
   lee.cells = foldsSince(key, r.cells, r.version);
   const same = r.cells.findIndex(c => c.id === selectedId);
   if (d.op === 'undo' || d.op === 'redo') lee.sel = Math.max(0, Math.min(r.index ?? lee.sel, r.cells.length - 1));

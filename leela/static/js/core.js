@@ -47,6 +47,9 @@ const lee = {
   cellClipboard: null,       // detached cell payload; survives tab switches for cross-notebook moves
   recentTabs: [], locations: new Map(), recentCycle: [], recentCycleAt: 0, researchDocs: [], researchSelected: new Set(),
   draftBases: new Map(), draftTimers: new Map(), heldSaveConflicts: new Set(),
+  // This page's name and, by tab and cell, the source the server last confirmed to it: a row the page sends
+  // names both, so a cell another window changed meanwhile is a conflict and not a silent overwrite.
+  pageId: Math.random().toString(36).slice(2, 12), nbSeen: new Map(),
   editorPrefs: null, settingsMeta: null, filePrefs: {}, workbenchPrefs: {}, debugPrefs: {}, backupPrefs: {},
   theme: null,               // {family, mode, density}; mode may be 'system', resolved at paint time
   gitDiffTabs: new Map(), activeGitTab: '', gitMergeView: null,
@@ -302,6 +305,18 @@ window.addEventListener('beforeunload', e => {
 //: A stamp on every source write the page sends, so the server keeps the newest of two that arrive out of order.
 const nextSeq = () => lee.srcSeq = Math.max(lee.srcSeq + 1, Date.now());
 const headingSynced = (key = lee.tabKey) => lee.headingSync.get(key) || Promise.resolve();
+const seenKey = (key, id) => `${key}\u0000${id}`;
+function noteSeen(key, cells) { for (const c of cells || []) if (c?.id) lee.nbSeen.set(seenKey(key, c.id), c.source); }
+//: What a source row adds so the server can tell this page's edit from a clash: the source it last saw, and who it is.
+function seenRow(key, id) {
+  const base = lee.nbSeen.get(seenKey(key, id));
+  return base === undefined ? {} : {base, page: lee.pageId};
+}
+//: The rows of the cells whose text differs from what the server last confirmed, each with that base.
+function changedRows(key, cells, seq) {
+  return cells.map((c, i) => ({i, id: c.id, seq, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}))
+    .filter(r => lee.nbSeen.get(seenKey(key, r.id)) !== r.source).map(r => ({...r, ...seenRow(key, r.id)}));
+}
 async function restoreDrafts(st) {
   if (lee.observer) return false;   // the drafts are the person's, in storage this origin shares
   const documentKey = st.path || st.title || ''; if (!documentKey) return false;
@@ -331,6 +346,8 @@ async function restoreDrafts(st) {
     for (const cell of (st.cells || [])) {
       const row = byId.get(cell.id); if (!row || row.payload.text === cell.source) continue;
       lee.draftBases.set(row.key, row.baseDiskVersion || '');
+      // The draft was typed over the source it names, not over what the server holds now.
+      if (row.payload.base !== undefined) lee.nbSeen.set(seenKey(documentKey, cell.id), row.payload.base);
       cell.source = row.payload.text; recovered = true;
     }
   }

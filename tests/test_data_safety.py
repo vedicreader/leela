@@ -267,3 +267,17 @@ def test_a_real_kernel_printing_2000_lines_streams_a_few_kilobytes(tmp_path):
     done = json.loads(body.decode().rsplit('data: ', 1)[1])
     assert len(body) < 100_000, len(body)
     assert [o['text'].count('\n') for o in done['cell']['outputs']] == [2000]
+
+@pytest.mark.slow
+def test_the_page_shows_the_note_and_a_read_only_editor(tmp_path):
+    pytest.importorskip('playwright.async_api')
+    import test_web_slow as web
+    (tmp_path/'notes.txt').write_bytes(LATIN)
+    async def go(pg):
+        await pg.evaluate('p => leeOpenFile(p)', str(tmp_path/'notes.txt'))
+        await pg.wait_for_selector('.lee-readonly-note')
+        await pg.click('#filecm .cm-content'); await pg.keyboard.type('more')
+        return await pg.text_content('.lee-readonly-note'), await pg.evaluate("LeeCM.getDoc(lee.editors.get('file'))")
+    note, text = web._run(go, roots=[tmp_path])
+    assert note == 'This file is not UTF-8 text, so Leela opens it read-only.' and 'more' not in text
+    assert (tmp_path/'notes.txt').read_bytes() == LATIN

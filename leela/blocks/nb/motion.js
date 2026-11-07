@@ -70,6 +70,12 @@ async function settleRun(path, id) {
    reads the outcome here and follows the outputs through `lee-cell-output`. `save: false` runs the
    live text and writes no file: no save before or after, and no placeholder made valid. */
 const cellOutputEvent = (id, outputs) => dispatchEvent(new CustomEvent('lee-cell-output', {detail: {id, outputs}}));
+//: A run stream's `output` message on the outputs shown: `n` outputs, each op a stream's new text or a whole output.
+function applyOutputOps(outputs, {n, ops}) {
+  const outs = (outputs || []).slice(0, n);
+  for (const [k, kind, v] of ops) outs[k] = kind === 'append' ? {...outs[k], text: (outs[k]?.text || '') + v} : v;
+  return outs;
+}
 async function runCell(i, advance, {save = true} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
@@ -107,11 +113,11 @@ async function runCell(i, advance, {save = true} = {}) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await withPython(() => postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
+        await withPython(() => postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...seenRow(runKey, cellId), ...guess, ...(save ? {} : {save: false})}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();
-          if (at && event === 'output') { at.outputs = data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
+          if (at && event === 'output') { at.outputs = data.ops ? applyOutputOps(at.outputs, data) : data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
         }, null, 45000));
       } catch (e) { if (e === failed || e.unsent) throw e; }
       if (!r) r = await settleRun(runKey, cellId);
@@ -283,7 +289,7 @@ async function debugCell(i) {
   status(`starting ipykernel debugger for cell ${i + 1}…`);
   let done = null;
   try {
-    await withPython(() => postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
+    await withPython(() => postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), ...seenRow(key, c.id), breakpoints}, (event, data) => {
       if (event === 'ready') {
         rememberBreakpoints(c.id, data.breakpoints || breakpoints);
         LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);

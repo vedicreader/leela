@@ -36,7 +36,7 @@ async function askCell(i, src, el) {
     lee.promptRuns = lee.promptRuns || new Map();
     const abort = new AbortController();
     lee.promptRuns.set(cellId, abort);
-    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq()}, (event, data) => {
+    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq(), ...seenRow(runKey, cellId)}, (event, data) => {
       const shown = cur();
       if (event === 'chunk') {
         raw += data.text || '';
