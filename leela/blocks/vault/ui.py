@@ -23,7 +23,7 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
 POLL_MS = 1200
 LEVELS = (('open', 'Open'), ('personal', 'Personal'), ('local', 'Local only'))
 
-PII_COVERS = ('covers pattern kinds and titled names — a bare name or loose address is never '
+PII_COVERS = ('covers pattern kinds and titled names. A bare name or loose address is never '
               'looked for, so this says what was found, never that there is nothing')
 
 VIEWS = (('library', 'what is in it, and putting more in'), ('find', 'search it'),
@@ -535,7 +535,7 @@ def add_view(memory, vault='', jobs=None, root='', **_):
     smart = Form(Input(name='target', cls='lee-input', autocomplete='off', required=True,
                        placeholder='https://… · 2401.12345 · github.com/owner/repo · a youtube link'),
         Select(Option('work out what it is', value=''),
-               *[Option(f'{a} — {why}', value=a) for a, why in ACTIONS], name='action', cls='lee-input'),
+               *[Option(f'{a}: {why}', value=a) for a, why in ACTIONS], name='action', cls='lee-input'),
         Button('bring it in', cls='lee-btn go', type='submit'),
         hx_post='/vault/acquire', hx_target='#vaultwbjobs', hx_swap='afterbegin', cls='lee-wb-form')
     local = Form(Input(name='target', cls='lee-input', value=root or '', autocomplete='off', required=True,
@@ -552,7 +552,7 @@ def add_view(memory, vault='', jobs=None, root='', **_):
             Small('each of these is a different reader. leave the action blank and the address '
                   'decides which one runs.', cls='lee-dim'), cls='lee-wb-card'),
         Div(Span('from this computer', cls='lee-vault-legend'), local,
-            Small('shelves come from the folder structure, and generated paths are left out — '
+            Small('shelves come from the folder structure, and generated paths are left out. '
                   'both are shown before anything is indexed.', cls='lee-dim'),
             Div(id='vaultwbplan'), cls='lee-wb-card'),
         Div(Span('write it yourself', cls='lee-vault-legend'), note, cls='lee-wb-card'),
@@ -619,7 +619,7 @@ def news_view(memory, vault='', feeds=None, error='', q='', feed='', **_):
     items = ([Div(Span(day, cls='lee-vault-legend'), Div(*[_story(x, vault) for x in rows_], cls='lee-vault-docs'))
               for day, rows_ in days.items()] if docs else
              [empty('nothing to show', 'nothing matches that narrowing.' if (q or feed) else
-                    'follow a feed and read it now — items land on the news shelf.')])
+                    'follow a feed and read it now. Its items go on the news shelf.')])
     return Div(
         Div(Span('feeds', cls='lee-vault-legend'), Span(cls='lee-spacer'), read, cls='lee-wb-cardhead'),
         Div(error, cls='lee-job-error') if error else None,
@@ -636,7 +636,7 @@ def news_view(memory, vault='', feeds=None, error='', q='', feed='', **_):
 def _op_cell(o, name):
     "The operation name is what a call is made by, so it is a button that fills the call form."
     op = o.get('name') or ''
-    if not op: return Td(Small('—'))
+    if not op: return Td(Small('–'))
     return Td(Form(Hidden(name='name', value=name), Hidden(name='operation', value=op),
                    Button(op, cls='lee-btn quiet', type='submit', title=o.get('signature') or op),
                    hx_get='/vault/apis/form', hx_target='#vaultwbcall', hx_swap='innerHTML'))
@@ -647,14 +647,14 @@ def ops_table(rows, src='', match='', name=''):
     # Every cell is escaped: a specification is somebody else's document, fetched from a url.
     body = [Tr(_op_cell(o, name), Td(Span(o['verb'], cls=f"lee-wb-verb {o['verb'].lower()}")),
                Td(Code(o['path'])), Td(o.get('summary') or ''),
-               Td(Small(', '.join(o.get('required') or []) or '—')),
+               Td(Small(', '.join(o.get('required') or []) or '–')),
                Td(Small(o.get('group') or ''))) for o in rows[:400]]
     return Div(Small(f'{len(rows)} operations' + (f' matching “{match}”' if match else ''), cls='lee-dim'),
         Div(Table(Thead(Tr(Th('call it'), Th(''), Th('endpoint'), Th('what it does'), Th('required'),
                            Th('group'))), Tbody(*body), cls='lee-wb-table'), cls='lee-wb-tablewrap'),
         Form(Hidden(name='target', value=src), Hidden(name='kind', value='clip_api_spec'),
              Button('file it in the vault', cls='lee-btn go', type='submit',
-                    title='one document, one section per operation — then ask about it like a paper'),
+                    title='one document, one section per operation. Then ask about it as you ask about a paper'),
              hx_post='/clip', hx_target='#vaultwbjobs', hx_swap='afterbegin'),
         cls='lee-wb-ops')
 
@@ -666,7 +666,7 @@ def call_form(name='', operation='', params='', ops=()):
              Input(name='operation', value=operation, cls='lee-input', required=True,
                    autocomplete='off', list='vaultwbops', placeholder='which operation'),
              Textarea(params or '', name='params', cls='lee-input', rows='2',
-                      placeholder='{"parameter": "value"}  — a JSON object, or empty'),
+                      placeholder='{"parameter": "value"} · a JSON object, or empty'),
              Button('call it', cls='lee-btn go', type='submit'),
              Datalist(*[Option(value=n) for n in names[:400]], id='vaultwbops'),
              hx_post='/vault/apis/call', hx_target='#vaultwbout', hx_swap='innerHTML',
@@ -695,14 +695,14 @@ def _policy_row(name, pol):
     return Div(Div(Strong(name), Span(cls='lee-spacer'),
                    Span('local only' if reach == 'local' else 'any model', cls='lee-shelf-count'),
                    Span(', '.join(headers) or 'no key', cls='lee-shelf-count'), cls='lee-wb-feedhead'),
-        *[Small(f'${{{k}}} is ' + ('set here' if ok else 'not set — a call will fail'),
+        *[Small(f'${{{k}}} is ' + ('set here' if ok else 'not set, so a call fails'),
                 cls='lee-dim' if ok else 'lee-job-error') for k, ok in env.items()])
 
 def creds_panel(policies):
     "What each api sends and who may call it. A value is never rendered."
     rows = [_policy_row(name, pol) for name, pol in sorted((policies or {}).items())]
-    return Div(*(rows or [Small('no api carries a key, so calls go out unauthenticated — which most '
-                                'apis answer with 401.', cls='lee-dim')]), cls='lee-wb-creds')
+    return Div(*(rows or [Small('no api has a key, so calls go out with no credentials. Most '
+                                'apis answer them with 401.', cls='lee-dim')]), cls='lee-wb-creds')
 
 def creds_view(policies=None, error=''):
     "The keys panel, which is its own swap target: a key is set without reloading the page."
@@ -717,9 +717,9 @@ def creds_view(policies=None, error=''):
     return Div(Div(Span('the keys a real call needs', cls='lee-vault-legend'), cls='lee-wb-cardhead'),
         Div(error, cls='lee-job-error') if error else None, creds_panel(policies), form,
         Small('a key is kept where leela keeps its secrets, sent only with calls to the api it '
-              'belongs to, and never given to the model. a header may name an environment variable '
-              'instead — write ', Code('Bearer ${COSTING_TOKEN}'), ' and rotating the variable '
-              'rotates the credential. an api marked local-only refuses a hosted model rather than '
+              'belongs to, and never given to the model. a header can name an environment variable '
+              'instead. Write ', Code('Bearer ${COSTING_TOKEN}'), ', and a change to the variable changes '
+              'the credential. an api marked local-only refuses a hosted model rather than '
               'sending anything.', cls='lee-dim'),
         id='vaultwbcreds', cls='lee-wb-credsview')
 
@@ -759,7 +759,7 @@ def topics_view(memory, vault='', **_):
     if not rows:
         return Div(empty('no topics yet',
                          'topics are read off the entity graph, which is built after an import rather '
-                         'than during one — it reads every chunk, so it is a job, not a page load.',
+                         'than during one. It reads every chunk, so it runs as a job, not as a page load.',
                          Small(d.get('note') or '', cls='lee-dim'), build),
                    Div(id='vaultwbjobs', cls='lee-vault-jobs'), cls='lee-wb-topics')
     top = max(int(t.get('chunks') or t.get('size') or 1) for t in rows)

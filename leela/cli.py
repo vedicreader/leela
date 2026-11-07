@@ -54,7 +54,7 @@ def main(argv=None):
                         '(default: $LEELA_KEYMAP, else keys.json in leela’s config dir)')
     p.add_argument('--write-keymap', action='store_true',
                    help='write the chords you have changed to that file, with every action and its '
-                        'default listed beside them, then exit — the starting point for rebinding '
+                        'default listed beside them, then exit. Start here to change a key '
                         'anything your terminal swallows')
     a = p.parse_args(argv)
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)

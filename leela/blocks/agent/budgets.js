@@ -51,7 +51,7 @@ async function paintAgentBudget() {
   const el = $('#agentbudgetstatus'); if (!el) return;
   try {
     const d = await api('/agent/status');
-    el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '—'}`;
+    el.textContent = `${d.tool_calls || 0} / ${d.tool_limit || '–'}`;
     el.title = `${d.tool_calls || 0} of ${d.tool_limit || 'unknown'} tool calls used this turn`;
   } catch (_) {}
 }

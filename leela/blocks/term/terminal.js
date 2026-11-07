@@ -197,8 +197,8 @@ function leeSyncPin(which) {
     b.textContent = pinned ? '●' : '○';
     b.classList.toggle('pinned', pinned);
     b.setAttribute('aria-pressed', String(pinned));
-    b.title = pinned ? 'pinned open — unpin to close it when you click away'
-                     : 'auto-closing — pin to keep it open';
+    b.title = pinned ? 'pinned open. Unpin it to close it when you click away'
+                     : 'closes when you click away. Pin it to keep it open';
   });
 }
 

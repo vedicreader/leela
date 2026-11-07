@@ -52,7 +52,7 @@ def connect(app, ctx):
         d = await req.json()
         text = d.get('text') or ''
         try: posted = json.loads(text)
-        except Exception as e: return fail(f'that is not valid JSON — {errstr(e)}')
+        except Exception as e: return fail(f'that is not valid JSON: {errstr(e)}')
         over = posted.get('keys') if isinstance(posted, dict) else None
         if isinstance(over, dict) and (set(posted) == {'keys'} or keymap.bulk_map(over)):
             over = {str(a): str(c) for a, c in over.items()}

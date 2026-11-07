@@ -107,9 +107,9 @@ def connect(app, ctx):
         if not py: return fail('choose a project interpreter first')
         if key := tool_of(py):
             r = await off_loop(upgrade_tool_env, key)
-            return {'ok': True, 'python': r.python} if r.ok else fail(f'could not install the lesson kernel again — {r.error}')
+            return {'ok': True, 'python': r.python} if r.ok else fail(f'could not install the lesson kernel again: {r.error}')
         try: return await off_loop(install_kernel_support, py)
-        except Exception as e: return fail(f'could not install project kernel support — {errstr(e)}')
+        except Exception as e: return fail(f'could not install project kernel support: {errstr(e)}')
     @rt('/runtime/inspector')
     async def runtime_inspector(req):
         "Give a project environment its own copy of what the live-variable inspector imports."
@@ -120,7 +120,7 @@ def connect(app, ctx):
         if not installable(py):
             return fail('that is leela’s own interpreter; choose a project environment first')
         try: return await off_loop(install_inspector_support, py)
-        except Exception as e: return fail(f'could not install the inspector’s packages — {errstr(e)}')
+        except Exception as e: return fail(f'could not install the inspector’s packages: {errstr(e)}')
     @rt('/runtime/create')
     async def runtime_create(req):
         "Create a .venv in the project the person named, else the checkout in hand, and install only its kernel transport, never Leela itself."
@@ -133,7 +133,7 @@ def connect(app, ctx):
         if copy_folder(root): return fail('this folder holds learning copies from abhyasa; each copy runs in the environment of its own project')
         if d.get('root') and (root := session.venv_project(root)) is None: return fail('a loose file has no project to set up a .venv in')
         try: py, note = await off_loop(session.setup_venv, root)
-        except Exception as e: return fail(f'could not create .venv — {errstr(e)}')
+        except Exception as e: return fail(f'could not create .venv: {errstr(e)}')
         return {'ok': True, 'python': py, 'root': str(root), 'note': note}
     @rt('/kernel/interrupt')
     async def k_interrupt():

@@ -34,7 +34,7 @@ def nbdev_prepare(session, target=''):
     if not session.fs.roots: raise PipelineError('open a folder first')
     cfg = first(c for r in (repo_for(session, target), *session.fs.roots) if (c := nbdev_config(r)))
     if cfg is None: raise PipelineError(
-        'no settings.ini and no [tool.nbdev] in any open folder — not an nbdev project')
+        'no settings.ini and no [tool.nbdev] in any open folder, so this is not an nbdev project')
     root = Path(cfg.config_path)
     argv = uv_argv(root, ['nbdev-prepare']) or resolve_script(['nbdev-prepare'], step_python(session, root))
     if argv[0] == 'nbdev-prepare': raise PipelineError(
@@ -58,7 +58,7 @@ def _ship(root, session, argv, timeout=900):
     import subprocess
     resolved = resolve_script(argv, python := step_python(session, root))
     if resolved[0] == argv[0]:
-        raise PipelineError(f'fastship is not installed in {root.name} — add it to the dev dependencies')
+        raise PipelineError(f'fastship is not installed in {root.name}. Add it to the dev dependencies')
     r = subprocess.run(resolved, cwd=str(root), stdin=subprocess.DEVNULL, start_new_session=True, capture_output=True, text=True, timeout=timeout,
                        env=venv_env(python))
     if r.returncode: raise PipelineError((r.stderr or r.stdout or f'{argv[0]} failed').strip()[-4000:])
@@ -73,7 +73,7 @@ def fastship_state(session, target=''):
     return dict(ok=True, root=str(root), flow=flow, nbdev=flow == 'nbdev', app=app_project(root),
         installed=installed, changelog=(root/'CHANGELOG.md').exists(),
         ops=[{'op': k, 'cmd': c, 'doc': doc} for k, (c, doc) in FASTSHIP_OPS.items()],
-        why='' if installed else f'fastship is not installed in {root.name} — add it to the dev dependencies')
+        why='' if installed else f'fastship is not installed in {root.name}. Add it to the dev dependencies')
 
 def fastship_run(session, op, target='', part=None):
     "One fastship command, in the project the panel is about and in that project's venv."

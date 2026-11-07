@@ -1276,7 +1276,7 @@ class Workspace:
         from .blocks.runtime.kernels import run_file_src
         t = tab or self.tab
         if t is None: return None, 'nothing open'
-        if t.kind == 'notebook': return None, 'this is a notebook — run its cells, or use run all'
+        if t.kind == 'notebook': return None, 'this is a notebook. Run its cells, or use run all'
         if not t.path: return None, f'{t.title} has never been saved'
         if not t.path.endswith('.py'): return None, f'{Path(t.path).name} is not a python file'
         if src is None:

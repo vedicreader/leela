@@ -8,7 +8,7 @@ from .clip import DOC_EXTS, _files
 
 __all__ = ['ACTIONS', 'detect', 'plan_tree', 'category_for']
 
-ACTIONS = (('grab', 'a page, a paper, a pdf — read it and file it'),
+ACTIONS = (('grab', 'read a page, a paper or a PDF, and file it'),
            ('web', 'search the web and file what comes back'),
            ('crawl', 'follow a site and file every page'),
            ('github', 'a repository, as prose'),

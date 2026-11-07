@@ -60,7 +60,7 @@ function updateAgentSendMode(mode = 'send') {
   const label = mode === 'force' ? 'Stop and send next' : mode === 'steer' ? 'Steer after this call' : 'Send';
   button.textContent = label; button.setAttribute('aria-label', label);
   button.title = mode === 'send' ? 'send this as a turn'
-    : 'hand this to the model after the current call — shift-click to stop the run and send it now';
+    : 'send this to the model after the current call. Shift-click to stop the run and send it now';
 }
 /* A steer belongs inside the turn's timeline rather than after it, among the chunks and tool rows
    it came between. */

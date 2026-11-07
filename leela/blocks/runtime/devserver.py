@@ -292,7 +292,7 @@ def run_command(argv):
     if (fn := _entry_point(head)) is not None:
         sys.argv = [head, *rest]
         return fn()
-    raise SystemExit(f'[leela] cannot run {head!r} in this process — '
+    raise SystemExit(f'[leela] cannot run {head!r} in this process. '
         f'write it as `python -m {head} ...` if it is a module')
 
 def _child(argv=None):

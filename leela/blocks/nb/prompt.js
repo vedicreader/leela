@@ -61,7 +61,7 @@ async function askCell(i, src, el) {
     const here = (r.edits || []).some(e => e.path === lee.path);
     showProblems(r.problems);
     status((r.problems || []).length ? r.problems[r.problems.length - 1]
-           : here ? 'this notebook also changed on disk — your buffer wins until you save'
+           : here ? 'this notebook also changed on disk. Your text stays until you save'
                   : (r.note || 'answered'),
            r.ok && !here && !(r.problems || []).length ? 'ok' : 'err');
     markDirty();

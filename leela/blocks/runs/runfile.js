@@ -16,9 +16,9 @@ function execLine(code, text, ok) {
  * A saved configuration for this file still wins, so `python -m x` or an argv is honoured. Scratch
  * code is `run selection`, which is still the kernel. */
 async function runFile() {
-  if (lee.kind !== 'text') return status('this is a notebook — run its cells, or “▶ all”', 'err');
+  if (lee.kind !== 'text') return status('this is a notebook. Run its cells, or use “▶ all”', 'err');
   const path = lee.path || '';
-  if (!path.endsWith('.py')) return status('only a .py file can be run — try “run selection”', 'err');
+  if (!path.endsWith('.py')) return status('only a .py file can run. Use “run selection” instead', 'err');
   if ($('.lee-tab.active.dirty') && !await saveTab(true))
     return status('save the file before running it', 'err');
   const here = path.split('/').pop();
@@ -44,7 +44,7 @@ async function runSelection() {
   catch (e) { return status(String(e.message || e), 'err'); }
   const head = code.trim().split('\n')[0].slice(0, 60);
   execLine(head + (code.trim().includes('\n') ? ' …' : ''), r.text, r.ok);
-  status(r.ok ? 'ran the selection' : 'the selection raised — see the exec log', r.ok ? 'ok' : 'err');
+  status(r.ok ? 'ran the selection' : 'the selection raised an error. See the exec log', r.ok ? 'ok' : 'err');
   leeVars();
 }
 
@@ -58,7 +58,7 @@ async function runRange(start, end, label) {
     if (c.cell_type !== 'code' || !(c.source || '').trim()) continue;
     status(`running cell ${i + 1}…`);
     const r = await runCell(i, false);
-    if (!r.ok) return status(`${r.error || `cell ${i + 1} failed`} — stopped there`, 'err');
+    if (!r.ok) return status(`${r.error || `cell ${i + 1} failed`}. Stopped there.`, 'err');
   }
   status(`ran ${label}`, 'ok');
 }

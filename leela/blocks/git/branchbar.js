@@ -258,7 +258,7 @@ window.leeBranchMenu = leeBranchMenu;
 async function showSyncPlan(d) {
   try {
     const p = await api(gitUrl('/git/sync-plan', {repo: gitUI.repo, fetch: 1}));
-    if (!p.upstream) return status(`${p.branch} has no upstream — publish it first`, 'err');
+    if (!p.upstream) return status(`${p.branch} has no upstream. Publish it first.`, 'err');
     if (!p.behind) return status(p.ahead ? `${p.ahead} ahead, nothing to pull` : 'already up to date', 'ok');
     const dirty = p.clean ? '' : `<div class="lee-git-merge-warning"><strong>Uncommitted changes to ${p.dirty.length} tracked file${p.dirty.length === 1 ? '' : 's'}</strong><span>${p.dirty.map(esc).join(' · ')}</span></div>`;
     // Only `merge` and `rebase` are rehearsed, so only they carry `conflicts`; none carries a name.

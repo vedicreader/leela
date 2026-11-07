@@ -1143,7 +1143,7 @@ def api_context(host):
     for n in names:
         info, pol = dict(getattr(host, 'spec_info', {}).get(n) or {}), keyed.get(n) or {}
         groups, ops = info.get('groups') or [], info.get('operations')
-        bits = [f"{info.get('title') or n} — {ops} operation{'' if ops == 1 else 's'} in "
+        bits = [f"{info.get('title') or n}: {ops} operation{'' if ops == 1 else 's'} in "
                 f"{len(groups)} group{'' if len(groups) == 1 else 's'}"]
         if groups[:8]: bits.append('groups: ' + ', '.join(groups[:8]) + ('…' if len(groups) > 8 else ''))
         if pol.get('headers'): bits.append('sends ' + ', '.join(pol['headers']))
@@ -1154,7 +1154,7 @@ def api_context(host):
         rows.append(f'- `{n}`: ' + '. '.join(bits) + '.')
     return ('\n\n## APIs loaded in this session\n\n' + '\n'.join(rows) + """
 
-These are loaded already — do not `api_load` them again. `api_ops(name=…, match=…)` finds the
+These are loaded already. Do not `api_load` them again. `api_ops(name=…, match=…)` finds the
 operation and `api_call` runs it; say which one answered. A spec marked local-only refuses on a
 hosted model rather than sending anything, and the refusal names what to change.""")
 
@@ -1513,15 +1513,15 @@ class Assistant(Agent):
         if writes:
             here = Path(self.host.roots[0]).resolve()
             if foreign := [g['root'] for g in writes if g.get('root') and Path(g['root']).resolve() != here]:
-                raise ValueError(f"git writes in {foreign[0]} can't be undone from here (the rollback runs in {here}) — undo refused")
+                raise ValueError(f"git writes in {foreign[0]} can't be undone from here (the rollback runs in {here}) · undo refused")
             (head, branch), (now, on) = tx.get('git_state') or ('', ''), self._repo_state()
-            if not head or not now: raise ValueError('git state unknown: the repository could not be read before or after the turn — undo refused')
+            if not head or not now: raise ValueError('git state unknown: the repository could not be read before or after the turn · undo refused')
             if head != now or branch != on:
-                raise ValueError(f'HEAD moved after the turn: {head[:12]} on {branch} .. {now[:12]} on {on} — undo refused')
+                raise ValueError(f'HEAD moved after the turn: {head[:12]} on {branch} .. {now[:12]} on {on} · undo refused')
             own = {str(Path(p).resolve()) for p in tx['files']}
             if outside := [p for p in self._dirty_paths() if p not in own]:
                 raise ValueError("uncommitted changes outside this turn's files: " + ', '.join(outside)
-                                 + ' — a git undo would discard them; commit or stash them first — undo refused')
+                                 + '. A git undo would discard them. Commit or stash them first · undo refused')
             tx['git_result'] = self._undo_git_writes(writes)
         for path, snap in tx['files'].items(): self.host.write(path, snap['before'])
         tx['rolled_back'] = True
@@ -1535,7 +1535,7 @@ class Assistant(Agent):
             except Exception as e:
                 names = ', '.join(f"{u['tool']} ({u.get('summary') or u.get('undoes') or u['undo']})" for u in undone) or 'none'
                 head, _ = self._repo_state()
-                raise ValueError(f"undid {len(undone)} git write(s) — already undone: {names}; HEAD moved to {head[:12]} as a result, "
+                raise ValueError(f"undid {len(undone)} git write(s). already undone: {names}; HEAD moved to {head[:12]} as a result, "
                                  f"so the turn's later undo is refused until you look at the tree; {w['tool']}: {errstr(e)}")
         return f'undid {len(undone)} git write(s)'
 

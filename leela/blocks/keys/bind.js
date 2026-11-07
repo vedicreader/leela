@@ -156,7 +156,7 @@ async function captureScreen() {
     // the display, so it can take it instead.
     if (!navigator.mediaDevices?.getDisplayMedia) {
       const r = await post('/screen/native', {});
-      return status(`screen captured (${Math.round(r.bytes / 1024)}kb) — it rides along with your next question`, 'ok');
+      return status(`screen captured (${Math.round(r.bytes / 1024)}kb). It goes with your next question.`, 'ok');
     }
     if (!lee.vtrack || lee.vtrack.readyState === 'ended') {
       const s = await navigator.mediaDevices.getDisplayMedia({video: true});
@@ -169,7 +169,7 @@ async function captureScreen() {
     cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
     bmp.close();
     const r = await post('/screen', {data_url: cv.toDataURL('image/png')});
-    status(`screen captured (${Math.round(r.bytes / 1024)}kb) — it rides along with your next question`, 'ok');
+    status(`screen captured (${Math.round(r.bytes / 1024)}kb). It goes with your next question.`, 'ok');
   } catch (e) { status('capture failed: ' + (e.message || e), 'err'); }
 }
 
@@ -179,7 +179,7 @@ async function captureScreen() {
    Resolves to the response it applied, or null, so a caller leaves focus and selection alone. */
 async function nbEdit(d) {
   // A file is one document, not a column of cells, and a structural edit would split the buffer.
-  if (lee.kind !== 'notebook') { status('cells belong to notebooks — this tab is a file', 'err'); return null; }
+  if (lee.kind !== 'notebook') { status('this tab is a file. Cells are in notebooks only', 'err'); return null; }
   const key = lee.tabKey, cells = lee.cells, named = {path: key};
   if (!['undo', 'redo', 'clear'].includes(d.op) && cells[d.i]) named.id = cells[d.i].id;
   if (d.indices) named.ids = d.indices.map(i => cells[i]?.id).filter(Boolean);

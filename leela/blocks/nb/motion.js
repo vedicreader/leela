@@ -29,7 +29,7 @@ async function openLocation(hit) {
   try {
     if (!inCell && /\.ipynb$/i.test(hit.path)) {
       await leeOpenFile(hit.path);
-      return status(`${name} — line ${hit.line} of the notebook file is in no cell`, 'info');
+      return status(`${name}: line ${hit.line} of the notebook file is in no cell`, 'info');
     }
     const line = inCell ? Number(hit.cell_line) : hit.line;
     lee.pendingLocation = {path: hit.path, line, column: Number(hit.column || 0), symbol: hit.symbol || '',
@@ -135,7 +135,7 @@ async function runCell(i, advance, {save = true} = {}) {
       const duration = formatCellTime(elapsed), n = lee.cells.indexOf(at) + 1;
       setCellTime(at, elapsed, false);
       setCellState(at, r.ok ? 'done' : 'error', r.ok ? `ran successfully in ${duration}` : `failed after ${duration}`);
-      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · its last outputs may be missing' : ''}`
+      status(r.ok ? `cell ${n} ran in ${duration}${r.lost ? ' · some of its last outputs are lost' : ''}`
              : r.reason === 'shell_stopped' ? `cell ${n}: the kernel's shell stopped answering · restart the kernel` : `cell ${n} failed after ${duration}`,
              r.ok ? 'ok' : 'err');
       res = {ok: !!r.ok, error: r.ok ? '' : `cell ${n} failed after ${duration}`};

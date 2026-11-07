@@ -35,7 +35,7 @@ async def _replaces(api, name):
     if rows is None:
         # an inspector that answered nothing at all is the one `/api/promote` reports for itself
         if info is None: return ''
-        return (f'the live namespace could not be read, so promoting {name} may replace a value '
+        return (f'the live namespace could not be read, so promoting {name} can replace a value '
                 'that is already there')
     if name not in {n.get('name') for g in rows.get('groups', []) for n in g.get('nodes', [])}: return ''
     return (f'{name} already exists in the live namespace. Promoting replaces it, and the value '

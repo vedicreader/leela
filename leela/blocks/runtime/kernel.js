@@ -22,7 +22,7 @@ async function pickKernel() {
     (o.boot_error ? `<div class="lee-err">${esc(o.boot_error)}</div>` : '') +
     (o.api_error ? `<div class="lee-err">Inspector connection failed: ${esc(o.api_error)} <button class="lee-btn" data-kernel-reconnect>Restart kernel</button></div>` : '') +
     (o.notice ? `<div class="lee-err">${esc(o.notice.message)} <button class="lee-btn" data-kernel-upgrade>Upgrade ipykernel</button></div>` : '') +
-    `<div class="lee-dim">choosing either of these restarts the kernel — its variables are lost</div>` +
+    `<div class="lee-dim">choosing either of these restarts the kernel. Its variables are lost</div>` +
     `<h4>launcher</h4><div class="lee-modallist">${kinds}</div>` +
     `<h4>interpreter</h4><div class="lee-modallist">${pys}</div>` +
     engineSection(models) +

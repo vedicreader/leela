@@ -481,7 +481,7 @@ def connect(app, ctx):
             if spec.model_id not in by_id:
                 provider = spec.model_id.partition('/')[0] if not spec.local else spec.runtime
                 rows.append({'value': current, 'label': current, 'provider': provider,
-                             'source': 'saved choice · provider credentials may be required'})
+                             'source': 'saved choice · needs the provider key'})
         def selected(current):
             "Which row a chosen model is, by the id it resolves to. A lookup, not a scan."
             spec = _spec(current)

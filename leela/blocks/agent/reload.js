@@ -41,7 +41,7 @@ async function watchOpenFile() {
     // clean editor follows agent, terminal and git writes live.
     if ($('.lee-tab.active')?.classList.contains('dirty')) {
       if (d.disk_version !== lee.seenDiskVersion)
-        status(`${lee.path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
+        status(`${lee.path.split('/').pop()} changed on disk. Leela keeps your unsaved text.`, 'err');
       lee.seenDiskVersion = d.disk_version;
       return;
     }
@@ -120,7 +120,7 @@ async function reloadAfterEdits(edits) {
   bar.querySelector('#dtake').onclick = async () => {
     m.remove(); await takeDiskVersion(e.path); status('loaded the agent edit from disk', 'ok');
   };
-  bar.querySelector('#dkeep').onclick = () => { m.remove(); status('kept your buffer — ctrl+s overwrites', 'ok'); };
+  bar.querySelector('#dkeep').onclick = () => { m.remove(); status(`kept your text. ${displayChord('mod+s')} writes it over the file`, 'ok'); };
 }
 
 async function stopAgent() {

@@ -41,7 +41,7 @@ function depStackRows() {
   return `<div class="lee-inf-status"><i>${d.checkouts.length} checkouts open</i></div>` +
     `<div class="lee-pkgs">${d.packages.map(p => `<article class="lee-pkg${p.shadowed ? ' shadowed' : ''}">` +
       `<div><strong>${esc(p.name)}</strong><small>${p.installed ? esc(p.version || 'no version') + ' · ' + esc(p.source) : 'not installed'}</small>` +
-      `${p.shadowed ? '<i class="warn">edits in your checkout are not what runs — reinstall it editable</i>' : ''}</div>` +
+      `${p.shadowed ? '<i class="warn">edits in your checkout are not what runs. Install it again as editable</i>' : ''}</div>` +
       `${p.checkout ? `<button data-pkg-open="${esc(p.checkout)}">open</button>` : ''}</article>`).join('')}</div>`;
 }
 async function loadInfra(force = false) {
@@ -104,7 +104,7 @@ function renderDeployPanel() {
     `<button data-dep-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-dep-top="edit">edit steps</button>` +
     `${t.script ? '<button data-dep-top="open">open deploy.py</button>' : ''}</div>` +
-    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the deploy terminal. The stages are idempotent — fix and continue.</span></div>` : ''}` +
+    `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the deploy terminal. You can run each stage again safely. Fix the problem and continue.</span></div>` : ''}` +
     blameRow(d.blame) +
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>`;
   host.querySelectorAll('[data-dep-view]').forEach(b => b.onclick = () => { depUI.view = b.dataset.depView; renderDeployPanel(); });

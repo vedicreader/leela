@@ -290,7 +290,7 @@ const COMPLETION_CODE = {kept: '', 'not kept': 'the code was not kept for this o
 /* Two causes, one shape: nothing carried an id before the browser began minting them, and an ask
    can fall outside the window this list covers while its verdict stays inside it. */
 const COMPLETION_ORPHAN = 'not joined to its ask: recorded before asks carried an id, or its ask is outside this window';
-const percent = r => r === null || r === undefined ? '—' : Math.round(r * 100) + '%';
+const percent = r => r === null || r === undefined ? '–' : Math.round(r * 100) + '%';
 const completionWhen = at => at ? new Date(at * 1000).toLocaleString() : '';
 
 function completionRow(r) {
@@ -1001,7 +1001,7 @@ function renderWarmStart(log, rep) {
   }
   if (skipped.length) {
     const ul = document.createElement('ul'); ul.className = 'lee-agent-warm-skipped';
-    for (const s of skipped) ul.insertAdjacentHTML('beforeend', `<li><code>${esc(s.name)}</code> — ${esc(s.reason)}</li>`);
+    for (const s of skipped) ul.insertAdjacentHTML('beforeend', `<li><code>${esc(s.name)}</code>: ${esc(s.reason)}</li>`);
     block.insertAdjacentHTML('beforeend', '<div class="lee-vgroup">skipped</div>'); block.appendChild(ul);
   }
   const first = $('.lee-agent-turn', log);
@@ -1017,7 +1017,7 @@ async function leeAgentAssess() {
     const d = await post('/agent/thread/assess', {thread: lee.agentThread});
     const log = $('#agentlog'); if (!log) return;
     const card = document.createElement('details'); card.className = 'lee-agent-warm lee-agent-assess'; card.open = true;
-    const rows = (d.findings || []).map(f => `<li><code>${esc(f.kind)}</code> ${esc(f.tool)} · turn ${f.turn + 1}, call ${f.index + 1} — ${esc(f.message)}</li>`).join('');
+    const rows = (d.findings || []).map(f => `<li><code>${esc(f.kind)}</code> ${esc(f.tool)} · turn ${f.turn + 1}, call ${f.index + 1}: ${esc(f.message)}</li>`).join('');
     card.innerHTML = `<summary><span class="lee-agent-step-copy">Assessment · score ${esc(d.score)} · ${esc(d.calls)} call${d.calls === 1 ? '' : 's'} over ${esc(d.turns)} turn${d.turns === 1 ? '' : 's'}</span>` +
       `<span class="lee-agent-step-chevron" aria-hidden="true"></span></summary>` +
       (rows ? `<ul class="lee-agent-warm-skipped">${rows}</ul>` : '<div class="lee-dim">no findings</div>');

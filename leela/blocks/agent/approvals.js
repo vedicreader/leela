@@ -72,7 +72,7 @@ function groupedToolOptions(schemas, selected) {
     groups.get(schema.group).push(schema);
   }
   return [...groups].map(([group, tools]) => `<optgroup label="${esc(group)}">` + tools.map(tool =>
-    `<option value="${esc(tool.name)}"${tool.name === selected ? ' selected' : ''}>${esc(tool.name)} — ${esc(tool.description)}</option>`).join('') + '</optgroup>').join('');
+    `<option value="${esc(tool.name)}"${tool.name === selected ? ' selected' : ''}>${esc(tool.name)}: ${esc(tool.description)}</option>`).join('') + '</optgroup>').join('');
 }
 function previewContent(preview) {
   if (!preview) return '<div class="lee-proposal-empty">No preview available.</div>';

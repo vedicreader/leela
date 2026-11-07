@@ -115,7 +115,7 @@ def loose_refusal(p):
     p = Path(p)
     if not p.is_file(): return f'not a file: {p}'
     if not is_media(p) and p.stat().st_size > (OFFICE_MAX_BYTES if is_office(p) else MAX_EDIT_BYTES): return f'{p.name} is too large to {"show" if is_office(p) else "edit"}'
-    if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} may hold credentials'
+    if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} has the name of a credentials file'
     return None
 
 def _nfc(p): return unicodedata.normalize('NFC', str(p))
@@ -240,7 +240,7 @@ class Sandbox:
         if not self.covers(p):
             if not self.read_only(p): raise Unsafe(f'{p} is outside the open folders')
             if not reading: raise Unsafe(f'{p.name} is read-only (standard library)')
-            if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): raise Unsafe(f'{p.name} may hold credentials')
+            if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): raise Unsafe(f'{p.name} has the name of a credentials file')
         if must_exist and not p.exists(): raise FileNotFoundError(str(p))
         return p
     def root_of(self, ref):

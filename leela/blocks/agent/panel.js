@@ -236,7 +236,7 @@ let bkPoll = 0;
 function backendRow(r) {
   const st = r.install || {}, running = st.state === 'running';
   const note = running ? `installing with ${esc(st.via || 'pip')}…`
-    : st.state === 'error' ? `${esc(st.via || 'the installer')} failed — see below`
+    : st.state === 'error' ? `${esc(st.via || 'the installer')} failed. See below.`
     : r.available ? 'ready' : esc(r.why || 'not installed');
   return `<div class="lee-setup-row" data-bk="${esc(r.value)}">` +
     `<span><strong>${esc(r.label || r.value)}</strong><br><small>${note}</small>` +
@@ -293,7 +293,7 @@ function paintRuntimes(m, rows) {
   const rtsel = $('#modelruntime', m), was = rtsel.value;
   rtsel.innerHTML = (rows.length ? rows : [REMOTE_RUNTIME]).map(r =>
     `<option value="${esc(r.value)}"${r.available ? '' : ' disabled'}>${esc(r.label || r.value)}` +
-    `${r.available ? '' : ' — ' + esc(r.why || 'unavailable here')}</option>`).join('');
+    `${r.available ? '' : ': ' + esc(r.why || 'not available here')}</option>`).join('');
   const keep = rtsel.querySelector(`option[value="${CSS.escape(was || '')}"]:not([disabled])`);
   const firstrt = keep || rtsel.querySelector('option:not([disabled])');
   if (firstrt) rtsel.value = firstrt.value;

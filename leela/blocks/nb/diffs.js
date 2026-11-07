@@ -73,7 +73,7 @@ async function showDiff() {
   const d = await post('/diff', {path: lee.tabKey, ...bufferBody()});
   if (!d.rows.length) return status('no unsaved changes', 'ok');
   status(`${d.label} unsaved`, 'ok');
-  diffModal('unsaved changes — ' + d.title, d.label, d.rows);
+  diffModal('unsaved changes: ' + d.title, d.label, d.rows);
 }
 
 async function openMergeConflict(conflictBox, theirs = []) {
