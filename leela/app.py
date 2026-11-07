@@ -41,7 +41,7 @@ from .core.web import Assets, IDE_BUNDLES, JsonBody, board_routes, board_url, ha
 from .core.text import did_you_mean
 from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
-from .blocks.nb.nb import Notebook
+from .blocks.nb.nb import Notebook, capped
 from .blocks.nb.presentation import stage_src
 from .blocks.term.term import TerminalGate, colorfgbg, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
@@ -1009,17 +1009,23 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
     @rt('/tabs/save-all')
     async def tabs_save_all():
         "Persist every dirty open tab, including buffers belonging to inactive tabs."
-        saved, errors, versions = 0, [], {}
+        saved, errors, versions, held, kinds = 0, [], {}, [], set()
         for t in ws.tabs:
             if not t.dirty: continue
             key = t.path or t.title
             try:
                 if not t.path: raise ValueError(f'{t.title} needs a filename before it can be saved')
-                base = _buffer_bases.get(key)
-                if base and _disk_version(t.path) != base:
-                    raise ValueError('changed on disk after this browser draft began; open the tab to review it')
+                base, now = _buffer_bases.get(key), _disk_version(t.path)
+                nb = _docs.get(key) if t.kind == 'notebook' else None
+                # A notebook held here takes what changed on disk, as `/nb/save` does; a text draft over a moved file waits for its tab.
+                if nb is not None and (synced := _doc_versions.get(key) or base) and now != synced:
+                    try: clash = nb.take_disk(Notebook.load(t.path)) if now != 'missing' else None
+                    except Exception: clash = None
+                    if clash is not None and not clash: base = None
+                    else: held.append(key); raise ValueError('changed on disk after this browser draft began; open the tab to review it')
+                elif base and now != base:
+                    held.append(key); raise ValueError('changed on disk after this browser draft began; open the tab to review it')
                 if t.kind == 'notebook':
-                    nb = _docs.get(key)
                     if nb is None: nb = Notebook.load(t.path)
                     nb.save(t.path, sandbox=ws.fs)
                 else:
@@ -1030,9 +1036,13 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
                 _doc_versions[key] = _disk_version(t.path)
                 versions[key] = _doc_versions[key]
                 saved += 1
-            except Exception as e: errors.append(f'{t.title}: {errstr(e)}')
+            except Exception as e:
+                errors.append(f"{t.title}: {getattr(e, 'said', None) or errstr(e)}")
+                if getattr(e, 'kind', None): kinds.add(e.kind)
         if saved: ws.save()
-        if errors: return _fail('; '.join(errors))
+        # The same kinds `/nb/save` answers with, so the page offers the same way out.
+        if errors: return JSONResponse({'ok': False, 'error': '; '.join(errors), 'saved': saved, 'versions': versions, 'paths': held,
+                                        **({'kind': 'save_conflict'} if held else {'kind': first(kinds)} if kinds else {})}, status_code=409 if held else 400)
         # What was written, and what it now says on disk, so the next read is not another process
         # having written the file.
         return {'ok': True, 'saved': saved, 'versions': versions}
@@ -1089,7 +1099,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         has_result = any(o.get('output_type') == 'execute_result' for o in res.outputs)
         latest = await k.api('/api/result', timeout=2) if res.ok and has_result else None
         return {'ok': res.ok, 'text': await _explain(k, res.error) or res.text or 'ok',
-                'outputs': res.outputs, 'count': res.execution_count, 'scope': 'live',
+                'outputs': capped(res.outputs), 'count': res.execution_count, 'scope': 'live',
                 'result': (latest or {}).get('result')}
     @rt('/run/file')
     async def run_file(req):
@@ -1101,7 +1111,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         if code is None: return _fail(label)
         k = await _k(tab)
         res = await k.execute(code)
-        return {'ok': res.ok, 'label': label, 'outputs': res.outputs,
+        return {'ok': res.ok, 'label': label, 'outputs': capped(res.outputs),
                 'text': await _explain(k, res.error) or res.text or 'ok'}
     @rt('/run/code')
     async def run_code(req):
@@ -1113,7 +1123,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         if err: return _fail(err)
         k = await _k(tab)
         res = await k.execute(code)
-        return {'ok': res.ok, 'outputs': res.outputs,
+        return {'ok': res.ok, 'outputs': capped(res.outputs),
                 'text': await _explain(k, res.error) or res.text or 'ok'}
     @rt('/exec/history')
     async def exec_history(n: int = 200):

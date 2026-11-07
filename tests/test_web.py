@@ -662,7 +662,8 @@ def test_an_open_notebook_does_not_resurrect_itself_over_newer_work(tmp_path):
                                           'base_disk_version': after['disk_version'],
                                           'cells': [{'i': 0, 'source': 'X = "branch-a"'}]})
         assert 'branch-b' in p.read_text(), 'the newer work must survive the stale save'
-        assert r.status_code == 409, 'the save guard catches it instead of overwriting'
+        assert r.status_code == 200, 'the page changed nothing, so the save takes the disk change into the held copy'
+        assert client.get('/tab/state', params={'path': tab.path}).json()['cells'][0]['source'] == 'X = "branch-b"'
         assert after['disk_version'] == first['disk_version'], 'stamped with what it was read at'
         assert after.get('stale') is True, 'the file has moved under the copy being served'
 

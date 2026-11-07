@@ -21,7 +21,7 @@ except ImportError:
 
 __all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans', 'heading_level', 'section_end', 'hidden_cells',
            'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'run_watched', 'strip_work_log',
-           'merge_rows', 'merged_cells', 'CHOICES', 'take_seq']
+           'merge_rows', 'merged_cells', 'CHOICES', 'take_seq', 'MAX_STREAM', 'capped', 'OutFeed']
 
 CELL_TYPES = ('code', 'markdown', 'prompt')
 
@@ -40,6 +40,8 @@ CELL_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
 #: One count for every notebook this process holds, so a reload outranks the copy it replaced. Microseconds
 #: since the epoch to start, so a page that outlives a restart still sees a later number, and within JS's exact integers.
 _VERSIONS = itertools.count(time.time_ns() // 1000)
+
+def _js(d): return json.dumps(d, sort_keys=True, default=str)
 
 def take_seq(seqs, key, seq):
     "Whether a page write stamped `seq` is no older than the last one `seqs` took for `key`, recording it."
@@ -97,6 +99,41 @@ def media_output(m):
     return dict(output_type='display_data', data={'text/html': html}, metadata={})
 
 def media_outputs(media): return [media_output(m) for m in (media or [])]
+
+#: Characters one stream output keeps. Past it the oldest half goes, and a first line says how much went.
+MAX_STREAM = 200_000
+_CUT = re.compile(r'\[Leela removed the first ([\d,]+) characters of this output\.\]\n')
+
+def _trimmed(o):
+    "A stream output longer than `MAX_STREAM` as a new output with its newest half; any other output as it is."
+    t = o.get('text')
+    if o.get('output_type') != 'stream' or not isinstance(t, str) or len(t) <= MAX_STREAM: return o
+    m = _CUT.match(t)
+    if m and len(t) - m.end() <= MAX_STREAM: return o
+    body, gone = (t[m.end():], int(m[1].replace(',', ''))) if m else (t, 0)
+    keep = body[-(MAX_STREAM // 2):]
+    return {**o, 'text': f'[Leela removed the first {gone + len(body) - len(keep):,} characters of this output.]\n' + keep}
+
+def capped(outputs): return [_trimmed(o) for o in outputs or []]
+
+def _same_stream(a, b):
+    return (a.get('output_type') == b.get('output_type') == 'stream' and a.get('name') == b.get('name')
+            and isinstance(a.get('text'), str) and isinstance(b.get('text'), str))
+
+class OutFeed:
+    "A cell's outputs as the changes since the last `ops`: `[k, 'append', text]` for a stream that grew, `[k, 'set', output]` otherwise."
+    def __init__(self, c): self.c, self.sent = c, []
+    def ops(self):
+        outs, ops = self.c.outputs, []
+        del self.sent[len(outs):]
+        for k, o in enumerate(outs):
+            n = len(o['text']) if o.get('output_type') == 'stream' and isinstance(o.get('text'), str) else -1
+            was = self.sent[k] if k < len(self.sent) else None
+            if was and was[0] is o and was[1] == n: continue
+            ops.append([k, 'append', o['text'][was[1]:]] if was and was[0] is o and 0 <= was[1] < n else [k, 'set', dict(o)])
+            if was: self.sent[k] = (o, n)
+            else: self.sent.append((o, n))
+        return ops
 
 def _detached(cell):
     "A copy of `cell` with a fresh identity and no running state."
@@ -240,6 +277,9 @@ class Notebook:
         self.meta = dict(meta or {})
         self.version, self.dirty = next(_VERSIONS), False
         self._undo, self._redo = [], []
+        #: `cell id -> (page, source)`: the source each page last wrote, so its own write still in flight is no clash.
+        self.writers = {}
+        self.synced = None
     @property
     def dirty(self): return self._dirty
     @dirty.setter
@@ -247,14 +287,60 @@ class Notebook:
         if v: self.version = next(_VERSIONS)
         self._dirty = bool(v)
     def take_sources(self, rows, seqs):
-        "Put each `{id or i, source, seq}` row on its cell, unless `seqs` has taken a newer write for that cell."
-        by_id = {c.id: c for c in self.cells}
+        "Put each `{id or i, source, seq, base, page}` row on its cell; the ids of rows that clash, which change nothing."
+        by_id, clash = {c.id: c for c in self.cells}, []
         for r in rows:
-            i = int(r.get('i', -1))
+            i, page = int(r.get('i', -1)), r.get('page') or ''
             c = by_id.get(r['id']) if r.get('id') else self.cells[i] if 0 <= i < len(self) else None
-            if c is None or not take_seq(seqs, c.id, r.get('seq')) or c.source == r.get('source', c.source): continue
+            if 'base' in r:
+                # A page names the source it last saw: a cell gone, or changed by anyone but this page, is a clash.
+                if c is None or not r.get('id'): clash.append(r.get('id') or str(i)); continue
+                if c.source != r['source'] and c.source != r['base'] and self.writers.get(c.id) != (page, c.source):
+                    clash.append(c.id); continue
+            if c is None or not take_seq(seqs, f'{page}:{c.id}' if page else c.id, r.get('seq')) or c.source == r.get('source', c.source): continue
             c.source = r['source']
+            if page: self.writers[c.id] = (page, c.source)
             self.dirty = True
+        return clash
+    def _sync(self):
+        "Note what the file holds now: the base `take_disk` tells this copy's changes from the disk's by."
+        self.synced = dict(meta=_js(self.meta), cells={c.id: (c.source, c.cell_type, _js(c.extra), c.outputs) for c in self.cells})
+    def take_disk(self, disk):
+        "Take what changed in `disk` since the last load or save, keeping this copy's own changes and outputs; the cells changed on both sides, or None with no base."
+        if self.synced is None: return None
+        was, mine, theirs = self.synced['cells'], {c.id: c for c in self.cells}, {c.id: c for c in disk.cells}
+        moved = lambda c, b: (c.source, c.cell_type) != b[:2]
+        clash, sets, drops, adds = [], [], [], []
+        for j, t in enumerate(disk.cells):
+            b, m = was.get(t.id), mine.get(t.id)
+            if b is None:
+                if m is None: adds.append(j)
+                continue
+            if m is None:
+                if moved(t, b): clash.append(t)
+                continue
+            if moved(t, b):
+                if not moved(m, b): sets.append((m, 'source', t.source)); sets.append((m, 'cell_type', t.cell_type))
+                elif (m.source, m.cell_type) != (t.source, t.cell_type): clash.append(t)
+            if _js(t.extra) != b[2] and _js(m.extra) == b[2]: sets.append((m, 'extra', t.extra))
+            if m.outputs is b[3] and (m.outputs, m.execution_count) != (t.outputs, t.execution_count):
+                sets += [(m, 'outputs', t.outputs), (m, 'execution_count', t.execution_count)]
+        for k, b in was.items():
+            if k in theirs or (m := mine.get(k)) is None: continue
+            if moved(m, b) or m.outputs is not b[3]: clash.append(m)
+            else: drops.append(m)
+        meta = _js(disk.meta) != self.synced['meta'] and _js(self.meta) == self.synced['meta']
+        if clash or not (sets or drops or adds or meta): return clash
+        for c, k, v in sets: setattr(c, k, v)
+        self.cells = L(c for c in self.cells if not any(c is d for d in drops))
+        for j in adds:
+            prev = first(disk.cells[i].id for i in range(j - 1, -1, -1) if disk.cells[i].id in {c.id for c in self.cells})
+            self.cells.insert(next((i + 1 for i, c in enumerate(self.cells) if c.id == prev), 0), disk.cells[j])
+        if meta: self.meta = disk.meta
+        # Undo would bring back the cells as they were before the disk's changes, and the next save would erase them.
+        self._undo.clear(); self._redo.clear(); self.writers.clear()
+        self.dirty = True
+        return []
     def __len__(self): return len(self.cells)
     def __getitem__(self, i): return self.cells[i]
     @property
@@ -282,12 +368,21 @@ class Notebook:
         if p.exists() and p.stat().st_size == 0: return cls.blank(path)
         nb = read_nb(str(path))
         cells = [Cell.from_nb(c) for c in nb['cells']] or [Cell()]
+        seen = set()
+        for c in cells:
+            if c.id in seen: c.id = cell_id()   # a hand-merged file can repeat an id, and every route names cells by it
+            seen.add(c.id)
         # A notebook whose metadata is missing, or is not a mapping, is a notebook without a
         # language, not a notebook that fails to open.
         meta = nb.get('metadata')
-        return cls(cells, path, meta if isinstance(meta, dict) else None)
+        doc = cls(cells, path, meta if isinstance(meta, dict) else None)
+        doc._sync()
+        return doc
     @classmethod
-    def blank(cls, path=None, meta=None): return cls([Cell()], path, meta)
+    def blank(cls, path=None, meta=None):
+        doc = cls([Cell()], path, meta)
+        doc._sync()
+        return doc
     def save(self, path=None, sandbox=None):
         "Write the notebook; `sandbox` confines the write to the open folders."
         p = str(path or self.path)
@@ -296,6 +391,7 @@ class Notebook:
         if sandbox is not None: sandbox.write(p, nb2str(nb))
         else: write_nb(nb, p)
         self.path, self.dirty = p, False
+        self._sync()
         return p
     def _snapshot(self, i=0): return dict(cells=deepcopy(list(self.cells)), meta=deepcopy(self.meta), dirty=self.dirty, index=i)
     def _checkpoint(self, i=0):
@@ -316,6 +412,7 @@ class Notebook:
             else: c.extra.pop(COLLAPSED)
             self.dirty = True
         self.meta = deepcopy(snap.get('meta') or {})
+        self.writers.clear()
         return max(0, min(snap['index'], len(self.cells) - 1))
     def undo(self):
         "Restore the notebook before its last structural operation; return the focus index."
@@ -523,12 +620,16 @@ class Notebook:
                     c.outputs = []
                     display_at.clear()
                 elif o.get('_update') and display_id in display_at: c.outputs[display_at[display_id]] = row
+                elif c.outputs and _same_stream(last := c.outputs[-1], row):
+                    # Popped first, so the text has one reference and CPython grows it in place instead of copying it.
+                    t = last.pop('text'); t += row['text']; last['text'] = t
+                    c.outputs[-1] = _trimmed(last)
                 else:
                     c.outputs.append(row)
                     if display_id: display_at[display_id] = len(c.outputs) - 1
                 if on_output: on_output(i, row)
             r = await kernel.execute(c.source, on_output=receive)
-            c.outputs = r.outputs
+            c.outputs = capped(r.outputs)
             c.execution_count = r.execution_count
             c._lost = bool(getattr(r, 'lost', False))   # kunda settled a run whose reply never came
             c._reason = getattr(r, 'reason', None)

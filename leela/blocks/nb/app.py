@@ -12,11 +12,13 @@ from ... import errstr
 from pathlib import Path
 
 from ...core.text import did_you_mean
+from ...core.session import MAX_BODY
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop, sse
+from ..fs.fs import NotText, decoded
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
-from .nb import Cell, Notebook, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
+from .nb import Cell, Notebook, OutFeed, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
@@ -27,30 +29,17 @@ CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug'
 #: Seconds between SSE comments on a silent run stream, well inside the page's own silence limit.
 KEEPALIVE = 15
 
-def _rebase_notebook(tab, payload, docs):
-    "Put a draft's source edits onto the notebook as it is on disk now."
-    key = tab.path or tab.title
-    base = docs.get(key)
-    if base is None or not tab.path: return None
-    try: disk = Notebook.load(tab.path)
-    except Exception: return None
-    by_id = {c.id: c for c in disk.cells if c.id}
-    clash, edits = [], []
-    held = {c.id: c for c in base.cells if c.id}
-    for c in payload.get('cells', []):
-        i = c.get('i')
-        if c.get('id'): was = held.get(c['id'])
-        else: was = base[i] if isinstance(i, int) and 0 <= i < len(base) else None
-        if was is None: return None
-        now = by_id.get(was.id) if was.id else (disk[i] if i < len(disk) else None)
-        if now is None: return None                      # the cell is gone: not ours to reconcile
-        if now.source != was.source and now.source != c['source']:
-            clash.append(f'cell {i + 1}')
-        else: edits.append((now, c['source']))
-    if clash: return clash
-    for cell, source in edits: cell.source = source
-    docs[key] = disk
-    return []
+#: Seconds between two output messages on a run stream. The page draws each one, and a cell can print thousands of lines a second.
+FLUSH = .075
+CONFLICT = 'save_conflict'
+
+def conflict(msg, cells=()):
+    "Every save conflict's answer: the page offers keep, merge, overwrite and load, with the other side of each cell that clashed."
+    return fail(msg, 409, kind=CONFLICT, cells=[{'id': c.id, 'source': c.source, 'cell_type': c.cell_type} for c in cells])
+
+def _labels(nb, cells):
+    at = {c.id: j for j, c in enumerate(nb.cells)}
+    return ', '.join(f'cell {at[c.id] + 1}' if c.id in at else 'a deleted cell' for c in cells)
 
 #: Messages one page's widget socket holds while it falls behind; past it the page reloads widget state instead.
 COMM_BACKLOG = 2000
@@ -120,6 +109,13 @@ def connect(app, ctx):
         if d.get('ids') is not None and d.get('op') != 'heading':
             if not all(x in at for x in d['ids']): return 'a selected cell is no longer in the notebook'
             d['indices'] = [at[x] for x in d['ids']]
+    def took(nb, d, cid, i, tab):
+        "Put a run's `source` on its cell; the conflict answer when another window changed that cell since this page saw it."
+        if 'source' not in d: return None
+        row = {'id': cid, 'i': i, 'source': d['source'], 'seq': d.get('seq'), **{k: d[k] for k in ('base', 'page') if k in d}}
+        if not (clash := nb.take_sources([row], store.seqs_for(tab))): return None
+        held = first(c for c in nb.cells if c.id == clash[0])
+        return conflict('another window changed this cell: ' + _labels(nb, [held] if held else []) + '. Review it before running.', [held] if held else [])
     def note_origin(tab, cell): ws.origins.cell(cell, (tab.path or tab.title) if tab else '')
     def place(nb, c): return next((j for j, x in enumerate(nb.cells) if x is c), -1)
     def dbg(method=None): return paused_kernel(dbgstate, method)
@@ -145,7 +141,7 @@ def connect(app, ctx):
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
         c = nb[i]
-        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if (no := took(nb, d, c.id, i, owner_tab)): return no
         async with run_lock:
             if place(nb, c) < 0: return fail('that cell is no longer in the notebook', 409)
             try: k = await runtime_for(owner_tab)
@@ -178,7 +174,7 @@ def connect(app, ctx):
         if not (0 <= i < len(nb)) or (d.get('id') and nb[i].id != d['id']):
             return fail('that cell is no longer at this position', 409)
         c = nb[i]
-        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if (no := took(nb, d, c.id, i, owner_tab)): return no
         # The notebook about to run is one stat; its tree is a walk, and that is once per root. `save: false` (a presentation) writes neither.
         if d.get('save') is not False:
             if ws.initialize_notebook(getattr(owner_tab, 'path', None), nb):
@@ -193,8 +189,8 @@ def connect(app, ctx):
         if place(nb, c) < 0:
             run_lock.release()
             return fail('that cell is no longer in the notebook', 409)
-        q = asyncio.Queue()
-        def emitted(_i, _output): q.put_nowait([dict(x) for x in c.outputs])
+        wake, feed = asyncio.Event(), OutFeed(c)
+        def emitted(_i, _output): wake.set()
         async def run():
             _, lost = await run_watched(nb, c, k, on_output=emitted)
             if c.cell_type == 'code': lock(c, d.get('prediction', ''), d.get('confidence'))
@@ -210,21 +206,26 @@ def connect(app, ctx):
             if owner_tab: owner_tab.running = max(0, owner_tab.running - 1)
             if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
             run_lock.release()
-            q.put_nowait(None)
+            wake.set()
         if owner_tab: owner_tab.running += 1
         task = asyncio.create_task(run())
         task.add_done_callback(finished)
         running_cells[run_key] = (k, task)
         async def events():
+            # At most one message per `FLUSH`, each only what changed since the last; `done` carries the whole cell.
+            loop, sent = asyncio.get_running_loop(), 0.
             try:
-                while True:
-                    try: got = [await asyncio.wait_for(q.get(), KEEPALIVE)]
+                while not task.done():
+                    try: await asyncio.wait_for(wake.wait(), KEEPALIVE)
                     except TimeoutError:
                         yield ': keep-alive\n\n'
                         continue
-                    while not q.empty(): got.append(q.get_nowait())
-                    if (outputs := first(reversed(got), lambda o: o is not None)) is not None: yield sse('output', {'i': place(nb, c), 'id': c.id, 'outputs': outputs})
-                    if None in got: break
+                    await asyncio.sleep(max(0, sent + FLUSH - loop.time()))
+                    wake.clear()
+                    if task.done(): break
+                    if (ops := feed.ops()):
+                        sent = loop.time()
+                        yield sse('output', {'i': place(nb, c), 'id': c.id, 'n': len(c.outputs), 'ops': ops})
                 yield sse('done', await task)
             except Exception as e:
                 yield sse('error', {'text': errstr(e)})
@@ -251,7 +252,7 @@ def connect(app, ctx):
         c = nb[i]
         if not exercise_meta(c): return fail(JUDGE['not_exercise'], 400)
         if not take_seq(store.seqs_for(owner_tab), c.id, d.get('seq')): return fail(JUDGE['stale'], 409)
-        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if (no := took(nb, d, c.id, i, owner_tab)): return no
         try: verdict = await check_cell(nb, c, run_lock, lambda: runtime_for(owner_tab), ws.jobs)
         except (Refused, EnvGone) as e: return fail(str(e), 409)
         note_origin(owner_tab, c)
@@ -270,7 +271,7 @@ def connect(app, ctx):
             return fail('that cell is no longer at this position', 409)
         c = nb[i]
         if c.cell_type != 'code': return fail('only code cells can be debugged')
-        if 'source' in d: nb.take_sources([{'id': c.id, 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if (no := took(nb, d, c.id, i, owner_tab)): return no
         await run_lock.acquire()
         try: k = await runtime_for(owner_tab)
         except BaseException as e:
@@ -308,7 +309,7 @@ def connect(app, ctx):
                     elif value.get('event') == 'continued':
                         yield sse('continued', value.get('body') or {})
                 result = await task
-                c.outputs, c.execution_count = result.outputs, result.execution_count
+                c.outputs, c.execution_count = capped(result.outputs), result.execution_count
                 c.execution_ms = (asyncio.get_running_loop().time() - started) * 1000
                 c.fresh, c.output_hash = True, src_hash(c.source)
                 note_origin(owner_tab, c)
@@ -386,7 +387,7 @@ def connect(app, ctx):
         i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
         asked = nb[i]
-        if 'source' in d: nb.take_sources([{'id': d.get('id'), 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if (no := took(nb, d, d.get('id'), i, owner_tab)): return no
         try: c = await off_loop(ws.ask_cell, nb, asked)
         except Exception as e: return fail(e)
         owner_tab.dirty = True
@@ -405,7 +406,7 @@ def connect(app, ctx):
         if (gone := by_id(nb, d)): return fail(gone, 409)
         i = int(d.get('i', 0))
         if not (0 <= i < len(nb)): return fail(f'no cell {i}')
-        if 'source' in d: nb.take_sources([{'id': d.get('id'), 'i': i, 'source': d['source'], 'seq': d.get('seq')}], store.seqs_for(owner_tab))
+        if (no := took(nb, d, d.get('id'), i, owner_tab)): return no
         asked = nb[i]
         asked.running = True
         owner_tab.running += 1
@@ -459,8 +460,8 @@ def connect(app, ctx):
         d = await req.json()
         tab, nb, _ = run_owner(d)
         if nb is None: return fail('that notebook is no longer open' if d.get('path') else 'no notebook open')
-        nb.take_sources(d.get('sources', []), store.seqs_for(tab))
-        tab.dirty = tab.dirty or nb.dirty
+        clash = nb.take_sources(d.get('sources', []), store.seqs_for(tab))
+        tab.dirty = tab.dirty or nb.dirty or bool(clash)
         if (gone := by_id(nb, d)): return fail(gone, 409)
         op, i = d.get('op'), int(d.get('i', 0))
         if op == 'insert': nb.insert(i, Cell(source=d.get('source', ''), cell_type=d.get('cell_type', 'code')))
@@ -491,7 +492,8 @@ def connect(app, ctx):
         elif op == 'redo':
             if (at := nb.redo()) is None: return fail('no cell operation to redo')
         elif op == 'merge': nb.merge(i)
-        elif op == 'source': nb.take_sources([{'id': nb[i].id, 'i': i, 'source': d.get('source', ''), 'seq': d.get('seq')}], store.seqs_for(tab))
+        elif op == 'source':
+            if (no := took(nb, {**d, 'source': d.get('source', '')}, nb[i].id, i, tab)): return no
         elif op == 'context':
             mode = str(d.get('mode') or 'auto')
             if mode not in ('auto', 'keep', 'discard'): return fail('context mode must be auto, keep or discard')
@@ -519,7 +521,7 @@ def connect(app, ctx):
         elif op == 'clear': nb.clear_all()
         else: return fail(f'unknown op {op!r}')
         tab.dirty = tab.dirty or nb.dirty
-        return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version,
+        return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version, 'clash': clash,
                 'index': at if op in ('undo', 'redo') else i}
     def _vault_fail(e):
         if isinstance(e, ImportError) and (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail('Saving cards needs abhyasa. Install abhyasa, then try again.')
@@ -652,54 +654,66 @@ def connect(app, ctx):
                 return fail(errstr(e))
             except Exception as e: return fail(errstr(e))
             return dict(board, notes=notes, ok=True)
+    def _held_text(target):
+        "The file's text for the journal, None when it is not there; `False` past `MAX_BODY`, which history does not copy, so it is never read."
+        p = Path(target) if target else None
+        if not (p and p.exists()): return None
+        if p.stat().st_size > MAX_BODY: return False
+        try: return decoded(p.read_bytes(), p)
+        except NotText: raise NotText(p, write=True) from None
     @rt('/nb/save')
     async def nb_save(req):
         d=await req.json();path=str(d.get('path') or '')
         t=store.tab_for(d['tab']) if d.get('tab') else first(x for x in ws.tabs if x.path==path) if path else ctx.tab
         if t is None:return fail('that tab is no longer open' if d.get('tab') or path else 'nothing open')
+        key, force = t.path or t.title, bool(d.get('force'))
         current_version = _disk_version(t.path)
         base_version = str(d.get('base_disk_version') or '')
-        rebased = ''
-        if base_version and current_version != base_version and not d.get('force'):
-            # Take the file as it is now and put the draft's edits back on top. Only a source
-            # changed on both sides is a conflict worth stopping for.
-            clash = _rebase_notebook(t, d, docs) if t.kind == 'notebook' else None
-            if clash is None:
-                mine = doc_versions.get(t.path or t.title) == current_version
-                whose = ('Leela wrote that version itself, so this draft began before its own last save'
-                         if mine else 'another process wrote it')
-                return fail('the file changed on disk after this browser draft began; review it before '
-                            f'overwriting. Draft base {base_version}, on disk {current_version}: {whose}.', 409)
-            if clash:
-                return fail('the file changed on disk and so did these cells in the browser: '
-                            + ', '.join(clash) + '. Review them before overwriting.', 409)
-            rebased = current_version
+        changed = ('the file changed on disk after this browser draft began; review it before overwriting. '
+                   f'Draft base {base_version}, on disk {current_version}: ')
+        nb = docs.get(key) if t.kind == 'notebook' else None
+        if t.kind != 'notebook' and base_version and current_version != base_version and not force:
+            mine = doc_versions.get(key) == current_version
+            return conflict(changed + ('Leela wrote that version itself, so this draft began before its own last save.' if mine else 'another process wrote it.'))
         try:
             target = t.path or d.get('path')
-            before = Path(target).read_text(encoding='utf-8', errors='replace') if target and Path(target).exists() else None
             if t.kind == 'notebook':
-                nb=docs.get(t.path or t.title)
                 if nb is None:
                     try:nb=Notebook.load(t.path) if t.path else Notebook.blank()
                     except Exception:return fail('no notebook')
-                    docs[t.path or t.title]=nb
-                nb.take_sources(d.get('cells', []), store.seqs_for(t))
-                nb.save(t.path or d.get('path'), sandbox=ctx.fs)
+                    docs[key]=nb
+                    doc_versions[key] = current_version
+                rows = d.get('cells', [])
+                if force: rows = [{k: v for k, v in r.items() if k != 'base'} for r in rows]
+                if (clash := nb.take_sources(rows, store.seqs_for(t))):
+                    t.dirty = True
+                    held = {c.id: c for c in nb.cells}
+                    gone = [Cell(id=i, source='') for i in clash if i not in held]
+                    return conflict('another window changed these cells: ' + _labels(nb, [held[i] for i in clash if i in held] + gone)
+                                    + '. Review them before overwriting.', [held[i] for i in clash if i in held] + gone)
+                synced_at = doc_versions.get(key) or base_version
+                if t.path and synced_at and current_version != synced_at and not force:
+                    # Something else wrote the file: take its changes into this copy, which keeps its own.
+                    try: clash = nb.take_disk(Notebook.load(t.path)) if current_version != 'missing' else None
+                    except Exception: clash = None
+                    if clash is None: return conflict(changed + 'another process wrote it.')
+                    if clash: return conflict('the file changed on disk and so did these cells here: ' + _labels(nb, clash)
+                                              + '. Review them before overwriting.', clash)
+                    t.dirty = True
+            before = _held_text(target)
+            if t.kind == 'notebook': nb.save(t.path or d.get('path'), sandbox=ctx.fs)
             else:
                 ctx.fs.write(t.path, text := d.get('text', ''))
                 # A mirror stamped after this text has already landed: it stays held, and the tab dirty.
-                if (newest := take_seq(store.seqs_for(t), '', d.get('seq'))): buffers.pop(t.path or t.title, None)
+                if (newest := take_seq(store.seqs_for(t), '', d.get('seq'))): buffers.pop(key, None)
             t.dirty = t.kind != 'notebook' and not newest
-            buffer_bases.pop(t.path or t.title, None)
+            buffer_bases.pop(key, None)
             # what is cached now matches the file again, so this is the version it was read at
-            doc_versions[t.path or t.title] = _disk_version(t.path)
-            # A text save already knows what it wrote. Reading it back would cost a second pass
-            # over the file, which on a large notebook is long enough to feel.
-            after = (text if t.kind != 'notebook' else
-                     Path(target).read_text(encoding='utf-8', errors='replace')
-                     if target and Path(target).exists() else None)
-            operation = ctx.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
-            return {'ok': True, 'path': t.path, 'disk_version': _disk_version(t.path),
+            doc_versions[key] = _disk_version(t.path)
+            # A text save already knows what it wrote; a notebook is read back only when history keeps it.
+            after = text if t.kind != 'notebook' else None if before is False else _held_text(target)
+            operation = None if False in (before, after) else ctx.journal.record(f'Save {t.title}', [(target, before, after)], kind='save')
+            return {'ok': True, 'path': t.path, 'disk_version': doc_versions[key],
                     'version': nb.version if t.kind == 'notebook' else None,
                     'operation_id': operation['id'] if operation else ''}
         except Exception as e:
