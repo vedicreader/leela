@@ -36,3 +36,22 @@ def test_markdown_cell_images_resolve_against_the_notebook(tmp_path):
     assert raw and not [u for u in raw if 'missing' in u], raw
     assert all(folder in __import__('urllib.parse').parse.unquote(i['src']) for i in got[:2]), got
     assert got[2]['src'].startswith('data:image/png;base64,'), got
+
+
+def test_markdown_images_with_spaces_and_unicode_in_their_paths(tmp_path):
+    """URL's `pathname` is percent-encoded, so `a b.png` was asked for as a file named `a%20b.png`."""
+    d = tmp_path.resolve()/'Notes 9.46 am'; d.mkdir()
+    names = ['Screenshot 2026-11-04 at 9.46.03 am.png', 'my pic.png', 'café.png']
+    for n in names: (d/n).write_bytes(DOT)
+    p = d/'pics.ipynb'
+    src = f'<img src="{names[0]}">\n\n![s](my%20pic.png)\n\n![c](caf%C3%A9.png)\n\n![m](<{names[1]}>)\n'
+    p.write_text(json.dumps({'cells': [{'cell_type': 'markdown', 'source': src.splitlines(True), 'metadata': {}, 'id': 'c0'}],
+        'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    async def go(pg):
+        await pg.evaluate('p => leeOpenFile(p)', str(p))
+        await pg.wait_for_function(f'(({IMGS})()).length === 4')
+        try: await pg.wait_for_function(f'(({IMGS})()).every(i => i.done && i.w > 0)', timeout=5000)
+        except Exception: pass
+        return await pg.evaluate(IMGS)
+    got = _run(go, roots=[d])
+    assert len(got) == 4 and all(i['w'] > 0 for i in got), got

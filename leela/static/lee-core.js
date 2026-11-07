@@ -749,6 +749,8 @@ function addMarkdownCellAction(el) {
   bar.appendChild(button); el.appendChild(bar);
 }
 
+function uriPath(s) { try { return decodeURIComponent(s); } catch { return s; } }
+
 function resolveMarkdownImages(el) {
   const base = el.closest('[data-md-base]')?.dataset.mdBase || '';
   $$('img', el).forEach(img => {
@@ -756,7 +758,8 @@ function resolveMarkdownImages(el) {
     if (!src || /^(https?:|data:|blob:|attachment:|\/file\/raw)/i.test(src)) return;
     if (!src.startsWith('/') && !base) return;
     // `..` and `.` are resolved by URL, so a path cannot climb out through the query string.
-    const abs = src.startsWith('/') ? src : new URL(src, 'file://' + base + '/').pathname;
+    // `pathname` is percent-encoded, so `a b.png` would be asked for as `a%20b.png`.
+    const abs = src.startsWith('/') ? src : uriPath(new URL(src, 'file://' + base + '/').pathname);
     img.src = '/file/raw/' + encodeURIComponent(abs.split('/').pop()) + '?path=' + encodeURIComponent(abs);
     img.loading = 'lazy';
   });
