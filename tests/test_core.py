@@ -530,10 +530,11 @@ def test_a_hung_interactive_shell_is_asked_again_as_a_login_shell(tmp_path, monk
     shell.chmod(0o755)
     # macOS scans a new executable on its first exec, and under `-n auto` that took longer than the timeout; it happens here, untimed.
     subprocess.run([str(shell)], capture_output=True, check=True)
-    assert shell_env(str(shell), timeout=3) == {'OPENAI_API_KEY': 'sk-login'}
+    # The default timeout, which also bounds the login shell: on a loaded runner a healthy one took more than 3 s.
+    assert shell_env(str(shell)) == {'OPENAI_API_KEY': 'sk-login'}
     asked, run = [], envs.subprocess.run
     monkeypatch.setattr(envs.subprocess, 'run', lambda argv, **kw: asked.append(argv[1:]) or run(argv, **kw))
-    assert shell_env(str(shell), timeout=3) == {'OPENAI_API_KEY': 'sk-login'}
+    assert shell_env(str(shell)) == {'OPENAI_API_KEY': 'sk-login'}
     assert asked == [['-l', '-c', 'env -0']], 'a shell that hung once is not waited on again'
 
 def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_path, monkeypatch):
