@@ -147,6 +147,8 @@ async function loadSettings(language = '') {
   try {
     const d = await api('/settings?language=' + encodeURIComponent(language));
     lee.settingsMeta = d; lee.filePrefs = d.effective.files || {};
+    // Said once per problem: `prefSet` callers swallow the refusal, so this is where a broken file shows.
+    for (const said of Object.values(d.problems || {})) if (said !== lee.settingsSaid) { lee.settingsSaid = said; status(said, 'err'); }
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
     lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
     lee.prefs = d.effective || {}; lee.appearancePrefs = d.effective.appearance || {};
