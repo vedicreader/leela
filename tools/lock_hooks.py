@@ -160,7 +160,7 @@ def smoke(s):
     ok &= s.step('kernel cell 1+1', cell)
     def find():   # rgapi 0.2.3 swapped fd's first two arguments, and an empty file list looked like a pass
         work = s.tmp/'work'; (work/'probe.py').write_text('x = 1\n')
-        got = sh(s.py, '-I', '-c', f'from pathlib import Path; from leela.blocks.fs.fs import _walked; print(len(_walked([Path({str(work)!r})], False, 100, None)))', env=kernel_env(s), cwd=s.tmp, timeout=120)
+        got = sh(s.py, '-I', '-c', f'from pathlib import Path; from leela.blocks.fs.fs import _walked; print(len(_walked([Path({str(work)!r})], False, 100, None)[0]))', env=kernel_env(s), cwd=s.tmp, timeout=120)
         if got.splitlines()[-1:] != ['1']: raise RuntimeError(f'the file walk found {got.strip()[-200:]!r} files, not 1')
     return ok & s.step('file walk', find)
 
