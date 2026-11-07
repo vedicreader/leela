@@ -24,12 +24,13 @@ FEATURES = (
      'Write the `.gitignore` rules that the folder needs, then stage it. The file tree colours each file by its git state.'),
     ('Live variables', ('focus_vars', 'switch_env'),
      'See every name in the kernel while a cell runs. Start the filter with `=` to evaluate an expression.'),
-    # TODO(approval-gate): the worktree leela-gate changes what each mode lets through. Rewrite these four sentences from that branch when it is on main.
     ('The agent', ('focus_agent', 'agent_selection', 'ask_ai'),
      'Ask a local or cloud model to read, change, run and test code. Each tool call is a card: approve, reject with steering, retry or roll back. '
      'The pane control sets the mode. Guided runs reads and stops before each write, command, kernel run and web call. Directed stops before every call. '
      'Edits runs file and notebook edits with no stop, and stops before other writes. Autopilot stops for nothing, except the third same call in a row, '
-     'a question only a person can answer, and a host policy that asks. Stop and Pause after current work in every mode.'),
+     'a question only a person can answer, and a host policy that asks. In every mode short of autopilot, these always stop: code the agent runs '
+     '(an isolated check stays free), a watch or remember on a file, folder or URL, an API call other than GET or HEAD, image and video generation, '
+     'and a write under `.git`, `.venv` or `.leela`. The notebook tools act on the open tab, unsaved edits included. Stop and Pause after current work in every mode.'),
     ('Lessons from abhyasa', ('new_lesson', 'Open in Leela in abhyasa', '`alt+s` checks the exercise at the cursor'),
      'Learn a topic step by step. A lesson runs in its own uv environment. The agent grades a checked exercise from 0 to 10.'),
     ('The screen guide', ('the I don\'t get… button on a lesson cell',),

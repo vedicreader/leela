@@ -4,12 +4,15 @@
 
 ## 0.1.27
 
-Needs kavacha 0.0.16, Sanketa 0.2.7, gheasy 0.0.21, kunda 0.0.15, dhrishti 0.1.13, koshas 0.1.23, fossick 0.1.26 and litesearch 0.1.64.
+Needs kavacha 0.0.16, Sanketa 0.2.7, shalya 0.1.32, pullup 0.0.12, dockeasy 0.0.13, gheasy 0.0.21, kunda 0.0.15, dhrishti 0.1.13, koshas 0.1.23, fossick 0.1.26 and litesearch 0.1.64.
 
 - Security:
   - a raw file such as an SVG is served in a sandbox, so its script cannot run at Leela's address;
   - a git ref that starts with a dash is refused, and gheasy marks where options end;
   - a page on another local port can no longer reach Leela, and routes that change things take only POST.
+- The agent asks, in every mode short of autopilot, before code it runs (an isolated check stays free), a watch or remember on a file, folder or URL, an API call other than GET or HEAD, image and video generation, and a write under `.git`, `.venv` or `.leela`. A watch cannot reach outside your folders or credentials. The notebook tools act on the open tab, unsaved edits included.
+- API keys go to the keychain, or a 0600 file when there is none, and never into the environment of kernels, shells or pipelines.
+- A repo's `.leela/settings.json` cannot choose the terminal program or the agent's config folder; the settings page lists what it ignored.
 - A file that is not UTF-8 opens read-only and is never rewritten. A file keeps its own line endings.
 - A loop that prints a lot streams small updates: 2000 prints send about 32 KB, not 125 MB. One output keeps at most 200,000 characters.
 - A save after git or a formatter changed the notebook keeps your deletes, moves and outputs. Two windows on one notebook keep each other's edits, and the same cell edited in both asks which to keep.
