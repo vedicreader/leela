@@ -64,27 +64,30 @@ def external_terminal_argv(
         if binary and (exe := shutil.which(binary)): return ['open', '-a', app, cwd] if darwin else [exe, cwd]
     return None
 
+#: Home, clear the screen, clear the scrollback: the echoed prelude goes, and the first prompt is the first line.
+CLEAR = r"printf '\033[H\033[2J\033[3J'"
+
 def path_prelude(py, shell=None):
-    "The line that puts a project's venv first on PATH, in the language of the user's shell."
+    "The line that puts a project's venv first on PATH, in the language of the user's shell, then clears its own echo."
     if not py: return ''
     bindir = Path(py).parent
     name = Path(str(shell or default_shell())).name
-    if name == 'fish': return f' set -gx PATH {bindir} $PATH'
-    if name in ('csh', 'tcsh'): return f' setenv PATH "{bindir}:$PATH"'
-    return f' export PATH="{bindir}:$PATH"'
+    if name == 'fish': return f" set -gx PATH {bindir} $PATH; printf '\\e[H\\e[2J\\e[3J'"
+    if name in ('csh', 'tcsh'): return f' setenv PATH "{bindir}:$PATH"; {CLEAR}'
+    return f' export PATH="{bindir}:$PATH"; {CLEAR}'
 
 def lazygit_argv(cwd=None):
     "The argv to run lazygit against `cwd`, or raise `LazygitMissing`. Resolved at call time, not import."
     exe = shutil.which('lazygit')
     if not exe: raise LazygitMissing(
-        'lazygit is not installed or not on PATH — see https://github.com/jesseduffield/lazygit#installation')
+        'lazygit is not installed or not on PATH. See https://github.com/jesseduffield/lazygit#installation')
     return [exe] + (['--path', str(cwd)] if cwd else [])
 
 def gh_auth_argv():
     "The argv for `gh auth login`, or raise `ToolMissing`."
     exe = shutil.which('gh')
     if not exe: raise ToolMissing(
-        'the GitHub CLI is not installed or not on PATH — see https://cli.github.com')
+        'the GitHub CLI is not installed or not on PATH. See https://cli.github.com')
     return [exe, 'auth', 'login']
 
 def own_python():

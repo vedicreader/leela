@@ -216,11 +216,12 @@ def test_one_walk_answers_where_the_project_is(tmp_path):
 def test_the_path_prelude_is_written_in_the_users_own_shell():
     "`export FOO=bar` is not fish, and fish has no `export` at all."
     from leela.blocks.term.term import path_prelude
+    clear = "printf '\\033[H\\033[2J\\033[3J'"
     assert path_prelude('/p/.venv/bin/python', '/opt/homebrew/bin/fish') == \
-        ' set -gx PATH /p/.venv/bin $PATH'
-    assert path_prelude('/p/.venv/bin/python', '/bin/bash') == ' export PATH="/p/.venv/bin:$PATH"'
-    assert path_prelude('/p/.venv/bin/python', '/bin/zsh') == ' export PATH="/p/.venv/bin:$PATH"'
-    assert path_prelude('/p/.venv/bin/python', '/bin/tcsh') == ' setenv PATH "/p/.venv/bin:$PATH"'
+        " set -gx PATH /p/.venv/bin $PATH; printf '\\e[H\\e[2J\\e[3J'"
+    assert path_prelude('/p/.venv/bin/python', '/bin/bash') == ' export PATH="/p/.venv/bin:$PATH"; ' + clear
+    assert path_prelude('/p/.venv/bin/python', '/bin/zsh') == ' export PATH="/p/.venv/bin:$PATH"; ' + clear
+    assert path_prelude('/p/.venv/bin/python', '/bin/tcsh') == ' setenv PATH "/p/.venv/bin:$PATH"; ' + clear
     assert path_prelude('', '/bin/bash') == '', 'no interpreter, nothing to prepend'
     for shell in ('/bin/bash', '/opt/homebrew/bin/fish'):
         assert path_prelude('/p/.venv/bin/python', shell).startswith(' '), 'kept out of history'
