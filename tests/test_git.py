@@ -286,18 +286,43 @@ def test_cloning_a_repository_into_a_folder_runs_as_a_job_and_can_then_be_opened
     into = _outside(tmp_path, 'checkouts'); into.mkdir()
     with TestClient(ide_app(Workspace(roots=[repo_git]))) as client:
         landed = into/remote.name.removesuffix('.git')
-        started = client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}).json()
+        started = client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}, headers=SAME_ORIGIN).json()
         assert started['root'] == str(landed), 'the folder name comes from the URL'
         job = _await_job(client, started['job']['id'])
         assert job['status'] == 'complete', job.get('error')
         assert (landed/'src'/'app.py').read_text() == 'value = 1\n'
         assert repo_root(landed) == landed and job['result']['root'] == str(landed)
-        assert client.post('/fs/add-root', json={'path': str(landed)}, headers={'origin': 'http://testserver', 'sec-fetch-site': 'same-origin'}).json()['ok']
+        assert client.post('/fs/add-root', json={'path': str(landed)}, headers=SAME_ORIGIN).json()['ok']
         assert client.post('/workspace/activate', json={'path': str(landed)}).json()['ok']
         assert client.get('/git/info').json()['root'] == str(landed)
-        assert client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}).json()['error']
+        assert client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}, headers=SAME_ORIGIN).json()['error']
         assert client.post('/git/clone',
-            json={'url': str(remote), 'parent': str(_outside(tmp_path, 'imaginary'))}).json()['error']
+            json={'url': str(remote), 'parent': str(_outside(tmp_path, 'imaginary'))}, headers=SAME_ORIGIN).json()['error']
+
+SAME_ORIGIN = {'origin': 'http://testserver', 'sec-fetch-site': 'same-origin'}
+
+def test_a_clone_goes_only_into_an_open_folder_or_one_the_person_agreed_to(repo_git, tmp_path):
+    "`/git/clone` wrote into any folder a request named, from any caller."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.hub import set_confirmer
+    remote = _bare_remote(repo_git, tmp_path, 'gated.git')
+    into = _outside(tmp_path, 'elsewhere'); into.mkdir()
+    landed = into/remote.name.removesuffix('.git')
+    with TestClient(ide_app(Workspace(roots=[repo_git]))) as client:
+        r = client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}, headers={'sec-fetch-site': 'same-site'})
+        assert r.status_code == 403 and r.json()['cloned'] is False and not landed.exists()
+        inside = client.post('/git/clone', json={'url': str(remote), 'parent': str(repo_git), 'name': 'sub'}).json()
+        assert _await_job(client, inside['job']['id'])['status'] == 'complete', 'inside an open folder needs no question'
+        asked = []
+        set_confirmer(lambda q: asked.append(q) or True)
+        started = client.post('/git/clone', json={'url': str(remote), 'parent': str(into)}).json()
+        assert len(asked) == 1 and str(landed) in asked[0]
+        assert _await_job(client, started['job']['id'])['status'] == 'complete'
+        assert client.post('/fs/add-root', json={'path': str(landed)}).json()['ok'] and len(asked) == 1, 'one question, not two'
+        set_confirmer(lambda q: False)
+        no = client.post('/git/clone', json={'url': str(remote), 'parent': str(into), 'name': 'again'})
+        assert no.status_code == 403 and no.json()['declined'] and not (into/'again').exists()
 
 def test_fetch_pull_and_push_are_the_same_one_route_the_panel_already_uses(repo_git, tmp_path):
     "The three top-bar icons add no route: `/git/action` has known all three all along."

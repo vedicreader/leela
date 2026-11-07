@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from starlette.responses import JSONResponse
 
 from fastcore.all import first
 
@@ -295,8 +296,10 @@ def _clone_into(fs, url, parent, name=''):
 def connect(app, ctx):
     rt = app.route
     def run_clone(job, report):
+        from ...hub import grant
         report(current=f'cloning {job.target}')
         root = clone(job.target, job.params.get('parent') or '', job.params.get('name') or '')
+        grant(root)   # the person agreed to this folder before the clone; the add that follows asks nothing
         return {'root': str(root), 'name': root.name}
     ctx.jobs.register('git_clone', run_clone)
     #: Every conflicted file's text at the moment `/git/conflicts` served the plan, one entry per
@@ -382,6 +385,10 @@ def connect(app, ctx):
         try:
             url = clone_url(d.get('url') or '')
             target = _clone_into(ctx.fs, url, str(d.get('parent') or ''), str(d.get('name') or ''))
+            # The clone becomes an open folder, so it passes the same gate as opening one: inside an open folder, or the person agrees.
+            from ...hub import admit_folder, window_name
+            if no := await off_loop(admit_folder, str(target), window_name(ctx.session), covers=ctx.fs.covers, headers=req.headers):
+                return JSONResponse({**no[1], 'cloned': False}, status_code=no[0])
             job = ctx.jobs.start('git_clone', url, parent=str(target.parent), name=target.name)
             return {'job': job.dict(), 'root': str(target)}
         except Exception as e: return fail(e)
