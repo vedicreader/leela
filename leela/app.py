@@ -377,30 +377,15 @@ def _symbols_panel():
             cls='lee-symbols', role='tree', aria_label='file structure'),
         cls='lee-panel lee-structure')
 
+#: The left activity bar: `(key, label, title)` of each pane.
+LEFT_PANES = (('files', 'Project', 'Project files'), ('symbols', 'Structure', 'File structure'), ('git', 'Git', 'Git source control'),
+    ('workflows', 'Workflows', 'GitHub workflows'), ('releases', 'Release', 'Release pipeline'), ('deploys', 'Deploy', 'Deploy to a server'),
+    ('drive', 'Drive', 'Drive the packages one call at a time'))
+
 def _left_workspace(ws):
     return Aside(
-        Nav(Button(_activity_icon('files'), Span('Project', cls='sr-only'), cls='lee-activity-btn active',
-                   data_left='files', title='Project files', aria_label='Project files',
-                   onclick='leeLeft("files")'),
-            Button(_activity_icon('symbols'), Span('Structure', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='symbols', title='File structure', aria_label='File structure',
-                   onclick='leeLeft("symbols")'),
-            Button(_activity_icon('git'), Span('Git', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='git', title='Git source control', aria_label='Git source control',
-                   onclick='leeLeft("git")'),
-            Button(_activity_icon('workflows'), Span('Workflows', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='workflows', title='GitHub workflows', aria_label='GitHub workflows',
-                   onclick='leeLeft("workflows")'),
-            Button(_activity_icon('releases'), Span('Release', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='releases', title='Release pipeline', aria_label='Release pipeline',
-                   onclick='leeLeft("releases")'),
-            Button(_activity_icon('deploys'), Span('Deploy', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='deploys', title='Deploy to a server', aria_label='Deploy to a server',
-                   onclick='leeLeft("deploys")'),
-            Button(_activity_icon('drive'), Span('Drive', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='drive', title='Drive the packages one call at a time',
-                   aria_label='Drive the packages one call at a time',
-                   onclick='leeLeft("drive")'),
+        Nav(*[Button(_activity_icon(k), Span(lbl, cls='sr-only'), cls='lee-activity-btn' + (' active' if k == 'files' else ''),
+                     data_left=k, title=title, aria_label=title, onclick=f'leeLeft("{k}")') for k, lbl, title in LEFT_PANES],
             Span(cls='lee-activity-spacer'),
             Button('●', cls='lee-pane-pin pinned', type='button', data_pane_pin='left',
                    title='pinned open — unpin to close it when you click away',
