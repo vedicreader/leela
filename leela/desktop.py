@@ -25,6 +25,8 @@ __all__ = ['BACKENDS', 'backend', 'shell_ready', 'wait_for_http', 'start_cdp', '
 use_app('leela', leela_cfg, 'LEELA_')
 #: The page reaches this as `window.pywebview.api.recent()`, and the Dock menu reads the same hook.
 shell_api().on_recent = recent_folders
+#: The header's top row is the title bar: kavacha merges the two on macOS and tints the caption on Windows.
+shell_api().unified = True
 
 @patch
 def set_title(self:ShellApi, title, url=None):
