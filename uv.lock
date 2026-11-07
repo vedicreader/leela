@@ -1114,7 +1114,7 @@ wheels = [
 
 [[package]]
 name = "dockeasy"
-version = "0.0.11"
+version = "0.0.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -1123,9 +1123,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3c/c1/6bf0b5d5aacac112de0e81d54a9d2fd205bbe591e46ea95f90328a1c536e/dockeasy-0.0.11.tar.gz", hash = "sha256:a1ae029f803a4571abab525dad3833b0599ca05713860b360203a49188362e60", size = 28847, upload-time = "2026-10-19T08:34:15.491Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a5/3f/32b1c3eb3faa8a300679355fe5277657c9af7cf59467df1a6258564ae201/dockeasy-0.0.13.tar.gz", hash = "sha256:05e7cf20af7fd1af2eb7cf7a621c1ddfd07bdc481033f56e23283b5fce51da6e", size = 29126, upload-time = "2026-11-07T23:34:59.152Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/d9/9155b3ff86636672e361d2eadc2b1958f233035b4f67b209d6604cb2b745/dockeasy-0.0.11-py3-none-any.whl", hash = "sha256:1b2ebdaea4e2aee08526007923599a0eac1631992539ba07d2b988b1415dd262", size = 30230, upload-time = "2026-10-19T08:34:14.157Z" },
+    { url = "https://files.pythonhosted.org/packages/02/15/9e87da002561f8aebca85e84a086aa8e8bdc8ae24847e13c28da4005b509/dockeasy-0.0.13-py3-none-any.whl", hash = "sha256:67b3073b089e59d02f0672d386cff6514ec407d2c6023e6ae961b525e1df7268", size = 30505, upload-time = "2026-11-07T23:34:57.808Z" },
 ]
 
 [[package]]
@@ -2620,7 +2620,7 @@ requires-dist = [
     { name = "cfeasy", specifier = ">=0.0.6" },
     { name = "dhrishti", specifier = ">=0.1.13" },
     { name = "dhrona", specifier = ">=0.1.18" },
-    { name = "dockeasy", specifier = ">=0.0.10" },
+    { name = "dockeasy", specifier = ">=0.0.13" },
     { name = "exhash", specifier = ">=0.4.10" },
     { name = "fastcore", specifier = ">=1.7.0" },
     { name = "filelock", specifier = ">=3.12" },
@@ -2651,7 +2651,7 @@ requires-dist = [
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "orjson", specifier = ">=3.9" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "pullup", specifier = ">=0.0.11" },
+    { name = "pullup", specifier = ">=0.0.12" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
@@ -2664,7 +2664,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = ">=0.1.68" },
     { name = "rupaka", specifier = ">=0.0.15" },
-    { name = "shalya", specifier = ">=0.1.31" },
+    { name = "shalya", specifier = ">=0.1.32" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "varga", specifier = ">=0.0.7" },
@@ -4215,7 +4215,7 @@ wheels = [
 
 [[package]]
 name = "pullup"
-version = "0.0.11"
+version = "0.0.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfeasy" },
@@ -4228,9 +4228,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "vpseasy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/65/4b4845fe1bd2468070853d041cff976849bb2bc7ddeb71a300d5ef9266db/pullup-0.0.11.tar.gz", hash = "sha256:3011a651858181baa0d0e467a006d3e49e84bc4a074d0b0d941b928a90cb8637", size = 41126, upload-time = "2026-10-20T10:22:13.228Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/4e/da8ef28b5a5bbb389ba2b33e41c713cd606081fab49cbdcef24dea415398/pullup-0.0.12.tar.gz", hash = "sha256:09b639220da6b307a3c2fd2adb52ccc3bfa95f70bc074628986ea3ab85a92abc", size = 41175, upload-time = "2026-11-07T23:36:07.853Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/b1/e328be91bedee2d8ef06ad6763acac9d43295edfa39459b880b9cf3c0309/pullup-0.0.11-py3-none-any.whl", hash = "sha256:9d488ea17170504cfc20e73653fe17c55505c377661979d6c9b2b5adc6e7a05a", size = 46940, upload-time = "2026-10-20T10:22:11.613Z" },
+    { url = "https://files.pythonhosted.org/packages/db/f9/2d629bfe630dc2923b956aae45ecce8d27deb0c13457c027aee92911613a/pullup-0.0.12-py3-none-any.whl", hash = "sha256:6447451fb8cbcdfe45cf41c67b4c9a673d1970397a1c0cdd2a11cd038bbd3647", size = 46989, upload-time = "2026-11-07T23:36:06.663Z" },
 ]
 
 [[package]]
@@ -5524,7 +5524,7 @@ wheels = [
 
 [[package]]
 name = "shalya"
-version = "0.1.31"
+version = "0.1.32"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -5538,9 +5538,9 @@ dependencies = [
     { name = "litesearch" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/09/7e/e0a051e00121489d0073a83bceafa5b2cda0cfda15f39f8cf75ffacc27d6/shalya-0.1.31.tar.gz", hash = "sha256:399513edb9a639fd75f53410f4b53db1f3349a388a3673a0665c640b39e0a5d9", size = 72955, upload-time = "2026-11-06T08:07:24.218Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0c/a8/440943cea533b621ed66fac77741b13d2562a2818d7ab2f12eaf79c5e32d/shalya-0.1.32.tar.gz", hash = "sha256:6e69cb0e4644eca6e860a5e4fade2f6323dbfae49fa67a08ec91841363ceca47", size = 73155, upload-time = "2026-11-07T23:33:19.456Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/76/b94265789be68deb746c394f6c9969f39d358b63c716af8f0cbe408c37f9/shalya-0.1.31-py3-none-any.whl", hash = "sha256:81e55eb6cccea7f371e14860c5801185ce07d3fa5f446208b89cb142f2f3fb76", size = 76306, upload-time = "2026-11-06T08:07:22.891Z" },
+    { url = "https://files.pythonhosted.org/packages/66/93/b5503cb2acce7d14707b223fdeeaa1b3158b43bf8247e352e6b962c2ef82/shalya-0.1.32-py3-none-any.whl", hash = "sha256:62fa7bb1987b5287813e42f35f20a24fc7a61ba4d679e654456788015a6d9218", size = 76536, upload-time = "2026-11-07T23:33:18.203Z" },
 ]
 
 [package.optional-dependencies]
