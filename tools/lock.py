@@ -483,7 +483,7 @@ def _health(env_dir, tmp, wait=120):
 
 def incremental(env_a, lock, cache, tmp, uv, results):
     "The next env from a copy of this one: `uv sync` changes one thing (an extra), and the copy works and names only itself."
-    t, b = time.monotonic(), tmp/'env-b'
+    t, b = time.monotonic(), tmp/'next'   # a name the old path is not the start of, or the check below finds `env` inside `env-b`
     try:
         before = _digest(env_a)
         seed(env_a, b)

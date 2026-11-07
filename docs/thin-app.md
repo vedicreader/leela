@@ -34,6 +34,8 @@ Leela.app/Contents/
 
 - The lock hash is sha256 over the name and the bytes of `pyproject.toml`, `uv.lock` and `.python-version`, then `uv` and the uv version. Swift (`LockHash`) and Python (`lock_hash`) compute the same value; both test suites pin one vector.
 - The app builds a new env in place in `envs/<hash16>`. The marker is written last. A folder with no marker is a partial build, and garbage collection removes it.
+- A new lock's env starts from an APFS clone of the env in use (`EnvStore.seed`, `clonefile(2)`), when that env has the same Python. The clone drops the old marker and every `__pycache__` (a .pyc names its source path), and the old env's path is rewritten to the new one in `bin/` (script shebangs, `activate*`) and `pyvenv.cfg`. Then the usual exact `uv sync` adds, changes and removes only what the new lock changes. The env in use is never written. A failed clone or a failed sync of the copy deletes it and builds fresh. `make lock-test` checks it: a copy that adds one extra installs only that, works (imports, `/health`, a kernel cell), and holds no file that names the old env.
+- The setup window and the lock update notice say what changes, from the two `uv.lock` files (`LockDiff`): "Updating 1 package: ramabana 0.2.109 → 0.2.110", three by name, then "and N more".
 - The app switches env only at launch or at "Restart to update". It writes `state.json.tmp`, then renames it.
 - When `/health` does not answer in 120 s, or a new env crashes twice before it is ready, the app goes back to the previous env and adds the hash to `bad`. The menu item "Leela > Use Previous Version" does the same by hand.
 - Garbage collection keeps current, previous, pending and the env in use. The app runs `uv cache prune` once a week.
