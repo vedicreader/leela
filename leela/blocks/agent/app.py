@@ -51,6 +51,18 @@ def compact_chat(ai):
         raise RuntimeError((b.note if b is not None else '') or ai.routing.notes.get('summary') or 'the summary model answered nothing')
     return chat
 
+#: Help for Ramabana's own slash commands, which carry none.
+COMMAND_HELP = {
+    'model': 'show or change the model; tools native|text|auto sets how tool calls travel', 'cost': 'show token and cost totals',
+    'compact': 'compact the current context', 'skills': 'list available skills',
+    'skill': 'read one skill', 'tools': 'list tools available to the agent',
+    'extensions': 'show loaded tool extensions', 'reload': 'reload tools, skills and extensions',
+    'models': 'list the models here: provider, native tool calls, effort; `all` adds older ones',
+    'subagents': 'sub-agent settings: on|off, steps N, timeout S, nest N, model NAME|default, effort LEVEL|default, tools native|text|auto; --save keeps the last three',
+}
+#: Slash commands the page runs itself; Ramabana never sees them.
+PAGE_COMMANDS = {'calm': 'show only text, each stretch of tool calls folded into one group: on|off'}
+
 def connect(app, ctx):
     rt = app.route
     ws = ctx.session
@@ -908,17 +920,9 @@ def connect(app, ctx):
     def agent_commands():
         "Slash-command metadata for the prompt's inline command picker."
         help_by_name = {name: help for name, (_, help) in ctx.ai.registry.commands.items()}
-        builtins = {
-            'model': 'show or change the model; tools native|text|auto sets how tool calls travel', 'cost': 'show token and cost totals',
-            'compact': 'compact the current context', 'skills': 'list available skills',
-            'skill': 'read one skill', 'tools': 'list tools available to the agent',
-            'extensions': 'show loaded tool extensions', 'reload': 'reload tools, skills and extensions',
-            'models': 'list the models here: provider, native tool calls, effort; `all` adds older ones',
-            'subagents': 'sub-agent settings: on|off, steps N, timeout S, nest N, model NAME|default, effort LEVEL|default, tools native|text|auto; --save keeps the last three',
-        }
         describe = lambda item: (getattr(item, '__doc__', '') or '').strip().split('\n')[0]
         return {
-            'commands': [{'name': n, 'help': help_by_name.get(n) or builtins.get(n, '')}
+            'commands': [{'name': n, 'help': help_by_name.get(n) or COMMAND_HELP.get(n, '')}
                          for n in ctx.ai.commands()],
             'tools': [{'name': t.__name__, 'help': describe(t)} for t in ctx.ai._plain],
             'skills': [{'name': s.name, 'help': s.description} for s in ctx.ai.skills],
