@@ -386,7 +386,8 @@ def test_home_is_the_work_folder():
     "Leela's tests rely on this: in the closed process, HOME and `~` are the temporary work folder."
     src = 'import os\ndef f():\n    return os.environ.get("HOME") == os.getcwd() == os.path.expanduser("~")'
     for sandbox in (True, False):
-        assert check.run_isolated('assert', 'f', src, ['assert f() == True'], sandbox=sandbox)['checks'][0]['status'] == 'pass'
+        r = check.run_isolated('assert', 'f', src, ['assert f() == True'], sandbox=sandbox)
+        assert r.get('checks') and r['checks'][0]['status'] == 'pass', (sandbox, r)
 
 
 def _peak_mb():

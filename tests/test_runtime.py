@@ -376,9 +376,8 @@ def test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream(tm
         dev = DevServers(port=9474)
         s1 = await dev.start(str(p))
         q = s1.subscribe()
-        for _ in range(50):
-            if len(s1.urls) == 2: break
-            await asyncio.sleep(0.1)
+        # Bounded by the `wait_for` below, not by a count: under `-n auto` the child's own start can take longer than 5 s.
+        while len(s1.urls) < 2: await asyncio.sleep(0.1)
         assert s1.urls == ['http://127.0.0.1:8765', 'http://127.0.0.1:8766'], 'every URL a run prints, not the first'
         assert s1.app_url == 'http://127.0.0.1:8765'
         await dev.stop(str(p))
@@ -394,11 +393,9 @@ def test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream(tm
         assert s2 is not s1 and s2.pid != s1.pid
         q2 = dev.get(str(p)).subscribe()
         seen = bytearray()
-        for _ in range(50):
-            while not q2.empty(): seen += q2.get_nowait() or b''
-            if b'Uvicorn running' in seen: break
-            await asyncio.sleep(0.1)
-        assert b'Uvicorn running' in seen, 'a viewer that resubscribes sees the new run'
+        while b'Uvicorn running' not in seen:
+            assert (chunk := await q2.get()) is not None, 'the new run ended before it printed'
+            seen += chunk
         await dev.stop_all()
     asyncio.run(asyncio.wait_for(go(), 60))
 

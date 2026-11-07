@@ -773,25 +773,21 @@ def test_a_command_cannot_be_started_outside_the_open_folders(project):
         project.run_cmd('ls', cwd='/etc')
 
 
-def killed(pid):
-    """Dead, or dead and not yet reaped."""
-    import os
-    from pathlib import Path
-    if Path('/proc').is_dir():
-        stat = Path(f'/proc/{pid}/stat')
-        if not stat.exists(): return True
-        return stat.read_text().rsplit(')', 1)[1].split()[0] == 'Z'
-    try: os.kill(pid, 0)
-    except OSError: return True
-    return False
+def killed(pid, wait=10):
+    """Dead, or dead and not yet reaped, within `wait` seconds. `os.kill(pid, 0)` succeeds on a zombie, and on macOS launchd reaps an orphan late under load."""
+    import psutil, time
+    end = time.monotonic() + wait
+    while True:
+        try: gone = psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess: gone = True
+        if gone or time.monotonic() > end: return gone
+        time.sleep(.05)
 
 def test_a_timeout_takes_the_children_with_it(project):
     "`pytest -n 4` behind a pipe leaves children that outlive the shell, and a leaked one holds the pipe open."
-    import time
     marker = project.roots[0] + '/child.pid'
-    project.run_cmd(f'(sleep 30 & echo $! > {marker}); sleep 30', timeout=2)
+    project.run_cmd(f'(sleep 30 & echo $! > {marker}); sleep 30', timeout=5)   # 2 s was less than a loaded runner took to start the shell
     pid = int(open(marker).read().strip())
-    time.sleep(0.2)
     assert killed(pid), f'the grandchild {pid} outlived the timeout'
 
 
