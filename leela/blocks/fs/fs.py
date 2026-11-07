@@ -178,10 +178,21 @@ class Sandbox:
         self.roots = self.roots.filter(lambda r: r != p)
         return p
     def _spelled(self, p):
-        "`p` in its root's spelling, when the two differ only in Unicode form."
-        if any(p.is_relative_to(r) for r in self.roots): return p
+        "`p` as spelled on disk, when it differs only in Unicode form: APFS takes either form, Linux only the stored one."
         n = Path(_nfc(p))
-        return first(r/n.relative_to(m) for r in self.roots if n.is_relative_to(m := Path(_nfc(r)))) or p
+        r = first(r for r in self.roots if p.is_relative_to(r))
+        rel = p.relative_to(r) if r else first(n.relative_to(m) for r in self.roots if n.is_relative_to(m := Path(_nfc(r))))
+        if rel is None: return p if p.exists() else first(a for a in self.admitted if Path(_nfc(a)) == n) or p
+        r = r or first(r for r in self.roots if n.is_relative_to(_nfc(r)))
+        if (q := r/rel).exists(): return q
+        for part in rel.parts:
+            if not (r/part).exists():
+                try: hits = [e for e in os.listdir(r) if _nfc(e) == _nfc(part)]
+                except OSError: return q
+                if len(hits) != 1: return q
+                part = hits[0]
+            r = r/part
+        return r.resolve()
     def _check(self, ref, must_exist=False, reading=False):
         "Resolve a path inside the open folders, or stdlib for reads."
         if not self.roots: raise Unsafe('no folder is open')

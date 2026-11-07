@@ -8,7 +8,7 @@ from leela.blocks.fs import app as fs_app, office
 from leela.blocks.fs.fs import MEDIA_TYPES, Unsafe, is_media, is_texty, loose_refusal
 from leela.hub import _unopenable
 from leela.workspace import Tab, Workspace, kind_for, openable
-from fastcore.all import Path
+from fastcore.all import L, Path
 
 FIXTURES = Path(__file__).parent/'fixtures'
 AUDIO = ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac', '.opus')
@@ -169,3 +169,26 @@ def test_sandbox_takes_odd_names_in_either_unicode_form(tmp_path, monkeypatch):
         for n in ODD_NAMES[:7]:
             for f in forms(root/n): assert c.post('/media/open', params={'path': f}).json()['ok'], (n, f)
     assert len(ran) == len([f for n in ODD_NAMES[:7] for f in forms(root/n)])
+
+def test_spelled_finds_the_stored_unicode_form_on_a_strict_disk(tmp_path, monkeypatch):
+    """Linux keeps NFC and NFD names apart, so `café.mov` asked for as NFC was not found when stored as NFD."""
+    import os, pathlib
+    from leela.blocks.fs import fs
+    nfd, nfc, am = 'café', 'café', '9.46 am'
+    disk = {'/v', '/v/root', f'/v/root/{nfd} dir', f'/v/root/{nfd} dir/{am} {nfd}.mov', f'/v/root/{nfc}.mov', f'/v/root/{nfd}.mov',
+        f'/v/root/{nfc} x', f'/v/root/{nfc} x/a.mov', f'/v/{nfd}.mov'}
+    monkeypatch.setattr(pathlib.Path, 'exists', lambda self, **kw: str(self) in disk)
+    monkeypatch.setattr(pathlib.Path, 'resolve', lambda self, strict=False: self)
+    monkeypatch.setattr(fs.os, 'listdir', lambda d: [x.rsplit('/', 1)[1] for x in disk if x.rsplit('/', 1)[0] == str(d)])
+    sb = fs.Sandbox([tmp_path]); sb.roots = L([Path('/v/root')]); sb.admitted = L([Path(f'/v/{nfd}.mov')])
+    sp = lambda s: str(sb._spelled(Path(s)))
+    assert sp(f'/v/root/{nfc} dir/{am} {nfc}.mov') == f'/v/root/{nfd} dir/{am} {nfd}.mov'
+    assert sp(f'/v/root/{nfd} x/a.mov') == f'/v/root/{nfc} x/a.mov'
+    assert sp(f'/v/root/{nfd}.mov') == f'/v/root/{nfd}.mov' and sp(f'/v/root/{nfc}.mov') == f'/v/root/{nfc}.mov'
+    assert sp(f'/v/root/{nfd} x/b.mov') == f'/v/root/{nfd} x/b.mov', 'a part missing in every form leaves the path as asked'
+    assert sp(f'/v/{nfc}.mov') == f'/v/{nfd}.mov', 'an admitted loose file by its other form'
+    assert sp(f'/v/other/{nfc}.mov') == f'/v/other/{nfc}.mov', 'nothing outside the roots is looked up'
+    disk |= {'/v/root/amb', '/v/root/amb/\u212b.png', '/v/root/amb/A\u030a.png'}
+    assert sp('/v/root/amb/\u00c5.png') == '/v/root/amb/\u00c5.png', 'two stored forms of one name: refuse to pick'
+    disk.discard('/v/root/amb/\u212b.png')
+    assert sp('/v/root/amb/\u00c5.png') == '/v/root/amb/A\u030a.png'
