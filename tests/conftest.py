@@ -180,9 +180,9 @@ def _no_real_lessons(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_made_venvs(request, monkeypatch):
-    "A folder without a venv runs on Leela's own Python, as before; a test marked `makes_venv` makes the real one."
-    if request.node.get_closest_marker('makes_venv'): return
-    monkeypatch.setattr('kunda.support.make_venv', lambda root, python=None: None)
+    "No test makes a real venv unless marked `makes_venv`; a folder without one runs on Leela's own Python, as if chosen, unless marked `no_venv`."
+    if not request.node.get_closest_marker('makes_venv'): monkeypatch.setattr('kunda.support.make_venv', lambda root, python=None: None)
+    if not request.node.get_closest_marker('no_venv'): monkeypatch.setattr('leela.workspace.Workspace.missing_venv', lambda self, cwd: None)
 
 @pytest.fixture(autouse=True)
 def _no_backup_threads(monkeypatch):

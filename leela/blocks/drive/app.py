@@ -16,11 +16,11 @@ def connect(app, ctx):
     rt = app.route
     live = {}
     def drive(target='', make=False):
-        "The driver for one project, made once and kept: a running step is a process. `make` gives a run its project's venv."
+        "The driver for one project, made once and kept: a running step is a process. `make` refuses a Python project with no venv."
         root = repo_for(ctx.session, target)
         key = str(root)
         #: A changed interpreter builds a new `Drive`; setting `python` after build ran steps under the app, not the project.
-        python = ctx.session.user_python(root, make=make and python_project(root))
+        python = ctx.session.user_python(root, need=make and python_project(root))
         d = live.get(key)
         if d is None or getattr(d, 'python', None) != python:
             d = live[key] = Drive(root, python=python, env=EnvStore())

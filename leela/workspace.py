@@ -263,7 +263,7 @@ class Workspace:
         from .blocks.git.git import wire_env
         wire_env()
         self.fs_watch = Watcher(self.fs)
-        self.chosen_python, self.venv_made, self.venv_notes, self._own, self._own_lock = {}, {}, [], None, None   # project folder -> the interpreter the person picked; Leela's own kernel
+        self.chosen_python, self.venv_made, self._own, self._own_lock = {}, {}, None, None   # project folder -> the interpreter the person picked; Leela's own kernel
         self.pool = KernelPool(port=port, default_kernel=kernel, default_python=python,
                                transport=transport, gateway=gateway)
         self.dev = DevServers(port=dev_port)
@@ -1061,9 +1061,8 @@ class Workspace:
             await self.pool.close(key)
             for c in self._lesson(t)[0].cells: c.fresh = False
         lang = (t.nb_lang if t else '') or 'python'
-        try: return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent,
-                                        python=python or python_for(cwd, self) or (await self.project_venv(cwd) if lang == 'python' else None),
-                                        lang=lang)
+        py = python or (self.user_python(cwd) if lang == 'python' else python_for(cwd, self))
+        try: return await self.pool.get(key, cwd=cwd, name=name, agent=self.agent, python=py, lang=lang)
         except KernelStartError as e:
             if not python: raise
             from .blocks.nb.lesson import ENV_GONE, EnvGone
@@ -1086,30 +1085,34 @@ class Workspace:
         from .blocks.runtime.app import copy_folder
         proj = project_of(cwd, self)
         return None if proj is None or proj == self.fs.loose or copy_folder(proj) else proj
-    def venv_for(self, cwd):
-        "Make the `.venv` of the project `cwd` is in; None where no project owns `cwd`."
-        from .blocks.runtime.kernels import KernelStartError, nearest_python
-        import kunda.support as ks
-        if (proj := self.venv_project(cwd)) is None: return None
-        had = nearest_python(proj, proj)
-        try: py = ks.make_venv(proj)
-        except Exception as e: raise KernelStartError(f'could not make {proj/".venv"} for this project: {errstr(e)}') from e
-        if py and not had:
-            self.venv_made[str(proj)] = py
-            v = _venv_version(py)
-            self.venv_notes.append(f'Leela made .venv for {proj.name}{f" (Python {v})" if v else ""}. Change it in kernel settings.')
-        return py
-    def take_venv_notes(self):
-        "The notes on venvs Leela made since the last call, each given out once."
-        out, self.venv_notes = self.venv_notes, []
-        return out
-    async def project_venv(self, cwd):
-        "`venv_for` off the loop, for a notebook that has no venv and no chosen interpreter."
-        return await asyncio.to_thread(self.venv_for, cwd)
-    def user_python(self, cwd, make=True):
-        "The interpreter user code at `cwd` runs on: the chosen one, else its project's venv, made if missing when `make`; None outside every project."
+    def missing_venv(self, cwd):
+        "The project at `cwd` with no venv and no chosen interpreter; None where Python has somewhere to run."
         from .blocks.runtime.kernels import python_for
-        return python_for(cwd, self) or (self.venv_for(cwd) if make else None)
+        return None if python_for(cwd, self) else self.venv_project(cwd)
+    def user_python(self, cwd, need=True):
+        "The interpreter user code at `cwd` runs on: the chosen one, else its project's venv; `NoVenv` for a project with neither when `need`; None is Leela's own."
+        from .blocks.runtime.kernels import NoVenv, python_for
+        if (py := python_for(cwd, self)) or not need: return py
+        if (proj := self.missing_venv(cwd)) is not None: raise NoVenv(proj)
+    def setup_venv(self, proj):
+        "Make `proj/.venv` because the person asked; `(python, note)`."
+        import kunda.support as ks
+        from .blocks.runtime.kernels import nearest_python
+        had = nearest_python(proj, proj)
+        py = ks.make_venv(proj)
+        if not py or had: return py, ''
+        self.venv_made[str(proj)] = py
+        v = _venv_version(py)
+        return py, f'Leela set up .venv for {Path(proj).name}{f" (Python {v})" if v else ""}. Change it in kernel settings.'
+    def venv_notice(self, tab=None):
+        "`{root, name}` of the project in front that has Python in it but nowhere to run it; None otherwise."
+        from .blocks.runtime.kernels import python_project
+        t = tab or self.tab
+        if (proj := self.missing_venv(self.cwd_for(t))) is None: return None
+        here = Path(t.path).suffix.lower() in ('.py', '.ipynb') if t and t.path else False
+        try: top = here or python_project(proj) or any(f.suffix.lower() in ('.py', '.ipynb') for f in Path(proj).iterdir())
+        except OSError: top = here
+        return {'root': str(proj), 'name': Path(proj).name} if top else None
     def kernel_peek(self, tab=None): return self.pool.peek(self.kernel_key(tab))
     def runtime_label(self, tab=None, k=False):
         "What to call the runtime a tab runs in, alive or not."
@@ -1191,7 +1194,7 @@ class Workspace:
             if save: self.runs.add(r)
         root = self.project_repo
         cwd = r.resolved_cwd(root) if root else None
-        # An app belongs in its own project's environment.
+        # An app belongs in its own project's environment. Every run is a Python child under the inspector.
         python = await asyncio.to_thread(self.user_python, cwd or root)
         return await self.dev.start(r.cmd, cwd=cwd, name=r.name, watch=r.watch, env=r.resolved_env(root), python=python)
     def kernel_options(self, tab=None):
@@ -1204,6 +1207,7 @@ class Workspace:
         try: cur_py = self.lesson_python(t) or python_for(self.cwd_for(t), self)
         except EnvGone: cur_py = None
         proj = str(project_of(self.cwd_for(t), self))
+        no_venv = cur_py is None and self.missing_venv(self.cwd_for(t)) is not None
         return {
             'key': self.kernel_key(t),
             'alive': bool(k and k.alive),
@@ -1218,11 +1222,12 @@ class Workspace:
                        'note': ('' if n != 'ipymini' or ipymini_available()
                                 else 'install project kernel support')} for n in KERNELS],
             'running_kind': getattr(k, 'kernel_kind', self.pool.default_kernel),
-            'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0)}
+            'pythons': [{**p, 'current': p['path'] == cur_py or (cur_py is None and i == 0 and not no_venv)}
                         for i, p in enumerate(find_pythons(self.fs.roots, cur_py))],
             'python': cur_py,
             'chosen': bool(cur_py) and cur_py == self.chosen_python.get(proj),
             'venv_made': self.venv_made.get(proj, ''),
+            'no_venv': no_venv,
             'auto_manage': self.kernels_auto_manage,
         }
     def choose_python(self, python, tab=None):
@@ -1230,7 +1235,10 @@ class Workspace:
         from .blocks.runtime.kernels import project_of
         if (proj := project_of(self.cwd_for(tab or self.tab), self)) is None:
             raise ValueError('open a folder first: an interpreter is chosen for one project')
-        if python: self.chosen_python[str(proj)] = str(python)
+        import sys
+        from .blocks.runtime.kernels import runtime_python
+        # In the bundle `sys.executable` is the app, so "this one" is stored as the Python it runs on.
+        if python: self.chosen_python[str(proj)] = runtime_python() if str(python) == sys.executable else str(python)
         else: self.chosen_python.pop(str(proj), None)
         return str(proj)
     async def set_kernel(self, kind=None, python=False, private=None, tab=None, restart=True):

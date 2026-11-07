@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from ... import errstr
-from ...core.web import fail, off_loop, pipeline_socket
+from ...core.web import fail, json_obj, off_loop, pipeline_socket
 from kunda.support import INSPECTOR
 
 __all__ = ['CAPS', 'connect']
@@ -122,15 +122,19 @@ def connect(app, ctx):
         try: return await off_loop(install_inspector_support, py)
         except Exception as e: return fail(f'could not install the inspector’s packages — {errstr(e)}')
     @rt('/runtime/create')
-    async def runtime_create():
-        "Create a .venv in the checkout in hand, and install only its kernel transport, never Leela itself."
+    async def runtime_create(req):
+        "Create a .venv in the project the person named, else the checkout in hand, and install only its kernel transport, never Leela itself."
+        d = await json_obj(req) or {}
         root = session.project_repo
+        if d.get('root'):
+            try: root = Path(session.fs._check(d['root'], must_exist=True))
+            except Exception as e: return fail(e)
         if root is None: return fail('open a folder first')
         if copy_folder(root): return fail('this folder holds learning copies from abhyasa; each copy runs in the environment of its own project')
-        import kunda.support as ks
-        try: py = await off_loop(ks.make_venv, root)
+        if d.get('root') and (root := session.venv_project(root)) is None: return fail('a loose file has no project to set up a .venv in')
+        try: py, note = await off_loop(session.setup_venv, root)
         except Exception as e: return fail(f'could not create .venv — {errstr(e)}')
-        return {'ok': True, 'python': py, 'root': str(root)}
+        return {'ok': True, 'python': py, 'root': str(root), 'note': note}
     @rt('/kernel/interrupt')
     async def k_interrupt():
         k = session.runtime_peek()
@@ -161,7 +165,7 @@ def connect(app, ctx):
             'notice': getattr(k, 'notice', None),
             'cwd': str(session.cwd_for() or ''),
             'tabs': [{'running': t.running, 'dirty': t.dirty} for t in session.tabs],
-            **({'evicted': evicted} if evicted else {}), **({'venv_notes': n} if (n := session.take_venv_notes()) else {})}
+            **({'evicted': evicted} if evicted else {}), 'no_venv': session.venv_notice()}
     @rt('/kernel/options')
     def k_options():
         "What the kernel picker shows: the launchers, the interpreters, and what is running."

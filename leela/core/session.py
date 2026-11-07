@@ -51,8 +51,10 @@ class Origins:
         return f"  ({r['by']} at {stamp}{'' if r['ok'] else ', which then failed'})"
 
 async def kernel_api(session, path, params=None, timeout=15, tab=None):
-    "Proxy an inspector call through the exact runtime `Run` would use."
-    client = await session.runtime(tab)
+    "Proxy an inspector call through the exact runtime `Run` would use; None where the project has no Python to run."
+    from ..blocks.runtime.kernels import NoVenv
+    try: client = await session.runtime(tab)
+    except NoVenv: return None
     return await client.api(path, params, timeout) if client else None
 
 class FileHistory:

@@ -1,7 +1,7 @@
 "Binding a `Workspace` to the agent harness."
 
 from __future__ import annotations
-from ..runtime.kernels import python_for, venv_env
+from ..runtime.kernels import NoVenv, python_for, venv_env
 import asyncio, functools, inspect, json, os, re, threading
 from fnmatch import fnmatch
 from fastcore.all import AttrDict, L, Path, delegates, first
@@ -589,6 +589,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         # an unopened notebook gets the private kernel its tab would have, never the kernel of the tab in front
         tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p)) or Tab(path=str(p), kind='notebook')
         try: k = asyncio.run_coroutine_threadsafe(self.ws.runtime(tab), loop).result(120)
+        except NoVenv as e: return e.for_agent
         except Exception as e: return f'could not start the kernel for {path}: {errstr(e)}'
         was, self._cells[str(p)] = self._cells.get(str(p)), self._ident(k)
         note = ('' if was in (None, self._cells[str(p)]) else
@@ -616,6 +617,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         tab = tab or Tab(path=str(p), kind='notebook')
         try: v = asyncio.run_coroutine_threadsafe(check_cell(nb, c, lock, lambda: self.ws.runtime(tab), getattr(self.ws, 'jobs', None)), loop).result(max(1, int(timeout)))
         except Refused as e: return str(e)
+        except NoVenv as e: return e.for_agent
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         tab.dirty = True
         return json.dumps(v, indent=1)
@@ -668,6 +670,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         loop = self._loop()
         if loop is None: return None
         try: return asyncio.run_coroutine_threadsafe(self.ws.runtime(), loop).result(120)
+        except NoVenv as e: raise RuntimeError(e.for_agent) from None
         except Exception: return None
     def restart_kernel(self):
         "Restart the tab's kernel through the one path the kernel menu uses."
@@ -946,7 +949,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         import shutil, sys
         proj = self.project
         lines = [f'this process: {sys.executable}; inspect_python honours {", ".join(self.scopes)}',
-                 f'project python: {(python_for(proj, self.ws) or "none yet; the first notebook run makes .venv") if proj else "no folder is open"}',
+                 f'project python: {(python_for(proj, self.ws) or "none: the person sets up .venv or chooses an interpreter; ask them") if proj else "no folder is open"}',
                  "run_python, inspect_python, run_cell and run_shell use the project's interpreter, which imports only the project's packages; "
                  f"own_python runs on this process's interpreter, with Leela's packages ({', '.join(LEELA_PACKAGES)}) and the project folder as cwd"]
         lines += [f"runtime: {e['name']} ({e['kind']}, pid {e.get('pid')}){' current' if e.get('current') else ''}" for e in self.ws.envs()]

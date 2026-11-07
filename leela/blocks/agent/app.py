@@ -15,6 +15,7 @@ from ...agent.runtime import estimate_tokens
 from ...core.web import diff_payload, fail, off_loop, sse
 from ...blocks.memory.memory import pii_gate
 from ...workspace import STEP_RANGE, TOOL_RANGE
+from ..runtime.kernels import NoVenv
 from .threads import TurnError
 from .warm import NoDhrona, accept_round, assess_session, capture_round
 from .turns import (edit_diffs, indexed_sessions, latest_started_here, project_state_context,
@@ -55,7 +56,8 @@ def connect(app, ctx):
     ws = ctx.session
     def _doc(): return ctx.docs.current()
     async def api(path, params=None, timeout=15):
-        client = await ws.runtime()
+        try: client = await ws.runtime()
+        except NoVenv: return None
         return await client.api(path, params, timeout) if client else None
     async def api_peek(path, params=None, timeout=15):
         "The runtime's inspector, but only where one is already running."

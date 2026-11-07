@@ -12,7 +12,7 @@ from .deploys import Deploy
 from ...core.envs import EnvStore
 from pullup.pipeline import resolve_script, uv_argv
 from pullup.project import app_project, nbdev_project, release_flow
-from .pipelines import PipelineError, Release
+from .pipelines import PipelineError, Release, has_venv
 from ..git.repos import RepoSet, repo_for
 
 __all__ = ['CAPS', 'connect', 'FASTSHIP_OPS', 'fastship_state', 'fastship_run', 'fastship_new']
@@ -36,7 +36,8 @@ def nbdev_prepare(session, target=''):
     if cfg is None: raise PipelineError(
         'no settings.ini and no [tool.nbdev] in any open folder — not an nbdev project')
     root = Path(cfg.config_path)
-    argv = uv_argv(root, ['nbdev-prepare']) or resolve_script(['nbdev-prepare'], session.user_python(root))
+    python = session.user_python(root)
+    argv = (has_venv(root) and uv_argv(root, ['nbdev-prepare'])) or resolve_script(['nbdev-prepare'], python)
     if argv[0] == 'nbdev-prepare': raise PipelineError(
         f'no nbdev-prepare in {root.name}: nbdev is not installed in the environment it uses')
     # Through `venv_env`, like the pty steps: a child that keeps the bundle's `PYTHONPATH` imports
@@ -107,11 +108,11 @@ def connect(app, ctx):
     rt = app.route
     live = {}
     def pipeline(kind, target='', make=False):
-        "The pipeline for one project and kind, made once and then kept: it has a process in it. `make` gives a run its project's venv."
+        "The pipeline for one project and kind, made once and then kept: it has a process in it. `make` refuses a Python project with no venv."
         root = repo_for(ctx.session, target)
         key = (kind, str(root))
         if key not in live: live[key] = KINDS[kind](root, env=EnvStore())
-        live[key].python = ctx.session.user_python(root, make=make and python_project(root))
+        live[key].python = ctx.session.user_python(root, need=make and python_project(root))
         return live[key]
     async def act(kind, d):
         "One explicit move: start, retry a step, skip it, stop, forget, or edit the plan."
