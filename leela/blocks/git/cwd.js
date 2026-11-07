@@ -211,7 +211,10 @@ async function refreshProjectPills() {
     const d = await api('/workspace/info');
     const active = (d.roots || []).find(r => r.path === (gitUI.repo || d.active)) || (d.roots || [])[0];
     const name = $('#workspacename'); if (name) name.textContent = active?.name || 'open workspace';
-    const workspace = $('#workspacepill'); if (workspace) workspace.title = active?.path || 'open workspace';
+    const workspace = $('#workspacepill');
+    if (workspace) { workspace.title = active?.path || 'open workspace'; workspace.setAttribute('aria-label', `switch workspace: ${active?.name || 'none open'}`); }
+    // The loose window's folder is Leela's own; the title calls it `loose`, as `title_folder` does.
+    lee.titleFolder = active ? (active.loose ? 'loose' : active.name) : ''; paintTitle();
   } catch (_) {}
   try {
     const d = await api('/cwd');
@@ -230,24 +233,19 @@ async function refreshGitPill() {
     const git = $('#gitpill'); if (!git) return;
     if (!d || d.repo === false) {
       // With no folder open there is nothing to be inside or outside of, so the pill says neither.
-      const nothingOpen = !!(d && String(d.note || '').startsWith('no folder'));
-      git.textContent = nothingOpen ? 'git …' : 'no git';
-      git.className = 'lee-branch-switcher';
+      paintBranchPill(d, d && String(d.note || '').startsWith('no folder') ? 'pending' : 'nogit');
       git.title = (d && d.note) || 'not inside a Git repository';
       return;
     }
-    const n = (d.changes || []).length;
-    git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
-    git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
+    paintBranchPill(d);
     git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ''}${d.ahead ? ' · ahead ' + d.ahead : ''}${d.behind ? ' · behind ' + d.behind : ''}`;
     paintGitTree(d);
     noticeGitState(d);
   } catch (e) {
     // A failure is not an absence. Saying `no git` here claims the folder is not a checkout,
     // which is a statement about the user's project rather than about the request.
-    const git = $('#gitpill');
-    if (git) { git.textContent = 'git ?'; git.className = 'lee-branch-switcher lee-pill-warn';
-               git.title = 'could not read the repository: ' + ((e && e.message) || e); }
+    paintBranchPill(null, 'error');
+    const git = $('#gitpill'); if (git) git.title = 'could not read the repository: ' + ((e && e.message) || e);
     console.error('git pill', e);
   }
 }

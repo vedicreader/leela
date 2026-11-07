@@ -30,6 +30,7 @@ if getattr(sys, 'frozen', False):
 
 #: The ladder a window is served from. Fixed, not OS-assigned: a moving port moves the `http://<slug>.localhost:<port>` origin, and the browser keeps nothing per origin at the new one.
 from leela import PORT
+from leela.core.projects import title_folder, window_title
 PORTS = range(PORT, PORT+10)
 
 def leela_on(port, host=HOST, timeout=.6):
@@ -126,7 +127,7 @@ def attach(port, dirs, host=HOST, files=()):
     "Windows on the Leela already serving `port`. Opens through its own route so the slug and URL are the ones it assigned; a refused folder is reported and the rest still open."
     from leela.desktop import run_shell
     if not dirs:
-        return run_shell([f'http://{host}:{port}/'], titles=['leela'], keys=[HOME_KEY], icon=_icon(),
+        return run_shell([f'http://{host}:{port}/'], titles=[window_title()], keys=[HOME_KEY], icon=_icon(),
                          **_hooks(port, files))
     rows = []
     for d in dirs:
@@ -134,7 +135,7 @@ def attach(port, dirs, host=HOST, files=()):
         if got.get('ok'): rows.append(got)
         else: print(f"  could not open {d}: {got.get('error')}")
     if not rows: return print('leela: the running copy opened none of these folders')
-    urls, titles = [r['url'] for r in rows], [f"leela — {r['name']}" for r in rows]
+    urls, titles = [r['url'] for r in rows], [window_title(r['name']) for r in rows]
     run_shell(urls, titles=titles, keys=[r['id'] for r in rows], icon=_icon(), **_hooks(port, files))
 
 def _hooks(port, files=()):
@@ -147,7 +148,7 @@ def _hooks(port, files=()):
 
 def titles_for(dirs):
     "One window title per workspace, named after its folder."
-    return [f'leela — {Path(d).name}' for d in dirs] or ['leela']
+    return [window_title(title_folder(d)) for d in dirs] or [window_title()]
 
 def hub_open(port, path, host=HOST, timeout=600, file='', folder=False):
     "Ask the server on `port` to serve `path` as a workspace, and with `file` to open it there; a file adds no folder unless `folder`. Returns its row, or the reason not; `down` marks a server that did not answer. The server may ask the person first, so the wait is long."
@@ -170,7 +171,7 @@ def open_folder(port, path, host=HOST, trusted=True):
     if trusted: grant(path)
     d = hub_open(port, path, host)
     if not d.get('ok'): return print(f"  could not open {path}: {d.get('error')}")
-    return open_window(d['url'], f"leela — {d['name']}", key=d['id'])
+    return open_window(d['url'], window_title(d['name']), key=d['id'])
 
 def open_file(port, path, host=HOST, wait=60, every=.5):
     "Open one file Finder or the command line handed over, in the workspace it belongs to. A server still starting is waited for, up to `wait` seconds."
@@ -184,7 +185,7 @@ def open_file(port, path, host=HOST, wait=60, every=.5):
         got = hub_open(port, o, host, file=path, folder=True)
         if got.get('declined'): return None
     if not got.get('ok'): return _tell(f"Leela could not open {path}: {got.get('error')}")
-    return open_window(got['url'], f"leela — {Path(path).name if str(loose_root()) in (str(d), got.get('root')) else got['name']}", key=got['id'])
+    return open_window(got['url'], window_title('loose' if str(loose_root()) in (str(d), got.get('root')) else got['name']), key=got['id'])
 
 def _tell(msg):
     "Say `msg` in a native dialog when a window can show one, and on the terminal either way."

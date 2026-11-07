@@ -145,7 +145,7 @@ def _keymap_js(expr):
     if not shutil.which('node'): pytest.skip('node is not installed')
     stub = ("globalThis.lee = {scope: 'editor'}; globalThis.location = {href: 'http://x/'};"
             "const _on = {}; globalThis.window = globalThis; globalThis.addEventListener = (k, f) => _on[k] = f;"
-            "globalThis.document = {title: 'leela — orgs', addEventListener() {}};"
+            "globalThis.document = {title: 'Leela · orgs · files', addEventListener() {}};"
             "const _timers = []; globalThis.setTimeout = f => _timers.push(f); globalThis.clearTimeout = () => _timers.splice(0);\n")
     src = stub + (Path(__file__).parents[1]/'leela'/'blocks'/'keys'/'keymap.js').read_text()
     out = subprocess.run(['node', '-'], input=src + f'\nprocess.stdout.write(JSON.stringify({expr}));\n', capture_output=True, text=True)
@@ -154,32 +154,78 @@ def _keymap_js(expr):
 
 
 def test_the_title_names_the_focused_pane_with_one_token_per_scope():
+    "A scope word always ends the title, for every pane, every tab kind and no tab at all; Python gives a tab the same word."
+    from leela.core.projects import title_scope
     cases = [('editor', 'text', 'a/b.py', 'py'), ('editor', 'notebook', 'n.ipynb', 'notebook'),
              ('widget', 'notebook', 'n.ipynb', 'notebook'), ('editor', 'text', 'README.MD', 'editor:md'),
              ('editor', 'text', 'Makefile', 'editor'), ('term', 'text', 'a.py', 'terminal'),
              ('agent', 'text', 'a.py', 'agent'), ('exec', 'text', 'a.py', 'exec'), ('files', 'text', 'a.py', 'files'),
-             ('vars', 'text', 'a.py', 'vars'), ('vault', '', '', 'vault'), ('review', '', '', 'review'),
-             ('global', 'text', 'a.py', '')]
+             ('vars', 'text', 'a.py', 'vars'), ('vault', '', '', 'vault'), ('review', '', '', 'review'), ('web', 'web', '', 'web'),
+             ('global', 'text', 'a.py', 'py'), ('global', 'notebook', 'n.ipynb', 'notebook'), ('editor', None, '', 'files'),
+             ('global', None, '', 'files'), ('editor', 'text', '', 'editor'), ('editor', 'notebook', '', 'notebook'),
+             ('editor', 'vault', '', 'vault'), ('editor', 'vaultwb', '', 'vault'), ('editor', 'web', '', 'web')]
     got = _keymap_js(f'{json.dumps(cases)}.map(([s, k, p]) => titleScope(s, k, p))')
     assert got == [c[3] for c in cases]
-    assert _keymap_js("[leelaTitle('leela — orgs', 'py'), leelaTitle('leela — orgs', 'agent', '2⚙ (!)'), leelaTitle('leela', '')]") == \
-        ['leela — orgs · py', '2⚙ (!) · leela — orgs · agent', 'leela']
+    for s, k, p, want in cases:
+        if s in ('editor', 'global') and want != 'notebook' or k == 'notebook': assert title_scope(k, p) == want, (k, p)
 
+TITLES = [('karma', 'notebook', ''), ('karma', 'files', ''), ('karma', 'notebook', '2⚙ (!)'), ('loose', 'editor', '1⚙'),
+          ('my project v2.0', 'editor:md', '(!)'), ('10.03.12\u202fPM shots', 'editor:png', ''), ('कर्म', 'terminal', ''),
+          ('a · b', 'py', ''), ('two\nlines', 'vars', ''), ('x' * 90, 'agent', ''), ('', 'files', ''), ('  ', 'review', ''),
+          ('karma — old', 'web', ''), ('leela', 'vault', '')]
+
+def test_python_and_js_build_the_same_title():
+    "One rule in two languages: `window_title` for the server and the native windows, `leelaTitle` for the page."
+    from leela.core.projects import window_title
+    js = _keymap_js(f'{json.dumps(TITLES)}.map(([f, s, p]) => leelaTitle(f, s, p))')
+    assert js == [window_title(f, s, p) for f, s, p in TITLES]
+    assert js[:4] == ['Leela · karma · notebook', 'Leela · karma · files', '2⚙ (!) · Leela · karma · notebook', '1⚙ · Leela · loose · editor']
+    assert js[7] == 'Leela · a - b · py' and js[8] == 'Leela · two lines · vars' and js[10] == js[11].replace('review', 'files') == 'Leela · files'
+    assert all('—' not in t for t in js[:12])
+
+#: Copied from Sanketa's `Resources/Packs/leela.toml` (branch leela-title). Sanketa reads Leela's title with these;
+#: change both together. The test reads the sibling repository's file instead when it is there.
+SANKETA_TITLES = r'^(?:(?:\d+⚙)?(?: ?\(!\))? · )?[Ll]eela(?: — [^\s·]+(?: · [a-z]+(?::[a-z0-9]+)?)?| — [^·]+ · [a-z]+(?::[a-z0-9]+)?| · (?:(?:(?! · ).)+ · )?[a-z]+(?::[a-z0-9]+)?)(?: - Google Chrome(?: – [^·]*)?)?$'
+SANKETA_SCOPE = r' · ([a-z]+(?::[a-z0-9]+)?)(?: [-–] [^·]*)?$'
+
+def _sanketa_regexes():
+    import tomllib
+    from pathlib import Path
+    pack = Path(__file__).parents[2]/'sanketa'/'Resources'/'Packs'/'leela.toml'
+    if not pack.is_file(): return SANKETA_TITLES, SANKETA_SCOPE
+    d = tomllib.loads(pack.read_text())
+    # The main checkout may still hold the old regex until Sanketa merges; the copy above is the new one.
+    return (d['titles'][0], d['title_scope']) if '[Ll]eela' in d['titles'][0] else (SANKETA_TITLES, SANKETA_SCOPE)
+
+def test_every_leela_title_matches_sanketa_and_gives_its_scope():
+    "Sanketa picks its Leela keys from the title: each title Leela makes must match `titles` and end in the scope `title_scope` reads, in a Chrome tab too."
+    import re
+    from leela.core.projects import window_title
+    titles, scope = map(re.compile, _sanketa_regexes())
+    chrome = ' - Google Chrome – Sam (Work)'
+    for f, s, p in TITLES:
+        for t in (window_title(f, s, p), window_title(f, s, p) + chrome):
+            assert titles.search(t), t
+            assert scope.search(t).group(1) == s, t
+    for t in ('Leela', 'leela', 'leela — a review', 'leela - Google Search' + chrome, 'Blog · Leela · karma · py', 'Leela · a blog'):
+        assert not titles.search(t), t
+    assert titles.search('2⚙ (!) · leela — sanketa · notebook'), 'Leela 0.1.26 keeps working until it updates'
 
 def test_the_title_is_painted_once_per_change_and_sent_to_the_native_window():
     got = _keymap_js("""(() => {
       const sent = []; window.pywebview = {api: {set_title: (t, u) => { sent.push([t, u]); return Promise.resolve(true); }}};
       const flush = () => _timers.splice(0).forEach(f => f());
-      lee.kind = 'text'; lee.path = 'x.py';
+      lee.titleFolder = 'orgs'; lee.kind = 'text'; lee.path = 'x.py';
       paintTitle('term'); paintTitle('editor'); flush();
       paintTitle('overlay'); flush();
       lee.titlePrefix = '1⚙'; paintTitle(); flush();
+      lee.titleFolder = 'karma'; paintTitle(); flush();
       delete window.pywebview; paintTitle('vault'); flush();
       return {sent, title: document.title};
     })()""")
-    assert got['sent'] == [['leela — orgs · py', 'http://x/'], ['1⚙ · leela — orgs · py', 'http://x/']], \
-        'debounced to the last scope, an overlay keeps the scope under it, and an unchanged title is not sent again'
-    assert got['title'] == '1⚙ · leela — orgs · vault', 'a browser without pywebview still gets the title'
+    assert got['sent'] == [['Leela · orgs · py', 'http://x/'], ['1⚙ · Leela · orgs · py', 'http://x/'], ['1⚙ · Leela · karma · py', 'http://x/']], \
+        'debounced to the last scope, an overlay keeps the scope under it, an unchanged title is not sent again, and a new folder is'
+    assert got['title'] == '1⚙ · Leela · karma · vault', 'a browser without pywebview still gets the title'
 
 def test_option_s_checks_the_exercise_in_the_editor_and_nothing_else():
     "abhyasa 0.0.13 asks for Option+S on Check my work. On a Mac Option+S types ß, so the chord matches the physical key."

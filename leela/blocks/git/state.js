@@ -42,11 +42,30 @@ function paintGitPill(d) {
   // pill over a dirty file tree is worse than no pill.
   if (gitUI.repo) return;
   const git = $('#gitpill'); if (!git || !d) return;
-  const n = (d.changes || []).length;
-  git.textContent = `${d.branch}${n ? ' · ' + n : ''}${d.ahead ? ' · ↑' + d.ahead : ''}${d.behind ? ' · ↓' + d.behind : ''}`;
-  git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
+  paintBranchPill(d);
   git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ' · no upstream'} · ${gitFreshness(d.fetched_at)}`;
   paintGitTree(d);
+}
+/* The one painter of the branch pill and the pull and push arrows beside it. `state` is `branch`,
+   `nogit` (not a checkout), `pending` (no folder open yet) or `error` (the repository could not be
+   read). The arrows show only when there is something to pull or push. */
+const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?'};
+function paintBranchPill(d, state = 'branch') {
+  const git = $('#gitpill'); if (!git) return;
+  const n = state === 'branch' ? (d?.changes || []).length : 0;
+  const name = BRANCH_WORDS[state] || d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
+  git.dataset.state = state;
+  const label = git.querySelector('.lee-branch-name'), count = git.querySelector('.lee-change-count');
+  if (label) label.textContent = name;
+  if (count) { count.textContent = n || ''; count.hidden = !n; }
+  git.setAttribute('aria-label', `switch branch: ${name}${n ? `, ${n} changed file${n === 1 ? '' : 's'}` : ''}`);
+  for (const [op, k] of [['pull', state === 'branch' && d?.behind], ['push', state === 'branch' && d?.ahead]]) {
+    const b = $(`#git${op}`); if (!b) continue;
+    b.hidden = !k;
+    const num = b.querySelector('.lee-sync-n'); if (num) num.textContent = k || '';
+    const say = k ? `${op} ${k} commit${k === 1 ? '' : 's'}` : op;
+    b.title = say; b.setAttribute('aria-label', say);
+  }
 }
 async function gitDo(op, extra = {}) {
   const started = performance.now(), name = op.replaceAll('_', ' ');

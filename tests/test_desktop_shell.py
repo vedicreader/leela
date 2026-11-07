@@ -41,7 +41,7 @@ def report():
                                   'url': w.get_current_url()}))
     w.destroy()
 threading.Thread(target=report, daemon=True).start()
-run_shell([url], titles=['leela — test'], gui='gtk')
+run_shell([url], titles=['Leela · test · files'], gui='gtk')
 '''
 
 @pytest.mark.slow
@@ -58,7 +58,7 @@ def test_the_shell_opens_a_window_and_loads_the_workspace_into_it(tmp_path):
     assert line, f'no window report\nstdout:\n{out.stdout}\nstderr:\n{out.stderr}'
     import json
     got = json.loads(line[len('RESULT '):])
-    assert got['title'] == 'leela — test'
+    assert got['title'] == 'Leela · test · files'
     assert got['heading'] == 'workspace'          # the server's page really rendered
     assert got['url'].startswith('http://127.0.0.1:')
 
@@ -234,8 +234,8 @@ def test_the_page_retitles_its_own_native_window(monkeypatch):
     a, b = W('http://127.0.0.1:5001/'), W('http://127.0.0.1:5002/')
     monkeypatch.setitem(sys.modules, 'webview', NS(windows=[a, b], active_window=lambda: a))
     api = desktop.shell_api()
-    assert api.set_title('leela — b · py', 'http://127.0.0.1:5002/#x')
-    assert (a.title, b.title) == ('', 'leela — b · py')
-    assert api.set_title('leela — a · agent') and a.title == 'leela — a · agent', 'no url means the focused window'
+    assert api.set_title('Leela · b · py', 'http://127.0.0.1:5002/#x')
+    assert (a.title, b.title) == ('', 'Leela · b · py')
+    assert api.set_title('Leela · a · agent') and a.title == 'Leela · a · agent', 'no url means the focused window'
     monkeypatch.setitem(sys.modules, 'webview', NS(windows=[], active_window=lambda: None))
     assert api.set_title('leela') is False

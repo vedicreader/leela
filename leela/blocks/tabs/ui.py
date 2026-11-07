@@ -38,10 +38,9 @@ def tab_bar(ws):
 
 def kernel_pill(ws):
     "Kernel identity and liveness for the active tab. Clicking it opens the picker."
-    common = dict(id='kpill', onclick='leeAct("pick_kernel")')
-    if (k := ws.runtime_peek()) is None:
-        return Span('no kernel', cls='lee-pill lee-pill-off', title='choose a kernel', **common)
-    if not k.alive: return Span('kernel dead', cls='lee-pill lee-pill-err', title='choose a kernel', **common)
-    nm = ws.runtime_label(k=k)
-    return Span(f'⏺ {nm}', cls='lee-pill lee-pill-on',
-                title=f'{k.base or "no inspector"} · pid {k.pid} — click to change', **common)
+    k = ws.runtime_peek()
+    state, nm, doing = ('off', 'no kernel', '') if k is None else ('err', ws.runtime_label(k=k), 'off') if not k.alive else ('on', ws.runtime_label(k=k), 'idle')
+    title = 'choose a kernel' if k is None or not k.alive else f'{k.base or "no inspector"} · pid {k.pid}. Click to change.'
+    return Span(Span(cls='lee-kdot', aria_hidden='true'), Span(nm, cls='lee-kname'), Span(f'· {doing}' if doing else '', cls='lee-kstate'),
+                id='kpill', cls='lee-hitem lee-kernel', data_state=state, title=title, role='button', tabindex='0',
+                onclick='leeAct("pick_kernel")', onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();leeAct('pick_kernel')}")

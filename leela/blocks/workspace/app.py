@@ -26,7 +26,7 @@ def connect(app, ctx):
         catalog = ctx.catalog
         sites = catalog() if callable(catalog) else list(catalog or ())
         return {'active': str(ctx.session.project_root or ''),
-                'roots': [{'path': str(root), 'name': root.name} for root in ctx.fs.roots],
+                'roots': [{'path': str(root), 'name': root.name, 'loose': root == ctx.fs.loose} for root in ctx.fs.roots],
                 'workspaces': sites}
     @rt('/cwd')
     def cwd_info():

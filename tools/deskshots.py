@@ -59,7 +59,7 @@ if url:
     start_cdp({cdp}, headless=True, wait=True, timeout=90, profile={profile!r})
     urllib.request.urlopen(base + 'browser/open?url=' + urllib.parse.quote(url, safe=''),
                            timeout=120).close()
-run_shell([base], titles=['leela — leela'], gui={gui!r}, size=({w}, {h}))
+run_shell([base], titles=['Leela · leela · files'], gui={gui!r}, size=({w}, {h}))
 '''
 
 def window_shot(out=None, size=(1440, 900), seconds=14, url=None, roots=True, name=None):
