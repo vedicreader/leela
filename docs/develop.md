@@ -18,7 +18,7 @@ Leela uses these packages from the same authors: [ramabana](https://github.com/v
 ```
 leela/
   agent/          the alias seam: `leela.agent.*` is `ramabana.*` (one `__init__.py`)
-  core/           what every block may import
+  core/           what every block can import
     block.py      `Ctx` (capabilities), the block contract, ordered wiring
     langs.py      the languages Leela runs, serves and highlights
     keys.py       single-source keymap and the user's overrides

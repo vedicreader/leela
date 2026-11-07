@@ -4,7 +4,7 @@ The project README describes the product. These pages are what a user or a maint
 
 ## Using Leela
 
-- [guide.md](guide.md): starting Leela, each part of the app, lessons, the keys, and what it costs to run.
+- [guide.md](guide.md): starting Leela, the header, the venv notice, each part of the app, lessons, updates and the keys.
 - [present.md](present.md): present a notebook as slides. Keys, the audience window, live runs, what the room can see, and recovery.
 - [search.md](search.md): the code search dialog, its modes, its keys, and what it records.
 
