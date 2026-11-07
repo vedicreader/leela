@@ -67,7 +67,7 @@ function armChangeGutter(host) {
 }
 
 function changePopupBody(h) {
-  if (!h.old) return '<div class="lee-change-new">These lines are new — there is no committed version of them.</div>';
+  if (!h.old) return '<div class="lee-change-new">These lines are new. No commit has them yet.</div>';
   const old = h.old.replace(/\n$/, '').split('\n'), now = (h.new || '').replace(/\n$/, '').split('\n');
   return `<pre class="lee-change-old">${old.map((l, k) => tokenDiffHtml(l, now[k])).join('\n')}</pre>`;
 }
@@ -140,7 +140,7 @@ async function refreshFileChanges(path, fromDisk = false, had = null) {
   if (fromDisk) {
     const st = await api('/tab/state?path=' + encodeURIComponent(path)).catch(() => null);
     // Typing since `had` was read is newer than the file git just wrote, so it stays.
-    if (had !== null && LeeCM.getDoc(v) !== had) status(`${path.split('/').pop()} changed on disk — keeping your unsaved buffer`, 'err');
+    if (had !== null && LeeCM.getDoc(v) !== had) status(`${path.split('/').pop()} changed on disk. Leela keeps your unsaved text.`, 'err');
     else if (typeof st?.text === 'string') {
       lee.dirtyBuffers.delete(path); lee.buffers.delete(path);
       if (st.text !== LeeCM.getDoc(v)) LeeCM.setDoc(v, st.text);

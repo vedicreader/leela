@@ -206,6 +206,18 @@ def test_the_widget_socket_relays_both_ways_and_names_the_pages_own_messages(tmp
     assert reply['id'] == 'q1' and cid in reply['content']['comms'], reply
     assert value == '5', value
 
+def shown_outputs(events):
+    "The outputs a page shows after each `output` message of a run stream, as `applyOutputOps` builds them."
+    shown, seen = [], []
+    for e in events:
+        if 'ops' not in e: continue
+        shown = shown[:e['n']]
+        for k, kind, v in e['ops']:
+            if k == len(shown): shown.append(None)
+            shown[k] = {**shown[k], 'text': shown[k]['text'] + v} if kind == 'append' else v
+        seen.append(shown)
+    return seen
+
 UPDATING = '''from IPython.display import display, HTML
 import time
 h = display(HTML('<progress max="3" value="0"></progress>'), display_id=True)
@@ -225,10 +237,11 @@ def test_an_updated_display_is_one_output_holding_its_final_value_in_the_stream_
         with client.stream('POST', '/nb/run/stream', json={'i': 0, 'id': None, 'source': UPDATING, 'path': path}) as r:
             events = [json.loads(l[6:]) for l in r.iter_lines() if l.startswith('data: ')]
         assert client.post('/nb/save', json={'path': path}).json()['ok']
-    outs = [e['outputs'] for e in events if 'outputs' in e and 'cell' not in e]
+    outs = shown_outputs(events)
     assert outs
     for o in outs: assert len(o) == 1, o
-    assert 'value="3"' in outs[-1][0]['data']['text/html']
+    # Output messages are at most one per `FLUSH`; `done` carries the cell as it ended.
+    assert 'value="3"' in [e for e in events if 'cell' in e][-1]['cell']['outputs'][0]['data']['text/html']
     saved = json.loads(p.read_text())['cells'][0]['outputs']
     assert len(saved) == 1 and 'value="3"' in ''.join(saved[0]['data']['text/html'])
 

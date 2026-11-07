@@ -62,6 +62,8 @@ The cask also installs uv. Lessons and project environments use uv.
 
 Or download [Leela-macOS.dmg](https://github.com/vedicreader/leela/releases/latest/download/Leela-macOS.dmg) from the latest release, open it, and drag Leela into Applications. If you do not have uv, run `brew install uv`. The app is signed with a Developer ID and notarized by Apple.
 
+The Mac app checks for a new release at start and each hour, and shows a bar when one is out. In a Homebrew install, press **Update** and then **Restart Leela**. A DMG install shows a link to the release page. See [updates](docs/guide.md#updates).
+
 On Linux, or on Windows inside WSL, run Leela from the command line. It opens in your browser at `http://localhost:5010`:
 
 ```sh
@@ -75,32 +77,32 @@ leela .
 ## First use
 
 1. Open Leela. On the welcome screen, press **Open a folder** and pick a project.
-2. Open a notebook or a file in the file tree. Put the cursor in a cell and press Shift+Return to run it.
-3. Write a question in the agent pane and press Command+Return. If no model is set up, the pane lists the providers that you can use, and **+ model** adds one.
+2. Open a notebook or a file in the file tree, or press ⌘P and type its name. Put the cursor in a cell and press ⇧↩ (Shift+Enter) to run it. A Python project with no environment shows a notice above the editor. Press **Set up .venv** to make one.
+3. Write a question in the agent pane and press ⌘↩ (Ctrl+Enter). If no model is set up, the pane lists the providers that you can use, and **+ model** adds one.
 
 ## Keys
 
-On a Mac, `mod` is Command. Elsewhere it is Control.
+| Mac | Windows and Linux | Action |
+|---|---|---|
+| ⌘O | Ctrl+O | Open a file or a folder |
+| ⌘P | Ctrl+P | Go to a file by name |
+| ⌘1 to ⌘5 | Ctrl+1 to Ctrl+5 | Go to the files, editor, exec, variables or agent pane. In a browser tab, use ⌥⇧1 to ⌥⇧5 (Alt+Shift+1 to Alt+Shift+5). |
+| ⌘↩ | Ctrl+Enter | Run the cell. In the agent pane, send. |
+| ⇧↩ | Shift+Enter | Run the cell and select the next one |
+| ⇧⌘↩ | Ctrl+Shift+Enter | Run all cells |
+| ⇧⌘P | Ctrl+Shift+P | Command palette |
+| ⇧⌘F | Ctrl+Shift+F | Search code |
+| ⇧⌘/ | Ctrl+Shift+/ | Show all keys |
+| ⌥S | Alt+S | Check the exercise that has the cursor |
+| ⌥R | Alt+R | Present the notebook from the selected cell |
 
-| Key | Action |
-|---|---|
-| `mod+enter` | Run the cell. In the agent pane, send. |
-| `shift+enter` | Run the cell and select the next one |
-| `mod+shift+enter` | Run all cells |
-| `mod+shift+p` | Command palette |
-| `mod+shift+f` | Search code |
-| `mod+shift+/` | Show all keys |
-| `alt+shift+1` to `alt+shift+5` | Go to files, editor, exec, variables or agent |
-| `alt+s` | Check the exercise that has the cursor |
-| `alt+r` | Present the notebook from the selected cell |
-
-You can change each key in `keys.json`. See [keys and buttons](docs/guide.md#keys-and-buttons).
+A selected notebook cell also takes the Jupyter command keys, such as A, B, M, Y and D D. You can change each key in `keys.json`. See [keys and buttons](docs/guide.md#keys-and-buttons).
 
 ## More
 
 - [Using Leela](docs/guide.md): the command-line options, each part of the app, lessons, and the keys.
 - [Developing Leela](docs/develop.md): get the code, the code layout, the desktop builds, the release steps and the tests.
-- [All docs](docs/README.md): the design notes.
+- [All docs](docs/README.md): the design notes and the decisions.
 - [Release notes](CHANGELOG.md)
 
 ## License

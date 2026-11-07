@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, hashlib
+import asyncio, hashlib, json
 
 from fastcore.all import Path, first
 
@@ -10,7 +10,7 @@ from fasthtml.common import Div
 
 from ... import errstr
 from ...core.web import fail
-from ..fs.fs import is_media
+from ..fs.fs import NotText, is_media, universal
 from ..nb.nb import Notebook, take_seq
 from .ui import tab_bar
 
@@ -32,11 +32,16 @@ def disk_version(path):
     stamp = (s.st_mtime_ns, s.st_size)
     if is_media(path): return f'{s.st_size}:{s.st_mtime_ns}'   # a film is too large to hash on every poll
     if (hit := _TOKENS.get(path)) and hit[0] == stamp: return hit[1]
-    try: digest = hashlib.blake2b(Path(path).read_bytes(), digest_size=8).hexdigest()
+    try:
+        with open(path, 'rb') as f: digest = hashlib.file_digest(f, lambda: hashlib.blake2b(digest_size=8)).hexdigest()
     except OSError: return 'missing'
     if len(_TOKENS) >= TOKEN_CACHE: _TOKENS.clear()
     _TOKENS[path] = (stamp, token := f'{s.st_size}:{digest}')
     return token
+
+def _shown(p):
+    "A file that is not UTF-8 text, decoded with replacement characters for a read-only view."
+    return universal(Path(p).read_bytes().decode('utf-8', 'replace'))
 
 async def _shut_page(browser, tid):
     "Close the Chrome page a web tab was showing, once the tab itself has gone."
@@ -112,9 +117,11 @@ def connect(app, ctx):
         return (now, False) if was is None or was == now else (was, True)
 
     @rt('/tab/state')
-    def tab_state(path: str = ''):
-        "Everything needed to mount the active tab, or an open tab addressed by absolute path or, with none, by title."
-        d = _tab_state(path)
+    def tab_state(path: str = '', have: str = ''):
+        "Everything needed to mount the active tab, or an open tab addressed by path or title. `have` is `{key: version}` of notebooks the page still holds, which come back without their cells."
+        try: held = json.loads(have) if have else {}
+        except ValueError: held = {}
+        d = _tab_state(path, held if isinstance(held, dict) else {})
         if (o := session.offers.get(d.get('path') or '')): d['offer'], d['also'] = o, session.offer_also.get(d['path'], [])
         return d
     @rt('/tab/offer/dismiss', methods=['POST'])
@@ -122,7 +129,7 @@ def connect(app, ctx):
         "Not now: the loose tab on `path` stops offering its folder."
         session.offers.pop(path, None); session.offer_also.pop(path, None)
         return {'ok': True}
-    def _tab_state(path=''):
+    def _tab_state(path='', have={}):
         t = first(session.tabs, lambda x: docs.key(x) == path) if path else ctx.tab
         if t is None and path:
             try: want = str(Path(path).expanduser().resolve())
@@ -140,9 +147,11 @@ def connect(app, ctx):
             except Exception as e: return {'kind': 'error', 'error': errstr(e)}
             docs.docs[key] = nb
             t.nb_lang = nb.lang
-            return {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                    'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version,
-                    'cells': [c.dict() for c in nb.cells]}
+            d = {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
+                 'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version}
+            # A running cell changes its outputs before the version moves, so the page's copy is only the same when nothing runs.
+            if have.get(key) == nb.version and not any(c.running for c in nb.cells): return d | {'same': True}
+            return d | {'cells': [c.dict() for c in nb.cells]}
         if t.kind in ('pdf', 'image', 'office', 'audio', 'video'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
@@ -155,15 +164,17 @@ def connect(app, ctx):
         if t.kind == 'web':
             # Same shape again: the page lives in Chrome, and the panel opens `/browser/ws`.
             return {'kind': 'web', 'title': t.title, 'target': t.ref}
+        note = ''
         try:
             key = t.path or t.title
             if key in docs.buffers: text = docs.buffers[key]
             else:
-                text = ctx.fs.read(t.path) if t.path else ''
+                try: text = ctx.fs.read(t.path) if t.path else ''
+                except NotText as e: text, note = _shown(t.path), e.said
                 docs.versions[key] = held
         except Exception as e: return {'kind': 'error', 'error': errstr(e)}
-        return {'kind': 'text', 'path': t.path, 'title': t.title, 'lang': t.lang or '',
-                'disk_version': held, 'stale': stale, 'text': text, 'read_only': bool(t.path and ctx.fs.read_only(t.path))}
+        return {'kind': 'text', 'path': t.path, 'title': t.title, 'lang': t.lang or '', 'disk_version': held, 'stale': stale,
+                'text': text, 'read_only': bool(note or t.path and ctx.fs.read_only(t.path)), 'note': note}
     @rt('/tab/disk')
     def tab_disk(path: str = ''):
         "Current on-disk text for the explicit conflict/merge editor."
@@ -173,8 +184,9 @@ def connect(app, ctx):
                 return {'path': str(p), 'kind': 'notebook',
                         'cells': [c.dict() for c in Notebook.load(p).cells],
                         'disk_version': disk_version(p)}
-            return {'path': str(p), 'kind': 'text', 'text': ctx.fs.read(p),
-                    'disk_version': disk_version(p)}
+            try: text, note = ctx.fs.read(p), ''
+            except NotText as e: text, note = _shown(p), e.said
+            return {'path': str(p), 'kind': 'text', 'text': text, 'note': note, 'disk_version': disk_version(p)}
         except Exception as e: return fail(e)
     outside = {}
     def keep_outside_write(path, version):
@@ -231,7 +243,9 @@ def connect(app, ctx):
         docs.versions.setdefault(path, docs.bases[path])   # a draft descends from what was read
         if kind == 'notebook':
             nb = docs.docs.get(path)
-            if nb is not None: nb.take_sources([{'id': d.get('id'), 'i': d.get('i', -1), 'source': text, 'seq': d.get('seq')}], docs.seqs_for(tab))
-            tab.dirty = tab.dirty or nb is None or nb.dirty
+            row = {'id': d.get('id'), 'i': d.get('i', -1), 'source': text, 'seq': d.get('seq'), **{k: d[k] for k in ('base', 'page') if k in d}}
+            clash = nb.take_sources([row], docs.seqs_for(tab)) if nb is not None else []
+            tab.dirty = tab.dirty or nb is None or nb.dirty or bool(clash)
+            return {'ok': True, 'took': not clash}
         elif take_seq(docs.seqs_for(tab), '', d.get('seq')): docs.buffers[path], tab.dirty = text, True
         return {'ok': True}

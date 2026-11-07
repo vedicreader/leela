@@ -2,10 +2,10 @@ async function startRun(r) {
   if (r.debug) return startDirectDebug(r);
   status(`starting ${r.name || (r.cmd || '').split('/').pop()}…`);
   let s;
-  try { s = await withPython(() => api('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
+  try { s = await withPython(() => post('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
   catch (e) { return status(String(e.message || e), 'err'); }
   if (!s.ok) return status(s.error || 'failed to start', 'err');
-  agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
+  agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)}: ${esc(s.cmd)}</span></div>` +
            `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
   // A dev server's output is the thing you watch, so open the terminal it is on rather than
   // leaving it to be found under a dock tab and a filter.
@@ -27,7 +27,7 @@ async function runApp() {
   const opts = (d.runs || []).concat(d.here ? [d.here] : []);
   if (!opts.length) {
     editRuns();
-    return status('no run configurations yet — here is the file', 'err');
+    return status('no run configurations yet. This is the file for them', 'err');
   }
   const start = startRun;
   if (opts.length === 1) return start(opts[0]);
@@ -92,7 +92,7 @@ async function pickEnv() {
     `<div class="lee-modallist">${rows.map((e, i) =>
       `<div class="lee-mrow${e.current ? ' sel' : ''}" data-i="${i}">${e.current ? '● ' : '○ '}` +
       `${esc(e.name)}<span class="sub">${esc(e.kind)}${e.pid ? ' · pid ' + e.pid : ''}</span></div>`).join('')}</div>` +
-    `<div class="lee-dim">a process only appears here if it has an inspector in it — ` +
+    `<div class="lee-dim">a process shows here only when it has an inspector in it. ` +
     `<code>${esc(d.hint)}</code> puts one in yours.</div>`);
   m.addEventListener('click', async (e) => {
     const r = e.target.closest('.lee-mrow'); if (!r) return;

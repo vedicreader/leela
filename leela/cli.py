@@ -21,7 +21,7 @@ def main(argv=None):
                         'app runs), or none. The inline browser uses the CDP Chrome either way.')
     p.add_argument('--port', type=int, default=PORT, help=f'web IDE port (default: {PORT})')
     p.add_argument('--host', default='127.0.0.1', help='web IDE host (default: 127.0.0.1)')
-    p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
+    p.add_argument('--kernel-port', type=int, default=0, help='base port for kernel inspectors; 0 lets the OS choose')
     p.add_argument('--transport', choices=['auto', 'direct', 'gateway'], default='auto',
                    help='kernel transport; auto uses the shared gateway for app windows')
     p.add_argument('--gateway-port', type=int, default=8787,
@@ -57,7 +57,7 @@ def main(argv=None):
                         '(default: $LEELA_KEYMAP, else keys.json in leela’s config dir)')
     p.add_argument('--write-keymap', action='store_true',
                    help='write the chords you have changed to that file, with every action and its '
-                        'default listed beside them, then exit — the starting point for rebinding '
+                        'default listed beside them, then exit. Start here to change a key '
                         'anything your terminal swallows')
     a = p.parse_args(argv)
     if a.keymap: os.environ['LEELA_KEYMAP'] = os.path.abspath(a.keymap)
@@ -72,6 +72,11 @@ def main(argv=None):
     # The Mac app runs this server as its child: its env, its dialogs, and no extras folder to shadow the pinned packages.
     if hosted: host.setup()
     else: _plain_setup()
+    # API keys an older Leela put in the fastops env file move to the keychain
+    try:
+        from .blocks.vault.spec import CREDS
+        CREDS.migrate()
+    except Exception as e: print(f'  API keys not moved to the keychain: {e}')
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')

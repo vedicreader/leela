@@ -364,3 +364,24 @@ def test_typing_during_a_git_revert_is_kept_over_the_file_it_wrote(tmp_path, bro
         await pg.evaluate('([p, had]) => refreshFileChanges(p, true, had)', [str(f), had])
         return await pg.evaluate("LeeCM.getDoc(lee.editors.get('file'))")
     assert web._run(go, roots=[tmp_path], browser=browser) == 'a = 1\nb = 2\n'
+
+@BROWSERS
+def test_two_windows_on_one_notebook_keep_each_others_edits_and_a_shared_cell_offers_the_choice(tmp_path, browser):
+    "Each save sent every cell, so the window that saved second put back the source the other window had replaced."
+    a = _nb(tmp_path/'two.ipynb', [('x', 'code', 'x = 1'), ('y', 'code', 'y = 2')])
+    async def go(pg):
+        await _open(pg, a)
+        async with pg.context.expect_page() as pop: await pg.evaluate("() => { window.open(location.href, '_blank', 'noopener'); }")
+        pb = await pop.value
+        await pb.wait_for_function('window.lee && lee.keys.length')
+        await _open(pb, a)
+        await _type(pg, 'x', '00'); await pg.evaluate('saveTab(true)')
+        await _type(pb, 'y', '00'); await pb.evaluate('saveTab(true)')
+        both = _src(a, 'x'), _src(a, 'y')
+        await _type(pb, 'x', '7'); await pb.wait_for_timeout(300)   # B still shows `x = 1`, which A replaced
+        saved = await pb.evaluate('saveTab(false)')
+        offered = await pb.evaluate("!!document.querySelector('.lee-save-conflict [data-merge]')")
+        return both, saved, offered, _src(a, 'x')
+    both, saved, offered, x = web._run(go, roots=[tmp_path], browser=browser)
+    assert both == ('x = 100', 'y = 200'), both
+    assert saved is False and offered and x == 'x = 100', (saved, offered, x)

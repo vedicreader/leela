@@ -1,3 +1,5 @@
+lee-cm6.js, lee-term.js, lee-term.css and htmx.min.js: built from frontend/ with the versions in frontend/package-lock.json. `make vendor-check` runs `npm ci && npm run build` in frontend/ and fails if a byte differs. THIRD_PARTY_NOTICES.md lists every package in the bundles with its licence; `tools/third_party.py` writes it (run `npm ci` first, and pass the widgets scratch folder's node_modules with `--widgets`).
+
 lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scratch folder outside the repository, so no node tooling enters it. Packages, exact: @jupyter-widgets/html-manager@1.0.15 @jupyter-widgets/base@6.0.12 @jupyter-widgets/controls@5.0.13 @jupyter-widgets/output@6.0.12 esbuild@0.28.1 (node 26.5.0, npm 11.17.0).
 
     d=$(mktemp -d) && cp frontend/widgets.js frontend/widgets.css "$d" && cd "$d"

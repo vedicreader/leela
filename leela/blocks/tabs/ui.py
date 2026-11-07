@@ -11,7 +11,7 @@ __all__ = ['tab_bar', 'kernel_pill']
 
 def tab_bar(ws):
     "The open tabs. `alt+1..9` selects, the x closes."
-    if not ws.tabs: return Div(Span('no files open', cls='lee-dim'), id='tabbar', cls='lee-tabbar', role='tablist')
+    if not ws.tabs: return Div(Span('no files open', cls='lee-dim'), id='tabbar', cls='lee-tabbar')
     counts = Counter(t.title for t in ws.tabs)
     def label(t):
         "A shared title widens to `root/relative/path`; a unique one stays short."

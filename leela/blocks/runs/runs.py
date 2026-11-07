@@ -103,7 +103,7 @@ class Runs:
             rs = [self.for_file(py) if py else
                   Run(name='app', cmd='uvicorn app:app --port 8000', watch='app')]
         return {'_help': ['leela run configurations: how this project starts.',
-                          'cmd is a command line — `uvicorn app:app --port 8000`, `python train.py`, '
+                          'cmd is a command line, for example `uvicorn app:app --port 8000`, `python train.py`, '
                           '`python -m flask run`. It runs in a process leela puts an inspector in, '
                           'so its module namespace shows up in the variable panel.',
                           'watch names the module to inspect; blank infers it from the command.'],

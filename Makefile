@@ -54,3 +54,10 @@ lock-verify:
 # the SSH signing keys in ~/.ssh, asks for a passphrase; refuses to overwrite
 lock-key:
 	$(LOCKPY) key
+
+# make vendor-check: rebuild the editor, terminal and htmx bundles from frontend/package-lock.json and fail if a byte differs
+.PHONY: vendor-check
+vendor-check:
+	cd frontend && npm ci && npm run build
+	git diff --exit-code leela/vendor
+	uv run python tools/third_party.py --check

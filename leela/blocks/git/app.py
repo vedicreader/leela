@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from starlette.responses import JSONResponse
 
 from fastcore.all import first
 
@@ -47,6 +48,13 @@ def git_paths(values):
         out.append(str(p))
     if not out: raise GitError('select at least one changed file')
     return out
+
+#: the request fields that name a ref, a branch, a tag or a remote
+REF_KEYS = ('branch', 'start', 'ref', 'upstream', 'name', 'remote')
+
+def git_refs(*refs):
+    "Refuse a ref that starts with `-`: git reads it as an option, and `--output=` writes a file."
+    if bad := [r for r in refs if str(r or '').lstrip().startswith('-')]: raise GitError(f'not a branch, tag or commit: {bad[0]}')
 
 def _dropped(repo, branch, force):
     "Delete a branch and report the commit it was at, which is the only handle for bringing it back."
@@ -288,8 +296,10 @@ def _clone_into(fs, url, parent, name=''):
 def connect(app, ctx):
     rt = app.route
     def run_clone(job, report):
+        from ...hub import grant
         report(current=f'cloning {job.target}')
         root = clone(job.target, job.params.get('parent') or '', job.params.get('name') or '')
+        grant(root)   # the person agreed to this folder before the clone; the add that follows asks nothing
         return {'root': str(root), 'name': root.name}
     ctx.jobs.register('git_clone', run_clone)
     #: Every conflicted file's text at the moment `/git/conflicts` served the plan, one entry per
@@ -325,6 +335,7 @@ def connect(app, ctx):
         d = await req.json()
         try:
             def act():
+                git_refs(*(d.get(k) for k in REF_KEYS))
                 r, op = repo_at(d.get('repo') or ''), str(d.get('op') or '')
                 if op in ('resolve_conflict', 'write_worktree', 'discard'):
                     _writable(ctx, r, git_paths(d.get('paths') if op == 'discard' else [d.get('path')]))
@@ -374,6 +385,10 @@ def connect(app, ctx):
         try:
             url = clone_url(d.get('url') or '')
             target = _clone_into(ctx.fs, url, str(d.get('parent') or ''), str(d.get('name') or ''))
+            # The clone becomes an open folder, so it passes the same gate as opening one: inside an open folder, or the person agrees.
+            from ...hub import admit_folder, window_name
+            if no := await off_loop(admit_folder, str(target), window_name(ctx.session), covers=ctx.fs.covers, headers=req.headers):
+                return JSONResponse({**no[1], 'cloned': False}, status_code=no[0])
             job = ctx.jobs.start('git_clone', url, parent=str(target.parent), name=target.name)
             return {'job': job.dict(), 'root': str(target)}
         except Exception as e: return fail(e)
@@ -386,6 +401,7 @@ def connect(app, ctx):
     async def git_history(limit: int = 100, skip: int = 0, query: str = '', ref: str = '--all',
         path: str = '', repo: str = ''):
         try:
+            if ref != '--all': git_refs(ref)
             clean = git_paths([path])[0] if path else ''
             return {'commits': await off_loop(repo_at(repo).history, limit, skip, query, ref, clean)}
         except Exception as e: return fail(e)
@@ -414,28 +430,30 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/git/commit')
     async def git_commit_detail(ref: str = 'HEAD', repo: str = ''):
-        try: return await off_loop(repo_at(repo).commit_detail, ref)
+        try: return git_refs(ref) or await off_loop(repo_at(repo).commit_detail, ref)
         except Exception as e: return fail(e)
     @rt('/git/commit/review')
     async def git_commit_review(ref: str = 'HEAD', repo: str = ''):
-        try: return await off_loop(repo_at(repo).commit_review, ref)
+        try: return git_refs(ref) or await off_loop(repo_at(repo).commit_review, ref)
         except Exception as e: return fail(e)
     @rt('/git/commit/file')
     async def git_commit_file(ref: str = 'HEAD', path: str = '', context: int = 3, repo: str = ''):
         try:
-            clean = git_paths([path])[0]
+            git_refs(ref); clean = git_paths([path])[0]
             return await off_loop(lambda: coloured(repo_at(repo).commit_file(ref, clean, context), clean, cells=('patch',)))
         except Exception as e: return fail(e)
     @rt('/git/compare')
     async def git_compare(left: str = 'HEAD', right: str = '', repo: str = ''):
         try:
             if not right: raise GitError('choose two refs to compare')
+            git_refs(left, right)
             return await off_loop(repo_at(repo).compare, left, right)
         except Exception as e: return fail(e)
     @rt('/git/review')
     async def git_review(base: str = 'HEAD', head: str = '', mode: str = 'review', repo: str = ''):
         try:
             if not head: raise GitError('choose a branch to review')
+            git_refs(base, head)
             return await off_loop(repo_at(repo).review, base, head, mode)
         except Exception as e: return fail(e)
     @rt('/git/review/file')
@@ -443,6 +461,7 @@ def connect(app, ctx):
         mode: str = 'review', context: int = 3, repo: str = ''):
         try:
             if not head: raise GitError('choose a branch to review')
+            git_refs(base, head)
             r, clean = repo_at(repo), git_paths([path])[0]
             d = await off_loop(lambda: coloured(r.review_file(base, head, clean, mode, context), clean, cells=('patch',)))
             if d['can_apply'] and not clean.lower().endswith('.ipynb'):
@@ -454,6 +473,7 @@ def connect(app, ctx):
     async def git_merge_preview(incoming: str = '', repo: str = ''):
         try:
             if not incoming: raise GitError('choose a branch to merge')
+            git_refs(incoming)
             return await off_loop(repo_at(repo).merge_preview, incoming)
         except Exception as e: return fail(e)
     @rt('/git/pr')
@@ -461,18 +481,19 @@ def connect(app, ctx):
         "The pull request this branch belongs to, or why there is nothing to say about it."
         from .hub import pr_context
         try:
-            r = repo_at(repo)
+            git_refs(branch); r = repo_at(repo)
             return await off_loop(pr_context, r.root, branch or r.run('branch', '--show-current').strip())
         except Exception as e: return fail(e)
     @rt('/git/sync-plan')
     async def git_sync_plan(repo: str = '', upstream: str = '', fetch: bool = False):
         "Where the branch stands against its upstream, and each way to reconcile. What the Sync dialog reads."
-        try: return await off_loop(repo_at(repo).divergence, upstream, fetch)
+        try: return git_refs(upstream) or await off_loop(repo_at(repo).divergence, upstream, fetch)
         except Exception as e: return fail(e)
     @rt('/git/rebase-preview')
     async def git_rebase_preview(onto: str = '', repo: str = ''):
         try:
             if not onto: raise GitError('choose a branch to rebase')
+            git_refs(onto)
             return await off_loop(repo_at(repo).rebase_preview, onto)
         except Exception as e: return fail(e)
     @rt('/git/blame')

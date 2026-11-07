@@ -283,7 +283,8 @@ class LoopbackHostGuard:
         site = headers.get(b'sec-fetch-site', b'').decode().lower()
         # a page with `Referrer-Policy: no-referrer` posts to itself with `Origin: null`
         origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost') or (origin == 'null' and site == 'same-origin')
-        browser_ok = site != 'cross-site' or learn_navigation(scope, headers)
+        # `same-site` is a page on another local port: 127.0.0.1:3000 and 127.0.0.1:5001 are one site
+        browser_ok = site in ('', 'same-origin', 'none') or learn_navigation(scope, headers)
         if not (allowed and origin_ok and browser_ok): return await _refuse(scope, send, 'invalid Host header')
         # as abhyasa's `LocalOnly`: a change, or a socket, from a page on another port is another site's
         changes = scope.get('type') == 'websocket' or scope.get('method', 'GET') not in SAFE_METHODS

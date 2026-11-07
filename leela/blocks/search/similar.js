@@ -57,7 +57,7 @@ async function findSimilar() {
   status('finding similar code…');
   const d = await api(`/similar?path=${encodeURIComponent(lee.path)}&line=${cursorLine()}&mode=cluster`);
   status(`${d.hits.length} similar · ${d.backend} · ${d.note}`, d.hits.length ? 'ok' : null);
-  hitList(d.hits, `${d.backend} — ${d.note}`, 'code like this', openHit);
+  hitList(d.hits, `${d.backend} · ${d.note}`, 'code like this', openHit);
 }
 
 async function codeMap() {
@@ -70,7 +70,7 @@ async function codeMap() {
     symbol: `${c.label}  (${c.size})`, text: '', path: c.files[0] || '', line: 1,
     score: 0, _cluster: c,
   }));
-  hitList(rows, d.note, 'code map — clusters by shape', (r) => {
+  hitList(rows, d.note, 'code map: clusters of similar code', (r) => {
     const c = r._cluster;
     hitList(c.members, `${c.size} members across ${c.files.length} files`, `cluster: ${c.label}`, openHit);
   });

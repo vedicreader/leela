@@ -490,7 +490,7 @@ def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
 _OPEN_SETTINGS = {
     'palette': lambda page: (page.keyboard.press('ControlOrMeta+Shift+P'), page.wait_for_selector('#cp'),
                              page.fill('#cp', 'settings'),
-                             page.locator('#cplist .lee-mrow', has_text=__import__('re').compile(r'^settings')).first.click()),
+                             page.locator('#cplist .lee-mrow', has_text=__import__('re').compile(r'^settings', __import__('re').I)).first.click()),
     'key': lambda page: page.keyboard.press('ControlOrMeta+Comma'),
     'menu': lambda page: page.evaluate("leeAct('settings')"),
 }
@@ -776,10 +776,10 @@ def test_the_palette_lists_commands_and_hands_a_file_query_to_the_opener(tmp_pat
         await pg.wait_for_function("() => (lee.path || '').endsWith('zqxw_notes.py')", timeout=5000)
         return saved, only, asked, empty, prefilled, focused, await pg.evaluate("!!document.querySelector('#cp, #qo')")
     saved, only, asked, empty, prefilled, focused, still_open = _run(go, roots=[tmp_path])
-    assert saved[0].startswith('save') and saved[-1].startswith('Go to file matching “save”'), saved
+    assert saved[0].startswith('Save') and saved[-1].startswith('Go to file matching “save”'), saved
     assert not any('zqxw_notes.py' in r for r in only) and len(only) == 1, only
     assert not asked, 'the palette searched files itself'
-    assert any(r.startswith('new lesson notebook') for r in empty), empty
+    assert any(r.startswith('New lesson notebook') for r in empty), 'palette rows are in sentence case'
     assert not any(r.startswith('Go to file matching') for r in empty), 'an empty query offers no hand-off'
     assert (prefilled, focused) == ('zqxw', 'qo')
     assert not still_open, 'opening the file closes both'

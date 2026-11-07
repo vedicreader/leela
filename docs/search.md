@@ -1,6 +1,6 @@
 # Code search
 
-`mod+shift+f` opens the code search dialog. One query box, a rail of modes, a result list, and a preview.
+⇧⌘F (Ctrl+Shift+F) opens the code search dialog. One query box, a rail of modes, a result list, and a preview.
 
 ![Results](screenshots/search-results.png)
 

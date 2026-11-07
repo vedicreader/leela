@@ -36,7 +36,7 @@ async function askCell(i, src, el) {
     lee.promptRuns = lee.promptRuns || new Map();
     const abort = new AbortController();
     lee.promptRuns.set(cellId, abort);
-    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq()}, (event, data) => {
+    await postEvents('/nb/ask/stream', {i, id: cellId, path: runKey, source: src, seq: nextSeq(), ...seenRow(runKey, cellId)}, (event, data) => {
       const shown = cur();
       if (event === 'chunk') {
         raw += data.text || '';
@@ -61,7 +61,7 @@ async function askCell(i, src, el) {
     const here = (r.edits || []).some(e => e.path === lee.path);
     showProblems(r.problems);
     status((r.problems || []).length ? r.problems[r.problems.length - 1]
-           : here ? 'this notebook also changed on disk — your buffer wins until you save'
+           : here ? 'this notebook also changed on disk. Your text stays until you save'
                   : (r.note || 'answered'),
            r.ok && !here && !(r.problems || []).length ? 'ok' : 'err');
     markDirty();

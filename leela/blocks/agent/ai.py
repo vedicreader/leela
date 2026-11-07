@@ -11,7 +11,7 @@ from ..fs.office import is_office, office_text
 from ...agent.agent import PERSON_ONLY, SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
-                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
+                         ASK_TOOLS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, arg_write, clip, failed, one_line as _1, summary)
 from shalya.host import (ApiHost, AskHost, BrowserHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost,
                          NotebookHost, OwnPythonHost, SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
@@ -37,14 +37,30 @@ BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a co
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo', 'add_exercise'})   # grade_exercise only adds a note under the learner's checks, so it does not ask
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | ASK_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'check_exercise', 'add_demo', 'add_exercise', 'generate_video'})   # grade_exercise only adds a note under the learner's checks, so it does not ask
+PATH_ACTIONS, URL_ACTIONS = ('path', 'folder'), ('url', 'harvest', 'crawl')   #: vishalakshi watch actions that read a local path, or a page
+GUARDED_DIRS = ('.git', '.venv', '.leela')   #: a write under one asks even in `edits`: hooks, interpreters and settings run code
+SAFE_VERBS = ('GET', 'HEAD')
+
+def api_write(host, args):
+    "Whether an `api_call` may change something: any verb but GET or HEAD, and any operation whose verb is unknown."
+    # TODO(ramabana): gate on the verb in ramabana.spec (SpecHost.api_call) and let `Approvals` take an arg-aware predicate beside `path_write`
+    a, op = args or {}, str((args or {}).get('operation') or '')
+    try: rows = host.api_ops(name=a.get('name') or '', match=op, limit=0)
+    except Exception: return True
+    return first(r.get('verb') for r in rows if r.get('name') == op) not in SAFE_VERBS
+
+def gated(name, args, host=None):
+    "Whether a call asks a person in `ask` mode: a write by name, by the path it saves to, or by its arguments."
+    return (name in WRITE_TOOLS or path_write(name, args) or arg_write(name, args)
+            or (name == 'api_call' and api_write(host, args)))
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 CONTROL_APPROVALS = {'autopilot': 'auto', 'edits': 'edits'}   #: the approvals mode a pane control puts in place while it holds
-KEPT = ('policy', 'person', 'loop', 'pause')   #: asks a mode switch leaves for the person
+KEPT = ('policy', 'person', 'loop', 'pause')   #: asks a mode switch leaves for the person; `guard` stays unless the switch is to auto
 STOP_NOTE = 'the user stopped this turn'
 def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in SECRET_ARGS.get(tool, ()) if k in was}}
 def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
@@ -139,7 +155,8 @@ class Interventions(Approvals):
         self.held = None
         return super().set_mode(mode)
     def _settle(self):
-        settled = [a for a in self.waiting if a.forced not in KEPT and self.mode != 'ask' and not (self.mode == 'edits' and not self.edits_cover(a.tool))]
+        settled = [a for a in self.waiting if a.forced not in KEPT and self.mode != 'ask' and not (self.mode == 'edits' and not self.edits_cover(a.tool))
+                   and not (a.forced == 'guard' and self.mode == 'edits')]
         if not settled: return ''
         ok = self.mode != 'off'
         for a in settled: self.answer(a.id, ok, f'answered by /approve {self.mode}')
@@ -214,7 +231,7 @@ class Interventions(Approvals):
                 p['remaining'] -= 1
                 if p['remaining'] <= 0: self.run_policy = None
                 return True
-            writes = name in WRITE_TOOLS or path_write(name, args)
+            writes = gated(name, args, self.host)
             if kind == 'until_write':
                 if writes:
                     self.run_policy = None
@@ -229,16 +246,17 @@ class Interventions(Approvals):
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
         branch_id='main', parent_action_id=''):
         args = dict(args or {})
-        required = name in self.tools or path_write(name, args)   # a drawing saved where the call names is a write
+        required = name in self.tools or gated(name, args, self.host)   # a drawing saved where the call names is a write
         # ramabana's repeat guard: the DOOM_LOOPth identical gated call is put to the person whatever
         # the mode or run policy says; a read between neither counts nor resets the streak
         loop = (force or required) and self._looping(name, args)
         paused = not self.stopping and self._take_pause()
-        bypassed = not force and not paused and self._policy_bypasses(name, args)
+        guard = required and self.mode not in ('auto', 'off') and self.guarded_write(name, args)
+        bypassed = not force and not paused and not guard and self._policy_bypasses(name, args)
         # under auto, guided's extra network pauses go: only directed, chosen to step through, still pauses
         control_checkpoint = not bypassed and (self.control == 'directed' or
             (self.control == 'guided' and self.mode != 'auto' and (name in GUIDED_TOOLS or path_write(name, args))))
-        checkpoint = force or loop or paused or (required and not bypassed) or control_checkpoint
+        checkpoint = force or loop or paused or guard or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, shown := _hidden(name, args)),
             preview=preview_for(name, shown, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
@@ -254,7 +272,7 @@ class Interventions(Approvals):
         if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
             # a path write is not in `tools`; a pause still lets the policy, a saved rule or mode off refuse
             if (d := self.decide(name, args, force=name not in self.tools, ask=a, loop=loop or paused)) is not None: return d
-        if not a.forced: a.forced = 'loop' if loop else 'pause' if paused else ''
+        if not a.forced: a.forced = 'loop' if loop else 'pause' if paused else 'guard' if guard else ''
         if not checkpoint: return a.resolve(True)
         with self._lock:
             closing, heard = self.closed, self.listeners > 0 or self.no_listener == 'wait'
@@ -272,6 +290,18 @@ class Interventions(Approvals):
                 a.resolve(False, f'no answer after {wait_for}s')
                 self._notify('answer', a)
         return a
+    def decide(self, name, args, force=False, ask=None, loop=False):
+        "A write under a guarded folder is put to the person, outside `auto` and `off`, whatever `edits` or a saved allow says."
+        if self.mode not in ('auto', 'off') and self.guarded_write(name, args) and self.rule_for(name, args) != 'deny': return None
+        return super().decide(name, args, force=force, ask=ask, loop=loop)
+    def guarded_write(self, name, args):
+        "Whether this call writes a path under `.git`, `.venv` or `.leela`, links resolved and case folded."
+        if not (name in self.tools or path_write(name, args)): return False
+        for t in write_targets(name, args):
+            try: p = self.host.check(t) if self.host is not None else Path(t)
+            except Exception: p = Path(t)
+            if {x.lower() for x in Path(p).parts} & set(GUARDED_DIRS) or {x.lower() for x in Path(t).parts} & set(GUARDED_DIRS): return True
+        return False
     def answer(self, id, ok, note='', session=False, tool=None, args=None):
         "Resolve a checkpoint; only approval may replace the call that will execute."
         a = self._asks.get(id)
@@ -396,7 +426,27 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
                 f'Writable: {", ".join(self.writable_roots)}. Enable workspace repository writes in '
                 'agent settings to write to the other open folders')
         return target
-    def write(self, path, text): return self.ws.write_text_at(self.check_write(path), text)
+    def write(self, path, text):
+        p = self.check_write(path)
+        if p.suffix == '.ipynb' and self._in_tab(p, lambda nb, seqs: nb.take_source_text(text))[0]: return str(p)
+        return self.ws.write_text_at(p, text)
+    def _held(self, path):
+        "`(tab, notebook, run lock)` of the open tab holding notebook `path`, else Nones: the agent works on what the person sees."
+        store = getattr(self.ws, 'docstore', None)
+        p = Path(path).expanduser().resolve()
+        tab = first(t for t in getattr(self.ws, 'tabs', []) if getattr(t, 'kind', '') == 'notebook' and getattr(t, 'path', '') and Path(t.path).resolve() == p)
+        return store.owner(store.key(tab)) if tab is not None and store is not None else (None, None, None)
+    def _in_tab(self, path, f):
+        "`(True, f(nb, seqs))` run on the workspace loop over the open tab's notebook, which is then unsaved; `(False, None)` when no tab holds it."
+        tab, nb, _ = self._held(path)
+        if nb is None: return False, None
+        def go():
+            out = f(nb, self.ws.docstore.seqs_for(tab))
+            nb.dirty = tab.dirty = True
+            return out
+        if (loop := self._loop()) is None: return True, go()   # already on the loop, or no loop runs
+        async def run(): return go()
+        return True, asyncio.run_coroutine_threadsafe(run(), loop).result(30)
     def exists(self, path):
         "Whether `path` is a file the agent may read; one outside the roots, or missing, is not."
         try: return self.check(path, reading=True).exists()
@@ -405,7 +455,10 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "Remove one file inside the writable roots (a `/rewind` of a created file); one already gone is not an error."
         self.ws.fs._fixed(p := self.check_write(path), 'deleted')
         p.unlink(missing_ok=True)
-    def text_at(self, path): return self.ws.text_at(path)
+    def text_at(self, path):
+        try: _, nb, _ = self._held(self.check(path, reading=True)) if str(path).endswith('.ipynb') else (None, None, None)
+        except Exception: nb = None
+        return nb.source_text() if nb is not None else self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):
         "Leela's own blend: every backend at once, each hit stamped with the legs that agreed."
@@ -420,7 +473,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     def web_search(self, query, n=20):
         if why := query_refusal(query): raise PrivacyBlocked(why, 'pii_blocked')
         return self.ws.research.search(query, n=n)
-    def read_url(self, url, remember=True): return self.ws.research.read(url, remember=remember)
+    def read_url(self, url, remember=True):
+        if source_kind(str(url)) != 'url': raise Unsafe(f'{url} is not a web address; read a local file with view_file')
+        return self.ws.research.read(url, remember=remember)
     def research(self, query):
         if why := query_refusal(query): raise PrivacyBlocked(why, 'pii_blocked')
         _, digest = self.ws.research.dig(query)
@@ -477,13 +532,23 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "Every kind the vault watches, folders included: a vault is always attached here."
         from vishalakshi.acquire import ACTIONS
         return ACTIONS
+    def _watchable(self, target, action):
+        "Refuse a watch that would read a local path a read tool may not, or a URL that is not on the web."
+        if action in PATH_ACTIONS: return self.check(target, reading=True)
+        if action in URL_ACTIONS and source_kind(str(target)) != 'url': raise Unsafe(f'{target} is not a web address; a watch reads only http and https pages')
     def watch(self, target, action='url', every='1d', note=None, **kw):
+        self._watchable(target, action)
         return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
     def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)
     def watches(self, due_only=False): return self._vault().watches(due_only=due_only)
     def poll(self):
-        "Fire what has come due. A watch files itself into memory, so this needs the write."
-        return self._vault(write=True).poll()
+        "Fire what has come due, after pausing each due watch a read tool could not read. A watch files itself into memory, so this needs the write."
+        m, skipped = self._vault(write=True), []
+        for w in m.watches(due_only=True):
+            try: self._watchable(w['target'], w.get('action') or w.get('kind'))
+            except Exception:
+                m.vault.pause(w['id']); skipped.append(w['target'])
+        return {**m.poll(), 'skipped': skipped}
     # `SpecHost` is a `LocalHost`, so specs are borrowed rather than inherited. The workspace
     # holds the loaded ones, so they outlive one `WorkspaceHost`.
     @property
@@ -564,30 +629,47 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         return self.api_fetch(operation, key, **params)
     def nb_cells(self, path):
         from ..nb.nb import Notebook
-        return [(c.id, c.cell_type, c.source) for c in Notebook.load(self.check(path)).cells]
+        p = self.check(path)
+        _, nb, _ = self._held(p)
+        return [(c.id, c.cell_type, c.source) for c in (nb if nb is not None else Notebook.load(p)).cells]
+    def nb_set_cell(self, path, cell_id, source):
+        "Replace one cell's source in the open tab, stamped so an older page write cannot undo it; on disk when no tab holds it."
+        import time
+        cid, p = self.nb_cell(path, cell_id)[0], self.check(path, must_exist=True)
+        def put(nb, seqs):
+            nb.take_sources([{'id': cid, 'source': source, 'seq': int(time.time() * 1000)}], seqs)
+            return cid
+        held, out = self._in_tab(p, put)
+        return out if held else NotebookHost.nb_set_cell(self, path, cell_id, source)
     def nb_add_cell(self, path, source, index=-1, cell_type='code'):
         from ..nb.nb import Cell, Notebook
         p = self.check(path)
+        def add(nb, seqs=None):
+            c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
+            if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
+            nb.reveal(first(j for j, x in enumerate(nb.cells) if x is c))   # the fold lives in the file, so unfold it there
+            return c.id
+        held, cid = self._in_tab(p, add)
+        if held: return cid
         nb = Notebook.load(p) if p.exists() else Notebook.blank(p)
-        c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
-        if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
-        nb.reveal(first(j for j, x in enumerate(nb.cells) if x is c))   # the fold lives in the file, so unfold it there
+        cid = add(nb)
         nb.save(p, sandbox=self.ws.fs)
-        return c.id
+        return cid
     def nb_run_cell(self, path, cell_id, timeout=120):
         "Run one cell in the kernel its notebook's tab runs in, the way the Run button does."
         from ..nb.nb import Notebook, run_watched
         from ...workspace import Tab
         p = self.check(path, must_exist=True)
-        nb = Notebook.load(p)
+        held, nb, lock = self._held(p)
+        nb = nb if nb is not None else Notebook.load(p)
         i = first(i for i, c in enumerate(nb.cells) if c.id == cell_id)
         if i is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
         if nb[i].cell_type != 'code': return f'cell {cell_id} is a {nb[i].cell_type} cell; only code cells run'
-        if nb.reveal(i): nb.save(p, sandbox=self.ws.fs)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
+        if held is None and nb.reveal(i): nb.save(p, sandbox=self.ws.fs)
         # an unopened notebook gets the private kernel its tab would have, never the kernel of the tab in front
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p)) or Tab(path=str(p), kind='notebook')
+        tab = held or Tab(path=str(p), kind='notebook')
         try: k = asyncio.run_coroutine_threadsafe(self.ws.runtime(tab), loop).result(120)
         except NoVenv as e: return e.for_agent
         except Exception as e: return f'could not start the kernel for {path}: {errstr(e)}'
@@ -595,7 +677,15 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         note = ('' if was in (None, self._cells[str(p)]) else
                 "[this notebook's kernel is not the one your last run_cell here used (it restarted, or closed and started again): names from earlier cells are gone]\n")
         before = self._var_snapshot(k)
-        try: c, _ = asyncio.run_coroutine_threadsafe(run_watched(nb, i, k), loop).result(max(1, int(timeout)))
+        async def run():
+            if lock is None: return await run_watched(nb, i, k)
+            async with lock:
+                j = first(j for j, x in enumerate(nb.cells) if x.id == cell_id)
+                if j is None: raise ValueError(f'cell {cell_id} left the notebook before it could run')
+                nb.reveal(j); held.running += 1
+                try: return await run_watched(nb, j, k)
+                finally: held.running, held.dirty = max(0, held.running - 1), True
+        try: c, _ = asyncio.run_coroutine_threadsafe(run(), loop).result(max(1, int(timeout)))
         except TimeoutError: return f'cell {cell_id} has not finished in {timeout}s; it is still running in the kernel'
         except Exception as e: return f'could not run cell {cell_id}: {errstr(e)}'
         if (origins := getattr(self.ws, 'origins', None)) is not None: origins.cell(c, path)
@@ -608,9 +698,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         p = self.check(path, must_exist=True)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
-        store = getattr(self.ws, 'docstore', None)
-        _, nb, lock = store.owner(str(p)) if tab and store else (None, None, None)
+        tab, nb, lock = self._held(p)
         if nb is None: nb, lock = Notebook.load(p), asyncio.Lock()
         c = first(c for c in nb.cells if c.id == cell_id)
         if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
@@ -628,9 +716,7 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         p = self.check(path, must_exist=True)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the notebooks here, so nothing can be graded'
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p))
-        store = getattr(self.ws, 'docstore', None)
-        _, nb, lock = store.owner(str(p)) if tab and store else (None, None, None)
+        tab, nb, lock = self._held(p)
         if nb is None: return f'{path} is not open in a tab. Open it, check the exercise there, then grade it.'
         c = first(c for c in nb.cells if c.id == cell_id)
         if c is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
@@ -972,7 +1058,7 @@ def _session_tools(host):
     @summary(lambda a: f'Run {a.get("path","")} cell {a.get("cell_id","?")}')
     def run_cell(path: str, cell_id: str, timeout: int = 120) -> str:
         """Run one notebook cell in the user's live kernel, as pressing Run on it would.
-        The source runs as it is on disk, in that notebook tab's kernel, against the user's namespace and execution counter. The notebook file is never written. Take `cell_id` from `notebook_cells`. `run_python` is not a substitute: it runs in your own layer, not the user's.
+        The source runs as the open tab holds it, unsaved edits included, in that tab's kernel, against the user's namespace and execution counter. The output goes into the tab; the file is not written. Take `cell_id` from `notebook_cells`. `run_python` is not a substitute: it runs in your own layer, not the user's.
         """
         try: return clip(host.nb_run_cell(path, cell_id, timeout))
         except Exception as e: return f'run_cell failed: {errstr(e)}'
@@ -1024,14 +1110,17 @@ def _session_tools(host):
                     or 'the stub does not pass every test')
             p = host.check_write(path)
             if p.suffix != '.ipynb': return 'add_exercise failed: path must be an .ipynb notebook'
-            nb = Notebook.load(p)
-            index = first(i + 1 for i, c in enumerate(nb.cells) if c.id == after_cell_id) if after_cell_id else len(nb)
-            if index is None: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
             task_cell, code = exercise_cells(spec)
-            nb.insert(index, task_cell)
-            nb.insert(index + 1, code)
-            nb.reveal(index + 1)
-            nb.save(p, sandbox=host.ws.fs)
+            def put(nb, seqs=None):
+                index = first(i + 1 for i, c in enumerate(nb.cells) if c.id == after_cell_id) if after_cell_id else len(nb)
+                if index is None: return False
+                nb.insert(index, task_cell); nb.insert(index + 1, code); nb.reveal(index + 1)
+                return True
+            held, ok = host._in_tab(p, put)
+            if not held:
+                nb = Notebook.load(p)
+                if ok := put(nb): nb.save(p, sandbox=host.ws.fs)
+            if not ok: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
             return f'Added the exercise (cells {task_cell.id}, {code.id}). Checked: the solution passes {n} of {n}; {stub}.'
         except Exception as e: return f'add_exercise failed: {errstr(e)}'
     add_exercise.secret_args = ('solution',)
@@ -1144,7 +1233,7 @@ def api_context(host):
     for n in names:
         info, pol = dict(getattr(host, 'spec_info', {}).get(n) or {}), keyed.get(n) or {}
         groups, ops = info.get('groups') or [], info.get('operations')
-        bits = [f"{info.get('title') or n} — {ops} operation{'' if ops == 1 else 's'} in "
+        bits = [f"{info.get('title') or n}: {ops} operation{'' if ops == 1 else 's'} in "
                 f"{len(groups)} group{'' if len(groups) == 1 else 's'}"]
         if groups[:8]: bits.append('groups: ' + ', '.join(groups[:8]) + ('…' if len(groups) > 8 else ''))
         if pol.get('headers'): bits.append('sends ' + ', '.join(pol['headers']))
@@ -1155,7 +1244,7 @@ def api_context(host):
         rows.append(f'- `{n}`: ' + '. '.join(bits) + '.')
     return ('\n\n## APIs loaded in this session\n\n' + '\n'.join(rows) + """
 
-These are loaded already — do not `api_load` them again. `api_ops(name=…, match=…)` finds the
+These are loaded already. Do not `api_load` them again. `api_ops(name=…, match=…)` finds the
 operation and `api_call` runs it; say which one answered. A spec marked local-only refuses on a
 hosted model rather than sending anything, and the refusal names what to change.""")
 
@@ -1514,15 +1603,15 @@ class Assistant(Agent):
         if writes:
             here = Path(self.host.roots[0]).resolve()
             if foreign := [g['root'] for g in writes if g.get('root') and Path(g['root']).resolve() != here]:
-                raise ValueError(f"git writes in {foreign[0]} can't be undone from here (the rollback runs in {here}) — undo refused")
+                raise ValueError(f"git writes in {foreign[0]} can't be undone from here (the rollback runs in {here}) · undo refused")
             (head, branch), (now, on) = tx.get('git_state') or ('', ''), self._repo_state()
-            if not head or not now: raise ValueError('git state unknown: the repository could not be read before or after the turn — undo refused')
+            if not head or not now: raise ValueError('git state unknown: the repository could not be read before or after the turn · undo refused')
             if head != now or branch != on:
-                raise ValueError(f'HEAD moved after the turn: {head[:12]} on {branch} .. {now[:12]} on {on} — undo refused')
+                raise ValueError(f'HEAD moved after the turn: {head[:12]} on {branch} .. {now[:12]} on {on} · undo refused')
             own = {str(Path(p).resolve()) for p in tx['files']}
             if outside := [p for p in self._dirty_paths() if p not in own]:
                 raise ValueError("uncommitted changes outside this turn's files: " + ', '.join(outside)
-                                 + ' — a git undo would discard them; commit or stash them first — undo refused')
+                                 + '. A git undo would discard them. Commit or stash them first · undo refused')
             tx['git_result'] = self._undo_git_writes(writes)
         for path, snap in tx['files'].items(): self.host.write(path, snap['before'])
         tx['rolled_back'] = True
@@ -1536,7 +1625,7 @@ class Assistant(Agent):
             except Exception as e:
                 names = ', '.join(f"{u['tool']} ({u.get('summary') or u.get('undoes') or u['undo']})" for u in undone) or 'none'
                 head, _ = self._repo_state()
-                raise ValueError(f"undid {len(undone)} git write(s) — already undone: {names}; HEAD moved to {head[:12]} as a result, "
+                raise ValueError(f"undid {len(undone)} git write(s). already undone: {names}; HEAD moved to {head[:12]} as a result, "
                                  f"so the turn's later undo is refused until you look at the tree; {w['tool']}: {errstr(e)}")
         return f'undid {len(undone)} git write(s)'
 

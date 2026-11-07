@@ -1,7 +1,7 @@
 "Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
-import asyncio, os, shutil, re, subprocess, unicodedata
+import asyncio, codecs, os, shutil, re, subprocess, unicodedata
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from itertools import islice, zip_longest
@@ -16,7 +16,7 @@ from fastcore.xtras import flexicache, time_policy
 from ... import Dictable
 from .office import OFFICE, OFFICE_MAX_BYTES, is_office
 
-__all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
+__all__ = ['Unsafe', 'NotText', 'Entry', 'SKIP_DIRS', 'WALK_LIMIT', 'FIND_LIMIT', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
 
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
@@ -50,16 +50,61 @@ MAX_EDIT_BYTES = 4_000_000
 class Unsafe(HostUnsafe):
     "A path that resolves outside every open root, or an operation refused for safety; a shalya refusal, so the agent's guards see it."
 
+class NotText(Unsafe):
+    "A file that is not UTF-8 text, or holds NUL bytes: shown read-only, never written."
+    kind = 'not_text'
+    def __init__(self, p, write=False):
+        self.path, self.said = str(p), (f'{Path(p).name} is not UTF-8 text, so Leela does not change it.' if write else
+                                          'This file is not UTF-8 text, so Leela opens it read-only.')
+        super().__init__(self.said)
+
+def decoded(raw, p=''):
+    "`raw` as text, strictly: NUL bytes or bytes that are not UTF-8 raise `NotText`."
+    if b'\0' in raw: raise NotText(p)
+    try: return raw.decode('utf-8')
+    except UnicodeDecodeError: raise NotText(p) from None
+
+def is_plain(p, chunk=1 << 20):
+    "Whether the file at `p` is UTF-8 with no NUL byte, read in chunks so a large file is never held whole."
+    dec = codecs.getincrementaldecoder('utf-8')()
+    try:
+        with open(p, 'rb') as f:
+            while (b := f.read(chunk)):
+                if b'\0' in b: return False
+                dec.decode(b)
+            dec.decode(b'', final=True)
+    except UnicodeDecodeError: return False
+    return True
+
+def newline_of(p, head=1 << 16):
+    "The line ending most of the file's first 64 KB uses: `\\r\\n`, `\\r` or `\\n`; `\\n` for a new file."
+    try:
+        with open(p, 'rb') as f: b = f.read(head)
+    except OSError: return '\n'
+    crlf = b.count(b'\r\n'); cr, lf = b.count(b'\r') - crlf, b.count(b'\n') - crlf
+    return max((lf, '\n'), (crlf, '\r\n'), (cr, '\r'))[1] if crlf or cr else '\n'
+
+def universal(text):
+    "`text` with every line ending as `\\n`, as Python reads text files."
+    return text.replace('\r\n', '\n').replace('\r', '\n')
+
 _GEN = 0
 def _changed():
     "Our own writes skip `_walked`'s window."
     global _GEN; _GEN += 1
 
+#: Files a walk returns by default: callers that read every file it names stay at this.
+WALK_LIMIT = 20_000
+#: Files go-to-file walks. Names only, so it goes further: 100k files walked in 0.9 s and ranked in 0.15 s.
+FIND_LIMIT = 100_000
+
 @flexicache(time_policy(2), maxsize=16)
 def _walked(roots, hidden, limit, gen):
+    "Up to `limit` files, and whether there were more."
     # Roots take turns, so a large first root cannot spend the whole cap.
     turns = zip_longest(*(fd_iter(root=r, hidden=hidden, skip_dir_re=_SKIP_RE) for r in roots))
-    return L(islice((p for t in turns for p in t if p is not None), limit)).sorted()
+    got = L(islice((p for t in turns for p in t if p is not None), limit + 1))
+    return got[:limit].sorted(), len(got) > limit
 
 def lang_for(p):
     "Language id for a path, including conventional extensionless project files."
@@ -77,7 +122,7 @@ def loose_refusal(p):
     p = Path(p)
     if not p.is_file(): return f'not a file: {p}'
     if not is_media(p) and p.stat().st_size > (OFFICE_MAX_BYTES if is_office(p) else MAX_EDIT_BYTES): return f'{p.name} is too large to {"show" if is_office(p) else "edit"}'
-    if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} may hold credentials'
+    if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} has the name of a credentials file'
     return None
 
 def _nfc(p): return unicodedata.normalize('NFC', str(p))
@@ -202,7 +247,7 @@ class Sandbox:
         if not self.covers(p):
             if not self.read_only(p): raise Unsafe(f'{p} is outside the open folders')
             if not reading: raise Unsafe(f'{p.name} is read-only (standard library)')
-            if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): raise Unsafe(f'{p.name} may hold credentials')
+            if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): raise Unsafe(f'{p.name} has the name of a credentials file')
         if must_exist and not p.exists(): raise FileNotFoundError(str(p))
         return p
     def root_of(self, ref):
@@ -228,13 +273,16 @@ class Sandbox:
         "`ref`, or every root still on disk, as the strings ripgrep walks."
         roots = self.roots if ref is None else L([self._check(ref, must_exist=True)])
         return tuple(str(r) for r in roots if r.is_dir())
-    def walk(self, ref=None, hidden=False, limit=20000):
-        "Every file under `ref` (or all roots) that git would track, capped at `limit`."
-        return _walked(self._live(ref), hidden, limit, _GEN)
+    def walk(self, ref=None, hidden=False, limit=None):
+        "Every file under `ref` (or all roots) that git would track, capped at `limit` (`WALK_LIMIT`)."
+        return self.walk_capped(ref, hidden, limit)[0]
+    def walk_capped(self, ref=None, hidden=False, limit=None):
+        "`(files, partial)`: `walk`, and whether the cap cut it short."
+        return _walked(self._live(ref), hidden, limit or WALK_LIMIT, _GEN)
     async def hidden_files(self, pattern, ref=None, timeout_ms=10000):
         "Files named like `pattern` that `walk` leaves out, and whether the time limit cut the search short; cancelling stops the walk."
         found = await fda(root=list(self._live(ref)), pattern=pattern, hidden=True, ignore=False, skip_dir='.git', timeout_ms=timeout_ms)
-        seen = set(await asyncio.to_thread(self.walk, ref))
+        seen = set((await asyncio.to_thread(self.walk_capped, ref, False, FIND_LIMIT))[0])
         return L(found).filter(lambda p: p not in seen).sorted(), found.stop_reason == 'timeout'
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."
@@ -242,18 +290,21 @@ class Sandbox:
         if p.is_dir(): raise IsADirectoryError(str(p))
         if not is_texty(p): raise Unsafe(f'{p.name} is a binary file')
         if p.stat().st_size > MAX_EDIT_BYTES: raise Unsafe(f'{p.name} is too large to edit')
-        return p.read_text(encoding='utf-8', errors='replace')
+        return universal(decoded(p.read_bytes(), p))
     def read_bytes(self, ref):
         p = self._check(ref, must_exist=True)
         return p.read_bytes()
     def write(self, ref, text):
-        "Write text atomically, so a crash mid-save leaves the previous file intact."
+        "Write text atomically, so a crash mid-save leaves the previous file intact, in the file's own line ending."
         p = self._check(ref)
         if is_office(p): raise Unsafe(f'{p.name} is read-only here: Leela shows Word, PowerPoint and Excel files, and does not change them')
         if is_media(p): raise Unsafe(f'{p.name} is read-only here: Leela plays audio and video files, and does not change them')
         mode = p.stat().st_mode & 0o7777 if p.exists() else None
-        with atomic_save(p, mode='w', encoding='utf-8') as f:
-            f.write(text)
+        if mode is not None and p.is_file():
+            if not is_plain(p): raise NotText(p, write=True)
+            if (nl := newline_of(p)) != '\n': text = universal(text).replace('\n', nl)
+        with atomic_save(p, mode='w', encoding='utf-8', newline='') as f:
+            for i in range(0, len(text), 1 << 20): f.write(text[i:i + (1 << 20)])   # a large notebook is never encoded whole
             if mode is not None: os.chmod(f.name, mode)
         _changed()
         return self.entry(p)

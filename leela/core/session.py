@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 import asyncio
+from contextlib import contextmanager
 from fastcore.basics import first
 from fastcore.xtras import atomic_save
-import gzip, hashlib, json, shutil, time, uuid
+import gzip, hashlib, json, os, shutil, stat, sys, threading, time, uuid
 from pathlib import Path
 
 __all__ = ['DocStore', 'DebugState', 'FileHistory', 'Origins', 'RunState', 'Trash',
@@ -57,26 +58,56 @@ async def kernel_api(session, path, params=None, timeout=15, tab=None):
     except NoVenv: return None
     return await client.api(path, params, timeout) if client else None
 
+#: Seconds a blob no row names yet is kept: another window may have written it and not yet listed it.
+BLOB_GRACE = 600
+
 class FileHistory:
-    "Every version of a project file Leela saw, so a write it did not make is still recoverable."
+    "Every version of a project file Leela saw, so a write it did not make is still recoverable. Two windows on the same folders share it."
     def __init__(self, root, pinned=None):
         self.root = Path(root); self.path = self.root/'index.json'
-        self.rows_ = []
+        self.rows_, self._seen = [], None
         #: Digests something else still needs, so pruning does not take a body the journal holds an operation open against.
         self.pinned = pinned or (lambda: ())
         self._load()
+    def _stamp(self):
+        try: st = self.path.stat(); return st.st_mtime_ns, st.st_size, st.st_ino
+        except OSError: return None
     def _load(self):
-        try: self.rows_ = json.loads(self.path.read_text()).get('versions', [])
-        except Exception: self.rows_ = []
+        "Read the index again. One that does not parse is kept aside as `index.json.bad`, not written over."
+        self._seen = self._stamp()
+        try: raw = self.path.read_bytes()
+        except OSError: self.rows_ = []; return
+        try: self.rows_ = json.loads(raw).get('versions', [])
+        except Exception:
+            self.rows_ = []
+            try: self.path.with_name('index.json.bad').write_bytes(raw)
+            except OSError: pass
+    def _fresh(self):
+        "The rows as on disk now: another window may have added some."
+        if self._stamp() != self._seen: self._load()
+        return self.rows_
+    @contextmanager
+    def _locked(self):
+        "Hold the index for one read, change and write; True when held. A lock that cannot be had skips the version, never the save."
+        from filelock import FileLock, Timeout
+        lock = FileLock(str(self.path) + '.lock')
+        try: self.root.mkdir(parents=True, exist_ok=True); lock.acquire(timeout=5)
+        except (Timeout, OSError): yield False; return
+        try:
+            self._load()
+            yield True
+        finally: lock.release()
     def _save(self):
         with atomic_save(self.path, mode='w', encoding='utf-8') as f:
             f.write(json.dumps({'versions': self.rows_}, ensure_ascii=False))
+        self._seen = self._stamp()
     def _blob(self, text):
-        digest = hashlib.sha256(text.encode('utf-8', 'replace')).hexdigest()[:16]
+        raw = text.encode('utf-8')
+        digest = hashlib.sha256(raw).hexdigest()[:16]
         p = self.root/'blobs'/f'{digest}.gz'
         if not p.exists():
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(gzip.compress(text.encode('utf-8', 'replace')))
+            with atomic_save(p, mode='wb') as f: f.write(gzip.compress(raw))
         return digest
     def stash(self, text):
         "Keep one body and return its digest. `None` for a file that was not there, or was too big."
@@ -86,60 +117,64 @@ class FileHistory:
         if digest is None: return None
         p = self.root/'blobs'/f'{digest}.gz'
         if not p.exists(): raise ValueError('the stored body is gone')
-        return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
+        return gzip.decompress(p.read_bytes()).decode('utf-8')
     def latest(self, path):
-        return first(r for r in reversed(self.rows_) if r['path'] == str(path))
+        return first(r for r in reversed(self._fresh()) if r['path'] == str(path))
     def record(self, path, text, label='save'):
-        "One version, or None when the file already reads exactly like this."
+        "One version, or None when the file already reads exactly like this, or when the index could not be held."
         if text is None: return None
-        path = str(path)
-        digest = hashlib.sha256(str(text).encode('utf-8', 'replace')).hexdigest()[:16]
-        held = self.latest(path)
+        with self._locked() as held:
+            return self._record(str(path), str(text), label) if held else None
+    def _record(self, path, text, label):
+        digest = hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+        held = first(r for r in reversed(self.rows_) if r['path'] == path)
         if held is not None and held['blob'] == digest: return None
         # An enormous file is listed but not copied, and `kept` is what `text` reads to say so.
-        big = len(str(text)) > MAX_BODY
+        big = len(text) > MAX_BODY
         row = {'id': 'ver_' + uuid.uuid4().hex[:12], 'path': path, 'at': time.time(),
-               'label': str(label), 'blob': digest if big else self._blob(str(text)),
-               'bytes': len(str(text)), 'kept': not big}
+               'label': str(label), 'blob': digest if big else self._blob(text),
+               'bytes': len(text), 'kept': not big}
         self.rows_.append(row); self._prune(path); self._save()
         return row
     def _prune(self, path):
-        "Drop this path's oldest versions, and any body no surviving version names."
+        "Drop this path's oldest versions, and any body no surviving version names. Runs under `_locked`."
         mine = [r for r in self.rows_ if r['path'] == path]
         if len(mine) <= KEEP_PER_PATH: return
         drop = {r['id'] for r in mine[:-KEEP_PER_PATH]}
         self.rows_ = [r for r in self.rows_ if r['id'] not in drop]
-        kept = {r['blob'] for r in self.rows_} | {d for d in self.pinned() if d}
+        kept, young = {r['blob'] for r in self.rows_} | {d for d in self.pinned() if d}, time.time() - BLOB_GRACE
         for p in (self.root/'blobs').glob('*.gz'):
-            if p.stem not in kept:
-                try: p.unlink()
-                except OSError: pass
+            try:
+                if p.stem not in kept and p.stat().st_mtime < young: p.unlink()
+            except OSError: pass
     def rows(self, path='', limit=60):
         "Versions newest first, of one file or of everything Leela has seen."
-        rows = [r for r in self.rows_ if not path or r['path'] == str(path)]
+        rows = [r for r in self._fresh() if not path or r['path'] == str(path)]
         return [{k: v for k, v in r.items() if k != 'blob'} for r in rows[::-1][:int(limit)]]
     def text(self, version_id):
         "The body of one version. A missing body is an error, never silently an empty file."
-        row = first(r for r in self.rows_ if r['id'] == str(version_id))
+        row = first(r for r in self._fresh() if r['id'] == str(version_id))
         if row is None: raise ValueError(f'no such version {version_id}')
         if not row.get('kept', True):
             raise ValueError(f"{row['path']} was {row['bytes']:,} bytes, too large to copy")
         p = self.root/'blobs'/f"{row['blob']}.gz"
         if not p.exists(): raise ValueError(f"the stored body for {row['path']} is gone")
-        return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
+        return gzip.decompress(p.read_bytes()).decode('utf-8')
     def keep(self, path, before, after, label='change'):
         "Both sides of one change. The first `before` for a path is the only copy of what was there before Leela looked."
-        if before is not None and self.latest(path) is None:
-            self.record(path, before, 'before the first change seen')
-        return self.record(path, after, label)
+        with self._locked() as held:
+            if not held: return None
+            if before is not None and first(r for r in self.rows_ if r['path'] == str(path)) is None:
+                self._record(str(path), str(before), 'before the first change seen')
+            return None if after is None else self._record(str(path), str(after), label)
     def row(self, version_id):
         "One version's listing, without its body."
-        held = first(r for r in self.rows_ if r['id'] == str(version_id))
+        held = first(r for r in self._fresh() if r['id'] == str(version_id))
         return None if held is None else {k: v for k, v in held.items() if k != 'blob'}
     def paths(self, limit=200):
         "Which files have versions, most recently touched first."
         out = {}
-        for r in reversed(self.rows_):
+        for r in reversed(self._fresh()):
             row = out.setdefault(r['path'], {'path': r['path'], 'at': r['at'], 'versions': 0})
             row['versions'] += 1
         return list(out.values())[:int(limit)]
@@ -233,20 +268,73 @@ class RunState:
 
 MAX_OPERATIONS = 200
 
+#: What the trash keeps: nothing older than `TRASH_DAYS` days, and no more than `TRASH_BYTES`, oldest out first.
+#: An item younger than `TRASH_FRESH` seconds stays whatever its size, so undo of the delete just made still works.
+TRASH_DAYS, TRASH_BYTES, TRASH_FRESH = 30, 2 << 30, 86400
+
+def _mount(p):
+    "The mount point of the volume `p` is on."
+    p = Path(os.path.abspath(p))
+    while not os.path.ismount(p) and p != p.parent: p = p.parent
+    return p
+
+def _size(p):
+    "Bytes under `p`, symlinks counted as themselves."
+    try: st = os.lstat(p)
+    except OSError: return 0
+    if not stat.S_ISDIR(st.st_mode): return st.st_size
+    n = 0
+    for d, dirs, files in os.walk(p):
+        for f in (*dirs, *files):
+            try: n += os.lstat(os.path.join(d, f)).st_size
+            except OSError: pass
+    return n
+
+#: One prune at a time in this process: each works from its own listing of the trash.
+_PRUNING = threading.Lock()
+
 class Trash:
-    "Where a deleted file or folder goes, so deleting either is recoverable."
-    def __init__(self, root): self.root = Path(root)
+    "Where a deleted file or folder goes, so deleting either is recoverable. Emptied by age and size."
+    def __init__(self, root, days=TRASH_DAYS, most=TRASH_BYTES, fresh=TRASH_FRESH):
+        self.root, self.days, self.most, self.fresh = Path(root), days, most, fresh
+        self._prune_soon()
+    def _volume_trash(self, p):
+        "A folder for Leela's trash on the volume `p` is on: the volume's own trash folder."
+        if not hasattr(os, 'getuid'): return None
+        m, uid = _mount(p), os.getuid()
+        d = m/'.Trashes'/str(uid) if sys.platform == 'darwin' else m/f'.Trash-{uid}'
+        try: d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError: return None
+        return d
+    def _same_volume(self, p): return os.lstat(p).st_dev == os.stat(self.root).st_dev
     def keep(self, path):
-        "Move `path` aside whole and return the key that brings it back."
+        "Move `path` aside whole and return the key that brings it back. Never copies a folder across volumes."
         p, key = Path(path), uuid.uuid4().hex[:12]
-        d = self.root/key
+        self.root.mkdir(parents=True, exist_ok=True)
+        if self._same_volume(p): d = self.root/key
+        elif (vt := self._volume_trash(p)) is not None:
+            d = vt/f'leela-{key}'
+            (self.root/f'{key}.where').write_text(str(d), encoding='utf-8')
+        elif p.is_dir() and not p.is_symlink():
+            raise OSError(f'{p.name} is on another disk with no trash folder Leela can use, so it was not deleted')
+        else: d = self.root/key
         d.mkdir(parents=True, exist_ok=True)
         shutil.move(str(p), str(d/p.name))
+        self._prune_soon()
         return key
+    def _dir(self, key):
+        "The folder that holds `key`: here, or on the item's own volume."
+        if (d := self.root/str(key)).is_dir(): return d
+        try: return Path((self.root/f'{key}.where').read_text(encoding='utf-8'))
+        except OSError: return None
     def held(self, key):
         "The path a key holds, or None when the trash no longer has it."
-        d = self.root/str(key)
-        return first(sorted(d.iterdir())) if d.is_dir() else None
+        d = self._dir(key)
+        return first(sorted(d.iterdir())) if d is not None and d.is_dir() else None
+    def _forget(self, key):
+        if (d := self._dir(key)) is not None: shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(self.root/str(key), ignore_errors=True)
+        (self.root/f'{key}.where').unlink(missing_ok=True)
     def restore(self, key, path):
         "Move what `key` holds back to `path`, and forget the key."
         src = self.held(key)
@@ -254,8 +342,40 @@ class Trash:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(p))
-        shutil.rmtree(self.root/str(key), ignore_errors=True)
-
+        self._forget(key)
+    def items(self):
+        "`(key, age in seconds, bytes)` for each item, oldest first. An item on a volume that is not mounted now is left out."
+        out, now = [], time.time()
+        try: entries = list(self.root.iterdir())
+        except OSError: return []
+        for e in entries:
+            if e.suffix == '.where':
+                key, d = e.stem, self._dir(e.stem)
+                if d is None or not d.is_dir():
+                    if d is None or d.parent.is_dir(): e.unlink(missing_ok=True)   # the volume is here and the item is gone
+                    continue
+            elif e.is_dir(): key, d = e.name, e
+            else: continue
+            try: out.append((key, now - e.stat().st_mtime, _size(d)))
+            except OSError: pass
+        return sorted(out, key=lambda r: -r[1])
+    def prune(self):
+        "Forget items older than `days`, then the oldest until the rest fit in `most` bytes. A fresh item always stays."
+        with _PRUNING: self._prune()
+    def _prune(self):
+        rows = self.items()
+        for key, age, _ in rows:
+            if age > self.days*86400: self._forget(key)
+        rows = [r for r in rows if r[1] <= self.days*86400]
+        total = sum(r[2] for r in rows)
+        for key, age, n in rows:
+            if total <= self.most or age < self.fresh: break
+            self._forget(key); total -= n
+    def _prune_soon(self):
+        threading.Thread(target=self._safe_prune, daemon=True, name='leela-trash-prune').start()
+    def _safe_prune(self):
+        try: self.prune()
+        except Exception: pass
 
 class OperationJournal:
     "The last `MAX_OPERATIONS` workspace operations, on disk, newest last."
@@ -316,8 +436,10 @@ class OperationJournal:
         self.operations.append(op); self.operations = self.operations[-MAX_OPERATIONS:]; self._save()
         return op
     def blobs(self):
-        "Every body digest the journal still needs, so `FileHistory` does not prune one away."
-        return {r[k] for op in self.operations for r in op.get('resources', [])
+        "Every body digest the journal still needs, so `FileHistory` does not prune one away. The file on disk too: another window on the same folders writes it."
+        try: disk = json.loads(self.path.read_text()).get('operations', [])
+        except Exception: disk = []
+        return {r[k] for op in (*self.operations, *disk) for r in op.get('resources', [])
                 for k in ('before_blob', 'after_blob') if r.get(k)}
     def _body(self, row, side):
         "One side of a resource: inline on an older operation, else out of the blob store."
@@ -335,9 +457,10 @@ class OperationJournal:
                  'redoable': self._has_work(op) and op.get('undone') and op.get('redoable', True)}
                 for op in reversed(self.operations[-int(limit):])]
     def _current(self, path):
-        "One resource as it is on disk right now, or None when it is not there."
+        "One resource as it is on disk right now, line endings as `\\n` as every recorded side has them, or None when it is not there. A file that is not UTF-8 raises `NotText`."
+        from ..blocks.fs.fs import decoded, universal
         p = self.sandbox._check(path)
-        return p.read_text(encoding='utf-8', errors='replace') if p.exists() else None
+        return universal(decoded(p.read_bytes(), p)) if p.exists() else None
     def _write(self, path, text):
         p = self.sandbox._check(path)
         if text is None:
@@ -362,7 +485,9 @@ class OperationJournal:
             if not here.exists(): return f'{here} is not there to move'
             if there.exists(): return f'{there} is in the way'
             return None
-        return None if self._current(row['path']) == self._body(row, side) else str(p)
+        try: same = self._current(row['path']) == self._body(row, side)
+        except Exception as e: return f'{p} ({getattr(e, "said", e)})'
+        return None if same else str(p)
     def _reverse(self, row, side):
         "Put one row back to `side`: the text it held, or the place it was."
         if 'at' in row:

@@ -243,7 +243,7 @@ def connect(app, ctx):
         try: return dict(watches=ctx.memory.watches(shelf=shelf or None, due_only=due_only),
             actions=('url', 'web', 'crawl', 'arxiv', 'youtube', 'remind'))
         except Exception as e: return fail(e)
-    @rt('/vault/watch')
+    @rt('/vault/watch', methods=['POST'])
     async def watch(target: str, action: str = 'url', every: str = '1d', note: str = '', shelf: str = ''):
         try:
             if not target.strip(): raise ValueError('nothing to watch')
@@ -251,7 +251,7 @@ def connect(app, ctx):
                 note=note or None, shelf=shelf or None))
             return ui.watch_list(ctx.memory.watches(shelf=shelf or None))
         except Exception as e: return fail(e)
-    @rt('/vault/unwatch')
+    @rt('/vault/unwatch', methods=['POST'])
     async def unwatch(watch_id: str, shelf: str = ''):
         try:
             await off_loop(ctx.memory.unwatch, watch_id, shelf or None)
@@ -769,19 +769,19 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     def _refused(e):
         return fail(e, 403 if isinstance(e, PermissionError) else 400)
-    @rt('/vault/shelf/move')
+    @rt('/vault/shelf/move', methods=['POST'])
     async def vault_move(doc: str, target: str, vault: str = '', shelf: str = ''):
         try:
             _writable(vault)
             return await off_loop(_mem(vault).move, doc, target, shelf or None)
         except Exception as e: return _refused(e)
-    @rt('/vault/shelf/drop')
+    @rt('/vault/shelf/drop', methods=['POST'])
     async def vault_drop_shelf(shelf: str, vault: str = ''):
         try:
             _writable(vault)
             return await off_loop(_mem(vault).drop_shelf, shelf)
         except Exception as e: return _refused(e)
-    @rt('/vault/not-pii')
+    @rt('/vault/not-pii', methods=['POST'])
     async def vault_not_pii(doc: str, vault: str = '', shelf: str = '', clear: bool = True, reason: str = ''):
         try:
             _writable(vault)
@@ -789,7 +789,7 @@ def connect(app, ctx):
             await off_loop(m.mark_not_pii, doc, shelf or None, clear, reason)
             return {'ok': True, 'privacy': await off_loop(m.pii, doc, shelf or None), 'covers': PII_COVERS}
         except Exception as e: return _refused(e)
-    @rt('/vault/pii/mark')
+    @rt('/vault/pii/mark', methods=['POST'])
     async def vault_mark_pii(doc: str, vault: str = '', shelf: str = '', force: bool = True, reason: str = ''):
         "The override the arithmetic cannot reach: a name, an address, a whole scanned page."
         try:

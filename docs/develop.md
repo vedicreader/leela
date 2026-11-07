@@ -18,7 +18,7 @@ Leela uses these packages from the same authors: [ramabana](https://github.com/v
 ```
 leela/
   agent/          the alias seam: `leela.agent.*` is `ramabana.*` (one `__init__.py`)
-  core/           what every block may import
+  core/           what every block can import
     block.py      `Ctx` (capabilities), the block contract, ordered wiring
     langs.py      the languages Leela runs, serves and highlights
     keys.py       single-source keymap and the user's overrides
@@ -65,12 +65,7 @@ leela/blocks/git/
 
 ## Standalone desktop builds
 
-Packaged, leela is a native window with a Python server behind it and a headless Chrome
-beside it. The window is [pywebview](https://pywebview.flowrl.com/) over the platform's own
-webview: WKWebView on macOS, WebView2 on Windows. It points at a loopback port chosen at
-launch. Chrome is not in the bundle. `--app` and the inline browser both drive the persistent
-CDP profile fossick keeps in `~/.cache/fastcdp`. It is the copy of Chrome the machine already
-has, with the logins it already has. The processes, the browser and the menu bar are in [desktop.md](desktop.md).
+Packaged, leela is a native window with a Python server behind it and a headless Chrome beside it. The window is [pywebview](https://pywebview.flowrl.com/) over the platform's own webview: WKWebView on macOS, WebView2 on Windows. It points at a loopback port chosen at launch. Chrome is not in the bundle. `--app` and the inline browser both drive the persistent CDP profile fossick keeps in `~/.cache/fastcdp`. It is the copy of Chrome the machine already has, with the logins it already has. The processes, the browser and the menu bar are in [desktop.md](desktop.md).
 
 ```sh
 uv sync --extra desktop --extra macapp --group dev
@@ -84,26 +79,15 @@ python setup_app.py                 # dist\Leela\Leela.exe
 python tools\build_release.py       # + dist\Leela-Windows.zip
 ```
 
-`setup_app.py --check` says what it would do first. On macOS it builds against a framework
-Python and makes one when the active interpreter is uv's standalone build. py2app copies
-stdlib extension modules such as `zlib` out as files, and a standalone build has them linked
-in. Windows uses py2exe through the same driver, and produces a folder rather than one file.
+`setup_app.py --check` says what it would do first. On macOS it builds against a framework Python and makes one when the active interpreter is uv's standalone build. py2app copies stdlib extension modules such as `zlib` out as files, and a standalone build has them linked in. Windows uses py2exe through the same driver, and produces a folder rather than one file.
 
-The definitions are `packaging/macos/setup.py` and `packaging/windows/setup.py`. The mark
-lives in `packaging/assets`: an ICNS for macOS, an ICO with executable metadata for Windows.
-`leela_app.py` is the script they freeze. It picks a free port, starts the ordinary
-`leela --app` server on a daemon thread, and gives the main thread to the window. Cocoa allows
-no other order.
+The definitions are `packaging/macos/setup.py` and `packaging/windows/setup.py`. The mark lives in `packaging/assets`: an ICNS for macOS, an ICO with executable metadata for Windows. `leela_app.py` is the script they freeze. It picks a free port, starts the ordinary `leela --app` server on a daemon thread, and gives the main thread to the window. Cocoa allows no other order.
 
-`tests/test_packaging.py` checks what a green build would not. That the asset walk reaches
-`vendor/fonts/`. That the plist carries the `NSAllowsLocalNetworking` exemption WKWebView
-needs for a loopback URL. That Windows keeps modules as files, which lets a kernel subprocess
-import them.
+`tests/test_packaging.py` checks what a green build would not. That the asset walk reaches `vendor/fonts/`. That the plist carries the `NSAllowsLocalNetworking` exemption WKWebView needs for a loopback URL. That Windows keeps modules as files, which lets a kernel subprocess import them.
 
 ### Cutting a release
 
-Leela is a fastship project, and the Release panel therefore runs `pytest`, `ship-changelog`, `ship-gh`,
-`ship-pypi`, then the two desktop steps, then `ship-bump`. From a shell the same sequence is:
+Leela is a fastship project, and the Release panel therefore runs `pytest`, `ship-changelog`, `ship-gh`, `ship-pypi`, then the two desktop steps, then `ship-bump`. From a shell the same sequence is:
 
 ```sh
 pytest tests -q
@@ -114,20 +98,11 @@ python tools/build_release.py upload        # attach it to the release for this 
 ship-bump && git commit -am bump && git push
 ```
 
-Write the `## <version>` section of `CHANGELOG.md` before `ship-gh`. That section is the
-release body.
+Write the `## <version>` section of `CHANGELOG.md` before `ship-gh`. That section is the release body.
 
-The tag builds the other platform. `.github/workflows/desktop-artifacts.yml` runs on a push of
-`v*` or of a bare version tag. It accepts both, because `ship-gh` tags a Python project `0.1.3`
-while fastship's Rust, Zig and npm flows push `v0.1.3`. Each job exports `uv.lock` as the
-bundle's requirements before it freezes anything. Letting pip resolve `>=` fresh on a runner
-shipped the 0.1.2 bundle a jupyasyncclient whose kernel answered 500 to every cell. Each job then runs
-`tests/test_packaging.py` against the artefact it built and uploads it to the release the tag
-names. Set `LEELA_CODESIGN_IDENTITY` for Developer ID signing. Notarization credentials stay in
-the release environment.
+The tag builds the other platform. `.github/workflows/desktop-artifacts.yml` runs on a push of `v*` or of a bare version tag. It accepts both, because `ship-gh` tags a Python project `0.1.3` while fastship's Rust, Zig and npm flows push `v0.1.3`. Each job exports `uv.lock` as the bundle's requirements before it freezes anything. Letting pip resolve `>=` fresh on a runner shipped the 0.1.2 bundle a jupyasyncclient whose kernel answered 500 to every cell. Each job then runs `tests/test_packaging.py` against the artefact it built and uploads it to the release the tag names. Set `LEELA_CODESIGN_IDENTITY` for Developer ID signing. Notarization credentials stay in the release environment.
 
-`python tools/build_release.py upload` finds the release under either tag spelling and refuses
-with the command to run when there is none.
+`python tools/build_release.py upload` finds the release under either tag spelling and refuses with the command to run when there is none.
 
 ### The thin Mac app
 
@@ -162,16 +137,9 @@ uv sync --group dev --python 3.12
 uv run pytest tests -q   # `-m ""` adds the slow ones: browsers, real kernels, a real model
 ```
 
-`tests/conftest.py` fakes the kernels, and the harness tests drive a `FakeBackend` over
-scripted replies. The suite needs no ipykernel and no gigabytes of weights.
+`tests/conftest.py` fakes the kernels, and the harness tests drive a `FakeBackend` over scripted replies. The suite needs no ipykernel and no gigabytes of weights.
 
-Each IDE client module sits beside the feature it serves, as `leela/blocks/<block>/*.js`, with
-the shared vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the
-order its `LAYERS` fixes, into the committed bundles `leela/core/web.py` names in
-`IDE_BUNDLES`: `lee-core.js`, `lee-agent.js` and `lee-ide.js`, served as three deferred tags in
-one lexical scope. Run it after editing a module, or run `--check` to see whether a bundle has gone stale. It
-refuses to build a module it cannot find, and one it finds but the order never names. The repository commits the npm bundles in `leela/vendor/` too, and an
-install needs no node:
+Each IDE client module sits beside the feature it serves, as `leela/blocks/<block>/*.js`, with the shared vocabulary in `leela/static/js/`. `tools/build_ide_js.py` concatenates them, in the order its `LAYERS` fixes, into the committed bundles `leela/core/web.py` names in `IDE_BUNDLES`: `lee-core.js`, `lee-agent.js` and `lee-ide.js`, served as three deferred tags in one lexical scope. Run it after editing a module, or run `--check` to see whether a bundle has gone stale. It refuses to build a module it cannot find, and one it finds but the order never names. The repository commits the npm bundles in `leela/vendor/` too, and an install needs no node:
 
 ```sh
 python tools/build_ide_js.py [--check]

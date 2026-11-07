@@ -216,19 +216,21 @@ def test_one_walk_answers_where_the_project_is(tmp_path):
 def test_the_path_prelude_is_written_in_the_users_own_shell():
     "`export FOO=bar` is not fish, and fish has no `export` at all."
     from leela.blocks.term.term import path_prelude
+    clear = "printf '\\033[H\\033[2J\\033[3J'"
     assert path_prelude('/p/.venv/bin/python', '/opt/homebrew/bin/fish') == \
-        ' set -gx PATH /p/.venv/bin $PATH'
-    assert path_prelude('/p/.venv/bin/python', '/bin/bash') == ' export PATH="/p/.venv/bin:$PATH"'
-    assert path_prelude('/p/.venv/bin/python', '/bin/zsh') == ' export PATH="/p/.venv/bin:$PATH"'
-    assert path_prelude('/p/.venv/bin/python', '/bin/tcsh') == ' setenv PATH "/p/.venv/bin:$PATH"'
+        " set -gx PATH /p/.venv/bin $PATH; printf '\\e[H\\e[2J\\e[3J'"
+    assert path_prelude('/p/.venv/bin/python', '/bin/bash') == ' export PATH="/p/.venv/bin:$PATH"; ' + clear
+    assert path_prelude('/p/.venv/bin/python', '/bin/zsh') == ' export PATH="/p/.venv/bin:$PATH"; ' + clear
+    assert path_prelude('/p/.venv/bin/python', '/bin/tcsh') == ' setenv PATH "/p/.venv/bin:$PATH"; ' + clear
     assert path_prelude('', '/bin/bash') == '', 'no interpreter, nothing to prepend'
     for shell in ('/bin/bash', '/opt/homebrew/bin/fish'):
         assert path_prelude('/p/.venv/bin/python', shell).startswith(' '), 'kept out of history'
 
-def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
+def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path, monkeypatch):
     "Actually open the pty, because nothing else here does."
-    settings = tmp_path/'.leela'/'settings.json'
-    settings.parent.mkdir()
+    import leela.blocks.settings.settings as st
+    settings = tmp_path/'user-settings.json'   # the shell is the user's to choose; a repo's choice is ignored
+    monkeypatch.setattr(st, 'user_settings_file', lambda: settings)
     settings.write_text(json.dumps({'terminal': {
         'shell': '/bin/echo', 'shellArgs': ['leela-terminal-ok'], 'loginShell': False}}))
     ws = Workspace(roots=[tmp_path])
@@ -375,9 +377,8 @@ def test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream(tm
         dev = DevServers(port=9474)
         s1 = await dev.start(str(p))
         q = s1.subscribe()
-        for _ in range(50):
-            if len(s1.urls) == 2: break
-            await asyncio.sleep(0.1)
+        # Bounded by the `wait_for` below, not by a count: under `-n auto` the child's own start can take longer than 5 s.
+        while len(s1.urls) < 2: await asyncio.sleep(0.1)
         assert s1.urls == ['http://127.0.0.1:8765', 'http://127.0.0.1:8766'], 'every URL a run prints, not the first'
         assert s1.app_url == 'http://127.0.0.1:8765'
         await dev.stop(str(p))
@@ -393,11 +394,9 @@ def test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream(tm
         assert s2 is not s1 and s2.pid != s1.pid
         q2 = dev.get(str(p)).subscribe()
         seen = bytearray()
-        for _ in range(50):
-            while not q2.empty(): seen += q2.get_nowait() or b''
-            if b'Uvicorn running' in seen: break
-            await asyncio.sleep(0.1)
-        assert b'Uvicorn running' in seen, 'a viewer that resubscribes sees the new run'
+        while b'Uvicorn running' not in seen:
+            assert (chunk := await q2.get()) is not None, 'the new run ended before it printed'
+            seen += chunk
         await dev.stop_all()
     asyncio.run(asyncio.wait_for(go(), 60))
 
@@ -408,7 +407,7 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
     with TestClient(ide_app(ws)) as c:
         info = c.get('/term/info').json()
         if not info['enabled']: pytest.skip(info['why'])
-        r = c.get(f'/dev/start?path={p}').json()
+        r = c.post(f'/dev/start?path={p}').json()
         assert r['ok'], r
         try:
             with c.websocket_connect('/run/ws') as sock:
@@ -420,7 +419,7 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
                     frame = sock.receive()
                     assert 'bytes' in frame, frame
                     seen += frame['bytes']
-                c.get(f'/dev/stop?path={p}')
+                c.post(f'/dev/stop?path={p}')
                 for _ in range(200):
                     m = sock.receive()
                     if 'text' in m: break
@@ -428,7 +427,7 @@ def test_the_run_socket_says_exit_when_the_run_is_stopped(tmp_path):
             listed = c.get('/dev/list').json()['servers'][0]
             assert listed['running'] is False and listed['last_url'] == 'http://127.0.0.1:8767'
             assert listed['urls'] == ['http://127.0.0.1:8767', 'http://127.0.0.1:8768']
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def test_the_stop_button_stops_a_run_when_no_kernel_is_open(tmp_path):
     "The toolbar's stop calls /kernel/interrupt. With only a run up it answered 'no running kernel' and left the server and its inspector alive."
@@ -436,13 +435,13 @@ def test_the_stop_button_stops_a_run_when_no_kernel_is_open(tmp_path):
     ws = Workspace(roots=[tmp_path], dev_port=9477)
     with TestClient(ide_app(ws)) as c:
         if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
-        assert c.get(f'/dev/start?path={p}').json()['ok']
+        assert c.post(f'/dev/start?path={p}').json()['ok']
         try:
             r = c.get('/kernel/interrupt').json()
             assert r.get('ok'), r
             listed = c.get('/dev/list').json()['servers'][0]
             assert not listed['alive'] and listed['running'] is False, listed
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def test_the_stop_button_stops_a_run_beside_an_idle_kernel(tmp_path):
     "A notebook tab's kernel open but idle: stop ends the run, and the kernel is not interrupted. It used to interrupt the idle kernel and leave the run up."
@@ -455,13 +454,13 @@ def test_the_stop_button_stops_a_run_beside_an_idle_kernel(tmp_path):
     ws.runtime_peek = lambda tab=None: Idle()
     with TestClient(ide_app(ws)) as c:
         if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
-        assert c.get(f'/dev/start?path={p}').json()['ok']
+        assert c.post(f'/dev/start?path={p}').json()['ok']
         try:
             r = c.get('/kernel/interrupt').json()
             assert r.get('ok') and 'stopped' in r.get('note', ''), r
             assert not c.get('/dev/list').json()['servers'][0]['alive']
             assert hit == [], 'the idle kernel was interrupted'
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def _alive_after(tmp_path, body, port, wait=8.0):
     "Run `body` as a script under the inspector; whether its process is still up `wait` seconds later."
@@ -470,7 +469,7 @@ def _alive_after(tmp_path, body, port, wait=8.0):
     ws = Workspace(roots=[tmp_path], dev_port=port)
     with TestClient(ide_app(ws)) as c:
         if not c.get('/term/info').json()['enabled']: pytest.skip('no pty here')
-        c.get(f'/dev/start?path={p}')
+        c.post(f'/dev/start?path={p}')
         try:
             end = time.monotonic() + wait
             while time.monotonic() < end:
@@ -478,7 +477,7 @@ def _alive_after(tmp_path, body, port, wait=8.0):
                 if not s['alive']: return False
                 time.sleep(0.2)
             return True
-        finally: c.get(f'/dev/stop?path={p}')
+        finally: c.post(f'/dev/stop?path={p}')
 
 def test_a_command_that_exits_cleanly_takes_its_inspector_with_it(tmp_path):
     "Exit 0, as uvicorn returns on Ctrl-C: the process ends. It used to idle with the inspector up and its ports held."
@@ -660,7 +659,7 @@ def test_no_route_makes_a_venv_without_a_click(tmp_path, monkeypatch):
         _refused(c.post('/exec', json={'code': '1', 'path': str(nb)}), karma)
         ws.open(str(main))
         _refused(c.post('/run/code', json={'code': '1', 'path': str(main)}), karma)
-        _refused(c.get('/dev/start', params={'path': str(main)}), karma)
+        _refused(c.post('/dev/start', params={'path': str(main)}), karma)
         _refused(c.get('/debug/capabilities'), karma)
         _refused(c.post('/debug/install', json={'python': ''}), karma)
         _refused(c.post('/debug/start', json={'program': str(main), 'cwd': str(karma)}), karma)
@@ -831,3 +830,32 @@ def _made(monkeypatch):
     def fake(root, python=None): made.append(Path(root)); return str(_venv(Path(root)))
     monkeypatch.setattr(ks, 'make_venv', fake)
     return made
+
+def test_each_workspace_pool_asks_the_os_for_its_inspector_port():
+    "Pools took 8400, 8500, ... so each kernel's inspector sat on a fixed port a person may want."
+    from itertools import islice
+    from leela.app import _pool_ports
+    assert list(islice(_pool_ports(), 3)) == [0, 0, 0]
+    assert list(islice(_pool_ports(8400), 2)) == [8400, 8500], 'an explicit --kernel-port keeps its ladder'
+    assert Workspace().pool.port == 0
+
+def _first_free(start=8000):
+    import socket
+    for p in range(start, start+50):
+        with socket.socket() as s:
+            try: s.bind(('127.0.0.1', p)); return p
+            except OSError: continue
+
+@pytest.mark.slow
+def test_a_server_on_8000_still_starts_while_a_kernel_runs(tmp_path):
+    "The inspector took the first free port from 8000, so a person's own server there failed to bind."
+    import socket
+    want, ws = _first_free(), Workspace(roots=[tmp_path])
+    async def go():
+        k = await ws.pool.get('p1', cwd=str(tmp_path))
+        try:
+            assert k.base, k.boot_error
+            with socket.socket() as s: s.bind(('127.0.0.1', want)); s.listen()
+            return int(k.base.rsplit(':', 1)[-1])
+        finally: await ws.pool.close_all()
+    assert asyncio.run(go()) != want

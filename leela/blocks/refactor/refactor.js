@@ -21,7 +21,7 @@ async function replaceWorkspace() {
         word: $('[data-refactor-word]', m).checked});
       if (!data.summary.files) return status('no matches in editable workspace files', 'err');
       const selected = new Set(data.files.map(x => x.path));
-      m.querySelector('.lee-modalbox').innerHTML = `<div class="lee-mhead">Replace preview<span class="sub">${data.summary.edits} replacements in ${data.summary.files} files</span></div>` +
+      m.querySelector('.lee-modalbox').innerHTML = `<div class="lee-mhead">Replace preview<span class="sub">${data.summary.edits} replacements in ${data.summary.files} files${data.summary.partial ? `, in the first ${data.summary.searched} files only: the folder has more` : ''}</span></div>` +
         `<div class="lee-modallist" data-refactor-files>${refactorRows(data.files, selected)}</div>` +
         `<div class="lee-mfoot"><button class="lee-btn go" data-refactor-apply>Apply</button><button class="lee-btn" data-refactor-cancel>Cancel</button></div>`;
       $('[data-refactor-cancel]', m).onclick = () => m.remove();

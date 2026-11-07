@@ -47,13 +47,13 @@ function paintGitPill(d) {
   paintGitTree(d);
 }
 /* The one painter of the branch pill and the pull and push arrows beside it. `state` is `branch`,
-   `nogit` (not a checkout), `pending` (no folder open yet) or `error` (the repository could not be
-   read). The arrows show only when there is something to pull or push. */
-const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?'};
+   `nogit` (not a checkout), `pending` (not asked yet), `nofolder` (hidden: no folder is open) or `error`
+   (the repository could not be read). The arrows show only when there is something to pull or push. */
+const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?', nofolder: ''};
 function paintBranchPill(d, state = 'branch') {
   const git = $('#gitpill'); if (!git) return;
   const n = state === 'branch' ? (d?.changes || []).length : 0;
-  const name = BRANCH_WORDS[state] || d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
+  const name = state in BRANCH_WORDS ? BRANCH_WORDS[state] : d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
   git.dataset.state = state;
   const label = git.querySelector('.lee-branch-name'), count = git.querySelector('.lee-change-count');
   if (label) label.textContent = name;
@@ -80,7 +80,7 @@ async function gitDo(op, extra = {}) {
     // a merge that stopped at a conflict both "complete". One call, not two, because a second
     // `status` replaces the first.
     const said = d.outcome?.summary || `complete · ${Math.round(performance.now() - started)} ms`;
-    status(`git ${name} · ${said}${d.outcome?.note ? ' — ' + d.outcome.note : ''}`,
+    status(`git ${name} · ${said}${d.outcome?.note ? '. ' + d.outcome.note : ''}`,
            d.outcome?.note ? 'err' : 'ok');
     // `recover` is the only handle on a deleted branch or a dropped stash, and a status line is
     // gone in seconds, so the log is where it has to end up.
@@ -107,7 +107,7 @@ function gitFilterBanner(d) {
   const f = d.filters || {};
   if (f.ok !== false || !f.explain) return '';
   return `<section class="lee-git-operation lee-git-filters"><div>` +
-    `<strong>files here may not stay staged</strong><span>${esc(f.explain)}</span></div></section>`;
+    `<strong>a filter changes files here when they are staged</strong><span>${esc(f.explain)}</span></div></section>`;
 }
 
 /* The way back from the last thing that moved this branch, because "that merge was not what I

@@ -7,13 +7,13 @@ per thread.
     python tools/profile_worktrees.py -n 8       # eight threads
 """
 from __future__ import annotations
-import argparse, os, shutil, subprocess, sys, tempfile, threading, time
+import argparse, shutil, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp(prefix='leela-tool-cfg-')   # never the person's ~/.config/leela
+from tools.isolate import isolate; isolate()   # never the person's real stores
 
 def rss():
     try:
@@ -99,7 +99,6 @@ def main(argv=None):
     ap.add_argument('--dirs', type=int, default=60)
     ap.add_argument('--per', type=int, default=12)
     a = ap.parse_args(argv)
-    os.environ.setdefault('LEELA_MEMORY_OFFLINE', '1')
     root = make_repo(a.dirs, a.per)
     print(f'\n## {a.threads} worktrees of a {a.dirs * a.per}-file repository\n')
     times, paths = worktrees(root, a.threads)

@@ -21,7 +21,7 @@ PACKAGES = [
     'watchfiles',
     'leela', 'ramabana', 'dhrishti', 'fastcore', 'fasthtml', 'starlette', 'uvicorn',
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
-    'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
+    'fossick', 'fastcdp', 'scrapling', 'markdownify', 'readability',
     'kavacha', 'kunda', 'pullup',   # see the macOS definition
     # Copied whole for their source, not only their bytecode. `fastcore.funccall` schemas every
     # tool with `docments`, which calls `inspect.getsource` on the function: a package reached from

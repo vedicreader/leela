@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import unquote, urlparse
 
 from ...core.langs import lang_named
@@ -11,10 +12,24 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ('fs', 'journal', 'lsp_for')
 
+#: LSP ends a line only at `\r\n`, `\r` or `\n`; `splitlines` also splits at form feeds and other separators.
+_LINE = re.compile(r'[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$')
+
+def _lines(text): return _LINE.findall(text) or ['']
+
+def _units(s): return len(s.encode('utf-16-le')) // 2
+
+def _col(line, units):
+    "The code point index of `units` UTF-16 code units into `line`, which is how LSP counts characters."
+    n = 0
+    for i, ch in enumerate(line):
+        if n >= units: return i
+        n += 2 if ord(ch) > 0xFFFF else 1
+    return len(line)
+
 def _offsets(source):
-    "Character offset of the start of each line, for converting LSP positions to offsets."
-    lines = source.splitlines(keepends=True) or ['']
-    starts, at = [], 0
+    "Each line, and the code point offset where it starts, for converting LSP positions to offsets."
+    lines, starts, at = _lines(source), [], 0
     for line in lines:
         starts.append(at)
         at += len(line)
@@ -25,7 +40,7 @@ def _edited(before, edits):
     lines, starts = _offsets(before)
     def offset(pos):
         row = max(0, min(int(pos.get('line', 0)), len(lines) - 1))
-        return starts[row] + min(int(pos.get('character', 0)), len(lines[row].rstrip('\r\n')))
+        return starts[row] + _col(lines[row].rstrip('\r\n'), int(pos.get('character', 0)))
     spans = sorted(((offset(x['range']['start']), offset(x['range']['end']), x.get('newText', '')) for x in edits),
                    reverse=True)
     after = before
@@ -64,8 +79,8 @@ def connect(app, ctx):
         except Exception as e: return fail(e)
     @rt('/lsp/inlay-hints')
     async def lsp_inlay_hints(req):
-        d = await req.json(); text = d.get('text', ''); lines = text.splitlines()
-        end = {'line': max(0, len(lines)-1), 'character': len(lines[-1]) if lines else 0}
+        d = await req.json(); text = d.get('text', ''); lines = _lines(text)
+        end = {'line': len(lines) - 1, 'character': _units(lines[-1].rstrip('\r\n'))}
         try:
             rows = await ask(d, 'textDocument/inlayHint', text, None, 0,
                              {'range': {'start': {'line': 0, 'character': 0}, 'end': end}})

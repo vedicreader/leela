@@ -472,7 +472,7 @@ async function addRoot(find = false) {
     (r.where ? `<span class="lee-dim lee-folderwhere">${esc(r.where)}</span>` : '') + `</button>`;
   const paint = (extra = '') => {
     list.innerHTML = rows.map(row).join('') + extra ||
-      '<div class="lee-dim">no folders match — Enter still opens what you typed, if it exists</div>';
+      '<div class="lee-dim">No folder matches. Enter opens what you typed, if it exists.</div>';
     list.querySelector('.sel')?.scrollIntoView({block: 'nearest'});
     hint.textContent = base ? `in ${base}` : '';
   };

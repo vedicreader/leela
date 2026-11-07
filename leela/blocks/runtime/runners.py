@@ -1,13 +1,13 @@
 "Languages Leela runs without a Jupyter kernel: a cargo scratch crate, and one node process."
 from __future__ import annotations
-import asyncio, hashlib, json, os, re, shutil
+import asyncio, hashlib, json, os, re, shutil, signal
 from pathlib import Path
 from fastcore.xdg import xdg_data_home
 
 from .kernels import ExecOutcome, InspectorClient, KernelStartError
 
 __all__ = ['Runner', 'CargoRunner', 'NodeRunner', 'RUNNERS', 'runner_for', 'scratch_root',
-           'rust_chunks', 'rust_source']
+           'rust_chunks', 'rust_source', 'merge_items']
 
 DRIVER = Path(__file__).parent/'driver.mjs'
 
@@ -154,6 +154,27 @@ def _is_item(chunk):
         return bool(ITEM.match(s))
     return False
 
+_QUAL = re.compile(r'^(?:pub(?:\([^)]*\))?\s+|unsafe\s+|async\s+|const\s+(?=fn\b)|extern\s+(?:"[^"]*"\s+)?|default\s+)*')
+_NAMED = re.compile(r'^(fn|struct|enum|trait|mod|const|static|type|union)\s+(?:mut\s+)?([A-Za-z_]\w*)|^macro_rules!\s*([A-Za-z_]\w*)')
+
+def _item_key(chunk):
+    "What an item defines, so a cell run again replaces its own items: `fn f`, an impl's header and its method names, else the text."
+    lines = [l.strip() for l in chunk.splitlines()]
+    head = next((l for l in lines if l and not l.startswith(('#[', '#![', '//'))), '')
+    head = _QUAL.sub('', head)
+    if (m := _NAMED.match(head)): return (m[1] or 'macro', m[2] or m[3])
+    if head.startswith('impl'):
+        return ('impl', head.split('{')[0].strip(), tuple(re.findall(r'\bfn\s+([A-Za-z_]\w*)', chunk)))
+    return ('text', chunk.strip())
+
+def merge_items(old, new):
+    "`old` with each of `new` replacing the item that defines the same thing, in place; the rest appended."
+    out, at = list(old), {_item_key(c): i for i, c in enumerate(old)}
+    for c in new:
+        if (k := _item_key(c)) in at: out[at[k]] = c
+        else: at[k] = len(out); out.append(c)
+    return out
+
 def rust_source(items, stmts):
     "The `main.rs` for a cell: everything defined so far, then this cell's statements in `main`."
     body = '\n    '.join(stmts) if stmts else ''
@@ -167,7 +188,7 @@ class CargoRunner(Runner):
                           r'const|static|type|for|while|loop|if|match|unsafe|pub)\b')
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
-        self.items, self.deps = [], {}
+        self.items, self.deps, self.proc = [], {}, None
     @property
     def missing(self):
         return ('cargo is not installed, so Leela cannot run Rust cells. Install Rust from '
@@ -198,10 +219,11 @@ class CargoRunner(Runner):
         if deps:
             self.deps.update(deps)
             self._write_toml()
-        (self.dir/'src'/'main.rs').write_text(rust_source(self.items + items, stmts), encoding='utf-8')
+        merged = merge_items(self.items, items)
+        (self.dir/'src'/'main.rs').write_text(rust_source(merged, stmts), encoding='utf-8')
         failed = await self._build(emit)
         if failed: return failed
-        self.items += items                     # only a crate that compiled is worth keeping
+        self.items = merged                     # only a crate that compiled is worth keeping
         return await self._exec(emit, timeout)
     async def _build(self, emit):
         "Compile, turning every diagnostic into an output. Returns the error summary, or None."
@@ -223,24 +245,51 @@ class CargoRunner(Runner):
             emit(_error('cargo', 'the build produced no binary', out.splitlines()[-40:]))
             return 'cargo: the build produced no binary'
         return first_error
+    async def _spawn(self, argv, cwd, stderr):
+        "Start one step in a process group of its own, so Stop takes rustc and the program's children too."
+        self.proc = await asyncio.create_subprocess_exec(*argv, cwd=str(cwd), stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=stderr, start_new_session=os.name == 'posix')
+        return self.proc
+    async def _kill(self):
+        "End the running step and every process under it."
+        p, self.proc = self.proc, None
+        if p is None or p.returncode is not None: return
+        try:
+            import psutil
+            kids = psutil.Process(p.pid).children(recursive=True)
+        except Exception: kids = []
+        if os.name == 'posix':
+            try: os.killpg(p.pid, signal.SIGKILL)
+            except OSError: pass
+        for k in kids:
+            try: k.kill()
+            except Exception: pass
+        try: p.kill()
+        except ProcessLookupError: pass
+        try: await asyncio.wait_for(p.wait(), 5)
+        except asyncio.TimeoutError: pass
     async def _capture(self, argv):
-        p = await asyncio.create_subprocess_exec(*argv, cwd=str(self.dir), stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await p.communicate()
+        p = await self._spawn(argv, self.dir, asyncio.subprocess.DEVNULL)
+        try: out, _ = await p.communicate()
+        except BaseException: await asyncio.shield(self._kill()); raise
         return out.decode('utf-8', 'replace')
     async def _exec(self, emit, timeout=None):
         "Run the compiled cell, streaming its output. A non-zero exit is the cell's error."
-        p = await asyncio.create_subprocess_exec(str(self.dir/'target'/'debug'/'leela_cell'),
-            cwd=self.cwd, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        p = await self._spawn([str(self.dir/'target'/'debug'/'leela_cell')], self.cwd, asyncio.subprocess.PIPE)
         async def pump(reader, name):
             while (chunk := await reader.read(4096)): emit(_stream(name, chunk.decode('utf-8', 'replace')))
         try: await asyncio.wait_for(asyncio.gather(pump(p.stdout, 'stdout'), pump(p.stderr, 'stderr')), timeout)
         except asyncio.TimeoutError:
-            p.kill()
+            await self._kill()
             return 'TimeoutError: the cell did not finish'
+        except BaseException: await asyncio.shield(self._kill()); raise
         rc = await p.wait()
         if rc: return f'ProcessExit: the program exited with status {rc}'
         return None
+    async def interrupt(self): await self._kill()
+    async def shutdown(self):
+        await self._kill()
+        await super().shutdown()
     async def restart(self):
         "Forget every definition. The crate is rebuilt from the next cell that defines something."
         self.items, self.deps = [], {}

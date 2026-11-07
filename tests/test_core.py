@@ -521,16 +521,21 @@ def test_an_empty_inherited_value_takes_the_profiles(tmp_path):
     assert import_login_env(shell=str(shell), env=env) == ['OPENAI_API_KEY']
     assert env == {'OPENAI_API_KEY': 'sk-from-profile', 'EDITOR': 'vim'}, 'and an empty export erases nothing'
 
-def test_a_hung_interactive_shell_is_asked_again_as_a_login_shell(tmp_path):
+def test_a_hung_interactive_shell_is_asked_again_as_a_login_shell(tmp_path, monkeypatch):
     """A timeout under `-i` returned nothing at all, and every key in the profile went missing."""
+    from leela.core import envs
     from leela.core.envs import shell_env
     shell = tmp_path/'hangs'
     shell.write_text("#!/bin/sh\ncase \"$*\" in *-i*) exec sleep 30;; esac\nprintf 'OPENAI_API_KEY=sk-login\\0'\n")
     shell.chmod(0o755)
-    assert shell_env(str(shell), timeout=3) == {'OPENAI_API_KEY': 'sk-login'}
-    t = time.monotonic()
-    assert shell_env(str(shell), timeout=3) == {'OPENAI_API_KEY': 'sk-login'}
-    assert time.monotonic() - t < 3, 'a shell that hung once is not waited on again'
+    # macOS scans a new executable on its first exec, and under `-n auto` that took longer than the timeout; it happens here, untimed.
+    subprocess.run([str(shell)], capture_output=True, check=True)
+    # The default timeout, which also bounds the login shell: on a loaded runner a healthy one took more than 3 s.
+    assert shell_env(str(shell)) == {'OPENAI_API_KEY': 'sk-login'}
+    asked, run = [], envs.subprocess.run
+    monkeypatch.setattr(envs.subprocess, 'run', lambda argv, **kw: asked.append(argv[1:]) or run(argv, **kw))
+    assert shell_env(str(shell)) == {'OPENAI_API_KEY': 'sk-login'}
+    assert asked == [['-l', '-c', 'env -0']], 'a shell that hung once is not waited on again'
 
 def test_the_shell_is_asked_without_the_bundles_interpreter_pointed_at_it(tmp_path, monkeypatch):
     """A packaged app hands every child `PYTHONHOME` and `PYTHONPATH` aimed at itself."""

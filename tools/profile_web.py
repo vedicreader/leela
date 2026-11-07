@@ -6,12 +6,12 @@ Drives a real Chromium over a generated project.
     python tools/profile_web.py --dirs 40       # a wider tree
 """
 from __future__ import annotations
-import argparse, asyncio, subprocess, sys, tempfile, threading, time, os
+import argparse, asyncio, subprocess, sys, tempfile, threading, time
 from fastcore.all import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp(prefix='leela-tool-cfg-')   # never the person's ~/.config/leela
+from tools.isolate import isolate; isolate()   # never the person's real stores
 
 def make_project(dirs, per, dirty):
     "A generated checkout: `dirs` directories of `per` files, `dirty` of them uncommitted."

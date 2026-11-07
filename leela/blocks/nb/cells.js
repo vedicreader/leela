@@ -277,7 +277,7 @@ function copyCell(i) {
   const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
   if (!cells.length) return status('select notebook cells to copy', 'err');
   lee.cellClipboard = {cells, cell: cells[0], from: lee.path || lee.tabKey || 'scratch'};
-  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} copied — open another notebook and paste`, 'ok');
+  status(`${cells.length} cell${cells.length === 1 ? '' : 's'} copied. Open another notebook and paste.`, 'ok');
 }
 async function cutCell(i) {
   const indices = selectedCellIndices(i), cells = indices.map(cellClipboardPayload).filter(Boolean);
@@ -328,7 +328,7 @@ function mountCell(c, i) {
   c.source = source;
   const v = createEditor($('#cm-' + c.id), {
     doc: source, lang: c.cell_type === 'code' ? nbLang() : c.cell_type === 'markdown' ? 'markdown' : '',
-    placeholder: c.cell_type === 'prompt' ? `ask the inline model — ${displayChord('mod+enter')} answers in place`
+    placeholder: c.cell_type === 'prompt' ? `ask the inline model · ${displayChord('mod+enter')} answers here`
       : c.cell_type === 'markdown' && c.extra?.lesson?.role === 'prediction' ? 'Your guess: what will the code below print?' : '',
     completeUrl: c.cell_type === 'code' ? '/complete' : null,
     lintPath: lee.path || 'scratch.ipynb',
@@ -621,6 +621,11 @@ function richWalk(root) {
   }
 }
 //: `html` as a clean fragment. Parsed in a `<template>`, so nothing in it loads or runs before the walk.
+//: A pandas table in the theme's colours. An adopted sheet comes before the output's own `<style>`, which wins where it says something; `border="1"` loses to any rule.
+const RICH_TABLE_CSS = new CSSStyleSheet(); RICH_TABLE_CSS.replaceSync('table{border-collapse:collapse;border:0;margin:2px 0;font:12px/1.4 var(--lee-mono);color:var(--lee-output)}' +
+  'th,td{border:0;border-bottom:1px solid var(--lee-border);padding:3px 10px;text-align:right}' +
+  'thead th{border-bottom-color:var(--lee-fg4);color:var(--lee-fg2);font-weight:600}tbody th{color:var(--lee-fg2);font-weight:600}' +
+  'tbody tr:hover{background:var(--lee-active-line)}');
 function richHtml(html) {
   const t = document.createElement('template'); t.innerHTML = html;
   richWalk(t.content);
@@ -678,6 +683,7 @@ function outputEl(o, c = null, i = 0) {
       d.textContent = ''; d.style.contain = 'paint';
       const r = d.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out-rich'})).attachShadow({mode: 'open'});
       if (svg) r.append(Object.assign(document.createElement('style'), {textContent: 'svg{display:block;max-width:100%;height:auto}'}));
+      else r.adoptedStyleSheets = [RICH_TABLE_CSS];
       r.append(richHtml(rich));
     };
     if (rich.length > MAX_OUTPUT_CHARS) {
@@ -764,7 +770,7 @@ function setTabSaveState(tab, state, detail = '') {
   if (!tab) return;
   const dot = $('.lee-save-state', tab); if (!dot) return;
   const labels = {
-    pending: lee.path ? 'Changes queued for autosave' : 'Unsaved — choose a filename to save',
+    pending: lee.path ? 'Changes queued for autosave' : 'Not saved. Choose a file name to save it',
     saving: 'Saving changes…', saved: 'Saved on disk', error: 'Autosave failed',
   };
   dot.className = `lee-save-state ${state}`;

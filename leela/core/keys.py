@@ -390,7 +390,7 @@ def chord_display(action_or_key, sep=' / '):
     "How a binding is written for a person: every chord it answers to, or an em dash when unbound."
     k = lookup(action_or_key) if isinstance(action_or_key, str) else action_or_key
     if k is None: return ''
-    return sep.join(_twice(k, c) for c in k.keys) if k.bound else '—'
+    return sep.join(_twice(k, c) for c in k.keys) if k.bound else '–'
 
 def _browser_safe(c):
     try: return _signature(c) not in {_signature(r) for r in CHROME_RESERVED}
@@ -540,10 +540,10 @@ def read_overrides(path=None, notes=None):
     try: d = json.loads(p.read_text())
     except FileNotFoundError: return {}
     except Exception as e:
-        notes.append(f'{p}: {type(e).__name__}: {e} — using the default keys')
+        notes.append(f'{p}: {type(e).__name__}: {e}. Leela uses the default keys')
         return {}
     if not isinstance(d, dict):
-        notes.append(f'{p}: expected an object of action -> chord — using the default keys')
+        notes.append(f'{p}: expected an object of action -> chord. Leela uses the default keys')
         return {}
     help_text = ' '.join(map(str, d.get('_help') or ()))
     generated_snapshot = isinstance(d.get('keys'), dict) and len(d['keys']) > 50 and 'leela keymap' in help_text
@@ -581,7 +581,7 @@ def apply_overrides(keys, over, notes=None):
             if not _dupes(trial): out, moved = trial, True; del todo[i]
     for i, k in todo.items():
         trial = L(list(out)); trial[i] = k
-        notes.append(f'keymap: {k.action} -> {k.key!r} conflicts ({_dupes(trial)[0]}) — kept {out[i].key or "unbound"}')
+        notes.append(f'keymap: {k.action} -> {k.key!r} conflicts ({_dupes(trial)[0]}). Leela kept {out[i].key or "unbound"}')
     return out
 
 _BULK = 50

@@ -4,7 +4,29 @@
 
 ## 0.1.27
 
-Needs kavacha 0.0.16 and Sanketa 0.2.7.
+Needs kavacha 0.0.16, Sanketa 0.2.7, shalya 0.1.32, pullup 0.0.12, dockeasy 0.0.13, gheasy 0.0.21, kunda 0.0.15, dhrishti 0.1.13, koshas 0.1.23, fossick 0.1.26 and litesearch 0.1.64.
+
+- Security:
+  - a raw file such as an SVG is served in a sandbox, so its script cannot run at Leela's address;
+  - a git ref that starts with a dash is refused, and gheasy marks where options end;
+  - a page on another local port can no longer reach Leela, and routes that change things take only POST.
+- The agent asks, in every mode short of autopilot, before code it runs (an isolated check stays free), a watch or remember on a file, folder or URL, an API call other than GET or HEAD, image and video generation, and a write under `.git`, `.venv` or `.leela`. A watch cannot reach outside your folders or credentials. The notebook tools act on the open tab, unsaved edits included.
+- API keys go to the keychain, or a 0600 file when there is none, and never into the environment of kernels, shells or pipelines.
+- A repo's `.leela/settings.json` cannot choose the terminal program or the agent's config folder; the settings page lists what it ignored.
+- A file that is not UTF-8 opens read-only and is never rewritten. A file keeps its own line endings.
+- A loop that prints a lot streams small updates: 2000 prints send about 32 KB, not 125 MB. One output keeps at most 200,000 characters.
+- A save after git or a formatter changed the notebook keeps your deletes, moves and outputs. Two windows on one notebook keep each other's edits, and the same cell edited in both asks which to keep.
+- A large notebook is not sent again when its tab comes back, and saving it no longer grows memory.
+- A settings file with a typo is kept as it is, with a `.bad` copy, and Leela says why it cannot save.
+- A clone goes only into an open folder or one you approve.
+- Go-to-file walks up to 100,000 files and says when it stopped early.
+- The trash drops items older than 30 days and keeps under 2 GB.
+- File history is safe with two windows.
+- Rust cells run again without a duplicate-definition error, and Stop ends the whole program.
+- On Linux, the file watcher skips ignored folders, and a deleted folder no longer stops the watch.
+- Contrast meets WCAG AA. The welcome screen, menus and palette use plain words and real key glyphs. Dark-mode tables, menus that ran off the screen, toasts and the terminal's PATH line are fixed. The guide and README match the app.
+- fossick converts web pages with markdownify (MIT) instead of html2text (GPL), and its caches no longer use pickle. The `.kosha` folder hides itself from git.
+- The frontend bundles have a lockfile and rebuild to the same bytes; `leela/vendor/THIRD_PARTY_NOTICES.md` lists their licences.
 
 - A new two-row header shows the Leela mark and name, the folder, the branch with its change count, and ↓/↑ only when the branch is behind or ahead. Row 2 holds File, Tools, Debug, the tabs and Run, Next, Stop and Present. The old toolbar row is gone. On macOS the title bar is part of the window.
 - The window title is `Leela · <folder> · <scope>`, for example `Leela · karma · notebook`. It always ends with the scope that Sanketa reads, and it changes when the folder changes.
@@ -13,6 +35,8 @@ Needs kavacha 0.0.16 and Sanketa 0.2.7.
 - The agent has a `leela` skill: what Leela can do and where, with the menus, keys, panes, settings, slash commands and tools. It is built from the app, so it shows your own keys. A local model on the auto profile does not see skills; set the profile to full for a large local model.
 - Signing retries when Apple's timestamp server does not answer (kavacha 0.0.16).
 - Security: oauthlib 4.0.1, tornado 6.6 and setuptools 84.2.1.
+- A kernel's inspector asks the OS for a free port. Before, it took 8400 or the next free port, so a person's own server on that port could not start. `--kernel-port` still sets a fixed start port.
+- Leela ships `leela/vendor/THIRD_PARTY_NOTICES.md`, with each package in its browser bundles, its version, its licence and the licence text. `frontend/package-lock.json` is committed, so `npm ci && npm run build` makes the same bytes; `make vendor-check` checks it. htmx is pinned at 2.0.7, the version Leela ships.
 
 ## 0.1.26
 

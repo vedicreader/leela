@@ -65,13 +65,16 @@ def _fake_service(tmp_path, mode):
     s.server, s.argv = 'fake', [sys.executable, str(script), mode]; s.command = sys.executable
     return s
 
-def test_a_request_the_server_makes_is_answered_and_a_silent_server_is_not_waited_on_twice(tmp_path):
+def test_a_request_the_server_makes_is_answered_and_a_silent_server_is_not_waited_on_twice(tmp_path, monkeypatch):
     """basedpyright asks `workspace/configuration` first and answers nothing until it is replied to; its request id also collides with ours."""
     import time
     f = tmp_path/'a.py'; f.write_text('def f(): pass\n')
     s = _fake_service(tmp_path, 'config')
-    try: assert s.request('textDocument/documentSymbol', f, f.read_text(), None) == [{'name': 'f'}]
-    finally: s.close()
+    # The 1.5 s soft wait covers the configuration round trip too, which a loaded runner took longer than.
+    with monkeypatch.context() as m:
+        m.setattr('leela.blocks.lsp.lsp.SOFT_WAIT', 30)
+        try: assert s.request('textDocument/documentSymbol', f, f.read_text(), None) == [{'name': 'f'}]
+        finally: s.close()
     s = _fake_service(tmp_path, 'mute')
     try:
         for method, extra in [('textDocument/documentSymbol', None), ('textDocument/inlayHint', {'range': {}})]:

@@ -154,7 +154,7 @@ async function showGitConflict(path) {
         ? `conflict ${active + 1} of ${total}` : 'no conflicts left';
       m.querySelector('[data-state]').textContent = total
         ? `${done} of ${original.blocks.length} resolved`
-        : `all ${original.blocks.length} resolved — staging marks this file merged`;
+        : `all ${original.blocks.length} resolved. Stage the file to mark it merged.`;
       m.querySelectorAll('[data-take],[data-nav]').forEach(b => b.disabled = !total);
       m.querySelector('[data-resolve]').classList.toggle('go', !total);
       LeeCM.setChangedLines(views.result, marks(

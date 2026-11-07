@@ -35,7 +35,7 @@
 :root,
 :root[data-theme="leela"][data-mode="dark"] {
   --lee-bg: #0d1117; --lee-bg1: #161b22; --lee-bg2: #21262d; --lee-bg3: #30363d;
-  --lee-fg: #c9d1d9; --lee-fg2: #b1bac4; --lee-fg4: #6e7681;
+  --lee-fg: #c9d1d9; --lee-fg2: #b1bac4; --lee-fg4: #878d96;
   --lee-border: #30363d; --lee-accent: #58a6ff; --lee-sel: #264f78; --lee-selection-fg: #f0f6fc;
   --lee-red: #ff7b72; --lee-green: #7ee787; --lee-yellow: #e3b341; --lee-orange: #ffa657;
   --lee-blue: #1f6feb; --lee-purple: #d2a8ff; --lee-aqua: #79c0ff;
@@ -45,9 +45,9 @@
 }
 :root[data-theme="leela"][data-mode="light"] {
   --lee-bg: #ffffff; --lee-bg1: #f6f8fa; --lee-bg2: #eaeef2; --lee-bg3: #d0d7de;
-  --lee-fg: #1f2328; --lee-fg2: #424a53; --lee-fg4: #6e7781;
-  --lee-border: #d0d7de; --lee-accent: #0969da; --lee-sel: #dbeafe; --lee-selection-fg: #1f2328;
-  --lee-red: #cf222e; --lee-green: #1a7f37; --lee-yellow: #9a6700; --lee-orange: #bc4c00;
+  --lee-fg: #1f2328; --lee-fg2: #424a53; --lee-fg4: #646c75;
+  --lee-border: #d0d7de; --lee-accent: #0967d6; --lee-sel: #dbeafe; --lee-selection-fg: #1f2328;
+  --lee-red: #cf222e; --lee-green: #197b35; --lee-yellow: #916100; --lee-orange: #bc4c00;
   --lee-blue: #0a3069; --lee-purple: #8250df; --lee-aqua: #0550ae;
   --lee-output: #17191d; --lee-warning: #8a6500; --lee-log: #b4232d;
   --lee-active-line: rgba(0,0,0,.03); --lee-bracket: rgba(9,105,218,.2);
@@ -65,7 +65,7 @@
 }
 :root[data-theme="cursor"][data-mode="light"] {
   --lee-bg: #fbfbfb; --lee-bg1: #f4f4f4; --lee-bg2: #ececec; --lee-bg3: #e2e2e2;
-  --lee-fg: #1a1a1a; --lee-fg2: #3d3d3d; --lee-fg4: #6f6f6f;
+  --lee-fg: #1a1a1a; --lee-fg2: #3d3d3d; --lee-fg4: #696969;
   --lee-border: #ebebeb; --lee-accent: #171717; --lee-sel: #e7e7e7; --lee-selection-fg: #111111;
   --lee-red: #c23b22; --lee-green: #2f6f4e; --lee-yellow: #8a6d1b; --lee-orange: #b35c1e;
   --lee-blue: #3b5bdb; --lee-purple: #5b4b8a; --lee-aqua: #0b6e99;
@@ -75,7 +75,7 @@
 }
 :root[data-theme="vscode"][data-mode="dark"] {
   --lee-bg: #1e1e1e; --lee-bg1: #252526; --lee-bg2: #2d2d30; --lee-bg3: #3e3e42;
-  --lee-fg: #d4d4d4; --lee-fg2: #cccccc; --lee-fg4: #858585;
+  --lee-fg: #d4d4d4; --lee-fg2: #cccccc; --lee-fg4: #959595;
   --lee-border: #3e3e42; --lee-accent: #3794ff; --lee-sel: #264f78; --lee-selection-fg: #ffffff;
   --lee-red: #f44747; --lee-green: #6a9955; --lee-yellow: #dcdcaa; --lee-orange: #ce9178;
   --lee-blue: #569cd6; --lee-purple: #c586c0; --lee-aqua: #4ec9b0;
@@ -85,7 +85,7 @@
 }
 :root[data-theme="vscode"][data-mode="light"] {
   --lee-bg: #ffffff; --lee-bg1: #f3f3f3; --lee-bg2: #ececec; --lee-bg3: #e4e4e4;
-  --lee-fg: #333333; --lee-fg2: #444444; --lee-fg4: #767676;
+  --lee-fg: #333333; --lee-fg2: #444444; --lee-fg4: #6a6a6a;
   --lee-border: #e0e0e0; --lee-accent: #005fb8; --lee-sel: #add6ff; --lee-selection-fg: #000000;
   --lee-red: #cd3131; --lee-green: #008000; --lee-yellow: #795e26; --lee-orange: #a31515;
   --lee-blue: #0000ff; --lee-purple: #af00db; --lee-aqua: #0451a5;
@@ -95,7 +95,7 @@
 }
 :root[data-theme="jetbrains"][data-mode="dark"] {
   --lee-bg: #2b2b2b; --lee-bg1: #313335; --lee-bg2: #3c3f41; --lee-bg3: #4e5254;
-  --lee-fg: #a9b7c6; --lee-fg2: #bbbbbb; --lee-fg4: #808080;
+  --lee-fg: #a9b7c6; --lee-fg2: #bbbbbb; --lee-fg4: #aaaaaa;
   --lee-border: #4e5254; --lee-accent: #589df6; --lee-sel: #214283; --lee-selection-fg: #ffffff;
   --lee-red: #ff6b68; --lee-green: #6a8759; --lee-yellow: #ffc66d; --lee-orange: #cc7832;
   --lee-blue: #6897bb; --lee-purple: #9876aa; --lee-aqua: #4eade5;
@@ -105,7 +105,7 @@
 }
 :root[data-theme="jetbrains"][data-mode="light"] {
   --lee-bg: #ffffff; --lee-bg1: #f7f8fa; --lee-bg2: #ebecf0; --lee-bg3: #dfe1e5;
-  --lee-fg: #1f1f1f; --lee-fg2: #3c3f41; --lee-fg4: #6e6e6e;
+  --lee-fg: #1f1f1f; --lee-fg2: #3c3f41; --lee-fg4: #6a6a6a;
   --lee-border: #dfe1e5; --lee-accent: #2470b3; --lee-sel: #a6d2ff; --lee-selection-fg: #1f1f1f;
   --lee-red: #c9211e; --lee-green: #067d17; --lee-yellow: #9e880d; --lee-orange: #a1620a;
   --lee-blue: #0033b3; --lee-purple: #871094; --lee-aqua: #067d75;
@@ -115,7 +115,7 @@
 }
 :root[data-theme="solarized"][data-mode="dark"] {
   --lee-bg: #002b36; --lee-bg1: #073642; --lee-bg2: #0e4451; --lee-bg3: #17505d;
-  --lee-fg: #93a1a1; --lee-fg2: #839496; --lee-fg4: #657b83;
+  --lee-fg: #a0acac; --lee-fg2: #9eacad; --lee-fg4: #9eacb1;
   --lee-border: #0e4451; --lee-accent: #268bd2; --lee-sel: #144b58; --lee-selection-fg: #fdf6e3;
   --lee-red: #dc322f; --lee-green: #859900; --lee-yellow: #b58900; --lee-orange: #cb4b16;
   --lee-blue: #5fb3e8; --lee-purple: #6c71c4; --lee-aqua: #2aa198;
@@ -125,7 +125,7 @@
 }
 :root[data-theme="solarized"][data-mode="light"] {
   --lee-bg: #fdf6e3; --lee-bg1: #f5eeda; --lee-bg2: #eee8d5; --lee-bg3: #ddd6c1;
-  --lee-fg: #073642; --lee-fg2: #586e75; --lee-fg4: #839496;
+  --lee-fg: #073642; --lee-fg2: #556b71; --lee-fg4: #5d696a;
   --lee-border: #ddd6c1; --lee-accent: #268bd2; --lee-sel: #d5e4ea; --lee-selection-fg: #073642;
   --lee-red: #dc322f; --lee-green: #859900; --lee-yellow: #b58900; --lee-orange: #cb4b16;
   --lee-blue: #155d8f; --lee-purple: #6c71c4; --lee-aqua: #2aa198;
@@ -135,7 +135,7 @@
 }
 :root[data-theme="gruvbox"][data-mode="dark"] {
   --lee-bg: #282828; --lee-bg1: #32302f; --lee-bg2: #3c3836; --lee-bg3: #504945;
-  --lee-fg: #ebdbb2; --lee-fg2: #d5c4a1; --lee-fg4: #a89984;
+  --lee-fg: #ebdbb2; --lee-fg2: #d5c4a1; --lee-fg4: #afa18e;
   --lee-border: #504945; --lee-accent: #83a598; --lee-sel: #504945; --lee-selection-fg: #fbf1c7;
   --lee-red: #fb4934; --lee-green: #b8bb26; --lee-yellow: #fabd2f; --lee-orange: #fe8019;
   --lee-blue: #458588; --lee-purple: #d3869b; --lee-aqua: #8ec07c;
@@ -145,7 +145,7 @@
 }
 :root[data-theme="gruvbox"][data-mode="light"] {
   --lee-bg: #fbf1c7; --lee-bg1: #f2e5bc; --lee-bg2: #ebdbb2; --lee-bg3: #d5c4a1;
-  --lee-fg: #3c3836; --lee-fg2: #504945; --lee-fg4: #7c6f64;
+  --lee-fg: #3c3836; --lee-fg2: #504945; --lee-fg4: #695e55;
   --lee-border: #d5c4a1; --lee-accent: #076678; --lee-sel: #d9c8a0; --lee-selection-fg: #282828;
   --lee-red: #9d0006; --lee-green: #79740e; --lee-yellow: #b57614; --lee-orange: #af3a03;
   --lee-blue: #458588; --lee-purple: #8f3f71; --lee-aqua: #427b58;
@@ -155,7 +155,7 @@
 }
 :root[data-theme="nord"][data-mode="dark"] {
   --lee-bg: #2e3440; --lee-bg1: #333b48; --lee-bg2: #3b4252; --lee-bg3: #434c5e;
-  --lee-fg: #d8dee9; --lee-fg2: #c2cbd9; --lee-fg4: #7b88a1;
+  --lee-fg: #d8dee9; --lee-fg2: #c2cbd9; --lee-fg4: #a7afc0;
   --lee-border: #3b4252; --lee-accent: #88c0d0; --lee-sel: #434c5e; --lee-selection-fg: #eceff4;
   --lee-red: #bf616a; --lee-green: #a3be8c; --lee-yellow: #ebcb8b; --lee-orange: #d08770;
   --lee-blue: #81a1c1; --lee-purple: #b48ead; --lee-aqua: #8fbcbb;
@@ -165,7 +165,7 @@
 }
 :root[data-theme="nord"][data-mode="light"] {
   --lee-bg: #eceff4; --lee-bg1: #e5e9f0; --lee-bg2: #dde3ec; --lee-bg3: #d8dee9;
-  --lee-fg: #2e3440; --lee-fg2: #3b4252; --lee-fg4: #6d7893;
+  --lee-fg: #2e3440; --lee-fg2: #3b4252; --lee-fg4: #5a647a;
   --lee-border: #d8dee9; --lee-accent: #5e81ac; --lee-sel: #cfd9e8; --lee-selection-fg: #2e3440;
   --lee-red: #99424b; --lee-green: #5e7a44; --lee-yellow: #a17c2f; --lee-orange: #b1653f;
   --lee-blue: #37628c; --lee-purple: #8a6a92; --lee-aqua: #4c7d80;
@@ -175,7 +175,7 @@
 }
 :root[data-theme="dracula"][data-mode="dark"] {
   --lee-bg: #282a36; --lee-bg1: #21222c; --lee-bg2: #343746; --lee-bg3: #44475a;
-  --lee-fg: #f8f8f2; --lee-fg2: #d5d5e0; --lee-fg4: #6272a4;
+  --lee-fg: #f8f8f2; --lee-fg2: #d5d5e0; --lee-fg4: #96a1c2;
   --lee-border: #44475a; --lee-accent: #bd93f9; --lee-sel: #44475a; --lee-selection-fg: #f8f8f2;
   --lee-red: #ff5555; --lee-green: #50fa7b; --lee-yellow: #f1fa8c; --lee-orange: #ffb86c;
   --lee-blue: #6ec3f2; --lee-purple: #bd93f9; --lee-aqua: #8be9fd;
@@ -185,7 +185,7 @@
 }
 :root[data-theme="dracula"][data-mode="light"] {
   --lee-bg: #faf9f2; --lee-bg1: #f2f1e8; --lee-bg2: #e9e8dd; --lee-bg3: #dcdbcf;
-  --lee-fg: #1f1f28; --lee-fg2: #454458; --lee-fg4: #6c6a86;
+  --lee-fg: #1f1f28; --lee-fg2: #454458; --lee-fg4: #67657f;
   --lee-border: #dcdbcf; --lee-accent: #7b48c8; --lee-sel: #e3d9f7; --lee-selection-fg: #1f1f28;
   --lee-red: #cb3a2a; --lee-green: #2c7a3f; --lee-yellow: #8a7400; --lee-orange: #b4571a;
   --lee-blue: #1d64b0; --lee-purple: #7b48c8; --lee-aqua: #0f7a8f;
@@ -215,7 +215,7 @@
 }
 :root[data-theme="ember"][data-mode="dark"] {
   --lee-bg: #221d18; --lee-bg1: #29231d; --lee-bg2: #322b24; --lee-bg3: #3d342b;
-  --lee-fg: #c9bba4; --lee-fg2: #b8aa93; --lee-fg4: #958670;
+  --lee-fg: #c9bba4; --lee-fg2: #b8aa93; --lee-fg4: #a0927e;
   --lee-border: #3a3129; --lee-accent: #d0a76c; --lee-sel: #4a3c2d; --lee-selection-fg: #efe3cf;
   --lee-red: #e08a6e; --lee-green: #a9b86e; --lee-yellow: #dfba68; --lee-orange: #e39d5f;
   --lee-blue: #8db2c8; --lee-purple: #c99bbd; --lee-aqua: #8ebfa8;
@@ -225,7 +225,7 @@
 }
 :root[data-theme="ember"][data-mode="light"] {
   --lee-bg: #efe6d6; --lee-bg1: #e8dece; --lee-bg2: #e0d5c3; --lee-bg3: #d3c6b1;
-  --lee-fg: #4a3f33; --lee-fg2: #5b4f42; --lee-fg4: #6e6152;
+  --lee-fg: #4a3f33; --lee-fg2: #5b4f42; --lee-fg4: #675b4d;
   --lee-border: #d6c9b4; --lee-accent: #87582a; --lee-sel: #dccab0; --lee-selection-fg: #3a3027;
   --lee-red: #9c4430; --lee-green: #56622a; --lee-yellow: #7a5a16; --lee-orange: #91501f;
   --lee-blue: #3b5a70; --lee-purple: #784c66; --lee-aqua: #38645a;
@@ -235,7 +235,7 @@
 }
 :root[data-theme="dusk"][data-mode="dark"] {
   --lee-bg: #252a33; --lee-bg1: #2b313b; --lee-bg2: #333a45; --lee-bg3: #3e4653;
-  --lee-fg: #c4ccd7; --lee-fg2: #adb6c3; --lee-fg4: #8a93a3;
+  --lee-fg: #c4ccd7; --lee-fg2: #adb6c3; --lee-fg4: #9da4b2;
   --lee-border: #39414d; --lee-accent: #8eaacb; --lee-sel: #3b4a5f; --lee-selection-fg: #e2e7ee;
   --lee-red: #d49297; --lee-green: #a3c19f; --lee-yellow: #d6c393; --lee-orange: #d6a684;
   --lee-blue: #93b3d8; --lee-purple: #b8a5d2; --lee-aqua: #90c2c2;
@@ -245,7 +245,7 @@
 }
 :root[data-theme="dusk"][data-mode="light"] {
   --lee-bg: #e6eaf0; --lee-bg1: #dde2e9; --lee-bg2: #d4dae3; --lee-bg3: #c6ced9;
-  --lee-fg: #2f3b4a; --lee-fg2: #3f4c5d; --lee-fg4: #5a6676;
+  --lee-fg: #2f3b4a; --lee-fg2: #3f4c5d; --lee-fg4: #545f6e;
   --lee-border: #cad1dc; --lee-accent: #3b628c; --lee-sel: #c4d0e0; --lee-selection-fg: #243040;
   --lee-red: #94404a; --lee-green: #3f6440; --lee-yellow: #6f5a1f; --lee-orange: #8a4f2b;
   --lee-blue: #2d5a88; --lee-purple: #66508a; --lee-aqua: #2a6767;
@@ -256,9 +256,9 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-mode]) {
     --lee-bg: #ffffff; --lee-bg1: #f6f8fa; --lee-bg2: #eaeef2; --lee-bg3: #d0d7de;
-    --lee-fg: #1f2328; --lee-fg2: #424a53; --lee-fg4: #6e7781;
-    --lee-border: #d0d7de; --lee-accent: #0969da; --lee-sel: #dbeafe; --lee-selection-fg: #1f2328;
-    --lee-red: #cf222e; --lee-green: #1a7f37; --lee-yellow: #9a6700; --lee-orange: #bc4c00;
+    --lee-fg: #1f2328; --lee-fg2: #424a53; --lee-fg4: #646c75;
+    --lee-border: #d0d7de; --lee-accent: #0967d6; --lee-sel: #dbeafe; --lee-selection-fg: #1f2328;
+    --lee-red: #cf222e; --lee-green: #197b35; --lee-yellow: #916100; --lee-orange: #bc4c00;
     --lee-blue: #8250df; --lee-purple: #8250df; --lee-aqua: #0550ae;
     --lee-output: #17191d; --lee-warning: #8a6500; --lee-log: #b4232d;
     --lee-active-line: rgba(0,0,0,.03); --lee-bracket: rgba(9,105,218,.2);
@@ -468,7 +468,7 @@ body {
 .lee-cell-meta:hover { border-color: var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg2); }
 .lee-cell-no { color: var(--lee-fg2); font-variant-numeric: tabular-nums; }
 .lee-cell.sel .lee-cell-no { color: var(--lee-accent); }
-.lee-cell-size { opacity: .75; white-space: nowrap; }
+.lee-cell-size { color: var(--lee-fg4); white-space: nowrap; }
 /* Asked for often enough to earn a place: it was reachable only by hovering. */
 .lee-cell-id { opacity: .45; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lee-cell-meta:hover .lee-cell-id { opacity: .8; }
@@ -543,6 +543,7 @@ body {
   display: flex; flex: none; height: 26px;
   align-items: stretch; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1);
 }
+.lee-righttabs > .lee-tablist { display: flex; flex: 1 1 auto; min-width: 0; align-items: stretch; }
 .lee-righttab {
   flex: 1 1 0; min-width: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--lee-fg4);
   cursor: pointer; font: 600 10px/1 var(--lee-mono); letter-spacing: .04em; text-transform: uppercase;
@@ -622,6 +623,12 @@ body {
 .lee-node { padding: 1px 8px 1px 10px; cursor: pointer; border-radius: 3px; white-space: nowrap; }
 .lee-node:hover { background: var(--lee-bg2); }
 .lee-node.sel { background: var(--lee-sel); }
+/* A container that takes focus to route keys draws no ring; the row it acts on shows where you are. */
+.lee-tree:focus, .lee-ctxmenu:focus, .lee-modalbox:focus, .lee-editor:focus { outline: none; }
+.lee-tree:focus-visible .lee-node.sel:not(details), .lee-tree:focus-visible details.lee-node.sel > summary { box-shadow: inset 2px 0 0 var(--lee-accent); }
+/* An open folder with nothing in it says so, instead of showing nothing. */
+.lee-dir[open] > .lee-kids:empty::before { content: 'empty folder'; display: block; padding: 2px 0 4px 26px; color: var(--lee-fg4); font-style: italic; }
+.lee-tree > .lee-root[open] > .lee-kids:empty::before { content: 'This folder is empty. Use +file to make a file.'; font-style: normal; }
 .lee-file { color: var(--lee-fg2); display: flex; align-items: center; gap: 5px; }
 .lee-file.git-modified .lee-fname { color: var(--lee-orange); }
 .lee-file.git-staged .lee-fname { color: var(--lee-green); }
@@ -738,7 +745,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-empty-mark::after { content: ''; width: 7px; height: 7px; position: absolute; right: -2px; bottom: -2px;
   border-radius: 2px; background: var(--lee-accent); animation: lee-empty-dot 1.8s ease-in-out infinite; }
 @keyframes lee-empty-dot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.75); opacity: .7; } }
-.lee-empty > strong { color: var(--lee-fg); font-size: 22px; letter-spacing: -.03em; max-width: 28ch; }
+.lee-empty > h2 { margin: 0; color: var(--lee-fg); font-size: 22px; font-weight: 700; letter-spacing: -.03em; max-width: 28ch; }
 .lee-empty > p { max-width: 48ch; margin: 8px 0 16px; color: var(--lee-fg4); line-height: 1.55; }
 .lee-empty-features { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 8px; width: 100%;
   max-width: 52ch; }
@@ -801,6 +808,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-app.no-bottom .lee-bottomdock, .lee-app.no-bottom .lee-dock-split { display: none; }
 .lee-docktabs { display: flex; align-items: center; gap: 2px; height: 25px; padding: 2px 6px;
                 border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-docktabs > .lee-tablist { display: flex; align-items: center; gap: 2px; }
 .lee-docktab { padding: 2px 8px; border: 1px solid transparent; border-radius: 3px;
                background: transparent; color: var(--lee-fg4); cursor: pointer; font: 10px/1.35 var(--lee-mono); }
 .lee-docktab:hover { background: var(--lee-bg2); color: var(--lee-fg2); }
@@ -1119,7 +1127,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-agent-progress-copy { display: flex; align-items: baseline; gap: 7px; min-width: 0; line-height: 1.35; }
 .lee-agent-progress-copy strong { flex: none; color: var(--lee-fg); font-size: 11.5px; font-weight: 600; }
 .lee-agent-phase { overflow: hidden; color: var(--lee-fg4); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.lee-agent-phase::before { content: '—'; margin-right: 7px; color: var(--lee-border); }
+.lee-agent-phase::before { content: '–'; margin-right: 7px; color: var(--lee-border); }
 .lee-agent-elapsed { color: var(--lee-fg4); font: 10px/1 var(--lee-mono); font-variant-numeric: tabular-nums; }
 .lee-agent-stop {
   padding: 2px 7px; border: 1px solid var(--lee-border); border-radius: 3px;
@@ -1266,8 +1274,8 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-checkpoint-intro { display: grid; gap: 5px; padding: 10px 12px 11px 32px; border-top: 1px solid color-mix(in srgb, var(--lee-border) 74%, transparent); background: color-mix(in srgb, var(--lee-bg) 38%, var(--lee-bg1)); }
 .lee-checkpoint-intro strong { max-width: 62ch; color: var(--lee-fg); font: 600 11px/1.45 var(--lee-mono); }
 .lee-checkpoint-intro span { max-width: 76ch; color: var(--lee-fg4); font: var(--lee-size-min)/1.5 var(--lee-mono); }
-.lee-approval-summary { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 9px; padding: 8px 12px; overflow-wrap: anywhere; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font: 500 10px/1.45 var(--lee-mono); }
-.lee-approval-summary > span { color: var(--lee-fg4); font-size: var(--lee-size-min); letter-spacing: .05em; text-transform: uppercase; }
+.lee-approval-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px; padding: 8px 12px; overflow-wrap: anywhere; border-top: 1px solid var(--lee-border); color: var(--lee-fg2); font: 500 10px/1.45 var(--lee-mono); }
+.lee-approval-summary > span { color: var(--lee-fg4); font-size: var(--lee-size-min); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; overflow-wrap: normal; }
 .lee-proposal-preview, .lee-proposal-editor { border-top: 1px solid var(--lee-border); }
 .lee-proposal-preview > summary, .lee-proposal-editor > summary {
   padding: 6px 10px; cursor: pointer; color: var(--lee-fg4); font: var(--lee-size-min)/1.3 var(--lee-mono);
@@ -1320,7 +1328,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-proposal-steer label { display: grid; gap: 5px; color: var(--lee-fg4); font: var(--lee-size-min)/1.35 var(--lee-mono); }
 .lee-proposal-steer .lee-input { width: 100%; margin: 0; }
 .lee-approval-actions { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-top: 1px solid var(--lee-border); font-size: 10px; }
-.lee-run-policy-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
+.lee-run-policy-label { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; white-space: nowrap; color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
 .lee-approval-actions .lee-select { width: min(210px, 32vw); max-width: 210px; }
 .lee-approval-actions .lee-btn { transition: border-color .18s ease, background-color .18s ease, color .18s ease, transform .12s ease; }
 .lee-approval-actions .lee-btn:active { transform: translateY(1px); }
@@ -2100,7 +2108,7 @@ audio.lee-media { width: min(100%, 560px); }
 .lee-md-cell { padding: 6px 12px; min-height: 1.6em; cursor: text; overflow-wrap: anywhere; }
 .lee-md-cell > :first-child { margin-top: 0; }
 .lee-md-cell > :last-child { margin-bottom: 0; }
-.lee-md-cell.empty::before { content: 'double-click to edit'; color: var(--lee-fg4); font-style: italic; opacity: .7; }
+.lee-md-cell.empty::before { content: 'double-click to edit'; color: var(--lee-fg4); font-style: italic; }
 .lee-cell[data-lesson-role="prediction"] .lee-md-cell.empty::before { content: 'Your guess: what will the code below print?'; }
 .lee-reveal, .lee-guide-out, .lee-cell[data-lesson-role="card"] .lee-md-cell, .lee-lesson-review-card {
   border-left: 2px solid color-mix(in srgb, var(--lee-accent) 28%, transparent);
@@ -2396,6 +2404,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 }
 .lee-status[hidden] { display: none; }
 .lee-status.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+/* Above the terminal / exec pill, which sits at the bottom centre while the dock is closed. */
+.lee-app.no-bottom .lee-status { bottom: 60px; }
 .lee-status::before { content: ''; width: 9px; height: 9px; flex: none; border-radius: 50%;
                       background: var(--lee-accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--lee-bg) 35%, transparent); }
 .lee-status.info { border-color: color-mix(in srgb, var(--lee-accent) 42%, var(--lee-border)); }
@@ -2589,7 +2599,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-theme-choice > span:last-child { color: var(--lee-fg4); font-size: 11px; }
 .lee-settings-modal .lee-modalbox { width: min(1040px, calc(100vw - 32px)); height: min(800px, calc(100dvh - 32px)); }
 .lee-settings-scope { display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 6px 12px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
-.lee-settings-scope label { display: flex; align-items: center; gap: 7px; color: var(--lee-fg4); font-size: 10px; }
+.lee-settings-scope label { display: flex; align-items: center; gap: 7px; color: var(--lee-fg4); font-size: 10px; white-space: nowrap; }
 .lee-settings-scope .lee-select { width: auto; min-width: 120px; }
 .lee-settings-scope > span { min-width: 0; margin-left: auto; overflow: hidden; color: var(--lee-fg4); font: var(--lee-size-min)/1.2 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
 .lee-settings-layout { display: grid; grid-template-columns: 188px minmax(0, 1fr); min-height: 0; flex: 1; }
@@ -2868,6 +2878,10 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-mrow { padding: 4px 12px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
 .lee-mrow.sel { background: var(--lee-sel); }
 .lee-mrow .sub { color: var(--lee-fg4); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.lee-mrow kbd { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--lee-fg4); font-size: 11px; white-space: nowrap; }
+.lee-qo-none { padding: 10px 12px; }
+/* A long list scrolls inside a box that ends well above the screen's edge. */
+.lee-modalbox > #cplist, .lee-modalbox > #qolist { max-height: min(60vh, 560px); }
 .lee-mhead {
   display: flex; align-items: baseline; gap: 8px; padding: 8px 12px 4px;
   border-bottom: 1px solid var(--lee-border); font-weight: 600; color: var(--lee-fg);
@@ -2911,7 +2925,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   .lee-pane-restore.restore-left, .lee-pane-restore.restore-right { display: block; }
 }
 @media (max-width: 680px) {
-  #header .lee-wordmark, #header .lee-runs .lee-hitem-text, #header .lee-kstate { display: none; }
+  #header .lee-runs .lee-hitem-text, #header .lee-kstate { display: none; }
+  #header .lee-wordmark { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   #header .lee-workspace-name { max-width: 110px; }
   #header .lee-branch-name { max-width: 90px; }
   #header .lee-menubar { display: none; }
@@ -2941,7 +2956,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 /* ---- contextual menus + file dialogs ---- */
 .lee-ctxmenu {
   position: fixed; z-index: 60; width: max-content; min-width: 230px; max-width: min(360px, 92vw);
-  max-height: calc(100vh - 8px); overflow-y: auto;
+  max-height: min(70vh, 640px); overflow-y: auto; overscroll-behavior: contain;
   padding: 5px; border: 1px solid var(--lee-border); border-radius: 7px;
   background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.38);
 }
@@ -3056,7 +3071,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-sc-commit #screviewstaged { background: var(--lee-bg2); color: var(--lee-fg2); border: 1px solid var(--lee-border); }
 .lee-sc-commit label:first-child { display: grid; gap: 4px; color: var(--lee-fg4); font: var(--lee-size-min)/1 var(--lee-mono); }
 .lee-sc-commit .lee-git-check { grid-column: 1 / -1; display: flex; align-items: center; gap: 5px; color: var(--lee-fg4); font-size: var(--lee-size-min); }
-.lee-git-file { display: flex; align-items: center; text-align: left; }
+.lee-git-file { display: flex; align-items: center; justify-content: flex-start; text-align: left; }
 .lee-git-change > input { flex: none; margin: 0 3px 0 1px; accent-color: var(--lee-accent); }
 .lee-git-change.selected { background: var(--lee-sel); }
 .lee-git-changelist { max-width: 74px; overflow: hidden; padding: 2px 4px; background: var(--lee-bg2); color: var(--lee-fg4); font: normal var(--lee-size-min)/1 var(--lee-mono); text-overflow: ellipsis; white-space: nowrap; }
@@ -3151,7 +3166,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-wf-pick button:hover { color: var(--lee-accent); }
 .lee-wf-has { border-color: transparent; cursor: default; }
 .lee-dep-files { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); }
-.lee-dep-files i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal var(--lee-size-min)/1.4 var(--lee-mono); opacity: .55; }
+.lee-dep-files i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal var(--lee-size-min)/1.4 var(--lee-mono); }
 .lee-dep-files i.has { border-color: var(--lee-green); color: var(--lee-green); opacity: 1; }
 
 .lee-bld { display: grid; }
@@ -3174,7 +3189,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-bld-opt input[type="checkbox"] { justify-self: start; }
 
 .lee-inf-status { display: flex; flex-wrap: wrap; gap: 3px; padding: 6px 7px; border-bottom: 1px solid var(--lee-border); }
-.lee-inf-status i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal var(--lee-size-min)/1.4 var(--lee-mono); opacity: .55; }
+.lee-inf-status i { padding: 2px 5px; border: 1px solid var(--lee-border); border-radius: 3px; color: var(--lee-fg4); font: normal var(--lee-size-min)/1.4 var(--lee-mono); }
 .lee-inf-status i.has { border-color: var(--lee-green); color: var(--lee-green); opacity: 1; }
 .lee-inf-group { display: grid; }
 .lee-inf-group > header { padding: 6px 7px 3px; color: var(--lee-fg2); font: 600 var(--lee-size-min)/1.4 var(--lee-mono); text-transform: uppercase; letter-spacing: .06em; }
@@ -3448,11 +3463,11 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-nbmerge-why { color: var(--lee-orange); font: var(--lee-size-min)/1.4 var(--lee-mono); }
 @media (max-width: 760px) { .lee-nbmerge-sides { grid-template-columns: 1fr; } }
 
-.lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; opacity: .65;
+.lee-folderwhere { margin-left: auto; padding-left: 12px; font-size: 11px; color: var(--lee-fg4);
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
 .lee-foundhead { padding: 8px 8px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 
-.lee-searching { display: flex; align-items: center; gap: 8px; padding: 10px 8px; font-size: 12px; opacity: .7; }
+.lee-searching { display: flex; align-items: center; gap: 8px; padding: 10px 8px; font-size: 12px; color: var(--lee-fg4); }
 .lee-spin { width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent;
             border-radius: 50%; animation: lee-spin .7s linear infinite; flex: none; }
 @keyframes lee-spin { to { transform: rotate(360deg); } }
@@ -3550,7 +3565,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 :root[data-density="tight"] .lee-empty-mark {
   min-width: 52px; height: 28px; margin-bottom: 12px; border-radius: 6px; font-size: 12px;
 }
-:root[data-density="tight"] .lee-empty > strong { font-size: 15px; font-weight: 600; }
+:root[data-density="tight"] .lee-empty > h2 { font-size: 15px; font-weight: 600; }
 :root[data-density="tight"] .lee-empty > p { margin: 5px 0 12px; font-size: 12px; }
 :root[data-density="tight"] .lee-empty-features { gap: 4px; margin-bottom: 12px; }
 :root[data-density="tight"] .lee-empty-features li { padding: 5px 0; }
@@ -4061,7 +4076,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 #header .lee-brand::after { content: ''; position: absolute; right: 0; top: 4px; bottom: 4px; width: 1px; background: var(--lee-hair); }
 #header .lee-mark { width: 28px; height: 28px; margin-top: -2px; flex: none; background: var(--lee-fg);
   -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
-#header .lee-wordmark { font: 600 19px/1 var(--lee-serif); letter-spacing: .005em; color: var(--lee-fg); }
+#header .lee-wordmark { margin: 0; font: 600 19px/1 var(--lee-serif); letter-spacing: .005em; color: var(--lee-fg); }
 #header .lee-hitem { display: flex; align-items: center; gap: 7px; height: 30px; min-width: 0; padding: 0 10px; border: 0; border-radius: 7px;
   background: transparent; color: var(--lee-fg2); font: 13.5px/1 var(--lee-sans); white-space: nowrap; cursor: pointer; }
 #header .lee-hitem:hover, #header .lee-git-quick:hover, #header .lee-act:hover, #header .lee-menubar-btn:hover, #header .lee-tab-overflow:hover {
@@ -4076,6 +4091,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 #header .lee-change-count[hidden], #header .lee-git-quick[hidden] { display: none; }
 #gitpill:not([data-state="branch"]) .lee-branch-glyph { display: none; }
 #gitpill[data-state="error"] { color: var(--lee-orange); }
+#gitpill[data-state="nofolder"] { display: none; }
 #header .lee-git-quickbar { display: flex; align-items: center; gap: 2px; flex: none; }
 #header .lee-git-quick { display: flex; align-items: center; gap: 3px; height: 30px; padding: 0 6px; border: 0; border-radius: 7px;
   background: transparent; color: var(--lee-fg4); font: 12.5px/1 var(--lee-sans); font-variant-numeric: tabular-nums; cursor: pointer; }

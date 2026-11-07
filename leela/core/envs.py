@@ -13,7 +13,7 @@ use_extra('dockeasy')
 __all__ = ['EnvStore', 'EnvError', 'import_login_env', 'preferred_shell', 'shell_env',
            'BUNDLE_ONLY', 'clean_env', 'strip_bundle',
            'env_file', 'stored_env', 'apply_stored_env', 'set_env', 'unset_env', 'env_rows',
-           'is_secret', 'KNOWN_KEYS']
+           'is_secret', 'KNOWN_KEYS', 'API_PREFIX', 'strip_keys']
 
 #: The names the agent's model backends read, offered whether or not anything has set them.
 KNOWN_KEYS = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT',
@@ -25,6 +25,15 @@ _SECRETISH = ('KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASSWD', 'CREDENTIAL')
 _NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\Z')
 
 def is_secret(name): return any(w in str(name).upper() for w in _SECRETISH)
+
+#: The prefix of the vault API page's keys. No child process gets one: they are for the agent's API calls only.
+API_PREFIX = 'LEELA_API_'
+
+def strip_keys(env=None):
+    "Remove every `LEELA_API_*` name from `env`, else from `os.environ`, and return it."
+    env = os.environ if env is None else env
+    for k in [k for k in env if k.startswith(API_PREFIX)]: env.pop(k, None)
+    return env
 
 def env_file():
     from .. import leela_cfg
@@ -50,6 +59,7 @@ def apply_stored_env(env=None):
     target = os.environ if env is None else env
     values = {k: v for k, v in stored_env().items() if not (on() and steered(k))}
     target.update(values)
+    strip_keys(target)
     return sorted(values)
 
 def set_env(key, value):
@@ -139,6 +149,7 @@ def import_login_env(shell=None, env=None, timeout=8):
     if extra:
         target['PATH'] = os.pathsep.join([*(target.get('PATH') or '').split(os.pathsep), *extra]).strip(os.pathsep)
         added.append('PATH')
+    strip_keys(target)
     return added
 
 class EnvStore(_EnvStore):

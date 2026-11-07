@@ -16,7 +16,7 @@ BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
 def _with_chord(what, action):
     "`what`, plus the chord that also does it when there is one."
     c = chord_display(action)
-    return f'{what}  ({c})' if c and c != '—' else what
+    return f'{what}  ({c})' if c and c != '–' else what
 
 @dataclass(frozen=True)
 class Btn:
@@ -40,7 +40,7 @@ BUTTONS = L(
     Btn('run_all',      '▶ all',    'run every cell, top to bottom',   'toolbar'),
     Btn('clear_all_outputs', 'clear',    'clear every cell output',   'toolbar'),
     Btn('run_file',     '▶ file',   'run the whole file in the kernel','toolbar'),
-    Btn('run_selection','▶ sel',    'run just what is selected',       'toolbar'),
+    Btn('run_selection','▶ sel',    'run only the selection',       'toolbar'),
     Btn('cell_below',   '+ cell',   'insert a cell below',             'toolbar'),
     Btn('notebook_undo','undo',     'undo the last cell operation',     'toolbar'),
     Btn('notebook_redo','redo',     'redo the last cell operation',     'toolbar'),

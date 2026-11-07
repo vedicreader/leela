@@ -105,7 +105,7 @@ const cases = JSON.parse(process.argv[2]);
     const editors = new Map(row.live ? [[prediction.id, {text: 'live guess'}]] : []);
     const ctx = {console, Map, Set, JSON, Math, performance, setInterval, clearInterval,
       lee: {tabKey: 'lesson', cells: [decoy, card, c, ...(row.missing ? [] : [prediction])], editors},
-      LeeCM: {getDoc: v => v.text}, nextSeq: () => 1, ensureCellMounted: () => null,
+      LeeCM: {getDoc: v => v.text}, nextSeq: () => 1, seenRow: () => ({}), ensureCellMounted: () => null,
       $: () => ({textContent: '', classList: {add() {}, remove() {}}}),
       setCellState() {}, setCellTime() {}, status() {}, leeVars() {}, widgetWatch: async () => {},
       withPython: go => go(), postEvents: async (url, body, cb) => { bodies.push({url, body}); ctx.lee.tabKey = 'changed'; cb('done', {ok: true, cell: c}); }

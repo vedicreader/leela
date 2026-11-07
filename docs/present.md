@@ -9,7 +9,7 @@ In this guide, the presenter screen is the presentation in the IDE window. The a
 Select a cell. Then do one of these:
 
 - Press Alt+R.
-- Click Present in the toolbar.
+- Click Present at the right end of the tab row, in the header.
 - Choose "Present from this cell" in the cell menu.
 
 The View menu, the tab menu and the command palette also have Present. Each one starts the same presentation.
@@ -117,7 +117,7 @@ Stop shows while the cell runs. Its place in the strip stays empty while the cel
 
 Run in a presentation writes no file. Autosave pauses during a presentation. Leela schedules it again when the presentation ends. Files that your own code writes are not covered. A cell with side effects runs in front of the room.
 
-When a run fails, the room sees the other outputs of that run, possibly none. The room does not see the traceback. The presenter sees a panel with the error name, the message and the traceback. The panel says `The audience window does not show this error. The room can see it when you share this screen.` Click Show error to audience to send the error to the audience window. Esc or Close closes the panel. A new run of the cell closes it too. On one shared screen, the room can see the panel while it is open.
+When a run fails, the room sees the other outputs of that run, or no output. The room does not see the traceback. The presenter sees a panel with the error name, the message and the traceback. The panel says `The audience window does not show this error. The room can see it when you share this screen.` Click Show error to audience to send the error to the audience window. Esc or Close closes the panel. A new run of the cell closes it too. On one shared screen, the room can see the panel while it is open.
 
 A kernel restart clears the output of every code cell on both screens. Run is then available again.
 

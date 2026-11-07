@@ -244,7 +244,7 @@ def _venv_version(py):
 
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
-    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
+    def __init__(self, roots=(), port=0, agent='restricted', dev_port=9000, kernel='ipykernel',
                  model=None,
                  inline_model=None,
                  completion_model=None,
@@ -1276,7 +1276,7 @@ class Workspace:
         from .blocks.runtime.kernels import run_file_src
         t = tab or self.tab
         if t is None: return None, 'nothing open'
-        if t.kind == 'notebook': return None, 'this is a notebook — run its cells, or use run all'
+        if t.kind == 'notebook': return None, 'this is a notebook. Run its cells, or use run all'
         if not t.path: return None, f'{t.title} has never been saved'
         if not t.path.endswith('.py'): return None, f'{Path(t.path).name} is not a python file'
         if src is None:
@@ -1526,7 +1526,7 @@ class Workspace:
             except OSError: pass
         return p
     @classmethod
-    def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
+    def load(cls, path=None, port=0, agent='restricted', kernel='ipykernel',
              model=None, inline_model=None, completion_model=None, local_multimodal=None,
              kernels_auto_manage=None,
              litert_backend=None,

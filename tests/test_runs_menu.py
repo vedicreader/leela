@@ -17,6 +17,7 @@ const ctx = {
   lee: {terms: new Map()}, $: () => null, document: el, status() {}, openExternal() {}, runApp() {},
   leeRunTerm: async () => {}, openChromeMenu: (a, rows) => menus.push(rows),
   api: async u => { calls.push(u); return u.startsWith('/dev/list') ? {servers} : {}; },
+  post: async u => { calls.push('POST ' + u); return {}; },
 };
 ctx.window = ctx; ctx.globalThis = ctx;
 vm.createContext(ctx); vm.runInContext(src, ctx);
@@ -39,7 +40,7 @@ def test_a_finished_command_whose_process_is_up_can_be_stopped():
     "The child keeps the inspector up after the command returns, and the server keeps its port: stop must be offered."
     out = menu([dict(label='vedicreader', path='main.py', script='main.py', alive=True, running=False, code=0, pid=26535)])
     assert 'stop vedicreader' in out['rows'], out
-    assert '/dev/stop?path=main.py' in out['calls'], out
+    assert 'POST /dev/stop?path=main.py' in out['calls'], out
 
 def test_a_run_whose_process_is_gone_offers_no_stop():
     out = menu([dict(label='vedicreader', path='main.py', script='main.py', alive=False, running=False, code=0, pid=None)])

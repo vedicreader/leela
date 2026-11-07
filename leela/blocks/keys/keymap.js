@@ -29,7 +29,7 @@ async function loadKeys(d) {
   paintFooterKeys(); paintKeyLabels();
   const prompt = $('#agentprompt'); if (prompt) prompt.placeholder = displayChord(prompt.placeholder);
   renderContextKeys(lee.scope);
-  if (lee.keyNotes.length) status(lee.keyNotes[0] + ' — see the keys panel', 'err');
+  if (lee.keyNotes.length) status(lee.keyNotes[0] + '. See the keys panel', 'err');
 }
 
 function renderContextKeys(scope = lee.scope) {

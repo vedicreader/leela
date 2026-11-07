@@ -10,11 +10,15 @@ const inShell = () => Boolean(window.pywebview?.api?.pick_folder);
 const shortHome = p => lee.home && p.startsWith(lee.home) ? '~' + p.slice(lee.home.length) : p;
 
 // pywebview injects its bridge asynchronously, so "is there a native chooser" cannot be answered
-// by one synchronous look at load.
+// by one synchronous look at load. The wait happens once: a browser tab never gets the bridge.
+let shellSettled = null;
 async function shellReady(waitMs = 1500) {
-  for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
-    await new Promise(r => setTimeout(r, 50));
-  return (lee.inShell = inShell());
+  if (inShell()) return (lee.inShell = true);
+  return shellSettled ||= (async () => {
+    for (const end = Date.now() + waitMs; !inShell() && Date.now() < end;)
+      await new Promise(r => setTimeout(r, 50));
+    return (lee.inShell = inShell());
+  })();
 }
 window.leeShellReady = shellReady;
 lee.inShell = inShell();

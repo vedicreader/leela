@@ -35,7 +35,7 @@ async def _replaces(api, name):
     if rows is None:
         # an inspector that answered nothing at all is the one `/api/promote` reports for itself
         if info is None: return ''
-        return (f'the live namespace could not be read, so promoting {name} may replace a value '
+        return (f'the live namespace could not be read, so promoting {name} can replace a value '
                 'that is already there')
     if name not in {n.get('name') for g in rows.get('groups', []) for n in g.get('nodes', [])}: return ''
     return (f'{name} already exists in the live namespace. Promoting replaces it, and the value '
@@ -94,7 +94,7 @@ def connect(app, ctx):
         d = await req.json()
         r = await api('/api/set', {'accessor': d['accessor'], 'expr': d['expr']})
         return r or {'ok': False, 'error': 'no kernel inspector'}
-    @rt('/vars/promote')
+    @rt('/vars/promote', methods=['POST'])
     async def vars_promote(accessor: str, replace: int = 0):
         "Hand one name the agent bound to the user; a name the user already has needs `replace`."
         name = _whole_name(accessor)

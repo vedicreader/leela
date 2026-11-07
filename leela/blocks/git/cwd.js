@@ -209,6 +209,7 @@ function refreshScmIfOpen(snapshot = null) {
 async function refreshProjectPills() {
   try {
     const d = await api('/workspace/info');
+    lee.roots = d.roots || []; lee.home = d.home || lee.home || '';
     const active = (d.roots || []).find(r => r.path === (gitUI.repo || d.active)) || (d.roots || [])[0];
     const name = $('#workspacename'); if (name) name.textContent = active?.name || 'open workspace';
     const workspace = $('#workspacepill');
@@ -232,8 +233,8 @@ async function refreshGitPill() {
     const d = await api('/git/info');
     const git = $('#gitpill'); if (!git) return;
     if (!d || d.repo === false) {
-      // With no folder open there is nothing to be inside or outside of, so the pill says neither.
-      paintBranchPill(d, d && String(d.note || '').startsWith('no folder') ? 'pending' : 'nogit');
+      // With no folder open there is nothing to be inside or outside of, so the pill hides.
+      paintBranchPill(d, d && String(d.note || '').startsWith('no folder') ? 'nofolder' : 'nogit');
       git.title = (d && d.note) || 'not inside a Git repository';
       return;
     }

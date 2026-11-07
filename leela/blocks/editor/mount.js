@@ -116,6 +116,7 @@ async function mountFile(host, st) {
             `<div class="lee-cm" id="filecm"></div>` +
             `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
           : '<div class="lee-cm" id="filecm"></div>');
+  if (st.note) host.insertAdjacentHTML('afterbegin', `<div class="lee-doc-head lee-readonly-note" role="note">${esc(st.note)}</div>`);
   // Nothing in the editor depends on these two answers, and awaiting them held an empty box on
   // screen for as long as they took: `/editor/packages` starts an interpreter to read version
   // metadata, and `/git/file` is four git subprocesses. Together they were 80 to 200ms of blank
@@ -386,9 +387,15 @@ function keepNotebookShells(host, key, version) {
   // The views are already destroyed. What they left behind is not a shell, so it goes.
   frag.querySelectorAll('.lee-cm').forEach(cm => { cm.innerHTML = ''; });
   nbShells.delete(key);
-  nbShells.set(key, {frag, version, ids: [...frag.querySelectorAll('.lee-cell')].map(el => el.dataset.id).join()});
+  nbShells.set(key, {frag, version, ids: [...frag.querySelectorAll('.lee-cell')].map(el => el.dataset.id).join(), cells: lee.cells});
   for (const stale of [...nbShells.keys()].slice(0, nbShells.size - NB_SHELLS)) nbShells.delete(stale);
 }
+
+//: `{key: version}` of each kept notebook, which `/tab/state` answers with `same` instead of its cells.
+function heldNotebookVersions() {
+  return Object.fromEntries([...nbShells].map(([key, held]) => [key, Number(held.version.split('@').pop())]));
+}
+function heldNotebookCells(key) { return nbShells.get(key)?.cells || []; }
 
 function takeNotebookShells(host, st) {
   const key = st.path || st.title, held = key && nbShells.get(key);

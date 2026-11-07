@@ -212,7 +212,8 @@ async function envOp(op, extra) {
     if (d.results) {
       const failed = d.results.filter(r => r.ok === false).length;
       status(`pushed ${d.results.filter(r => r.ok && !r.skipped).length} · skipped ${d.results.filter(r => r.skipped).length} · failed ${failed}`, failed ? 'err' : 'ok');
-    } else status(`${extra.key} ${op === 'unset' ? 'removed' : 'saved'}`, 'ok');
+    } else if (op === 'set' && d.file && !d.keychain) status(`${extra.key} saved in ${d.file}, which only you can read: this computer has no keychain`, 'err');
+    else status(`${extra.key} ${op === 'unset' ? 'removed' : 'saved'}`, 'ok');
     renderWorkflowsPanel();
   } catch (e) { status(e.message || String(e), 'err'); }
 }

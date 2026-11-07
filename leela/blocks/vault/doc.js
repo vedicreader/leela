@@ -411,10 +411,10 @@ async function vaultFields(st, box, go) {
   let d;
   try { d = await api('/vault/fields?' + new URLSearchParams(base)); }
   catch (e) { box.textContent = e.message || String(e); return; }
-  const shown = v => v == null || v === '' || (Array.isArray(v) && !v.length) ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+  const shown = v => v == null || v === '' || (Array.isArray(v) && !v.length) ? '–' : typeof v === 'object' ? JSON.stringify(v) : String(v);
   box.innerHTML = `<div class="lee-vault-fieldshead"><strong>Fields</strong>` +
     `<small>${d.extracted ? `${esc(d.schema || '')}${d.model ? ' · ' + esc(d.model) : ''}` : 'nothing extracted yet'}</small></div>` +
-    (d.fields || []).map((f, i) => `<button class="lee-vault-field${f.errors.length ? ' warn' : ''}${shown(f.value) === '—' ? ' empty' : ''}" data-field="${i}"` +
+    (d.fields || []).map((f, i) => `<button class="lee-vault-field${f.errors.length ? ' warn' : ''}${shown(f.value) === '–' ? ' empty' : ''}" data-field="${i}"` +
       `${f.page == null ? ' disabled' : ''}><strong>${esc(f.field.replace(/_/g, ' '))}</strong><span>${esc(shown(f.value))}</span>` +
       `${f.page == null ? '' : `<small>p. ${pageNo(f.page)}</small>`}${f.quote ? `<q>${esc(f.quote)}</q>` : ''}` +
       f.errors.map(w => `<span class="warn" data-field-warn>⚠ ${esc(w)}</span>`).join('') +

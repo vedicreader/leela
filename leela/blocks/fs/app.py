@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from ... import errstr
 from ...core.web import fail, off_loop, sse, unless_gone
 from ...core.text import fuzzy_rank
-from .fs import MEDIA_TYPES, Unsafe, is_media, lang_for
+from .fs import FIND_LIMIT, MEDIA_TYPES, Unsafe, is_media, lang_for
 from .office import QL_HEADERS, QL_TYPES, SHEET_ROWS, QuickLookError, is_office, office_html, office_text, open_in_app, quicklook, quicklook_file, sheet_rows
 from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
@@ -25,6 +25,8 @@ __all__ = ['CAPS', 'connect', 'SERVED_TYPES']
 SERVED_TYPES = {'.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
     '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
     '.bmp': 'image/bmp', **MEDIA_TYPES}
+#: an SVG opened at Leela's origin ran its scripts there; a sandboxed document has none and an opaque origin
+RAW_CSP = "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'"
 
 CAPS = ('fs', 'fs_watch', 'journal', 'docs')
 
@@ -258,8 +260,10 @@ def connect(app, ctx):
             kind = SERVED_TYPES.get(p.suffix.lower())
             if kind is None: return fail(f'{p.suffix or p.name} is not served as a raw document')
             # Starlette writes a non-ASCII name as RFC 5987 `filename*`; a raw one is not Latin-1 and raised.
-            return FileResponse(p, media_type=kind, filename=p.name, content_disposition_type='attachment' if download else 'inline',
-                headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+            hs = {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}
+            # Chrome refuses to show a sandboxed PDF, and its viewer runs a PDF's scripts away from this origin.
+            if kind != 'application/pdf': hs['Content-Security-Policy'] = RAW_CSP
+            return FileResponse(p, media_type=kind, filename=p.name, content_disposition_type='attachment' if download else 'inline', headers=hs)
         except Exception as e: return fail(e)
     @rt('/file/raw')
     def file_raw(path: str = '', download: bool = False): return _serve_raw(path, download)
@@ -322,7 +326,9 @@ def connect(app, ctx):
         "Fuzzy match over the open folders, best match first; `more` searches only what the walk leaves out."
         root = ctx.session.project_root if scope == 'project' else None
         answer = lambda rows, partial=False: {'hits': rows, 'scope': str(root) if root else '', 'partial': partial}
-        if not more: return answer(await off_loop(lambda: _ranked(q, ctx.fs.walk(root), root, limit, dirs)))
+        if not more:
+            files, cut = await off_loop(ctx.fs.walk_capped, root, False, FIND_LIMIT)
+            return answer(await off_loop(_ranked, q, files, root, limit, dirs), cut)
         name = q.strip().rsplit('/', 1)[-1]
         if not name: return answer([])
         got = await unless_gone(req, ctx.fs.hidden_files(r'(?i)' + r'.*'.join(map(re.escape, name)), root))

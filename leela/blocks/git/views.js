@@ -5,7 +5,7 @@ function gitNav() {
 function gitSummary(d) {
   return `<header class="lee-sc-branch"><div><strong>${esc(d.branch)}</strong><span>${esc(d.upstream || 'unpublished branch')}</span></div>` +
     `<span class="lee-spacer"></span>${d.behind ? `<b>↓${d.behind}</b>` : ''}${d.ahead ? `<b>↑${d.ahead}</b>` : ''}` +
-    `<small title="Remote-derived branch data may be stale">${esc(gitFreshness(d.fetched_at))}</small></header>`;
+    `<small title="Branch data from the remote, as of the last fetch">${esc(gitFreshness(d.fetched_at))}</small></header>`;
 }
 function gitChangesView(d) {
   const staged = (d.changes || []).filter(c => c.staged), unstaged = (d.changes || []).filter(c => c.unstaged);
@@ -121,7 +121,7 @@ function gitReposView() {
     `<div class="lee-sc-actions"><button data-repos-op="status">refresh</button><button data-repos-op="fetch">fetch all</button>` +
     `<button data-repos-op="pull">pull all</button><button data-repos-op="push">push all</button>` +
     `<button id="gitrepoclone">clone…</button><button id="gitrepoadd">add repository…</button></div>` +
-    `<div class="lee-git-filter"><input id="gitrepoexpect" class="lee-input" value="${esc(gitUI.expect)}" placeholder="Expected branch — default: ${esc(d.expected_branch || 'the one most share')}" aria-label="Expected branch"></div>` +
+    `<div class="lee-git-filter"><input id="gitrepoexpect" class="lee-input" value="${esc(gitUI.expect)}" placeholder="Expected branch. Default: ${esc(d.expected_branch || 'the one most share')}" aria-label="Expected branch"></div>` +
     `<div class="lee-git-repo-list">${list}</div>` + results;
 }
 async function loadGitRepos() {
@@ -148,7 +148,7 @@ async function gitReposDo(op, extra = {}) {
     status(`workspace ${op}: ${done} done · ${skipped} skipped · ${failed} failed · ${Math.round(performance.now() - started)} ms`,
            failed ? 'err' : 'ok');
     for (const r of gitUI.reposResults) {
-      leeLog('git', `${op} · ${r.name}${r.skipped ? ' — ' + r.skipped : ''}`,
+      leeLog('git', `${op} · ${r.name}${r.skipped ? ': ' + r.skipped : ''}`,
              r.ok === false ? (r.error || 'failed') : (r.output || ''), r.ok === false ? 'err' : '');
     }
     if (failed) showLog('git');       // one repository refusing is the reason to read the log

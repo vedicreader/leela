@@ -41,7 +41,7 @@ function mountWeb(host, st) {
     `</div>` +
     `<div class="lee-doc-body lee-webbody" data-web="body">` +
     `<canvas class="lee-webcanvas" data-web="canvas" tabindex="0"` +
-    ` aria-label="${esc(st.title || 'web page')} — rendered by the CDP browser"></canvas>` +
+    ` aria-label="${esc(st.title || 'web page')}, drawn by the CDP browser"></canvas>` +
     `<div class="lee-webnote lee-dim" data-web="note">connecting to the browser…</div>` +
     `</div></div>`;
 
@@ -70,7 +70,7 @@ function mountWeb(host, st) {
     send({id: st.target, w, h, scale: webScale()});
   };
   sock.onerror = () => say('the inline browser socket failed', 'err');
-  sock.onclose = () => { if (webView === view) say('the browser disconnected — reopen the tab', 'err'); };
+  sock.onclose = () => { if (webView === view) say('the browser disconnected. Open the tab again', 'err'); };
 
   sock.onmessage = ev => {
     if (typeof ev.data !== 'string') return drawFrame(ctx, canvas, view, ev.data);

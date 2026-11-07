@@ -54,8 +54,7 @@ CDP constraints:
 - shield socket writes
 - retain cast ownership through resize and visibility changes
 - pin the viewport to panel coordinates, in CSS pixels
-- a screencast frame carries one image pixel per CSS pixel whatever a page's `deviceScaleFactor`
-  says; `--force-device-scale-factor` at launch is the only setting that changes it
+- a screencast frame carries one image pixel per CSS pixel whatever a page's `deviceScaleFactor` says; `--force-device-scale-factor` at launch is the only setting that changes it
 - close the page when its tab closes, unless the page was adopted from the user's own Chrome
 
 ## Build

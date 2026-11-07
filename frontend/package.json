@@ -1,12 +1,13 @@
 {
   "name": "leela-editor",
   "private": true,
-  "description": "Browser build inputs for the leela IDE (CodeMirror 6 editor, xterm.js terminal). Build with `npm install && npm run build`; output lands in `leela/vendor/` and is committed so users never need node.",
+  "description": "Browser build inputs for the leela IDE (CodeMirror 6 editor, xterm.js terminal, htmx). Build with `npm ci && npm run build`; package-lock.json pins every version, so the output in `leela/vendor/` is the same bytes each time. The output is committed so users never need node.",
   "scripts": {
-    "build": "npm run build:editor && npm run build:term && npm run build:termcss",
+    "build": "npm run build:editor && npm run build:term && npm run build:termcss && npm run build:htmx",
     "build:editor": "esbuild editor.js --bundle --format=iife --global-name=LeeCM --minify --outfile=../leela/vendor/lee-cm6.js",
     "build:term": "esbuild term.js --bundle --format=iife --minify --outfile=../leela/vendor/lee-term.js",
-    "build:termcss": "cp node_modules/@xterm/xterm/css/xterm.css ../leela/vendor/lee-term.css"
+    "build:termcss": "cp node_modules/@xterm/xterm/css/xterm.css ../leela/vendor/lee-term.css",
+    "build:htmx": "cp node_modules/htmx.org/dist/htmx.min.js ../leela/vendor/htmx.min.js"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.18.0",
@@ -39,6 +40,6 @@
   },
   "dependencies": {
     "@lezer/highlight": "^1.2.3",
-    "htmx.org": "^2.0.7"
+    "htmx.org": "2.0.7"
   }
 }

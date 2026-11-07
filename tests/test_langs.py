@@ -1,6 +1,6 @@
 "Running a notebook in a language that is not Python: its metadata, its runtime, its server."
 
-import json, shutil
+import asyncio, json, os, shutil
 
 import pytest
 
@@ -183,6 +183,60 @@ def test_a_brace_inside_a_string_does_not_end_a_chunk():
 def test_a_trailing_expression_without_a_semicolon_is_printed():
     _, _, stmts = CargoRunner(key='trail')._split('let v = vec![1];\nv.len()')
     assert stmts[-1] == 'println!("{:?}", v.len());'
+
+
+def test_a_rust_cell_run_twice_defines_its_items_once():
+    "A second run of the same cell put `fn f` in main.rs twice, and rustc answered E0428."
+    from leela.blocks.runtime.runners import merge_items
+    a = ['#[derive(Debug)]\npub struct P { x: i32 }', 'impl P {\n    fn get(&self) -> i32 { self.x }\n}', 'pub(crate) fn f() -> i32 { 1 }', 'use std::fmt;']
+    assert merge_items(a, a) == a
+    b = merge_items(a, ['fn f() -> i32 { 2 }', 'impl P {\n    fn put(&mut self) {}\n}'])
+    assert b[2] == 'fn f() -> i32 { 2 }' and len(b) == 5, 'a new body replaces the old one in place; an impl with other methods is kept'
+
+FAKE_CARGO = """#!/bin/sh
+mkdir -p target/debug
+if grep -q SLEEP src/main.rs; then body='sleep 30 & echo $! > child.pid; exec sleep 30'; else body='echo ran'; fi
+printf '#!/bin/sh\\n%s\\n' "$body" > target/debug/leela_cell; chmod +x target/debug/leela_cell
+"""
+
+async def _fake_rust(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
+    bin_ = tmp_path/'bin'; bin_.mkdir(); (bin_/'cargo').write_text(FAKE_CARGO); (bin_/'cargo').chmod(0o755)
+    subprocess.run([str(bin_/'cargo')], cwd=tmp_path, capture_output=True)   # macOS scans a new executable on its first run
+    monkeypatch.setenv('PATH', f"{bin_}:{os.environ['PATH']}")
+    return await CargoRunner(cwd=tmp_path, key=str(tmp_path)).start()
+
+@pytest.mark.asyncio
+async def test_a_rust_cell_run_twice_builds_one_definition(tmp_path, monkeypatch):
+    r = await _fake_rust(tmp_path, monkeypatch)
+    try:
+        for _ in range(2): assert (await r.execute('fn f() -> i32 { 1 }\nf()')).ok
+        assert (r.dir/'src'/'main.rs').read_text().count('fn f()') == 1
+    finally: await r.shutdown()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('how', ['interrupt', 'restart'])
+async def test_stop_and_restart_end_a_rust_cell_and_its_children(tmp_path, monkeypatch, how):
+    "Stop called a no-op interrupt and Restart only forgot the tool, so the program and what it started ran on."
+    import psutil
+    r = await _fake_rust(tmp_path, monkeypatch)
+    try:
+        run = asyncio.ensure_future(r.execute('let SLEEP = 1;'))
+        for _ in range(400):
+            if (tmp_path/'child.pid').exists() and (tmp_path/'child.pid').read_text().strip(): break
+            await asyncio.sleep(.05)
+        child, main = int((tmp_path/'child.pid').read_text()), r.proc.pid
+        await getattr(r, how)()
+        await asyncio.wait_for(run, 10)
+        def dead(pid):
+            try: return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+            except psutil.NoSuchProcess: return True
+        for _ in range(100):
+            if dead(child) and dead(main): break
+            await asyncio.sleep(.05)
+        assert dead(main) and dead(child), 'the program and its child are gone'
+    finally: await r.shutdown()
 
 
 # the runners, against the real toolchains -------------------------------------------------------

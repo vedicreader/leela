@@ -70,3 +70,24 @@ def test_a_reference_outside_the_open_roots_is_counted_and_not_written(tmp_path,
     assert d['outside'] == 1
     assert outside.read_text() == 'area = 1\n'
     assert {f['path'] for f in d['files']} == {str(tmp_path/'core.py'), str(tmp_path/'use.py')}
+
+
+def test_positions_are_utf16_units_and_lines_end_only_where_lsp_says(tmp_path):
+    "An emoji is two UTF-16 units, and a form feed is not a line break in LSP, so `splitlines` put the edit in the wrong place."
+    f = tmp_path/'core.py'
+    f.write_text('s = "\U0001f600"; area = 1\n\x0c\nx = area\n')
+    text = f.read_text()
+    c, ws, lsp = build(tmp_path, [ref(f, 0, 10, 14), ref(f, 2, 4, 8)])
+    r = c.post('/lsp/rename', json={'path': str(f), 'text': text, 'line': 0, 'character': 10, 'newName': 'surface', 'apply': True})
+    assert r.status_code == 200, r.text
+    assert f.read_text() == 's = "\U0001f600"; surface = 1\n\x0c\nx = surface\n'
+
+
+def test_inlay_hints_ask_for_the_whole_file_in_utf16_units(tmp_path):
+    asked = []
+    class Hints(FakeLsp):
+        def request(self, method, path, text, line=0, character=0, extra=None, timeout=5): asked.append(extra); return []
+    ws = Workspace(roots=[tmp_path], port=8000); ws.lsp_for = lambda lang='python': Hints()
+    c = TestClient(ide_app(ws))
+    assert c.post('/lsp/inlay-hints', json={'path': str(tmp_path/'a.py'), 'text': 'a\x0cb\n"\U0001f600"'}).status_code == 200
+    assert asked[0]['range']['end'] == {'line': 1, 'character': 4}

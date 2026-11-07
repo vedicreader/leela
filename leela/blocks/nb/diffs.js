@@ -73,13 +73,16 @@ async function showDiff() {
   const d = await post('/diff', {path: lee.tabKey, ...bufferBody()});
   if (!d.rows.length) return status('no unsaved changes', 'ok');
   status(`${d.label} unsaved`, 'ok');
-  diffModal('unsaved changes — ' + d.title, d.label, d.rows);
+  diffModal('unsaved changes: ' + d.title, d.label, d.rows);
 }
 
-async function openMergeConflict(conflictBox) {
+async function openMergeConflict(conflictBox, theirs = []) {
   if (!lee.path) return status('save the document before merging it', 'err');
   const disk = await api('/tab/disk?path=' + encodeURIComponent(lee.path));
   if (lee.kind === 'notebook') {
+    // A clash with another window names its side of each cell; the rest of the left side is the disk.
+    const other = new Map(theirs.map(c => [c.id, c]));
+    if (other.size) disk.cells = lee.cells.map((c, i) => other.get(c.id) || disk.cells?.find(d => d.id === c.id) || disk.cells?.[i] || {source: ''});
     conflictBox?.remove(); const merges = [];
     const count = Math.max(lee.cells.length, (disk.cells || []).length);
     const m = modal(`<div class="lee-mhead">Resolve notebook conflict<span class="sub">cell-aware disk / draft merge</span></div>` +
@@ -122,7 +125,7 @@ async function openMergeConflict(conflictBox) {
     m.remove(); await saveTab(false, null, true); status('merged file saved', 'ok');
   };
 }
-function showSaveConflict(message) {
+function showSaveConflict(message, theirs = []) {
   if ($('.lee-save-conflict')) return;
   const box = modal(`<div class="lee-mhead">File changed on disk</div>` +
     `<div class="lee-dialogcopy">${esc(message)} Your browser draft is safe and has not been replaced.</div>` +
@@ -136,7 +139,7 @@ function showSaveConflict(message) {
     setTabSaveState($('.lee-tab.active'), 'pending', 'Draft kept; press Save to review the disk conflict again');
     status('kept browser draft · automatic retries paused until you save or resolve it', 'ok');
   };
-  $('[data-merge]', box).onclick = () => openMergeConflict(box);
+  $('[data-merge]', box).onclick = () => openMergeConflict(box, theirs);
   $('[data-overwrite]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await saveTab(false, null, true); };
   $('[data-disk]', box).onclick = async () => { lee.heldSaveConflicts.delete(lee.path); box.remove(); await takeDiskVersion(lee.path); status('loaded disk version; browser draft discarded', 'ok'); };
 }
@@ -174,9 +177,10 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
     const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
     const base_disk_version = draftBaseFor(documentKey);
     if (kind === 'notebook') {
-      const seq = nextSeq(), cells = lee.cells.map((c, i) => ({i, id: c.id, seq, source: lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source}));
+      const cells = changedRows(tabKey, lee.cells, nextSeq());
       await headingSynced(tabKey);
       d = await post('/nb/save', {tab: tabKey, cells, base_disk_version, force});
+      noteSeen(tabKey, cells);
     } else {
       let text=normalizeSavedText(LeeCM.getDoc(lee.editors.get('file')));
       if(lee.filePrefs.formatOnSave){try{const formatted=await post('/editor/format',{path:lee.path,lang:curLang(),text});text=formatted.text;if(text!==LeeCM.getDoc(lee.editors.get('file')))LeeCM.setDoc(lee.editors.get('file'),text);editAt=expectedVersion??lee.editVersion;tabAt=edits();}catch(e){status(`format skipped: ${e.message||e}`,'err');}}
@@ -210,9 +214,9 @@ async function saveTab(quiet = false, expectedVersion = null, force = false) {
   } catch (e) {
     const message = String(e.message || e);
     setTabSaveState(saveTabEl, 'error', `Autosave failed: ${message}`);
-    if (message.includes('changed on disk after this browser draft began')) {
+    if (e.body?.kind === 'save_conflict' || message.includes('changed on disk after this browser draft began')) {
       const documentKey = lee.path || $('.lee-tab.active .lee-tab-name')?.textContent || '';
-      if (!quiet || !lee.heldSaveConflicts.has(documentKey)) showSaveConflict(message);
+      if (!quiet || !lee.heldSaveConflicts.has(documentKey)) showSaveConflict(message, e.body?.cells || []);
     }
     else status(message, 'err');
     return false;
@@ -252,6 +256,10 @@ async function saveAllTabs() {
       tab.classList.remove('dirty'); setTabSaveState(tab, 'saved');
     }
     status(`saved ${saved} tab${saved === 1 ? '' : 's'}`, 'ok');
-  } catch (e) { status(e.message || String(e), 'err'); }
+  } catch (e) {
+    // A conflict is resolved in its own tab, where saving offers keep, merge, overwrite and load.
+    if (e.body?.kind === 'save_conflict') takeSavedVersions(e.body);
+    status(e.body?.kind === 'save_conflict' ? `${(e.body.paths || []).map(p => p.split('/').pop()).join(', ')} changed elsewhere · open the tab and save to choose what to keep` : e.message || String(e), 'err');
+  }
 }
 

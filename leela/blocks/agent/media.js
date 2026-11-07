@@ -268,7 +268,7 @@ function agentListen(thread, since, card = null) {
         : '<strong>Failed</strong><small>The output above explains what the tool returned.</small>';
       updateAgentRunstrip();
     }
-    if (a.done && a.ok && a.kind === 'edit' && a.args?.path) scheduleAgentFileReload(a.args.path);
+    if (a.done && a.ok && (a.kind === 'edit' || NOTEBOOK_TOOLS.has(a.tool)) && a.args?.path) scheduleAgentFileReload(a.args.path);
     progress.phase(a.done ? 'Reviewing tool results' : (a.summary || `Running ${a.tool}`));
     stickAgentLog(log);
   }));

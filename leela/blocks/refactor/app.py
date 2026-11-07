@@ -71,13 +71,15 @@ def connect(app, ctx):
         try:
             d = await req.json()
             _prune(plans)
-            rows, skipped = await off_loop(replace_plan, ctx.fs.walk(limit=20000), d.get('find', ''), d.get('replace', ''),
+            files, cut = await off_loop(ctx.fs.walk_capped)
+            rows, skipped = await off_loop(replace_plan, files, d.get('find', ''), d.get('replace', ''),
                                            d.get('regex', False), d.get('case', False), d.get('word', False), read=ctx.fs.read)
             token = 'replace_' + uuid.uuid4().hex
             plans[token] = {'at': time.time(), 'label': f"Replace {str(d.get('find', ''))!r}",
                             'kind': 'replace-text', 'rows': rows}
             return {'ok': True, 'token': token, 'files': [r.dict() for r in rows],
-                    'summary': {'files': len(rows), 'edits': sum(r.edits for r in rows), 'skipped': len(skipped)},
+                    'summary': {'files': len(rows), 'edits': sum(r.edits for r in rows), 'skipped': len(skipped),
+                                'partial': cut, 'searched': len(files)},
                     'skipped': skipped[:100]}
         except Exception as e: return fail(e)
     async def replace_apply(req):

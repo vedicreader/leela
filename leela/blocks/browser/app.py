@@ -36,7 +36,7 @@ def connect(app, ctx):
         return {'ok': browser.available(), 'running': browser.running(), 'port': browser.port,
                 'scale': browser.scale}
 
-    @rt('/browser/external')
+    @rt('/browser/external', methods=['POST'])
     def browser_external(url: str = ''):
         "Open `url` in the machine's own browser, which is where the logged-in sessions are."
         try:

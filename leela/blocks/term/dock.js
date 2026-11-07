@@ -143,7 +143,7 @@ function adoptTerm(id, kind, d, project = '') {
     onExit: () => { record.exited = true; paintTermTabs(); status(`${record.label} exited`); },
   });
   lee.terms.set(id, record); switchTerm(id);
-  status(`${record.label} was still running — reattached`);
+  status(`${record.label} was still running. Leela connected to it again`);
 }
 
 // xterm.js cannot attach to a terminal application that is already running, because that program

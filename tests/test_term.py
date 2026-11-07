@@ -127,6 +127,22 @@ def test_a_mac_bundle_whose_executable_is_the_helper_has_a_python(tmp_path, monk
     monkeypatch.setattr(sys, 'executable', str(tmp_path/'Leela.exe'))
     with pytest.raises(NoPython): own_python()
 
+def test_the_path_prelude_clears_its_own_echo_off_the_screen(tmp_path):
+    "The terminal showed ` export PATH=\"…/.venv/bin:$PATH\"` above the first prompt. The prelude now clears the screen after it runs."
+    from leela.blocks.term.term import path_prelude
+    py = tmp_path/'.venv'/'bin'/'python'
+    async def run():
+        p = Pty(['sh', '-i'], env={**os.environ, 'PS1': '$ ', 'ENV': '/dev/null'}, prelude=path_prelude(str(py), '/bin/sh')).start(); out = bytearray()
+        async def on_data(b): out.extend(b)
+        task = asyncio.create_task(p.stream(on_data))
+        p.write(b'echo "P=$PATH"; exit\n')
+        await asyncio.wait_for(task, 10)
+        return out.decode()
+    out = asyncio.run(run())
+    assert f'P={py.parent}:' in out, 'the venv is first on PATH'
+    shown = out[out.rindex('\x1b[2J'):]
+    assert 'export PATH' not in shown and '\x1b[3J' in shown, 'nothing of the prelude is left on the screen or in the scrollback'
+
 def test_a_terminal_shell_names_its_terminal_as_a_real_one_does(monkeypatch):
     """Leela started from a non-terminal parent has no TERM, or an empty or `dumb` one, and nano in `nbdev-release-gh` would not open."""
     async def run(env):

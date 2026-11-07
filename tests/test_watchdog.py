@@ -36,7 +36,8 @@ def test_busy_thread_is_named_in_one_report(tmp_path):
     assert 'spin_here' in rep.read_text()
 
 def test_idle_writes_nothing(tmp_path):
-    assert _run(tmp_path, 0, gap=1.5) == []
+    "Scripted: the real CPU clock is the whole process's, and a thread an earlier test left behind made a report under `-n auto`."
+    assert _scripted(tmp_path, [10]*16, 3600) == []
 
 def _scripted(tmp_path, busy, cooldown):
     "Drive the watchdog through `busy`, one CPU% for each tick of a fake clock, and return its reports. Runner speed does not matter."

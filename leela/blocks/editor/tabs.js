@@ -88,8 +88,12 @@ async function mountTab(expectedPath = '') {
       .then(d => { takeSavedVersions(d); setTabDirt(new Set(Object.keys(d.versions || {})), false); }))
     .catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab
-  const st=await api('/tab/state'+(expectedPath?'?path='+encodeURIComponent(expectedPath):''));
+  // A notebook this page still holds comes back without its cells when the server's copy is the same version.
+  const have = JSON.stringify(heldNotebookVersions());
+  const st=await api('/tab/state?'+new URLSearchParams({...(expectedPath?{path:expectedPath}:{}), have}));
   if(mountVersion!==mountTabVersion)return;
+  if (st.kind === 'notebook' && st.same) st.cells = heldNotebookCells(st.path || st.title);
+  if (st.kind === 'notebook') noteSeen(st.path || st.title, st.cells);
   const recoveredDraft = await restoreDrafts(st);
   // `/tab/state` serves the cached copy and flags that the file has moved under it, which is what a
   // run of `nbdev-prepare` over an open notebook does. Nobody read the flag, so the tab showed the
@@ -124,7 +128,7 @@ async function mountTab(expectedPath = '') {
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
   if (!st.kind) {
     host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
-    paintRecent();
+    paintKeyLabels(host); paintRecent();
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
@@ -205,7 +209,7 @@ function takeLate(st) {
   lee.nbVersions.set(key, st.version);
 }
 function rememberBuffer(key, payload) {
-  payload = {...payload, seq: nextSeq()};
+  payload = {...payload, seq: nextSeq(), ...(payload.kind === 'notebook' ? seenRow(payload.title || payload.path, payload.id) : {})};
   lee.buffers.set(key, payload.text); lee.dirtyBuffers.add(key); persistDraft(key, payload);
   clearTimeout(lee.bufferTimers.get(key));
   lee.bufferTimers.set(key, setTimeout(() => {
@@ -242,7 +246,7 @@ function noteStaleTab(st, recoveredDraft) {
     status(`${name} changed on disk; your unsaved version is what you are looking at`, 'err');
     return;
   }
-  status(`${name} changed on disk — reloading`, 'busy');
+  status(`${name} changed on disk. Reloading…`, 'busy');
   takeDiskVersion(st.path).then(() => status(`${name} reloaded from disk`, 'ok'))
                           .catch(e => status(String(e.message || e), 'err'));
 }

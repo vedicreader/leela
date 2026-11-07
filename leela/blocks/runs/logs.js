@@ -62,7 +62,7 @@ function leeFail(source, what, e) {
   const detail = (e && e.message) || String(e || '');
   leeLog(source, `${what} failed`, detail, 'err');
   showLog(source);
-  status(`${source} ${what} failed — ${firstLine(detail)}`, 'err');
+  status(`${source} ${what} failed: ${firstLine(detail)}`, 'err');
 }
 window.leeFail = leeFail;
 
@@ -105,7 +105,7 @@ function paintRunsPill() {
     : dead.length ? `${dead.length} stopped` : 'runs';
   const say = pill.querySelector('.lee-hitem-text'); if (say) say.textContent = text; else pill.textContent = text;
   pill.title = runs.length ? runs.map(s => `${s.label}: ${runState(s)}`).join('\n')
-                           : 'nothing running — click to start a script';
+                           : 'nothing is running. Click to start a script';
 }
 function runState(s) {
   if (s.running === false) return (s.code ? `exited ${s.code}` : 'finished') + (s.alive ? ' · still up' + (s.pid ? ' · pid ' + s.pid : '') : '');
@@ -126,7 +126,7 @@ async function leeRunsMenu(anchor) {
   for (const s of runs.filter(runUp)) rows.push({
     label: 'stop ' + (s.label || s.path), warn: true,
     run: async () => {
-      try { await api('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
+      try { await post('/dev/stop?path=' + encodeURIComponent(s.script || s.path)); }
       catch (e) { return status(String(e.message || e), 'err'); }
       status(`${s.label} stopped`, 'ok'); pollRunLogs();
     },
@@ -143,7 +143,7 @@ function adoptRuns(servers) {
   lee.runsAdopted = true;
   const up = servers.filter(s => runUp(s) && s.pid && !lee.terms.has('run:' + (s.script || s.path)));
   for (const s of up) leeRunTerm(s.script || s.path, s.label, s.pid, true).catch(() => {});
-  if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still up — see the runs pill`);
+  if (up.length) status(`${up.length === 1 ? up[0].label || 'a run' : up.length + ' runs'} still running. See the runs pill.`);
 }
 
 async function pollRunLogs() {
@@ -169,7 +169,7 @@ async function pollRunLogs() {
       lee.runFinished.add(path);
       const failed = code !== 0;
       leeLog('runs', `${srv.label || path.split('/').pop()} ${failed ? 'failed' : 'finished'} · exit ${code}`, '', failed ? 'err' : 'ok');
-      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed — exit ${code}`, 'err'); }
+      if (failed) { leeLogFilter('runs'); leeDock('logs'); status(`${srv.label || path.split('/').pop()} failed with exit code ${code}`, 'err'); }
     }
   }
   return servers.length;
