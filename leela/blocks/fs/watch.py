@@ -36,7 +36,9 @@ def linux_targets(roots):
     from rgapi import fd_iter
     from .fs import _SKIP_RE
     out = {str(r) for r in roots}
-    for r in roots: out |= {str(d) for d in fd_iter(root=str(r), files=False, dirs=True, hidden=True, skip_dir_re=_SKIP_RE)}
+    for r in roots:
+        try: out |= {str(d) for d in fd_iter(root=str(r), files=False, dirs=True, hidden=True, skip_dir_re=_SKIP_RE)}
+        except (OSError, ValueError): pass   # the root went during the walk; the watch then names it gone
     for d in list(out):
         if (g := Path(d)/'.git').is_dir():   # a worktree's `.git` is a file, and its HEAD lives in the main repository
             out |= {str(g), *(str(x) for x in [g/'refs', *(g/'refs').rglob('*')] if x.is_dir())}
@@ -105,6 +107,12 @@ class Watcher:
         # filter then drops. On Linux the folders are listed here and watched one by one; a new folder rebuilds the list.
         linux, retries = _linux(), 0
         while live and not stop.is_set():
+            if linux and (missing := [r for r in live if not os.path.isdir(r)]):
+                # the recursive watch learns this from its OSError below; a list built from the roots must ask first
+                if new := [r for r in missing if r not in self.gone]: print(f'  the file tree no longer follows {", ".join(new)}: the folder is gone')
+                self.gone |= set(missing)
+                live = [r for r in live if r not in missing]
+                continue
             try:
                 targets, grown = linux_targets(live) if linux else live, []
                 for batch in watch(*targets, stop_event=stop, watch_filter=keep, debounce=self.step,
@@ -122,7 +130,7 @@ class Watcher:
                     if grown: break
                 if not grown: return
                 retries = 0
-            except OSError as e:
+            except (OSError, ValueError) as e:
                 # A watched folder was deleted: drop it, keep the rest. Said once per folder.
                 gone = [r for r in live if not os.path.isdir(r)]
                 if linux and not gone and retries < 3:

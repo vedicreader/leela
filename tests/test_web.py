@@ -602,11 +602,14 @@ def test_a_settled_watcher_sends_nothing_for_its_quiet_ticks(tmp_path):
         finally: w.close()
     assert all(paths or resync for paths, resync in asyncio.run(run()))
 
-def test_a_deleted_root_is_dropped_and_the_rest_are_still_watched(tmp_path, capfd):
-    "A watched folder deleted before or while watching raised FileNotFoundError on the watch thread, and no folder was watched after."
+@pytest.mark.parametrize('linux', [False, True], ids=['recursive', 'linux-list'])
+def test_a_deleted_root_is_dropped_and_the_rest_are_still_watched(tmp_path, capfd, monkeypatch, linux):
+    "A watched folder deleted before or while watching raised FileNotFoundError on the watch thread, and no folder was watched after. `linux-list` runs Linux's per-folder watch with the real watchfiles here too."
     import shutil, threading
+    from leela.blocks.fs import watch as W
     from leela.blocks.fs.fs import Sandbox
     from leela.blocks.fs.watch import Watcher
+    monkeypatch.setattr(W, '_linux', lambda: linux)
     gone, kept, later = tmp_path/'gone', tmp_path/'kept', tmp_path/'later'
     for d in (gone, kept, later): d.mkdir()
     errors, hook = [], threading.excepthook
