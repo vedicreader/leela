@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, os, threading
+import asyncio, os, sys, threading
 from pathlib import Path
 
 from fastcore.all import store_attr
@@ -11,7 +11,7 @@ from ... import errstr
 from ...core import keys as keymap
 from .fs import SKIP_DIRS
 
-__all__ = ['Watcher', 'KEYMAP', 'git_meta']
+__all__ = ['Watcher', 'KEYMAP', 'git_meta', 'linux_targets']
 
 KEYMAP = ('keymap',)    # queued when the keymap file changed and `keymap.KEYS` was rebuilt
 
@@ -28,6 +28,19 @@ def git_meta(p):
     if set(head) & SKIP_DIRS or not rest or rest[-1].endswith('.lock'): return None
     if rest in (('HEAD',), ('index',), ('packed-refs',)) or rest[0] == 'refs': return str(Path(*head))
     return None
+
+def _linux(): return sys.platform.startswith('linux')
+
+def linux_targets(roots):
+    "The folders inotify watches one by one: each root and every folder below it that the walk keeps, plus each repository's `.git` and `.git/refs`."
+    from rgapi import fd_iter
+    from .fs import _SKIP_RE
+    out = {str(r) for r in roots}
+    for r in roots: out |= {str(d) for d in fd_iter(root=str(r), files=False, dirs=True, hidden=True, skip_dir_re=_SKIP_RE)}
+    for d in list(out):
+        if (g := Path(d)/'.git').is_dir():   # a worktree's `.git` is a file, and its HEAD lives in the main repository
+            out |= {str(g), *(str(x) for x in [g/'refs', *(g/'refs').rglob('*')] if x.is_dir())}
+    return sorted(out)
 
 def _sig(p):
     "What an edit changes, rename-over included: a new inode. None once the file is gone."
@@ -85,22 +98,38 @@ class Watcher:
             # watcher for as long as it did, and the tree looked merely stale rather than broken.
             print(f'  the file tree will not follow the disk: {errstr(e)}')
             return
+        from watchfiles import Change
         keep = lambda _change, p: not (set(Path(p).parts) & SKIP_DIRS) or git_meta(p) is not None
         live = [r for r in roots if r not in self.gone or os.path.isdir(r)]
+        # inotify has one watch per folder, and a recursive watch adds one inside node_modules and .venv too, which the
+        # filter then drops. On Linux the folders are listed here and watched one by one; a new folder rebuilds the list.
+        linux, retries = _linux(), 0
         while live and not stop.is_set():
             try:
-                for batch in watch(*live, stop_event=stop, watch_filter=keep, debounce=self.step,
-                                   rust_timeout=RUST_TIMEOUT, yield_on_timeout=True):
+                targets, grown = linux_targets(live) if linux else live, []
+                for batch in watch(*targets, stop_event=stop, watch_filter=keep, debounce=self.step,
+                                   rust_timeout=RUST_TIMEOUT, yield_on_timeout=True, recursive=not linux):
                     if stop.is_set(): return
                     if not batch:                            # macOS replays a setup mkdir late; this follows it
                         quiet.set()
                         continue
-                    try: self._push(sorted({p for _change, p in batch}))
+                    paths = {p for _change, p in batch}
+                    if linux and (grown := [p for c, p in batch if c == Change.added and os.path.isdir(p)]):
+                        # what was made in it before its watch starts is pushed now, or it is never seen
+                        paths |= {str(f) for g in grown for f in Path(g).rglob('*') if keep(None, str(f))}
+                    try: self._push(sorted(paths))
                     except RuntimeError: return              # the loop closed under us
-                return
+                    if grown: break
+                if not grown: return
+                retries = 0
             except OSError as e:
                 # A watched folder was deleted: drop it, keep the rest. Said once per folder.
                 gone = [r for r in live if not os.path.isdir(r)]
+                if linux and not gone and retries < 3:
+                    # a folder in the list went before its watch started, or the inotify limit was reached: list again, then watch each root whole
+                    retries += 1
+                    if retries == 3: linux = False; print(f'  the file tree watches each folder whole: {errstr(e)}')
+                    continue
                 if new := [r for r in gone if r not in self.gone] or (not gone and live):
                     print(f'  the file tree no longer follows {", ".join(new)}: {errstr(e)}')
                 self.gone |= set(gone)
