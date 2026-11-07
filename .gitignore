@@ -150,7 +150,6 @@ checklink/cookies.txt
 
 # browser build inputs (the bundles they produce in leela/vendor/ ARE committed)
 frontend/node_modules/
-frontend/package-lock.json
 
 # pytest-textual-snapshot writes this on failure
 snapshot_report.html

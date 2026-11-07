@@ -14,6 +14,7 @@ Needs kavacha 0.0.16 and Sanketa 0.2.7.
 - Signing retries when Apple's timestamp server does not answer (kavacha 0.0.16).
 - Security: oauthlib 4.0.1, tornado 6.6 and setuptools 84.2.1.
 - A kernel's inspector asks the OS for a free port. Before, it took 8400 or the next free port, so a person's own server on that port could not start. `--kernel-port` still sets a fixed start port.
+- Leela ships `leela/vendor/THIRD_PARTY_NOTICES.md`, with each package in its browser bundles, its version, its licence and the licence text. `frontend/package-lock.json` is committed, so `npm ci && npm run build` makes the same bytes; `make vendor-check` checks it. htmx is pinned at 2.0.7, the version Leela ships.
 
 ## 0.1.26
 
