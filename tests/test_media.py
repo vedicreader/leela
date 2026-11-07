@@ -126,3 +126,46 @@ def test_rename_follows_the_media_kind(tmp_path):
 def test_attaching_a_video_is_refused_not_sent_as_bytes(tmp_path):
     (m := tmp_path/'a.mp4').write_bytes((FIXTURES/'tiny.mp4').read_bytes())
     with pytest.raises(ValueError, match='cannot take'): Workspace(roots=[str(tmp_path)])._attachment_context([str(m)])
+
+ODD_NAMES = ('Screen Recording 2026-11-04 at 9.46.03 am.mov', 'café.mov', 'café.mp4', 'a #1?.mov', '100% done.mov',
+    'say "hi"; x.mov', '録画.mov', 'Screenshot 2026-11-04 at 9.46.03 am.png', 'notes am.pdf')
+
+def test_raw_serves_any_file_name_with_range(tmp_path):
+    """macOS names a recording `… 9.46.03 am.mov`, and a non-Latin-1 name in the Content-Disposition header made `/file/raw` answer 400."""
+    from urllib.parse import quote, unquote
+    from unicodedata import normalize
+    tiny = (FIXTURES/'tiny.mp4').read_bytes()
+    with TestClient(ide_app(Workspace(roots=[str(tmp_path)])), base_url='http://127.0.0.1') as c:
+        for n in ODD_NAMES:
+            (p := tmp_path/n).write_bytes(tiny)
+            for path in {str(p), normalize('NFC', str(p)), normalize('NFD', str(p))}:
+                for dl in (False, True):
+                    r = c.get(f'/file/raw/{quote(n, safe="")}', params={'path': path, 'download': dl}, headers={'Range': 'bytes=0-9'})
+                    assert r.status_code == 206 and r.content == tiny[:10], (n, path, r.text[:200])
+                    cd = r.headers['content-disposition']
+                    assert cd.startswith(('attachment' if dl else 'inline') + "; filename*=utf-8''"), cd
+                    assert normalize('NFC', unquote(cd.split("''", 1)[1])) == normalize('NFC', n), cd
+            p.unlink()
+
+def test_sandbox_takes_odd_names_in_either_unicode_form(tmp_path, monkeypatch):
+    """A root, a file and an admitted loose file each resolve by their NFC and NFD paths."""
+    from unicodedata import normalize
+    from leela.blocks.fs.fs import Sandbox
+    forms = lambda p: {normalize('NFC', str(p)), normalize('NFD', str(p))}
+    root, out = tmp_path/'Café notes am', tmp_path/'Desktop'
+    root.mkdir(); out.mkdir()
+    loose = tmp_path/'loose'; loose.mkdir()
+    sb = Sandbox([root, loose]); sb.loose = sb.roots[-1]
+    for n in ODD_NAMES:
+        (p := root/n).write_bytes(b'x'); (q := out/n).write_bytes(b'x')
+        for f in forms(p): assert sb._check(f, must_exist=True).samefile(p), f
+        for f in forms(q):
+            with pytest.raises(Unsafe): sb._check(f)
+        sb.admit(q)
+        for f in forms(q): assert sb._check(f, must_exist=True).samefile(q), f
+    ran = []
+    monkeypatch.setattr(fs_app, 'open_in_app', lambda p: ran.append(p.name))
+    with TestClient(ide_app(Workspace(roots=[str(root)])), base_url='http://127.0.0.1') as c:
+        for n in ODD_NAMES[:7]:
+            for f in forms(root/n): assert c.post('/media/open', params={'path': f}).json()['ok'], (n, f)
+    assert len(ran) == len([f for n in ODD_NAMES[:7] for f in forms(root/n)])
