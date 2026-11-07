@@ -107,7 +107,7 @@ def test_an_endless_learner_function_times_out_within_the_budget(rig, monkeypatc
 def tool(rig):
     client, ws, p, live, lock, code, body = rig
     tools = {f.__name__: f for f in _session_tools(ws.inline_ai.host)}
-    assert 'check_exercise' in tools and 'check_exercise' not in WRITE_TOOLS
+    assert 'check_exercise' in tools and 'check_exercise' in WRITE_TOOLS, 'it runs code, so the gate asks first'
     return tools['check_exercise']
 
 def test_the_agent_gets_the_source_and_every_check(rig, tool):

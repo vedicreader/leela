@@ -226,10 +226,11 @@ def test_the_path_prelude_is_written_in_the_users_own_shell():
     for shell in ('/bin/bash', '/opt/homebrew/bin/fish'):
         assert path_prelude('/p/.venv/bin/python', shell).startswith(' '), 'kept out of history'
 
-def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path):
+def test_opening_a_terminal_really_builds_its_argv_from_the_settings(tmp_path, monkeypatch):
     "Actually open the pty, because nothing else here does."
-    settings = tmp_path/'.leela'/'settings.json'
-    settings.parent.mkdir()
+    import leela.blocks.settings.settings as st
+    settings = tmp_path/'user-settings.json'   # the shell is the user's to choose; a repo's choice is ignored
+    monkeypatch.setattr(st, 'user_settings_file', lambda: settings)
     settings.write_text(json.dumps({'terminal': {
         'shell': '/bin/echo', 'shellArgs': ['leela-terminal-ok'], 'loginShell': False}}))
     ws = Workspace(roots=[tmp_path])
