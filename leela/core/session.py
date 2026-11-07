@@ -72,11 +72,12 @@ class FileHistory:
         with atomic_save(self.path, mode='w', encoding='utf-8') as f:
             f.write(json.dumps({'versions': self.rows_}, ensure_ascii=False))
     def _blob(self, text):
-        digest = hashlib.sha256(text.encode('utf-8', 'replace')).hexdigest()[:16]
+        raw = text.encode('utf-8')
+        digest = hashlib.sha256(raw).hexdigest()[:16]
         p = self.root/'blobs'/f'{digest}.gz'
         if not p.exists():
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_bytes(gzip.compress(text.encode('utf-8', 'replace')))
+            with atomic_save(p) as f: f.write(gzip.compress(raw))
         return digest
     def stash(self, text):
         "Keep one body and return its digest. `None` for a file that was not there, or was too big."
@@ -86,14 +87,14 @@ class FileHistory:
         if digest is None: return None
         p = self.root/'blobs'/f'{digest}.gz'
         if not p.exists(): raise ValueError('the stored body is gone')
-        return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
+        return gzip.decompress(p.read_bytes()).decode('utf-8')
     def latest(self, path):
         return first(r for r in reversed(self.rows_) if r['path'] == str(path))
     def record(self, path, text, label='save'):
         "One version, or None when the file already reads exactly like this."
         if text is None: return None
         path = str(path)
-        digest = hashlib.sha256(str(text).encode('utf-8', 'replace')).hexdigest()[:16]
+        digest = hashlib.sha256(str(text).encode('utf-8')).hexdigest()[:16]
         held = self.latest(path)
         if held is not None and held['blob'] == digest: return None
         # An enormous file is listed but not copied, and `kept` is what `text` reads to say so.
@@ -126,7 +127,7 @@ class FileHistory:
             raise ValueError(f"{row['path']} was {row['bytes']:,} bytes, too large to copy")
         p = self.root/'blobs'/f"{row['blob']}.gz"
         if not p.exists(): raise ValueError(f"the stored body for {row['path']} is gone")
-        return gzip.decompress(p.read_bytes()).decode('utf-8', 'replace')
+        return gzip.decompress(p.read_bytes()).decode('utf-8')
     def keep(self, path, before, after, label='change'):
         "Both sides of one change. The first `before` for a path is the only copy of what was there before Leela looked."
         if before is not None and self.latest(path) is None:
@@ -335,9 +336,10 @@ class OperationJournal:
                  'redoable': self._has_work(op) and op.get('undone') and op.get('redoable', True)}
                 for op in reversed(self.operations[-int(limit):])]
     def _current(self, path):
-        "One resource as it is on disk right now, or None when it is not there."
+        "One resource as it is on disk right now, line endings as `\\n` as every recorded side has them, or None when it is not there. A file that is not UTF-8 raises `NotText`."
+        from ..blocks.fs.fs import decoded, universal
         p = self.sandbox._check(path)
-        return p.read_text(encoding='utf-8', errors='replace') if p.exists() else None
+        return universal(decoded(p.read_bytes(), p)) if p.exists() else None
     def _write(self, path, text):
         p = self.sandbox._check(path)
         if text is None:
@@ -362,7 +364,9 @@ class OperationJournal:
             if not here.exists(): return f'{here} is not there to move'
             if there.exists(): return f'{there} is in the way'
             return None
-        return None if self._current(row['path']) == self._body(row, side) else str(p)
+        try: same = self._current(row['path']) == self._body(row, side)
+        except Exception as e: return f'{p} ({getattr(e, "said", e)})'
+        return None if same else str(p)
     def _reverse(self, row, side):
         "Put one row back to `side`: the text it held, or the place it was."
         if 'at' in row:

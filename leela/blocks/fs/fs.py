@@ -1,7 +1,7 @@
 "Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
-import asyncio, os, shutil, re, subprocess, unicodedata
+import asyncio, codecs, os, shutil, re, subprocess, unicodedata
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from itertools import islice, zip_longest
@@ -16,7 +16,7 @@ from fastcore.xtras import flexicache, time_policy
 from ... import Dictable
 from .office import OFFICE, OFFICE_MAX_BYTES, is_office
 
-__all__ = ['Unsafe', 'Entry', 'SKIP_DIRS', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
+__all__ = ['Unsafe', 'NotText', 'Entry', 'SKIP_DIRS', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
 
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
@@ -49,6 +49,44 @@ MAX_EDIT_BYTES = 4_000_000
 
 class Unsafe(HostUnsafe):
     "A path that resolves outside every open root, or an operation refused for safety; a shalya refusal, so the agent's guards see it."
+
+class NotText(Unsafe):
+    "A file that is not UTF-8 text, or holds NUL bytes: shown read-only, never written."
+    kind = 'not_text'
+    def __init__(self, p, write=False):
+        self.path, self.said = str(p), (f'{Path(p).name} is not UTF-8 text, so Leela does not change it.' if write else
+                                          'This file is not UTF-8 text, so Leela opens it read-only.')
+        super().__init__(self.said)
+
+def decoded(raw, p=''):
+    "`raw` as text, strictly: NUL bytes or bytes that are not UTF-8 raise `NotText`."
+    if b'\0' in raw: raise NotText(p)
+    try: return raw.decode('utf-8')
+    except UnicodeDecodeError: raise NotText(p) from None
+
+def is_plain(p, chunk=1 << 20):
+    "Whether the file at `p` is UTF-8 with no NUL byte, read in chunks so a large file is never held whole."
+    dec = codecs.getincrementaldecoder('utf-8')()
+    try:
+        with open(p, 'rb') as f:
+            while (b := f.read(chunk)):
+                if b'\0' in b: return False
+                dec.decode(b)
+            dec.decode(b'', final=True)
+    except UnicodeDecodeError: return False
+    return True
+
+def newline_of(p, head=1 << 16):
+    "The line ending most of the file's first 64 KB uses: `\\r\\n`, `\\r` or `\\n`; `\\n` for a new file."
+    try:
+        with open(p, 'rb') as f: b = f.read(head)
+    except OSError: return '\n'
+    crlf = b.count(b'\r\n'); cr, lf = b.count(b'\r') - crlf, b.count(b'\n') - crlf
+    return max((lf, '\n'), (crlf, '\r\n'), (cr, '\r'))[1] if crlf or cr else '\n'
+
+def universal(text):
+    "`text` with every line ending as `\\n`, as Python reads text files."
+    return text.replace('\r\n', '\n').replace('\r', '\n')
 
 _GEN = 0
 def _changed():
@@ -242,18 +280,21 @@ class Sandbox:
         if p.is_dir(): raise IsADirectoryError(str(p))
         if not is_texty(p): raise Unsafe(f'{p.name} is a binary file')
         if p.stat().st_size > MAX_EDIT_BYTES: raise Unsafe(f'{p.name} is too large to edit')
-        return p.read_text(encoding='utf-8', errors='replace')
+        return universal(decoded(p.read_bytes(), p))
     def read_bytes(self, ref):
         p = self._check(ref, must_exist=True)
         return p.read_bytes()
     def write(self, ref, text):
-        "Write text atomically, so a crash mid-save leaves the previous file intact."
+        "Write text atomically, so a crash mid-save leaves the previous file intact, in the file's own line ending."
         p = self._check(ref)
         if is_office(p): raise Unsafe(f'{p.name} is read-only here: Leela shows Word, PowerPoint and Excel files, and does not change them')
         if is_media(p): raise Unsafe(f'{p.name} is read-only here: Leela plays audio and video files, and does not change them')
         mode = p.stat().st_mode & 0o7777 if p.exists() else None
-        with atomic_save(p, mode='w', encoding='utf-8') as f:
-            f.write(text)
+        if mode is not None and p.is_file():
+            if not is_plain(p): raise NotText(p, write=True)
+            if (nl := newline_of(p)) != '\n': text = universal(text).replace('\n', nl)
+        with atomic_save(p, mode='w', encoding='utf-8', newline='') as f:
+            for i in range(0, len(text), 1 << 20): f.write(text[i:i + (1 << 20)])   # a large notebook is never encoded whole
             if mode is not None: os.chmod(f.name, mode)
         _changed()
         return self.entry(p)
