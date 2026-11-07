@@ -10,7 +10,9 @@ Needs kavacha 0.0.16 and Sanketa 0.2.7.
 - The window title is `Leela · <folder> · <scope>`, for example `Leela · karma · notebook`. It always ends with the scope that Sanketa reads, and it changes when the folder changes.
 - Update installs through `vedicreader/tap/leela`, in an environment like Terminal's. When Homebrew fails, Leela shows its error and keeps it in the log.
 - Leela checks for a new release at each start and every hour. "Not now" holds for that version only.
+- The agent has a `leela` skill: what Leela can do and where, with the menus, keys, panes, settings, slash commands and tools. It is built from the app, so it shows your own keys. A local model on the auto profile does not see skills; set the profile to full for a large local model.
 - Signing retries when Apple's timestamp server does not answer (kavacha 0.0.16).
+- Security: oauthlib 4.0.1, tornado 6.6 and setuptools 84.2.1.
 
 ## 0.1.26
 
