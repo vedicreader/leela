@@ -20,8 +20,8 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] B7. The agent's notebook tools work on the file on disk, not on the open tab, so `run_cell` runs old code; `check_exercise` runs code with no question. (leela, M)
 
 ### C. Data safety (leela)
-- [ ] C1. A non-UTF-8 file opens as editable and a save corrupts it (`fs.py:245`, `:255`). Decode strictly; open such files read-only with a note; refuse the write. (S)
-- [ ] C2. Streamed cell output grows quadratically (`nb/app.py:198`, `nb.py:527`): 2000 prints gave 137 MB of SSE and 505 MB RSS. Merge stream outputs, send deltas at most every 50-100 ms, cap text per output. (M)
+- [x] C1. A non-UTF-8 file opens as editable and a save corrupts it (`fs.py:245`, `:255`). Decode strictly; open such files read-only with a note; refuse the write. (S)
+- [x] C2. Streamed cell output grows quadratically (`nb/app.py:198`, `nb.py:527`): 2000 prints gave 137 MB of SSE and 505 MB RSS. Merge stream outputs, send deltas at most every 50-100 ms, cap text per output. (M)
 
 ### D. Header layout (leela)
 - [x] D1. The tab strip collapses to one tab and "+N" at 1440 px (`actions.js:412-432` measures `#tabbar`). `test_nb_races_slow.py::test_saving_one_scratch_notebook_keeps_another_scratch_notebooks_unsaved_text` fails. (S)
@@ -34,10 +34,10 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 ### Settings, files, notebooks, editor (leela)
 - [ ] S4. A typo in the user settings file wipes all user settings at the next save. Refuse to save over a file that does not parse; keep a `.bad` copy. (S)
 - [ ] S5. A clone can go into any folder (`git/app.py:282 _clone_into`). (S)
-- [ ] S7. A save after an outside rewrite undoes deletes and moves and drops in-memory outputs (`_rebase_notebook`, `nb/app.py:30`). (M)
-- [ ] S8. Two windows on one notebook lose each other's edits (`core.js:303`). Send changed cells with the source each page last saw. (M)
-- [ ] S9. CRLF files become LF on save. (S)
-- [ ] S10. Rename-symbol uses code points where LSP sends UTF-16 units, and splits with `splitlines` (`lsp/app.py:14-33`). (S)
+- [x] S7. A save after an outside rewrite undoes deletes and moves and drops in-memory outputs (`_rebase_notebook`, `nb/app.py:30`). (M)
+- [x] S8. Two windows on one notebook lose each other's edits (`core.js:303`). Send changed cells with the source each page last saw. (M)
+- [x] S9. CRLF files become LF on save. (S)
+- [x] S10. Rename-symbol uses code points where LSP sends UTF-16 units, and splits with `splitlines` (`lsp/app.py:14-33`). (S)
 - [ ] S11. Go-to-file stops at 20000 files and says `partial: False` (`fs.py:57`, `fs/app.py:325`); the same cap limits replace. (S)
 - [ ] S12. The trash is never emptied and moves folders across disks (`core/session.py:239`). (S)
 - [ ] S13. FileHistory blobs are not atomic; two processes overwrite `index.json` and prune each other's blobs (`session.py:76-81`). (S)
@@ -45,7 +45,7 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 
 ### Performance (leela)
 - [ ] S15. Start takes 7-9 s; `from IPython.core.display import ImageFormat` in `blocks/nb/show.py:10` costs 1.3 s. (S)
-- [ ] S16. A 77 MB notebook: `/tab/state` sends 76 MB; each save adds about 85 MB RSS. (M)
+- [x] S16. A 77 MB notebook: `/tab/state` sends 76 MB; each save adds about 85 MB RSS. (M)
 - [ ] S17. On Linux, inotify still watches ignored folders such as `node_modules` and `.venv` (`fs/watch.py:93`). (M)
 
 ### UX and prose (leela)
