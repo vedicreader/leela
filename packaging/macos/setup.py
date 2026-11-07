@@ -27,7 +27,7 @@ DATA_FILES = tree(ROOT/'leela'/'static', 'leela/static', skip={'js'}) + tree(ROO
 PACKAGES = [
     'leela', 'ramabana', 'dhrishti', 'fastcore', 'fasthtml', 'starlette', 'uvicorn',
     'httpx', 'httpcore', 'anyio', 'certifi', 'websockets',
-    'fossick', 'fastcdp', 'scrapling', 'html2text', 'readability',
+    'fossick', 'fastcdp', 'scrapling', 'markdownify', 'readability',
     'kavacha', 'kunda', 'pullup',   # the casing, the kernels and the release half
     # Copied whole for their source, not only their bytecode. `fastcore.funccall` schemas every
     # tool with `docments`, which calls `inspect.getsource` on the function: a package reached from
