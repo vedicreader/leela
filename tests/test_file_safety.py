@@ -131,3 +131,36 @@ def test_delete_route_refuses_a_cross_disk_folder_and_keeps_it(tmp_path, monkeyp
         r = c.post('/fs/delete', json={'path': str(root/'pkg')})
         assert r.status_code >= 400 and 'another disk' in r.text
     assert (root/'pkg'/'a.py').exists()
+
+def test_two_windows_on_one_folder_keep_each_others_versions(tmp_path):
+    "Two processes on one folder each wrote `index.json` from their own memory, so the later save dropped the other's versions."
+    from leela.core.session import FileHistory
+    a, b = FileHistory(tmp_path/'h'), FileHistory(tmp_path/'h')
+    ra = a.record('/p/x.py', 'one'); rb = b.record('/p/y.py', 'two')
+    assert {r['id'] for r in FileHistory(tmp_path/'h').rows()} == {ra['id'], rb['id']}
+    assert {r['id'] for r in a.rows()} == {ra['id'], rb['id']}, "a window sees the other's new row"
+    assert a.record('/p/y.py', 'two') is None, 'and does not add the same body twice'
+
+def test_a_prune_in_one_window_keeps_the_bodies_the_other_needs(tmp_path, monkeypatch):
+    import leela.core.session as S
+    monkeypatch.setattr(S, 'KEEP_PER_PATH', 2); monkeypatch.setattr(S, 'BLOB_GRACE', 0)
+    a, b = S.FileHistory(tmp_path/'h'), S.FileHistory(tmp_path/'h')
+    rb = b.record('/p/y.py', 'kept by b')
+    for i in range(4): a.record('/p/x.py', f'v{i}')
+    assert b.text(rb['id']) == 'kept by b', "a's prune left b's body"
+    assert [a.text(r['id']) for r in a.rows('/p/x.py')] == ['v3', 'v2']
+
+def test_a_body_is_written_whole_or_not_at_all(tmp_path, monkeypatch):
+    import gzip
+    from leela.core.session import FileHistory
+    h = FileHistory(tmp_path/'h')
+    def boom(*a, **k): raise OSError('disk full')
+    monkeypatch.setattr(gzip, 'compress', lambda b: b[:3] if boom() else b)
+    with pytest.raises(OSError): h.record('/p/x.py', 'text')
+    assert not list((tmp_path/'h'/'blobs').glob('*.gz')), 'no half-written body that a later save would trust'
+
+def test_an_index_that_does_not_parse_is_kept_aside(tmp_path):
+    from leela.core.session import FileHistory
+    (tmp_path/'h').mkdir(); (tmp_path/'h'/'index.json').write_text('{broken')
+    FileHistory(tmp_path/'h').record('/p/x.py', 'one')
+    assert (tmp_path/'h'/'index.json.bad').read_text() == '{broken'

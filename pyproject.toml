@@ -48,6 +48,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dhrishti>=0.1.12",
     "watchfiles>=1.0",
+    "filelock>=3.12",   # file history: two windows on one folder share its index
     "vishalakshi>=0.1.35",
     "rahasya>=0.0.4",
     "varga>=0.0.7",
