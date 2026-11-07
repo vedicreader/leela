@@ -1,0 +1,45 @@
+# Leela's thin Mac app, as kavacha builds, locks and ships it. See docs/thin-app.md and kavacha's contract/api-1.md.
+name = "Leela"
+identifier = "org.vedicreader.leela"
+package = "leela"
+version = "1.0.0"
+build = "1"
+summary = "Editor for notebooks and code files with a coding agent"
+copyright = "Apache-2.0"
+repo = "vedicreader/leela"
+icon = "packaging/assets/Leela.icns"
+
+[run]
+server_args = ["--app", "--shell", "none", "--port", "{port}", "--gateway-port", "0"]
+
+[lock]
+python = "3.13.18"
+platforms = ["darwin-arm64"]
+macos_min = "14.0"
+extras = ["mlx", "llama", "langserver"]
+seed_extra = "langserver"
+owners = ["karthik"]
+owner_org = "vedicreader"
+imports = ["leela.app", "leela.core.host", "ramabana", "shalya", "kunda", "rishi", "ipykernel"]
+hooks = "tools/lock_hooks.py"
+build_dir = "packaging/mac/build"
+
+[lock.wheels.llama-cpp-python]
+version = "0.3.30"
+sha256 = "4f5b385f31dbda502d7118aff0c07c9e98961fa0402c025b89ff3250db843eb3"
+url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl"
+
+[native]
+menu_action_js = "leeAct({action})"
+titlebar = "mac-unified"
+
+[sites]
+list = "/app/sites"
+go = "/hub/go/"
+
+[dist]
+cask = "leela"
+cask_template = "packaging/mac/cask/leela.rb"
+tap = "vedicreader/tap"
+max_mb = 60
+max_zip_mb = 25

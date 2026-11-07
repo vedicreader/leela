@@ -526,48 +526,50 @@ def test_quitting_mid_clip_is_quick_and_leaves_no_forked_worker(tmp_path):
         time.sleep(.5)
     assert not left, 'processes outlived the app:\n' + '\n'.join(left)
 
-# The thin Mac app (packaging/mac, docs/thin-app.md)
+# The thin Mac app: kavacha's launcher with Leela's spec (packaging/kavacha.toml, docs/thin-app.md)
 
 THIN = ROOT/'packaging'/'mac'
 
-def _lockpy():
-    spec = importlib.util.spec_from_file_location('lockpy', ROOT/'tools'/'lock.py')
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    return m
+def _lock():
+    from kavacha.lock import Lock
+    from kavacha.thin import Thin
+    return Lock(Thin.load(ROOT))
 
 def test_the_thin_app_keeps_the_bundle_id_and_document_types_of_the_old_one(mac):
     """WebKit storage is keyed by the bundle id, and Finder's Open With list comes from the document types."""
-    import plistlib
-    p = plistlib.loads((THIN/'Resources'/'Info.plist').read_bytes())
+    lk = _lock()
+    p = lk.t.info_plist() | lk.hook('plist')()
     assert p['CFBundleIdentifier'] == 'org.vedicreader.leela' and p['CFBundleExecutable'] == 'Leela' and p['CFBundleShortVersionString'] == '1.0.0'
     assert p['NSAppTransportSecurity'] == {'NSAllowsLocalNetworking': True} and p['LSMinimumSystemVersion'] == '14.0'
     assert p['CFBundleDocumentTypes'] == mac.PLIST['CFBundleDocumentTypes']
 
 def test_the_thin_app_build_checks_size_signature_and_the_pinned_uv():
-    mk = (THIN/'Makefile').read_text()
-    assert 'MAX_KB := 61440' in mk and 'MAX_ZIP_KB := 25600' in mk, 'the plan: 60 MB on disk, 25 MB zipped'
-    assert 'shasum -a 256 -c' in mk and 'codesign --verify --strict' in mk and '--options runtime' in mk
+    t = _lock().t
+    assert (t.max_mb, t.max_zip_mb) == (60, 25), 'the plan: 60 MB on disk, 25 MB zipped'
+    assert 'codesign --verify --strict' in (THIN/'Makefile').read_text()
     assert (ROOT/'packaging'/'uv.version').read_text().strip() and len((ROOT/'packaging'/'uv.sha256').read_text().strip()) == 64
 
 def test_verify_app_names_every_missing_piece(tmp_path):
     import plistlib
-    L = _lockpy()
     app = tmp_path/'Leela.app'
     (app/'Contents'/'MacOS').mkdir(parents=True); (app/'Contents'/'Resources').mkdir()
     (app/'Contents'/'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'org.example.other'}))
     (app/'Contents'/'Resources'/'lock-keys.pub').write_text('')
-    with pytest.raises(SystemExit) as e: L.verify_app(app)
+    with pytest.raises(SystemExit) as e: _lock().verify_app(app)
     why = str(e.value)
-    for w in ('CFBundleIdentifier', 'NSAllowsLocalNetworking', 'document types', 'no launcher', 'no Helpers/uv', 'bootstrap lock', 'childenv.json'): assert w in why, w
+    for w in ('CFBundleIdentifier', 'NSAllowsLocalNetworking', 'document types', 'no launcher', 'no Helpers/uv', 'bootstrap lock', 'childenv.json', 'kavacha.json'): assert w in why, w
 
-def test_verify_app_refuses_a_bundle_over_the_size_limit(tmp_path):
-    L = _lockpy()
+def test_verify_app_refuses_a_bundle_over_the_size_limit(tmp_path, monkeypatch):
+    lk = _lock()
     built = THIN/'build'/'Leela.app'
     if not built.is_dir(): pytest.skip('no built app: make -C packaging/mac uv-fetch dev-lock app')
-    with pytest.raises(SystemExit, match='on disk is over'): L.verify_app(built, max_kb=1)
+    monkeypatch.setattr(lk.t, 'max_mb', 0)
+    with pytest.raises(SystemExit, match='on disk is over'): lk.verify_app(built)
 
 def test_the_thin_app_cask_watches_app_tags_and_zaps_its_folders():
-    c = (THIN/'cask'/'leela.rb').read_text()
+    from kavacha.ship import cask
+    c = cask(_lock(), '1.0.3', 'ab' * 32)
+    assert 'version "1.0.3"' in c and f'sha256 "{"ab" * 32}"' in c
     assert 'releases/download/app-v#{version}/Leela.zip' in c and 'strategy :github_releases' in c and 'regex(/^app-v' in c
     assert '~/Library/Application Support/Leela' in c and '~/Library/Caches/Leela' in c and 'uninstall quit: "org.vedicreader.leela"' in c
 
@@ -576,18 +578,20 @@ def test_ci_no_longer_builds_the_fat_mac_app():
     assert re.search(r'\n  macos:\n    if: false\n', y)
 
 def test_the_thin_launcher_keeps_kavachas_window_settings():
-    """The launcher copies these from kavacha.window, the old app's window; a change there must reach the Swift side."""
-    from kavacha.window import DEFAULT_SIZE, DOCK_RECENT, MIN_SIZE, NO_SUBSTITUTION
-    src = (THIN/'Sources'/'Leela'/'Windows.swift').read_text()
-    assert set(re.findall(r'"(NSAutomatic\w+)"', src)) == set(NO_SUBSTITUTION)
-    assert f'NSSize(width: {DEFAULT_SIZE[0]}, height: {DEFAULT_SIZE[1]})' in src and f'NSSize(width: {MIN_SIZE[0]}, height: {MIN_SIZE[1]})' in src
-    assert f'static let dockRecent = {DOCK_RECENT}' in src and '"LEELA_WEBVIEW_DEBUG"' in src
+    """The launcher's window comes from the spec; it keeps the old app's kavacha.window sizes."""
+    from kavacha.window import DEFAULT_SIZE, MIN_SIZE
+    c = _lock().t.config()
+    assert c['window']['size'] == list(DEFAULT_SIZE) and c['window']['min_size'] == list(MIN_SIZE) and c['debug_env'] == 'LEELA_WEBVIEW_DEBUG'
 
 def test_the_thin_app_tests_its_shortcuts_against_the_menu_the_server_serves():
-    """`make test` writes menu.json from the Python source, so a keymap or kavacha change reaches the Swift shortcut test."""
+    """`make test` writes menu.json from the Python source, and the launcher checks it with no window."""
     mk = (THIN/'Makefile').read_text()
     assert 'from leela.blocks.keys.menus import launcher_json, menu_json' in mk and "os.environ['XDG_CONFIG_HOME']=tempfile.mkdtemp()" in mk
-    assert 'LEELA_MENU_JSON="$(MENU_JSON)" swift test' in mk
+    assert '--check-menu "$(MENU_JSON)"' in mk
+
+def test_no_swift_source_is_left_in_leela():
+    "The launcher is kavacha's: Leela keeps its spec, its checks and its cask template."
+    assert not (THIN/'Sources').exists() and not (THIN/'Package.swift').exists() and not (ROOT/'packaging'/'childenv.json').exists()
 
 # Finder's Open With: CFBundleDocumentTypes and UTImportedTypeDeclarations, from `leela.workspace.doc_types`
 

@@ -131,11 +131,11 @@ with the command to run when there is none.
 
 ### The thin Mac app
 
-From app 1.0 the Mac app is a Swift launcher in `packaging/mac`, and its Python packages come from a signed lock with its own channel. `docs/thin-app.md` has the contract, the lock flow and the checklists. In short:
+From app 1.0 the Mac app is kavacha's launcher with Leela's spec (`packaging/kavacha.toml`), and its Python packages come from a signed lock with its own channel. kavacha builds, locks and ships it; `docs/thin-app.md` has what is Leela's, the lock flow and the checklists. In short:
 
 ```sh
-make -C packaging/mac test                       # the launcher's tests
-make -C packaging/mac uv-fetch dev-lock app verify LOCK_SRC=<lock folder>   # a local, ad hoc signed build
+make -C packaging/mac test LAUNCHER=<kavacha-launcher>   # the menu bar, checked by the launcher
+make -C packaging/mac uv-fetch dev-lock app verify LOCK_SRC=<lock folder> LAUNCHER=<kavacha-launcher>   # a local, ad hoc signed build
 make lock-wheel V=<leela version>                # the Leela wheel on release V
 make lock V=<leela version> && make lock-diff && make lock-test FRESH=1 EXTRAS=1
 make lock-publish && make lock-promote N=<n>     # test channel first, then stable

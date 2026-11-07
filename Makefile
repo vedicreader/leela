@@ -1,7 +1,7 @@
 # Leela's release targets. Values reach recipes through the environment ("$$V"), so the shell never parses them.
 # The thin Mac app and its environment lock: docs/thin-app.md. The old fat app: make ship V=<version> (py2app, being retired).
 export V TAP N WHEEL DIR CHANNEL FRESH EXTRAS ALLOW_DOWNGRADE PIN AGAINST
-PY := uv run --frozen python
+PY ?= uv run --frozen python
 LOCKPY := $(PY) tools/lock.py
 .PHONY: ship ship-app lock lock-wheel lock-hash lock-check lock-test lock-diff lock-publish lock-promote lock-verify lock-key
 

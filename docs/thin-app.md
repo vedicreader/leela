@@ -1,90 +1,34 @@
 # The thin Mac app
 
-Leela.app 1.0 is a small Swift launcher. It owns the windows. Python runs headless as its child: `leela --app --shell none`. The Python packages do not ship in the app. They come from a signed environment lock, which has its own number and its own channel. A new lock reaches people without a new app build.
+Leela.app 1.0 is kavacha's launcher, configured for Leela. It owns the windows. Python runs headless as its child: `leela --app --shell none`. The Python packages do not ship in the app. They come from a signed environment lock, which has its own number and its own channel. A new lock reaches people without a new app build.
+
+kavacha owns the machinery: the launcher (`swift/` in the kavacha repository), the lock tool (`kavacha lock`), the build and the release (`kavacha ship mac`), and the server's client of the launcher (`kavacha.host`). The contract between them is kavacha's `contract/api-1.md`: the bundle, the folders the app keeps, the child environment, the token, the control routes, the bridge, the manifest, the channel and the signing. This page gives what is Leela's.
 
 The old py2app app (`make ship`, `docs/desktop.md`) stays for one release while this one ships.
 
-## What is in the bundle
+## What Leela gives kavacha
 
-```
-Leela.app/Contents/
-  MacOS/Leela              the Swift launcher (packaging/mac)
-  Helpers/uv               the pinned uv (packaging/uv.version, packaging/uv.sha256), signed with the app
-  Resources/Lock/          the bootstrap lock: manifest.json, manifest.sig, pyproject.toml, uv.lock, .python-version
-  Resources/lock-keys.pub  the two public keys that may sign a lock (main and emergency)
-  Resources/childenv.json  the clean child environment, shared with tools/lock.py
-  Info.plist               bundle id org.vedicreader.leela, document types, NSAllowsLocalNetworking
-```
+- `packaging/kavacha.toml`: the spec. kavacha derives every name from it: the support folder `Leela`, the marker `.leela-env.json`, the SSHSIG namespace `leela-lock`, the `LEELA_*` variables, the bridge handler `leela`, the cask `leela`, and the bundle id `org.vedicreader.leela` (the old app's, so WebKit storage carries over). The server arguments are `--app --shell none --port <port> --gateway-port 0`.
+- `tools/lock_hooks.py`: the extras' requirements, the old app's document types for the plist, and Leela's checks in the lock test (below).
+- `packaging/lock/`: the pinned project, `keys.pub` and the test records. `packaging/mac/cask/leela.rb`: the cask template. `packaging/assets/Leela.icns`: the icon.
+- `leela/core/host.py`: `kavacha.host.HostClient` with the prefix `LEELA_`, plus Leela's agent tools (`AGENT_TOOLS`) and `setup`.
+- `leela.blocks.keys.menus`: the menu bar the server serves, and `/app/menu.json`.
+- The size gates: 60 MB on disk, 25 MB zipped.
 
-- The bundle id is the same as the old app, so WebKit storage carries over.
-- `make -C packaging/mac verify` fails above 60 MB on disk or 25 MB zipped.
+`tools/lock.py` is kavacha's lock tool with Leela's root, so the make targets below do not change.
 
-## Where the app keeps its files
+## The child environment
 
-```
-~/Library/Application Support/Leela/
-  locks/<n>/                 each lock the app accepted
-  envs/<hash16>/             one env per lock hash; .leela-env.json is written last
-  python/                    the managed Pythons uv downloads
-  state.json                 {current, previous, pending, highest_n, bad: []}
-  logs/sync-<hash16>.log, logs/server.log
-  run.lock                   flock: one launcher at a time
-~/Library/Caches/Leela/uv    the uv cache
-```
+Leela takes kavacha's child environment for macOS with its own prefix and server arguments. Two Leela rules sit on top of it:
 
-- The lock hash is sha256 over the name and the bytes of `pyproject.toml`, `uv.lock` and `.python-version`, then `uv` and the uv version. Swift (`LockHash`) and Python (`lock_hash`) compute the same value; both test suites pin one vector.
-- The app builds a new env in place in `envs/<hash16>`. The marker is written last. A folder with no marker is a partial build, and garbage collection removes it.
-- A new lock's env starts from an APFS clone of the env in use (`EnvStore.seed`, `clonefile(2)`), when that env has the same Python. The clone drops the old marker and every `__pycache__` (a .pyc names its source path), and the old env's path is rewritten to the new one in `bin/` (script shebangs, `activate*`) and `pyvenv.cfg`. Then the usual exact `uv sync` adds, changes and removes only what the new lock changes. The env in use is never written. A failed clone or a failed sync of the copy deletes it and builds fresh. `make lock-test` checks it: a copy that adds one extra installs only that, works (imports, `/health`, a kernel cell), and holds no file that names the old env.
-- The setup window and the lock update notice say what changes, from the two `uv.lock` files (`LockDiff`): "Updating 1 package: ramabana 0.2.109 → 0.2.110", three by name, then "and N more".
-- The app switches env only at launch or at "Restart to update". It writes `state.json.tmp`, then renames it.
-- When `/health` does not answer in 120 s, or a new env crashes twice before it is ready, the app goes back to the previous env and adds the hash to `bad`. The menu item "Leela > Use Previous Version" does the same by hand.
-- Garbage collection keeps current, previous, pending and the env in use. The app runs `uv cache prune` once a week.
-
-## The child environment: `packaging/childenv.json`
-
-Swift (`ChildEnv`) and `tools/lock.py` read the same file.
-
-- `drop` and `drop_prefixes`: names removed from the launcher's environment. These include `VIRTUAL_ENV`, `CONDA_PREFIX`, `PYTHONHOME`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONUSERBASE` and every `UV_*`.
-- `set`: `LANG` and `NO_COLOR`, for the launcher's own uv runs only.
-- `uv`: what the launcher's own uv runs get (the build, an extra, `uv cache prune`), and nothing else. `UV_NO_CONFIG=1`, the cache, the Python folder, `UV_PYTHON_PREFERENCE=only-managed`, the exact Python, the env folder, `UV_FROZEN=1`, `UV_NO_PROGRESS=1`, `UV_LINK_MODE=clone`.
-- `server`: what the server also gets: `PYTHONUNBUFFERED=1`. The server gets the person's environment, less `drop` and `drop_prefixes`, with `tool_dirs` on `PATH`. It gets no `uv` key, no `VIRTUAL_ENV`, no `PYTHONNOUSERSITE` and not the env's `bin`, because every kernel, terminal, agent shell and project `uv` run inherits the server's environment. The launcher starts `envs/<hash16>/bin/leela` by its absolute path, and its shebang names the env's Python, so the server needs none of them.
-- App 1.0.0 gave the server all of these. A newer lock still runs under it: `leela.core.host.setup` first takes out every `UV_*`, `PYTHONNOUSERSITE`, `NO_COLOR=1`, a `VIRTUAL_ENV` that is the env, and the env's `bin` on `PATH`. The login shell and Leela's stored values then fill in the person's own, `UV_*` among them: a `UV_INDEX_URL` the person set reaches their kernels, terminals and project `uv` runs, as in the old app. The app's own uv settings go only to the launcher's uv runs.
+- App 1.0.0 gave the server uv's build settings. A newer lock still runs under it: `leela.core.host.setup` first takes them out (`kavacha.host.scrub`). The login shell and Leela's stored values then fill in the person's own, `UV_*` among them: a `UV_INDEX_URL` the person set reaches their kernels, terminals and project `uv` runs, as in the old app.
 - The language server of the `langserver` extra is in the env's `bin`, so in host mode `find_server` also looks in the server's own scripts folder.
-- An agent's shell runs the console scripts of the owner's packages in the env (`host.AGENT_TOOLS`: `ramabana`, `kosha`, `exhash`, `fossick` and the rest), never `python`, `pip` or `uv`. At each start the server links them into `~/Library/Application Support/Leela/bin` (`host.link_tools`), so an env switch changes them, and only the agent's shell gets that folder on `PATH`, after the project's `.venv/bin` and before the person's own folders. The old app had none of them there.
+- An agent's shell runs the console scripts of the owner's packages in the env (`host.AGENT_TOOLS`), never `python`, `pip` or `uv`. At each start the server links them into `~/Library/Application Support/Leela/bin` (`host.link_tools`), and only the agent's shell gets that folder on `PATH`, after the project's `.venv/bin` and before the person's own folders.
 - A new launcher with an env from an older lock (Use Previous Version) runs a server that does not look in its scripts folder, so the Python language server is missing until the person updates again.
-- `sync`: the build command, `uv sync --frozen --no-install-project --project <locks/n>`. `extra` adds `--extra <name>` per extra; `inexact` adds `--inexact` when an extra goes into a running env.
-- `server_args`: `--app --shell none --port <port> --gateway-port 0`.
 
-## The contract between the launcher and the server (API 1)
+## The routes
 
-The launcher starts the server with these environment variables:
-
-| Name | Value |
-|---|---|
-| `LEELA_HOST_URL` | `http://127.0.0.1:<port>` of the launcher's control server |
-| `LEELA_APP_VERSION` | the app version, such as `1.0.0` |
-| `LEELA_APP_BUNDLE` | the path of `Leela.app` |
-| `LEELA_LOCK_N` | the number of the lock the env came from |
-| `LEELA_ENV_HASH` | the lock hash of the env |
-| `LEELA_UV` | the path of the bundled uv |
-
-The token is never in argv, the environment, a file or a log. The launcher starts the server with a pipe as stdin, writes one line `<token>` to it right after the start, and closes its end. In host mode the server reads that one line first (`leela.core.host.take`, 5 s at most), keeps it in memory, and reopens stdin on /dev/null. No line, an empty line or a late line stops the server with a plain error. A `LEELA_HOST_TOKEN` in the environment is ignored, with a warning. The server also takes `LEELA_HOST_URL` out of its environment, so no kernel, terminal or agent shell gets it. In host mode the server does not use the old extras folder, and the login shell or a stored value cannot replace `PYTHONPATH`, `VIRTUAL_ENV` or any `LEELA_HOST_*`, `LEELA_LOCK_N`, `LEELA_ENV_HASH`.
-
-### Control routes in the launcher
-
-The control server listens before the launcher starts the server. Only the server calls it, and every request carries `Authorization: Bearer <token>`. A wrong token gets 401.
-
-| Route | Body | Answer |
-|---|---|---|
-| `POST /confirm` | `{question}` | `{answer: bool}` from an NSAlert. Any other answer is "no window", never a No. |
-| `POST /extras` | `{name}` (`mlx`, `llama`, `langserver`) | `{ok}`; the state is in `/status` |
-| `POST /update` | `{kind}` (`app` or `lock`) | `{state, line}` |
-| `GET /update` | | `{state, line}`; `state` is `idle`, `running`, `ready`, `same`, `unavailable` or `error` |
-| `POST /restart` | `{}` | `{ok}`; the launcher stops the server, switches env if one is pending, and starts it again |
-| `GET /status` | | `{app_version, api, brew, lock: {current_n, newest_n, newer, needs_app, app_min}, extras: {name: {state, log}}, env}` |
-| `POST /grant` | `{nonce, path}` | `{ok}`: true once, when the launcher issued `nonce` for `path` in the last minute |
-
-The server maps the launcher's `ready` to the page's `done`, so "Restart to update" uses the existing `/update/restart` route.
+The control routes of the launcher are kavacha's. The server maps the launcher's `ready` to the page's `done`, so "Restart to update" uses the existing `/update/restart` route. In host mode the server does not use the old extras folder, and the login shell or a stored value cannot replace `PYTHONPATH`, `VIRTUAL_ENV` or any `LEELA_HOST_*`, `LEELA_LOCK_N`, `LEELA_ENV_HASH`.
 
 ### Server routes for the launcher
 
@@ -193,7 +137,7 @@ The newest app comes from the `app-v*` releases, not from `releases/latest`. The
 
 ## Window parity with the old app
 
-The old app's window layer is pywebview's Cocoa backend (`webview/platforms/cocoa.py`, here C), `kavacha/window.py` (K), `leela/desktop.py` (D) and `leela_app.py` (A). The menu bar comes from `leela/blocks/keys/menus.py` (M) in both apps. The thin side is `packaging/mac/Sources/Leela/Windows.swift` (W) and `AppDelegate.swift` (AD). Status: same, fixed (it was missing or different, and now matches), or different (on purpose, with the reason).
+The old app's window layer is pywebview's Cocoa backend (`webview/platforms/cocoa.py`, here C), `kavacha/window.py` (K), `leela/desktop.py` (D) and `leela_app.py` (A). The menu bar comes from `leela/blocks/keys/menus.py` (M) in both apps. The thin side is kavacha's `swift/Sources/KavachaApp/Windows.swift` (W) and `AppDelegate.swift` (AD); the line numbers are from before the move to kavacha. Status: same, fixed (it was missing or different, and now matches), or different (on purpose, with the reason).
 
 ### Menus and keys
 
@@ -268,7 +212,7 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 
 ### The automated checks
 
-`make -C packaging/mac test` writes `build/menu.json` from the Python source with an empty keymap folder, then runs the Swift tests with it. `Tests/LeelaTests` builds the launcher's menu bar from that file and, with no window on screen:
+`make -C packaging/mac test LAUNCHER=<kavacha-launcher>` writes `build/menu.json` from the Python source with an empty keymap folder, then runs the launcher's `--check-menu` on it: each row has its chord, a key-down as the US keyboard sends it runs its row, no two rows share a chord, and no action row takes ⌘Z. kavacha's own Swift tests (`make -C swift test` in kavacha) build the menu bar of a snapshot of this file and, with no window on screen:
 
 - each row has its key and mask;
 - a key-down as the US keyboard sends it reaches its row through `NSMenu.performKeyEquivalent`, and the row runs `leeAct("<action>")` through a runner the test gives, or sends its selector to a probe;
