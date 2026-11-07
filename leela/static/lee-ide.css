@@ -1761,6 +1761,10 @@ audio.lee-media { width: min(100%, 560px); }
 .lee-office-body table { border-collapse: collapse; margin: 8px 0; }
 .lee-office-body td, .lee-office-body th { border: 1px solid var(--lee-border); padding: 3px 8px; vertical-align: top; text-align: left; }
 .lee-office-body td p { margin: 0; }
+.lee-office-ql { display: flex; flex-direction: column; }
+.lee-office-ql .lee-sheet-tabs { margin: 6px 8px; }
+.lee-office-clip { padding: 4px 10px; }
+.lee-office-frame { flex: 1 1 auto; min-height: 240px; width: 100%; border: 0; background: #fff; }
 .lee-office-noimg { color: var(--lee-fg4); font-style: italic; }
 .lee-office-slide { margin: 0 0 18px; padding: 10px 14px; border: 1px solid var(--lee-border); border-radius: 5px; background: var(--lee-bg2); }
 .lee-office-slide h2 { margin: .2em 0 .4em; }

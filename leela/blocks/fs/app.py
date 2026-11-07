@@ -12,7 +12,7 @@ from ... import errstr
 from ...core.web import fail, off_loop, sse, unless_gone
 from ...core.text import fuzzy_rank
 from .fs import MEDIA_TYPES, Unsafe, is_media, lang_for
-from .office import SHEET_ROWS, is_office, office_html, office_text, open_in_app, sheet_rows
+from .office import QL_HEADERS, QL_TYPES, SHEET_ROWS, QuickLookError, is_office, office_html, office_text, open_in_app, quicklook, quicklook_file, sheet_rows
 from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
 from ..keys.app import keys_payload
@@ -276,6 +276,20 @@ def connect(app, ctx):
         "A Word, PowerPoint or Excel file as cleaned HTML for its read-only tab."
         try: return {'ok': True, 'html': await off_loop(office_html, _office(path))}
         except Exception as e: return fail(e)
+    @rt('/office/quicklook')
+    async def office_quicklook(path: str = ''):
+        "Quick Look's own preview of the file, on macOS: a token for its files and its pages."
+        try: return {'ok': True, **await off_loop(quicklook, _office(path))}
+        except Exception as e: return fail(e)
+    @rt('/office/ql/{token}/{name}')
+    def office_ql_file(token: str, name: str):
+        "One file of a Quick Look preview, while the office file it shows is still open to Leela."
+        from starlette.responses import FileResponse
+        try:
+            if (got := quicklook_file(token, name)) is None: raise QuickLookError('This preview is gone. Open the file again.')
+            _office(str(got[1]))
+        except Exception as e: return fail(e, 404)
+        return FileResponse(got[0], media_type=QL_TYPES[got[0].suffix.lower()], headers=QL_HEADERS)
     @rt('/office/rows')
     async def office_rows(path: str = '', sheet: int = 0, start: int = 0, n: int = SHEET_ROWS):
         "The next rows of one sheet, for show more."
