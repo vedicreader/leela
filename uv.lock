@@ -2656,7 +2656,7 @@ requires-dist = [
     { name = "litesearch", specifier = ">=0.1.63" },
     { name = "mammoth", specifier = ">=1.13.0" },
     { name = "mdhtml", specifier = ">=0.1.38" },
-    { name = "nh3", specifier = "==0.3.7" },
+    { name = "nh3", specifier = ">=0.3.7" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "orjson", specifier = ">=3.9" },
