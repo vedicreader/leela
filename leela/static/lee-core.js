@@ -2242,7 +2242,9 @@ function mountMedia(host, st) {
     .then(() => status('opened in the default app', 'ok')).catch(e => status(String(e.message || e), 'err'));
   $('[data-media-open]', host).onclick = open;
   $('.lee-media', host).onerror = () => {
-    $('.lee-media-body', host).innerHTML = `<div class="lee-err" data-media-error>${esc(name)} cannot play here. ` +
+    const body = $('.lee-media-body', host);
+    if (!body) return;   // the tab has moved on
+    body.innerHTML = `<div class="lee-err" data-media-error>${esc(name)} cannot play here. ` +
       `Open it in the default app.<br><button class="lee-btn" data-media-open>open in default app</button></div>`;
     $('.lee-media-body [data-media-open]', host).onclick = open;
   };

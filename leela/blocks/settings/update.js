@@ -36,7 +36,6 @@ function updateOffer(d) {
   if (d.job?.state === 'done') return updateRestart(updateInstalled(d, d.job.line), d);
   updateBar(updateText(d), d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater] : [updateNotes(d), updateLater]);
 }
-}
 async function leeUpdateNotice() {
   if ($('#leeupdate')?.hidden === false) return;
   const d = await api('/update');

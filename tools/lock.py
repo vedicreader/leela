@@ -290,7 +290,15 @@ class FakeHost:
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
     def close(self): self.srv.shutdown()
 
+def live_ports(home=None):
+    "The ports of the Leela the person runs, from their real serving.json: no test or script may call them."
+    f = Path(home or Path.home())/'.config'/'leela'/'serving.json'
+    try: d = json.loads(f.read_text()); os.kill(int(d['pid']), 0)
+    except (OSError, ValueError, KeyError, TypeError): return set()
+    return {int(d['port']), *map(int, d.get('ports') or ())}
+
 def _get(url, data=None, headers=None, timeout=5, raw=False):
+    if urllib.parse.urlsplit(url).port in live_ports(): raise RuntimeError(f'{url} is the Leela you are running; tests use their own server')
     req = urllib.request.Request(url, data=data, headers=headers or {}, method='POST' if data is not None else 'GET')
     op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with op.open(req, timeout=timeout) as r: return r.read() if raw else json.loads(r.read())

@@ -289,3 +289,13 @@ def test_a_pointer_names_its_channel_and_an_old_expires_field_is_ignored(tmp_pat
     assert L.channel('channel-test', tmp_path/'k')['n'] == 4, 'a pointer with no change for months is still good'
     serve(p)
     assert L.channel('channel-test', tmp_path/'k')['n'] == 4
+
+def test_the_lock_tests_refuse_the_leela_the_person_runs(tmp_path):
+    "A probe once reached the running app; the harness now refuses its ports, read from the real serving.json."
+    (cfg := tmp_path/'.config'/'leela').mkdir(parents=True)
+    (cfg/'serving.json').write_text(json.dumps({'pid': os.getpid(), 'port': 5999, 'ports': [6001]}))
+    assert L.live_ports(tmp_path) == {5999, 6001}
+    (cfg/'serving.json').write_text(json.dumps({'pid': 999999, 'port': 5999}))
+    assert L.live_ports(tmp_path) == set(), 'a stale file names nobody'
+    import unittest.mock as m
+    with m.patch.object(L, 'live_ports', lambda: {5999}), pytest.raises(RuntimeError, match='the Leela you are running'): L._get('http://127.0.0.1:5999/health')
