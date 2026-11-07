@@ -4,7 +4,26 @@
 
 ## 0.1.27
 
-Needs kavacha 0.0.16 and Sanketa 0.2.7.
+Needs kavacha 0.0.16, Sanketa 0.2.7, gheasy 0.0.21, kunda 0.0.15, dhrishti 0.1.13, koshas 0.1.23, fossick 0.1.26 and litesearch 0.1.64.
+
+- Security:
+  - a raw file such as an SVG is served in a sandbox, so its script cannot run at Leela's address;
+  - a git ref that starts with a dash is refused, and gheasy marks where options end;
+  - a page on another local port can no longer reach Leela, and routes that change things take only POST.
+- A file that is not UTF-8 opens read-only and is never rewritten. A file keeps its own line endings.
+- A loop that prints a lot streams small updates: 2000 prints send about 32 KB, not 125 MB. One output keeps at most 200,000 characters.
+- A save after git or a formatter changed the notebook keeps your deletes, moves and outputs. Two windows on one notebook keep each other's edits, and the same cell edited in both asks which to keep.
+- A large notebook is not sent again when its tab comes back, and saving it no longer grows memory.
+- A settings file with a typo is kept as it is, with a `.bad` copy, and Leela says why it cannot save.
+- A clone goes only into an open folder or one you approve.
+- Go-to-file walks up to 100,000 files and says when it stopped early.
+- The trash drops items older than 30 days and keeps under 2 GB.
+- File history is safe with two windows.
+- Rust cells run again without a duplicate-definition error, and Stop ends the whole program.
+- On Linux, the file watcher skips ignored folders, and a deleted folder no longer stops the watch.
+- Contrast meets WCAG AA. The welcome screen, menus and palette use plain words and real key glyphs. Dark-mode tables, menus that ran off the screen, toasts and the terminal's PATH line are fixed. The guide and README match the app.
+- fossick converts web pages with markdownify (MIT) instead of html2text (GPL), and its caches no longer use pickle. The `.kosha` folder hides itself from git.
+- The frontend bundles have a lockfile and rebuild to the same bytes; `leela/vendor/THIRD_PARTY_NOTICES.md` lists their licences.
 
 - A new two-row header shows the Leela mark and name, the folder, the branch with its change count, and ↓/↑ only when the branch is behind or ahead. Row 2 holds File, Tools, Debug, the tabs and Run, Next, Stop and Present. The old toolbar row is gone. On macOS the title bar is part of the window.
 - The window title is `Leela · <folder> · <scope>`, for example `Leela · karma · notebook`. It always ends with the scope that Sanketa reads, and it changes when the folder changes.
