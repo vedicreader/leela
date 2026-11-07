@@ -275,3 +275,20 @@ def test_streamed_output_coalesces_so_no_old_snapshot_waits_in_the_post_chain():
     assert got['first'] == 2, 'one post for each cell at a time'
     assert got['sent'] == [['/present/out', 1, 1, ['a'], False], ['/present/out', 1, 1, ['other'], True], ['/present/out', 2, 1, ['final'], True],
                            ['/present/out', 1, 3, ['after the restart'], True]], got['sent']
+
+
+def test_the_server_starts_without_ipython():
+    "`blocks/nb/show.py` imported IPython at module level for `ImageFormat`, which cost the start 1.3 s."
+    import subprocess, sys
+    out = subprocess.run([sys.executable, '-c', 'import sys, leela.app; print("IPython" in sys.modules)'],
+                         capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120)
+    assert out.stdout.strip() == 'False', out.stderr[-2000:]
+
+
+def test_a_room_copy_still_keeps_raster_images():
+    from leela.blocks.nb.show import put_img
+    png = bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010806000000') + b'\0'*16
+    images = {}
+    assert put_img(png, images, 'image/png') and list(images.values())[0][0] == 'image/png'
+    assert put_img(b'GIF89a' + b'\0'*20, {}, 'image/png') is None, 'the bytes must be the type the output says'
+    assert put_img(b'not an image', {}) is None

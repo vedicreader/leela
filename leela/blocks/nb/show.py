@@ -7,7 +7,6 @@ import nh3
 from bs4 import BeautifulSoup
 from fastcore.ansi import strip_ansi
 from fastcore.xtras import fenced
-from IPython.core.display import ImageFormat
 from rupaka.render import MIME as RUPAKA_MIME
 from rupaka.spec import validate
 from abhyasa.stagekit import room_spec
@@ -16,9 +15,9 @@ from ...core.text import MD_HIGHLIGHT, _HTML_ATTRS, _HTML_DROP, _HTML_TAGS, _htm
 MOST, MOST_GROUPS, ROOM_LONG = 65536, 49, '<p>Output is too long for the room screen.</p>'
 NOT_SHOWN = '<p class="nb-none">This output type is not shown in presentations.</p>'
 IMG_MOST, IMG_BYTES, IMG_TOTAL, IMG_SIDE, IMG_PIXELS = 100, 8 << 20, 64 << 20, 16384, 40_000_000
-_RASTER = (ImageFormat.png, ImageFormat.jpeg, ImageFormat.gif, ImageFormat.webp)
+_RASTER = ('image/png', 'image/jpeg', 'image/gif', 'image/webp')   # IPython's ImageFormat, named here: importing IPython cost the start 1.3 s
 _ROOM_ATTRS = {k: v - {'id', 'title', 'data-id'} for k, v in _HTML_ATTRS.items()}
-_SHOWN = {RUPAKA_MIME, 'text/html', 'text/markdown', 'text/plain', *(f.mime_type for f in _RASTER)}
+_SHOWN = {RUPAKA_MIME, 'text/html', 'text/markdown', 'text/plain', *_RASTER}
 _VOID = frozenset('area base br col embed hr img input link meta source track wbr'.split())
 
 def render_md(md):
@@ -51,13 +50,15 @@ def _webp(b):
     "`(width, height)` of WebP bytes: IPython 9.16 unpacks a lossy size from 6 bytes, so it fails on every `VP8 ` file."
     if (k := b[12:16]) == b'VP8 ': return tuple(x & 0x3fff for x in struct.unpack('<HH', b[26:30]))
     if k == b'VP8X': return 1 + int.from_bytes(b[24:27], 'little'), 1 + int.from_bytes(b[27:30], 'little')
+    from IPython.core.display import ImageFormat
     return ImageFormat.webp.shape(b)
 
 def put_img(b, images, want=None):
     "Keep raster bytes `b` in `images` under their SHA-256, checked by content and within the limits; the hash, or None when refused."
     if images is None or not b or len(b) > IMG_BYTES: return None
+    from IPython.core.display import ImageFormat
     f = ImageFormat.webp if b[:4] == b'RIFF' and b[8:12] == b'WEBP' else ImageFormat.from_data(b)   # IPython looks for WEBP at byte 0
-    if f not in _RASTER or (want and f.mime_type != want): return None
+    if f is None or f.mime_type not in _RASTER or (want and f.mime_type != want): return None
     try: w, h = _webp(b) if f is ImageFormat.webp else f.shape(b)
     except Exception: return None
     if not (0 < w <= IMG_SIDE and 0 < h <= IMG_SIDE and w*h <= IMG_PIXELS): return None
@@ -115,12 +116,12 @@ def _one(o, base, key, images, fs, room):
     if not _SHOWN & set(d): return NOT_SHOWN, []
     if RUPAKA_MIME in d:   # the demo, never the HTML page `rupaka.show` sends beside it
         return room_html(_fence(s), base, key, images, fs, room) if (s := _demo(d[RUPAKA_MIME])) else ('', [])
-    for f in _RASTER:
-        if f.mime_type not in d: continue
-        try: sha = put_img(base64.b64decode(_text(d[f.mime_type]), validate=False), images, f.mime_type)
+    for mime in _RASTER:
+        if mime not in d: continue
+        try: sha = put_img(base64.b64decode(_text(d[mime]), validate=False), images, mime)
         except (binascii.Error, ValueError): sha = None
         if not sha: continue
-        m = meta.get(f.mime_type) or {}
+        m = meta.get(mime) or {}
         wh = ''.join(f' {k}="{m[k]}"' for k in ('width', 'height') if isinstance(m.get(k), int) and not isinstance(m.get(k), bool))
         return f'<img src="/present/img/{sha}?k={key}"{wh}>', []
     if 'text/html' in d: return room_html(_text(d['text/html']), base, key, images, fs, room)
