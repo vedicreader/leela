@@ -63,9 +63,9 @@ def project_of(cwd, session=None):
 class NoVenv(KernelStartError):
     "A project with no venv and no chosen interpreter: Leela runs no Python there until the person sets one up or picks one."
     kind = 'no_venv'
-    def __init__(self, proj):
+    def __init__(self, proj, said=''):
         self.proj = Path(proj); self.refs = [str(self.proj)]
-        self.said = f'No Python environment for {self.proj.name}. Set up .venv or choose an interpreter.'
+        self.said = said or f'No Python environment for {self.proj.name}. Set up .venv or choose an interpreter.'
         super().__init__(self.said)
     @property
     def for_agent(self):

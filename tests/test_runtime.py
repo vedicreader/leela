@@ -636,11 +636,11 @@ def _cell_nb(path):
                                 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
     return path
 
-def _refused(r, proj):
+def _refused(r, proj, said=''):
     "The one answer every route gives a project with no venv."
     d = r.json()
     assert r.status_code >= 400 and d['kind'] == 'no_venv' and d['refs'] == [str(proj)], d
-    assert d['error'] == f'No Python environment for {proj.name}. Set up .venv or choose an interpreter.', d
+    assert d['error'] == (said or f'No Python environment for {proj.name}. Set up .venv or choose an interpreter.'), d
 
 @pytest.mark.no_venv
 def test_no_route_makes_a_venv_without_a_click(tmp_path, monkeypatch):
@@ -668,32 +668,45 @@ def test_no_route_makes_a_venv_without_a_click(tmp_path, monkeypatch):
     assert made == [] and seen == [] and not (karma/'.venv').exists()
 
 @pytest.mark.no_venv
-def test_pipelines_and_drive_refuse_a_python_project_with_no_venv(tmp_path, monkeypatch):
-    "A release step or a drive step in a checkout with no venv made one, or ran under Leela's own interpreter."
+def test_a_pipeline_in_a_uv_project_with_no_venv_runs_pullups_steps(tmp_path, monkeypatch):
+    "Leela refused a release in a uv project with no .venv and skipped `uv run`; pullup's steps are uv's, and uv makes .venv."
+    import time
     from leela.blocks.pipelines.app import _ship
-    from leela.blocks.runtime.kernels import NoVenv
-    orgs = tmp_path/'orgs'
-    lib, site = _checkout(orgs, 'lib'), _checkout(orgs, 'site', py=False)
+    from leela.blocks.pipelines.pipelines import PipelineError
+    orgs, fake, log = tmp_path/'orgs', tmp_path/'fake', tmp_path/'uv.log'
+    lib = _checkout(orgs, 'lib'); (lib/'uv.lock').write_text('')
+    (lib/'.leela').mkdir(); (lib/'.leela'/'release.json').write_text(json.dumps({'steps': [{'id': 'build', 'label': 'build', 'cmd': 'uv build'}]}))
+    fake.mkdir(); (fake/'uv').write_text(f"#!/bin/sh\necho \"$@\" > '{log}'\n"); (fake/'uv').chmod(0o755)
+    monkeypatch.setenv('PATH', str(fake))
     made = _made(monkeypatch)
     ws = Workspace(roots=[orgs])
     with TestClient(ide_app(ws)) as c:
-        assert c.get('/releases', params={'repo': str(lib)}).status_code == 200 and c.get('/drive', params={'repo': str(lib)}).status_code == 200, 'looking at a panel is fine'
-        _refused(c.post('/releases/action', json={'op': 'start', 'repo': str(lib)}), lib)
-        _refused(c.post('/deploys/action', json={'op': 'step', 'step': 'x', 'repo': str(lib)}), lib)
-        _refused(c.post('/drive/action', json={'op': 'step', 'step': 'x', 'repo': str(lib)}), lib)
-        assert c.post('/drive/action', json={'op': 'step', 'step': 'nope', 'repo': str(site)}).json().get('kind') != 'no_venv', 'a project that is not Python needs no venv'
-    with pytest.raises(NoVenv): _ship(lib, ws, ['ship-bump'])
-    assert made == [] and not (lib/'.venv').exists() and not (site/'.venv').exists()
+        r = c.post('/releases/action', json={'op': 'start', 'repo': str(lib)})
+        assert r.status_code == 200, r.json()
+        for _ in range(500):
+            if not (s := c.get('/releases', params={'repo': str(lib)}).json())['running']: break
+            time.sleep(.02)
+        assert s['steps'][0]['status'] == 'passed', s
+        for path in ('/deploys/action', '/drive/action'):
+            assert c.post(path, json={'op': 'step', 'step': 'nope', 'repo': str(lib)}).json().get('kind') != 'no_venv', path
+    assert log.read_text().split() == ['run', '--project', str(lib.resolve()), 'uv', 'build'], 'the step is `uv run`, unchanged'
+    with pytest.raises(PipelineError, match='fastship is not installed'): _ship(lib, ws, ['ship-bump'])
+    assert made == [], 'Leela makes no venv; uv does, when a step needs one'
 
-def test_a_pipeline_runs_uv_only_where_the_venv_is(tmp_path):
-    "`uv run --project` makes .venv, so a chosen interpreter in a uv project still got one."
-    from leela.blocks.pipelines.pipelines import Release
-    if not shutil.which('uv'): pytest.skip('needs uv on PATH for uv_argv')
-    (tmp_path/'uv.lock').write_text('')
-    r = Release(tmp_path, python=None)
-    assert r._resolve(['ls'], None)[0] != shutil.which('uv'), 'no uv run without a venv'
-    _venv(tmp_path)
-    assert r._resolve(['ls'], None)[0] == shutil.which('uv')
+@pytest.mark.no_venv
+def test_a_python_project_with_no_pyproject_and_no_venv_gets_a_plain_message(tmp_path, monkeypatch):
+    "With no pyproject.toml there is no uv project to run in, so Leela says what is missing."
+    orgs = tmp_path/'orgs'
+    old, site = _checkout(orgs, 'old', py=False), _checkout(orgs, 'site', py=False)
+    (old/'setup.py').write_text('')
+    made = _made(monkeypatch)
+    ws = Workspace(roots=[orgs])
+    with TestClient(ide_app(ws)) as c:
+        assert c.get('/releases', params={'repo': str(old)}).status_code == 200 and c.get('/drive', params={'repo': str(old)}).status_code == 200, 'looking at a panel is fine'
+        for path, d in (('/releases/action', {'op': 'start'}), ('/deploys/action', {'op': 'step', 'step': 'x'}), ('/drive/action', {'op': 'step', 'step': 'x'})):
+            _refused(c.post(path, json=d | {'repo': str(old)}), old, 'No pyproject.toml and no Python environment in old.')
+        assert c.post('/drive/action', json={'op': 'step', 'step': 'nope', 'repo': str(site)}).json().get('kind') != 'no_venv', 'a project that is not Python needs no venv'
+    assert made == [] and not (old/'.venv').exists() and not (site/'.venv').exists()
 
 @pytest.mark.no_venv
 def test_the_notice_shows_for_a_python_project_with_no_venv(tmp_path, monkeypatch):
