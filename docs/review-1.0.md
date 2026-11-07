@@ -75,6 +75,12 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] P7. The cask zap list misses `~/Library/Logs/Leela`. (homebrew-tap, S)
 - [ ] P8. `lee-cm6.js`, `lee-term.js` and htmx ship with no licence notice and no lockfile (`frontend/package.json`). (leela, S)
 
+### Follow-ups from the fixes
+- [ ] F1. kunda keeps each run's whole stream text and grows it with `+=`; cap it in kunda. (kunda, S)
+- [ ] F2. `nb.save(path)` with no sandbox (learn.py:169, agent/app.py:1251) skips the not-UTF-8 and line-ending checks; both write new files only. (leela, S)
+- [ ] F3. The conflict dialog title says "File changed on disk" for a two-window conflict. (leela, S)
+- [ ] F4. `/nb/language` saves with no disk-version check. (leela, S)
+
 ## Nice to have
 - [ ] N1. The update thread stays "running" if `_run` raises; a pipeline timeout kills only the direct child (`pipelines/app.py:44`); a backup restore swallows errors (`core/backups.py:316`); a read-only file is overwritten; Stop interrupts the active tab's kernel, not the busy one; settings types: a non-dict `languages` entry raises, "false" becomes True.
 - [ ] N2. Accessibility: `lang`, landmarks and an h1, tablist roles, the palette's accessible name, Tab out of the exec box, the empty-folder hint, ⌘O in a browser tab waits 1.5 s.
