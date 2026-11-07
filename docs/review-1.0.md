@@ -67,13 +67,13 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 
 ### Other packages
 - [ ] P1. Each kernel's inspector takes port 8000 (`kunda/pool.py:89`, `dhrishti/serving.py:46`); bind port 0. (kunda, dhrishti, S)
-- [ ] P2. `.kosha/` shows as untracked in the person's repo; write `.kosha/.gitignore` with `*`. (koshas, S)
+- [x] P2. `.kosha/` shows as untracked in the person's repo; write `.kosha/.gitignore` with `*`. (koshas, S)
 - [ ] P3. The thin first install downloads about 392 MB: claude-agent-sdk, playwright, patchright, jupyterlab and notebook through dockeasy, litert-lm-api, matplotlib. Move them to extras, after a test of Leela with none of them (an OpenRouter key, Ollama models). (dockeasy, fossick, rishi, safepyrun, leela, M)
-- [ ] P4. diskcache 5.6.3 has PYSEC-2026-2447 with no fix (fossick, uraiyadal). (S-M)
-- [ ] P5. html2text is GPL-3.0, through fossick; replace it, with fossick's own converter if it has one. (fossick, S)
+- [x] P4. diskcache 5.6.3 has PYSEC-2026-2447 with no fix (fossick, uraiyadal). (S-M)
+- [x] P5. html2text is GPL-3.0, through fossick; replace it, with fossick's own converter if it has one. (fossick, S)
 - [ ] P6. The thin launcher appends `server.log` for ever; 0.1.x has no log a person can send. (kavacha, S)
-- [ ] P7. The cask zap list misses `~/Library/Logs/Leela`. (homebrew-tap, S)
-- [ ] P8. `lee-cm6.js`, `lee-term.js` and htmx ship with no licence notice and no lockfile (`frontend/package.json`). (leela, S)
+- [x] P7. The cask zap list misses `~/Library/Logs/Leela`. (homebrew-tap, S)
+- [x] P8. `lee-cm6.js`, `lee-term.js` and htmx ship with no licence notice and no lockfile (`frontend/package.json`). (leela, S)
 
 ### Follow-ups from the fixes
 - [ ] F1. kunda keeps each run's whole stream text and grows it with `+=`; cap it in kunda. (kunda, S)
@@ -84,7 +84,7 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] F7. The FILES and TOOLS restore pills are bright boxes. (leela, S)
 - [ ] F8. The leela skill's approval-mode text needs one pass after the approval-gate batch merges. (leela, S)
 - [ ] F4. `/nb/language` saves with no disk-version check. (leela, S)
-- [ ] F9. Release gheasy 0.0.21 (`--end-of-options` for every caller ref) and raise Leela's pin; Leela's own ref check covers the hole until then. (gheasy, S)
+- [x] F9. Release gheasy 0.0.21 (`--end-of-options` for every caller ref) and raise Leela's pin; Leela's own ref check covers the hole until then. (gheasy, S)
 - [ ] F10. About 400 routes still take GET and POST; audit the rest for POST-only. (leela, M)
 - [ ] F11. ramabana writes probes to a fixed folder under its config home (`ramabana/core.py:103`); add `RAMABANA_PROBES` or put them beside `$RAMABANA_CONFIG`. Leela's tests patch `PROBE_DIR` for now. (ramabana, S)
 - [ ] F12. The first page spends about 1.4 s building the agent panel (`turn_move` model probes 0.83 s, a new conversation's prompt 0.55 s). (ramabana, leela, M)
