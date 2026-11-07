@@ -1,20 +1,24 @@
 "Whether a newer Leela is released, and the Homebrew step that installs it in the Mac app."
-# The modules a finished upgrade needs are imported here: `brew` replaces `python313.zip` under the running app.
+# Everything a run needs after `brew` replaces `python313.zip` under the running app is imported here, not later.
 import json, os, plistlib, shutil, signal, subprocess, sys, threading, time, urllib.request
 from fastcore.all import Path, first
 from fastcore.net import urljson
 from fastcore.xdg import xdg_data_home
+from packaging.version import InvalidVersion, Version
 from pullup.env import strip_bundle
+from .envs import _SHELL_ONLY, shell_env, stored_env
 from .. import __version__
 
-__all__ = ['REPO', 'RELEASES', 'RELEASE_PAGE', 'CASK', 'TTL', 'FRESH_TTL', 'latest_release', 'newer', 'app_bundle', 'brew_for',
-           'pending', 'offer', 'Upgrade', 'upgrade', 'upgrade_status', 'restart']
+__all__ = ['REPO', 'RELEASES', 'RELEASE_PAGE', 'CASK', 'TOKEN', 'TTL', 'FRESH_TTL', 'latest_release', 'newer', 'app_bundle', 'brew_for',
+           'pending', 'offer', 'log_path', 'Upgrade', 'upgrade', 'upgrade_status', 'restart']
 
 REPO = 'vedicreader/leela'
 RELEASES = f'https://api.github.com/repos/{REPO}/releases/latest'
 RELEASE_PAGE = f'https://github.com/{REPO}/releases/latest'
-CASK = 'leela'
-TTL = 6*3600
+#: Fully qualified: Homebrew's own `homebrew/cask` has a `leela`, a Go program, and a bare name loads that one.
+CASK = 'vedicreader/tap/leela'
+TOKEN = CASK.rsplit('/', 1)[1]
+TTL = 50*60  #: below the notice's hourly poll, so each poll asks GitHub
 FRESH_TTL = 30  #: a forced check still waits this long, for GitHub's 60 an hour
 
 def _cache(): return xdg_data_home()/'leela'/'release.json'
@@ -48,10 +52,12 @@ def latest_release(ttl=TTL, now=None):
 def newer(latest, current=__version__):
     "Whether `latest` is a later release than `current`, by the packaging rules and not by string."
     if not (latest and current): return False
-    try:
-        from packaging.version import Version
-        return Version(latest) > Version(current)
-    except Exception: return False
+    try: return Version(latest) > Version(current)
+    except (InvalidVersion, TypeError): return False
+
+def _key(v):
+    try: return Version(v)
+    except (InvalidVersion, TypeError): return Version('0')
 
 def app_bundle(exe=None, frozen=None, platform=sys.platform):
     "The `.app` this process runs from, or None outside a frozen Mac app."
@@ -60,8 +66,11 @@ def app_bundle(exe=None, frozen=None, platform=sys.platform):
 
 def brew_for(app):
     "The `brew` that installed `app` from the cask, or None."
-    if not app or not (b := shutil.which('brew')): return None
-    return b if (Path(b).parent.parent/'Caskroom'/CASK).is_dir() and Path(app).name == 'Leela.app' else None
+    if not app or not (b := shutil.which('brew')) or Path(app).name != 'Leela.app': return None
+    if not (room := Path(b).parent.parent/'Caskroom'/TOKEN).is_dir(): return None
+    try: tap = json.loads((room/'.metadata'/'INSTALL_RECEIPT.json').read_text())['source']['tap']
+    except (OSError, ValueError, KeyError, TypeError): tap = None
+    return b if tap in (None, CASK.rsplit('/', 1)[0]) else None
 
 def _version(app):
     try: return plistlib.loads((Path(app)/'Contents'/'Info.plist').read_bytes()).get('CFBundleShortVersionString')
@@ -72,9 +81,14 @@ def pending(app=None):
     v = _version(app) if (app := app or app_bundle()) else None
     return v if newer(v) else None
 
+_asked, _ask_lock = False, threading.Lock()
+
 def offer(rel=None, app=None, fresh=False):
     "What the notice offers: whether a newer release exists, and whether Leela can install it here. `fresh` asks GitHub now."
-    rel = latest_release(FRESH_TTL if fresh else TTL) if rel is None else rel
+    global _asked
+    if rel is None:
+        # The first check in each process goes past the cache: a start is when a person expects news.
+        with _ask_lock: rel, _asked = latest_release(FRESH_TTL if fresh or not _asked else TTL), True
     app = app_bundle() if app is None else app
     out = dict(current=__version__, latest=rel.get('version'), url=rel.get('url') or RELEASE_PAGE, outdated=newer(rel.get('version')),
                failed=bool(rel.get('failed') or not rel.get('version')), pending=pending(app) if app else None)
@@ -84,48 +98,104 @@ def offer(rel=None, app=None, fresh=False):
 _NO_FETCH = ('HOMEBREW_NO_AUTO_UPDATE', 'HOMEBREW_AUTO_UPDATING', 'HOMEBREW_UPDATE_AUTO', 'HOMEBREW_AUTO_UPDATE_CHECKED')
 #: `brew update-report` lines about other formulae, which mean nothing in Leela's bar.
 _NOISE = ('You have ', 'Run `brew', '==> Outdated', '==> New ')
-WAIT = 600
+#: What a Finder launch without a login shell still hands brew; `bin/brew` drops the rest.
+_KEEP = ('HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'PATH')
+_SYS_PATH = ('/usr/bin', '/bin', '/usr/sbin', '/sbin')
+_PROXY = {'http_proxy', 'https_proxy', 'ftp_proxy', 'no_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'FTP_PROXY', 'ALL_PROXY', 'NO_PROXY'}
+WAIT, LOG_MAX = 600, 1 << 20
+
+def log_path(): return Path.home()/'Library'/'Logs'/'Leela'/'update.log'
 
 def _killpg(pid):
     try: os.killpg(pid, signal.SIGKILL)
     except OSError: pass
 
+def _why(out, rc):
+    "The line that says why brew stopped: its first `Error:`, with the fix for a tap it does not trust."
+    err = first(l for l in out if l.startswith('Error:'))
+    if not err: return f'Homebrew stopped with exit code {rc}.'
+    if 'untrusted tap' in err: return f'{err} To trust it, run `brew trust --cask {CASK}` in Terminal, then try again.'
+    return err
+
 class Upgrade:
-    "One `brew upgrade --cask leela` in the background, with its state and last line. A child of the app, so the cask's `uninstall quit` skips it."
+    "One `brew upgrade --cask vedicreader/tap/leela` in the background, with its state and last line. A child of the app, so the cask's `uninstall quit` skips it."
     def __init__(self, app=None, brew=None, latest=None):
-        self.app, self.brew, self.latest, self.state, self.line, self.was = app, brew, latest, 'idle', '', None
-    def env(self):
-        "Homebrew's env with the tap fetch forced: its default fetches at most once a day, so a cask pushed today is not seen."
-        e = {k: v for k, v in os.environ.items() if k not in _NO_FETCH}
-        return strip_bundle(e | dict.fromkeys(('HOMEBREW_NO_ENV_HINTS', 'HOMEBREW_NO_COLOR', 'HOMEBREW_NO_EMOJI', 'NONINTERACTIVE'), '1') | {'HOMEBREW_AUTO_UPDATE_SECS': '0'})
+        self.app, self.brew, self.latest, self.state, self.line, self.was, self.out, self._env = app, brew, latest, 'idle', '', None, [], None
+    def env(self, login=None):
+        "A Terminal's env for brew, not the app's, with the tap fetch forced: its default fetches at most once a day."
+        login = shell_env(timeout=8) if login is None else login
+        e = {k: v for k, v in login.items() if k not in _SHELL_ONLY} if login else {k: os.environ[k] for k in _KEEP if os.environ.get(k)}
+        # Only proxy and Homebrew values typed into Leela; its PYTHON*, SSL_CERT_FILE, GIT_* and XDG_CONFIG_HOME stay out.
+        e |= {k: v for k, v in stored_env().items() if v and (k in _PROXY or k.startswith('HOMEBREW_'))}
+        e = {k: v for k, v in e.items() if k not in _NO_FETCH}
+        e['PATH'] = os.pathsep.join(dict.fromkeys([*filter(None, e.get('PATH', '').split(os.pathsep)), str(Path(self.brew or '/opt/homebrew/bin/brew').parent), *_SYS_PATH]))
+        return strip_bundle(e | dict.fromkeys(('HOMEBREW_NO_ENV_HINTS', 'HOMEBREW_NO_COLOR', 'HOMEBREW_NO_EMOJI', 'NONINTERACTIVE'), '1') | {'HOMEBREW_AUTO_UPDATE_SECS': '0'}, frozen=True)
     def start(self):
-        if self.state == 'running': return self.status()
+        if self.state in ('running', 'done'): return self.status()
         if (v := pending(self.app)): self.state, self.line = 'done', f'Leela {v} is installed.'; return self.status()
-        self.was, self.state, self.line = _version(self.app), 'running', 'Homebrew is getting the newest list of apps…'
+        self.was, self.state, self.line = self._now(), 'running', 'Homebrew is getting the newest list of apps…'
         threading.Thread(target=self._run, daemon=True, name='leela-upgrade').start()
         return self.status()
-    def _brew(self, *args):
-        "Run brew with `args`, the last useful line into `line`; its exit code, or None when it did not start."
+    def _now(self):
+        "The newest Leela on disk: the app's own plist, or the cask's newest version folder for an app that moved."
+        room = Path(self.brew).parent.parent/'Caskroom'/TOKEN if self.brew else None
+        vs = [v for v in (_version(self.app), *(d.name for d in (room.iterdir() if room and room.is_dir() else ()) if not d.name.startswith('.'))) if v]
+        return max(vs, key=_key, default=None)
+    def _log(self, text):
+        try:
+            (p := log_path()).parent.mkdir(parents=True, exist_ok=True)
+            with p.open('a', encoding='utf-8') as f: f.write(text)
+        except OSError: pass
+    def _brew(self, *args, show=True):
+        "Run brew with `args`, all its output into `out` and the log, the last useful line into `line`; its exit code, or None when it did not start."
+        self.out, timed = [], False
+        self._log(f'\n$ brew {" ".join(args)}  ({time.strftime("%Y-%m-%d %H:%M:%S")})\n')
         # Its own session, so a quit mid-swap does not signal it; still this process's child, which is what the cask checks.
         try: p = subprocess.Popen([self.brew, *args], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, text=True, env=self.env(), start_new_session=True)
-        except OSError as e: self.line = str(e); return None
+                                  stderr=subprocess.STDOUT, text=True, env=self._env, start_new_session=True)
+        except OSError as e: self.line = str(e); self.out = [f'Error: {e}']; self._log(f'{e}\n'); return None
         # The whole group: brew's git children hold the pipe open past brew itself.
         (t := threading.Timer(WAIT, _killpg, (p.pid,))).start()
         try:
             for l in p.stdout:
-                if (l := l.strip()) and not l.startswith(_NOISE): self.line = l
-            return p.wait()
+                self._log(l)
+                if not (l := l.strip()): continue
+                self.out.append(l)
+                if show and not l.startswith(_NOISE): self.line = l
+            rc = p.wait()
         finally:
-            if not t.is_alive(): self.line = f'Homebrew did not answer in {WAIT//60} minutes.'
+            if not t.is_alive(): timed, self.line = True, f'Homebrew did not answer in {WAIT//60} minutes.'
             t.cancel()
+        self._log(f'exit {rc}{" (stopped: no answer)" if timed else ""}\n')
+        if timed: self.out.insert(0, f'Error: {self.line}')
+        return rc
+    def _listed(self):
+        "The version Homebrew lists for the cask, or None with `out` holding why."
+        if self._brew('info', '--cask', '--json=v2', CASK, show=False) != 0: return None
+        text = '\n'.join(self.out)
+        try: return json.JSONDecoder().raw_decode(text[text.index('{'):])[0]['casks'][0]['version']
+        except (ValueError, KeyError, IndexError, TypeError): self.out.append('Error: Homebrew did not list the Leela cask.'); return None
+    def _fail(self, rc): self.state, self.line = 'error', f'{_why(self.out, rc)} The log is {log_path()}.'
     def _run(self):
-        rc = self._brew('upgrade', '--cask', CASK)
-        # A brew.env setting can still skip the fetch; `brew update` ignores it, so one more try after it.
-        if rc == 0 and _version(self.app) == self.was and newer(self.latest, self.was) and self._brew('update') == 0: rc = self._brew('upgrade', '--cask', CASK)
-        if rc != 0: self.state = 'error'
-        elif _version(self.app) != self.was: self.state, self.line = 'done', f'Leela {_version(self.app)} is installed.'
+        try:
+            if (p := log_path()).stat().st_size > LOG_MAX: p.unlink()
+        except OSError: pass
+        self._env = self.env()
+        if (rc := self._brew('upgrade', '--cask', CASK)) != 0: return self._fail(rc)
+        if self._changed(): return
+        # A brew.env setting can still skip the fetch; `brew update` ignores it. Another tap failing it does not stop the retry.
+        urc, uout = self._brew('update'), self.out
+        if (rc := self._brew('upgrade', '--cask', CASK)) != 0: return self._fail(rc)
+        if self._changed(): return
+        skipped = first(l for l in self.out if 'Not upgrading' in l)
+        if urc != 0: self.out = uout; return self._fail(urc)
+        if (v := self._listed()) is None: return self._fail(1)
+        if newer(v, self.was): self.state, self.line = 'error', f'Homebrew lists Leela {v}, but did not install it: {skipped or "no reason given"}. The log is {log_path()}.'
         else: self.state, self.line = 'same', f'Homebrew does not list Leela {self.latest or "the new version"} yet. Try again in a few minutes.'
+    def _changed(self):
+        if not newer(v := self._now(), self.was): return False
+        self.state, self.line = 'done', f'Leela {v} is installed.'
+        return True
     def status(self): return dict(state=self.state, line=self.line)
 
 _job, _lock = None, threading.Lock()
