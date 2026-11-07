@@ -273,7 +273,7 @@ def _git_pill_branch(ws):
     except Exception: return 'git …', 'pending'
 
 #: The toolbar's actions, as the header shows them; the keymap and the menus keep their own words.
-TOOLBAR = {'run_cell': 'Run', 'run_advance': 'Next', 'run_file': 'File', 'run_selection': 'Selection',
+TOOLBAR = {'run_cell': 'Run', 'run_advance': 'Next', 'run_file': 'Run file', 'run_selection': 'Selection',
            'interrupt': 'Stop', 'present_notebook': 'Present'}
 
 def _header(ws):
