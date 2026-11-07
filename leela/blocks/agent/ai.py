@@ -456,7 +456,8 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         self.ws.fs._fixed(p := self.check_write(path), 'deleted')
         p.unlink(missing_ok=True)
     def text_at(self, path):
-        _, nb, _ = self._held(path) if str(path).endswith('.ipynb') else (None, None, None)
+        try: _, nb, _ = self._held(self.check(path, reading=True)) if str(path).endswith('.ipynb') else (None, None, None)
+        except Exception: nb = None
         return nb.source_text() if nb is not None else self.ws.text_at(path)
     def search(self, query, limit=20): return self.ws.search.agent_search(query, limit=limit)
     def search_blend(self, query, limit=20, legs=None):
