@@ -50,6 +50,19 @@ def test_the_palette_names_come_from_the_shipped_bundle():
     from leela.blocks.agent.skill import _palette_extras
     assert _palette_extras() == _palette_names()
 
+def test_the_palette_scan_fails_loudly_when_it_finds_nothing():
+    "It returned an empty list when `palette()` moved, and the skill dropped the palette commands with no sign."
+    from leela.blocks.agent.skill import _palette_extras
+    for js in ('no palette here', 'function palette() { const cmds = []; }', 'const cmds = 1; function palette() { name: "x" }'):
+        with pytest.raises(LookupError): _palette_extras(js)
+    assert _palette_extras("function palette() { [{name: 'Agent: a'}, {name: \"b\"}]; const cmds") == ['Agent: a', 'b']
+
+def test_the_skill_says_what_each_approval_mode_lets_through_and_covers_settings_venv_and_updates(ai):
+    t = _text(ai)
+    for s in ('Guided runs reads and stops before each write', 'Directed stops before every call', 'Edits runs file and notebook edits',
+              'Autopilot stops for nothing', '`.leela/settings.json`', 'Set up .venv', 'uv tool upgrade leela', 'check for updates'):
+        assert s in t, s
+
 def test_every_tool_leela_can_offer_is_named_and_the_hidden_one_is_not(ai):
     from shalya.tools import tool_groups
     from leela.blocks.agent.ai import HIDDEN

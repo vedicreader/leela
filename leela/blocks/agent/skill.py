@@ -24,8 +24,12 @@ FEATURES = (
      'Write the `.gitignore` rules that the folder needs, then stage it. The file tree colours each file by its git state.'),
     ('Live variables', ('focus_vars', 'switch_env'),
      'See every name in the kernel while a cell runs. Start the filter with `=` to evaluate an expression.'),
+    # TODO(approval-gate): the worktree leela-gate changes what each mode lets through. Rewrite these four sentences from that branch when it is on main.
     ('The agent', ('focus_agent', 'agent_selection', 'ask_ai'),
-     'Ask a local or cloud model to read, change, run and test code. Each tool call is a card: approve, reject with steering, retry or roll back. The pane control sets the mode: guided, directed, edits or autopilot.'),
+     'Ask a local or cloud model to read, change, run and test code. Each tool call is a card: approve, reject with steering, retry or roll back. '
+     'The pane control sets the mode. Guided runs reads and stops before each write, command, kernel run and web call. Directed stops before every call. '
+     'Edits runs file and notebook edits with no stop, and stops before other writes. Autopilot stops for nothing, except the third same call in a row, '
+     'a question only a person can answer, and a host policy that asks. Stop and Pause after current work in every mode.'),
     ('Lessons from abhyasa', ('new_lesson', 'Open in Leela in abhyasa', '`alt+s` checks the exercise at the cursor'),
      'Learn a topic step by step. A lesson runs in its own uv environment. The agent grades a checked exercise from 0 to 10.'),
     ('The screen guide', ('the I don\'t get… button on a lesson cell',),
@@ -48,6 +52,12 @@ FEATURES = (
      'Start a run configuration under an inspector and watch its variables while it runs.'),
     ('Opening a project without a command line', ('open_folder', 'add_root', 'Open With > Leela in Finder'),
      'Open a folder or a file from the welcome screen, the folder chooser, or the Dock. Leela remembers the open folders.'),
+    ('Project settings', ('settings', '`.leela/settings.json`'),
+     'Settings has a user file and a project file. `.leela/settings.json` in the project folder overrides the user file, key by key. Save to in Settings picks the file a change goes to.'),
+    ('The venv notice', ('Set up .venv in the notice above the editor',),
+     'A Python project with no environment runs no code until you choose. Set up .venv makes `.venv` with uv and installs only the kernel support. Choose interpreter… opens the kernel picker. Not now hides the notice.'),
+    ('Updates', ('check_updates', 'setup_models'),
+     'The Mac app checks for a new release at start and each hour. Update installs it with Homebrew; Restart Leela opens the new version. A Leela installed with `uv tool install` updates with `uv tool upgrade leela`.'),
     ('Terminal and debugger', ('terminal', 'the Debug menu'),
      'Open terminals in the bottom pane. Debug a file with breakpoints and step controls.'),
     ('Refactoring', ('rename_symbol', 'extract_variable', 'extract_method', 'move_symbol', 'replace_workspace'),
@@ -72,12 +82,13 @@ def _label(r):
     if getattr(r, 'action', None): return _key(r.action)
     return getattr(r, 'title', '') or ''
 
-def _palette_extras():
-    "Names of the palette commands that are not keymap rows, read from the shipped bundle."
-    js = (Path(__file__).parents[2]/'static'/'lee-ide.js').read_text(encoding='utf-8')
-    if (i := js.find('function palette()')) < 0: return []
-    body = js[i:js.index('const cmds', i)]
-    return [m[2] for m in re.finditer(r"""name:\s*(['"])(.*?)\1""", body)]
+def _palette_extras(js=None):
+    "Names of the palette commands that are not keymap rows, read from the shipped bundle. Raises `LookupError` when it finds none."
+    js = js or (Path(__file__).parents[2]/'static'/'lee-ide.js').read_text(encoding='utf-8')
+    i = js.find('function palette()'); j = js.find('const cmds', max(i, 0))
+    names = [m[2] for m in re.finditer(r"""name:\s*(['"])(.*?)\1""", js[i:j])] if 0 <= i < j else []
+    if not names: raise LookupError('no palette commands in lee-ide.js: `palette()` or its `const cmds` moved')
+    return names
 
 def _code(c): return f'`` {c} ``' if '`' in c else f'`{c}`'
 SEP = ' · '   # labels hold commas
@@ -121,14 +132,14 @@ def leela_skill(ai=None):
     for scope, rows in K.help_rows().items():
         if scope == 'present': rows = [(' / '.join(c.split()), l) for c, l in rows]
         else: rows = [(K.chord_display(k), k.label) for k in K.by_scope(scope) if k.label and k.action not in seen]
-        if rows: out.append(f'- **{scope}**: ' + SEP.join(l + (f' {_code(c)}' if c and c != '—' else '') for c, l in rows) + '\n')
+        if rows: out.append(f'- **{scope}**: ' + SEP.join(l + (f' {_code(c)}' if c and c != '–' else '') for c, l in rows) + '\n')
     if ex := _palette_extras(): out.append('- **palette only**: ' + SEP.join(ex) + '\n')
     cmds = list(ai.commands()) if ai is not None else list(COMMAND_HELP)
     reg = {n: h for n, (_, h) in ai.registry.commands.items()} if ai is not None else {}
     out.append('\n## Slash commands in the agent prompt\n\n' + ', '.join(
         f'`/{n}`' + (f' ({h})' if (h := reg.get(n) or COMMAND_HELP.get(n) or PAGE_COMMANDS.get(n)) else '')
         for n in sorted({*cmds, *PAGE_COMMANDS})) + '\n')
-    out.append(f'\n## Settings ({_key("settings")})\n\nUser settings, and per-project ones in `.leela/settings.json`. Sections and their keys:\n')
+    out.append(f'\n## Settings ({_key("settings")})\n\nThe user file, and per project `.leela/settings.json`, which overrides it key by key. Sections and their keys:\n')
     for sec, d in DEFAULT_SETTINGS.items(): out.append(f'- **{sec}**: ' + ', '.join(d) + '\n')
     if ai is not None: out.append('\n## Agent tools\n\n' + _tools(ai))
     return ''.join(out)
