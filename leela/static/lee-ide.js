@@ -896,6 +896,7 @@ async function editorSettings(languageScope = null) {
     `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
     `<span data-settings-target></span><span data-settings-path>${esc(lee.settingsMeta?.paths?.user || '')}</span></div>` +
     `<div class="lee-settings-shadow" data-settings-shadow hidden></div>` +
+    (lee.settingsMeta?.ignored?.length ? `<div class="lee-settings-shadow" data-settings-ignored>This project's settings file sets ${esc(lee.settingsMeta.ignored.join(', '))}. Leela ignores these values: only your user settings choose the shell and the agent's folder.</div>` : '') +
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
@@ -2272,7 +2273,8 @@ async function envOp(op, extra) {
     if (d.results) {
       const failed = d.results.filter(r => r.ok === false).length;
       status(`pushed ${d.results.filter(r => r.ok && !r.skipped).length} · skipped ${d.results.filter(r => r.skipped).length} · failed ${failed}`, failed ? 'err' : 'ok');
-    } else status(`${extra.key} ${op === 'unset' ? 'removed' : 'saved'}`, 'ok');
+    } else if (op === 'set' && d.file && !d.keychain) status(`${extra.key} saved in ${d.file}, which only you can read: this computer has no keychain`, 'err');
+    else status(`${extra.key} ${op === 'unset' ? 'removed' : 'saved'}`, 'ok');
     renderWorkflowsPanel();
   } catch (e) { status(e.message || String(e), 'err'); }
 }

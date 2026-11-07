@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio, errno, os, pty, secrets, shlex, shutil, signal, subprocess, sys, termios, time
 from fastcore.all import Path, L, first, store_attr
 from fastcore.xtras import clean_cli_output
+from ...core.envs import strip_keys
 
 __all__ = ['Pty', 'Terminals', 'TerminalGate', 'lazygit_argv', 'gh_auth_argv', 'ToolMissing',
            'LazygitMissing', 'NoPython', 'own_python', 'bundle_env', 'default_shell', 'path_prelude', 'shell_argv',
@@ -240,6 +241,7 @@ class Pty:
         if env.get('TERM', '') in ('', 'dumb'): env['TERM'] = 'xterm-256color'
         if not env.get('COLORTERM'): env['COLORTERM'] = 'truecolor'   # xterm.js draws 24-bit colour
         env.pop('PYTHONSTARTUP', None)
+        strip_keys(env)
         self.sess = PtySession(self.argv, cwd=self.cwd, env=env, rows=self.rows, cols=self.cols,
                                buffer_bytes=RING, keep_bundle=self.keep_bundle)
         self.pid = self.sess.pid

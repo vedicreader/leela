@@ -177,15 +177,37 @@ class Creds:
         return {k: v for k, v in parse_headers(text).items() if k in set(names)}
     def get(self, name): return self._read(name, self.keyed().get(name, ()))
     def all(self): return {name: self._read(name, names) for name, names in self.keyed().items()}
+    def _file(self):
+        from dockeasy.core import FASTOPS_ENV
+        return Path(self.store.path or FASTOPS_ENV)
+    def _keep(self, key, text):
+        "Store one key: the keychain only, and a copy an older Leela left in the env file goes; with no keychain, the 0600 file, and `note` says so."
+        went = self.store.set(key, text)
+        if went.get('keychain'):
+            from dotenv import unset_key
+            if self._file().exists(): unset_key(str(self._file()), key)
+        elif went.get('file'): self.note = f"This computer has no keychain, so the key is in {went['file']}, which only you can read."
+        return went
+    def migrate(self):
+        "Move each key an older Leela wrote to the env file into the keychain. Returns the names moved."
+        from dotenv import dotenv_values
+        if not self._file().exists(): return []
+        old = dotenv_values(self._file())
+        moved = [k for k in map(cred_key, self.keyed()) if old.get(k) and self._keep(k, old[k]).get('keychain')]
+        if self._file().exists(): self._file().chmod(0o600)
+        return moved
     def set(self, name, headers, reach=None):
         "Keep one spec's headers, and who may call it; neither forgets it. `reach=None` leaves it."
         name = str(name or '').strip()
         if not name: raise ValueError('name which api the key belongs to')
-        rows, headers = self.policies(), dict(headers or {})
+        rows, headers, self.note = self.policies(), dict(headers or {}), ''
         try:
-            if headers: self.store.set(cred_key(name), '\n'.join(f'{k}: {v}' for k, v in headers.items()))
+            if headers: self._keep(cred_key(name), '\n'.join(f'{k}: {v}' for k, v in headers.items()))
             else: self.store.unset(cred_key(name))
         except Exception as e: self.note = errstr(e)
+        finally:
+            from ...core.envs import strip_keys
+            strip_keys()
         row = _policy(dict(headers=list(headers), refs=env_vars(headers)),
                       reach=reach or rows.get(name, {}).get('reach'))
         if row['headers'] or row['reach'] != 'cloud': rows[name] = row

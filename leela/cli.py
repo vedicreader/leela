@@ -79,6 +79,11 @@ def main(argv=None):
     # machine where asking the shell gives the wrong one.
     from .core.envs import apply_stored_env
     apply_stored_env()
+    # API keys an older Leela put in the fastops env file move to the keychain
+    try:
+        from .blocks.vault.spec import CREDS
+        CREDS.migrate()
+    except Exception as e: print(f'  API keys not moved to the keychain: {e}')
     roots = [os.path.abspath(f) for f in a.folders]
     for r in roots:
         if not os.path.isdir(r): p.error(f'not a directory: {r}')
