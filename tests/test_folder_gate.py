@@ -323,6 +323,22 @@ def test_no_route_takes_a_request_from_a_page_on_another_local_port():
     assert _guard('GET', {}, '/health') == 'passed', 'no header: not a browser'
     assert _guard('GET', {'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}, '/learn') == 'passed', 'the abhyasa handoff'
 
+def test_in_the_mac_app_only_a_sibling_workspace_port_is_same_site(monkeypatch):
+    "Each thin-app workspace is its own 127.0.0.1:<port>, so a move between two is same-site; a page on any other port stays refused."
+    from leela.core import host
+    h = WorkspaceHub([], 5011); h.ports['beta'] = 5012
+    nav = {'sec-fetch-site': 'same-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}
+    assert _guard('GET', {**nav, 'referer': 'http://127.0.0.1:5012/'}, '/') == 421, 'the old app keeps main\'s rule'
+    monkeypatch.setattr(host, 'on', lambda: True)
+    assert _guard('GET', {**nav, 'referer': 'http://127.0.0.1:5012/'}, '/') == 'passed'
+    assert _guard('GET', {**nav, 'origin': 'http://127.0.0.1:5012'}, '/') == 'passed'
+    assert _guard('GET', {**nav, 'referer': 'http://127.0.0.1:3000/'}, '/dev/start') == 421, 'a page on a port Leela does not serve'
+    assert _guard('GET', nav, '/dev/start') == 421, 'no Origin or Referer: no proof of a sibling'
+    assert _guard('GET', {**nav, 'referer': 'http://localhost:5012/'}, '/') == 421, 'only the address the workspaces use'
+    assert _guard('GET', {**nav, 'referer': 'http://127.0.0.1:5012/', 'host': '127.0.0.1:5013'}, '/') == 421, 'nor to a port no workspace has'
+    assert _guard('POST', {'sec-fetch-site': 'same-site', 'origin': 'http://127.0.0.1:5012'}, '/tab/close') == 403, 'a change from a sibling stays refused'
+    del h
+
 def test_a_state_change_takes_only_a_post():
     "A GET to these routes changed state; a typed address or an `<img>` reached them."
     with TestClient(ide_app(Workspace(roots=[]))) as c:

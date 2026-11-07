@@ -9,7 +9,7 @@ from pathlib import Path
 
 __all__ = ['WorkspaceSite', 'WorkspaceHub', 'LoopbackHostGuard', 'learn_navigation', 'OPEN_PATH', 'workspace_slug',
            'workspace_slugs', 'assign_slugs', 'GO_PATH', 'cfg_mark', 'slug_map', 'save_slug_map', 'workspace_urls',
-           'NoWindow', 'set_confirmer', 'grant', 'declined', 'admit_folder', 'window_name', 'reset_gate']
+           'NoWindow', 'set_confirmer', 'grant', 'declined', 'admit_folder', 'window_name', 'reset_gate', 'site_ports', 'sibling_site']
 
 LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
@@ -271,6 +271,24 @@ def learn_navigation(scope, headers) -> bool:
     return (scope.get('method') == 'GET' and scope.get('path') == '/learn'
             and h(b'sec-fetch-mode') == 'navigate' and h(b'sec-fetch-dest') == 'document')
 
+def site_ports():
+    "Every port this server's workspaces answer on: each hub's main port and its sites' own."
+    return {p for h in list(_hubs) for p in (h.port, *h.ports.values())}
+
+def _site_port(raw):
+    "The port of `raw` (a URL or a Host header) when it is a 127.0.0.1-style loopback address of one of this server's workspaces, else None."
+    u = urlsplit(raw if '//' in raw else f'//{raw}')
+    try: port = u.port
+    except ValueError: return None
+    return port if _name(u.hostname) in ('127.0.0.1', '::1') and port in site_ports() else None
+
+def sibling_site(headers) -> bool:
+    "In the Mac app, a `same-site` request from one workspace's port to another's: each is its own `127.0.0.1:<port>`, so moving between them is same-site."
+    from .core import host
+    if not host.on(): return False
+    src = headers.get(b'origin', b'').decode() or headers.get(b'referer', b'').decode()
+    return bool(src) and _site_port(src) is not None and _site_port(headers.get(b'host', b'').decode()) is not None
+
 class LoopbackHostGuard:
     "Reject DNS-rebinding and forwarded Host headers before they reach executable routes."
     def __init__(self, app): self.app = app
@@ -284,7 +302,7 @@ class LoopbackHostGuard:
         # a page with `Referrer-Policy: no-referrer` posts to itself with `Origin: null`
         origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost') or (origin == 'null' and site == 'same-origin')
         # `same-site` is a page on another local port: 127.0.0.1:3000 and 127.0.0.1:5001 are one site
-        browser_ok = site in ('', 'same-origin', 'none') or learn_navigation(scope, headers)
+        browser_ok = site in ('', 'same-origin', 'none') or learn_navigation(scope, headers) or (site == 'same-site' and sibling_site(headers))
         if not (allowed and origin_ok and browser_ok): return await _refuse(scope, send, 'invalid Host header')
         # as abhyasa's `LocalOnly`: a change, or a socket, from a page on another port is another site's
         changes = scope.get('type') == 'websocket' or scope.get('method', 'GET') not in SAFE_METHODS
