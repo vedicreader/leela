@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import ast, asyncio, ipaddress, json, os, re, sys, time, uuid, warnings
-from itertools import accumulate, count
+from itertools import accumulate, count, repeat
 from fasthtml.common import *
 from starlette.middleware import Middleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -1360,7 +1360,11 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
                 catalog=workspace_catalog)
     return app
 
-def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_port=8400,
+def _pool_ports(base=0):
+    "Each workspace's inspector port: 0 for all lets the OS choose, so no kernel takes a port a person wants."
+    return count(base, 100) if base else repeat(0)
+
+def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_port=0,
               open_ws=True, kernel='ipykernel',
               model=None, approvals='ask', agent_scope='overlay', python=None,
               app_window=False, cdp_port=9223, transport='auto', gateway_port=8787,
@@ -1393,7 +1397,7 @@ def serve_ide(roots=(), port=PORT, host='127.0.0.1', agent='restricted', kernel_
     broker = RuntimeBroker()   # every shape gets the ceiling
     from .core.projects import loose_root, now_serving, served
     hub = None
-    pool_ports = count(kernel_port, 100)
+    pool_ports = _pool_ports(kernel_port)
     def site_for_root(root, slug):
         "One independent workspace: its own state file, its own kernel pool, its own window."
         state = leela_cfg/'workspaces'/f'{slug}.json'

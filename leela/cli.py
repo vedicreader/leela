@@ -18,7 +18,7 @@ def main(argv=None):
                         'app runs), or none. The inline browser uses the CDP Chrome either way.')
     p.add_argument('--port', type=int, default=PORT, help=f'web IDE port (default: {PORT})')
     p.add_argument('--host', default='127.0.0.1', help='web IDE host (default: 127.0.0.1)')
-    p.add_argument('--kernel-port', type=int, default=8400, help='base port for kernel inspectors')
+    p.add_argument('--kernel-port', type=int, default=0, help='base port for kernel inspectors; 0 lets the OS choose')
     p.add_argument('--transport', choices=['auto', 'direct', 'gateway'], default='auto',
                    help='kernel transport; auto uses the shared gateway for app windows')
     p.add_argument('--gateway-port', type=int, default=8787,

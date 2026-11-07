@@ -13,6 +13,7 @@ Needs kavacha 0.0.16 and Sanketa 0.2.7.
 - The agent has a `leela` skill: what Leela can do and where, with the menus, keys, panes, settings, slash commands and tools. It is built from the app, so it shows your own keys. A local model on the auto profile does not see skills; set the profile to full for a large local model.
 - Signing retries when Apple's timestamp server does not answer (kavacha 0.0.16).
 - Security: oauthlib 4.0.1, tornado 6.6 and setuptools 84.2.1.
+- A kernel's inspector asks the OS for a free port. Before, it took 8400 or the next free port, so a person's own server on that port could not start. `--kernel-port` still sets a fixed start port.
 
 ## 0.1.26
 

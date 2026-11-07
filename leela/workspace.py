@@ -244,7 +244,7 @@ def _venv_version(py):
 
 class Workspace:
     "The IDE's session: open folders, open tabs, and the kernels behind them."
-    def __init__(self, roots=(), port=8000, agent='restricted', dev_port=9000, kernel='ipykernel',
+    def __init__(self, roots=(), port=0, agent='restricted', dev_port=9000, kernel='ipykernel',
                  model=None,
                  inline_model=None,
                  completion_model=None,
@@ -1526,7 +1526,7 @@ class Workspace:
             except OSError: pass
         return p
     @classmethod
-    def load(cls, path=None, port=8000, agent='restricted', kernel='ipykernel',
+    def load(cls, path=None, port=0, agent='restricted', kernel='ipykernel',
              model=None, inline_model=None, completion_model=None, local_multimodal=None,
              kernels_auto_manage=None,
              litert_backend=None,

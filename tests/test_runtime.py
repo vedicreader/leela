@@ -829,3 +829,32 @@ def _made(monkeypatch):
     def fake(root, python=None): made.append(Path(root)); return str(_venv(Path(root)))
     monkeypatch.setattr(ks, 'make_venv', fake)
     return made
+
+def test_each_workspace_pool_asks_the_os_for_its_inspector_port():
+    "Pools took 8400, 8500, ... so each kernel's inspector sat on a fixed port a person may want."
+    from itertools import islice
+    from leela.app import _pool_ports
+    assert list(islice(_pool_ports(), 3)) == [0, 0, 0]
+    assert list(islice(_pool_ports(8400), 2)) == [8400, 8500], 'an explicit --kernel-port keeps its ladder'
+    assert Workspace().pool.port == 0
+
+def _first_free(start=8000):
+    import socket
+    for p in range(start, start+50):
+        with socket.socket() as s:
+            try: s.bind(('127.0.0.1', p)); return p
+            except OSError: continue
+
+@pytest.mark.slow
+def test_a_server_on_8000_still_starts_while_a_kernel_runs(tmp_path):
+    "The inspector took the first free port from 8000, so a person's own server there failed to bind."
+    import socket
+    want, ws = _first_free(), Workspace(roots=[tmp_path])
+    async def go():
+        k = await ws.pool.get('p1', cwd=str(tmp_path))
+        try:
+            assert k.base, k.boot_error
+            with socket.socket() as s: s.bind(('127.0.0.1', want)); s.listen()
+            return int(k.base.rsplit(':', 1)[-1])
+        finally: await ws.pool.close_all()
+    assert asyncio.run(go()) != want

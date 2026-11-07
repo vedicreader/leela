@@ -239,17 +239,6 @@ def _private_cdp_chrome(monkeypatch, tmp_path_factory):
         init(self, port, headless, profile)
     monkeypatch.setattr(B.Browser, '__init__', own)
 
-#: Where this worker's kernels start looking for an inspector port. From 8000, every worker and a person's running Leela raced for the same
-#: port, and a kernel that lost the race waited on its inspector's bootstrap. dhrishti tries 50 ports from here.
-_INSPECTOR_PORT = 20000 + 100*int(_os.environ.get('PYTEST_XDIST_WORKER', 'gw-1')[2:]) + 100
-
-@pytest.fixture(autouse=True)
-def _own_inspector_ports(monkeypatch):
-    """A kernel pool asked for port 8000 starts its inspectors in this worker's own range; a test naming another port keeps it."""
-    init = KernelPool.__init__
-    def own(self, port=8000, *a, **kw): init(self, _INSPECTOR_PORT if int(port) == 8000 else port, *a, **kw)
-    monkeypatch.setattr(KernelPool, '__init__', own)
-
 @pytest.fixture(autouse=True)
 def _sessions_off_the_repo(tmp_path_factory):
     """No test writes an agent transcript into the checked-out repository."""

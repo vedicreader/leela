@@ -88,7 +88,7 @@ def find_pythons(roots=(), current=None):
     "Interpreters a kernel could be launched under, this one among them."
     return _find_pythons(roots, current, 'this one (leela’s own)')
 
-def bootstrap_src(name=None, port=8000, agent='restricted', token=True, kernel='ipykernel'):
+def bootstrap_src(name=None, port=0, agent='restricted', token=True, kernel='ipykernel'):
     "The bootstrap cell source for a kernel that should host an inspector."
     return _bootstrap_src(name, port, agent, token, SESSIONS, AGENT_SESSIONS)
 
@@ -106,7 +106,7 @@ def _spec(python=None, name='python3', kernel='ipykernel', lang='python'):
 
 class KernelPool(_KernelPool):
     "The IDE's kernels: Leela's language registry, and its own runners where no kernel is installed."
-    def __init__(self, port=8000, default_kernel='ipykernel', default_python=None, broker=None,
+    def __init__(self, port=0, default_kernel='ipykernel', default_python=None, broker=None,
         transport='direct', gateway=None, idle=None):
         from .runners import runner_for
         super().__init__(port, default_kernel, default_python, broker, transport, gateway, idle,
