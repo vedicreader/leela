@@ -1763,8 +1763,10 @@ def test_the_git_panel_follows_its_own_repository_and_the_disk(tmp_path):
 def test_check_for_updates_answers_and_the_dialog_updates_through_brew(monkeypatch, tmp_path):
     "No way back to Update after the notice: the menu row re-checks past the cache and 'Not now', and the dialog runs the same brew step."
     from leela.core import update as U
-    from tests.test_update import _app, _logging_brew
-    app = _app(tmp_path); b, log = _logging_brew(tmp_path, app, bump=True)
+    from tests.test_update import _app, _fake, BUMP
+    app = _app(tmp_path); b, log = _fake(tmp_path, upgrade=BUMP)
+    monkeypatch.setattr(U, 'shell_env', lambda **kw: {'HOME': str(tmp_path), 'PATH': str(b.parent)}); monkeypatch.setattr(U, 'stored_env', lambda: {})
+    monkeypatch.setattr(U, 'log_path', lambda: tmp_path/'update.log')
     rel = {'version': U.__version__, 'url': 'https://x/r'}
     monkeypatch.setattr(U, 'latest_release', lambda ttl=U.TTL: dict(rel))
     monkeypatch.setattr(U, 'app_bundle', lambda *a, **kw: app); monkeypatch.setattr(U, '_job', None)
@@ -1781,6 +1783,10 @@ def test_check_for_updates_answers_and_the_dialog_updates_through_brew(monkeypat
         await pg.evaluate("() => leeAct('check_updates')"); out['offline'] = await said(pg, 'could not check')
         rel.update(failed=False, version='99.0')
         await pg.evaluate("() => leeAct('check_updates')"); out['newer'] = await said(pg, 'is available')
+        await pg.click('#leeupdate button:has-text("Not now")')
+        await pg.evaluate("() => leeUpdateNotice()"); out['later'] = await pg.evaluate(bar)
+        await pg.evaluate("() => sessionStorage.setItem('lee-update-later', '98.0')")
+        await pg.evaluate("() => leeUpdateNotice()"); out['older_later'] = await said(pg, 'is available')
         await pg.evaluate("() => leeAct('setup_models')")
         await pg.wait_for_selector('.lee-setup-modal [data-leela-update]')
         out['row'] = await pg.inner_text('.lee-setup-modal [data-leela-update]')
@@ -1793,6 +1799,8 @@ def test_check_for_updates_answers_and_the_dialog_updates_through_brew(monkeypat
     assert f'Leela is up to date ({U.__version__}).' in got['same']
     assert 'Try again' in got['offline']
     assert 'Leela 99.0 is available' in got['newer'] and 'Update' in got['newer'], 'past "Not now"'
+    assert got['later'] == '', '"Not now" hides 99.0'
+    assert 'Leela 99.0 is available' in got['older_later'], 'a "Not now" for an older version does not hide a newer one'
     assert got['row'] == 'update' and not got['modal']
     assert 'Leela 99.0 is installed. Restart now to use it.' in got['done'] and 'Restart Leela' in got['done']
     assert 'Restart Leela' in got['again'] and log.read_text().count('args ') == 1, 'a check after the run offers Restart, not a second brew'

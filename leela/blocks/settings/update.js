@@ -11,7 +11,8 @@ function updateBar(text, buttons) {
   return el;
 }
 const updateHide = () => { const el = $('#leeupdate'); if (el) el.hidden = true; };
-const updateLater = ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', '1'); }];
+/* Per version: a newer release that the hourly check finds shows the bar again. */
+const updateLater = d => ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', d.latest || ''); }];
 const updateNotes = d => ['Release notes', () => openExternal(d.url)];
 const updateBusy = d => ['running', 'done'].includes(d.job?.state);
 const updateRestart = text => updateBar(text, [['Restart Leela', () => post('/update/restart', {}).catch(e => status(String(e.message || e), 'err'))]]);
@@ -20,12 +21,13 @@ function updateOffer(d) {
   if (d.job?.state === 'running') return leeUpdateRun(d);
   if (d.job?.state === 'done') return updateRestart(`${d.job.line || 'The new Leela is installed.'} Restart now to use it.`);
   updateBar(`Leela ${d.latest} is available. You have ${d.current}.`,
-    d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater] : [updateNotes(d), updateLater]);
+    d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)] : [updateNotes(d), updateLater(d)]);
 }
+/* At start and then each hour (`boot.js`); a bar on screen or a run in progress is left alone. */
 async function leeUpdateNotice() {
-  if (sessionStorage.getItem('lee-update-later') || $('#leeupdate')?.hidden === false) return;
+  if (updateRunning || $('#leeupdate')?.hidden === false) return;
   const d = await api('/update');
-  if (d.notice || updateBusy(d)) updateOffer(d);
+  if (updateBusy(d) || (d.notice && sessionStorage.getItem('lee-update-later') !== d.latest)) updateOffer(d);
 }
 /* "Check for updates…": asks GitHub now, past the cache and past "Not now", and always answers. */
 async function leeUpdateCheck() {
@@ -50,9 +52,9 @@ async function updateRunOnce(d) {
   }
   if (s.state === 'done') return updateRestart(`${s.line || `Leela ${d.latest} is installed.`} Restart now to use it.`);
   if (s.state === 'same') return updateBar(s.line || 'Homebrew does not list the new Leela yet. Try again in a few minutes.',
-    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
-  if (s.state === 'unavailable') return updateBar('This Leela was not installed with Homebrew. Get the new version from the release page.', [updateNotes(d), updateLater]);
-  updateBar(`The update did not finish: ${s.line || s.state}`, [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
+    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
+  if (s.state === 'unavailable') return updateBar('This Leela was not installed with Homebrew. Get the new version from the release page.', [updateNotes(d), updateLater(d)]);
+  updateBar(`The update did not finish: ${s.line || s.state}`, [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
 }
 window.leeUpdateNotice = leeUpdateNotice;
 window.leeUpdateCheck = leeUpdateCheck;
