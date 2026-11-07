@@ -425,6 +425,8 @@ class WorkspaceHub:
         slug = scope['path'][len(GO_PATH):].strip('/')
         if slug not in self.sites: return await _json(send, {'ok': False, 'error': f'no workspace {slug!r} is open'}, 404)
         url = await self.listen(slug)
+        # The window's first URL carries `?titlebar=`, which the page needs at first paint.
+        if q := scope.get('query_string', b'').decode(): url += f'?{q}'
         await send({'type': 'http.response.start', 'status': 307, 'headers': [(b'location', url.encode()), (b'cache-control', b'no-store')]})
         await send({'type': 'http.response.body', 'body': b''})
     async def _open(self, scope, send):
