@@ -24,10 +24,10 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] C2. Streamed cell output grows quadratically (`nb/app.py:198`, `nb.py:527`): 2000 prints gave 137 MB of SSE and 505 MB RSS. Merge stream outputs, send deltas at most every 50-100 ms, cap text per output. (M)
 
 ### D. Header layout (leela)
-- [ ] D1. The tab strip collapses to one tab and "+N" at 1440 px (`actions.js:412-432` measures `#tabbar`). `test_nb_races_slow.py::test_saving_one_scratch_notebook_keeps_another_scratch_notebooks_unsaved_text` fails. (S)
-- [ ] D2. Git pane rows show no file name: hidden buttons keep their width (`lee-ide.css:2701`). (S)
-- [ ] D3. A full-screen side pane covers the header (`inset: 34px`, `lee-ide.css:602`). (S)
-- [ ] D4. Files pane header buttons spill over the editor (`.lee-phead`, `lee-ide.css:520`). (S)
+- [x] D1. The tab strip collapses to one tab and "+N" at 1440 px (`actions.js:412-432` measures `#tabbar`). `test_nb_races_slow.py::test_saving_one_scratch_notebook_keeps_another_scratch_notebooks_unsaved_text` fails. (S)
+- [x] D2. Git pane rows show no file name: hidden buttons keep their width (`lee-ide.css:2701`). (S)
+- [x] D3. A full-screen side pane covers the header (`inset: 34px`, `lee-ide.css:602`). (S)
+- [x] D4. Files pane header buttons spill over the editor (`.lee-phead`, `lee-ide.css:520`). (S)
 
 ## Should fix
 
@@ -62,6 +62,7 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] T1. One isolation helper that sets XDG, `VISHALAKSHI_VAULT`, `LEELA_SEARCH_VAULT`, `ABHYASA_CONFIG`, `RAMABANA_CONFIG` and `LEELA_MEMORY_OFFLINE=1`; guard those folders in conftest; an autouse fake keyring; AGENTS.md rule. ramabana writes probes to a fixed `~/.config/ramabana/probes`. (S)
 - [ ] T2. CI runs none of the 283 slow tests and only Python 3.12; the app ships 3.13. A nightly `-m slow` job and a 3.13 matrix. (M)
 - [ ] T3. Flaky under load: `test_runtime.py::test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream`, `test_core.py::test_a_hung_interactive_shell_is_asked_again_as_a_login_shell`, `test_refactor` silent server, `test_watchdog::test_idle_writes_nothing`, `test_agent` timeout children, `test_nb_check::test_home_is_the_work_folder`. (S each)
+- [ ] T5. Slow tests that fail on main: `test_the_keymap_answers_every_chord_it_claims_in_one_browser_session` ("reading 'hyper'"), `test_markdown_links_never_navigate_the_desktop_shell` (link list mismatch). (S)
 - [ ] T4. No test for: many streamed outputs, non-UTF-8 and CRLF round trips, LSP UTF-16 rename, rebase with delete/move/insert, two-page saves, the walk cap, the same-site guard, the SVG CSP.
 
 ### Other packages
