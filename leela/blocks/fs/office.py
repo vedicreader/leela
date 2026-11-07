@@ -1,15 +1,18 @@
-"Read-only views of Word, PowerPoint and Excel files: safe HTML for the viewer tab, and text for the agent."
+"Read-only views of Word, PowerPoint and Excel files: safe HTML for the viewer tab, Quick Look's own preview on macOS, and text for the agent."
 
 from __future__ import annotations
-import base64, re, subprocess, sys, zipfile
-from fastcore.all import Path
+import atexit, base64, html, os, plistlib, re, secrets, shutil, signal, subprocess, sys, tempfile, threading, zipfile
+from collections import OrderedDict
+from types import SimpleNamespace
+from fastcore.all import AttrDict, Path, first
 from functools import partial
 from fasthtml.common import Details, Div, H2, Img, NotStr, P, Section, Span, Summary, Table, Td, Th, Tr, to_xml as _xml
 from ...core.text import clean_html
 
 to_xml = partial(_xml, indent=False)
 
-__all__ = ['OFFICE', 'OFFICE_MAX_BYTES', 'SHEET_ROWS', 'is_office', 'office_html', 'sheet_rows', 'office_text', 'open_in_app']
+__all__ = ['OFFICE', 'OFFICE_MAX_BYTES', 'SHEET_ROWS', 'is_office', 'office_html', 'sheet_rows', 'office_text', 'open_in_app',
+           'QL_ROWS', 'QL_TYPES', 'QL_HEADERS', 'QuickLookError', 'NoQuickLook', 'can_quicklook', 'quicklook', 'quicklook_file']
 
 OFFICE = frozenset({'.docx', '.pptx', '.xlsx', '.xlsm'})
 OFFICE_MAX_BYTES, UNZIPPED_MAX, IMAGES_MAX = 64_000_000, 400_000_000, 40_000_000
@@ -139,3 +142,103 @@ def open_in_app(p):
     if not (is_office(p) or is_media(p)): raise ValueError(f'{Path(p).name} is not a Word, PowerPoint, Excel, audio or video file')
     subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', str(p)], stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+QL, QL_TIMEOUT, QL_KEEP, QL_BYTES, QL_ROWS, QL_PNG = '/usr/bin/qlmanage', 30, 16, 512_000_000, 4096, 1600
+QL_TYPES = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.tiff': 'image/tiff', '.pdf': 'application/pdf'}
+#: Quick Look's markup is Apple's, built from the document; it still runs no script, sends nothing out, and opens no link.
+QL_HEADERS = {'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; "
+                               "frame-ancestors 'self'; base-uri 'none'; form-action 'none'; sandbox allow-same-origin"}
+_TAB = re.compile(r'<div class="TabHeader">(.*?)</div>\s*<a href="(Attachment\d+\.html)">', re.S)
+_HREF = re.compile(r'''(<(?:a|area)\b[^>]*?)\s+href\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)''', re.I)
+_PDF_SRC = re.compile(r'''(\bsrc=["']?)(Attachment\d+\.pdf)\b''')
+_QL_NAME = re.compile(r'^\w[\w.-]*$')
+#: Office's fonts when the Mac has them, else the nearest system font; without this a missing Calibri falls back to a serif.
+_QL_FONTS = '<style>' + ''.join(f"@font-face{{font-family:'{n}';src:{','.join(f'local({x!r})' for x in (n, *alt))}}}" for n, *alt in (
+    ('Calibri', 'Carlito', 'Helvetica Neue'), ('Calibri Light', 'Helvetica Neue Light', 'Helvetica Neue'), ('Cambria', 'Caladea', 'Georgia'),
+    ('Aptos', 'Helvetica Neue'), ('Segoe UI', 'Helvetica Neue'))) + '</style>'
+
+class QuickLookError(ValueError): kind = 'quicklook'
+class NoQuickLook(QuickLookError): kind = 'no-quicklook'
+
+def can_quicklook(): return sys.platform == 'darwin' and os.access(QL, os.X_OK)
+
+_ql = SimpleNamespace(root=None, keys=OrderedDict(), tokens={}, locks={}, lock=threading.Lock())
+
+def _alive(pid):
+    try: os.kill(pid, 0)
+    except ProcessLookupError: return False
+    except OSError: pass
+    return True
+
+def _ql_root():
+    "This run's preview folder; the folders of runs that ended are removed first."
+    if _ql.root is None:
+        for d in Path(tempfile.gettempdir()).glob('leela-ql-*-*'):
+            pid = d.name.split('-')[2]
+            if pid.isdigit() and int(pid) != os.getpid() and not _alive(int(pid)): shutil.rmtree(d, ignore_errors=True)
+        _ql.root = Path(tempfile.mkdtemp(prefix=f'leela-ql-{os.getpid()}-'))
+        atexit.register(shutil.rmtree, _ql.root, True)
+    return _ql.root
+
+def _ql_run(*args):
+    "Run qlmanage; it shows no window with `-o`. A run that hangs is killed with the helpers it started."
+    pr = subprocess.Popen([QL, *map(str, args)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try: return pr.wait(QL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(pr.pid, signal.SIGKILL)
+        except OSError: pass
+        pr.wait()
+        raise QuickLookError('Quick Look took too long to show this file') from None
+
+def _ql_make(p, out):
+    "Quick Look's HTML preview of `p` in `out`: charts as PNG, no links, and its pages."
+    _ql_run('-p', '-o', out, p)
+    pv = first(out.glob('*.qlpreview'))
+    try: props = plistlib.loads((pv/'PreviewProperties.plist').read_bytes())
+    except Exception: raise QuickLookError(f'Quick Look could not show {p.name}') from None
+    if props.get('MimeType') != 'text/html' or not (pv/'Preview.html').is_file(): raise QuickLookError(f'Quick Look gave no page for {p.name}')
+    enc = props.get('TextEncoding') or 'utf-8'
+    if pdfs := sorted(pv.glob('Attachment*.pdf')):
+        try: _ql_run('-t', '-s', QL_PNG, '-o', pv, *pdfs)   # a PDF in an <img> shows only in WebKit
+        except QuickLookError: pass
+    tabs = _TAB.findall((pv/'Preview.html').read_text(enc, 'replace'))
+    pages = [{'name': html.unescape(re.sub(r'<[^>]*>', '', n)).strip(), 'src': f} for n, f in tabs if (pv/f).is_file()] or [{'name': '', 'src': 'Preview.html'}]
+    for f in pv.glob('*.html'):
+        h = _PDF_SRC.sub(lambda m: m[1] + m[2] + '.png' if (pv/f'{m[2]}.png').is_file() else m[0], f.read_text(enc, 'replace'))
+        f.write_text(_QL_FONTS + _HREF.sub(r'\1', h), 'utf-8')
+    for pg in pages: pg['clipped'] = (pv/pg['src']).read_text('utf-8').count('<tr') >= QL_ROWS
+    return pv, pages
+
+def _ql_drop(key):
+    e = _ql.keys.pop(key); _ql.tokens.pop(e.token, None); shutil.rmtree(e.out, ignore_errors=True)
+
+def quicklook(p):
+    "Quick Look's own preview of office file `p`: a token for its files, and its pages, one for each sheet of a workbook."
+    if not can_quicklook(): raise NoQuickLook('Quick Look is only on macOS')
+    p = _opened(p).resolve()
+    st = p.stat(); key = (str(p), st.st_mtime_ns, st.st_size)
+    with _ql.lock: lk = _ql.locks.setdefault(key, threading.Lock())
+    with lk:
+        try:
+            with _ql.lock:
+                if (e := _ql.keys.get(key)) is not None:
+                    _ql.keys.move_to_end(key); return {'token': e.token, 'pages': e.pages}
+            out = Path(tempfile.mkdtemp(dir=_ql_root()))
+            try: pv, pages = _ql_make(p, out)
+            except BaseException: shutil.rmtree(out, ignore_errors=True); raise
+            e = AttrDict(token=secrets.token_urlsafe(18), dir=pv, out=out, path=p, pages=pages, size=sum(f.stat().st_size for f in pv.iterdir()))
+            with _ql.lock:
+                for k in [k for k in _ql.keys if k[0] == key[0]]: _ql_drop(k)   # an older copy of the same file
+                _ql.keys[key] = e; _ql.tokens[e.token] = e
+                while len(_ql.keys) > 1 and (len(_ql.keys) > QL_KEEP or sum(x.size for x in _ql.keys.values()) > QL_BYTES): _ql_drop(first(_ql.keys))
+        finally:
+            with _ql.lock: _ql.locks.pop(key, None)
+    return {'token': e.token, 'pages': pages}
+
+def quicklook_file(token, name):
+    "A file of preview `token` and the office file it shows, or None."
+    e = _ql.tokens.get(token)
+    if e is None or not _QL_NAME.match(name) or Path(name).suffix.lower() not in QL_TYPES: return None
+    return (e.dir/name, e.path) if (e.dir/name).is_file() else None
