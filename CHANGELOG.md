@@ -2,6 +2,16 @@
 
 <!-- do not remove -->
 
+## 0.1.27
+
+Needs kavacha 0.0.16 and Sanketa 0.2.7.
+
+- A new two-row header shows the Leela mark and name, the folder, the branch with its change count, and ↓/↑ only when the branch is behind or ahead. Row 2 holds File, Tools, Debug, the tabs and Run, Next, Stop and Present. The old toolbar row is gone. On macOS the title bar is part of the window.
+- The window title is `Leela · <folder> · <scope>`, for example `Leela · karma · notebook`. It always ends with the scope that Sanketa reads, and it changes when the folder changes.
+- Update installs through `vedicreader/tap/leela`, in an environment like Terminal's. When Homebrew fails, Leela shows its error and keeps it in the log.
+- Leela checks for a new release at each start and every hour. "Not now" holds for that version only.
+- Signing retries when Apple's timestamp server does not answer (kavacha 0.0.16).
+
 ## 0.1.26
 
 - On macOS, Word, PowerPoint and Excel tabs show Quick Look's own preview: slide layout, fonts, colours, charts and pictures. A button switches to the simple view, and the choice is kept. The agent and "copy as text" still read the text. Excel shows at most 4096 rows a sheet in this view, and says when a sheet is cut off.
