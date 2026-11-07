@@ -85,7 +85,7 @@ def connect(app, ctx):
         return {'ok': True, **out, 'note': 'reload the window to read the restored state'}
     @rt('/update')
     async def update_offer(fresh: bool = False):
-        "Whether a newer Leela is out, and whether this app can install it. `fresh` skips the six-hour cache."
+        "Whether a newer Leela is out, and whether this app can install it. `fresh` skips the cache, down to the 30 s floor."
         from ...core.update import offer
         return {'ok': True, **await off_loop(offer, fresh=fresh)}
     @rt('/update/install')
