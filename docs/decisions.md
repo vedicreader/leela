@@ -6,8 +6,7 @@ The rules of daily work (code style, the seams, prose, tests, plans) are in [CLA
 
 ## Where code lives
 
-- **Leela composes libraries. It does not copy them.** `leela.agent` is `ramabana`. Tools and hosts are `shalya`, git is `gheasy`, kernels and interpreters are `kunda`, the native window and the freezers are `kavacha`, the release and deploy pipeline is `pullup`. A behaviour that belongs to a library goes upstream as a patch, not into a wrapper here.
-  Why: two copies drift, and each copy gets worse than the union. `leela/agent/__init__.py`, `leela/blocks/runtime/kernels.py` and `support.py` (re-export seams over kunda), `leela/core/inspectors.py`.
+- **Leela composes libraries. It does not copy them.** `leela.agent` is `ramabana`. Tools and hosts are `shalya`, git is `gheasy`, kernels and interpreters are `kunda`, the native window and the freezers are `kavacha`, the release and deploy pipeline is `pullup`. A behaviour that belongs to a library goes upstream as a patch, not into a wrapper here. Why: two copies drift, and each copy gets worse than the union. `leela/agent/__init__.py`, `leela/blocks/runtime/kernels.py` and `support.py` (re-export seams over kunda), `leela/core/inspectors.py`.
 - **The retired port registry stays retired.** `leela/core/ports.py` and `leela/conformance.py` had one provider per port, and no swap ever happened. `Host.provides` is the only way to ask what a host supports. `leela/blocks/agent/ai.py` `WorkspaceHost`.
 - **The server turn feed stays in Leela.** `Feed`, `Thread`, `Threads` and `TurnRunner` were not moved to ramabana: nothing in ramabana would use a replay feed, and `Threads` carries Leela's card and badge rules. Move it only together with a rewrite of `racp.Session` over `Feed`. (Oct 2026) `leela/blocks/agent/threads.py`.
 
@@ -18,6 +17,7 @@ The rules of daily work (code style, the seams, prose, tests, plans) are in [CLA
 - **The client is plain scripts in one lexical scope, built into three bundles.** A block's `*.js` sits beside its Python. `tools/build_ide_js.py` joins them in the order `LAYERS` fixes into `lee-core.js`, `lee-agent.js` and `lee-ide.js`, named in `IDE_BUNDLES` (`leela/core/web.py`). It refuses a missing module and a module that `LAYERS` does not name. No node at install: the bundles and `leela/vendor/` are committed.
 - **Each `ACTIONS` entry is a thunk** (`help: () => showHelp()`). A bare reference to a function in a later bundle throws at load, and the throw stops the rest of `lee-core.js`. `leela/static/js/actions.js`, `tests/blocks/test_ide_bundle.py`.
 - **No `fast_app`.** The app builds `FastHTML` directly with `GZipMiddleware`. `fast_app` imports IPython through `fasthtml.pico` (212 ms at boot) and serves the working folder by extension with no containment. Leela serves its own files from `/leestatic` and `/file/raw`. `leela/app.py`.
+- **The server never imports `dhrishti.core`.** It imports IPython, pandas and numpy at module scope, and the server never formats a live value. Before this rule, `dhrishti` cost most of the start time and memory. `leela/core/inspectors.py` reads only `dhrishti.registry` (the profile and sort menus, and the registry that in-kernel inspectors write) and `kunda.support` (the import classifier). `tests/test_inspectors.py` imports the real dhrishti and fails if the two disagree. `tools/profile_app.py` measures the import cost, the time to the first page and the idle memory, each in a fresh subprocess. At the change (Oct 2026): `import leela.app` went from 766 ms and 109 MB to 377 ms and 48 MB, and an idle workspace from 119 MB to 74 MB.
 - **Push, then poll as a backstop.** `blocks/fs/watch.py` is one `watchfiles` thread per workspace, sent to the browser on `/fs/events`. Polls are slow when idle (approvals 5 s, `/tab/watch` 10 s, dev servers 15 s). A write the client made itself is not news (`noteSelfWrite`). The watcher thread is Rust, so `close()` joins it, or the interpreter segfaults at exit.
 
 ## The agent host
@@ -59,6 +59,7 @@ The rules of daily work (code style, the seams, prose, tests, plans) are in [CLA
 - **The editor asks for diagnostics only for Python and Markdown.** Widening it needs a rebuild of the CM6 bundle with esbuild. Hover, symbols, inlay hints and rename already route by language. `frontend/editor.js`.
 - **Kernel support installs Leela's own locked versions.** An index's newest of each gave `ipymini` and `kernmini` versions that do not fit. `kunda.support`, `leela/blocks/runtime/support.py`.
 - **The inspector is borrowed only by a kernel of Leela's minor version.** A frozen build ships bytecode for one version. `leela/blocks/runtime/kernels.py`.
+- **ipymini runs execs and shell-channel calls on a subshell.** With `--kernel ipymini`, completion does not wait behind a long cell. On a cell that awaits two seconds, a completion request went from about 3 s to about 275 ms. `docs/screenshots/web-concurrency.png`.
 - **`venv_env` never sets `UV_PROJECT_ENVIRONMENT`.** A `uv sync` in another checkout would prune this venv. uv finds the environment from the directory.
 
 ## Search and memory
@@ -93,7 +94,10 @@ The rules of daily work (code style, the seams, prose, tests, plans) are in [CLA
 ## Desktop app and the frozen build
 
 - **pywebview owns the main thread, and the server runs on a daemon thread.** Cocoa allows no other order. A folder opened while Leela runs goes over HTTP to `/hub/open`, because the hub owns the workspaces on another loop. One folder is one workspace is one window. See [desktop.md](desktop.md). `leela_app.py`, `leela/desktop.py`, `leela/hub.py`.
+- **A double-clicked app never guesses a folder.** It opens the folders the desktop gave it, then the folders open at the last close, then the welcome screen. The old guess was the home folder, and kosha then indexed every file the person owns. A web page cannot produce a folder path, so the folder chooser comes from the native window through `window.pywebview.api`. macOS sends Open With and a Dock drop to the running app as an `odoc` Apple Event, and `kavacha.window` answers it. Both Mac apps take their `Info.plist` document types from `leela.workspace.doc_types`. `leela/desktop.py`, `leela/hub.py`, `kavacha.window`.
 - **Chrome is not in the bundle.** The inline browser drives fossick's CDP profile. A link that a person clicks goes to their own browser (`openExternal`), because the automation profile meets bot walls. `leela/blocks/browser/`.
+- **Chrome starts on the first web tab, not at launch.** A headless Chrome uses some hundreds of megabytes over a dozen processes, more than the workspace, and most sessions never open a web tab. `LEELA_CDP_EAGER=1` starts it at launch (kavacha's `EAGER_CDP`). `/browser/ready` answers whether a Chrome can be driven, not whether one runs. `leela/blocks/browser/`.
+- **Screencast frames cross the socket as raw JPEG.** Base64 in JSON was a third more bytes (10,775 against 8,080 for one frame). The page decodes each frame with `createImageBitmap` off the main thread, and drops a frame that arrives during a decode. A late frame has no value. Hiding the window stops the cast. `leela/blocks/browser/browser.js`.
 - **A child process of the frozen app gets a clean environment.** py2app points `PYTHONPATH`, `PYTHONHOME` and `__PYVENV_LAUNCHER__` at the bundle. A child that keeps them imports the bundle's stdlib under another Python. Use `kunda.pythons.clean_env` and `venv_env` for every subprocess, git filters and the login shell included.
 - **An app started from Finder gets launchd's environment.** Leela sets `LC_CTYPE`, asks the login shell for `PATH` and imports credentials from the shell, and keeps what the launcher set. `leela/__init__.py` `use_utf8`, `use_login_path`, `use_extras`; `leela/core/envs.py` `import_login_env`.
 - **Optional backends install beside the bundle.** `use_extras` puts that folder first on the path at process start, so an install lasts past a restart. `leela/cli.py` `main`.
@@ -101,12 +105,13 @@ The rules of daily work (code style, the seams, prose, tests, plans) are in [CLA
 
 ## Git
 
-- **Staging a new folder writes its `.gitignore` first.** The rules go in the folder's own `.gitignore`, only those that `git check-ignore` says are missing. `leela/blocks/git/ignores.py` `KINDS`, `prepare`.
+- **Staging a new folder writes its `.gitignore` first.** The rules go in the folder's own `.gitignore`, only those that `git check-ignore` says are missing. A rule at the root does not reach a nested folder: `/target/` does not match `mycrate/target/`. `leela/blocks/git/ignores.py` `KINDS`, `prepare`.
 - **A conflict batch is checked whole before any file is written.** A stale file refuses the batch. `leela/blocks/git/app.py` `_guard_batch`.
 - **Parallel agent threads need a shared-state git lock first.** The gateway lock keys on the worktree root, so `fetch`, `gc`, `config` and branch renames in two worktrees are not serialised. Lock on `git rev-parse --git-common-dir` for those, in gheasy, before any thread board ships. Not built.
 
 ## Themes and keys
 
+- **One context-aware router handles every key in the page.** Some chords never arrive: Terminal.app cannot tell some modified keys apart, macOS uses Option to compose, and Chrome keeps some chords. The router matches modified printable chords by physical key code. Rare actions have no default chord, only a button and a palette entry, so the person picks a chord that works in their browser. `leela/blocks/keys/keymap.js`, `leela/core/keys.py`.
 - **Per-theme code colours remap the shared variables on highlight spans.** The editor bundle cannot be rebuilt without node. `tools/build_hl_css.py` `PALETTES` writes both the `hl-*` rules and the editor remap, so they cannot drift. `leela/static/lee-ide.css`.
 - **The server writes the theme families into the first paint.** The inline script cannot read `prefs.js`. A test holds the list equal to the picker's. `leela/blocks/settings/settings.py` `theme_boot`.
 - **The menu bar rows name keymap actions.** A row for an unknown action raises at import. A row shows a shortcut only for a global action with a modifier, because AppKit reads a menu key before the page. `leela/blocks/keys/menus.py` `BAR`.
