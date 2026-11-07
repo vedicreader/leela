@@ -64,7 +64,7 @@ def test_attach_with_no_folder_opens_the_bare_loopback_window(monkeypatch):
     got = _launch(monkeypatch)
     app.attach(5010, [])
     [(urls, titles, kw)] = got['windows']
-    assert urls == [BARE] and titles == ['leela'] and kw['keys'] == [app.HOME_KEY]
+    assert urls == [BARE] and titles == ['Leela · files'] and kw['keys'] == [app.HOME_KEY]
     assert got['opened'] == [], 'no folder, so no hub route'
 
 def test_a_no_folder_launch_attaches_to_a_running_leela_instead_of_serving(monkeypatch):
@@ -129,7 +129,7 @@ def test_a_file_directly_in_home_opens_in_the_loose_window_named_for_it(monkeypa
                         calls.append((path, file)) or dict(ok=True, id='loose', name='loose', url='http://loose.localhost:5010/'))
     monkeypatch.setattr(leela.desktop, 'open_window', lambda url, title='leela', key=None, **kw: opened.append((title, key)))
     app.open_file(5010, f)
-    assert calls == [(loose_root(), f)] and opened == [('leela — .zshrc', 'loose')]
+    assert calls == [(loose_root(), f)] and opened == [('Leela · loose · files', 'loose')]
     got = _launch(monkeypatch)
     monkeypatch.setattr(app, 'files', lambda a=None: [str(f)])
     app.run()

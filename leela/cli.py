@@ -95,7 +95,8 @@ def main(argv=None):
     ok, why = shell_ready()
     if not ok: p.error(f'--shell webview: {why}')
     urls = workspace_urls(roots, a.port) if (a.app and roots) else [f'http://{a.host}:{a.port}/']
-    titles = [f'leela — {os.path.basename(r)}' for r in roots] if len(urls) == len(roots) else ['leela']
+    from .core.projects import title_folder, window_title
+    titles = [window_title(title_folder(r)) for r in roots] if len(urls) == len(roots) else [window_title()]
     threading.Thread(target=serve, args=('none',), daemon=True, name='leela-server').start()
     warm_cdp(a.cdp_port)
     run_shell(urls, titles=titles)

@@ -1037,22 +1037,34 @@ function eventContext(e) {
 }
 
 /* The window title ends with the kind of pane that has focus, so a tool outside the page (Sanketa)
- * can read it. The token comes from the same scope the key router uses. */
+ * can read it. The token comes from the same scope the key router uses; `title_scope` in Python
+ * gives the same word for a tab before the page names the focused pane. */
 function titleScope(scope, kind = lee.kind, path = lee.path) {
   if (scope === 'term') return 'terminal';
-  if (scope === 'widget' || (scope === 'editor' && kind === 'notebook')) return 'notebook';
-  if (scope !== 'editor') return scope === 'global' ? '' : scope || '';
+  if (scope && !['editor', 'global', 'widget'].includes(scope)) return scope;
+  if (!kind) return 'files';
+  if (scope === 'widget' || kind === 'notebook') return 'notebook';
+  if (kind === 'vault' || kind === 'vaultwb') return 'vault';
+  if (kind === 'web') return 'web';
   const ext = /\.([^./]+)$/.exec(path || '')?.[1]?.toLowerCase();
   return ext === 'py' ? 'py' : ext ? `editor:${ext}` : 'editor';
 }
-//: `prefix` is the agent's attention marks; `base` is `leela — <folder>` as the server titled the page.
-const leelaTitle = (base, token, prefix = '') => [prefix, base, token].filter(Boolean).join(' · ');
+//: One part of the title: no control characters, never ` · ` inside, at most 60 characters. `title_part` in Python is the same.
+function titlePart(s, most = 60) {
+  s = String(s ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ');
+  while (s.includes(' · ')) s = s.replaceAll(' · ', ' - ');
+  return Array.from(s.trim()).slice(0, most).join('').trim();
+}
+//: `[prefix · ]Leela · <folder> · <scope>`, as `window_title` in Python builds it. `prefix` is the agent's attention marks.
+const leelaTitle = (folder, token, prefix = '') => [prefix, 'Leela', titlePart(folder), token || 'files'].filter(Boolean).join(' · ');
+//: The active folder's title name. The server puts it on the folder pill; `refreshProjectPills` keeps it current.
+const titleFolder = () => lee.titleFolder ??= globalThis.document?.getElementById?.('workspacepill')?.dataset.folder || '';
 //: An overlay keeps the scope it opened over. Native windows are told only when the string changes.
 function paintTitle(scope) {
   if (scope && scope !== 'overlay') lee.titleScope = scope;
   clearTimeout(lee.titleTimer);
   lee.titleTimer = setTimeout(() => {
-    const t = leelaTitle(lee.titleBase ||= document.title, titleScope(lee.titleScope || lee.scope), lee.titlePrefix);
+    const t = leelaTitle(titleFolder(), titleScope(lee.titleScope || lee.scope), lee.titlePrefix);
     if (t === lee.title) return;
     document.title = lee.title = t;
     window.pywebview?.api?.set_title?.(t, location.href)?.catch?.(() => {});
@@ -1634,7 +1646,9 @@ function layoutTabs() {
   // The active file and its neighbours stay spatially meaningful, and every other open document
   // is one click away in the overflow menu.
   const breakpointCap = innerWidth >= 1700 ? 7 : innerWidth >= 1300 ? 5 : innerWidth >= 960 ? 4 : 2;
-  const cap = Math.max(1, Math.min(breakpointCap, Math.floor(bar.clientWidth / 138) || 1));
+  // The bar is only as wide as the tabs it shows; the spacer beside it holds the rest of the row's room.
+  const room = bar.clientWidth + ($(':scope > .lee-spacer', bar.parentElement)?.clientWidth || 0);
+  const cap = Math.max(1, Math.min(breakpointCap, Math.floor(room / 138) || 1));
   const keep = new Set();
   if (tabs.length <= cap) tabs.forEach((_, i) => keep.add(i));
   else {
@@ -1945,7 +1959,7 @@ async function leeOpenFile(path) {
   // take it out of the page. Every open after that fails on the missing element, so put it back.
   const old=$('#tabbar');
   if(old)old.replaceWith(fresh);
-  else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
+  else if($('.lee-tab-overflow'))$('.lee-tab-overflow').before(fresh);else $('#tabrow')?.append(fresh);
   htmx.process(fresh);
   // The variables panel is beside the editor, not part of it, and awaiting it held the switch open
   // for as long as it took to paint: 97ms of the 113 a notebook switch cost in the window Leela

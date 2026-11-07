@@ -84,7 +84,9 @@ The pane's control decides how much of that you see. Guided stops at writes and 
 surgical and appears in the timeline. Turns fork from any revision. A prompt cell saves the
 answer in the notebook cell, as markdown that Jupyter can still read. The charter under
 state layers context by organization, project, task and branch, then puts it in the
-briefing. Skills come from `pyskills` entry points and `SKILL.md` directories. The harness is
+briefing. Skills come from `pyskills` entry points and `SKILL.md` directories. Leela adds its own
+skill, `leela`. It lists the features, menus, keys, panes, settings and agent tools, so the agent
+can tell you what Leela can do and where. The harness is
 [ramabana](https://github.com/vedicreader/ramabana), which `leela.agent` aliases.
 Nothing chooses a provider for you. When the agent's model cannot run, the agent pane lists the
 providers it can use (OpenAI, Azure OpenAI, AWS Bedrock, Anthropic, Gemini, OpenRouter, Claude

@@ -7,7 +7,7 @@ from .keys import KEYS, chord_display, lookup
 from fasthtml.common import Button, Div, NotStr
 
 __all__ = ['Btn', 'BARS', 'BUTTONS', 'bar', 'tip', 'btn', 'action_bar', 'menu_button',
-           'activity_icon', 'ICONS']
+           'activity_icon', 'ICONS', 'HEADER_ICONS', 'header_icon']
 
 # The `web_` prefix names the bars added later, not the browser's own: nothing filters on it.
 BARS = ('toolbar', 'cell', 'files', 'keys', 'exec', 'vars', 'agent',
@@ -131,6 +131,21 @@ ICONS = {
     'git': '<circle cx="5" cy="4" r="2"/><circle cx="15" cy="6" r="2"/><circle cx="5" cy="16" r="2"/>'
            '<path d="M5 6v8m2-7h4a4 4 0 0 1 4 4v-3"/>',
 }
+
+#: The header's 16-unit line icons.
+HEADER_ICONS = {
+    'folder': '<path d="M2 4.5h4l1.5 1.5H14v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/>',
+    'branch': '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 2-7 4.5"/>',
+    'down': '<path d="M8 3v10M4 9l4 4 4-4"/>', 'up': '<path d="M8 13V3M4 7l4-4 4 4"/>',
+    'runs': '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
+    'sidebar': '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M10 3v10"/>',
+    'play': '<path d="M5 3.5v9l7-4.5z" fill="currentColor" stroke="none"/>',
+    'chev': '<path d="M5 6.5 8 9.5 11 6.5"/>',
+}
+
+def header_icon(kind, cls='lee-hico'):
+    "One header icon, hidden from assistive tech: the control beside it carries the words."
+    return NotStr(f'<svg class="{cls}" viewBox="0 0 16 16" aria-hidden="true">{HEADER_ICONS[kind]}</svg>')
 
 def activity_icon(kind):
     "Small monochrome activity-bar icons; labels remain available to assistive tech."

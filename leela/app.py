@@ -29,6 +29,7 @@ from .blocks.tabs.ui import kernel_pill as _kernel_pill
 from .blocks.tabs.ui import tab_bar as _tab_bar
 from .core.ui import action_bar as _action_bar
 from .core.ui import activity_icon as _activity_icon
+from .core.ui import header_icon as _hicon
 from .core.ui import btn as _btn
 from .core.ui import menu_button as _menu_button
 from .core.web import asset as _asset
@@ -44,6 +45,7 @@ from .blocks.nb.nb import Notebook
 from .blocks.nb.presentation import stage_src
 from .blocks.term.term import TerminalGate, colorfgbg, gh_auth_argv, lazygit_argv, path_prelude, shell_argv
 from .workspace import STEP_RANGE, TOOL_RANGE, Workspace
+from .core.projects import title_folder, title_scope, window_title
 
 __all__ = ['ide_app', 'serve_ide']
 
@@ -261,32 +263,49 @@ async def _explain(k, err, scope='live'):
     if not (err and 'is not defined' in err): return err
     return did_you_mean(err, await k.names(scope)) if k else err
 
-def _git_pill_text(ws):
-    "What the branch pill says before the client has asked anything."
+def _git_pill_branch(ws):
+    "The branch pill's words and state before the client has asked anything: as `paintBranchPill` paints them."
     root = ws.project_repo
-    if root is None: return 'git …'
+    if root is None: return 'git …', 'pending'
     try:
         from .blocks.git.git import GitRepo, repo_root
         r = repo_root(root)
-        if r is None: return 'no git'
-        return GitRepo.at(r).run('branch', '--show-current').strip() or 'git …'
-    except Exception: return 'git …'
+        if r is None: return 'no git', 'nogit'
+        return (GitRepo.at(r).run('branch', '--show-current').strip() or 'detached'), 'branch'
+    except Exception: return 'git …', 'pending'
+
+#: The toolbar's actions, as the header shows them; the keymap and the menus keep their own words.
+TOOLBAR = {'run_cell': 'Run', 'run_advance': 'Next', 'run_file': 'Run file', 'run_selection': 'Selection',
+           'interrupt': 'Stop', 'present_notebook': 'Present'}
 
 def _header(ws):
-    "Project identity first, document tabs second, infrequent actions in menus."
+    "Two rows: the brand, the folder, git and the runtime; then the menus, the tabs and the run actions."
     root = ws.project_root
-    return Header(
-        Button(Span('leela', cls='lee-brand'), Span(Path(root).name if root else 'open workspace',
-               id='workspacename', cls='lee-workspace-name'), cls='lee-workspace-switcher',
-               id='workspacepill', title='switch or open workspace', onclick='leeWorkspaceMenu(this)'),
-        Button(_git_pill_text(ws), id='gitpill', cls='lee-branch-switcher', title='switch branch',
-               onclick='leeBranchMenu(this)'),
-        Div(*(Button(glyph, id=f'git{op}', cls='lee-git-quick', title=title, aria_label=title,
-                     onclick=f'leeGitQuick("{op}")')
-              for op, glyph, title in (('fetch', '⭮', 'fetch from remotes'),
-                                       ('pull', '↓', 'pull (fast-forward, autostash)'),
-                                       ('push', '↑', 'push this branch'))),
-            cls='lee-git-quickbar', aria_label='remote actions'),
+    name, state = _git_pill_branch(ws)
+    folder = Path(root).name if root else 'open workspace'
+    sync = lambda op, word: Button(_hicon({'pull': 'down', 'push': 'up'}[op]), Span(cls='lee-sync-n'), id=f'git{op}', cls='lee-git-quick', title=word,
+                                   aria_label=word, hidden=True, onclick=f'leeGitQuick("{op}")')
+    top = Div(
+        Div(Span(cls='lee-mark pywebview-drag-region', aria_hidden='true'), Span('Leela', cls='lee-wordmark pywebview-drag-region'),
+            cls='lee-brand pywebview-drag-region'),
+        Button(_hicon('folder'), Span(folder, id='workspacename', cls='lee-workspace-name'), _hicon('chev', 'lee-chev'),
+               cls='lee-hitem lee-workspace-switcher', id='workspacepill', title=str(root or 'open workspace'),
+               aria_label=f'switch workspace: {folder}', data_folder=title_folder(root), onclick='leeWorkspaceMenu(this)'),
+        Button(_hicon('branch', 'lee-hico lee-branch-glyph'), Span(name, cls='lee-branch-name'),
+               Span(cls='lee-change-count', hidden=True), _hicon('chev', 'lee-chev'),
+               id='gitpill', cls='lee-hitem lee-branch-switcher', data_state=state, title='switch branch',
+               aria_label=f'switch branch: {name}', onclick='leeBranchMenu(this)'),
+        Div(sync('pull', 'pull'), sync('push', 'push'), cls='lee-git-quickbar', aria_label='remote actions'),
+        Span(cls='lee-spacer pywebview-drag-region'),
+        # Filled in by the poll that already reads /dev/list; server-rendered only so the header
+        # does not reflow when the first one arrives.
+        Button(_hicon('runs'), Span('runs', cls='lee-hitem-text'), id='runspill', cls='lee-hitem lee-runs', data_state='off',
+               title='scripts running under leela', onclick='leeRunsMenu(this)'),
+        _kernel_pill(ws),
+        Button(_hicon('sidebar'), cls='lee-hitem lee-sidebar-toggle', title='show or hide the tools pane',
+               aria_label='show or hide the tools pane', onclick='leeAct("toggle_right")'),
+        cls='lee-titlebar pywebview-drag-region', id='titlebar')
+    row = Div(
         Nav(Button('File', cls='lee-menubar-btn', onclick='leeMenuAt("files", this)'),
             Button('Tools', cls='lee-menubar-btn', onclick='leeToolsMenu(this)'),
             Button('Debug', cls='lee-menubar-btn', onclick='leeDebugMenu(this)'),
@@ -297,12 +316,9 @@ def _header(ws):
         Button('⋯', id='taboverflow', cls='lee-tab-overflow', title='all open files',
                aria_label='all open files', onclick='leeTabOverflow(this)'),
         Span(cls='lee-spacer'),
-        # Filled in by the poll that already reads /dev/list; server-rendered only so the header
-        # does not reflow when the first one arrives.
-        Button('○ runs', id='runspill', cls='lee-pill lee-pill-off',
-               title='scripts running under leela', onclick='leeRunsMenu(this)'),
-        _kernel_pill(ws),
-        cls='lee-header', id='header')
+        _toolbar(),
+        cls='lee-tabrow', id='tabrow')
+    return Header(top, row, cls='lee-header', id='header', style=f"--lee-mark: url('{_asset('favicon-dark.svg')}')")
 
 def _git_panel():
     return Section(
@@ -363,30 +379,15 @@ def _symbols_panel():
             cls='lee-symbols', role='tree', aria_label='file structure'),
         cls='lee-panel lee-structure')
 
+#: The left activity bar: `(key, label, title)` of each pane.
+LEFT_PANES = (('files', 'Project', 'Project files'), ('symbols', 'Structure', 'File structure'), ('git', 'Git', 'Git source control'),
+    ('workflows', 'Workflows', 'GitHub workflows'), ('releases', 'Release', 'Release pipeline'), ('deploys', 'Deploy', 'Deploy to a server'),
+    ('drive', 'Drive', 'Drive the packages one call at a time'))
+
 def _left_workspace(ws):
     return Aside(
-        Nav(Button(_activity_icon('files'), Span('Project', cls='sr-only'), cls='lee-activity-btn active',
-                   data_left='files', title='Project files', aria_label='Project files',
-                   onclick='leeLeft("files")'),
-            Button(_activity_icon('symbols'), Span('Structure', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='symbols', title='File structure', aria_label='File structure',
-                   onclick='leeLeft("symbols")'),
-            Button(_activity_icon('git'), Span('Git', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='git', title='Git source control', aria_label='Git source control',
-                   onclick='leeLeft("git")'),
-            Button(_activity_icon('workflows'), Span('Workflows', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='workflows', title='GitHub workflows', aria_label='GitHub workflows',
-                   onclick='leeLeft("workflows")'),
-            Button(_activity_icon('releases'), Span('Release', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='releases', title='Release pipeline', aria_label='Release pipeline',
-                   onclick='leeLeft("releases")'),
-            Button(_activity_icon('deploys'), Span('Deploy', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='deploys', title='Deploy to a server', aria_label='Deploy to a server',
-                   onclick='leeLeft("deploys")'),
-            Button(_activity_icon('drive'), Span('Drive', cls='sr-only'), cls='lee-activity-btn',
-                   data_left='drive', title='Drive the packages one call at a time',
-                   aria_label='Drive the packages one call at a time',
-                   onclick='leeLeft("drive")'),
+        Nav(*[Button(_activity_icon(k), Span(lbl, cls='sr-only'), cls='lee-activity-btn' + (' active' if k == 'files' else ''),
+                     data_left=k, title=title, aria_label=title, onclick=f'leeLeft("{k}")') for k, lbl, title in LEFT_PANES],
             Span(cls='lee-activity-spacer'),
             Button('●', cls='lee-pane-pin pinned', type='button', data_pane_pin='left',
                    title='pinned open — unpin to close it when you click away',
@@ -414,11 +415,13 @@ def _toast_panel():
 
 def _toolbar():
     "Only the actions used continuously; everything else lives in a named menu."
-    actions = {'run_cell', 'run_advance', 'run_file', 'run_selection', 'interrupt', 'present_notebook'}
-    buttons = [_btn(b) for b in btn_bar('toolbar') if b.action in actions]
-    return Div(*buttons, Span(cls='lee-spacer'),
-               Button('⋯', cls='lee-more lee-toolbar-more', title='more editor actions',
-                      aria_label='more editor actions', onclick='leeEditorMenu(this)'),
+    def btn(b):
+        icon = _hicon('play') if b.action == 'run_cell' else ''
+        return Button(icon, TOOLBAR[b.action], cls='lee-act ' + (b.kind or 'plain'), title=b.tooltip,
+                      data_action=b.action, onclick=f'leeAct("{b.action}")')
+    buttons = [btn(b) for b in btn_bar('toolbar') if b.action in TOOLBAR]
+    return Div(*buttons, Button('⋯', cls='lee-more lee-toolbar-more', title='more editor actions',
+                                aria_label='more editor actions', onclick='leeEditorMenu(this)'),
                cls='lee-toolbar', id='toolbar')
 
 def _vars_panel(ws):
@@ -816,7 +819,6 @@ def _shell(ws, gate):
     "The whole app body; every structural route returns this so the client re-mounts consistently."
     return Div(
         _header(ws),
-        _toolbar(),
         Div(
             _left_workspace(ws),
             Div(cls='lee-split', data_split='left'),
@@ -830,6 +832,13 @@ def _shell(ws, gate):
         Button('tools', cls='lee-pane-restore restore-right', onclick='leePane("right", true)'),
         Button('terminal / exec', cls='lee-pane-restore restore-bottom', onclick='leePane("bottom", true)'),
         id='shell', cls='lee-app')
+
+#: The page's first paint knows its window: kavacha puts `titlebar=<mode>` on a desktop window's first URL, and a reload
+#: in the same window keeps it. A browser tab has neither, so its header reserves no room for window buttons.
+TITLEBAR_BOOT = """try { const q = new URLSearchParams(location.search).get('titlebar');
+if (q) sessionStorage.setItem('lee-titlebar', q);
+const m = {'mac-unified': 'mac', 'win-caption': 'win'}[q || sessionStorage.getItem('lee-titlebar')] || 'browser';
+document.documentElement.classList.add('lee-titlebar-' + m); } catch (_) {}"""
 
 def _warm_probes():
     "Pay for the model probes while the window is still opening."
@@ -850,7 +859,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
             Link(rel='icon', href=_asset('favicon-dark.svg'), type='image/svg+xml',
                  media='(prefers-color-scheme: dark)'),
             Script(src=_asset('htmx.min.js'), defer=True),
-            Script(theme_boot(ws.project_root)),
+            Script(theme_boot(ws.project_root)), Script(TITLEBAR_BOOT),
             Script(src=_asset('lee-cm6.js'), defer=True),
             Meta(name='lee-widgets-src', content=_asset('lee-widgets.js')),
             Meta(name='lee-rupaka-src', content=_asset('lee-rupaka.js')),
@@ -955,7 +964,8 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         return await client.api(path, params, timeout) if client else None
     @rt('/')
     def home():
-        return Title(f'leela — {Path(ws.project_root).name}' if ws.project_root else 'leela'), _shell(ws, gate)
+        t = ws.tab
+        return Title(window_title(title_folder(ws.project_root), title_scope(t and t.kind, t and t.path))), _shell(ws, gate)
     @rt('/markdown/render')
     async def markdown_render(req):
         "Paste-safe Markdown rendering through mdhtml's explicit dialect."

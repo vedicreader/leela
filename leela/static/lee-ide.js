@@ -495,10 +495,10 @@ function paintRunsPill() {
   const runs = lee.runs || [];
   const live = runs.filter(runUp);
   const dead = runs.filter(s => !runUp(s) && s.code);
-  pill.className = 'lee-pill ' + (dead.length ? 'lee-pill-err' : live.length ? 'lee-pill-on' : 'lee-pill-off');
-  pill.textContent = live.length === 1 ? '▶ ' + (live[0].label || 'run')
-    : live.length ? `▶ ${live.length} runs`
-    : dead.length ? `⚠ ${dead.length} stopped` : '○ runs';
+  pill.dataset.state = dead.length ? 'err' : live.length ? 'on' : 'off';
+  const text = live.length === 1 ? live[0].label || '1 run' : live.length ? `${live.length} runs`
+    : dead.length ? `${dead.length} stopped` : 'runs';
+  const say = pill.querySelector('.lee-hitem-text'); if (say) say.textContent = text; else pill.textContent = text;
   pill.title = runs.length ? runs.map(s => `${s.label}: ${runState(s)}`).join('\n')
                            : 'nothing running — click to start a script';
 }
@@ -837,6 +837,16 @@ function nativeBackground(colour) {
   window.removeEventListener('pywebviewready', lee.nativeBackgroundWait);
   window.addEventListener('pywebviewready', lee.nativeBackgroundWait = send, {once: true});
 }
+/* The desktop window says how its title bar is drawn, which a reload with no query has lost; and a
+   macOS window in full screen hides its traffic lights, so their room goes too. */
+function paintTitlebarMode(mode) {
+  const m = {'mac-unified': 'mac', 'win-caption': 'win'}[mode] || 'browser', root = document.documentElement;
+  for (const k of ['mac', 'win', 'browser']) root.classList.toggle(`lee-titlebar-${k}`, k === m);
+  if (m !== 'browser') sessionStorage.setItem('lee-titlebar', mode);
+}
+window.addEventListener('pywebviewready', () => window.pywebview?.api?.titlebar?.()?.then?.(paintTitlebarMode)?.catch?.(() => {}));
+const paintFullScreen = () => document.documentElement.classList.toggle('lee-fullscreen', innerWidth >= screen.width && innerHeight >= screen.height);
+window.addEventListener('resize', paintFullScreen); paintFullScreen();
 function applyTheme(theme) {
   lee.theme = parseTheme(theme);
   const {family, mode, density} = lee.theme;
@@ -1122,11 +1132,9 @@ function updateBar(text, buttons) {
   buttons.forEach(([, fn], i) => { el.querySelector(`[data-update="${i}"]`).onclick = fn; });
   return el;
 }
-/* "Not now" holds for this offer only: a later version, or a new package set, asks again. */
-const updateKey = d => `${d.kind || 'app'}:${d.latest}`;
-let updateShown = null;
 const updateHide = () => { const el = $('#leeupdate'); if (el) el.hidden = true; };
-const updateLater = ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', updateKey(updateShown || {})); }];
+/* Per version, or a new package set: a newer release that the hourly check finds shows the bar again. */
+const updateLater = d => ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', d.latest || ''); }];
 const updateText = d => ({lock: `A new set of Leela packages is ready${d.changes ? ` (${d.changes})` : ''}. Kernels stop when Leela restarts to use it.`,
   'app-needed': `The newest Leela packages need Leela app ${d.latest}. Get it from the release page.`,
   download: `Leela ${d.latest} is available. You have ${d.current}. Get it from the release page.`})[d.kind] || `Leela ${d.latest} is available. You have ${d.current}.`;
@@ -1143,17 +1151,16 @@ function oldExtrasOffer(o) {
 }
 /* A run in progress or already installed comes first, so a reload or a second window picks it up. */
 function updateOffer(d) {
-  updateShown = d;
   if (d.job?.state === 'running') return leeUpdateRun(d);
   if (d.job?.state === 'done') return updateRestart(updateInstalled(d, d.job.line), d);
-  updateBar(updateText(d), d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater] : [updateNotes(d), updateLater]);
+  updateBar(updateText(d), d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)] : [updateNotes(d), updateLater(d)]);
 }
+/* At start and then each hour (`boot.js`); a bar on screen or a run in progress is left alone. */
 async function leeUpdateNotice() {
-  if ($('#leeupdate')?.hidden === false) return;
+  if (updateRunning || $('#leeupdate')?.hidden === false) return;
   const d = await api('/update');
-  if (updateBusy(d)) return updateOffer(d);
-  if (!d.notice || sessionStorage.getItem('lee-update-later') === updateKey(d)) return oldExtrasOffer(d.old_extras);
-  updateOffer(d);
+  if (updateBusy(d) || (d.notice && sessionStorage.getItem('lee-update-later') !== d.latest)) return updateOffer(d);
+  oldExtrasOffer(d.old_extras);
 }
 /* "Check for updates…": asks GitHub now, past the cache and past "Not now", and always answers. */
 async function leeUpdateCheck() {
@@ -1178,11 +1185,11 @@ async function updateRunOnce(d) {
   }
   if (s.state === 'done') return updateRestart(updateInstalled(d, s.line), d);
   if (d.kind === 'lock') return updateBar(`The update did not install. Leela still runs the current version.${s.line ? ' ' + s.line : ''}`,
-    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
+    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
   if (s.state === 'same') return updateBar(s.line || 'Homebrew does not list the new Leela yet. Try again in a few minutes.',
-    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
-  if (s.state === 'unavailable') return updateBar('This Leela was not installed with Homebrew. Get the new version from the release page.', [updateNotes(d), updateLater]);
-  updateBar(`The update did not finish: ${s.line || s.state}`, [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
+    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
+  if (s.state === 'unavailable') return updateBar('This Leela was not installed with Homebrew. Get the new version from the release page.', [updateNotes(d), updateLater(d)]);
+  updateBar(`The update did not finish: ${s.line || s.state}`, [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
 }
 window.leeUpdateNotice = leeUpdateNotice;
 window.leeUpdateCheck = leeUpdateCheck;
@@ -1400,7 +1407,10 @@ async function refreshProjectPills() {
     const d = await api('/workspace/info');
     const active = (d.roots || []).find(r => r.path === (gitUI.repo || d.active)) || (d.roots || [])[0];
     const name = $('#workspacename'); if (name) name.textContent = active?.name || 'open workspace';
-    const workspace = $('#workspacepill'); if (workspace) workspace.title = active?.path || 'open workspace';
+    const workspace = $('#workspacepill');
+    if (workspace) { workspace.title = active?.path || 'open workspace'; workspace.setAttribute('aria-label', `switch workspace: ${active?.name || 'none open'}`); }
+    // The loose window's folder is Leela's own; the title calls it `loose`, as `title_folder` does.
+    lee.titleFolder = active ? (active.loose ? 'loose' : active.name) : ''; paintTitle();
   } catch (_) {}
   try {
     const d = await api('/cwd');
@@ -1419,24 +1429,19 @@ async function refreshGitPill() {
     const git = $('#gitpill'); if (!git) return;
     if (!d || d.repo === false) {
       // With no folder open there is nothing to be inside or outside of, so the pill says neither.
-      const nothingOpen = !!(d && String(d.note || '').startsWith('no folder'));
-      git.textContent = nothingOpen ? 'git …' : 'no git';
-      git.className = 'lee-branch-switcher';
+      paintBranchPill(d, d && String(d.note || '').startsWith('no folder') ? 'pending' : 'nogit');
       git.title = (d && d.note) || 'not inside a Git repository';
       return;
     }
-    const n = (d.changes || []).length;
-    git.textContent = `${d.branch}${n ? ' · ' + n : ''}`;
-    git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
+    paintBranchPill(d);
     git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ''}${d.ahead ? ' · ahead ' + d.ahead : ''}${d.behind ? ' · behind ' + d.behind : ''}`;
     paintGitTree(d);
     noticeGitState(d);
   } catch (e) {
     // A failure is not an absence. Saying `no git` here claims the folder is not a checkout,
     // which is a statement about the user's project rather than about the request.
-    const git = $('#gitpill');
-    if (git) { git.textContent = 'git ?'; git.className = 'lee-branch-switcher lee-pill-warn';
-               git.title = 'could not read the repository: ' + ((e && e.message) || e); }
+    paintBranchPill(null, 'error');
+    const git = $('#gitpill'); if (git) git.title = 'could not read the repository: ' + ((e && e.message) || e);
     console.error('git pill', e);
   }
 }
@@ -1796,11 +1801,30 @@ function paintGitPill(d) {
   // pill over a dirty file tree is worse than no pill.
   if (gitUI.repo) return;
   const git = $('#gitpill'); if (!git || !d) return;
-  const n = (d.changes || []).length;
-  git.textContent = `${d.branch}${n ? ' · ' + n : ''}${d.ahead ? ' · ↑' + d.ahead : ''}${d.behind ? ' · ↓' + d.behind : ''}`;
-  git.className = 'lee-branch-switcher ' + (n ? 'lee-pill-warn' : 'lee-pill-on');
+  paintBranchPill(d);
   git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ' · no upstream'} · ${gitFreshness(d.fetched_at)}`;
   paintGitTree(d);
+}
+/* The one painter of the branch pill and the pull and push arrows beside it. `state` is `branch`,
+   `nogit` (not a checkout), `pending` (no folder open yet) or `error` (the repository could not be
+   read). The arrows show only when there is something to pull or push. */
+const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?'};
+function paintBranchPill(d, state = 'branch') {
+  const git = $('#gitpill'); if (!git) return;
+  const n = state === 'branch' ? (d?.changes || []).length : 0;
+  const name = BRANCH_WORDS[state] || d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
+  git.dataset.state = state;
+  const label = git.querySelector('.lee-branch-name'), count = git.querySelector('.lee-change-count');
+  if (label) label.textContent = name;
+  if (count) { count.textContent = n || ''; count.hidden = !n; }
+  git.setAttribute('aria-label', `switch branch: ${name}${n ? `, ${n} changed file${n === 1 ? '' : 's'}` : ''}`);
+  for (const [op, k] of [['pull', state === 'branch' && d?.behind], ['push', state === 'branch' && d?.ahead]]) {
+    const b = $(`#git${op}`); if (!b) continue;
+    b.hidden = !k;
+    const num = b.querySelector('.lee-sync-n'); if (num) num.textContent = k || '';
+    const say = k ? `${op} ${k} commit${k === 1 ? '' : 's'}` : op;
+    b.title = say; b.setAttribute('aria-label', say);
+  }
 }
 async function gitDo(op, extra = {}) {
   const started = performance.now(), name = op.replaceAll('_', ' ');
@@ -6308,12 +6332,19 @@ function initEditorSplitter() {
   };
 }
 
+//: The kernel pill: a dot coloured by `state`, the runtime's name, and a muted word for what it is doing.
+function paintKernelPill(pill, state, name, doing) {
+  pill.dataset.state = state;
+  const [n, w] = [pill.querySelector('.lee-kname'), pill.querySelector('.lee-kstate')];
+  if (n) n.textContent = name || 'kernel'; else pill.textContent = name || 'kernel';
+  if (w) w.textContent = doing ? `· ${doing}` : '';
+}
 async function refreshKernelPill() {
   try {
     const d = await api('/kernel/info');
     const pill = $('#kpill'); if (!pill) return;
-    pill.className = 'lee-pill ' + (d.api_error || d.boot_error || d.notice ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
-    pill.textContent = (d.api_error || d.notice ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
+    paintKernelPill(pill, d.api_error || d.boot_error || d.notice ? 'warn' : d.alive ? 'on' : 'off', (d.key || '').split('/').pop(),
+                    d.api_error || d.boot_error || d.notice ? 'problem' : !d.alive ? 'off' : (d.tabs || []).some(t => t.running) ? 'busy' : 'idle');
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
@@ -6498,6 +6529,7 @@ async function boot() {
   if ($('#leesetup')) bootStep('setup pane', leeSetupPane);
   // A network check, so it waits until the page is at work; it fails silent.
   setTimeout(() => leeUpdateNotice().catch(() => {}), 5000);
+  setInterval(() => leeUpdateNotice().catch(() => {}), 3600e3);
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   bootStep('file tree', paintHiddenBtn); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   /* The agent's log is one append-only file and grows without bound; reading it the first time

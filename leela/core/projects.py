@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json, threading
+import json, re, threading
 
 from fastcore.xtras import Path, atomic_save
 from kunda.pythons import nearest_marked
@@ -10,6 +10,7 @@ from kunda.pythons import nearest_marked
 from .. import leela_cfg
 
 __all__ = ['SESSION', 'SERVING', 'MAX_RECENT', 'PROJECT_MARKERS', 'nearest_marked', 'project_dir', 'workspace_for', 'loose_root',
+           'title_part', 'title_folder', 'title_scope', 'window_title',
            'session', 'remember', 'note_folder', 'drop_folder',
            'last_folders', 'last_folder', 'recent_folders', 'forget_recent', 'serving', 'now_serving', 'served']
 
@@ -32,6 +33,29 @@ def loose_root():
     "The empty folder Leela owns that stands for files opened outside any folder."
     (d := Path(leela_cfg)/'loose').mkdir(parents=True, exist_ok=True)
     return d.resolve()
+
+def title_part(s, most=60):
+    "One part of the window title: no control characters, never ` · ` inside, at most `most` characters. `titlePart` in keymap.js is the same."
+    s = re.sub(r'[\x00-\x1f\x7f]+', ' ', str(s or ''))
+    while ' · ' in s: s = s.replace(' · ', ' - ')
+    return s.strip()[:most].strip()
+
+def title_folder(root):
+    "What the window title calls `root`: `loose` for the loose window, else the folder's name."
+    if not root: return ''
+    return 'loose' if Path(root).resolve() == (Path(leela_cfg)/'loose').resolve() else Path(root).name
+
+def title_scope(kind=None, path=''):
+    "The scope word a tab of `kind` at `path` gives the title before the page names the focused pane. `titleScope` in keymap.js is the same."
+    if not kind: return 'files'
+    if kind in ('vault', 'vaultwb'): return 'vault'
+    if kind in ('notebook', 'web'): return kind
+    ext = Path(path or '').suffix[1:].lower()
+    return 'py' if ext == 'py' else f'editor:{ext}' if ext else 'editor'
+
+def window_title(folder='', scope='files', prefix=''):
+    "`[prefix · ]Leela · <folder> · <scope>`: the shape Sanketa reads, the scope always last."
+    return ' · '.join(o for o in (prefix, 'Leela', title_part(folder), scope or 'files') if o)
 
 #: The session a person opens. A test points `SESSION` at its own file; the guard below is about this one.
 DEFAULT_SESSION = SESSION = leela_cfg/'desktop.json'

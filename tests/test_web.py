@@ -1105,10 +1105,27 @@ def test_a_test_never_drives_the_machines_cdp_chrome(tmp_path):
 
 
 def test_the_page_title_names_the_workspace_folder(tmp_path):
-    "The client adds the pane to this, so the folder part is the server's and matches the native window."
+    "The first title already ends in a scope word, so Sanketa never reads the folder as one; the page then names the focused pane."
     (root := tmp_path/'orgs').mkdir()
-    with TestClient(ide_app(Workspace(roots=[root]))) as c: assert '<title>leela — orgs</title>' in c.get('/').text
-    with TestClient(ide_app(Workspace(roots=[]))) as c: assert '<title>leela</title>' in c.get('/').text
+    (root/'n.ipynb').write_text('{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}')
+    with TestClient(ide_app(Workspace(roots=[root]))) as c: assert '<title>Leela · orgs · files</title>' in c.get('/').text
+    with TestClient(ide_app(Workspace(roots=[]))) as c: assert '<title>Leela · files</title>' in c.get('/').text
+    ws = Workspace(roots=[root]); ws.open(str(root/'n.ipynb'))
+    with TestClient(ide_app(ws)) as c: assert '<title>Leela · orgs · notebook</title>' in c.get('/').text
+
+def test_the_header_is_two_rows_with_the_brand_and_no_fetch_glyph(tmp_path):
+    "Row 1: brand, folder, branch, hidden pull and push, runs, kernel, pane toggle. Row 2: menus, tabs, run actions. The old toolbar row is gone."
+    (root := tmp_path/'karma').mkdir()
+    with TestClient(ide_app(Workspace(roots=[root]))) as c: html = c.get('/').text
+    top, row = html.split('id="titlebar"')[1].split('id="tabrow"')
+    assert 'class="lee-wordmark pywebview-drag-region">Leela<' in top and '--lee-mark: url(' in html
+    assert 'data-folder="karma"' in top and 'aria-label="switch workspace: karma"' in top
+    assert 'id="gitpill"' in top and 'data-state="nogit"' in top and '>no git<' in top, 'a folder outside git says so from the first paint'
+    for op in ('pull', 'push'): assert f'id="git{op}"' in top and top.split(f'id="git{op}"')[0].rsplit('<button', 1)[1].count('hidden'), op
+    assert 'gitfetch' not in html and '⭮' not in html and '⍁' not in html, 'fetch lives in the branch menu'
+    assert 'id="kpill"' in top and 'id="runspill"' in top and 'toggle_right' in top
+    assert 'id="toolbar"' in row and 'id="tabbar"' in row and '>Run<' in row and '>Present<' in row
+    assert html.count('class="lee-toolbar"') == 1 and "lee-titlebar-' + m" in html
 
 
 @pytest.mark.parametrize('route', ['/nb/edit', '/lesson/save'])

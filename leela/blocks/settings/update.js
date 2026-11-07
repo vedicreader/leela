@@ -10,11 +10,9 @@ function updateBar(text, buttons) {
   buttons.forEach(([, fn], i) => { el.querySelector(`[data-update="${i}"]`).onclick = fn; });
   return el;
 }
-/* "Not now" holds for this offer only: a later version, or a new package set, asks again. */
-const updateKey = d => `${d.kind || 'app'}:${d.latest}`;
-let updateShown = null;
 const updateHide = () => { const el = $('#leeupdate'); if (el) el.hidden = true; };
-const updateLater = ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', updateKey(updateShown || {})); }];
+/* Per version, or a new package set: a newer release that the hourly check finds shows the bar again. */
+const updateLater = d => ['Not now', () => { updateHide(); sessionStorage.setItem('lee-update-later', d.latest || ''); }];
 const updateText = d => ({lock: `A new set of Leela packages is ready${d.changes ? ` (${d.changes})` : ''}. Kernels stop when Leela restarts to use it.`,
   'app-needed': `The newest Leela packages need Leela app ${d.latest}. Get it from the release page.`,
   download: `Leela ${d.latest} is available. You have ${d.current}. Get it from the release page.`})[d.kind] || `Leela ${d.latest} is available. You have ${d.current}.`;
@@ -31,17 +29,16 @@ function oldExtrasOffer(o) {
 }
 /* A run in progress or already installed comes first, so a reload or a second window picks it up. */
 function updateOffer(d) {
-  updateShown = d;
   if (d.job?.state === 'running') return leeUpdateRun(d);
   if (d.job?.state === 'done') return updateRestart(updateInstalled(d, d.job.line), d);
-  updateBar(updateText(d), d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater] : [updateNotes(d), updateLater]);
+  updateBar(updateText(d), d.install ? [['Update', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)] : [updateNotes(d), updateLater(d)]);
 }
+/* At start and then each hour (`boot.js`); a bar on screen or a run in progress is left alone. */
 async function leeUpdateNotice() {
-  if ($('#leeupdate')?.hidden === false) return;
+  if (updateRunning || $('#leeupdate')?.hidden === false) return;
   const d = await api('/update');
-  if (updateBusy(d)) return updateOffer(d);
-  if (!d.notice || sessionStorage.getItem('lee-update-later') === updateKey(d)) return oldExtrasOffer(d.old_extras);
-  updateOffer(d);
+  if (updateBusy(d) || (d.notice && sessionStorage.getItem('lee-update-later') !== d.latest)) return updateOffer(d);
+  oldExtrasOffer(d.old_extras);
 }
 /* "Check for updates…": asks GitHub now, past the cache and past "Not now", and always answers. */
 async function leeUpdateCheck() {
@@ -66,11 +63,11 @@ async function updateRunOnce(d) {
   }
   if (s.state === 'done') return updateRestart(updateInstalled(d, s.line), d);
   if (d.kind === 'lock') return updateBar(`The update did not install. Leela still runs the current version.${s.line ? ' ' + s.line : ''}`,
-    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
+    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
   if (s.state === 'same') return updateBar(s.line || 'Homebrew does not list the new Leela yet. Try again in a few minutes.',
-    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
-  if (s.state === 'unavailable') return updateBar('This Leela was not installed with Homebrew. Get the new version from the release page.', [updateNotes(d), updateLater]);
-  updateBar(`The update did not finish: ${s.line || s.state}`, [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater]);
+    [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
+  if (s.state === 'unavailable') return updateBar('This Leela was not installed with Homebrew. Get the new version from the release page.', [updateNotes(d), updateLater(d)]);
+  updateBar(`The update did not finish: ${s.line || s.state}`, [['Try again', () => leeUpdateRun(d)], updateNotes(d), updateLater(d)]);
 }
 window.leeUpdateNotice = leeUpdateNotice;
 window.leeUpdateCheck = leeUpdateCheck;

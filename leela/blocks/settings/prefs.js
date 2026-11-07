@@ -69,6 +69,16 @@ function nativeBackground(colour) {
   window.removeEventListener('pywebviewready', lee.nativeBackgroundWait);
   window.addEventListener('pywebviewready', lee.nativeBackgroundWait = send, {once: true});
 }
+/* The desktop window says how its title bar is drawn, which a reload with no query has lost; and a
+   macOS window in full screen hides its traffic lights, so their room goes too. */
+function paintTitlebarMode(mode) {
+  const m = {'mac-unified': 'mac', 'win-caption': 'win'}[mode] || 'browser', root = document.documentElement;
+  for (const k of ['mac', 'win', 'browser']) root.classList.toggle(`lee-titlebar-${k}`, k === m);
+  if (m !== 'browser') sessionStorage.setItem('lee-titlebar', mode);
+}
+window.addEventListener('pywebviewready', () => window.pywebview?.api?.titlebar?.()?.then?.(paintTitlebarMode)?.catch?.(() => {}));
+const paintFullScreen = () => document.documentElement.classList.toggle('lee-fullscreen', innerWidth >= screen.width && innerHeight >= screen.height);
+window.addEventListener('resize', paintFullScreen); paintFullScreen();
 function applyTheme(theme) {
   lee.theme = parseTheme(theme);
   const {family, mode, density} = lee.theme;

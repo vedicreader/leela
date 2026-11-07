@@ -102,6 +102,7 @@ async function boot() {
   if ($('#leesetup')) bootStep('setup pane', leeSetupPane);
   // A network check, so it waits until the page is at work; it fails silent.
   setTimeout(() => leeUpdateNotice().catch(() => {}), 5000);
+  setInterval(() => leeUpdateNotice().catch(() => {}), 3600e3);
   // The first paint is server-rendered without the preference, so it is only wrong when set.
   bootStep('file tree', paintHiddenBtn); if (treeHidden()) refreshFileTree(undefined, false).catch(() => {});
   /* The agent's log is one append-only file and grows without bound; reading it the first time
