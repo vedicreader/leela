@@ -5,9 +5,9 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 ## Blockers
 
 ### A. Server guard and file serving (leela, gheasy)
-- [ ] A1. `/file/raw` serves `.svg` inline at Leela's origin with no CSP. A script in an SVG reads `/term/info` and gets the terminal token. Serve with `Content-Security-Policy: sandbox; default-src 'none'`; send SVG as an attachment or only in `<img>`. (leela, S)
-- [ ] A2. `GET /git/history?ref=--output=<path>` overwrites a file outside the roots. Put `--end-of-options` before each caller ref in gheasy (history, blame, compare, file, diff); refuse a ref that starts with `-` in Leela. (gheasy, leela, S)
-- [ ] A3. The guard refuses only `Sec-Fetch-Site: cross-site`, so a page on another local port reaches GET routes that change state (`/dev/start`, `/vault/not-pii`, `/vault/watch`, `/vault/move`, `/browser/external`, `/term/external`). Allow only `same-origin` and `none`; make each state change POST only; test every route in `tests/routes.txt` with `same-site`. (leela, M)
+- [x] A1. `/file/raw` serves `.svg` inline at Leela's origin with no CSP. A script in an SVG reads `/term/info` and gets the terminal token. Serve with `Content-Security-Policy: sandbox; default-src 'none'`; send SVG as an attachment or only in `<img>`. (leela, S)
+- [x] A2. `GET /git/history?ref=--output=<path>` overwrites a file outside the roots. Put `--end-of-options` before each caller ref in gheasy (history, blame, compare, file, diff); refuse a ref that starts with `-` in Leela. (gheasy, leela, S)
+- [x] A3. The guard refuses only `Sec-Fetch-Site: cross-site`, so a page on another local port reaches GET routes that change state (`/dev/start`, `/vault/not-pii`, `/vault/watch`, `/vault/move`, `/browser/external`, `/term/external`). Allow only `same-origin` and `none`; make each state change POST only; test every route in `tests/routes.txt` with `same-site`. (leela, M)
 - [ ] A4. A per-launch secret for the page: the launcher sets a cookie from a one-time URL, and the guard refuses a request without it. `/term/info` stops giving the terminal token to any caller. Needed for Linux and WSL. (kavacha contract, leela, M)
 
 ### B. The agent's approval gate (leela, shalya, ramabana, dockeasy)
@@ -32,21 +32,21 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 ## Should fix
 
 ### Settings, files, notebooks, editor (leela)
-- [ ] S4. A typo in the user settings file wipes all user settings at the next save. Refuse to save over a file that does not parse; keep a `.bad` copy. (S)
-- [ ] S5. A clone can go into any folder (`git/app.py:282 _clone_into`). (S)
+- [x] S4. A typo in the user settings file wipes all user settings at the next save. Refuse to save over a file that does not parse; keep a `.bad` copy. (S)
+- [x] S5. A clone can go into any folder (`git/app.py:282 _clone_into`). (S)
 - [x] S7. A save after an outside rewrite undoes deletes and moves and drops in-memory outputs (`_rebase_notebook`, `nb/app.py:30`). (M)
 - [x] S8. Two windows on one notebook lose each other's edits (`core.js:303`). Send changed cells with the source each page last saw. (M)
 - [x] S9. CRLF files become LF on save. (S)
 - [x] S10. Rename-symbol uses code points where LSP sends UTF-16 units, and splits with `splitlines` (`lsp/app.py:14-33`). (S)
-- [ ] S11. Go-to-file stops at 20000 files and says `partial: False` (`fs.py:57`, `fs/app.py:325`); the same cap limits replace. (S)
-- [ ] S12. The trash is never emptied and moves folders across disks (`core/session.py:239`). (S)
-- [ ] S13. FileHistory blobs are not atomic; two processes overwrite `index.json` and prune each other's blobs (`session.py:76-81`). (S)
-- [ ] S14. Rust cells: a second run gives `E0428`; Stop and Restart do not kill the process (`runtime/runners.py`). (S-M)
+- [x] S11. Go-to-file stops at 20000 files and says `partial: False` (`fs.py:57`, `fs/app.py:325`); the same cap limits replace. (S)
+- [x] S12. The trash is never emptied and moves folders across disks (`core/session.py:239`). (S)
+- [x] S13. FileHistory blobs are not atomic; two processes overwrite `index.json` and prune each other's blobs (`session.py:76-81`). (S)
+- [x] S14. Rust cells: a second run gives `E0428`; Stop and Restart do not kill the process (`runtime/runners.py`). (S-M)
 
 ### Performance (leela)
-- [ ] S15. Start takes 7-9 s; `from IPython.core.display import ImageFormat` in `blocks/nb/show.py:10` costs 1.3 s. (S)
+- [x] S15. Start takes 7-9 s; `from IPython.core.display import ImageFormat` in `blocks/nb/show.py:10` costs 1.3 s. (S)
 - [x] S16. A 77 MB notebook: `/tab/state` sends 76 MB; each save adds about 85 MB RSS. (M)
-- [ ] S17. On Linux, inotify still watches ignored folders such as `node_modules` and `.venv` (`fs/watch.py:93`). (M)
+- [x] S17. On Linux, inotify still watches ignored folders such as `node_modules` and `.venv` (`fs/watch.py:93`). (M)
 
 ### UX and prose (leela)
 - [x] S18. Dim text fails WCAG AA in both themes (dark 3.76:1, light 4.27:1). (S)
@@ -59,9 +59,9 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [x] S25. UI text has 104 em dashes and hedges. (M)
 
 ### Tests and CI (leela)
-- [ ] T1. One isolation helper that sets XDG, `VISHALAKSHI_VAULT`, `LEELA_SEARCH_VAULT`, `ABHYASA_CONFIG`, `RAMABANA_CONFIG` and `LEELA_MEMORY_OFFLINE=1`; guard those folders in conftest; an autouse fake keyring; AGENTS.md rule. ramabana writes probes to a fixed `~/.config/ramabana/probes`. (S)
+- [x] T1. One isolation helper that sets XDG, `VISHALAKSHI_VAULT`, `LEELA_SEARCH_VAULT`, `ABHYASA_CONFIG`, `RAMABANA_CONFIG` and `LEELA_MEMORY_OFFLINE=1`; guard those folders in conftest; an autouse fake keyring; AGENTS.md rule. ramabana writes probes to a fixed `~/.config/ramabana/probes`. (S)
 - [ ] T2. CI runs none of the 283 slow tests and only Python 3.12; the app ships 3.13. A nightly `-m slow` job and a 3.13 matrix. (M)
-- [ ] T3. Flaky under load: `test_runtime.py::test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream`, `test_core.py::test_a_hung_interactive_shell_is_asked_again_as_a_login_shell`, `test_refactor` silent server, `test_watchdog::test_idle_writes_nothing`, `test_agent` timeout children, `test_nb_check::test_home_is_the_work_folder`, `test_term::test_a_view_that_reconnects_is_owed_only_what_it_missed`, `test_update` brew upgrade tests, `test_workflows` folder clips. (S each)
+- [x] T3. Flaky under load: `test_runtime.py::test_stopping_a_run_ends_its_viewers_and_starting_again_is_a_fresh_stream`, `test_core.py::test_a_hung_interactive_shell_is_asked_again_as_a_login_shell`, `test_refactor` silent server, `test_watchdog::test_idle_writes_nothing`, `test_agent` timeout children, `test_nb_check::test_home_is_the_work_folder`, `test_term::test_a_view_that_reconnects_is_owed_only_what_it_missed`, `test_update` brew upgrade tests, `test_workflows` folder clips. (S each)
 - [ ] T5. Slow tests that fail on main: `test_the_keymap_answers_every_chord_it_claims_in_one_browser_session` ("reading 'hyper'"), `test_markdown_links_never_navigate_the_desktop_shell` (link list mismatch). (S)
 - [ ] T4. No test for: many streamed outputs, non-UTF-8 and CRLF round trips, LSP UTF-16 rename, rebase with delete/move/insert, two-page saves, the walk cap, the same-site guard, the SVG CSP.
 
@@ -84,6 +84,11 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] F7. The FILES and TOOLS restore pills are bright boxes. (leela, S)
 - [ ] F8. The leela skill's approval-mode text needs one pass after the approval-gate batch merges. (leela, S)
 - [ ] F4. `/nb/language` saves with no disk-version check. (leela, S)
+- [ ] F9. Release gheasy 0.0.21 (`--end-of-options` for every caller ref) and raise Leela's pin; Leela's own ref check covers the hole until then. (gheasy, S)
+- [ ] F10. About 400 routes still take GET and POST; audit the rest for POST-only. (leela, M)
+- [ ] F11. ramabana writes probes to a fixed folder under its config home (`ramabana/core.py:103`); add `RAMABANA_PROBES` or put them beside `$RAMABANA_CONFIG`. Leela's tests patch `PROBE_DIR` for now. (ramabana, S)
+- [ ] F12. The first page spends about 1.4 s building the agent panel (`turn_move` model probes 0.83 s, a new conversation's prompt 0.55 s). (ramabana, leela, M)
+- [ ] F13. A4 is on branch `launch-key` (worktree leela-sec). It needs a test in a real WKWebView window and the kavacha launcher side (docs/kavacha-launch-key.md on that branch) before it ships. (leela, kavacha, M)
 
 ## Nice to have
 - [ ] N1. The update thread stays "running" if `_run` raises; a pipeline timeout kills only the direct child (`pipelines/app.py:44`); a backup restore swallows errors (`core/backups.py:316`); a read-only file is overwritten; Stop interrupts the active tab's kernel, not the busy one; settings types: a non-dict `languages` entry raises, "false" becomes True.
