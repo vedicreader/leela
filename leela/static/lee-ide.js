@@ -5180,8 +5180,9 @@ async function codeMap() {
 async function startRun(r) {
   if (r.debug) return startDirectDebug(r);
   status(`starting ${r.name || (r.cmd || '').split('/').pop()}…`);
-  const s = await api('/dev/start?name=' + encodeURIComponent(r.name || '') +
-                      '&path=' + encodeURIComponent(r.cmd));
+  let s;
+  try { s = await withPython(() => api('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
+  catch (e) { return status(String(e.message || e), 'err'); }
   if (!s.ok) return status(s.error || 'failed to start', 'err');
   agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
            `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
@@ -5227,7 +5228,8 @@ window.leeDebugFile = () => startDirectDebug(
   {name: lee.path?.split('/').pop() || 'Python', program: lee.path, debug: true});
 
 async function startDirectDebug(run={}) {
-  let capabilities=await api('/debug/capabilities');
+  let capabilities;
+  try{capabilities=await withPython(()=>api('/debug/capabilities'));}catch(e){return status(String(e.message||e),'err');}
   if(!capabilities.debugpy){
     const ok=await confirmDialog('Install debugpy',`Install debugpy into ${capabilities.python}?`,'install');
     if(!ok)return;
@@ -5236,7 +5238,8 @@ async function startDirectDebug(run={}) {
   const path=run.program||lee.path||'', lines=path?detailedBreakpoints(path):[];
   status(`starting debugger: ${run.name||path.split('/').pop()||'Python'}…`);
   const config={...lee.debugPrefs,...run,program:run.program||path,breakpoints:path?{[path]:lines}:{}};
-  await post('/debug/start',config);lee.directDebug=true;
+  try{await withPython(()=>post('/debug/start',config));}catch(e){return status(String(e.message||e),'err');}
+  lee.directDebug=true;
   status('debugger running','ok');
   postEvents('/debug/events',{},(event,data)=>{
     if(event==='stopped'){lee.debugThread=data.thread_id;paintDebugger(data);status(`paused at line ${data.frames?.[0]?.line||'?'}`,'ok');}
@@ -6089,23 +6092,75 @@ async function treeAddFolder() {
     await refreshFileTree(path, false);
   } catch (e) { leeFail('git', 'add folder', e); }
 }
-/* A Word, PowerPoint or Excel file, read-only. The server sends the document as cleaned HTML; this
-   file adds the head bar, the sheet buttons and the row pager. Nothing here writes the file. */
+/* A Word, PowerPoint or Excel file, read-only. On macOS the tab shows Quick Look's own preview in a
+   frame that runs no script. The simple view is the server's cleaned HTML, with the sheet buttons and
+   the row pager. Nothing here writes the file. */
 const officeQ = (path, more = '') => '?path=' + encodeURIComponent(path) + more;
+const OFFICE_VIEW = 'lee-office-view';   // 'simple' once a person picks the simple view
 async function mountOffice(host, st) {
   host.innerHTML =
     `<div class="lee-doc lee-office"><div class="lee-doc-head"><span>${esc(compactPath(st.path))}</span>` +
     `<span class="lee-dim">read-only</span><span class="lee-spacer"></span>` +
+    `<button class="lee-btn" data-office-view hidden></button>` +
     `<button class="lee-btn" data-office-open>open in default app</button>` +
     `<button class="lee-btn" data-office-copy>copy as text</button></div>` +
     `<div class="lee-doc-body lee-office-body"><div class="lee-dim">Loading…</div></div></div>`;
-  const body = $('.lee-office-body', host), path = st.path;
+  const body = $('.lee-office-body', host), path = st.path, view = $('[data-office-view]', host);
   $('[data-office-open]', host).onclick = () => post('/office/open' + officeQ(path))
     .then(() => status('opened in the default app', 'ok')).catch(e => status(String(e.message || e), 'err'));
   $('[data-office-copy]', host).onclick = async () => {
     try { await navigator.clipboard.writeText((await api('/office/text' + officeQ(path))).text); status('document text copied', 'ok'); }
     catch (e) { status(String(e.message || e), 'err'); }
   };
+  const show = async faithful => {
+    view.hidden = true; body.className = 'lee-doc-body lee-office-body'; body.innerHTML = '<div class="lee-dim">Loading…</div>';
+    let ql = null;
+    if (faithful) {
+      try { ql = await api('/office/quicklook' + officeQ(path)); }
+      catch (e) {
+        if (e.body?.kind === 'no-quicklook') return officeSimple(body, path);
+        status(`${String(e.message || e)}. The simple view is shown.`, 'err');
+      }
+    }
+    if (ql) officeQuickLook(body, ql); else await officeSimple(body, path);
+    view.textContent = ql ? 'simple view' : 'Quick Look view'; view.hidden = false;
+    view.onclick = () => { localStorage.setItem(OFFICE_VIEW, ql ? 'simple' : 'quicklook'); show(!ql); };
+  };
+  await show(localStorage.getItem(OFFICE_VIEW) !== 'simple');
+}
+//: Quick Look's pages in a frame with no script and no links; a workbook gets one button for each sheet.
+function officeQuickLook(body, ql) {
+  body.className = 'lee-doc-body lee-office-ql';
+  const src = pg => `/office/ql/${encodeURIComponent(ql.token)}/${encodeURIComponent(pg.src)}`;
+  const note = document.createElement('div'), frame = document.createElement('iframe');
+  note.className = 'lee-dim lee-office-clip';
+  note.textContent = 'Quick Look shows only the first 4096 rows of a sheet. The simple view shows all rows.';
+  frame.className = 'lee-office-frame'; frame.setAttribute('sandbox', 'allow-same-origin'); frame.title = 'Quick Look preview';
+  const pick = i => {
+    frame.src = src(ql.pages[i]); note.hidden = !ql.pages[i].clipped;
+    for (const [j, x] of $$('[data-sheet-tab]', body).entries()) x.setAttribute('aria-selected', String(j === i));
+  };
+  body.replaceChildren();
+  if (ql.pages.length > 1) {
+    const bar = document.createElement('div');
+    bar.className = 'lee-sheet-tabs'; bar.setAttribute('role', 'tablist');
+    ql.pages.forEach((pg, i) => {
+      const b = document.createElement('button');
+      b.className = 'lee-btn'; b.setAttribute('role', 'tab'); b.dataset.sheetTab = i;
+      b.textContent = pg.name || `Sheet ${i + 1}`; b.onclick = () => pick(i);
+      bar.append(b);
+    });
+    body.append(bar);
+  }
+  // Quick Look draws slides at their size in points; scale them to the tab's width, never above it.
+  const fit = () => {
+    const d = frame.contentDocument, s = d?.querySelector('div.slide');
+    if (s) d.body.style.zoom = String(Math.min(1, (frame.clientWidth - 32) / (s.offsetWidth + 16)));
+  };
+  frame.onload = fit; new ResizeObserver(fit).observe(frame);
+  body.append(note, frame); pick(0);
+}
+async function officeSimple(body, path) {
   try { body.innerHTML = (await api('/office/view' + officeQ(path))).html; }
   catch (e) { body.innerHTML = `<div class="lee-err">${esc(String(e.message || e))}</div>`; return; }
   // A link in a document never replaces the IDE page.
@@ -6263,7 +6318,7 @@ async function refreshKernelPill() {
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
-    (d.venv_notes || []).forEach(m => status(m, 'ok'));
+    paintVenvNotice(d.no_venv);
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
       let run = tab.querySelector('.lee-tab-run');
@@ -6277,68 +6332,65 @@ async function refreshKernelPill() {
   } catch (e) {}
 }
 
+/* A project with Python in it and nowhere to run it says so above the editor until it is answered.
+   "Not now" holds for this window's session; the server, not the page, decides when it is answered. */
+function paintVenvNotice(v) {
+  let bar = $('#venvnotice');
+  if (!v || lee.observer || sessionStorage.getItem('lee-venv-later:' + v.root)) return bar?.remove();
+  if (bar?.dataset.root === v.root) return;
+  bar?.remove();
+  bar = document.createElement('div');
+  Object.assign(bar, {id: 'venvnotice', className: 'lee-venv-notice', role: 'status'});
+  bar.dataset.root = v.root;
+  bar.innerHTML = `<span>No Python environment for ${esc(v.name)}.</span>` +
+    `<button class="lee-btn go" data-venv="setup">Set up .venv</button>` +
+    `<button class="lee-btn" data-venv="pick">Choose interpreter…</button>` +
+    `<button class="lee-btn" data-venv="later">Not now</button>`;
+  $('#editorstage')?.before(bar);
+  bar.addEventListener('click', async e => {
+    const act = e.target.closest('[data-venv]')?.dataset.venv;
+    if (act === 'later') { sessionStorage.setItem('lee-venv-later:' + v.root, '1'); bar.remove(); }
+    else if (act === 'pick') { if (await pickKernel()) refreshKernelPill(); }
+    else if (act === 'setup') {
+      bar.querySelectorAll('button').forEach(b => b.disabled = true);
+      bar.classList.add('busy'); bar.firstChild.textContent = `Setting up .venv for ${v.name}…`;
+      if (!await setUpVenv(v.root, v.name)) { bar.remove(); refreshKernelPill(); }
+    }
+  });
+}
+
 async function checkProjectRuntime() {
   if (lee.observer) return;
   let d;
   try { d = await api('/runtime/info'); } catch (_) { return; }
-  if ((!d.needs_create && !d.needs_support && !d.needs_upgrade && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
+  /* A folder with no environment gets the notice above the editor, from `refreshKernelPill`, and
+     never a venv it did not ask for. */
+  if ((!d.needs_support && !d.needs_upgrade && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
-  /* A folder with no environment at all gets one, without being asked, because with uv the fix is
-     one command that a deleted directory undoes. Only for a missing environment: installing
-     packages into an environment you built yourself is your decision, so `needs_support` below
-     still asks. Without uv it also still asks, because a half-built venv is worse than none. */
-  if (d.needs_create && d.uv) {
-    status('no project environment — creating .venv with uv…');
-    try {
-      const r = await post('/runtime/create');
-      status(`project runtime ready: ${r.python}`, 'ok'); refreshKernelPill();
-      return;
-    } catch (e) { status(`could not create .venv — ${String(e.message || e)}`, 'err'); }
-    /* fall through to the dialog, which offers choosing an interpreter instead */
-  }
-  if (d.needs_support || d.needs_upgrade || d.needs_inspector) {
-    /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
-       and the variables panel cannot read the namespace without what dhrishti imports. A folder
-       missing both should be asked once. */
-    const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
-    const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
-                   d.needs_upgrade && !d.needs_support ? `<code>ipykernel</code> 7.4 or later (${esc(d.notice.message)})` : '',
-                   d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
-    const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
-      `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
-      `${wants.join(', and ')}. ` +
-      `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
-      `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
-      `<button class="lee-btn" id="runtimelater">not now</button></div>`);
-    m.querySelector('#runtimeenable').onclick = async () => {
-      m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
-      try {
-        if (d.needs_support || d.needs_upgrade) await post('/runtime/support', {python: d.python});
-        if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
-        m.remove();
-        status('project runtime ready', 'ok');
-        refreshKernelPill(); if (window.leeVars) leeVars();
-      }
-      catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
-    };
-    m.querySelector('#runtimelater').onclick = () => m.remove();
-    return;
-  }
-  const m = modal(`<div class="lee-mhead">project runtime<span class="sub">${esc(d.root)}</span></div>` +
-    `<div class="lee-dialogcopy">This folder has no <code>.venv</code>, <code>venv</code>, ` +
-    `<code>env</code>, or <code>.env</code>. Leela stays in its own environment; your code ` +
-    `runs in a project environment.</div><div class="lee-mfoot">` +
-    `<button class="lee-btn go" id="runtimecreate">create .venv</button>` +
-    `<button class="lee-btn" id="runtimepick">choose interpreter</button>` +
+  /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
+     and the variables panel cannot read the namespace without what dhrishti imports. A folder
+     missing both should be asked once. */
+  const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
+  const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
+                 d.needs_upgrade && !d.needs_support ? `<code>ipykernel</code> 7.4 or later (${esc(d.notice.message)})` : '',
+                 d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
+  const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
+    `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
+    `${wants.join(', and ')}. ` +
+    `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
     `<button class="lee-btn" id="runtimelater">not now</button></div>`);
-  m.querySelector('#runtimecreate').onclick = async () => {
-    m.querySelector('#runtimecreate').disabled = true; status('creating .venv and installing ipykernel…');
+  m.querySelector('#runtimeenable').onclick = async () => {
+    m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
     try {
-      const r = await post('/runtime/create'); m.remove();
-      status(`project runtime ready: ${r.python}`, 'ok'); refreshKernelPill();
-    } catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimecreate').disabled = false; }
+      if (d.needs_support || d.needs_upgrade) await post('/runtime/support', {python: d.python});
+      if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
+      m.remove();
+      status('project runtime ready', 'ok');
+      refreshKernelPill(); if (window.leeVars) leeVars();
+    }
+    catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
   };
-  m.querySelector('#runtimepick').onclick = () => { m.remove(); pickKernel(); };
   m.querySelector('#runtimelater').onclick = () => m.remove();
 }
 

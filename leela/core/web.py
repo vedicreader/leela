@@ -97,7 +97,8 @@ class Assets:
 
 def fail(err, code=400, kind=None, **extra):
     "The IDE's JSON error shape. `err` is an exception (reported `Type: message`) or a ready string; `kind` is what a screen can offer."
-    body = {'ok': False, 'error': errstr(err) if isinstance(err, Exception) else str(err)}
+    # `said` is an error already worded for a person, so it goes without its type name.
+    body = {'ok': False, 'error': getattr(err, 'said', None) or (errstr(err) if isinstance(err, Exception) else str(err))}
     # The kernel ceiling is the one failure a person can answer, so it travels with what to offer.
     if getattr(err, 'limit', None): body |= {'kernel_limit': err.limit, 'candidate': err.candidate}
     if isinstance(err, Exception) and getattr(err, 'kind', None): body |= {'kind': err.kind, 'refs': list(getattr(err, 'refs', ()))}

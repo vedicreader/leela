@@ -906,8 +906,9 @@ async function postEvents(url, data, onEvent, signal = null, idle = 0) {
                               body: JSON.stringify(data || {}), signal}).catch(e => { throw Object.assign(e, {unsent: true}); });
   if (!r.ok) {
     const text = await r.text(); let said = text;
-    try { const b = JSON.parse(text); said = b.error || b.message || text; } catch (_) {}
-    throw Object.assign(new Error(said || r.statusText), {unsent: true});
+    let body = null;
+    try { body = JSON.parse(text); said = body.error || body.message || text; } catch (_) {}
+    throw Object.assign(new Error(said || r.statusText), {unsent: true, body});
   }
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';
@@ -3911,7 +3912,7 @@ async function checkExercise(cellId) {
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) throw new Error('the notebook could not be saved first');
     const i = lee.cells.findIndex(x => x.id === cellId); if (!cur() || i < 0) throw new Error('the notebook changed before the check began');
     const v = ensureCellMounted(i), source = v ? LeeCM.getDoc(v) : lee.cells[i].source;
-    const {cell, ...verdict} = await post('/exercise/check', {i, id: cellId, path: runKey, source, seq: nextSeq()});
+    const {cell, ...verdict} = await withPython(() => post('/exercise/check', {i, id: cellId, path: runKey, source, seq: nextSeq()}));
     st.result = {...verdict, source};
     const at = cur();
     if (at && cell) {
@@ -4335,12 +4336,12 @@ async function runCell(i, advance, {save = true} = {}) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
+        await withPython(() => postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();
           if (at && event === 'output') { at.outputs = data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
-        }, null, 45000);
+        }, null, 45000));
       } catch (e) { if (e === failed || e.unsent) throw e; }
       if (!r) r = await settleRun(runKey, cellId);
       const at = cur();
@@ -4511,7 +4512,7 @@ async function debugCell(i) {
   status(`starting ipykernel debugger for cell ${i + 1}…`);
   let done = null;
   try {
-    await postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
+    await withPython(() => postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
       if (event === 'ready') {
         rememberBreakpoints(c.id, data.breakpoints || breakpoints);
         LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);
@@ -4524,7 +4525,7 @@ async function debugCell(i) {
         leeVars();
       } else if (event === 'done') done = data;
       else if (event === 'error') throw new Error(data.text || 'debugger failed');
-    });
+    }));
     const at = lee.tabKey === key && lee.cells.find(x => x.id === c.id);
     if (done?.cell && at) {
       Object.assign(at, done.cell); renderOutputs(at);
@@ -5541,7 +5542,9 @@ async function runSelection() {
   const s = v.state.selection.main;
   const code = s.empty ? '' : v.state.doc.sliceString(s.from, s.to);
   if (!code.trim()) return status('select some code first', 'err');
-  const r = await post('/run/code', {code, path: lee.tabKey || ''});
+  let r;
+  try { r = await withPython(() => post('/run/code', {code, path: lee.tabKey || ''})); }
+  catch (e) { return status(String(e.message || e), 'err'); }
   const head = code.trim().split('\n')[0].slice(0, 60);
   execLine(head + (code.trim().includes('\n') ? ' …' : ''), r.text, r.ok);
   status(r.ok ? 'ran the selection' : 'the selection raised — see the exec log', r.ok ? 'ok' : 'err');
@@ -5576,8 +5579,11 @@ async function restartRunAll() {
 }
 
 /* Two questions, two lists: which interpreter's packages this tab can import, and which launcher
- * runs it. Both restart the kernel, so what that costs is on screen while the choice is made. */
+ * runs it. Both restart the kernel, so what that costs is on screen while the choice is made.
+ * Resolves true once an interpreter is chosen and its kernel is up, false when the picker closes without one. */
 async function pickKernel() {
+  let picked, picking = false;
+  const chosen = new Promise(r => picked = r);
   const o = await api('/kernel/options');
   const models = await loadedModels();
   const row = (cur, main, sub, attrs) =>
@@ -5606,7 +5612,8 @@ async function pickKernel() {
     `<div class="lee-dim">at the limit, closes the longest-idle runtime instead of asking</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
     `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
-    `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
+    `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`,
+    null, () => { if (!picking) picked(false); });
   const clearWeights = m.querySelector('#clearengines');
   if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
@@ -5622,12 +5629,16 @@ async function pickKernel() {
                                   o.cwd || '', '/path/to/project');
     if (!cwd || cwd === o.cwd) return;
     m.remove(); status('restarting kernel in ' + cwd + '…');
-    const d = await post('/kernel/cwd', {cwd});
+    let d;
+    try { d = await withPython(() => post('/kernel/cwd', {cwd})); }
+    catch (e) { return status(String(e.message || e), 'err'); }
     markPreviousRuns(); paintEnv(''); status('kernel cwd: ' + d.cwd, 'ok'); refreshKernelPill(); leeVars();
   };
   m.querySelector('#kernelattach').onclick = async () => {
     const privateKernel = !o.private; m.remove(); status('changing kernel attachment…');
-    const d = await post('/kernel/select', {private: privateKernel});
+    let d;
+    try { d = await withPython(() => post('/kernel/select', {private: privateKernel})); }
+    catch (e) { return status(String(e.message || e), 'err'); }
     markPreviousRuns(); paintEnv('');
     status(privateKernel ? 'this tab now has its own kernel' : 'attached to the folder kernel', 'ok');
     refreshKernelPill(); leeVars();
@@ -5642,10 +5653,13 @@ async function pickKernel() {
              support.ok ? 'ok' : 'err');
       return pickKernel();
     }
-    m.remove();
+    picking = !r.dataset.kind; m.remove();
     status('starting the new kernel…');
-    const d = await post('/kernel/select',
-                         r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
+    const pick = () => post('/kernel/select', r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
+    let d;
+    try { d = await (r.dataset.kind ? withPython(pick) : pick()); }
+    catch (e) { picked(false); return status(String(e.message || e), 'err'); }
+    picked(true);
     markPreviousRuns();
     // Picking a runtime also makes its namespace the live variable source, so the panel must not
     // stay pinned, on screen or server-side, to the process watched before the switch.
@@ -5653,8 +5667,51 @@ async function pickKernel() {
     status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()} · variables connected`, 'ok');
     refreshKernelPill(); leeVars();
   });
+  return chosen;
 }
 
+/* A project with no venv and no chosen interpreter runs no Python. The person answers once: set up
+ * .venv, or choose an interpreter; then `go` runs again. Runs that ask together share one answer. */
+let pythonAsked = null;
+async function withPython(go) {
+  try { return await go(); }
+  catch (e) {
+    if (e.body?.kind !== 'no_venv') throw e;
+    if (!await (pythonAsked ||= askPython(e.body).finally(() => { pythonAsked = null; }))) throw e;
+    return go();
+  }
+}
+window.withPython = withPython;
+
+async function setUpVenv(root, name) {
+  status(`setting up .venv for ${name}…`);
+  try {
+    const r = await post('/runtime/create', {root});
+    status(r.note || `the Python environment for ${name} is ready`, 'ok');
+    refreshKernelPill(); return true;
+  } catch (e) { status(String(e.message || e), 'err'); return false; }
+}
+
+function askPython(body) {
+  const root = (body.refs || [])[0] || '', name = root.split('/').pop() || 'this project';
+  return new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    const m = modal(`<div class="lee-mhead">No Python environment for ${esc(name)}</div>` +
+      `<div class="lee-dialogcopy">Leela runs no code in ${esc(name)} until it has a Python environment. ` +
+      `Set up a <code>.venv</code> in the project, or choose an interpreter. Then the run starts.</div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" id="pyvenv">Set up .venv</button>` +
+      `<button class="lee-btn" id="pypick">Choose interpreter…</button>` +
+      `<button class="lee-btn" id="pylater">Not now</button></div>`, null, () => done(false), {className: 'lee-python-ask'});
+    m.querySelector('#pyvenv').onclick = async () => {
+      m.querySelectorAll('button').forEach(b => b.disabled = true);
+      if (!await setUpVenv(root, name)) return m.querySelectorAll('button').forEach(b => b.disabled = false);
+      done(true); m.remove();
+    };
+    m.querySelector('#pypick').onclick = async () => { settled = true; m.remove(); resolve(await pickKernel()); };
+    m.querySelector('#pylater').onclick = () => m.remove();
+  });
+}
 
 //: Every Restart kernel button: the saved outputs turn historical, and the pill and the variables follow.
 async function restartKernel() {
@@ -6527,7 +6584,7 @@ async function runExec() {
   lee.execBusy = true; status('running exec…');
   const log = $('#execlog');
   try {
-    const r = await post('/exec', {code, path: lee.tabKey || '', scope: lee.execScope, frame_id: lee.debugState?.frame_id});
+    const r = await withPython(() => post('/exec', {code, path: lee.tabKey || '', scope: lee.execScope, frame_id: lee.debugState?.frame_id}));
     const line = document.createElement('div');
     line.className = 'lee-runline' + (r.ok ? '' : ' err');
     line.innerHTML = `<span class="code">${esc(code)}</span><span class="arrow">→</span>` +
@@ -6731,7 +6788,7 @@ async function leeEvalVarFilter(event) {
   const code = raw.slice(1).trim(); if (!code) return status('enter Python after =', 'err');
   input.disabled = true; status('evaluating variable expression…');
   try {
-    const r = await post('/vars/eval', {code, scope: lee.execScope});
+    const r = await withPython(() => post('/vars/eval', {code, scope: lee.execScope}));
     if (!r.ok) return status(r.error || 'expression failed', 'err');
     if (r.stdout) status(r.stdout.trim(), 'info');
     if (!r.result) return status('expression returned no value', 'info');

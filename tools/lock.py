@@ -353,6 +353,35 @@ def windows_by_port(base, port, tmp):
         if b'<html' not in _get(r['url'], raw=True, timeout=60).lower(): raise RuntimeError(f'no page at {r["url"]}')
         if want and (t := _get(r['url'] + 'tab/state', timeout=30)).get('kind') != want: raise RuntimeError(f'the loose window shows {t}')
 
+def _post(url, body, timeout=180):
+    "A JSON POST's status and answer, a refusal included."
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r: return r.status, r.read().decode()
+    except urllib.error.HTTPError as e: return e.code, e.read().decode()
+
+def venv_and_quicklook(base, port, tmp, py):
+    "A Python project with no venv: the notice, a run that asks and makes nothing, then Set up .venv by its route; and Quick Look's slides on that port."
+    d = tmp/'novenv'; d.mkdir(exist_ok=True)
+    (d/'pyproject.toml').write_text('[project]\nname = "p"\nversion = "0"\n')
+    cell = dict(cell_type='code', id='c0', metadata={}, execution_count=None, outputs=[], source='1+1')
+    (d/'nb.ipynb').write_text(json.dumps(dict(cells=[cell], metadata={}, nbformat=4, nbformat_minor=5)))
+    sh(py, '-I', '-c', 'import sys; from pptx import Presentation; p = Presentation(); p.slides.add_slide(p.slide_layouts[0]).shapes.title.text = "Probe slide"; p.save(sys.argv[1])', d/'deck.pptx')
+    r = _get(f'{base}/hub/open?path={urllib.parse.quote(str(d))}', data=b'', timeout=120)
+    site = r['url'].rstrip('/')
+    info = _get(f'{site}/runtime/info', timeout=60)
+    if not info.get('needs_create') or info.get('python'): raise RuntimeError(f'no venv notice: {info}')
+    _get(f'{site}/tab/open?path={urllib.parse.quote(str(d/"nb.ipynb"))}', timeout=60, raw=True)
+    code, body = _post(f'{site}/nb/run', dict(path=str(d/'nb.ipynb'), i=0, id='c0'))
+    if 'venv' not in body.lower(): raise RuntimeError(f'the run did not ask about a venv: {code} {body[-300:]}')
+    if (d/'.venv').exists(): raise RuntimeError('a run made a .venv nobody asked for')
+    q = _get(f'{site}/office/quicklook?path={urllib.parse.quote(str(d/"deck.pptx"))}', timeout=120)
+    if not q.get('ok') or not q.get('pages'): raise RuntimeError(f'Quick Look gave {q}')
+    page = _get(f"{site}/office/ql/{q['token']}/{q['pages'][0]['src']}", timeout=60, raw=True)
+    if b'<' not in page[:200]: raise RuntimeError('Quick Look gave no page')
+    code, body = _post(f'{site}/runtime/create', {}, timeout=600)
+    if code != 200 or not (d/'.venv'/'bin'/'python').exists(): raise RuntimeError(f'Set up .venv: {code} {body[-300:]}')
+
 def project_cell(base, port, proj, env_dir):
     "Through the server's routes, a cell of a notebook in `proj` runs on the project's .venv, and no app build setting reaches it."
     d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(proj))}', data=b'', timeout=120)
@@ -427,7 +456,7 @@ def smoke(env_dir, results, extras=(), wait=180):
         d = _get(f'{base}/hub/open?path={urllib.parse.quote(str(work))}', data=b'', timeout=120)
         if not d.get('ok'): raise RuntimeError(d)
     ok &= serve('', server_env(), lambda base, port: step('/hub/open', lambda: hub_open(base)) & step('project kernel cell', lambda: project_cell(base, port, proj, env_dir))
-                & step('windows by port', lambda: windows_by_port(base, port, tmp)))
+                & step('windows by port', lambda: windows_by_port(base, port, tmp)) & step('venv notice, Quick Look', lambda: venv_and_quicklook(base, port, tmp, py)))
     ok &= step('agent shell tools', lambda: agent_shell(py, proj, server_env() | dict(XDG_CONFIG_HOME=str(tmp/'cfg'), XDG_DATA_HOME=str(tmp/'data'))))
     old = server_env_1_0(env_dir, cache='', python='', python_version=PYTHON)
     ok &= serve(' (app 1.0.0 env)', old, lambda base, port: step('project kernel cell (app 1.0.0 env)', lambda: project_cell(base, port, proj, env_dir)))

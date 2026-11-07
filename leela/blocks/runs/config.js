@@ -1,8 +1,9 @@
 async function startRun(r) {
   if (r.debug) return startDirectDebug(r);
   status(`starting ${r.name || (r.cmd || '').split('/').pop()}…`);
-  const s = await api('/dev/start?name=' + encodeURIComponent(r.name || '') +
-                      '&path=' + encodeURIComponent(r.cmd));
+  let s;
+  try { s = await withPython(() => api('/dev/start?name=' + encodeURIComponent(r.name || '') + '&path=' + encodeURIComponent(r.cmd))); }
+  catch (e) { return status(String(e.message || e), 'err'); }
   if (!s.ok) return status(s.error || 'failed to start', 'err');
   agentLog(`<div class="lee-runline"><span class="sub">▶ ${esc(s.label)} — ${esc(s.cmd)}</span></div>` +
            `<div class="lee-runline"><span class="res">${esc((s.log || []).join('\n'))}</span></div>`);
@@ -48,7 +49,8 @@ window.leeDebugFile = () => startDirectDebug(
   {name: lee.path?.split('/').pop() || 'Python', program: lee.path, debug: true});
 
 async function startDirectDebug(run={}) {
-  let capabilities=await api('/debug/capabilities');
+  let capabilities;
+  try{capabilities=await withPython(()=>api('/debug/capabilities'));}catch(e){return status(String(e.message||e),'err');}
   if(!capabilities.debugpy){
     const ok=await confirmDialog('Install debugpy',`Install debugpy into ${capabilities.python}?`,'install');
     if(!ok)return;
@@ -57,7 +59,8 @@ async function startDirectDebug(run={}) {
   const path=run.program||lee.path||'', lines=path?detailedBreakpoints(path):[];
   status(`starting debugger: ${run.name||path.split('/').pop()||'Python'}…`);
   const config={...lee.debugPrefs,...run,program:run.program||path,breakpoints:path?{[path]:lines}:{}};
-  await post('/debug/start',config);lee.directDebug=true;
+  try{await withPython(()=>post('/debug/start',config));}catch(e){return status(String(e.message||e),'err');}
+  lee.directDebug=true;
   status('debugger running','ok');
   postEvents('/debug/events',{},(event,data)=>{
     if(event==='stopped'){lee.debugThread=data.thread_id;paintDebugger(data);status(`paused at line ${data.frames?.[0]?.line||'?'}`,'ok');}

@@ -39,7 +39,9 @@ async function runSelection() {
   const s = v.state.selection.main;
   const code = s.empty ? '' : v.state.doc.sliceString(s.from, s.to);
   if (!code.trim()) return status('select some code first', 'err');
-  const r = await post('/run/code', {code, path: lee.tabKey || ''});
+  let r;
+  try { r = await withPython(() => post('/run/code', {code, path: lee.tabKey || ''})); }
+  catch (e) { return status(String(e.message || e), 'err'); }
   const head = code.trim().split('\n')[0].slice(0, 60);
   execLine(head + (code.trim().includes('\n') ? ' …' : ''), r.text, r.ok);
   status(r.ok ? 'ran the selection' : 'the selection raised — see the exec log', r.ok ? 'ok' : 'err');

@@ -52,7 +52,7 @@ const [cell, verdict, fail] = JSON.parse(process.argv[2]), host = new El('div'),
 const ctx = {console, CSS: {escape: s => s}, lee: {tabKey: 't', cells: [cell], editors: new Map([[cell.id, view]]), path: 'n.ipynb', exerciseResults: new Map()},
   document: {createElement: t => new El(t)}, $: s => s.startsWith('.lee-exercise') ? host : s.startsWith('#g-') ? {} : null,
   LeeCM: {getDoc: v => v.doc}, ensureCellMounted: () => view, renderOutputs() {}, setCellState() {}, status() {}, leeVars() {},
-  nextSeq: () => 7, saveTab: async () => true, autoSaveEnabled: () => false,
+  nextSeq: () => 7, saveTab: async () => true, autoSaveEnabled: () => false, withPython: go => go(),
   post: async (url, body) => { calls.push([url, body]); busy.push(host.all().find(e => e.tag === 'button').attrs['aria-busy'], cell.running); if (fail) throw Error(fail); view.doc = 'typed meanwhile'; return {...verdict, cell: {...cell, source: body.source, execution_count: 3}}; }};
 ctx.window = ctx; vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx);

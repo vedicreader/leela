@@ -6,7 +6,7 @@ from ...core.web import fail, off_loop, pipeline_socket
 from .drive import Drive, DriveError
 from ...core.envs import EnvStore
 from ..git.repos import RepoSet, repo_for
-from ..runtime.kernels import python_project
+from ..pipelines.pipelines import step_python
 
 __all__ = ['CAPS', 'connect']
 
@@ -16,11 +16,11 @@ def connect(app, ctx):
     rt = app.route
     live = {}
     def drive(target='', make=False):
-        "The driver for one project, made once and kept: a running step is a process. `make` gives a run its project's venv."
+        "The driver for one project, made once and kept: a running step is a process. `make` refuses a Python project with no venv and no pyproject.toml."
         root = repo_for(ctx.session, target)
         key = str(root)
         #: A changed interpreter builds a new `Drive`; setting `python` after build ran steps under the app, not the project.
-        python = ctx.session.user_python(root, make=make and python_project(root))
+        python = step_python(ctx.session, root, make)
         d = live.get(key)
         if d is None or getattr(d, 'python', None) != python:
             d = live[key] = Drive(root, python=python, env=EnvStore())

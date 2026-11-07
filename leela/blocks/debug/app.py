@@ -32,9 +32,8 @@ def connect(app, ctx):
         from ..runtime.kernels import runtime_python
         # `runtime_python` and not `sys.executable`: in the bundle that name is Leela itself,
         # so probing it for debugpy relaunches the app.
-        cwd = ws.cwd_for()
-        python = ws.user_python(cwd, make=False) or (None if ws.venv_project(cwd) else runtime_python())
-        if python is None: return {'python': '', 'debugpy': False, 'notebook': True, 'direct': False}
+        try: python = ws.user_python(ws.cwd_for()) or runtime_python()
+        except Exception as e: return fail(e, 409)
         return {'python': str(python), 'debugpy': debugpy_available(python),
                 'notebook': True, 'direct': debugpy_available(python)}
     @rt('/debug/install')

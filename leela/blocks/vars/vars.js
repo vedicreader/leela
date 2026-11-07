@@ -175,7 +175,7 @@ async function leeEvalVarFilter(event) {
   const code = raw.slice(1).trim(); if (!code) return status('enter Python after =', 'err');
   input.disabled = true; status('evaluating variable expression…');
   try {
-    const r = await post('/vars/eval', {code, scope: lee.execScope});
+    const r = await withPython(() => post('/vars/eval', {code, scope: lee.execScope}));
     if (!r.ok) return status(r.error || 'expression failed', 'err');
     if (r.stdout) status(r.stdout.trim(), 'info');
     if (!r.result) return status('expression returned no value', 'info');

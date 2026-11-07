@@ -1,6 +1,9 @@
 /* Two questions, two lists: which interpreter's packages this tab can import, and which launcher
- * runs it. Both restart the kernel, so what that costs is on screen while the choice is made. */
+ * runs it. Both restart the kernel, so what that costs is on screen while the choice is made.
+ * Resolves true once an interpreter is chosen and its kernel is up, false when the picker closes without one. */
 async function pickKernel() {
+  let picked, picking = false;
+  const chosen = new Promise(r => picked = r);
   const o = await api('/kernel/options');
   const models = await loadedModels();
   const row = (cur, main, sub, attrs) =>
@@ -29,7 +32,8 @@ async function pickKernel() {
     `<div class="lee-dim">at the limit, closes the longest-idle runtime instead of asking</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="kernelattach">` +
     `${o.private ? 'attach to folder kernel' : 'give this tab its own kernel'}</button>` +
-    `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`);
+    `<span class="lee-dim">notebooks default to their own kernel; files share by folder</span></div>`,
+    null, () => { if (!picking) picked(false); });
   const clearWeights = m.querySelector('#clearengines');
   if (clearWeights) clearWeights.onclick = () => clearEngines(m);
   const reconnect = $('[data-kernel-reconnect]', m);
@@ -45,12 +49,16 @@ async function pickKernel() {
                                   o.cwd || '', '/path/to/project');
     if (!cwd || cwd === o.cwd) return;
     m.remove(); status('restarting kernel in ' + cwd + '…');
-    const d = await post('/kernel/cwd', {cwd});
+    let d;
+    try { d = await withPython(() => post('/kernel/cwd', {cwd})); }
+    catch (e) { return status(String(e.message || e), 'err'); }
     markPreviousRuns(); paintEnv(''); status('kernel cwd: ' + d.cwd, 'ok'); refreshKernelPill(); leeVars();
   };
   m.querySelector('#kernelattach').onclick = async () => {
     const privateKernel = !o.private; m.remove(); status('changing kernel attachment…');
-    const d = await post('/kernel/select', {private: privateKernel});
+    let d;
+    try { d = await withPython(() => post('/kernel/select', {private: privateKernel})); }
+    catch (e) { return status(String(e.message || e), 'err'); }
     markPreviousRuns(); paintEnv('');
     status(privateKernel ? 'this tab now has its own kernel' : 'attached to the folder kernel', 'ok');
     refreshKernelPill(); leeVars();
@@ -65,10 +73,13 @@ async function pickKernel() {
              support.ok ? 'ok' : 'err');
       return pickKernel();
     }
-    m.remove();
+    picking = !r.dataset.kind; m.remove();
     status('starting the new kernel…');
-    const d = await post('/kernel/select',
-                         r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
+    const pick = () => post('/kernel/select', r.dataset.kind ? {kind: r.dataset.kind} : {python: r.dataset.py});
+    let d;
+    try { d = await (r.dataset.kind ? withPython(pick) : pick()); }
+    catch (e) { picked(false); return status(String(e.message || e), 'err'); }
+    picked(true);
     markPreviousRuns();
     // Picking a runtime also makes its namespace the live variable source, so the panel must not
     // stay pinned, on screen or server-side, to the process watched before the switch.
@@ -76,8 +87,51 @@ async function pickKernel() {
     status(`kernel: ${d.running_kind} · ${(d.python || 'leela’s own python').split('/').pop()} · variables connected`, 'ok');
     refreshKernelPill(); leeVars();
   });
+  return chosen;
 }
 
+/* A project with no venv and no chosen interpreter runs no Python. The person answers once: set up
+ * .venv, or choose an interpreter; then `go` runs again. Runs that ask together share one answer. */
+let pythonAsked = null;
+async function withPython(go) {
+  try { return await go(); }
+  catch (e) {
+    if (e.body?.kind !== 'no_venv') throw e;
+    if (!await (pythonAsked ||= askPython(e.body).finally(() => { pythonAsked = null; }))) throw e;
+    return go();
+  }
+}
+window.withPython = withPython;
+
+async function setUpVenv(root, name) {
+  status(`setting up .venv for ${name}…`);
+  try {
+    const r = await post('/runtime/create', {root});
+    status(r.note || `the Python environment for ${name} is ready`, 'ok');
+    refreshKernelPill(); return true;
+  } catch (e) { status(String(e.message || e), 'err'); return false; }
+}
+
+function askPython(body) {
+  const root = (body.refs || [])[0] || '', name = root.split('/').pop() || 'this project';
+  return new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (!settled) { settled = true; resolve(v); } };
+    const m = modal(`<div class="lee-mhead">No Python environment for ${esc(name)}</div>` +
+      `<div class="lee-dialogcopy">Leela runs no code in ${esc(name)} until it has a Python environment. ` +
+      `Set up a <code>.venv</code> in the project, or choose an interpreter. Then the run starts.</div>` +
+      `<div class="lee-mfoot"><button class="lee-btn go" id="pyvenv">Set up .venv</button>` +
+      `<button class="lee-btn" id="pypick">Choose interpreter…</button>` +
+      `<button class="lee-btn" id="pylater">Not now</button></div>`, null, () => done(false), {className: 'lee-python-ask'});
+    m.querySelector('#pyvenv').onclick = async () => {
+      m.querySelectorAll('button').forEach(b => b.disabled = true);
+      if (!await setUpVenv(root, name)) return m.querySelectorAll('button').forEach(b => b.disabled = false);
+      done(true); m.remove();
+    };
+    m.querySelector('#pypick').onclick = async () => { settled = true; m.remove(); resolve(await pickKernel()); };
+    m.querySelector('#pylater').onclick = () => m.remove();
+  });
+}
 
 //: Every Restart kernel button: the saved outputs turn historical, and the pill and the variables follow.
 async function restartKernel() {

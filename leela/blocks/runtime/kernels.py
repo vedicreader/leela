@@ -27,7 +27,7 @@ __all__ = ['ExecOutcome', 'Kernel', 'KernelStartError', 'GatewayKernel', 'Gatewa
            'RuntimeBroker', 'KernelLimit', 'check_gateway_deps',
            'bootstrap_src', 'output_text', 'ipymini_available', 'missing_kernel_module', 'find_pythons',
            'installed_kernels', 'kernelspec_for', 'installed_spec',
-           'project_python', 'nearest_python', 'python_for', 'project_of', 'python_project', 'venv_env', 'run_file_src']
+           'project_python', 'nearest_python', 'python_for', 'project_of', 'python_project', 'venv_env', 'run_file_src', 'NoVenv']
 
 #: Names kunda's app and env prefix Leela's way; must run on the import other modules reach kunda through.
 use_app('leela', 'LEELA_')
@@ -59,6 +59,19 @@ def project_of(cwd, session=None):
     try: root = session.fs.root_of(cwd)
     except Exception: return None
     return project_dir(cwd, root) or root
+
+class NoVenv(KernelStartError):
+    "A project with no venv and no chosen interpreter: Leela runs no Python there until the person sets one up or picks one."
+    kind = 'no_venv'
+    def __init__(self, proj, said=''):
+        self.proj = Path(proj); self.refs = [str(self.proj)]
+        self.said = said or f'No Python environment for {self.proj.name}. Set up .venv or choose an interpreter.'
+        super().__init__(self.said)
+    @property
+    def for_agent(self):
+        "The tool error the agent gets: the two choices are the person's."
+        return (f'{self.said} Leela runs no code in {self.proj.name} until the person presses Set up .venv or '
+                'Choose interpreter… in the notice. Ask them; do not make a venv unless they ask you to.')
 
 def python_project(root):
     "Whether `root` is a Python project, whose runs belong in its own venv."
