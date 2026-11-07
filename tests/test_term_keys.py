@@ -121,10 +121,11 @@ def test_the_leave_full_screen_chord_is_a_global_binding_the_terminal_lets_throu
     assert json.loads(out.stdout) == 'leave_full_screen'
 
 
-def test_a_terminal_started_by_the_ide_carries_the_themes_colorfgbg(tmp_path):
+def test_a_terminal_started_by_the_ide_carries_the_themes_colorfgbg(tmp_path, monkeypatch):
     "`COLORFGBG` is how a program inside tmux learns the background, and tmux cannot answer for it."
-    settings = tmp_path/'.leela'/'settings.json'
-    settings.parent.mkdir()
+    import leela.blocks.settings.settings as st
+    settings = tmp_path/'user-settings.json'   # the shell is the user's to choose; a repo's choice is ignored
+    monkeypatch.setattr(st, 'user_settings_file', lambda: settings)
     settings.write_text(json.dumps({'terminal': {'shell': '/bin/sh', 'shellArgs': ['-c', 'echo FG=$COLORFGBG'], 'loginShell': False}}))
     assert colorfgbg('system') is None and colorfgbg(['light']) is None, 'only a resolved mode names a value'
     ws = Workspace(roots=[tmp_path])

@@ -122,6 +122,18 @@ _RANGES = {
        if isinstance(v, (int, float)) and not isinstance(v, bool)},
 }
 
+#: Settings that choose a program or a folder that runs code. Only the user's own file sets them; a repo's value is ignored.
+USER_ONLY = {'terminal': None, 'agent': ('configFolder',)}
+def _user_only(section, key): return section in USER_ONLY and (USER_ONLY[section] is None or key in USER_ONLY[section])
+
+def _repo_safe(data):
+    "A workspace layer without `USER_ONLY` keys, at the top level and in each `languages` block."
+    def keep(d): return {s: ({k: v for k, v in vs.items() if not _user_only(s, k)} if isinstance(vs, dict) else vs)
+                         for s, vs in (d or {}).items() if s != 'languages'}
+    out = keep(data)
+    if isinstance(data.get('languages'), dict): out['languages'] = {l: keep(b) if isinstance(b, dict) else b for l, b in data['languages'].items()}
+    return out
+
 class BrokenSettings(ValueError):
     "A settings file that exists but does not read as a JSON object; saving over it would lose it."
 
@@ -234,8 +246,13 @@ class Settings:
         if scope == 'user': return _compact_legacy_snapshot(read(self.user_path))
         if scope == 'workspace': return _compact_legacy_snapshot(read(self.workspace_path)) if self.workspace_path else {}
         raise ValueError('scope must be user or workspace')
+    def ignored(self):
+        "Each `section.key` the repo's file sets that only the user's file may set, so it has no effect."
+        data = self.raw('workspace')
+        blocks = [data, *[b for b in (data.get('languages') or {}).values() if isinstance(b, dict)]]
+        return sorted({f'{s}.{k}' for b in blocks for s, vs in b.items() if isinstance(vs, dict) for k in vs if _user_only(s, k)})
     def effective(self, language=''):
-        user, workspace = self.raw('user'), self.raw('workspace')
+        user, workspace = self.raw('user'), _repo_safe(self.raw('workspace'))
         out = _merge(_merge(DEFAULT_SETTINGS, user), workspace)
         if language:
             out = _merge(out, (user.get('languages') or {}).get(language, {}))
@@ -245,7 +262,7 @@ class Settings:
         "Every layer that names each key, least specific first."
         out = {}
         for scope in ('user', 'workspace'):
-            data = self.raw(scope)
+            data = self.raw(scope) if scope == 'user' else _repo_safe(self.raw(scope))
             for section, values in data.items():
                 if section == 'languages' or not isinstance(values, dict): continue
                 for key in values: out.setdefault(section, {}).setdefault(key, []).append(scope)
@@ -255,13 +272,13 @@ class Settings:
                     for key in values: out.setdefault(section, {}).setdefault(key, []).append(f'{scope}:{lang}')
         return out
     def describe(self, language=''):
-        user, workspace = self.raw('user'), self.raw('workspace')
+        user, workspace = self.raw('user'), _repo_safe(self.raw('workspace'))
         effective = self.effective(language)
         origins = {section: {key: _origin(section, key, user, workspace, language) for key in values}
                    for section, values in DEFAULT_SETTINGS.items()}
         return {'effective': effective, 'origins': origins, 'layers': self.layers(),
                 'user': user, 'workspace': workspace,
-                'paths': {'user': str(self.user_path), 'workspace': str(self.workspace_path or '')},
+                'paths': {'user': str(self.user_path), 'workspace': str(self.workspace_path or '')}, 'ignored': self.ignored(),
                 'problems': {k: m for k, p in (('user', self.user_path), ('workspace', self.workspace_path)) if p and (m := _problem(p))},
                 'language': language}
     def _path(self, scope, verb):
@@ -271,6 +288,7 @@ class Settings:
         return path
     def save(self, scope, section, values, language=''):
         values = _validated(section, values)
+        if scope == 'workspace': values = {k: v for k, v in values.items() if not _user_only(section, k)}
         path = self._path(scope, 'saving')
         current = self.raw(scope, strict=True)
         if language and not isinstance(current.setdefault('languages', {}), dict):
