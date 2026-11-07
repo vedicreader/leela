@@ -1,11 +1,11 @@
 "Filesystem access for the IDE, confined to the open folders."
 
 from __future__ import annotations
-import asyncio, os, shutil, re, subprocess
+import asyncio, os, shutil, re, subprocess, unicodedata
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from itertools import islice, zip_longest
-from fastcore.all import Path, L, atomic_save, mkdir as fc_mkdir
+from fastcore.all import Path, L, atomic_save, first, mkdir as fc_mkdir
 from kunda.pythons import clean_env, project_python, python_for
 from rgapi import fda, fd_iter
 from shalya.host import DENY
@@ -79,6 +79,8 @@ def loose_refusal(p):
     if not is_media(p) and p.stat().st_size > (OFFICE_MAX_BYTES if is_office(p) else MAX_EDIT_BYTES): return f'{p.name} is too large to {"show" if is_office(p) else "edit"}'
     if any(fnmatch(str(p).lower(), pat.lower()) for pat in DENY): return f'{p.name} may hold credentials'
     return None
+
+def _nfc(p): return unicodedata.normalize('NFC', str(p))
 
 def _same(a, b):
     "Whether two paths name one file, case-blind where the disk is."
@@ -175,12 +177,17 @@ class Sandbox:
         if p == self.loose: self.loose, self.admitted = None, L()
         self.roots = self.roots.filter(lambda r: r != p)
         return p
+    def _spelled(self, p):
+        "`p` in its root's spelling, when the two differ only in Unicode form."
+        if any(p.is_relative_to(r) for r in self.roots): return p
+        n = Path(_nfc(p))
+        return first(r/n.relative_to(m) for r in self.roots if n.is_relative_to(m := Path(_nfc(r)))) or p
     def _check(self, ref, must_exist=False, reading=False):
         "Resolve a path inside the open folders, or stdlib for reads."
         if not self.roots: raise Unsafe('no folder is open')
         p = Path(ref).expanduser()
         if not p.is_absolute(): p = self.roots[0]/p
-        p = p.resolve()
+        p = self._spelled(p.resolve())
         if not self.covers(p):
             if not self.read_only(p): raise Unsafe(f'{p} is outside the open folders')
             if not reading: raise Unsafe(f'{p.name} is read-only (standard library)')

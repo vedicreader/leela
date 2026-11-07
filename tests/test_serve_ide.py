@@ -174,3 +174,17 @@ def test_the_agents_browser_counts_every_workspace_port_as_leelas_own(monkeypatc
     projects.now_serving('127.0.0.1', 5001, ports=[5002])
     assert browser.own_origins() == {'http://127.0.0.1:5001', 'http://127.0.0.1:5002'}
     assert projects.now_serving('127.0.0.1', 5001)['ports'] == [5002], 'a later write keeps the ports'
+
+def test_a_file_named_with_a_narrow_space_is_served_on_its_workspaces_port(tmp_path):
+    "macOS names a screen recording `… 8.11.22 am.mov`; the thin app serves each workspace on a port of its own, and the same /file/raw answers there."
+    import unicodedata, urllib.parse
+    for name in ('home', 'proj'): (tmp_path/name).mkdir()
+    name = 'Screen Recording 2026-11-05 at 8.11.22 am.mov'
+    (f := tmp_path/'proj'/name).write_bytes(b'\0' * 4096)
+    port = serve(roots=[str(tmp_path/'home'), str(tmp_path/'proj')], app_window=True, gateway_port=0)
+    url = next(s['url'] for s in json.loads(get(f'http://127.0.0.1:{port}/app/sites').read())['sites'] if s['id'] == 'proj')
+    assert f':{port}/' not in url
+    for path in (str(f), unicodedata.normalize('NFD', str(f))):
+        req = urllib.request.Request(f"{url}file/raw/{urllib.parse.quote(name)}?path={urllib.parse.quote(path)}", headers={'Range': 'bytes=0-99'})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            assert r.status == 206 and len(r.read()) == 100 and "filename*=utf-8''" in r.headers.get('content-disposition', '').lower(), r.headers

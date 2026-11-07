@@ -257,9 +257,9 @@ def connect(app, ctx):
             if not p.is_file(): return fail(f'{p.name} is not a file')
             kind = SERVED_TYPES.get(p.suffix.lower())
             if kind is None: return fail(f'{p.suffix or p.name} is not served as a raw document')
-            disposition = 'attachment' if download else 'inline'
-            return FileResponse(p, media_type=kind, headers={'Cache-Control': 'no-store',
-                'X-Content-Type-Options': 'nosniff', 'Content-Disposition': f'{disposition}; filename="{p.name}"'})
+            # Starlette writes a non-ASCII name as RFC 5987 `filename*`; a raw one is not Latin-1 and raised.
+            return FileResponse(p, media_type=kind, filename=p.name, content_disposition_type='attachment' if download else 'inline',
+                headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
         except Exception as e: return fail(e)
     @rt('/file/raw')
     def file_raw(path: str = '', download: bool = False): return _serve_raw(path, download)

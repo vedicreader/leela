@@ -184,6 +184,26 @@ import WebKit
         #expect(ws.failed.contains(ObjectIdentifier(v)))
     }
 
+    @Test func aDroppedFileWithANarrowSpaceKeepsItsName() throws {
+        // macOS names a screen recording "… 8.11.22\u{202F}am.mov"; the name must reach /hub/open exactly, in both Unicode forms
+        let app = AppDelegate(); app.windows.app = app
+        let (w, v) = app.windows.make(u("http://127.0.0.1:1/"), title: "t")
+        defer { w.close() }
+        let web = try #require(v as? LeelaWebView)
+        let dir = FileManager.default.temporaryDirectory.appending(path: "leela-name-\(UUID().uuidString)/Café")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let f = dir.appending(path: "Screen Recording 2026-11-05 at 8.11.22\u{202F}am.mov"); try Data("x".utf8).write(to: f)
+        let pb = NSPasteboard(name: .init("leela-name-\(UUID().uuidString)")); defer { pb.releaseGlobally() }
+        pb.clearContents(); pb.writeObjects([f as NSURL])
+        #expect(web.take(pb, outside: true))
+        let got = try #require(app.queued.first)
+        #expect(got.path.precomposedStringWithCanonicalMapping == f.path.precomposedStringWithCanonicalMapping && got.lastPathComponent.contains("\u{202F}am.mov"))
+        // the query the launcher sends: URLComponents percent-encodes it, and the server decodes the same characters
+        var c = URLComponents(string: "http://127.0.0.1:1/hub/open")!
+        c.queryItems = [URLQueryItem(name: "file", value: got.path)]
+        #expect(c.url!.absoluteString.contains("%E2%80%AF") && URLComponents(url: c.url!, resolvingAgainstBaseURL: false)!.queryItems![0].value == got.path)
+    }
+
     @Test func openPathRefusesAPathThatIsNotThere() {
         #expect(!AppDelegate().openPath("/no/such/file-\(UUID().uuidString)"))
     }
