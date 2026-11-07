@@ -1394,6 +1394,14 @@ class Assistant(Agent):
         return super().tools
 
     @property
+    def skills(self):
+        "Ramabana's skills and Leela's own `leela` skill, which sits on the registry outside any mod, as Leela's tools do."
+        from .skill import SKILL_NAME, skill_for
+        reg = self.registry
+        if not any(s.name == SKILL_NAME for s in reg.skills): reg.skills.append(skill_for(self))
+        return super().skills
+
+    @property
     def _plain(self):
         "What the model is offered: everything but `user_steering`, which is dispatchable after a refusal and never advertised."
         return [f for f in super()._plain if f.__name__ not in HIDDEN]

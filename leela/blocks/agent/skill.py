@@ -1,0 +1,138 @@
+"Leela's own skill: what Leela can do and where, built from the keymap, menus, panes, settings and toolset."
+
+import re
+from functools import partial
+from fastcore.all import Path
+from shalya.skills import Skill
+from shalya.tools import group_of, tool_groups
+
+__all__ = ['SKILL_NAME', 'SKILL_DESC', 'FEATURES', 'leela_skill', 'skill_for']
+
+SKILL_NAME = 'leela'
+SKILL_DESC = ('What Leela can do, and where: menus, keys, panes, settings, tools. '
+              'Read it when the user asks if Leela can do something, or how to do it in Leela.')
+
+#: `(guide heading, where, what)`. `where` names keymap actions, which get their live label, chord and menu, or plain text.
+FEATURES = (
+    ('Editing', ('quick_open', 'recent_tabs', 'run_file', 'run_selection'),
+     'Edit notebooks and files side by side. A `.py` file runs as a script in its own kernel. Autosave is on.'),
+    ('Rust and JavaScript notebooks', ('`notebook language` in the palette',),
+     'Run Rust and JavaScript cells on an installed Jupyter kernel, or on Leela\'s own runner.'),
+    ('Presenting a notebook', ('present_notebook', 'present_from_cell'),
+     'Show the notebook as slides, from the selected cell. Code cells run live. An audience window is optional.'),
+    ('Staging a folder of a language you have just met', ('git_stage', 'the Git pane'),
+     'Write the `.gitignore` rules that the folder needs, then stage it. The file tree colours each file by its git state.'),
+    ('Live variables', ('focus_vars', 'switch_env'),
+     'See every name in the kernel while a cell runs. Start the filter with `=` to evaluate an expression.'),
+    ('The agent', ('focus_agent', 'agent_selection', 'ask_ai'),
+     'Ask a local or cloud model to read, change, run and test code. Each tool call is a card: approve, reject with steering, retry or roll back. The pane control sets the mode: guided, directed, edits or autopilot.'),
+    ('Lessons from abhyasa', ('new_lesson', 'Open in Leela in abhyasa', '`alt+s` checks the exercise at the cursor'),
+     'Learn a topic step by step. A lesson runs in its own uv environment. The agent grades a checked exercise from 0 to 10.'),
+    ('The screen guide', ('the I don\'t get… button on a lesson cell',),
+     'Say in one line what you do not understand. The guide explains it in steps and draws a board on the cell.'),
+    ('Search and memory', ('code_search', 'find_definition', 'find_usages', 'vault_find'),
+     'Search code with kosha: text, meaning, call graph and notebook cells. Ripgrep is the fallback. The agent recalls saved pages from the vault.'),
+    ('The vault', ('open_vault', 'clip_to_vault', 'vault_review'),
+     'Keep pages, papers, repositories, videos and folders. Search them, and attach sections to an agent question. `@` completes vault documents.'),
+    ('Research', ('research', 'web_search', 'read_url'),
+     'Search the web and get a digest that cites its sources. Sources stay beside the reader.'),
+    ('The browser', ('browse_url', 'browse_tabs'),
+     'Open a web page as a tab, on the sessions you signed in to. **read** turns it into Markdown. **remember** files it in the vault.'),
+    ('Git', ('panel_git', 'show_diff', 'git_blame', 'git'),
+     'Changes, Review, Branches, History, Repository and All repos. Diffs open as tabs with hunk staging. Merge and rebase show a plan first. Fetch, pull and push run across many repositories.'),
+    ('Ship it', ('panel_releases', 'panel_deploys', 'the Workflows and Drive panes', 'nbdev_prepare', 'fastship'),
+     'Draw GitHub workflows and their runs. Run the release flow the project uses (nbdev, maturin, cargo or fastship). Deploy with `deploy.py`, or one library call at a time in Drive.'),
+    ('Keys and buttons', ('palette', 'help', 'edit_keys'),
+     'Every action has a button, a palette entry and a chord. Change chords in `keys.json` in the config folder, or in the keys editor.'),
+    ('Watching something run', ('run_app', 'edit_runs', '`.leela/runs.json`'),
+     'Start a run configuration under an inspector and watch its variables while it runs.'),
+    ('Opening a project without a command line', ('open_folder', 'add_root', 'Open With > Leela in Finder'),
+     'Open a folder or a file from the welcome screen, the folder chooser, or the Dock. Leela remembers the open folders.'),
+    ('Terminal and debugger', ('terminal', 'the Debug menu'),
+     'Open terminals in the bottom pane. Debug a file with breakpoints and step controls.'),
+    ('Refactoring', ('rename_symbol', 'extract_variable', 'extract_method', 'move_symbol', 'replace_workspace'),
+     'Rename, extract, inline and move code across the workspace. Undo a workspace operation as one step.'),
+)
+
+def _menus():
+    "Each menu-bar action and the menu it sits in."
+    from ..keys.menus import BAR
+    return {r.action: 'Leela' if t == '__app__' else t for t, rows in BAR for r in rows if getattr(r, 'action', None)}
+
+def _key(a, menus=None):
+    "`label (chord)` of keymap action `a`, with its menu; None when `a` is not an action."
+    from ...core import keys as K
+    if (k := K.lookup(a)) is None: return None
+    c = K.chord_display(k)
+    s = (k.label or a.replace('_', ' ')) + (f' {_code(c)}' if k.bound else '')
+    return s + (f', {m} menu' if menus and (m := menus.get(a)) else '')
+
+def _label(r):
+    "A menu row as a person reads it."
+    if getattr(r, 'action', None): return _key(r.action)
+    return getattr(r, 'title', '') or ''
+
+def _palette_extras():
+    "Names of the palette commands that are not keymap rows, read from the shipped bundle."
+    js = (Path(__file__).parents[2]/'static'/'lee-ide.js').read_text(encoding='utf-8')
+    if (i := js.find('function palette()')) < 0: return []
+    body = js[i:js.index('const cmds', i)]
+    return [m[2] for m in re.finditer(r"""name:\s*(['"])(.*?)\1""", body)]
+
+def _code(c): return f'`` {c} ``' if '`' in c else f'`{c}`'
+SEP = ' · '   # labels hold commas
+
+def _tools(ai):
+    "Tool names by group: what this session offers now, then the rest Leela can offer. Each offered tool's schema says what it does."
+    from .ai import HIDDEN
+    now = {t.__name__ for t in ai._catalog_view.tools} if getattr(ai, '_tools', None) is not None else set()   # never rebuild mid-turn
+    own = {t.__name__: why for ts, why in ((ai._news_toolset, 'while a feed is followed'), (ai._lesson_toolset, 'while a lesson tab is active'),
+           (ai._session_toolset, ''), (ai._video_toolset, '')) for t in ts}
+    grp = lambda n: 'leela' if n in own else group_of(n, 'agent')
+    rows = lambda ns: ''.join(f'- **{g}**: ' + ', '.join(f'`{n}`' + (f' ({own[n]})' if own.get(n) else '') for n in sorted(ns) if grp(n) == g) + '\n'
+                              for g in sorted({grp(n) for n in ns}))
+    rest = {*tool_groups(), *own, *(f.__name__ for f in ai.registry.tools)} - now - HIDDEN
+    return (f'Offered now:\n{rows(now - HIDDEN)}' if now else '') + (
+        f'\nNot offered now. The host, the model profile, a setting or the active tab decides:\n{rows(rest)}' if rest else '')
+
+def leela_skill(ai=None):
+    "The skill text: features first, then menus, commands, keys, settings and agent tools."
+    from ...core import keys as K
+    from ...app import LEFT_PANES
+    from ..keys.menus import BAR, MENUS
+    from ..settings.settings import DEFAULT_SETTINGS
+    from .app import COMMAND_HELP, PAGE_COMMANDS
+    menus = _menus()
+    out = ['# What Leela can do\n\nLeela is an IDE for notebooks and code, with an agent, a vault, git, release and deploy. '
+           'Each item says where it is: a menu, a pane, or a key. `mod` is Command on a Mac and Control elsewhere. '
+           'The keys are the user\'s own, from `keys.json`. Every action is also in the command palette.\n\n## Features\n']
+    for title, where, what in FEATURES:
+        w = '; '.join(_key(a, menus) or a for a in where)
+        out.append(f'- **{title}** ({w}): {what}\n')
+    out.append('\n## Panes\n\n- Left bar: ' + ', '.join(t for _, _, t in LEFT_PANES) +
+               '.\n- Centre: the editor tabs. Right: Variables and the agent. Bottom: exec, terminal and log.\n'
+               '- Each pane has a `⋯` menu. Right-click opens the same menu.\n\n## Menu bar\n')
+    for t, rows in BAR: out.append(f'- **{"Leela" if t == "__app__" else t}**: ' + SEP.join(l for r in rows if (l := _label(r))) + '\n')
+    out.append('\n## Context menus (`⋯` or right-click)\n\nEach menu also holds the menu-bar commands that apply to it. These are only here:\n')
+    for sf, rows in MENUS.items():
+        if ls := list(dict.fromkeys(K.lookup(r.action).label or r.action for r in rows if r.action and r.action not in menus)): out.append(f'- **{sf.replace("_head", " pane header")}**: ' + SEP.join(ls) + '\n')
+    seen = {*menus, *(r.action for rows in MENUS.values() for r in rows if r.action)}
+    out.append('\n## Other commands, by where they work (palette or key)\n')
+    for scope, rows in K.help_rows().items():
+        if scope == 'present': rows = [(' / '.join(c.split()), l) for c, l in rows]
+        else: rows = [(K.chord_display(k), k.label) for k in K.by_scope(scope) if k.label and k.action not in seen]
+        if rows: out.append(f'- **{scope}**: ' + SEP.join(l + (f' {_code(c)}' if c and c != '—' else '') for c, l in rows) + '\n')
+    if ex := _palette_extras(): out.append('- **palette only**: ' + SEP.join(ex) + '\n')
+    cmds = list(ai.commands()) if ai is not None else list(COMMAND_HELP)
+    reg = {n: h for n, (_, h) in ai.registry.commands.items()} if ai is not None else {}
+    out.append('\n## Slash commands in the agent prompt\n\n' + ', '.join(
+        f'`/{n}`' + (f' ({h})' if (h := reg.get(n) or COMMAND_HELP.get(n) or PAGE_COMMANDS.get(n)) else '')
+        for n in sorted({*cmds, *PAGE_COMMANDS})) + '\n')
+    out.append(f'\n## Settings ({_key("settings")})\n\nUser settings, and per-project ones in `.leela/settings.json`. Sections and their keys:\n')
+    for sec, d in DEFAULT_SETTINGS.items(): out.append(f'- **{sec}**: ' + ', '.join(d) + '\n')
+    if ai is not None: out.append('\n## Agent tools\n\n' + _tools(ai))
+    return ''.join(out)
+
+def skill_for(ai):
+    "The `leela` skill for agent `ai`; its text is built when it is read, so it shows the keys and tools of that moment."
+    return Skill(name=SKILL_NAME, source='leela', description=SKILL_DESC, where='leela.blocks.agent.skill', _text=partial(leela_skill, ai))
