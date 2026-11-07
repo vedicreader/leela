@@ -3409,6 +3409,10 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 
 .lee-modal-merge3 .lee-modalbox { width: min(96vw, 1600px); height: min(88vh, 900px); }
 .lee-git-merge3 { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; min-height: 0; }
+/* A project with Python in it and nowhere to run it: calm, one line, until it is answered. */
+.lee-venv-notice { display: flex; flex: none; align-items: center; gap: 6px; padding: 5px 9px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); color: var(--lee-fg2); font-size: 12px; }
+.lee-venv-notice > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-venv-notice.busy .lee-btn { opacity: .5; }
 .lee-merge3-bar { display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg2); }
 .lee-merge3-count { min-width: 120px; color: var(--lee-fg3); font: 600 10px/1 var(--lee-mono); }
 .lee-merge3-take { display: flex; gap: 4px; margin-left: auto; }

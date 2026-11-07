@@ -67,7 +67,7 @@ async function checkExercise(cellId) {
     if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) throw new Error('the notebook could not be saved first');
     const i = lee.cells.findIndex(x => x.id === cellId); if (!cur() || i < 0) throw new Error('the notebook changed before the check began');
     const v = ensureCellMounted(i), source = v ? LeeCM.getDoc(v) : lee.cells[i].source;
-    const {cell, ...verdict} = await post('/exercise/check', {i, id: cellId, path: runKey, source, seq: nextSeq()});
+    const {cell, ...verdict} = await withPython(() => post('/exercise/check', {i, id: cellId, path: runKey, source, seq: nextSeq()}));
     st.result = {...verdict, source};
     const at = cur();
     if (at && cell) {

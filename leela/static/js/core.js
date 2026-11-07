@@ -906,8 +906,9 @@ async function postEvents(url, data, onEvent, signal = null, idle = 0) {
                               body: JSON.stringify(data || {}), signal}).catch(e => { throw Object.assign(e, {unsent: true}); });
   if (!r.ok) {
     const text = await r.text(); let said = text;
-    try { const b = JSON.parse(text); said = b.error || b.message || text; } catch (_) {}
-    throw Object.assign(new Error(said || r.statusText), {unsent: true});
+    let body = null;
+    try { body = JSON.parse(text); said = body.error || body.message || text; } catch (_) {}
+    throw Object.assign(new Error(said || r.statusText), {unsent: true, body});
   }
   const reader = r.body.getReader(), decoder = new TextDecoder();
   let pending = '';

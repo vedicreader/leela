@@ -108,7 +108,7 @@ const cases = JSON.parse(process.argv[2]);
       LeeCM: {getDoc: v => v.text}, nextSeq: () => 1, ensureCellMounted: () => null,
       $: () => ({textContent: '', classList: {add() {}, remove() {}}}),
       setCellState() {}, setCellTime() {}, status() {}, leeVars() {}, widgetWatch: async () => {},
-      postEvents: async (url, body, cb) => { bodies.push({url, body}); ctx.lee.tabKey = 'changed'; cb('done', {ok: true, cell: c}); }
+      withPython: go => go(), postEvents: async (url, body, cb) => { bodies.push({url, body}); ctx.lee.tabKey = 'changed'; cb('done', {ok: true, cell: c}); }
     };
     ctx.window = ctx; vm.createContext(ctx);
     vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), ctx);

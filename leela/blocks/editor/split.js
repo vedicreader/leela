@@ -119,7 +119,7 @@ async function refreshKernelPill() {
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
-    (d.venv_notes || []).forEach(m => status(m, 'ok'));
+    paintVenvNotice(d.no_venv);
     (d.tabs || []).forEach((state, i) => {
       const tab = $(`.lee-tab[data-i="${i}"]`); if (!tab) return;
       let run = tab.querySelector('.lee-tab-run');
@@ -133,68 +133,65 @@ async function refreshKernelPill() {
   } catch (e) {}
 }
 
+/* A project with Python in it and nowhere to run it says so above the editor until it is answered.
+   "Not now" holds for this window's session; the server, not the page, decides when it is answered. */
+function paintVenvNotice(v) {
+  let bar = $('#venvnotice');
+  if (!v || lee.observer || sessionStorage.getItem('lee-venv-later:' + v.root)) return bar?.remove();
+  if (bar?.dataset.root === v.root) return;
+  bar?.remove();
+  bar = document.createElement('div');
+  Object.assign(bar, {id: 'venvnotice', className: 'lee-venv-notice', role: 'status'});
+  bar.dataset.root = v.root;
+  bar.innerHTML = `<span>No Python environment for ${esc(v.name)}.</span>` +
+    `<button class="lee-btn go" data-venv="setup">Set up .venv</button>` +
+    `<button class="lee-btn" data-venv="pick">Choose interpreter…</button>` +
+    `<button class="lee-btn" data-venv="later">Not now</button>`;
+  $('#editorstage')?.before(bar);
+  bar.addEventListener('click', async e => {
+    const act = e.target.closest('[data-venv]')?.dataset.venv;
+    if (act === 'later') { sessionStorage.setItem('lee-venv-later:' + v.root, '1'); bar.remove(); }
+    else if (act === 'pick') { if (await pickKernel()) refreshKernelPill(); }
+    else if (act === 'setup') {
+      bar.querySelectorAll('button').forEach(b => b.disabled = true);
+      bar.classList.add('busy'); bar.firstChild.textContent = `Setting up .venv for ${v.name}…`;
+      if (!await setUpVenv(v.root, v.name)) { bar.remove(); refreshKernelPill(); }
+    }
+  });
+}
+
 async function checkProjectRuntime() {
   if (lee.observer) return;
   let d;
   try { d = await api('/runtime/info'); } catch (_) { return; }
-  if ((!d.needs_create && !d.needs_support && !d.needs_upgrade && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
+  /* A folder with no environment gets the notice above the editor, from `refreshKernelPill`, and
+     never a venv it did not ask for. */
+  if ((!d.needs_support && !d.needs_upgrade && !d.needs_inspector) || sessionStorage.getItem('lee-runtime-asked:' + d.root)) return;
   sessionStorage.setItem('lee-runtime-asked:' + d.root, '1');
-  /* A folder with no environment at all gets one, without being asked, because with uv the fix is
-     one command that a deleted directory undoes. Only for a missing environment: installing
-     packages into an environment you built yourself is your decision, so `needs_support` below
-     still asks. Without uv it also still asks, because a half-built venv is worse than none. */
-  if (d.needs_create && d.uv) {
-    status('no project environment — creating .venv with uv…');
-    try {
-      const r = await post('/runtime/create');
-      status(`project runtime ready: ${r.python}`, 'ok'); refreshKernelPill();
-      return;
-    } catch (e) { status(`could not create .venv — ${String(e.message || e)}`, 'err'); }
-    /* fall through to the dialog, which offers choosing an interpreter instead */
-  }
-  if (d.needs_support || d.needs_upgrade || d.needs_inspector) {
-    /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
-       and the variables panel cannot read the namespace without what dhrishti imports. A folder
-       missing both should be asked once. */
-    const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
-    const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
-                   d.needs_upgrade && !d.needs_support ? `<code>ipykernel</code> 7.4 or later (${esc(d.notice.message)})` : '',
-                   d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
-    const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
-      `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
-      `${wants.join(', and ')}. ` +
-      `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
-      `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
-      `<button class="lee-btn" id="runtimelater">not now</button></div>`);
-    m.querySelector('#runtimeenable').onclick = async () => {
-      m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
-      try {
-        if (d.needs_support || d.needs_upgrade) await post('/runtime/support', {python: d.python});
-        if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
-        m.remove();
-        status('project runtime ready', 'ok');
-        refreshKernelPill(); if (window.leeVars) leeVars();
-      }
-      catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
-    };
-    m.querySelector('#runtimelater').onclick = () => m.remove();
-    return;
-  }
-  const m = modal(`<div class="lee-mhead">project runtime<span class="sub">${esc(d.root)}</span></div>` +
-    `<div class="lee-dialogcopy">This folder has no <code>.venv</code>, <code>venv</code>, ` +
-    `<code>env</code>, or <code>.env</code>. Leela stays in its own environment; your code ` +
-    `runs in a project environment.</div><div class="lee-mfoot">` +
-    `<button class="lee-btn go" id="runtimecreate">create .venv</button>` +
-    `<button class="lee-btn" id="runtimepick">choose interpreter</button>` +
+  /* Two separate lacks, one dialog: the runtime cannot run notebook code without the launchers,
+     and the variables panel cannot read the namespace without what dhrishti imports. A folder
+     missing both should be asked once. */
+  const pkgs = (d.inspector_packages || []).map(p => `<code>${esc(p)}</code>`).join(' and ');
+  const wants = [d.needs_support ? '<code>ipykernel</code> and <code>ipymini</code> to run notebook code' : '',
+                 d.needs_upgrade && !d.needs_support ? `<code>ipykernel</code> 7.4 or later (${esc(d.notice.message)})` : '',
+                 d.needs_inspector ? `${pkgs} to read live variables` : ''].filter(Boolean);
+  const m = modal(`<div class="lee-mhead">enable project runtime<span class="sub">${esc(d.python)}</span></div>` +
+    `<div class="lee-dialogcopy">Leela found this folder’s environment, but it needs ` +
+    `${wants.join(', and ')}. ` +
+    `Leela installs them into this project environment with uv; the IDE remains separate.</div>` +
+    `<div class="lee-mfoot"><button class="lee-btn go" id="runtimeenable">install kernel support</button>` +
     `<button class="lee-btn" id="runtimelater">not now</button></div>`);
-  m.querySelector('#runtimecreate').onclick = async () => {
-    m.querySelector('#runtimecreate').disabled = true; status('creating .venv and installing ipykernel…');
+  m.querySelector('#runtimeenable').onclick = async () => {
+    m.querySelector('#runtimeenable').disabled = true; status('installing project kernel support…');
     try {
-      const r = await post('/runtime/create'); m.remove();
-      status(`project runtime ready: ${r.python}`, 'ok'); refreshKernelPill();
-    } catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimecreate').disabled = false; }
+      if (d.needs_support || d.needs_upgrade) await post('/runtime/support', {python: d.python});
+      if (d.needs_inspector) await post('/runtime/inspector', {python: d.python});
+      m.remove();
+      status('project runtime ready', 'ok');
+      refreshKernelPill(); if (window.leeVars) leeVars();
+    }
+    catch (e) { status(String(e.message || e), 'err'); m.querySelector('#runtimeenable').disabled = false; }
   };
-  m.querySelector('#runtimepick').onclick = () => { m.remove(); pickKernel(); };
   m.querySelector('#runtimelater').onclick = () => m.remove();
 }
 

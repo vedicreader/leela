@@ -107,12 +107,12 @@ async function runCell(i, advance, {save = true} = {}) {
       let r = null, failed = null;
       await widgetWatch(runKey, cellId);
       try {
-        await postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
+        await withPython(() => postEvents('/nb/run/stream', {i, id: cellId, path: runKey, source: src, seq, ...guess, ...(save ? {} : {save: false})}, (event, data) => {
           if (event === 'error') throw failed = new Error(data.text || 'cell execution failed');
           if (event === 'done') r = data;
           const at = cur();
           if (at && event === 'output') { at.outputs = data.outputs || []; renderOutputs(at); cellOutputEvent(cellId, at.outputs); }
-        }, null, 45000);
+        }, null, 45000));
       } catch (e) { if (e === failed || e.unsent) throw e; }
       if (!r) r = await settleRun(runKey, cellId);
       const at = cur();
@@ -283,7 +283,7 @@ async function debugCell(i) {
   status(`starting ipykernel debugger for cell ${i + 1}…`);
   let done = null;
   try {
-    await postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
+    await withPython(() => postEvents('/nb/debug/stream', {i, id: c.id, path: key, source, seq: nextSeq(), breakpoints}, (event, data) => {
       if (event === 'ready') {
         rememberBreakpoints(c.id, data.breakpoints || breakpoints);
         LeeCM.setBreakpoints(view, data.breakpoints || breakpoints);
@@ -296,7 +296,7 @@ async function debugCell(i) {
         leeVars();
       } else if (event === 'done') done = data;
       else if (event === 'error') throw new Error(data.text || 'debugger failed');
-    });
+    }));
     const at = lee.tabKey === key && lee.cells.find(x => x.id === c.id);
     if (done?.cell && at) {
       Object.assign(at, done.cell); renderOutputs(at);
