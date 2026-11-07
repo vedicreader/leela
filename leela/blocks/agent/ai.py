@@ -11,7 +11,7 @@ from ..fs.office import is_office, office_text
 from ...agent.agent import PERSON_ONLY, SECRET_ARGS, Agent, Approvals, Ask, _hidden, _summary, answer_md, ask_md, plan_tools, preview_for
 from ...agent.runtime import current_run
 from shalya.core import (MAX_API, MAX_GREP_HITS, MAX_HITS, MAX_TOOL_CHARS,
-                         WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, clip, failed, one_line as _1, summary)
+                         ASK_TOOLS, WRITE_TOOLS as HARNESS_WRITE_TOOLS, Refusal, arg_write, clip, failed, one_line as _1, summary)
 from shalya.host import (ApiHost, AskHost, BrowserHost, CodeHost, DENY, GitHost, Host, LocalHost, MemoryHost,
                          NotebookHost, OwnPythonHost, SessionHost, ShellHost, WatchHost, WebHost)
 #: `tools_for` stays Ramabana's: it builds the image group from the turn's model, which shalya
@@ -37,14 +37,30 @@ BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a co
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'add_demo', 'add_exercise'})   # grade_exercise only adds a note under the learner's checks, so it does not ask
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | ASK_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'check_exercise', 'add_demo', 'add_exercise', 'generate_video'})   # grade_exercise only adds a note under the learner's checks, so it does not ask
+PATH_ACTIONS, URL_ACTIONS = ('path', 'folder'), ('url', 'harvest', 'crawl')   #: vishalakshi watch actions that read a local path, or a page
+GUARDED_DIRS = ('.git', '.venv', '.leela')   #: a write under one asks even in `edits`: hooks, interpreters and settings run code
+SAFE_VERBS = ('GET', 'HEAD')
+
+def api_write(host, args):
+    "Whether an `api_call` may change something: any verb but GET or HEAD, and any operation whose verb is unknown."
+    # TODO(ramabana): gate on the verb in ramabana.spec (SpecHost.api_call) and let `Approvals` take an arg-aware predicate beside `path_write`
+    a, op = args or {}, str((args or {}).get('operation') or '')
+    try: rows = host.api_ops(name=a.get('name') or '', match=op, limit=0)
+    except Exception: return True
+    return first(r.get('verb') for r in rows if r.get('name') == op) not in SAFE_VERBS
+
+def gated(name, args, host=None):
+    "Whether a call asks a person in `ask` mode: a write by name, by the path it saves to, or by its arguments."
+    return (name in WRITE_TOOLS or path_write(name, args) or arg_write(name, args)
+            or (name == 'api_call' and api_write(host, args)))
 
 __all__ = ['WorkspaceHost', 'Assistant', 'Interventions', 'ide_tools', 'api_context',
            'notebook_approvals', 'BRIEFING_NOTES', 'MAX_TOOL_CHARS', 'WRITE_TOOLS']
 
 CONTROL_MODES = frozenset({'autopilot', 'guided', 'directed'})
 CONTROL_APPROVALS = {'autopilot': 'auto', 'edits': 'edits'}   #: the approvals mode a pane control puts in place while it holds
-KEPT = ('policy', 'person', 'loop', 'pause')   #: asks a mode switch leaves for the person
+KEPT = ('policy', 'person', 'loop', 'pause')   #: asks a mode switch leaves for the person; `guard` stays unless the switch is to auto
 STOP_NOTE = 'the user stopped this turn'
 def _restore(tool, args, was_tool, was): return args if tool != was_tool else {**args, **{k: was[k] for k in SECRET_ARGS.get(tool, ()) if k in was}}
 def _times(n): return {2: 'twice', 3: 'three times'}.get(n, f'{n} times')
@@ -139,7 +155,8 @@ class Interventions(Approvals):
         self.held = None
         return super().set_mode(mode)
     def _settle(self):
-        settled = [a for a in self.waiting if a.forced not in KEPT and self.mode != 'ask' and not (self.mode == 'edits' and not self.edits_cover(a.tool))]
+        settled = [a for a in self.waiting if a.forced not in KEPT and self.mode != 'ask' and not (self.mode == 'edits' and not self.edits_cover(a.tool))
+                   and not (a.forced == 'guard' and self.mode == 'edits')]
         if not settled: return ''
         ok = self.mode != 'off'
         for a in settled: self.answer(a.id, ok, f'answered by /approve {self.mode}')
@@ -214,7 +231,7 @@ class Interventions(Approvals):
                 p['remaining'] -= 1
                 if p['remaining'] <= 0: self.run_policy = None
                 return True
-            writes = name in WRITE_TOOLS or path_write(name, args)
+            writes = gated(name, args, self.host)
             if kind == 'until_write':
                 if writes:
                     self.run_policy = None
@@ -229,16 +246,17 @@ class Interventions(Approvals):
     def request(self, name, args, force=False, timeout=None, action_id='', revision=0,
         branch_id='main', parent_action_id=''):
         args = dict(args or {})
-        required = name in self.tools or path_write(name, args)   # a drawing saved where the call names is a write
+        required = name in self.tools or gated(name, args, self.host)   # a drawing saved where the call names is a write
         # ramabana's repeat guard: the DOOM_LOOPth identical gated call is put to the person whatever
         # the mode or run policy says; a read between neither counts nor resets the streak
         loop = (force or required) and self._looping(name, args)
         paused = not self.stopping and self._take_pause()
-        bypassed = not force and not paused and self._policy_bypasses(name, args)
+        guard = required and self.mode not in ('auto', 'off') and self.guarded_write(name, args)
+        bypassed = not force and not paused and not guard and self._policy_bypasses(name, args)
         # under auto, guided's extra network pauses go: only directed, chosen to step through, still pauses
         control_checkpoint = not bypassed and (self.control == 'directed' or
             (self.control == 'guided' and self.mode != 'auto' and (name in GUIDED_TOOLS or path_write(name, args))))
-        checkpoint = force or loop or paused or (required and not bypassed) or control_checkpoint
+        checkpoint = force or loop or paused or guard or (required and not bypassed) or control_checkpoint
         a = Intervention(tool=name, args=args, summary=_summary(name, shown := _hidden(name, args)),
             preview=preview_for(name, shown, self.host), control=self.control,
             run_id=getattr(current_run(), 'id', '') or '')
@@ -254,7 +272,7 @@ class Interventions(Approvals):
         if required and (self.mode == 'off' or self.control != 'directed' or self.rule_for(name, args) is not None):
             # a path write is not in `tools`; a pause still lets the policy, a saved rule or mode off refuse
             if (d := self.decide(name, args, force=name not in self.tools, ask=a, loop=loop or paused)) is not None: return d
-        if not a.forced: a.forced = 'loop' if loop else 'pause' if paused else ''
+        if not a.forced: a.forced = 'loop' if loop else 'pause' if paused else 'guard' if guard else ''
         if not checkpoint: return a.resolve(True)
         with self._lock:
             closing, heard = self.closed, self.listeners > 0 or self.no_listener == 'wait'
@@ -272,6 +290,18 @@ class Interventions(Approvals):
                 a.resolve(False, f'no answer after {wait_for}s')
                 self._notify('answer', a)
         return a
+    def decide(self, name, args, force=False, ask=None, loop=False):
+        "A write under a guarded folder is put to the person, outside `auto` and `off`, whatever `edits` or a saved allow says."
+        if self.mode not in ('auto', 'off') and self.guarded_write(name, args) and self.rule_for(name, args) != 'deny': return None
+        return super().decide(name, args, force=force, ask=ask, loop=loop)
+    def guarded_write(self, name, args):
+        "Whether this call writes a path under `.git`, `.venv` or `.leela`, links resolved and case folded."
+        if not (name in self.tools or path_write(name, args)): return False
+        for t in write_targets(name, args):
+            try: p = self.host.check(t) if self.host is not None else Path(t)
+            except Exception: p = Path(t)
+            if {x.lower() for x in Path(p).parts} & set(GUARDED_DIRS) or {x.lower() for x in Path(t).parts} & set(GUARDED_DIRS): return True
+        return False
     def answer(self, id, ok, note='', session=False, tool=None, args=None):
         "Resolve a checkpoint; only approval may replace the call that will execute."
         a = self._asks.get(id)
@@ -420,7 +450,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
     def web_search(self, query, n=20):
         if why := query_refusal(query): raise PrivacyBlocked(why, 'pii_blocked')
         return self.ws.research.search(query, n=n)
-    def read_url(self, url, remember=True): return self.ws.research.read(url, remember=remember)
+    def read_url(self, url, remember=True):
+        if source_kind(str(url)) != 'url': raise Unsafe(f'{url} is not a web address; read a local file with view_file')
+        return self.ws.research.read(url, remember=remember)
     def research(self, query):
         if why := query_refusal(query): raise PrivacyBlocked(why, 'pii_blocked')
         _, digest = self.ws.research.dig(query)
@@ -477,13 +509,23 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         "Every kind the vault watches, folders included: a vault is always attached here."
         from vishalakshi.acquire import ACTIONS
         return ACTIONS
+    def _watchable(self, target, action):
+        "Refuse a watch that would read a local path a read tool may not, or a URL that is not on the web."
+        if action in PATH_ACTIONS: return self.check(target, reading=True)
+        if action in URL_ACTIONS and source_kind(str(target)) != 'url': raise Unsafe(f'{target} is not a web address; a watch reads only http and https pages')
     def watch(self, target, action='url', every='1d', note=None, **kw):
+        self._watchable(target, action)
         return self._vault(write=True).watch(target, action=action, every=every, note=note, **kw)
     def unwatch(self, watch_id): return self._vault(write=True).unwatch(watch_id)
     def watches(self, due_only=False): return self._vault().watches(due_only=due_only)
     def poll(self):
-        "Fire what has come due. A watch files itself into memory, so this needs the write."
-        return self._vault(write=True).poll()
+        "Fire what has come due, after pausing each due watch a read tool could not read. A watch files itself into memory, so this needs the write."
+        m, skipped = self._vault(write=True), []
+        for w in m.watches(due_only=True):
+            try: self._watchable(w['target'], w.get('action') or w.get('kind'))
+            except Exception:
+                m.vault.pause(w['id']); skipped.append(w['target'])
+        return {**m.poll(), 'skipped': skipped}
     # `SpecHost` is a `LocalHost`, so specs are borrowed rather than inherited. The workspace
     # holds the loaded ones, so they outlive one `WorkspaceHost`.
     @property
@@ -583,11 +625,11 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         i = first(i for i, c in enumerate(nb.cells) if c.id == cell_id)
         if i is None: return f'no cell {cell_id!r} in {path}; call notebook_cells for the ids'
         if nb[i].cell_type != 'code': return f'cell {cell_id} is a {nb[i].cell_type} cell; only code cells run'
-        if nb.reveal(i): nb.save(p, sandbox=self.ws.fs)
         loop = self._loop()
         if loop is None: return 'no running event loop owns the kernels here, so no cell can be run'
+        if held is None and nb.reveal(i): nb.save(p, sandbox=self.ws.fs)
         # an unopened notebook gets the private kernel its tab would have, never the kernel of the tab in front
-        tab = first(t for t in getattr(self.ws, 'tabs', []) if str(getattr(t, 'path', '') or '') == str(p)) or Tab(path=str(p), kind='notebook')
+        tab = held or Tab(path=str(p), kind='notebook')
         try: k = asyncio.run_coroutine_threadsafe(self.ws.runtime(tab), loop).result(120)
         except NoVenv as e: return e.for_agent
         except Exception as e: return f'could not start the kernel for {path}: {errstr(e)}'
