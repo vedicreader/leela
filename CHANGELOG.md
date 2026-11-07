@@ -2,6 +2,19 @@
 
 <!-- do not remove -->
 
+## 0.1.26
+
+- On macOS, Word, PowerPoint and Excel tabs show Quick Look's own preview: slide layout, fonts, colours, charts and pictures. A button switches to the simple view, and the choice is kept. The agent and "copy as text" still read the text. Excel shows at most 4096 rows a sheet in this view, and says when a sheet is cut off.
+- Leela no longer makes a venv by itself. A Python project with no venv shows "No Python environment for <project>." with "Set up .venv", "Choose interpreter…" and "Not now". A run that needs Python asks the same, then runs. Pipelines refuse until a venv exists. The agent cannot make one either; it must ask.
+- Files whose names have characters outside Latin-1 open in every viewer: screen recordings and screenshots (the narrow space before "am"), names in Chinese or Japanese, and names with quotes. Before, the server answered 400 and a video said it "cannot play here".
+- A path asked for in the other Unicode spelling of an accent (café typed one way, stored the other) is found, on macOS and on Linux.
+- A markdown image whose path has spaces or such characters shows.
+
+Known issues:
+
+- A run configuration written as `uv run …` still makes a `.venv`, because uv does.
+- Quick Look shows only the first page of Keynote, Pages and Numbers files, so those stay in the simple view.
+
 ## 0.1.25
 
 Needs kavacha 0.0.14.
