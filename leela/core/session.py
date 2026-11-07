@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from fastcore.basics import first
 from fastcore.xtras import atomic_save
-import gzip, hashlib, json, shutil, time, uuid
+import gzip, hashlib, json, os, shutil, stat, sys, threading, time, uuid
 from pathlib import Path
 
 __all__ = ['DocStore', 'DebugState', 'FileHistory', 'Origins', 'RunState', 'Trash',
@@ -234,20 +234,70 @@ class RunState:
 
 MAX_OPERATIONS = 200
 
+#: What the trash keeps: nothing older than `TRASH_DAYS` days, and no more than `TRASH_BYTES`, oldest out first.
+#: An item younger than `TRASH_FRESH` seconds stays whatever its size, so undo of the delete just made still works.
+TRASH_DAYS, TRASH_BYTES, TRASH_FRESH = 30, 2 << 30, 86400
+
+def _mount(p):
+    "The mount point of the volume `p` is on."
+    p = Path(os.path.abspath(p))
+    while not os.path.ismount(p) and p != p.parent: p = p.parent
+    return p
+
+def _size(p):
+    "Bytes under `p`, symlinks counted as themselves."
+    try: st = os.lstat(p)
+    except OSError: return 0
+    if not stat.S_ISDIR(st.st_mode): return st.st_size
+    n = 0
+    for d, dirs, files in os.walk(p):
+        for f in (*dirs, *files):
+            try: n += os.lstat(os.path.join(d, f)).st_size
+            except OSError: pass
+    return n
+
 class Trash:
-    "Where a deleted file or folder goes, so deleting either is recoverable."
-    def __init__(self, root): self.root = Path(root)
+    "Where a deleted file or folder goes, so deleting either is recoverable. Emptied by age and size."
+    def __init__(self, root, days=TRASH_DAYS, most=TRASH_BYTES, fresh=TRASH_FRESH):
+        self.root, self.days, self.most, self.fresh = Path(root), days, most, fresh
+        self._prune_soon()
+    def _volume_trash(self, p):
+        "A folder for Leela's trash on the volume `p` is on: the volume's own trash folder."
+        if not hasattr(os, 'getuid'): return None
+        m, uid = _mount(p), os.getuid()
+        d = m/'.Trashes'/str(uid) if sys.platform == 'darwin' else m/f'.Trash-{uid}'
+        try: d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError: return None
+        return d
+    def _same_volume(self, p): return os.lstat(p).st_dev == os.stat(self.root).st_dev
     def keep(self, path):
-        "Move `path` aside whole and return the key that brings it back."
+        "Move `path` aside whole and return the key that brings it back. Never copies a folder across volumes."
         p, key = Path(path), uuid.uuid4().hex[:12]
-        d = self.root/key
+        self.root.mkdir(parents=True, exist_ok=True)
+        if self._same_volume(p): d = self.root/key
+        elif (vt := self._volume_trash(p)) is not None:
+            d = vt/f'leela-{key}'
+            (self.root/f'{key}.where').write_text(str(d), encoding='utf-8')
+        elif p.is_dir() and not p.is_symlink():
+            raise OSError(f'{p.name} is on another disk with no trash folder Leela can use, so it was not deleted')
+        else: d = self.root/key
         d.mkdir(parents=True, exist_ok=True)
         shutil.move(str(p), str(d/p.name))
+        self._prune_soon()
         return key
+    def _dir(self, key):
+        "The folder that holds `key`: here, or on the item's own volume."
+        if (d := self.root/str(key)).is_dir(): return d
+        try: return Path((self.root/f'{key}.where').read_text(encoding='utf-8'))
+        except OSError: return None
     def held(self, key):
         "The path a key holds, or None when the trash no longer has it."
-        d = self.root/str(key)
-        return first(sorted(d.iterdir())) if d.is_dir() else None
+        d = self._dir(key)
+        return first(sorted(d.iterdir())) if d is not None and d.is_dir() else None
+    def _forget(self, key):
+        if (d := self._dir(key)) is not None: shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(self.root/str(key), ignore_errors=True)
+        (self.root/f'{key}.where').unlink(missing_ok=True)
     def restore(self, key, path):
         "Move what `key` holds back to `path`, and forget the key."
         src = self.held(key)
@@ -255,8 +305,38 @@ class Trash:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(p))
-        shutil.rmtree(self.root/str(key), ignore_errors=True)
-
+        self._forget(key)
+    def items(self):
+        "`(key, age in seconds, bytes)` for each item, oldest first. An item on a volume that is not mounted now is left out."
+        out, now = [], time.time()
+        try: entries = list(self.root.iterdir())
+        except OSError: return []
+        for e in entries:
+            if e.suffix == '.where':
+                key, d = e.stem, self._dir(e.stem)
+                if d is None or not d.is_dir():
+                    if d is None or d.parent.is_dir(): e.unlink(missing_ok=True)   # the volume is here and the item is gone
+                    continue
+            elif e.is_dir(): key, d = e.name, e
+            else: continue
+            try: out.append((key, now - e.stat().st_mtime, _size(d)))
+            except OSError: pass
+        return sorted(out, key=lambda r: -r[1])
+    def prune(self):
+        "Forget items older than `days`, then the oldest until the rest fit in `most` bytes. A fresh item always stays."
+        rows = self.items()
+        for key, age, _ in rows:
+            if age > self.days*86400: self._forget(key)
+        rows = [r for r in rows if r[1] <= self.days*86400]
+        total = sum(r[2] for r in rows)
+        for key, age, n in rows:
+            if total <= self.most or age < self.fresh: break
+            self._forget(key); total -= n
+    def _prune_soon(self):
+        threading.Thread(target=self._safe_prune, daemon=True, name='leela-trash-prune').start()
+    def _safe_prune(self):
+        try: self.prune()
+        except Exception: pass
 
 class OperationJournal:
     "The last `MAX_OPERATIONS` workspace operations, on disk, newest last."
