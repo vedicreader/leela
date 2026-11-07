@@ -3408,11 +3408,11 @@ function richWalk(root) {
   }
 }
 //: `html` as a clean fragment. Parsed in a `<template>`, so nothing in it loads or runs before the walk.
-//: A pandas table in the theme's colours. The output's own `<style>` comes later and wins where it says something; `border="1"` loses to any rule.
-const RICH_TABLE_CSS = 'table{border-collapse:collapse;border:0;margin:2px 0;font:12px/1.4 var(--lee-mono);color:var(--lee-output)}' +
+//: A pandas table in the theme's colours. An adopted sheet comes before the output's own `<style>`, which wins where it says something; `border="1"` loses to any rule.
+const RICH_TABLE_CSS = new CSSStyleSheet(); RICH_TABLE_CSS.replaceSync('table{border-collapse:collapse;border:0;margin:2px 0;font:12px/1.4 var(--lee-mono);color:var(--lee-output)}' +
   'th,td{border:0;border-bottom:1px solid var(--lee-border);padding:3px 10px;text-align:right}' +
   'thead th{border-bottom-color:var(--lee-fg4);color:var(--lee-fg2);font-weight:600}tbody th{color:var(--lee-fg2);font-weight:600}' +
-  'tbody tr:hover{background:var(--lee-active-line)}';
+  'tbody tr:hover{background:var(--lee-active-line)}');
 function richHtml(html) {
   const t = document.createElement('template'); t.innerHTML = html;
   richWalk(t.content);
@@ -3470,7 +3470,7 @@ function outputEl(o, c = null, i = 0) {
       d.textContent = ''; d.style.contain = 'paint';
       const r = d.appendChild(Object.assign(document.createElement('div'), {className: 'lee-out-rich'})).attachShadow({mode: 'open'});
       if (svg) r.append(Object.assign(document.createElement('style'), {textContent: 'svg{display:block;max-width:100%;height:auto}'}));
-      else r.append(Object.assign(document.createElement('style'), {textContent: RICH_TABLE_CSS}));
+      else r.adoptedStyleSheets = [RICH_TABLE_CSS];
       r.append(richHtml(rich));
     };
     if (rich.length > MAX_OUTPUT_CHARS) {
