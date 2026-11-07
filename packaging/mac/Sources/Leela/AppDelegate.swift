@@ -179,21 +179,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ControlHost {
         }
     }
 
-    func pickFolder(_ done: @escaping (String?) -> Void) {
+    func pickFolder(on w: NSWindow? = nil, _ done: @escaping (String?) -> Void) {
         let o = NSOpenPanel()
         o.canChooseDirectories = true; o.canChooseFiles = false; o.allowsMultipleSelection = false
-        guard o.runModal() == .OK, let u = o.url else { return done(nil) }
-        Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
+        windows.sheet(o, on: w) { [self] ok in
+            guard ok, let u = o.url else { return done(nil) }
+            Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
+        }
     }
 
     /// Open…: one file or folder; a folder gets the grant a picked folder gets, so it opens with no question
-    func pickPath(_ done: @escaping (String?) -> Void) {
+    func pickPath(on w: NSWindow? = nil, _ done: @escaping (String?) -> Void) {
         let o = NSOpenPanel()
         o.canChooseDirectories = true; o.canChooseFiles = true; o.allowsMultipleSelection = false
-        guard o.runModal() == .OK, let u = o.url else { return done(nil) }
-        var dir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: u.path, isDirectory: &dir), dir.boolValue else { return done(u.path) }
-        Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
+        windows.sheet(o, on: w) { [self] ok in
+            guard ok, let u = o.url else { return done(nil) }
+            var dir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: u.path, isDirectory: &dir), dir.boolValue else { return done(u.path) }
+            Task { _ = await request("/hub/grant", method: "POST", query: ["path": u.path, "grant": grants.issue(u.path)], timeout: 10); done(u.path) }
+        }
     }
 
     /// what the page's Open… sends back: a folder opens as the page's open_folder does (the server asks unless it was picked), a file goes to `/hub/open?path=<file>`, where a Finder open goes. Whether it was taken

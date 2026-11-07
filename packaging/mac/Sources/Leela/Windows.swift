@@ -217,6 +217,13 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         NSApp.activate(); w.makeKeyAndOrderFront(nil); return true
     }
 
+    /// a file panel as a sheet on Leela's window: a free panel lets a tiling window manager move Leela away; the window comes back to the front after
+    func sheet(_ p: NSSavePanel, on w: NSWindow? = nil, _ done: @escaping (Bool) -> Void) {
+        guard let w = w ?? forQuestion() else { return done(p.runModal() == .OK) }
+        NSApp.activate()
+        p.beginSheetModal(for: w) { r in w.makeKeyAndOrderFront(nil); done(r == .OK) }
+    }
+
     /// where a question goes: the key window, a visible one, else the last closed one brought back
     func forQuestion() -> NSWindow? {
         if let w = NSApp.keyWindow, windows.values.contains(where: { $0.0 === w }) { return w }
@@ -231,8 +238,8 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         else { return replyHandler(nil, "not a Leela page") }
         switch Bridge.route(m.body) {
         case .openFolder(let p): app?.openFolder(p, trusted: false); replyHandler(true, nil)
-        case .pickFolder: app?.pickFolder { replyHandler($0, nil) }
-        case .pickPath: app?.pickPath { replyHandler($0, nil) }
+        case .pickFolder: app?.pickFolder(on: m.webView?.window) { replyHandler($0, nil) }
+        case .pickPath: app?.pickPath(on: m.webView?.window) { replyHandler($0, nil) }
         case .openPath(let p): replyHandler(app?.openPath(p) ?? false, nil)
         case .recent: replyHandler(app?.recent ?? [], nil)
         case .setBackground(let hexColour):
@@ -293,10 +300,12 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
         let s = NSSavePanel()
         s.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         s.nameFieldStringValue = n
-        guard s.runModal() == .OK, let u = s.url else { return completionHandler(nil) }
-        // the panel already asked to replace it; WebKit refuses a file that is there
-        try? FileManager.default.removeItem(at: u)
-        completionHandler(u)
+        sheet(s) { ok in
+            guard ok, let u = s.url else { return completionHandler(nil) }
+            // the panel already asked to replace it; WebKit refuses a file that is there
+            try? FileManager.default.removeItem(at: u)
+            completionHandler(u)
+        }
     }
 
     func webView(_ w: WKWebView, createWebViewWith c: WKWebViewConfiguration, for a: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -322,7 +331,7 @@ final class Windows: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessa
 
     func webView(_ w: WKWebView, runOpenPanelWith p: WKOpenPanelParameters, initiatedByFrame f: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
         let o = NSOpenPanel(); o.allowsMultipleSelection = p.allowsMultipleSelection; o.canChooseDirectories = p.allowsDirectories
-        completionHandler(o.runModal() == .OK ? o.urls : nil)
+        sheet(o, on: w.window) { completionHandler($0 ? o.urls : nil) }
     }
 }
 
