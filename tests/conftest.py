@@ -10,9 +10,10 @@ _MADE_HERE = not TEST_CONFIG_HOME
 if _MADE_HERE:
     TEST_CONFIG_HOME = _tempfile.mkdtemp(prefix='leela-test-cfg-')
     _os.environ['LEELA_TEST_CONFIG_HOME'] = TEST_CONFIG_HOME
-_os.environ['XDG_CONFIG_HOME'] = TEST_CONFIG_HOME
-_os.environ['XDG_DATA_HOME'] = _os.path.join(TEST_CONFIG_HOME, 'data')
-_os.environ['ABHYASA_CONFIG'] = _os.path.join(TEST_CONFIG_HOME, 'abhyasa')   # abhyasa's cfg_dir() ignores XDG_CONFIG_HOME
+import sys as _sys
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+from tools.isolate import REAL_STORES, isolate
+isolate(TEST_CONFIG_HOME)
 #: No orphan sweep thread unless a test asks for one with `Jobs.sweep(seconds)`.
 _os.environ['LEELA_JOB_SWEEP'] = '0'
 
@@ -23,7 +24,7 @@ _os.environ['LEELA_JOB_SWEEP'] = '0'
 REAL_CONFIG_HOME = _pathlib.Path.home()/'.config'/'leela'
 
 #: Every write this process made under `GUARDED`, as `(event, path)`. Audited, not mtime-compared: the person's own Leela writes there while the suite runs.
-REAL_WRITES, GUARDED = [], [str(REAL_CONFIG_HOME)]
+REAL_WRITES, GUARDED = [], [str(p) for p in REAL_STORES]
 _WRITE_FLAGS = _os.O_WRONLY | _os.O_RDWR | _os.O_APPEND | _os.O_CREAT | _os.O_TRUNC
 _PATH_EVENTS = {'os.rename': 2, 'os.replace': 2, 'os.remove': 1, 'os.mkdir': 1, 'os.rmdir': 1, 'shutil.rmtree': 1,
                 'os.truncate': 1, 'os.utime': 1, 'os.chmod': 1, 'os.symlink': 2, 'os.link': 2}
@@ -40,7 +41,6 @@ def _audit(event, args):
     else: return
     REAL_WRITES.extend((event, _os.fsdecode(p)) for p in paths if _guarded(p))
 
-import sys as _sys
 _sys.addaudithook(_audit)
 
 #: The CDP port this worker's tests get in place of 9223, which on a working machine is the person's headed Chrome.
@@ -49,7 +49,7 @@ _CDP_PORT = []
 def pytest_sessionfinish(session):
     if _MADE_HERE: _shutil.rmtree(TEST_CONFIG_HOME, ignore_errors=True)
     if REAL_WRITES:
-        print(f'\nthe test run wrote under {REAL_CONFIG_HOME}: {REAL_WRITES[:20]}')
+        print(f'\nthe test run wrote under a real store: {REAL_WRITES[:20]}')
         session.exitstatus = 1
     if not _CDP_PORT: return
     import psutil
@@ -108,6 +108,25 @@ def _isolate_credentials(monkeypatch, tmp_path_factory):
     monkeypatch.setenv('CODEX_AUTH_PATH', str(tmp_path_factory.mktemp('codex')/'auth.json'))   # a real Codex sign-in would move the turn
     monkeypatch.setattr(rc, '_copilot_available', lambda: False)
 
+class MemKeyring:
+    "A keyring that keeps passwords in a dict, never in the machine's keychain."
+    priority = 1
+    def __init__(self): self.d = {}
+    def get_password(self, service, user): return self.d.get((service, user))
+    def set_password(self, service, user, pw): self.d[service, user] = pw
+    def delete_password(self, service, user):
+        import keyring.errors
+        if self.d.pop((service, user), None) is None: raise keyring.errors.PasswordDeleteError(user)
+    def get_credential(self, service, user): return None
+
+@pytest.fixture(autouse=True)
+def fake_keyring(monkeypatch):
+    "Each test gets an empty in-memory keyring; it is also the fixture's value."
+    import keyring, keyring.core
+    k = MemKeyring()
+    monkeypatch.setattr(keyring.core, '_keyring_backend', k)
+    return k
+
 @pytest.fixture(autouse=True)
 def _curated_models_only(monkeypatch):
     "ramabana 0.1.42 lists models live from a provider once a key is set; a test that sets one must not wait on the network."
@@ -139,10 +158,10 @@ def _no_real_beat(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_real_config_writes():
-    "Fail the test that wrote under the person's real `~/.config/leela`."
+    "Fail the test that wrote under one of the person's real stores, `REAL_STORES`."
     n = len(REAL_WRITES)
     yield
-    assert len(REAL_WRITES) == n, f'this test wrote under {REAL_CONFIG_HOME}: {REAL_WRITES[n:]}'
+    assert len(REAL_WRITES) == n, f'this test wrote under a real store: {REAL_WRITES[n:]}'
 
 @pytest.fixture(autouse=True)
 def cfg_home(monkeypatch, tmp_path_factory):

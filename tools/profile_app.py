@@ -22,9 +22,8 @@ WATCH = ('pandas', 'IPython', 'numpy', 'matplotlib', 'torch', 'scipy')
 PRELUDE = '''
 import os, sys, time
 sys.path.insert(0, {root!r})
-os.environ['XDG_CONFIG_HOME'] = {cfg!r}
-os.environ['LEELA_MEMORY_OFFLINE'] = '1'
-os.environ['VISHALAKSHI_VAULT'] = {vault!r}
+from tools.isolate import isolated_env
+os.environ.update({{k: str(v) for k, v in isolated_env({cfg!r}).items()}})
 
 def rss():
     "Resident set size in MB. `/proc` where there is one, else the peak from getrusage."
@@ -40,8 +39,7 @@ def rss():
 def run(body):
     "Run `body` in a fresh interpreter with the prelude, and parse the JSON line it prints."
     env = dict(os.environ, XDG_CONFIG_HOME=tempfile.mkdtemp())
-    src = PRELUDE.format(root=str(ROOT), cfg=tempfile.mkdtemp(),
-                         vault=tempfile.mkdtemp() + '/vault.db') + textwrap.dedent(body)
+    src = PRELUDE.format(root=str(ROOT), cfg=tempfile.mkdtemp()) + textwrap.dedent(body)
     out = subprocess.run([PY, '-c', src], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600, env=env)
     line = next((l for l in reversed(out.stdout.splitlines()) if l.startswith('{')), None)
     if line is None: raise SystemExit(f'measurement failed:\n{out.stdout[-2000:]}\n{out.stderr[-2000:]}')

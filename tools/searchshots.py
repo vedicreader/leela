@@ -7,7 +7,7 @@ numbers in it rather than empty. `rg` answers on this repository, so the results
 """
 
 from __future__ import annotations
-import asyncio, os, sys, tempfile, threading, time
+import asyncio, os, sys, threading, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -15,8 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 ROOT = Path(__file__).resolve().parent.parent
 # Before leela is imported: `leela_cfg` binds at import, and a screenshot run must not write its
 # seeded event log into the person's own config dir.
-os.environ.setdefault('XDG_CONFIG_HOME', tempfile.mkdtemp(prefix='leela-shots-'))
-os.environ.setdefault('LEELA_SEARCH_VAULT', os.environ['XDG_CONFIG_HOME'] + '/search.db')
+from tools.isolate import isolate; isolate()   # never the person's real stores
 
 from leela.app import ide_app                                             # noqa: E402
 from leela.blocks.search.signals import Signals                           # noqa: E402
