@@ -14,7 +14,7 @@ def test_the_walk_names_its_root(tmp_path, monkeypatch):
     (tmp_path/'a.py').write_text('x = 1\n')
     seen = []
     monkeypatch.setattr(fs, 'fd_iter', _new_order(seen))
-    assert fs._walked([tmp_path], False, 100, None) == [tmp_path/'a.py']
+    assert fs._walked([tmp_path], False, 100, None) == ([tmp_path/'a.py'], False)
     assert seen == [tmp_path], 'the folder went in as the pattern'
 
 def test_hidden_files_name_root_and_pattern(tmp_path, monkeypatch):
@@ -26,6 +26,6 @@ def test_hidden_files_name_root_and_pattern(tmp_path, monkeypatch):
     monkeypatch.setattr(fs, 'fda', fda)
     f = fs.Sandbox.__new__(fs.Sandbox)
     monkeypatch.setattr(fs.Sandbox, '_live', lambda self, ref=None: [tmp_path])
-    monkeypatch.setattr(fs.Sandbox, 'walk', lambda self, ref=None, **kw: [])
+    monkeypatch.setattr(fs.Sandbox, 'walk_capped', lambda self, *a, **kw: ([], False))
     asyncio.run(f.hidden_files('x.*'))
     assert got == dict(pattern='x.*', root=[tmp_path])

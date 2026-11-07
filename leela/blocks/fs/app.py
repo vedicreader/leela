@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from ... import errstr
 from ...core.web import fail, off_loop, sse, unless_gone
 from ...core.text import fuzzy_rank
-from .fs import MEDIA_TYPES, Unsafe, is_media, lang_for
+from .fs import FIND_LIMIT, MEDIA_TYPES, Unsafe, is_media, lang_for
 from .office import QL_HEADERS, QL_TYPES, SHEET_ROWS, QuickLookError, is_office, office_html, office_text, open_in_app, quicklook, quicklook_file, sheet_rows
 from .ui import TREE_GIT_MAX, files_panel, git_ignored, git_tree_state, stale_tree, tree_git, tree_node
 from ..tabs.app import disk_version
@@ -326,7 +326,9 @@ def connect(app, ctx):
         "Fuzzy match over the open folders, best match first; `more` searches only what the walk leaves out."
         root = ctx.session.project_root if scope == 'project' else None
         answer = lambda rows, partial=False: {'hits': rows, 'scope': str(root) if root else '', 'partial': partial}
-        if not more: return answer(await off_loop(lambda: _ranked(q, ctx.fs.walk(root), root, limit, dirs)))
+        if not more:
+            files, cut = await off_loop(ctx.fs.walk_capped, root, False, FIND_LIMIT)
+            return answer(await off_loop(_ranked, q, files, root, limit, dirs), cut)
         name = q.strip().rsplit('/', 1)[-1]
         if not name: return answer([])
         got = await unless_gone(req, ctx.fs.hidden_files(r'(?i)' + r'.*'.join(map(re.escape, name)), root))

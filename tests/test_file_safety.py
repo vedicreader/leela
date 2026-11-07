@@ -42,3 +42,29 @@ def test_the_settings_route_answers_the_refusal(ws, cfg_home):
         assert r.status_code == 400 and 'not valid JSON' in r.json()['error']
         assert 'user' in c.get('/settings').json()['problems']
     assert user.read_text() == '{oops'
+
+def test_go_to_file_and_replace_say_when_the_walk_was_cut(tmp_path, monkeypatch):
+    "Go-to-file stopped at 20000 files and said `partial: False`, and replace searched the same 20000 without a word."
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    root = tmp_path/'big'; root.mkdir()
+    for i in range(12): (root/f'm{i:02}.py').write_text('old = 1\n')
+    monkeypatch.setattr('leela.blocks.fs.app.FIND_LIMIT', 5); monkeypatch.setattr('leela.blocks.fs.fs.WALK_LIMIT', 5)
+    with TestClient(ide_app(Workspace(roots=[str(root)]))) as c:
+        assert c.get('/fs/find', params={'q': 'm'}).json()['partial'] is True
+        s = c.post('/replace/preview', json={'find': 'old', 'replace': 'new'}).json()['summary']
+        assert s['partial'] is True and s['searched'] == 5 and s['files'] == 5
+        monkeypatch.setattr('leela.blocks.fs.app.FIND_LIMIT', 50); monkeypatch.setattr('leela.blocks.fs.fs.WALK_LIMIT', 50)
+        assert c.get('/fs/find', params={'q': 'm11'}).json()['partial'] is False
+        assert c.post('/replace/preview', json={'find': 'old', 'replace': 'new'}).json()['summary']['partial'] is False
+
+def test_go_to_file_reaches_past_twenty_thousand_files(tmp_path):
+    from leela.blocks.fs.fs import FIND_LIMIT, Sandbox
+    assert FIND_LIMIT >= 100_000
+    root = tmp_path/'r'
+    for d in range(3):
+        (root/f'd{d}').mkdir(parents=True)
+        for f in range(10): (root/f'd{d}'/f'f{f}.py').touch()
+    files, cut = Sandbox([root]).walk_capped(None, False, 29)
+    assert len(files) == 29 and cut
+    assert Sandbox([root]).walk_capped(None, False, 30) == (sorted(root.rglob('*.py')), False)

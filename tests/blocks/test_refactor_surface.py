@@ -21,7 +21,7 @@ def test_preview_then_apply_writes_exactly_the_previewed_text_and_journals_it(tm
     (tmp_path/'b.txt').write_text('alpha\n')
     c, ws = client(tmp_path)
     d = preview(c)
-    assert d['summary'] == {'files': 2, 'edits': 3, 'skipped': d['summary']['skipped']}
+    assert d['summary'] == {'files': 2, 'edits': 3, 'skipped': d['summary']['skipped'], 'partial': False, 'searched': d['summary']['searched']}
     previewed = {f['path']: f['after'] for f in d['files']}
     r = c.post('/replace/apply', json={'token': d['token']})
     assert r.status_code == 200, r.text

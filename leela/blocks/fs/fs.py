@@ -16,7 +16,7 @@ from fastcore.xtras import flexicache, time_policy
 from ... import Dictable
 from .office import OFFICE, OFFICE_MAX_BYTES, is_office
 
-__all__ = ['Unsafe', 'NotText', 'Entry', 'SKIP_DIRS', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
+__all__ = ['Unsafe', 'NotText', 'Entry', 'SKIP_DIRS', 'WALK_LIMIT', 'FIND_LIMIT', 'LANGS', 'MEDIA_TYPES', 'lang_for', 'is_texty', 'is_media', 'loose_refusal', 'Sandbox']
 
 SKIP_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'node_modules', '.mypy_cache',
     '.pytest_cache', '.ruff_cache', '.ipynb_checkpoints', '.tox', 'dist', 'build', '.idea',
@@ -93,11 +93,18 @@ def _changed():
     "Our own writes skip `_walked`'s window."
     global _GEN; _GEN += 1
 
+#: Files a walk returns by default: callers that read every file it names stay at this.
+WALK_LIMIT = 20_000
+#: Files go-to-file walks. Names only, so it goes further: 100k files walked in 0.9 s and ranked in 0.15 s.
+FIND_LIMIT = 100_000
+
 @flexicache(time_policy(2), maxsize=16)
 def _walked(roots, hidden, limit, gen):
+    "Up to `limit` files, and whether there were more."
     # Roots take turns, so a large first root cannot spend the whole cap.
     turns = zip_longest(*(fd_iter(root=r, hidden=hidden, skip_dir_re=_SKIP_RE) for r in roots))
-    return L(islice((p for t in turns for p in t if p is not None), limit)).sorted()
+    got = L(islice((p for t in turns for p in t if p is not None), limit + 1))
+    return got[:limit].sorted(), len(got) > limit
 
 def lang_for(p):
     "Language id for a path, including conventional extensionless project files."
@@ -266,13 +273,16 @@ class Sandbox:
         "`ref`, or every root still on disk, as the strings ripgrep walks."
         roots = self.roots if ref is None else L([self._check(ref, must_exist=True)])
         return tuple(str(r) for r in roots if r.is_dir())
-    def walk(self, ref=None, hidden=False, limit=20000):
-        "Every file under `ref` (or all roots) that git would track, capped at `limit`."
-        return _walked(self._live(ref), hidden, limit, _GEN)
+    def walk(self, ref=None, hidden=False, limit=None):
+        "Every file under `ref` (or all roots) that git would track, capped at `limit` (`WALK_LIMIT`)."
+        return self.walk_capped(ref, hidden, limit)[0]
+    def walk_capped(self, ref=None, hidden=False, limit=None):
+        "`(files, partial)`: `walk`, and whether the cap cut it short."
+        return _walked(self._live(ref), hidden, limit or WALK_LIMIT, _GEN)
     async def hidden_files(self, pattern, ref=None, timeout_ms=10000):
         "Files named like `pattern` that `walk` leaves out, and whether the time limit cut the search short; cancelling stops the walk."
         found = await fda(root=list(self._live(ref)), pattern=pattern, hidden=True, ignore=False, skip_dir='.git', timeout_ms=timeout_ms)
-        seen = set(await asyncio.to_thread(self.walk, ref))
+        seen = set((await asyncio.to_thread(self.walk_capped, ref, False, FIND_LIMIT))[0])
         return L(found).filter(lambda p: p not in seen).sorted(), found.stop_reason == 'timeout'
     def read(self, ref):
         "Text contents of a file. Refuses binaries and anything too big to sanely edit."

@@ -1,9 +1,9 @@
 async function quickOpen(searchMode, q = '') {
-  let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null;
+  let hits = [], sel = 0, seq = 0, timer = null, ctl = null, shown = null, cut = false;
   const m = modal(
     `<input class="lee-input" id="qo" placeholder="${searchMode ? 'search files…' : 'open file…'}" aria-label="Go to file" autofocus>
      <label><input type="checkbox" id="qoall"> include .venv and dot folders</label>
-     <div class="sub" id="qonote" hidden>hidden folders took over 10 seconds, so this list is incomplete</div>
+     <div class="sub" id="qonote" hidden></div>
      <div class="lee-modallist" id="qolist"></div>`,
     (e) => {
       if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.max(0, Math.min(sel + 1, hits.length - 1)); paint(); }
@@ -29,20 +29,22 @@ async function quickOpen(searchMode, q = '') {
     stop();
     const mine = seq, q = input.value.trim(), signal = (ctl = new AbortController()).signal;
     const find = extra => api('/fs/find?' + extra + 'q=' + encodeURIComponent(q), {signal});
-    note.hidden = true;
     let found;
+    const say = text => { note.textContent = text; note.hidden = !text; };
     if (q === shown) { hits = hits.filter(h => !h.hidden); sel = Math.min(sel, Math.max(0, hits.length - 1)); paint(); }
     else {
-      try { found = (await find('')).hits; } catch (e) { if (live(mine)) status(e.message, 'err'); return; }
+      try { found = await find(''); } catch (e) { if (live(mine)) status(e.message, 'err'); return; }
       if (!live(mine)) return;
-      hits = found; shown = q; sel = 0; paint();
+      cut = !!found.partial; hits = found.hits; shown = q; sel = 0; paint();
     }
+    const CUT = 'this folder has too many files to list them all, so some files are not in this list';
+    say(cut ? CUT : '');
     if (!all.checked || !q) return;
     await new Promise(r => setTimeout(r, 300));
     if (!live(mine)) return;
     try { found = await find('more=1&'); } catch (e) { if (live(mine)) status(e.message, 'err'); return; }
     if (!live(mine)) return;
-    note.hidden = !found.partial;
+    say(cut ? CUT : found.partial ? 'hidden folders took over 10 seconds, so this list is incomplete' : '');
     hits = hits.concat(found.hits.map(h => ({...h, hidden: true}))); paint();
   };
   input.addEventListener('input', () => { stop(); clearTimeout(timer); timer = setTimeout(search, 120); });
