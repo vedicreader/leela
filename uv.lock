@@ -2633,7 +2633,7 @@ requires-dist = [
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
-    { name = "kavacha", specifier = ">=0.0.16" },
+    { name = "kavacha", specifier = ">=0.0.18" },
     { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.18" },
     { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.18" },
     { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.18" },
