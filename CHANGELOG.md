@@ -2,6 +2,12 @@
 
 <!-- do not remove -->
 
+## 0.1.28
+
+- The window keeps the Mac's own title bar and its title. On macOS 26 the 0.1.27 title bar painted over the header's top row, so the folder, branch and git buttons did not show.
+- The header is the 0.1.26 header again: one row with the folder, branch, git, menus and tabs, and the run toolbar under it. A small Leela mark and a serif "Leela" start the row.
+- The folder menu keeps a long path on one line, shows your home folder as `~`, and no longer scrolls sideways.
+
 ## 0.1.27
 
 Needs kavacha 0.0.16, Sanketa 0.2.7, shalya 0.1.32, pullup 0.0.12, dockeasy 0.0.13, gheasy 0.0.21, kunda 0.0.15, dhrishti 0.1.13, koshas 0.1.23, fossick 0.1.26 and litesearch 0.1.64.
