@@ -39,25 +39,27 @@ if gh release view "$V" -R $R --json assets -q '.assets[].name' | grep -qx "leel
 else $LOCKPY wheel "$V" --upload; fi
 
 say "4. a lock for $V, tested"
-if grep -q "\"leela==$V\"" packaging/lock/pyproject.toml && ls packaging/lock/tested/*.json >/dev/null 2>&1 && $LOCKPY check >/dev/null 2>&1; then echo "packaging/lock pins leela $V and is tested"
+if grep -q "\"leela==$V\"" packaging/lock/pyproject.toml && test -f "packaging/lock/tested/$($LOCKPY hash).json"; then echo "packaging/lock pins leela $V and has its test record"
 else
   test -x packaging/mac/build/uv/uv || make -C packaging/mac uv-fetch
   $LOCKPY make "$V"
   $LOCKPY test --fresh --extras
-  git add packaging/lock && git add -f packaging/lock/.python-version
-  git commit -qm "Lock for Leela $V, tested fresh with every extra"
-  gitc push -q origin main
 fi
+git add packaging/lock && git add -f packaging/lock/.python-version
+git diff --cached --quiet || git commit -qm "Lock for Leela $V, tested fresh with every extra"
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || gitc push -q origin main
 
 say "5. publish the lock to the test channel"
+# steps 5 and 7 both sign, so the key must be in the agent on every run
+ssh-add -l 2>/dev/null | grep -q leela-lock-main || { echo "no leela-lock-main key in the SSH agent. fish: eval (ssh-agent -c); bash or zsh: eval \"\$(ssh-agent -s)\". Then: ssh-add --apple-use-keychain ~/.ssh/leela_lock_ed25519" >&2; exit 1; }
 test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
 if [ "${test_v#* }" = "$V" ]; then echo "the test channel has lock ${test_v% *} with leela $V"
 else
-  ssh-add -l 2>/dev/null | grep -q leela-lock-main || { echo "no leela-lock-main key in the SSH agent: eval \"\$(ssh-agent -s)\"; ssh-add --apple-use-keychain ~/.ssh/leela_lock_ed25519" >&2; exit 1; }
-  # publish reads the new channel pointer back at once, and GitHub can take a few seconds to serve a new release; verify is the real check
-  $LOCKPY publish || { sleep 15; $LOCKPY verify --channel test; }
-  test_v=$($LOCKPY verify --channel test | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p')
+  # publish reads the new lock and pointer back at once, and GitHub can take a few seconds to serve a new release; the test channel decides
+  $LOCKPY publish || { echo "publish stopped; checking the test channel in 15 s" >&2; sleep 15; }
+  test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
 fi
+[ "${test_v#* }" = "$V" ] || { echo "the test channel has '${test_v:-nothing}', not leela $V, so publish failed. If a lock-<n> release was made but the channel did not move, delete it (gh release delete lock-<n> -R $R --cleanup-tag -y) and run again" >&2; exit 1; }
 N=${test_v% *}
 
 say "6. your check"
@@ -66,7 +68,7 @@ if [ "$stable" = "$N" ]; then echo "stable already points at lock $N"
 elif [ "${YES:-}" = 1 ]; then echo "YES=1: no question"
 else
   printf 'Lock %s (leela %s) is on the test channel. Open an app with LEELA_LOCK_CHANNEL=test, or a build from it, and check it.\nPromote it to stable? [y/N] ' "$N" "$V"
-  read -r ok; [ "$ok" = y ] || [ "$ok" = yes ] || { echo "not promoted; run make ship V=$V again when it is good"; exit 1; }
+  read -r ok || ok=; [ "$ok" = y ] || [ "$ok" = yes ] || { echo "not promoted; run make ship V=$V again when it is good"; exit 1; }
 fi
 
 say "7. promote lock $N to stable"
@@ -74,5 +76,8 @@ if [ "$stable" = "$N" ]; then echo "done already"; else $LOCKPY promote "$N"; fi
 
 say "8. the app"
 if [ "${APP:-}" = 1 ] || ! gh release view "app-v$V" -R $R >/dev/null 2>&1; then MAKE="${MAKE:-make}" sh tools/ship_app.sh
-else echo "app-v$V is there; a new lock reaches the installed app without one (APP=1 ships a new app anyway)"; fi
+else
+  echo "app-v$V is there; a new lock reaches the installed app without one (APP=1 ships a new app anyway)"
+  TAG_PREFIX=app-v ASSET=Leela.zip PUSH=1 sh tools/ship_cask.sh   # a stop after the upload left the cask behind; makes no commit when it is current
+fi
 say "Leela $V is released."
