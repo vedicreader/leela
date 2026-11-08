@@ -309,7 +309,7 @@ body {
   min-width: 0; height: 26px; border: 0; border-radius: 4px; background: transparent;
   color: var(--lee-fg2); cursor: pointer; font: 11px/1.2 var(--lee-mono);
 }
-.lee-workspace-switcher { display: flex; flex: none; align-items: baseline; gap: 7px; max-width: 260px; padding: 0 7px; }
+.lee-workspace-switcher { display: inline-grid; grid-auto-flow: column; align-items: baseline; align-content: center; justify-content: start; flex: none; gap: 7px; max-width: 260px; padding: 0 7px 2px; }
 .lee-workspace-switcher:hover, .lee-branch-switcher:hover, .lee-menubar-btn:hover { background: var(--lee-bg2); color: var(--lee-fg); }
 .lee-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lee-workspace-name::after, .lee-branch-switcher::after { content: ''; display: inline-block; width: 5px; height: 5px;
