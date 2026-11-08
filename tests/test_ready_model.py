@@ -45,7 +45,10 @@ def test_a_sign_in_after_the_conversation_began_moves_its_next_turn(ws, codex):
     assert t.ai.model.name == core.DFLT_TURN and t.moved == ''
     codex['on'] = True
     out = t.runner.start('hello')
-    assert out['moved'] == t.moved and t.ai.model.name == core.ready_turn(), out
+    end = time.time() + 10
+    while not (moved := [x for x in t.feed.since(out['seq']) if x['event'] == 'moved']) and time.time() < end: time.sleep(.02)
+    assert 'moved' not in out and moved, 'the move is the worker\'s to find, and the feed says it'
+    assert moved[0]['data']['text'] == t.moved and t.ai.model.name == core.ready_turn(), moved
 
 
 def test_with_nothing_ready_the_turn_is_refused_and_gemma_is_offered(ws, bare):
@@ -53,8 +56,12 @@ def test_with_nothing_ready_the_turn_is_refused_and_gemma_is_offered(ws, bare):
     from leela.app import ide_app
     with TestClient(ide_app(ws)) as c:
         r = c.post('/agent/turn', json={'prompt': 'Say hi'})
-    msg = r.json()['message']
-    assert r.status_code == 409 and 'cannot run here' in msg, msg
+        assert r.json()['ok'], 'accepted at once; the refusal is the turn\'s, in its card'
+        feed, end = ws.threads.active.feed, time.time() + 20
+        while not feed.settled_seq and time.time() < end: time.sleep(.05)
+        rows = {x['event']: x['data'] for x in feed.since(r.json()['seq'])}
+    msg = rows['error']['message']
+    assert rows['done']['unstarted'] and 'cannot run here' in msg, msg
     assert 'gemma-e2b runs here;' not in msg and 'gemma-e2b runs here after a 3.5 GB download' in msg, 'no claim that a model with no weights runs'
     html = _panel(ws)
     assert 'Download Gemma 4 E2B (3.5 GB) to run on this Mac' in html and 'data-download="gemma-e2b"' in html

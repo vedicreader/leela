@@ -1132,6 +1132,8 @@ def connect(app, ctx):
         if d.get('force'):
             from .threads import TERMINAL_CANCEL
             busy = bool(th.ai.runs(active=True))
+            # accepted but not yet running: only the runner holds it, and a cancel alone would leave it to start
+            if not busy and th.runner.held(): th.runner.stop(ai=th.ai)
             try: run = th.ai.cancel()
             except Exception as e: return fail(errstr(e))
             # nothing was running: the draft is an ordinary turn, not a cancellation that failed
