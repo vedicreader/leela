@@ -271,7 +271,7 @@ function openChromeMenu(anchor, rows) {
   const menu = document.createElement('div'); menu.className = 'lee-ctxmenu'; menu.setAttribute('role', 'menu');
   menu.innerHTML = rows.map((r, i) => r.separator ? '<div class="lee-menusep" role="separator"></div>' :
     `<button class="lee-menuitem${r.warn ? ' warn' : ''}" role="menuitem" data-i="${i}" ${r.disabled ? 'disabled' : ''}>` +
-    `<span>${esc(sentence(r.label))}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</button>`).join('');
+    `<span>${esc(sentence(r.label))}</span>${r.detail ? `<small title="${esc(r.detail)}">${esc(r.detail)}</small>` : ''}</button>`).join('');
   document.body.appendChild(menu);
   const a = anchor.getBoundingClientRect(), rect = menu.getBoundingClientRect();
   menu.style.left = Math.max(4, Math.min(a.left, innerWidth - rect.width - 4)) + 'px';
@@ -298,12 +298,13 @@ window.leeActivateRoot = activateRoot;
 async function leeWorkspaceMenu(anchor) {
   const d = await api('/workspace/info');
   const sites = d.workspaces || [];
-  const rows = sites.map(site => ({label: site.name, detail: site.root, run: () => {
+  const home = p => lee.home && (p === lee.home || String(p).startsWith(lee.home + '/')) ? '~' + String(p).slice(lee.home.length) : p;
+  const rows = sites.map(site => ({label: site.name, detail: home(site.root), run: () => {
     if (site.url && site.url !== location.href) location.href = site.url;
   }}));
   if (sites.length && (d.roots || []).length) rows.push({separator: true});
   rows.push(...(d.roots || []).map(root => ({label: sites.length ? `Folder: ${root.name}` : root.name,
-    detail: root.path, run: () => activateRoot(root.path)})));
+    detail: home(root.path), run: () => activateRoot(root.path)})));
   if (rows.length) rows.push({separator: true});
   rows.push({label: 'Add folder…', detail: 'to this workspace', run: addRoot});
   openChromeMenu(anchor, rows);
