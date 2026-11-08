@@ -2,6 +2,13 @@
 
 <!-- do not remove -->
 
+## 1.0.2
+
+The Mac app is the full app again, signed and notarized, as in 0.1.27. The small-launcher app of 1.0.0 and 1.0.1 is not released.
+
+- Same fixes as 1.0.0 and 1.0.1: the Mac's own title bar with no title text, the 0.1.26 header, a prompt in the agent pane that shows at once, and a folder menu that keeps a long path on one line.
+- A folder you pick in Leela's own folder dialog (⇧⌘O, find repository) opens with no second "Add this folder?" question.
+
 ## 1.0.1
 
 The first Leela app for Mac built as a small native launcher; 1.0.0 was the first package and environment lock.
