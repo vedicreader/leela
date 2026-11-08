@@ -46,26 +46,17 @@ function paintGitPill(d) {
   git.title = `${d.root}${d.upstream ? ' · ' + d.upstream : ' · no upstream'} · ${gitFreshness(d.fetched_at)}`;
   paintGitTree(d);
 }
-/* The one painter of the branch pill and the pull and push arrows beside it. `state` is `branch`,
-   `nogit` (not a checkout), `pending` (not asked yet), `nofolder` (hidden: no folder is open) or `error`
-   (the repository could not be read). The arrows show only when there is something to pull or push. */
+/* The one painter of the branch pill. `state` is `branch`, `nogit` (not a checkout), `pending` (not asked yet),
+   `nofolder` (hidden: no folder is open) or `error` (the repository could not be read). */
 const BRANCH_WORDS = {nogit: 'no git', pending: 'git …', error: 'git ?', nofolder: ''};
 function paintBranchPill(d, state = 'branch') {
   const git = $('#gitpill'); if (!git) return;
   const n = state === 'branch' ? (d?.changes || []).length : 0;
   const name = state in BRANCH_WORDS ? BRANCH_WORDS[state] : d?.branch || (d?.head ? `detached at ${String(d.head).slice(0, 7)}` : 'detached');
-  git.dataset.state = state;
-  const label = git.querySelector('.lee-branch-name'), count = git.querySelector('.lee-change-count');
-  if (label) label.textContent = name;
-  if (count) { count.textContent = n || ''; count.hidden = !n; }
+  git.dataset.state = state; git.hidden = state === 'nofolder';
+  git.textContent = state === 'branch' ? `${name}${n ? ' · ' + n : ''}${d?.ahead ? ' · ↑' + d.ahead : ''}${d?.behind ? ' · ↓' + d.behind : ''}` : name;
+  git.className = 'lee-branch-switcher' + (state === 'branch' ? (n ? ' lee-pill-warn' : ' lee-pill-on') : state === 'error' ? ' lee-pill-warn' : '');
   git.setAttribute('aria-label', `switch branch: ${name}${n ? `, ${n} changed file${n === 1 ? '' : 's'}` : ''}`);
-  for (const [op, k] of [['pull', state === 'branch' && d?.behind], ['push', state === 'branch' && d?.ahead]]) {
-    const b = $(`#git${op}`); if (!b) continue;
-    b.hidden = !k;
-    const num = b.querySelector('.lee-sync-n'); if (num) num.textContent = k || '';
-    const say = k ? `${op} ${k} commit${k === 1 ? '' : 's'}` : op;
-    b.title = say; b.setAttribute('aria-label', say);
-  }
 }
 async function gitDo(op, extra = {}) {
   const started = performance.now(), name = op.replaceAll('_', ' ');

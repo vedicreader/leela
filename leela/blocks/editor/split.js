@@ -109,19 +109,12 @@ function initEditorSplitter() {
   };
 }
 
-//: The kernel pill: a dot coloured by `state`, the runtime's name, and a muted word for what it is doing.
-function paintKernelPill(pill, state, name, doing) {
-  pill.dataset.state = state;
-  const [n, w] = [pill.querySelector('.lee-kname'), pill.querySelector('.lee-kstate')];
-  if (n) n.textContent = name || 'kernel'; else pill.textContent = name || 'kernel';
-  if (w) w.textContent = doing ? `· ${doing}` : '';
-}
 async function refreshKernelPill() {
   try {
     const d = await api('/kernel/info');
     const pill = $('#kpill'); if (!pill) return;
-    paintKernelPill(pill, d.api_error || d.boot_error || d.notice ? 'warn' : d.alive ? 'on' : 'off', (d.key || '').split('/').pop(),
-                    d.api_error || d.boot_error || d.notice ? 'problem' : !d.alive ? 'off' : (d.tabs || []).some(t => t.running) ? 'busy' : 'idle');
+    pill.className = 'lee-pill ' + (d.api_error || d.boot_error || d.notice ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
+    pill.textContent = (d.api_error || d.notice ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
