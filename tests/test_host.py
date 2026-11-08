@@ -208,7 +208,9 @@ def test_the_menu_and_recent_routes_carry_no_secret_and_need_none(hosted):
     titles = [m['title'] for m in body['menus']]
     assert st == 200 and titles[0] == '__app__' and 'Edit' in titles
     edit = next(m for m in body['menus'] if m['title'] == 'Edit')['items']
-    assert {'title': 'Copy', 'selector': 'copy:', 'key': 'c', 'mask': 1 << 20} in edit and {'sep': True} in edit
+    # the launcher runs beside this server, so the menu takes this platform's keys: AppKit masks on a Mac, a Ctrl label elsewhere
+    copy = {'title': 'Copy', 'selector': 'copy:', 'key': 'c', 'mask': 1 << 20} if sys.platform == 'darwin' else {'title': 'Copy', 'selector': 'copy:', 'chord': 'Ctrl+C'}
+    assert copy in edit and {'sep': True} in edit
     assert _call(WorkspaceHub([], 5001), '/app/recent', method='GET')[0] == 200
 
 def _grants(issued):
@@ -309,6 +311,7 @@ def test_in_host_mode_a_failed_or_silent_app_marks_the_install_error(hosted):
     models._host_install('mlx', every=.05)
     assert models.install_state('mlx')['state'] == 'error' and 'no network' in models.install_state('mlx')['log']
 
+@pytest.mark.skipif(sys.platform != 'darwin', reason='mlx installs only on Apple Silicon')
 def test_the_install_route_reaches_the_app_in_host_mode(hosted, monkeypatch):
     from unittest.mock import MagicMock
     from fasthtml.common import FastHTML
