@@ -55,9 +55,12 @@ ssh-add -l 2>/dev/null | grep -q leela-lock-main || { echo "no leela-lock-main k
 test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
 if [ "${test_v#* }" = "$V" ]; then echo "the test channel has lock ${test_v% *} with leela $V"
 else
-  # publish reads the new lock and pointer back at once, and GitHub can take a few seconds to serve a new release; the test channel decides
-  $LOCKPY publish || { echo "publish stopped; checking the test channel in 15 s" >&2; sleep 15; }
-  test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
+  # the test channel decides: publish can stop on a read-back while GitHub settles, so look again for up to 2 minutes
+  $LOCKPY publish || echo "publish stopped; checking the test channel for up to 2 minutes" >&2
+  for _ in 1 2 3 4 5 6 7 8; do
+    test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
+    [ "${test_v#* }" = "$V" ] && break; sleep 15
+  done
 fi
 [ "${test_v#* }" = "$V" ] || { echo "the test channel has '${test_v:-nothing}', not leela $V, so publish failed. If a lock-<n> release was made but the channel did not move, delete it (gh release delete lock-<n> -R $R --cleanup-tag -y) and run again" >&2; exit 1; }
 N=${test_v% *}
