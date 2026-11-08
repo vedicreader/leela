@@ -458,7 +458,7 @@ async function rehydrateAgentLive() {
   if (lee.observer) return;
   const log = $('#agentlog');
   // a conversation a person chose is empty because it is new, not because the pane forgot it
-  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating || lee.agentPicks) return;
+  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentSending || lee.agentHydrating || lee.agentPicks) return;
   lee.agentHydrating = true;
   try {
     const d = await paintAgentThread(lee.agentThread || '');
@@ -528,7 +528,7 @@ async function leeAgentHistory() {
 }
 async function leeAgentResume(group) {
   if (!group) return;
-  if (lee.agentBusy) return status('the model is already working', 'err');
+  if (lee.agentBusy || lee.agentSending) return status('the model is already working', 'err');
   const picked = pickAgentThread();
   try {
     const d = await post('/agent/resume', {session: group.id});

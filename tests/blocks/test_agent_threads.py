@@ -90,14 +90,70 @@ def test_a_start_that_never_reports_leaves_the_pane_usable(tmp_path):
             if self.calls > 1: on_registered(self.ai._run); yield 'answer'; return
             self.ai.registered = True; hold.wait(5)
     ws, feed = Hung(), Feed(); runner = TurnRunner(ws, feed); runner.start_timeout = .05
-    try: runner.start('question')
-    except TurnError as e: assert e.code == 'turn_conflict'
-    else: assert False
-    assert runner._pending == {}, 'the refused turn does not keep the slot'
+    first = runner.start('question')
+    rows = _until(feed, 'done', first['seq'])
+    assert [r['event'] for r in rows] == ['error', 'done', 'state'] and 'nothing was reported' in rows[0]['data']['message']
+    assert rows[1]['data']['unstarted'] and rows[1]['data']['turn_id'] == '', 'no turn of its own, so none is claimed'
+    assert runner._pending == {}, 'the cleared turn does not keep the slot'
     assert not ws.ai.busy, 'nor the run it registered before it hung'
-    assert runner.start('second')['run'] == 'run-1'
-    assert [row['event'] for row in feed.since(0)][0] == 'user'
+    second = runner.start('second')
+    assert [r['event'] for r in _until(feed, 'done', second['seq'])][:2] == ['chunk', 'done']
+    assert feed.since(0)[0]['event'] == 'user'
     hold.set()
+
+
+def _until(feed, event, seq=0, secs=5):
+    "The feed's rows after `seq` once `event` has arrived, and the turn has settled."
+    end = time.time() + secs
+    while time.time() < end:
+        rows = feed.since(seq)
+        if any(r['event'] == event for r in rows) and feed.finished(rows[-1]['seq']): return rows
+        time.sleep(.01)
+    raise AssertionError(f'no {event}: {[r["event"] for r in feed.since(seq)]}')
+
+
+def test_a_turn_is_accepted_before_the_model_is_settled_and_moves_in_the_feed(monkeypatch):
+    """The reply waited on `settle` (a model probe) and on the run registering, so a sent prompt showed nothing for a second or more."""
+    import leela.blocks.agent.threads as th
+    gate = threading.Event()
+    def slow(ai): gate.wait(5); return 'fake cannot run here, so this session runs on other'
+    monkeypatch.setattr(th, 'settle', slow)
+    ws, feed = _Workspace(), Feed(); runner = TurnRunner(ws, feed)
+    t = time.perf_counter(); out = runner.start('question'); took = time.perf_counter() - t
+    assert took < .5 and set(out) == {'ok', 'thread', 'seq'}, (took, out)
+    assert feed.since(0)[-1]['event'] == 'user' and runner.held(), 'accepted, and holding the conversation'
+    try: runner.start('again')
+    except TurnError as e: assert e.code == 'thread_busy'
+    else: assert False, 'a second prompt is refused while the first settles'
+    gate.set()
+    rows = _until(feed, 'done', out['seq'])
+    assert rows[0]['event'] == 'moved' and 'runs on other' in rows[0]['data']['text']
+    assert 'chunk' in [r['event'] for r in rows]
+
+
+def test_a_turn_that_fails_before_it_has_a_run_says_why_in_its_card():
+    """Before, this answered 409 and the page kept the prompt; now the turn was accepted, so the error and a `done` must reach the feed."""
+    class Refusing(_Workspace):
+        def ask_stream(self, prompt, **kw): raise RuntimeError('turn job: fake cannot run here: no key')
+    ws, feed = Refusing(), Feed(); runner = TurnRunner(ws, feed)
+    out = runner.start('question')
+    rows = _until(feed, 'done', out['seq'])
+    assert [r['event'] for r in rows][:2] == ['error', 'done'] and 'cannot run here' in rows[0]['data']['message']
+    assert rows[1]['data']['ok'] is False and rows[1]['data']['unstarted'] and rows[1]['data']['edits'] == []
+    assert runner._pending == {} and runner.start('next')['ok']
+
+
+def test_a_stop_while_the_model_settles_ends_the_turn_once(monkeypatch):
+    import leela.blocks.agent.threads as th
+    gate = threading.Event()
+    monkeypatch.setattr(th, 'settle', lambda ai: gate.wait(5) and '')
+    ws, feed = _Workspace(), Feed(); runner = TurnRunner(ws, feed)
+    out = runner.start('question')
+    assert runner.stop(ai=ws.ai)['cleared'] == 1
+    gate.set()
+    rows = _until(feed, 'done', out['seq'])
+    assert [r['event'] for r in rows].count('done') == 1 and 'chunk' not in [r['event'] for r in rows]
+    assert ws.seen is None, 'the stopped turn never reached the model'
 
 
 def _scripted_workspace(tmp, steps, delay=0):
@@ -619,3 +675,21 @@ def test_subagent_settings_outlive_the_conversation_that_set_them(tmp_path):
     assert back.subagent_depth is None, 'a value that is not a number falls back to the default rather than failing the load'
 
 
+
+
+def test_a_forced_steer_before_the_run_exists_clears_the_accepted_turn(tmp_path, monkeypatch):
+    "A cancel alone found no run, so the accepted turn started anyway and the forced draft met `thread_busy`."
+    import leela.blocks.agent.threads as th
+    from tests.fakemodel import Step
+    gate = threading.Event()
+    monkeypatch.setattr(th, 'settle', lambda ai: gate.wait(5) and '')
+    ws = _scripted_workspace(tmp_path, [Step(text='first answer')])
+    with TestClient(ide_app(ws)) as client:
+        acc = client.post('/agent/turn', json={'prompt': 'first'}).json()
+        assert client.post('/agent/steer', json={'text': 'instead', 'force': True}).json()['forced']
+        assert not ws.turn_runner.held(), 'the forced steer let go of the accepted turn'
+        gate.set()
+        rows = _until(ws.turn_runner.feed, 'done', acc['seq'])
+        assert 'chunk' not in [r['event'] for r in rows], 'the cleared turn never reached the model'
+        while ws.turn_runner._pending: time.sleep(.01)
+        assert client.post('/agent/turn', json={'prompt': 'instead'}).json()['ok']

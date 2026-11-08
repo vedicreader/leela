@@ -92,7 +92,7 @@ async function checkExercise(cellId) {
 function askTutor(cellId) {
   const c = lee.cells.find(x => x.id === cellId), r = exerciseState(`${lee.tabKey}:${cellId}`).result;
   if (!c || !r || r.source !== c.source) return;
-  if (lee.agentBusy) return status('The tutor is working. Ask again when it finishes.', 'err');
+  if (lee.agentBusy || lee.agentSending) return status('The tutor is working. Ask again when it finishes.', 'err');
   leeAct('focus_agent');
   const prompt = $('#agentprompt');
   if (prompt.value.trim()) return status('Send or clear your message to the agent first.', 'err');

@@ -301,15 +301,15 @@ body {
   display: flex; align-items: center; gap: 8px; padding: 0 8px;
   background: var(--lee-bg1); border-bottom: 1px solid var(--lee-border); min-width: 0;
 }
-.lee-brand { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--lee-fg); }
-.lee-brand .lee-mark { width: 15px; height: 15px; flex: none; background: currentColor; -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
+.lee-brand { display: inline-flex; align-items: baseline; gap: 5px; flex: none; color: var(--lee-fg); }
+.lee-brand .lee-mark { width: 15px; height: 15px; flex: none; align-self: center; background: currentColor; -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
 .lee-brand .lee-wordmark { font: 600 15px/1 var(--lee-serif); letter-spacing: .005em; }
 .lee-spacer { flex: 1 1 auto; }
 .lee-workspace-switcher, .lee-branch-switcher, .lee-menubar-btn {
   min-width: 0; height: 26px; border: 0; border-radius: 4px; background: transparent;
   color: var(--lee-fg2); cursor: pointer; font: 11px/1.2 var(--lee-mono);
 }
-.lee-workspace-switcher { display: flex; align-items: center; gap: 7px; max-width: 220px; padding: 0 7px; }
+.lee-workspace-switcher { display: flex; flex: none; align-items: baseline; gap: 7px; max-width: 260px; padding: 0 7px; }
 .lee-workspace-switcher:hover, .lee-branch-switcher:hover, .lee-menubar-btn:hover { background: var(--lee-bg2); color: var(--lee-fg); }
 .lee-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lee-workspace-name::after, .lee-branch-switcher::after { content: ''; display: inline-block; width: 5px; height: 5px;
@@ -883,6 +883,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
    resized. It is already `visibility: hidden` and `aria-hidden`, so nothing else changes. */
 .lee-agent-turn.folded > .lee-agent-turn-body { display: none; max-height: 0; overflow: hidden; visibility: hidden; }
 .lee-agent-turn.lee-turn-undone-card > .lee-agent-turn-head { opacity: .6; }
+.lee-agent-turn.sending { opacity: .55; }
 .lee-history-index {
   position: sticky; top: 0; z-index: 2; display: grid;
   grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto auto; align-items: center; gap: 10px;

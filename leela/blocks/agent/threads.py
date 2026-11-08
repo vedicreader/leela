@@ -399,12 +399,17 @@ class TurnRunner:
         def registered(run):
             nonlocal run_id
             run_id = run.id; threading.current_thread().name = f'leela-turn-{run_id}'
-            ready['run'] = run_id; ready['event'].set(); ready['gate'].wait(self.start_timeout)
+            with self._lock: ready['run'] = run_id; ready['timer'].cancel(); accepted = ready['accepted']
             # the run alone, not `ai.cancel`: a turn nobody accepted must not clear a live one's checkpoint
-            if not ready['accepted']: run.cancel(); return
+            if not accepted: run.cancel(); return
             threading.Thread(target=self._watch, args=(ai, run_id, before), daemon=True,
                 name=f'leela-feed-{run_id}').start()
         try:
+            # a sign-in or download since the thread was made; the probe is this worker's, not the request's
+            if (moved := settle(ai)):
+                if self.thread is not None: self.thread.moved = moved
+                self.feed.emit('moved', {'text': moved})
+            if not ready['accepted']: return self._cleared(ai, '') if ready.get('cleared') else None
             stream = self.workspace.ask_stream(prompt, attachments=attachments, reasoning=reasoning,
                 context=context, context_path=context_path, grounding=grounding,
                 on_registered=registered, ai=ai)
@@ -421,27 +426,50 @@ class TurnRunner:
             self._retain(ai, run_id, before)
             self._settled(ai, run_id, title=True)
         except Exception as e:
-            if not ready['accepted']:
-                ready['error'] = e; ready['event'].set()
+            if not run_id: return self._unstarted(ai, ready, agent_err(e))
+            if not ready['accepted']: return self._cleared(ai, run_id) if ready.get('cleared') else None
             else:
                 self.feed.emit('error', {'message': agent_err(e), 'run': run_id})
                 self.feed.emit('done', self._done(ai, run_id, ok=False))
                 self._retain(ai, run_id, before)
                 self._settled(ai, run_id)
         finally:
+            ready['timer'].cancel()
             with self._lock:self._pending.pop(ready['id'], None)
 
     def _cleared(self, ai, run_id):
-        "A stop dropped this turn's gate while its worker was still inside the provider's stream."
-        run = ai.run(run_id)
+        "A stop dropped this turn's gate while its worker was still inside the provider's stream, or before it had a run."
+        run = ai.run(run_id) if run_id else None
         if run is not None and run.state in TERMINAL_CANCEL: self.feed.emit('run', run.dict())
-        self.feed.emit('done', self._done(ai, run_id))
+        self.feed.emit('done', self._done(ai, run_id) if run_id else self._unrun(ai, ok=True))
         self._settled(ai, run_id)
 
-    def _unstarted(self, ai, ready):
-        "A stream that ended without reporting a run: `note` holds the reason, and `start` is waiting on it."
-        ready['error'] = TurnError('turn_conflict', f'the turn did not start ({self._note(ai)})', self.feed.thread)
-        ready['event'].set()
+    def _unrun(self, ai, ok=False):
+        "`done` for a turn that never had a run: nothing of the previous turn's is passed off as this one's."
+        return {**self._done(ai, '', ok=ok), 'turn_id': '', 'media': [], 'edits': [], 'activity': [],
+                'capabilities': {}, 'usage': {}, 'usage_label': '', 'unstarted': True}
+
+    def _failed(self, ai, message):
+        "An accepted turn that ended before it had a run: its card says why."
+        self.feed.emit('error', {'message': message, 'run': ''})
+        self.feed.emit('done', self._unrun(ai))
+        self._settled(ai, '')
+
+    def _unstarted(self, ai, ready, why=''):
+        "A stream that ended or raised without reporting a run. Said once: the watchdog may have spoken already."
+        with self._lock:
+            accepted, cleared = ready['accepted'], ready.get('cleared')
+            ready['accepted'] = False
+        if cleared: return self._cleared(ai, '')
+        if accepted: self._failed(ai, why or f'the turn did not start ({self._note(ai)})')
+
+    def _overdue(self, ai, ready):
+        "No run reported within `start_timeout`: free the conversation, and say so in the card."
+        with self._lock:
+            if ready['run'] or not ready['accepted']: return
+            ready['accepted'] = False; self._pending.pop(ready['id'], None)
+        self._release(ai)
+        self._failed(ai, f'nothing was reported in {self.start_timeout}s ({self._note(ai)}), so the turn was cleared; send it again')
 
     def _note(self, ai): return (getattr(ai, 'note', '') or '').strip() or 'the assistant said nothing about why'
 
@@ -464,7 +492,8 @@ class TurnRunner:
                 # it starts the worker, so `is_alive` alone reaps the turn it is still setting up.
                 started = worker is not None and worker.ident is not None
                 gone = started and not worker.is_alive()
-                quiet = (r['accepted'] and r['gate'].is_set() and not running
+                # a turn with no run yet is `_overdue`'s to end, and it says so in the card
+                quiet = (r['accepted'] and r['run'] and r['gate'].is_set() and not running
                          and now - r['at'] >= self.stale_after)
                 if not (gone or quiet): continue
                 r['accepted'] = False        # whatever the worker still emits belongs to nobody
@@ -516,49 +545,31 @@ class TurnRunner:
         return {**out, 'cleared': len(cleared)}
 
     def start(self, prompt, attachments=(), reasoning=None, context='', context_path='', grounding=None):
+        "Queue one turn and return at once: `{ok, thread, seq}`. The worker settles the model and registers the run."
         ai = self.ai or self.workspace.ai
         thread = ai.session_id
         self.feed.thread = thread
         ident = uuid.uuid4().hex[:8]
-        ready = {'id': ident, 'event': threading.Event(), 'gate': threading.Event(),
-            'accepted': False, 'run': '', 'error': None, 'at': time.time()}
+        ready = {'id': ident, 'gate': threading.Event(), 'accepted': False, 'run': '', 'at': time.time()}
         worker = threading.Thread(target=self._work,
             args=(prompt, tuple(attachments), reasoning, context, context_path, grounding, ready), daemon=True,
             name=f'leela-turn-pending-{ident}')
-        ready['worker'] = worker
+        ready['worker'], ready['timer'] = worker, threading.Timer(self.start_timeout, self._overdue, (ai, ready))
+        ready['timer'].daemon = True
         self._reap(ai)
-        if (moved := settle(ai)) and self.thread is not None: self.thread.moved = moved   # a sign-in or download since the thread was made
         with self._lock:
             if self._pending or ai.busy: raise TurnError('thread_busy', self._busy_note(), thread)
-            self._pending[ident] = ready
-        worker.start()
-        ready['event'].wait(self.start_timeout)
-        run_id = ready['run']
-        if ready['error'] is not None:
-            with self._lock: self._pending.pop(ident, None)
-            ready['gate'].set()
-            if isinstance(ready['error'], TurnError): raise ready['error']
-            raise TurnError('turn_conflict', agent_err(ready['error']), thread)
-        if not run_id:
-            with self._lock: self._pending.pop(ident, None)
-            ready['gate'].set(); self._release(ai)
-            raise TurnError('turn_conflict', f'nothing was reported in {self.start_timeout}s '
-                f'({self._note(ai)}), so the turn was cleared; send it again', thread)
-        with self._lock:
-            if ready['error'] is not None:
-                ready['gate'].set(); raise ready['error']
+            user = self.feed.emit('user', {'text': prompt})
+            if user is None: raise TurnError('thread_closed', 'the thread is closed', thread)
             if self.thread is not None and not self.thread.opener: self.thread.opener = prompt
-            user = self.feed.emit('user', {'text': prompt, 'run': run_id})
-            if user is None:
-                ready['gate'].set(); raise TurnError('thread_closed', 'the thread is closed', thread, run_id)
             ready['accepted'] = True; ready['gate'].set()
-        return {'ok': True, 'thread': thread, 'run': run_id, 'seq': user['seq'], **({'moved': moved} if moved else {})}
+            self._pending[ident] = ready
+        ready['timer'].start(); worker.start()
+        return {'ok': True, 'thread': thread, 'seq': user['seq']}
 
     def close(self, cancel=True):
         with self._lock:
-            for ready in self._pending.values():
-                ready['error'] = TurnError('thread_closed', 'the thread is closed', self.feed.thread)
-                ready['event'].set(); ready['gate'].set()
+            for ready in self._pending.values(): ready['accepted'] = False; ready['timer'].cancel()
         ai = self.ai or self.workspace._ai
         if cancel and ai is not None:
             for row in ai.runs(active=True):

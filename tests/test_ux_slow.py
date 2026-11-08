@@ -152,3 +152,19 @@ def test_the_folder_menu_keeps_a_long_path_on_one_line(tmp_path):
         return await pg.evaluate(WSMENU)
     got = asyncio.run(_on_page(go, roots=[str(d)]))
     assert not got['sideways'] and got['oneLine'] and got['titled'], got
+
+BRAND = """() => { const box = e => { const r = document.createRange(); r.selectNodeContents(e); return r.getBoundingClientRect(); };
+  const w = document.querySelector('.lee-wordmark'), n = document.querySelector('#workspacename'), m = document.querySelector('.lee-brand .lee-mark');
+  const base = e => { const s = document.createElement('span'); s.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; e.appendChild(s);
+    const y = s.getBoundingClientRect().top; s.remove(); return y; };
+  const mb = m.getBoundingClientRect(), wb = box(w);
+  return {gap: Math.abs(base(w) - base(n)), cut: n.scrollWidth > n.clientWidth, mark: Math.abs((mb.top + mb.bottom) / 2 - (wb.top + wb.bottom) / 2)}; }"""
+
+def test_the_brand_and_the_folder_share_a_baseline_and_the_folder_shows_whole(tmp_path):
+    "The serif Leela sat lower than the folder name, and a narrow window cut the folder name."
+    d = tmp_path/'karma'; d.mkdir()
+    async def go(pg):
+        await pg.set_viewport_size({'width': 900, 'height': 600})
+        return await pg.evaluate(BRAND)
+    got = asyncio.run(_on_page(go, roots=[str(d)]))
+    assert got['gap'] <= 1 and not got['cut'] and got['mark'] <= 3, got

@@ -88,6 +88,8 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
 - [ ] F10. About 400 routes still take GET and POST; audit the rest for POST-only. (leela, M)
 - [ ] F11. ramabana writes probes to a fixed folder under its config home (`ramabana/core.py:103`); add `RAMABANA_PROBES` or put them beside `$RAMABANA_CONFIG`. Leela's tests patch `PROBE_DIR` for now. (ramabana, S)
 - [ ] F12. The first page spends about 1.4 s building the agent panel (`turn_move` model probes 0.83 s, a new conversation's prompt 0.55 s). (ramabana, leela, M)
+  - Leela's part is done on branch `fast-send`. The pane draws a sent prompt at once, and `/agent/turn` answers when the turn is queued (about 20 ms with a scripted model, against about 1 s with the probe cost). The worker settles the model and builds the prompt. A move to another model arrives as a `moved` feed event.
+  - Ramabana's part is open. The turn's time to its first token still includes the probes and the prompt build. Cache model probes across calls, make `Agent.settle` and `turn_move` return at once when the routing has not changed, and build a new conversation's system prompt once.
 - [ ] F13. A4 is on branch `launch-key` (worktree leela-sec). It needs a test in a real WKWebView window and the kavacha launcher side (docs/kavacha-launch-key.md on that branch) before it ships. (leela, kavacha, M)
 
 ## Nice to have

@@ -1501,7 +1501,7 @@ async function rehydrateAgentLive() {
   if (lee.observer) return;
   const log = $('#agentlog');
   // a conversation a person chose is empty because it is new, not because the pane forgot it
-  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentHydrating || lee.agentPicks) return;
+  if (!log || lee.agentView === 'history' || lee.agentBusy || lee.agentSending || lee.agentHydrating || lee.agentPicks) return;
   lee.agentHydrating = true;
   try {
     const d = await paintAgentThread(lee.agentThread || '');
@@ -1571,7 +1571,7 @@ async function leeAgentHistory() {
 }
 async function leeAgentResume(group) {
   if (!group) return;
-  if (lee.agentBusy) return status('the model is already working', 'err');
+  if (lee.agentBusy || lee.agentSending) return status('the model is already working', 'err');
   const picked = pickAgentThread();
   try {
     const d = await post('/agent/resume', {session: group.id});
@@ -3714,6 +3714,8 @@ function setAgentStatus(state, title) {
 async function sendAgent(force = false) {
   const calm = $('#agentprompt')?.value.trim().match(/^\/calm(?:\s+(on|off))?$/i);
   if (calm) { $('#agentprompt').value = ''; return leeAgentCalm(calm[1] ? calm[1].toLowerCase() === 'on' : undefined); }
+  // the box is already clear while a send is on the wire, so a second ⌘↩ would read as a steer or a new turn
+  if (lee.agentSending) return status('still sending the last message…', 'busy');
   if (lee.agentBusy) return force ? leeForceSteer() : leeQueueSteer();
   if (lee.agentView && lee.agentView !== 'live') restoreAgentLive();
   const el = $('#agentprompt'); if (!el || !el.value.trim()) return;
@@ -3723,30 +3725,49 @@ async function sendAgent(force = false) {
     const head = q.slice(1).split(/\s/, 1)[0];
     if ((lee.agentVocabulary?.commands || []).some(c => c.name === head)) return sendAgentCommand(q);
   }
-  const attachments = agentAttachList();
-  const reasoning = $('#agentreasoning')?.value || 'auto';
-  let accepted;
-  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread: lee.agentThread || ''}); }
-  catch (e) {
-    el.value = q;
-    // a withheld attachment: its chip turns red with the reason, and nothing was sent
-    if (e.body?.attachments) { markAgentBlocked(e.body.attachments, e.body.line || e.message, e.body.kind); paintAgentAttachments(); }
-    return status(e.message || String(e), 'err');
-  }
-  lee.attachBlocked?.clear();
+  const attachments = agentAttachList(), reasoning = $('#agentreasoning')?.value || 'auto';
+  const thread = lee.agentThread || '', gen = lee.agentStreamGen;
+  const held = {files: new Map(lee.agentAttachments), sels: [...lee.agentSelections], vault: new Map(lee.vaultRefs)};
+  /* Drawn before the server answers: the reply used to wait on a model probe and the system prompt,
+     and the pane showed nothing for a second or more. `sending` until the turn is accepted. */
+  lee.agentSending = true;
   el.value = ''; el.style.height = '64px';
-  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments();
-  lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
-  const log = $('#agentlog'); $('.lee-agent-welcome', log)?.remove();
-  const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''});
+  lee.agentAttachments.clear(); lee.agentSelections = []; lee.vaultRefs.clear(); paintAgentAttachments(false);
+  const log = $('#agentlog'), welcome = $('.lee-agent-welcome', log); welcome?.remove();
+  const card = agentTurnCard({prompt: q, model: $('#agentmodel')?.value || ''}); card.classList.add('sending');
   turnBody(card).appendChild(userMessage(q));
   log.appendChild(card);
   foldOlderTurns(log);            // what came before is answered; this is the one being read
   trimAgentLog(log);
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
-  // a turn nobody named moves to the model ready here; the line says where and why
-  if (accepted.moved) { status(accepted.moved, 'ok'); window.leeLoadModels?.(); } else status('model is working…');
-  agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
+  status('sending…', 'busy');
+  let accepted, refused;
+  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread}); }
+  catch (e) { refused = e; }
+  try {
+    await agentPicksSettled();    // a thread switch in flight decides whose box the prompt goes back to
+    const elsewhere = gen !== lee.agentStreamGen || (lee.agentThread || '') !== (thread || lee.agentThread || '');
+    if (refused) {
+      card.remove();
+      if (welcome && lee.agentView !== 'history' && !$('.lee-agent-turn', log)) log.prepend(welcome);
+      if (elsewhere) { lee.agentThreadDrafts.set(thread, q); return status(`not sent: ${refused.message || refused}`, 'err'); }
+      if (!el.value.trim()) el.value = q;
+      for (const [k, v] of held.files) if (!lee.agentAttachments.has(k)) lee.agentAttachments.set(k, v);
+      lee.agentSelections = [...held.sels, ...lee.agentSelections];
+      for (const [k, v] of held.vault) if (!lee.vaultRefs.has(k)) lee.vaultRefs.set(k, v);
+      // a withheld attachment: its chip turns red with the reason, and nothing was sent
+      if (refused.body?.attachments) markAgentBlocked(refused.body.attachments, refused.body.line || refused.message, refused.body.kind);
+      paintAgentAttachments();
+      return status(refused.message || String(refused), 'err');
+    }
+    lee.attachBlocked?.clear();
+    card.classList.remove('sending');
+    if (elsewhere) return status('sent; the turn runs in its own conversation', 'ok');   // the attention strip shows it
+    lee.agentBusy = true; lee.agentBusyAt = Date.now(); startAgentBusyWatch(); setAgentStatus('working'); updateAgentRunstrip(); refreshAgentBudget();
+    card._prompt = q;   // `done` puts it back when the turn never started
+    status('model is working…');
+    agentListen(accepted.thread || lee.agentThread, accepted.seq, card);
+  } finally { lee.agentSending = false; }
 }
 
 /* One conversation's feed, painted into the live pane. `sendAgent` calls this for the turn it
@@ -3853,6 +3874,8 @@ function agentListen(thread, since, card = null) {
     timeline.seal(); if ('queued_steer' in d) setQueuedSteer(d.queued_steer || '', d.text || '');
   }));
   es.addEventListener('title', dedupe(d => { if (d.title) lee.agentTitle = titleText(d.title); }));
+  // a turn nobody named moves to the model ready here; the line says where and why
+  es.addEventListener('moved', dedupe(d => { status(d.text, 'ok'); window.leeLoadModels?.(); }));
   // arrives during `_prepare`, before the first chunk: the seeds go above this first turn's card
   es.addEventListener('warm', dedupe(d => { renderWarmStart(log, d); stickAgentLog(log); }));
   es.addEventListener('watch', dedupe(d => leeWatchRun(d.target, d.target)));
@@ -3925,6 +3948,9 @@ function agentListen(thread, since, card = null) {
     showProblems(d.problems, host);   // a turn's problems belong to that turn
     if ((d.problems || []).length) status(d.problems[d.problems.length - 1], 'err');
     else status(d.ok ? tail : (d.note || 'assistant unavailable'), d.ok ? 'ok' : 'err');
+    // it never reached the model, so the prompt goes back where it was typed, unless something new is there
+    const box = $('#agentprompt');
+    if (d.unstarted && !d.ok && card._prompt && box && !box.value.trim()) box.value = card._prompt;
     await reloadAfterEdits(d.edits || []);
   }));
 
