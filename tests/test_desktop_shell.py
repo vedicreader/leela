@@ -239,3 +239,8 @@ def test_the_page_retitles_its_own_native_window(monkeypatch):
     assert api.set_title('Leela · a · agent') and a.title == 'Leela · a · agent', 'no url means the focused window'
     monkeypatch.setitem(sys.modules, 'webview', NS(windows=[], active_window=lambda: None))
     assert api.set_title('leela') is False
+
+def test_the_window_keeps_the_platforms_own_title_bar():
+    "macOS 26 paints a transparent title bar over the page, which hid the header's top row in 0.1.27."
+    from kavacha.window import shell_api
+    assert shell_api().unified is False
