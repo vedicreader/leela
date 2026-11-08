@@ -11,12 +11,11 @@
    Colours are declared once as --lee-* and consumed everywhere, including by
    the CodeMirror theme, so the editor cannot drift from the app. */
 
-:root {
+:root { --lee-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
   --lee-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --lee-code-size: 13px;
   --lee-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --lee-sans-cursor: "Segoe UI", "Helvetica Neue", ui-sans-serif, sans-serif;
-  --lee-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
   --lee-size-min: 10px;
   --lee-md-output-weight: 400;
   --lee-code-line-height: 1.5;
@@ -24,7 +23,7 @@
   --lee-left-w: 260px;
   --lee-right-w: 420px;      /* the thicker variable sidebar */
   --lee-dock-h: 230px;
-  --lee-titlebar-h: 52px; --lee-tabrow-h: 40px; --lee-header-h: calc(var(--lee-titlebar-h) + var(--lee-tabrow-h));
+  --lee-header-h: 34px;
 }
 /* ---- theme families ------------------------------------------------------------
    `data-theme` names the family, `data-mode` the resolved dark/light. Every variant
@@ -281,7 +280,7 @@ body {
 
 /* header · toolbar · body · footer. The toolbar is `auto` rather than a fixed row so it
    keeps whatever height the buttons need, and only the body stretches. */
-.lee-app { display: grid; grid-template-rows: auto 1fr 24px; height: 100vh; height: 100dvh; }
+.lee-app { display: grid; grid-template-rows: var(--lee-header-h) auto 1fr 24px; height: 100vh; height: 100dvh; }
 .lee-body {
   display: grid;
   grid-template-columns: var(--lee-left-w) 4px 1fr 4px var(--lee-right-w);
@@ -297,8 +296,27 @@ body {
   visibility: hidden; overflow: hidden; pointer-events: none;
 }
 
-/* ---- header: see the two-row block at the end ---- */
+/* ---- header ---- */
+.lee-header {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  background: var(--lee-bg1); border-bottom: 1px solid var(--lee-border); min-width: 0;
+}
+.lee-brand { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--lee-fg); }
+.lee-brand .lee-mark { width: 15px; height: 15px; flex: none; background: currentColor; -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
+.lee-brand .lee-wordmark { font: 600 15px/1 var(--lee-serif); letter-spacing: .005em; }
 .lee-spacer { flex: 1 1 auto; }
+.lee-workspace-switcher, .lee-branch-switcher, .lee-menubar-btn {
+  min-width: 0; height: 26px; border: 0; border-radius: 4px; background: transparent;
+  color: var(--lee-fg2); cursor: pointer; font: 11px/1.2 var(--lee-mono);
+}
+.lee-workspace-switcher { display: flex; align-items: center; gap: 7px; max-width: 220px; padding: 0 7px; }
+.lee-workspace-switcher:hover, .lee-branch-switcher:hover, .lee-menubar-btn:hover { background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-workspace-name::after, .lee-branch-switcher::after { content: ''; display: inline-block; width: 5px; height: 5px;
+  margin: 0 1px 3px 7px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.lee-branch-switcher { max-width: 168px; padding: 0 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-menubar { display: flex; align-items: center; gap: 1px; border-left: 1px solid var(--lee-border); padding-left: 6px; }
+.lee-menubar-btn { padding: 0 7px; font-family: inherit; }
 
 .lee-tabbar { display: flex; gap: 2px; overflow: hidden; scrollbar-width: none; min-width: 96px; flex: 1 1 420px; }
 .lee-tabbar::-webkit-scrollbar { display: none; }
@@ -405,7 +423,7 @@ body {
 .cm-line.cm-lee-debug-line { background: color-mix(in srgb, var(--lee-yellow) 18%, transparent); position: relative; }
 .cm-line.cm-lee-debug-line::before { content: ''; position: absolute; left: -4px; top: 0; bottom: 0;
   width: 3px; background: var(--lee-yellow); }
-.lee-debug-source-pane { position: fixed; z-index: 69; left: max(18px, calc(50vw - 450px)); top: calc(var(--lee-header-h) + 6px);
+.lee-debug-source-pane { position: fixed; z-index: 69; left: max(18px, calc(50vw - 450px)); top: calc(var(--lee-header-h) + 36px);
   width: min(900px, calc(100vw - 36px)); border: 1px solid var(--lee-border); border-radius: 7px;
   background: var(--lee-bg1); box-shadow: 0 18px 54px rgba(0,0,0,.45); overflow: hidden; }
 .lee-debug-source-pane .lee-mhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
@@ -2913,7 +2931,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   }
   .lee-centre { grid-column: 3; }
   .lee-left, .lee-right {
-    position: fixed; top: var(--lee-header-h); bottom: 24px; z-index: 18; display: flex; width: min(86vw, 380px);
+    position: fixed; top: calc(var(--lee-header-h) + 30px); bottom: 24px; z-index: 18; display: flex; width: min(86vw, 380px);
     box-shadow: 18px 0 36px rgba(0,0,0,.28); transition: transform .22s cubic-bezier(.16,1,.3,1);
   }
   .lee-left { left: 0; transform: translateX(-102%); }
@@ -2925,11 +2943,11 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   .lee-pane-restore.restore-left, .lee-pane-restore.restore-right { display: block; }
 }
 @media (max-width: 680px) {
-  #header .lee-runs .lee-hitem-text, #header .lee-kstate { display: none; }
-  #header .lee-wordmark { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-  #header .lee-workspace-name { max-width: 110px; }
-  #header .lee-branch-name { max-width: 90px; }
-  #header .lee-menubar { display: none; }
+  .lee-header { gap: 3px; padding: 0 4px; }
+  .lee-workspace-switcher { max-width: 142px; }
+  .lee-workspace-switcher .lee-brand { display: none; }
+  .lee-branch-switcher { max-width: 112px; }
+  .lee-menubar { display: none; }
   .lee-tab { max-width: 128px; padding-inline: 6px; }
   .lee-toolbar-hint, .lee-toolbar-link { display: none; }
   .lee-bottomdock { max-height: calc(100% - 180px); }
@@ -2956,7 +2974,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 /* ---- contextual menus + file dialogs ---- */
 .lee-ctxmenu {
   position: fixed; z-index: 60; width: max-content; min-width: 230px; max-width: min(360px, 92vw);
-  max-height: min(70vh, 640px); overflow-y: auto; overscroll-behavior: contain;
+  max-height: min(70vh, 640px); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
   padding: 5px; border: 1px solid var(--lee-border); border-radius: 7px;
   background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.38);
 }
@@ -2966,6 +2984,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   color: var(--lee-fg2); cursor: pointer; font: inherit; text-align: left;
 }
 .lee-menuitem:hover, .lee-menuitem:focus { outline: none; background: var(--lee-sel); color: var(--lee-fg); }
+.lee-menuitem > span { flex: none; }
+.lee-menuitem small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lee-menuitem.warn { color: var(--lee-red); }
 .lee-menuitem:disabled { opacity: .45; cursor: default; }
 .lee-menuitem[role="menuitemcheckbox"]::before { content: ''; width: 11px; height: 11px; flex: none; margin-right: -14px; border: 1px solid var(--lee-fg4); border-radius: 3px; }
@@ -3505,7 +3525,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-termtab-x:hover { opacity: 1; }
 
 :root[data-theme="cursor"] { --lee-sans: var(--lee-sans-cursor); }
-:root[data-density="tight"] .lee-app { grid-template-rows: auto 1fr 22px; }
+:root[data-density="tight"] { --lee-header-h: 30px; }
+:root[data-density="tight"] .lee-app { grid-template-rows: var(--lee-header-h) auto 1fr 22px; }
 :root[data-density="tight"] .lee-header,
 :root[data-density="tight"] .lee-toolbar,
 :root[data-density="tight"] .lee-left,
@@ -3530,6 +3551,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 :root[data-density="tight"] .lee-sc-group {
   border-color: color-mix(in srgb, var(--lee-border) 88%, transparent);
 }
+:root[data-density="tight"] .lee-header { padding: 0 6px; gap: 6px; }
 :root[data-density="tight"] .lee-toolbar { min-height: 26px; padding: 2px 5px; }
 :root[data-density="tight"] .lee-phead { min-height: 26px; padding: 2px 6px; gap: 4px; }
 :root[data-density="tight"] .lee-ptitle { font-size: 10px; letter-spacing: .08em; font-weight: 550; }
@@ -3593,6 +3615,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 }
 :root[data-density="tight"] .lee-memory .lee-mrow,
 :root[data-density="tight"] .lee-varspanel .lee-vrow { border-radius: 2px; }
+:root[data-density="tight"] .lee-brand .lee-wordmark { font-size: 14px; }
 :root[data-density="tight"] .lee-modalbox {
   border-radius: 4px; border-color: color-mix(in srgb, var(--lee-border) 92%, transparent);
   box-shadow: 0 10px 28px rgba(0,0,0,.12);
@@ -3936,7 +3959,12 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-agent-attachment.vault { border-color: color-mix(in srgb, var(--lee-accent) 50%, var(--lee-border)); }
 .lee-agent-attachment.vault > span:first-child::before { content: '❋ '; color: var(--lee-accent); }
 
-/* ---- branch popup ---- */
+/* ---- branch popup and the remote actions beside the pill ---- */
+.lee-git-quickbar { display: flex; align-items: center; gap: 1px; flex: none; }
+.lee-git-quick { min-width: 22px; height: 22px; padding: 0 5px; border: 0; border-radius: 4px;
+                 background: transparent; color: var(--lee-fg4); cursor: pointer; font: 11px/1 var(--lee-mono); }
+.lee-git-quick:hover:not(:disabled) { background: var(--lee-bg2); color: var(--lee-fg); }
+.lee-git-quick:disabled { opacity: .4; cursor: progress; }
 .lee-branchmodal .lee-modalbox { width: min(560px, 94vw); }
 .lee-branchmodal > .lee-modalbox > .lee-input { margin: 8px 12px 4px; }
 .lee-branchlist { max-height: min(58vh, 520px); }
@@ -3963,7 +3991,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 /* The find pane. Fixed, because it belongs to the document rather than to the cell the caret
    happens to be in, and it has to stay put while the text scrolls under it. Query and replace
    share a grid column, so the two rows line up whatever the controls beside them are. */
-.lee-find-bar { position: fixed; top: calc(var(--lee-header-h) + 36px); right: 26px; z-index: 60; display: grid; width: 430px;
+.lee-find-bar { position: fixed; top: calc(var(--lee-header-h) + 22px); right: 26px; z-index: 60; display: grid; width: 430px;
                 grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; align-items: center;
                 padding: 7px 9px; border: 1px solid var(--lee-border); border-radius: 8px;
                 background: var(--lee-bg2); box-shadow: 0 8px 24px #0007; }
@@ -4060,74 +4088,3 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   --lee-green: #0a3069; --lee-purple: #0550ae; --lee-blue: #8250df; --lee-yellow: #953800;
 }
 
-/* ---- header: two rows ----
-   Row 1 is the window's own title bar: brand, folder, branch, sync, runs, kernel. Row 2 holds the
-   menus, the tabs and the run actions. IDs, so no theme or density rule reaches in. The left inset
-   is the traffic lights' room in a unified macOS window; a browser tab and the Windows caption
-   need none. */
-#header { display: flex; flex-direction: column; min-width: 0; padding: 0; gap: 0; background: var(--lee-bg); border: 0;
-  --lee-hair: color-mix(in srgb, var(--lee-border) 70%, transparent); font-family: var(--lee-sans); }
-#titlebar { height: var(--lee-titlebar-h); flex: none; display: flex; align-items: center; gap: 6px; padding: 0 14px 0 16px; min-width: 0;
-  background: var(--lee-bg1); border-bottom: 1px solid var(--lee-hair); -webkit-app-region: drag; user-select: none; }
-.lee-titlebar-mac #titlebar { padding-left: 94px; }
-.lee-titlebar-mac.lee-fullscreen #titlebar { padding-left: 16px; }
-#titlebar button, #titlebar [role="button"] { -webkit-app-region: no-drag; }
-#header .lee-brand { display: flex; align-items: center; gap: 9px; flex: none; padding: 0 16px 0 4px; margin-right: 6px; position: relative; }
-#header .lee-brand::after { content: ''; position: absolute; right: 0; top: 4px; bottom: 4px; width: 1px; background: var(--lee-hair); }
-#header .lee-mark { width: 28px; height: 28px; margin-top: -2px; flex: none; background: var(--lee-fg);
-  -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
-#header .lee-wordmark { margin: 0; font: 600 19px/1 var(--lee-serif); letter-spacing: .005em; color: var(--lee-fg); }
-#header .lee-hitem { display: flex; align-items: center; gap: 7px; height: 30px; min-width: 0; padding: 0 10px; border: 0; border-radius: 7px;
-  background: transparent; color: var(--lee-fg2); font: 13.5px/1 var(--lee-sans); white-space: nowrap; cursor: pointer; }
-#header .lee-hitem:hover, #header .lee-git-quick:hover, #header .lee-act:hover, #header .lee-menubar-btn:hover, #header .lee-tab-overflow:hover {
-  background: color-mix(in srgb, var(--lee-fg) 6%, transparent); }
-#header .lee-hitem:focus-visible, #header .lee-act:focus-visible { outline: 2px solid var(--lee-accent); outline-offset: -2px; }
-#header .lee-hico { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4;
-  stroke-linecap: round; stroke-linejoin: round; color: var(--lee-fg4); }
-#header .lee-chev { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.65; opacity: .6; margin-left: -3px; }
-#header .lee-workspace-switcher { color: var(--lee-fg); font-weight: 500; }
-#header .lee-workspace-name, #header .lee-branch-name { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-#header .lee-change-count { color: var(--lee-yellow); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-#header .lee-change-count[hidden], #header .lee-git-quick[hidden] { display: none; }
-#gitpill:not([data-state="branch"]) .lee-branch-glyph { display: none; }
-#gitpill[data-state="error"] { color: var(--lee-orange); }
-#gitpill[data-state="nofolder"] { display: none; }
-#header .lee-git-quickbar { display: flex; align-items: center; gap: 2px; flex: none; }
-#header .lee-git-quick { display: flex; align-items: center; gap: 3px; height: 30px; padding: 0 6px; border: 0; border-radius: 7px;
-  background: transparent; color: var(--lee-fg4); font: 12.5px/1 var(--lee-sans); font-variant-numeric: tabular-nums; cursor: pointer; }
-#header .lee-git-quick .lee-hico { width: 13px; height: 13px; }
-#header .lee-git-quick:disabled { opacity: .4; cursor: progress; }
-#header .lee-runs[data-state="on"] .lee-hico { color: var(--lee-green); }
-#header .lee-runs[data-state="err"] { color: var(--lee-red); }
-#header .lee-kdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--lee-fg4); }
-#header .lee-kernel[data-state="on"] .lee-kdot { background: var(--lee-green); }
-#header .lee-kernel[data-state="warn"] .lee-kdot { background: var(--lee-yellow); }
-#header .lee-kernel[data-state="err"] .lee-kdot { background: var(--lee-red); }
-#header .lee-kname { overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-#header .lee-kstate { color: var(--lee-fg4); margin-left: -3px; }
-#header .lee-sidebar-toggle { padding: 0 8px; }
-#tabrow { height: var(--lee-tabrow-h); flex: none; display: flex; align-items: center; gap: 2px; padding: 0 14px; min-width: 0;
-  background: var(--lee-bg); border-bottom: 1px solid var(--lee-hair); }
-#header .lee-menubar { display: flex; align-items: center; gap: 2px; flex: none; border: 0; padding: 0; position: relative; margin-right: 21px; }
-#header .lee-menubar::after { content: ''; position: absolute; right: -11px; top: 11px; bottom: 11px; width: 1px; background: var(--lee-hair); }
-#header .lee-menubar-btn { height: 28px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--lee-fg2);
-  font: 13px/1 var(--lee-sans); cursor: pointer; }
-#tabbar { display: flex; align-items: stretch; gap: 0; height: var(--lee-tabrow-h); min-width: 96px; flex: 0 1 auto; overflow: hidden; }
-#tabbar > .lee-dim { align-self: center; padding: 0 12px; font-size: 13px; }
-#tabbar .lee-tab { display: flex; align-items: center; gap: 7px; height: var(--lee-tabrow-h); padding: 0 12px; margin: 0; max-width: 220px;
-  border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--lee-fg4); font: 13px/1 var(--lee-sans); position: relative; }
-#tabbar .lee-tab.overflowed { display: none; }
-#tabbar .lee-tab:hover { color: var(--lee-fg2); background: transparent; }
-#tabbar .lee-tab.active { color: var(--lee-fg); background: transparent; box-shadow: none; }
-#tabbar .lee-tab.active::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px; background: var(--lee-accent); }
-#tabbar .lee-tab:focus-visible { outline: 2px solid var(--lee-accent); outline-offset: -4px; }
-#tabbar .lee-save-state { width: 6px; height: 6px; box-shadow: none; }
-#header .lee-tab-overflow { height: 28px; min-width: 26px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent;
-  color: var(--lee-fg4); font: 12px/1 var(--lee-sans); cursor: pointer; }
-#toolbar { display: flex; align-items: center; gap: 0; flex: none; min-height: 0; padding: 0; margin: 0; background: transparent; border: 0; overflow: visible; }
-#toolbar .lee-act { display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 0; border-radius: 6px;
-  background: transparent; color: var(--lee-fg2); font: 13px/1 var(--lee-sans); cursor: pointer; }
-#toolbar .lee-act[hidden] { display: none; }
-#toolbar .lee-act.go { color: var(--lee-green); font-weight: 600; }
-#toolbar .lee-act .lee-hico { width: 12px; height: 12px; color: currentColor; }
-#toolbar .lee-toolbar-more { width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--lee-fg4); }

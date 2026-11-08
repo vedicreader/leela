@@ -100,10 +100,10 @@ function paintRunsPill() {
   const runs = lee.runs || [];
   const live = runs.filter(runUp);
   const dead = runs.filter(s => !runUp(s) && s.code);
-  pill.dataset.state = dead.length ? 'err' : live.length ? 'on' : 'off';
-  const text = live.length === 1 ? live[0].label || '1 run' : live.length ? `${live.length} runs`
-    : dead.length ? `${dead.length} stopped` : 'runs';
-  const say = pill.querySelector('.lee-hitem-text'); if (say) say.textContent = text; else pill.textContent = text;
+  pill.className = 'lee-pill ' + (dead.length ? 'lee-pill-err' : live.length ? 'lee-pill-on' : 'lee-pill-off');
+  pill.textContent = live.length === 1 ? '▶ ' + (live[0].label || 'run')
+    : live.length ? `▶ ${live.length} runs`
+    : dead.length ? `⚠ ${dead.length} stopped` : '○ runs';
   pill.title = runs.length ? runs.map(s => `${s.label}: ${runState(s)}`).join('\n')
                            : 'nothing is running. Click to start a script';
 }

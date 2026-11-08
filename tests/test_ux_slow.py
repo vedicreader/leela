@@ -138,3 +138,17 @@ def test_an_empty_folder_says_so_and_tab_leaves_the_exec_box(tmp_path):
     assert 'empty' in got['empty'], got
     assert got['exec'] == [False, False, True, False], 'Tab passes through an empty box both ways; with code, Tab indents and Escape then Tab leaves'
     assert got['open'] < 500, f"⌘O asked after {got['open']:.0f} ms"
+
+WSMENU = """async () => { await leeWorkspaceMenu(document.querySelector('#workspacepill'));
+  const m = document.querySelector('.lee-ctxmenu'), s = [...m.querySelectorAll('.lee-menuitem small')];
+  return {sideways: m.scrollWidth > m.clientWidth, oneLine: s.every(x => x.getBoundingClientRect().height < 22), titled: s.every(x => x.title),
+    details: s.map(x => x.textContent)}; }"""
+
+def test_the_folder_menu_keeps_a_long_path_on_one_line(tmp_path):
+    "A folder deep under /private/var wrapped onto two lines in the workspace menu and gave it a sideways scroll bar."
+    d = tmp_path/('a-very-long-folder-name-for-the-menu-' * 3)/'demo'; d.mkdir(parents=True)
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1440, 'height': 900})
+        return await pg.evaluate(WSMENU)
+    got = asyncio.run(_on_page(go, roots=[str(d)]))
+    assert not got['sideways'] and got['oneLine'] and got['titled'], got

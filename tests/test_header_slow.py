@@ -1,4 +1,4 @@
-"The header in a real browser: title, brand, folder, branch and sync, the room per platform, and screenshots in light and dark for the owner."
+"The header in a real browser: one row over the toolbar, title, folder, branch and sync, no room kept for window buttons, and screenshots in light and dark."
 
 import pytest
 
@@ -29,35 +29,28 @@ def _repo(root):
     return d.resolve()
 
 ROW = """() => { const r = s => document.querySelector(s).getBoundingClientRect(), q = s => document.querySelector(s);
-  return {top: r('#titlebar').height, tabs: r('#tabrow').height, toolbarInRow: !!q('#tabrow #toolbar'),
-    pad: getComputedStyle(q('#titlebar')).paddingLeft, brand: q('.lee-wordmark').textContent,
-    folder: q('#workspacename').textContent, branch: q('#gitpill .lee-branch-name').textContent,
-    count: q('#gitpill .lee-change-count').hidden ? '' : q('#gitpill .lee-change-count').textContent,
-    pull: q('#gitpull').hidden ? null : q('#gitpull').textContent, push: q('#gitpush').hidden ? null : q('#gitpush').textContent,
-    state: q('#gitpill').dataset.state, glyph: getComputedStyle(q('#gitpill .lee-branch-glyph')).display,
+  return {density: document.documentElement.dataset.density, head: r('#header').height, bar: r('#toolbar').height, barTop: r('#toolbar').top, tabsInHead: !!q('#header #tabbar'),
+    pad: getComputedStyle(q('#header')).paddingLeft, left: r('#workspacepill').left, brand: q('#header .lee-brand').textContent,
+    folder: q('#workspacename').textContent, pill: q('#gitpill').textContent, state: q('#gitpill').dataset.state,
+    cls: q('#gitpill').className, shown: getComputedStyle(q('#gitpill')).display !== 'none',
+    quick: [...document.querySelectorAll('#header .lee-git-quick')].filter(b => b.offsetParent).map(b => b.textContent),
+    acts: [...document.querySelectorAll('#toolbar [data-action]')].filter(b => b.offsetParent).map(b => b.dataset.action),
     text: q('#header').textContent, title: document.title}; }"""
 
-def test_header_rows_title_pills_and_screenshots(tmp_path):
+def test_header_row_toolbar_title_pills_and_screenshots(tmp_path):
     d = _repo(tmp_path)
     async def go(pg):
         await pg.set_viewport_size({'width': 1440, 'height': 900})
         await pg.evaluate('p => leeOpenFile(p)', str(d/'01_karma.ipynb'))
         await pg.wait_for_function("() => document.querySelectorAll('.lee-tab').length >= 1 && document.title.endsWith('notebook')")
-        await pg.wait_for_function("() => !document.querySelector('#gitpill .lee-change-count').hidden && !document.querySelector('#gitpull').hidden")
+        await pg.wait_for_function("() => document.querySelector('#gitpill').textContent.includes('·')")
         got = {'first': await pg.evaluate(ROW)}
         # Painted and read in one turn: the git poll repaints the pill from the real repository between turns.
         paint = lambda call: pg.evaluate(f"() => {{ {call}; return ({ROW})(); }}")
-        got['even'] = await paint("paintBranchPill({branch: 'master', changes: [1, 2, 3], ahead: 0, behind: 0})")
-        for st in ('nogit', 'pending', 'error'): got[st] = await paint(f"paintBranchPill(null, '{st}')")
-        # Headless Chromium's screen is its viewport, so it reads as full screen; a real window is smaller than its screen.
-        await pg.evaluate("() => { document.documentElement.classList.remove('lee-fullscreen'); document.documentElement.classList.replace('lee-titlebar-browser', 'lee-titlebar-mac'); }")
-        got['mac'] = await pg.evaluate(ROW)
-        await pg.evaluate("() => document.documentElement.classList.add('lee-fullscreen')")
-        got['macfull'] = await pg.evaluate(ROW)
-        await pg.evaluate("() => { document.documentElement.classList.remove('lee-fullscreen'); document.documentElement.classList.replace('lee-titlebar-mac', 'lee-titlebar-win'); }")
-        got['win'] = await pg.evaluate(ROW)
-        await pg.evaluate("() => document.documentElement.classList.replace('lee-titlebar-win', 'lee-titlebar-browser')")
+        got['clean'] = await paint("paintBranchPill({branch: 'master', changes: [], ahead: 0, behind: 0})")
+        for st in ('nogit', 'pending', 'error', 'nofolder'): got[st] = await paint(f"paintBranchPill(null, '{st}')")
         await pg.evaluate('() => refreshGitPill()')
+        await pg.wait_for_function("() => document.querySelector('#gitpill').textContent.includes('·')")
         SHOTS.mkdir(parents=True, exist_ok=True)
         for mode in ('light', 'dark'):
             await pg.evaluate(f"() => applyTheme('leela:{mode}:relaxed')")
@@ -67,20 +60,21 @@ def test_header_rows_title_pills_and_screenshots(tmp_path):
         return got
     got = asyncio.run(_on_page(go, roots=[str(d)], dpr=2))
     f = got['first']
-    assert (f['top'], f['tabs'], f['toolbarInRow']) == (52, 40, True), 'two rows; the old toolbar row is gone'
+    h = 30 if f['density'] == 'tight' else 34
+    assert (f['head'], f['barTop'], f['tabsInHead']) == (h, h, True), 'one header row with the tabs, the toolbar under it'
+    assert 24 <= f['bar'] <= 40, f
+    assert f['acts'][:2] == ['run_cell', 'run_advance'] and {'interrupt', 'present_notebook'} <= set(f['acts']), f['acts']
     assert f['title'] == 'Leela · karma · notebook' and f['brand'] == 'Leela' and f['folder'] == 'karma', f
-    assert (f['branch'], f['count'], f['pull'].strip(), f['push'].strip(), f['state']) == ('master', '3', '2', '1', 'branch'), f
-    assert '⍁' not in f['text'] and '⭮' not in f['text'] and '—' not in f['title']
-    assert (got['even']['pull'], got['even']['push'], got['even']['count']) == (None, None, '3'), 'arrows hidden at 0/0'
-
-    assert [got[k]['branch'] for k in ('nogit', 'pending', 'error')] == ['no git', 'git …', 'git ?']
-    assert all(got[k]['pull'] is None and got[k]['count'] == '' and got[k]['glyph'] == 'none' for k in ('nogit', 'pending', 'error'))
-    assert (f['pad'], got['mac']['pad'], got['macfull']['pad'], got['win']['pad']) == ('16px', '94px', '16px', '16px'), \
-        'room for the traffic lights only in a unified macOS window out of full screen'
+    assert (f['pill'], f['state'], 'lee-pill-warn' in f['cls']) == ('master · 3 · ↑1 · ↓2', 'branch', True), f
+    assert f['quick'] == ['⭮', '↓', '↑'] and '—' not in f['title']
+    assert (f['pad'], f['left']) == (('6px', 6) if h == 30 else ('8px', 8)), 'the native title bar holds the traffic lights, so the header keeps no room for them'
+    assert (got['clean']['pill'], 'lee-pill-on' in got['clean']['cls']) == ('master', True)
+    assert [got[k]['pill'] for k in ('nogit', 'pending', 'error')] == ['no git', 'git …', 'git ?']
+    assert all(got[k]['shown'] for k in ('nogit', 'pending', 'error')) and not got['nofolder']['shown'], 'no folder hides the pill'
     assert (SHOTS/'light.png').stat().st_size and (SHOTS/'dark.png').stat().st_size
 
-def test_tab_strip_takes_the_free_row_width_and_row_two_names_are_unique(tmp_path):
-    "The strip measured `#tabbar`, which is only as wide as its tabs, so at 1440px it kept one tab and `+N`; two row-2 buttons were both `File`."
+def test_tab_strip_takes_the_free_row_width_and_header_names_are_unique(tmp_path):
+    "The strip measured `#tabbar` alone, not the free room beside it; and no two header buttons share a name."
     for i in range(5): (tmp_path/f'f{i}.py').write_text(f'v = {i}\n')
     async def go(pg):
         await pg.set_viewport_size({'width': 1440, 'height': 900})
@@ -88,10 +82,10 @@ def test_tab_strip_takes_the_free_row_width_and_row_two_names_are_unique(tmp_pat
         await pg.wait_for_function("document.querySelectorAll('.lee-tab').length === 5")
         await pg.wait_for_timeout(300)
         return await pg.evaluate("""() => ({shown: [...document.querySelectorAll('.lee-tab')].filter(t => t.offsetParent).length,
-          more: document.querySelector('#taboverflow').hidden,
-          names: [...document.querySelectorAll('#tabrow button')].filter(b => b.offsetParent && !b.closest('#tabbar')).map(b => b.textContent.trim()).filter(Boolean)})""")
+          more: document.querySelector('#taboverflow').hidden, alone: Math.floor(document.querySelector('#tabbar').clientWidth / 138),
+          names: [...document.querySelectorAll('#header button, #toolbar button')].filter(b => b.offsetParent && !b.closest('#tabbar')).map(b => b.textContent.trim()).filter(Boolean)})""")
     got = asyncio.run(_on_page(go, roots=[str(tmp_path)]))
-    assert (got['shown'], got['more']) == (5, True), got
+    assert got['shown'] >= 4 and got['shown'] > min(got['alone'], 5) - 1 and got['more'] == (got['shown'] == 5), got
     assert len(got['names']) == len(set(got['names'])), got['names']
 
 def test_git_pane_rows_show_the_file_names(tmp_path):
@@ -110,14 +104,14 @@ def test_git_pane_rows_show_the_file_names(tmp_path):
     assert hovered, 'the row actions still show on hover'
 
 def test_full_screen_side_pane_starts_below_the_header(tmp_path):
-    "A full-screen pane sat at `top: 34px`, the old header height, and covered the second header row."
+    "A full-screen pane starts at the bottom of the header, from the one header height variable."
     async def go(pg):
         await pg.set_viewport_size({'width': 1440, 'height': 900})
         await pg.evaluate("() => { leePane('left', true); localStorage.setItem('lee-expand', 'left:full'); leeSyncExpand(); }")
         await pg.wait_for_function("document.querySelector('#shell').classList.contains('expand-full')")
         return await pg.evaluate("() => [document.querySelector('#left').getBoundingClientRect().top, document.querySelector('#header').getBoundingClientRect().bottom]")
     top, header = asyncio.run(_on_page(go, roots=[str(tmp_path)]))
-    assert top == header == 92, (top, header)
+    assert top == header and header in (30, 34), (top, header)
 
 def test_files_pane_header_fits_and_the_rest_wait_in_the_menu(tmp_path):
     "`open…`, `add…` and `⋯` were drawn past the Files pane over the editor."

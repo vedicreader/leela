@@ -200,7 +200,7 @@ async function leeOpenFile(path) {
   // take it out of the page. Every open after that fails on the missing element, so put it back.
   const old=$('#tabbar');
   if(old)old.replaceWith(fresh);
-  else if($('.lee-tab-overflow'))$('.lee-tab-overflow').before(fresh);else $('#tabrow')?.append(fresh);
+  else $('#header')?.insertBefore(fresh,$('.lee-tab-overflow')||null);
   htmx.process(fresh);
   // The variables panel is beside the editor, not part of it, and awaiting it held the switch open
   // for as long as it took to paint: 97ms of the 113 a notebook switch cost in the window Leela

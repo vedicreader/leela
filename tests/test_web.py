@@ -1128,19 +1128,23 @@ def test_the_page_title_names_the_workspace_folder(tmp_path):
     ws = Workspace(roots=[root]); ws.open(str(root/'n.ipynb'))
     with TestClient(ide_app(ws)) as c: assert '<title>Leela · orgs · notebook</title>' in c.get('/').text
 
-def test_the_header_is_two_rows_with_the_brand_and_no_fetch_glyph(tmp_path):
-    "Row 1: brand, folder, branch, hidden pull and push, runs, kernel, pane toggle. Row 2: menus, tabs, run actions. The old toolbar row is gone."
+def test_the_header_is_one_row_over_the_toolbar(tmp_path):
+    "The 0.1.26 header: brand, folder, branch, fetch, pull and push, menus, tabs, runs and kernel in one row; the run actions in the toolbar row under it."
     (root := tmp_path/'karma').mkdir()
     with TestClient(ide_app(Workspace(roots=[root]))) as c: html = c.get('/').text
-    top, row = html.split('id="titlebar"')[1].split('id="tabrow"')
-    assert 'class="lee-wordmark pywebview-drag-region">Leela<' in top and '--lee-mark: url(' in html
-    assert 'data-folder="karma"' in top and 'aria-label="switch workspace: karma"' in top
-    assert 'id="gitpill"' in top and 'data-state="nogit"' in top and '>no git<' in top, 'a folder outside git says so from the first paint'
-    for op in ('pull', 'push'): assert f'id="git{op}"' in top and top.split(f'id="git{op}"')[0].rsplit('<button', 1)[1].count('hidden'), op
-    assert 'gitfetch' not in html and '⭮' not in html and '⍁' not in html, 'fetch lives in the branch menu'
-    assert 'id="kpill"' in top and 'id="runspill"' in top and 'toggle_right' in top
-    assert 'id="toolbar"' in row and 'id="tabbar"' in row and '>Run<' in row and '>Present<' in row
-    assert html.count('class="lee-toolbar"') == 1 and "lee-titlebar-' + m" in html
+    head, rest = html.split('id="header"')[1].split('id="toolbar"')
+    assert '<h1 class="sr-only">Leela</h1>' in head and 'class="lee-mark"' in head and 'class="lee-wordmark">Leela<' in head and '--lee-mark: url(' in head
+    assert 'data-folder="karma"' in head and 'aria-label="switch workspace: karma"' in head
+    assert 'id="gitpill"' in head and 'data-state="nogit"' in head and '>no git<' in head, 'a folder outside git says so from the first paint'
+    for op in ('fetch', 'pull', 'push'): assert f'id="git{op}"' in head, op
+    assert 'id="tabbar"' in head and 'id="kpill"' in head and 'id="runspill"' in head and 'application menus' in head
+    assert 'titlebar' not in html and 'tabrow' not in html, 'the native title bar holds no part of the header'
+    assert html.count('class="lee-toolbar"') == 1 and 'data-action="run_cell"' in rest and 'data-action="present_notebook"' in rest
+
+def test_no_folder_hides_the_git_pill_from_the_first_paint(tmp_path):
+    with TestClient(ide_app(Workspace(roots=[]))) as c: html = c.get('/').text
+    pill = html.split('id="gitpill"')[0].rsplit('<button', 1)[1] + html.split('id="gitpill"')[1].split('>', 1)[0]
+    assert 'data-state="nofolder"' in pill and 'hidden' in pill, pill
 
 
 @pytest.mark.parametrize('route', ['/nb/edit', '/lesson/save'])
