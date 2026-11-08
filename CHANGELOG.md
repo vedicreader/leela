@@ -2,11 +2,20 @@
 
 <!-- do not remove -->
 
-## 0.1.28
+## 1.0.0
 
-- The window keeps the Mac's own title bar and its title. On macOS 26 the 0.1.27 title bar painted over the header's top row, so the folder, branch and git buttons did not show.
-- The header is the 0.1.26 header again: one row with the folder, branch, git, menus and tabs, and the run toolbar under it. A small Leela mark and a serif "Leela" start the row.
+Leela 1.0 for Mac is a small native app: it sets up its own Python environment from a signed package lock, and updates that lock without a new app. Needs kavacha 0.0.18.
+
+- The window keeps the Mac's own title bar and draws no title text in it; the title is still set for Sanketa and the Window menu. On macOS 26 the 0.1.27 title bar painted over the header's top row, so the folder, branch and git buttons did not show.
+- The header is the 0.1.26 header again: one row with the folder, branch, git, menus and tabs, and the run toolbar under it. A small Leela mark and a serif "Leela" start the row, on the same baseline as the folder name.
+- A prompt sent in the agent pane shows at once. The server accepts the turn in about 20 ms and checks the model while the reply starts. A refused prompt goes back into the box with the reason.
 - The folder menu keeps a long path on one line, shows your home folder as `~`, and no longer scrolls sideways.
+
+Known issues:
+
+- The first install downloads about 392 MB of packages. A later release moves the large ones into extras.
+- The thin app's server log is never rotated.
+- Another program on your Mac can still reach Leela's local server; a per-launch key is planned.
 
 ## 0.1.27
 
