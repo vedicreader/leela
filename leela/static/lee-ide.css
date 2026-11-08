@@ -883,6 +883,7 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
    resized. It is already `visibility: hidden` and `aria-hidden`, so nothing else changes. */
 .lee-agent-turn.folded > .lee-agent-turn-body { display: none; max-height: 0; overflow: hidden; visibility: hidden; }
 .lee-agent-turn.lee-turn-undone-card > .lee-agent-turn-head { opacity: .6; }
+.lee-agent-turn.sending { opacity: .55; }
 .lee-history-index {
   position: sticky; top: 0; z-index: 2; display: grid;
   grid-template-columns: minmax(120px, auto) minmax(220px, 1fr) auto auto; align-items: center; gap: 10px;

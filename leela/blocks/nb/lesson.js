@@ -107,7 +107,7 @@ function lessonAsk(e) {
   if (!c) return;
   const about = askAbout(d), n = lee.cells.indexOf(c) + 1;
   if (lessonNotebook() && guideCell(c)) { e.preventDefault(); return lessonGuide(c.id, '', `${d.text || GUIDE_START + 'this demo.'}${about ? ` (${about})` : ''}`); }
-  if (lee.agentBusy) return status('The agent is working. Ask again when it finishes.', 'err');
+  if (lee.agentBusy || lee.agentSending) return status('The agent is working. Ask again when it finishes.', 'err');
   leeAct('focus_agent');
   const prompt = $('#agentprompt');
   if (!prompt) return;
