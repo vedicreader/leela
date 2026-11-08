@@ -582,6 +582,7 @@ def test_the_thin_launcher_keeps_kavachas_window_settings():
     from kavacha.window import DEFAULT_SIZE, MIN_SIZE
     c = _lock().t.config()
     assert c['window']['size'] == list(DEFAULT_SIZE) and c['window']['min_size'] == list(MIN_SIZE) and c['debug_env'] == 'LEELA_WEBVIEW_DEBUG'
+    assert c['titlebar']['style'] == 'native' and c['titlebar']['title_text'] is False, 'the header shows the name, so the native bar draws no title text'
 
 def test_the_thin_app_tests_its_shortcuts_against_the_menu_the_server_serves():
     """`make test` writes menu.json from the Python source, and the launcher checks it with no window."""

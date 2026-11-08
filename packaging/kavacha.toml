@@ -32,6 +32,7 @@ url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-met
 [native]
 menu_action_js = "leeAct({action})"
 titlebar = "native"
+title_text = false
 
 [sites]
 list = "/app/sites"
