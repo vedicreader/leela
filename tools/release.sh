@@ -15,6 +15,9 @@ unset GITHUB_TOKEN GH_TOKEN   # the keyring of gh signs in; a stale token in the
 say() { printf '\n== %s\n' "$*"; }
 gitc() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -c url.https://github.com/.insteadOf=git@github.com: "$@"; }
 
+need_gh() { gh release list -R $R --limit 1 >/dev/null 2>&1 || { echo "gh cannot reach $R: it is not signed in, or the keychain is locked. Run gh auth status, then gh auth login if it says so, and run make ship V=$V again" >&2; exit 1; }; }
+need_gh   # a broken gh login stops the release here, before the slow steps
+
 say "1. main is clean, pushed and green"
 test "$(git branch --show-current)" = main || { echo "make ship runs on main" >&2; exit 1; }
 grep -q "^__version__ = \"$V\"" leela/__init__.py || { echo "leela/__init__.py is not version $V" >&2; exit 1; }
@@ -78,6 +81,7 @@ say "7. promote lock $N to stable"
 if [ "$stable" = "$N" ]; then echo "done already"; else $LOCKPY promote "$N"; fi
 
 say "8. the app"
+need_gh   # signing and notarizing take minutes, and the keychain can lock in that time: look again before them
 if [ "${APP:-}" = 1 ] || ! gh release view "app-v$V" -R $R >/dev/null 2>&1; then MAKE="${MAKE:-make}" sh tools/ship_app.sh
 else
   echo "app-v$V is there; a new lock reaches the installed app without one (APP=1 ships a new app anyway)"
