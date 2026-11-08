@@ -85,7 +85,8 @@ def test_tab_strip_takes_the_free_row_width_and_header_names_are_unique(tmp_path
           more: document.querySelector('#taboverflow').hidden, alone: Math.floor(document.querySelector('#tabbar').clientWidth / 138),
           names: [...document.querySelectorAll('#header button, #toolbar button')].filter(b => b.offsetParent && !b.closest('#tabbar')).map(b => b.textContent.trim()).filter(Boolean)})""")
     got = asyncio.run(_on_page(go, roots=[str(tmp_path)]))
-    assert got['shown'] >= 4 and got['shown'] > min(got['alone'], 5) - 1 and got['more'] == (got['shown'] == 5), got
+    # the strip shows every tab its free room holds; the brand and a long folder name take some of that row
+    assert got['shown'] >= 3 and got['shown'] >= min(got['alone'], 5) and got['more'] == (got['shown'] == 5), got
     assert len(got['names']) == len(set(got['names'])), got['names']
 
 def test_git_pane_rows_show_the_file_names(tmp_path):

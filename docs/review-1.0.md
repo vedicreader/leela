@@ -91,6 +91,7 @@ A review of main at 2623b616 (7 Nov 2026). Each item has an ID, the owner packag
   - Leela's part is done on branch `fast-send`. The pane draws a sent prompt at once, and `/agent/turn` answers when the turn is queued (about 20 ms with a scripted model, against about 1 s with the probe cost). The worker settles the model and builds the prompt. A move to another model arrives as a `moved` feed event.
   - Ramabana's part is open. The turn's time to its first token still includes the probes and the prompt build. Cache model probes across calls, make `Agent.settle` and `turn_move` return at once when the routing has not changed, and build a new conversation's system prompt once.
 - [ ] F13. A4 is on branch `launch-key` (worktree leela-sec). It needs a test in a real WKWebView window and the kavacha launcher side (docs/kavacha-launch-key.md on that branch) before it ships. (leela, kavacha, M)
+- [ ] F14. On Linux, a folder made after the watcher starts can take more than 10 s to be watched on a slow runner (`test_lesson_run_filing.py::test_a_result_saved_beside_a_lesson_is_filed_by_the_file_watcher` failed once on ubuntu-latest, then passed). (leela, S)
 
 ## Nice to have
 - [ ] N1. The update thread stays "running" if `_run` raises; a pipeline timeout kills only the direct child (`pipelines/app.py:44`); a backup restore swallows errors (`core/backups.py:316`); a read-only file is overwritten; Stop interrupts the active tab's kernel, not the busy one; settings types: a non-dict `languages` entry raises, "false" becomes True.

@@ -298,7 +298,7 @@ def test_menu_bar_and_launcher_chords_are_unique():
     from kavacha.window import menu_json
     from leela.blocks.keys.menus import BAR, menu_lookup
     seen = {}
-    for m in menu_json(BAR, menu_lookup) + menu_json([('launcher', LAUNCHER_ROWS)], menu_lookup):
+    for m in menu_json(BAR, menu_lookup, mac=True) + menu_json([("launcher", LAUNCHER_ROWS)], menu_lookup, mac=True):
         for r in m['items']:
             if 'key' not in r: continue
             what = r.get('action') or r.get('selector') or r.get('js')
@@ -353,7 +353,7 @@ def test_open_is_the_mac_open_and_go_to_file_is_the_quick_open():
     assert (lookup('open_folder').key, lookup('open_folder').label) == ('mod+o', 'open…')
     assert (lookup('quick_open').key, lookup('quick_open').label) == ('mod+p', 'go to file…')
     assert lookup('tree_open_folder').key == 'o', 'the tree keeps its folder key'
-    file = first(m for m in menu_json(BAR, menu_lookup) if m['title'] == 'File')['items']
+    file = first(m for m in menu_json(BAR, menu_lookup, mac=True) if m['title'] == 'File')['items']
     rows = {r.get('action'): r for r in file}
     assert (rows['open_folder']['title'], rows['open_folder']['key'], rows['open_folder']['mask']) == ('Open…', 'o', 1 << 20)
     assert (rows['quick_open']['title'], rows['quick_open']['key']) == ('Go to file…', 'p')
