@@ -2296,14 +2296,14 @@ wheels = [
 
 [[package]]
 name = "kavacha"
-version = "0.0.17"
+version = "0.0.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/27/7d/d182c4500cd903d474d5023b892c70f1a429db218920baf5624022a4ee73/kavacha-0.0.17.tar.gz", hash = "sha256:e6943c8e24b84e74b84d38df2f0c2f0f4dc53f81dd4d3c9c2f48ea1264e391c2", size = 66156, upload-time = "2026-11-07T09:50:07.173Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/67/140a26b45b73fd2d09c6bc24bbe8a25a5a4ce940b6223a253a113f782f78/kavacha-0.0.18.tar.gz", hash = "sha256:5e83a141f55a0739e60b2c413c1e07e6ff05e509c0efc7bb91ffa631718a6b01", size = 66362, upload-time = "2026-11-08T01:41:44.987Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/92/2c046f6e35f46c5f990f038c82e76e744e2811f35f0c39df3fbbc6df8f54/kavacha-0.0.17-py3-none-any.whl", hash = "sha256:30bac2f4e3c33694b3f70a9e84ff00c8265e640f82cad13cf883c2bb3d168d64", size = 72747, upload-time = "2026-11-07T09:50:05.912Z" },
+    { url = "https://files.pythonhosted.org/packages/43/58/81339e032cd6e5b51d8e07289ef6502dded2563c5f8f4543f06f94c2011a/kavacha-0.0.18-py3-none-any.whl", hash = "sha256:eb3b8393a1a890b60f4b8f249dba8671e92dc6ade55579e84b70d79f16b5e16e", size = 72978, upload-time = "2026-11-08T01:41:43.768Z" },
 ]
 
 [package.optional-dependencies]
@@ -2633,12 +2633,12 @@ requires-dist = [
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
-    { name = "kavacha", specifier = ">=0.0.17" },
-    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.17" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.17" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.17" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.17" },
-    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.17" },
+    { name = "kavacha", specifier = ">=0.0.18" },
+    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.18" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.18" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.18" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.18" },
+    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.18" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.23" },
     { name = "kunda", specifier = ">=0.0.15" },

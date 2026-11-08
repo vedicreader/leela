@@ -39,8 +39,8 @@ list = "/app/sites"
 go = "/hub/go/"
 
 [dist]
-launcher = "launcher-v1"
-launcher_sha256 = "03bf3dd413cdf35a4e3891ca8711d453120ddd6f471e034d3020105a11b7c0a2"
+launcher = "launcher-v2"
+launcher_sha256 = "85851bf84062ca296db8cd832e0a9dd45d51e8795201601c3a0656c87c8edee6"
 cask = "leela"
 cask_template = "packaging/mac/cask/leela.rb"
 tap = "vedicreader/tap"
