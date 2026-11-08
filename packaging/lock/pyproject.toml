@@ -2,7 +2,7 @@
 name = "leela-lock"
 version = "0"
 requires-python = "==3.13.*"
-dependencies = ["leela==1.0.0"]
+dependencies = ["leela==1.0.1"]
 
 [project.optional-dependencies]
 mlx = ["mlx-lm==0.32.2"]
@@ -13,10 +13,10 @@ langserver = ["basedpyright==1.40.2"]
 package = false
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 required-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
-exclude-newer = "2026-11-01T02:59:25Z"
-exclude-newer-package = { "abhyasa" = "2026-11-08T02:59:25Z", "adhara" = "2026-11-08T02:59:25Z", "cfeasy" = "2026-11-08T02:59:25Z", "dhrishti" = "2026-11-08T02:59:25Z", "dhrona" = "2026-11-08T02:59:25Z", "dockeasy" = "2026-11-08T02:59:25Z", "fossick" = "2026-11-08T02:59:25Z", "ganapati" = "2026-11-08T02:59:25Z", "gheasy" = "2026-11-08T02:59:25Z", "kavacha" = "2026-11-08T02:59:25Z", "koshas" = "2026-11-08T02:59:25Z", "kunda" = "2026-11-08T02:59:25Z", "laghu" = "2026-11-08T02:59:25Z", "laghu-rs" = "2026-11-08T02:59:25Z", "lekhaka" = "2026-11-08T02:59:25Z", "litesearch" = "2026-11-08T02:59:25Z", "pdflite" = "2026-11-08T02:59:25Z", "pobblebonk" = "2026-11-08T02:59:25Z", "pullup" = "2026-11-08T02:59:25Z", "rahasya" = "2026-11-08T02:59:25Z", "ramabana" = "2026-11-08T02:59:25Z", "rishi" = "2026-11-08T02:59:25Z", "rupaka" = "2026-11-08T02:59:25Z", "shalya" = "2026-11-08T02:59:25Z", "uraiyadal" = "2026-11-08T02:59:25Z", "varga" = "2026-11-08T02:59:25Z", "vishalakshi" = "2026-11-08T02:59:25Z", "vpseasy" = "2026-11-08T02:59:25Z", "vruksha" = "2026-11-08T02:59:25Z" }
+exclude-newer = "2026-11-01T07:33:28Z"
+exclude-newer-package = { "abhyasa" = "2026-11-08T07:33:28Z", "adhara" = "2026-11-08T07:33:28Z", "cfeasy" = "2026-11-08T07:33:28Z", "dhrishti" = "2026-11-08T07:33:28Z", "dhrona" = "2026-11-08T07:33:28Z", "dockeasy" = "2026-11-08T07:33:28Z", "fossick" = "2026-11-08T07:33:28Z", "ganapati" = "2026-11-08T07:33:28Z", "gheasy" = "2026-11-08T07:33:28Z", "kavacha" = "2026-11-08T07:33:28Z", "koshas" = "2026-11-08T07:33:28Z", "kunda" = "2026-11-08T07:33:28Z", "laghu" = "2026-11-08T07:33:28Z", "laghu-rs" = "2026-11-08T07:33:28Z", "lekhaka" = "2026-11-08T07:33:28Z", "litesearch" = "2026-11-08T07:33:28Z", "pdflite" = "2026-11-08T07:33:28Z", "pobblebonk" = "2026-11-08T07:33:28Z", "pullup" = "2026-11-08T07:33:28Z", "rahasya" = "2026-11-08T07:33:28Z", "ramabana" = "2026-11-08T07:33:28Z", "rishi" = "2026-11-08T07:33:28Z", "rupaka" = "2026-11-08T07:33:28Z", "shalya" = "2026-11-08T07:33:28Z", "uraiyadal" = "2026-11-08T07:33:28Z", "varga" = "2026-11-08T07:33:28Z", "vishalakshi" = "2026-11-08T07:33:28Z", "vpseasy" = "2026-11-08T07:33:28Z", "vruksha" = "2026-11-08T07:33:28Z" }
 constraint-dependencies = ["mcp<2", "pyjwt>=2.15.0"]
 
 [tool.uv.sources]
-leela = { url = "https://github.com/vedicreader/leela/releases/download/1.0.0/leela-1.0.0-py3-none-any.whl" }
+leela = { url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl" }
 llama-cpp-python = { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl" }

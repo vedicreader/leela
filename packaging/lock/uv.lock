@@ -12,38 +12,38 @@ required-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-01T02:59:25Z"
+exclude-newer = "2026-11-01T07:33:28Z"
 
 [options.exclude-newer-package]
-abhyasa = "2026-11-08T02:59:25Z"
-adhara = "2026-11-08T02:59:25Z"
-cfeasy = "2026-11-08T02:59:25Z"
-dhrishti = "2026-11-08T02:59:25Z"
-dhrona = "2026-11-08T02:59:25Z"
-dockeasy = "2026-11-08T02:59:25Z"
-fossick = "2026-11-08T02:59:25Z"
-ganapati = "2026-11-08T02:59:25Z"
-gheasy = "2026-11-08T02:59:25Z"
-kavacha = "2026-11-08T02:59:25Z"
-koshas = "2026-11-08T02:59:25Z"
-kunda = "2026-11-08T02:59:25Z"
-laghu = "2026-11-08T02:59:25Z"
-laghu-rs = "2026-11-08T02:59:25Z"
-lekhaka = "2026-11-08T02:59:25Z"
-litesearch = "2026-11-08T02:59:25Z"
-pdflite = "2026-11-08T02:59:25Z"
-pobblebonk = "2026-11-08T02:59:25Z"
-pullup = "2026-11-08T02:59:25Z"
-rahasya = "2026-11-08T02:59:25Z"
-ramabana = "2026-11-08T02:59:25Z"
-rishi = "2026-11-08T02:59:25Z"
-rupaka = "2026-11-08T02:59:25Z"
-shalya = "2026-11-08T02:59:25Z"
-uraiyadal = "2026-11-08T02:59:25Z"
-varga = "2026-11-08T02:59:25Z"
-vishalakshi = "2026-11-08T02:59:25Z"
-vpseasy = "2026-11-08T02:59:25Z"
-vruksha = "2026-11-08T02:59:25Z"
+abhyasa = "2026-11-08T07:33:28Z"
+adhara = "2026-11-08T07:33:28Z"
+cfeasy = "2026-11-08T07:33:28Z"
+dhrishti = "2026-11-08T07:33:28Z"
+dhrona = "2026-11-08T07:33:28Z"
+dockeasy = "2026-11-08T07:33:28Z"
+fossick = "2026-11-08T07:33:28Z"
+ganapati = "2026-11-08T07:33:28Z"
+gheasy = "2026-11-08T07:33:28Z"
+kavacha = "2026-11-08T07:33:28Z"
+koshas = "2026-11-08T07:33:28Z"
+kunda = "2026-11-08T07:33:28Z"
+laghu = "2026-11-08T07:33:28Z"
+laghu-rs = "2026-11-08T07:33:28Z"
+lekhaka = "2026-11-08T07:33:28Z"
+litesearch = "2026-11-08T07:33:28Z"
+pdflite = "2026-11-08T07:33:28Z"
+pobblebonk = "2026-11-08T07:33:28Z"
+pullup = "2026-11-08T07:33:28Z"
+rahasya = "2026-11-08T07:33:28Z"
+ramabana = "2026-11-08T07:33:28Z"
+rishi = "2026-11-08T07:33:28Z"
+rupaka = "2026-11-08T07:33:28Z"
+shalya = "2026-11-08T07:33:28Z"
+uraiyadal = "2026-11-08T07:33:28Z"
+varga = "2026-11-08T07:33:28Z"
+vishalakshi = "2026-11-08T07:33:28Z"
+vpseasy = "2026-11-08T07:33:28Z"
+vruksha = "2026-11-08T07:33:28Z"
 
 [manifest]
 constraints = [
@@ -1655,8 +1655,8 @@ wheels = [
 
 [[package]]
 name = "leela"
-version = "1.0.0"
-source = { url = "https://github.com/vedicreader/leela/releases/download/1.0.0/leela-1.0.0-py3-none-any.whl" }
+version = "1.0.1"
+source = { url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl" }
 dependencies = [
     { name = "abhyasa" },
     { name = "beautifulsoup4" },
@@ -1710,7 +1710,7 @@ dependencies = [
     { name = "watchfiles" },
 ]
 wheels = [
-    { url = "https://github.com/vedicreader/leela/releases/download/1.0.0/leela-1.0.0-py3-none-any.whl", hash = "sha256:d1bf633b3edfe1bf7a64ed1aef2b8d064caa40784af3708dd3c1c5dd2ddf1423" },
+    { url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl", hash = "sha256:856a0ed374935f5b0f6ee3946d143b160469ff1a6dd1374e2b12c16ed7efb0b8" },
 ]
 
 [package.metadata]
@@ -1798,7 +1798,7 @@ mlx = [
 [package.metadata]
 requires-dist = [
     { name = "basedpyright", marker = "extra == 'langserver'", specifier = "==1.40.2" },
-    { name = "leela", url = "https://github.com/vedicreader/leela/releases/download/1.0.0/leela-1.0.0-py3-none-any.whl" },
+    { name = "leela", url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl" },
     { name = "llama-cpp-python", marker = "extra == 'llama'", url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl" },
     { name = "mlx-lm", marker = "extra == 'mlx'", specifier = "==0.32.2" },
     { name = "numpy", marker = "extra == 'llama'", specifier = "==2.5.4" },
