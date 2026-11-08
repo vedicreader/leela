@@ -161,8 +161,8 @@ def test_each_workspace_has_its_own_port_and_no_page_reaches_another(tmp_path):
         def redirect_request(self, *a, **kw): return None
     try: urllib.request.build_opener(NoRedirect).open(f'http://127.0.0.1:{port}/hub/go/beta', timeout=10); assert False, 'no redirect'
     except urllib.error.HTTPError as e: assert e.code == 307 and e.headers['location'] == sites['beta']
-    try: urllib.request.build_opener(NoRedirect).open(f'http://127.0.0.1:{port}/hub/go/beta?titlebar=mac-unified', timeout=10); assert False, 'no redirect'
-    except urllib.error.HTTPError as e: assert e.headers['location'] == sites['beta'] + '?titlebar=mac-unified', 'the title bar mode reaches the first paint'
+    try: urllib.request.build_opener(NoRedirect).open(f'http://127.0.0.1:{port}/hub/go/beta?titlebar=native', timeout=10); assert False, 'no redirect'
+    except urllib.error.HTTPError as e: assert e.headers['location'] == sites['beta'] + '?titlebar=native', 'the query of the first URL is kept'
     assert get(f'http://127.0.0.1:{port}/hub/go/nope').status == 404
     assert 'beta' in get(f'http://127.0.0.1:{port}/', host=f'beta.localhost:{port}').read().decode(), 'a saved *.localhost link still works'
     req = urllib.request.Request(sites['beta'] + 'tab/close', data=b'{}', method='POST', headers={'Origin': sites['alpha'].rstrip('/'), 'Content-Type': 'application/json'})
