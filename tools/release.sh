@@ -42,10 +42,13 @@ if gh release view "$V" -R $R --json assets -q '.assets[].name' | grep -qx "leel
 else $LOCKPY wheel "$V" --upload; fi
 
 say "4. a lock for $V, tested"
-if grep -q "\"leela==$V\"" packaging/lock/pyproject.toml && test -f "packaging/lock/tested/$($LOCKPY hash).json"; then echo "packaging/lock pins leela $V and has its test record"
+if grep -q "\"leela==$V\"" packaging/lock/pyproject.toml; then echo "packaging/lock pins leela $V"
+else test -x packaging/mac/build/uv/uv || make -C packaging/mac uv-fetch; $LOCKPY make "$V"; fi
+# a record from before a kavacha or test change is stale: publish refuses it, so look at what it says, not whether the file is there
+if why=$($LOCKPY stale 2>&1); then echo "the lock has a usable test record"
 else
+  echo "the lock is tested again: $why"
   test -x packaging/mac/build/uv/uv || make -C packaging/mac uv-fetch
-  $LOCKPY make "$V"
   $LOCKPY test --fresh --extras
 fi
 git add packaging/lock && git add -f packaging/lock/.python-version
@@ -55,17 +58,16 @@ test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || gitc push -q or
 say "5. publish the lock to the test channel"
 # steps 5 and 7 both sign, so the key must be in the agent on every run
 ssh-add -l 2>/dev/null | grep -q leela-lock-main || { echo "no leela-lock-main key in the SSH agent. fish: eval (ssh-agent -c); bash or zsh: eval \"\$(ssh-agent -s)\". Then: ssh-add --apple-use-keychain ~/.ssh/leela_lock_ed25519" >&2; exit 1; }
-test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
+err=$(mktemp)   # what verify says when it fails, shown at the end instead of thrown away
+look() { test_v=$($LOCKPY verify --channel test 2>"$err" | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true); }
+look
 if [ "${test_v#* }" = "$V" ]; then echo "the test channel has lock ${test_v% *} with leela $V"
 else
   # the test channel decides: publish can stop on a read-back while GitHub settles, so look again for up to 2 minutes
   $LOCKPY publish || echo "publish stopped; checking the test channel for up to 2 minutes" >&2
-  for _ in 1 2 3 4 5 6 7 8; do
-    test_v=$($LOCKPY verify --channel test 2>/dev/null | sed -n 's/.*lock \([0-9]*\), leela \([^,]*\),.*/\1 \2/p' || true)
-    [ "${test_v#* }" = "$V" ] && break; sleep 15
-  done
+  for _ in 1 2 3 4 5 6 7 8; do look; [ "${test_v#* }" = "$V" ] && break; sleep 15; done
 fi
-[ "${test_v#* }" = "$V" ] || { echo "the test channel has '${test_v:-nothing}', not leela $V, so publish failed. If a lock-<n> release was made but the channel did not move, delete it (gh release delete lock-<n> -R $R --cleanup-tag -y) and run again" >&2; exit 1; }
+[ "${test_v#* }" = "$V" ] || { echo "the test channel has '${test_v:-nothing}', not leela $V, so publish failed (the last check said: $(tail -n 2 "$err" | tr '\n' ' ')). If a lock-<n> release was made but the channel did not move, delete it (gh release delete lock-<n> -R $R --cleanup-tag -y) and run again" >&2; exit 1; }
 N=${test_v% *}
 
 say "6. your check"

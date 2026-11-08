@@ -24,3 +24,10 @@ def test_gh_is_checked_before_step_1_and_again_before_the_app(tmp_path):
     assert len(calls) == 2, 'two calls: the definition is need_gh() with no space'
     assert calls[0] < s.index('say "1.') and calls[1] > s.index('say "8.') and calls[1] < s.index('sh tools/ship_app.sh')
     assert s.index('say "5.') < calls[1], 'the second look comes after the signing steps'
+
+def test_the_lock_is_tested_again_when_its_record_is_stale_and_verify_errors_are_kept():
+    "The 1.0.1 release skipped the lock test because a record file existed; publish then refused it as stale, and verify's 504 was thrown away."
+    s = SCRIPT.read_text()
+    assert '$LOCKPY stale' in s and 'test -f "packaging/lock/tested' not in s, 'staleness is asked of kavacha, not of the file'
+    assert s.index('$LOCKPY stale') < s.index('$LOCKPY test --fresh --extras') < s.index('say "5.')
+    assert 'verify --channel test 2>/dev/null' not in s and '2>"$err"' in s and 'the last check said' in s
