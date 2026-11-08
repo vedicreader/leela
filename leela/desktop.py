@@ -27,6 +27,8 @@ use_app('leela', leela_cfg, 'LEELA_')
 shell_api().on_recent = recent_folders
 #: The window keeps the platform's own title bar and its title: on macOS 26 a unified bar painted over the header.
 shell_api().unified = False
+#: The header shows the mark, the name and the folder, so the native bar draws no title text; the title stays set for the Window menu and Sanketa.
+shell_api().title_text = False
 
 @patch
 def set_title(self:ShellApi, title, url=None):

@@ -244,3 +244,4 @@ def test_the_window_keeps_the_platforms_own_title_bar():
     "macOS 26 paints a transparent title bar over the page, which hid the header's top row in 0.1.27."
     from kavacha.window import shell_api
     assert shell_api().unified is False
+    assert shell_api().title_text is False, "the header already shows the name: the native bar draws no title text"
