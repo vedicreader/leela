@@ -2,6 +2,13 @@
 
 <!-- do not remove -->
 
+## 1.0.1
+
+The first Leela app for Mac built as a small native launcher; 1.0.0 was the first package and environment lock.
+
+- A folder you pick in Leela's own folder dialog (⇧⌘O, find repository) opens with no second "Add this folder?" question.
+- `make ship V=<version>` runs the whole release in order and skips each step that is already done.
+
 ## 1.0.0
 
 Leela 1.0 for Mac is a small native app: it sets up its own Python environment from a signed package lock, and updates that lock without a new app. Needs kavacha 0.0.18.

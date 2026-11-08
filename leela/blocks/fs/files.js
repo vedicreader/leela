@@ -519,7 +519,7 @@ async function addRoot(find = false) {
     const target = path || input.value.trim(); if (!target) return;
     m.remove();
     try {
-      await post('/fs/add-root', {path: target});
+      await post('/fs/add-root', {path: target, chosen: true});
       // The tree is redrawn before the folder is activated, because activating selects the new
       // root's node and a tree that has not been rebuilt does not have one yet.
       await refreshFileTree(target);

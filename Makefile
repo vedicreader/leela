@@ -1,14 +1,18 @@
 # Leela's release targets. Values reach recipes through the environment ("$$V"), so the shell never parses them.
 # The thin Mac app and its environment lock: docs/thin-app.md. The old fat app: make ship V=<version> (py2app, being retired).
-export V TAP N WHEEL DIR CHANNEL FRESH EXTRAS ALLOW_DOWNGRADE PIN AGAINST
+export V APP YES TAP N WHEEL DIR CHANNEL FRESH EXTRAS ALLOW_DOWNGRADE PIN AGAINST
 PY ?= uv run --frozen python
 LOCKPY := $(PY) tools/lock.py
-.PHONY: ship ship-app lock lock-wheel lock-hash lock-check lock-test lock-diff lock-publish lock-promote lock-verify lock-key
+.PHONY: ship ship-fat ship-app lock lock-wheel lock-hash lock-check lock-test lock-diff lock-publish lock-promote lock-verify lock-key
 
-# The fat py2app DMG. Kept for one release while the thin app ships; it says so first.
+# V=<version> [APP=1] [YES=1]: the whole release in order, each step skipped when it is done (tools/release.sh says which):
+# CI green, release V and its wheel, a tested lock, lock-publish, your check, lock-promote, ship-app. Start an SSH agent first.
 ship:
-	@echo "make ship builds the old py2app app. The thin Mac app ships with: make lock V=..., make lock-test, make lock-publish,"
-	@echo "make lock-promote N=..., then make ship-app V=<app version>. See docs/thin-app.md."
+	@test -n "$$V" || { echo "Give the version: make ship V=1.0.1" >&2; exit 1; }
+	MAKE="$(MAKE)" sh tools/release.sh
+
+# The old fat py2app DMG, for 0.1.x installs only.
+ship-fat:
 	tools/ship.sh
 
 # V=<app version>: sign, notarize, staple, zip, upload to app-v<V> (--latest=false), update the cask

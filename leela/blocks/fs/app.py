@@ -122,10 +122,12 @@ def connect(app, ctx):
     async def add_root_json(req):
         "Add a root without rebuilding the editor, model controls and every other pane."
         from ...core.projects import note_folder
-        from ...hub import admit_folder, window_name
-        path = (await req.json()).get('path') or ''
+        from ...hub import admit_folder, window_name, _same_origin
+        d = await req.json(); path = d.get('path') or ''
+        # Leela's own folder dialog is the person's choice already, so it asks no second question
+        chosen = bool(d.get('chosen')) and _same_origin(req.headers)
         try:
-            if no := await off_loop(admit_folder, path, window_name(ctx.session), covers=ctx.fs.covers, headers=req.headers): return JSONResponse(no[1], status_code=no[0])
+            if no := await off_loop(admit_folder, path, window_name(ctx.session), trusted=chosen, covers=ctx.fs.covers, headers=req.headers): return JSONResponse(no[1], status_code=no[0])
             ctx.session.add_root(path); ctx.session.save(); note_folder(path)
             ctx.fs_watch.start(restart=True)
         except Exception as e: return fail(e)

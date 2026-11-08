@@ -345,3 +345,17 @@ def test_a_state_change_takes_only_a_post():
         for p in ('/dev/start', '/dev/stop', '/vars/promote', '/term/external', '/browser/external', '/vault/watch', '/vault/unwatch',
                   '/vault/shelf/move', '/vault/shelf/drop', '/vault/not-pii', '/vault/pii/mark'):
             assert c.get(p).status_code == 405, p
+
+def test_a_folder_chosen_in_leelas_own_dialog_asks_no_second_question(tmp_path, folders):
+    "⇧⌘O, find repository: picking a folder there is the choice, so the native Add this folder? box was redundant."
+    ws = Workspace(roots=[folders[0]])
+    hub.set_confirmer(asked := Asked(False))
+    with TestClient(ide_app(ws)) as c:
+        r = c.post('/fs/add-root', json={'path': str(folders[1]), 'chosen': True}, headers=PAGE)
+        assert r.status_code == 200 and ws.fs.covers(folders[1]) and not asked.qs, 'no question for the dialog'
+        r = c.post('/fs/add-root', json={'path': str(tmp_path), 'chosen': True}, headers={'sec-fetch-site': 'same-origin'})
+        assert r.status_code == 403 and not ws.fs.covers(tmp_path), 'chosen counts only from a Leela page (same origin)'
+        hub.reset_gate(); hub.set_confirmer(asked := Asked(False))
+        r = c.post('/fs/add-root', json={'path': str(tmp_path)}, headers=PAGE)
+        assert r.status_code == 403 and len(asked.qs) == 1, 'without chosen the question stays'
+    ws.shutdown_now()
