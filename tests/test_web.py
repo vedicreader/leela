@@ -1122,7 +1122,7 @@ def test_the_header_is_one_row_over_the_toolbar(tmp_path):
     (root := tmp_path/'karma').mkdir()
     with TestClient(ide_app(Workspace(roots=[root]))) as c: html = c.get('/').text
     head, rest = html.split('id="header"')[1].split('id="toolbar"')
-    assert '<h1 class="sr-only">Leela</h1>' in head and 'class="lee-brand">leela<' in head
+    assert '<h1 class="sr-only">Leela</h1>' in head and 'class="lee-mark"' in head and 'class="lee-wordmark">Leela<' in head and '--lee-mark: url(' in head
     assert 'data-folder="karma"' in head and 'aria-label="switch workspace: karma"' in head
     assert 'id="gitpill"' in head and 'data-state="nogit"' in head and '>no git<' in head, 'a folder outside git says so from the first paint'
     for op in ('fetch', 'pull', 'push'): assert f'id="git{op}"' in head, op

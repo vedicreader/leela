@@ -277,7 +277,7 @@ def _header(ws):
     name, state = _git_pill_branch(ws)
     folder = Path(root).name if root else 'open workspace'
     return Header(H1('Leela', cls='sr-only'),
-        Button(Span('leela', cls='lee-brand'), Span(folder, id='workspacename', cls='lee-workspace-name'), cls='lee-workspace-switcher',
+        Button(Span(Span(cls='lee-mark', aria_hidden='true'), Span('Leela', cls='lee-wordmark'), cls='lee-brand'), Span(folder, id='workspacename', cls='lee-workspace-name'), cls='lee-workspace-switcher',
                id='workspacepill', title='switch or open workspace', aria_label=f'switch workspace: {folder}',
                data_folder=title_folder(root), onclick='leeWorkspaceMenu(this)'),
         Button(name, id='gitpill', cls='lee-branch-switcher', data_state=state, hidden=state == 'nofolder', title='switch branch',
@@ -303,7 +303,7 @@ def _header(ws):
         Button('○ runs', id='runspill', cls='lee-pill lee-pill-off',
                title='scripts running under leela', onclick='leeRunsMenu(this)'),
         _kernel_pill(ws),
-        cls='lee-header', id='header')
+        cls='lee-header', id='header', style=f"--lee-mark: url('{_asset('favicon-dark.svg')}')")
 
 def _git_panel():
     return Section(

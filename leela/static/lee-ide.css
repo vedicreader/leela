@@ -11,7 +11,7 @@
    Colours are declared once as --lee-* and consumed everywhere, including by
    the CodeMirror theme, so the editor cannot drift from the app. */
 
-:root {
+:root { --lee-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
   --lee-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --lee-code-size: 13px;
   --lee-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -301,7 +301,9 @@ body {
   display: flex; align-items: center; gap: 8px; padding: 0 8px;
   background: var(--lee-bg1); border-bottom: 1px solid var(--lee-border); min-width: 0;
 }
-.lee-brand { font-weight: 700; color: var(--lee-accent); letter-spacing: -.02em; flex: none; }
+.lee-brand { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--lee-fg); }
+.lee-brand .lee-mark { width: 15px; height: 15px; flex: none; background: currentColor; -webkit-mask: var(--lee-mark) center / contain no-repeat; mask: var(--lee-mark) center / contain no-repeat; }
+.lee-brand .lee-wordmark { font: 600 15px/1 var(--lee-serif); letter-spacing: .005em; }
 .lee-spacer { flex: 1 1 auto; }
 .lee-workspace-switcher, .lee-branch-switcher, .lee-menubar-btn {
   min-width: 0; height: 26px; border: 0; border-radius: 4px; background: transparent;
@@ -3611,7 +3613,7 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 }
 :root[data-density="tight"] .lee-memory .lee-mrow,
 :root[data-density="tight"] .lee-varspanel .lee-vrow { border-radius: 2px; }
-:root[data-density="tight"] .lee-brand { color: var(--lee-fg); font-weight: 650; }
+:root[data-density="tight"] .lee-brand .lee-wordmark { font-size: 14px; }
 :root[data-density="tight"] .lee-modalbox {
   border-radius: 4px; border-color: color-mix(in srgb, var(--lee-border) 92%, transparent);
   box-shadow: 0 10px 28px rgba(0,0,0,.12);

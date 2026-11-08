@@ -64,7 +64,7 @@ def test_header_row_toolbar_title_pills_and_screenshots(tmp_path):
     assert (f['head'], f['barTop'], f['tabsInHead']) == (h, h, True), 'one header row with the tabs, the toolbar under it'
     assert 24 <= f['bar'] <= 40, f
     assert f['acts'][:2] == ['run_cell', 'run_advance'] and {'interrupt', 'present_notebook'} <= set(f['acts']), f['acts']
-    assert f['title'] == 'Leela · karma · notebook' and f['brand'] == 'leela' and f['folder'] == 'karma', f
+    assert f['title'] == 'Leela · karma · notebook' and f['brand'] == 'Leela' and f['folder'] == 'karma', f
     assert (f['pill'], f['state'], 'lee-pill-warn' in f['cls']) == ('master · 3 · ↑1 · ↓2', 'branch', True), f
     assert f['quick'] == ['⭮', '↓', '↑'] and '—' not in f['title']
     assert (f['pad'], f['left']) == (('6px', 6) if h == 30 else ('8px', 8)), 'the native title bar holds the traffic lights, so the header keeps no room for them'
