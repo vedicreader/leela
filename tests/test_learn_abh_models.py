@@ -25,6 +25,7 @@ def _hosted(app):
 
 
 def _start(s):
+    s['cl'].post('/learn/abh/open')
     s['cl'].post(f"/w/{s['jid']}/start")
     s['cl'].get(f"/w/{s['jid']}/0?pane=1")
     s['cl'].get(f"/w/{s['jid']}/0/check")
@@ -134,3 +135,77 @@ def test_hosted_stop_is_bounded_while_a_model_call_blocks(served):
     began = time.monotonic(); _hosted(s['app']).stop()
     assert time.monotonic() - began < 1.5
     release.set(); t.join(3)
+
+
+GAPS = GRADE.replace('"misconception"', '"gaps": ["common denominators"], "misconception"')
+
+
+def _window(ws, lr, monkeypatch, vault_pii):
+    "One more Leela window over the same Learn store: its own assistant, backend and privacy setting."
+    ws.vault_pii = vault_pii
+    be = install(ws, [], spec=ModelSpec(f'win-{vault_pii}', 'remote', 'scripted/model', ctx=8000))
+    be.supports_deadline = True
+    calls = []
+    be._oneshot = lambda prompt, sp, max_tokens, deadline=None: calls.append(prompt) or (GAPS if 'Return JSON' not in prompt and 'grade' in prompt.lower() else GRADE)
+    ws.ai._be = ws.ai._be_or_none = lambda job='turn': be
+    app = ide_app(ws)
+    return dict(app=app, cl=TestClient(app), ws=ws, calls=calls, h=_hosted(app))
+
+
+def _two(served, request, monkeypatch, key=lambda ws, make=False: 'one-learn-vault'):
+    from leela.workspace import Workspace
+    from tests.conftest import fixture_dir
+    s = served
+    monkeypatch.setattr(host, 'learn_key', key)
+    a = _window(s['ws'], s['lr'], monkeypatch, 'redact')
+    b = _window(Workspace(roots=[fixture_dir(request)], port=8001), s['lr'], monkeypatch, 'refuse')
+    return a, b
+
+
+def test_two_windows_share_one_app_and_each_answers_through_its_own_workspace(served, request, monkeypatch):
+    s = served
+    a, b = _two(s, request, monkeypatch)
+    try:
+        assert a['cl'].post('/learn/abh/open').status_code == 200 and b['cl'].post('/learn/abh/open').status_code == 200
+        assert a['h'].app is b['h'].app and a['h'].app is not None
+        a['cl'].post(f"/w/{s['jid']}/start"); a['cl'].get(f"/w/{s['jid']}/0?pane=1"); a['cl'].get(f"/w/{s['jid']}/0/check")
+        a['calls'].clear()
+        address = 'jane.doe@example.com'
+        r = b['cl'].post(f"/w/{s['jid']}/0/answer", data=dict(answer=address, confidence=70))
+        assert r.status_code == 403 and not a['calls'] and not b['calls']
+        r = a['cl'].post(f"/w/{s['jid']}/0/answer", data=dict(answer=address, confidence=70))
+        assert r.status_code == 200 and a['calls'] and not b['calls'] and all(address not in c for c in a['calls'])
+    finally:
+        a['h'].stop(); b['h'].stop(); b['cl'].close(); a['cl'].close()
+
+
+def test_a_background_pool_job_uses_the_workspace_that_submitted_it(served, request, monkeypatch):
+    s = served
+    a, b = _two(s, request, monkeypatch)
+    try:
+        a['cl'].post('/learn/abh/open')
+        app = a['h'].app
+        pool = app.state.svc['pool']
+        for w in (a, b):
+            with host.using(w['ws']): pool.submit(lambda: host.learn_ask(host._Live(), 'extract')('background')).result(3)
+        assert len(a['calls']) == 1 and len(b['calls']) == 1
+    finally:
+        a['h'].stop(); b['h'].stop(); b['cl'].close(); a['cl'].close()
+
+
+def test_a_second_window_with_another_learn_vault_rebuilds_the_app(served, request, monkeypatch):
+    s = served
+    keys = {'a': 'vault-a'}
+    a, b = _two(s, request, monkeypatch, lambda ws, make=False: keys['a'])
+    try:
+        a['cl'].post('/learn/abh/open')
+        first = a['h'].app
+        a['cl'].post('/learn/abh/open')
+        assert a['h'].app is first, 'the same vault keeps the one app'
+        keys['a'] = 'vault-b'
+        assert a['cl'].get('/learn/abh/you/strengths').status_code == 409, 'a window on another vault must open first'
+        assert b['cl'].post('/learn/abh/open').status_code == 200
+        assert b['h'].app is not first and first.state.stopped is True and not getattr(b['h'].app.state, 'stopped', False)
+        assert a['h'].app is b['h'].app and a['cl'].get('/learn/abh/you/strengths').status_code == 200
+    finally:
+        a['h'].stop(); b['h'].stop(); b['cl'].close(); a['cl'].close()

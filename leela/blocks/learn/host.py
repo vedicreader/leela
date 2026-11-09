@@ -1,14 +1,28 @@
-import threading
-from starlette.responses import PlainTextResponse
-from starlette.routing import Match, Mount
+import contextvars, threading
+from pathlib import Path
+from urllib.parse import quote
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.routing import Match, Mount, Route
 from ... import errstr
-from ...core.web import off_loop
+from ...core.web import fail, off_loop
+from ...hub import LOOPBACK
+from ..memory.vaults import LEARN
 from .tools import learn_ask, learn_store
 
-__all__ = ['HOSTS', 'Hosted', 'abhyasa_app', 'host_ask', 'mount_abhyasa', 'no_speech']
+__all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'no_speech', 'shared', 'using']
 
-HOSTS = ('127.0.0.1', 'localhost', '::1')
+HOSTS = (*LOOPBACK, '.localhost')   # `LoopbackHostGuard`'s rule: loopback, and any `<slug>.localhost`
 LEFT_OUT = ('build', 'guide')
+BASE = '/learn/abh'
+METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+_ws = contextvars.ContextVar('learn_ws', default=None)
+
+
+class using:
+    "Inside `with using(ws)`, Abhyasa's model calls go through the assistant of `ws`, and so do the background jobs it submits."
+    def __init__(self, ws): self.ws = ws
+    def __enter__(self): self.tok = _ws.set(self.ws)
+    def __exit__(self, *a): _ws.reset(self.tok)
 
 
 def host_ask(ai):
@@ -27,9 +41,16 @@ def no_speech(audio, hint=''): raise RuntimeError('Speech comes in S6: Leela has
 
 
 class _Live:
-    "The workspace's active assistant, looked up on each use, because the thread may change."
-    def __init__(self, ws): self._ws = ws
-    def __getattr__(self, name): return getattr(self._ws.ai, name)
+    "The assistant of the workspace that the current request or job belongs to, looked up on each use."
+    def __getattr__(self, name):
+        if (ws := _ws.get()) is None: raise RuntimeError('no workspace: Abhyasa asked the model outside a Leela request')
+        return getattr(ws.ai, name)
+
+
+def learn_key(ws, make=False):
+    "The path of the Learn vault of `ws`, which says what the one hosted app serves; None when none is attached (made first when `make`)."
+    ref = ws.vaults.learn() if make else ws.vaults.get(LEARN)
+    return str(Path(ref.path).resolve()) if ref else None
 
 
 def abhyasa_app(ws, ai=None, hosts=None):
@@ -37,40 +58,97 @@ def abhyasa_app(ws, ai=None, hosts=None):
     from abhyasa.app import mk_app
     from abhyasa.blocks import NAMES
     _, lr = learn_store(ws)
-    return mk_app(lr, host_ask(ai or _Live(ws)), transcribe=no_speech, names=[n for n in NAMES if n not in LEFT_OUT], warm_speech=False, hosts=hosts or HOSTS)
+    return mk_app(lr, host_ask(ai or _Live()), transcribe=no_speech, names=[n for n in NAMES if n not in LEFT_OUT], warm_speech=False, hosts=hosts or HOSTS)
+
+
+class Shared:
+    "The one Abhyasa app of the process, keyed by its Learn vault, and the hosts that use it."
+    def __init__(self): self.app = self.key = None; self.users, self.lock = set(), threading.RLock()
+    def get(self, user, key, build):
+        "The app for `key`: kept when it serves that vault, else the old one is stopped and `build()` makes the new one."
+        with self.lock:
+            if self.app is None or self.key != key: self.drop(); self.app, self.key = build(), key
+            self.users.add(user)
+            return self.app
+    def drop(self):
+        from abhyasa.app import stop_app
+        with self.lock:
+            app, self.app, self.key = self.app, None, None
+            if app is not None: stop_app(app)
+    def release(self, user):
+        "`user` is done; the app stops with its last user."
+        with self.lock:
+            self.users.discard(user)
+            if not self.users: self.drop()
+
+
+shared = Shared()
+
+
+def _known(app, scope):
+    "Whether Abhyasa's own route table answers `scope`; its catch-all for files in the working folder does not count."
+    return any(r.matches(scope)[0] != Match.NONE for r in app.router.routes if not getattr(r, 'path', '').startswith('/{fname'))
 
 
 class Hosted:
-    "Leela's last route: Abhyasa's app, built on the first request that no Leela route answered."
-    def __init__(self, build, siblings=()): self.build, self.siblings, self.app, self.lock = build, siblings, None, threading.Lock()
+    "Leela's last route: Abhyasa's app, built only by `open` and shared by every workspace of the process."
+    def __init__(self, ws, ai=None, siblings=(), reg=None): self.ws, self.ai, self.siblings, self.shared = ws, ai, siblings, reg or shared
+    @property
+    def app(self): return self.shared.app
     def partial(self, scope):
         "The Leela route that matches the path but not the method."
         return next((r for r in self.siblings if r.matches(scope)[0] == Match.PARTIAL), None)
     def get(self):
-        with self.lock:
-            if self.app is None: self.app = self.build()
-            return self.app
-    def stop(self):
-        from abhyasa.app import stop_app
-        if self.app is not None: stop_app(self.app)
+        "The app over this workspace's Learn vault, built when the process has none for it."
+        def build():
+            with using(self.ws): return abhyasa_app(self.ws, self.ai)
+        return self.shared.get(self, learn_key(self.ws, True), build)
+    def live(self):
+        "The app when it serves this workspace's Learn vault, else None."
+        s = self.shared
+        return s.app if s.app is not None and s.key == learn_key(self.ws) else None
+    def stop(self): self.shared.release(self)
     async def _refuse(self, scope, receive, send, text, status):
         if scope['type'] == 'websocket': return await send(dict(type='websocket.close', code=1008))
         await PlainTextResponse(text, status)(scope, receive, send)
+    def _host(self, scope):
+        from abhyasa.app import LocalOnly
+        return LocalOnly(None, HOSTS).refuse(scope) if scope['type'] == 'http' else ''
+    async def _serve(self, app, scope, receive, send, path=None):
+        sc = dict(scope)   # a copy: Abhyasa's session middleware must not replace the one Leela's holds
+        if path is not None: sc.update(path=path, raw_path=quote(path).encode())
+        with using(self.ws): await app(sc, receive, send)
+    async def open(self, req):
+        "POST `/learn/abh/open`: build the app if needed."
+        if why := self._host(req.scope): return PlainTextResponse(why, 403)
+        try: await off_loop(self.get)
+        except Exception as e: return fail(f'Learn is not available: {errstr(e)}', 503)
+        return JSONResponse(dict(ok=True, base=BASE))
+    async def under(self, scope, receive, send):
+        "Any method on `/learn/abh/{path}`: Abhyasa's `/{path}`, when the app is built for this workspace's vault."
+        if why := self._host(scope): return await self._refuse(scope, receive, send, why, 403)
+        if (app := self.live()) is None: return await JSONResponse(dict(ok=False, error='learn_not_open'), 409)(scope, receive, send)
+        path = '/' + scope['path_params'].get('path', '')
+        if not _known(app, {**scope, 'path': path}): return await self._refuse(scope, receive, send, 'Not found', 404)
+        await self._serve(app, scope, receive, send, path)
     async def __call__(self, scope, receive, send):
         if scope['type'] not in ('http', 'websocket'): return
-        from abhyasa.app import LocalOnly
         if scope['type'] == 'http' and (r := self.partial(scope)): return await r.handle(scope, receive, send)   # Starlette takes a later full match over an earlier partial one: that route's 405 stands
-        if scope['type'] == 'http' and (why := LocalOnly(None, HOSTS).refuse(scope)): return await self._refuse(scope, receive, send, why, 403)
-        try: app = self.app or await off_loop(self.get)
-        except Exception as e: return await self._refuse(scope, receive, send, f'Learn is not available: {errstr(e)}', 503)
-        await app(dict(scope), receive, send)   # a copy: Abhyasa's session middleware must not replace the one Leela's holds
+        if why := self._host(scope): return await self._refuse(scope, receive, send, why, 403)
+        if (app := self.live()) is None or not _known(app, scope): return await self._refuse(scope, receive, send, 'Not found', 404)
+        await self._serve(app, scope, receive, send)
+
+
+class Prefixed:
+    "`Hosted.under` as the endpoint of a Starlette route."
+    def __init__(self, h): self.h = h
+    async def __call__(self, scope, receive, send): await self.h.under(scope, receive, send)
 
 
 def mount_abhyasa(app, ws, ai=None):
-    "Append Abhyasa's app to `app` as its last route, and stop it when `app` shuts down."
-    h = Hosted(lambda: abhyasa_app(ws, ai))
-    h.siblings = app.router.routes
-    app.router.routes.append(Mount('/', app=h))
+    "Append the entry routes and Abhyasa's app to `app` as its last routes, and release the app when `app` shuts down."
+    h = Hosted(ws, ai, app.router.routes)
+    app.router.routes += [Route(f'{BASE}/open', h.open, methods=['POST']), Route(f'{BASE}/{{path:path}}', Prefixed(h), methods=METHODS), Mount('/', app=h)]
     async def stop(): await off_loop(h.stop)
     app.on_event('shutdown')(stop)
     return h

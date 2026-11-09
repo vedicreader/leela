@@ -1,5 +1,7 @@
+DELETE,GET,OPTIONS,PATCH,POST,PUT /learn/abh/{path:path}
 GET /learn
 GET /learn/abh.css
+GET /learn/import
 GET /learn/lookup
 GET /learn/tool
 GET /learn/walk.css
@@ -447,6 +449,7 @@ POST /dev/start
 POST /dev/stop
 POST /fs/add-root
 POST /fs/add_root
+POST /learn/abh/open
 POST /learn/env
 POST /learn/open
 POST /learn/scratch

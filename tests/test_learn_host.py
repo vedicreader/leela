@@ -8,6 +8,7 @@ from tests.fakemodel import install
 from tools.s2_native_pilot import PLAN
 from ramabana.core import ModelSpec
 
+ORIG_HOSTS = host.HOSTS
 GRADE = r'{"correct": true, "grade": 10, "feedback": "Correct.", "first_error": "", "misconception": ""}'
 CLASH = [('GET', '/'), ('GET', '/learn'), ('GET', '/search'), ('GET', '/settings'), ('GET', '/keys.json'), ('POST', '/keys/save')]
 
@@ -57,6 +58,7 @@ def test_leela_routes_win_every_clash(served):
 
 def start(s):
     cl, jid = s['cl'], s['jid']
+    assert cl.post('/learn/abh/open').json() == {'ok': True, 'base': '/learn/abh'}
     cl.post(f'/w/{jid}/start')
     page = cl.get(f'/w/{jid}/0?pane=1')
     cl.get(f'/w/{jid}/0/check')
@@ -140,16 +142,22 @@ def test_one_answer_path_for_the_route_and_the_agent_tool(served):
     page = cl.get(f'/w/{jid}/1?pane=1')
     assert page.status_code == 200
 
-def test_the_hosted_app_gets_a_copy_of_the_scope():
+def test_the_hosted_app_gets_a_copy_of_the_scope(monkeypatch):
     "Abhyasa's session middleware assigns `scope['session']`; on a shared dict that replaces the session Leela's middleware holds."
     import asyncio
-    seen = {}
-    async def inner(scope, receive, send): scope['session'] = {'abhyasa': 1}; scope['path_params'] = 'inner'
-    h = host.Hosted(lambda: inner); h.app = inner
+    async def run(scope, receive, send): scope['session'] = {'abhyasa': 1}; scope['path_params'] = 'inner'
+    from starlette.routing import Route
+    class Inner:
+        router = type('R', (), dict(routes=[Route('/w/{x}', run)]))
+        async def __call__(self, *a): await run(*a)
+    inner = Inner()
+    monkeypatch.setattr(host, 'learn_key', lambda ws, make=False: 'k')
+    monkeypatch.setattr(host, 'HOSTS', ('testserver',))
+    box = host.Shared(); box.app, box.key = inner, 'k'
+    h = host.Hosted(None, reg=box)
     outer = dict(type='http', method='GET', path='/w/x', headers=[(b'host', b'testserver')], session={'leela': 1})
     async def go(): await h(outer, None, None)
-    from unittest import mock
-    with mock.patch.object(host, 'HOSTS', ('testserver',)): asyncio.run(go())
+    asyncio.run(go())
     assert outer['session'] == {'leela': 1} and 'path_params' not in outer
 
 
@@ -159,14 +167,43 @@ def test_a_leela_route_keeps_its_405_for_the_wrong_method(served):
     assert r.status_code == 405, (r.status_code, r.text[:100])
 
 
-def test_the_app_is_built_on_the_first_abhyasa_request_and_stopped_on_shutdown(served):
+def test_the_app_is_built_by_open_only_and_stopped_on_shutdown(served):
     import asyncio
-    s = served
+    s = served; cl = s['cl']
     h = next(r.app for r in s['app'].router.routes if isinstance(r, Mount) and isinstance(r.app, host.Hosted))
-    s['cl'].get('/'); s['cl'].get('/learn')
-    assert h.app is None, 'a Leela route built the Abhyasa app'
+    cl.get('/'); cl.get('/learn')
+    for path in ('/robots.txt', '/typo', '/w/x/0', '/assets/x.js', '/learn/abh/robots.txt'):
+        assert cl.get(path).status_code in (404, 409), path
+        assert h.app is None, f'{path} built the Abhyasa app'
     start(s)
     assert h.app is not None and not getattr(h.app.state, 'stopped', False)
+    app = h.app
     stop = next(f for f in s['app'].lifespan.shutdown if f.__name__ == 'stop')
     asyncio.run(stop())
-    assert h.app.state.stopped is True
+    assert app.state.stopped is True and h.app is None
+
+
+def test_before_open_the_prefix_route_says_learn_not_open(served):
+    r = served['cl'].get('/learn/abh/search')
+    assert r.status_code == 409 and r.json() == {'ok': False, 'error': 'learn_not_open'}
+
+
+def test_after_open_only_abhyasa_routes_pass_and_the_prefix_reaches_clashing_pages(served):
+    s = served; cl = s['cl']; start(s)
+    assert cl.get('/robots.txt').status_code == 404 and cl.get('/typo').status_code == 404 and cl.get('/learn/abh/typo').status_code == 404
+    assert cl.get('/you/strengths').status_code == 200 and cl.get('/learn/abh/you/strengths').status_code == 200
+    assert cl.get(f"/learn/abh/w/{s['jid']}/0?pane=1").status_code == 200
+    r = cl.get('/learn/abh/', follow_redirects=False)
+    assert r.status_code in (200, 302, 303)
+    assert cl.get('/learn/abh/search').status_code != 409 and cl.get('/search').status_code != 409
+
+
+def test_a_slug_host_is_accepted_and_a_foreign_host_refused(served, monkeypatch):
+    monkeypatch.setattr(host, 'HOSTS', ORIG_HOSTS)
+    app = served['app']
+    at = lambda name: TestClient(app, base_url=f'http://{name}')
+    for name, code in (('alpha.localhost', 200), ('localhost', 200), ('evil.example', 403), ('localhost.evil.example', 403)):
+        assert at(name).post('/learn/abh/open').status_code == code, name
+    cl = at('alpha.localhost')
+    assert cl.get('/you/strengths').status_code == 200 and cl.get('/learn/abh/you/strengths').status_code == 200
+    for path in ('/you/strengths', '/learn/abh/you/strengths'): assert cl.get(path, headers={'Host': 'evil.example'}).status_code == 403
