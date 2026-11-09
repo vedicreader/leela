@@ -66,7 +66,7 @@ PAGE_COMMANDS = {'calm': 'show only text, each stretch of tool calls folded into
 def connect(app, ctx):
     rt = app.route
     ws = ctx.session
-    from ..learn.tools import register_learn_jobs
+    from ..learn.tools import register_learn_jobs, contract_missing
     register_learn_jobs(ws)
     def _doc(): return ctx.docs.current()
     async def api(path, params=None, timeout=15):
@@ -191,7 +191,8 @@ def connect(app, ctx):
         active = ws.threads.active
         # `threads` hides an empty conversation, so `live` is what says a pane's own one still exists
         return {'active': active.id, 'threads': ws.threads.dicts(), 'live': [r.id for r in ws.threads.rows()],
-                'attention': ws.threads.attention(), 'learn_modes': {t.id: bool(getattr(t.ai, 'learn_mode', False)) for t in ws.threads.rows()}}
+                'attention': ws.threads.attention(), 'learn_modes': {t.id: bool(getattr(t.ai, 'learn_mode', False)) for t in ws.threads.rows()},
+                'learn_missing': contract_missing()}
     @rt('/agent/learn-mode', methods=['POST'])
     async def agent_learn_mode(req):
         try:

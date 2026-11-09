@@ -47,6 +47,15 @@ def test_toggle_refuses_accepted_work(learn_thread, monkeypatch, held):
     finally: t.runner._pending.clear()
 
 
+def test_toggle_refuses_an_abhyasa_without_the_contract(learn_thread, monkeypatch):
+    t = learn_thread
+    monkeypatch.setattr('leela.blocks.learn.tools.contract_missing', lambda: ['abhyasa.agent_tools.TOOLS'])
+    with pytest.raises(TurnError) as e: t.set_learn_mode(True)
+    assert e.value.code == 'contract_missing' and 'abhyasa.agent_tools.TOOLS' in e.value.message
+    assert not t.ai.learn_mode and not t.ai.saved_learn_mode(t.id)
+    assert t.set_learn_mode(False)['ok']   # turning it off is never refused
+
+
 def test_refresh_failure_rolls_back(learn_thread, monkeypatch):
     t = learn_thread; before = list(t.ai.tools)
     def broken(): raise RuntimeError('refresh failed')
