@@ -314,6 +314,7 @@ function agentListen(thread, since, card = null) {
     checkpoints.add(d.id);
     timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot);
   }));
+  es.addEventListener('learn_mode', dedupe(d => { lee.agentLearnMode = !!d.on; refreshAgentThreads().catch(() => {}); }));
   es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('state', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('steer', dedupe(d => {

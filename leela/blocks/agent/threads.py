@@ -114,6 +114,7 @@ class Thread:
         self.moved = settle(self.ai)
         if hasattr(self.ai, 'host'): self.approvals.host = self.ai.host
         self.id = getattr(self.ai, 'session_id', '') or f'thread_{uuid.uuid4().hex[:12]}'
+        if hasattr(self.ai, 'saved_learn_mode'): self.ai.learn_mode = self.ai.saved_learn_mode(self.id)
         self._stop_approvals = self.approvals.listen()
         self.feed = feed or Feed(self.id)
         self.ai.on_watch = lambda target, log: self.feed.emit('watch', {'target': target, 'log': str(log)})
@@ -146,6 +147,41 @@ class Thread:
         try: self.ai.set_muted(self.muted, self.id); self.mute_problem = ''
         except Exception as e: self.mute_problem = errstr(e)
         return self
+    def set_learn_mode(self, on):
+        from .turns import save_learn_mode
+        ai = self.ai
+        with self.runner._lock:
+            if ai.busy or self.runner._pending or self.approvals.pending is not None or self.approvals.waiting:
+                raise TurnError('thread_busy', 'Learn mode cannot change during a turn, queued message or approval.', self.id)
+            old = ai.learn_mode
+            if old == on: return dict(ok=True, on=old, thread=self.id)
+            keys = ('_tools', '_skills', '_catalog_view', '_built_mode', '_briefed_mode', '_briefed_lesson', '_briefed_charter', '_briefed_learn')
+            saved = {k: getattr(ai, k, None) for k in keys}
+            registry = list(ai.registry.tools)
+            catalogs, views = dict(ai._catalogs), dict(ai._views)
+            backends = [(b, b.sp, b.tools) for b in ai._backends.values()]
+            ai.learn_mode = on
+            try:
+                ai.refresh()
+                save_learn_mode(ai.cfg, self.id, on)
+            except Exception:
+                ai.learn_mode = old
+                ai.registry.tools[:] = registry
+                ai._catalogs.clear(); ai._catalogs.update(catalogs)
+                ai._views.clear(); ai._views.update(views)
+                for k, v in saved.items(): setattr(ai, k, v)
+                problems = []
+                for b, sp, tools in backends:
+                    try: b.refresh(sp, tools)
+                    except Exception as e:
+                        b.sp, b.tools = sp, tools
+                        problems.append(errstr(e))
+                if problems:
+                    ai._briefed_learn = None
+                    raise RuntimeError('Learn mode was restored, but backend refresh failed: ' + '; '.join(problems))
+                raise
+            self.feed.emit('learn_mode', dict(on=on))
+            return dict(ok=True, on=on, thread=self.id)
     def meta(self):
         "The sidecar row, given the name `sessions()` derives while nothing has been summarised yet."
         ai = self.ai
@@ -166,7 +202,7 @@ class Thread:
                 'created': self.created, 'touched': self.touched, 'unread': self.unread,
                 'branch': getattr(self.ai, 'current_branch_id', '') or 'main',
                 'warm': bool(getattr(self.ai, 'warm', False)), 'optin': list(getattr(self.ai, 'optin', ()) or ()),
-                'profile': getattr(self.ai, 'profile', 'full'),
+                'profile': getattr(self.ai, 'profile', 'full'), 'learn_mode': bool(getattr(self.ai, 'learn_mode', False)),
                 'muted': bool(meta.get('muted', self.muted)), 'problem': self.mute_problem}
     def close(self):
         "Close every part, and report what refused rather than skipping the rest."

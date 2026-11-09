@@ -27,6 +27,16 @@ def test_the_text_fits_under_the_skill_cap(ai):
     ai.tools
     assert len(find(ai.skills, 'leela')._text()) <= MAX_SKILL_CHARS
 
+def test_the_learn_section_keeps_the_text_under_the_cap(ai):
+    "The app registers the Learn rows at start; the skill must still fit, and name the section in one line."
+    from shalya.skills import MAX_SKILL_CHARS, find
+    from leela.blocks.learn.app import learn_rows
+    from leela.blocks.settings.settings import register_section
+    register_section('learn', learn_rows(), 'abhyasa')   # what `connect` does; the same rows again are a no-op
+    ai.tools
+    t = find(ai.skills, 'leela')._text()
+    assert len(t) <= MAX_SKILL_CHARS and '- **learn**: ' in t and 'abhyasa settings, user settings only' in t
+
 def _palette_names():
     js = (ROOT/'leela'/'blocks'/'keys'/'palette.js').read_text()
     body = js[js.index('function palette()'):js.index('const cmds')]
@@ -36,12 +46,12 @@ def test_every_menu_row_key_palette_command_pane_and_setting_is_named(ai):
     from leela.core import keys as K
     from leela.blocks.keys.menus import BAR, MENUS
     from leela.app import LEFT_PANES
-    from leela.blocks.settings.settings import DEFAULT_SETTINGS
+    from leela.blocks.settings.settings import DEFAULT_SETTINGS, SECTIONS
     t = _text(ai)
     rows = [r for _, rs in BAR for r in rs] + [r for rs in MENUS.values() for r in rs]
     want = [K.lookup(r.action).label if getattr(r, 'action', None) else getattr(r, 'title', '') for r in rows]
     want += [k.label for k in K.KEYS if k.label] + [l for _, l in K.PRESENT_KEYS] + [p for _, _, p in LEFT_PANES]
-    want += [f'**{s}**: ' + ', '.join(d) for s, d in DEFAULT_SETTINGS.items()] + _palette_names()
+    want += [f'**{s}**: ' + (f'{len(d)} ' if s in SECTIONS else ', '.join(d)) for s, d in DEFAULT_SETTINGS.items()] + _palette_names()   # a package section is one line
     assert len(_palette_names()) > 10
     assert not [w for w in want if w and w not in t]
 
@@ -67,10 +77,10 @@ def test_every_tool_leela_can_offer_is_named_and_the_hidden_one_is_not(ai):
     from shalya.tools import tool_groups
     from leela.blocks.agent.ai import HIDDEN
     t = _text(ai)
-    own = [f.__name__ for ts in (ai._news_toolset, ai._lesson_toolset, ai._session_toolset, ai._video_toolset) for f in ts]
+    own = [f.__name__ for ts in (ai._news_toolset, ai._lesson_toolset, ai._learn_toolset, ai._session_toolset, ai._video_toolset) for f in ts]
     names = {*tool_groups(), *(f.__name__ for f in ai._plain), *own} - HIDDEN
     assert not [n for n in names if f'`{n}`' not in t]
-    assert '`news_follow` (while a feed is followed)' in t and '`user_steering`' not in t
+    assert 'while a feed is followed: `news_feeds`, `news_follow`' in t and 'while Learn mode is on: `create_walk`' in t and '`user_steering`' not in t
 
 def test_every_slash_command_is_named(ai):
     from leela.blocks.agent.app import PAGE_COMMANDS

@@ -1351,6 +1351,9 @@ class Assistant(Agent):
         self._news_toolset = _news_tools(host)
         self._session_toolset = _session_tools(host)
         self._lesson_toolset = _lesson_tools(host, lambda: self._lesson_env())
+        from ..learn.tools import learn_tools
+        self.learn_mode, self._briefed_learn = False, ''
+        self._learn_toolset = learn_tools(self)
         self._lesson_seen = (None, None)   # (seal, (step, packages)) of the last learning-store read
         self.video_jobs = VideoJobs()   # offered with no video model too, so asking for one says how to add it
         self._video_toolset = video_tools(host, jobs=self.video_jobs)
@@ -1370,7 +1373,23 @@ class Assistant(Agent):
         self.turn_transactions = {}
     def resume_session(self, selector='latest', keep_model=True):
         "Continue a stored conversation on the model picked here, not the one it last ran."
-        return super().resume_session(selector, keep_model=keep_model)
+        out = super().resume_session(selector, keep_model=keep_model)
+        self.learn_mode = self.saved_learn_mode(self.session_id)
+        self._forget(files=False)
+        return out
+    def saved_learn_mode(self, sid):
+        from .turns import learn_modes
+        return bool(learn_modes(self.cfg).get(sid, False))
+    def learn_context(self):
+        if not self.learn_mode: return ''
+        from abhyasa.agent_tools import learner_context
+        from ..learn.tools import learn_settings, learn_store
+        from abhyasa.learner import use_settings
+        tab = getattr(self.ws, 'tab', None)
+        vault, walk = json.loads(tab.ref) if getattr(tab, 'kind', '') == 'learn_walk' else (None, None)
+        try: _, lr = learn_store(self.ws, vault)
+        except (KeyError, FileNotFoundError): return 'Learn mode. The learning vault is unavailable. Attach it before continuing.'
+        with use_settings(learn_settings(self.ws)): return learner_context(lr, walk)
     def mark_surface(self):
         "Claim the live session for Leela. The CLI shares this log and leaves no such mark."
         from .turns import mark_surface
@@ -1431,8 +1450,9 @@ class Assistant(Agent):
         from ..nb.lesson import CHARTER_TAIL
         if self._briefed_mode is None: self._briefed_mode = self._built_mode   # a backend installed from outside (`tests.fakemodel`) was briefed with what `tools` built
         mode, charter = self._mode(), self._charter()
+        learn = self.learn_context()
         lesson = bool(charter)
-        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson and charter == self._briefed_charter:
+        if (self._briefed_mode is None or mode == self._briefed_mode) and lesson == self._briefed_lesson and charter == self._briefed_charter and learn == self._briefed_learn:
             self._briefed_mode = mode
             return
         self._forget()
@@ -1441,6 +1461,7 @@ class Assistant(Agent):
         be.refresh(prompt, self.tools)
         self._briefed_mode, self._briefed_lesson = mode, CHARTER_TAIL in prompt
         self._briefed_charter = charter if self._briefed_lesson else ''
+        self._briefed_learn = learn
 
     def cancel(self, run_id='', grace=None):
         "Cancel one run and preserve Leela's pending-approval state."
@@ -1465,6 +1486,7 @@ class Assistant(Agent):
             from ..nb.lesson import CHARTER_TAIL
             self._briefed_mode, self._briefed_lesson = self._built_mode, CHARTER_TAIL in be.sp
             self._briefed_charter = c if self._briefed_lesson and (c := self._charter()) and c in be.sp else ''
+            self._briefed_learn = c if (c := self.learn_context()) and c in be.sp else ''
         if self.engines is not None: self.engines.attach(be)
         return be
 
@@ -1473,8 +1495,8 @@ class Assistant(Agent):
         "Leela's own tools on the registry: news tools while a feed is followed, lesson tools while the active tab is a lesson, the rest always."
         if self._tools is None:
             feeds = mode = self._mode()
-            want = [*(self._news_toolset if feeds else []), *(self._lesson_toolset if self._lesson() else []), *self._session_toolset, *self._video_toolset]
-            stale = {id(f) for f in [*self._news_toolset, *self._lesson_toolset]} - {id(f) for f in want}
+            want = [*(self._news_toolset if feeds else []), *(self._lesson_toolset if self._lesson() else []), *(self._learn_toolset if self.learn_mode else []), *self._session_toolset, *self._video_toolset]
+            stale = {id(f) for f in [*self._news_toolset, *self._lesson_toolset, *self._learn_toolset]} - {id(f) for f in want}
             self.registry.tools[:] = [f for f in self.registry.tools if id(f) not in stale]
             registered = {f.__name__ for f in self.registry.tools}
             self.registry.tools.extend(f for f in want if f.__name__ not in registered)
@@ -1498,7 +1520,7 @@ class Assistant(Agent):
 
     def _sub_plain(self, spec=None):
         "A delegated agent gets neither the Git writes (briefed to the main agent, not delegable) nor `user_steering`, on top of `ROOT_ONLY` (delegation, the plan) which ramabana's own `_sub_plain` already drops. Its own set, not `HIDDEN`."
-        refused = {*GIT_WRITE_TOOLS, 'user_steering'}
+        refused = {*GIT_WRITE_TOOLS, 'user_steering', *(f.__name__ for f in getattr(self, '_learn_toolset', ()))}
         return [f for f in super()._sub_plain(spec) if f.__name__ not in refused]
     def model_local(self):
         "Whether this turn's model runs on this machine, and what it is called."
@@ -1511,6 +1533,7 @@ class Assistant(Agent):
         base = super().system_prompt() + api_context(self.host)   # '' unless a spec is loaded, in either profile
         base += VAULT_MARKS
         if charter := self._charter(): base += '\n\n' + charter
+        if learn := self.learn_context(): base += '\n\n' + learn
         if loose := getattr(self.host, 'loose_files', ()):
             base += f'\n\nLoose files: {", ".join(loose)}. Each was opened on its own: read and edit it, but nothing beside it is yours to touch.'
         if (writable := self.host.writable_roots) != self.host.roots:

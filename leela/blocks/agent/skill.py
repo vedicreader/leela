@@ -99,10 +99,11 @@ def _tools(ai):
     from .ai import HIDDEN
     now = {t.__name__ for t in ai._catalog_view.tools} if getattr(ai, '_tools', None) is not None else set()   # never rebuild mid-turn
     own = {t.__name__: why for ts, why in ((ai._news_toolset, 'while a feed is followed'), (ai._lesson_toolset, 'while a lesson tab is active'),
-           (ai._session_toolset, ''), (ai._video_toolset, '')) for t in ts}
+           (ai._learn_toolset, 'while Learn mode is on'), (ai._session_toolset, ''), (ai._video_toolset, '')) for t in ts}
     grp = lambda n: 'leela' if n in own else group_of(n, 'agent')
-    rows = lambda ns: ''.join(f'- **{g}**: ' + ', '.join(f'`{n}`' + (f' ({own[n]})' if own.get(n) else '') for n in sorted(ns) if grp(n) == g) + '\n'
-                              for g in sorted({grp(n) for n in ns}))
+    def row(ns): return '; '.join((f'{w}: ' if w else '') + ', '.join(f'`{n}`' for n in sorted(ns) if own.get(n, '') == w)
+                                  for w in sorted({own.get(n, '') for n in ns}))   # a condition is said once, not after each tool
+    rows = lambda ns: ''.join(f'- **{g}**: ' + row([n for n in ns if grp(n) == g]) + '\n' for g in sorted({grp(n) for n in ns}))
     rest = {*tool_groups(), *own, *(f.__name__ for f in ai.registry.tools)} - now - HIDDEN
     return (f'Offered now:\n{rows(now - HIDDEN)}' if now else '') + (
         f'\nNot offered now. The host, the model profile, a setting or the active tab decides:\n{rows(rest)}' if rest else '')
@@ -112,7 +113,7 @@ def leela_skill(ai=None):
     from ...core import keys as K
     from ...app import LEFT_PANES
     from ..keys.menus import BAR, MENUS
-    from ..settings.settings import DEFAULT_SETTINGS
+    from ..settings.settings import DEFAULT_SETTINGS, SECTIONS
     from .app import COMMAND_HELP, PAGE_COMMANDS
     menus = _menus()
     out = ['# What Leela can do\n\nLeela is an IDE for notebooks and code, with an agent, a vault, git, release and deploy. '
@@ -141,7 +142,8 @@ def leela_skill(ai=None):
         f'`/{n}`' + (f' ({h})' if (h := reg.get(n) or COMMAND_HELP.get(n) or PAGE_COMMANDS.get(n)) else '')
         for n in sorted({*cmds, *PAGE_COMMANDS})) + '\n')
     out.append(f'\n## Settings ({_key("settings")})\n\nThe user file, and per project `.leela/settings.json`, which overrides it key by key. Sections and their keys:\n')
-    for sec, d in DEFAULT_SETTINGS.items(): out.append(f'- **{sec}**: ' + ', '.join(d) + '\n')
+    for sec, d in DEFAULT_SETTINGS.items():   # a package section can hold many rows, so it gets one line
+        out.append(f'- **{sec}**: ' + (f'{len(d)} {SECTIONS[sec]["owner"]} settings, user settings only' if sec in SECTIONS else ', '.join(d)) + '\n')
     if ai is not None: out.append('\n## Agent tools\n\n' + _tools(ai))
     return ''.join(out)
 

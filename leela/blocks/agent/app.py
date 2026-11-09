@@ -66,6 +66,8 @@ PAGE_COMMANDS = {'calm': 'show only text, each stretch of tool calls folded into
 def connect(app, ctx):
     rt = app.route
     ws = ctx.session
+    from ..learn.tools import register_learn_jobs
+    register_learn_jobs(ws)
     def _doc(): return ctx.docs.current()
     async def api(path, params=None, timeout=15):
         try: client = await ws.runtime()
@@ -189,7 +191,20 @@ def connect(app, ctx):
         active = ws.threads.active
         # `threads` hides an empty conversation, so `live` is what says a pane's own one still exists
         return {'active': active.id, 'threads': ws.threads.dicts(), 'live': [r.id for r in ws.threads.rows()],
-                'attention': ws.threads.attention()}
+                'attention': ws.threads.attention(), 'learn_modes': {t.id: bool(getattr(t.ai, 'learn_mode', False)) for t in ws.threads.rows()}}
+    @rt('/agent/learn-mode', methods=['POST'])
+    async def agent_learn_mode(req):
+        try:
+            d = await req.json()
+            if not isinstance(d, dict) or not isinstance(d.get('on'), bool):
+                return JSONResponse(dict(ok=False, code='invalid_request', message='on must be a boolean'), status_code=400)
+            thread = _thread(d.get('thread', ''))
+            return await off_loop(thread.set_learn_mode, d['on'])
+        except TurnError as e:
+            if e.code != 'thread_busy': return _thread_error(e)
+            from abhyasa.agent_tools import failed
+            return JSONResponse({**failed(e.code, e.message, extra=('thread_busy',)), **e.dict()}, status_code=409)
+        except Exception as e: return _thread_error(e)
     def _optin(names):
         "Opt-in group names as a tuple, checked against what this shalya offers; None stands for the workspace default."
         if names is None: return None

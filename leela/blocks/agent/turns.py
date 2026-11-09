@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import base64, json
+import base64, json, threading
 from pathlib import Path
 
 from fastcore.basics import first
@@ -13,6 +13,24 @@ from ...core.web import diff_payload
 __all__ = ['GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
            'activity_changes', 'history_sessions', 'indexed_sessions', 'project_state_context', 'turn_media',
            'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
+
+def learn_modes(cfg):
+    p = Path(cfg)/'agent-learn.json'
+    try: rows = json.loads(p.read_text()) if p.exists() else {}
+    except (OSError, ValueError): return {}
+    return rows if isinstance(rows, dict) else {}
+
+
+_learn_lock = threading.RLock()
+
+
+def save_learn_mode(cfg, sid, on):
+    with _learn_lock:
+        rows = learn_modes(cfg)
+        if on: rows[sid] = True
+        else: rows.pop(sid, None)
+        with atomic_save(Path(cfg)/'agent-learn.json', mode='w', encoding='utf-8') as f: f.write(json.dumps(rows))
+
 
 SURFACES_FILE = 'agent-surfaces.json'   #: sessions Leela started, beside Ramabana's own metadata
 

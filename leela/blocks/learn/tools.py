@@ -166,3 +166,100 @@ def start_tool_job(jobs, names):
     "The `tool_env` job that makes the environment for `names`: the active one for its key, else a new one."
     names = tool_names(names)
     return active_job(jobs, key := tool_key(names)) or jobs.start('tool_env', key, names=names)
+
+
+def learn_settings(ws):
+    from ..settings.settings import Settings
+    return dict(Settings(ws.project_root).effective().get('learn', {}))
+
+
+def learn_store(ws, vault=None, write=False):
+    from abhyasa.learner import Learning
+    ref = ws.vaults.get(vault)
+    if ref is None: raise KeyError('Learning vault is not attached.')
+    if write and not ref.agent_writable: raise PermissionError('Learning vault is read-only for the agent.')
+    memory = ws.vaults.memory(ref.name)
+    return ref.name, Learning(memory._store('learning'))
+
+
+def learn_guard(ai, text, spec=None):
+    from abhyasa.models import guard
+    return guard(text, spec or ai.spec_or_none('plan'), ai.ws.vault_pii)
+
+
+def learn_ask(ai):
+    def prepare(prompt, sp, backend):
+        return learn_guard(ai, prompt, backend.spec), learn_guard(ai, sp, backend.spec)
+    def ask(prompt, sp=''):
+        return ai.oneshot(prompt, sp, 'plan', 2048, prepare=prepare, wait=True, strict=True)
+    return ask
+
+
+def register_learn_jobs(ws):
+    from abhyasa import agent_tools as engine
+    import inspect
+    captures = ws.__dict__.setdefault('_learn_jobs', {})
+    def run(job, report):
+        if job.id not in captures: raise RuntimeError('The originating learning session is no longer available. Start a new walk.')
+        ai, lr = captures[job.id]
+        try:
+            kw = dict(stopping=lambda: ws.jobs.stopping(job.id), progress=lambda stage, frac: report(progress=frac, current=stage))
+            params = inspect.signature(engine.create_walk).parameters
+            if 'settings' in params: kw['settings'] = job.params['settings']
+            if 'guard' in params: kw['guard'] = lambda text: learn_guard(ai, text)
+            r = engine.create_walk(lr, learn_ask(ai), job.target, **kw)
+            r.update(operation_id=job.id, vault=job.params['vault'])
+            if r['status'] == 'ok': r['data']['tab'] = dict(kind='learn_walk', vault=r['vault'], walk=r['walk'])
+            if r['status'] == 'stopped': r['cancelled'] = True
+            return r
+        finally: captures.pop(job.id, None)
+    ws.jobs.register('learn_walk', run)
+
+
+def start_learn_job(ai, goal):
+    from abhyasa.agent_tools import result
+    ws = ai.ws
+    vault, lr = learn_store(ws, write=True)
+    settings = learn_settings(ws)
+    with ws.jobs._lock:
+        for job in ws.jobs.all(kind='learn_walk'):
+            if job.active and job.target == goal and job.params.get('vault') == vault and job.params.get('thread') == ai.session_id:
+                return result('ok', operation_id=job.id, vault=vault, data=dict(job=job.id))
+        job = ws.jobs.new('learn_walk', goal, vault=vault, thread=ai.session_id, settings=settings, _cancel=True)
+        ws._learn_jobs[job.id] = (ai, lr)
+        try: ws.jobs.launch(job.id)
+        except Exception:
+            ws._learn_jobs.pop(job.id, None)
+            raise
+    return result('ok', operation_id=job.id, vault=vault, data=dict(job=job.id))
+
+
+def learn_tools(ai):
+    import inspect
+    from abhyasa import agent_tools as engine
+    from ...agent.tools import small_tool
+    from shalya.core import writes
+    def wrap(name, args):
+        def call(**kwargs):
+            if not ai.learn_mode:
+                return engine.failed('mode_off', 'Turn Learn mode on before using learning tools.', extra=('mode_off',))
+            try:
+                if name == 'create_walk': return start_learn_job(ai, **kwargs)
+                vault, lr = learn_store(ai.ws, write=name != engine.walk_state.__name__)
+                fn = getattr(engine, name)
+                params = inspect.signature(fn).parameters
+                if 'ask' in params: kwargs['ask'] = learn_ask(ai)
+                if 'settings' in params: kwargs['settings'] = learn_settings(ai.ws)
+                r = fn(lr, **kwargs)
+                r['vault'] = vault
+                return r
+            except PermissionError as e: return engine.failed('read_only', str(e))
+            except KeyError as e: return engine.failed('not_found', str(e))
+        call.__name__ = name
+        call.__doc__ = getattr(engine, name).__doc__ or ''
+        call.__annotations__ = {k: {'str': str, 'int': int}[v.split(':', 1)[0]] for k, v in args.items()}
+        call.__signature__ = inspect.Signature([inspect.Parameter(k, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=call.__annotations__[k]) for k in args])
+        call.__doc__ += '\n\n' + '\n'.join(f'{k}: {v}' for k, v in args.items())
+        if name != engine.walk_state.__name__: writes(call)
+        return small_tool(call)
+    return [wrap(name, args) for name, args in engine.TOOLS]

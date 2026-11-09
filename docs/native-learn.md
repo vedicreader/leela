@@ -1,5 +1,11 @@
 # Native Learn
 
+## Upstream later
+
+- Add a public group-registration hook in `shalya.tools` for contextual host toolsets.
+- Add a public `set_meta` in Ramabana for conversation-owned host metadata.
+- Add a public alias for `show._confuses` in Abhyasa.
+
 Status: Claude approved S1 and the parallel S2 model-callback pilot. D2 is owner-confirmed. Later implementation follows the per-slice review protocol. The native branches start at Leela `02eb8133` and Abhyasa `e5292a1`. The hosting prototype remains unmerged.
 
 ## Product and ownership

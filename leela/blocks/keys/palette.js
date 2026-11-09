@@ -2,6 +2,7 @@ function palette() {
   const picked = String(getSelection?.() ?? '').trim();
   const lessonCommands = [{name: "Lesson: I don't get…", scope: 'editor', run: () => lessonGuideSelected(picked)}];
   const agentCommands = [
+    {name: 'Learn mode', scope: 'agent', run: () => leeAgentLearnToggle()},
     {name: 'Agent: autopilot mode', scope: 'agent', run: () => leeAgentControl('autopilot')},
     {name: 'Agent: guided mode', scope: 'agent', run: () => leeAgentControl('guided')},
     {name: 'Agent: directed mode', scope: 'agent', run: () => leeAgentControl('directed')},
