@@ -3102,6 +3102,7 @@ function steerSaid(args) {
   return (said || '').trim() ||
     (/stopped this turn/i.test(raw) ? 'stopped the turn' : 'rejected that call');
 }
+const cleanTool = s => /<user-request>/.test(s || '') ? plainAsk(s).replace(/\s{2,}/g, ' ').replace(/(["']) /g, '$1') : s;
 function renderAgentStep(row, a) {
   const wasOpen = row.open;
   for (const v of (row._leeViews || [])) try { LeeCM.destroy(v); } catch {}
@@ -3113,7 +3114,7 @@ function renderAgentStep(row, a) {
   const summary = document.createElement('summary');
   summary.innerHTML = `<span class="lee-agent-step-state" aria-hidden="true"></span>` +
     `<span class="lee-agent-step-copy">${steered ? `<strong>You</strong> ${esc(steerSaid(a.args))}`
-      : esc(a.summary || a.tool || 'Working')}</span>` +
+      : esc(cleanTool(a.summary) || a.tool || 'Working')}</span>` +
     // a delegation is the one step whose work happened somewhere this row cannot show
     ((a.kind || '') === 'delegate' ? `<button class="lee-agent-step-open" type="button" data-open-sub` +
       ` title="open this delegation: what its sub-agents did, and steer one that is still going">open</button>` : '') +
@@ -3135,7 +3136,7 @@ function renderAgentStep(row, a) {
       const dl = document.createElement('dl');
       for (const [key, value] of rest) {
         const dt = document.createElement('dt'), dd = document.createElement('dd');
-        dt.textContent = key; dd.textContent = typeof value === 'string' ? value : JSON.stringify(value);
+        dt.textContent = key; dd.textContent = typeof value === 'string' ? cleanTool(value) : JSON.stringify(value);
         dl.append(dt, dd);
       }
       panel.appendChild(dl);
@@ -3386,8 +3387,9 @@ function paintAgentAttachments(check = true) {
   if (check) { clearTimeout(lee.__sendT); lee.__sendT = setTimeout(checkAgentSend, 150); }
   const bad = k => lee.attachBlocked?.get(k);
   const chip = (k, cls, title) => `<span class="lee-agent-attachment${cls}${bad(k) ? ' blocked' : ''}" title="${esc(bad(k) || title)}" data-attach-key="${esc(k)}">`;
-  const active = lee.path ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
-    `<span>active · ${esc(compactPath(lee.path))}</span></span>` : '';
+  const here = lee.kind === 'learn' ? lee.learnPage || lee.path : lee.path;   // a Learn tab's page changes inside the tab
+  const active = here ? `<span class="lee-agent-context" title="The assistant can see the active workspace and open files">` +
+    `<span>active · ${esc(compactPath(here))}</span></span>` : '';
   const states = lee.stateSuggestions.map(s => `<button type="button" class="lee-agent-state-suggestion" data-state-id="${esc(s.id)}" ` +
     `title="Preview and attach this remembered starting state">state · ${esc(s.title)}</button>`).join('');
   const sels = lee.agentSelections.map((s, i) =>

@@ -905,7 +905,7 @@ function settingsPercent(value, original) {
   if (original === undefined) return Math.round(value * 100);
   return Number(value) === settingsPercent(original) ? original : Number(value) / 100;
 }
-async function editorSettings(languageScope = null) {
+async function editorSettings(languageScope = null, startPage = 'editor') {
   if(typeof languageScope!=='string'){
     // Default to All languages, never to the focused tab's language. Saving remembers the scope,
     // so one derived from `curLang()` would send every later edit into `languages.<lang>`. A
@@ -1114,7 +1114,7 @@ async function editorSettings(languageScope = null) {
         await post('/settings/reset', {scope: oscope, section, language: olang || ''});
         await loadSettings(language.value);
         status(`${origin} cleared for ${section}`, 'ok');
-        saved = true; m.remove(); setTimeout(() => editorSettings(language.value), 0);
+        saved = true; m.remove(); setTimeout(() => editorSettings(language.value, page), 0);
       } catch (e) { status(String(e.message || e), 'err'); }
     };
   }
@@ -1122,7 +1122,7 @@ async function editorSettings(languageScope = null) {
   let held=null;const own=()=>held||{scope:scope.value,language:language.value};
   const paintPath=()=>{const learn=isPkg(page);if(learn&&!held){held={scope:scope.value,language:language.value};scope.value='user';language.value='';}else if(!learn&&held){scope.value=held.scope;language.value=held.language;held=null;}scope.disabled=language.disabled=learn;const note=$('[data-learn-scope]',m);note.hidden=!learn;if(learn)note.textContent=`${pkgTitle(page)} uses user settings for all languages.`;const savedScope=learn?'user':scope.value;path.textContent=shownPath(lee.settingsMeta?.paths?.[savedScope]);path.title=lee.settingsMeta?.paths?.[savedScope]||'';target.textContent=learn?'user · all languages':`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
-  language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
+  language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value,page);};
   // Every click previews live; the modal's close handler puts the original back unless saved.
   const paintPicker=()=>{const {family,mode}=lee.theme;
     $$('[data-theme]',m).forEach(b=>{const on=b.dataset.theme===family;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on);
@@ -1132,7 +1132,7 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,family:b.dataset.theme});paintPicker();});
   $$('[data-theme-mode]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,mode:b.dataset.themeMode});paintPicker();});
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
-  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:isPkg(section)?'user':scope.value,section,language:section==='appearance'||isPkg(section)?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
+  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:isPkg(section)?'user':scope.value,section,language:section==='appearance'||isPkg(section)?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(()=>editorSettings(null,page),0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
   $('[data-save]',m).onclick=async()=>{update();const o=own();let count=0;const said=new Set();try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){said.add((await post('/settings/save',{scope:isPkg(section)?'user':o.scope,language:isPkg(section)?'':o.language,section,values:changed})).message);count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){said.add((await saveTheme(lee.theme,o.scope)).message);count++;}localStorage.setItem('lee-settings-save-scope',o.scope);localStorage.setItem('lee-settings-language-scope',o.language);localStorage.removeItem('lee-editor-settings');await loadSettings(o.language);saved=true;m.remove();status(count?[...said].filter(Boolean).join(' '):'No settings changed.','ok');};
@@ -1192,6 +1192,7 @@ async function editorSettings(languageScope = null) {
   paintBackups();
   $('[data-open-keys]',m).onclick=()=>{saved=true;m.remove();editKeys();};
   $('[data-open-runs]',m).onclick=()=>{saved=true;m.remove();editRuns();};
+  if(startPage!=='editor') $(`[data-settings-page="${startPage}"]`,m)?.click();
 }
 function leeTheme() { editorSettings(); }
 window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;
@@ -4200,18 +4201,20 @@ window.addEventListener('resize', () => { closeMenu(); layoutTabs(); });
 window.addEventListener('scroll', e => { if (!e.target.closest?.('.lee-ctxmenu, #agentlog')) closeMenu(); }, true);
 
 function showHelp() {
-  const scopes = Object.entries(lee.help).sort(([a], [b]) =>
-    a === lee.scope ? -1 : b === lee.scope ? 1 : a === 'global' ? -1 : b === 'global' ? 1 : 0);
+  const learn = lee.kind === 'learn', here = learn ? 'learn' : lee.scope;   // the Learn section shows in Learn mode only
+  const scopes = Object.entries(lee.help).filter(([scope]) => learn || scope !== 'learn').sort(([a], [b]) =>
+    a === here ? -1 : b === here ? 1 : a === 'global' ? -1 : b === 'global' ? 1 : 0);
   const body = scopes.map(([scope, rows]) =>
-    `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
-    `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` +
+    `<section class="lee-help-scope${scope === here ? ' active' : ''}"><h4>${esc(scope === 'learn' ? 'Learn' : scope)}` +
+    `${scope === here ? '<span>current</span>' : ''}</h4>` +
+    (scope === 'learn' ? '<p class="lee-dim lee-help-note">These keys work on a Learn page. They cannot be rebound. A row with no key is a button only.</p>' : '') +
     (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') +
     (scope === 'editor' ? '<p class="lee-dim lee-help-note">In a notebook, a single letter works only when you do not edit a cell. Press Escape to stop editing. Press D two times to delete a cell. Hold ' + esc(displayChord('alt')) + ' and drag a number in a code cell to scrub it. ' + esc(displayChord('alt+up')) + ' or ' + esc(displayChord('alt+down')) + ' on a number moves it one step. "Nudge the number" and "scrub the number" are in the command palette. Live scrub is opt-in per cell, runs on a copy in a separate process, and only for plain data.</p>' : '') + rows.map(([k, l]) =>
-      `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
+      `<div class="lee-krow">${k ? `<kbd>${esc(displayChord(k))}</kbd>` : '<kbd></kbd>'}<span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
     (lee.keyNotes || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('') +
-    `<div class="lee-dim">Every key outside the present section can be rebound. Each of those keys also has a button.</div>` +
+    `<div class="lee-dim">Every key outside the present and Learn sections can be rebound. Each of those keys also has a button.</div>` +
     `<div class="lee-help">${body}</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="gokeys">edit keybindings</button></div>`);
   m.querySelector('#gokeys').onclick = () => { m.remove(); editKeys(); };
@@ -5472,9 +5475,10 @@ function palette() {
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
+  learnCommands.push({name: 'Learn: New module', scope: 'global', run: () => leeLearnOpen('/').then(() => leeFirstLearn())});
   learnCommands.push(...$$('#modeswitch [data-mode]').map(b => ({name: 'Mode: ' + b.textContent, scope: 'global', run: () => leeModeSet(b.dataset.mode)})));
-  learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});
-  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
+  if (lee.kind === 'learn') learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});   // a Learn tab's own ask, not the vault's
+  const cmds = lee.keys.filter(k => k.label && !(lee.kind === 'learn' && k.action === 'vault_ask_page')).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" aria-label="Command palette" role="combobox" aria-controls="cplist" aria-expanded="true" autofocus>
                    <div class="lee-modallist" id="cplist" role="listbox" aria-label="Commands"></div>`,
@@ -6417,11 +6421,15 @@ async function refreshKernelPill() {
   try {
     const d = await api('/kernel/info');
     const pill = $('#kpill'); if (!pill) return;
+    if (!d.alive && d.pid == null && !d.boot_error && !d.api_error && !d.notice) {   // no kernel: the server's own words, not the tab's key
+      pill.className = 'lee-pill lee-pill-off'; pill.textContent = 'no kernel'; pill.title = 'choose a kernel';
+    } else {
     pill.className = 'lee-pill ' + (d.api_error || d.boot_error || d.notice ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
     pill.textContent = (d.api_error || d.notice ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
+    }
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
     paintVenvNotice(d.no_venv);
     (d.tabs || []).forEach((state, i) => {
@@ -9237,6 +9245,7 @@ async function leeLearnToAgent(text, send) {
   if (lee.agentBusy || lee.agentSending) return status('The agent is working. Try again when it finishes.', 'err');
   if ($('#agentprompt')?.value.trim()) { leeAct('focus_agent'); return status('Send or clear your message to the agent first.', 'err'); }
   if (!await leeLearnModeOn()) return;
+  await lee.learnPageSaved;   // the agent reads the page that the tab last saved
   leeAct('focus_agent');
   const prompt = $('#agentprompt'); if (!prompt) return;
   prompt.value = text;

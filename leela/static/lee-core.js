@@ -2130,7 +2130,7 @@ async function mountTab(expectedPath = '') {
   // stays open and the tab reattaches on the way back.
   closeWebView();
   const host = $('#editor'); if (!host) return;
-  lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
+  lee.kind = st.kind; lee.path = st.path || ''; lee.learnPage = ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   lee.rise = st.rise || {};
   bindTabHandlers(st.kind, host);
   window.leeFolderOffer?.(st);
@@ -2148,7 +2148,7 @@ async function mountTab(expectedPath = '') {
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
   if (!st.kind) {
     host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
-    paintKeyLabels(host); paintRecent();
+    paintKeyLabels(host); paintRecent(); paintAgentAttachments();
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
@@ -2363,14 +2363,33 @@ function leeAbhKey(e, home) {
 }
 window.leeAbhKey = leeAbhKey;
 
+async function learnOffer(host) {
+  "Show the import offer in place of Learn when an old vault holds learning and the Learn vault is empty and not decided; true when it shows."
+  if (window.leeLearnLater) return false;
+  const html = await fetch('/learn/import').then(r => r.status === 200 ? r.text() : '').catch(() => '');
+  if (!html) return false;
+  $('#modebar').innerHTML = '';
+  host.innerHTML = '<div class="lee-learn-first" style="max-width:42rem;margin:0 auto;padding:32px 20px;overflow:auto;height:100%;box-sizing:border-box"><h2>Your earlier learning</h2><p>Leela found learning in another vault. Choose what to do with it. Not now asks again next time.</p>' + html + '<p><button type="button" class="lee-btn" data-learn-later>Not now</button></p></div>';
+  htmx.process(host);
+  const go = () => { window.leeLearnLater = true; mountTab(); };
+  host.querySelector('[data-learn-later]').onclick = go;
+  host.addEventListener('htmx:afterSwap', e => {
+    const box = host.querySelector('#learnimport');
+    if (!box || box.querySelector('form') || box.querySelector('[data-learn-go]')) return;
+    const b = Object.assign(document.createElement('button'), {type: 'button', className: 'lee-btn go', textContent: 'Open Learn', onclick: () => mountTab()});
+    b.dataset.learnGo = '1'; box.append(b); host.querySelector('[data-learn-later]')?.closest('p')?.remove();
+  });
+  return true;
+}
 async function learnMount(host, st) {
+  if (await learnOffer(host)) return;
   if (!document.getElementById('lee-abh-css')) {
     const link = document.createElement('link'); link.id = 'lee-abh-css'; link.rel = 'stylesheet'; link.href = '/learn/abh.css'; document.head.append(link);
   }
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
   const bar = $('#modebar');
-  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-keys title="The keys of this page (Option+Shift+F)">Keys</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
+  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-keys title="The keys of Learn">Keys</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
   host.innerHTML = '<div class="lee-learn-tab"><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
   const fit = bar.querySelector('[data-learn-fit]'), sync = () => {
@@ -2442,8 +2461,9 @@ async function learnMount(host, st) {
     let path = r ? r.pathname + r.search : pending?.path;
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
-    if (path !== cur) fetch('/learn/tab/page', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})}).then(r => r.text()).catch(() => {});
+    if (path !== cur) lee.learnPageSaved = fetch('/learn/tab/page', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})}).then(r => r.text()).catch(() => {});
     cur = path; pending = null; learnChips(bar, cur);
+    lee.learnPage = cur; paintAgentAttachments(false);
     const find = bar.querySelector('.lee-learn-find input'); if (find) find.value = /^\/search\?/.test(cur) ? new URLSearchParams(cur.split('?')[1]).get('q') || '' : ''; back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
     if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
@@ -2451,7 +2471,7 @@ async function learnMount(host, st) {
   abh.addEventListener('htmx:afterSettle', e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
-  bar.querySelector('[data-learn-keys]').onclick = () => document.body.dispatchEvent(new KeyboardEvent('keydown', {code: 'KeyF', key: 'F', altKey: true, shiftKey: true, bubbles: true, cancelable: true}));
+  bar.querySelector('[data-learn-keys]').onclick = () => leeAct('help');
   bar.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
   change.onclick = () => window.leeLearnChange?.();
   const sides = [];
