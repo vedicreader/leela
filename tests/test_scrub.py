@@ -141,7 +141,7 @@ R4_RULES = [('list(iter(int, 1))', 'sentinel'), ('while True:\n    pass', 'while
             ('import numpy as np\nnp.ones((5000, 5000))', 'elements'), ('import numpy as np\nnp.arange(0, 9999, 0.0001)', 'elements'), ('[0] * 9999 * 9999', 'repeats'),
             ('n = 10**9\n"a" * n', 'repeats'), ('n = 10**8\nx = 7**n', 'huge'), ('1 << 10**9', 'huge'), ('import math\nmath.factorial(10**6)', 'more than'),
             ('import time\ndef f(): time.sleep(1)\nfor i in range(50): f()', 'inside a function'), ('len = 3', 'builtin'), ('from numpy import sum', 'builtin'),
-            ('import numpy as pd', 'usual name'), ('import numpy as os', 'usual name'), ('import numpy as np\nnp.zeros((3, 3)).shape', ''), ('"{0.__class__}".format(1)', 'private')]
+            ('import numpy as pd', 'usual name'), ('import numpy as os', 'usual name'), ('import numpy as np\nnp.zeros((3, 3)).shape', ''), ('"{0.__class__}".format(1)', 'plain text'), ('x = "{0.__class__}"', 'private')]
 
 @pytest.mark.parametrize('src,word', R4_RULES)
 def test_the_second_review_rules(src, word):
@@ -150,3 +150,10 @@ def test_the_second_review_rules(src, word):
 
 def test_a_def_s_function_names_are_its_own():
     assert not scrub_ok('def f(h): return h()\nf(lambda: 1)') and scrub_ok('h = lambda: 1\ndef f(): return 2\nf()')
+
+def test_a_constant_that_makes_a_size_is_forgotten_when_the_name_is_rebound():
+    "`n = 10; n *= 10**8` is 10**9, not 10: a size check on `n` must see the new number, and a name set again must not keep the old one."
+    assert 'more than' in scrub_why('import numpy as np\nn = 10\nn *= 10**8\nnp.ones(n)')
+    assert not scrub_why('import numpy as np\nn = 10**9\nn //= 10**6\nnp.ones(n)')
+    assert not scrub_why('import numpy as np\nn = 10**9\n[np.ones(n) for n in range(3)]')
+    assert not scrub_why('import numpy as np\nn = 10**9\ndef f(n): return np.ones(n)\nf(2)')

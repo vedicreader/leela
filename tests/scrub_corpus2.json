@@ -401,10 +401,8 @@
 {
 "name": "d_format_attr",
 "src": "\"{0.name}\".format(spy)",
-"want": "accept",
-"names": [
-"spy"
-],
+"want": "refuse",
+"names": [],
 "control": false
 },
 {
@@ -1326,5 +1324,194 @@
 "want": "refuse",
 "names": [],
 "control": true
+},
+{
+"name": "r5_format_split",
+"src": "'{0.' + '__class__}'.format(1)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_split_globals",
+"src": "f = lambda: 1\n'{0.' + '__globals__[__builtins__][__import__](os).environ}'.format(f)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_class",
+"src": "'{0.__class__}'.format(1)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_index",
+"src": "'{0[a]}'.format({'a': 1})",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_map_attr",
+"src": "'{a.real}'.format_map({'a': 1})",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_str_format_call",
+"src": "str.format('{0.real}', 1)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_nested_spec",
+"src": "'{0:{1}}'.format(1, 2)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_variable",
+"src": "s = '{0}'\ns.format(1)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_bound_method",
+"src": "f = '{0.real}'.format\nf(1)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_plain_ok",
+"src": "'{} {:.2f} {name!r} {0}'.format(1, 2.0, name='a')",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "r5_format_dots_in_text_ok",
+"src": "'v = {:.3f}.'.format(1.5)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "r5_pandas_plot_backend",
+"src": "import pandas as pd\npd.Series([1, 2]).plot(backend='this')",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_pandas_plot_engine",
+"src": "import pandas as pd\npd.Series([1, 2]).plot(engine='antigravity')",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_pandas_plot_parser",
+"src": "import pandas as pd\npd.Series([1, 2]).plot(parser='this')",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_frame_plot_backend",
+"src": "import pandas as pd\npd.DataFrame({'a': [1]}).plot(backend='this')",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_fontproperties",
+"src": "import matplotlib.pyplot as plt\nplt.title('a', fontproperties='/etc/hosts')",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_usetex",
+"src": "import matplotlib.pyplot as plt\nplt.text(0, 0, 'a', usetex=True)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_storage_options",
+"src": "import pandas as pd\npd.to_datetime('2020', storage_options={})",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_plot_plain_ok",
+"src": "import pandas as pd\npd.Series([1, 2]).plot(kind='line', title='a')",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "r5_augassign_size",
+"src": "import numpy as np\nn = 10\nn *= 10**8\nnp.ones(n)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_augassign_repeat",
+"src": "n = 5\nn *= 10**9\n[0] * n",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_augassign_pow",
+"src": "import numpy as np\nn = 10\nn **= 9\nnp.zeros(n)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_augassign_two_steps",
+"src": "import numpy as np\nn = 10\nn *= 1000\nn *= 1000\nnp.arange(n)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "r5_augassign_shrinks_ok",
+"src": "import numpy as np\nn = 10**9\nn //= 10**6\nnp.ones(n)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "r5_rebind_for_ok",
+"src": "import numpy as np\nn = 10**9\nfor n in range(3):\n    pass\nnp.ones(n)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "r5_walrus_rebind_ok",
+"src": "import numpy as np\nn = 10**9\n(n := 4)\nnp.ones(n)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "r5_del_rebind",
+"src": "import numpy as np\nn = 10**9\ndel n\nn = 2\nnp.ones(n)",
+"want": "accept",
+"names": [],
+"control": false
 }
 ]

@@ -1,5 +1,5 @@
 "Which code cells may re-run on every tick of a scrubbed number: an allowlist of effects, checked on the syntax tree."
-import ast, builtins, math, cmath, re, statistics, itertools, sys
+import ast, builtins, math, cmath, re, statistics, itertools, string, sys
 
 def _w(mod, names): return {f'{mod}.{n}' for n in names.split()}
 def _all(mod, m): return {f'{mod}.{n}' for n in dir(m) if not n.startswith('_')}
@@ -36,7 +36,7 @@ RNG_M = frozenset('random normal uniform integers choice standard_normal permuta
 #: Methods that change their object. Only an object this cell made may take them.
 MUT_M = frozenset('append extend insert pop remove clear update add discard setdefault popitem sort reverse fill resize appendleft popleft extendleft rotate'.split()) | RNG_M
 ATTRS = frozenset('shape dtype T real imag size ndim loc iloc at iat columns index values name str dt flat nbytes itemsize year month day hour minute second microsecond numerator denominator'.split())
-BAD_KW = frozenset('out inplace file filename fname path mode dir root buf path_or_buf fp stream'.split())
+BAD_KW = frozenset('out inplace file filename fname path mode dir root buf path_or_buf fp stream backend engine parser fontproperties usetex storage_options compression io'.split())
 SIZED = frozenset('range ones zeros empty full arange linspace logspace tile repeat eye identity rand randn randint random normal uniform choice integers standard_normal reshape sleep factorial pow comb perm bytes ljust rjust center zfill permutations combinations product'.split())
 ELEMS = 10**6
 CONV = {'np': 'numpy', 'pd': 'pandas', 'plt': 'matplotlib.pyplot', 'mpl': 'matplotlib'}
@@ -51,6 +51,13 @@ NODES = frozenset(getattr(ast, n) for n in ('Module Expr Assign AugAssign AnnAss
 LONG = 20000
 
 class No(Exception): pass
+
+def plain_format(n):
+    "Whether `n` is one text constant whose fields are plain names or numbers: no `.` or `[` that could walk to an object's attributes."
+    if not (isinstance(n, ast.Constant) and isinstance(n.value, str)): return False
+    try: parts = list(string.Formatter().parse(n.value))
+    except ValueError: return False
+    return all(f is None or (re.fullmatch(r'\w*', f) and '{' not in (sp or '') and conv in (None, 'r', 's', 'a')) for _, f, sp, conv in parts)
 
 def okpath(p): return p in ALLOW
 def modpath(p): return any(a.startswith(p + '.') for a in ALLOW)
@@ -163,6 +170,7 @@ class Check(ast.NodeVisitor):
             if not okpath(p): self.no(f'it uses the module {p} as a value')
             return
         if n.attr not in PURE_M | MUT_M | ATTRS: self.no(f'it uses .{n.attr}, which is not on the safe list')
+        if n.attr in ('format', 'format_map') and not plain_format(n.value): self.no(f'it uses .{n.attr} on something that is not one plain text with simple fields')
         if n.attr in MUT_M and self.tainted(n.value): self.no(f'it calls .{n.attr} on a value another cell made')
         self.visit(n.value)
     def visit_Call(self, n):
@@ -213,9 +221,9 @@ class Check(ast.NodeVisitor):
         else: self.mult *= 100
         if self.mult > WORK: self.no('its loops nest too deep to re-run live')
     def visit_Assign(self, n):
-        self.visit(n.value)
+        self.visit(n.value); v = fold(n.value, self.consts)
         for t in n.targets: self.target(t, self.tainted(n.value), isinstance(n.value, ast.Lambda))
-        if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and not self.scopes and not self.cond and (v := fold(n.value, self.consts)) is not None: self.consts[n.targets[0].id] = v
+        if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and not self.scopes and not self.cond and v is not None: self.consts[n.targets[0].id] = v
     def visit_AnnAssign(self, n):
         self.visit(n.annotation)
         if n.value: self.visit(n.value)
@@ -225,12 +233,16 @@ class Check(ast.NodeVisitor):
         t = n.target
         if isinstance(t, ast.Name):
             if self.look(t.id) != ('local', False): self.no(f'it changes `{t.id}`, which this cell did not make')
+            v = None if self.scopes or self.cond or t.id not in self.consts else fold(ast.BinOp(ast.Name(t.id, ast.Load()), n.op, n.value), self.consts)
+            if v is None: self.consts.pop(t.id, None)
+            else: self.consts[t.id] = v
         else: self.target(t)
         if isinstance(n.op, ast.Pow) and (v := fold(n.value, self.consts)) is not None and v > 1000: self.no('it raises to a huge power')
     def visit_Delete(self, n):
         for t in n.targets:
             if isinstance(t, ast.Name):
                 if self.look(t.id) != ('local', False): self.no(f'it deletes `{t.id}`, which this cell did not make')
+                self.consts.pop(t.id, None)
             else: self.target(t)
     def visit_NamedExpr(self, n): self.visit(n.value); self.target(n.target, self.tainted(n.value))
     def maybe(self, f, *a):
@@ -277,9 +289,9 @@ class Check(ast.NodeVisitor):
             if ((a.asname or a.name) in CONV and p != CONV[a.asname or a.name]) or ((a.asname or a.name) in sys.stdlib_module_names and p.split('.')[0] != (a.asname or a.name)): self.no(f'it imports {p} as {a.asname or a.name}, which is another module\'s usual name')
             self.bind(a.asname or a.name); self.imports[a.asname or a.name] = p; self.glob.pop(a.asname or a.name, None)
     def scope(self, names, body):
-        self.scopes.append(names); keep = self.mult
+        self.scopes.append(names); keep = self.mult; hid = {k: self.consts.pop(k) for k in list(names) if k in self.consts}
         try: [self.visit(x) for x in body]
-        finally: self.scopes.pop(); self.mult = keep
+        finally: self.scopes.pop(); self.mult = keep; self.consts.update(hid)
     def visit_FunctionDef(self, n):
         if n.decorator_list: self.no('it uses a decorator')
         a = n.args
@@ -298,7 +310,7 @@ class Check(ast.NodeVisitor):
         self.scope({x.arg: True for x in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg] if x}, [n.body])
     def comp(self, n, elts):
         keep, names = self.mult, {}
-        self.scopes.append(names)
+        self.scopes.append(names); hid = {m.id: self.consts.pop(m.id) for g in n.generators for m in ast.walk(g.target) if isinstance(m, ast.Name) and m.id in self.consts}
         try:
             for g in n.generators:
                 self.visit(g.iter); self.loop(g.iter)
@@ -307,7 +319,7 @@ class Check(ast.NodeVisitor):
                     if isinstance(m, ast.Name): names[m.id] = t
                 [self.visit(c) for c in g.ifs]
             [self.visit(e) for e in elts]
-        finally: self.scopes.pop(); self.mult = keep
+        finally: self.scopes.pop(); self.mult = keep; self.consts.update(hid)
     def visit_ListComp(self, n): self.comp(n, [n.elt])
     visit_SetComp = visit_GeneratorExp = visit_ListComp
     def visit_DictComp(self, n): self.comp(n, [n.key, n.value])
