@@ -2001,8 +2001,16 @@ async function leeOpenFile(path) {
 }
 window.leeOpenFile = leeOpenFile;
 
-const tabMounts = new Map();
-function registerTabMount(kind, mount) { tabMounts.set(kind, mount); }
+const tabMounts = new Map(), tabHandlers = new Map(); let tabHostOff = [];
+function registerTabHandlers(kind, on) { tabHandlers.set(kind, on); }
+function registerTabMount(kind, mount, on) { tabMounts.set(kind, mount); if (on) registerTabHandlers(kind, on); }
+// A kind's listeners on `#editor` are its own: the last kind's come off, and each runs only while its kind is on screen.
+function bindTabHandlers(kind, host) {
+  tabHostOff.splice(0).forEach(off => off());
+  for (const [type, fn] of Object.entries(tabHandlers.get(kind) || {})) {
+    const h = e => lee.kind === kind && fn(e); host.addEventListener(type, h); tabHostOff.push(() => host.removeEventListener(type, h));
+  }
+}
 
 function updateToolbarForKind(kind) {
   const notebook = kind === 'notebook', text = kind === 'text';
@@ -2120,6 +2128,7 @@ async function mountTab(expectedPath = '') {
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   lee.rise = st.rise || {};
+  bindTabHandlers(st.kind, host);
   window.leeFolderOffer?.(st);
   paintTitle();
   // A notebook's kernelspec, so cells highlight and lint as the language they are.
@@ -2139,7 +2148,6 @@ async function mountTab(expectedPath = '') {
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
-  host.onclick = null; host.onsubmit = null;
   if (tabMounts.has(st.kind)) await tabMounts.get(st.kind)(host, st);
   else if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'vaultwb') await mountVaultWorkbench(host, st);
