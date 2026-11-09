@@ -1,42 +1,55 @@
 "A number scrubbed in a code cell re-runs the cell only when the cell is safe to run over and over."
-import json, shutil, subprocess
+import ast, copy, json, os, shutil, subprocess
 from pathlib import Path
 import pytest
 from leela.blocks.nb.scrub import scrub_ok, scrub_why
 
 ROOT = Path(__file__).parents[1]
+CORPUS = json.loads((ROOT/'tests'/'scrub_corpus.json').read_text())
+IDS = [c['name'] for c in CORPUS]
 
-OK = ['x = 3\nprint(x*2)', 'import math\nprint(math.sin(0.5))', 'import numpy as np\na = np.linspace(0, 1, 5)\nprint(a.sum())',
-      'import matplotlib.pyplot as plt\nplt.plot([1, 2, 3])\nplt.show()', 'import pandas as pd\ndf = pd.DataFrame({"a": [1, 2]})\ndf', 'import random\nrandom.seed(1)\nrandom.random()',
-      'from collections import Counter\nCounter("aab")', 'import itertools, functools\nlist(itertools.islice(range(10), 3))',
-      'import time\ntime.sleep(0.5)', 'import time\ntime.sleep(1)', 'xs = []\nxs.append(1)\nprint(xs)', 'total = 0\ntotal += 5\ntotal',
-      'def f(n):\n    return n * 2\nf(4)', 'print(sum(i*i for i in range(10)))', 'with open("a.txt") as f:\n    pass', 'open("a.txt", "rb")',
-      'd = {}\nd["a"] = 1\nd', 'import statistics\nstatistics.mean([1, 2, 3])']
-BAD = [('open("a.txt", "w").write("x")', 'write'), ('open("a.txt", mode="a")', 'open'), ('open("a.txt", "r+")', 'open'), ('open("a", m)', 'open'),
-       ('import requests', 'requests'), ('import urllib.request', 'urllib'), ('from urllib import request', 'urllib'), ('import subprocess', 'subprocess'),
-       ('import os\nos.system("ls")', 'os'), ('import shutil', 'shutil'), ('import socket', 'socket'), ('input("x")', 'input'),
-       ('import time\ntime.sleep(2)', 'sleeps'), ('import time\ntime.sleep(n)', 'sleeps'), ('exec("x=1")', 'exec'), ('eval("1+1")', 'eval'),
-       ('__import__("os")', '__import__'), ('import sys', 'sys'), ('import pickle', 'pickle'), ('from . import x', 'relative'),
-       ('global g\ng = 1', 'global'), ('data.append(1)', 'data'), ('count += 1', 'count'), ('cfg["a"] = 1', 'cfg'),
-       ('import matplotlib.pyplot as plt\nplt.savefig("a.png")', 'savefig'), ('import pandas as pd\npd.DataFrame().to_csv("a.csv")', 'to_csv'),
-       ('import numpy as np\nnp.save("a", [1])', 'save'), ('from pathlib import Path\nPath("a").write_text("x")', 'pathlib'),
-       ('x.__class__.__subclasses__()', '__subclasses__'), ('%timeit 1', 'valid Python'), ('!ls', 'valid Python'), ('x = (', 'valid Python'),
-       ('import importlib', 'importlib'), ('breakpoint()', 'breakpoint'), ('setattr(o, "a", 1)', 'setattr'), ('globals()["a"] = 1', 'globals')]
+@pytest.mark.parametrize('case', CORPUS, ids=IDS)
+def test_the_corpus_verdict_holds(case):
+    "Every snippet the independent review judged unsafe is refused and every one judged safe is accepted; `judgement` marks a call the review left open."
+    why = scrub_why(case['src'])
+    assert bool(why) == (case['want'] == 'refuse'), (case['name'], case['want'], why)
+    assert '\n' not in why
 
-@pytest.mark.parametrize('src', OK)
-def test_a_pure_cell_may_scrub(src): assert scrub_ok(src), scrub_why(src)
+def test_the_corpus_is_big_and_names_its_judgement_calls():
+    assert len(CORPUS) >= 190 and sum(c['want'] == 'refuse' for c in CORPUS) > 100 and sum(c['want'] == 'accept' for c in CORPUS) > 25
+    assert 0 < sum(c['judgement'] for c in CORPUS) < 70
 
-@pytest.mark.parametrize('src,word', BAD)
-def test_an_unsafe_cell_is_refused_with_a_reason(src, word):
-    why = scrub_why(src)
-    assert why and word in why and not scrub_ok(src), why
+def test_what_is_accepted_runs_without_touching_a_file_or_a_name_another_cell_made(tmp_path, monkeypatch):
+    "Run every accepted snippet in an empty folder against a made-up notebook: no file appears or changes, and no outside value changes."
+    np = pytest.importorskip('numpy'); pd = pytest.importorskip('pandas'); plt = pytest.importorskip('matplotlib.pyplot')
+    import matplotlib; matplotlib.use('agg')
+    monkeypatch.chdir(tmp_path); (tmp_path/'victim.txt').write_text('precious')
+    outside = lambda: dict(data=[1, 2, 3], xs=[1, 2, 3], arr=np.ones(3), df=pd.DataFrame({'a': [1, 5]}), d={'a': 1}, rng=np.random.default_rng(1))
+    for c in CORPUS:
+        if c['want'] != 'accept' or c['name'] in ('busy time loop', 'recursion'): continue
+        ns = outside(); before = {k: copy.deepcopy(v) for k, v in ns.items()}
+        try: exec(compile(c['src'], c['name'], 'exec'), ns)
+        except Exception: pass
+        plt.close('all')
+        made = {n.id for n in ast.walk(ast.parse(c['src'])) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        for k, v in before.items():
+            if k in made: continue
+            same = (v.equals(ns[k]) if hasattr(v, 'equals') else (v == ns[k]).all() if hasattr(v, 'all') else (v.bit_generator.state == ns[k].bit_generator.state if hasattr(v, 'bit_generator') else v == ns[k]))
+            assert same, (c['name'], k)
+        assert sorted(os.listdir(tmp_path)) == ['victim.txt'] and (tmp_path/'victim.txt').read_text() == 'precious', c['name']
 
-def test_a_reason_is_one_line(): assert all('\n' not in scrub_why(s) for s, _ in BAD)
+@pytest.mark.parametrize('bad', [None, 5, b'x = 1', [], '(' * 6000 + ')' * 6000, 'x = ' + '-' * 8000 + '1', '\x00', 'x = 1\n' * 20000, 'f"{"', '1 +'])
+def test_the_check_never_raises(bad):
+    assert isinstance(scrub_why(bad), str)
 
-def test_a_name_made_in_the_cell_may_change_and_one_made_outside_may_not():
-    assert scrub_ok('a = [1]\na.append(2)') and not scrub_ok('a.append(2)')
-    assert scrub_ok('a = 0\na += 1') and not scrub_ok('a += 1')
-    assert scrub_ok('for i in range(3):\n    pass\ni += 1')
+def test_a_dragged_number_that_makes_a_safe_cell_unsafe_is_refused_on_the_new_text():
+    assert scrub_ok('import time\ntime.sleep(0.5)') and not scrub_ok('import time\ntime.sleep(5)')
+    assert scrub_ok('import numpy as np\nnp.ones((100, 100))') and not scrub_ok('import numpy as np\nnp.ones((50000, 50000))')
+    assert scrub_ok('x = [0] * 100') and not scrub_ok('x = [0] * 1000000000')
+    assert scrub_ok('for i in range(100): pass') and not scrub_ok('for i in range(10**9): pass')
+
+def test_a_reason_names_the_cell_s_problem_in_one_line():
+    assert 'safe list' in scrub_why('import os') and 'open' in scrub_why("open('a', 'w')") and 'another cell' in scrub_why('x = x + 1')
 
 JS = r'''
 const fs = require('fs'), vm = require('vm'); const ctx = {console, setTimeout, clearTimeout, setInterval, clearInterval}; ctx.window = ctx; vm.createContext(ctx);

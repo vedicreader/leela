@@ -1,0 +1,1479 @@
+[
+{
+"name": "alias open",
+"src": "o = open\no('f.txt','w').write('x')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "alias open2",
+"src": "o = open\nf = o('f.txt','w')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "open mode kw var",
+"src": "m='w'\nopen('f',m)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "open mode via kw",
+"src": "open('f', mode='w')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "open via pathlib-free io",
+"src": "import io\nio.open('f','w')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "builtins getattr",
+"src": "getattr(__builtins__,'open')('f','w')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "getattr str",
+"src": "f=getattr\nf(1,'real')",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "getattr open via builtins mod",
+"src": "import builtins",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "np.save alias",
+"src": "import numpy as np\ns=np.save\ns('a',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.save via getattr",
+"src": "import numpy as np\ngetattr(np,'save')('a',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.memmap write",
+"src": "import numpy as np\nm=np.memmap('f.dat',dtype='f4',mode='w+',shape=(10,))\nm[0]=1",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.load pickle",
+"src": "import numpy as np\nnp.load('a.npy',allow_pickle=True)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.fromfile/loadtxt read",
+"src": "import numpy as np\nnp.loadtxt('a.txt')",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "np.genfromtxt url",
+"src": "import numpy as np\nnp.genfromtxt('http://evil.example/x.csv')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd.read_csv url",
+"src": "import pandas as pd\npd.read_csv('http://example.com/a.csv')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd.read_pickle",
+"src": "import pandas as pd\npd.read_pickle('x.pkl')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd.read_html",
+"src": "import pandas as pd\npd.read_html('http://example.com')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd to_csv alias",
+"src": "import pandas as pd\ndf=pd.DataFrame()\nw=df.to_csv\nw('a.csv')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "pd to_csv getattr",
+"src": "import pandas as pd\ndf=pd.DataFrame()\ngetattr(df,'to_csv')('a.csv')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "df.to_xml",
+"src": "import pandas as pd\npd.DataFrame({'a':[1]}).to_xml('a.xml')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "df.to_orc/gbq/string",
+"src": "import pandas as pd\npd.DataFrame({'a':[1]}).to_orc('a.orc')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "df.to_stata (listed)",
+"src": "import pandas as pd\npd.DataFrame({'a':[1]}).to_stata('a.dta')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "fig.savefig",
+"src": "import matplotlib.pyplot as plt\nfig=plt.gcf()\nfig.savefig('a.png')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "fig.print_figure",
+"src": "import matplotlib.pyplot as plt\nplt.gcf().canvas.print_figure('a.png')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "fig.canvas.print_png",
+"src": "import matplotlib.pyplot as plt\nplt.gcf().canvas.print_png('a.png')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "plt.imsave",
+"src": "import matplotlib.pyplot as plt\nplt.imsave('a.png',[[1]])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "matplotlib.image.imsave",
+"src": "import matplotlib.image as mi\nmi.imsave('a.png',[[1]])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "plt.get_backend / switch",
+"src": "import matplotlib\nmatplotlib.use('pdf')",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "plt.figure leak",
+"src": "import matplotlib.pyplot as plt\nfor i in range(100): plt.figure()",
+"want": "accept",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "logging handler",
+"src": "import logging\nlogging.basicConfig(filename='x.log')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "collections os via module attr",
+"src": "import collections\ncollections.sys.modules",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "module attr os in numpy",
+"src": "import numpy as np\nnp.os.system('ls')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "numpy.os via from",
+"src": "from numpy import os\nos.system('ls')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "numpy ctypeslib",
+"src": "import numpy as np\nnp.ctypeslib",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "pandas.io.common.os",
+"src": "import pandas as pd\npd.io.common.os.system('ls')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "time.sleep alias",
+"src": "import time\ns=time.sleep\ns(30)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "from time import sleep",
+"src": "from time import sleep\nsleep(30)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "sleep expr const",
+"src": "import time\ntime.sleep(0.5+100)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "sleep negative",
+"src": "import time\ntime.sleep(-1)",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "sleep 1 in loop",
+"src": "import time\nfor i in range(100): time.sleep(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pathlib import",
+"src": "import pathlib",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "shelve",
+"src": "import shelve",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "dunder import",
+"src": "__import__('os')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "importlib",
+"src": "import importlib",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "ctypes",
+"src": "import ctypes",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "compile",
+"src": "compile('1','','eval')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "string-built getattr dunder",
+"src": "x=1\ngetattr(x,'__cl'+'ass__')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "type().__subclasses__ via type()",
+"src": "type(1).mro()",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-sandbox-escape"
+},
+{
+"name": "().__class__",
+"src": "().__class__",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "subclasses via mro()",
+"src": "(1).__class__",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "object.__subclasses__",
+"src": "object.__subclasses__()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "vars/dir",
+"src": "dir()",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "memory bomb list",
+"src": "x=[0]*10**10",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "memory bomb list2",
+"src": "x=list(range(10**10))",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "range materialised",
+"src": "len(list(range(10**12)))",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np bomb",
+"src": "import numpy as np\nnp.zeros(10**11)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "nested comp",
+"src": "[[j for j in range(10**4)] for i in range(10**4)]",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "infinite while",
+"src": "while True: pass",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "busy time loop",
+"src": "import time\nt=time.time()\nwhile time.time()-t<0.9: pass",
+"want": "accept",
+"judgement": true,
+"label": "BYPASS"
+},
+{
+"name": "recursion",
+"src": "def f(): return f()\nf()",
+"want": "accept",
+"judgement": true,
+"label": "BYPASS"
+},
+{
+"name": "thread via matplotlib",
+"src": "import matplotlib\nimport matplotlib.pyplot as plt\nplt.ion()",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "random.seed",
+"src": "import random\nrandom.seed(3)",
+"want": "accept",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "np.random.seed",
+"src": "import numpy as np\nnp.random.seed(3)",
+"want": "accept",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "np.seterr global",
+"src": "import numpy as np\nnp.seterr(all='ignore')\nnp.set_printoptions(precision=1)",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "pd.set_option global",
+"src": "import pandas as pd\npd.set_option('display.max_rows',3)",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "plt.rcParams global",
+"src": "import matplotlib.pyplot as plt\nplt.rcParams['font.size']=30",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "aug assign outside",
+"src": "x += 1",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "tuple unpack outside",
+"src": "a, b = 1, 2",
+"want": "accept",
+"judgement": false,
+"label": "ok-binds"
+},
+{
+"name": "for target outside rebind",
+"src": "for x in range(3): pass",
+"want": "accept",
+"judgement": true,
+"label": "info-rebind"
+},
+{
+"name": "rebind name by plain assign",
+"src": "df = 5",
+"want": "accept",
+"judgement": true,
+"label": "info-rebind"
+},
+{
+"name": "del outside",
+"src": "del df",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "del outside item",
+"src": "del data['k']",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "walrus",
+"src": "(x := 5)",
+"want": "accept",
+"judgement": true,
+"label": "info-rebind"
+},
+{
+"name": "walrus in comp",
+"src": "[y := i for i in range(3)]",
+"want": "accept",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "class attr outside",
+"src": "Config.debug = True",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "class attr outside via setitem",
+"src": "cfg['a']=1",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "outside method append",
+"src": "data.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "outside method via alias",
+"src": "a = data\na.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside alias attr assign",
+"src": "a = data\na[0]=1",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside alias aug",
+"src": "a = data\na += [1]",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside np inplace",
+"src": "a = arr\na[0]=1",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside np in-place add via np.add out",
+"src": "import numpy as np\nnp.add(arr,1,out=arr)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside .sort via call chain",
+"src": "get().append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside mutate by func arg",
+"src": "def f(l): l.append(1)\nf(data)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside mutate by np.copyto",
+"src": "import numpy as np\nnp.copyto(arr, 0)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside mutate via np.random.shuffle",
+"src": "import numpy as np\nnp.random.shuffle(arr)",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "outside mutate random.shuffle",
+"src": "import random\nrandom.shuffle(data)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside df.drop inplace",
+"src": "df.drop(columns=['a'],inplace=True)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside df.loc assign",
+"src": "df.loc[0,'a']=1",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "outside df.columns assign",
+"src": "df.columns=['x']",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "outside df.iloc aug",
+"src": "df.iloc[0] += 1",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "outside .fill_diagonal",
+"src": "import numpy as np\nnp.fill_diagonal(arr,0)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "outside dict.update via |=",
+"src": "d = other\nd |= {'a':1}",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "global kw in def",
+"src": "def f():\n    global g\n    g=1\nf()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "nonlocal in nested",
+"src": "def f():\n    x=1\n    def g():\n        nonlocal x\n        x=2\n    g()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "decorator call",
+"src": "import functools\n@functools.lru_cache\ndef f(): pass",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "lambda later write",
+"src": "w=lambda: open('f','w')\nw()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse-by-arg?"
+},
+{
+"name": "open mode positional computed",
+"src": "open('f','w'+'')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "open kw buffering only",
+"src": "open('f', 'r', 1)",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "open **kw",
+"src": "k={'mode':'w'}\nopen('f',**k)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "open *args",
+"src": "a=('f','w')\nopen(*a)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "open file only (creates nothing) with opener",
+"src": "open('f', opener=None)",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "open r reads secrets",
+"src": "open('/etc/passwd').read()",
+"want": "refuse",
+"judgement": true,
+"label": "info-read"
+},
+{
+"name": "os.write via numpy re-export",
+"src": "from numpy import sys",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "from matplotlib import _api (os)",
+"src": "from matplotlib import os",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pandas.compat/ io open",
+"src": "import pandas as pd\npd.io.common.open('x','w')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd.io.json.to_json",
+"src": "import pandas as pd\npd.io.formats.csvs",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "tempfile via numpy",
+"src": "import numpy as np\nnp.lib.npyio.os",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "datetime ok",
+"src": "import datetime\ndatetime.datetime.now()",
+"want": "accept",
+"judgement": false,
+"label": "ok"
+},
+{
+"name": "functools reduce eval",
+"src": "import functools\nfunctools.reduce(lambda a,b:a+b, [1,2])",
+"want": "accept",
+"judgement": false,
+"label": "ok"
+},
+{
+"name": "operator.methodcaller write",
+"src": "import operator\noperator.methodcaller('write','x')(open('f','w'))",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "operator.attrgetter",
+"src": "import operator\noperator.attrgetter('__class__')(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "operator.methodcaller to_csv",
+"src": "import operator, pandas as pd\noperator.methodcaller('to_csv','a.csv')(pd.DataFrame())",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "itertools bomb",
+"src": "import itertools\nlist(itertools.count())",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "collections.abc subclass hook",
+"src": "import collections\nclass A(collections.UserList): pass",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "class with __del__ side effects",
+"src": "class A:\n    def __del__(self): open('f','w').write('x')\nA()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "matplotlib.cbook / sys access",
+"src": "import matplotlib\nmatplotlib.sys.exit()",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "matplotlib subprocess",
+"src": "import matplotlib.animation as an",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "matplotlib.font_manager rebuild",
+"src": "import matplotlib.font_manager as fm\nfm._load_fontmanager(try_read_cache=False)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd.read_csv local huge",
+"src": "import pandas as pd\npd.read_csv('/big.csv')",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "np.vectorize",
+"src": "import numpy as np\nnp.vectorize(lambda x:x)([1,2])",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "print flush to file",
+"src": "print('x', file=open('f','w'))",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "print file via var",
+"src": "f=open('f','w')\nprint('x',file=f)",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "sys.stdout via print file= kw",
+"src": "import numpy as np\nnp.savetxt",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "np.ndarray.dump",
+"src": "import numpy as np\nnp.zeros(3).dump('a.pkl')",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "np.ndarray.tofile via getattr",
+"src": "import numpy as np\ngetattr(np.zeros(3),'tofile')('a')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.lib.format.open_memmap",
+"src": "import numpy as np\nnp.lib.format.open_memmap('a.npy',mode='w+',dtype='f',shape=(3,))",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.save via from-import",
+"src": "from numpy import save\nsave('a',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "from numpy import savetxt as s",
+"src": "from numpy import savetxt as s\ns('a',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.testing/ f2py",
+"src": "import numpy as np\nnp.f2py",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "pd.eval",
+"src": "import pandas as pd\npd.eval('1+1')",
+"want": "refuse",
+"judgement": true,
+"label": "info-eval"
+},
+{
+"name": "df.eval/query",
+"src": "import pandas as pd\npd.DataFrame({'a':[1]}).query('a>0')",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "pd.read_sql",
+"src": "import pandas as pd\npd.read_sql('select 1','sqlite:///x.db')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "pd.read_clipboard",
+"src": "import pandas as pd\npd.read_clipboard()",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "df.to_clipboard via pd.io",
+"src": "import pandas as pd\npd.DataFrame().to_clipboard()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "time.perf_counter busy",
+"src": "import time\nwhile True: time.sleep(0.5)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "async def await",
+"src": "async def f(): pass",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "try/except suppress",
+"src": "try:\n    open('f','w')\nexcept: pass",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "with-open write as",
+"src": "with open('f','w') as g: pass",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "star import numpy",
+"src": "from numpy import *",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "star import then save",
+"src": "from numpy import *\nsave('a',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "star import pandas",
+"src": "from pandas import *\nread_csv('http://x/y.csv')",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "import numpy.f2py nested",
+"src": "import numpy.distutils",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "import numpy as os-name collision",
+"src": "import numpy as os\nos.save('a',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "__builtins__ name",
+"src": "__builtins__",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "getattr on import-bound module with attr str",
+"src": "import numpy as np\ngetattr(np,'sa'+'ve')('x',[1])",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "python 'match' stmt",
+"src": "match 1:\n    case 1: pass",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "try star",
+"src": "try:\n    pass\nexcept* ValueError:\n    pass",
+"want": "refuse",
+"judgement": true,
+"label": "ok"
+},
+{
+"name": "lambda mutating outside",
+"src": "f=lambda: data.append(1)\nf()",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "decorator mutating outside",
+"src": "@registry.append\ndef f(): pass",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "class kw outside meta",
+"src": "class A(metaclass=Meta): pass",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "comprehension mutate outside",
+"src": "[data.append(i) for i in range(3)]",
+"want": "refuse",
+"judgement": false,
+"label": "refuse"
+},
+{
+"name": "AugAssign comp var shadow",
+"src": "x = [0]\n[x.append(i) for i in range(2)]",
+"want": "accept",
+"judgement": false,
+"label": "ok"
+},
+{
+"name": "shadow via comprehension var then use outside",
+"src": "[data for data in range(3)]\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-bound-leak"
+},
+{
+"name": "shadow via arg then outer",
+"src": "def f(data): pass\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-bound-leak"
+},
+{
+"name": "shadow via except name",
+"src": "try: pass\nexcept Exception as data: pass\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-bound-leak"
+},
+{
+"name": "shadow via for in func",
+"src": "def f():\n    for data in []: pass\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-bound-leak"
+},
+{
+"name": "shadow by def local assign",
+"src": "def f():\n    data = []\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-bound-leak"
+},
+{
+"name": "shadow via lambda arg",
+"src": "f = lambda data: 1\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-bound-leak"
+},
+{
+"name": "shadow via import as",
+"src": "import numpy as data\ndata.append(1)",
+"want": "refuse",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "order: mutate before bind",
+"src": "data.append(1)\ndata = []",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-order"
+},
+{
+"name": "order: setitem then bind",
+"src": "d['a']=1\nd = {}",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-order"
+},
+{
+"name": "with as target outside",
+"src": "with ctx() as q: q.append(1)",
+"want": "refuse",
+"judgement": true,
+"label": "ok?"
+},
+{
+"name": "mutation via bound after outer assign",
+"src": "x = outside_list\nx.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "call arbitrary outside fn",
+"src": "step()",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-outside-call"
+},
+{
+"name": "call outside obj method",
+"src": "model.fit(X)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS-outside-call"
+},
+{
+"name": "call outside obj method .train",
+"src": "model.train()",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "kernel stateful: next(it)",
+"src": "next(it)",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "np.random draws",
+"src": "import numpy as np\nnp.random.rand(3)",
+"want": "accept",
+"judgement": true,
+"label": "info"
+},
+{
+"name": "rng outside advance",
+"src": "rng.random()",
+"want": "refuse",
+"judgement": false,
+"label": "BYPASS"
+},
+{
+"name": "x = x + 1 (cumulative)",
+"src": "x = x + 1",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "df = df.dropna()",
+"src": "df = df.dropna()",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "data = data[1:]",
+"src": "data = data[1:]",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "x *= 2 on own var",
+"src": "y=1\ny *= 2",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "sleep(0.5)",
+"src": "import time\ntime.sleep(0.5)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "ones 100x100",
+"src": "import numpy as np\nnp.ones((100,100)).sum()",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "ones 50000x50000",
+"src": "import numpy as np\nnp.ones((50000,50000)).sum()",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "sleep(5)",
+"src": "import time\ntime.sleep(5)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "list repeat 1e9",
+"src": "x = [0]*10**9",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "list repeat 100",
+"src": "x = [0]*100",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "deep parens",
+"src": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((())))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "long chain",
+"src": "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "null byte",
+"src": "x=1\u0000",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "lambda default mutating outside",
+"src": "def f(a=data.append(1)): pass",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "class body outside append",
+"src": "class A:\n    data.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "if-bound name then mutate",
+"src": "if 0:\n    data = []\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "for-bound name then mutate",
+"src": "for data in []: pass\ndata.append(1)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "for-bound own list",
+"src": "acc = []\nfor i in range(3): acc.append(i)\nprint(acc)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "sleep in range loop",
+"src": "import time\nfor i in range(50): time.sleep(0.9)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "nested range 3 deep",
+"src": "s=0\nfor i in range(100):\n  for j in range(100):\n    for k in range(100): s+=1",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "nested range 4 deep",
+"src": "s=0\nfor i in range(100):\n  for j in range(100):\n    for k in range(100):\n      for l in range(100): s+=1",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "huge power",
+"src": "x = 2**100000",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "rng local",
+"src": "import numpy as np\ng = np.random.default_rng(1)\ng.normal(size=5)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "rng outside",
+"src": "rng.normal(size=5)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "plot with outside xs",
+"src": "import matplotlib.pyplot as plt\nplt.plot(xs, [k*2 for k in xs])\nplt.show()",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "fig ax local",
+"src": "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1,2,3])\nax.set_title(\"t\")",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "pure read of outside",
+"src": "total = sum(data)\nprint(total / len(data))",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "outside as arg to local def",
+"src": "def f(l): return len(l)\nf(data)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "outside mutate in local def",
+"src": "def f(l): l.append(1)\nf(data)",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "comprehension over outside",
+"src": "ys = [v*2 for v in data]\nprint(ys)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "numpy math",
+"src": "import numpy as np\nx = np.linspace(0, 1, 50)\nnp.sin(2*np.pi*3*x).max()",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "math",
+"src": "import math\nmath.sqrt(2)*3",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "f-string",
+"src": "x = 3\nprint(f\"{x*2:.2f}\")",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "lambda local",
+"src": "f = lambda t: t*2\nf(3)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "from math import",
+"src": "from math import sin, pi\nsin(pi/6)",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "from numpy import save",
+"src": "from numpy import save\nsave(\"n\",[1])",
+"want": "refuse",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "str format",
+"src": "print(\"{} {}\".format(1, 2))",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "dict of own",
+"src": "d = {\"a\": 1}\nd[\"b\"] = 2\nd.update(c=3)\nd",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "try/except own",
+"src": "try:\n    1/0\nexcept ZeroDivisionError as e:\n    print(\"z\")",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "while with break",
+"src": "i = 0\nwhile True:\n    i += 1\n    if i > 3: break",
+"want": "accept",
+"judgement": false,
+"label": "added"
+},
+{
+"name": "datetime now",
+"src": "import datetime\ndatetime.datetime.now()",
+"want": "accept",
+"judgement": false,
+"label": "added"
+}
+]
