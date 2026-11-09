@@ -2,6 +2,16 @@
 
 <!-- do not remove -->
 
+## 1.0.3
+
+Keys: a chord you set is never refused for a chord Leela ships.
+
+- A chord you set in `keys.json` wins over a built-in default. The default loses only that chord and keeps its others. The keys panel and the file notes say which chord moved. Two chords of yours that collide are still refused, and a file of more than 50 entries still counts as machine-written, so a default outranks it.
+- On a Mac, `hyper+z` and `mod+alt+shift+z` are different keys, so they no longer collide.
+- A default that lost a chord to yours is no longer written into `keys.json`, so it follows the next default.
+- Keys v2 took Hyper off 16 defaults. If you used them, add the chords you want to `keys.json` again.
+- Needs ramabana 0.2.112.
+
 ## 1.0.2
 
 The Mac app is the full app again, signed and notarized, as in 0.1.27. The small-launcher app of 1.0.0 and 1.0.1 is not released.
