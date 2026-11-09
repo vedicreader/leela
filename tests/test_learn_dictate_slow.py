@@ -17,10 +17,12 @@ MIC = """(mode) => {
 
 
 @pytest.fixture
-def engine(monkeypatch):
+def engine(monkeypatch, tmp_path):
     import abhyasa.models as m
     from leela.blocks.learn import speech
     monkeypatch.setattr(m, 'cached', lambda model: True)
+    ok = tmp_path/'complete'; ok.write_text('')
+    monkeypatch.setattr(speech, '_marker', lambda model: ok)
     monkeypatch.setattr(m, 'transcribe', lambda audio, engine=None, hint='', model=None: 'spoken words')
     monkeypatch.setattr(speech, 'TOLD', set())
 
