@@ -6,6 +6,7 @@ from pathlib import Path
 
 ALWAYS = dict(css=[], js=[], rerun=[])
 SURFACES = [
+    (r'^/[wc]/', dict(css=[], js=['detour.js'], rerun=[])),
     (r'^/(?:library/)?graph(?:/|$)', dict(css=[], js=['d3.min.js', 'graph.js'], rerun=['graph.js'])),
 ]
 

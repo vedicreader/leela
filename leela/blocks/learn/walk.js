@@ -1,10 +1,14 @@
 const LEARN = '/learn/abh';
 const LEARN_OWN = {'/settings': () => leeAct('settings'), '/keys': () => leeAct('help'), '/search': () => leeVaultWorkbench('find'), '/library': () => leeVaultWorkbench('library'), '/sources': () => leeVaultWorkbench('library'), '/library/sources': () => leeVaultWorkbench('library')};
 const LEARN_KEYS = window.abhyasaKeys ||= {KeyS: ['#send', 'main .go'], KeyW: '#hint', KeyE: '#show-demo', KeyC: ['#continue', '[data-part=continue-card] [data-act=continue]'], KeyX: '#idk, #teach', KeyA: '#another', KeyV: '.walk-demo #keep'};
+window.abhyasaGo ||= u => window.leeLearnNav?.(u);
+window.abhyasaPane ||= {open: u => window.leeLearnNav?.(u), close: () => window.leeLearnBack?.(), isOpen: () => false};
 window.abhyasaMotion ||= () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 const LEARN_HX = '[hx-get],[hx-post],[hx-put],[hx-patch],[hx-delete]';
 const learnSeen = el => !el.disabled && (el.checkVisibility ? el.checkVisibility() : el.offsetParent !== null);
 
+const leeAbhSettled = abh => abh.getAttribute('aria-busy') !== 'true' ? Promise.resolve() : new Promise(ok => abh.addEventListener('lee:settled', ok, {once: true}));
+window.leeAbhSettled = leeAbhSettled;
 const learnLoaded = window.learnLoaded ||= new Set();
 async function learnSurface(path) {
   const s = await fetch('/learn/abh-surface?path=' + encodeURIComponent(path)).then(r => r.json()).catch(() => null);
@@ -27,10 +31,12 @@ function leeLearnFit(on) {
 }
 window.leeLearnFit = leeLearnFit;
 
-function leeAbhKey(e) {
-  const abh = e.target.closest?.('.abh');
+function leeAbhKey(e, home) {
+  const abh = home || e.target.closest?.('.abh') || (e.code === 'KeyB' && getSelection()?.anchorNode?.parentElement?.closest('.abh'));
   if (!abh || e.isComposing) return false;
+  if (!home && abh.getAttribute('aria-busy') === 'true' && e.altKey) { e.preventDefault(); e.stopPropagation(); leeAbhSettled(abh).then(() => leeAbhKey(e, abh)); return true; }
   const box = e.target.matches('textarea, input, select, [contenteditable]');
+  if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyB' && window.abhyasaDetourKey) { window.abhyasaDetourKey(e); return e.defaultPrevented; }
   let el = null;
   if (e.altKey && !e.metaKey && !e.ctrlKey) {
     const mark = '⌥' + e.code.replace(/^(?:Key|Digit)/, '');
@@ -74,6 +80,10 @@ async function learnMount(host, st) {
     const d = e.detail;
     if (d.target === abh && typeof d.serverResponse === 'string') d.serverResponse = d.serverResponse.replace(/<script\b[^>]*\bsrc="[^"]*?([\w.-]+)(?:\?[^"]*)?"[^>]*>\s*<\/script>/g, (m, n) => known.has(n) ? '' : m);
   });
+  const busy = new Set(), idle = x => { busy.delete(x); if (!busy.size) { abh.removeAttribute('aria-busy'); abh.dispatchEvent(new CustomEvent('lee:settled')); } };
+  abh.addEventListener('htmx:beforeRequest', e => { busy.add(e.detail.xhr); abh.setAttribute('aria-busy', 'true'); });
+  for (const ev of ['htmx:responseError', 'htmx:sendError', 'htmx:swapError', 'htmx:targetError', 'htmx:sendAbort', 'htmx:timeout']) abh.addEventListener(ev, e => idle(e.detail.xhr));
+  abh.addEventListener('htmx:afterRequest', e => { const x = e.detail.xhr; if (!e.detail.successful || x.status === 204 || x.status === 205) idle(x); });
   const own = u => LEARN_OWN[u.pathname];
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
@@ -110,10 +120,12 @@ async function learnMount(host, st) {
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
     cur = path; pending = null; back.disabled = !trail.length;
     const main = abh.querySelector('main');
-    if (main && !ran.has(main)) { ran.add(main); learnSurface(path).then(() => renderMath(abh)); }
+    if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
   });
+  abh.addEventListener('htmx:afterSettle', e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
+  window.leeLearnNav = nav; window.leeLearnBack = () => back.onclick();
   host.querySelector('[data-learn-home]').onclick = () => nav('/');
   new ResizeObserver(() => abh.classList.toggle('wide', abh.clientWidth >= 940)).observe(abh);
   htmx.process(abh);
