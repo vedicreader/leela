@@ -26,12 +26,14 @@ class FakeJobs:
 
 
 @pytest.fixture
-def eng(monkeypatch):
+def eng(monkeypatch, tmp_path):
     "`abhyasa.models` with a fake engine and no cache, and the told-once memory empty."
     import abhyasa.models as m
     calls = []
     monkeypatch.setattr(m, 'transcribe', lambda audio, engine=None, hint='', model=None: calls.append((engine, model, hint)) or 'hello')
     monkeypatch.setattr(m, 'cached', lambda model: True)
+    ok = tmp_path/'complete'; ok.write_text('')
+    monkeypatch.setattr(speech, '_marker', lambda model: ok)
     monkeypatch.setattr(m, 'openai_key', lambda: (_ for _ in ()).throw(AssertionError('a key file was read')))
     monkeypatch.setattr(speech, 'TOLD', set())
     monkeypatch.delenv(KEY, raising=False)
@@ -80,6 +82,39 @@ def test_a_model_not_on_the_machine_starts_one_visible_job_and_says_so(eng, monk
     for _ in range(2):
         with pytest.raises(RuntimeError, match='not on this Mac yet.*job card'): t(b'wav')
     assert [(j.kind, j.target, j.params) for j in jobs.rows] == [('speech_model', eng.m.DFLT_STT, {'_cancel': True})] and not eng.calls
+
+
+def test_a_half_finished_download_is_not_ready_and_restarts_its_job(eng, monkeypatch, tmp_path):
+    import huggingface_hub, huggingface_hub.constants as hc
+    monkeypatch.setattr(hc, 'HF_HUB_CACHE', str(tmp_path/'hf'))
+    monkeypatch.setattr(speech, '_marker', lambda model: tmp_path/'hf'/f"models--{model.replace('/', '--')}"/'.complete')
+    model = eng.m.DFLT_STT
+    (tmp_path/'hf'/f"models--{model.replace('/', '--')}").mkdir(parents=True)
+    jobs, t = FakeJobs(), speech.make_transcribe(FakeJobs())
+    def dies(model, tqdm_class=None): raise OSError('connection lost')
+    monkeypatch.setattr(huggingface_hub, 'snapshot_download', dies)
+    monkeypatch.setattr(eng.m, 'model_size', lambda model: 0)
+    assert not speech.complete(model)
+    with pytest.raises(OSError): speech.download(model, lambda **kw: None, lambda: False)
+    assert not speech.complete(model)
+    why = speech.blocker(jobs, {'stt.engine': 'mlx', 'stt.model': ''}); assert 'not on this Mac yet' in why
+    jobs.rows[0].active = False
+    speech.blocker(jobs, {'stt.engine': 'mlx', 'stt.model': ''})
+    assert [j.kind for j in jobs.rows] == ['speech_model', 'speech_model']
+    monkeypatch.setattr(huggingface_hub, 'snapshot_download', lambda model, tqdm_class=None: None)
+    assert speech.download(model, lambda **kw: None, lambda: False) == {'model': model} and speech.complete(model)
+    assert speech.blocker(jobs, {'stt.engine': 'mlx', 'stt.model': ''}) == ''
+
+
+def test_the_download_card_goes_to_the_workspace_of_the_call_not_the_first_one(eng, monkeypatch):
+    monkeypatch.setattr(eng.m, 'cached', lambda model: False)
+    a, b = (NS(jobs=FakeJobs(), project_root=None) for _ in range(2))
+    t = speech.make_transcribe(a.jobs)
+    for ws in (a, b, b):
+        with host.using(ws), pytest.raises(RuntimeError, match='job card'): t(b'wav')
+    assert [len(a.jobs.rows), len(b.jobs.rows)] == [1, 1]
+    with pytest.raises(RuntimeError, match='job card'): t(b'wav')
+    assert len(a.jobs.rows) == 1
 
 
 def test_openai_needs_the_key_from_environment_and_says_where_audio_goes_once(eng, monkeypatch):

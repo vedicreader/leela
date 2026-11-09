@@ -4,7 +4,7 @@ from fastcore.basics import first
 from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
 from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
-from ..memory.memory import _open_lock
+from ..memory.memory import _open_lock, learning_store
 from ..settings.settings import register_section
 from .speech import connect as connect_speech, speech_rows
 from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
@@ -31,7 +31,7 @@ def learn_rows():
 def due_cards(memory):
     from abhyasa.learner import Learning
     from abhyasa.learner import recall, understanding
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path):
         lr, now = Learning(vault), time.time()
         due = [c for c in lr.concepts() if c.seen and c.due and c.due <= now]
@@ -48,13 +48,13 @@ PANE_ONLY = 'The side pane shows only Learn pages.'
 def read_step(memory, q):
     from abhyasa.learner import Learning
     from .learn import find_step
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path): return find_step(Learning(vault), q)
 
 def read_doc(memory, q):
     from abhyasa.learner import Learning
     from .learn import doc_notebook
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path): return doc_notebook(Learning(vault), q)
 
 def go_now(req, q) -> bool:

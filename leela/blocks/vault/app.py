@@ -11,7 +11,7 @@ from starlette.responses import HTMLResponse, Response
 
 from ... import errstr
 from ...core.web import fail, off_loop, sse
-from ..memory.memory import VERSE_SCRIPT, PrivacyBlocked, VaultRefused, counts_list, page_list, source_kind
+from ..memory.memory import VERSE_SCRIPT, PrivacyBlocked, VaultRefused, counts_list, learning_store, page_list, shelf_store, source_kind
 from ..memory.vaults import LEARN, WORKSPACE, learn_path
 from ..tabs.ui import tab_bar
 from . import ui
@@ -91,11 +91,55 @@ def _backup(src, dst):
     except BaseException: Path(dst).unlink(missing_ok=True); raise
     finally: a.close(); b.close()
 
-def _copy_learning(src, con):
-    "Copy the learning shelf of the vault file `src` into the open vault connection `con` in one transaction, so a failure leaves it as it was."
+CITE = re.compile(r'/v/([\w-]+)/(\w+)')
+
+def _cited(src):
+    "`{shelf: [doc_id]}` of the documents of other shelves that the learning shelf of the vault file `src` cites and `src` holds, read-only."
+    found = {}
+    def walk(o):
+        if isinstance(o, dict):
+            sh, doc, s = o.get('shelf'), o.get('doc_id'), str(o.get('src') or '')
+            if not (sh and doc) and s.startswith('vault:'): sh, doc = s[6:], str(o.get('ref') or '').split('#')[0]
+            if sh and doc: found.setdefault(str(sh), set()).add(str(doc))
+            for v in o.values(): walk(v)
+        elif isinstance(o, list):
+            for v in o: walk(v)
+        elif isinstance(o, str):
+            for sh, doc in CITE.findall(o): found.setdefault(sh, set()).add(doc)
+    try:
+        con = sqlite3.connect(f'file:{src}?mode=ro', uri=True)
+        try:
+            for (m,) in con.execute('select meta from learning_docs'):
+                try: walk(json.loads(m or '{}'))
+                except ValueError: pass
+            out = {}
+            for sh, ids in found.items():
+                if sh == 'learning' or not re.fullmatch(r'[\w-]+', sh): continue
+                try: have = {r[0] for r in con.execute(f"select id from [{'' if sh == 'store' else sh + '_'}docs]")} & ids
+                except sqlite3.Error: continue
+                if have: out[sh] = sorted(have)
+            return out
+        finally: con.close()
+    except Exception: return {}
+
+def _copy_docs(con, old, new, sh, ids):
+    "Copy the documents `ids` of the shelf `sh`, with their chunks, nodes, sources and marks, from `old.` into `main.`."
+    p, qs = '' if sh == 'store' else f'{sh}_', ','.join('?' * len(ids))
+    for tab, col, extra in ((sh, 'doc_id', ''), (f'{p}docs', 'id', ''), (f'{p}nodes', 'doc_id', ''), (f'{p}sources', 'doc_id', ''),
+                            ('doc_marks', 'doc_id', ' and store=?'), ('pii_findings', 'doc_id', ' and store=?')):
+        if tab not in old: continue
+        if tab not in new: raise ValueError(f'the Learn vault has no shelf {sh}')
+        have = {r['name'] for r in con.q(f'pragma main.table_info([{tab}])')}
+        cols = ','.join(f'[{r["name"]}]' for r in con.q(f'pragma old.table_info([{tab}])') if r['name'] in have)
+        con.execute(f'insert or replace into main.[{tab}] ({cols}) select {cols} from old.[{tab}] where {col} in ({qs}){extra}', [*ids, *([sh] if extra else [])])
+    con.execute(f"insert into main.[{sh}_fts]([{sh}_fts]) values('rebuild')")
+
+def _copy_learning(src, con, cited=None):
+    "Copy the learning shelf of the vault file `src`, and the documents of `cited` (`_cited`), into the open vault connection `con` in one transaction, so a failure leaves it as it was."
     con.execute('attach database ? as old', (str(src),))
     try:
         names = {r['name'] for r in con.q("select name from old.sqlite_master where type='table'")}
+        new = {r['name'] for r in con.q("select name from main.sqlite_master where type='table'")}
         con.execute('begin immediate')
         try:
             for name in ('learning', 'learning_docs', 'learning_nodes', 'learning_sources'):
@@ -104,6 +148,7 @@ def _copy_learning(src, con):
                 con.execute(f'delete from main.[{name}]')
                 con.execute(f'insert into main.[{name}] ({cols}) select {cols} from old.[{name}]')
             con.execute("insert into main.[learning_fts]([learning_fts]) values('rebuild')")
+            for sh, ids in (cited or {}).items(): _copy_docs(con, names, new, sh, ids)
             con.execute('commit')
         except BaseException:
             con.execute('rollback'); raise
@@ -122,23 +167,23 @@ def _frag(x): return HTMLResponse(to_xml(x))
 
 def _is_workspace_file(vaults, src): return Path(vaults.get(WORKSPACE).path).resolve() == Path(src).resolve()
 
-def _src_encoder(src):
-    "The encoder id the learning shelf of the vault file `src` was embedded with, or ''."
+def _src_encoder(src, shelf='learning'):
+    "The encoder id the shelf `shelf` of the vault file `src` was embedded with, or ''."
     try:
         con = sqlite3.connect(f'file:{src}?mode=ro', uri=True)
-        try: return (con.execute("select encoder from store_meta where name='learning'").fetchone() or [''])[0] or ''
+        try: return (con.execute("select encoder from store_meta where name=?", (shelf,)).fetchone() or [''])[0] or ''
         finally: con.close()
     except Exception: return ''
 
 def _offer(vaults, again=False):
-    "`(source, walks, concepts, same_file)` when the Learn vault is not set up and a standalone vault holds learning, else None."
+    "`(source, walks, concepts, same_file, cited)` when the Learn vault is not set up and a standalone vault holds learning, else None."
     src, ref = _standalone_vault(), vaults.get(LEARN)
     if src is None: return
     if ref is not None:
         if ref.imported_from or (ref.skipped and not again) or sum(_shelf_counts(ref.path)): return
         if ref.exists and src.resolve() == Path(ref.path).resolve(): return
     w, c = _shelf_counts(src)
-    return (src, w, c, _is_workspace_file(vaults, src)) if w + c else None
+    return (src, w, c, _is_workspace_file(vaults, src), sum(map(len, _cited(src).values()))) if w + c else None
 
 def _refusal(e):
     "Any failure as the shared shape: a `VaultRefused` keeps its kind and status."
@@ -147,8 +192,8 @@ def _refusal(e):
     if isinstance(e, (KeyError, FileNotFoundError)): return fail(e, 404, kind='not_found')
     return fail(e, kind=getattr(e, 'kind', None) or 'failed')
 
-def _do_learn_import(ctx, src, ref, choice):
-    "Attach, copy or skip; the one result dict every route that reaches this state returns."
+def _do_learn_import(ctx, src, ref, choice, cited=True):
+    "Attach, copy or skip (with the documents the walks cite, unless `cited` is off); the one result dict every route that reaches this state returns."
     if choice not in ('attach', 'copy', 'skip'): raise VaultRefused('choice must be attach, copy or skip', 'bad_choice')
     if ref is not None and ref.imported_from: raise VaultRefused('Learning data was already imported.', 'already_imported', 409)
     if choice == 'skip':
@@ -165,17 +210,21 @@ def _do_learn_import(ctx, src, ref, choice):
         backup = _backup_path(src); _backup(src, backup)
     except Exception as e: raise VaultRefused(f'The backup failed, so nothing was copied and your learning data is untouched ({errstr(e)}).', 'backup_failed', 500) from e
     ref = ctx.vaults.learn()
-    try: _copy_learning(src, ctx.vaults.memory(ref.name)._store('learning').db)
+    docs = _cited(src) if cited else {}
+    try:
+        m = ctx.vaults.memory(ref.name)
+        for sh in docs: shelf_store(m, sh)
+        _copy_learning(src, learning_store(m).db, docs)
     except Exception as e: raise VaultRefused(f'The copy failed and was undone. Your learning data is untouched in {src.parent.name}, and a backup is {backup.name} ({errstr(e)}).', 'copy_failed', 500) from e
     ref = ctx.vaults._replace(ref, imported_from=str(src.resolve()), skipped=False)
-    return {'ok': True, 'vault': ref.name, 'choice': 'copy', 'backup': str(backup), **_start_index(ctx, ref, _src_encoder(src))}
+    return {'ok': True, 'vault': ref.name, 'choice': 'copy', 'backup': str(backup), 'cited': sum(map(len, docs.values())), **_start_index(ctx, ref, _src_encoder(src), {sh: _src_encoder(src, sh) for sh in docs})}
 
-def _start_index(ctx, ref, src_enc):
+def _start_index(ctx, ref, src_enc, shelves=None):
     "Queue the job that rebuilds the vector index of the copied shelf; its job id and first progress line, or why it could not start."
     try:
-        v = ctx.vaults.memory(ref.name)._store('learning')
-        n = v.db.q(f'select count(*) n from [{v.name}] where embedding is not null')[0]['n']
-        job = ctx.jobs.start('learn_index', ref.name, _cancel=True, vault=ref.name, src_encoder=src_enc)
+        m, shelves = ctx.vaults.memory(ref.name), shelves or {}
+        n = sum(v.db.q(f'select count(*) n from [{v.name}] where embedding is not null')[0]['n'] for v in [learning_store(m), *(shelf_store(m, sh) for sh in shelves)])
+        job = ctx.jobs.start('learn_index', ref.name, _cancel=True, vault=ref.name, src_encoder=src_enc, shelves=shelves)
         return {'index': job.id, 'indexing': f'indexing 0 of {n}'}
     except Exception as e: return {'index': None, 'index_error': f'The copy is complete, but the search index could not start ({errstr(e)}). Retry from the Vault panel.'}
 
@@ -246,28 +295,31 @@ def connect(app, ctx):
         return result(out, p) | dict(doc_id=b['doc'], title=b['title'], shelf=out.get('shelf') or p.get('shelf') or '', chapters=len(b['chapters']),
                                      verses=b['verses'], problems=sum(r['state'] == 'open' for r in b['probs']))
     def learn_index_job(job, report):
-        "Embed the copied shelf again when its encoder differs from this vault's, then rebuild its vector index."
-        p, v = dict(job.params), ctx.vaults.memory(job.params['vault'])._store('learning')
-        rows = v.db.q(f'select id, content from [{v.name}] where embedding is not null')
-        total, here = len(rows), (v.db.q("select encoder from store_meta where name='learning'") or [{}])[0].get('encoder') or ''
+        "Embed each copied shelf again when its encoder differs from this vault's, then rebuild its vector index."
+        p, m = dict(job.params), ctx.vaults.memory(job.params['vault'])
+        shelves = {'learning': p.get('src_encoder') or '', **(p.get('shelves') or {})}
+        work = [(sh, v, v.db.q(f'select id, content from [{v.name}] where embedding is not null'), enc) for sh, enc in shelves.items() for v in [shelf_store(m, sh)]]
+        total, done, again, built = sum(len(w[2]) for w in work), 0, False, 0
         report(progress=.05, current=f'indexing 0 of {total}')
-        again = not p.get('src_encoder') or p['src_encoder'] != here
-        if again:
-            import numpy as np
-            vecs = []
-            for i in range(0, total, 64):
-                if ctx.jobs.stopping(job.id): return {'cancelled': True, 'indexed': i, 'total': total, 'vault': v.name}
-                vecs += [np.asarray(e).tobytes() for e in v.enc.model.encode([r['content'] for r in rows[i:i+64]])]
-                report(progress=.05 + .8 * min(i + 64, total) / max(1, total), current=f'indexing {min(i + 64, total)} of {total}')
-            con = v.db
-            con.execute('begin immediate')
-            try:
-                for r, b in zip(rows, vecs): con.execute(f'update [{v.name}] set embedding=? where id=?', (b, r['id']))
-                con.execute('commit')
-            except BaseException: con.execute('rollback'); raise
-        report(progress=.9, current=f'building the index of {total}')
-        n = v.db.t[v.name].rebuild_index()
-        return {'indexed': n, 'total': total, 'reencoded': again, 'vault': job.params['vault']}
+        for sh, v, rows, enc in work:
+            here = (v.db.q('select encoder from store_meta where name=?', [v.name]) or [{}])[0].get('encoder') or ''
+            if not enc or enc != here:
+                import numpy as np
+                again, vecs = True, []
+                for i in range(0, len(rows), 64):
+                    if ctx.jobs.stopping(job.id): return {'cancelled': True, 'indexed': done + i, 'total': total, 'vault': p['vault']}
+                    vecs += [np.asarray(e).tobytes() for e in v.enc.model.encode([r['content'] for r in rows[i:i+64]])]
+                    report(progress=.05 + .8 * (done + min(i + 64, len(rows))) / max(1, total), current=f'indexing {done + min(i + 64, len(rows))} of {total}')
+                con = v.db
+                con.execute('begin immediate')
+                try:
+                    for r, x in zip(rows, vecs): con.execute(f'update [{v.name}] set embedding=? where id=?', (x, r['id']))
+                    con.execute('commit')
+                except BaseException: con.execute('rollback'); raise
+            done += len(rows)
+            report(progress=.9, current=f'building the index of {total}')
+            built += v.db.t[v.name].rebuild_index()
+        return {'indexed': built, 'total': total, 'reencoded': again, 'vault': p['vault']}
     ctx.jobs.register('learn_index', learn_index_job)
     ctx.jobs.register('read', read_job)
     ctx.jobs.register('book', book_job)
@@ -406,14 +458,14 @@ def connect(app, ctx):
         if not (o := _offer(ctx.vaults, again)): return _frag(ui.learn_result({'ok': True, 'choice': 'none'})) if again else Response(status_code=204)
         return _frag(ui.learn_offer(*o))
     @rt('/vault/learn-import', methods=['GET', 'POST'])
-    async def learn_import(req: Request, choice: str = ''):
+    async def learn_import(req: Request, choice: str = '', cited: str = '', form: str = ''):
         src, ref = _standalone_vault(), ctx.vaults.get(LEARN)
         if req.method == 'GET': return {'found': src is not None, 'source': str(src) if src else None, 'learn_exists': ref is not None}
-        try: out = _do_learn_import(ctx, src, ref, choice)
+        try: out = _do_learn_import(ctx, src, ref, choice, cited == '1' or not form)
         except Exception as e: out = _refusal(e)
         if req.headers.get('hx-request') != 'true': return out
         body = json.loads(out.body) if isinstance(out, Response) else out
-        return _frag(ui.learn_result(dict(body, same_file=bool(src and _is_workspace_file(ctx.vaults, src)))))
+        return _frag(ui.learn_result(dict(body, same_file=bool(src and _is_workspace_file(ctx.vaults, src)), offer_cited=sum(map(len, _cited(src).values())) if src else 0)))
     @rt('/vault/attach')
     @rt('/vault/attach')
     def vault_attach(path: str, name: str = '', access: str = 'read'):

@@ -352,3 +352,59 @@ def test_stopped_index_job_changes_no_embeddings(ws, tmp_path, monkeypatch):
     with _client(ws) as cl: out = _post(cl, 'copy').json()
     job = _wait(ws, out)
     assert job.status == 'cancelled' and job.result['cancelled'] and learn_store(ws)[1].journey('w0')
+
+
+def _cited_walk(path):
+    from vishalakshi import Vault
+    v = Vault(str(path), offline=True)
+    d = v.shelf('notebooks').add('Softmax turns scores into probabilities.\n\nIt is exp over a sum.', 'Softmax note', source='/n/softmax.md', kind='md', refresh=False)
+    v.shelf('notebooks').add('Another note that no walk cites.', 'Other', source='/n/other.md', kind='md', refresh=False)
+    lr = Learning(v)
+    lr.put_journey(dict(id='cites', title='Cites', goal='learn', steps=[dict(slug='softmax', status='todo', read=dict(src='vault:notebooks', ref=d['doc_id'] + '#1', text='Softmax turns scores'))]))
+    return d['doc_id']
+
+
+def _held(ws, doc):
+    from leela.blocks.memory.memory import shelf_store
+    db = shelf_store(ws.vaults.memory(LEARN), 'notebooks').db
+    return [db.q('select count(*) n from notebooks_docs where id=?', [doc])[0]['n'], db.q('select count(*) n from notebooks where doc_id=?', [doc])[0]['n'],
+            db.q('select count(*) n from notebooks_docs')[0]['n']]
+
+
+def test_the_offer_says_it_copies_the_cited_documents_too_with_the_box_on(ws, tmp_path, monkeypatch):
+    src = tmp_path/'standalone.db'; _cited_walk(src); monkeypatch.setenv('ABHYASA_VAULT', str(src))
+    with _client(ws) as cl: html = cl.get('/learn/import').text
+    assert 'also copy the 1 document your walks cite' in html and 'name="cited"' in html and 'checked' in html
+
+
+def test_copy_brings_the_documents_the_walk_cites_and_only_those(ws, tmp_path, monkeypatch):
+    src = tmp_path/'standalone.db'; doc = _cited_walk(src); before = src.read_bytes(); monkeypatch.setenv('ABHYASA_VAULT', str(src))
+    learn_store(ws)
+    with _client(ws) as cl: out = cl.post('/vault/learn-import', data={'choice': 'copy'}, headers=_headers()).json()
+    assert out['ok'] and out['cited'] == 1, out
+    job = _wait(ws, out)
+    assert job.status == 'complete' and src.read_bytes() == before
+    assert _held(ws, doc) == [1, 1, 1]
+    assert learn_store(ws)[1].journey('cites')
+
+
+def test_the_box_off_copies_no_documents(ws, tmp_path, monkeypatch):
+    src = tmp_path/'standalone.db'; doc = _cited_walk(src); monkeypatch.setenv('ABHYASA_VAULT', str(src))
+    learn_store(ws)
+    with _client(ws) as cl: out = cl.post('/vault/learn-import', data={'choice': 'copy', 'form': '1'}, headers=_headers()).json()
+    assert out['ok'] and out['cited'] == 0, out
+    _wait(ws, out)
+    assert _held(ws, doc) == [0, 0, 0] and learn_store(ws)[1].journey('cites')
+
+
+def test_a_failed_copy_of_the_cited_documents_undoes_the_whole_copy(ws, tmp_path, monkeypatch):
+    from leela.blocks.vault import app as vapp
+    src = tmp_path/'standalone.db'; doc = _cited_walk(src); monkeypatch.setenv('ABHYASA_VAULT', str(src))
+    learn_store(ws)
+    real = vapp._copy_docs
+    def boom(*a): real(*a); raise RuntimeError('disk full')
+    monkeypatch.setattr(vapp, '_copy_docs', boom)
+    with _client(ws) as cl: out = cl.post('/vault/learn-import', data={'choice': 'copy'}, headers=_headers()).json()
+    assert not out['ok'] and out['kind'] == 'copy_failed'
+    assert _held(ws, doc) == [0, 0, 0] and not learn_store(ws)[1].journeys()
+    assert not ws.vaults.get(LEARN).imported_from

@@ -1,32 +1,40 @@
 import asyncio, json, os, threading
+from pathlib import Path
 from functools import partial
 from fastcore.basics import first
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from ... import errstr, leela_cfg
 
-__all__ = ['ROWS', 'speech_rows', 'speech_values', 'blocker', 'download', 'make_transcribe', 'connect']
+__all__ = ['speech_rows', 'complete', 'speech_values', 'blocker', 'download', 'make_transcribe', 'connect']
 
-def _row(key, dflt, kind, label, help, **kw): return dict(key=f'speech.{key}', dflt=dflt, kind=kind, lo=kw.get('lo'), hi=kw.get('hi'), hi_key=None, choices=kw.get('choices'), label=label,
-                                                          help=help, unit=kw.get('unit'), pct=False, more=kw.get('more', False), group='speech', group_label='Speech')
+ENGINE_HELP = 'mlx runs on this Mac, and your audio stays here. openai sends your audio to OpenAI and needs OPENAI_API_KEY in Environment.'
+OVER = dict(engine=dict(kind='choice', choices=['mlx', 'openai'], help=ENGINE_HELP), model=dict(more=True))
 
-ROWS = [
-    _row('engine', 'mlx', 'choice', 'Engine', 'mlx runs on this Mac, and your audio stays here. openai sends your audio to OpenAI and needs OPENAI_API_KEY in Environment.', choices=['mlx', 'openai']),
-    _row('model', '', 'str', 'Model', 'The speech model. Empty uses the default of the engine.', more=True),
-    _row('segment', True, 'bool', 'Cut at pauses', 'The text shows after each pause. When this is off, the text comes in fixed blocks of time.'),
-    _row('pause', 700, 'int', 'Pause before a cut', 'How long a pause must be before the text of what you said shows.', lo=300, hi=2000, unit='ms', more=True),
-    _row('longest', 12, 'int', 'Longest segment', 'The text shows after this time, also when you do not pause.', lo=5, hi=30, unit='s', more=True),
-]
+def speech_rows():
+    "The Speech rows of the Learn settings, made from Abhyasa's own `stt.*` rows so that no default is kept twice."
+    from abhyasa.learner import SETTINGS
+    return [dict(key=f'speech.{r.key}', dflt=r.dflt, kind=r.kind, lo=r.lo, hi=r.hi, hi_key=None, choices=list(r.choices) or None, label=r.label, help=r.help,
+                 unit=r.unit or None, pct=r.pct, more=r.more, group='speech', group_label='Speech') | OVER.get(r.key, {})
+            for r in (SETTINGS[f'stt.{k}'] for k in ('engine', 'model', 'segment', 'pause', 'longest'))]
+
 TOLD, _lock = set(), threading.Lock()
 NO_KEY = 'There is no OpenAI key. Add OPENAI_API_KEY in Settings, Environment, or choose the mlx engine.'
 NOTICE = 'Your audio goes to OpenAI, because you chose that engine in Settings. Speak again to go on.'
-
-def speech_rows(): return [dict(r) for r in ROWS]
 
 def speech_values(root=None, cur=None):
     "Abhyasa's `stt.*` rows, valued from the Learn settings `cur` of Leela (else those of `root`): what `use_settings` takes."
     from ..settings.settings import Settings
     cur = Settings(root).effective().get('learn', {}) if cur is None else cur
-    return {f'stt.{r["key"].split(".")[1]}': cur.get(r['key'], r['dflt']) for r in ROWS}
+    return {f'stt.{r["key"].split(".")[1]}': cur.get(r['key'], r['dflt']) for r in speech_rows()}
+
+def _marker(model):
+    from huggingface_hub.constants import HF_HUB_CACHE
+    return Path(HF_HUB_CACHE)/f"models--{model.replace('/', '--')}"/'.complete'
+
+def complete(model):
+    "Whether the download of `model` ran to its end here: a half-finished folder passes Abhyasa's `cached`, so a marker, written last, says it is whole."
+    from abhyasa import models
+    return models.cached(model) and _marker(model).exists()
 
 def _active(jobs, model): return first(j for j in jobs.all(limit=50, kind='speech_model') if j.active and j.target == model and jobs.alive(j))
 
@@ -39,7 +47,7 @@ def blocker(jobs, v):
         if 'openai' in TOLD: return ''
         TOLD.add('openai')
         return NOTICE
-    if models.cached(model): return ''
+    if complete(model): return ''
     with _lock: _active(jobs, model) or jobs.start('speech_model', model, _cancel=True)
     return f'The speech model {model} is not on this Mac yet. It downloads now: watch the job card, then speak again.'
 
@@ -60,6 +68,7 @@ def download(model, report, stopping):
             return super().update(n)
     try: snapshot_download(model, tqdm_class=Bar)
     except Stop: return dict(cancelled=True)
+    (m := _marker(model)).parent.mkdir(parents=True, exist_ok=True); m.write_text('')
     return dict(model=model)
 
 def make_transcribe(jobs, root=lambda: None):
@@ -67,11 +76,13 @@ def make_transcribe(jobs, root=lambda: None):
     def transcribe(audio, hint=''):
         from abhyasa import models
         from abhyasa.learner import use_config
-        v = speech_values(root())
-        if why := blocker(jobs, v): raise RuntimeError(why)
+        from .host import STATE, _ws
+        ws = _ws.get()
+        j, v = (ws.jobs, speech_values(ws.project_root)) if ws else (jobs, speech_values(root()))
+        if why := blocker(j, v): raise RuntimeError(why)
         engine, model = models.resolve(v['stt.engine'], v['stt.model'])
         try:
-            with use_config(leela_cfg/'learn-abhyasa'): return models.transcribe(audio, engine, hint, model)   # no key file of Abhyasa is read
+            with use_config(leela_cfg/STATE): return models.transcribe(audio, engine, hint, model)   # no key file of Abhyasa is read
         except ModuleNotFoundError as e: raise RuntimeError(f'Speech on this Mac needs the {e.name} package. Install leela[local], or choose the openai engine.') from e
     return transcribe
 

@@ -13,7 +13,7 @@ except ImportError:
 
 __all__ = ['Memory', 'memory_path', 'memory_shelf', 'safe_shelf', 'shared_encoder', 'source_kind', 'source_keys',
            'GLOBAL', 'ACQUIRE', 'PII_GATES', 'PII_LABELS', 'pii_gate', 'PrivacyBlocked', 'withheld_why',
-           'VaultRefused', 'read_chat', 'page_list', 'withhold_local', 'query_refusal', 'index_workers']
+           'VaultRefused', 'learning_store', 'shelf_store', 'read_chat', 'page_list', 'withhold_local', 'query_refusal', 'index_workers']
 
 GLOBAL = 'leela'
 
@@ -228,6 +228,14 @@ def _why_no_vault(e):
         return ('memory needs the LiteRT runtime here, and it is not installed. '
                 'Install it under Models in the settings pane, and memory comes back.')
     return f'memory ingest failed ({errstr(e)})'
+
+def shelf_store(memory, name):
+    "The store of the shelf `name` of `memory`. Vishalakshi has no public accessor."
+    return memory._store(name)
+
+def learning_store(memory):
+    "The `learning` shelf of `memory`: the store Abhyasa's `Learning` wraps."
+    return shelf_store(memory, 'learning')
 
 class Memory:
     "MemoryPort over a vishalakshi vault: one store per project, one shared by all of them."
