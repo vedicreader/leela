@@ -1224,7 +1224,7 @@ function textEditorOf(e) {
 }
 
 window.addEventListener('keydown', e => {
-  if (window.leeLearnKey?.(e)) return;
+  if (window.leeAbhKey?.(e)) return;
   const scope = eventContext(e), match = findBinding(e, scope);
   // Kept on `lee` so the key editor and DevTools can tell "Chrome did not deliver it" from "the
   // router rejected it".
@@ -2257,11 +2257,12 @@ function noteStaleTab(st, recoveredDraft) {
 }
 const LEARN = '/learn/abh';
 const LEARN_OWN = {'/settings': () => leeAct('settings'), '/keys': () => leeAct('help'), '/search': () => leeVaultWorkbench('find'), '/library': () => leeVaultWorkbench('library'), '/sources': () => leeVaultWorkbench('library'), '/library/sources': () => leeVaultWorkbench('library')};
-const LEARN_KEYS = {KeyS: ['#send', 'main .go'], KeyW: '#hint', KeyE: '#show-demo', KeyC: ['#continue', '[data-part=continue-card] [data-act=continue]'], KeyX: '#idk, #teach', KeyA: '#another', KeyV: '.walk-demo #keep'};
+const LEARN_KEYS = window.abhyasaKeys ||= {KeyS: ['#send', 'main .go'], KeyW: '#hint', KeyE: '#show-demo', KeyC: ['#continue', '[data-part=continue-card] [data-act=continue]'], KeyX: '#idk, #teach', KeyA: '#another', KeyV: '.walk-demo #keep'};
+window.abhyasaMotion ||= () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
 const LEARN_HX = '[hx-get],[hx-post],[hx-put],[hx-patch],[hx-delete]';
 const learnSeen = el => !el.disabled && (el.checkVisibility ? el.checkVisibility() : el.offsetParent !== null);
 
-function leeLearnKey(e) {
+function leeAbhKey(e) {
   const abh = e.target.closest?.('.abh');
   if (!abh || e.isComposing) return false;
   const box = e.target.matches('textarea, input, select, [contenteditable]');
@@ -2280,16 +2281,17 @@ function leeLearnKey(e) {
   el.matches('textarea, input') ? el.focus() : el.click();
   return true;
 }
-window.leeLearnKey = leeLearnKey;
+window.leeAbhKey = leeAbhKey;
 
 async function learnMount(host, st) {
   if (!document.getElementById('lee-abh-css')) {
     const link = document.createElement('link'); link.id = 'lee-abh-css'; link.rel = 'stylesheet'; link.href = '/learn/abh.css'; document.head.append(link);
   }
+  if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
   host.innerHTML = '<div class="lee-learn"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button></div><div class="abh" hx-push-url="false"></div></div>';
   const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]');
-  const trail = []; let cur = null, pending = null, held = false;
+  const trail = []; let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
   if (!open.ok) { abh.textContent = 'Learn is not available. Turn on Learn and attach the learning vault.'; return; }
   const nav = (path, goBack = false) => { pending = {path, goBack}; return htmx.ajax('GET', path, {source: abh, target: abh, swap: 'innerHTML', select: 'main'}); };
@@ -2318,9 +2320,9 @@ async function learnMount(host, st) {
     if (u.origin === location.origin && !u.pathname.startsWith(LEARN + '/') && !/^\/(?:assets|vendor)\//.test(u.pathname)) d.path = LEARN + u.pathname + u.search;
     if (!u.searchParams.has('pane')) d.parameters.pane = '1';
   });
-  abh.addEventListener('htmx:beforeRequest', () => { held = abh.contains(document.activeElement); });
+  for (const ev of ['pointerdown', 'keydown']) abh.addEventListener(ev, () => { touched = true; }, true);
   abh.addEventListener('htmx:afterSettle', e => {
-    if (!held && document.activeElement?.closest('.abh')) document.activeElement.blur();
+    if (!touched && document.activeElement?.closest('.abh')) document.activeElement.blur();
     if (e.target !== abh) return;
     const r = e.detail.xhr?.responseURL ? new URL(e.detail.xhr.responseURL) : null;
     let path = r ? r.pathname + r.search : pending?.path;

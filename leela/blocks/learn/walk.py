@@ -134,6 +134,8 @@ def connect(app, ctx):
     def abh_css():
         from pathlib import Path
         return Response(Path(__file__).with_name('abh.css').read_text() + abh_styles(), media_type='text/css')
+    @app.route('/learn/abh-grip.js', methods=['GET'])
+    def abh_grip(): return Response((files('abhyasa')/'core/grip.js').read_text(), media_type='text/javascript')
     @app.route('/learn/walk.css', methods=['GET'])
     def walk_css():
         from pathlib import Path
