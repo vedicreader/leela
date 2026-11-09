@@ -23,3 +23,5 @@
 .lv-state.lv-spin::before { content: ''; display: inline-block; width: .8em; height: .8em; margin-right: .4em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -.1em; animation: lv-spin .8s linear infinite; }
 @keyframes lv-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .lv-state.lv-spin::before { animation: none; } }
+.lv-out.lv-old { opacity: .5; }
+.live-numbers.lv-old { opacity: .5; }

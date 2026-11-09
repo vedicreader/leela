@@ -24,8 +24,10 @@
     return {get: () => ta.value, set: t => { ta.value = t; }, destroy() {}, focus: () => ta.focus()};
   }
 
+  const numbers = c => document.querySelector(`.live-numbers[data-for="${CSS.escape(c.dataset.id)}"]`);
+
   function show(c, r) {
-    const out = c.querySelector('.lv-out'); out.replaceChildren();
+    const out = c.querySelector('.lv-out'); out.replaceChildren(); out.classList.remove('lv-old');
     const add = (cls, text) => { const p = el('pre', 'lv-' + cls, text); out.append(p); return p; };
     if (r.stdout) add('stdout', r.stdout);
     if (r.result) add('result', r.result);
@@ -36,6 +38,7 @@
     const t = c.querySelector('.lv-watch'), rows = Object.entries(r.watch || {});
     t.hidden = !rows.length; t.replaceChildren();
     for (const [k, v] of rows) { const tr = el('tr'); tr.append(el('th', '', k), el('td', '', v)); t.append(tr); }
+    if (r.ok) document.dispatchEvent(new CustomEvent('lee-live-ran', {detail: {id: c.dataset.id, watch: r.watch || {}}}));
     const num = document.querySelector(`.live-numbers[data-for="${CSS.escape(c.dataset.id)}"]`);
     if (num) { num.replaceChildren(); for (const [k, v] of rows) { const tr = el('tr'); tr.append(el('th', '', k), el('td', '', v)); num.append(tr); } num.nextElementSibling?.remove?.(); }
   }
@@ -49,13 +52,24 @@
 
   async function run(c, extra = {}) {
     const v = LV.views.get(c); if (!v || c.dataset.busy) return;
-    const state = c.querySelector('.lv-state'); c.dataset.busy = '1'; c.querySelector('.lv-run').disabled = true; state.textContent = LV.ran ? 'Running…' : 'Starting the kernel… the first run can take 10 seconds.'; state.classList.add('lv-spin');
+    const state = c.querySelector('.lv-state'); c.dataset.busy = '1'; c.querySelector('.lv-run').disabled = true; c.querySelector('.lv-out').classList.remove('lv-old'); numbers(c)?.classList.remove('lv-old'); state.textContent = LV.ran ? 'Running…' : 'Starting the kernel… the first run can take 10 seconds.'; state.classList.add('lv-spin');
     try {
       const r = await post(c, {code: (v.head ? v.head + '\n' : '') + v.ed.get(), watch: (c.dataset.watch || '').split(',').filter(Boolean), ...extra});
       v.last = r; LV.ran = true; show(c, r); state.textContent = '';
     } catch { state.textContent = 'The code did not run. Try again.'; }
     finally { state.classList.remove('lv-spin'); delete c.dataset.busy; c.querySelector('.lv-run').disabled = false; }
   }
+
+  // A name in the demo moved: put its new number in the one place the code sets it, and say that the output is old until a run.
+  async function rewrite(c, name, value) {
+    const v = LV.views.get(c); if (!v || c.dataset.busy) return false;
+    const r = await fetch('/learn/cell/literal', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: v.ed.get(), name, value})}).then(x => x.json()).catch(() => null);
+    if (!r?.ok) return false;
+    v.ed.set(r.code); c.querySelector('.lv-out').classList.add('lv-old'); c.querySelector('.lv-state').textContent = r.said;
+    numbers(c)?.classList.add('lv-old');
+    return true;
+  }
+  LV.rewrite = rewrite;
 
   async function check(c) {
     const v = LV.views.get(c), say = c.querySelector('.lv-state');

@@ -81,3 +81,15 @@ def test_every_new_idea_page_and_the_walk_render_and_load_the_rupaka_files(crawl
     r = cl.get(f'/demo/{lr.demo_for("rc-circuit").slug}', follow_redirects=False)
     assert r.status_code in (200, 301), r.status_code
     assert cl.get(f'/demo/{lr.demo_for("rc-circuit").slug}.json').json()['id'] == 'rc-charging'
+
+
+def test_the_first_step_has_code_that_shares_v_and_r_with_its_demo_and_the_ladder_follows(crawl):
+    cl, lr, jid = crawl
+    code = lr.journey(sd.LOWPASS).steps[0]['code']
+    assert code['watch'] == ['V', 'R', 'I'] and code['expect'] == dict(var='I', value='2.0') and set(code['watch'][:2]) <= set(lr.demo_for('ohms-law').spec['state'])
+    assert not any(s.get('code') for s in lr.journey(sd.LOWPASS).steps[1:])
+    step = cl.get(f'/w/{sd.LOWPASS}/0').text
+    assert 'lee-livecell' not in step or 'data-watch="V,R,I"' in step
+    page = cl.get('/c/ohms-law').text
+    assert 'The idea in four ways' in page and 'data-watch="V,R,I"' in page
+    assert 'gate' not in cl.get('/c/ohms-law').text.split('As a picture')[1].split('As code')[0]   # the seed answered that gate right: no second lock

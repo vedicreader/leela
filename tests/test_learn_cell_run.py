@@ -105,3 +105,24 @@ def test_a_post_from_another_site_runs_nothing(cell, hdr):
 def test_a_foreign_host_runs_nothing(cell):
     cl = TestClient(LoopbackHostGuard(cell.app), base_url='http://evil.example')
     assert cl.post('/learn/cell/run', json=dict(code='x = 1'), headers=OWN).status_code in (403, 421) and not cell.k.codes
+
+
+def lit(cell, code, name, value): return cell.cl.post('/learn/cell/literal', json=dict(code=code, name=name, value=value), headers=OWN).json()
+
+def test_a_slider_value_rewrites_the_one_plain_number_and_keeps_the_rest_of_the_text(cell):
+    code = "# the pond\nr = 4   # radius\nv = r * 2\nprint(r, v)"
+    r = lit(cell, code, 'r', 6)
+    assert r['ok'] and r['code'] == "# the pond\nr = 6   # radius\nv = r * 2\nprint(r, v)" and r['said'] == 'changed r to 6, run to see it'
+    assert lit(cell, 'x = -3.5', 'x', 2.25)['code'] == 'x = 2.25' and lit(cell, 'é = 1; x = 3', 'x', 7)['code'] == 'é = 1; x = 7'
+
+@pytest.mark.parametrize('code', ['r = 1\nr = 2', 'r = 1\nr += 1', 'r = f(2)', 'r = 2 * 3', 'a, r = 1, 2', 'for r in range(3): pass', 'def r(): pass', 'x = 1', 'r = 1 +', 'r = True', 'r = "4"'])
+def test_a_name_that_is_not_set_once_to_a_plain_number_changes_nothing(cell, code):
+    r = lit(cell, code, 'r', 6)
+    assert not r['ok'] and r['code'] == code and r['why']
+
+def test_the_literal_route_refuses_a_bad_value_a_bad_name_and_a_long_code(cell):
+    assert not lit(cell, 'r = 1', 'r', 'six')['ok'] and not lit(cell, 'r = 1', 'r r', 3)['ok'] and not lit(cell, 'r = 1', 'r', True)['ok']
+    big = cell.cl.post('/learn/cell/literal', json=dict(code='x' * (cellrun.CODE_MAX + 1), name='r', value=1), headers=OWN)
+    assert big.status_code == 413
+    cl = TestClient(LoopbackHostGuard(cell.app), base_url=BASE)
+    assert cl.post('/learn/cell/literal', json=dict(code='r = 1', name='r', value=2), headers={'Origin': 'https://evil.example', 'Sec-Fetch-Site': 'cross-site'}).status_code in (403, 421)

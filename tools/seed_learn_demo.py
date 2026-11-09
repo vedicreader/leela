@@ -78,6 +78,7 @@ TOPICS = [('ohms-law', "Ohm's law", "The current through a resistor is the volta
           ('fourier-spectrum', 'The frequency spectrum', 'The spectrum of a signal shows how much of each frequency it holds. A sum of sine waves shows one peak for each wave.',
            'The spectrum shows the same signal as the wave does, in frequencies in place of time.', 'the-spectrum', 'https://en.wikipedia.org/wiki/Spectral_density', 'sampling-aliasing')]
 LOWPASS = 'lowpass'
+OHM_CODE = dict(src='V = 6\nR = 3\nI = V / R\nprint(I)', watch=['V', 'R', 'I'], expect=dict(var='I', value='2.0'))   # V and R are the inputs of the ohms-law demo
 OLD = 'rupaka too old for the circuit demos'
 
 def circuits_ready():
@@ -86,7 +87,7 @@ def circuits_ready():
     return None if 'ghost' in manifests().get('plot', {}).get('props', ()) and all(t[4] in gallery() for t in TOPICS) else OLD
 
 def circuits(lr, say=print):
-    "Add the subject `circuits`: six ideas with their rupaka demos, a course and a walk with demo checks, an attempt. Idempotent. Returns the walk id, or None."
+    "Add the subject `circuits`: six ideas with their rupaka demos, a course and a walk with demo checks (the first step also has code that shares V and R with its demo), an attempt. Idempotent. Returns the walk id, or None."
     if lr.journey(LOWPASS): return LOWPASS
     if why := circuits_ready(): say(why); return
     from abhyasa.path import join_course, new_course
@@ -97,6 +98,8 @@ def circuits(lr, say=print):
         lr.put(name, st, CIRCUITS, slug=slug, prereqs=[pre] if pre else [], core=core, provenance=[dict(src='demo data', url=url)])
         lr.put_demo(g[did], slug)
     steps = [dict(slug=t[0], status='todo', why='', read=dict(src='demo', title='Demo data', what='Demo data', url=t[5], text=t[2]), check=dict(way='demo', kind='demo', depth=2, why='')) for t in TOPICS[:3]]
+    from abhyasa.path import check_code
+    steps[0]['code'] = check_code(OHM_CODE)
     c = lr.put_course(new_course('Understand how a low-pass filter works', 'Circuits and signals', CIRCUITS))
     lr.put_journey(dict(id=LOWPASS, title='How a low-pass filter works', goal=c.goal, subject=CIRCUITS, mode='walk', source=None, started=now - DAY, created=now - DAY, steps=steps, chips=[], chip_counts={}))
     join_course(lr, LOWPASS); lr.merge_journey(LOWPASS, demo='circuits')

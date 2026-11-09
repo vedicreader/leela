@@ -22,12 +22,31 @@ The launcher puts both worktrees on `sys.path` itself, so you do not set `PYTHON
 | `--rupaka PATH` | The rupaka worktree to import first. The default is the sibling `rupaka-explorables` worktree, if there is one. The banner names the rupaka in use. If it is too old for the circuit demos (no `ghost` on `plot`), the banner says `rupaka too old for the circuit demos` and the circuit and signal ideas are not added. |
 | `--port N` | Uses this port on 127.0.0.1. The default is a free port. Port 5001 is refused. |
 
+The launcher also takes `--dhrishti PATH` and `--kunda PATH`. The default for each is the sibling `dhrishti-explorables` or `kunda-explorables` worktree, if there is one. Without them, the cell Trace button says in one line which package is too old.
+
 ## What the preview is
 
 - Isolated. The config, data, cache, vault, Abhyasa settings and Ramabana config are all under the state folder. The launcher never reads or writes your real vault or config.
 - A scripted model. The replies are canned and nothing leaves this machine. Web research is off unless you pass `--web`.
 - Demo data. Without `--copy-vault`, the Learn vault holds a walk of 3 ideas from a paper with real quotes and a source link, a course, a talk, attempts from several days, and a demo check. A second subject, "Circuits and signals", has six ideas (Ohm's law, an RC circuit, the RC low-pass filter, adding sine waves, sampling and aliasing, the spectrum), each with its live rupaka demo, a course, and the walk "How a low-pass filter works". Its passages are plain statements marked "Demo data", each with a link to a public page on the topic. The launcher says on stdout that this is demo data.
 - Your port. It serves on 127.0.0.1 only.
+
+## Code, picture and numbers
+
+The first step of "How a low-pass filter works" (Ohm's law) has a code cell. The cell and the demo below it share the names `V` and `R`.
+
+1. Press Run. The numbers show under the code, and the demo moves to the same `V` and `R`.
+2. Pick an answer in the demo and press Lock in. Then drag the `R` slider. The code changes to the new `R = ...`, the output turns pale, and the cell says `changed R to 2, run to see it`. Press Run to bring the output up to date.
+3. A name that the code sets more than once, or sets to a sum, is not changed. The cell says nothing then.
+4. Open the idea page "Ohm's law". The four rungs (words, picture, code, numbers) move together. You passed that idea's check, so the picture has no second lock.
+5. The first Run can take 10 seconds. The cell says `Starting the kernel…` and shows a spinner.
+
+## Scrub and trace
+
+- In a notebook, put the caret in a code cell that has a number. A line under the cell says `Hold Option and drag the 3. Live: off. Turn on`. The line goes away after your first drag.
+- With live numbers off, a drag changes the number only, and the output shows `old: run again` until the next run.
+- The cell menu has `live numbers for this cell: on or off` and `trace this run`. Each code cell also has a Trace button. The step bar under the cell starts at step 1 and has Play and Pause. The Variables pane shows the same step and has no slider of its own.
+- In the circuit demo "An RC low-pass filter", after Lock in, your guess shows as a dashed curve beside the true one. Drag the input dot along the curve, or press A or D.
 
 ## What the preview is not
 
