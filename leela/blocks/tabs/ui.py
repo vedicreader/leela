@@ -29,7 +29,7 @@ def tab_bar(ws):
             Span('read-only', cls='lee-dim') if t.path and ws.fs.read_only(t.path) else '',
             Button('×', cls='lee-tab-x', title=f'close {t.title}', aria_label=f'close {t.title}',
                    onclick=f'event.stopPropagation();leeCloseTab({i})'),
-            cls='lee-tab' + (' active' if active else '') + (' dirty' if t.dirty else ''),
+            cls='lee-tab' + (' active' if active else '') + (' dirty' if t.dirty else '') + ('' if t.path else ' untitled'),
             title=t.path or t.title, data_i=i, data_kind=t.kind, role='tab', draggable='true',
             aria_selected='true' if active else 'false', tabindex='0' if active else '-1',
             hx_post=f'/tab/select?i={i}', hx_target='#tabbar', hx_swap='outerHTML')

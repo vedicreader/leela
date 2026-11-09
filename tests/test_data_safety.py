@@ -40,6 +40,15 @@ def test_a_file_that_is_not_utf8_opens_read_only_with_a_note_and_a_save_is_refus
         assert r.json()['kind'] == 'not_text', r.json()
     assert p.read_bytes() == raw
 
+def test_save_all_skips_an_untitled_dirty_tab_and_still_saves_the_others(tmp_path):
+    "Autosave posts save-all with an untitled tab dirty; that was a 400 with 'needs a filename' each time."
+    p, ws, tab = opened(tmp_path, 'a.py', 'x = 1\n')
+    new = ws.new_scratch('text'); new.dirty = tab.dirty = True
+    with TestClient(ide_app(ws)) as c:
+        r = c.post('/tabs/save-all')
+        assert r.status_code == 200 and r.json()['ok'] and 'filename' not in r.text, r.text
+    assert new.dirty and not tab.dirty
+
 def test_every_write_route_meets_the_same_refusal(tmp_path):
     "`Sandbox.write` is where every route writes, so one check covers rename-symbol, refactor, history restore and the agent."
     (tmp_path/'a.py').write_bytes(LATIN)
