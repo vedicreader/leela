@@ -208,3 +208,27 @@ def test_a_slug_host_is_accepted_and_a_foreign_host_refused(served, monkeypatch)
     cl = at('alpha.localhost')
     assert cl.get('/you/strengths').status_code == 200 and cl.get('/learn/abh/you/strengths').status_code == 200
     for path in ('/you/strengths', '/learn/abh/you/strengths'): assert cl.get(path, headers={'Host': 'evil.example'}).status_code == 403
+
+
+DOC = {'Sec-Fetch-Dest': 'document', 'Accept': 'text/html'}
+SHELL = ('class="brand"', 'aria-label="Main"', 'class="gear', 'Caps+E', 'Keys:')
+
+
+@pytest.mark.parametrize('path', ['/learn/abh/', '/learn/abh/w/nope/0', '/learn/abh/w/nope/0?pane=1', '/learn/abh/?pane=1', '/learn/abh/no-such-page'])
+def test_a_page_opened_on_its_own_never_shows_abhyasas_shell(served, path):
+    s = served; start(s)
+    r = s['cl'].get(path, headers=DOC)
+    assert r.status_code in (200, 404) and 'lee-learn' in r.text, r.text[:300]
+    assert not any(x in r.text for x in SHELL) and 'abhyasa' not in r.text.lower().replace('/learn/abh/', ''), r.text[:600]
+
+
+def test_a_page_the_tab_asks_for_still_comes_from_abhyasa(served):
+    s = served; start(s)
+    r = s['cl'].get('/learn/abh/you/strengths?pane=1', headers={'HX-Request': 'true'})
+    assert r.status_code == 200 and 'lee-learn' not in r.text
+    assert s['cl'].get('/learn/abh/nav/extra?path=/').status_code == 200
+
+
+def test_a_page_opened_on_its_own_before_learn_opens_gets_the_box(served):
+    r = served['cl'].get('/learn/abh/w/x/0', headers=DOC)
+    assert r.status_code == 404 and 'lee-learn' in r.text and not any(x in r.text for x in SHELL)

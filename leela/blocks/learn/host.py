@@ -1,7 +1,9 @@
 import contextvars, threading
 from pathlib import Path
 from urllib.parse import quote
-from starlette.responses import JSONResponse, PlainTextResponse
+from fasthtml.common import A, P, to_xml
+from starlette.datastructures import Headers
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.routing import Match, Mount, Route
 from ... import errstr, leela_cfg
 from ...core.web import fail, off_loop
@@ -89,6 +91,14 @@ class Shared:
 shared = Shared()
 
 
+def direct(scope):
+    "Whether a browser asks for a whole page: a GET that htmx did not send, which fetch metadata, or else Accept, says is a document."
+    if scope['type'] != 'http' or scope['method'] != 'GET': return False
+    h = Headers(scope=scope)
+    if h.get('hx-request'): return False
+    return h['sec-fetch-dest'] in ('document', 'iframe') if 'sec-fetch-dest' in h else h.get('accept', '').startswith('text/html')
+
+
 def _own(path):
     "Whether Leela owns the path: Abhyasa's settings writes and its Keys button switch only change files that a host never reads."
     return path == '/keys/float' or (path.startswith('/settings/') and path not in KEEP)
@@ -133,8 +143,15 @@ class Hosted:
         s = self.shared
         return s.app if s.app is not None and s.key == learn_key(self.ws) else None
     def stop(self): self.shared.release(self)
+    async def _box(self, scope, receive, send, status):
+        "Leela's own short page for a browser that asks for an Abhyasa page outside the Learn tab: no logo, menu, gear or key chord."
+        from .ui import Page
+        text = 'This page is not here.' if status == 404 else 'Learn pages show inside the Learn tab. Open Leela, then open the Learn tab.'
+        page = Page('Learn', P(text, cls='lee-learn-line'), P(A('Open Leela', href='/'), cls='lee-learn-line'), root=getattr(self.ws, 'project_root', None))
+        await HTMLResponse('<!doctype html>' + to_xml(page), status, headers={'Content-Security-Policy': FRAME, 'X-Frame-Options': 'SAMEORIGIN'})(scope, receive, send)
     async def _refuse(self, scope, receive, send, text, status):
         if scope['type'] == 'websocket': return await send(dict(type='websocket.close', code=1008))
+        if status == 404 and direct(scope): return await self._box(scope, receive, send, 404)
         await PlainTextResponse(text, status)(scope, receive, send)
     def _host(self, scope):
         from abhyasa.app import LocalOnly
@@ -154,15 +171,19 @@ class Hosted:
     async def under(self, scope, receive, send):
         "Any method on `/learn/abh/{path}`: Abhyasa's `/{path}`, when the app is built for this workspace's vault."
         if why := self._host(scope): return await self._refuse(scope, receive, send, why, 403)
-        if (app := self.live()) is None: return await JSONResponse(dict(ok=False, error='learn_not_open'), 409)(scope, receive, send)
+        if (app := self.live()) is None:
+            if direct(scope): return await self._box(scope, receive, send, 404)
+            return await JSONResponse(dict(ok=False, error='learn_not_open'), 409)(scope, receive, send)
         path = '/' + scope['path_params'].get('path', '')
         if not _known(app, {**scope, 'path': path}): return await self._refuse(scope, receive, send, 'Not found', 404)
+        if direct(scope): return await self._box(scope, receive, send, 200)
         await self._serve(app, scope, receive, send, path)
     async def __call__(self, scope, receive, send):
         if scope['type'] not in ('http', 'websocket'): return
         if scope['type'] == 'http' and (r := self.partial(scope)): return await r.handle(scope, receive, send)   # Starlette takes a later full match over an earlier partial one: that route's 405 stands
         if why := self._host(scope): return await self._refuse(scope, receive, send, why, 403)
         if (app := self.live()) is None or not _known(app, scope): return await self._refuse(scope, receive, send, 'Not found', 404)
+        if direct(scope): return await self._box(scope, receive, send, 200)
         await self._serve(app, scope, receive, send)
 
 
