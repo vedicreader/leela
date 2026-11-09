@@ -64,7 +64,15 @@ def connect(app, ctx):
         except Exception as e: return Div(errstr(e), cls='lee-err')
         return tab_bar(session)
     @rt('/tab/select')
-    def tab_select(i: int):
+    async def tab_select(i: int):
+        "Activate tab `i`. A tab of the other mode switches the mode first; a refusal leaves the tab, the mode and the layout as they were."
+        t = session.tabs[i] if 0 <= i < len(session.tabs) else None
+        if t is not None and (want := 'learn' if t.kind == 'learn' else 'code') != session.mode:
+            from ..agent.threads import TurnError
+            from ..modes.app import refusal, switch
+            try: await switch(session, want, tab=i)
+            except TurnError as e: return refusal(e)
+            return tab_bar(session)
         session.activate(i)
         session.watch_env(None)
         return tab_bar(session)

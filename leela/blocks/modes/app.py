@@ -5,7 +5,7 @@ from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..agent.threads import TurnError
 from .modes import get_mode, modes
 
-__all__ = ['CAPS', 'connect', 'refusal']
+__all__ = ['CAPS', 'connect', 'refusal', 'switch']
 
 CAPS = ()
 
@@ -14,6 +14,13 @@ def refusal(e):
     if e.code != 'thread_busy': return JSONResponse(e.dict(), status_code=409)
     from abhyasa.agent_tools import failed
     return JSONResponse({**failed(e.code, e.message, extra=('thread_busy',)), **e.dict()}, status_code=409)
+
+async def switch(ws, mode, thread=None, tab=None):
+    "Switch the agent conversation, then the workspace; a refusal raises `TurnError` and nothing has changed."
+    if ws._threads is not None:
+        t = ws.threads.require(str(thread)) if thread else ws.threads.active
+        await off_loop(t.set_mode, mode)
+    return await off_loop(ws.set_mode, mode, tab)
 
 def listing(ws):
     return {'mode': ws.mode, 'modes': [m.dict() for m in modes()], 'layouts': {m.id: ws.mode_layout(m.id) for m in modes()}}
@@ -28,10 +35,7 @@ def connect(app, ctx):
         try: get_mode(d.get('mode'))
         except KeyError: return JSONResponse(dict(ok=False, code='invalid_mode', message=f"There is no mode {d.get('mode')!r}."), status_code=400)
         try:
-            if ws._threads is not None:
-                t = ws.threads.require(str(d['thread'])) if d.get('thread') else ws.threads.active
-                await off_loop(t.set_mode, d['mode'])
-            out = await off_loop(ws.set_mode, d['mode'])
+            out = await switch(ws, d['mode'], d.get('thread'))
         except TurnError as e: return refusal(e)
         except Exception as e: return fail(e, 400 if isinstance(e, (KeyError, ValueError)) else 500)
         return {'ok': True, **out}

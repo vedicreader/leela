@@ -306,3 +306,43 @@ def test_each_mode_keeps_its_own_docks_and_a_reload_paints_them_at_once(tmp_path
         await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length'); await pg.wait_for_timeout(800)
         assert await pg.evaluate(GRID) == code
     _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_a_refused_tab_click_changes_neither_the_tab_nor_the_mode_and_an_idle_one_switches(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    from leela.blocks.agent.threads import TurnError
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        ws.open_walk('workspace', jid, 0); ws.activate(0); ws.save()
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length')
+        assert ws.mode == 'code' and ws.tab.kind == 'text'
+        def refuse(mode): raise TurnError('thread_busy', 'The mode cannot change during a turn. Wait for it to finish, then try again.', 'x')
+        real = ws.threads.active.set_mode; ws.threads.active.set_mode = refuse
+        before, docks = await pg.evaluate(AGENT), await pg.evaluate(DOCKS)
+        await pg.locator('.lee-tab', has_text='Learn').click(); await pg.wait_for_timeout(1200)
+        assert 'cannot change during a turn' in await pg.locator('#status').inner_text()
+        assert ws.mode == 'code' and ws.tab.kind == 'text' and await pg.locator('.lee-tab.active').get_attribute('data-kind') == 'text'
+        assert await pg.evaluate(DOCKS) == docks and await pg.evaluate(AGENT) == before and await pg.locator('.abh').count() == 0
+        del ws.threads.active.set_mode
+        await pg.locator('.lee-tab', has_text='Learn').click()
+        await pg.locator('.abh main').first.wait_for(timeout=30000)
+        await pg.wait_for_function("document.querySelector('#agentmode').textContent === 'Learn'")
+        assert ws.mode == 'learn' and ws.tab.kind == 'learn' and (await pg.evaluate(DOCKS))['mode'] == 'learn'
+        await pg.locator('.lee-tab', has_text='lesson.py').click()
+        await pg.wait_for_function("document.querySelector('#shell').dataset.mode === 'code'")
+        assert ws.mode == 'code' and ws.tab.kind == 'text' and ws.threads.active.ai.mode == 'code'
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_the_header_is_the_same_height_on_first_load_and_after_a_reload(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        H = "() => [document.querySelector('#header').getBoundingClientRect().height, [...document.querySelectorAll('#shell > *')].map(e => Math.round(e.getBoundingClientRect().height))]"
+        ws.open_walk('workspace', jid, 0); ws.save()
+        for mode in ('code', 'learn'):
+            await pg.locator(f'#modeswitch [data-mode={mode}]').click(); await pg.wait_for_timeout(1500)
+            first = await pg.evaluate(H)
+            await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length'); await pg.wait_for_timeout(1500)
+            assert await pg.evaluate(H) == first, mode
+    _run(tmp_path, scenario, dict(width=1500, height=900))

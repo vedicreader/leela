@@ -44,6 +44,7 @@ async function leeModeSet(mode, follow = false) {
     return true;
   } finally { lee.modeBusy = false; }
 }
+document.addEventListener('htmx:responseError', e => { const x = e.detail.xhr; if (x.status === 409 && /\/tab\/select/.test(e.detail.pathInfo?.requestPath || '')) { try { status(JSON.parse(x.responseText).message || 'The mode could not change.', 'err'); } catch (_) {} } });
 const leeModeFollow = kind => { if (!lee.modeBusy && kind && Date.now() - personAt < 2500) leeModeSet(kind === 'learn' ? 'learn' : 'code', true); };
 let keepTimer;
 function leeModeKeep() {

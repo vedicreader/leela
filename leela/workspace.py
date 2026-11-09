@@ -592,8 +592,8 @@ class Workspace:
     def _settle_mode(self):
         "After a restore Code never shows the Learn tab: it shows its editor tab, or the empty page."
         if self.mode == 'code' and (t := self.tab) is not None and t.kind == 'learn': self.active = ifnone(self._code_tab(), -1)
-    def set_mode(self, mode):
-        "Switch the workspace mode; nothing closes. Returns the mode, its layout and the tab to focus."
+    def set_mode(self, mode, tab_i=None):
+        "Switch the workspace mode; nothing closes. `tab_i` is the index of the tab to focus, else the mode's own. Returns the mode, its layout and the tab to focus."
         from .blocks.modes.modes import get_mode
         m = get_mode(mode)
         if (t := self.tab) is not None and t.kind != 'learn': self.mode_focus['code'] = self._mode_key(t)
@@ -608,6 +608,9 @@ class Workspace:
             if i is None: self.active = -1; self.watch_env(None)
             tab = self.activate(i) if i is not None else None
             focus = dict(kind=tab.kind, path=tab.path) if tab is not None else dict(kind='', path='')
+        if tab_i is not None and 0 <= tab_i < len(self.tabs) and (self.tabs[tab_i].kind == 'learn') == (m.id == 'learn'):
+            t = self.activate(tab_i); focus = dict(kind=t.kind, path=t.page if t.kind == 'learn' else t.path)
+            if m.id == 'code': self.mode_focus['code'] = self._mode_key(t)
         self.save()
         return dict(mode=m.id, layout=self.mode_layout(m.id), focus=focus)
     def find(self, path):
