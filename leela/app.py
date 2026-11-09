@@ -309,11 +309,11 @@ def _header(ws):
         cls='lee-header', id='header', style=f"--lee-mark: url('{_asset('favicon-dark.svg')}')")
 
 def _mode_switch(ws):
-    "The `Code | Learn` switch: one segmented control, one button per registered mode."
+    "The `Code | Learn | Create` switch: one segmented control, one button per registered mode."
     from .blocks.modes.modes import modes
     return Div(*(Button(m.title, type='button', cls='lee-seg' + (' active' if m.id == ws.mode else ''), data_mode=m.id,
                         aria_pressed=str(m.id == ws.mode).lower(), onclick=f'leeModeSet("{m.id}")') for m in modes()),
-               id='modeswitch', cls='lee-segbar lee-modeswitch', role='group', aria_label='Mode', title='Code or Learn: each keeps its own layout')
+               id='modeswitch', cls='lee-segbar lee-modeswitch', role='group', aria_label='Mode', title='Code, Learn or Create: each keeps its own layout')
 
 def _mode_attrs(ws):
     "What the shell carries so the first paint already has the mode's docks: no flicker, no script needed. Code is painted from its docks once it has any saved."

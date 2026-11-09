@@ -61,10 +61,11 @@ def test_code_is_the_base_mode_and_learn_registers_itself():
 
 
 def test_a_duplicate_id_is_refused_and_the_same_mode_twice_is_not(monkeypatch):
+    modes()   # load the built-in modes before the registry is copied
     monkeypatch.setattr(M, '_REG', dict(M._REG))
-    m = register_mode(Mode('create', 'Create'))
-    assert register_mode(m) is m and get_mode('create') is m
-    with pytest.raises(ValueError, match='already registered'): register_mode(Mode('create', 'Other'))
+    m = register_mode(Mode('draw', 'Draw'))
+    assert register_mode(m) is m and get_mode('draw') is m
+    with pytest.raises(ValueError, match='already registered'): register_mode(Mode('draw', 'Other'))
     with pytest.raises(KeyError): get_mode('nope')
     with pytest.raises(KeyError): get_mode(['code'])
 

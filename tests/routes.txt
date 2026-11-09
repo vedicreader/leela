@@ -1,4 +1,7 @@
 DELETE,GET,OPTIONS,PATCH,POST,PUT /learn/abh/{path:path}
+GET /create/export
+GET /create/page
+GET /create/scene
 GET /learn
 GET /learn/abh-asset/{name}
 GET /learn/abh-grip.js
@@ -452,6 +455,9 @@ POST /agent/learning
 POST /agent/mode
 POST /agent/shell-run
 POST /browser/external
+POST /create/new
+POST /create/state
+POST /create/tab/open
 POST /dev/start
 POST /dev/stop
 POST /fs/add-root

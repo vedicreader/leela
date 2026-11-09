@@ -586,31 +586,38 @@ class Workspace:
         return self.mode_layout(mode)
     def _mode_key(self, t): return t.path or t.ref or t.title
     def _code_tab(self):
-        "The index of the editor tab Code shows: the last one it had, else the newest; None when only Learn tabs are open."
+        "The index of the editor tab Code shows: the last one it had, else the newest; None when only Learn or Create tabs are open."
         want = self.mode_focus.get('code', '')
-        i = first(i for i, t in enumerate(self.tabs) if t.kind != 'learn' and self._mode_key(t) == want)
-        return first((i for i in reversed(range(len(self.tabs))) if self.tabs[i].kind != 'learn'), None) if i is None else i
+        from .blocks.modes.modes import kind_mode
+        code = lambda t: kind_mode(t.kind) == 'code'
+        i = first(i for i, t in enumerate(self.tabs) if code(t) and self._mode_key(t) == want)
+        return first((i for i in reversed(range(len(self.tabs))) if code(self.tabs[i])), None) if i is None else i
     def _settle_mode(self):
-        "After a restore Code never shows the Learn tab: it shows its editor tab, or the empty page."
-        if self.mode == 'code' and (t := self.tab) is not None and t.kind == 'learn': self.active = ifnone(self._code_tab(), -1)
+        "After a restore Code never shows a Learn or Create tab: it shows its editor tab, or the empty page."
+        from .blocks.modes.modes import kind_mode
+        if self.mode == 'code' and (t := self.tab) is not None and kind_mode(t.kind) != 'code': self.active = ifnone(self._code_tab(), -1)
     def set_mode(self, mode, tab_i=None):
         "Switch the workspace mode; nothing closes. `tab_i` is the index of the tab to focus, else the mode's own. Returns the mode, its layout and the tab to focus."
-        from .blocks.modes.modes import get_mode
+        from .blocks.modes.modes import get_mode, kind_mode
         m = get_mode(mode)
-        if (t := self.tab) is not None and t.kind != 'learn': self.mode_focus['code'] = self._mode_key(t)
+        if (t := self.tab) is not None and kind_mode(t.kind) == 'code': self.mode_focus['code'] = self._mode_key(t)
         self.mode = m.id
         if m.id == 'learn':
             i = first(i for i, t in enumerate(self.tabs) if t.kind == 'learn')
             tab = self.open_learn() if i is None else self.activate(i)
             focus = dict(kind='learn', path=tab.page)
+        elif m.id == 'create':
+            i = first(i for i, t in enumerate(self.tabs) if t.kind == 'story')
+            tab = self.open_story() if i is None else self.activate(i)
+            focus = dict(kind='story', path=tab.ref)
         else:
             want = self.mode_focus.get('code', '')
             i = self._code_tab()
             if i is None: self.active = -1; self.watch_env(None)
             tab = self.activate(i) if i is not None else None
             focus = dict(kind=tab.kind, path=tab.path) if tab is not None else dict(kind='', path='')
-        if tab_i is not None and 0 <= tab_i < len(self.tabs) and (self.tabs[tab_i].kind == 'learn') == (m.id == 'learn'):
-            t = self.activate(tab_i); focus = dict(kind=t.kind, path=t.page if t.kind == 'learn' else t.path)
+        if tab_i is not None and 0 <= tab_i < len(self.tabs) and kind_mode(self.tabs[tab_i].kind) == m.id:
+            t = self.activate(tab_i); focus = dict(kind=t.kind, path=t.page if t.kind == 'learn' else t.ref if t.kind == 'story' else t.path)
             if m.id == 'code': self.mode_focus['code'] = self._mode_key(t)
         self.save()
         return dict(mode=m.id, layout=self.mode_layout(m.id), focus=focus)
@@ -700,6 +707,14 @@ class Workspace:
             self.tabs[i].page, self.active = path, i
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='learn', ref=json.dumps([vault]), page=path, title='Learn', private_kernel=False))
+    def open_story(self, slug=''):
+        "Open the one Create tab on the project `slug` (the newest, or a new one, when empty); it is a place, so reopening moves it there."
+        from .blocks.create.scene import ensure
+        slug = ensure(slug)
+        if (i := first(i for i, t in enumerate(self.tabs) if t.kind == 'story')) is not None:
+            self.tabs[i].ref, self.active = slug, i
+            return self.tabs[i]
+        return self._add_tab(Tab(path='', kind='story', ref=slug, title='Create', private_kernel=False))
     def open_walk(self, vault, walk, i=0):
         "Open the Learn tab at step `i` of walk `walk`."
         return self.open_learn(vault, walk_path(walk, i))
@@ -1570,6 +1585,8 @@ class Workspace:
             try:
                 if t.get('kind') in ('learn_walk', 'learn'):
                     tab = self.open_saved_learn(t)
+                elif t.get('kind') == 'story':
+                    tab = self.open_story(str(t.get('ref') or ''))
                 else:
                     if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve()) and not self.fs.read_only(place)): continue
                     tab = self.open(place)
@@ -1581,7 +1598,7 @@ class Workspace:
         if opened:
             was = saved[min(max(active, 0), len(saved) - 1)] or {}
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
-                                       if (t.kind == 'learn' and was.get('kind') in ('learn_walk', 'learn')) or (t.path and t.path == str(was.get('path') or ''))), 0)
+                                       if (t.kind == 'learn' and was.get('kind') in ('learn_walk', 'learn')) or (t.kind == 'story' and was.get('kind') == 'story') or (t.path and t.path == str(was.get('path') or ''))), 0)
             self._settle_mode()
         return opened
     def _merge_roots(self, held, mine):
@@ -1654,7 +1671,7 @@ class Workspace:
         saved, active = _saved_tabs(d)
         for t in saved:
             try:
-                tab = ws.open_saved_learn(t) if t.get('kind') in ('learn_walk', 'learn') else ws.open(t['path'])
+                tab = ws.open_saved_learn(t) if t.get('kind') in ('learn_walk', 'learn') else ws.open_story(str(t.get('ref') or '')) if t.get('kind') == 'story' else ws.open(t['path'])
                 if d.get('version', 0) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
                 tab.cwd = str(t.get('cwd') or '')

@@ -358,7 +358,24 @@ JSON for the UI:
 
 First run: with no tab open, the page offers three choices: Open a folder, Learn something (`leeFirstLearn`: `POST /workspace/mode {mode: 'learn'}`, then the Learn tab, then focus on the Start box) and Write or run code. A line points to the top-bar switch.
 
-Deferred: the title-bar switch and the mode bar (JS), the palette commands `Mode: Code` and `Mode: Learn`, the `Learn about this` command, per-mode key sets, and a `create` mode.
+Deferred: the title-bar switch and the mode bar (JS), the palette commands `Mode: Code` and `Mode: Learn`, the `Learn about this` command, and per-mode key sets.
+
+## Create mode
+
+Create is the third mode. A student makes a small moving picture, and the numbers that move it are named values. This first slice has one scene, a boat on a river from dawn to dusk. It uses no model and no picture file.
+
+- A project is a folder under Leela's own data (`create/<name>/story.json`), not in the student's folders. `story.json` is a rupaka spec. Each number in its `state` is a named value: `t` (time), `boat` and `sun`.
+- The mode is `leela/blocks/create/`. `scene.py` holds the projects and the agent tools. `app.py` holds the routes. `ui.py` draws the bar. `create.js` draws the scene in the tab, in the same way as a Learn demo (a shadow root, no frame). The tab kind is `story`. There is one Create tab, and it moves to the project that is open.
+- The scene needs rupaka 0.0.16 or newer: the `layers`, `layer` and `timeline` blocks and the `ease` and `keyframes` fns. With an older rupaka the switch to Create is refused with a plain line, and nothing changes.
+- The student drags the time bar, the boat or the sun. A faint copy shows where a thing was while it moves. A caption changes at each time mark. A far layer moves less than a near one.
+- The page saves each change to `story.json` (`POST /create/state`). The agent changes the same file, so the page asks for the revision every 1.5 seconds and draws a new value when one arrives.
+- The switch to Create keeps the one agent conversation. Only the tools and the context change. The tools are `list_scene` (reads the values, their ranges and the time marks) and `set_scene_value(name, value)`. Both answer in the field shape of `abhyasa.agent_tools`. Outside Create they answer `mode_off`. A name that the scene lacks gives `not_found`. A value that is not a number, or is out of its range, gives `invalid_value`.
+- `Export page` saves one web page with the fonts inside. It opens from a file with no network.
+- Palette: `Mode: Create` and `Create: New scene`. There is no key chord yet: the keymap audit found no free left-hand chord.
+
+JSON for the UI: `GET /create/page`, `GET /create/scene?slug=&have=` (`{ok, rev, spec, state}` or `{ok, same, rev}`), `POST /create/state {slug, state}`, `POST /create/new {name?}`, `POST /create/tab/open`, `GET /create/export?slug=`.
+
+Left for slice 2: dragging a thing to record a keyframe, uploaded or drawn pictures, an `image` block, a record of each picture in the vault, a model that makes pictures, a cost limit, a Create section in Settings, and a link from a notebook variable to a named value.
 
 ## Hosted route audit
 

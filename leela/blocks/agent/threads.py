@@ -161,7 +161,7 @@ class Thread:
         except KeyError: raise TurnError('invalid_mode', f'There is no mode {mode!r}.', self.id)
         if missing := m.contract_check():
             from ..learn.tools import missing_line
-            raise TurnError('contract_missing', f'{m.title} is off. {missing_line(missing)}', self.id)
+            raise TurnError('contract_missing', f'{m.title} is off. {(m.says or missing_line)(missing)}', self.id)
         with self.runner._lock:
             if ai.busy or self.runner._pending or self.approvals.pending is not None or self.approvals.waiting:
                 raise TurnError('thread_busy', 'The mode cannot change during a turn, queued message or approval.', self.id)

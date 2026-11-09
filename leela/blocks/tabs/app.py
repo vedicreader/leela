@@ -67,7 +67,8 @@ def connect(app, ctx):
     async def tab_select(i: int):
         "Activate tab `i`. A tab of the other mode switches the mode first; a refusal leaves the tab, the mode and the layout as they were."
         t = session.tabs[i] if 0 <= i < len(session.tabs) else None
-        if t is not None and (want := 'learn' if t.kind == 'learn' else 'code') != session.mode:
+        from ..modes.modes import kind_mode
+        if t is not None and (want := kind_mode(t.kind)) != session.mode:
             from ..agent.threads import TurnError
             from ..modes.app import refusal, switch
             try: await switch(session, want, tab=i)
@@ -165,6 +166,8 @@ def connect(app, ctx):
                     'disk_version': disk_version(t.path)}
         if t.kind == 'learn':
             return {'kind': 'learn', 'title': t.title, 'vault': (json.loads(t.ref) or [''])[0], 'path': t.page or '/'}
+        if t.kind == 'story':
+            return {'kind': 'story', 'title': t.title, 'project': t.ref}
         if t.kind == 'vault':
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}

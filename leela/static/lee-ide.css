@@ -4143,3 +4143,12 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-first-note { margin: 18px 0 0; font-size: 14px; color: var(--lee-fg4); }
 .lee-first .lee-empty-recent { margin: 22px 0 0; max-width: none; }
 .lee-first > .lee-empty-mark { align-self: flex-start; }
+
+/* Create mode: the scene tab */
+.lee-create { padding: 12px 16px; max-width: 860px; margin: 0 auto; }
+.lee-create-bar { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.lee-create-title { font-size: calc(var(--lee-code-size) + 3px); font-weight: 600; }
+.lee-create-keys { margin: 0 0 8px; font-size: var(--lee-size-min); }
+.lee-create-say { min-height: 1.4em; margin: 0 0 6px; }
+.lee-create-say.err { color: var(--lee-red); }
+.lee-create-stage .lee-rupaka { display: block; }

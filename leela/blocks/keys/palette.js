@@ -21,6 +21,7 @@ function palette() {
   ];
   const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
   learnCommands.push({name: 'Learn: New module', scope: 'global', run: () => leeLearnOpen('/').then(() => leeFirstLearn())});
+  learnCommands.push({name: 'Create: New scene', scope: 'global', run: () => leeCreateNew()});
   learnCommands.push(...$$('#modeswitch [data-mode]').map(b => ({name: 'Mode: ' + b.textContent, scope: 'global', run: () => leeModeSet(b.dataset.mode)})));
   if (lee.kind === 'learn') learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});   // a Learn tab's own ask, not the vault's
   const cmds = lee.keys.filter(k => k.label && !(lee.kind === 'learn' && k.action === 'vault_ask_page')).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);

@@ -7,11 +7,11 @@ from typing import Callable
 from fastcore.basics import first
 from ..runtime.kernels import output_text
 
-__all__ = ['Mode', 'register_mode', 'get_mode', 'modes', 'mode_ids', 'cell_anchor', 'LAYOUT_KEYS', 'DEFAULT_MODE']
+__all__ = ['Mode', 'register_mode', 'get_mode', 'kind_mode', 'modes', 'mode_ids', 'cell_anchor', 'LAYOUT_KEYS', 'DEFAULT_MODE']
 
 DEFAULT_MODE = 'code'
 LAYOUT_KEYS = ('files', 'exec', 'exec_handle', 'agent', 'main')
-BUILTIN = ('leela.blocks.learn.mode',)
+BUILTIN = ('leela.blocks.learn.mode', 'leela.blocks.create.mode')
 ANCHOR_SRC, ANCHOR_ERR, ANCHOR_OUT = 4000, 1500, 2000
 
 @dataclass
@@ -28,6 +28,7 @@ class Mode:
     palette: tuple = ()
     contract_check: Callable = lambda: []
     bar: str = ''
+    says: Callable = None   # the sentence for a failed `contract_check`, from its list; None uses the Learn wording
     def dict(self): return dict(id=self.id, title=self.title, layout=dict(self.layout), palette=list(self.palette), bar=self.bar, tab_kinds=list(self.tab_kinds))
 
 _REG = {}
@@ -46,6 +47,10 @@ def modes():
     return list(_REG.values())
 
 def mode_ids(): return [m.id for m in modes()]
+
+def kind_mode(kind):
+    "The id of the mode whose tabs have `kind`; `code` for any other kind."
+    return next((m.id for m in modes() if m.id != DEFAULT_MODE and kind in m.tab_kinds), DEFAULT_MODE)
 
 def get_mode(id):
     "The mode `id`; `KeyError` for one nobody registered."
