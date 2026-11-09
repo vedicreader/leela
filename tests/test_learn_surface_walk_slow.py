@@ -161,7 +161,8 @@ def test_overview_change_box_goes_through_the_host_and_plan_tools_work(tmp_path,
         await pg.wait_for_timeout(1500)
         assert (await names())[0] == first
         grips = abh.locator('.grip')
-        a, b = await grips.nth(2).bounding_box(), await grips.nth(0).bounding_box()
+        await grips.nth(0).scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
+        a, b = await grips.nth(1).bounding_box(), await grips.nth(0).bounding_box()
         order = await names()
         await pg.mouse.move(a['x'] + 4, a['y'] + 4); await pg.mouse.down()
         await pg.mouse.move(b['x'] + 4, b['y'] - 20, steps=12); await pg.mouse.up()
