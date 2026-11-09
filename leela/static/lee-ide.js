@@ -5413,7 +5413,8 @@ function palette() {
     {name: 'Agent: shape what the model remembers', scope: 'agent', run: () => leeAgentShape()},
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
-  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, lessonCommands);
+  const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
+  const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" aria-label="Command palette" role="combobox" aria-controls="cplist" aria-expanded="true" autofocus>
                    <div class="lee-modallist" id="cplist" role="listbox" aria-label="Commands"></div>`,

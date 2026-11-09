@@ -237,6 +237,7 @@ function textEditorOf(e) {
 }
 
 window.addEventListener('keydown', e => {
+  if (window.leeLearnKey?.(e)) return;
   const scope = eventContext(e), match = findBinding(e, scope);
   // Kept on `lee` so the key editor and DevTools can tell "Chrome did not deliver it" from "the
   // router rejected it".

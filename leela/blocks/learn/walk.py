@@ -118,12 +118,13 @@ def walk_job_actions(job, result):
 
 def abh_styles():
     root = files('abhyasa')
-    css = '\n'.join((root/p).read_text() for p in ('core/base.css', 'blocks/walk/walk.css'))
+    css = '\n'.join(p.read_text() for p in [root/'core'/f for f in ('base.css', 'pane.css', 'edit.css', 'stage.css')] + sorted((root/'blocks').glob('*/*.css')))
+    fonts = '\n'.join(re.findall(r'@font-face\s*\{.*?\}', css, flags=re.S))
     css = re.sub(r'@font-face\s*\{.*?\}', '', css, flags=re.S)
-    css = re.sub(r'\[data-theme(?:=[^\]]+)?\]', ':scope', css)
-    css = css.replace(':root', ':scope').replace('html.in-pane', ':scope').replace('html.rh-open', ':scope')
-    css = re.sub(r'(?<![-\w])body(?![-\w])', ':scope', css)
-    return '@scope (.abh) {\n' + css + '\n}\n'
+    css = re.sub(r'^\[data-theme=\w+\][^\n]*$', '', css, flags=re.M)
+    css = css.replace('html.in-pane', ':scope:not(.wide)').replace('html.rh-open', ':scope.rh-open').replace(':root, [data-theme]', ':scope')
+    css = re.sub(r'(?<![-\w.#:])(?:body|html|:root)(?![-\w])(?=\s*[{:,.\[ ])', ':scope', css)
+    return fonts + '\n@scope (.abh) {\n' + css + '\n}\n'
 
 
 def connect(app, ctx):
@@ -137,6 +138,16 @@ def connect(app, ctx):
     def walk_css():
         from pathlib import Path
         return Response(Path(__file__).with_name('walk.css').read_text(), media_type='text/css')
+    @app.route('/learn/tab/open', methods=['POST'])
+    async def learn_tab_open(path: str = '/'):
+        if not path.startswith('/') or path.startswith('//'): path = '/'
+        ctx.session.open_learn(path=path); ctx.session.save()
+        return tab_bar(ctx.session)
+    @app.route('/learn/tab/page', methods=['POST'])
+    async def learn_tab_page(req):
+        data = await req.json()
+        ctx.session.note_learn_page(str(data.get('path') or ''))
+        return Response(status_code=204)
     @app.route('/learn/walk/open', methods=['POST'])
     async def walk_open(req):
         data = await req.json() if req.headers.get('content-type', '').startswith('application/json') else await req.form()

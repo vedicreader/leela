@@ -1,3 +1,6 @@
-.abh { --bg: var(--lee-bg); --fg: var(--lee-fg); --ink2: var(--lee-fg2); --mute: var(--lee-fg4); --line: var(--lee-border); --rule: var(--lee-border); --page: var(--lee-bg); --raised: var(--lee-bg1); --sunken: var(--lee-bg2); --acc: var(--lee-accent); --ok: var(--lee-green); --no: var(--lee-orange); --bad: var(--lee-red); --serif: 'Literata', ui-serif, Georgia, serif; --head: 'Literata', ui-serif, Georgia, serif; --mono: var(--lee-mono, ui-monospace, monospace); color-scheme: inherit; min-height: 100%; overflow: auto; background: var(--bg); color: var(--fg); font: 18px/1.65 var(--serif); }
+.abh { --bg: var(--lee-bg); --fg: var(--lee-fg); --ink2: var(--lee-fg2); --mute: var(--lee-fg4); --line: var(--lee-border); --rule: var(--lee-border); --page: var(--lee-bg); --raised: var(--lee-bg1); --sunken: var(--lee-bg2); --acc: var(--lee-accent); --ok: var(--lee-green); --no: var(--lee-orange); --bad: var(--lee-red); --serif: 'Literata', ui-serif, Georgia, serif; --head: 'Literata', ui-serif, Georgia, serif; --mono: var(--lee-mono, ui-monospace, monospace); color-scheme: inherit; flex: 1; min-height: 0; overflow: auto; transform: translateZ(0); background: var(--bg); color: var(--fg); font: 18px/1.65 var(--serif); }
 .abh > main { max-width: 1200px; margin: 0 auto; padding: 44px 24px 96px; }
 
+.lee-learn { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.lee-learn-bar { display: flex; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
+.lee-learn-bar .lee-btn[disabled] { opacity: .4; }

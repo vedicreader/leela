@@ -1,14 +1,14 @@
 r"""Native Learn end to end: acceptance A1, A2, A4, A5 and A7 in a headless browser, on a scripted model that sends nothing off the machine.
 
-A missing route or tool fails the test with its name. The contracts it is written against: `POST /agent/learn-mode {on}`, tab kind `learn_walk`, `GET /learn/walk/{jid}`, `POST /learn/walk/{jid}/{i}/answer`.
+A missing route or tool fails the test with its name. The contracts it is written against: `POST /agent/learn-mode {on}`, tab kind `learn_walk` hosting Abhyasa's real step page in `.abh`, `GET /learn/walk/{jid}`, `POST /learn/walk/{jid}/{i}/answer`.
 """
-import asyncio, importlib.util, inspect, re
+import asyncio, importlib.util, inspect, json, re
 from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
 TOPIC = 'teach me fractions'
-WALK = r'/learn/walk/([^/?#]+)/?(?:[?#].*)?$'
+WALK = r'/w/([^/?#]+)/\d+(?:[?#].*)?$'
 
 def _load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -130,21 +130,29 @@ def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_
                         pytest.fail(f'no learn_walk tab opened after the turn: {e}\njobs: {jobs}\ntabs: {[(t.kind, t.ref) for t in ws.tabs]}\nagent log: {await pg.inner_text("#agentlog")}')
                     assert await pg.locator('.lee-tab[data-kind="learn_walk"]').count() == 1, 'the walk tab is in the tab strip, with no reload'
                     assert await pg.evaluate('() => document.activeElement && document.activeElement.id') == 'agentprompt', 'the new tab leaves focus in the agent prompt'
-                    await pg.wait_for_selector('.lee-walk', timeout=15000)
-                    assert jids, 'the walk tab never asked GET /learn/walk/{jid}'
+                    await pg.wait_for_selector('.abh #check .check', timeout=30000)
+                    assert jids, 'the walk tab never asked GET /w/{jid}/{i}'
                     jid = jids[-1]
+                    assert not await pg.evaluate("() => !!document.activeElement?.closest('.abh')"), 'the walk page took focus'
                     out['job'] = next((j for j in ws.jobs.all(kind='learn_walk') if (j.result or {}).get('walk') == jid), None)
-                    first = await _api(pg, 'GET', f'/learn/walk/{jid}')
+                    vq = '?vault=' + json.loads(next(t for t in ws.tabs if t.kind == 'learn_walk').ref)[0]
+                    first = await _api(pg, 'GET', f'/learn/walk/{jid}{vq}')
                     _missing(first['status'], 'GET /learn/walk/{jid}')
                     out['first'] = first
-                    out['quoted'] = await pg.locator('blockquote a[href]').count()
-                    out['ungrounded'] = bool(re.search('ungrounded', await pg.inner_text('body'), re.I))
+                    await pg.locator('.abh #ans').fill('add the numerators')
+                    await pg.locator('.abh #send').click()
+                    await pg.locator('.abh #check .tag, .abh #check .msg').first.wait_for(timeout=30000)
+                    out['ui_answered'] = await pg.locator('.abh #check').inner_text()
+                    out['ui_after'] = await _api(pg, 'GET', f'/learn/walk/{jid}{vq}')
+                    out['quoted'] = await pg.locator('.abh blockquote a[href]').count()
+                    out['ungrounded'] = bool(re.search(r"tutor.s words|find a source|ungrounded", await pg.inner_text('.abh'), re.I))
+                    now = _find(out['ui_after']['json'], 'current') or 0
                     body = {'answer': 'add the numerators', 'attempt_id': 'e2e-attempt-1'}
-                    ans = await _api(pg, 'POST', f'/learn/walk/{jid}/0/answer', body)
+                    ans = await _api(pg, 'POST', f'/learn/walk/{jid}/{now}/answer{vq}', body)
                     _missing(ans['status'], 'POST /learn/walk/{jid}/{i}/answer')
                     out['answer'] = ans
-                    out['retry'] = await _api(pg, 'POST', f'/learn/walk/{jid}/0/answer', body)
-                    out['after'] = await _api(pg, 'GET', f'/learn/walk/{jid}')
+                    out['retry'] = await _api(pg, 'POST', f'/learn/walk/{jid}/{now}/answer{vq}', body)
+                    out['after'] = await _api(pg, 'GET', f'/learn/walk/{jid}{vq}')
                     cards, hist = await pg.locator('#agentlog .lee-agent-turn').count(), len(be.hist_)
                     off = await _api(pg, 'POST', '/agent/learn-mode', {'on': False})
                     out['off'] = off
@@ -161,11 +169,12 @@ def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_
     out, port = asyncio.run(asyncio.wait_for(go(), 150))
     assert out['tools_on'], 'A5: Learn mode on advertises the learn tools'
     assert out['job'] and out['job'].status == 'complete', 'A1: the create_walk job completes'
-    assert out['quoted'] or out['ungrounded'], 'A2: a linked quote, or an Ungrounded label'
+    assert out['quoted'] or out['ungrounded'], 'A2: a linked quote, or a tutor-words label'
     ans, retry = _result(out['answer'], ERRORS), _result(out['retry'], ERRORS)
     assert ans['status'] == 'ok' and retry == ans, 'A4: a retry returns the stored result'
     g0, g1 = _gauge(out['first']['json']), _gauge(out['after']['json'])
     assert g0 is not None and g1 != g0, f'A4: the gauge moved from {g0!r} to {g1!r}'
+    assert out['ui_answered'].strip() and _gauge(out['ui_after']['json']) != g0, 'A4: answering in the tab moves the gauge'
     assert out['off']['status'] == 200 and not out['tools_off'], 'A5: Learn mode off removes the learn tools'
     assert all(out['kept']), 'A5: history and the backend remain'
     assert out['frames'] == 0, 'A7: no iframe'

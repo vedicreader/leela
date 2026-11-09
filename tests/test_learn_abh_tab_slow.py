@@ -8,6 +8,8 @@ from tools.isolate import isolate
 isolate()
 pytestmark = pytest.mark.slow
 
+OUT = str(Path(__file__).resolve().parents[1]/'target')
+LEE_BG = "() => { const d = document.createElement('i'); d.style.background = 'var(--lee-bg)'; document.body.append(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c }"
 GRADE = r'{"correct": true, "grade": 10, "feedback": "Correct.", "first_error": "", "misconception": ""}'
 
 
@@ -44,7 +46,7 @@ def test_real_abhyasa_step_stays_inside_the_leela_tab(tmp_path, monkeypatch):
             async with async_playwright() as pw:
                 browser = await _launch(pw)
                 try:
-                    pg = await browser.new_page(viewport=dict(width=1280, height=1000))
+                    pg = await browser.new_page(viewport=dict(width=1280, height=900))
                     await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
                     await pg.wait_for_function('window.lee && lee.keys.length')
                     await pg.evaluate("leeRight('agent')")
@@ -53,6 +55,7 @@ def test_real_abhyasa_step_stays_inside_the_leela_tab(tmp_path, monkeypatch):
                       const css = s => { const x = getComputedStyle(document.querySelector(s)); return [x.fontFamily, x.fontSize, x.color, x.backgroundColor] };
                       return [css('body'), css('.lee-tab'), css('#agentprompt')];
                     }"""
+                    await pg.evaluate("applyTheme('leela:light:relaxed')")
                     before = await pg.evaluate(shell_style)
                     href, history = await pg.evaluate('() => [location.href, window.history.length]')
                     ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
@@ -64,9 +67,8 @@ def test_real_abhyasa_step_stays_inside_the_leela_tab(tmp_path, monkeypatch):
                     assert not await pg.evaluate("() => !!document.activeElement?.closest('.abh')")
                     assert before == await pg.evaluate(shell_style)
                     assert [href, history] == await pg.evaluate('() => [location.href, window.history.length]')
-                    Path('target').mkdir(exist_ok=True)
-                    await pg.evaluate("applyTheme('leela:light:relaxed')")
-                    await abh.screenshot(path='target/p0-step-light.png')
+                    await pg.wait_for_timeout(700)
+                    await pg.screenshot(path=OUT+'/p0-step-light.png')
                     first = await pg.locator('.abh h1.idea').text_content()
                     shell = await abh.evaluate("el => [...el.parentElement.children].filter(x => x !== el).map(x => x.outerHTML)")
                     await pg.locator('.abh .outline a[href$="/1"]').evaluate('el => el.click()')
@@ -76,17 +78,21 @@ def test_real_abhyasa_step_stays_inside_the_leela_tab(tmp_path, monkeypatch):
                     await pg.locator('.abh a[href$="/0"]').first.evaluate('el => el.click()')
                     await pg.wait_for_function("old => document.querySelector('.abh h1.idea')?.textContent === old", arg=first)
                     await pg.evaluate("applyTheme('leela:dark:relaxed')")
-                    await abh.screenshot(path='target/p0-step-dark.png')
-                    assert await abh.evaluate("el => getComputedStyle(el).backgroundColor") == await pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()")
+                    await pg.wait_for_timeout(700)
+                    await pg.screenshot(path=OUT+'/p0-step-dark.png')
+                    assert await abh.evaluate("el => getComputedStyle(el).backgroundColor") == await pg.evaluate(LEE_BG)
                     await pg.evaluate("applyTheme('leela:light:relaxed')")
                     await pg.locator('.abh #ans').fill('A fraction names equal parts of a whole.')
                     await pg.locator('.abh #send').click()
                     await pg.locator('.abh #check').get_by_text('Correct.', exact=True).wait_for(timeout=30000)
                     assert lr.attempts()
-                    await abh.screenshot(path='target/p0-answered-light.png')
+                    await pg.wait_for_timeout(700)
+                    await pg.screenshot(path=OUT+'/p0-answered-light.png')
                     await pg.evaluate("applyTheme('leela:dark:relaxed')")
-                    await abh.screenshot(path='target/p0-answered-dark.png')
-                    assert await abh.evaluate("el => getComputedStyle(el).backgroundColor") == await pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--lee-bg').trim()")
+                    await pg.wait_for_timeout(700)
+                    await pg.screenshot(path=OUT+'/p0-answered-dark.png')
+                    assert await abh.evaluate("el => getComputedStyle(el).backgroundColor") == await pg.evaluate(LEE_BG)
+                    await pg.evaluate("applyTheme('leela:light:relaxed')")
                     assert before == await pg.evaluate(shell_style)
                     assert [href, history] == await pg.evaluate('() => [location.href, window.history.length]')
                 finally: await browser.close()
