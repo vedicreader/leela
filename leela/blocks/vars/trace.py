@@ -9,13 +9,22 @@ __all__ = ['TracedKernel', 'TraceStore', 'trace_context', 'trace_store', 'trace_
 KEEP = 24
 ANCHOR_TRACE = 1500
 
+NEEDS = dict(dhrishti='0.1.14', kunda='0.0.16')
+
+def _old(pkg):
+    "The one line for a `pkg` that cannot trace: what it needs and what is installed."
+    import importlib.metadata as md
+    try: have = f'This one is {md.version(pkg)}.'
+    except md.PackageNotFoundError: have = f'{pkg} is not installed.'
+    return f'Tracing needs {pkg} {NEEDS[pkg]} or newer. {have}'
+
 def trace_support(k=None):
-    "'' when this kunda and dhrishti can trace a run (and kernel `k`, if given), else one sentence for the person."
+    "'' when this kunda and dhrishti can trace a run (and kernel `k`, if given), else one plain sentence for the person."
     try: import dhrishti.trace  # noqa: F401
-    except ImportError: return 'needs a newer dhrishti'
+    except ImportError: return _old('dhrishti')
     try: import kunda.trace  # noqa: F401
-    except ImportError: return 'needs a newer kunda'
-    if k is not None and not hasattr(k, 'run_traced'): return 'needs a newer kunda'
+    except ImportError: return _old('kunda')
+    if k is not None and not hasattr(k, 'run_traced'): return _old('kunda')
     return ''
 
 class TracedKernel:

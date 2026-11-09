@@ -51,7 +51,7 @@ function leeTraceDraw() {
     `<span class="lee-trnote" id="tracenote"></span></div>`;
   if (!t.model) { box.innerHTML = head + `<div class="lee-trnote">${t.why ? esc(t.why) : 'Select a code cell and press Trace this run. The values of each line then appear beside the code, one column for each pass.'}</div>`; return leeTraceNote(); }
   box.innerHTML = head +
-    `<div class="lee-trslide"><span class="lee-trnote">step</span><input type="range" id="tracestep" min="0" max="${Math.max(0, t.model.states.length - 1)}" value="${t.step}" oninput="leeTraceScrub(+this.value)" aria-label="scrub the steps of this run"><span class="lee-trnote" id="tracepos"></span></div>` +
+    `<div class="lee-trslide"><span class="lee-trnote">step</span><span class="lee-trnote" id="tracepos"></span><span class="lee-trnote">Use the step bar under the cell.</span></div>` +
     `<div class="lee-trvals" id="tracevals"></div>`;
   leeTraceNote(); leeTraceValues();
 }
@@ -77,12 +77,21 @@ function leeTraceValues() {
   const pos = $('#tracepos'); if (pos) pos.textContent = `${t.step + 1} / ${m.states.length}`;
 }
 
-function leeTraceScrub(i) {
+function leeTraceScrub(i, playing = false) {
   const t = lee.trace; if (!t.model) return;
+  if (!playing && t.timer) { clearInterval(t.timer); t.timer = 0; }
   t.step = Math.max(0, Math.min(Math.round(i) || 0, t.model.states.length - 1));
-  const sl = $('#tracestep'); if (sl) sl.value = t.step;
   leeTraceValues(); leeLensStep();
 }
+//: Play the run from the current step, one pass every 400 ms; it stops at the end, on Pause, on a step by hand and when the trace closes.
+function leeTracePlay() {
+  const t = lee.trace; if (!t.model) return;
+  if (t.timer) return leeTraceStop();
+  if (t.step >= t.model.states.length - 1) t.step = -1;
+  t.timer = setInterval(() => { if (!lee.trace.model || lee.trace.step >= lee.trace.model.states.length - 1) return leeTraceStop(); leeTraceScrub(lee.trace.step + 1, true); }, 400);
+  leeTraceScrub(t.step + 1, true);
+}
+function leeTraceStop() { const t = lee.trace; if (t.timer) { clearInterval(t.timer); t.timer = 0; } if (t.model) leeLensStep(); }
 //: Jump to the pass whose step number is `step`.
 function leeTraceJump(step) {
   const k = lee.trace.model && leeLensRows(lee.trace.model).idx.get(step);
@@ -96,7 +105,7 @@ function leeTracePlot(name) {
 }
 //: Remove the trace from the page: strips, bar, plot and the pane's numbers. Nothing in the cell changes.
 function leeTraceClose(focus = true) {
-  const t = lee.trace, id = t.id; leeLensHide(); leeLensCleared(id, '');
+  const t = lee.trace, id = t.id; if (t.timer) { clearInterval(t.timer); t.timer = 0; } leeLensHide(); leeLensCleared(id, '');
   Object.assign(t, {model: null, id: null, plot: null, why: ''}); leeTraceDraw();
   const v = id && lee.editors.get(id); if (v && focus) LeeCM.focus(v);
 }
@@ -128,7 +137,7 @@ async function leeTraceRun() {
 
 function leeTraceShow(model, id, ok = true) {
   leeLensHide();
-  Object.assign(lee.trace, {model, id, ok, tab: lee.tabKey, plot: null, step: Math.max(0, (model?.states?.length || 1) - 1), why: ''});
+  Object.assign(lee.trace, {model, id, ok, tab: lee.tabKey, plot: null, step: 0, why: ''});
   $('.lee-varspanel')?.classList.add('tracing'); $('#tracebtn')?.classList.add('active');
   leeTraceDraw();
   if (!leeLensShow()) { lee.trace.why = 'The values could not be drawn beside the code; the pane lists them.'; }
@@ -142,7 +151,7 @@ async function leeTraceToggle() {
   const on = !panel.classList.contains('tracing');
   panel.classList.toggle('tracing', on); $('#tracebtn')?.classList.toggle('active', on);
   if (!on) return leeTraceClose(false);
-  try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : `Tracing ${s.why}.`; lee.trace.can = !!s.ok; }
+  try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : s.why; lee.trace.can = !!s.ok; }
   catch (e) { lee.trace.why = String(e.message || e); lee.trace.can = false; }
   if (lee.trace.can && !lee.trace.model && lee.path && lee.cells?.[lee.sel]) {
     try { const d = await api(`/vars/trace/last?path=${encodeURIComponent(lee.tabKey)}&id=${encodeURIComponent(lee.cells[lee.sel].id)}`); if (d.trace && d.trace.source === LeeCM.getDoc(ensureCellMounted(lee.sel))) leeTraceShow(d.trace, lee.cells[lee.sel].id, true); } catch (e) {}
@@ -151,9 +160,21 @@ async function leeTraceToggle() {
   if (!lee.trace.can) { const b = $('#tracerun'); if (b) { b.disabled = true; b.title = lee.trace.why; } }
 }
 
+//: "Trace this run" from the cell: the pane's box is made when it is not there yet, then the selected cell runs traced.
+async function leeTraceFromCell() {
+  const panel = $('.lee-varspanel'); if (!panel) return leeTraceRun();
+  leeTraceStyle();
+  if (!$('#tracebox')) panel.append(Object.assign(document.createElement('div'), {id: 'tracebox'}));
+  if (lee.trace.can === undefined) {
+    try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : s.why; lee.trace.can = !!s.ok; }
+    catch (e) { lee.trace.why = String(e.message || e); lee.trace.can = false; }
+  }
+  if (!lee.trace.can) { leeTraceDraw(); return status(lee.trace.why || 'Tracing is not available here.', 'err'); }
+  return leeTraceRun();
+}
 function leeTraceInit() {
   const head = $('.lee-varspanel .lee-phead'); if (!head || $('#tracebtn')) return;
   head.insertBefore(Object.assign(document.createElement('button'), {id: 'tracebtn', className: 'lee-seg', textContent: 'trace', title: 'run the selected cell and see the values of each line, pass by pass', onclick: leeTraceToggle}), head.querySelector('.lee-spacer'));
 }
-window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow; window.leeTracePlot = leeTracePlot; window.leeTraceJump = leeTraceJump; window.leeTraceClose = leeTraceClose;
+window.leeTraceFromCell = leeTraceFromCell; window.leeTracePlay = leeTracePlay; window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow; window.leeTracePlot = leeTracePlot; window.leeTraceJump = leeTraceJump; window.leeTraceClose = leeTraceClose;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', leeTraceInit); else leeTraceInit();

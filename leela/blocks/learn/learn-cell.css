@@ -19,3 +19,7 @@
 .abh .lv-watch { margin: 4px 12px 10px; border-collapse: collapse; font: 13px var(--lee-mono, monospace); }
 .abh .lv-watch th, .abh .lv-watch td { padding: 2px 16px 2px 0; text-align: left; font-weight: normal; }
 .abh .lv-watch th { color: var(--mute, var(--lee-fg4)); }
+
+.lv-state.lv-spin::before { content: ''; display: inline-block; width: .8em; height: .8em; margin-right: .4em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -.1em; animation: lv-spin .8s linear infinite; }
+@keyframes lv-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .lv-state.lv-spin::before { animation: none; } }

@@ -77,9 +77,11 @@ function cellButtons(i) {
     `onclick="leeCellAct(${i}, '${esc(b.action)}')">${esc(b.label)}</button>`).join('');
   const debug = lee.cells[i]?.cell_type === 'code'
     ? `<button class="lee-cbtn" title="debug this cell (ipykernel)" onclick="leeDebugCell(${i})">◆</button>` : '';
+  const trace = lee.cells[i]?.cell_type === 'code'
+    ? `<button class="lee-cbtn lee-cbtn-trace" title="trace this run: see the values of each line" onclick="leeCellAct(${i}, 'trace_cell')">Trace</button>` : '';
   const more = `<button class="lee-cbtn" title="more cell actions" aria-label="more cell actions" ` +
     `onclick="leeCellMenu(${i}, this, event)">⋯</button>`;
-  return debug + normal + more;
+  return debug + trace + normal + more;
 }
 function leeCellAct(i, action) { selectCell(i); setScope('editor'); leeAct(action); }
 function leeCellMenu(i, button, event) {

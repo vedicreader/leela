@@ -130,8 +130,29 @@ function leeScrubGhost(c, before) {
   g.classList.toggle('overlay', media);
   inner.style.top = media ? -box.offsetHeight + 'px' : '';
 }
-//: Forget the ghost and the note of cell `id`: an ordinary run has come.
-function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); $('#out-' + id)?.classList.remove('lee-scrub-preview'); }
+//: Forget the ghost, the note and the old-result mark of cell `id`: an ordinary run has come.
+function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); $('#stale-' + id)?.remove(); $('#out-' + id)?.classList.remove('lee-scrub-preview', 'lee-scrub-stale'); }
+//: A number changed and the cell did not run: the output shows the old numbers, so say so at once.
+function leeScrubStale(id) {
+  const c = lee.cells.find(x => x.id === id), box = $('#out-' + id); if (!box || !(c?.outputs || []).length || $('#stale-' + id)) return;
+  const n = document.createElement('div'); n.id = 'stale-' + id; n.className = 'lee-scrub-note stale'; n.setAttribute('role', 'status'); n.textContent = 'old: run again';
+  box.before(n); box.classList.add('lee-scrub-stale');
+}
+const leeScrubUsed = () => { try { return !!localStorage.getItem('lee-scrub-used'); } catch { return false; } };
+//: The first drag is the lesson: the hint under every cell goes and does not come back.
+function leeScrubUse() { try { localStorage.setItem('lee-scrub-used', '1'); } catch {} $$('.lee-scrub-tip').forEach(e => e.remove()); }
+//: The one-line hint under a code cell that holds a number: how to drag it, and the switch for live numbers, until a drag is done once.
+function leeScrubTip(id) {
+  $('#tip-' + id)?.remove(); if (leeScrubUsed() || !leeScrubOn()) return;
+  const c = lee.cells.find(x => x.id === id), view = lee.editors.get(id), box = $('#out-' + id);
+  const lit = c?.cell_type === 'code' && view && box && leeScrubScan(leeScrubDoc(view))[0]; if (!lit) return;
+  const live = leeScrubIsLive(id), t = document.createElement('div'); t.id = 'tip-' + id; t.className = 'lee-scrub-tip';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'lee-cbtn'; b.textContent = live ? 'Turn off' : 'Turn on';
+  b.title = 'Live numbers run a safe copy of the cell as you drag. The kernel is not touched.';
+  b.onclick = async () => { selectCell(lee.cells.findIndex(x => x.id === id)); await leeScrubToggleLive(); leeScrubTip(id); };
+  t.append(`Hold ${/Mac/.test(navigator.platform) ? 'Option' : 'Alt'} and drag the ${lit.text.replace(/^-/, '')}. Live: ${live ? 'on' : 'off'}. `, b);
+  (box.nextElementSibling?.id === 'ghost-' + id ? box.nextElementSibling : box).after(t);
+}
 function leeScrubNote(id, text) {
   let n = $('#note-' + id);
   if (!text) return n?.remove();
@@ -145,11 +166,11 @@ function leeScrubOpen(view, id) {
   const c = lee.cells.find(x => x.id === id);
   s = {view, id, good: JSON.parse(JSON.stringify(c?.outputs || [])), ran: false, last: null, ok: true};
   s.gate = leeScrubGate(() => leeScrubRun(s));
-  lee.scrubbing.set(id, s); leeScrubClear(id);
+  lee.scrubbing.set(id, s); leeScrubClear(id); leeScrubUse();
   return s;
 }
 //: A new text is in the editor: run it when the cell may.
-const leeScrubChanged = s => { if (leeScrubLive && leeScrubIsLive(s.id)) s.gate.push(1); };
+const leeScrubChanged = s => { if (leeScrubLive && leeScrubIsLive(s.id)) s.gate.push(1); else leeScrubStale(s.id); };
 async function leeScrubRun(s) {
   const c = lee.cells.find(x => x.id === s.id); if (!c) return 'stop';
   if (c.running) { setTimeout(() => s.gate.push(1), 250); return; }
@@ -159,9 +180,9 @@ async function leeScrubRun(s) {
   if (r.busy) { setTimeout(() => s.gate.push(1), 250); return; }
   s.last = src;
   if (r.off) return 'stop';
-  if (r.refused) { s.ok = false; note(`Not re-running while you scrub: ${r.refused} Run the cell yourself.`); return; }
-  if (r.slow) { note('Too slow to scrub: the copy of the cell ran over its limit and was stopped. The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
-  if (r.memory || r.died) { note('The scrub copy of the cell stopped (too much memory, or it died). The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
+  if (r.refused) { s.ok = false; leeScrubStale(s.id); note(`Not re-running while you scrub: ${r.refused} Run the cell yourself.`); return; }
+  if (r.slow) { leeScrubStale(s.id); note('Too slow to scrub: the copy of the cell ran over its limit and was stopped. The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
+  if (r.memory || r.died) { leeScrubStale(s.id); note('The scrub copy of the cell stopped (too much memory, or it died). The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
   s.ok = true; s.ran = true; note('');
   c.outputs = r.outputs || []; renderOutputs(c); cellOutputEvent(s.id, c.outputs);
   $('#out-' + s.id)?.classList.add('lee-scrub-preview');
@@ -287,6 +308,7 @@ function leeScrubInstall() {
   window.addEventListener('mousedown', e => { if (leeScrubS.drag) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
   window.addEventListener('pointerup', () => leeScrubDragEnd(true), true);
   window.addEventListener('pointercancel', () => leeScrubDragEnd(false), true);
+  document.addEventListener('focusin', e => { const id = e.target.closest?.('.lee-cell.code')?.dataset.id; if (id && !$('#tip-' + id)) leeScrubTip(id); });
   window.addEventListener('blur', () => { leeScrubDragEnd(true); leeScrubHint(null, null); });
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && leeScrubS.drag) { e.preventDefault(); e.stopImmediatePropagation(); leeScrubDragEnd(false); return; }

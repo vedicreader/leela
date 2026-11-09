@@ -79,5 +79,12 @@ def test_an_older_kunda_says_so_and_the_cell_does_not_run(rig, monkeypatch):
 
 def test_support_is_off_when_the_kernel_lacks_run_traced():
     class Old: pass
-    assert tr.trace_support(Old()) == 'needs a newer kunda'
+    assert tr.trace_support(Old()).startswith('Tracing needs kunda 0.0.16 or newer. This one is ')
     assert tr.trace_support() == ''
+
+def test_the_reason_is_one_plain_line_and_only_when_a_package_cannot_trace(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, 'dhrishti.trace', None)
+    why = tr.trace_support()
+    assert why.startswith('Tracing needs dhrishti 0.1.14 or newer.') and '\n' not in why
+

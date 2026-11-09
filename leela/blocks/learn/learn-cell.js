@@ -49,12 +49,12 @@
 
   async function run(c, extra = {}) {
     const v = LV.views.get(c); if (!v || c.dataset.busy) return;
-    const state = c.querySelector('.lv-state'); c.dataset.busy = '1'; c.querySelector('.lv-run').disabled = true; state.textContent = 'Running…';
+    const state = c.querySelector('.lv-state'); c.dataset.busy = '1'; c.querySelector('.lv-run').disabled = true; state.textContent = LV.ran ? 'Running…' : 'Starting the kernel… the first run can take 10 seconds.'; state.classList.add('lv-spin');
     try {
       const r = await post(c, {code: (v.head ? v.head + '\n' : '') + v.ed.get(), watch: (c.dataset.watch || '').split(',').filter(Boolean), ...extra});
-      v.last = r; show(c, r); state.textContent = '';
+      v.last = r; LV.ran = true; show(c, r); state.textContent = '';
     } catch { state.textContent = 'The code did not run. Try again.'; }
-    finally { delete c.dataset.busy; c.querySelector('.lv-run').disabled = false; }
+    finally { state.classList.remove('lv-spin'); delete c.dataset.busy; c.querySelector('.lv-run').disabled = false; }
   }
 
   async function check(c) {

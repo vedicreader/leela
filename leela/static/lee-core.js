@@ -1421,6 +1421,7 @@ const ACTIONS = {
   scrub_down:   () => leeScrubNudge(-1),
   scrub_value:  () => leeScrubValue(),
   scrub_live:   () => leeScrubToggleLive(),
+  trace_cell:   () => leeTraceFromCell(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
   ask_ai:       () => askSelection('[data-ask]'),
@@ -3125,9 +3126,11 @@ function cellButtons(i) {
     `onclick="leeCellAct(${i}, '${esc(b.action)}')">${esc(b.label)}</button>`).join('');
   const debug = lee.cells[i]?.cell_type === 'code'
     ? `<button class="lee-cbtn" title="debug this cell (ipykernel)" onclick="leeDebugCell(${i})">◆</button>` : '';
+  const trace = lee.cells[i]?.cell_type === 'code'
+    ? `<button class="lee-cbtn lee-cbtn-trace" title="trace this run: see the values of each line" onclick="leeCellAct(${i}, 'trace_cell')">Trace</button>` : '';
   const more = `<button class="lee-cbtn" title="more cell actions" aria-label="more cell actions" ` +
     `onclick="leeCellMenu(${i}, this, event)">⋯</button>`;
-  return debug + normal + more;
+  return debug + trace + normal + more;
 }
 function leeCellAct(i, action) { selectCell(i); setScope('editor'); leeAct(action); }
 function leeCellMenu(i, button, event) {
@@ -4002,8 +4005,29 @@ function leeScrubGhost(c, before) {
   g.classList.toggle('overlay', media);
   inner.style.top = media ? -box.offsetHeight + 'px' : '';
 }
-//: Forget the ghost and the note of cell `id`: an ordinary run has come.
-function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); $('#out-' + id)?.classList.remove('lee-scrub-preview'); }
+//: Forget the ghost, the note and the old-result mark of cell `id`: an ordinary run has come.
+function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); $('#stale-' + id)?.remove(); $('#out-' + id)?.classList.remove('lee-scrub-preview', 'lee-scrub-stale'); }
+//: A number changed and the cell did not run: the output shows the old numbers, so say so at once.
+function leeScrubStale(id) {
+  const c = lee.cells.find(x => x.id === id), box = $('#out-' + id); if (!box || !(c?.outputs || []).length || $('#stale-' + id)) return;
+  const n = document.createElement('div'); n.id = 'stale-' + id; n.className = 'lee-scrub-note stale'; n.setAttribute('role', 'status'); n.textContent = 'old: run again';
+  box.before(n); box.classList.add('lee-scrub-stale');
+}
+const leeScrubUsed = () => { try { return !!localStorage.getItem('lee-scrub-used'); } catch { return false; } };
+//: The first drag is the lesson: the hint under every cell goes and does not come back.
+function leeScrubUse() { try { localStorage.setItem('lee-scrub-used', '1'); } catch {} $$('.lee-scrub-tip').forEach(e => e.remove()); }
+//: The one-line hint under a code cell that holds a number: how to drag it, and the switch for live numbers, until a drag is done once.
+function leeScrubTip(id) {
+  $('#tip-' + id)?.remove(); if (leeScrubUsed() || !leeScrubOn()) return;
+  const c = lee.cells.find(x => x.id === id), view = lee.editors.get(id), box = $('#out-' + id);
+  const lit = c?.cell_type === 'code' && view && box && leeScrubScan(leeScrubDoc(view))[0]; if (!lit) return;
+  const live = leeScrubIsLive(id), t = document.createElement('div'); t.id = 'tip-' + id; t.className = 'lee-scrub-tip';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'lee-cbtn'; b.textContent = live ? 'Turn off' : 'Turn on';
+  b.title = 'Live numbers run a safe copy of the cell as you drag. The kernel is not touched.';
+  b.onclick = async () => { selectCell(lee.cells.findIndex(x => x.id === id)); await leeScrubToggleLive(); leeScrubTip(id); };
+  t.append(`Hold ${/Mac/.test(navigator.platform) ? 'Option' : 'Alt'} and drag the ${lit.text.replace(/^-/, '')}. Live: ${live ? 'on' : 'off'}. `, b);
+  (box.nextElementSibling?.id === 'ghost-' + id ? box.nextElementSibling : box).after(t);
+}
 function leeScrubNote(id, text) {
   let n = $('#note-' + id);
   if (!text) return n?.remove();
@@ -4017,11 +4041,11 @@ function leeScrubOpen(view, id) {
   const c = lee.cells.find(x => x.id === id);
   s = {view, id, good: JSON.parse(JSON.stringify(c?.outputs || [])), ran: false, last: null, ok: true};
   s.gate = leeScrubGate(() => leeScrubRun(s));
-  lee.scrubbing.set(id, s); leeScrubClear(id);
+  lee.scrubbing.set(id, s); leeScrubClear(id); leeScrubUse();
   return s;
 }
 //: A new text is in the editor: run it when the cell may.
-const leeScrubChanged = s => { if (leeScrubLive && leeScrubIsLive(s.id)) s.gate.push(1); };
+const leeScrubChanged = s => { if (leeScrubLive && leeScrubIsLive(s.id)) s.gate.push(1); else leeScrubStale(s.id); };
 async function leeScrubRun(s) {
   const c = lee.cells.find(x => x.id === s.id); if (!c) return 'stop';
   if (c.running) { setTimeout(() => s.gate.push(1), 250); return; }
@@ -4031,9 +4055,9 @@ async function leeScrubRun(s) {
   if (r.busy) { setTimeout(() => s.gate.push(1), 250); return; }
   s.last = src;
   if (r.off) return 'stop';
-  if (r.refused) { s.ok = false; note(`Not re-running while you scrub: ${r.refused} Run the cell yourself.`); return; }
-  if (r.slow) { note('Too slow to scrub: the copy of the cell ran over its limit and was stopped. The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
-  if (r.memory || r.died) { note('The scrub copy of the cell stopped (too much memory, or it died). The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
+  if (r.refused) { s.ok = false; leeScrubStale(s.id); note(`Not re-running while you scrub: ${r.refused} Run the cell yourself.`); return; }
+  if (r.slow) { leeScrubStale(s.id); note('Too slow to scrub: the copy of the cell ran over its limit and was stopped. The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
+  if (r.memory || r.died) { leeScrubStale(s.id); note('The scrub copy of the cell stopped (too much memory, or it died). The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
   s.ok = true; s.ran = true; note('');
   c.outputs = r.outputs || []; renderOutputs(c); cellOutputEvent(s.id, c.outputs);
   $('#out-' + s.id)?.classList.add('lee-scrub-preview');
@@ -4159,6 +4183,7 @@ function leeScrubInstall() {
   window.addEventListener('mousedown', e => { if (leeScrubS.drag) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
   window.addEventListener('pointerup', () => leeScrubDragEnd(true), true);
   window.addEventListener('pointercancel', () => leeScrubDragEnd(false), true);
+  document.addEventListener('focusin', e => { const id = e.target.closest?.('.lee-cell.code')?.dataset.id; if (id && !$('#tip-' + id)) leeScrubTip(id); });
   window.addEventListener('blur', () => { leeScrubDragEnd(true); leeScrubHint(null, null); });
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && leeScrubS.drag) { e.preventDefault(); e.stopImmediatePropagation(); leeScrubDragEnd(false); return; }
@@ -7772,12 +7797,12 @@ function leeLensBar() {
   if (!bar) {
     bar = Object.assign(document.createElement('div'), {id: 'trbar-' + id, className: 'lee-trbar', tabIndex: 0});
     bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Run trace. Left and right arrows step through the run. Escape closes it.');
-    bar.innerHTML = `<button type="button" data-d="-1" title="previous step (Left)">‹ prev</button>` +
+    bar.innerHTML = `<button type="button" data-play title="play or pause the run">Play</button><button type="button" data-d="-1" title="previous step (Left)">‹ prev</button>` +
       `<input type="range" min="0" value="0" aria-label="step of the traced run" tabindex="-1">` +
       `<button type="button" data-d="1" title="next step (Right)">next ›</button><span class="lee-trpos" role="status" aria-live="polite"></span>` +
       `<span class="lee-trinfo"></span><button type="button" data-close title="remove the trace from the cell (Escape)">close trace</button>`;
     bar.oninput = e => { if (e.target.matches('input')) leeTraceScrub(+e.target.value); };
-    bar.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.close != null) leeTraceClose(); else leeTraceScrub(lee.trace.step + +b.dataset.d); };
+    bar.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.close != null) leeTraceClose(); else if (b.dataset.play != null) leeTracePlay(); else leeTraceScrub(lee.trace.step + +b.dataset.d); };
     bar.onkeydown = e => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const d = {ArrowLeft: -1, ArrowRight: 1, Home: -1e9, End: 1e9}[e.key];
@@ -7786,6 +7811,7 @@ function leeLensBar() {
     };
     host.after(bar);
   }
+  $('[data-play]', bar).textContent = t.timer ? 'Pause' : 'Play';
   const r = $('input', bar); r.max = Math.max(0, m.states.length - 1); r.value = t.step;
   $('.lee-trpos', bar).textContent = `step ${t.step + 1} of ${m.states.length} · line ${m.states[t.step]?.line ?? ''}`;
   const info = $('.lee-trinfo', bar); info.textContent = info.title = leeTraceInfo();
@@ -7907,7 +7933,7 @@ function leeTraceDraw() {
     `<span class="lee-trnote" id="tracenote"></span></div>`;
   if (!t.model) { box.innerHTML = head + `<div class="lee-trnote">${t.why ? esc(t.why) : 'Select a code cell and press Trace this run. The values of each line then appear beside the code, one column for each pass.'}</div>`; return leeTraceNote(); }
   box.innerHTML = head +
-    `<div class="lee-trslide"><span class="lee-trnote">step</span><input type="range" id="tracestep" min="0" max="${Math.max(0, t.model.states.length - 1)}" value="${t.step}" oninput="leeTraceScrub(+this.value)" aria-label="scrub the steps of this run"><span class="lee-trnote" id="tracepos"></span></div>` +
+    `<div class="lee-trslide"><span class="lee-trnote">step</span><span class="lee-trnote" id="tracepos"></span><span class="lee-trnote">Use the step bar under the cell.</span></div>` +
     `<div class="lee-trvals" id="tracevals"></div>`;
   leeTraceNote(); leeTraceValues();
 }
@@ -7933,12 +7959,21 @@ function leeTraceValues() {
   const pos = $('#tracepos'); if (pos) pos.textContent = `${t.step + 1} / ${m.states.length}`;
 }
 
-function leeTraceScrub(i) {
+function leeTraceScrub(i, playing = false) {
   const t = lee.trace; if (!t.model) return;
+  if (!playing && t.timer) { clearInterval(t.timer); t.timer = 0; }
   t.step = Math.max(0, Math.min(Math.round(i) || 0, t.model.states.length - 1));
-  const sl = $('#tracestep'); if (sl) sl.value = t.step;
   leeTraceValues(); leeLensStep();
 }
+//: Play the run from the current step, one pass every 400 ms; it stops at the end, on Pause, on a step by hand and when the trace closes.
+function leeTracePlay() {
+  const t = lee.trace; if (!t.model) return;
+  if (t.timer) return leeTraceStop();
+  if (t.step >= t.model.states.length - 1) t.step = -1;
+  t.timer = setInterval(() => { if (!lee.trace.model || lee.trace.step >= lee.trace.model.states.length - 1) return leeTraceStop(); leeTraceScrub(lee.trace.step + 1, true); }, 400);
+  leeTraceScrub(t.step + 1, true);
+}
+function leeTraceStop() { const t = lee.trace; if (t.timer) { clearInterval(t.timer); t.timer = 0; } if (t.model) leeLensStep(); }
 //: Jump to the pass whose step number is `step`.
 function leeTraceJump(step) {
   const k = lee.trace.model && leeLensRows(lee.trace.model).idx.get(step);
@@ -7952,7 +7987,7 @@ function leeTracePlot(name) {
 }
 //: Remove the trace from the page: strips, bar, plot and the pane's numbers. Nothing in the cell changes.
 function leeTraceClose(focus = true) {
-  const t = lee.trace, id = t.id; leeLensHide(); leeLensCleared(id, '');
+  const t = lee.trace, id = t.id; if (t.timer) { clearInterval(t.timer); t.timer = 0; } leeLensHide(); leeLensCleared(id, '');
   Object.assign(t, {model: null, id: null, plot: null, why: ''}); leeTraceDraw();
   const v = id && lee.editors.get(id); if (v && focus) LeeCM.focus(v);
 }
@@ -7984,7 +8019,7 @@ async function leeTraceRun() {
 
 function leeTraceShow(model, id, ok = true) {
   leeLensHide();
-  Object.assign(lee.trace, {model, id, ok, tab: lee.tabKey, plot: null, step: Math.max(0, (model?.states?.length || 1) - 1), why: ''});
+  Object.assign(lee.trace, {model, id, ok, tab: lee.tabKey, plot: null, step: 0, why: ''});
   $('.lee-varspanel')?.classList.add('tracing'); $('#tracebtn')?.classList.add('active');
   leeTraceDraw();
   if (!leeLensShow()) { lee.trace.why = 'The values could not be drawn beside the code; the pane lists them.'; }
@@ -7998,7 +8033,7 @@ async function leeTraceToggle() {
   const on = !panel.classList.contains('tracing');
   panel.classList.toggle('tracing', on); $('#tracebtn')?.classList.toggle('active', on);
   if (!on) return leeTraceClose(false);
-  try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : `Tracing ${s.why}.`; lee.trace.can = !!s.ok; }
+  try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : s.why; lee.trace.can = !!s.ok; }
   catch (e) { lee.trace.why = String(e.message || e); lee.trace.can = false; }
   if (lee.trace.can && !lee.trace.model && lee.path && lee.cells?.[lee.sel]) {
     try { const d = await api(`/vars/trace/last?path=${encodeURIComponent(lee.tabKey)}&id=${encodeURIComponent(lee.cells[lee.sel].id)}`); if (d.trace && d.trace.source === LeeCM.getDoc(ensureCellMounted(lee.sel))) leeTraceShow(d.trace, lee.cells[lee.sel].id, true); } catch (e) {}
@@ -8007,9 +8042,21 @@ async function leeTraceToggle() {
   if (!lee.trace.can) { const b = $('#tracerun'); if (b) { b.disabled = true; b.title = lee.trace.why; } }
 }
 
+//: "Trace this run" from the cell: the pane's box is made when it is not there yet, then the selected cell runs traced.
+async function leeTraceFromCell() {
+  const panel = $('.lee-varspanel'); if (!panel) return leeTraceRun();
+  leeTraceStyle();
+  if (!$('#tracebox')) panel.append(Object.assign(document.createElement('div'), {id: 'tracebox'}));
+  if (lee.trace.can === undefined) {
+    try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : s.why; lee.trace.can = !!s.ok; }
+    catch (e) { lee.trace.why = String(e.message || e); lee.trace.can = false; }
+  }
+  if (!lee.trace.can) { leeTraceDraw(); return status(lee.trace.why || 'Tracing is not available here.', 'err'); }
+  return leeTraceRun();
+}
 function leeTraceInit() {
   const head = $('.lee-varspanel .lee-phead'); if (!head || $('#tracebtn')) return;
   head.insertBefore(Object.assign(document.createElement('button'), {id: 'tracebtn', className: 'lee-seg', textContent: 'trace', title: 'run the selected cell and see the values of each line, pass by pass', onclick: leeTraceToggle}), head.querySelector('.lee-spacer'));
 }
-window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow; window.leeTracePlot = leeTracePlot; window.leeTraceJump = leeTraceJump; window.leeTraceClose = leeTraceClose;
+window.leeTraceFromCell = leeTraceFromCell; window.leeTracePlay = leeTracePlay; window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow; window.leeTracePlot = leeTracePlot; window.leeTraceJump = leeTraceJump; window.leeTraceClose = leeTraceClose;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', leeTraceInit); else leeTraceInit();

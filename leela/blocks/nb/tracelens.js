@@ -159,12 +159,12 @@ function leeLensBar() {
   if (!bar) {
     bar = Object.assign(document.createElement('div'), {id: 'trbar-' + id, className: 'lee-trbar', tabIndex: 0});
     bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Run trace. Left and right arrows step through the run. Escape closes it.');
-    bar.innerHTML = `<button type="button" data-d="-1" title="previous step (Left)">‹ prev</button>` +
+    bar.innerHTML = `<button type="button" data-play title="play or pause the run">Play</button><button type="button" data-d="-1" title="previous step (Left)">‹ prev</button>` +
       `<input type="range" min="0" value="0" aria-label="step of the traced run" tabindex="-1">` +
       `<button type="button" data-d="1" title="next step (Right)">next ›</button><span class="lee-trpos" role="status" aria-live="polite"></span>` +
       `<span class="lee-trinfo"></span><button type="button" data-close title="remove the trace from the cell (Escape)">close trace</button>`;
     bar.oninput = e => { if (e.target.matches('input')) leeTraceScrub(+e.target.value); };
-    bar.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.close != null) leeTraceClose(); else leeTraceScrub(lee.trace.step + +b.dataset.d); };
+    bar.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.close != null) leeTraceClose(); else if (b.dataset.play != null) leeTracePlay(); else leeTraceScrub(lee.trace.step + +b.dataset.d); };
     bar.onkeydown = e => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const d = {ArrowLeft: -1, ArrowRight: 1, Home: -1e9, End: 1e9}[e.key];
@@ -173,6 +173,7 @@ function leeLensBar() {
     };
     host.after(bar);
   }
+  $('[data-play]', bar).textContent = t.timer ? 'Pause' : 'Play';
   const r = $('input', bar); r.max = Math.max(0, m.states.length - 1); r.value = t.step;
   $('.lee-trpos', bar).textContent = `step ${t.step + 1} of ${m.states.length} · line ${m.states[t.step]?.line ?? ''}`;
   const info = $('.lee-trinfo', bar); info.textContent = info.title = leeTraceInfo();

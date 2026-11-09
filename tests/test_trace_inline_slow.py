@@ -46,6 +46,8 @@ def test_the_values_sit_beside_each_line_scrub_with_the_step_and_close_cleanly(t
         await _open(pg, p)
         await pg.click('#tracerun')
         await pg.wait_for_selector(LENS, timeout=60000)
+        out['start'] = await pg.evaluate('() => lee.trace.step')
+        await pg.evaluate('() => leeTraceScrub(1e9)')
         out['doc'] = await pg.evaluate("() => LeeCM.getDoc(lee.editors.get('c1'))")
         out['strips'] = await _strips(pg)
         out['cols'] = await pg.eval_on_selector_all('.cm-line .lee-lens', "els => els.map(e => e.querySelectorAll('.lee-lc').length)")
