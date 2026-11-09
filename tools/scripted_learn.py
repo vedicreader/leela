@@ -3,10 +3,13 @@ from tools.s2_native_pilot import PLAN
 
 QUESTION = r'{"question": "What does a fraction name?", "code": "", "answer": "Equal parts of a whole.", "core": "A fraction names equal parts of a whole.", "also": [], "wrong": ""}'
 GRADE = r'{"correct": true, "grade": 10, "feedback": "Correct.", "first_error": "", "misconception": ""}'
+CORE_ASK = 'Return JSON: {"core": str, "wrong": [{"think": str, "fact": str}]}'
+CORE = r'{"core": "A fraction names equal parts of a whole.", "wrong": [{"think": "The parts can differ in size.", "fact": "The parts are equal."}]}'
 
 def reply(prompt, sp, max_tokens=0, deadline=None):
-    "The canned answer to one engine call: a question, a grade, or else the plan."
+    "The canned answer to one engine call: a question, the core of an idea, a grade, or else the plan."
     if 'Write ONE question' in prompt: return QUESTION
+    if prompt.rstrip().endswith(CORE_ASK): return CORE
     if 'grade' in sp.lower() or 'correct' in sp.lower(): return GRADE
     return PLAN
 
