@@ -452,11 +452,13 @@ def test_reloading_an_unchanged_file_does_not_bump_the_version(tmp_path, monkeyp
         assert K.VERSION == v and len(K.TOOK) == 1 and len(K.NOTES) == 1
     finally: K.reload(); K.KEYS = keep
 
-def test_the_owners_hand_written_keymap_keeps_every_chord_it_names():
+@__import__('pytest').mark.parametrize('fold', [True, False])
+def test_the_owners_hand_written_keymap_keeps_every_chord_it_names(monkeypatch, fold):
     "Seven of these were refused after keys v2 moved the defaults onto them."
     over = {'panel_deploys': 'alt+f', 'panel_releases': 'alt+v', 'cell_duplicate': 'alt+d', 'cell_merge_above': 'alt+g',
             'toggle_bottom': 'alt+b', 'local_history': 'alt+t', 'toggle_left': 'hyper+z alt+shift+b',
             'find_usages': 'hyper+u', 'workspace_redo': 'hyper+.', 'git_blame': 'hyper+b', 'new_notebook': 'hyper+n', 'ask_ai': 'hyper+a'}
+    monkeypatch.setattr(K, '_host_fold', lambda: fold)
     by, notes, took, _ = _won(over)
     assert notes == [] and all(by[a] == c for a, c in over.items()), {a: by[a] for a in over if by[a] != over[a]}
 
@@ -501,3 +503,29 @@ def test_the_check_route_and_a_reload_say_the_same_about_the_same_file(tmp_path,
         f, c = h['/keys/file'](), _post(h['/keys/check'], {'keys': over})
         assert (f['notes'], f['took']) == (c['notes'], c['took'])
     finally: monkeypatch.undo(); K.reload(); K.KEYS = keep
+
+
+@__import__('pytest').mark.parametrize('fold', [True, False])
+def test_a_chord_you_set_wins_whatever_the_host_folds(monkeypatch, fold):
+    monkeypatch.setattr(K, '_host_fold', lambda: fold)
+    by, notes, took, _ = _won({'panel_deploys': 'alt+f'})
+    assert by['panel_deploys'] == 'alt+f' and by['find_usages'] == '' and notes == [] and len(took) == 1
+
+def test_changing_a_chord_from_mod_to_ctrl_is_a_change_on_a_mac_and_not_on_a_pc(monkeypatch):
+    "`only_changed` decides what is written to keys.json; it must use the same notion of 'same press' as the conflict check."
+    monkeypatch.setattr(K, '_host_fold', lambda: False)
+    assert K.only_changed({'save': 'ctrl+s'}) == {'save': 'ctrl+s'}
+    monkeypatch.setattr(K, '_host_fold', lambda: True)
+    assert K.only_changed({'save': 'ctrl+s'}) == {}
+
+@__import__('pytest').mark.parametrize('fold', [True, False])
+def test_a_chord_named_twice_in_one_action_costs_that_entry_only(monkeypatch, fold):
+    monkeypatch.setattr(K, '_host_fold', lambda: fold)
+    by, notes, took, _ = _won({'save': 'mod+alt+shift+8 mod+alt+shift+8', 'panel_deploys': 'alt+f'})
+    assert by['save'] == lookup('save').key and by['panel_deploys'] == 'alt+f'
+    assert len(notes) == 1 and 'twice' in notes[0] and len(took) == 1
+
+def test_a_table_that_already_collides_is_said_and_not_hidden():
+    bad = L([replace(k, key='mod+f') if k.action == 'save' else k for k in DEFAULTS])
+    by, notes, took, _ = _won({'panel_deploys': 'alt+f'}, base=bad)
+    assert any('already has a collision' in n for n in notes), notes

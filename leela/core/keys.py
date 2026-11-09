@@ -589,6 +589,8 @@ def _user_wins(out, todo, fold):
     "(keys, notes, took): the user's chords placed, a default losing only the chord a user chord takes. None if a collision is left."
     notes, took, mine = [], [], {}
     for i, k in todo.items():
+        if len({_signature(c, fold) for c in k.keys}) < len(k.keys):
+            notes.append(f'keymap: {k.action} -> {k.key!r} names one chord twice. Leela kept {out[i].key or "unbound"}'); continue
         hit = first(o.action for j, o in mine.items() if any(_clash(k, c, o, d, fold) for c in k.keys for d in o.keys))
         if hit: notes.append(f'keymap: {k.action} -> {k.key!r} conflicts with {hit}, which you also set. Leela kept {out[i].key or "unbound"}')
         else: mine[i] = k
@@ -609,7 +611,8 @@ def _user_wins(out, todo, fold):
 
 def apply_overrides(keys, over, notes=None, took=None):
     """`keys` with the user's chords applied, skipping what cannot work. In a hand-written map your chord wins over a
-    built-in default, which loses only that chord (told in `took`); two of your own chords that collide are refused (told in `notes`)."""
+    built-in default, which loses only that chord (told in `took`); two of your own chords that collide are refused (told in `notes`).
+    A map of more than `_BULK` entries counts as machine-written, so a default outranks it: copy only what you change."""
     notes, took = ifnone(notes, NOTES), ifnone(took, TOOK)
     fold = _host_fold()
     out, todo = L(list(keys)), {}
@@ -619,10 +622,12 @@ def apply_overrides(keys, over, notes=None, took=None):
         try: todo[i] = replace(out[i], key=c)
         except ValueError as e: notes.append(f'keymap: {a}: {e}')
     if not todo: return out
-    if not bulk_map(over) and (r := _user_wins(out, todo, fold)):
-        res, n, t = r
-        notes.extend(n); took.extend(t)
-        return res
+    if not bulk_map(over):
+        if r := _user_wins(out, todo, fold):
+            res, n, t = r
+            notes.extend(n); took.extend(t)
+            return res
+        notes.append(f'keymap: the table already has a collision ({_dupes(out, fold)[0] if _dupes(out, fold) else "after your chords"}). Your chords were tried one at a time, defaults first')
     return _defaults_win(out, todo, notes, fold)
 
 _BULK = 50
@@ -634,7 +639,7 @@ def bulk_map(over):
 def _same_chord(a, b):
     "Whether two chord strings bind the same keys in the same order."
     if a == b: return True
-    try: return [_signature(c) for c in a.split()] == [_signature(c) for c in b.split()]
+    try: return [_signature(c, _host_fold()) for c in a.split()] == [_signature(c, _host_fold()) for c in b.split()]
     except ValueError: return False
 
 def only_changed(over, base=None):
