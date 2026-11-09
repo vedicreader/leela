@@ -8,7 +8,6 @@ HERE = Path(__file__).parent
 MARK = '@@leela-scrub-snapshot@@'
 #: Seconds a tick may run: the first of a gesture (imports), the rest. The worker is killed after that; the kernel is never touched.
 FIRST, LIMIT = 5, 1
-PROXIES = ('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy', 'ftp_proxy')
 
 def memory_cap():
     "About 1.5 GB, or a quarter of the machine's memory when that is less."
@@ -43,14 +42,14 @@ def outputs_of(r):
 class Worker:
     "A scrub worker process: it keeps its imports warm between ticks, and is killed, never interrupted, when a tick runs too long or too big."
     def __init__(self, python):
-        self.python, self.proc, self.dir, self.lock, self.cap = python, None, None, asyncio.Lock(), memory_cap()
+        self.python, self.proc, self.dir, self.lock, self.cap, self.seq, self.ticks, self.closing = python, None, None, asyncio.Lock(), memory_cap(), 0, 0, False
     @property
     def alive(self): return self.proc is not None and self.proc.returncode is None
     async def start(self):
         if self.alive: return
+        self.ticks = 0
         self.dir = self.dir or tempfile.mkdtemp(prefix='leela-scrub-')
-        env = {k: v for k, v in os.environ.items() if k.lower() not in PROXIES and not k.startswith(('PYTHON', 'VIRTUAL_ENV'))}
-        env.update(MPLBACKEND='Agg', MPLCONFIGDIR=self.dir, HOME=self.dir, LEELA_SCRUB_MEMORY=str(self.cap), OMP_NUM_THREADS='2')
+        env = dict(PATH=os.environ.get('PATH', os.defpath), LANG=os.environ.get('LANG', 'C.UTF-8'), **({'SYSTEMROOT': os.environ['SYSTEMROOT']} if 'SYSTEMROOT' in os.environ else {}), MPLBACKEND='Agg', MPLCONFIGDIR=self.dir, HOME=self.dir, LEELA_SCRUB_MEMORY=str(self.cap), OMP_NUM_THREADS='2')
         self.proc = await asyncio.create_subprocess_exec(self.python, '-I', str(HERE/'scrubworker.py'), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                                                          stderr=asyncio.subprocess.DEVNULL, cwd=self.dir, env=env, start_new_session=True, limit=2**26)
         try: await asyncio.wait_for(self.proc.stdout.readline(), 30)
@@ -69,21 +68,35 @@ class Worker:
             return sum(c.memory_info().rss for c in [p, *p.children(recursive=True)])
         except Exception: return 0
     async def run(self, source, snap, limit=LIMIT):
-        "The worker's answer for `source` over `snap`; `{'slow': True}` or `{'memory': True}` after the worker was killed, `{'died': True}` if it was gone."
+        "The worker's answer for `source` over `snap`; `{'slow': True}` or `{'memory': True}` after the worker was killed, `{'died': True}` if it was gone or answered another request."
         async with self.lock:
-            await self.start()
-            req = json.dumps({'id': time.monotonic(), 'source': source, 'snap': snap}) + '\n'
-            self.proc.stdin.write(req.encode()); await self.proc.stdin.drain()
-            reply = asyncio.ensure_future(self.proc.stdout.readline())
-            end = time.monotonic() + limit
-            while not reply.done():
-                await asyncio.wait([reply], timeout=0.05)
-                if reply.done(): break
-                if time.monotonic() > end: self.kill(); reply.cancel(); return {'slow': True}
-                if (r := await self.rss()) > self.cap: self.kill(); reply.cancel(); return {'memory': True}
-            line = reply.result()
-            if not line: self.kill(); return {'died': True}
-            return json.loads(line)
+            reply = None
+            try:
+                await self.start()
+                self.seq += 1; rid = self.seq
+                req = json.dumps({'id': rid, 'source': source, 'snap': snap}) + '\n'
+                self.proc.stdin.write(req.encode()); await self.proc.stdin.drain()
+                reply = asyncio.ensure_future(self.proc.stdout.readline())
+                end = time.monotonic() + limit
+                while not reply.done():
+                    await asyncio.wait([reply], timeout=0.05)
+                    if reply.done(): break
+                    if time.monotonic() > end: self.kill(); return {'slow': True}
+                    if (r := await self.rss()) > self.cap: self.kill(); return {'memory': True}
+                line = reply.result()
+                res = json.loads(line) if line else None
+                if not isinstance(res, dict) or res.get('id') != rid: self.kill(); return {'died': True}
+                self.ticks += 1
+                return res
+            except asyncio.CancelledError: self.kill(); raise
+            except Exception: self.kill(); return {'died': True}
+            finally:
+                if reply is not None and not reply.done(): reply.cancel()
+                if self.closing: self.close()
+    def retire(self):
+        "Close now, or when the tick that holds the lock is over."
+        if self.lock.locked(): self.closing = True
+        else: self.close()
     def close(self):
         self.kill()
         if self.dir: shutil.rmtree(self.dir, ignore_errors=True); self.dir = None
@@ -93,7 +106,7 @@ WORKERS = {}
 def worker_for(key, python):
     "The worker of notebook `key`, made on first use; one on another Python replaces it."
     w = WORKERS.get(key)
-    if w is not None and w.python != python: w.close(); w = None
+    if w is not None and w.python != python: w.retire(); w = None
     if w is None: w = WORKERS[key] = Worker(python)
     return w
 

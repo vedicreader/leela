@@ -238,17 +238,23 @@ def connect(app, ctx):
         "The interpreter of a tab's kernel, found without starting it."
         try: return str(ws.user_python(ws.cwd_for(tab)))
         except Exception: return sys.executable
+    scrub_on = set()   # (notebook key, cell id) the owner switched on in this session; notebook metadata never counts
+    async def scrub_body(req):
+        try: d = await req.json()
+        except ValueError: return None
+        return d if isinstance(d, dict) else None
     @rt('/nb/scrub/run')
     async def nb_scrub_run(req):
         "One tick of a live scrub: run a cell that passes the scrub check in the notebook's worker process, on a copy of the plain data it reads. The kernel is not run in, interrupted or restarted."
-        d = await req.json()
-        if not isinstance(d, dict) or not isinstance(d.get('source'), str): return fail('source must be text', 400)
+        d = await scrub_body(req)
+        if d is None: return fail('the request must be a JSON object', 400)
+        if not isinstance(d.get('source'), str): return fail('source must be text', 400)
         src = d['source']
         if (why := scrub_why(src)): return {'ok': False, 'refused': why}
         owner_tab, nb, run_lock = run_owner(d)
         c = first(x for x in (nb or []) if x.id == d.get('id'))
         if c is None or c.cell_type != 'code': return fail('that cell is no longer in the notebook', 409)
-        if not (c.extra.get('scrub') or {}).get('live'): return {'ok': False, 'off': True}
+        if (store.key(owner_tab), c.id) not in scrub_on: return {'ok': False, 'off': True}
         snap = {}
         if (names := scrub_names(src)):
             if run_lock.locked(): return {'ok': False, 'busy': True}
@@ -261,14 +267,15 @@ def connect(app, ctx):
             if 'bad' in got: return {'ok': False, 'refused': f"This cell uses {got['bad']} from another cell, which is not plain data ({got['why']})."}
             snap = got['ok']
         w = worker_for(store.key(owner_tab), scrub_python(owner_tab))
-        try: res = await w.run(src, snap, SCRUB_FIRST if d.get('first') else SCRUB_LIMIT)
+        try: res = await w.run(src, snap, SCRUB_FIRST if d.get('first') is True and not w.ticks else SCRUB_LIMIT)
         except Exception as e: return {'ok': False, 'died': True, 'note': errstr(e)}
         if 'refused' in res or 'slow' in res or 'memory' in res or 'died' in res: return {'ok': False, **res}
         return {'ok': not res.get('error'), 'outputs': outputs_of(res)}
     @rt('/nb/scrub/warm')
     async def nb_scrub_warm(req):
         "Start the notebook's scrub worker before a scrub needs it, so its first tick does not count the start."
-        owner_tab, nb, _ = run_owner(await req.json())
+        if (d := await scrub_body(req)) is None: return fail('the request must be a JSON object', 400)
+        owner_tab, nb, _ = run_owner(d)
         if nb is None: return fail('no notebook open')
         try: await worker_for(store.key(owner_tab), scrub_python(owner_tab)).start()
         except Exception as e: return fail(errstr(e))
@@ -555,8 +562,8 @@ def connect(app, ctx):
         elif op == 'scrub_live':
             if nb[i].cell_type != 'code': return fail('Live scrub belongs to a code cell.')
             nb._checkpoint(i)
-            if d.get('on'): nb[i].extra['scrub'] = {'live': True}
-            else: nb[i].extra.pop('scrub', None)
+            if d.get('on') is True: nb[i].extra['scrub'] = {'live': True}; scrub_on.add((store.key(tab), nb[i].id))
+            else: nb[i].extra.pop('scrub', None); scrub_on.discard((store.key(tab), nb[i].id))
             nb.dirty = True
         elif op == 'slide':
             try: nb.set_slide(d.get('indices') or [i], str(d.get('type') or 'none'))

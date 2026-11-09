@@ -264,6 +264,7 @@ class Cell(Dictable):
         if isinstance(src, list): src = ''.join(src)
         held = dict(c.get('metadata') or {})
         meta = held.pop('leela', None) or {}
+        held.pop('scrub', None)   # live scrub is the owner's choice in a session; a file never turns it on
         return cls(source=src, outputs=list(c.get('outputs') or meta.get('outputs') or []), extra=held,
             id=c['id'] if isinstance(c.get('id'), str) and CELL_ID.fullmatch(c['id']) else cell_id(),
             cell_type='prompt' if meta.get('kind') == 'prompt' else c.get('cell_type', 'code'),

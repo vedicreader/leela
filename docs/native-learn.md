@@ -389,6 +389,24 @@ Open:
 - `hosted`: Abhyasa in hosted mode, where Leela serves its routes inside its own app and owns the guard, the settings and the keys.
 - `native`: the plan docs and test names for this work (`native-learn`), where Learn is a part of Leela and not a separate window.
 
+## Live scrub limits
+
+A live scrub runs a copy of the cell in a worker process. The kernel is never touched.
+
+What the worker now refuses:
+- The opt-in is the owner's action. A notebook file cannot turn it on: `scrub.live` in metadata is dropped on load, and the server keeps its own list of cells the owner switched on in this session. A reload keeps the cell on the page as off until the owner switches it on again.
+- The worker gets a small environment: `PATH`, `LANG`, a temporary `HOME`, the plot folder and the memory limit. It has none of the server's keys or tokens.
+- `.format` and `.format_map` need one plain text constant whose fields have no `.` and no `[`. A field such as `{0.__class__}` could walk to an object's attributes.
+- Calls that take a module, engine or file by name are refused: `backend`, `engine`, `parser`, `fontproperties`, `usetex`, `storage_options`, `compression` and the file keywords.
+- Data from other cells must be plain types. A string or array is limited by its size in bytes (4 MB in all), as well as by its element count.
+- A tick that is cancelled or answered with the wrong request number ends the worker. The next tick starts a new one.
+- The server decides the time limit. A longer first limit is given only to a worker that has not yet answered a tick.
+
+What stays best effort:
+- The syntax check is an allowlist, not a proof. A size check on a number known before the cell runs is a convenience; the memory limit and the time limit are the real stops.
+- The network block is a patch of `socket` in the worker. Code that finds another route is not stopped by it.
+- The worker is a plain process of the same user. It has memory, CPU and file-size limits where the system keeps them, and it can read files that the user can read.
+
 ## Packaging
 
 `tests/test_packaging_learn.py` checks, with no build, that the new Learn files reach both apps.
