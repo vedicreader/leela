@@ -9,12 +9,13 @@ from fastcore.all import L, Path, atomic_save, first
 from ... import Dictable, errstr, leela_cfg
 from .memory import GLOBAL, Memory, memory_path, safe_shelf
 
-__all__ = ['ACCESS', 'WORKSPACE', 'VaultRef', 'Vaults', 'vaults_path']
+__all__ = ['ACCESS', 'WORKSPACE', 'LEARN', 'VaultRef', 'Vaults', 'vaults_path', 'learn_path']
 
 ACCESS = ('read', 'admin')
-WORKSPACE = 'workspace'
+WORKSPACE, LEARN = 'workspace', 'learn'
 
 def vaults_path(): return leela_cfg/'vaults.json'
+def learn_path(): return leela_cfg/'learn'/'vault.db'
 
 def _same_file(a, b):
     "One vault file is one vault, whatever path you reached it by: `~`, `..` and symlinks all."
@@ -28,6 +29,7 @@ class VaultRef(Dictable):
     access: str = 'read'
     agent: bool = False
     attached_at: float = field(default_factory=time.time)
+    imported_from: str = ''
     def __post_init__(self):
         if self.access not in ACCESS: raise ValueError(f'{self.name}: unknown access {self.access!r}')
         self.name, self.path = safe_shelf(self.name), str(Path(self.path).expanduser())
@@ -110,6 +112,23 @@ class Vaults:
         self.rows.append(ref); self.save()
         self.note = f'created {ref.name}'
         return ref
+    def learn(self, path=None):
+        "The managed Learn vault, made on first use or attached to `path`."
+        if ref := self.get(LEARN): return ref
+        p = Path(path).expanduser() if path else learn_path()
+        if p.is_file():
+            ref = VaultRef(LEARN, str(p), access='admin', agent=True, imported_from=str(p.resolve()))
+            if already := first(r for r in self.rows if _same_file(r.path, p)): return already
+            self.rows.append(ref); self.save()
+            return ref
+        if path: raise FileNotFoundError(f'no vault file at {p}')
+        return self.create(p, name=LEARN, access='admin', agent=True)
+    def import_learn(self, path):
+        "Point Learn at an existing vault without changing the file."
+        p = Path(path).expanduser()
+        if not p.is_file(): raise FileNotFoundError(f'no vault file at {p}')
+        if ref := self.get(LEARN): return self._replace(ref, path=str(p), access='admin', agent=True, imported_from=str(p.resolve()))
+        return self.learn(p)
     def detach(self, name):
         "Forget a vault. The file is left alone."
         ref = self.get(name)

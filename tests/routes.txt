@@ -374,6 +374,7 @@ GET,POST /vault/documents
 GET,POST /vault/extract
 GET,POST /vault/fields
 GET,POST /vault/find
+GET,POST /vault/learn-import
 GET,POST /vault/list
 GET,POST /vault/mentions
 GET,POST /vault/news/add

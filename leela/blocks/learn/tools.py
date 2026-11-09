@@ -177,7 +177,7 @@ def learn_settings(ws):
 
 def learn_store(ws, vault=None, write=False):
     from abhyasa.learner import Learning
-    ref = ws.vaults.get(vault)
+    ref = ws.vaults.get(vault) if vault else ws.vaults.learn()
     if ref is None: raise KeyError('Learning vault is not attached.')
     if write and not ref.agent_writable: raise PermissionError('Learning vault is read-only for the agent.')
     memory = ws.vaults.memory(ref.name)

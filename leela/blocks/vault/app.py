@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-import asyncio, json, re
+import asyncio, json, os, re, shutil
+from datetime import datetime
 from collections import Counter
 
 from fastcore.all import AttrDict, L, Path, first
 from fasthtml.common import Button, Div, Span
+from starlette.requests import Request
 from starlette.responses import Response
 
 from ... import errstr
 from ...core.web import fail, off_loop, sse
 from ..memory.memory import VERSE_SCRIPT, PrivacyBlocked, VaultRefused, counts_list, page_list, source_kind
+from ..memory.vaults import LEARN, learn_path
 from ..tabs.ui import tab_bar
 from . import ui
 from .jobs import CLIPS
@@ -71,6 +74,31 @@ class Streamed:
         return {'role': 'assistant', 'content': text}
 
 def _plain(o): return json.loads(json.dumps(o, default=lambda x: list(x) if isinstance(x, (L, set, tuple)) else str(x)))
+
+def _standalone_vault():
+    p = os.getenv('ABHYASA_VAULT') or os.getenv('VISHALAKSHI_VAULT') or str(Path.home()/'.vishalakshi'/'vault.db')
+    p = Path(p).expanduser()
+    return p if p.is_file() else None
+
+def _backup_path(src):
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    return src.with_name(f'{src.stem}.{stamp}.backup{src.suffix}')
+
+def _copy_learning(src, dst):
+    from abhyasa.learner import Learning
+    con = Learning(str(dst)).vault.db
+    try:
+        con.execute('attach database ? as old', (str(src),))
+        names = {r['name'] for r in con.q("select name from old.sqlite_master where type='table'")}
+        for name in ('learning', 'learning_docs', 'learning_nodes', 'learning_sources'):
+            if name not in names: continue
+            cols = ','.join(f"[{r['name']}]" for r in con.q(f'pragma old.table_info([{name}])'))
+            con.execute(f'delete from main.[{name}]')
+            con.execute(f'insert into main.[{name}] ({cols}) select {cols} from old.[{name}]')
+        if 'store_meta' in names: con.execute("insert or replace into main.store_meta select * from old.store_meta where name='learning'")
+        con.execute("insert into main.[learning_fts]([learning_fts]) values('rebuild')")
+        con.execute('detach database old')
+    finally: con.close()
 
 def _refusal(e):
     "Any failure as the shared shape: a `VaultRefused` keeps its kind and status."
@@ -277,6 +305,24 @@ def connect(app, ctx):
     def vault_list():
         try: return ctx.vaults.dict()
         except Exception as e: return fail(e)
+    @rt('/vault/learn-import', methods=['GET', 'POST'])
+    async def learn_import(req: Request, choice: str = ''):
+        src, ref = _standalone_vault(), ctx.vaults.get(LEARN)
+        if req.method == 'GET': return {'found': src is not None, 'source': str(src) if src else None, 'learn_exists': ref is not None}
+        try:
+            if ref is not None and ref.imported_from: raise VaultRefused('Learning data was already imported.', 'already_imported', 409)
+            if src is None: raise VaultRefused('No standalone Abhyasa vault was found.', 'none_found', 404)
+            if choice not in ('attach', 'copy'): raise VaultRefused('choice must be attach or copy', 'bad_choice')
+            if choice == 'attach':
+                ref = ctx.vaults.import_learn(src)
+                return {'ok': True, 'vault': ref.name}
+            backup = _backup_path(src); shutil.copy2(src, backup)
+            ref = ctx.vaults.learn()
+            _copy_learning(src, Path(ref.path))
+            ref = ctx.vaults._replace(ref, imported_from=str(src.resolve()))
+            ctx.vaults._memories.pop(ref.name, None)
+            return {'ok': True, 'vault': ref.name, 'backup': str(backup)}
+        except Exception as e: return _refusal(e)
     @rt('/vault/attach')
     def vault_attach(path: str, name: str = '', access: str = 'read'):
         try: return dict(ctx.vaults.attach(path, name=name, access=access).dict(), note=ctx.vaults.note)
