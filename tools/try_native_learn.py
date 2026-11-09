@@ -8,7 +8,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 ABHYASA = ROOT.parent/'abhyasa-native-learn'
-RUPAKA = ROOT.parent/'rupaka-explorables'
+LIBS = ('rupaka', 'dhrishti', 'kunda')   # each taken from its sibling `<name>-explorables` worktree, when there is one
 REFUSED_PORT = 5001
 
 def parse(argv=None):
@@ -21,7 +21,7 @@ def parse(argv=None):
     p.add_argument('--state', default=None, help='the isolated folder to use again (default: a new temporary one)')
     p.add_argument('--port', type=int, default=None, help='port on 127.0.0.1 (default: a free one)')
     p.add_argument('--abhyasa', default=str(ABHYASA), help='the Abhyasa worktree to import first')
-    p.add_argument('--rupaka', default=str(RUPAKA) if RUPAKA.is_dir() else None, help='the rupaka worktree to import first (default: the sibling rupaka-explorables worktree, if there is one)')
+    for n in LIBS: p.add_argument(f'--{n}', default=str(d) if (d := ROOT.parent/f'{n}-explorables').is_dir() else None, help=f'the {n} worktree to import first (default: the sibling {n}-explorables worktree, if there is one)')
     return p.parse_args(argv)
 
 def refused(paths, real):
@@ -88,6 +88,12 @@ def rupaka_line():
     from tools.seed_learn_demo import circuits_ready
     return f'rupaka {rupaka.__version__}  {Path(rupaka.__file__).resolve().parent}' + (f'  ({why})' if (why := circuits_ready()) else '')
 
+def libs_line():
+    "The dhrishti and kunda in use, and whether each one can trace a run."
+    import dhrishti, kunda
+    from leela.blocks.vars.trace import trace_support
+    return '\n'.join(f'{m.__name__:<9}{getattr(m, "__version__", "?")}  {Path(m.__file__).resolve().parent}' for m in (dhrishti, kunda)) + (f'\ntrace  off: {why}' if (why := trace_support()) else '\ntrace  on')
+
 def banner(url, state, ref, scripted, seeded, copied, web=False, rupaka=None):
     "The text the owner reads first."
     model = 'scripted model: canned replies, nothing leaves this machine' if scripted else 'configured model (see Settings > Models); it may leave this machine'
@@ -103,7 +109,8 @@ def check(a):
     iso = load_isolate()
     state = Path(a.state or tempfile.mkdtemp(prefix='leela-learn-')).resolve()
     if bad := refused([state], iso.REAL_STORES): raise SystemExit(f'the state folder is a real store: {bad}')
-    if a.rupaka and not Path(a.rupaka).resolve().is_dir(): raise SystemExit(f'no rupaka worktree at {a.rupaka}')
+    for n in LIBS:
+        if getattr(a, n) and not Path(getattr(a, n)).resolve().is_dir(): raise SystemExit(f'no {n} worktree at {getattr(a, n)}')
     return abh, iso, state, pick_port(a.port)
 
 def standalone(state, copy):
@@ -116,10 +123,10 @@ def standalone(state, copy):
 def main(argv=None):
     a = parse(argv)
     abh, iso, state, port = check(a)
-    if (late := {'leela', 'abhyasa', 'ramabana', 'vishalakshi', 'rupaka'} & set(sys.modules)): raise SystemExit(f'isolate before importing {sorted(late)}')
-    rk = [str(Path(a.rupaka).resolve())] if a.rupaka else []
-    sys.path[:0] = [*rk, str(ROOT), str(abh)]
-    os.environ['PYTHONPATH'] = os.pathsep.join([*rk, str(ROOT), str(abh)] + [p for p in [os.environ.get('PYTHONPATH')] if p])
+    if (late := {'leela', 'abhyasa', 'ramabana', 'vishalakshi', *LIBS} & set(sys.modules)): raise SystemExit(f'isolate before importing {sorted(late)}')
+    rk = {n: str(Path(getattr(a, n)).resolve()) for n in LIBS if getattr(a, n)}
+    sys.path[:0] = [*rk.values(), str(ROOT), str(abh)]
+    os.environ['PYTHONPATH'] = os.pathsep.join([*rk.values(), str(ROOT), str(abh)] + [p for p in [os.environ.get('PYTHONPATH')] if p])
     state.mkdir(parents=True, exist_ok=True)
     iso.isolate(state)
     env = stores(iso, state)
@@ -127,9 +134,9 @@ def main(argv=None):
     standalone(state, a.copy_vault)
     import abhyasa
     if not Path(abhyasa.__file__).resolve().is_relative_to(abh): raise SystemExit(f'abhyasa came from {abhyasa.__file__}, not {abh}')
-    if rk:
-        import rupaka
-        if not Path(rupaka.__file__).resolve().is_relative_to(rk[0]): raise SystemExit(f'rupaka came from {rupaka.__file__}, not {rk[0]}')
+    for n, d in rk.items():
+        m = importlib.import_module(n)
+        if not Path(m.__file__).resolve().is_relative_to(d): raise SystemExit(f'{n} came from {m.__file__}, not {d}')
     import leela
     if not Path(leela.__file__).resolve().is_relative_to(ROOT): raise SystemExit(f'leela came from {leela.__file__}, not {ROOT}')
     if refused([leela.leela_cfg], iso.REAL_STORES): raise SystemExit(f'leela_cfg is a real store: {leela.leela_cfg}')
@@ -152,7 +159,7 @@ def main(argv=None):
     ref = ws.vaults.get(LEARN)
     ref = (ref.name, ref.path) if ref else (LEARN, f'{learn_path()}  (made when you choose Attach, Back up and copy, or Skip)')
     if refused([ref[1].split('  ')[0]], iso.REAL_STORES): raise SystemExit('the Learn vault is a real store')
-    print(banner(f'http://127.0.0.1:{port}/', state, ref, scripted, seeded, bool(a.copy_vault), bool(a.web), rupaka_line()), flush=True)
+    print(banner(f'http://127.0.0.1:{port}/', state, ref, scripted, seeded, bool(a.copy_vault), bool(a.web), rupaka_line() + '\n' + libs_line()), flush=True)
     print(f'rerun  python {Path(__file__).resolve()} --state {state}', flush=True)
     try: uvicorn.run(ide_app(ws), host='127.0.0.1', port=port, log_level='warning')
     except KeyboardInterrupt: pass

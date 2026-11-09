@@ -135,3 +135,13 @@ def test_web_on_the_agent_walk_searches_through_the_patched_fetcher(web, monkeyp
     s = web; s['ws'].learn_research = True
     job = _create(s, monkeypatch)
     assert job.status == 'complete' and s['searched'] and 'got a source' in job.result['data']['research']
+
+
+def test_the_preview_takes_rupaka_dhrishti_and_kunda_from_their_worktrees():
+    "Without dhrishti and kunda worktrees on the path the cell Trace control says 'needs a newer dhrishti'."
+    a = tnl.parse([])
+    for n in tnl.LIBS:
+        want = ROOT.parent/f'{n}-explorables'
+        assert getattr(a, n) == (str(want) if want.is_dir() else None), n
+    assert {'rupaka', 'dhrishti', 'kunda'} == set(tnl.LIBS) and tnl.parse(['--dhrishti', '/x']).dhrishti == '/x'
+    with pytest.raises(SystemExit, match='no kunda worktree'): tnl.check(tnl.parse(['--kunda', '/no/such/folder']))
