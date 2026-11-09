@@ -44,6 +44,16 @@ def linux_targets(roots):
             out |= {str(g), *(str(x) for x in [g/'refs', *(g/'refs').rglob('*')] if x.is_dir())}
     return sorted(out)
 
+def _unwatched(targets, live, keep):
+    "(folders, files): the folders that exist now and were not in `targets`, and what is already in them. Made between the list and the watch starting, so no event will name them."
+    try: new = sorted(set(linux_targets(live)) - set(targets))
+    except (OSError, ValueError): return [], []
+    files = []
+    for g in new:
+        try: files += [str(f) for f in Path(g).rglob('*') if keep(None, str(f))]
+        except OSError: pass
+    return new, files
+
 def _sig(p):
     "What an edit changes, rename-over included: a new inode. None once the file is gone."
     try: st = os.stat(p)
@@ -105,7 +115,7 @@ class Watcher:
         live = [r for r in roots if r not in self.gone or os.path.isdir(r)]
         # inotify has one watch per folder, and a recursive watch adds one inside node_modules and .venv too, which the
         # filter then drops. On Linux the folders are listed here and watched one by one; a new folder rebuilds the list.
-        linux, retries = _linux(), 0
+        linux, retries, relists = _linux(), 0, 0
         while live and not stop.is_set():
             if linux and (missing := [r for r in live if not os.path.isdir(r)]):
                 # the recursive watch learns this from its OSError below; a list built from the roots must ask first
@@ -114,13 +124,24 @@ class Watcher:
                 live = [r for r in live if r not in missing]
                 continue
             try:
-                targets, grown = linux_targets(live) if linux else live, []
+                targets, grown, relisted, late = linux_targets(live) if linux else live, [], False, False
                 for batch in watch(*targets, stop_event=stop, watch_filter=keep, debounce=self.step,
                                    rust_timeout=RUST_TIMEOUT, yield_on_timeout=True, recursive=not linux):
                     if stop.is_set(): return
                     if not batch:                            # macOS replays a setup mkdir late; this follows it
+                        if linux and not relisted and relists < 2:
+                            # the first idle tick: a folder made after the list and before the watch started has no event, so look once more, before `quiet` says the watch is complete
+                            relisted = True
+                            new, files = _unwatched(targets, live, keep)
+                            if new:
+                                grown, late, relists = new, True, relists + 1
+                                if files:
+                                    try: self._push(sorted(files))
+                                    except RuntimeError: return
+                                break
                         quiet.set()
                         continue
+                    relists = 0
                     paths = {p for _change, p in batch}
                     if linux and (grown := [p for c, p in batch if c == Change.added and os.path.isdir(p)]):
                         # what was made in it before its watch starts is pushed now, or it is never seen
@@ -129,7 +150,7 @@ class Watcher:
                     except RuntimeError: return              # the loop closed under us
                     if grown: break
                 if not grown: return
-                retries = 0
+                if not late: retries = 0   # a re-list is not progress: an alternating failure must still reach the fallback
             except (OSError, ValueError) as e:
                 # A watched folder was deleted: drop it, keep the rest. Said once per folder.
                 gone = [r for r in live if not os.path.isdir(r)]
