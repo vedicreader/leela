@@ -17,7 +17,7 @@ from ...core.web import NOT_OBJECT, fail, json_obj, off_loop, sse
 from ..fs.fs import NotText, decoded
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
-from .scrub import scrub_why
+from .scrub import scrub_why, SCRUB_FIRST, SCRUB_LIMIT, SCRUB_GRACE
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
@@ -233,6 +233,42 @@ def connect(app, ctx):
                 yield sse('error', {'text': errstr(e)})
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    @rt('/nb/scrub/run')
+    async def nb_scrub_run(req):
+        "One tick of a scrub: run a cell that passes the scrub check, lightly, with a time limit and a soft interrupt that never restarts the kernel."
+        d = await req.json()
+        if (why := scrub_why(d.get('source'))): return {'ok': False, 'refused': why}
+        owner_tab, nb, run_lock = run_owner(d)
+        c = first(x for x in (nb or []) if x.id == d.get('id'))
+        if c is None or c.cell_type != 'code': return fail('that cell is no longer in the notebook', 409)
+        if run_lock.locked(): return {'ok': False, 'busy': True}
+        if (no := took(nb, d, c.id, place(nb, c), owner_tab)): return no
+        await run_lock.acquire()
+        try: k = await runtime_for(owner_tab)
+        except BaseException as e:
+            run_lock.release()
+            if isinstance(e, EnvGone): return fail(str(e), 409)
+            raise
+        run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', c.id)
+        task = asyncio.create_task(run_watched(nb, c, k, light=True))
+        def finished(_):
+            if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
+            run_lock.release()
+        task.add_done_callback(finished); running_cells[run_key] = (k, task)
+        limit = SCRUB_FIRST if d.get('first') else SCRUB_LIMIT
+        if (await asyncio.wait([task], timeout=limit))[0]: return {'ok': not c.has_error, 'outputs': c.outputs, 'ms': c.execution_ms}
+        try: await k.interrupt()
+        except Exception: pass
+        if (await asyncio.wait([task], timeout=SCRUB_GRACE))[0]: return {'ok': False, 'slow': True, 'outputs': c.outputs}
+        return {'ok': False, 'slow': True, 'stuck': True}
+    @rt('/nb/scrub/warm')
+    async def nb_scrub_warm(req):
+        "Start the tab's kernel before a scrub needs it, so its first tick does not count the start."
+        owner_tab, nb, _ = run_owner(await req.json())
+        if nb is None: return fail('no notebook open')
+        try: await runtime_for(owner_tab)
+        except EnvGone as e: return fail(str(e), 409)
+        return {'ok': True}
     @rt('/nb/scrub/check')
     async def nb_scrub_check(req):
         "Whether a cell's source may re-run on every tick of a scrubbed number, and if not, why."

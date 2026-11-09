@@ -623,8 +623,8 @@ class Notebook:
         self._checkpoint(0)
         for c in self.cells: c.clear()
         self.dirty = True
-    async def run(self, i, kernel, on_output=None):
-        "Run cell `i`, an index or the `Cell` itself, against `kernel`, replacing its outputs. Non-code cells are a no-op."
+    async def run(self, i, kernel, on_output=None, light=False):
+        "Run cell `i`, an index or the `Cell` itself, against `kernel`, replacing its outputs. Non-code cells are a no-op. A `light` run (a scrub tick) keeps the kernel's history, the execution count and the dirty mark as they were."
         c = i if isinstance(i, Cell) else self.cells[i]
         if c.cell_type != 'code': return c
         c.clear()
@@ -647,9 +647,9 @@ class Notebook:
                     c.outputs.append(row)
                     if display_id: display_at[display_id] = len(c.outputs) - 1
                 if on_output: on_output(i, row)
-            r = await kernel.execute(c.source, on_output=receive)
+            r = await kernel.execute(c.source, on_output=receive, **({'store_history': False} if light else {}))
             c.outputs = capped(r.outputs)
-            c.execution_count = r.execution_count
+            if not light: c.execution_count = r.execution_count
             c._lost = bool(getattr(r, 'lost', False))   # kunda settled a run whose reply never came
             c._reason = getattr(r, 'reason', None)
         finally:
@@ -657,7 +657,7 @@ class Notebook:
             c.execution_ms = (time.perf_counter() - started) * 1000
             c.fresh = True
             c.output_hash = src_hash(c.source)
-        self.dirty = True
+        if not light: self.dirty = True
         return c
     async def run_all(self, kernel, on_output=None, stop_on_error=True):
         "Run every code cell in order, stopping at the first error by default."
@@ -990,7 +990,7 @@ async def _settle_lost(c, k):
     else: ok = None
     if not ok: c.outputs.append({'output_type': 'error', 'ename': 'LostReply', 'evalue': LOST[ok], 'traceback': []})
 
-async def run_watched(nb, c, k, on_output=None):
+async def run_watched(nb, c, k, on_output=None, light=False):
     "`(cell, lost)` for `nb.run(c, k)`, `c` a `Cell` or its index now; a run whose kernel went idle without its reply reaching us is settled from the kernel's record."
     if not isinstance(c, Cell): c = nb.cells[c]
     heard = time.monotonic()
@@ -998,7 +998,7 @@ async def run_watched(nb, c, k, on_output=None):
         nonlocal heard
         heard = time.monotonic()
         if on_output: on_output(j, o)
-    task, wait = asyncio.ensure_future(nb.run(c, k, on_output=emitted)), QUIET
+    task, wait = asyncio.ensure_future(nb.run(c, k, on_output=emitted, light=light)), QUIET
     async def finished():
         c = task.result()
         if not getattr(c, '_lost', False): return c, False
