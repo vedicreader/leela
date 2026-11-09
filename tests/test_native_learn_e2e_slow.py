@@ -142,6 +142,8 @@ def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_
                     out['job'] = next((j for j in ws.jobs.all(kind='learn_walk') if (j.result or {}).get('walk') == jid), None)
                     vault = json.loads(tab.ref)[0]
                     out['first'] = _state(ws, vault, jid)
+                    await pg.wait_for_function("() => /Cut a pizza/.test(document.querySelector('.abh')?.innerText || '')", timeout=30000)   # the note swaps in after the check and would clear the answer
+                    await pg.wait_for_timeout(1000)
                     await pg.locator('.abh #ans').fill('one of four equal parts of the pizza')
                     await pg.locator('.abh #send').click()
                     await pg.locator('.abh #check .tag, .abh #check .msg').first.wait_for(timeout=30000)

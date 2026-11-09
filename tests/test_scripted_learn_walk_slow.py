@@ -64,6 +64,7 @@ def test_every_button_of_the_first_step_answers_in_plain_words(tmp_path, monkeyp
                     await pg.locator('.abh #hint').click()
                     await pg.wait_for_selector('.abh #check .hint', timeout=30000)
                     seen['hint'] = await _clean(pg, 'hint')
+                    await pg.wait_for_timeout(1000)
                     await pg.locator('.abh #idk').click()
                     await pg.wait_for_function("() => /Check:|1\\. /.test(document.querySelector('.abh')?.innerText || '')", timeout=30000)
                     await pg.wait_for_timeout(1200)
