@@ -140,6 +140,15 @@ def test_a_walk_that_cannot_be_opened_stays_a_completed_job(ws, monkeypatch, cap
     assert any('disk full' in m for m in caplog.messages)
 
 
+def test_a_wrapped_goal_reaches_the_job_as_the_persons_words(ws, monkeypatch):
+    lr = temp_learning()
+    monkeypatch.setattr(ws.vaults, 'memory', lambda name: SimpleNamespace(_store=lambda shelf: lr.v))
+    ai = SimpleNamespace(ws=ws, mode='learn', session_id=ws.threads.active.id, oneshot=lambda *a, **k: 'a plan', spec_or_none=lambda job='turn': None)
+    register_learn_jobs(ws)
+    r = {f.__name__: f for f in learn_tools(ai)}['create_walk'](goal="<user-request> I don't get this </user-request>")
+    assert ws.jobs.get(r['operation_id']).target == "I don't get this"
+
+
 def test_the_tools_call_the_engine_with_the_contract_arguments(ws, monkeypatch):
     lr = temp_learning()
     monkeypatch.setattr(ws.vaults, 'memory', lambda name: SimpleNamespace(_store=lambda shelf: lr.v))

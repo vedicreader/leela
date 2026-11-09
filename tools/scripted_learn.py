@@ -72,7 +72,7 @@ def grade(p):
     fe = r.get('fe') or f'The answer does not yet say the key point of {n.lower()}.'
     return _j(core_met=ok, correct=ok, also_met=0, grade=8 if ok else 3, slip='', known=-1, gaps=[], asks_for='', first_error='' if ok else fe,
               misconception='' if ok else r.get('wrong') or f'{n} is only a word to remember.',
-              feedback=f'Correct. You said the key point of {n.lower()}. Next, use it in a new case.' if ok else f'Not yet. {fe} Think of one small case of your own. What does the idea tell you about it?')
+              feedback=f'Correct. You said the key point of {n.lower()}. Next, use it in a new case.' if ok else f'Not yet. Think of one small case of your own. What does the idea tell you about it?')
 
 def hint(p):
     n, k = _name(p), int(m[1]) if (m := re.search(r'Give hint level (\d+)', p)) else 1
@@ -105,8 +105,8 @@ def demo(p):
     n, s = _name(p), _said(p)
     return _j(rupaka=1, id=_slug(n), concept=_slug(n), title=f'{n}: try it', ask=s or f'You predict first. Then you see how {n.lower()} behaves.', state=dict(k=2),
         derive=[dict(fn='expr', expr='k * 3', out='total')],
-        blocks=[dict(type='gate', id='g', prompt=f'The number of parts goes from 2 to 4. What happens to the total of {n.lower()}?', options=['It doubles', 'It halves', 'It stays the same'],
-                     answer={'is': 'It doubles'}, hides=['total'], why='Say why, in one line, before you lock in.'),
+        blocks=[dict(type='gate', id='g', prompt=f'Each part adds 3 to the total of {n.lower()}. With 4 parts, what is the total?', options=['6', '9', '12'],
+                     answer={'is': '12'}, hides=['total'], why='Say why, in one line, before you lock in.'),
                 dict(type='slider', bind='k', label='Parts', min=1, max=6, step=1, lock='g'),
                 dict(type='readout', after='g', label='Total', text='{k} parts give a total of {total}'),
                 dict(type='caption', after='g', text=f'Each part adds 3 to the total. Move the slider to 1. What does {n.lower()} give now?')])
@@ -144,6 +144,7 @@ def reply(prompt, sp, max_tokens=0, deadline=None):
     "The canned answer to one engine call, found from the markers of its prompt; the plan, a grade or a paragraph when the prompt has none."
     p, s = prompt, sp or ''
     a = f'{p}\n{s}'   # a shape can be in the system prompt
+    if 'conversation title' in s: return ' '.join(re.sub(r'<[^>]+>', ' ', p).split())[:60] or 'Learn'
     if 'Write this text again' in p or 'Write these texts again' in p: return plain(p)
     if 'Write ONE question' in p: return question(p)
     if 'Return JSON: {"core_met"' in p: return grade(p)

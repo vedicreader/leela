@@ -113,11 +113,15 @@ async function refreshKernelPill() {
   try {
     const d = await api('/kernel/info');
     const pill = $('#kpill'); if (!pill) return;
+    if (!d.alive && d.pid == null && !d.boot_error && !d.api_error && !d.notice) {   // no kernel: the server's own words, not the tab's key
+      pill.className = 'lee-pill lee-pill-off'; pill.textContent = 'no kernel'; pill.title = 'choose a kernel';
+    } else {
     pill.className = 'lee-pill ' + (d.api_error || d.boot_error || d.notice ? 'lee-pill-warn' : d.alive ? 'lee-pill-on' : 'lee-pill-err');
     pill.textContent = (d.api_error || d.notice ? '⚠ ' : d.alive ? '⏺ ' : '○ ') + (d.key || '').split('/').pop();
     pill.title = (d.base || 'no inspector') + (d.cwd ? ' · cwd ' + d.cwd : '') +
                  (d.boot_error ? ' · ' + d.boot_error : '') + (d.api_error ? ' · inspector: ' + d.api_error : '') +
                  (d.notice ? ' · ' + d.notice.message : '');
+    }
     if (d.evicted) status(`closed ${d.evicted.name} runtime to make room; its in-memory variables were cleared`);
     paintVenvNotice(d.no_venv);
     (d.tabs || []).forEach((state, i) => {

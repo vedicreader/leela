@@ -14,6 +14,7 @@ async function leeLearnToAgent(text, send) {
   if (lee.agentBusy || lee.agentSending) return status('The agent is working. Try again when it finishes.', 'err');
   if ($('#agentprompt')?.value.trim()) { leeAct('focus_agent'); return status('Send or clear your message to the agent first.', 'err'); }
   if (!await leeLearnModeOn()) return;
+  await lee.learnPageSaved;   // the agent reads the page that the tab last saved
   leeAct('focus_agent');
   const prompt = $('#agentprompt'); if (!prompt) return;
   prompt.value = text;

@@ -7,6 +7,11 @@ def test_the_core_prompt_gets_a_core():
     assert out['core'] and out['wrong'][0]['fact']
 
 
+def test_a_title_prompt_gets_a_short_title_not_a_paragraph():
+    t = reply('<user-request>teach me fractions</user-request>', 'Write a short conversation title. Output only the title.')
+    assert 'teach me fractions' in t and 'clear point' not in t and len(t) <= 60
+
+
 def test_the_plan_prompt_still_gets_the_plan():
     assert reply('Return JSON: {"steps": [{"name": str, "core": str, "wrong": [{"think": str, "fact": str}]}]}', 'You plan') == PLAN
 

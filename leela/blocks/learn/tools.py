@@ -344,7 +344,7 @@ def learn_tools(ai):
                 r['data'].update(mode=ai.mode, needs='learn')
                 return r
             try:
-                if name == 'create_walk': return start_learn_job(ai, kwargs['goal'], research=research_on(ai.ws) and str(kwargs.get('research') or 'yes').lower() not in ('no', 'false', '0'))
+                if name == 'create_walk': return start_learn_job(ai, engine.plain(kwargs['goal']), research=research_on(ai.ws) and str(kwargs.get('research') or 'yes').lower() not in ('no', 'false', '0'))
                 if name == 'change_walk': return start_learn_job(ai, kwargs['jid'], 'learn_change', instruction=kwargs['instruction'])
                 vault, lr = learn_store(ai.ws, learn_view(ai.ws)[0] if name == 'explain_here' else None, write=name not in reads)
                 if name == 'explain_here': kwargs = {**kwargs, **on_screen(ai, lr)}

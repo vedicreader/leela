@@ -123,7 +123,7 @@ async function mountTab(expectedPath = '') {
   // stays open and the tab reattaches on the way back.
   closeWebView();
   const host = $('#editor'); if (!host) return;
-  lee.kind = st.kind; lee.path = st.path || ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
+  lee.kind = st.kind; lee.path = st.path || ''; lee.learnPage = ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   lee.rise = st.rise || {};
   bindTabHandlers(st.kind, host);
   window.leeFolderOffer?.(st);
@@ -141,7 +141,7 @@ async function mountTab(expectedPath = '') {
   // The empty state is authored once, in Python's `_empty_editor`, and shipped as a template.
   if (!st.kind) {
     host.replaceChildren($('#leeempty')?.content.cloneNode(true) ?? '');
-    paintKeyLabels(host); paintRecent();
+    paintKeyLabels(host); paintRecent(); paintAgentAttachments();
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
