@@ -1,5 +1,5 @@
 """Fill a new Learn vault with demo data, from the fixtures of Abhyasa's own tests. Nothing here calls a real model or the network."""
-import sys, time
+import re, struct, sys, time, zlib
 from fastcore.basics import first
 from pathlib import Path
 
@@ -17,6 +17,20 @@ def fixtures(abh=ABHYASA):
     import walk_data, talk_data, flows
     return walk_data, talk_data, flows
 
+def tiny_png(n=8):
+    "A small grey square, as PNG bytes."
+    ck = lambda t, d: struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d))
+    return b'\x89PNG\r\n\x1a\n' + ck(b'IHDR', struct.pack('>IIBBBBB', n, n, 8, 0, 0, 0, 0)) + ck(b'IDAT', zlib.compress((b'\0' + b'\xd0'*n)*n)) + ck(b'IEND', b'')
+
+def paper(lr, wd):
+    "File the demo paper: its text has no picture link, which no page of Leela can open, and the figure of its second idea is a real file."
+    keep = wd.PAGES
+    wd.PAGES = [(n, re.sub(r'\n*!\[[^\]]*\]\([^)]*\)', '', t)) for n, t in keep]
+    try: did = wd.add_paper(lr)
+    finally: wd.PAGES = keep
+    (lr.vault.assets('attention')/'images'/'fig2.png').write_bytes(tiny_png())
+    return did
+
 URL = 'https://arxiv.org/abs/1706.03762'
 
 def seeded(lr): return first(j.id for j in lr.journeys() if j.get('demo') == 'paper')
@@ -32,7 +46,7 @@ def seed(lr, abh=ABHYASA, say=print):
     from abhyasa.show import talk_from_walk
     can, rupaka.check.can_check = rupaka.check.can_check, lambda: False
     try:
-        jid = td.prep_walk(lr, journey_from_source(lr, Fake(td.TALK_RULES), wd.add_paper(lr), lr.vault.name).id)
+        jid = td.prep_walk(lr, journey_from_source(lr, Fake(td.TALK_RULES), paper(lr, wd), lr.vault.name).id)
         lr.merge_journey(jid, demo='paper')
         for i, s in enumerate(lr.journey(jid).steps): lr.walk_step(jid, i, read={**s['read'], 'url': URL})
         now = time.time()

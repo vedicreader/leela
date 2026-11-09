@@ -29,6 +29,7 @@
     const t = document.createElement('template'); t.innerHTML = html;
     t.content.querySelectorAll('link, script').forEach(x => x.remove());
     const kf = t.content.querySelector('#kf'); if (!kf) return;
+    kf.querySelectorAll('[href^="abhyasa://"]').forEach(a => a.remove());
     abh.append(kf); mark(kf);
     let first = null; try { first = localStorage.getItem(STORE); if (first === null) localStorage.setItem(STORE, 'closed'); } catch {}
     show(kf, first === null && at === '/' && main.getBoundingClientRect().left - abh.getBoundingClientRect().left >= 280);
