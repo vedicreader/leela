@@ -34,11 +34,11 @@ def asset_url(name):
 
 
 def surface(path):
-    "The css, js and rerun URLs the Abhyasa page at `path` needs, `ALWAYS` first, without duplicates."
+    "The css, js and rerun URLs the Abhyasa page at `path` needs, `ALWAYS` first, without duplicates, and every name the manifest knows."
     path = re.split(r'[?#]', path or '/')[0] or '/'
     es = [ALWAYS, *(e for rx, e in SURFACES if re.search(rx, path))]
     out = {}
     for k in ('css', 'js', 'rerun'):
         names = list(dict.fromkeys(n for e in es for n in e.get(k, [])))
         out[k] = [u for n in names if (u := asset_url(n))]
-    return out
+    return {**out, 'known': sorted(known())}

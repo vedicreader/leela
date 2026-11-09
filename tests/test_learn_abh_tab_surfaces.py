@@ -11,7 +11,8 @@ def test_manifest_gives_a_graph_page_d3_and_graph_js_with_graph_rerun():
 
 
 def test_manifest_gives_nothing_to_a_page_it_does_not_name():
-    assert surfaces.surface('/you') == dict(css=[], js=[], rerun=[]) and surfaces.surface('') == surfaces.surface('/')
+    s = surfaces.surface('/you')
+    assert s['css'] == s['js'] == s['rerun'] == [] and 'graph.js' in s['known'] and surfaces.surface('') == surfaces.surface('/')
 
 
 @pytest.mark.parametrize('name', ['../core.js', 'graph.js/../../x', 'base.css', 'nope.js', '..', 'abh.css'])

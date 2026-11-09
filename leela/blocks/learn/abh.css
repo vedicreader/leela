@@ -4,3 +4,13 @@
 .lee-learn { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .lee-learn-bar { display: flex; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
 .lee-learn-bar .lee-btn[disabled] { opacity: .4; }
+
+.abh > main:has(#graph) { max-width: none; height: 100%; box-sizing: border-box; padding: 12px 16px; display: flex; flex-direction: column; }
+.abh #graph { flex: 1; min-height: 0; --g1: var(--lee-orange); --g2: var(--lee-blue); --g3: var(--lee-green); --g4: var(--lee-purple); --g5: var(--lee-aqua); --g6: var(--lee-yellow); }
+.abh #graph .stage, .abh #graph .grip { height: auto; min-height: 0; }
+.abh #graph .stage { aspect-ratio: auto; width: auto; margin: 0; overflow: visible; }
+.abh:not(.wide) #graph { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+.abh:not(.wide) #graph .grip { display: none; }
+.abh:not(.wide) #levers { height: auto; max-height: 160px; overflow: auto; border-left: 0; border-top: 1px solid var(--line); padding: 12px 0 0; }
+.abh kbd { background: none; border: 0; border-radius: 0; padding: 0; min-width: 0; flex: initial; text-align: inherit; white-space: normal; }
+.abh:not(.wide) #graph .stage { min-height: 220px; }

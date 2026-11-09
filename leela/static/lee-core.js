@@ -2304,10 +2304,15 @@ async function learnMount(host, st) {
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
   host.innerHTML = '<div class="lee-learn"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button></div><div class="abh" hx-push-url="false"></div></div>';
   const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]');
-  const trail = []; let cur = null, pending = null, touched = false;
+  const trail = [], ran = new WeakSet(); let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
   if (!open.ok) { abh.textContent = 'Learn is not available. Turn on Learn and attach the learning vault.'; return; }
   const nav = (path, goBack = false) => { pending = {path, goBack}; return htmx.ajax('GET', path, {source: abh, target: abh, swap: 'innerHTML', select: 'main'}); };
+  const known = new Set((await fetch('/learn/abh-surface').then(r => r.json()).catch(() => ({}))).known);
+  abh.addEventListener('htmx:beforeSwap', e => {
+    const d = e.detail;
+    if (d.target === abh && typeof d.serverResponse === 'string') d.serverResponse = d.serverResponse.replace(/<script\b[^>]*\bsrc="[^"]*?([\w.-]+)(?:\?[^"]*)?"[^>]*>\s*<\/script>/g, (m, n) => known.has(n) ? '' : m);
+  });
   const own = u => LEARN_OWN[u.pathname];
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
@@ -2343,7 +2348,8 @@ async function learnMount(host, st) {
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
     cur = path; pending = null; back.disabled = !trail.length;
-    learnSurface(path).then(() => renderMath(abh));
+    const main = abh.querySelector('main');
+    if (main && !ran.has(main)) { ran.add(main); learnSurface(path).then(() => renderMath(abh)); }
   });
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
