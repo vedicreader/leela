@@ -128,7 +128,7 @@ async function editorSettings(languageScope = null) {
   const learnPage = () => {
     const rows = lee.settingsMeta?.sections?.learn; if (!rows) return '';
     const grid = list => `<div class="lee-settings-grid">${list.filter(r => r.kind !== 'bool').map(learnControl).join('')}</div><div class="lee-settings-checks">${list.filter(r => r.kind === 'bool').map(learnControl).join('')}</div>`;
-    return `<section data-settings-section="learn" hidden><h3>Learn</h3><p>Saved for the Learn tools. Learn tools that read them are coming.</p>` +
+    return `<section data-settings-section="learn" hidden><h3>Learn</h3><p>These settings change the Learn pages, the Learn tools and speech input.</p>` +
       [...new Set(rows.map(r => r.group))].map(g => {
         const own = rows.filter(r => r.group === g), more = own.filter(r => r.more), main = own.filter(r => !r.more);
         return `<div class="lee-settings-group"><h4>${esc(own[0].group_label)}</h4>${main.length ? grid(main) : ''}${more.length ? `<details data-learn-more><summary>More</summary>${grid(more)}</details>` : ''}</div>`;

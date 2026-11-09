@@ -137,3 +137,10 @@ assert not Path(user_settings_file()).exists()
 '''
     env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(root), *sys.path[1:], os.environ.get('PYTHONPATH', '')])}
     subprocess.run([sys.executable, '-c', code, str(tmp_path)], check=True, cwd=root, env=env)
+
+def test_learn_page_text_says_the_settings_are_used():
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent/'leela'
+    for f in ('blocks/settings/prefs.js', 'static/lee-ide.js'):
+        text = (root/f).read_text()
+        assert 'These settings change the Learn pages, the Learn tools and speech input.' in text and 'are coming' not in text
