@@ -4206,7 +4206,7 @@ function showHelp() {
     `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
     `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` +
     (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') +
-    (scope === 'editor' ? '<p class="lee-dim lee-help-note">In a notebook, a single letter works only when you do not edit a cell. Press Escape to stop editing. Press D two times to delete a cell. Hold ' + esc(displayChord('alt')) + ' and drag a number in a code cell to scrub it. ' + esc(displayChord('alt+up')) + ' or ' + esc(displayChord('alt+down')) + ' on a number moves it one step. "Nudge the number" and "scrub the number" are in the command palette.</p>' : '') + rows.map(([k, l]) =>
+    (scope === 'editor' ? '<p class="lee-dim lee-help-note">In a notebook, a single letter works only when you do not edit a cell. Press Escape to stop editing. Press D two times to delete a cell. Hold ' + esc(displayChord('alt')) + ' and drag a number in a code cell to scrub it. ' + esc(displayChord('alt+up')) + ' or ' + esc(displayChord('alt+down')) + ' on a number moves it one step. "Nudge the number" and "scrub the number" are in the command palette. Live scrub is opt-in per cell, runs on a copy in a separate process, and only for plain data.</p>' : '') + rows.map(([k, l]) =>
       `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +

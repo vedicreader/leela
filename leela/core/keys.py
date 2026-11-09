@@ -228,6 +228,7 @@ DEFAULTS = L(
     Key('scrub_up',         '',                'editor', 'nudge the number under the caret up'),
     Key('scrub_down',       '',                'editor', 'nudge the number under the caret down'),
     Key('scrub_value',      '',                'editor', 'scrub the number under the caret to a value'),
+    Key('scrub_live',       '',                'editor', 'live scrub on or off for this cell'),
     Key('cell_duplicate',   'shift+d',         'editor', 'duplicate cell below'),
     Key('cell_comment',     'mod+alt+/',         'editor', 'comment the whole cell'),
     Key('cell_copy',        'mod+c mod+shift+c c', 'editor', 'copy cell'),

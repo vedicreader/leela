@@ -2002,6 +2002,7 @@ audio.lee-media { width: min(100%, 560px); }
 .lee-scrub-hint { position: fixed; z-index: 60; height: 0; border-bottom: 2px dotted var(--lee-accent); pointer-events: none; }
 body.lee-scrub-armed .cm-editor, body.lee-scrub-armed .cm-editor * { cursor: ew-resize !important; }
 body.lee-scrubbing, body.lee-scrubbing * { cursor: ew-resize !important; user-select: none !important; }
+.lee-scrub-preview { border-left: 2px dotted var(--lee-accent); padding-left: 6px; }
 .lee-scrub-note { font: 12px/1.4 var(--lee-mono); color: var(--lee-warning); padding: 2px 0 4px; }
 .lee-scrub-ghost { position: relative; opacity: .35; pointer-events: none; user-select: none; }
 .lee-scrub-ghost:not(.overlay)::before { content: 'before'; display: block; font: 11px/1.4 var(--lee-mono); color: var(--lee-fg2); }

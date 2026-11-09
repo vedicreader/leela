@@ -1420,6 +1420,7 @@ const ACTIONS = {
   scrub_up:     () => leeScrubNudge(1),
   scrub_down:   () => leeScrubNudge(-1),
   scrub_value:  () => leeScrubValue(),
+  scrub_live:   () => leeScrubToggleLive(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
   ask_ai:       () => askSelection('[data-ask]'),
@@ -3850,12 +3851,14 @@ async function pickNotebookLanguage() {
   });
 }
 /* Scrub a number: hold Alt and drag a number in a Python cell, or put the caret on it and press Alt+Up or Alt+Down, or run
- * "nudge the number" or "scrub the number" from the palette. The text changes at once. A cell that passes the server's scrub check
- * (nb/scrub.py) re-runs lightly at most every 150 ms, and the output before stays beside the new one as a ghost until an ordinary run. */
+ * "nudge the number" or "scrub the number" from the palette. The text changes at once. Live scrub is opt-in per cell: then a cell that passes
+ * the server's scrub check (nb/scrub.py) runs at most every 150 ms on a copy of the plain data it reads, in a separate process, never in the
+ * kernel, and the output before stays beside the new one as a ghost. One ordinary run follows the gesture. */
 const leeScrubPx = 4, leeScrubGap = 150, leeScrubIdle = 700, leeScrubMax = 1e6, leeScrubGrow = 100;
 //: When false a scrub only changes the number and never re-runs the cell.
 const leeScrubLive = true;
-const leeScrubS = {drag: null, mouse: null, hint: null, warm: '', off: new Set()};
+const leeScrubS = {drag: null, mouse: null, hint: null, warm: ''};
+const leeScrubIsLive = id => !!lee.cells.find(c => c.id === id)?.extra?.scrub?.live;
 const leeScrubStartCh = /[\p{L}_]/u, leeScrubWordCh = /[\p{L}\p{N}\p{M}_]/u;
 const leeScrubKw = new Set('return yield await assert not and or in is if elif while else lambda del raise from import as with for'.split(' '));
 const leeScrubNum = /(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?[jJ]?|0[xXoObB]\w*/y;
@@ -3980,7 +3983,7 @@ function leeScrubGhost(c, before) {
   inner.style.top = media ? -box.offsetHeight + 'px' : '';
 }
 //: Forget the ghost and the note of cell `id`: an ordinary run has come.
-function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); leeScrubS.off.delete(id); }
+function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); $('#out-' + id)?.classList.remove('lee-scrub-preview'); }
 function leeScrubNote(id, text) {
   let n = $('#note-' + id);
   if (!text) return n?.remove();
@@ -3998,32 +4001,34 @@ function leeScrubOpen(view, id) {
   return s;
 }
 //: A new text is in the editor: run it when the cell may.
-const leeScrubChanged = s => { if (leeScrubLive && !leeScrubS.off.has(s.id)) s.gate.push(1); };
+const leeScrubChanged = s => { if (leeScrubLive && leeScrubIsLive(s.id)) s.gate.push(1); };
 async function leeScrubRun(s) {
   const c = lee.cells.find(x => x.id === s.id); if (!c) return 'stop';
   if (c.running) { setTimeout(() => s.gate.push(1), 250); return; }
-  const src = leeScrubDoc(s.view);
-  let r; try { r = await post('/nb/scrub/run', {path: lee.tabKey || '', id: s.id, source: src, seq: nextSeq(), ...seenRow(lee.tabKey, s.id), first: !s.ran}); }
-  catch (e) { leeScrubNote(s.id, `Not re-running while you scrub: ${e.message || e}`); return 'stop'; }
+  const src = leeScrubDoc(s.view), note = t => leeScrubNote(s.id, t);
+  let r; try { r = await post('/nb/scrub/run', {path: lee.tabKey || '', id: s.id, source: src, first: !s.ran}); }
+  catch (e) { note(`Not re-running while you scrub: ${e.message || e}`); return 'stop'; }
   if (r.busy) { setTimeout(() => s.gate.push(1), 250); return; }
   s.last = src;
-  if (r.refused) { s.ok = false; leeScrubNote(s.id, `Not re-running while you scrub: ${r.refused}. Run the cell yourself.`); return; }
-  if (r.stuck) { leeScrubS.off.add(s.id); leeScrubNote(s.id, 'The cell does not stop. Scrubbing is off for this cell.'); return 'stop'; }
-  if (r.slow) { leeScrubNote(s.id, 'Too slow to scrub: the run took too long and was stopped. Run the cell yourself.'); return 'stop'; }
-  s.ok = true; s.ran = true; leeScrubNote(s.id, '');
+  if (r.off) return 'stop';
+  if (r.refused) { s.ok = false; note(`Not re-running while you scrub: ${r.refused} Run the cell yourself.`); return; }
+  if (r.slow) { note('Too slow to scrub: the copy of the cell ran over its limit and was stopped. The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
+  if (r.memory || r.died) { note('The scrub copy of the cell stopped (too much memory, or it died). The notebook kernel was not touched. Run the cell yourself.'); return 'stop'; }
+  s.ok = true; s.ran = true; note('');
   c.outputs = r.outputs || []; renderOutputs(c); cellOutputEvent(s.id, c.outputs);
+  $('#out-' + s.id)?.classList.add('lee-scrub-preview');
   leeScrubGhost(c, s.good);
   if (!leeScrubBad(c.outputs)) s.good = JSON.parse(JSON.stringify(c.outputs));
 }
-//: The gesture is over: one last run when the text moved on from what last ran, then autosave is free again.
+//: The gesture is over: one last tick for the final text, then one ordinary run when live scrub is on and the cell ran; autosave is free again.
 async function leeScrubClose(s) {
   if (s.closing) return; s.closing = true;
-  if (s.ran && !s.gate.dead && !leeScrubS.off.has(s.id) && s.last !== leeScrubDoc(s.view)) s.gate.push(1);
+  if (s.ran && !s.gate.dead && s.last !== leeScrubDoc(s.view)) s.gate.push(1);
   await s.gate.end();
-  const c = lee.cells.find(x => x.id === s.id);
-  if (c && s.ran && s.ok && !leeScrubBad(c.outputs)) setCellState(c, 'done', 'ran while scrubbing; the output follows the text');
   lee.scrubbing.delete(s.id);
   if (!lee.scrubbing.size && autoSaveEnabled()) scheduleAutoSave();
+  const i = lee.cells.findIndex(x => x.id === s.id);
+  if (s.ran && leeScrubIsLive(s.id) && i >= 0 && !s.reverted) await runCell(i, false);
 }
 
 /* A literal being changed: `set` puts a new text over it without an undo step; `end(true)` makes the one undo step from the original
@@ -4041,6 +4046,7 @@ function leeScrubGrab(view, id, lit) {
         if (keep) leeScrubPut(view, lit.from, lit.to, this.cur, false);
       }
       if (keep && this.cur !== lit.text) LeeCM.focus(view);
+      s.reverted = !keep;
       return leeScrubClose(s);
     }};
 }
@@ -4101,6 +4107,13 @@ function leeScrubValue() {
   box.onkeydown = e => { if (e.key === 'Enter' || e.key === 'Escape') e.preventDefault(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); e.stopPropagation(); };
   new MutationObserver((_, o) => { if (!m.isConnected) { o.disconnect(); finish(true); } }).observe(document.body, {childList: true});
   box.focus(); box.select();
+}
+
+//: Live scrub on or off for the selected code cell; the choice is kept in the cell's metadata.
+async function leeScrubToggleLive() {
+  const c = lee.cells[lee.sel]; if (!c || c.cell_type !== 'code') return status('select a code cell first', 'err');
+  const on = !c.extra?.scrub?.live, r = await nbEdit({op: 'scrub_live', i: lee.sel, on}); if (!r) return;
+  status(on ? 'live scrub is on for this cell: it runs on a copy of plain data, in a separate process' : 'live scrub is off for this cell', 'ok');
 }
 
 //: Alt held with the pointer over a number: the kernel starts now, so the first tick does not wait for it.
@@ -4995,7 +5008,7 @@ function applyOutputOps(outputs, {n, ops}) {
   for (const [k, kind, v] of ops) outs[k] = kind === 'append' ? {...outs[k], text: (outs[k]?.text || '') + v} : v;
   return outs;
 }
-async function runCell(i, advance, {save = true, scrub = false} = {}) {
+async function runCell(i, advance, {save = true} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
@@ -5004,7 +5017,7 @@ async function runCell(i, advance, {save = true, scrub = false} = {}) {
     return {ok: false, error: `cell ${i + 1} is already running`};
   }
   const runKey = lee.tabKey, cellId = c.id;
-  if (!scrub) leeScrubClear(cellId);
+  leeScrubClear(cellId);
   // The cell that runs, wherever an insert, move or delete above has put it since; null once its tab is not shown.
   const cur = () => lee.tabKey === runKey ? lee.cells.find(x => x.id === cellId) : null;
   let res = {ok: true, error: ''};

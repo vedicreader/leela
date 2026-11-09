@@ -161,6 +161,7 @@ const ACTIONS = {
   scrub_up:     () => leeScrubNudge(1),
   scrub_down:   () => leeScrubNudge(-1),
   scrub_value:  () => leeScrubValue(),
+  scrub_live:   () => leeScrubToggleLive(),
   complete:     () => kernelComplete(),
   ai_complete:  () => aiComplete(),
   ask_ai:       () => askSelection('[data-ask]'),
