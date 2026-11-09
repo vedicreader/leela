@@ -16,3 +16,6 @@
 .abh:not(.wide) #graph .stage { min-height: 220px; }
 .lee-learn-bar [data-learn-fit] { margin-left: auto; }
 .lee-learn-bar [data-learn-fit][aria-pressed=true] { background: var(--lee-bg3); border-color: var(--lee-accent); }
+.lee-learn-find { margin-left: auto; width: 260px; }
+.lee-learn-find input { width: 100%; box-sizing: border-box; }
+.lee-learn-find ~ [data-learn-fit] { margin-left: 0; }

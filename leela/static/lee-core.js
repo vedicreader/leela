@@ -2256,7 +2256,17 @@ function noteStaleTab(st, recoveredDraft) {
                           .catch(e => status(String(e.message || e), 'err'));
 }
 const LEARN = '/learn/abh';
-const LEARN_OWN = {'/settings': () => leeAct('settings'), '/keys': () => leeAct('help'), '/search': () => leeVaultWorkbench('find'), '/library': () => leeVaultWorkbench('library'), '/sources': () => leeVaultWorkbench('library'), '/library/sources': () => leeVaultWorkbench('library')};
+const LEARN_FIND = () => leeVaultWorkbench('find');
+const LEARN_DOC = /^\/v\/([^/]+)\/([^/]+)$/;
+const learnDoc = k => { const [, shelf, doc] = LEARN_DOC.exec(k).map(x => x && decodeURIComponent(x)); return () => leeOpenVaultDoc(doc, shelf, 'learn'); };
+const LEARN_OWN = new Proxy({'/settings': () => leeAct('settings')?.then(() => $('[data-settings-page="learn"]')?.click()), '/keys': () => leeAct('help')}, {get: (o, k) => o[k] || (typeof k === 'string' && LEARN_DOC.test(k) ? learnDoc(k) : undefined)});
+function learnBar(host) {
+  const bar = host.querySelector('.lee-learn-bar'), fit = bar.querySelector('[data-learn-fit]');
+  for (const [name, path] of [['Library', '/library'], ['You', '/you']]) fit.before(Object.assign(document.createElement('button'), {type: 'button', className: 'lee-btn', textContent: name, onclick: () => window.leeLearnNav(path)}));
+  const f = Object.assign(document.createElement('form'), {className: 'lee-learn-find', innerHTML: '<input type="search" name="q" class="lee-input" placeholder="Search what you learned" aria-label="Search what you learned" autocomplete="off">'});
+  f.onsubmit = e => { e.preventDefault(); if (f.q.value.trim()) window.leeLearnNav('/search?q=' + encodeURIComponent(f.q.value.trim())); };
+  fit.before(f);
+}
 const LEARN_KEYS = window.abhyasaKeys ||= {KeyS: ['#send', 'main .go'], KeyW: '#hint', KeyE: '#show-demo', KeyC: ['#continue', '[data-part=continue-card] [data-act=continue]'], KeyX: '#idk, #teach', KeyA: '#another', KeyV: '.walk-demo #keep'};
 window.abhyasaGo ||= u => window.leeLearnNav?.(u);
 window.abhyasaPane ||= {open: u => window.leeLearnNav?.(u), close: () => window.leeLearnBack?.(), isOpen: () => false};
@@ -2302,7 +2312,7 @@ function leeAbhKey(e, home) {
   } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && box && e.target.form) {
     e.preventDefault(); e.stopPropagation(); e.target.form.requestSubmit(e.target.form.querySelector('button.go') || undefined); return true;
   } else if (e.key === '/' && !box && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    e.preventDefault(); e.stopPropagation(); LEARN_OWN['/search'](); return true;
+    e.preventDefault(); e.stopPropagation(); LEARN_FIND(); return true;
   }
   if (!el) return false;
   e.preventDefault(); e.stopPropagation();
@@ -2326,7 +2336,7 @@ async function learnMount(host, st) {
   };
   (window.leeLearnObs = new MutationObserver(sync)).observe(host, {childList: true});
   fit.onclick = () => { localStorage.setItem('lee-learn-fit', learnFitOn() ? '0' : '1'); sync(); };
-  sync();
+  sync(); learnBar(host);
   const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]'), change = host.querySelector('[data-learn-change]');
   const trail = [], ran = new WeakSet(); let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
@@ -2345,7 +2355,7 @@ async function learnMount(host, st) {
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
     const a = e.target.closest('a[href]');
-    if (!a || a.target || a.getAttribute('href').startsWith('#') || a.matches(LEARN_HX)) return;
+    if (!a || (a.target && !a.dataset.pane) || a.getAttribute('href').startsWith('#') || a.matches(LEARN_HX)) return;
     const u = new URL(a.href, location.origin);
     if (!local(u)) return;
     e.preventDefault(); e.stopImmediatePropagation();
