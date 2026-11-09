@@ -1,4 +1,5 @@
 import re
+from importlib.resources import files
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
@@ -115,9 +116,24 @@ def walk_job_actions(job, result):
     return []
 
 
+def abh_styles():
+    root = files('abhyasa')
+    css = '\n'.join((root/p).read_text() for p in ('core/base.css', 'blocks/walk/walk.css'))
+    css = re.sub(r'@font-face\s*\{.*?\}', '', css, flags=re.S)
+    css = re.sub(r'\[data-theme(?:=[^\]]+)?\]', '.abh', css)
+    css = css.replace(':root', '.abh').replace('html.in-pane', '.abh').replace('html.rh-open', '.abh')
+    css = re.sub(r'(?<![-\w])body(?![-\w])', '.abh', css)
+    css = re.sub(r'(?<![-\w])main(?![-\w])', '.abh', css)
+    return '@scope (.abh) {\n' + css + '\n}\n'
+
+
 def connect(app, ctx):
     from ..vault.ui import register_job_actions
     register_job_actions('learn_walk', walk_job_actions)
+    @app.route('/learn/abh.css', methods=['GET'])
+    def abh_css():
+        from pathlib import Path
+        return Response(Path(__file__).with_name('abh.css').read_text() + abh_styles(), media_type='text/css')
     @app.route('/learn/walk.css', methods=['GET'])
     def walk_css():
         from pathlib import Path

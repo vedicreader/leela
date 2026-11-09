@@ -1339,6 +1339,8 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
 
     connect_all(app, ws, BLOCKS, docs=_docstore, debug=_debugstate, running=_runstate, gate=gate,
                 catalog=workspace_catalog)
+    from .blocks.learn.host import mount_abhyasa
+    mount_abhyasa(app, ws)   # last, so every Leela route matches first
     return app
 
 def _pool_ports(base=0):
