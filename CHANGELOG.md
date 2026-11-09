@@ -2,6 +2,18 @@
 
 <!-- do not remove -->
 
+## Unreleased
+
+- Learn is a part of Leela. A Learn tab shows an Abhyasa walk in Leela's theme, with its checks, hints, graph, talks and concepts, and no second window or port. The Learn vault is a managed entry in the vault list, with a first-run import (Attach, Back up and copy, Skip). Learn needs abhyasa with `HOST_API` 1.
+- Modes: Code, Learn and Create are workspace presets. Switching keeps the one agent conversation and changes its tools and context. In Code mode the agent sees the active cell.
+- Learn from the agent pane: make, change and explain a walk, with job cards that you can stop. "I don't get this" goes to the step on screen.
+- Learn sources from the workspace: tick the folders of the workspace or attach a path at "Sources for Learn". A refused path shows its reason.
+- Code steps in Learn run live: a run moves the demo, and a slider rewrites the number in the code.
+- Live scrub: a number in a cell becomes a slider, and the cell runs again in a worker process. Notebook files cannot turn it on.
+- Trace this run: see the value of each line of a cell.
+- Create mode: a scene of named values that you drag in the tab. The agent can read and set them, and Export page saves one web page. It needs rupaka 0.0.16.
+- Save all no longer fails on an untitled tab: autosave skips it, and Save still asks for a name.
+
 ## 1.0.4
 
 Cells: undo no longer strands a running cell.
