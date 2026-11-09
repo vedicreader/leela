@@ -20,7 +20,7 @@ def test_seed_makes_walk_course_talk_and_attempts_over_days():
     jid = seed(lr, say=out.append)
     j = lr.journey(jid)
     assert len(j.steps) == 3 and all(s['read']['text'] and s['read']['url'].startswith('https://') for s in j.steps)
-    assert len(lr.courses()) == 1 and len(lr.talks()) == 1 and len(lr.talks()[0].slides) >= 4
+    assert len(lr.courses()) == 2 and len(lr.talks()) == 1 and len(lr.talks()[0].slides) >= 4
     assert any(s['check'].get('kind') == 'demo' for s in j.steps)
     ats = lr.attempts()
     assert len(ats) >= 4 and (max(a.at for a in ats) - min(a.at for a in ats)) > 3*86400

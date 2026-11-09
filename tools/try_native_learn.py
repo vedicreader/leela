@@ -8,6 +8,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 ABHYASA = ROOT.parent/'abhyasa-native-learn'
+RUPAKA = ROOT.parent/'rupaka-explorables'
 REFUSED_PORT = 5001
 
 def parse(argv=None):
@@ -20,6 +21,7 @@ def parse(argv=None):
     p.add_argument('--state', default=None, help='the isolated folder to use again (default: a new temporary one)')
     p.add_argument('--port', type=int, default=None, help='port on 127.0.0.1 (default: a free one)')
     p.add_argument('--abhyasa', default=str(ABHYASA), help='the Abhyasa worktree to import first')
+    p.add_argument('--rupaka', default=str(RUPAKA) if RUPAKA.is_dir() else None, help='the rupaka worktree to import first (default: the sibling rupaka-explorables worktree, if there is one)')
     return p.parse_args(argv)
 
 def refused(paths, real):
@@ -74,19 +76,25 @@ TRY = """what to try
  8  Dictate an answer with the microphone action
  9  Press "I don't get this" on a step, or ask it in the agent pane
 10  Settings > Learn: change a row and see it saved
-11  Course page: the demo course "Diffusion for comics" with its stage
+11  Course page: the demo courses "Diffusion for comics" and "Circuits and signals"; in the second, open an idea and press Show me
 12  With --copy-vault: open Learn and see the import offer (Attach, Back up and copy, Skip)"""
 
 WEB_OFF = 'web research: off (add --web to let the agent search the web)'
 WEB_ON = "web research: ON: topic words are sent to the web search through Leela's privacy guard"
 
-def banner(url, state, ref, scripted, seeded, copied, web=False):
+def rupaka_line():
+    "Which rupaka is imported, and whether it has the circuit demos."
+    import rupaka
+    from tools.seed_learn_demo import circuits_ready
+    return f'rupaka {rupaka.__version__}  {Path(rupaka.__file__).resolve().parent}' + (f'  ({why})' if (why := circuits_ready()) else '')
+
+def banner(url, state, ref, scripted, seeded, copied, web=False, rupaka=None):
     "The text the owner reads first."
     model = 'scripted model: canned replies, nothing leaves this machine' if scripted else 'configured model (see Settings > Models); it may leave this machine'
     data = 'a copy of your vault is the standalone vault; Learn offers to import it on first open' if copied else ('demo data (not yours)' if seeded else 'empty')
     from leela.blocks.learn.tools import HOST_API_NEEDED, host_api
     api = f'abhyasa host API {host_api() or "none"}, Leela needs {HOST_API_NEEDED}'
-    return f'pid    {os.getpid()}\nurl    {url}\nstate  {state}\nabh    {api}\nvault  {ref[0]}  {ref[1]}\nmodel  {model}\nweb    {WEB_ON if web else WEB_OFF}\ndata   {data}\n{TRY}'
+    return f'pid    {os.getpid()}\nurl    {url}\nstate  {state}\nabh    {api}\n{rupaka + chr(10) if rupaka else ""}vault  {ref[0]}  {ref[1]}\nmodel  {model}\nweb    {WEB_ON if web else WEB_OFF}\ndata   {data}\n{TRY}'
 
 def check(a):
     "The refusals that come before anything starts: the Abhyasa worktree, the state folder, the port. Returns `(abh, iso, state, port)`."
@@ -95,6 +103,7 @@ def check(a):
     iso = load_isolate()
     state = Path(a.state or tempfile.mkdtemp(prefix='leela-learn-')).resolve()
     if bad := refused([state], iso.REAL_STORES): raise SystemExit(f'the state folder is a real store: {bad}')
+    if a.rupaka and not Path(a.rupaka).resolve().is_dir(): raise SystemExit(f'no rupaka worktree at {a.rupaka}')
     return abh, iso, state, pick_port(a.port)
 
 def standalone(state, copy):
@@ -107,9 +116,10 @@ def standalone(state, copy):
 def main(argv=None):
     a = parse(argv)
     abh, iso, state, port = check(a)
-    if (late := {'leela', 'abhyasa', 'ramabana', 'vishalakshi'} & set(sys.modules)): raise SystemExit(f'isolate before importing {sorted(late)}')
-    sys.path[:0] = [str(ROOT), str(abh)]
-    os.environ['PYTHONPATH'] = os.pathsep.join([str(ROOT), str(abh)] + [p for p in [os.environ.get('PYTHONPATH')] if p])
+    if (late := {'leela', 'abhyasa', 'ramabana', 'vishalakshi', 'rupaka'} & set(sys.modules)): raise SystemExit(f'isolate before importing {sorted(late)}')
+    rk = [str(Path(a.rupaka).resolve())] if a.rupaka else []
+    sys.path[:0] = [*rk, str(ROOT), str(abh)]
+    os.environ['PYTHONPATH'] = os.pathsep.join([*rk, str(ROOT), str(abh)] + [p for p in [os.environ.get('PYTHONPATH')] if p])
     state.mkdir(parents=True, exist_ok=True)
     iso.isolate(state)
     env = stores(iso, state)
@@ -117,6 +127,9 @@ def main(argv=None):
     standalone(state, a.copy_vault)
     import abhyasa
     if not Path(abhyasa.__file__).resolve().is_relative_to(abh): raise SystemExit(f'abhyasa came from {abhyasa.__file__}, not {abh}')
+    if rk:
+        import rupaka
+        if not Path(rupaka.__file__).resolve().is_relative_to(rk[0]): raise SystemExit(f'rupaka came from {rupaka.__file__}, not {rk[0]}')
     import leela
     if not Path(leela.__file__).resolve().is_relative_to(ROOT): raise SystemExit(f'leela came from {leela.__file__}, not {ROOT}')
     if refused([leela.leela_cfg], iso.REAL_STORES): raise SystemExit(f'leela_cfg is a real store: {leela.leela_cfg}')
@@ -139,7 +152,7 @@ def main(argv=None):
     ref = ws.vaults.get(LEARN)
     ref = (ref.name, ref.path) if ref else (LEARN, f'{learn_path()}  (made when you choose Attach, Back up and copy, or Skip)')
     if refused([ref[1].split('  ')[0]], iso.REAL_STORES): raise SystemExit('the Learn vault is a real store')
-    print(banner(f'http://127.0.0.1:{port}/', state, ref, scripted, seeded, bool(a.copy_vault), bool(a.web)), flush=True)
+    print(banner(f'http://127.0.0.1:{port}/', state, ref, scripted, seeded, bool(a.copy_vault), bool(a.web), rupaka_line()), flush=True)
     print(f'rerun  python {Path(__file__).resolve()} --state {state}', flush=True)
     try: uvicorn.run(ide_app(ws), host='127.0.0.1', port=port, log_level='warning')
     except KeyboardInterrupt: pass
