@@ -2262,11 +2262,35 @@ const LEARN_DOC = /^\/v\/([^/]+)\/([^/]+)$/;
 const learnDoc = k => { const [, shelf, doc] = LEARN_DOC.exec(k).map(x => x && decodeURIComponent(x)); return () => leeOpenVaultDoc(doc, shelf, 'learn'); };
 const LEARN_OWN = new Proxy({'/settings': () => leeAct('settings')?.then(() => $('[data-settings-page="learn"]')?.click()), '/keys': () => leeAct('help')}, {get: (o, k) => o[k] || (typeof k === 'string' && LEARN_DOC.test(k) ? learnDoc(k) : undefined)});
 function learnBar(host) {
-  const bar = host.querySelector('.lee-learn-bar'), fit = bar.querySelector('[data-learn-fit]');
-  for (const [name, path] of [['Library', '/library'], ['You', '/you']]) fit.before(Object.assign(document.createElement('button'), {type: 'button', className: 'lee-btn', textContent: name, onclick: () => window.leeLearnNav(path)}));
+  const nav = host.querySelector('.lee-learn-nav');
+  for (const [name, path] of [['Library', '/library'], ['You', '/you']]) nav.append(Object.assign(document.createElement('button'), {type: 'button', className: 'lee-btn', textContent: name, onclick: () => window.leeLearnNav(path)}));
   const f = Object.assign(document.createElement('form'), {className: 'lee-learn-find', innerHTML: '<input type="search" name="q" class="lee-input" placeholder="Search what you learned" aria-label="Search what you learned" autocomplete="off">'});
   f.onsubmit = e => { e.preventDefault(); if (f.q.value.trim()) window.leeLearnNav('/search?q=' + encodeURIComponent(f.q.value.trim())); };
-  fit.before(f);
+  host.querySelector('[data-learn-chips]').after(f);
+}
+async function learnChips(host, path) {
+  const html = await fetch(LEARN + '/nav/extra?path=' + encodeURIComponent(path)).then(r => r.ok ? r.text() : '').catch(() => ''), t = document.createElement('template');
+  t.innerHTML = html;
+  const go = t.content.querySelector('#continue'), job = t.content.querySelector('#activity'), s = job?.querySelector('summary'), l = job?.querySelector('.activity-list a[href]');
+  go?.classList.add('lee-learn-chip');
+  host.querySelector('[data-learn-chips]')?.replaceChildren(...[go, s && Object.assign(document.createElement(l ? 'a' : 'span'), {className: 'lee-learn-chip', textContent: s.textContent.trim()}, l ? {href: l.getAttribute('href')} : {})].filter(Boolean));
+}
+function learnClear(host) {
+  window.leeLearnClr?.disconnect();
+  const tab = host.querySelector('.lee-learn-tab'), shell = $('#shell'), shown = s => { const e = $(s); return e && getComputedStyle(e).display !== 'none' ? e : null; };
+  const g = (e, p) => parseFloat(getComputedStyle(e)[p]) || 0, ro = new ResizeObserver(() => set()), mo = new MutationObserver(() => set());
+  const set = () => {
+    if (!tab?.isConnected) return;
+    const r = host.getBoundingClientRect(), l = shown('.restore-left'), rt = shown('.restore-right'), b = shown('.restore-bottom'), st = $('#status');
+    const need = b ? Math.max(b.offsetHeight + g(b, 'bottom'), st ? g(st, 'bottom') + g(st, 'minHeight') : 0) : 0;
+    tab.style.setProperty('--learn-left', (l ? Math.max(0, l.offsetWidth + g(l, 'left') - r.left) : 0) + 'px');
+    tab.style.setProperty('--learn-right', (rt ? Math.max(0, rt.offsetWidth + g(rt, 'right') - (innerWidth - r.right)) : 0) + 'px');
+    tab.style.setProperty('--learn-bottom', (need ? Math.max(0, need + 8 - (innerHeight - r.bottom)) : 0) + 'px');
+  };
+  ['.restore-left', '.restore-right', '.restore-bottom', '#status'].map(s => $(s)).filter(Boolean).forEach(e => ro.observe(e)); ro.observe(host);
+  shell && mo.observe(shell, {attributes: true, attributeFilter: ['class']});
+  window.leeLearnClr = {disconnect() { ro.disconnect(); mo.disconnect(); }};
+  set();
 }
 const LEARN_KEYS = window.abhyasaKeys ||= {KeyS: ['#send', 'main .go'], KeyW: '#hint', KeyE: '#show-demo', KeyC: ['#continue', '[data-part=continue-card] [data-act=continue]'], KeyX: '#idk, #teach', KeyA: '#another', KeyV: '.walk-demo #keep'};
 window.abhyasaGo ||= u => window.leeLearnNav?.(u);
@@ -2309,7 +2333,7 @@ function leeAbhKey(e, home) {
   if (e.altKey && !e.metaKey && !e.ctrlKey) {
     const mark = '⌥' + e.code.replace(/^(?:Key|Digit)/, '');
     el = [...abh.querySelectorAll('button kbd, a kbd')].filter(k => k.textContent.trim() === mark).map(k => k.closest('button, a')).find(learnSeen);
-    for (const s of el ? [] : [].concat(LEARN_KEYS[e.code] || [])) if ((el = [...abh.querySelectorAll(s)].find(learnSeen))) break;
+    for (const s of el ? [] : [].concat(LEARN_KEYS[e.code] || [])) if ((el = [...(abh.closest('.lee-learn-tab') || abh).querySelectorAll(s)].find(learnSeen))) break;
   } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && box && e.target.form) {
     e.preventDefault(); e.stopPropagation(); e.target.form.requestSubmit(e.target.form.querySelector('button.go') || undefined); return true;
   } else if (e.key === '/' && !box && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -2328,11 +2352,13 @@ async function learnMount(host, st) {
   }
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
-  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button></div><div class="abh" hx-push-url="false"></div></div>';
+  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button></div><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
   const fit = host.querySelector('[data-learn-fit]'), sync = () => {
     const here = !!host.querySelector('.lee-learn-tab');
     leeLearnFit(here && learnFitOn()); fit?.setAttribute('aria-pressed', String(learnFitOn()));
+    $('#shell')?.classList.toggle('lee-learn-on', here);
+    here ? learnClear(host) : window.leeLearnClr?.disconnect();
     if (!here) window.leeLearnObs?.disconnect();
   };
   (window.leeLearnObs = new MutationObserver(sync)).observe(host, {childList: true});
@@ -2362,6 +2388,10 @@ async function learnMount(host, st) {
     e.preventDefault(); e.stopImmediatePropagation();
     own(u) ? own(u)() : nav(u.pathname + u.search + u.hash);
   }, true);
+  host.querySelector('[data-learn-chips]').addEventListener('click', e => {
+    const a = e.target.closest('a[href]'); if (!a) return;
+    e.preventDefault(); const u = new URL(a.href, location.origin); own(u) ? own(u)() : nav(u.pathname + u.search + u.hash);
+  });
   abh.addEventListener('submit', e => {
     const f = e.target;
     if (f.matches(LEARN_HX) || f.closest(LEARN_HX)) return;
@@ -2386,7 +2416,7 @@ async function learnMount(host, st) {
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
-    cur = path; pending = null; back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
+    cur = path; pending = null; learnChips(host, cur); back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
     if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
   });
