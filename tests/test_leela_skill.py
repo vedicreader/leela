@@ -35,7 +35,8 @@ def test_the_learn_section_keeps_the_text_under_the_cap(ai):
     register_section('learn', learn_rows(), 'abhyasa')   # what `connect` does; the same rows again are a no-op
     ai.tools
     t = find(ai.skills, 'leela')._text()
-    assert len(t) <= MAX_SKILL_CHARS and '- **learn**: ' in t and 'abhyasa settings, user settings only' in t
+    assert len(t) <= MAX_SKILL_CHARS - 200, f'{len(t)} of {MAX_SKILL_CHARS}: keep 200 characters of headroom'
+    assert '- **learn**: ' in t and 'abhyasa settings, user settings only' in t
 
 def _palette_names():
     js = (ROOT/'leela'/'blocks'/'keys'/'palette.js').read_text()

@@ -54,7 +54,7 @@ FEATURES = (
     ('Opening a project without a command line', ('open_folder', 'add_root', 'Open With > Leela in Finder'),
      'Open a folder or a file from the welcome screen, the folder chooser, or the Dock. Leela remembers the open folders.'),
     ('Project settings', ('settings', '`.leela/settings.json`'),
-     'Settings has a user file and a project file. `.leela/settings.json` in the project folder overrides the user file, key by key. Save to in Settings picks the file a change goes to.'),
+     'Save to in Settings picks the file a change goes to: the user file or the project file.'),
     ('The venv notice', ('Set up .venv in the notice above the editor',),
      'A Python project with no environment runs no code until you choose. Set up .venv makes `.venv` with uv and installs only the kernel support. Choose interpreter… opens the kernel picker. Not now hides the notice.'),
     ('Updates', ('check_updates', 'setup_models'),
@@ -118,7 +118,7 @@ def leela_skill(ai=None):
     menus = _menus()
     out = ['# What Leela can do\n\nLeela is an IDE for notebooks and code, with an agent, a vault, git, release and deploy. '
            'Each item says where it is: a menu, a pane, or a key. `mod` is Command on a Mac and Control elsewhere. '
-           'The keys are the user\'s own, from `keys.json`. Every action is also in the command palette.\n\n## Features\n']
+           'Every action is also in the command palette.\n\n## Features\n']
     for title, where, what in FEATURES:
         w = '; '.join(_key(a, menus) or a for a in where)
         out.append(f'- **{title}** ({w}): {what}\n')
