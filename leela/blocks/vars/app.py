@@ -10,11 +10,12 @@ from ...core.inspectors import import_failure
 from ...core.session import kernel_api
 from ...core.web import fail
 from ..runtime.kernels import KernelLimit
+from .trace import TracedKernel, trace_store, trace_support
 from kunda.support import INSPECTOR, installable
 
 __all__ = ['CAPS', 'connect']
 
-CAPS = ()
+CAPS = ('docs',)
 
 def _api_path(name, scope):
     "`live` asks the tab's kernel; `agent` asks its overlay, which mounts the same names."
@@ -83,6 +84,46 @@ def connect(app, ctx):
                 'inspector': 'dhrishti', 'python': py,
                 **({'can_install': True, 'packages': list(INSPECTOR)} if can_install else {}),
                 'cwd': str(getattr(runtime, 'cwd', '') or '')}
+    def trace_key(tab, c): return (tab.path or tab.title, c.id)
+    @rt('/vars/trace/support')
+    async def trace_caps():
+        "Whether this install can trace a run, and the sentence to show when it cannot."
+        why = trace_support(session.kernel_peek())
+        return {'ok': not why, 'why': why}
+    @rt('/vars/trace/last')
+    async def trace_last(path: str = '', id: str = ''):
+        "The last traced run of one cell in this session, as the pane draws it."
+        tab, nb, _ = ctx.docs.owner(path)
+        c = next((x for x in (nb or []) if x.id == id), None)
+        m = trace_store(session).model(trace_key(tab, c)) if c is not None else None
+        return {'ok': True, 'trace': m}
+    @rt('/vars/trace')
+    async def vars_trace(req):
+        "Run one code cell with a line tracer on, as a normal run, and return its cell and its trace."
+        d = await req.json()
+        tab, nb, lock = ctx.docs.owner(d.get('path'))
+        if nb is None: return fail('no notebook open')
+        if (why := trace_support()): return fail(why, 409)
+        c = next((x for x in nb if x.id == d.get('id')), None)
+        if c is None: return fail('that cell is no longer in the notebook', 409)
+        if c.cell_type != 'code': return fail('only code cells can be traced')
+        if 'source' in d:
+            row = {'id': c.id, 'i': nb.cells.index(c), 'source': d['source'], 'seq': d.get('seq')}
+            if nb.take_sources([row], ctx.docs.seqs_for(tab)): return fail('another window changed this cell. Review it before tracing.', 409)
+        from ..nb.nb import run_watched
+        async with lock:
+            try: k = await session.runtime(tab)
+            except KernelLimit as e: return fail(e)
+            if (why := trace_support(k)): return fail(why, 409)
+            tk = TracedKernel(k)
+            tab.running += 1
+            try: c, lost = await run_watched(nb, c, tk)
+            finally: tab.running = max(0, tab.running - 1)
+        tab.dirty = True
+        r = tk.run
+        info = dict(truncated=bool(r and r.truncated), reason=r and r.reason, seen=r.seen if r else 0, secs=r.secs if r else 0)
+        m = trace_store(session).put(trace_key(tab, c), r.events if r else [], c.source, info)
+        return {'ok': not c.has_error, 'id': c.id, 'lost': lost, 'cell': c.dict(), 'trace': m}
     @rt('/vars/expand')
     async def vars_expand(accessor: str, offset: int = 0, scope: str = 'live'):
         return JSONResponse(await api(_api_path('expand', scope), {'accessor': accessor, 'offset': offset}) or [])

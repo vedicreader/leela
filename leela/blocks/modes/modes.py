@@ -72,5 +72,7 @@ def cell_anchor(ws, cell=''):
             tb = ANSI.sub('', '\n'.join(e.get('traceback') or [])) or f"{e.get('ename', '')}: {e.get('evalue', '')}"
             body.append(f'<error>\n{tb[-ANCHOR_ERR:]}\n</error>')
         if out := output_text([o for o in c.outputs if o.get('output_type') != 'error']).strip(): body.append(f'<output>\n{out[:ANCHOR_OUT]}\n</output>')
+        from ..vars.trace import trace_context
+        if tr := trace_context(ws, t, c): body.append(f'<trace>\n{tr}\n</trace>')
     body.append('</active-cell>')
     return '\n'.join(body)

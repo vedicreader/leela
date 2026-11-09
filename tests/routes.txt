@@ -354,6 +354,9 @@ GET,POST /vars/eval
 GET,POST /vars/expand
 GET,POST /vars/grid
 GET,POST /vars/set
+GET,POST /vars/trace
+GET,POST /vars/trace/last
+GET,POST /vars/trace/support
 GET,POST /vault/access
 GET,POST /vault/acquire
 GET,POST /vault/activate
