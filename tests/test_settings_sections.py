@@ -108,7 +108,7 @@ def test_learn_missing_package_skips_registration(reg, monkeypatch, caplog):
 def test_percent_conversion():
     import subprocess
     from pathlib import Path
-    source = Path('leela/blocks/settings/prefs.js').read_text()
+    source = (Path(__file__).resolve().parent.parent/'leela/blocks/settings/prefs.js').read_text()
     start = source.index('function settingsPercent(')
     helper = source[start:source.index('\n}', start)+2]
     subprocess.run(['node', '-e', helper + r'''
@@ -121,7 +121,9 @@ assert.equal(settingsPercent(0, .5), 0);
 '''], check=True)
 
 def test_import_does_not_write_user_settings(tmp_path):
-    import subprocess, sys
+    import os, subprocess, sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
     code = r'''
 from tools.isolate import isolate
 from pathlib import Path
@@ -133,4 +135,5 @@ assert not Path(user_settings_file()).exists()
 learn_rows()
 assert not Path(user_settings_file()).exists()
 '''
-    subprocess.run([sys.executable, '-c', code, str(tmp_path)], check=True)
+    env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(root), *sys.path[1:], os.environ.get('PYTHONPATH', '')])}
+    subprocess.run([sys.executable, '-c', code, str(tmp_path)], check=True, cwd=root, env=env)
