@@ -10,8 +10,8 @@ from ramabana.core import ModelSpec
 from tests.fakemodel import install
 from tools.s2_native_pilot import PLAN
 
-# Every task that the mounted paths below may route through `Router.for_`, and the jobs of Leela's research and picture calls (`test_learn_abh_research.py`).
-TASKS = frozenset('grade hint lesson note plan question research vision'.split())
+# Every task that the mounted paths below may route through `Router.for_`, and the jobs of Leela's research and picture calls (`test_learn_abh_research.py`). `ask` is the default call of the demo and talk blocks, and `talk` the route that their model chip names.
+TASKS = frozenset('ask grade hint lesson note plan question research talk vision'.split())
 GRADE = r'{"correct": true, "grade": 10, "feedback": "Correct.", "first_error": "", "misconception": ""}'
 QUESTION = r'{"question": "What does a fraction name?", "answer": "Equal parts.", "core": "A fraction names equal parts.", "rubric": ["Equal parts."]}'
 
@@ -224,3 +224,18 @@ def test_a_second_window_with_another_learn_vault_rebuilds_the_app(served, reque
         assert a['h'].app is b['h'].app and a['cl'].get('/learn/abh/you/strengths').status_code == 200
     finally:
         a['h'].stop(); b['h'].stop(); b['cl'].close(); a['cl'].close()
+
+
+def test_hosted_demo_and_talk_jobs_route_only_through_listed_tasks(served):
+    "A Show demo and a talk made from a walk call the model through `TASKS` alone, so the table did not grow for the demo and talk blocks."
+    s = served; _start(s); cl = s['cl']
+    slug = s['lr'].journey(s['jid']).steps[0]['slug']
+    r = cl.post('/demo/ask', data=dict(where='walk', concept=slug, walk=s['jid'], step='0'))
+    assert r.status_code == 200, r.text[:300]
+    cl.post('/talk/new', data=dict(jid=s['jid']))
+    for _ in range(100):
+        if cl.get(f"/talk/job?jid={s['jid']}").headers.get('hx-redirect'): break
+        time.sleep(.2)
+    time.sleep(1)
+    assert s['jobs'] and set(s['jobs']) <= TASKS, s['jobs']
+    assert set(s['routed']) <= TASKS and not s['forbidden']
