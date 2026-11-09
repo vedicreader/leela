@@ -89,10 +89,16 @@ def register_job_actions(kind, fn):
     "Draw `fn(job, result)` in the card of a finished job of `kind`."
     JOB_ACTIONS[kind] = fn
 
+def _index_line(d):
+    "The plain line of a `learn_index` job: how far the search by meaning is, or that it is ready or stopped."
+    if d['active']: return 'Building search by meaning: ' + (d['current'] or 'starting').removeprefix('indexing ') + '.'
+    return 'Search by meaning is ready.' if d['status'] == 'complete' else 'Search by meaning stopped. Build it again from the Vault settings.'
+
 def job_card(job):
     d = job.dict()
     active = d['active']
     attrs = dict(hx_get=f"/jobs/{d['id']}", hx_trigger=f'load delay:{POLL_MS}ms', hx_swap='outerHTML') if active else {}
+    if d['kind'] == 'learn_index' and not d['error']: return Div(Span(_index_line(d), role='status'), cls=f"lee-job {d['status']}", id=f"job-{d['id']}", **attrs)
     plain = d['kind'] in JOB_TITLES
     target = '' if d['kind'] in ('learn_change', 'learn_gather') else d['target'] or ''
     body = [Span(JOB_TITLES.get(d['kind'], d['kind']), cls='lee-job-kind'), Span(d['status'], cls=f"lee-job-status {d['status']}"),
@@ -410,7 +416,7 @@ def learn_result(r):
     c = r.get('choice')
     if not r.get('ok'): return Div(Span(r.get('error') or 'The import failed. Nothing was changed.', role='alert'), _learn_forms(r.get('same_file'), r.get('offer_cited', 0)), id='learnimport', cls='lee-wb-set lee-learn-offer')
     say = {'attach': 'Learn now uses that vault.', 'skip': 'Learn starts empty. Ask again with import learning in the Vault settings.',
-           'copy': 'Copied' + (f" with {_plural(r['cited'], 'cited document')}" if r.get('cited') else '') + f". The backup is {Path(r.get('backup', '')).name}." + (f" Search by meaning is being built ({r['indexing']})." if r.get('index') else ''),
+           'copy': 'Copied' + (f" with {_plural(r['cited'], 'cited document')}" if r.get('cited') else '') + f". The backup is {Path(r.get('backup', '')).name}." + (' Search by meaning is being built.' if r.get('index') else ''),
            'none': 'There is no learning to import.'}[c]
     return Div(Span(say, role='status'), *([Span(r['index_error'], role='alert')] if r.get('index_error') else []),
                *([Div(hx_get=f"/jobs/{r['index']}", hx_trigger='load', hx_swap='outerHTML')] if r.get('index') else []), id='learnimport', cls='lee-learn-offer')

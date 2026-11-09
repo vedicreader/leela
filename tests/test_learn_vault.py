@@ -314,7 +314,19 @@ def test_copy_queues_an_index_job_and_the_result_says_so(ws, tmp_path, monkeypat
 def test_htmx_copy_line_names_the_index_and_polls_the_job(ws, tmp_path, monkeypatch):
     _src(tmp_path, monkeypatch)
     with _client(ws) as cl: r = _post(cl, 'copy', **{'hx-request': 'true'})
-    assert 'Search by meaning is being built (indexing 0 of' in r.text and 'hx-get="/jobs/learn_index-' in r.text
+    assert 'Search by meaning is being built.' in r.text and 'hx-get="/jobs/learn_index-' in r.text
+
+
+def test_the_index_job_card_is_one_plain_line(ws, tmp_path, monkeypatch):
+    _src(tmp_path, monkeypatch)
+    with _client(ws) as cl:
+        out = _post(cl, 'copy').json(); _wait(ws, out)
+        card = cl.get(f"/jobs/{out['index']}").text
+    assert 'Search by meaning is ready.' in card
+    assert not any(x in card for x in ('>learn_index<', '>complete<', '<summary', '<pre'))
+    from leela.blocks.vault.ui import _index_line
+    assert _index_line(dict(active=True, current='indexing 3 of 101', status='running')) == 'Building search by meaning: 3 of 101.'
+    assert 'stopped' in _index_line(dict(active=False, current='', status='cancelled'))
 
 
 def test_copy_from_another_encoder_embeds_again_then_indexes(ws, tmp_path, monkeypatch):
@@ -408,3 +420,18 @@ def test_a_failed_copy_of_the_cited_documents_undoes_the_whole_copy(ws, tmp_path
     assert not out['ok'] and out['kind'] == 'copy_failed'
     assert _held(ws, doc) == [0, 0, 0] and not learn_store(ws)[1].journeys()
     assert not ws.vaults.get(LEARN).imported_from
+
+
+def test_the_learn_tab_asks_for_the_offer_before_home_and_not_now_decides_nothing(ws, tmp_path, monkeypatch):
+    "The tab shows the offer on mount (Attach, Back up and copy, Start empty from the route's own forms) and `Not now` only sets a page flag, so the next open asks again."
+    js = (Path(__file__).parents[1]/'leela'/'blocks'/'learn'/'walk.js').read_text()
+    mount = js[js.index('async function learnMount'):][:200]
+    assert 'await learnOffer(host)' in mount and "fetch('/learn/import')" in js
+    later = js[js.index('const go = () =>'):][:90]
+    assert 'leeLearnLater = true' in later and 'fetch(' not in later
+    _src(tmp_path, monkeypatch); learn_store(ws)
+    with _client(ws) as cl:
+        r = cl.get('/learn/import')
+        assert r.status_code == 200 and all(f'value="{c}"' in r.text for c in ('attach', 'copy', 'skip'))
+        assert cl.get('/learn/import').status_code == 200   # nothing was decided by looking, or by Not now
+        assert _post(cl, 'skip').json()['choice'] == 'skip' and cl.get('/learn/import').status_code == 204
