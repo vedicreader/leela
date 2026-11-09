@@ -255,14 +255,20 @@ class Polled(threading.Event):
     def is_set(self): return super().is_set() or bool(self.stopping())
 
 
+RESEARCH_OFF = 'Web research is off in this preview, so no source was looked for. Start it with --web to allow it.'
+
+def research_on(ws): return getattr(ws, 'learn_research', True)
+
 def learn_web(ws):
-    "`(search, fetch)` for Abhyasa's research from the workspace's own web tools, with Leela's query rule; nothing is kept in a folder or a vault."
+    "`(search, fetch)` for Abhyasa's research from the workspace's own web tools, with Leela's query rule; nothing is kept in a folder or a vault. With `ws.learn_research` False both refuse in words."
     from abhyasa.sources import public_url
     from ..memory.memory import PrivacyBlocked, query_refusal, source_kind
     def search(q, n):
+        if not research_on(ws): raise LookupError(RESEARCH_OFF)
         if why := query_refusal(q): raise PrivacyBlocked(why, 'pii_blocked')
         return [dict(title=h.title, href=h.url) for h in ws.research.search(q, n=n)]
     def fetch(url):
+        if not research_on(ws): raise LookupError(RESEARCH_OFF)
         if source_kind(str(url)) != 'url': raise ValueError(f'{url} is not a web address')
         public_url(url)
         if not (d := ws.research.read(url, remember=False)): raise LookupError(ws.research.note or f'no content at {url}')
@@ -273,6 +279,7 @@ def learn_web(ws):
 def learn_gather(ai, lr, jid, stopping, say=None, settings=None):
     "Abhyasa's `gather_loop` on walk `jid`: the model calls are the `research` task of `ai.oneshot`, the pages come from the workspace, and `stopping()` is Stop."
     from abhyasa import learner, path
+    if not research_on(ai.ws): return AttrDict(passages=0, read=0, why=RESEARCH_OFF, stopped='')
     search, fetch = learn_web(ai.ws)
     with learner.use_settings(settings): return path.gather_loop(lr, jid, Polled(stopping), learn_ask(ai, 'research'), search, fetch, say=say)
 
@@ -411,7 +418,7 @@ def learn_tools(ai):
             if not ai.learn_mode:
                 return engine.failed('mode_off', 'Turn Learn mode on before using learning tools.', extra=('mode_off',))
             try:
-                if name == 'create_walk': return start_learn_job(ai, kwargs['goal'], research=str(kwargs.get('research') or 'yes').lower() not in ('no', 'false', '0'))
+                if name == 'create_walk': return start_learn_job(ai, kwargs['goal'], research=research_on(ai.ws) and str(kwargs.get('research') or 'yes').lower() not in ('no', 'false', '0'))
                 if name == 'change_walk': return start_learn_job(ai, kwargs['jid'], 'learn_change', instruction=kwargs['instruction'])
                 vault, lr = learn_store(ai.ws, learn_view(ai.ws)[0] if name == 'explain_here' else None, write=name not in reads)
                 if name == 'explain_here': kwargs = {**kwargs, **on_screen(ai, lr)}
