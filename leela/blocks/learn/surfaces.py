@@ -12,7 +12,7 @@ SURFACES = [
     (r'^/(?:[wc]|t)/', dict(css=[], js=['learn-demo.js'], rerun=[])),
     (r'^/(?:$|c/|course/|w/|walks)', dict(css=['home.css'], js=['home.js'], rerun=['home.js'])),
     (r'^/(?:w/|walks)', dict(css=[], js=['edit.js', 'abhyasa:walk.js', 'walkpage.js'])),
-    (r'^/(?:t/|talks)', dict(css=[], js=['edit.js', 'abhyasa:talk.js'])),
+    (r'^/(?:t/|talks)', dict(css=['learn-talk.css'], js=['edit.js', 'abhyasa:talk.js', 'learn-talk.js'])),
     (r'^/(?:library/)?graph(?:/|$)', dict(css=[], js=['d3.min.js', 'graph.js'], rerun=['graph.js'])),
 ]
 
