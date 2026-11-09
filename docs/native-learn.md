@@ -198,22 +198,22 @@ The first-surface proof is the real `StepPage` of a fixture walk in a Leela tab,
 
 These slices replace S3 and S6 to S8 in the table below. S1, S2, S4, S5 and S5V stay. Each reference screenshot comes from the design audit of the real Abhyasa. Local copies are in `target/parity-ref/`. The acceptance for every row is the same: the surface looks and behaves like its reference, in Leela's theme, with Abhyasa's tests for that block passing.
 
-| Slice | Abhyasa surface | Abhyasa block | Reference |
-| --- | --- | --- | --- |
-| P0 | The host: the in-process app, the tab container, the token map and link handling | `abhyasa/app.py`, `core/ui.py` | `abhyasa-step0.png`, `abhyasa-step0-dark.png` |
-| P1 | Walk step with its check, feedback, hints and next | `walk` | `abhyasa-step0.png`, `abhyasa-step0-answered.png`, `abhyasa-step1.png` |
-| P2 | Walk page, plan and history | `walk` | `abhyasa-walk-overview.png`, `abhyasa-walks.png`, `abhyasa-walk-history.png` |
-| P3 | Today | `today` | `abhyasa-today.png`, `abhyasa-today-dark.png` |
-| P4 | Course and concepts | `course`, `concepts` | `abhyasa-concept.png`, `abhyasa-concept-seq.png` |
-| P5 | Strengths, history and profile | `strengths`, `history`, `profile` | `abhyasa-you.png`, `abhyasa-profile.png` |
-| P6 | Graph | `graph` | `abhyasa-graph.png`, `abhyasa-graph-dark.png` |
-| P7 | Demo checks | `demo` | `abhyasa-step2-demo.png` |
-| P8 | Talk and slides | `talk` | `abhyasa-talk.png`, `abhyasa-talks.png` |
-| P9 | Search, library and sources, with research gather as a job of the Leela session | `search`, `add`, `sources` | `abhyasa-search.png`, `abhyasa-library.png`, `abhyasa-sources.png`, `abhyasa-gather.png` |
-| P10 | Builder: create and change a module from the Leela agent pane | `build` | `abhyasa-build.png` |
-| P11 | Voice through Leela's one speech path | `voice` | none |
-| P12 | Removal of the S3 walk tab markup and the old handoff pane | Leela `blocks/learn` | none |
-| P13 | Guide: "I don't get this" and "Ask about what you see" through the Leela agent | `guide` | `abhyasa-guide.png` |
+| Slice | Abhyasa surface | Abhyasa block | Reference | Status |
+| --- | --- | --- | --- | --- |
+| P0 | The host: the in-process app, the tab container, the token map and link handling | `abhyasa/app.py`, `core/ui.py` | `abhyasa-step0.png`, `abhyasa-step0-dark.png` | Done (host and real step page; verified 9 Nov by tests) |
+| P1 | Walk step with its check, feedback, hints and next | `walk` | `abhyasa-step0.png`, `abhyasa-step0-answered.png`, `abhyasa-step1.png` | Not started |
+| P2 | Walk page, plan and history | `walk` | `abhyasa-walk-overview.png`, `abhyasa-walks.png`, `abhyasa-walk-history.png` | Not started |
+| P3 | Today | `today` | `abhyasa-today.png`, `abhyasa-today-dark.png` | Not started |
+| P4 | Course and concepts | `course`, `concepts` | `abhyasa-concept.png`, `abhyasa-concept-seq.png` | Not started |
+| P5 | Strengths, history and profile | `strengths`, `history`, `profile` | `abhyasa-you.png`, `abhyasa-profile.png` | Not started |
+| P6 | Graph | `graph` | `abhyasa-graph.png`, `abhyasa-graph-dark.png` | Not started |
+| P7 | Demo checks | `demo` | `abhyasa-step2-demo.png` | Not started |
+| P8 | Talk and slides | `talk` | `abhyasa-talk.png`, `abhyasa-talks.png` | Not started |
+| P9 | Search, library and sources, with research gather as a job of the Leela session | `search`, `add`, `sources` | `abhyasa-search.png`, `abhyasa-library.png`, `abhyasa-sources.png`, `abhyasa-gather.png` | Not started |
+| P10 | Builder: create and change a module from the Leela agent pane | `build` | `abhyasa-build.png` | Not started |
+| P11 | Voice through Leela's one speech path | `voice` | none | Not started |
+| P12 | Removal of the S3 walk tab markup and the old handoff pane | Leela `blocks/learn` | none | Not started |
+| P13 | Guide: "I don't get this" and "Ask about what you see" through the Leela agent | `guide` | `abhyasa-guide.png` | Not started |
 
 ## Delivery slices
 
@@ -247,18 +247,23 @@ On first Learn open, inspect the configured existing learning shelf through the 
 
 ## Known gaps
 
-These hold at Leela `53189f36` and Abhyasa `8fb2b9e`.
+These hold at Leela `49d4adea` and Abhyasa `1879564`.
 
 | Gap | Effect | Closed by |
 | --- | --- | --- |
 | In the hosted app, `show.vision_ask` sends no picture (Abhyasa `2008ebc`). | Figure labels and screen pictures do not reach the model. The page must say so in words where the person meets it. | Pictures through Leela's `Assistant.oneshot`, if it takes images; else a stated limit. |
 | In the hosted app, research gather takes the plain routed search, not its lead agent (Abhyasa `2008ebc`). | Research finds fewer and shallower sources. The page must say why, and never show a silent empty result. | P9: gather as a job of the Leela session that uses the Leela agent. |
 | The hosted app leaves out the `build` and `guide` blocks, because each runs its own agent. | No builder chat and no guide board in the tab. | P10 and P13 |
-| `learn_store(ws)` opens the learning shelf of the active vault in Leela's registry. | Until S5V, Learn tools write to the owner's active vault. A write needs `agent_writable` on that vault and an approval card. | S5V |
 | The isolated preview does not name its vault. | The owner cannot see which vault a demo writes to. | The preview launcher prints and shows the vault name and path. |
 | No presence signal for the person who started a job exists. | The walk tab auto-opens on the active conversation with Learn on, without a presence check. | A later presence signal; the Open walk action in the job card covers the rest. |
-| The walk tab shows the title, steps and the ungrounded label only. | No answer box, gauge, quote link or next and back. | S3 completion with S5 |
+| The native walk tab (S3) is replaced by the hosted Abhyasa pages under `/learn/abh`. | Only the step page is hosted and tested (P0); Today, Course, Graph and the other surfaces have no parity check. | P1 to P9 |
 | No engine call reads the Learn settings outside the three tools that take `settings=`. | Other Learn settings rows have no effect yet. | Each later slice that adds an engine call. |
+
+Closed since the last revision, each proven by a passing targeted suite on 9 Nov:
+
+- The Learn vault is a managed registry entry and the first-run import (attach, back up and copy, skip, read-only, failed copy) runs at `GET /learn/import` (`tests/test_learn_vault.py`, `tests/blocks/test_vault_*.py`). This closes the `learn_store(ws)` gap.
+- Host defects in Abhyasa: background pools keep the calling context (`e4c8cb6`), `LocalOnly` takes dotted hosts (`1879564`), the host owns the session cookie, the privacy guard and the settings rows, a withheld check is told to the learner, and an answer to an old walk revision is refused (`2008ebc`, `8fb2b9e`, `8f104f5`, `d83cf64`). The full Abhyasa suite passes (1260 passed, 24 skipped).
+- The walk answer route takes a JSON answer with a kept attempt id (`53189f36`, `05d1b17c`; `tests/test_learn_abh_tab.py`).
 
 ## Retirement and release
 
