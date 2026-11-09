@@ -1,4 +1,5 @@
 # Add a surface: append `(r'^/path-regex', dict(css=['x.css'], js=['x.js'], rerun=['x.js']))` to `SURFACES`. The tab loads each file once per page load.
+# A name with a prefix `abhyasa:` is looked up in Abhyasa's folders only, for a file whose name Leela's `learn/` folder also has.
 # Files are found by name in Abhyasa's `core/`, `core/vendor/`, `blocks/*/` or Leela's `learn/` folder. `rerun` scripts start themselves, so the tab runs them at every visit.
 import hashlib, re
 from importlib.resources import files
@@ -10,7 +11,7 @@ SURFACES = [
     (r'^/dictate$', dict(js=['dictate.js'])),
     (r'^/(?:[wc]|t)/', dict(css=[], js=['learn-demo.js'], rerun=[])),
     (r'^/(?:$|c/|course/|w/|walks)', dict(css=['home.css'], js=['home.js'], rerun=['home.js'])),
-    (r'^/(?:w/|walks)', dict(css=[], js=['edit.js', 'walk.js', 'walkpage.js'])),
+    (r'^/(?:w/|walks)', dict(css=[], js=['edit.js', 'abhyasa:walk.js', 'walkpage.js'])),
     (r'^/(?:library/)?graph(?:/|$)', dict(css=[], js=['d3.min.js', 'graph.js'], rerun=['graph.js'])),
 ]
 
@@ -29,7 +30,8 @@ def known(): return {n for e in (ALWAYS, *(e for _, e in SURFACES)) for n in _na
 def asset(name):
     "The file the manifest names `name`, or None; never a path built from a request."
     if name not in known() or '/' in name: return None
-    return next((p for d in _dirs() if (p := d/name).is_file()), None)
+    own, _, n = name.rpartition(':')
+    return next((p for d in (_dirs()[1:] if own else _dirs()) if (p := d/n).is_file()), None)
 
 
 def asset_url(name):
