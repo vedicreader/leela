@@ -7578,9 +7578,251 @@ function copyVar(what) {
   status('copied ' + what, 'ok');
 }
 
-/* The run trace: each line of a cell with the values it made, one column per pass (Bret Victor's
- * "Inventing on Principle"). `Trace this run` runs the selected cell once with a line tracer on, and a
- * slider scrubs the steps of that one run: it marks the line in the editor and lists the names then. */
+/* The run trace beside the code (Bret Victor's "Inventing on Principle"): each traced line of a cell ends in a muted strip of the values
+ * it made, one column per pass, and a step bar under the cell scrubs the run. The strips are CodeMirror decorations and the bar is
+ * ordinary DOM, so the text and the undo history are never touched. An edit to the cell removes them. `trace.js` owns the run and the step. */
+const leeLensCols = 8, leeLensClipTo = 14;
+const leeLensCss = `
+.cm-lee-trace-line { background: color-mix(in srgb, var(--lee-accent) 13%, transparent); }
+.lee-lens { display: inline-flex; align-items: baseline; margin-left: 2.5ch; font: 11px/1.35 var(--lee-mono); color: var(--lee-fg4); user-select: none; white-space: pre; vertical-align: baseline; font-variant-ligatures: none; }
+.lee-lc { padding: 0 .7em; border-left: 1px solid var(--lee-guide); cursor: pointer; }
+.lee-lc.future { opacity: .45; }
+.lee-lc.cur { outline: 1px solid var(--lee-accent); outline-offset: -1px; border-radius: 3px; background: var(--lee-bg1); opacity: 1; }
+.lee-lp { margin-right: .8em; }
+.lee-lp:last-child { margin-right: 0; }
+.lee-lp .n { cursor: pointer; }
+.lee-lp .n:hover { color: var(--lee-accent); text-decoration: underline; }
+.lee-lp .v { color: var(--lee-fg4); }
+.lee-lp.chg .v { color: var(--lee-fg); font-weight: 700; }
+.lee-lp s { color: var(--lee-fg4); opacity: .7; margin-right: .4em; }
+.lee-lf { font: inherit; color: var(--lee-accent); background: none; border: 0; padding: 0 .7em; cursor: pointer; }
+.lee-lf:hover { text-decoration: underline; }
+.lee-lskip { font-style: italic; padding: 0 .7em; border-left: 1px solid var(--lee-guide); }
+.lee-trbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 2px 0 0; padding: 3px 8px; font: 11px/1.4 var(--lee-sans); color: var(--lee-fg4); background: var(--lee-bg1); border-top: 1px solid var(--lee-guide); }
+.lee-trbar:focus-within, .lee-trbar:focus { outline: 1px solid var(--lee-accent); outline-offset: -1px; }
+.lee-trbar input[type=range] { flex: 1 1 120px; min-width: 80px; max-width: 360px; accent-color: var(--lee-accent); }
+.lee-trbar button, .lee-trtop button { font: inherit; color: var(--lee-fg2); background: var(--lee-bg); border: 1px solid var(--lee-border); border-radius: 4px; padding: 0 8px; cursor: pointer; }
+.lee-trbar button:hover, .lee-trtop button:hover { border-color: var(--lee-accent); color: var(--lee-fg); }
+.lee-trbar .lee-trinfo { flex: 1 1 0; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lee-trtop { display: flex; gap: 10px; align-items: center; padding: 3px 8px; font: 11px/1.4 var(--lee-mono); color: var(--lee-fg4); background: var(--lee-bg1); border-bottom: 1px solid var(--lee-guide); }
+.lee-trtop b { color: var(--lee-fg); }
+.lee-trtop svg { cursor: crosshair; flex: none; }
+.lee-trcleared { padding: 2px 8px; font: 11px/1.4 var(--lee-sans); color: var(--lee-fg4); }
+:root[data-density="tight"] .lee-lens { font-size: 10px; }
+:root[data-density="tight"] .lee-trbar, :root[data-density="tight"] .lee-trtop { padding-top: 1px; padding-bottom: 1px; }
+`;
+const leeLens = {kit: undefined, view: null, id: null, on: false, pin: {}, seen: new WeakSet(), css: false};
+
+//: Pure part: the model and a step in, the text of each strip out. Tested in node.
+const leeLensClip = (s, n = leeLensClipTo) => { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const leeLensRowsOf = new WeakMap();
+//: Per line, the passes that kept values (skips apart) and the count skipped; and the index of each step number among the states.
+function leeLensRows(m) {
+  let r = leeLensRowsOf.get(m); if (r) return r;
+  const rows = new Map(), idx = new Map();
+  for (const row of m.table.lines) rows.set(row.line, {its: row.iterations.filter(x => x.skip == null), skipped: row.skipped || 0});
+  m.states.forEach((s, i) => idx.set(s.step, i));
+  r = {rows, idx}; leeLensRowsOf.set(m, r); return r;
+}
+//: The index of the last pass at or before `step`, or -1 when the line has not run yet.
+function leeLensAt(its, step) {
+  let lo = 0, hi = its.length - 1, at = -1;
+  while (lo <= hi) { const k = (lo + hi) >> 1; if (its[k].step <= step) { at = k; lo = k + 1; } else hi = k - 1; }
+  return at;
+}
+//: Roughly how wide a column draws, in px, in the 11px strip font.
+const leeLensPx = c => (c.parts.reduce((n, q) => n + q.n.length + 2 + Math.min(String(q.v).length, leeLensClipTo) + (q.was != null ? Math.min(String(q.was).length, leeLensClipTo) + 1 : 0), 0) + 2) * 6.7 + 4;
+/* One line's strip at `step`: at most `leeLensCols` columns round the current pass, or from `pin`, and fewer when `room` px would not hold them,
+ * dropping the ones farthest from the current pass. Null when the line made no values. */
+function leeLensLine(m, step, line, pin, room = Infinity) {
+  const row = leeLensRows(m).rows.get(line);
+  if (!row || !row.its.some(x => Object.keys(x.values).length)) return null;
+  const its = row.its, n = its.length, cur = leeLensAt(its, step), W = leeLensCols;
+  let from = n <= W ? 0 : Math.max(0, Math.min(pin ?? Math.max(cur, 0) - 3, n - W));
+  let cols = its.slice(from, from + W).map((x, k) => ({i: from + k, step: x.step, cur: from + k === cur, future: from + k > cur,
+    parts: Object.keys(x.values).map(nm => ({n: nm, v: x.values[nm], was: x.was && nm in x.was ? (x.was[nm] ?? '–') : null, chg: (x.changed || []).includes(nm)}))}));
+  const fixed = (row.skipped ? 170 : 0) + (n > cols.length ? 60 : 0);
+  let used = cols.reduce((t, c) => t + leeLensPx(c), fixed);
+  while (cols.length > 1 && used > room) {
+    const drop = Math.abs(cur - cols[0].i) > Math.abs(cols[cols.length - 1].i - cur) ? 0 : cols.length - 1;
+    used -= leeLensPx(cols[drop]); cols = drop ? cols.slice(0, -1) : cols.slice(1);
+  }
+  from = cols[0].i;
+  return {line, cols, before: from, after: n - from - cols.length, skipped: row.skipped, cur, total: n};
+}
+//: The text of one column, `mid=3  low=4`, with `2→3` for a value that differs from the last run.
+const leeLensText = c => c.parts.map(p => `${p.n}=${p.was != null ? p.was + '→' : ''}${p.v}`).join('  ');
+//: Every line that has a strip at `step`, as {line: text of its current column}.
+function leeLensTexts(m, step) {
+  const out = {};
+  for (const line of leeLensRows(m).rows.keys()) { const p = leeLensLine(m, step, line); const c = p && p.cols.find(x => x.cur); if (c) out[line] = leeLensText(c); }
+  return out;
+}
+
+//: The strip as DOM. A name plots its series; a column jumps to its step; a fold slides the window.
+function leeLensEl(p) {
+  const el = document.createElement('span'); el.className = 'lee-lens'; el.setAttribute('role', 'group'); el.setAttribute('aria-label', `values of line ${p.line}`);
+  const fold = (txt, from, title) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'lee-lf'; b.textContent = txt; b.title = title;
+    b.onmousedown = e => { e.preventDefault(); e.stopPropagation(); }; b.onclick = e => { e.preventDefault(); e.stopPropagation(); leeLensPin(p.line, from); }; el.append(b); };
+  if (p.before) fold(`‹ ${p.before}`, p.before - leeLensCols, `${p.before} earlier passes`);
+  for (const c of p.cols) {
+    const col = document.createElement('span'); col.className = 'lee-lc' + (c.cur ? ' cur' : '') + (c.future ? ' future' : ''); col.dataset.step = c.step; col.dataset.i = c.i;
+    col.title = `pass ${c.i + 1} of ${p.total}: ${leeLensText(c)}`;
+    col.onclick = e => { e.preventDefault(); e.stopPropagation(); leeTraceJump(c.step); };
+    c.parts.forEach((q, k) => {
+      if (k) col.append(' ');
+      const part = document.createElement('span'); part.className = 'lee-lp' + (q.chg ? ' chg' : '');
+      const nm = Object.assign(document.createElement('span'), {className: 'n', textContent: q.n, title: `plot ${q.n}`});
+      nm.onclick = e => { e.preventDefault(); e.stopPropagation(); leeTracePlot(q.n); };
+      part.append(nm, '=');
+      if (q.was != null) part.append(Object.assign(document.createElement('s'), {textContent: leeLensClip(q.was), title: `last run: ${q.was}`}));
+      part.append(Object.assign(document.createElement('span'), {className: 'v', textContent: leeLensClip(q.v), title: String(q.v)}));
+      col.append(part);
+    });
+    if (!c.parts.length) col.textContent = '·';
+    el.append(col);
+  }
+  if (p.skipped) el.append(Object.assign(document.createElement('span'), {className: 'lee-lskip', textContent: `⋯ skipped ${p.skipped} passes`, title: 'the tracer keeps the first passes and counts the rest'}));
+  if (p.after) fold(`+${p.after} ›`, p.before + leeLensCols, `${p.after} later passes`);
+  return el;
+}
+
+//: CodeMirror's own classes, taken from a view that is already running, so no second copy of the editor loads. Null when they are not there.
+function leeLensKit(view) {
+  if (leeLens.kit !== undefined) return leeLens.kit;
+  try {
+    let eff; LeeCM.setInlineValues({dispatch: tr => { eff = tr.effects; }}, []);
+    const StateEffect = eff.constructor, EditorView = view.constructor, probe = LeeCM.create(document.createElement('div'), {doc: 'x'});
+    LeeCM.setInlineValues(probe, [{line: 1, name: 'x', value: '', type: ''}]);
+    let dec; for (const s of probe.state.facet(EditorView.decorations)) { if (typeof s === 'function') continue; const c = s.iter(); if (c.value?.widget) { dec = c.value; break; } }
+    LeeCM.destroy(probe);
+    const WidgetType = Object.getPrototypeOf(dec.widget.constructor), Decoration = Object.getPrototypeOf(dec.constructor);
+    if (typeof Decoration.widget !== 'function' || typeof StateEffect.appendConfig?.of !== 'function') throw new Error('no decoration api');
+    class LensWidget extends WidgetType {
+      constructor(p) { super(); this.p = p; this.key = JSON.stringify(p); }
+      eq(o) { return o.key === this.key; }
+      toDOM() { return leeLensEl(this.p); }
+    }
+    const poke = StateEffect.define();
+    const deco = v => {
+      const L = leeLens, m = lee.trace?.model;
+      if (!L.on || L.view !== v || !m) return Decoration.none;
+      const step = m.states[lee.trace.step]?.step, cur = m.states[lee.trace.step]?.line, doc = v.state.doc, seen = new Set(), out = [];
+      for (const r of v.visibleRanges) for (let n = doc.lineAt(r.from).number, end = doc.lineAt(r.to).number; n <= end; n++) {
+        if (seen.has(n)) continue; seen.add(n);
+        const line = doc.line(n);
+        if (n === cur) out.push(Decoration.line({class: 'cm-lee-trace-line'}).range(line.from));
+        const p = leeLensLine(m, step, n, L.pin[n], v.scrollDOM.clientWidth - 40 - line.length * v.defaultCharacterWidth);
+        if (p) out.push(Decoration.widget({widget: new LensWidget(p), side: 1}).range(line.to));
+      }
+      return Decoration.set(out, true);
+    };
+    const ext = [EditorView.decorations.of(deco), EditorView.updateListener.of(u => { if (u.docChanged && leeLens.on && leeLens.view === u.view) leeLensEdited(); })];
+    return leeLens.kit = {StateEffect, EditorView, poke, ext};
+  } catch (e) { console.warn('inline trace unavailable', e); return leeLens.kit = null; }
+}
+function leeLensPoke(view = leeLens.view) {
+  const k = leeLens.kit; if (!view || !k) return;
+  try { view.dispatch({effects: k.poke.of(1)}); } catch (e) { /* the editor is gone */ }
+}
+function leeLensPin(line, from) { leeLens.pin[line] = Math.max(0, from); leeLensPoke(); }
+
+function leeLensStyle() {
+  if (leeLens.css || typeof document === 'undefined') return;
+  leeLens.css = true; document.head.append(Object.assign(document.createElement('style'), {id: 'lee-lens-css', textContent: leeLensCss}));
+}
+
+//: The step bar under the cell: prev, slider, next, where we are, a note, and a plain close. Arrows step and Escape closes while it has focus.
+function leeLensBar() {
+  const t = lee.trace, m = t.model, id = leeLens.id, host = $('#cm-' + id); if (!m || !host) return;
+  let bar = $('#trbar-' + id);
+  if (!bar) {
+    bar = Object.assign(document.createElement('div'), {id: 'trbar-' + id, className: 'lee-trbar', tabIndex: 0});
+    bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Run trace. Left and right arrows step through the run. Escape closes it.');
+    bar.innerHTML = `<button type="button" data-d="-1" title="previous step (Left)">‹ prev</button>` +
+      `<input type="range" min="0" value="0" aria-label="step of the traced run" tabindex="-1">` +
+      `<button type="button" data-d="1" title="next step (Right)">next ›</button><span class="lee-trpos" role="status" aria-live="polite"></span>` +
+      `<span class="lee-trinfo"></span><button type="button" data-close title="remove the trace from the cell (Escape)">close trace</button>`;
+    bar.oninput = e => { if (e.target.matches('input')) leeTraceScrub(+e.target.value); };
+    bar.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.close != null) leeTraceClose(); else leeTraceScrub(lee.trace.step + +b.dataset.d); };
+    bar.onkeydown = e => {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const d = {ArrowLeft: -1, ArrowRight: 1, Home: -1e9, End: 1e9}[e.key];
+      if (d != null) { e.preventDefault(); e.stopPropagation(); leeTraceScrub(lee.trace.step + d); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leeTraceClose(); }
+    };
+    host.after(bar);
+  }
+  const r = $('input', bar); r.max = Math.max(0, m.states.length - 1); r.value = t.step;
+  $('.lee-trpos', bar).textContent = `step ${t.step + 1} of ${m.states.length} · line ${m.states[t.step]?.line ?? ''}`;
+  const info = $('.lee-trinfo', bar); info.textContent = info.title = leeTraceInfo();
+  return bar;
+}
+
+//: The plot of one name above the code: its numbers over the whole run, a dot at this step; a click on the plot jumps there.
+function leeLensTop() {
+  const t = lee.trace, m = t.model, id = leeLens.id, host = $('#cm-' + id); if (!m || !host) return;
+  let top = $('#trtop-' + id);
+  if (!t.plot || !m.series[t.plot]) { top?.remove(); return; }
+  if (!top) { top = Object.assign(document.createElement('div'), {id: 'trtop-' + id, className: 'lee-trtop'}); host.before(top); }
+  const s = m.series[t.plot], st = m.states[t.step], W = 280, H = 34, svg = leeTraceSpark(s, st?.step ?? 0, W, H);
+  const nums = s.points.filter(p => p.value != null).map(p => p.value);
+  top.innerHTML = `<b>${esc(t.plot)}</b>` + (svg || `<span>no numbers to plot: ${esc(s.points.length)} values</span>`) +
+    (svg ? `<span>${esc(Math.min(...nums))} to ${esc(Math.max(...nums))}</span>` : '') + `<button type="button" title="hide this plot">hide</button>`;
+  $('button', top).onclick = () => leeTracePlot(t.plot);
+  const sv = $('svg', top);
+  if (sv) sv.onclick = e => {
+    const pts = s.points.filter(p => p.value != null), box = sv.getBoundingClientRect();
+    const k = Math.round((e.clientX - box.left - 1) / (box.width - 2) * (pts.length - 1)); leeTraceJump(pts[Math.max(0, Math.min(k, pts.length - 1))].step);
+  };
+}
+
+//: Draw the strips and the bar for the run in `lee.trace`. False when the cell has no editor to draw on.
+function leeLensShow() {
+  const t = lee.trace, i = lee.cells?.findIndex(c => c.id === t.id);
+  if (!t.model || i == null || i < 0) return false;
+  const view = lee.editors.get(t.id) || ensureCellMounted(i), kit = view && leeLensKit(view);
+  if (!kit) return false;
+  leeLensStyle(); leeLensHide();
+  if (!leeLens.seen.has(view)) { view.dispatch({effects: kit.StateEffect.appendConfig.of(kit.ext)}); leeLens.seen.add(view); }
+  Object.assign(leeLens, {view, id: t.id, on: true, pin: {}});
+  $('#trcleared-' + t.id)?.remove();
+  leeLensBar(); leeLensTop(); leeLensPoke(); leeLensScroll();
+  return true;
+}
+//: The step moved: redraw the bar, the plot and the strips, and keep the current line in view.
+function leeLensStep() {
+  if (!leeLens.on) return;
+  if (lee.editors.get(leeLens.id) !== leeLens.view) return leeLensHide();
+  leeLens.pin = {}; leeLensBar(); leeLensTop(); leeLensPoke(); leeLensScroll();
+}
+function leeLensScroll() {
+  const L = leeLens, s = lee.trace.model?.states[lee.trace.step]; if (!L.on || !s || !L.kit) return;
+  try {
+    const doc = L.view.state.doc, line = doc.line(Math.max(1, Math.min(s.line, doc.lines)));
+    L.view.dispatch({effects: L.kit.EditorView.scrollIntoView(line.from, {y: 'nearest', yMargin: 24})});
+  } catch (e) { /* the editor is gone */ }
+}
+//: Take every strip, line mark, bar and plot off the cell. The text and the undo history stay as they were.
+function leeLensHide() {
+  const L = leeLens, id = L.id;
+  if (id) { $('#trbar-' + id)?.remove(); $('#trtop-' + id)?.remove(); }
+  const v = L.view; L.on = false; L.id = null; L.view = null; L.pin = {};
+  leeLensPoke(v);
+}
+//: The cell's text changed: the values no longer describe it.
+function leeLensEdited() {
+  const id = leeLens.id; leeLens.on = false;
+  queueMicrotask(() => leeTraceInvalidate(id));
+}
+//: A one-line note where the bar was.
+function leeLensCleared(id, text) {
+  $('#trcleared-' + id)?.remove(); if (!text) return;
+  const n = Object.assign(document.createElement('div'), {id: 'trcleared-' + id, className: 'lee-trcleared', textContent: text}); n.setAttribute('role', 'status');
+  ($('#out-' + id) || $('#cm-' + id))?.before(n);
+}
+/* The run trace: `Trace this run` runs the selected cell once with a line tracer on. The values then sit beside the code
+ * (`nb/tracelens.js`), a step bar scrubs the one run, and this pane keeps the names and numbers of the current step. */
 const leeTraceCss = `
 .lee-varspanel.tracing > #vars, .lee-varspanel.tracing > .lee-filterbar { display: none; }
 .lee-varspanel > #tracebox { display: none; }
@@ -7591,21 +7833,10 @@ const leeTraceCss = `
 #tracebox .lee-trslide input { flex: 1; min-width: 0; }
 #tracebox .lee-trvals { border: 1px solid var(--lee-border); border-radius: 4px; padding: 4px 6px; margin-bottom: 6px; background: var(--lee-bg1); }
 #tracebox .lee-trval { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
-#tracebox .lee-trval b { font-weight: 600; min-width: 4ch; }
+#tracebox .lee-trval button { font: inherit; font-weight: 600; min-width: 4ch; text-align: left; background: none; border: 0; padding: 0; color: var(--lee-fg); cursor: pointer; }
+#tracebox .lee-trval button:hover, #tracebox .lee-trval button.on { color: var(--lee-accent); }
 #tracebox .lee-trval span.v { overflow: hidden; text-overflow: ellipsis; max-width: 18ch; }
 #tracebox .lee-trval svg { flex: none; }
-#tracebox .lee-trrow { display: flex; border-top: 1px solid var(--lee-guide); }
-#tracebox .lee-trrow.cur { background: var(--lee-sel); }
-#tracebox .lee-trln { flex: none; width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: pre; padding-right: 6px; position: sticky; left: 0; background: var(--lee-bg); z-index: 1; }
-#tracebox .lee-trrow.cur .lee-trln { background: var(--lee-sel); }
-#tracebox .lee-trln i { color: var(--lee-fg4); font-style: normal; display: inline-block; width: 3ch; text-align: right; margin-right: 1ch; }
-#tracebox .lee-trits { display: flex; flex: none; }
-#tracebox .lee-trit { flex: none; width: 11ch; padding: 0 4px; border-left: 1px solid var(--lee-guide); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1.45em; }
-#tracebox .lee-trit.cur { outline: 1px solid var(--lee-accent); outline-offset: -1px; }
-#tracebox .lee-trit.chg b { color: var(--lee-accent); }
-#tracebox .lee-trit.skip { color: var(--lee-fg4); font-style: italic; }
-#tracebox .lee-trit s { color: var(--lee-fg4); opacity: .65; margin-right: .5ch; }
-#tracebox .lee-trscroll { overflow-x: auto; }
 #tracebox .lee-trerr { color: var(--lee-red); }
 `;
 function leeTraceStyle() {
@@ -7638,55 +7869,65 @@ function leeTraceCell(x, curStep) {
 
 function leeTraceDraw() {
   const box = $('#tracebox'), t = lee.trace, m = t.model; if (!box) return;
+  if (m && t.tab !== lee.tabKey) { leeLensHide(); Object.assign(t, {model: null, id: null, plot: null}); }
   const head = `<div class="lee-trhead"><button class="lee-btn go" id="tracerun" onclick="leeTraceRun()">Trace this run</button>` +
     `<span class="lee-trnote" id="tracenote"></span></div>`;
-  if (!m) { box.innerHTML = head + `<div class="lee-trnote">${t.why ? esc(t.why) : 'Select a code cell and press Trace this run. Each line then shows the values it made, one column for each pass.'}</div>`; return leeTraceNote(); }
-  const src = (m.source || '').split('\n'), curLine = m.states[t.step]?.line, curStep = m.states[t.step]?.step;
-  const rows = m.table.lines.map(r => `<div class="lee-trrow${r.line === curLine ? ' cur' : ''}" data-line="${r.line}">` +
-    `<div class="lee-trln" title="${esc(src[r.line - 1] || '')}"><i>${r.line}</i>${esc(src[r.line - 1] || '')}</div>` +
-    `<div class="lee-trits">${r.iterations.map(x => leeTraceCell(x, curStep)).join('')}</div></div>`).join('');
+  if (!t.model) { box.innerHTML = head + `<div class="lee-trnote">${t.why ? esc(t.why) : 'Select a code cell and press Trace this run. The values of each line then appear beside the code, one column for each pass.'}</div>`; return leeTraceNote(); }
   box.innerHTML = head +
-    `<div class="lee-trslide"><span class="lee-trnote">step</span><input type="range" id="tracestep" min="0" max="${Math.max(0, m.states.length - 1)}" value="${t.step}" oninput="leeTraceScrub(+this.value)" aria-label="scrub the steps of this run"><span class="lee-trnote" id="tracepos"></span></div>` +
-    `<div class="lee-trvals" id="tracevals"></div><div class="lee-trscroll" id="tracegrid">${rows}</div>`;
+    `<div class="lee-trslide"><span class="lee-trnote">step</span><input type="range" id="tracestep" min="0" max="${Math.max(0, t.model.states.length - 1)}" value="${t.step}" oninput="leeTraceScrub(+this.value)" aria-label="scrub the steps of this run"><span class="lee-trnote" id="tracepos"></span></div>` +
+    `<div class="lee-trvals" id="tracevals"></div>`;
   leeTraceNote(); leeTraceValues();
 }
 
-function leeTraceNote() {
-  const n = $('#tracenote'), t = lee.trace, m = t.model; if (!n) return;
-  if (!m) { n.textContent = ''; return; }
+//: The one line under the pane's button and in the step bar.
+function leeTraceInfo() {
+  const t = lee.trace, m = t.model; if (!m) return '';
   const bits = [`${m.table.steps} steps`];
   if (m.truncated) bits.push(`cut short: ${m.reason || 'limit reached'}`);
   if (m.has_prev) bits.push(m.table.diffs ? `${m.table.diffs} value${m.table.diffs === 1 ? '' : 's'} differ from the last run (old value struck through)` : 'same as the last run');
   if (t.ok === false) bits.push('the cell raised an error');
-  n.textContent = bits.join(' · ');
+  return bits.join(' · ');
+}
+function leeTraceNote() {
+  const n = $('#tracenote'); if (n) n.textContent = leeTraceInfo();
 }
 
 function leeTraceValues() {
   const t = lee.trace, m = t.model, s = m?.states[t.step], box = $('#tracevals'); if (!box || !s) return;
   const names = Object.keys(s.values);
   box.innerHTML = `<div class="lee-trnote">line ${s.line} · ${esc(s.event)}${s.depth > 1 ? ' · depth ' + s.depth : ''}${s.approx ? ' · approximate: passes were skipped' : ''}</div>` +
-    (names.map(n => `<div class="lee-trval"><b>${esc(n)}</b><span class="v" title="${esc(s.values[n])}">${esc(s.values[n])}</span>${leeTraceSpark(m.series[n], s.step)}</div>`).join('') || '<div class="lee-trnote">no names yet</div>');
+    (names.map(n => `<div class="lee-trval"><button type="button" class="${t.plot === n ? 'on' : ''}" data-name="${esc(n)}" title="plot ${esc(n)} above the code" onclick="leeTracePlot(this.dataset.name)">${esc(n)}</button><span class="v" title="${esc(s.values[n])}">${esc(s.values[n])}</span>${leeTraceSpark(m.series[n], s.step)}</div>`).join('') || '<div class="lee-trnote">no names yet</div>');
   const pos = $('#tracepos'); if (pos) pos.textContent = `${t.step + 1} / ${m.states.length}`;
-}
-
-function leeTraceMark(on = true) {
-  const t = lee.trace, view = t.id && lee.editors?.get(t.id); if (!view) return;
-  const s = t.model?.states[t.step];
-  if (!on || !s) { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); return; }
-  const line = Math.min(s.line, view.state.doc.lines), text = view.state.doc.line(line).text;
-  const here = new Set(text.match(/[_A-Za-z]\w*/g) || []);
-  LeeCM.setDebugLine(view, line);
-  LeeCM.setInlineValues(view, Object.keys(s.values).filter(n => here.has(n)).map(n => ({line, name: n, value: s.values[n], type: ''})));
 }
 
 function leeTraceScrub(i) {
   const t = lee.trace; if (!t.model) return;
-  t.step = Math.max(0, Math.min(i, t.model.states.length - 1));
-  const s = t.model.states[t.step];
-  $$('#tracebox .lee-trrow').forEach(r => r.classList.toggle('cur', +r.dataset.line === s.line));
-  $$('#tracebox .lee-trit').forEach(c => c.classList.toggle('cur', +c.dataset.step === s.step));
-  $('#tracebox .lee-trit.cur')?.scrollIntoView({block: 'nearest', inline: 'nearest'});
-  leeTraceValues(); leeTraceMark();
+  t.step = Math.max(0, Math.min(Math.round(i) || 0, t.model.states.length - 1));
+  const sl = $('#tracestep'); if (sl) sl.value = t.step;
+  leeTraceValues(); leeLensStep();
+}
+//: Jump to the pass whose step number is `step`.
+function leeTraceJump(step) {
+  const k = lee.trace.model && leeLensRows(lee.trace.model).idx.get(step);
+  if (k != null) leeTraceScrub(k);
+}
+//: Plot one name's series above the code; the same name again hides it.
+function leeTracePlot(name) {
+  const t = lee.trace; if (!t.model) return;
+  t.plot = t.plot === name ? null : name;
+  leeTraceValues(); leeLensStep();
+}
+//: Remove the trace from the page: strips, bar, plot and the pane's numbers. Nothing in the cell changes.
+function leeTraceClose(focus = true) {
+  const t = lee.trace, id = t.id; leeLensHide(); leeLensCleared(id, '');
+  Object.assign(t, {model: null, id: null, plot: null, why: ''}); leeTraceDraw();
+  const v = id && lee.editors.get(id); if (v && focus) LeeCM.focus(v);
+}
+//: The cell was edited: its trace no longer describes it.
+function leeTraceInvalidate(id) {
+  const t = lee.trace; if (!t.model || t.id !== id) return;
+  leeLensHide(); leeLensCleared(id, 'Trace cleared: the cell changed.');
+  Object.assign(t, {model: null, id: null, plot: null, why: 'Trace cleared: the cell changed.'}); leeTraceDraw();
 }
 
 async function leeTraceRun() {
@@ -7709,10 +7950,12 @@ async function leeTraceRun() {
 }
 
 function leeTraceShow(model, id, ok = true) {
-  leeTraceMark(false);
-  Object.assign(lee.trace, {model, id, ok, step: Math.max(0, (model?.states?.length || 1) - 1), why: ''});
+  leeLensHide();
+  Object.assign(lee.trace, {model, id, ok, tab: lee.tabKey, plot: null, step: Math.max(0, (model?.states?.length || 1) - 1), why: ''});
   $('.lee-varspanel')?.classList.add('tracing'); $('#tracebtn')?.classList.add('active');
-  leeTraceDraw(); leeTraceMark();
+  leeTraceDraw();
+  if (!leeLensShow()) { lee.trace.why = 'The values could not be drawn beside the code; the pane lists them.'; }
+  $('#trbar-' + id)?.focus({preventScroll: true});
 }
 
 async function leeTraceToggle() {
@@ -7721,13 +7964,13 @@ async function leeTraceToggle() {
   if (!$('#tracebox')) panel.append(Object.assign(document.createElement('div'), {id: 'tracebox'}));
   const on = !panel.classList.contains('tracing');
   panel.classList.toggle('tracing', on); $('#tracebtn')?.classList.toggle('active', on);
-  if (!on) return leeTraceMark(false);
+  if (!on) return leeTraceClose(false);
   try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : `Tracing ${s.why}.`; lee.trace.can = !!s.ok; }
   catch (e) { lee.trace.why = String(e.message || e); lee.trace.can = false; }
   if (lee.trace.can && !lee.trace.model && lee.path && lee.cells?.[lee.sel]) {
-    try { const d = await api(`/vars/trace/last?path=${encodeURIComponent(lee.tabKey)}&id=${encodeURIComponent(lee.cells[lee.sel].id)}`); if (d.trace) { Object.assign(lee.trace, {model: d.trace, id: lee.cells[lee.sel].id, step: d.trace.states.length - 1}); } } catch (e) {}
+    try { const d = await api(`/vars/trace/last?path=${encodeURIComponent(lee.tabKey)}&id=${encodeURIComponent(lee.cells[lee.sel].id)}`); if (d.trace && d.trace.source === LeeCM.getDoc(ensureCellMounted(lee.sel))) leeTraceShow(d.trace, lee.cells[lee.sel].id, true); } catch (e) {}
   }
-  leeTraceDraw(); leeTraceMark();
+  leeTraceDraw();
   if (!lee.trace.can) { const b = $('#tracerun'); if (b) { b.disabled = true; b.title = lee.trace.why; } }
 }
 
@@ -7735,5 +7978,5 @@ function leeTraceInit() {
   const head = $('.lee-varspanel .lee-phead'); if (!head || $('#tracebtn')) return;
   head.insertBefore(Object.assign(document.createElement('button'), {id: 'tracebtn', className: 'lee-seg', textContent: 'trace', title: 'run the selected cell and see the values of each line, pass by pass', onclick: leeTraceToggle}), head.querySelector('.lee-spacer'));
 }
-window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow;
+window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow; window.leeTracePlot = leeTracePlot; window.leeTraceJump = leeTraceJump; window.leeTraceClose = leeTraceClose;
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', leeTraceInit); else leeTraceInit();

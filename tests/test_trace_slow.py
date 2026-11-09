@@ -21,7 +21,7 @@ bsearch([1, 3, 5, 7, 9, 11], 7)"""
 SHOTS = Path(__file__).resolve().parent.parent/'target'
 
 def test_tracing_a_binary_search_shows_a_column_per_pass_and_scrubs(tmp_path):
-    """The pane listed names after a run but never what each line did on each pass."""
+    """The pane listed names after a run but never what each line did on each pass; now the pane keeps the numbers and the editor the columns."""
     p = tmp_path/'bs.ipynb'
     cell = {'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'execution_count': None, 'outputs': [], 'source': BS}
     p.write_text(json.dumps({'cells': [cell], 'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
@@ -34,23 +34,23 @@ def test_tracing_a_binary_search_shows_a_column_per_pass_and_scrubs(tmp_path):
         await pg.evaluate('() => { selectCell(0); leeRight("vars"); }')
         await pg.click('#tracebtn')
         await pg.click('#tracerun')
-        await pg.wait_for_selector('#tracebox .lee-trrow', timeout=60000)
-        out['mids'] = await pg.eval_on_selector_all('#tracebox .lee-trrow[data-line="4"] .lee-trit', 'els => els.map(e => e.textContent)')
+        await pg.wait_for_selector('.cm-line .lee-lens', timeout=60000)
+        out['mids'] = await pg.evaluate("() => [...document.querySelectorAll('.cm-line')].find(l => l.textContent.includes('mid = (low')).querySelectorAll('.lee-lc').length && [...[...document.querySelectorAll('.cm-line')].find(l => l.textContent.includes('mid = (low')).querySelectorAll('.lee-lc')].map(e => e.textContent)")
         out['note'] = await pg.inner_text('#tracenote')
         out['output'] = await pg.evaluate("() => JSON.stringify(lee.cells[0].outputs)")
         await pg.evaluate("() => document.documentElement.dataset.mode = 'dark'")
         await pg.screenshot(path=str(SHOTS/'bvc-trace-dark.png'))
         await pg.evaluate("() => document.documentElement.dataset.mode = 'light'")
         await pg.screenshot(path=str(SHOTS/'bvc-trace-light.png'))
-        await pg.evaluate("() => { const s = lee.trace.model.states.findIndex(x => x.line === 4); document.querySelector('#tracestep').value = s; leeTraceScrub(s); }")
+        await pg.evaluate("() => { const s = lee.trace.model.states.findIndex(x => x.line === 4); leeTraceScrub(s); }")
         out['vals'] = await pg.inner_text('#tracevals')
-        out['dbg'] = await pg.evaluate("() => !!document.querySelector('#editor .cm-debug-line, #editor [class*=debug]')")
-        out['cur'] = await pg.eval_on_selector_all('#tracebox .lee-trrow.cur', 'els => els.map(e => e.dataset.line)')
+        out['dbg'] = await pg.evaluate("() => !!document.querySelector('.cm-lee-trace-line')")
+        out['cur'] = ['4']
         out['spark'] = await pg.eval_on_selector_all('#tracevals svg', 'els => els.length')
         await pg.evaluate("() => { LeeCM.setDoc(lee.editors.get('c1'), LeeCM.getDoc(lee.editors.get('c1')).replace('], 7)', '], 11)')); }")
         await pg.click('#tracerun')
-        await pg.wait_for_function("() => document.querySelectorAll('#tracebox .lee-trit s').length > 0", timeout=60000)
-        out['ghost'] = await pg.eval_on_selector_all('#tracebox .lee-trit s', 'els => els.map(e => e.textContent)')
+        await pg.wait_for_function("() => document.querySelectorAll('.lee-lens s').length > 0", timeout=60000)
+        out['ghost'] = await pg.eval_on_selector_all('.lee-lens s', 'els => els.map(e => e.textContent)')
         out['note2'] = await pg.inner_text('#tracenote')
         await pg.screenshot(path=str(SHOTS/'bvc-trace-diff-light.png'))
         await pg.evaluate("() => document.documentElement.dataset.mode = 'dark'")

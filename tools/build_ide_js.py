@@ -31,7 +31,7 @@ LAYERS = {
         'blocks/nb/cells.js', 'blocks/nb/scrub.js', 'blocks/nb/bridge.js', 'blocks/nb/lesson.js', 'blocks/nb/exercise.js', 'blocks/nb/widgets.js', 'blocks/nb/motion.js', 'blocks/nb/prompt.js', 'blocks/nb/slides.js', 'blocks/nb/present.js',
         'blocks/runs/runfile.js', 'blocks/runtime/kernel.js', 'blocks/keys/bind.js',
         'static/js/focus.js', 'blocks/nb/diffs.js', 'blocks/runtime/exec.js',
-        'blocks/vars/vars.js', 'blocks/vars/trace.js'
+        'blocks/vars/vars.js', 'blocks/nb/tracelens.js', 'blocks/vars/trace.js'
     ],
     'lee-agent.js': [
         'blocks/agent/panel.js', 'blocks/agent/budgets.js', 'blocks/agent/memory.js',
