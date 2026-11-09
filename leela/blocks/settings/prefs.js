@@ -82,7 +82,7 @@ function settingsPercent(value, original) {
   if (original === undefined) return Math.round(value * 100);
   return Number(value) === settingsPercent(original) ? original : Number(value) / 100;
 }
-async function editorSettings(languageScope = null) {
+async function editorSettings(languageScope = null, startPage = 'editor') {
   if(typeof languageScope!=='string'){
     // Default to All languages, never to the focused tab's language. Saving remembers the scope,
     // so one derived from `curLang()` would send every later edit into `languages.<lang>`. A
@@ -291,7 +291,7 @@ async function editorSettings(languageScope = null) {
         await post('/settings/reset', {scope: oscope, section, language: olang || ''});
         await loadSettings(language.value);
         status(`${origin} cleared for ${section}`, 'ok');
-        saved = true; m.remove(); setTimeout(() => editorSettings(language.value), 0);
+        saved = true; m.remove(); setTimeout(() => editorSettings(language.value, page), 0);
       } catch (e) { status(String(e.message || e), 'err'); }
     };
   }
@@ -299,7 +299,7 @@ async function editorSettings(languageScope = null) {
   let held=null;const own=()=>held||{scope:scope.value,language:language.value};
   const paintPath=()=>{const learn=isPkg(page);if(learn&&!held){held={scope:scope.value,language:language.value};scope.value='user';language.value='';}else if(!learn&&held){scope.value=held.scope;language.value=held.language;held=null;}scope.disabled=language.disabled=learn;const note=$('[data-learn-scope]',m);note.hidden=!learn;if(learn)note.textContent=`${pkgTitle(page)} uses user settings for all languages.`;const savedScope=learn?'user':scope.value;path.textContent=shownPath(lee.settingsMeta?.paths?.[savedScope]);path.title=lee.settingsMeta?.paths?.[savedScope]||'';target.textContent=learn?'user · all languages':`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
-  language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
+  language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value,page);};
   // Every click previews live; the modal's close handler puts the original back unless saved.
   const paintPicker=()=>{const {family,mode}=lee.theme;
     $$('[data-theme]',m).forEach(b=>{const on=b.dataset.theme===family;b.classList.toggle('active',on);b.setAttribute('aria-pressed',on);
@@ -309,7 +309,7 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,family:b.dataset.theme});paintPicker();});
   $$('[data-theme-mode]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,mode:b.dataset.themeMode});paintPicker();});
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
-  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:isPkg(section)?'user':scope.value,section,language:section==='appearance'||isPkg(section)?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
+  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:isPkg(section)?'user':scope.value,section,language:section==='appearance'||isPkg(section)?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(()=>editorSettings(null,page),0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
   $('[data-save]',m).onclick=async()=>{update();const o=own();let count=0;const said=new Set();try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){said.add((await post('/settings/save',{scope:isPkg(section)?'user':o.scope,language:isPkg(section)?'':o.language,section,values:changed})).message);count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){said.add((await saveTheme(lee.theme,o.scope)).message);count++;}localStorage.setItem('lee-settings-save-scope',o.scope);localStorage.setItem('lee-settings-language-scope',o.language);localStorage.removeItem('lee-editor-settings');await loadSettings(o.language);saved=true;m.remove();status(count?[...said].filter(Boolean).join(' '):'No settings changed.','ok');};
@@ -369,6 +369,7 @@ async function editorSettings(languageScope = null) {
   paintBackups();
   $('[data-open-keys]',m).onclick=()=>{saved=true;m.remove();editKeys();};
   $('[data-open-runs]',m).onclick=()=>{saved=true;m.remove();editRuns();};
+  if(startPage!=='editor') $(`[data-settings-page="${startPage}"]`,m)?.click();
 }
 function leeTheme() { editorSettings(); }
 window.leeTheme = leeTheme; window.leeEditorSettings = editorSettings;

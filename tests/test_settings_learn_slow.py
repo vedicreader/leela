@@ -1,4 +1,4 @@
-import json
+import json, re
 from pathlib import Path
 import pytest
 from playwright.async_api import expect
@@ -86,4 +86,16 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         shot = Path('target/s1-learn-settings.png')
         shot.parent.mkdir(parents=True, exist_ok=True)
         await pg.screenshot(path=str(shot), full_page=True)
+    _run(go, roots=[tmp_path.resolve()])
+
+
+def test_reset_this_section_keeps_the_learn_page(tmp_path, cfg_home):
+    async def go(pg):
+        await pg.evaluate("leeEditorSettings('')")
+        await pg.locator('[data-settings-page="learn"]').click()
+        async with pg.expect_request(lambda r: r.url.endswith('/settings/reset')) as req:
+            await pg.locator('[data-reset]').click()
+        assert (await req.value).post_data_json['section'] == 'learn'
+        await expect(pg.locator('[data-settings-page="learn"]')).to_have_class(re.compile('active'))
+        await expect(pg.locator('[data-settings-section="learn"]')).to_be_visible()
     _run(go, roots=[tmp_path.resolve()])

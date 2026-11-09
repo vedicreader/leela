@@ -26,6 +26,7 @@ def connect(app, ctx):
         try:
             scope, lang = d.get('scope', 'user'), d.get('language') or ''
             return {'ok': True, **_settings().save(scope, d.get('section', 'editor'), d.get('values') or {}, lang), 'message': saved_say(scope, lang)}
+        except ValueError as e: return fail(str(e))   # a refused value is a sentence for the person, with no exception name
         except Exception as e: return fail(e)
     @rt('/settings/env')
     def settings_env():

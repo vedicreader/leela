@@ -80,6 +80,7 @@ def test_the_route_refuses_99_and_a_save_says_no_path(s, tmp_path, monkeypatch):
     c = TestClient(app)
     bad = c.post('/settings/save', json=dict(scope='user', section='learn', values={'walks.steps': 99})).json()
     assert not bad.get('ok') and 'Ideas in a walk must be from 3 to 7.' in str(bad) and not (tmp_path/'route.json').exists()
+    assert bad['error'] == 'Ideas in a walk must be from 3 to 7.'
     ok = c.post('/settings/save', json=dict(scope='user', section='learn', values={'walks.steps': 5})).json()
     assert ok['ok'] and ok['message'] == saved_say('user') and str(tmp_path) not in ok['message'] and '/' not in ok['message']
     assert saved_say('workspace', 'python') == 'Saved. This applies to this project, in python files.'
