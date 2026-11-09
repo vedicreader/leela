@@ -276,3 +276,15 @@ For the real-model pilot use an already configured local model through Leela rou
 ## Review status
 
 The expanded teacher review completed and requested corrections. This draft incorporates its settings trust, mode lifecycle, tab delivery, job and idempotency requirements. The reset collision was independently verified in `Settings.reset`. The reported A2 contradiction is resolved explicitly by including passage selection in the first slice; multi-source creation remains later. Claude approved the settings slice and parallel model-callback pilot. D2 is owner-confirmed. The model callback bridge, job cancellation, settings injection and canonical assessment persistence need bounded source checks or pilots before their implementation steps. Approval of the independent settings-registry step need not wait for D2. Do not expand research into another full repository survey.
+
+## Agent-pane builder and page context
+
+The agent pane builds and changes a walk through the one Leela session. Abhyasa owns the logic (`agent_tools`), and Leela owns routing and privacy: each model call goes through `learn_ask` with a task name.
+
+- `change_walk` is a `learn_change` job, as `create_walk` is a `learn_walk` job: cancellable, task `plan`. A stop, a refusal or a walk that changed during the model calls leaves the walk as it was. One change has one Undo.
+- `keep_idea`, `drop_idea`, `move_idea`, `add_source`, `list_versions` and `restore_version` call no model. Each change is one entry in the history of the walk, which the tab shows as Earlier versions. Writers need approval; `list_versions` and `walk_state` are in `READS`.
+- `explain_here(note)` is task `lesson`. Leela gives it the walk and step on screen: the active Learn tab's saved page (`Tab.page`, from `POST /learn/tab/page`) read by `page_of`. It keeps the confusion after the lesson, and a refusal keeps nothing.
+- `learn_context` puts the page on screen first, so "I don't get this" is about the step the learner sees: its quote or `ungrounded`, and its gauge. A graph, library, talk or concept page is named in one line.
+- The skill text stays under its cap: four wordy feature sentences were cut to pay for the new tool names.
+
+UI still to build: a button in the Learn tab, and a chord, that sends "I don't get this" to the agent pane (the guide board of the standalone app); the tab must reload its page after a `learn_change` job ends or a hand change.

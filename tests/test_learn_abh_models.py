@@ -1,4 +1,4 @@
-import socket, threading, time
+import json, socket, threading, time
 
 import pytest
 from starlette.routing import Match, Mount
@@ -106,6 +106,21 @@ def test_hosted_agent_tools_share_task_registry(served):
     ask = learn_ask(s['ws'].ai, 'grade')
     made = record_attempt(s['lr'], s['jid'], 0, 'Equal parts.', 'agent-grade', ask, settings={})
     assert made['status'] == 'ok' and s['jobs'][-1] == 'grade'
+    assert set(s['routed']) <= TASKS and not s['forbidden']
+
+
+def test_hosted_builder_tools_route_through_the_plan_and_lesson_tasks(served):
+    "`change_walk` is a plan task and `explain_here` a lesson task: both are in `TASKS` already, so the table did not grow."
+    from abhyasa.agent_tools import change_walk, explain_here
+    from leela.blocks.learn.tools import learn_ask
+
+    s = served
+    slug = s['lr'].journey(s['jid']).steps[1]['slug']
+    s['be']._oneshot = lambda p, sp, m, deadline=None: (s['calls'].append(p), s['jobs'][-1] == 'plan' and json.dumps(dict(changes=[dict(op='skip', idea=slug, why='x')])) or 'A short, clear tutor reply.')[1]
+    r = change_walk(s['lr'], learn_ask(s['ws'].ai, 'plan'), s['jid'], 'skip the second idea', settings={})
+    assert r['status'] == 'ok' and r['data']['changed'] and s['jobs'] == ['plan']
+    r = explain_here(s['lr'], learn_ask(s['ws'].ai, 'lesson'), s['jid'], 0, 'what is a fraction', settings={})
+    assert r['status'] == 'ok' and s['jobs'][-1] == 'lesson' and set(s['jobs']) <= TASKS
     assert set(s['routed']) <= TASKS and not s['forbidden']
 
 

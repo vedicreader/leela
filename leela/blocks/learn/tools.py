@@ -1,4 +1,4 @@
-import hashlib, logging, os, re, shutil, subprocess, sys
+import hashlib, json, logging, os, re, shutil, subprocess, sys
 from time import monotonic
 from fastcore.basics import AttrDict, first
 from fastcore.xdg import xdg_data_home
@@ -184,6 +184,25 @@ def learn_store(ws, vault=None, write=False):
     return ref.name, Learning(memory._store('learning'))
 
 
+def learn_view(ws):
+    "`(vault, walk, page)` of the active tab when it is a Learn tab: the walk of a walk tab, and the saved path of the page it shows. Else `(None, None, '')`."
+    tab = getattr(ws, 'tab', None)
+    if getattr(tab, 'kind', '') not in ('learn', 'learn_walk'): return None, None, ''
+    ref = json.loads(tab.ref or '[]')
+    return (ref[0] if ref else None), (ref[1] if tab.kind == 'learn_walk' and len(ref) > 1 else None), getattr(tab, 'page', '') or ''
+
+
+def on_screen(ai, lr):
+    "`dict(jid, i)` of the walk step that the active Learn tab shows. `KeyError` says why when it shows none."
+    from abhyasa.agent_tools import page_of, walk_state
+    _, walk, page = learn_view(ai.ws)
+    pg = page_of(page)
+    jid = pg['jid'] if pg['kind'] in ('step', 'walk') else walk
+    if not jid: raise KeyError('The Learn tab shows no walk step. Ask the learner to open one.')
+    i = pg['i'] if pg['kind'] == 'step' else (walk_state(lr, jid)['data'] or {}).get('current')
+    return dict(jid=jid, i=0 if i is None else i)
+
+
 def learn_guard(ai, text, spec=None):
     from abhyasa.models import guard
     return guard(text, spec or ai.spec_or_none('plan'), ai.ws.vault_pii)
@@ -201,10 +220,10 @@ def learn_ask(ai, task='plan'):
 
 
 def contract_missing() -> list[str]:
-    "The parts of Abhyasa's native contract this install lacks: `agent_tools.TOOLS` and `learner.use_settings`."
+    "The parts of Abhyasa's native contract this install lacks: `agent_tools.TOOLS`, `agent_tools.page_of` and `learner.use_settings`."
     from importlib import import_module
     out = []
-    for mod, name in (('abhyasa.agent_tools', 'TOOLS'), ('abhyasa.learner', 'use_settings')):
+    for mod, name in (('abhyasa.agent_tools', 'TOOLS'), ('abhyasa.agent_tools', 'page_of'), ('abhyasa.learner', 'use_settings')):
         try: have = hasattr(import_module(mod), name)
         except ImportError: have = False
         if not have: out.append(f'{mod}.{name}')
@@ -238,18 +257,30 @@ def register_learn_jobs(ws):
             return r
         finally: captures.pop(job.id, None)
     ws.jobs.register('learn_walk', run)
+    def change(job, report):
+        if job.id not in captures: raise RuntimeError('The originating learning session is no longer available. Ask for the change again.')
+        ai, lr = captures[job.id]
+        try:
+            r = engine.change_walk(lr, learn_ask(ai, 'plan'), job.target, job.params['instruction'], stopping=lambda: ws.jobs.stopping(job.id), settings=job.params['settings'])
+            r.update(operation_id=job.id, vault=job.params['vault'])
+            if r['status'] == 'stopped': r['cancelled'] = True
+            return r
+        finally: captures.pop(job.id, None)
+    ws.jobs.register('learn_change', change)
 
 
-def start_learn_job(ai, goal):
-    from abhyasa.agent_tools import result
+def start_learn_job(ai, goal, kind='learn_walk', **params):
+    "Start the cancellable job `kind` on `goal` (a goal, or a walk id for `learn_change`), or return the one that runs now with the same `params`."
+    from abhyasa.agent_tools import result, failed
     ws = ai.ws
     vault, lr = learn_store(ws, write=True)
     settings = learn_settings(ws)
+    if kind == 'learn_change' and ((j := lr.journey(goal)) is None or j.get('mode') != 'walk'): return failed('not_found', f'no walk {goal!r}', walk=goal)
     with ws.jobs._lock:
-        for job in ws.jobs.all(kind='learn_walk'):
-            if job.active and job.target == goal and job.params.get('vault') == vault and job.params.get('thread') == ai.session_id:
+        for job in ws.jobs.all(kind=kind):
+            if job.active and job.target == goal and job.params.get('vault') == vault and job.params.get('thread') == ai.session_id and all(job.params.get(k) == v for k, v in params.items()):
                 return result('ok', operation_id=job.id, vault=vault, data=dict(job=job.id))
-        job = ws.jobs.new('learn_walk', goal, vault=vault, thread=ai.session_id, settings=settings, _cancel=True)
+        job = ws.jobs.new(kind, goal, vault=vault, thread=ai.session_id, settings=settings, **params, _cancel=True)
         ws._learn_jobs[job.id] = (ai, lr)
         try: ws.jobs.launch(job.id)
         except Exception:
@@ -264,24 +295,28 @@ def learn_tools(ai):
     from abhyasa import agent_tools as engine
     from ...agent.tools import small_tool
     from shalya.core import writes
-    extra = dict(record_attempt=lambda: dict(ask=learn_ask(ai, 'grade'), settings=learn_settings(ai.ws)), walk_state=lambda: dict(settings=learn_settings(ai.ws)))
+    reads = getattr(engine, 'READS', (engine.walk_state.__name__,))
+    cfg = lambda: dict(settings=learn_settings(ai.ws))
+    extra = dict(record_attempt=lambda: dict(ask=learn_ask(ai, 'grade'), **cfg()), walk_state=cfg, add_source=cfg, explain_here=lambda: dict(ask=learn_ask(ai, 'lesson'), **cfg()))
     def wrap(name, args):
         def call(**kwargs):
             if not ai.learn_mode:
                 return engine.failed('mode_off', 'Turn Learn mode on before using learning tools.', extra=('mode_off',))
             try:
                 if name == 'create_walk': return start_learn_job(ai, **kwargs)
-                vault, lr = learn_store(ai.ws, write=name != engine.walk_state.__name__)
+                if name == 'change_walk': return start_learn_job(ai, kwargs['jid'], 'learn_change', instruction=kwargs['instruction'])
+                vault, lr = learn_store(ai.ws, learn_view(ai.ws)[0] if name == 'explain_here' else None, write=name not in reads)
+                if name == 'explain_here': kwargs = {**kwargs, **on_screen(ai, lr)}
                 r = getattr(engine, name)(lr, **kwargs, **extra.get(name, dict)())
                 r['vault'] = vault
                 return r
             except PermissionError as e: return engine.failed('read_only', str(e))
-            except KeyError as e: return engine.failed('not_found', str(e))
+            except KeyError as e: return engine.failed('not_found', str(e.args[0] if e.args else e))
         call.__name__ = name
         call.__doc__ = getattr(engine, name).__doc__ or ''
         call.__annotations__ = {k: {'str': str, 'int': int}[v.split(':', 1)[0]] for k, v in args.items()}
         call.__signature__ = inspect.Signature([inspect.Parameter(k, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=call.__annotations__[k]) for k in args])
         call.__doc__ += '\n\n' + '\n'.join(f'{k}: {v}' for k, v in args.items())
-        if name != engine.walk_state.__name__: writes(call)
+        if name not in reads: writes(call)
         return small_tool(call)
     return [wrap(name, args) for name, args in engine.TOOLS]

@@ -1383,13 +1383,12 @@ class Assistant(Agent):
     def learn_context(self):
         if not self.learn_mode: return ''
         from abhyasa.agent_tools import learner_context
-        from ..learn.tools import learn_settings, learn_store
+        from ..learn.tools import learn_settings, learn_store, learn_view
         from abhyasa.learner import use_settings
-        tab = getattr(self.ws, 'tab', None)
-        vault, walk = json.loads(tab.ref) if getattr(tab, 'kind', '') == 'learn_walk' else (None, None)
+        vault, walk, page = learn_view(self.ws)
         try: _, lr = learn_store(self.ws, vault)
         except (KeyError, FileNotFoundError): return 'Learn mode. The learning vault is unavailable. Attach it before continuing.'
-        with use_settings(learn_settings(self.ws)): return learner_context(lr, walk)
+        with use_settings(learn_settings(self.ws)): return learner_context(lr, walk, page=page)
     def mark_surface(self):
         "Claim the live session for Leela. The CLI shares this log and leaves no such mark."
         from .turns import mark_surface
