@@ -1,4 +1,4 @@
-const inLearnTab = () => ['learn', 'learn_walk'].includes(lee.kind);
+const inLearnTab = () => lee.kind === 'learn';
 async function leeLearnModeOn() {
   if (lee.agentLearnMode) return true;
   try {

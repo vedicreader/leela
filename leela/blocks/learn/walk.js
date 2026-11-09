@@ -193,7 +193,6 @@ async function learnMount(host, st) {
   htmx.process(abh);
   nav(start);
 }
-registerTabMount('learn_walk', learnMount);
 registerTabMount('learn', learnMount);
 
 function leeLearnOpen(path = '/') {
