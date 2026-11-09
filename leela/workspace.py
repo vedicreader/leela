@@ -636,6 +636,13 @@ class Workspace:
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='vault', ref=ref, scratch=True,
                                  title=title or doc_id, private_kernel=False))
+    def open_learn_walk(self, vault, walk):
+        vault = vault or self.vaults.active.name
+        ref = json.dumps([vault, walk])
+        if (i := first(i for i, t in enumerate(self.tabs) if t.kind == 'learn_walk' and t.ref == ref)) is not None:
+            self.active = i
+            return self.tabs[i]
+        return self._add_tab(Tab(path='', kind='learn_walk', ref=ref, title=f'walk: {walk} ({vault})', private_kernel=False))
     def open_vault_workbench(self, view='browse'):
         "Open the vault workbench as a tab. One is enough: it is a place, not a document."
         if (i := first(i for i, t in enumerate(self.tabs) if t.kind == 'vaultwb')) is not None:
@@ -1482,8 +1489,10 @@ class Workspace:
         for t in saved:
             place = str(t.get('path') or '')
             try:
-                if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve()) and not self.fs.read_only(place)): continue
-                tab = self.open(place)
+                if t.get('kind') == 'learn_walk': tab = self.open_learn_walk(*json.loads(t['ref']))
+                else:
+                    if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve()) and not self.fs.read_only(place)): continue
+                    tab = self.open(place)
                 if int(d.get('version', 0)) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
                 tab.cwd = str(t.get('cwd') or '')
@@ -1492,7 +1501,7 @@ class Workspace:
         if opened:
             was = saved[min(max(active, 0), len(saved) - 1)] or {}
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
-                                       if t.path == str(was.get('path') or '')), 0)
+                                       if (t.kind == 'learn_walk' and t.ref == was.get('ref')) or (t.path and t.path == str(was.get('path') or ''))), 0)
         return opened
     def _merge_roots(self, held, mine):
         "Folders the saved session should hold: what this window did not close, then what this window has."
@@ -1564,7 +1573,7 @@ class Workspace:
         saved, active = _saved_tabs(d)
         for t in saved:
             try:
-                tab = ws.open(t['path'])
+                tab = ws.open_learn_walk(*json.loads(t['ref'])) if t.get('kind') == 'learn_walk' else ws.open(t['path'])
                 if d.get('version', 0) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
                 tab.cwd = str(t.get('cwd') or '')

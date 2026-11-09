@@ -1,0 +1,12 @@
+.lee-walk { color: var(--lee-fg); background: var(--lee-bg); padding: 1.5rem; }
+.lee-walk-main { display: flex; gap: 2rem; }
+.lee-walk-steps { min-width: 12rem; padding: 0; list-style: none; }
+.lee-walk-steps button { color: var(--lee-fg); background: var(--lee-bg); border: 1px solid var(--lee-border); padding: .5rem; cursor: pointer; }
+.lee-walk-steps button[aria-current] { color: var(--lee-accent); }
+.lee-walk-content { max-width: 48rem; }
+.lee-walk blockquote { border-left: 3px solid var(--lee-accent); margin-left: 0; padding-left: 1rem; white-space: pre-wrap; }
+.lee-walk textarea { display: block; width: 100%; min-height: 6rem; color: var(--lee-fg); background: var(--lee-bg); border: 1px solid var(--lee-border); }
+.lee-walk-gauge { display: flex; flex-wrap: wrap; gap: .75rem; list-style: none; padding: 0; }
+.lee-walk-gauge li { border: 1px solid var(--lee-border); padding: .4rem; }
+.lee-walk-gauge-state { color: var(--lee-accent); margin-left: .5rem; }
+.lee-walk-error, .lee-walk-ungrounded { color: var(--lee-fg); }

@@ -1,6 +1,8 @@
 GET /learn
 GET /learn/lookup
 GET /learn/tool
+GET /learn/walk.css
+GET /learn/walk/{jid}
 GET /leeboard/board.css
 GET /leeboard/board.js
 GET /leeboard/texparts.js
@@ -433,6 +435,7 @@ GET,POST /workspace/info
 Mount /leeboard/libs
 Mount /leefonts
 Mount /leestatic
+POST /agent/learn-mode
 POST /agent/learned/compact
 POST /agent/learning
 POST /agent/shell-run
@@ -445,6 +448,8 @@ POST /learn/env
 POST /learn/open
 POST /learn/scratch
 POST /learn/tool
+POST /learn/walk/open
+POST /learn/walk/{jid}/{i}/answer
 POST /lesson/new
 POST /lesson/predict
 POST /lesson/predictions

@@ -98,6 +98,7 @@ def notebook_tab(docs, path):
 SWEEP = 10.   # seconds between two looks at the result of each open lesson
 
 def connect(app, ctx):
+    from .walk import connect as connect_walk; connect_walk(app, ctx)
     if rows := learn_rows(): register_section('learn', rows, 'abhyasa')
     filed = {}   # lesson path -> the `result_sig` last filed, or found filed already
     async def file_one(path):

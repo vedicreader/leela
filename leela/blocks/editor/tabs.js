@@ -1,3 +1,6 @@
+const tabMounts = new Map();
+function registerTabMount(kind, mount) { tabMounts.set(kind, mount); }
+
 function updateToolbarForKind(kind) {
   const notebook = kind === 'notebook', text = kind === 'text';
   // `stop` interrupts the tab's kernel, and a document tab does not have one.
@@ -132,7 +135,9 @@ async function mountTab(expectedPath = '') {
     return;
   }
   if (st.kind === 'error') { host.innerHTML = `<div class="lee-err">${esc(st.error)}</div>`; return; }
-  if (st.kind === 'vault') await mountVault(host, st);
+  host.onclick = null; host.onsubmit = null;
+  if (tabMounts.has(st.kind)) await tabMounts.get(st.kind)(host, st);
+  else if (st.kind === 'vault') await mountVault(host, st);
   else if (st.kind === 'vaultwb') await mountVaultWorkbench(host, st);
   else if (st.kind === 'web') mountWeb(host, st);
   else if (st.kind === 'pdf') mountPdf(host, st);

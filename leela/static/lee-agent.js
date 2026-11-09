@@ -1602,6 +1602,8 @@ function paintAgentThreads(d) {
   // the pane's own choice outlives the server's `active`, which a resume elsewhere moves; only a gone one yields
   const gone = !lee.agentThread || (d.live && !d.live.includes(lee.agentThread));
   lee.agentThreadRows = rows; if (gone) lee.agentThread = d.active || '';
+  if (d.learn_modes && lee.agentThread in d.learn_modes) lee.agentLearnMode = d.learn_modes[lee.agentThread];
+  paintAgentLearn(rows.find(t => t.id === lee.agentThread));
   const count = $('#agentthreadcount'); if (count) count.textContent = String(rows.length);
   const waiting = (d.attention?.waiting || []).length, unread = d.attention?.unread || 0;
   const toggle = $('#agentthreads');
@@ -1998,6 +2000,30 @@ function agentMoreActive() {
     diff(agentFullEnabled(), agentHead().profile === 'full', 'full briefing'),
     ...AGENT_OPTINS.map(n => diff(agentOptinOn(n), agentOptinDefault(n), n))].filter(Boolean);
 }
+function paintAgentLearn(thread) {
+  const more = $('#agentmore'); if (!more) return;
+  let button = $('#agentlearn');
+  if (!button) {
+    button = document.createElement('button'); button.id = 'agentlearn'; button.type = 'button';
+    button.className = more.className; button.onclick = () => leeAgentLearnToggle(); more.before(button);
+  }
+  if (thread) lee.agentLearnMode = !!thread.learn_mode;
+  const busy = thread ? thread.state === 'working' || thread.state === 'waiting' : !!lee.agentBusy;
+  button.disabled = busy; button.textContent = busy ? 'Learn: busy' : `Learn: ${lee.agentLearnMode ? 'on' : 'off'}`;
+  button.setAttribute('aria-pressed', String(!!lee.agentLearnMode));
+  button.title = busy ? 'Wait for the turn, queue and approval to finish.' : 'Change learning tools in this conversation';
+}
+async function leeAgentLearnToggle() {
+  try {
+    const rows = await api('/agent/threads');
+    const thread = rows.threads?.find(t => t.id === (lee.agentThread || rows.active));
+    const on = thread ? !!thread.learn_mode : !!rows.learn_modes?.[lee.agentThread || rows.active];
+    const d = await post('/agent/learn-mode', {on: !on, thread: lee.agentThread || rows.active});
+    if (!d.ok) return status(d.message || d.error || 'Learn mode could not change.', 'err');
+    lee.agentLearnMode = d.on; await refreshAgentThreads();
+  } catch (e) { status(e.message || String(e), 'err'); }
+}
+window.leeAgentLearnToggle = leeAgentLearnToggle;
 function paintAgentMore() {
   const b = $('#agentmore'); if (!b) return;
   const on = agentMoreActive(), label = on.length ? `more actions, active: ${on.join(', ')}` : 'more actions';
@@ -3868,6 +3894,7 @@ function agentListen(thread, since, card = null) {
     checkpoints.add(d.id);
     timeline.seal(); progress.phase('Waiting for your approval'); showApproval(d, timelineRoot);
   }));
+  es.addEventListener('learn_mode', dedupe(d => { lee.agentLearnMode = !!d.on; refreshAgentThreads().catch(() => {}); }));
   es.addEventListener('execution', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('state', dedupe(d => updateAgentRunstrip(d)));
   es.addEventListener('steer', dedupe(d => {

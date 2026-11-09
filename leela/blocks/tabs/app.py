@@ -155,6 +155,9 @@ def connect(app, ctx):
         if t.kind in ('pdf', 'image', 'office', 'audio', 'video'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
+        if t.kind == 'learn_walk':
+            vault, walk = json.loads(t.ref)
+            return {'kind': t.kind, 'title': t.title, 'vault': vault, 'walk': walk}
         if t.kind == 'vault':
             vault, shelf, doc = (t.ref.split('|') + ['', '', ''])[:3]
             return {'kind': 'vault', 'title': t.title, 'vault': vault, 'shelf': shelf, 'doc': doc}
