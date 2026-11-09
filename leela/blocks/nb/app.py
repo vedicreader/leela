@@ -18,7 +18,7 @@ from ..fs.fs import NotText, decoded
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
-from .nb import Cell, Notebook, OutFeed, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
+from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
@@ -487,10 +487,10 @@ def connect(app, ctx):
         elif op == 'merge_above': nb.merge(i - 1) if i > 0 else None
         elif op == 'merge_below': nb.merge(i)
         elif op == 'clear_cell': nb.clear_cell(i)
-        elif op == 'undo':
-            if (at := nb.undo()) is None: return fail('no cell operation to undo')
-        elif op == 'redo':
-            if (at := nb.redo()) is None: return fail('no cell operation to redo')
+        elif op in ('undo', 'redo'):
+            try: at = getattr(nb, op)()
+            except RunningCellError as e: return fail(str(e), 409)
+            if at is None: return fail(f'no cell operation to {op}')
         elif op == 'merge': nb.merge(i)
         elif op == 'source':
             if (no := took(nb, {**d, 'source': d.get('source', '')}, nb[i].id, i, tab)): return no
@@ -750,7 +750,7 @@ def connect(app, ctx):
         cell_id = d.get('id') or ''
         item = running_cells.get((d.get('path') or '', cell_id))
         if item is None:
-            nb = run_owner(d)[1]
+            tab, nb, _ = run_owner(d)
             c = first(x for x in (nb or []) if x.id == cell_id)
             if c is not None and c.is_prompt:
                 # `cancel`, which is what the agent panel's own stop reaches: it refuses the calls
@@ -758,6 +758,9 @@ def connect(app, ctx):
                 ctx.inline_ai.cancel()
                 c.running = False
                 return {'ok': True, 'stopped': 'prompt', 'note': 'asked the inline agent to stop'}
+            if c is not None and c.running and not (tab and tab.running):   # marked running, and no run counted on the tab: clear the mark, so the cell can run again
+                c.running = False
+                return {'ok': True, 'stopped': 'stale', 'note': 'cleared a running mark that had no run behind it'}
             return fail('that cell is not running')
         k, _task = item
         if not hasattr(k, 'stop'): return fail('this external runtime cannot be stopped safely')

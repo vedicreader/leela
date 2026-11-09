@@ -2,6 +2,15 @@
 
 <!-- do not remove -->
 
+## 1.0.4
+
+Cells: undo no longer strands a running cell.
+
+- Undo and redo keep the cell that is running. An undo that would remove it is refused until you stop it. Before, Cmd+Z while a cell ran left the cell looking running, the stop button said it was not running, and the cell would not run again.
+- Stop asks the server when the page thinks the cell is idle, and clears a running mark that has no run behind it.
+- A step taken while a cell runs no longer brings that cell back as running when you undo it.
+- On Linux, the file watcher looks at the folders once more on its first idle tick, so a folder made just before the watch started is watched.
+
 ## 1.0.3
 
 Keys: a chord you set is never refused for a chord Leela ships.
