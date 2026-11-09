@@ -1,6 +1,6 @@
 r"""Serve Leela from this worktree on a free 127.0.0.1 port with every store isolated, for the owner's native Learn check.
 
-Run: `python tools/try_native_learn.py [--copy-vault PATH] [--no-seed] [--model NAME] [--state DIR] [--port N]`; see `docs/try-native-learn.md`. It never calls the CLI, so no key is migrated out of the person's keychain. Every store is a new file under the state folder. With no `--model` it installs the scripted model of `tools/scripted_learn.py`. With no `--copy-vault` the new Learn vault gets the demo data of `tools/seed_learn_demo.py`; with it, the copy is the standalone vault and the first Learn open shows the import offer.
+Run: `python tools/try_native_learn.py [--copy-vault PATH] [--no-seed] [--web] [--model NAME] [--state DIR] [--port N]`; see `docs/try-native-learn.md`. It never calls the CLI, so no key is migrated out of the person's keychain. Every store is a new file under the state folder. With no `--model` it installs the scripted model of `tools/scripted_learn.py`. With no `--copy-vault` the new Learn vault gets the demo data of `tools/seed_learn_demo.py`; with it, the copy is the standalone vault and the first Learn open shows the import offer.
 """
 import argparse, importlib.util, os, shutil, socket, sys, tempfile
 from pathlib import Path
@@ -15,6 +15,7 @@ def parse(argv=None):
     p = argparse.ArgumentParser(prog='try_native_learn', description='Leela with native Learn on isolated state')
     p.add_argument('--copy-vault', default=None, help='a vault file to copy into the isolated folder as the standalone vault, so Learn offers to import it; the original is only read')
     p.add_argument('--no-seed', action='store_true', help='leave the new Learn vault empty')
+    p.add_argument('--web', action='store_true', help="let the agent search the web (topic words go to the web search through Leela's privacy guard)")
     p.add_argument('--model', default=None, help='name of an already configured model to use instead of the scripted one')
     p.add_argument('--state', default=None, help='the isolated folder to use again (default: a new temporary one)')
     p.add_argument('--port', type=int, default=None, help='port on 127.0.0.1 (default: a free one)')
@@ -76,11 +77,14 @@ TRY = """what to try
 11  Course page: the demo course "Diffusion for comics" with its stage
 12  With --copy-vault: open Learn and see the import offer (Attach, Back up and copy, Skip)"""
 
-def banner(url, state, ref, scripted, seeded, copied):
+WEB_OFF = 'web research: off (add --web to let the agent search the web)'
+WEB_ON = "web research: ON: topic words are sent to the web search through Leela's privacy guard"
+
+def banner(url, state, ref, scripted, seeded, copied, web=False):
     "The text the owner reads first."
     model = 'scripted model: canned replies, nothing leaves this machine' if scripted else 'configured model (see Settings > Models); it may leave this machine'
     data = 'a copy of your vault is the standalone vault; Learn offers to import it on first open' if copied else ('demo data (not yours)' if seeded else 'empty')
-    return f'pid    {os.getpid()}\nurl    {url}\nstate  {state}\nvault  {ref[0]}  {ref[1]}\nmodel  {model}\ndata   {data}\n{TRY}'
+    return f'pid    {os.getpid()}\nurl    {url}\nstate  {state}\nvault  {ref[0]}  {ref[1]}\nmodel  {model}\nweb    {WEB_ON if web else WEB_OFF}\ndata   {data}\n{TRY}'
 
 def check(a):
     "The refusals that come before anything starts: the Abhyasa worktree, the state folder, the port. Returns `(abh, iso, state, port)`."
@@ -120,6 +124,7 @@ def main(argv=None):
     from leela.workspace import Workspace
     from leela.blocks.memory.vaults import LEARN, learn_path
     ws = Workspace(roots=[work], agent='restricted', approvals='ask', transport='direct', model=a.model).at_exit()
+    ws.learn_research = bool(a.web)
     scripted = not ws.model
     if scripted:
         from tools.scripted_learn import install_scripted
@@ -132,7 +137,7 @@ def main(argv=None):
     ref = ws.vaults.get(LEARN)
     ref = (ref.name, ref.path) if ref else (LEARN, f'{learn_path()}  (made when you choose Attach, Back up and copy, or Skip)')
     if refused([ref[1].split('  ')[0]], iso.REAL_STORES): raise SystemExit('the Learn vault is a real store')
-    print(banner(f'http://127.0.0.1:{port}/', state, ref, scripted, seeded, bool(a.copy_vault)), flush=True)
+    print(banner(f'http://127.0.0.1:{port}/', state, ref, scripted, seeded, bool(a.copy_vault), bool(a.web)), flush=True)
     print(f'rerun  python {Path(__file__).resolve()} --state {state}', flush=True)
     try: uvicorn.run(ide_app(ws), host='127.0.0.1', port=port, log_level='warning')
     except KeyboardInterrupt: pass

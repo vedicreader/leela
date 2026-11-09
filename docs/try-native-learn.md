@@ -16,6 +16,7 @@ The launcher puts both worktrees on `sys.path` itself, so you do not set `PYTHON
 | --- | --- |
 | `--copy-vault PATH` | Copies the vault file (and its `-wal` and `-shm` files) into the state folder. The original is only read. The copy is the standalone vault. The first Learn open shows the import offer: Attach, Back up and copy, or Skip. No demo data is added. |
 | `--no-seed` | Leaves the new Learn vault empty. |
+| `--web` | Lets the agent search the web for sources. Topic words are sent to the web search through Leela's privacy guard. Without it, web research is off: new walks have no web sources, and the walk page says research is off in this preview. |
 | `--model NAME` | Uses a model that is already configured, in place of the scripted one. Replies can then leave this machine. |
 | `--state DIR` | Uses this folder again. The default is a new temporary folder. A folder under a real store is refused. |
 | `--port N` | Uses this port on 127.0.0.1. The default is a free port. Port 5001 is refused. |
@@ -23,7 +24,7 @@ The launcher puts both worktrees on `sys.path` itself, so you do not set `PYTHON
 ## What the preview is
 
 - Isolated. The config, data, cache, vault, Abhyasa settings and Ramabana config are all under the state folder. The launcher never reads or writes your real vault or config.
-- A scripted model. The replies are canned and nothing leaves this machine.
+- A scripted model. The replies are canned and nothing leaves this machine. Web research is off unless you pass `--web`.
 - Demo data. Without `--copy-vault`, the Learn vault holds a walk of 3 ideas from a paper with real quotes and a source link, a course, a talk, attempts from several days, and a demo check. The launcher says on stdout that this is demo data.
 - Your port. It serves on 127.0.0.1 only.
 

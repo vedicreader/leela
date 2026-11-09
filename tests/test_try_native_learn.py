@@ -103,3 +103,35 @@ def test_banner_names_url_state_vault_model_and_twelve_lines_to_try():
     t = tnl.banner('http://127.0.0.1:9/', '/s', ('learn', '/s/leela/learn/vault.db'), True, True, False)
     assert 'http://127.0.0.1:9/' in t and '/s/leela/learn/vault.db' in t and 'canned replies, nothing leaves this machine' in t and 'demo data' in t
     assert len([l for l in t.split('what to try\n')[1].splitlines() if l.strip()]) == 12
+
+
+from tests.test_learn_abh_research import web, _create, _gather  # noqa: F401
+from tests.test_learn_abh_models import served  # noqa: F401
+
+
+def test_banner_says_web_research_off_by_default_and_on_with_web():
+    a = ('http://127.0.0.1:9/', '/s', ('learn', '/s/v.db'), True, True, False)
+    assert 'web research: off (add --web to let the agent search the web)' in tnl.banner(*a)
+    assert "web research: ON: topic words are sent to the web search through Leela's privacy guard" in tnl.banner(*a, web=True)
+    assert tnl.parse(['--web']).web and not tnl.parse([]).web
+
+
+def test_preview_off_agent_walk_never_touches_the_web_and_says_why(web, monkeypatch):
+    s = web; s['ws'].learn_research = False
+    job = _create(s, monkeypatch)
+    assert job.status == 'complete' and not s['searched'] and not s['read'] and 'research' not in job.result['data']
+
+
+def test_preview_off_find_a_source_says_research_is_off_in_words(web):
+    s = web; s['ws'].learn_research = False
+    out = _gather(s)
+    assert out.passages == 0 and 'off in this preview' in out.why and not s['searched'] and not s['read']
+    from leela.blocks.learn.tools import learn_web
+    for f, arg in zip(learn_web(s['ws']), (('q', 3), ('https://example.org/x',))):
+        with pytest.raises(LookupError, match='off in this preview'): f(*arg)
+
+
+def test_web_on_the_agent_walk_searches_through_the_patched_fetcher(web, monkeypatch):
+    s = web; s['ws'].learn_research = True
+    job = _create(s, monkeypatch)
+    assert job.status == 'complete' and s['searched'] and 'got a source' in job.result['data']['research']
