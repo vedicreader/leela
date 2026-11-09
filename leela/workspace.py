@@ -123,7 +123,7 @@ def has_own_window(root, state):
     return root in (held.get('roots') or [])
 
 #: A saved session, as against the preferences saved beside it. Only a workspace that read or opened one writes them, so a bare `Workspace` recording a model choice does not blank them.
-SESSION_KEYS = ('roots', 'tabs', 'active', 'active_root')
+SESSION_KEYS = ('roots', 'tabs', 'active', 'active_root', 'mode', 'mode_layouts', 'mode_focus')
 
 TOOL_RANGE, STEP_RANGE = (20, 400), (8, 80)
 SUBAGENT_SETTINGS = ('subagent_steps', 'subagent_timeout', 'subagent_depth')   #: ramabana's sub-agent knobs a workspace keeps; `/subagents` sets them
@@ -234,6 +234,8 @@ class Tab(Dictable):
     page: str = ''
     #: A notebook's own language, from its kernelspec. Set when the document is read: the tab knows its path, and the parsed notebook lives in the nb block's store.
     nb_lang: str = ''
+    #: The notebook cell the person last pointed at, by id, so the agent's context can anchor on it.
+    cell: str = ''
     def __post_init__(self):
         if not self.title: self.title = Path(self.path).name or 'untitled'
         if (k := kind_for(self.path)) != 'text': self.kind = k
@@ -347,6 +349,7 @@ class Workspace:
                                    ('organization', 'project', 'task', 'preferences', 'branch', 'ephemeral')}
         self.agent_memory_selection = {'agent': [], 'inline': [], 'completion': []}
         self.job_models = {}                # harness job -> model, for the jobs without a field
+        self.mode, self.mode_layouts, self.mode_focus = 'code', {}, {}   # the workspace mode; each mode's remembered docks; each mode's last tab
         self.screen = (None, '', '')
         self.on_note = None
         self._approval_target, self.approvals_mode = None, approvals
@@ -563,6 +566,42 @@ class Workspace:
         return r
     @property
     def tab(self): return self.tabs[self.active] if self.tabs else None
+    def note_cell(self, cell):
+        "Remember the cell the active notebook tab points at; the agent's turn context anchors on it."
+        t = self.tab
+        if t is not None and t.kind == 'notebook' and isinstance(cell, str) and t.cell != cell: t.cell = cell
+        return t
+    def mode_layout(self, mode):
+        "The dock states of `mode`: its preset, under what the person last left open."
+        from .blocks.modes.modes import LAYOUT_KEYS, get_mode
+        return {**get_mode(mode).layout, **self.mode_layouts.get(mode, {})}
+    def remember_layout(self, mode, layout):
+        "Keep the dock states the page reports for `mode`; only the keys a layout has."
+        from .blocks.modes.modes import LAYOUT_KEYS, get_mode
+        get_mode(mode)
+        if not isinstance(layout, dict): raise ValueError('layout must be an object')
+        kept = {k: v for k, v in layout.items() if k in LAYOUT_KEYS and isinstance(v, (bool, str))}
+        self.mode_layouts[mode] = {**self.mode_layouts.get(mode, {}), **kept}
+        return self.mode_layout(mode)
+    def _mode_key(self, t): return t.path or t.ref or t.title
+    def set_mode(self, mode):
+        "Switch the workspace mode; nothing closes. Returns the mode, its layout and the tab to focus."
+        from .blocks.modes.modes import get_mode
+        m = get_mode(mode)
+        if (t := self.tab) is not None and t.kind != 'learn': self.mode_focus['code'] = self._mode_key(t)
+        self.mode = m.id
+        if m.id == 'learn':
+            i = first(i for i, t in enumerate(self.tabs) if t.kind == 'learn')
+            tab = self.open_learn() if i is None else self.activate(i)
+            focus = dict(kind='learn', path=tab.page)
+        else:
+            want = self.mode_focus.get('code', '')
+            i = first(i for i, t in enumerate(self.tabs) if t.kind != 'learn' and self._mode_key(t) == want)
+            if i is None: i = first((i for i in reversed(range(len(self.tabs))) if self.tabs[i].kind != 'learn'), None)
+            tab = self.activate(i) if i is not None else None
+            focus = dict(kind=tab.kind, path=tab.path) if tab is not None else dict(kind='', path='')
+        self.save()
+        return dict(mode=m.id, layout=self.mode_layout(m.id), focus=focus)
     def find(self, path):
         p = str(Path(path).expanduser().resolve())
         return first(i for i, t in enumerate(self.tabs) if t.path == p)
@@ -1446,7 +1485,7 @@ class Workspace:
                 'agent_optin': list(self.agent_optin), 'agent_profile': self.agent_profile,
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
                 'thread_profiles': dict(self.thread_profiles),
-                'job_models': self.job_models,
+                'job_models': self.job_models, 'mode': self.mode, 'mode_layouts': self.mode_layouts, 'mode_focus': self.mode_focus,
                 'active_root': str(self.active_root or ''),
                 'per_folder': True, 'saved': time.time()}
     def restore_settings(self, d):
@@ -1482,6 +1521,12 @@ class Workspace:
         rows = d.get('thread_optins') if isinstance(d.get('thread_optins'), dict) else {}
         self.thread_optins = {str(k): [x for x in (v or ()) if x in OPTIN] for k, v in rows.items()}
         self.job_models = {str(k): str(v) for k, v in (d.get('job_models') or {}).items() if v}
+        from .blocks.modes.modes import LAYOUT_KEYS, mode_ids   # a mode this build lacks is `code`, not a workspace that will not load
+        self.mode = d.get('mode') if d.get('mode') in mode_ids() else 'code'
+        rows = d.get('mode_layouts') if isinstance(d.get('mode_layouts'), dict) else {}
+        self.mode_layouts = {str(k): {a: b for a, b in v.items() if a in LAYOUT_KEYS and isinstance(b, (bool, str))} for k, v in rows.items() if k in mode_ids() and isinstance(v, dict)}
+        rows = d.get('mode_focus') if isinstance(d.get('mode_focus'), dict) else {}
+        self.mode_focus = {str(k): str(v) for k, v in rows.items() if isinstance(v, str)}
         self.agent_state = str(d.get('agent_state') or '')
         saved_selection = d.get('agent_memory_selection')
         if isinstance(saved_selection, dict):

@@ -14,22 +14,26 @@ __all__ = ['GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_schemas', 'tool_pr
            'activity_changes', 'history_sessions', 'indexed_sessions', 'project_state_context', 'turn_media',
            'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
 
-def learn_modes(cfg):
-    p = Path(cfg)/'agent-learn.json'
+def _rows(p):
     try: rows = json.loads(p.read_text()) if p.exists() else {}
     except (OSError, ValueError): return {}
     return rows if isinstance(rows, dict) else {}
 
+def saved_modes(cfg):
+    "Thread id -> mode: the old `agent-learn.json` rows read as 'learn', under the rows of `agent-modes.json`."
+    old = {k: 'learn' for k, v in _rows(Path(cfg)/'agent-learn.json').items() if v is True}
+    return {**old, **{k: v for k, v in _rows(Path(cfg)/'agent-modes.json').items() if isinstance(v, str)}}
 
-_learn_lock = threading.RLock()
+
+_modes_lock = threading.RLock()
 
 
-def save_learn_mode(cfg, sid, on):
-    with _learn_lock:
-        rows = learn_modes(cfg)
-        if on: rows[sid] = True
-        else: rows.pop(sid, None)
-        with atomic_save(Path(cfg)/'agent-learn.json', mode='w', encoding='utf-8') as f: f.write(json.dumps(rows))
+def save_mode(cfg, sid, mode):
+    "Record `mode` for `sid` in `agent-modes.json`; the old file is never written."
+    with _modes_lock:
+        rows = _rows(Path(cfg)/'agent-modes.json')
+        rows[sid] = mode
+        with atomic_save(Path(cfg)/'agent-modes.json', mode='w', encoding='utf-8') as f: f.write(json.dumps(rows))
 
 
 SURFACES_FILE = 'agent-surfaces.json'   #: sessions Leela started, beside Ramabana's own metadata

@@ -265,7 +265,7 @@ def test_agent_write_tools_report_read_only_on_the_learn_vault(ws):
     from types import SimpleNamespace
     from leela.blocks.learn.tools import learn_tools
     ws.vaults.learn(); ws.vaults.set_agent(LEARN, False)
-    ai = SimpleNamespace(ws=ws, learn_mode=True, session_id='s', oneshot=lambda *a, **k: '', spec_or_none=lambda job='turn': None)
+    ai = SimpleNamespace(ws=ws, mode='learn', session_id='s', oneshot=lambda *a, **k: '', spec_or_none=lambda job='turn': None)
     tool = {f.__name__: f for f in learn_tools(ai)}['note_confusion']
     r = tool(slug='x', note='y') if 'slug' in tool.__annotations__ else tool(**{k: 'x' for k in tool.__annotations__})
     assert r['status'] == 'error' and 'read_only' in json.dumps(r)

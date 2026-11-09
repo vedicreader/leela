@@ -12,7 +12,7 @@ def test_an_abhyasa_without_the_contract_keeps_learn_off_and_leela_starting(ws, 
     old.__dict__.update({k: v for k, v in vars(abhyasa.learner).items() if k not in ('use_settings', '__name__')})
     monkeypatch.setitem(sys.modules, 'abhyasa.learner', old)
     assert contract_missing() == ['abhyasa.learner.use_settings']
-    assert learn_tools(SimpleNamespace(ws=ws, learn_mode=True)) == []
+    assert learn_tools(SimpleNamespace(ws=ws, mode='learn')) == []
     with caplog.at_level(logging.WARNING): assert ide_app(ws)
     said = [r for r in caplog.records if r.name == 'leela.blocks.learn.app' and r.levelno == logging.WARNING]
     assert len(said) == 1 and 'abhyasa.learner.use_settings' in said[0].getMessage()

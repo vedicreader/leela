@@ -25,7 +25,7 @@ def pane(ws, monkeypatch):
         calls.append((task, prompt, kw))
         r = reply['text']
         return r(prompt) if callable(r) else r
-    ai = SimpleNamespace(ws=ws, learn_mode=True, session_id=ws.threads.active.id, oneshot=oneshot, spec_or_none=lambda job='turn': None)
+    ai = SimpleNamespace(ws=ws, mode='learn', session_id=ws.threads.active.id, oneshot=oneshot, spec_or_none=lambda job='turn': None)
     register_learn_jobs(ws)
     tools = {f.__name__: f for f in learn_tools(ai)}
     return SimpleNamespace(ws=ws, lr=lr, jid=jid, calls=calls, reply=reply, ai=ai, tools=tools, vault=ref.name)
@@ -111,7 +111,7 @@ def test_hand_tools_versions_and_sources_work_through_the_pane(pane):
 
 
 def test_learn_mode_off_refuses_the_new_tools_too(pane):
-    pane.ai.learn_mode = False
+    pane.ai.mode = 'code'
     for name, args in (('keep_idea', dict(jid=pane.jid, idea='1')), ('explain_here', dict(note='x')), ('list_versions', dict(jid=pane.jid))):
         assert pane.tools[name](**args)['error'] == 'mode_off'
 
@@ -121,16 +121,16 @@ def test_the_context_knows_the_page_on_screen(pane):
     assert learn_view(ws) == (None, None, '')
     _show(pane, f'/w/{j}/1')
     assert learn_view(ws) == (pane.vault, None, f'/w/{j}/1')
-    from leela.blocks.agent.ai import Assistant
-    text = Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws))
+    from leela.blocks.learn.tools import learn_context
+    text = learn_context(SimpleNamespace(mode='learn', ws=ws))
     step = lr.journey(j).steps[1]['slug']
     assert 'Step 2 of' in text and (lr.concept(step)['name']) in text and 'explain_here' in text and engine.RULE in text and len(text) <= 1200
     _show(pane, '/graph')
-    assert 'the graph page' in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws))
+    assert 'the graph page' in learn_context(SimpleNamespace(mode='learn', ws=ws))
     ws.open_walk(pane.vault, j)
-    assert f'({j})' in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws)), 'a walk tab with no saved page still gives its walk'
+    assert f'({j})' in learn_context(SimpleNamespace(mode='learn', ws=ws)), 'a walk tab with no saved page still gives its walk'
     ws.tabs.clear()
-    assert 'On screen' not in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws))
+    assert 'On screen' not in learn_context(SimpleNamespace(mode='learn', ws=ws))
 
 
 def test_explain_here_gives_the_agent_the_step_data_and_makes_no_model_call(pane):
@@ -161,7 +161,7 @@ def test_explain_here_inside_a_real_turn_returns_with_the_quote_and_level(pane, 
     be = install(ws, [Step(text='Explaining.', tool=('explain_here', dict(note='I do not get this')))], token_delay=0, spec=WIDE)
     thread = ws.threads.active
     monkeypatch.setattr(thread.ai, 'refresh', lambda: thread.ai._forget(files=False))
-    thread.set_learn_mode(True)
+    thread.set_mode('learn')
     seen, real = [], be._tool
     def tool(name):
         f = real(name)

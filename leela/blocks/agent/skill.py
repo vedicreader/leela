@@ -98,8 +98,10 @@ def _tools(ai):
     "Tool names by group: what this session offers now, then the rest Leela can offer. Each offered tool's schema says what it does."
     from .ai import HIDDEN
     now = {t.__name__ for t in ai._catalog_view.tools} if getattr(ai, '_tools', None) is not None else set()   # never rebuild mid-turn
-    own = {t.__name__: why for ts, why in ((ai._news_toolset, 'while a feed is followed'), (ai._lesson_toolset, 'while a lesson tab is active'),
-           (ai._learn_toolset, 'while Learn mode is on'), (ai._session_toolset, ''), (ai._video_toolset, '')) for t in ts}
+    from ..modes.modes import get_mode
+    kinds = [(ai._news_toolset, 'while a feed is followed'), (ai._lesson_toolset, 'while a lesson tab is active'),
+             *((ts, f'while {get_mode(m).title} mode is on') for m, ts in ai._mode_toolsets.items()), (ai._session_toolset, ''), (ai._video_toolset, '')]
+    own = {t.__name__: why for ts, why in kinds for t in ts}
     grp = lambda n: 'leela' if n in own else group_of(n, 'agent')
     def row(ns): return '; '.join((f'{w}: ' if w else '') + ', '.join(f'`{n}`' for n in sorted(ns) if own.get(n, '') == w)
                                   for w in sorted({own.get(n, '') for n in ns}))   # a condition is said once, not after each tool

@@ -200,7 +200,7 @@ def _create(s, monkeypatch, **kw):
     from tools.s2_native_pilot import PLAN
     ws = s['ws']
     monkeypatch.setattr(tools, 'learn_store', lambda ws, vault=None, write=False: ('test', s['lr']))
-    ws.ai.learn_mode = True
+    ws.ai.mode = 'learn'
     def oneshot(prompt, sp, max_tokens, deadline=None):
         s['calls'].append((prompt, sp))
         if 'You plan a learning path' in sp: return PLAN

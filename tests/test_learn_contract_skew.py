@@ -52,9 +52,9 @@ def test_the_contract_check_names_the_gap(skew):
 def test_learn_mode_refuses_with_the_line(ws, skew, monkeypatch):
     install(ws, [], spec=WIDE)
     t = ws.threads.active
-    with pytest.raises(TurnError) as e: t.set_learn_mode(True)
-    assert e.value.code == 'contract_missing' and skew in e.value.message and not t.ai.learn_mode
-    assert t.set_learn_mode(False)['ok']
+    with pytest.raises(TurnError) as e: t.set_mode('learn')
+    assert e.value.code == 'contract_missing' and skew in e.value.message and t.ai.mode == 'code'
+    assert t.set_mode('code')['ok']
 
 def test_open_answers_a_clear_503_with_the_same_line(cl, skew):
     r = cl.post('/learn/abh/open')

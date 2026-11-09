@@ -78,7 +78,7 @@ def test_every_tool_leela_can_offer_is_named_and_the_hidden_one_is_not(ai):
     from shalya.tools import tool_groups
     from leela.blocks.agent.ai import HIDDEN
     t = _text(ai)
-    own = [f.__name__ for ts in (ai._news_toolset, ai._lesson_toolset, ai._learn_toolset, ai._session_toolset, ai._video_toolset) for f in ts]
+    own = [f.__name__ for ts in (ai._news_toolset, ai._lesson_toolset, ai._mode_toolsets['learn'], ai._session_toolset, ai._video_toolset) for f in ts]
     names = {*tool_groups(), *(f.__name__ for f in ai._plain), *own} - HIDDEN
     assert not [n for n in names if f'`{n}`' not in t]
     assert 'while a feed is followed: `news_feeds`, `news_follow`' in t and 'while Learn mode is on: `add_source`, `change_walk`' in t and '`explain_here`' in t and '`user_steering`' not in t

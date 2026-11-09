@@ -14,7 +14,7 @@ def learn_thread(ws, monkeypatch):
     install(ws, [], spec=WIDE)
     thread = ws.threads.active
     monkeypatch.setattr(thread.ai, 'refresh', lambda: thread.ai._forget(files=False))
-    monkeypatch.setattr(thread.ai, 'learn_context', lambda: 'Learn mode.' if thread.ai.learn_mode else '')
+    monkeypatch.setattr(thread.ai, 'mode_context', lambda: 'Learn mode.' if thread.ai.mode == 'learn' else '')
     return thread
 
 
@@ -22,13 +22,13 @@ def test_toggle_keeps_assistant_history_and_contract_tools(learn_thread):
     t = learn_thread; ai, history = t.ai, t.ai.history
     names = {name for name, _ in engine.TOOLS}
     assert not names.intersection(f.__name__ for f in ai.tools)
-    t.set_learn_mode(True)
+    t.set_mode('learn')
     assert t.ai is ai and ai.history is history
     assert names <= {f.__name__ for f in ai.tools}
-    for f in ai._learn_toolset:
+    for f in ai._mode_toolsets['learn']:
         assert list(inspect.signature(f).parameters) == list(dict(engine.TOOLS)[f.__name__])
-    stale = ai._learn_toolset[0]
-    t.set_learn_mode(False)
+    stale = ai._mode_toolsets['learn'][0]
+    t.set_mode('code')
     assert t.ai is ai and ai.history is history
     assert not names.intersection(f.__name__ for f in ai.tools)
     r = stale(goal='fractions')
@@ -42,38 +42,38 @@ def test_toggle_refuses_accepted_work(learn_thread, monkeypatch, held):
     if held == 'queued': t.runner._pending['queued'] = {}
     if held == 'approval': monkeypatch.setattr(type(t.approvals), 'pending', property(lambda self: object()))
     try:
-        with pytest.raises(TurnError, match='Learn mode'): t.set_learn_mode(True)
-        assert not t.ai.learn_mode
+        with pytest.raises(TurnError, match='mode cannot change'): t.set_mode('learn')
+        assert t.ai.mode == 'code'
     finally: t.runner._pending.clear()
 
 
 def test_toggle_refuses_an_abhyasa_without_the_contract(learn_thread, monkeypatch):
     t = learn_thread
     monkeypatch.setattr('leela.blocks.learn.tools.contract_missing', lambda: ['abhyasa.agent_tools.TOOLS'])
-    with pytest.raises(TurnError) as e: t.set_learn_mode(True)
+    with pytest.raises(TurnError) as e: t.set_mode('learn')
     assert e.value.code == 'contract_missing' and 'abhyasa.agent_tools.TOOLS' in e.value.message
-    assert not t.ai.learn_mode and not t.ai.saved_learn_mode(t.id)
-    assert t.set_learn_mode(False)['ok']   # turning it off is never refused
+    assert t.ai.mode == 'code' and t.ai.saved_mode(t.id) == 'code'
+    assert t.set_mode('code')['ok']   # turning it off is never refused
 
 
 def test_refresh_failure_rolls_back(learn_thread, monkeypatch):
     t = learn_thread; before = list(t.ai.tools)
     def broken(): raise RuntimeError('refresh failed')
     monkeypatch.setattr(t.ai, 'refresh', broken)
-    with pytest.raises(RuntimeError, match='refresh failed'): t.set_learn_mode(True)
-    assert not t.ai.learn_mode
+    with pytest.raises(RuntimeError, match='refresh failed'): t.set_mode('learn')
+    assert t.ai.mode == 'code'
     assert t.ai.tools == before
-    assert not t.ai.saved_learn_mode(t.id)
+    assert t.ai.saved_mode(t.id) == 'code'
 
 
 def test_mode_restores_for_resumed_conversation(learn_thread, monkeypatch):
     t = learn_thread
-    t.set_learn_mode(True)
-    t.ai.learn_mode = False
+    t.set_mode('learn')
+    t.ai.mode = 'code'
     monkeypatch.setattr(t.ai.__class__.__mro__[1], 'resume_session', lambda self, *a, **kw: None)
     t.ai.resume_session(t.id)
-    assert t.ai.learn_mode and t.ai.saved_learn_mode(t.id)
-    t.set_learn_mode(False)
+    assert t.ai.mode == 'learn' and t.ai.saved_mode(t.id) == 'learn'
+    t.set_mode('code')
 
 
 @pytest.mark.parametrize('active,on,status', [(True, True, 'ok'), (False, True, 'ok'), (True, False, 'ok'), (True, True, 'error'), (True, True, 'stopped')])
@@ -84,7 +84,7 @@ def test_create_walk_starts_cancellable_job_with_tab(ws, monkeypatch, active, on
     calls, seen = [], []
     monkeypatch.setattr(ws.fs_watch, 'announce_tab', lambda *a: seen.append(a), raising=False)
     thread = ws.threads.active
-    ai = SimpleNamespace(ws=ws, learn_mode=True, session_id=thread.id if active else 'other-thread')
+    ai = SimpleNamespace(ws=ws, mode='learn', session_id=thread.id if active else 'other-thread')
     def ask(prompt, sp='', *args, **kwargs):
         calls.append((prompt, kwargs))
         return 'a plan'
@@ -94,7 +94,7 @@ def test_create_walk_starts_cancellable_job_with_tab(ws, monkeypatch, active, on
         assert isinstance(settings, dict) and callable(guard)
         assert not stopping(); progress('planning', .5)
         assert ask(goal) == 'a plan'
-        ai.learn_mode = on
+        ai.mode = 'learn' if on else 'code'
         if status != 'ok': return engine.failed('stopped' if status == 'stopped' else 'model_refused', 'No answer.')
         return engine.result('ok', walk='walk-test', data={'title': goal})
     ai.spec_or_none = lambda job='turn': None
@@ -124,7 +124,7 @@ def test_a_walk_that_cannot_be_opened_stays_a_completed_job(ws, monkeypatch, cap
     lr = temp_learning()
     ref = ws.vaults.learn()
     monkeypatch.setattr(ws.vaults, 'memory', lambda name: SimpleNamespace(_store=lambda shelf: lr.v))
-    ai = SimpleNamespace(ws=ws, learn_mode=True, session_id=ws.threads.active.id, oneshot=lambda *a, **k: 'a plan', spec_or_none=lambda job='turn': None)
+    ai = SimpleNamespace(ws=ws, mode='learn', session_id=ws.threads.active.id, oneshot=lambda *a, **k: 'a plan', spec_or_none=lambda job='turn': None)
     monkeypatch.setattr(engine, 'create_walk', lambda lr, ask, goal, **kw: engine.result('ok', walk='walk-test', data={'title': goal}))
     def boom(*a, **k): raise OSError('disk full')
     monkeypatch.setattr(ws, 'open_walk' if fails == 'open' else 'save', boom)
@@ -143,7 +143,7 @@ def test_a_walk_that_cannot_be_opened_stays_a_completed_job(ws, monkeypatch, cap
 def test_the_tools_call_the_engine_with_the_contract_arguments(ws, monkeypatch):
     lr = temp_learning()
     monkeypatch.setattr(ws.vaults, 'memory', lambda name: SimpleNamespace(_store=lambda shelf: lr.v))
-    ai = SimpleNamespace(ws=ws, learn_mode=True, session_id='s', oneshot=lambda *a, **k: 'x', spec_or_none=lambda job='turn': None)
+    ai = SimpleNamespace(ws=ws, mode='learn', session_id='s', oneshot=lambda *a, **k: 'x', spec_or_none=lambda job='turn': None)
     got = {}
     for name in ('walk_state', 'record_attempt', 'note_confusion'):
         monkeypatch.setattr(engine, name, lambda lr, _n=name, **kw: got.setdefault(_n, kw) and engine.result('ok'))

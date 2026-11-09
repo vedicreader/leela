@@ -103,7 +103,9 @@ SWEEP = 10.   # seconds between two looks at the result of each open lesson
 def connect(app, ctx):
     from .walk import connect as connect_walk; connect_walk(app, ctx)
     connect_speech(app, ctx)
-    from .tools import contract_missing, missing_line
+    from .mode import LEARN
+    from .tools import contract_missing, missing_line, register_learn_jobs
+    register_learn_jobs(ctx.session)
     if missing := contract_missing(): log.warning('Learn is off: %s', missing_line(missing))
     elif rows := learn_rows(): register_section('learn', rows, 'abhyasa')
     filed = {}   # lesson path -> the `result_sig` last filed, or found filed already

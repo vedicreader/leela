@@ -18,6 +18,7 @@ GET /present/img/{h}
 GET /present/room
 GET /present/stage.js
 GET /speech/events/{did}
+GET /workspace/mode
 GET,POST /
 GET,POST /agent/approval
 GET,POST /agent/approval/always
@@ -445,6 +446,7 @@ Mount /leestatic
 POST /agent/learn-mode
 POST /agent/learned/compact
 POST /agent/learning
+POST /agent/mode
 POST /agent/shell-run
 POST /browser/external
 POST /dev/start
@@ -487,6 +489,8 @@ POST /vault/shelf/drop
 POST /vault/shelf/move
 POST /vault/unwatch
 POST /vault/watch
+POST /workspace/layout
+POST /workspace/mode
 WebSocketRoute /browser/ws
 WebSocketRoute /drive/ws
 WebSocketRoute /nb/comm/ws

@@ -66,8 +66,9 @@ PAGE_COMMANDS = {'calm': 'show only text, each stretch of tool calls folded into
 def connect(app, ctx):
     rt = app.route
     ws = ctx.session
-    from ..learn.tools import register_learn_jobs, contract_missing
-    register_learn_jobs(ws)
+    from ..learn.tools import contract_missing
+    from ..modes.app import refusal
+    from ..modes.modes import cell_anchor
     def _doc(): return ctx.docs.current()
     async def api(path, params=None, timeout=15):
         try: client = await ws.runtime()
@@ -191,21 +192,26 @@ def connect(app, ctx):
         active = ws.threads.active
         # `threads` hides an empty conversation, so `live` is what says a pane's own one still exists
         return {'active': active.id, 'threads': ws.threads.dicts(), 'live': [r.id for r in ws.threads.rows()],
-                'attention': ws.threads.attention(), 'learn_modes': {t.id: bool(getattr(t.ai, 'learn_mode', False)) for t in ws.threads.rows()},
+                'attention': ws.threads.attention(), 'learn_modes': {t.id: getattr(t.ai, 'mode', 'code') == 'learn' for t in ws.threads.rows()},
+                'modes': {t.id: getattr(t.ai, 'mode', 'code') for t in ws.threads.rows()}, 'mode': ws.mode,
                 'learn_missing': contract_missing()}
+    async def _set_mode(mode, target):
+        try: return await off_loop(_thread(target).set_mode, mode)
+        except TurnError as e: return refusal(e)
+        except Exception as e: return _thread_error(e)
+    @rt('/agent/mode', methods=['POST'])
+    async def agent_mode(req):
+        try: d = await req.json()
+        except ValueError: d = None
+        if not isinstance(d, dict) or not isinstance(d.get('mode'), str): return JSONResponse(dict(ok=False, code='invalid_request', message='mode must be a string'), status_code=400)
+        return await _set_mode(d['mode'], d.get('thread', ''))
     @rt('/agent/learn-mode', methods=['POST'])
     async def agent_learn_mode(req):
-        try:
-            d = await req.json()
-            if not isinstance(d, dict) or not isinstance(d.get('on'), bool):
-                return JSONResponse(dict(ok=False, code='invalid_request', message='on must be a boolean'), status_code=400)
-            thread = _thread(d.get('thread', ''))
-            return await off_loop(thread.set_learn_mode, d['on'])
-        except TurnError as e:
-            if e.code != 'thread_busy': return _thread_error(e)
-            from abhyasa.agent_tools import failed
-            return JSONResponse({**failed(e.code, e.message, extra=('thread_busy',)), **e.dict()}, status_code=409)
-        except Exception as e: return _thread_error(e)
+        try: d = await req.json()
+        except ValueError: d = None
+        if not isinstance(d, dict) or not isinstance(d.get('on'), bool):
+            return JSONResponse(dict(ok=False, code='invalid_request', message='on must be a boolean'), status_code=400)
+        return await _set_mode('learn' if d['on'] else 'code', d.get('thread', ''))
     def _optin(names):
         "Opt-in group names as a tuple, checked against what this shalya offers; None stands for the workspace default."
         if names is None: return None
@@ -1052,6 +1058,9 @@ def connect(app, ctx):
         # and a switch in another tab must not move this turn
         try: runner = _thread(d.get('thread')).runner
         except Exception as e: return _thread_error(e)
+        if getattr(runner.ai, 'mode', 'code') == 'code' and nb is not None:
+            ws.note_cell(d.get('cell'))
+            if anchor := cell_anchor(ws): context = '\n'.join(x for x in (context, anchor) if x)
         try: grounding = await off_loop(ws.prepare_turn, attachments, context, runner.ai, context_path)
         except Exception as e:
             # a withheld attachment names its chip, so the prompt bar paints that one red and keeps the prompt

@@ -369,7 +369,7 @@ def register_learn_jobs(ws):
             if r['status'] == 'ok':
                 from ...workspace import walk_path
                 r['data']['tab'] = dict(kind='learn', vault=r['vault'], walk=r['walk'], path=walk_path(r['walk']))
-                if ws.threads.active_id == job.params['thread'] and ai.learn_mode: show_walk(ws, r['vault'], r['walk'])
+                if ws.threads.active_id == job.params['thread'] and ai.mode == 'learn': show_walk(ws, r['vault'], r['walk'])
                 ws.fs_watch.announce_learn(r['walk'])
             if r['status'] == 'ok' and job.params.get('research'):
                 try: r['data']['research'] = run_gather(ai, lr, r['walk'], Polled(lambda: ws.jobs.stopping(job.id))).why
@@ -422,6 +422,16 @@ def start_learn_job(ai, goal, kind='learn_walk', lr=None, **params):
     return result('ok', operation_id=job.id, vault=vault, data=dict(job=job.id))
 
 
+def learn_context(ai):
+    "The Learn mode block of the system prompt: the learner, the walk and the page on screen."
+    from abhyasa.agent_tools import learner_context
+    from abhyasa.learner import use_settings
+    vault, walk, page = learn_view(ai.ws)
+    try: _, lr = learn_store(ai.ws, vault)
+    except (KeyError, FileNotFoundError): return 'Learn mode. The learning vault is unavailable. Attach it before continuing.'
+    with use_settings(learn_settings(ai.ws)): return learner_context(lr, walk, page=page)
+
+
 def learn_tools(ai):
     if contract_missing(): return []
     import inspect
@@ -433,8 +443,10 @@ def learn_tools(ai):
     extra = dict(record_attempt=lambda: dict(ask=learn_ask(ai, 'grade'), **cfg()), walk_state=cfg, add_source=cfg, explain_here=cfg)
     def wrap(name, args):
         def call(**kwargs):
-            if not ai.learn_mode:
-                return engine.failed('mode_off', 'Turn Learn mode on before using learning tools.', extra=('mode_off',))
+            if ai.mode != 'learn':
+                r = engine.failed('mode_off', 'Turn Learn mode on before using learning tools.', extra=('mode_off',))
+                r['data'].update(mode=ai.mode, needs='learn')
+                return r
             try:
                 if name == 'create_walk': return start_learn_job(ai, kwargs['goal'], research=research_on(ai.ws) and str(kwargs.get('research') or 'yes').lower() not in ('no', 'false', '0'))
                 if name == 'change_walk': return start_learn_job(ai, kwargs['jid'], 'learn_change', instruction=kwargs['instruction'])

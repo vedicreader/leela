@@ -114,7 +114,7 @@ class Thread:
         self.moved = settle(self.ai)
         if hasattr(self.ai, 'host'): self.approvals.host = self.ai.host
         self.id = getattr(self.ai, 'session_id', '') or f'thread_{uuid.uuid4().hex[:12]}'
-        if hasattr(self.ai, 'saved_learn_mode'): self.ai.learn_mode = self.ai.saved_learn_mode(self.id)
+        if hasattr(self.ai, 'saved_mode'): self.ai.mode = self.ai.saved_mode(self.id, self._start_mode())
         self._stop_approvals = self.approvals.listen()
         self.feed = feed or Feed(self.id)
         self.ai.on_watch = lambda target, log: self.feed.emit('watch', {'target': target, 'log': str(log)})
@@ -147,27 +147,37 @@ class Thread:
         try: self.ai.set_muted(self.muted, self.id); self.mute_problem = ''
         except Exception as e: self.mute_problem = errstr(e)
         return self
-    def set_learn_mode(self, on):
-        from .turns import save_learn_mode
-        from ..learn.tools import contract_missing, missing_line
+    def _start_mode(self):
+        "The mode a conversation with no saved mode starts in: the workspace's, unless that mode's contract fails."
+        from ..modes.modes import get_mode
+        try: m = get_mode(self.workspace.mode)
+        except (KeyError, AttributeError): return 'code'
+        return 'code' if m.contract_check() else m.id
+    def set_mode(self, mode):
+        from .turns import save_mode
+        from ..modes.modes import get_mode
         ai = self.ai
-        if on and (missing := contract_missing()): raise TurnError('contract_missing', f'Learn is off. {missing_line(missing)}', self.id)
+        try: m = get_mode(mode)
+        except KeyError: raise TurnError('invalid_mode', f'There is no mode {mode!r}.', self.id)
+        if missing := m.contract_check():
+            from ..learn.tools import missing_line
+            raise TurnError('contract_missing', f'{m.title} is off. {missing_line(missing)}', self.id)
         with self.runner._lock:
             if ai.busy or self.runner._pending or self.approvals.pending is not None or self.approvals.waiting:
-                raise TurnError('thread_busy', 'Learn mode cannot change during a turn, queued message or approval.', self.id)
-            old = ai.learn_mode
-            if old == on: return dict(ok=True, on=old, thread=self.id)
-            keys = ('_tools', '_skills', '_catalog_view', '_built_mode', '_briefed_mode', '_briefed_lesson', '_briefed_charter', '_briefed_learn')
+                raise TurnError('thread_busy', 'The mode cannot change during a turn, queued message or approval.', self.id)
+            old = ai.mode
+            if old == mode: return dict(ok=True, mode=old, on=old == 'learn', thread=self.id)
+            keys = ('_tools', '_skills', '_catalog_view', '_built_mode', '_briefed_mode', '_briefed_lesson', '_briefed_charter', '_briefed_context')
             saved = {k: getattr(ai, k, None) for k in keys}
             registry = list(ai.registry.tools)
             catalogs, views = dict(ai._catalogs), dict(ai._views)
             backends = [(b, b.sp, b.tools) for b in ai._backends.values()]
-            ai.learn_mode = on
+            ai.mode = mode
             try:
                 ai.refresh()
-                save_learn_mode(ai.cfg, self.id, on)
+                save_mode(ai.cfg, self.id, mode)
             except Exception:
-                ai.learn_mode = old
+                ai.mode = old
                 ai.registry.tools[:] = registry
                 ai._catalogs.clear(); ai._catalogs.update(catalogs)
                 ai._views.clear(); ai._views.update(views)
@@ -179,11 +189,12 @@ class Thread:
                         b.sp, b.tools = sp, tools
                         problems.append(errstr(e))
                 if problems:
-                    ai._briefed_learn = None
-                    raise RuntimeError('Learn mode was restored, but backend refresh failed: ' + '; '.join(problems))
+                    ai._briefed_context = None
+                    raise RuntimeError('The mode was restored, but backend refresh failed: ' + '; '.join(problems))
                 raise
-            self.feed.emit('learn_mode', dict(on=on))
-            return dict(ok=True, on=on, thread=self.id)
+            self.feed.emit('mode', dict(mode=mode))
+            self.feed.emit('learn_mode', dict(on=mode == 'learn'))
+            return dict(ok=True, mode=mode, on=mode == 'learn', thread=self.id)
     def meta(self):
         "The sidecar row, given the name `sessions()` derives while nothing has been summarised yet."
         ai = self.ai
@@ -204,7 +215,7 @@ class Thread:
                 'created': self.created, 'touched': self.touched, 'unread': self.unread,
                 'branch': getattr(self.ai, 'current_branch_id', '') or 'main',
                 'warm': bool(getattr(self.ai, 'warm', False)), 'optin': list(getattr(self.ai, 'optin', ()) or ()),
-                'profile': getattr(self.ai, 'profile', 'full'), 'learn_mode': bool(getattr(self.ai, 'learn_mode', False)),
+                'profile': getattr(self.ai, 'profile', 'full'), 'mode': getattr(self.ai, 'mode', 'code'), 'learn_mode': getattr(self.ai, 'mode', 'code') == 'learn',
                 'muted': bool(meta.get('muted', self.muted)), 'problem': self.mute_problem}
     def close(self):
         "Close every part, and report what refused rather than skipping the rest."
