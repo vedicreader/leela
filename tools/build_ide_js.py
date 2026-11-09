@@ -53,7 +53,7 @@ LAYERS = {
 
 #: copy -> the one module it is, for a page outside the IDE that loads that module alone. The wheel ships no block module.
 #: modules a Learn surface loads by itself, so no bundle names them.
-SERVED = {'blocks/learn/learn-demo.js'}
+SERVED = {'blocks/learn/learn-demo.js', 'blocks/learn/home.js', 'blocks/learn/dictate.js'}
 
 ALONE = {'lee-pane.js': 'blocks/learn/pane.js', 'lee-slides.js': 'blocks/nb/slides.js'}
 
