@@ -357,3 +357,12 @@ Open:
 
 - `/learn/pick` opens a macOS folder chooser. It needs a loopback client and passes both guards, so only a Leela page can ask.
 - The GET routes that start work (`/w/{jid}/gather`, `/improve`, `/replan`, `/s/{sid}/end`, `/w/{jid}/{i}/done`) are safe from other sites by the guard. A page of Leela itself can still call them.
+
+## Names
+
+- `learn`: the Leela block (`leela/blocks/learn`), the settings section, and the tab kind. Everything of Leela is spelled `learn`.
+- `abh`: the URL base `/learn/abh` and the `abh.css` and `abh.js` assets that carry Abhyasa pages inside a Leela tab.
+- `abhyasa`: the Python package that teaches. Leela imports it by name and never copies it.
+- `walk`: an Abhyasa walk, the path of steps through one goal, and the pages that show it (`/w/{jid}/{i}`).
+- `hosted`: Abhyasa in hosted mode, where Leela serves its routes inside its own app and owns the guard, the settings and the keys.
+- `native`: the plan docs and test names for this work (`native-learn`), where Learn is a part of Leela and not a separate window.
