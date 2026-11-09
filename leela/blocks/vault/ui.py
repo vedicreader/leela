@@ -83,6 +83,7 @@ def _summarise(result, mx=40):
 
 #: Job kind -> function of the job dict and its result that returns the finished card's actions and error lines.
 JOB_ACTIONS = {}
+JOB_TITLES = {'learn_walk': 'Making your walk', 'learn_change': 'Changing your walk', 'learn_gather': 'Finding sources'}   # kind -> title; a target that is a walk id is not shown
 
 def register_job_actions(kind, fn):
     "Draw `fn(job, result)` in the card of a finished job of `kind`."
@@ -92,13 +93,15 @@ def job_card(job):
     d = job.dict()
     active = d['active']
     attrs = dict(hx_get=f"/jobs/{d['id']}", hx_trigger=f'load delay:{POLL_MS}ms', hx_swap='outerHTML') if active else {}
-    body = [Span(d['kind'], cls='lee-job-kind'), Span(d['status'], cls=f"lee-job-status {d['status']}"),
-        Span(d['target'] or '', cls='lee-job-target', title=d['target'] or '')]
+    plain = d['kind'] in JOB_TITLES
+    target = '' if d['kind'] in ('learn_change', 'learn_gather') else d['target'] or ''
+    body = [Span(JOB_TITLES.get(d['kind'], d['kind']), cls='lee-job-kind'), Span(d['status'], cls=f"lee-job-status {d['status']}"),
+        Span(target if plain else d['target'] or '', cls='lee-job-target', title=target if plain else d['target'] or '')]
     if active:
         body.append(Progress(value=str(round(d['progress'] or 0, 3)), max='1', cls='lee-job-bar'))
         if d['current']: body.append(Span(d['current'], cls='lee-job-current'))
         if d['cancellable']:
-            body.append(Form(Button('cancel', cls='lee-btn warn', data_job_cancel=d['id']), hx_post=f"/jobs/{d['id']}/cancel",
+            body.append(Form(Button('Stop' if plain else 'cancel', cls='lee-btn warn', data_job_cancel=d['id']), hx_post=f"/jobs/{d['id']}/cancel",
                              hx_target='closest .lee-job', hx_swap='outerHTML'))
         else: body.append(Span('committed documents are searchable while this runs', cls='lee-job-note'))
     if d['error']:

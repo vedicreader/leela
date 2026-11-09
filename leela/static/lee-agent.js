@@ -1091,8 +1091,13 @@ function restoreAgentLive() {
   lee.agentLive = null; lee.agentView = 'live';
   stickAgentLog(log, true);
 }
+const plainAsk = text => {
+  const t = String(text || ''), m = [...t.matchAll(/<user-request>\n?([\s\S]*?)\n?<\/user-request>/g)].at(-1);
+  return (m ? m[1] : t).replace(/<\/?user-request>/g, ' ')
+    .replace(/<(system-reminder|notebook|screen|background-results|watch-results|sent_mid_turn)\b[^>]*>[\s\S]*?<\/\1>/g, ' ').trim();
+};
 function userMessage(text) {
-  const raw = String(text || '').trim(), long = raw.length > 900 || raw.split('\n').length > 14;
+  const raw = plainAsk(text), long = raw.length > 900 || raw.split('\n').length > 14;
   const card = document.createElement('section'); card.className = 'lee-user-message';
   const head = document.createElement('header');
   head.innerHTML = '<strong>You</strong><span>request</span>'; card.appendChild(head);
@@ -1148,7 +1153,7 @@ function agentTurnCard({prompt = '', model = '', route = '', turnId = ''} = {}) 
     `<span class="lee-agent-turn-title"></span><span class="lee-agent-turn-meta">${esc(meta)}</span></header>` +
     `<div class="lee-agent-turn-body"></div>`;
   // textContent, not the template: a prompt is whatever was typed
-  $('.lee-agent-turn-title', card).textContent = String(prompt).replace(/\s+/g, ' ').trim() || '(no prompt)';
+  $('.lee-agent-turn-title', card).textContent = plainAsk(prompt).replace(/\s+/g, ' ').trim() || '(no prompt)';
   return card;
 }
 const turnBody = card => card && $('.lee-agent-turn-body', card);
@@ -1603,6 +1608,7 @@ function paintAgentThreads(d) {
   const gone = !lee.agentThread || (d.live && !d.live.includes(lee.agentThread));
   lee.agentThreadRows = rows; if (gone) lee.agentThread = d.active || '';
   if (d.learn_modes && lee.agentThread in d.learn_modes) lee.agentLearnMode = d.learn_modes[lee.agentThread];
+  if (d.modes?.[lee.agentThread]) lee.agentMode = d.modes[lee.agentThread];
   if (d.learn_missing) lee.agentLearnMissing = d.learn_missing;
   paintAgentLearn(rows.find(t => t.id === lee.agentThread));
   const count = $('#agentthreadcount'); if (count) count.textContent = String(rows.length);
@@ -1620,7 +1626,7 @@ function paintAgentThreads(d) {
       const live = t.id === d.active;
       return `<article class="lee-thread-card${live ? ' active' : ''}${t.state === 'waiting' ? ' wants' : ''}"` +
         ` role="option" aria-selected="${live}" tabindex="0" data-thread="${esc(t.id)}">` +
-        `<header><strong>${esc(threadName(t))}</strong>${t.warm ? '<span class="lee-thread-warm" title="seeded from dhrona\'s rounds">·warm</span>' : ''}` +
+        `<header><strong>${esc(threadName(t))}</strong><span class="lee-thread-warm" data-thread-mode="${esc(t.mode || 'code')}">${esc(modeTitle(t.mode || 'code'))}</span>${t.warm ? '<span class="lee-thread-warm" title="seeded from dhrona\'s rounds">·warm</span>' : ''}` +
         (t.optin || []).map(o => `<span class="lee-thread-warm" title="opted into ${esc(o)}">` + '·' + esc(o) + '</span>').join('') +
         (t.profile === 'small' ? '<span class="lee-thread-warm" title="small profile: 14 tools and one screen, for a local or small-window model">·small</span>' : '') +
         `<span class="lee-thread-state ${esc(t.state)}">${esc(t.state)}</span></header>` +
@@ -2001,20 +2007,43 @@ function agentMoreActive() {
     diff(agentFullEnabled(), agentHead().profile === 'full', 'full briefing'),
     ...AGENT_OPTINS.map(n => diff(agentOptinOn(n), agentOptinDefault(n), n))].filter(Boolean);
 }
+const modeTitle = m => ({code: 'Code', learn: 'Learn'})[m] || (m ? m[0].toUpperCase() + m.slice(1) : 'Code');
+const AGENT_STARTERS = ['Teach me something new', 'Explain what is on my screen', 'Quiz me on what I learned today'];
 function paintAgentLearn(thread) {
   const more = $('#agentmore'); if (!more) return;
-  let button = $('#agentlearn');
-  if (!button) {
-    button = document.createElement('button'); button.id = 'agentlearn'; button.type = 'button';
-    button.className = more.className; button.onclick = () => leeAgentLearnToggle(); more.before(button);
+  const old = $('#agentlearn'); if (old) old.hidden = true;
+  let tag = $('#agentmode');
+  if (!tag) { tag = document.createElement('span'); tag.id = 'agentmode'; tag.className = 'lee-agent-mode'; more.before(tag); }
+  if (thread) { lee.agentMode = thread.mode || (thread.learn_mode ? 'learn' : 'code'); lee.agentLearnMode = lee.agentMode === 'learn'; }
+  else if (lee.agentLearnMode && !lee.agentMode) lee.agentMode = 'learn';
+  lee.agentMode ||= 'code';
+  tag.textContent = modeTitle(lee.agentMode); tag.dataset.mode = lee.agentMode; tag.title = 'The mode of this conversation';
+  paintAgentStarters();
+}
+/* A Learn conversation starts from three prompts that fill the box and wait; the coding chore card belongs to
+   Code. CSS hides the starters once a turn card is in the log. */
+function paintAgentStarters() {
+  const log = $('#agentlog'); if (!log) return;
+  const learn = lee.agentMode === 'learn';
+  $$('[data-setup]', log).forEach(e => { e.hidden = learn; });
+  const welcome = $('.lee-agent-welcome', log); if (welcome) welcome.hidden = learn && ![...welcome.children].some(e => !e.hidden);
+  let box = $('.lee-agent-starters', log);
+  if (!learn) { if (box) box.remove(); return; }
+  if (box) return;
+  box = document.createElement('div'); box.className = 'lee-agent-starters'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Ways to start');
+  for (const text of AGENT_STARTERS) {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'lee-btn'; b.textContent = text;
+    b.onclick = () => { const p = $('#agentprompt'); if (!p) return; p.value = text; p.dispatchEvent(new Event('input', {bubbles: true})); p.focus(); };
+    box.appendChild(b);
   }
-  if (thread) lee.agentLearnMode = !!thread.learn_mode;
-  const busy = thread ? thread.state === 'working' || thread.state === 'waiting' : !!lee.agentBusy;
-  const missing = !lee.agentLearnMode && lee.agentLearnMissing?.length ? lee.agentLearnMissing : null;
-  button.disabled = busy || !!missing; button.textContent = busy ? 'Learn: busy' : `Learn: ${lee.agentLearnMode ? 'on' : 'off'}`;
-  button.setAttribute('aria-pressed', String(!!lee.agentLearnMode));
-  button.title = busy ? 'Wait for the turn, queue and approval to finish.'
-    : missing ? `Learn needs a newer Abhyasa: this install lacks ${missing.join(', ')}.` : 'Change learning tools in this conversation';
+  log.appendChild(box);
+}
+{
+  const log = $('#agentlog');
+  if (log && !log._leeStarters) {
+    log._leeStarters = true;
+    new MutationObserver(() => { if (lee.agentMode === 'learn' && !$('.lee-agent-starters', log)) paintAgentStarters(); }).observe(log, {childList: true});
+  }
 }
 async function leeAgentLearnToggle() {
   try {
@@ -2711,6 +2740,9 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
     ['undo', 'lee-btn warn', 'Restore files', !!capabilities.undoable,
      `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn${gitWritesNote(capabilities.git)}`,
      gone ? unheld : 'this turn made no reversible file or git changes']];
+  // a teaching turn that touched no file has nothing to restore and no memory worth editing
+  const bare = lee.agentMode && lee.agentMode !== 'code' && !files.length;
+  if (bare) controls.splice(0, controls.length, ...controls.filter(c => !['revise', 'undo'].includes(c[0])));
   const off = controls.filter(c => !c[3]);
   bar.dataset.turn = turnId;
   bar.dataset.revisable = capabilities.revisable ? '1' : '';
@@ -3771,7 +3803,7 @@ async function sendAgent(force = false) {
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
   status('sending…', 'busy');
   let accepted, refused;
-  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread}); }
+  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread, ...(window.leeCellId?.() ? {cell: window.leeCellId()} : {})}); }
   catch (e) { refused = e; }
   try {
     await agentPicksSettled();    // a thread switch in flight decides whose box the prompt goes back to
@@ -3884,7 +3916,7 @@ function agentListen(thread, since, card = null) {
     // and the throw was swallowed after `lastSeq` had already advanced, losing the prompt for good
     timelineRoot.parentElement.insertBefore(userMessage(d.text || ''), timelineRoot);
     const title = $('.lee-agent-turn-title', card);
-    if (title && title.textContent === '(no prompt)') title.textContent = String(d.text || '').replace(/\s+/g, ' ').trim();
+    if (title && title.textContent === '(no prompt)') title.textContent = plainAsk(d.text).replace(/\s+/g, ' ').trim();
     stickAgentLog(log);
   }));
 

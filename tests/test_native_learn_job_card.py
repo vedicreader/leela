@@ -37,3 +37,9 @@ def test_the_learn_block_registers_its_card_actions(ws):
     from leela.app import ide_app
     ide_app(ws)
     assert ui.JOB_ACTIONS['learn_walk'] is walk_job_actions
+
+
+def test_learn_job_cards_use_plain_titles_and_a_stop_button():
+    c = _card(kind="learn_change", target="w-123", active=True, status="running", progress=.5, current="Reading the idea", cancellable=True)
+    assert "Changing your walk" in c and "learn_change" not in c and "w-123" not in c and ">Stop<" in c and "Reading the idea" in c
+    assert "Finding sources" in _card(kind="learn_gather", target="w-1") and "Making your walk" in _card()

@@ -316,6 +316,9 @@ function addResponseRevision(out, turnId, raw, capabilities = {}) {
     ['undo', 'lee-btn warn', 'Restore files', !!capabilities.undoable,
      `Restore ${files.length} file${files.length === 1 ? '' : 's'} changed by this turn${gitWritesNote(capabilities.git)}`,
      gone ? unheld : 'this turn made no reversible file or git changes']];
+  // a teaching turn that touched no file has nothing to restore and no memory worth editing
+  const bare = lee.agentMode && lee.agentMode !== 'code' && !files.length;
+  if (bare) controls.splice(0, controls.length, ...controls.filter(c => !['revise', 'undo'].includes(c[0])));
   const off = controls.filter(c => !c[3]);
   bar.dataset.turn = turnId;
   bar.dataset.revisable = capabilities.revisable ? '1' : '';

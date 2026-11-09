@@ -7,12 +7,13 @@ from pathlib import Path
 
 from fastcore.basics import first
 from fastcore.xtras import atomic_save
+from ramabana.history_core import request_body
 
 from ...core.web import diff_payload
 
 __all__ = ['GROUP_LABELS', 'LEELA_TOOLS', 'tool_group', 'tool_schemas', 'tool_preview', 'edit_diffs',
            'activity_changes', 'history_sessions', 'indexed_sessions', 'project_state_context', 'turn_media',
-           'with_capabilities', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
+           'with_capabilities', 'shown_prompt', 'SURFACES_FILE', 'mark_surface', 'surfaces', 'latest_started_here']
 
 def _rows(p):
     try: rows = json.loads(p.read_text()) if p.exists() else {}
@@ -166,13 +167,17 @@ def tool_schemas(agent):
                     'group': tool_group(tool.__name__), 'fields': fields})
     return out
 
+def shown_prompt(prompt):
+    "The person's own words: no `<user-request>` wrapper, context blocks or prompt notices."
+    return request_body(prompt) if isinstance(prompt, (str, list, tuple)) else prompt
+
 def with_capabilities(ai, turns):
     "Each turn with what can still be done to it, so a painted turn carries its own controls."
     out = []
     for turn in turns or ():
         try: caps = ai.turn_capabilities(turn.get('turn_id') or '')
         except Exception: caps = {}
-        out.append({**turn, 'capabilities': caps})
+        out.append({**turn, 'prompt': shown_prompt(turn.get('prompt')), 'capabilities': caps})
     return out
 
 def edit_diffs(a):
