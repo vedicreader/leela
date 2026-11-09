@@ -151,7 +151,7 @@ async function loadSettings(language = '') {
     for (const said of Object.values(d.problems || {})) if (said !== lee.settingsSaid) { lee.settingsSaid = said; status(said, 'err'); }
     lee.workbenchPrefs = d.effective.workbench || {}; lee.debugPrefs = d.effective.debug || {};
     lee.backupPrefs = d.effective.backups || {}; lee.agentPrefs = d.effective.agent || {};
-    lee.prefs = d.effective || {}; lee.appearancePrefs = d.effective.appearance || {};
+    lee.prefs = d.effective || {}; lee.appearancePrefs = d.effective.appearance || {}; lee.learnPrefs = d.effective.learn || {};
     applyEditorPrefs(d.effective.editor || EDITOR_DEFAULTS);
   } catch (_) { applyEditorPrefs(lee.editorPrefs); }
 }

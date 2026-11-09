@@ -8,7 +8,7 @@ from fastcore.all import Path, atomic_save
 from ... import leela_cfg
 from ...core.backups import ENTRIES as BACKUP_ENTRIES, PRECIOUS
 
-__all__ = ['DEFAULT_SETTINGS', 'Settings', 'BrokenSettings', 'user_settings_file', 'WORKSPACE_SETTINGS_FILE',
+__all__ = ['DEFAULT_SETTINGS', 'SECTIONS', 'register_section', 'Settings', 'BrokenSettings', 'user_settings_file', 'WORKSPACE_SETTINGS_FILE',
            'CODE_FOLDER', 'agent_cfg', 'start_folder', 'THEME_DEFAULT', 'theme_backgrounds', 'parse_theme',
            'theme_background', 'saved_theme', 'theme_boot']
 
@@ -126,6 +126,25 @@ _RANGES = {
 USER_ONLY = {'terminal': None, 'agent': ('configFolder',)}
 def _user_only(section, key): return section in USER_ONLY and (USER_ONLY[section] is None or key in USER_ONLY[section])
 
+SECTIONS = {}   # name -> {owner, rows, user_only} for each section a package registered
+#: `learning` is Ramabana's, stored in the same user file; `languages` is the per-language layer.
+_RESERVED = {'languages', 'learning'}
+
+def register_section(name, rows, owner, user_only=True):
+    "Add a package's section: `rows` are dicts of `key`, `dflt`, `kind`, and optionally `lo`, `hi`, `choices`, `label`, `help`, `unit`, `pct`, `more`, `group`."
+    held = dict(owner=owner, rows=[dict(r) for r in rows], user_only=user_only)
+    if name in SECTIONS:
+        if SECTIONS[name] == held: return
+        raise ValueError(f'settings section {name!r} is already registered by {SECTIONS[name]["owner"]}')
+    if name in DEFAULT_SETTINGS or name in _RESERVED: raise ValueError(f'settings section {name!r} is taken')
+    SECTIONS[name] = held
+    DEFAULT_SETTINGS[name] = {r['key']: r['dflt'] for r in rows}
+    for r in rows:
+        if r.get('choices'): _ENUMS[name, r['key']] = set(r['choices'])
+        elif r.get('lo') is not None and (r.get('hi') is not None or r.get('hi_key')):
+            _RANGES[name, r['key']] = (r['lo'], float('inf') if r.get('hi_key') else r['hi'])
+    if user_only: USER_ONLY[name] = None
+
 def _repo_safe(data):
     "A workspace layer without `USER_ONLY` keys, at the top level and in each `languages` block."
     def keep(d): return {s: ({k: v for k, v in vs.items() if not _user_only(s, k)} if isinstance(vs, dict) else vs)
@@ -193,7 +212,7 @@ def _merge(base, overlay):
         if section in out: out[section].update({k: v for k, v in values.items() if k in out[section]})
     return out
 
-def _validated(section, values):
+def _validated(section, values, effective=None):
     if section not in DEFAULT_SETTINGS or not isinstance(values, dict):
         raise ValueError(f'unknown settings section {section!r}')
     out = {}
@@ -212,6 +231,11 @@ def _validated(section, values):
         elif isinstance(default, bool): value = bool(value)
         elif isinstance(default, str): value = str(value)
         out[key] = value
+    merged = {**(effective or DEFAULT_SETTINGS[section]), **out}
+    for r in SECTIONS.get(section, {}).get('rows', []):
+        key, hi_key = r['key'], r.get('hi_key')
+        if hi_key and (key in out or hi_key in out) and not r['lo'] <= merged[key] <= merged[hi_key]:
+            raise ValueError(f'{section}.{key} must be between {r["lo"]} and {hi_key} ({merged[hi_key]})')
     return out
 
 def _names(section, key, value):
@@ -280,14 +304,14 @@ class Settings:
                 'user': user, 'workspace': workspace,
                 'paths': {'user': str(self.user_path), 'workspace': str(self.workspace_path or '')}, 'ignored': self.ignored(),
                 'problems': {k: m for k, p in (('user', self.user_path), ('workspace', self.workspace_path)) if p and (m := _problem(p))},
-                'language': language}
+                'sections': {n: v['rows'] for n, v in SECTIONS.items()}, 'language': language}
     def _path(self, scope, verb):
         "The file `scope` writes to. A workspace scope needs a project open to have one."
         path = {'user': self.user_path, 'workspace': self.workspace_path}.get(scope)
         if path is None: raise ValueError(f'open a project folder before {verb} workspace settings')
         return path
     def save(self, scope, section, values, language=''):
-        values = _validated(section, values)
+        values = _validated(section, values, self.effective(language).get(section))
         if scope == 'workspace': values = {k: v for k, v in values.items() if not _user_only(section, k)}
         path = self._path(scope, 'saving')
         current = self.raw(scope, strict=True)

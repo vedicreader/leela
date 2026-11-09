@@ -94,7 +94,7 @@ async function editorSettings(languageScope = null) {
   const selected = (value, current) => value === current ? ' selected' : '';
   const prefsOf = section => section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
     section === 'workbench' ? lee.workbenchPrefs : section === 'backups' ? (lee.backupPrefs || {}) :
-    section === 'agent' ? (lee.agentPrefs || {}) : lee.debugPrefs;
+    section === 'agent' ? (lee.agentPrefs || {}) : section === 'learn' ? (lee.learnPrefs || {}) : lee.debugPrefs;
   const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
     `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} · ${esc(detail)}</option>`).join('');
@@ -113,6 +113,22 @@ async function editorSettings(languageScope = null) {
     `<button class="lee-theme-mode${m === mode ? ' active' : ''}" data-theme-mode="${m}" aria-pressed="${m === mode}">${m === 'system' ? 'follow system' : m}</button>`).join('');
   const densityButtons = density => THEME_DENSITIES.map(d =>
     `<button class="lee-theme-mode${d === density ? ' active' : ''}" data-theme-density="${d}" aria-pressed="${d === density}">${d}</button>`).join('');
+  const learnControl = r => {
+    const label = esc(r.label) + (r.unit ? ` (${esc(r.unit)})` : ''), help = esc(r.help || ''), v = (lee.learnPrefs || {})[r.key] ?? r.dflt;
+    if (r.kind === 'bool') return check('learn', r.key, label, help);
+    if (r.kind === 'choice') return select('learn', r.key, label, r.choices.map(c => [c, esc(c)]), help);
+    if (r.kind === 'str') return field('learn', r.key, label, `<input class="lee-input" data-setting spellcheck="false" value="${esc(v)}">`, help);
+    return field('learn', r.key, label, `<input class="lee-input" data-setting type="number" min="${r.lo ?? ''}" max="${(r.hi_key ? lee.learnPrefs?.[r.hi_key] : r.hi) ?? ''}" step="${r.kind === 'int' ? 1 : 'any'}" value="${v}">`, help);
+  };
+  const learnPage = () => {
+    const rows = lee.settingsMeta?.sections?.learn; if (!rows) return '';
+    const grid = list => `<div class="lee-settings-grid">${list.map(learnControl).join('')}</div>`;
+    return `<section data-settings-section="learn" hidden><h3>Learn</h3><p>How walks, checks and reviews run. Only your user settings change these; a project's settings file cannot.</p>` +
+      [...new Set(rows.map(r => r.group))].map(g => {
+        const own = rows.filter(r => r.group === g), more = own.filter(r => r.more), main = own.filter(r => !r.more);
+        return `<div class="lee-settings-group"><h4>${esc(own[0].group_label)}</h4>${main.length ? grid(main) : ''}${more.length ? `<details data-learn-more><summary>More</summary>${grid(more)}</details>` : ''}</div>`;
+      }).join('') + `</section>`;
+  };
   const m = modal(`<div class="lee-mhead">settings<span class="sub">user · workspace · language-aware</span></div>` +
     `<div class="lee-settings-scope"><label>Save to <select class="lee-select" data-settings-scope><option value="user"${selected('user',rememberedScope)}>User</option><option value="workspace"${selected('workspace',rememberedScope)}>Workspace</option></select></label>` +
     `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
@@ -122,7 +138,7 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
-    `<button data-settings-page="agent">Agent</button>` +
+    `<button data-settings-page="agent">Agent</button>` + (lee.settingsMeta?.sections?.learn ? `<button data-settings-page="learn">Learn</button>` : '') +
     `<button data-settings-page="environment">Environment</button>` +
     `<button data-settings-page="backups">Backups</button>` +
     `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
@@ -179,7 +195,7 @@ async function editorSettings(languageScope = null) {
     `value="${esc(lee.agentPrefs?.configFolder || '')}">` +
     `<small>Empty means Leela's own config dir, which is where it has always been. ` +
     `Backups and the pre-write copy follow this folder. Conversations already open keep the folder ` +
-    `they started in, so restart Leela after changing it.</small></label></div></section>` +
+    `they started in, so restart Leela after changing it.</small></label></div></section>` + learnPage() +
     `<section data-settings-section="backups" hidden><h3>Backups</h3>` +
     `<p>Dated copies of what cannot be rebuilt: conversations and their titles, branches, notes, ` +
     `workspaces, keymaps and settings. A copy is also taken before anything overwrites the ` +
@@ -212,9 +228,13 @@ async function editorSettings(languageScope = null) {
   api('/lsp/status').then(d=>{const el=$('[data-lsp-state]',m);if(el){el.textContent=d.available?(d.alive?'connected':'available'):'optional';el.title=d.note||'';}}).catch(()=>{});
   await document.fonts.ready;
   previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
-  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{}};
+  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{},learn:lee.learnPrefs||{}};
   const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
   const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});
+    for (const r of lee.settingsMeta?.sections?.learn || []) if (r.hi_key) {
+      const input = $(`[data-pref-section="learn"][data-pref="${r.key}"]`, m);
+      if (input) input.max = sections.learn[r.hi_key];
+    }
     const entries=$$('[data-backup-entry]',m); if(entries.length)sections.backups.include=entries.filter(b=>b.checked).map(b=>b.dataset.backupEntry);
     applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
   $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));

@@ -5,11 +5,21 @@ from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
 from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
+from ..settings.settings import register_section
 from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
 
-__all__ = ['CAPS', 'connect']
+__all__ = ['CAPS', 'connect', 'learn_rows']
 
 CAPS = ('memory', 'search', 'docs', 'jobs', 'fs', 'fs_watch')
+
+LEARN_GROUPS = ('walks', 'talks', 'checks', 'review', 'links', 'research', 'guide', 'lists')
+
+def learn_rows():
+    "The Learn settings section from Abhyasa's `SETTINGS`: file-stored rows of its own groups. Profile rows belong to the vault, and `sources.roots` to Leela's folder controls."
+    from abhyasa.learner import SETTINGS, GROUPS
+    return [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
+                 label=r.label, help=r.help, unit=r.unit, pct=r.pct, more=r.more, group=r.group, group_label=GROUPS[r.group][0])
+            for r in SETTINGS.values() if r.group in LEARN_GROUPS and r.ui and r.store == 'file' and r.section != 'sources']
 
 def due_cards(memory):
     from abhyasa.learner import Learning
@@ -84,6 +94,7 @@ def notebook_tab(docs, path):
 SWEEP = 10.   # seconds between two looks at the result of each open lesson
 
 def connect(app, ctx):
+    register_section('learn', learn_rows(), 'abhyasa')
     filed = {}   # lesson path -> the `result_sig` last filed, or found filed already
     async def file_one(path):
         "File the result beside the lesson at `path` once for each write; a failure is said, and the next look tries again."
