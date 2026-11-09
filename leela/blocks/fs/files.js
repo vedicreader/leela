@@ -287,6 +287,7 @@ function watchFiles() {
     if (d.path) leeOpenFile(d.path).catch(err => leeFail('open', d.path, err));
     else if (d.kind) refreshTabStrip().then(() => mountTab()).catch(err => leeFail('open', d.kind, err));
   });
+  es.addEventListener('learned', e => { try { window.leeLearnReload?.(JSON.parse(e.data).walk); } catch (_) {} });
   // The keymap file changed on disk: Sanketa, an Undo, a hand edit.
   es.addEventListener('keys', e => {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }

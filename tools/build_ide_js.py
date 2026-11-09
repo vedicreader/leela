@@ -47,11 +47,14 @@ LAYERS = {
         'static/js/boot.js', 'blocks/refactor/refactor.js', 'blocks/refactor/move.js',
         'blocks/git/conflictfiles.js', 'blocks/git/conflictcells.js',
         'blocks/vault/home.js', 'blocks/vault/doc.js', 'blocks/vault/review.js', 'blocks/git/branchbar.js', 'blocks/browser/browser.js',
-        'blocks/workspace/projects.js', 'blocks/learn/review.js'
+        'blocks/workspace/projects.js', 'blocks/learn/review.js', 'blocks/learn/agentlink.js'
     ],
 }
 
 #: copy -> the one module it is, for a page outside the IDE that loads that module alone. The wheel ships no block module.
+#: modules a Learn surface loads by itself, so no bundle names them.
+SERVED = {'blocks/learn/learn-demo.js'}
+
 ALONE = {'lee-pane.js': 'blocks/learn/pane.js', 'lee-slides.js': 'blocks/nb/slides.js'}
 
 assert tuple(LAYERS) == IDE_BUNDLES, f'{tuple(LAYERS)} is not what `core.web` serves: {IDE_BUNDLES}'
@@ -78,7 +81,7 @@ def orphans():
     "Modules the tree has but the order does not name, which would silently never load."
     named = {p.resolve() for p in modules()}
     found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))}
-    return sorted(found - named)
+    return sorted(found - named - {(PKG/m).resolve() for m in SERVED})
 
 def build(check=False):
     if gone := missing(): raise SystemExit(f'named but absent: {[p.name for p in gone]}')

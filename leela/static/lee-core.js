@@ -2317,7 +2317,7 @@ async function learnMount(host, st) {
   }
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
-  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button></div><div class="abh" hx-push-url="false"></div></div>';
+  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button></div><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
   const fit = host.querySelector('[data-learn-fit]'), sync = () => {
     const here = !!host.querySelector('.lee-learn-tab');
@@ -2327,7 +2327,7 @@ async function learnMount(host, st) {
   (window.leeLearnObs = new MutationObserver(sync)).observe(host, {childList: true});
   fit.onclick = () => { localStorage.setItem('lee-learn-fit', learnFitOn() ? '0' : '1'); sync(); };
   sync();
-  const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]');
+  const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]'), change = host.querySelector('[data-learn-change]');
   const trail = [], ran = new WeakSet(); let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
   if (!open.ok) { abh.textContent = 'Learn is not available. Turn on Learn and attach the learning vault.'; return; }
@@ -2341,7 +2341,7 @@ async function learnMount(host, st) {
   abh.addEventListener('htmx:beforeRequest', e => { busy.add(e.detail.xhr); abh.setAttribute('aria-busy', 'true'); });
   for (const ev of ['htmx:responseError', 'htmx:sendError', 'htmx:swapError', 'htmx:targetError', 'htmx:sendAbort', 'htmx:timeout']) abh.addEventListener(ev, e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterRequest', e => { const x = e.detail.xhr; if (!e.detail.successful || x.status === 204 || x.status === 205) idle(x); });
-  const own = u => LEARN_OWN[u.pathname];
+  const own = u => u.pathname.startsWith('/build') ? () => window.leeLearnChange?.() : LEARN_OWN[u.pathname];
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
     const a = e.target.closest('a[href]');
@@ -2375,13 +2375,35 @@ async function learnMount(host, st) {
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
-    cur = path; pending = null; back.disabled = !trail.length;
+    cur = path; pending = null; back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
     if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
   });
   abh.addEventListener('htmx:afterSettle', e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
+  host.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
+  change.onclick = () => window.leeLearnChange?.();
+  const sides = [];
+  const closeSide = async () => {
+    const sid = sides.pop();
+    if (!sid || !trail.length) return back.onclick();
+    const r = await fetch(LEARN + '/rh/back/' + encodeURIComponent(sid), {method: 'POST'}).catch(() => null);
+    if (!r?.ok) return back.onclick();
+    const u = new URL(r.url);
+    trail.pop(); nav(u.pathname.replace(LEARN, '') + u.search.replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, ''), true);
+  };
+  Object.assign(window.abhyasaPane ||= {}, {open: u => { const m = /^\/w\/([^/?#]+)/.exec(u); if (m) sides.push(decodeURIComponent(m[1])); return nav(u); }, close: closeSide});
+  window.leeLearnReload = async walk => {
+    if (!cur || abh.getAttribute('aria-busy') === 'true' || !abh.isConnected || (walk && cur !== '/' && !cur.startsWith('/w/' + encodeURIComponent(walk)))) return false;
+    if ([...abh.querySelectorAll('textarea, input[type=text]')].some(x => x.value.trim())) { status('The plan changed. Leave the box and press Home to see it.', 'err'); return false; }
+    const scrolls = []; for (let e = abh; e; e = e.parentElement) scrolls.push([e, e.scrollTop]);
+    const at = document.activeElement?.closest('.abh') && document.activeElement, sel = at?.id ? '#' + CSS.escape(at.id) : at?.name ? `[name="${CSS.escape(at.name)}"]` : '';
+    await nav(cur, true); await leeAbhSettled(abh);
+    for (const [e, t] of scrolls) e.scrollTop = t;
+    if (sel) abh.querySelector(sel)?.focus({preventScroll: true});
+    return true;
+  };
   window.leeLearnNav = nav; window.leeLearnBack = () => back.onclick();
   host.querySelector('[data-learn-home]').onclick = () => nav('/');
   new ResizeObserver(() => abh.classList.toggle('wide', abh.clientWidth >= 940)).observe(abh);

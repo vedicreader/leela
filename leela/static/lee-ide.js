@@ -5414,6 +5414,7 @@ function palette() {
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
+  learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" aria-label="Command palette" role="combobox" aria-controls="cplist" aria-expanded="true" autofocus>
@@ -5736,6 +5737,7 @@ function watchFiles() {
     if (d.path) leeOpenFile(d.path).catch(err => leeFail('open', d.path, err));
     else if (d.kind) refreshTabStrip().then(() => mountTab()).catch(err => leeFail('open', d.kind, err));
   });
+  es.addEventListener('learned', e => { try { window.leeLearnReload?.(JSON.parse(e.data).walk); } catch (_) {} });
   // The keymap file changed on disk: Sanketa, an Undo, a hand edit.
   es.addEventListener('keys', e => {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }
@@ -9148,3 +9150,32 @@ async function refreshLessonDue() {
   } catch (e) { if (seq !== lessonDueSeq) return; lessonDueError = String(e.message || e); }
   paintLessonReview();
 }
+const inLearnTab = () => ['learn', 'learn_walk'].includes(lee.kind);
+async function leeLearnModeOn() {
+  if (lee.agentLearnMode) return true;
+  try {
+    const rows = await api('/agent/threads'), d = await post('/agent/learn-mode', {on: true, thread: lee.agentThread || rows.active});
+    if (!d.ok) { status(d.message || d.error || 'Learn mode could not turn on.', 'err'); return false; }
+    lee.agentLearnMode = d.on; await refreshAgentThreads(); return true;
+  } catch (e) {
+    status(e.body?.code === 'thread_busy' ? 'The agent is working. Try again when it finishes.' : e.message || String(e), 'err'); return false;
+  }
+}
+async function leeLearnToAgent(text, send) {
+  if (!inLearnTab()) return status('Open a Learn tab first.', 'err');
+  if (lee.agentBusy || lee.agentSending) return status('The agent is working. Try again when it finishes.', 'err');
+  if ($('#agentprompt')?.value.trim()) { leeAct('focus_agent'); return status('Send or clear your message to the agent first.', 'err'); }
+  if (!await leeLearnModeOn()) return;
+  leeAct('focus_agent');
+  const prompt = $('#agentprompt'); if (!prompt) return;
+  prompt.value = text;
+  if (send) return sendAgent();
+  prompt.focus(); prompt.setSelectionRange(text.length, text.length);
+}
+const leeLearnAsk = () => leeLearnToAgent("I don't get this", true);
+const leeLearnChange = () => leeLearnToAgent('Change this walk: ', false);
+addEventListener('keydown', e => {
+  if (e.code !== 'KeyE' || !(e.metaKey && e.altKey && e.ctrlKey && e.shiftKey) || !inLearnTab()) return;
+  e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) leeLearnAsk();
+}, true);
+window.leeLearnToAgent = leeLearnToAgent; window.leeLearnAsk = leeLearnAsk; window.leeLearnChange = leeLearnChange;

@@ -196,6 +196,9 @@ class Watcher:
     def announce(self, path):
         "Tell every subscriber a tab was opened on `path` by something other than the page. From any thread."
         self._tell(str(path))
+    def announce_learn(self, walk):
+        "Tell every subscriber the Learn walk `walk` changed, so an open Learn tab loads its page again. From any thread."
+        self._tell(dict(kind='learn_changed', walk=walk))
     def announce_tab(self, kind, ref):
         "Tell every subscriber a tab with no path, of `kind` and `ref`, was opened by something other than the page. From any thread."
         self._tell(dict(kind=kind, ref=ref))

@@ -239,6 +239,8 @@ def show_walk(ws, vault, walk):
     except Exception as e: log.error('Learn walk %s was made but its tab did not open: %s', walk, errstr(e))
 
 
+LEARN_EDITS = ('keep_idea', 'drop_idea', 'move_idea', 'add_source', 'restore_version')
+
 def register_learn_jobs(ws):
     if contract_missing(): return
     from abhyasa import agent_tools as engine
@@ -253,6 +255,7 @@ def register_learn_jobs(ws):
             if r['status'] == 'ok':
                 r['data']['tab'] = dict(kind='learn_walk', vault=r['vault'], walk=r['walk'])
                 if ws.threads.active_id == job.params['thread'] and ai.learn_mode: show_walk(ws, r['vault'], r['walk'])
+                ws.fs_watch.announce_learn(r['walk'])
             if r['status'] == 'stopped': r['cancelled'] = True
             return r
         finally: captures.pop(job.id, None)
@@ -264,6 +267,7 @@ def register_learn_jobs(ws):
             r = engine.change_walk(lr, learn_ask(ai, 'plan'), job.target, job.params['instruction'], stopping=lambda: ws.jobs.stopping(job.id), settings=job.params['settings'])
             r.update(operation_id=job.id, vault=job.params['vault'])
             if r['status'] == 'stopped': r['cancelled'] = True
+            if r['status'] == 'ok': ws.fs_watch.announce_learn(job.target)
             return r
         finally: captures.pop(job.id, None)
     ws.jobs.register('learn_change', change)
@@ -309,6 +313,7 @@ def learn_tools(ai):
                 if name == 'explain_here': kwargs = {**kwargs, **on_screen(ai, lr)}
                 r = getattr(engine, name)(lr, **kwargs, **extra.get(name, dict)())
                 r['vault'] = vault
+                if name in LEARN_EDITS and r.get('status') == 'ok': ai.ws.fs_watch.announce_learn(r.get('walk') or kwargs.get('jid'))
                 return r
             except PermissionError as e: return engine.failed('read_only', str(e))
             except KeyError as e: return engine.failed('not_found', str(e.args[0] if e.args else e))
