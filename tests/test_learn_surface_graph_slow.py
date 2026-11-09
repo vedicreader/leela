@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from tests.test_learn_tab_pages_slow import OUT, _env, _run
+from tests.test_learn_tab_pages_slow import OUT, _env, _learn, _run
 
 pytestmark = pytest.mark.slow
 
@@ -34,6 +34,7 @@ def _seed(lr):
 
 
 async def _open_graph(pg):
+    await _learn(pg)
     await pg.evaluate("applyTheme('leela:light:relaxed')")
     await pg.evaluate("leeLearnOpen('/graph')")
     await pg.wait_for_function(PAINTED, timeout=30000)

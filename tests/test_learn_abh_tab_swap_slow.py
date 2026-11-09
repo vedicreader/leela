@@ -1,6 +1,6 @@
 import pytest
 
-from tests.test_learn_tab_pages_slow import OUT, _env, _run
+from tests.test_learn_tab_pages_slow import OUT, _env, _learn, _run
 
 pytestmark = pytest.mark.slow
 
@@ -8,7 +8,7 @@ IDLE = "() => !document.querySelector('.abh[aria-busy]')"
 
 
 async def _open(pg, ws, jid):
-    ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+    ws.open_walk('workspace', jid); ws.save(); await _learn(pg)
     await pg.locator('.abh #check .check').wait_for(timeout=30000)
     await pg.wait_for_function(IDLE, timeout=30000)
 
@@ -40,7 +40,7 @@ def test_option_b_offers_a_side_walk_for_the_selected_word(tmp_path, monkeypatch
         await _open(pg, ws, jid)
         await pg.wait_for_function("() => !!window.abhyasaDetour", timeout=10000)
         await pg.evaluate("jid => document.querySelector('.abh #passage').insertAdjacentHTML('afterend', `<div class=\"rh-needs\" data-at=\"${jid}/0\"><div id=\"rh-offer\"></div></div>`)", jid)
-        await pg.evaluate("""() => { const p = document.querySelector('.abh #passage'); const r = document.createRange(); r.selectNodeContents(p.querySelector('p, div, span') || p); getSelection().removeAllRanges(); getSelection().addRange(r); }""")
+        await pg.evaluate("""() => { const p = document.querySelector('.abh #passage'); const r = document.createRange(); r.selectNodeContents(p.querySelector('.md p') || p); getSelection().removeAllRanges(); getSelection().addRange(r); }""")
         await pg.keyboard.press('Alt+KeyB')
         await pg.wait_for_timeout(1500)
         assert offers, offers

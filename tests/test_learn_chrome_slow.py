@@ -7,7 +7,7 @@ pytestmark = pytest.mark.slow
 
 from pathlib import Path
 from tests.test_learn_surface_talk_slow import _env, _open, _watch
-from tests.test_learn_tab_pages_slow import _env as _check_env, _run
+from tests.test_learn_tab_pages_slow import _env as _check_env, _learn, _run
 
 OUT = str(Path(__file__).resolve().parents[1]/'target')
 HIT = """() => {
@@ -33,7 +33,7 @@ def test_learn_page_clears_the_dock_handles_and_the_status_pill(tmp_path, monkey
     pytest.importorskip('playwright.async_api')
     lr, jid, tid = _env(monkeypatch)
     async def scenario(pg, ws, port):
-        bad = _watch(pg)
+        bad = _watch(pg); await _learn(pg)
         pages = [('step', f'/w/{jid}/0', '.abh #check .check'), ('graph', '/graph', '.abh #graph canvas'), ('talk', f'/t/{tid}', '.abh main'), ('overview', f'/w/{jid}', '.abh main')]
         for mode in ('light', 'dark'):
             await pg.evaluate(f"applyTheme('leela:{mode}:relaxed')")

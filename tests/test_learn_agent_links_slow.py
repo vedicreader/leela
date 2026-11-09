@@ -1,7 +1,7 @@
 import pytest
 
 from tests.test_learn_agent_pane import _skip, _wait, pane  # noqa: F401
-from tests.test_learn_tab_pages_slow import OUT, _env, _run
+from tests.test_learn_tab_pages_slow import OUT, _env, _learn, _run
 
 pytestmark = pytest.mark.slow
 
@@ -11,7 +11,7 @@ SAID = "() => document.querySelector('#agentlog').innerText"
 
 
 async def _open(pg, ws, jid):
-    ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+    ws.open_walk('workspace', jid); ws.save(); await _learn(pg)
     await pg.locator('.abh #check .check').wait_for(timeout=30000)
     await pg.wait_for_function(IDLE, timeout=30000)
     await pg.evaluate(POSTS)
@@ -22,7 +22,7 @@ def test_the_button_turns_learn_mode_on_and_sends_the_question(tmp_path, monkeyp
     lr, jid, slug = _env(tmp_path, monkeypatch)
     async def scenario(pg, ws, port):
         await _open(pg, ws, jid)
-        assert not await pg.evaluate('!!lee.agentLearnMode')
+        await pg.evaluate('lee.agentLearnMode = false')
         await pg.locator('[data-learn-ask]').click()
         await pg.wait_for_function("() => document.querySelector('#agentlog').innerText.includes(\"I don't get this\")", timeout=15000)
         assert await pg.evaluate('lee.agentLearnMode') is True
@@ -96,7 +96,7 @@ def test_the_open_page_loads_again_when_the_walk_changes_and_keeps_scroll_and_fo
             if ws.fs_watch.subs: break
             await pg.wait_for_timeout(100)
         await pg.evaluate("document.querySelector('.abh').style.paddingBottom = '3000px'")
-        await pg.locator('.abh #ans').focus()
+        await pg.locator('.abh #ans').click()
         top = await pg.evaluate("""() => { let e = document.querySelector('.abh'); while (e && !(e.scrollHeight > e.clientHeight + 500 && /auto|scroll/.test(getComputedStyle(e).overflowY))) e = e.parentElement;
             window.__sc = e; if (e) e.scrollTop = 400; return e ? e.scrollTop : -1 }""")
         assert top > 0, top

@@ -57,6 +57,13 @@ def _run(tmp_path, scenario, viewport=None):
     asyncio.run(go())
 
 
+async def _learn(pg):
+    "Switch to Learn with a real click, as a person does."
+    await pg.locator('#modeswitch [data-mode=learn]').click()
+    await pg.wait_for_function("lee.mode === 'learn' && !lee.modeBusy", timeout=30000)
+    await pg.locator('#modebar').wait_for(state='visible')
+
+
 def test_chords_work_only_inside_the_learn_tab(tmp_path, monkeypatch):
     pytest.importorskip('playwright.async_api')
     lr, jid, slug = _env(tmp_path, monkeypatch)
