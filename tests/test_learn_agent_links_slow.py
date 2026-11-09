@@ -11,7 +11,7 @@ SAID = "() => document.querySelector('#agentlog').innerText"
 
 
 async def _open(pg, ws, jid):
-    ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+    ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
     await pg.locator('.abh #check .check').wait_for(timeout=30000)
     await pg.wait_for_function(IDLE, timeout=30000)
     await pg.evaluate(POSTS)

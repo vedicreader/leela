@@ -1,6 +1,6 @@
 r"""Native Learn end to end: acceptance A1, A2, A4, A5 and A7 in a headless browser, on a scripted model that sends nothing off the machine.
 
-A missing route or tool fails the test with its name. The contracts it is written against: `POST /agent/learn-mode {on}`, tab kind `learn_walk` hosting Abhyasa's real step page in `.abh`, `GET /learn/walk/{jid}`, `POST /learn/walk/{jid}/{i}/answer`.
+A missing route or tool fails the test with its name. The contracts it is written against: `POST /agent/learn-mode {on}`, the `learn` tab at `/w/{jid}/0` hosting Abhyasa's real step page in `.abh`, the answer posted from that page, the gauge read with `abhyasa.agent_tools.walk_state`.
 """
 import asyncio, importlib.util, inspect, json, re
 from pathlib import Path
@@ -40,6 +40,13 @@ def test_the_launcher_parses_its_options_and_refuses_real_stores(tmp_path):
 def _missing(status, what):
     if status in (404, 405): pytest.fail(f'{what} answered {status}')
 
+async def _api(pg, method, url, body=None):
+    return await pg.evaluate(r"""async ([m, u, b]) => {
+      const r = await fetch(u, {method: m, headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, body: b === null ? undefined : JSON.stringify(b)});
+      let j = null; try { j = await r.json(); } catch (e) {}
+      return {status: r.status, json: j};
+    }""", [method, url, body])
+
 def _find(o, key):
     "The first value stored under `key` anywhere in the JSON `o`."
     for v in (o.values() if isinstance(o, dict) else o if isinstance(o, list) else ()):
@@ -50,12 +57,11 @@ def _gauge(j):
     g = _find(j, 'gauge')
     return g if g is not None else _find(j, 'understanding')
 
-async def _api(pg, method, url, body=None):
-    return await pg.evaluate(r"""async ([m, u, b]) => {
-      const r = await fetch(u, {method: m, headers: {'Content-Type': 'application/json', 'Accept': 'application/json'}, body: b === null ? undefined : JSON.stringify(b)});
-      let j = null; try { j = await r.json(); } catch (e) {}
-      return {status: r.status, json: j};
-    }""", [method, url, body])
+def _state(ws, vault, jid):
+    "The engine's state of walk `jid`: what the Abhyasa page reads."
+    from abhyasa.agent_tools import walk_state
+    from abhyasa.learner import Learning
+    return walk_state(Learning(ws.vaults.memory(vault)._store('learning')), jid)
 
 def _tool_names(tools): return [t[0] if isinstance(t, tuple) else getattr(t, '__name__', t) for t in tools]   # TOOLS holds (name, arguments) pairs
 
@@ -64,18 +70,11 @@ def _learn_tool(ws, name):
     def find(_name):
         if (f := next((t for t in ws.ai.tools if getattr(t, '__name__', '') == name), None)) is None: return None
         first = next(iter(inspect.signature(f).parameters), None)
-        return (lambda **kw: f(**{first: TOPIC})) if first else (lambda **kw: f())
+        no = {'research': 'no'} if 'research' in inspect.signature(f).parameters else {}
+        return (lambda **kw: f(**{first: TOPIC}, **no)) if first else (lambda **kw: f())
     return find
 
 def _learn_names(ws, names): return [n for n in _tool_names(ws.ai.tools) if n in names]
-
-def _result(res, ERRORS):
-    "The engine result of a response; an `error` status fails with whether its code is a known one."
-    j = res['json']
-    if j.get('status') == 'error':
-        err = j.get('error'); code = err.get('code') if isinstance(err, dict) else err
-        pytest.fail(f'engine error {err!r} {j.get("data")}, in ERRORS: {code in ERRORS}')
-    return j
 
 @pytest.mark.slow
 def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_gauge(tmp_path, monkeypatch):
@@ -86,7 +85,7 @@ def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_
     from test_web_slow import fake_kernels, _free_port, _serve, _started, _launch
     from tests.fakemodel import install, Step
     from tools.scripted_learn import reply
-    try: from abhyasa.agent_tools import ERRORS, TOOLS
+    try: from abhyasa.agent_tools import TOOLS
     except ImportError as e: pytest.fail(f'abhyasa.agent_tools does not import: {e}')
     names = _tool_names(TOOLS)
     create = next((n for n in names if 'create' in n), None)
@@ -124,35 +123,32 @@ def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_
                     await pg.evaluate('() => sendAgent()')
                     await pg.wait_for_selector('#agentlog .lee-agent-turn')
                     try:
-                        await pg.wait_for_function("""() => lee.kind === 'learn_walk' || document.querySelector('.lee-tab[data-kind="learn_walk"]')""", timeout=30000)
+                        await pg.wait_for_function("""() => lee.kind === 'learn' || document.querySelector('.lee-tab[data-kind="learn"]')""", timeout=30000)
                     except Exception as e:
                         jobs = [(j.status, j.error, j.result) for j in ws.jobs.all(kind='learn_walk')]
-                        pytest.fail(f'no learn_walk tab opened after the turn: {e}\njobs: {jobs}\ntabs: {[(t.kind, t.ref) for t in ws.tabs]}\nagent log: {await pg.inner_text("#agentlog")}')
-                    assert await pg.locator('.lee-tab[data-kind="learn_walk"]').count() == 1, 'the walk tab is in the tab strip, with no reload'
+                        pytest.fail(f'no learn tab opened after the turn: {e}\njobs: {jobs}\ntabs: {[(t.kind, t.ref) for t in ws.tabs]}\nagent log: {await pg.inner_text("#agentlog")}')
+                    assert await pg.locator('.lee-tab[data-kind="learn"]').count() == 1, 'the walk tab is in the tab strip, with no reload'
                     assert await pg.evaluate('() => document.activeElement && document.activeElement.id') == 'agentprompt', 'the new tab leaves focus in the agent prompt'
                     await pg.wait_for_selector('.abh #check .check', timeout=30000)
                     assert jids, 'the walk tab never asked GET /w/{jid}/{i}'
                     jid = jids[-1]
+                    tab = next(t for t in ws.tabs if t.kind == 'learn')
+                    out['page'] = tab.page
                     assert not await pg.evaluate("() => !!document.activeElement?.closest('.abh')"), 'the walk page took focus'
+                    for _ in range(1000):
+                        if not any(j.active for j in ws.jobs.all(kind='learn_walk')): break
+                        await asyncio.sleep(.1)
+                    out['jobs'] = [(j.status, j.error, (j.result or {}).get('walk'), j.dict().get('current'), j.params.get('research')) for j in ws.jobs.all(kind='learn_walk')], jid
                     out['job'] = next((j for j in ws.jobs.all(kind='learn_walk') if (j.result or {}).get('walk') == jid), None)
-                    vq = '?vault=' + json.loads(next(t for t in ws.tabs if t.kind == 'learn_walk').ref)[0]
-                    first = await _api(pg, 'GET', f'/learn/walk/{jid}{vq}')
-                    _missing(first['status'], 'GET /learn/walk/{jid}')
-                    out['first'] = first
-                    await pg.locator('.abh #ans').fill('add the numerators')
+                    vault = json.loads(tab.ref)[0]
+                    out['first'] = _state(ws, vault, jid)
+                    await pg.locator('.abh #ans').fill('one of four equal parts of the pizza')
                     await pg.locator('.abh #send').click()
                     await pg.locator('.abh #check .tag, .abh #check .msg').first.wait_for(timeout=30000)
                     out['ui_answered'] = await pg.locator('.abh #check').inner_text()
-                    out['ui_after'] = await _api(pg, 'GET', f'/learn/walk/{jid}{vq}')
+                    out['ui_after'] = _state(ws, vault, jid)
                     out['quoted'] = await pg.locator('.abh blockquote a[href]').count()
                     out['ungrounded'] = bool(re.search(r"tutor.s words|find a source|ungrounded", await pg.inner_text('.abh'), re.I))
-                    now = _find(out['ui_after']['json'], 'current') or 0
-                    body = {'answer': 'add the numerators', 'attempt_id': 'e2e-attempt-1'}
-                    ans = await _api(pg, 'POST', f'/learn/walk/{jid}/{now}/answer{vq}', body)
-                    _missing(ans['status'], 'POST /learn/walk/{jid}/{i}/answer')
-                    out['answer'] = ans
-                    out['retry'] = await _api(pg, 'POST', f'/learn/walk/{jid}/{now}/answer{vq}', body)
-                    out['after'] = await _api(pg, 'GET', f'/learn/walk/{jid}{vq}')
                     cards, hist = await pg.locator('#agentlog .lee-agent-turn').count(), len(be.hist_)
                     off = await _api(pg, 'POST', '/agent/learn-mode', {'on': False})
                     out['off'] = off
@@ -166,15 +162,15 @@ def test_ask_for_a_module_in_the_pane_opens_a_native_walk_and_a_check_moves_the_
             ws.shutdown_now()
             restore()
         return out, port
-    out, port = asyncio.run(asyncio.wait_for(go(), 150))
+    out, port = asyncio.run(asyncio.wait_for(go(), 250))
     assert out['tools_on'], 'A5: Learn mode on advertises the learn tools'
-    assert out['job'] and out['job'].status == 'complete', 'A1: the create_walk job completes'
+    assert out['job'], out['jobs']
+    assert out['job'].status == 'complete', 'A1: the create_walk job completes'
     assert out['quoted'] or out['ungrounded'], 'A2: a linked quote, or a tutor-words label'
-    ans, retry = _result(out['answer'], ERRORS), _result(out['retry'], ERRORS)
-    assert ans['status'] == 'ok' and retry == ans, 'A4: a retry returns the stored result'
-    g0, g1 = _gauge(out['first']['json']), _gauge(out['after']['json'])
-    assert g0 is not None and g1 != g0, f'A4: the gauge moved from {g0!r} to {g1!r}'
-    assert out['ui_answered'].strip() and _gauge(out['ui_after']['json']) != g0, 'A4: answering in the tab moves the gauge'
+    assert re.fullmatch(r'/w/[^/]+/0', out['page']), f"the created walk opens at step 0 of its walk: {out['page']}"
+    g0, g1 = _gauge(out['first']), _gauge(out['ui_after'])
+    assert g0 is not None and g1 != g0, f'A4: answering in the tab moved the gauge from {g0!r} to {g1!r}'
+    assert out['ui_answered'].strip(), 'A4: the check shows its verdict'
     assert out['off']['status'] == 200 and not out['tools_off'], 'A5: Learn mode off removes the learn tools'
     assert all(out['kept']), 'A5: history and the backend remain'
     assert out['frames'] == 0, 'A7: no iframe'

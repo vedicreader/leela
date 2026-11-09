@@ -58,7 +58,7 @@ def test_real_abhyasa_step_stays_inside_the_leela_tab(tmp_path, monkeypatch):
                     await pg.evaluate("applyTheme('leela:light:relaxed')")
                     before = await pg.evaluate(shell_style)
                     href, history = await pg.evaluate('() => [location.href, window.history.length]')
-                    ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+                    ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
                     check = pg.locator('.abh #check .check')
                     await check.wait_for(timeout=30000)
                     abh = pg.locator('.abh')

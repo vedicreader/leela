@@ -127,7 +127,7 @@ def test_the_context_knows_the_page_on_screen(pane):
     assert 'Step 2 of' in text and (lr.concept(step)['name']) in text and 'explain_here' in text and engine.RULE in text and len(text) <= 1200
     _show(pane, '/graph')
     assert 'the graph page' in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws))
-    ws.open_learn_walk(pane.vault, j)
+    ws.open_walk(pane.vault, j)
     assert f'({j})' in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws)), 'a walk tab with no saved page still gives its walk'
     ws.tabs.clear()
     assert 'On screen' not in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws))

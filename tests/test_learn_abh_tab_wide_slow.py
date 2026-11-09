@@ -15,7 +15,7 @@ def test_learn_tab_takes_the_room_and_gives_it_back(tmp_path, monkeypatch):
         assert await pg.evaluate(SHOWN) == [True, True]
         before = await pg.evaluate("() => [localStorage.getItem('lee-pane-left'), localStorage.getItem('lee-pane-bottom')]")
         await pg.evaluate("applyTheme('leela:light:relaxed')")
-        ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
         await pg.locator('.abh #check .check').wait_for(timeout=30000)
         await pg.wait_for_timeout(800)
         assert await pg.evaluate(SHOWN) == [False, False]
@@ -51,7 +51,7 @@ def test_a_pane_the_user_hid_stays_hidden_after_the_learn_tab(tmp_path, monkeypa
     lr, jid, slug = _env(tmp_path, monkeypatch)
     async def scenario(pg, ws, port):
         await pg.evaluate("leePane('left', false)")
-        ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
         await pg.locator('.abh main').first.wait_for(timeout=30000); await pg.wait_for_timeout(500)
         assert await pg.evaluate(SHOWN) == [False, False]
         await pg.locator('.lee-tab', has_text='lesson.py').click(); await pg.wait_for_timeout(800)

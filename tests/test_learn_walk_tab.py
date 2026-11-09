@@ -1,65 +1,36 @@
+import json
 from starlette.testclient import TestClient
 
 from leela.app import ide_app
-from leela.blocks.learn import walk
-from leela.workspace import Workspace
+from leela.workspace import Workspace, walk_path
 
 
-def state(revision='one', quote=True):
-    step = dict(i=0, name='Addition', statement='Add the two values.', status='open', check=dict(question='What is 1 + 1?', kind='short'))
-    if quote: step['quote'] = dict(text='A sum joins values.', url='https://example.com/source', title='Source')
-    return dict(status='ok', revision=revision, data=dict(title='Numbers', current=0, steps=[step], gauge=dict(addition=dict(state='new'))))
-
-
-def test_walk_fragment_renders_sources_states_and_revision():
-    page = str(walk.walk_fragment(state(), 'walk-1'))
-    assert 'A sum joins values.' in page and 'https://example.com/source' in page
-    assert 'name="revision" value="one"' in page
-    assert 'Understanding' in page
-    ungrounded = str(walk.walk_fragment(state(quote=False), 'walk-1'))
-    assert 'Ungrounded: no verbatim source' in ungrounded
-    assert 'missing walk' in str(walk.walk_fragment(walk.walk_failure('not_found', 'missing walk', 'walk-1'), 'walk-1'))
-    assert 'vault locked' in str(walk.walk_fragment(walk.walk_failure('vault_locked', 'vault locked', 'walk-1'), 'walk-1'))
-    assert 'The walk changed; here is the current step' in str(walk.walk_fragment(state(), 'walk-1', notice=walk.walk_failure('stale_state', '', 'walk-1')))
-
-
-def test_open_learn_walk_dedupes_persists_and_restores(tmp_path):
-    path = tmp_path/'workspace.json'
+def test_a_walk_opens_in_the_one_learn_tab_and_a_second_walk_moves_it(tmp_path):
     ws = Workspace()
-    first = ws.open_learn_walk('workspace', 'walk-1')
-    assert ws.open_learn_walk('workspace', 'walk-1') is first and len(ws.tabs) == 1
-    ws.save(path)
+    first = ws.open_walk('workspace', 'walk-1')
+    assert first.kind == 'learn' and first.page == '/w/walk-1/0' and walk_path('a b') == '/w/a%20b/0' and walk_path('w', None) == '/w/w'
+    assert ws.open_walk('workspace', 'walk-2', 3) is first and first.page == '/w/walk-2/3' and len(ws.tabs) == 1
+    assert not hasattr(ws, 'open_learn_walk')
+
+
+def test_a_saved_walk_tab_restores_as_the_learn_tab_at_its_walk(tmp_path):
+    path = tmp_path/'workspace.json'
+    ws = Workspace(); ws.open_walk('workspace', 'walk-1'); ws.save(path)
+    d = json.loads(path.read_text())
+    old = dict(d['tabs'][0], kind='learn_walk', ref=json.dumps(['workspace', 'walk-1']), page=''); old.pop('page')
+    d['tabs'] = [old]; d['active'] = 0
+    path.write_text(json.dumps(d))
     restored = Workspace()
     assert restored.reopen_saved_tabs(path) == 1
-    assert restored.tab.kind == 'learn_walk' and restored.tab.ref == first.ref
+    assert [(t.kind, t.page) for t in restored.tabs] == [('learn', '/w/walk-1')] and restored.tab is restored.tabs[0]
+    d['tabs'] = [dict(old, page='/w/walk-1/2')]
+    path.write_text(json.dumps(d))
+    again = Workspace(); again.reopen_saved_tabs(path)
+    assert again.tab.page == '/w/walk-1/2'
 
 
-def test_walk_routes_use_selected_vault_settings_and_current_state(ws, monkeypatch):
-    calls = []
-    memory = object()
-    monkeypatch.setattr(walk, 'walk_memory', lambda ctx, vault: calls.append(('vault', vault)) or memory)
-    monkeypatch.setattr(walk, 'learn_settings', lambda session: {'walks.steps': 3})
-    monkeypatch.setattr(walk, 'walk_state_for', lambda memory, jid, settings: calls.append(('state', memory, jid, settings)) or state('two'))
-    def answer(memory, ask, jid, i, answer, attempt_id, settings, revision):
-        calls.append(('answer', memory, jid, i, answer, attempt_id, settings, revision))
-        return walk.walk_failure('stale_state', 'stale', jid)
-    monkeypatch.setattr(walk, 'answer_for', answer)
+def test_the_learn_tab_open_route_takes_a_walk_page(ws):
     with TestClient(ide_app(ws)) as client:
-        got = client.get('/learn/walk/walk-1', params={'vault': 'chosen'})
-        assert got.status_code == 200 and 'Source' in got.text
-        posted = client.post('/learn/walk/walk-1/0/answer', params={'vault': 'chosen'}, data={'answer': '2', 'attempt_id': 'a1', 'revision': 'one'})
-    assert 'The walk changed; here is the current step' in posted.text
-    assert ('vault', 'chosen') in calls
-    assert ('state', memory, 'walk-1', {'walks.steps': 3}) in calls
-    assert ('answer', memory, 'walk-1', 0, '2', 'a1', {'walks.steps': 3}, 'one') in calls
-
-
-def test_walk_open_route_dedupes_tab(ws, monkeypatch):
-    memory = object()
-    monkeypatch.setattr(walk, 'walk_memory', lambda ctx, vault: memory)
-    monkeypatch.setattr(walk, 'learn_settings', lambda session: {})
-    monkeypatch.setattr(walk, 'walk_state_for', lambda memory, jid, settings: state())
-    with TestClient(ide_app(ws)) as client:
-        assert client.post('/learn/walk/open', data={'vault': 'workspace', 'walk': 'walk-1'}).status_code == 200
-        assert client.post('/learn/walk/open', data={'vault': 'workspace', 'walk': 'walk-1'}).status_code == 200
-    assert len([t for t in ws.tabs if t.kind == 'learn_walk']) == 1
+        assert client.post('/learn/tab/open', params={'path': '/w/walk-1/0', 'vault': 'workspace'}).status_code == 200
+        assert client.post('/learn/tab/open', params={'path': '/w/walk-1/2'}).status_code == 200
+    assert [(t.kind, t.page) for t in ws.tabs] == [('learn', '/w/walk-1/2')]

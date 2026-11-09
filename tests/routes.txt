@@ -7,8 +7,6 @@ GET /learn/abh.css
 GET /learn/import
 GET /learn/lookup
 GET /learn/tool
-GET /learn/walk.css
-GET /learn/walk/{jid}
 GET /leeboard/board.css
 GET /leeboard/board.js
 GET /leeboard/texparts.js
@@ -460,8 +458,6 @@ POST /learn/scratch
 POST /learn/tab/open
 POST /learn/tab/page
 POST /learn/tool
-POST /learn/walk/open
-POST /learn/walk/{jid}/{i}/answer
 POST /lesson/new
 POST /lesson/predict
 POST /lesson/predictions

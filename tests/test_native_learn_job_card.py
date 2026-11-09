@@ -23,11 +23,10 @@ def test_a_kind_with_no_registered_actions_draws_as_before(monkeypatch):
 def test_learn_job_card_retains_open_action_and_failure_reason(monkeypatch):
     from abhyasa.agent_tools import failed, result
     monkeypatch.setattr(ui, 'JOB_ACTIONS', {'learn_walk': walk_job_actions})
-    ok = result('ok', vault='learning', walk='fractions', data=dict(tab=dict(kind='learn_walk', vault='learning', walk='fractions')))
+    ok = result('ok', vault='learning', walk='fractions', data=dict(tab=dict(kind='learn', vault='learning', walk='fractions', path='/w/fractions/0')))
     card = _card(result=ok)
-    assert 'Open walk' in card and '/learn/walk/open' in card
-    assert 'name="slot"' in card and 'value="#open-walk-error-learn-job"' in card and 'id="open-walk-error-learn-job"' in card
-    assert 'learning' in card and 'fractions' in card
+    assert 'Open walk' in card and '/learn/tab/open' in card and '/learn/walk' not in card
+    assert 'name="path"' in card and 'value="/w/fractions/0"' in card and 'value="learning"' in card
     for error in ('model_refused', 'stopped'):
         card = _card(result=failed(error, 'No model answer.'))
         assert 'Open walk' not in card

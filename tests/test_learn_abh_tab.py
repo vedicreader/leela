@@ -7,7 +7,7 @@ from leela.blocks.learn import walk
 def test_learn_tab_hosts_abhyasa_pages_under_the_prefix_with_leela_htmx():
     js = open(walk.__file__.replace('walk.py', 'walk.js')).read()
     assert 'class="abh"' in js and "LEARN = '/learn/abh'" in js and "LEARN + '/open'" in js
-    assert "registerTabMount('learn_walk'" in js and "registerTabMount('learn'" in js
+    assert "registerTabMount('learn'" in js
     assert "select: 'main'" in js and 'hx-push-url="false"' in js and "pane" in js
     assert 'vendor/htmx' not in js and 'fasthtml.js' not in js and 'pushState' not in js
 

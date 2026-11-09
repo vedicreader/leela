@@ -89,7 +89,7 @@ def test_step_shows_source_note_talk_keys_and_feedback(tmp_path, monkeypatch):
     async def scenario(pg, ws, port, bad, be):
         await pg.evaluate("applyTheme('leela:light:relaxed')")
         before = await pg.evaluate(SHELL)
-        ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
         await _open(pg, f'/w/{jid}/0', '.abh #check .check')
         abh = pg.locator('.abh')
         assert await abh.locator('.src-line .pill').text_content() == 'your source'
@@ -139,7 +139,7 @@ def test_overview_change_box_goes_through_the_host_and_plan_tools_work(tmp_path,
     async def scenario(pg, ws, port, bad, be):
         await pg.evaluate("applyTheme('leela:light:relaxed')")
         before = await pg.evaluate(SHELL)
-        ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
         await _open(pg, f'/w/{jid}')
         abh = pg.locator('.abh')
         assert await abh.locator('.grip').count() == 3

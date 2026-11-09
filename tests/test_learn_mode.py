@@ -111,10 +111,10 @@ def test_create_walk_starts_cancellable_job_with_tab(ws, monkeypatch, active, on
     assert job.status == ('cancelled' if status == 'stopped' else 'complete'), job.error
     assert job.result['operation_id'] == job.id
     assert job.result['vault'] == ref.name
-    if status == 'ok': assert job.result['data']['tab'] == dict(kind='learn_walk', vault=ref.name, walk='walk-test')
+    if status == 'ok': assert job.result['data']['tab'] == dict(kind='learn', vault=ref.name, walk='walk-test', path='/w/walk-test/0')
     opened = active and on and status == 'ok'
-    assert bool([t for t in ws.tabs if t.kind == 'learn_walk']) == opened
-    assert seen == ([('learn_walk', json.dumps([ref.name, 'walk-test']))] if opened else [])
+    assert bool([t for t in ws.tabs if t.kind == 'learn' and t.page == '/w/walk-test/0']) == opened
+    assert seen == ([('learn', json.dumps([ref.name]))] if opened else [])
     assert calls and calls[0][1]['strict'] and calls[0][1]['wait']
     assert callable(calls[0][1]['prepare'])
 
@@ -127,7 +127,7 @@ def test_a_walk_that_cannot_be_opened_stays_a_completed_job(ws, monkeypatch, cap
     ai = SimpleNamespace(ws=ws, learn_mode=True, session_id=ws.threads.active.id, oneshot=lambda *a, **k: 'a plan', spec_or_none=lambda job='turn': None)
     monkeypatch.setattr(engine, 'create_walk', lambda lr, ask, goal, **kw: engine.result('ok', walk='walk-test', data={'title': goal}))
     def boom(*a, **k): raise OSError('disk full')
-    monkeypatch.setattr(ws, 'open_learn_walk' if fails == 'open' else 'save', boom)
+    monkeypatch.setattr(ws, 'open_walk' if fails == 'open' else 'save', boom)
     register_learn_jobs(ws)
     r = {f.__name__: f for f in learn_tools(ai)}['create_walk'](goal='fractions')
     job = ws.jobs.get(r['operation_id'])
@@ -136,7 +136,7 @@ def test_a_walk_that_cannot_be_opened_stays_a_completed_job(ws, monkeypatch, cap
         time.sleep(.01); job = ws.jobs.get(job.id)
     assert job.status == 'complete', job.error
     assert job.result['status'] == 'ok' and job.result['walk'] == 'walk-test'
-    assert job.result['data']['tab'] == dict(kind='learn_walk', vault=ref.name, walk='walk-test')
+    assert job.result['data']['tab'] == dict(kind='learn', vault=ref.name, walk='walk-test', path='/w/walk-test/0')
     assert any('disk full' in m for m in caplog.messages)
 
 

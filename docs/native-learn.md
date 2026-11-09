@@ -212,7 +212,7 @@ These slices replace S3 and S6 to S8 in the table below. S1, S2, S4, S5 and S5V 
 | P9 | Search, library and sources, with research gather as a job of the Leela session | `search`, `add`, `sources` | `abhyasa-search.png`, `abhyasa-library.png`, `abhyasa-sources.png`, `abhyasa-gather.png` | Not started |
 | P10 | Builder: create and change a module from the Leela agent pane | `build` | `abhyasa-build.png` | Not started |
 | P11 | Voice through Leela's one speech path | `voice` | none | Built, tests pass; real microphone and real model download not verified |
-| P12 | Removal of the S3 walk tab markup and the old handoff pane | Leela `blocks/learn` | none | Not started |
+| P12 | Removal of the S3 walk tab markup and the old handoff pane | Leela `blocks/learn` | none | Done: a walk is the Learn tab at `/w/<jid>/<step>`; the walk markup, its HTML and JSON routes and the `learn_walk` tab kind are gone; saved `learn_walk` tabs restore as the Learn tab |
 | P13 | Guide: "I don't get this" and "Ask about what you see" through the Leela agent | `guide` | `abhyasa-guide.png` | Not started |
 
 ## Delivery slices
@@ -256,7 +256,6 @@ These hold at Leela `49d4adea` and Abhyasa `1879564`.
 | The hosted app leaves out the `build` and `guide` blocks, because each runs its own agent. | No builder chat and no guide board in the tab. | P10 and P13 |
 | The isolated preview does not name its vault. | The owner cannot see which vault a demo writes to. | The preview launcher prints and shows the vault name and path. |
 | No presence signal for the person who started a job exists. | The walk tab auto-opens on the active conversation with Learn on, without a presence check. | A later presence signal; the Open walk action in the job card covers the rest. |
-| The native walk tab (S3) is replaced by the hosted Abhyasa pages under `/learn/abh`. | Only the step page is hosted and tested (P0); Today, Course, Graph and the other surfaces have no parity check. | P1 to P9 |
 | No engine call reads the Learn settings outside the three tools that take `settings=`. | Other Learn settings rows have no effect yet. | Each later slice that adds an engine call. |
 
 Closed since the last revision, each proven by a passing targeted suite on 9 Nov:

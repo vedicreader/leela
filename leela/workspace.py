@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio, atexit, hashlib, json, os, re, threading, time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from urllib.parse import quote
 from fastcore.all import AttrDict, Path, L, atomic_save, first, groupby, ifnone
 
 from . import Dictable, errstr, leela_cfg
@@ -79,6 +80,10 @@ class _EnvClient:
     async def inspect_obj(self, code, pos, detail=0): return ''
     async def interrupt(self): pass
     async def restart(self): pass
+
+def walk_path(walk, i=0):
+    "Abhyasa's page of step `i` of walk `walk`; the walk page when `i` is None."
+    return f"/w/{quote(walk, safe='')}" + ('' if i is None else f'/{i}')
 
 def ws_path(): return leela_cfg/'workspace.json'
 
@@ -637,13 +642,6 @@ class Workspace:
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='vault', ref=ref, scratch=True,
                                  title=title or doc_id, private_kernel=False))
-    def open_learn_walk(self, vault, walk):
-        vault = vault or self.vaults.active.name
-        ref = json.dumps([vault, walk])
-        if (i := first(i for i, t in enumerate(self.tabs) if t.kind == 'learn_walk' and t.ref == ref)) is not None:
-            self.active = i
-            return self.tabs[i]
-        return self._add_tab(Tab(path='', kind='learn_walk', ref=ref, title=f'walk: {walk} ({vault})', private_kernel=False))
     def open_learn(self, vault='', path='/'):
         "Open Abhyasa's page `path` in the one Learn tab, which is a place: reopening it moves it there."
         vault = vault or self.vaults.active.name
@@ -651,10 +649,19 @@ class Workspace:
             self.tabs[i].page, self.active = path, i
             return self.tabs[i]
         return self._add_tab(Tab(path='', kind='learn', ref=json.dumps([vault]), page=path, title='Learn', private_kernel=False))
+    def open_walk(self, vault, walk, i=0):
+        "Open the Learn tab at step `i` of walk `walk`."
+        return self.open_learn(vault, walk_path(walk, i))
+    def open_saved_learn(self, t):
+        "Reopen a saved Learn tab; an old `learn_walk` tab becomes the Learn tab at its walk."
+        ref = json.loads(t['ref'])
+        tab = self.open_learn(ref[0] if ref else '')
+        tab.page = str(t.get('page') or '') or (walk_path(ref[1], None) if t['kind'] == 'learn_walk' and len(ref) > 1 else '')
+        return tab
     def note_learn_page(self, path):
         "Which Abhyasa page the active Learn tab shows, so a reload opens the same one."
         t = self.tab
-        if getattr(t, 'kind', '') not in ('learn', 'learn_walk') or not path.startswith('/') or path.startswith('//') or t.page == path: return None
+        if getattr(t, 'kind', '') != 'learn' or not path.startswith('/') or path.startswith('//') or t.page == path: return None
         t.page = path; self.save()
         return t
     def open_vault_workbench(self, view='browse'):
@@ -1504,8 +1511,7 @@ class Workspace:
             place = str(t.get('path') or '')
             try:
                 if t.get('kind') in ('learn_walk', 'learn'):
-                    tab = self.open_learn_walk(*json.loads(t['ref'])) if t['kind'] == 'learn_walk' else self.open_learn(*json.loads(t['ref']))
-                    tab.page = str(t.get('page') or '')
+                    tab = self.open_saved_learn(t)
                 else:
                     if not place or (self.fs.loose is None and not self.fs.covers(Path(place).resolve()) and not self.fs.read_only(place)): continue
                     tab = self.open(place)
@@ -1517,7 +1523,7 @@ class Workspace:
         if opened:
             was = saved[min(max(active, 0), len(saved) - 1)] or {}
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
-                                       if (t.kind in ('learn_walk', 'learn') and t.kind == was.get('kind') and t.ref == was.get('ref')) or (t.path and t.path == str(was.get('path') or ''))), 0)
+                                       if (t.kind == 'learn' and was.get('kind') in ('learn_walk', 'learn')) or (t.path and t.path == str(was.get('path') or ''))), 0)
         return opened
     def _merge_roots(self, held, mine):
         "Folders the saved session should hold: what this window did not close, then what this window has."
@@ -1589,8 +1595,7 @@ class Workspace:
         saved, active = _saved_tabs(d)
         for t in saved:
             try:
-                tab = (ws.open_learn_walk if t['kind'] == 'learn_walk' else ws.open_learn)(*json.loads(t['ref'])) if t.get('kind') in ('learn_walk', 'learn') else ws.open(t['path'])
-                if tab.kind in ('learn_walk', 'learn'): tab.page = str(t.get('page') or '')
+                tab = ws.open_saved_learn(t) if t.get('kind') in ('learn_walk', 'learn') else ws.open(t['path'])
                 if d.get('version', 0) >= 2 and 'private_kernel' in t:
                     tab.private_kernel = bool(t['private_kernel'])
                 tab.cwd = str(t.get('cwd') or '')

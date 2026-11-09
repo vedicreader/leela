@@ -185,19 +185,18 @@ def learn_store(ws, vault=None, write=False):
 
 
 def learn_view(ws):
-    "`(vault, walk, page)` of the active tab when it is a Learn tab: the walk of a walk tab, and the saved path of the page it shows. Else `(None, None, '')`."
+    "`(vault, None, page)` of the active tab when it is a Learn tab: its vault and the saved path of the page it shows. Else `(None, None, '')`."
     tab = getattr(ws, 'tab', None)
-    if getattr(tab, 'kind', '') not in ('learn', 'learn_walk'): return None, None, ''
+    if getattr(tab, 'kind', '') != 'learn': return None, None, ''
     ref = json.loads(tab.ref or '[]')
-    return (ref[0] if ref else None), (ref[1] if tab.kind == 'learn_walk' and len(ref) > 1 else None), getattr(tab, 'page', '') or ''
+    return (ref[0] if ref else None), None, getattr(tab, 'page', '') or ''
 
 
 def on_screen(ai, lr):
     "`dict(jid, i)` of the walk step that the active Learn tab shows. `KeyError` says why when it shows none."
     from abhyasa.agent_tools import page_of, walk_state
-    _, walk, page = learn_view(ai.ws)
-    pg = page_of(page)
-    jid = pg['jid'] if pg['kind'] in ('step', 'walk') else walk
+    pg = page_of(learn_view(ai.ws)[2])
+    jid = pg['jid'] if pg['kind'] in ('step', 'walk') else None
     if not jid: raise KeyError('The Learn tab shows no walk step. Ask the learner to open one.')
     i = pg['i'] if pg['kind'] == 'step' else (walk_state(lr, jid)['data'] or {}).get('current')
     return dict(jid=jid, i=0 if i is None else i)
@@ -319,9 +318,9 @@ def contract_missing() -> list[str]:
 
 
 def show_walk(ws, vault, walk):
-    "Open the walk tab, keep the layout, and tell the pages showing this workspace. A failure is logged: the walk exists, so the job stays ok."
+    "Open the Learn tab at the walk, keep the layout, and tell the pages showing this workspace. A failure is logged: the walk exists, so the job stays ok."
     try:
-        tab = ws.open_learn_walk(vault, walk)
+        tab = ws.open_walk(vault, walk)
         ws.save()
         ws.fs_watch.announce_tab(tab.kind, tab.ref)
     except Exception as e: log.error('Learn walk %s was made but its tab did not open: %s', walk, errstr(e))
@@ -343,7 +342,8 @@ def register_learn_jobs(ws):
                                    settings=job.params['settings'], guard=lambda text: learn_guard(ai, text))
             r.update(operation_id=job.id, vault=job.params['vault'])
             if r['status'] == 'ok':
-                r['data']['tab'] = dict(kind='learn_walk', vault=r['vault'], walk=r['walk'])
+                from ...workspace import walk_path
+                r['data']['tab'] = dict(kind='learn', vault=r['vault'], walk=r['walk'], path=walk_path(r['walk']))
                 if ws.threads.active_id == job.params['thread'] and ai.learn_mode: show_walk(ws, r['vault'], r['walk'])
                 ws.fs_watch.announce_learn(r['walk'])
             if r['status'] == 'ok' and job.params.get('research'):

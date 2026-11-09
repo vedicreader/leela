@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio, hashlib, json
-from urllib.parse import quote
 
 from fastcore.all import Path, first
 
@@ -156,9 +155,6 @@ def connect(app, ctx):
         if t.kind in ('pdf', 'image', 'office', 'audio', 'video'):
             return {'kind': t.kind, 'path': t.path, 'title': t.title,
                     'disk_version': disk_version(t.path)}
-        if t.kind == 'learn_walk':
-            vault, walk = json.loads(t.ref)
-            return {'kind': t.kind, 'title': t.title, 'vault': vault, 'walk': walk, 'path': t.page or f"/w/{quote(walk, safe='')}/0"}
         if t.kind == 'learn':
             return {'kind': 'learn', 'title': t.title, 'vault': (json.loads(t.ref) or [''])[0], 'path': t.page or '/'}
         if t.kind == 'vault':

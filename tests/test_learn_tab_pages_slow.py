@@ -63,7 +63,7 @@ def test_chords_work_only_inside_the_learn_tab(tmp_path, monkeypatch):
     async def scenario(pg, ws, port):
         hints = []
         pg.on('request', lambda r: hints.append(r.url) if '/hint' in r.url else None)
-        ws.open_learn_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid); ws.save(); await pg.evaluate('mountTab()')
         await pg.locator('.abh #check .check').wait_for(timeout=30000)
         await pg.wait_for_load_state('networkidle'); await pg.wait_for_timeout(1000)
         await pg.locator('.abh #ans').click()
