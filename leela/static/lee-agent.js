@@ -2036,6 +2036,8 @@ function paintAgentStarters() {
     b.onclick = () => { const p = $('#agentprompt'); if (!p) return; p.value = text; p.dispatchEvent(new Event('input', {bubbles: true})); p.focus(); };
     box.appendChild(b);
   }
+  const src = document.createElement('a'); src.className = 'lee-btn'; src.textContent = 'Sources for Learn'; src.title = 'The folders and files that Learn may read'; src.href = '/learn/sources'; src.target = '_blank'; src.rel = 'noopener';
+  box.appendChild(src);
   log.appendChild(box);
 }
 {

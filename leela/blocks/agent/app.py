@@ -1066,6 +1066,10 @@ def connect(app, ctx):
             # a withheld attachment names its chip, so the prompt bar paints that one red and keeps the prompt
             if (at := getattr(e, 'attachments', None)) is not None: return fail(e, attachments=at, line=str(e))
             return fail(e)
+        if getattr(runner.ai, 'mode', 'code') == 'learn' and (paths := [a for a in attachments if isinstance(a, str)]):   # an @ attachment in Learn mode is also a Learn source
+            from ..learn.tools import learn_attach
+            try: await off_loop(learn_attach, ws, paths)
+            except Exception: pass   # the Learn sources page names what Abhyasa refused
         # Started here, on the loop that owns the kernels, so the first tool call meets a live one.
         if ws.runtime_peek() is None: asyncio.ensure_future(_warm_runtime())
         try: return await off_loop(runner.start, q, attachments, reasoning,

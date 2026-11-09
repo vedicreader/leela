@@ -6,8 +6,85 @@ from ... import errstr
 log = logging.getLogger(__name__)
 
 def learn_settings(ws):
+    "The Learn rows of `ws` for one Abhyasa call. With `workspace_folders` on, `sources.roots` also names the ticked workspace folders that Abhyasa accepts."
     from ..settings.settings import Settings
-    return dict(Settings(ws.project_root).effective().get('learn', {}))
+    d = dict(Settings(ws.project_root).effective().get('learn', {}))
+    if d.get('workspace_folders') and (r := [x.path for x in learn_sources(ws) if x.origin == 'workspace' and x.on and not x.why]):
+        from abhyasa.learner import dflt
+        d['sources.roots'] = '\n'.join([*str(dflt('sources.roots')).splitlines(), *r])
+    return d
+
+
+def _src(ws):
+    "The Learn source state of `ws`, with its three parts in place: `off` (workspace folders that are not ticked), `added` (attached paths) and `filed` (path to the docs filed from it)."
+    s = ws.learn_src
+    for k, t in (('off', list), ('added', list), ('filed', dict)):
+        if not isinstance(s.get(k), t): s[k] = t()
+    return s
+
+def _why(path, kind):
+    "Why Abhyasa does not file `path` (its own rules), or ''."
+    from abhyasa.sources import file_why, folder_why
+    return (folder_why if kind == 'folder' else file_why)(path)
+
+def learn_sources(ws) -> list:
+    "The Learn sources of `ws`, each `AttrDict(path, name, kind, origin, on, why, filed)`: its open folders when `workspace_folders` is on (ticked unless in `off`), then the attached paths. `why` is Abhyasa's plain reason for a path it refuses; `filed` says if Abhyasa filed it."
+    s, rows, seen = _src(ws), [], set()
+    def add(p, origin, on):
+        p = str(Path(p).expanduser().resolve())
+        if p in seen: return
+        seen.add(p)
+        kind = 'file' if Path(p).is_file() else 'folder'
+        rows.append(AttrDict(path=p, name=Path(p).name, kind=kind, origin=origin, on=on, why=_why(p, kind), filed=p in s['filed']))
+    if learn_settings_on(ws):
+        loose = getattr(ws.fs, 'loose', None)
+        for r in ws.fs.roots:
+            if r != loose: add(r, 'workspace', str(Path(r).resolve()) not in s['off'])
+    for p in s['added']: add(p, 'attached', True)
+    return rows
+
+def learn_settings_on(ws) -> bool:
+    "Whether the setting `learn.workspace_folders` is on for `ws`."
+    from ..settings.settings import Settings
+    return bool(Settings(ws.project_root).effective().get('learn', {}).get('workspace_folders'))
+
+def sync_sources(ws) -> list:
+    "File each ticked source that Abhyasa accepts, in the way a hand-added one is (`file_folder`, `file_file`), and un-file what is off or gone, from the Learn vault only. A refused path is never read. Return `learn_sources(ws)`."
+    from abhyasa.sources import file_file, file_folder, unfile
+    s, rows = _src(ws), learn_sources(ws)
+    keep = {r.path: r for r in rows if r.on and not r.why}
+    _, lr = learn_store(ws, write=True)
+    for p in [p for p in s['filed'] if p not in keep]: unfile(lr, s['filed'].pop(p))
+    for p, r in keep.items():
+        if p in s['filed']: continue
+        try: docs = (file_folder if r.kind == 'folder' else file_file)(lr, p)
+        except Exception as e: r.why = errstr(e); continue
+        s['filed'][p] = [dict(shelf=d.shelf, doc_id=d.doc_id, mtime=d.mtime) for d in docs.added]
+    ws.save(only=('learn_src',))
+    return learn_sources(ws)
+
+def learn_attach(ws, refs) -> list:
+    "Attach the paths `refs` as Learn sources and file them. An attachment that is no path of a file or folder is skipped."
+    s = _src(ws)
+    for r in refs:
+        if isinstance(r, str) and (p := Path(r).expanduser()).exists() and str(p.resolve()) not in s['added']: s['added'].append(str(p.resolve()))
+    return sync_sources(ws)
+
+def learn_untick(ws, path, on=False) -> list:
+    "Tick or untick the workspace folder `path`, or detach the attached path `path`; then sync. A detached source leaves the Learn vault. The path itself is never changed."
+    s, p = _src(ws), str(Path(path).expanduser().resolve())
+    if p in s['added'] and not on: s['added'].remove(p)
+    elif on: s['off'] = [x for x in s['off'] if x != p]
+    elif p not in s['off']: s['off'].append(p)
+    return sync_sources(ws)
+
+def sources_line(ws) -> str:
+    "One line for the Learn context: what the agent may use from this workspace, and what Abhyasa refused."
+    rows = learn_sources(ws)
+    use, no = [r.name for r in rows if r.on and not r.why], [f'{r.name} ({r.why})' for r in rows if r.on and r.why]
+    on = learn_settings_on(ws)
+    if not (use or no or on): return ''
+    return f"Workspace folders as sources: {'on' if on else 'off'}. Sources of this workspace: {', '.join(use) or 'none'}." + (f" Not used: {'; '.join(no)}." if no else '')
 
 
 def learn_store(ws, vault=None, write=False):
@@ -248,7 +325,7 @@ def learn_context(ai):
     vault, walk, page = learn_view(ai.ws)
     try: _, lr = learn_store(ai.ws, vault)
     except (KeyError, FileNotFoundError): return 'Learn mode. The learning vault is unavailable. Attach it before continuing.'
-    with use_settings(learn_settings(ai.ws)): return learner_context(lr, walk, page=page)
+    with use_settings(learn_settings(ai.ws)): return '\n'.join(filter(None, [learner_context(lr, walk, page=page), sources_line(ai.ws)]))
 
 
 def learn_tools(ai):

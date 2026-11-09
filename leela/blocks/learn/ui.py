@@ -4,7 +4,7 @@ from ...core.text import md_html
 from ...core.web import asset
 from ..settings.settings import theme_boot
 
-__all__ = ['Page', 'StepPage', 'DocPage', 'OpenedPage', 'LookupPage', 'FolderPage']
+__all__ = ['Page', 'StepPage', 'DocPage', 'OpenedPage', 'LookupPage', 'FolderPage', 'SourcesPage']
 
 # A frame takes the IDE's theme over its own saved one, and follows it when it changes.
 FOLLOW = """try { if (window.parent !== window) { const d = document.documentElement, p = window.parent.document.documentElement;
@@ -133,3 +133,19 @@ def LookupPage(q, rows, packages=(), path='', pane:bool=False, root=None, say=No
                      Button('Look up', type='submit', cls='lee-btn'), method='get', action='/learn/lookup'),
                 P(say, cls='lee-learn-line') if say else None, *[_Hit(r, path) for r in rows],
                 P('', cls='lee-learn-line', role='status', aria_live='polite') if path else None, pane=pane, js=bool(path), root=root)
+
+
+def SourcesPage(rows, on, pane=False, root=None):
+    "The Learn sources of a workspace: each open folder with a tick (when the setting is on), each attached path with a Remove button, a refused path with its reason, and a box to add a path."
+    def Row(r):
+        post = lambda action, *kids: Form(*kids, Hidden(name='action', value=action), Hidden(name='path', value=r.path), Hidden(name='pane', value='1' if pane else ''), method='post', action='/learn/sources/do', cls='lee-learn-src')
+        first = (post('tick', Input(type='checkbox', checked=r.on, aria_label=f'Use {r.name}', onchange='this.form.submit()'), Hidden(name='on', value='0' if r.on else '1'))
+                 if r.origin == 'workspace' else post('remove', Button('Remove', type='submit', aria_label=f'Remove {r.name}')))
+        return Section(first, Strong(r.name), Span(f' {r.kind}, {"folder of this workspace" if r.origin == "workspace" else "attached"}'), Code(f' {r.path}'),
+                       P(r.why, cls='lee-learn-line', role='status') if r.why else (P('Filed in Learn.' if r.filed else 'Not filed.', cls='lee-learn-line') if r.on else None))
+    note = None if on else P('The setting "Use the folders of this workspace as sources" is off. Turn it on in Settings, then Learn, to list the folders of this workspace here.', cls='lee-learn-line')
+    add = Form(Input(name='path', placeholder='Path of a file or folder', aria_label='Path of a file or folder'), Button('Add', type='submit'), Hidden(name='action', value='add'),
+               Hidden(name='pane', value='1' if pane else ''), method='post', action='/learn/sources/do')
+    body = [P('Learn reads only what is listed here. Abhyasa refuses a hidden folder, a link, and anything outside your home folder. Leela never changes your files. Remove only takes a source out of Learn.', cls='lee-learn-line'), note,
+            *([Row(r) for r in rows] or [P('No source yet. Add a path, or attach a file or folder with @ in the Learn chat.', cls='lee-learn-line')]), add]
+    return Page('Learn sources', *filter(None, body), pane=pane, root=root)

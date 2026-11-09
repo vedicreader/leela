@@ -337,6 +337,7 @@ class Workspace:
         self.subagent_effort = self.subagent_tools = self.tool_channel = ''
         self.vault_pii = 'redact'           # what a hosted model gets of a Personal vault document
         self.vault_read = {}                # folder -> the Read sheet's last choice there: parse, preset, model, hint
+        self.learn_src = {}                 # Learn sources of this workspace: `off` (workspace folders unticked), `added` (attached paths), `filed` (path -> the docs filed from it)
         self.agent_optin = ()               # shalya's opt-in tool groups this workspace turns on ('exhash', 'research', …)
         self.agent_profile = agent_profile  # how new conversations are briefed: auto | small | full (ramabana's profiles)
         self.thread_optins = {}             # a conversation's own opt-ins, by session id, for `Threads.resume`
@@ -1497,7 +1498,7 @@ class Workspace:
                 'thread_optins': {k: list(v) for k, v in self.thread_optins.items()},
                 'thread_profiles': dict(self.thread_profiles),
                 'job_models': self.job_models, 'mode': self.mode, 'mode_layouts': self.mode_layouts, 'mode_focus': self.mode_focus,
-                'active_root': str(self.active_root or ''),
+                'active_root': str(self.active_root or ''), 'learn_src': self.learn_src,
                 'per_folder': True, 'saved': time.time()}
     def restore_settings(self, d):
         """Everything a saved session holds that is not its folders or its tabs."""
@@ -1523,6 +1524,7 @@ class Workspace:
         from .blocks.vault.app import read_choice   # a choice this build cannot read is dropped, not a workspace that will not load
         rows = d.get('vault_read') if isinstance(d.get('vault_read'), dict) else {}
         self.vault_read = {str(k): c for k, v in rows.items() if (c := read_choice(v))}
+        self.learn_src = d['learn_src'] if isinstance(d.get('learn_src'), dict) else {}
         from shalya.tools import OPTIN     # a group this shalya lacks is dropped, not a workspace that will not load
         self.agent_optin = tuple(x for x in (d.get('agent_optin') or ()) if x in OPTIN)
         from .agent.core import PROFILES   # a profile this ramabana lacks is `auto`, not a workspace that will not load

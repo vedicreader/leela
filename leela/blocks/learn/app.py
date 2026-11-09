@@ -8,7 +8,7 @@ from ..memory.memory import _open_lock, learning_store
 from ..settings.settings import Settings, register_section
 from .speech import connect as connect_speech, speech_rows
 from .learn import Refused, handoff_memory
-from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
+from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, SourcesPage, StepPage
 
 __all__ = ['CAPS', 'connect', 'learn_rows']
 
@@ -22,9 +22,12 @@ def learn_rows():
     "The Learn settings section from Abhyasa's `SETTINGS`: file-stored rows of its own groups. Profile rows belong to the vault, and `sources.roots` to Leela's folder controls."
     try:
         from abhyasa.learner import SETTINGS, GROUPS
-        return [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
+        rows = [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
                      label=r.label, help=r.help, unit=r.unit, pct=r.pct, more=r.more, group=r.group, group_label=GROUPS[r.group][0])
                 for r in SETTINGS.values() if r.group in LEARN_GROUPS and r.ui and r.store == 'file' and r.section != 'sources']
+        return [*rows, dict(key='workspace_folders', dflt=False, kind='bool', lo=None, hi=None, hi_key=None, choices=None, label='Use the folders of this workspace as sources',
+                            help='Learn gets the open folders of this workspace as source folders. Pick which ones on the Learn sources page. Abhyasa never reads a hidden folder, a link, or a folder outside your home folder.',
+                            unit='', pct=False, more=False, group='research', group_label=GROUPS['research'][0])]
     except (ImportError, AttributeError, KeyError) as e:
         log.warning('Learn settings unavailable: %s', type(e).__name__)
         return []
@@ -232,6 +235,22 @@ def connect(app, ctx):
         try: mem = handoff_memory(ctx, q.v)[1]
         except Refused as e: return q, str(e)
         return q, None if q.doc and not q.walk else await off_loop(read_step, mem, q)
+    @app.route('/learn/sources', methods=['GET'])
+    async def learn_sources_page(req):
+        from .tools import learn_settings_on, learn_sources
+        return FtResponse(SourcesPage(learn_sources(ctx.session), learn_settings_on(ctx.session), pane=req.query_params.get('pane') == '1', root=ctx.session.project_root), headers=HEADERS)
+    @app.route('/learn/sources/do', methods=['POST'])
+    async def learn_sources_do(req):
+        "Add, tick or remove one Learn source of this workspace, then show the list again. The vault changes; the path never does."
+        from .tools import learn_attach, learn_untick
+        f, ws = await req.form(), ctx.session
+        pane, path, act = f.get('pane') == '1', str(f.get('path') or '').strip(), f.get('action')
+        back = RedirectResponse('/learn/sources' + ('?pane=1' if pane else ''), 303)
+        if act not in ('add', 'tick', 'remove') or not path: return said(req, ws.project_root, 'Give the path of a file or folder.', 400, pane=pane)
+        try: await off_loop(learn_attach if act == 'add' else lambda w, p: learn_untick(w, p, f.get('on') == '1'), ws, [path] if act == 'add' else path)
+        except KeyError: return said(req, ws.project_root, 'Attach the learning vault first.', 409, pane=pane)
+        except Exception as e: return said(req, ws.project_root, f'Learn could not change its sources. {errstr(e)}', 500, pane=pane)
+        return back
     @app.route('/learn/env', methods=['POST'])
     async def learn_env(req):
         from . import toolenv

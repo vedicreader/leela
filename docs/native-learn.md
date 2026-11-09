@@ -324,6 +324,18 @@ The agent pane builds and changes a walk through the one Leela session. Abhyasa 
 
 UI still to build: a button in the Learn tab, and a chord, that sends "I don't get this" to the agent pane (the guide board of the standalone app); the tab must reload its page after a `learn_change` job ends or a hand change.
 
+## Learn sources from the workspace
+
+Leela knows the folders that a workspace has open. Learn can use them as sources, and the learner can attach single files and folders.
+
+- Setting `learn.workspace_folders` (off by default): "Use the folders of this workspace as sources". When it is on, `learn_settings` gives Abhyasa a `sources.roots` value for each call (`use_settings`): Abhyasa's own default roots, then the ticked folders of the workspace that Abhyasa accepts. When it is off, nothing changes. No change in Abhyasa was needed, and `HOST_API` stays 1.
+- State is per workspace, in `Workspace.learn_src` (saved in `workspace.json`): `off` (workspace folders that are not ticked), `added` (attached paths) and `filed` (for each path, the documents that this filing added). Nothing is written into the notebook or into the folders.
+- The page `/learn/sources` (a link, "Sources for Learn", is in the Learn starters of the agent pane) lists each folder with a tick, each attached path with Remove, and a box for a path. A path that Abhyasa refuses (`folder_why`, `file_why`) shows its plain reason. It is never read and never dropped without a word.
+- Attach is the agent pane's own `@` picker. In Learn mode, `/agent/turn` also files each `@` path as a Learn source (`learn_attach`): folders with `file_folder`, files with `file_file`. The turn itself goes through the normal attachment path and the privacy guard.
+- Remove and un-tick call `unfile` for the documents of that filing only, so a document that someone filed before stays. The user's file is never changed.
+- `learn_context` ends with one line: whether the setting is on, which sources are in use, and which were refused.
+- Not built: a drop target (a browser gives no path for a dropped file) and "Use in Learn" in the Files dock menu (the menu words come from `kavacha`, and the dock is hidden in the Learn layout). `add_source` of the agent already takes a path for one walk, with the same refusals.
+
 ## Modes
 
 A mode is a named workspace preset. `code` is the base mode. `learn` registers itself when the Learn block connects. A new mode is one `register_mode(Mode(...))` call.
