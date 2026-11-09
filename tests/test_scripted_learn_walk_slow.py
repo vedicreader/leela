@@ -97,3 +97,57 @@ def test_every_button_of_the_first_step_answers_in_plain_words(tmp_path, monkeyp
     assert 'Correct' in seen['right'] and 'HINT' in seen['hint'].upper()
     assert 'THE TUTOR' in seen['first'].upper() and '?' in seen['first'], seen['first']
     assert 'Check' in seen['idk'] and 'Check' in seen['teach'], (seen['idk'], seen['teach'])
+
+
+@pytest.mark.slow
+def test_show_me_draws_a_demo_with_a_lock_in_button(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    from playwright.async_api import async_playwright
+    from leela.workspace import Workspace
+    from test_web_slow import fake_kernels, _free_port, _serve, _started, _launch
+    from tools.scripted_learn import install_scripted
+    monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'vault.db'))
+    monkeypatch.setenv('LEELA_MEMORY_OFFLINE', '1')
+    SHOTS.mkdir(exist_ok=True)
+    async def go():
+        restore = fake_kernels()
+        ws = Workspace(roots=[tmp_path.resolve()], approvals='auto')
+        install_scripted(ws)
+        port = _free_port(); srv = _serve(ws, port); await _started(srv)
+        seen = {}
+        try:
+            async with async_playwright() as pw:
+                b = await _launch(pw)
+                try:
+                    pg = await b.new_page(viewport=dict(width=1500, height=900))
+                    await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
+                    await pg.wait_for_function('window.lee && lee.keys.length')
+                    assert (await _api(pg, 'POST', '/agent/learn-mode', {'on': True}))['status'] == 200
+                    await pg.evaluate("() => leeRight('agent')")
+                    await pg.fill('#agentprompt', TOPIC)
+                    await pg.evaluate('() => sendAgent()')
+                    await pg.wait_for_selector('.abh #check .check', timeout=30000)
+                    await pg.wait_for_function("() => /Cut a pizza/.test(document.querySelector('.abh')?.innerText || '')", timeout=30000)
+                    await pg.wait_for_timeout(1000)
+                    await pg.locator('.abh').get_by_role('button', name=re.compile('^Show me')).first.click()
+                    await pg.wait_for_function("() => [...document.querySelectorAll('.abh button, .abh [data-rupaka] button')].some(b => /Lock in/i.test(b.innerText))", timeout=60000)
+                    await pg.wait_for_timeout(1200)
+                    seen['page'] = await _clean(pg, 'demo')
+                    await pg.screenshot(path=str(SHOTS/'s1-demo-light.png'))
+                    await pg.evaluate("applyTheme('leela:dark:relaxed')")
+                    await pg.wait_for_timeout(800)
+                    await pg.screenshot(path=str(SHOTS/'s1-demo-dark.png'))
+                    await pg.locator('.abh').get_by_text('Show it in 3D').first.click()
+                    await pg.wait_for_function("() => document.querySelector('.abh canvas') || /Equal parts in 3D|One whole|3D explainer/.test(document.querySelector('.abh')?.innerText || '')", timeout=60000)
+                    await pg.wait_for_timeout(1500)
+                    seen['scene'] = await _clean(pg, '3D explainer')
+                    await pg.screenshot(path=str(SHOTS/'s1-explainer-dark.png'))
+                finally: await b.close()
+        finally:
+            srv.should_exit = True
+            ws.shutdown_now()
+            restore()
+        return seen
+    seen = asyncio.run(asyncio.wait_for(go(), 250))
+    assert 'could not make' not in seen['scene'].lower()
+    assert 'Lock in' in seen['page'] and 'equal parts' in seen['page'].lower(), seen['page']

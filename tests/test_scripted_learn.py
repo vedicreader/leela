@@ -126,9 +126,24 @@ def test_a_free_prompt_gets_a_paragraph():
     t = reply('Ask about this: Concept: Tides', 'You answer. Write at a US grade 9 level.')
     _clean(t)
 
-def test_explain_here_gets_three_numbered_steps(walk):
-    from abhyasa.agent_tools import explain_here
+@pytest.mark.parametrize('name', ['Equal parts', 'Tides'])
+def test_demo_prompt_gets_a_spec_that_passes_rupakas_validator_and_check(name):
+    from rupaka.agent import demo_prompt, demo_sp
+    from rupaka.check import check
+    from rupaka.spec import validate
+    spec = json.loads(reply(demo_prompt(dict(name=name, statement='One idea.')), demo_sp()))
+    assert not list(validate(spec)) and not check(spec).errors and name.lower() in spec['blocks'][0]['prompt']
+    assert [b['type'] for b in spec['blocks']][:2] == ['gate', 'slider'] and len(spec['blocks'][0]['options']) == 3
+
+@pytest.mark.parametrize('name', ['Equal parts', 'Tides'])
+def test_explainer_prompt_gets_a_scene_that_passes_both_checks(name):
+    from rupaka.spec import validate
+    spec = json.loads(reply(S.explainer_prompt(dict(name=name, statement='One idea.')), S.explainer_sp()))
+    assert not list(validate(spec)) and not S.scene_errors(spec) and name.lower() in spec['blocks'][0]['steps'][0]
+
+def test_make_demo_and_make_explainer_save_specs(walk):
     lr, jid, t, j = walk
-    r = explain_here(lr, ask, jid, 0, 'what is a fraction', settings={})
-    e = r['data']['explanation']
-    assert r['status'] == 'ok' and [x[:2] for x in e.splitlines()[:3]] == ['1.', '2.', '3.'] and '{' not in e
+    slug = j.steps[0]['slug']
+    d = S.make_demo(lr, ask, slug, check=True)
+    e = S.make_explainer(lr, ask, slug)
+    assert d and d.spec['blocks'][0]['type'] == 'gate' and e and e.spec['blocks'][0]['type'] == 'scene'

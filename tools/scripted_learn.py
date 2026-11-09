@@ -34,7 +34,7 @@ def _line(p, *keys):
         if m := re.search(rf'^{re.escape(k)}[^\n:]*:\s*(.+)$', p, re.M): return _clean(m[1])
     return ''
 def _name(p): return _line(p, 'Concept', 'Idea') .split(' (subject')[0] or 'this idea'
-def _said(p): return _line(p, 'Statement', 'Reference statement', 'The learner already sees this', 'In plain words') or _line(p, 'What the learner must understand', 'The core to teach', 'Core point')
+def _said(p): return _line(p, 'Statement', 'Reference statement', 'The learner already sees this') or _line(p, 'What the learner must understand', 'The core to teach', 'Core point')
 def _core(p): return _line(p, 'What the learner must understand', 'Core point', 'The core to teach') or _said(p)
 def _row(p): return FRACTIONS.get(_name(p).lower(), {})
 def _stems(t): return {w[:5] for w in re.findall(r'[a-z]+', (t or '').lower()) if len(w) > 3 and w not in STOP}
@@ -85,11 +85,6 @@ def lesson(p):
     chk = r.get('check') or f'Predict this: what do you see in a new case of {n.lower()}?'
     return f"1. Start with one small case of {n.lower()}: {r.get('note') or 'a thing that you can see and count.'}\n2. Look at what the case shows. {s}\n3. Say why it holds: the case follows the idea, so the idea fits the next case too.\nCheck: {chk}"
 
-def explain(p):
-    n, s, r = _name(p), _said(p), _row(p)
-    if '3 or 4 short numbered steps' not in p: return f"{n} starts from one small case. {s} Look at the case again and find the idea in it."
-    return f"1. Start with one small case of {n.lower()}: {r.get('note') or 'a thing that you can see and count.'}\n2. Look at what the case shows. {s}\n3. Say the idea in your own words, then look at the case again."
-
 def note(p):
     n = _name(p)
     return _row(p).get('note') or f'You meet {n.lower()} in daily life, when you share, count or compare things. Look for one case near you.'
@@ -102,6 +97,26 @@ def talk(p):
     n, s = _name(p), _said(p) or _name(p)
     return _j(points=[f'Start with one case that all can see: {n.lower()}.', s, f'Look at the case again and find {n.lower()} in it.'],
               say=f'Show one small case of {n.lower()} first. Then say the idea. Then let them find it in the case.', ask=f'Where do you meet {n.lower()} in your day?', watch=f'Some people say {n.lower()} is only a word. It is an idea that you can use.')
+
+def _slug(n): return re.sub(r'[^a-z0-9]+', '-', n.lower()).strip('-') or 'idea'
+
+def demo(p):
+    "A predict-then-lock demo: a gate with 3 options hides a total, a slider moves it after the lock."
+    n, s = _name(p), _said(p)
+    return _j(rupaka=1, id=_slug(n), concept=_slug(n), title=f'{n}: try it', ask=s or f'You predict first. Then you see how {n.lower()} behaves.', state=dict(k=2),
+        derive=[dict(fn='expr', expr='k * 3', out='total')],
+        blocks=[dict(type='gate', id='g', prompt=f'The number of parts goes from 2 to 4. What happens to the total of {n.lower()}?', options=['It doubles', 'It halves', 'It stays the same'],
+                     answer={'is': 'It doubles'}, hides=['total'], why='Say why, in one line, before you lock in.'),
+                dict(type='slider', bind='k', label='Parts', min=1, max=6, step=1, lock='g'),
+                dict(type='readout', after='g', label='Total', text='{k} parts give a total of {total}'),
+                dict(type='caption', after='g', text=f'Each part adds 3 to the total. Move the slider to 1. What does {n.lower()} give now?')])
+
+def scene(p):
+    "A 3D explainer of 3 steps: one whole, the parts, one share."
+    n = _name(p)
+    return _j(rupaka=1, id=f'{_slug(n)}-3d', concept=_slug(n), mode='learn', title=f'{n} in 3D', ask='Step through the scene.', state=dict(step=1, cam='wide'),
+        blocks=[dict(type='scene', bind='step', label=n, steps=[f'Here is one whole for {n.lower()}.', 'Now the whole splits into parts of one size.', f'Each part is one share of {n.lower()}.'],
+                     blocks=[dict(type='body', id='whole', kind='box', size=[1.2, 0.3, 0.3]), dict(type='body', id='part', kind='sphere', size=[0.2], at=[0, 0.5, 0])])])
 
 def vision(p): return _j(labels=[dict(text='Whole', box=[100, 100, 400, 250]), dict(text='Part', box=[500, 100, 800, 250])])
 
@@ -134,7 +149,6 @@ def reply(prompt, sp, max_tokens=0, deadline=None):
     if 'Return JSON: {"core_met"' in p: return grade(p)
     if 'Give hint level' in p: return hint(p)
     if 'Their first error:' in p: return lesson(p)
-    if 'What the learner does not get:' in p: return explain(p)
     if 'You write a short note' in s or 'Your last note said' in p: return note(p)
     if '"core": str, "wrong"' in a and '"name": str' not in a: return core(p)
     if '"steps": [{"name"' in a: return plan(p)
@@ -142,6 +156,8 @@ def reply(prompt, sp, max_tokens=0, deadline=None):
     if '"points": [' in a: return talk(p)
     if '"labels": [{"text"' in a: return vision(p)
     if 'Reply with the JSON lines.' in p: return board(p)
+    if 'Design one 3D explainer' in p: return scene(p)
+    if 'Design one demo that makes the learner predict' in p: return demo(p)
     if 'Return JSON:' in a: return shaped(a)
     if re.match(r'\s*you grade', s, re.I): return grade(p)
     if re.match(r'\s*(you )?plan', s, re.I): return plan(p)
@@ -151,7 +167,7 @@ def install_scripted(ws):
     "Point every job on `ws` at a scripted model that answers each message by calling `create_walk` on it."
     from ramabana.core import ModelSpec
     from tests.fakemodel import Step, install
-    be = install(ws, [], token_delay=0, spec=ModelSpec('hosted-scripted', 'remote', 'scripted/model', ctx=8000))
+    be = install(ws, [], token_delay=0, spec=ModelSpec('hosted-scripted', 'remote', 'scripted/model', ctx=200000))
     be.supports_deadline, be._oneshot = True, reply
     run = be._run
     def _run(msg):
