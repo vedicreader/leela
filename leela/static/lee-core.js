@@ -5893,10 +5893,11 @@ async function editKeys() {
     `<button class="lee-btn" id="keyreset">restore defaults</button>` +
     `<button class="lee-btn go" id="keysave">save</button></div>`,
     null, null, {className: 'lee-keys-modal', storageKey: 'keybindings'});
-  const notes = ns => {
+  const notes = (ns, tk) => {                     // refusals are errors; what a chord of yours took from a default is only told
     const host = m.querySelector('#keynotes');
-    host.innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('');
-    host.hidden = !(ns || []).length;
+    host.innerHTML = (ns || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('') +
+                     (tk || []).map(n => `<div style="opacity:.75">${esc(n)}</div>`).join('');
+    host.hidden = !((ns || []).length || (tk || []).length);
   };
   const edited = new Map();                       // action -> chord, only what a person changed
   const chordOf = k => edited.has(k.action) ? edited.get(k.action) : (k.key || '');
@@ -5926,12 +5927,12 @@ async function editKeys() {
      cannot promise something the save then refuses. */
   let checking = null;
   const check = async () => {
-    if (!edited.size) return notes(d.notes);
+    if (!edited.size) return notes(d.notes, d.took);
     clearTimeout(checking);
     checking = setTimeout(async () => {
       try {
         const r = await post('/keys/check', {keys: merged()});
-        notes(r.notes);
+        notes(r.notes, r.took);
         if (r.notes.length) status(r.notes[0], 'err');
       } catch (e) { notes([String(e.message || e)]); }
     }, 180);
@@ -5969,7 +5970,7 @@ async function editKeys() {
     // Both are what the next save builds on, so a reset the modal outlives must not be undone by it.
     if (r.overrides) d.overrides = r.overrides;
     if (r.text) d.text = r.text;
-    edited.clear(); notes(r.notes); paint();
+    edited.clear(); notes(r.notes, r.took); paint();
     status(r.notes.length ? 'saved, but some entries were skipped' : 'keys saved and live', 'ok');
     remountEditors();
   };
@@ -5987,7 +5988,7 @@ async function editKeys() {
     try { applied(await post('/keys/save', {text})); }
     catch (e) { status(String(e.message || e), 'err'); }
   };
-  notes(d.notes); paint();
+  notes(d.notes, d.took); paint();
 }
 
 /* CodeMirror captures its own keymap at creation, so a rebound chord only reaches the editors
