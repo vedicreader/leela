@@ -27,6 +27,9 @@ def _nb(path, src, live=True):
 async def _open(pg, p):
     await pg.evaluate('p => leeOpenFile(p)', str(p))
     await pg.wait_for_function("() => lee.kind === 'notebook' && lee.editors.get('c1')")
+    if json.loads(p.read_text())['cells'][0]['metadata'].get('scrub'):
+        await pg.evaluate("() => { lee.sel = 0; return leeAct('scrub_live'); }")
+        await pg.wait_for_function("() => lee.cells[0].extra?.scrub?.live === true", timeout=10000)
 
 async def _drag(pg, steps, wait):
     "Alt-drag the first number right by `steps` quarters of 16 px, waiting for `wait(i)` after each."
