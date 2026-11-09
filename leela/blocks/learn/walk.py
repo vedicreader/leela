@@ -53,32 +53,51 @@ def vault_failure(e, jid):
     return walk_failure('not_found' if isinstance(e, (KeyError, FileNotFoundError)) else 'vault_locked', str(e), jid)
 
 
+def _walk_step(steps, i):
+    if i is not None:
+        try: i = int(i)
+        except (TypeError, ValueError): i = None
+        if s := next((s for s in steps if s.get('i') == i), None): return s
+    return steps[0] if steps else None
+
+
+def _walk_link(q):
+    url = q.get('url', '')
+    text = q.get('title') or url
+    try: safe = isinstance(url, str) and (u := urlsplit(url)).scheme.lower() in ('http', 'https') and bool(u.netloc)
+    except ValueError: safe = False
+    return A(text, href=url, data_walk_source='1', rel='noopener noreferrer') if safe else Span(text)
+
+
 def walk_fragment(result, jid, i=None, notice=None):
-    if result.get('status') != 'ok':
-        return Div(P(result.get('data', {}).get('message') or result.get('error') or 'Walk unavailable.', cls='lee-walk-error'), cls='lee-walk')
-    d = result['data']; steps = d.get('steps', [])
-    i = d.get('current') if i is None else i
-    s = next((s for s in steps if s['i'] == i), None)
-    if s is None and steps: s = steps[0]; i = s['i']
+    d = result.get('data') or {}; steps = d.get('steps') or []
+    s = _walk_step(steps, d.get('current') if i is None else i)
+    i = s.get('i') if s else None
     base = '/learn/walk/' + quote(jid, safe='')
-    items = [Li(Button(f"{x['name']} · {x['status']}", type='button', data_walk_step=x['i'], aria_current='step' if x['i'] == i else None)) for x in steps]
+    items = [Li(Button(f"{x.get('name', '')} · {x.get('status', '')}", type='button', data_walk_step=x.get('i'), aria_current='step' if x is s else None)) for x in steps]
+    message = d.get('message') or result.get('error') or 'Walk unavailable.'
+    bad = result.get('status') != 'ok'
+    if notice and notice.get('error') == 'stale_state': message = 'The walk changed; here is the current step'
+    elif notice and notice.get('status') != 'ok': message = notice.get('data', {}).get('message') or notice.get('error') or message
+    msg = P(message, cls='lee-walk-error', role='status', data_walk_notice_error='1' if bad or notice and notice.get('status') != 'ok' else None) if bad or notice and notice.get('status') != 'ok' else None
     body = []
     if s:
-        body += [H3(s['name']), P(s.get('statement', ''), cls='lee-walk-statement')]
-        q = s.get('quote')
-        if q:
-            url = q.get('url', '')
-            link = A(q.get('title') or url, href=url, data_walk_source='1', rel='noopener noreferrer') if urlsplit(url).scheme in ('http', 'https') else Span(q.get('title') or url)
-            body += [Blockquote(q.get('text', '')), P(link)]
+        n = steps.index(s)
+        nav = [Button('Back', type='button', data_walk_back=steps[n-1]['i'])] if n else []
+        if n + 1 < len(steps): nav += [Button('Next', type='button', data_walk_next=steps[n+1]['i'])]
+        body += [H3(s.get('name', ''), tabindex='-1'), P(s.get('statement', ''), cls='lee-walk-statement')]
+        if q := s.get('quote'):
+            body += [Blockquote(q.get('text', '')), P(_walk_link(q), cls='lee-walk-source')]
         else: body += [P('Ungrounded: no verbatim source', cls='lee-walk-ungrounded')]
         if check := s.get('check'):
             body += [Form(P(check.get('question', '')), Textarea(name='answer', required=True, aria_label='Your answer'),
                           Input(type='hidden', name='attempt_id', value=str(uuid4())),
-                          Input(type='hidden', name='revision', value=str(result.get('revision') or '')), Button('Check answer', type='submit'),
-                          action=f"{base}/{i}/answer", method='post', data_walk_answer='1')]
-    gauge = [Li(Span(slug), Span(g.get('state', 'unseen'), cls='lee-walk-gauge-state')) for slug, g in d.get('gauge', {}).items()]
-    msg = P('The walk changed; here is the current step', cls='lee-walk-error', role='status') if notice and notice.get('error') == 'stale_state' else P(notice.get('data', {}).get('message') or notice.get('error', ''), cls='lee-walk-error', role='status') if notice and notice.get('status') != 'ok' else None
-    return Div(H2(d.get('title', 'Walk')), msg, Div(Ul(*items, cls='lee-walk-steps'), Div(*body, cls='lee-walk-content'), cls='lee-walk-main'),
+                          Input(type='hidden', name='revision', value='' if result.get('revision') is None else str(result['revision'])),
+                          Button('Check answer', type='submit'), action=f"{base}/{i}/answer", method='post', data_walk_answer='1')]
+        body += [Div(*nav, cls='lee-walk-nav')]
+    elif not bad: body += [P('This walk has no steps yet.', cls='lee-walk-empty')]
+    gauge = [Li(Span(slug), Span((g or {}).get('state', 'unseen'), cls='lee-walk-gauge-state', data_walk_gauge=(g or {}).get('state', 'unseen'))) for slug, g in (d.get('gauge') or {}).items()]
+    return Div(H2(d.get('title', 'Walk')), msg, P('', role='status', cls='lee-walk-busy'), Div(Ul(*items, cls='lee-walk-steps'), Div(*body, cls='lee-walk-content'), cls='lee-walk-main'),
                H3('Understanding'), Ul(*gauge, cls='lee-walk-gauge'), cls='lee-walk', data_walk_url=base)
 
 
