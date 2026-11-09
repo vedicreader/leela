@@ -1,49 +1,55 @@
 "Plain data across a process line: a tagged JSON form for the few exact types a scrub may copy. Self-contained: the kernel runs its text, the worker imports it."
 import base64, datetime as dt, json, sys
 
-CAP = 10**5
+CAP, BYTES = 10**5, 4 * 2**20
 NP_KINDS = 'biufcmMSU'
 
 class Bad(Exception): pass
 
 def _b64(b): return base64.b64encode(b).decode()
 
-def _nd(np, a, spend):
+def _nd(np, a, spend, grab):
     if type(a) is not np.ndarray or a.dtype.kind not in NP_KINDS or a.dtype.fields is not None or a.dtype.subdtype is not None: raise Bad(f'an array of {a.dtype}')
-    spend(a.size)
+    spend(a.size); grab(a.nbytes)
     return {'t': 'nd', 'dtype': a.dtype.str, 'shape': list(a.shape), 'v': _b64(np.ascontiguousarray(a).tobytes())}
 
-def _strs(vals, spend):
+def _strs(vals, spend, grab):
     spend(len(vals))
-    if not all(type(v) is str for v in vals): raise Bad('text that is not all str')
+    for v in vals:
+        if type(v) is not str: raise Bad('text that is not all str')
+        grab(len(v))
     return {'t': 'strs', 'v': list(vals)}
 
-def _index(pd, np, ix, spend):
+def _index(pd, np, ix, spend, grab):
     if type(ix) is pd.RangeIndex:
         if type(ix.name) not in (str, type(None)): raise Bad('an index name')
         return {'t': 'range', 'v': [ix.start, ix.stop, ix.step], 'name': ix.name}
     if type(ix) is not pd.Index or type(ix.name) not in (str, type(None)): raise Bad('an index that is not plain')
     a = ix.to_numpy()
-    out = _strs(a.tolist(), spend) if a.dtype.kind == 'O' else _nd(np, a, spend)
+    out = _strs(a.tolist(), spend, grab) if a.dtype.kind == 'O' else _nd(np, a, spend, grab)
     return {**out, 'name': ix.name}
 
-def _col(pd, np, s, spend):
+def _col(pd, np, s, spend, grab):
     dtype = s.dtype
-    if isinstance(dtype, np.dtype) and dtype.kind in 'biufcmM': return _nd(np, s.to_numpy(), spend)
-    if isinstance(dtype, pd.StringDtype): return _strs(s.tolist(), spend)
+    if isinstance(dtype, np.dtype) and dtype.kind in 'biufcmM': return _nd(np, s.to_numpy(), spend, grab)
+    if isinstance(dtype, pd.StringDtype): return _strs(s.tolist(), spend, grab)
     raise Bad(f'a column of {dtype}')
 
 def encode(x, budget=None, seen=None, depth=0):
-    "`x` as JSON-ready data, or `Bad` when it is not an exact plain type or is over the element cap."
-    budget = [CAP] if budget is None else budget
+    "`x` as JSON-ready data, or `Bad` when it is not an exact plain type or is over the element or byte cap. `budget` is `[elements, bytes]` left."
+    budget = [CAP, BYTES] if budget is None else budget
     seen = set() if seen is None else seen
     if depth > 30: raise Bad('nested too deeply')
     def spend(n):
         budget[0] -= n
         if budget[0] < 0: raise Bad(f'bigger than {CAP} elements')
+    def grab(n):
+        budget[1] -= n
+        if budget[1] < 0: raise Bad(f'bigger than {BYTES // 2**20} MB')
     t = type(x)
-    if t in (type(None), bool, int, float, str): spend(1); return x
-    if t is bytes: spend(len(x) // 8 + 1); return {'t': 'bytes', 'v': _b64(x)}
+    if t in (type(None), bool, int, float): spend(1); return x
+    if t is str: spend(1); grab(len(x)); return x
+    if t is bytes: spend(1); grab(len(x)); return {'t': 'bytes', 'v': _b64(x)}
     if t is complex: spend(1); return {'t': 'complex', 'v': [x.real, x.imag]}
     if t in (list, tuple, set, frozenset, dict):
         if id(x) in seen: raise Bad('a container that holds itself')
@@ -58,16 +64,16 @@ def encode(x, budget=None, seen=None, depth=0):
     if t is dt.timedelta: spend(1); return {'t': 'timedelta', 'v': [x.days, x.seconds, x.microseconds]}
     np, pd = sys.modules.get('numpy'), sys.modules.get('pandas')
     if np is not None:
-        if t is np.ndarray: return _nd(np, x, spend)
-        if isinstance(x, np.generic) and t.__module__ == 'numpy' and x.dtype.kind in NP_KINDS:
-            spend(1); return {**_nd(np, np.asarray(x), spend), 't': 'npscalar'}
+        if t is np.ndarray: return _nd(np, x, spend, grab)
+        if t in set(np.sctypeDict.values()) and t is x.dtype.type and x.dtype.kind in NP_KINDS:
+            spend(1); return {**_nd(np, np.asarray(x), spend, grab), 't': 'npscalar'}
     if pd is not None and np is not None:
         if t is pd.Series:
             if type(x.name) not in (str, int, type(None)): raise Bad('a series name')
-            return {'t': 'series', 'name': x.name, 'index': _index(pd, np, x.index, spend), 'v': _col(pd, np, x, spend)}
+            return {'t': 'series', 'name': x.name, 'index': _index(pd, np, x.index, spend, grab), 'v': _col(pd, np, x, spend, grab)}
         if t is pd.DataFrame:
             if type(x.columns) is not pd.Index or not x.columns.is_unique or not all(type(c) in (str, int) for c in x.columns): raise Bad('columns that are not plain names')
-            return {'t': 'frame', 'index': _index(pd, np, x.index, spend), 'cols': [[c, _col(pd, np, x[c], spend)] for c in x.columns]}
+            return {'t': 'frame', 'index': _index(pd, np, x.index, spend, grab), 'cols': [[c, _col(pd, np, x[c], spend, grab)] for c in x.columns]}
     raise Bad(f'a {t.__module__}.{t.__qualname__}' if t.__module__ != 'builtins' else f'a {t.__qualname__}')
 
 def decode(o):
@@ -97,10 +103,10 @@ def decode(o):
 
 def snapshot_json(ns, names):
     "JSON for the names of `ns` that `encode` accepts: `{'ok': {name: data}, 'missing': [...]}`, or `{'bad': name, 'why': text}` for the first that it does not."
-    out, missing = {}, []
+    out, missing, budget = {}, [], [CAP, BYTES]
     for n in names:
         if n not in ns: missing.append(n); continue
-        try: out[n] = encode(ns[n])
+        try: out[n] = encode(ns[n], budget)
         except Bad as e: return json.dumps({'bad': n, 'why': str(e)})
         except Exception as e: return json.dumps({'bad': n, 'why': f'a value that could not be read ({type(e).__name__})'})
     return json.dumps({'ok': out, 'missing': missing})

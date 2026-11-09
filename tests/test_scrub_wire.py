@@ -38,3 +38,19 @@ def test_a_snapshot_names_the_first_name_it_cannot_copy_and_skips_missing_ones()
     assert got['bad'] == 'b' and 'Spy' in got['why']
     got = json.loads(w.snapshot_json({'a': 1}, ['a', 'zz']))
     assert got == {'ok': {'a': 1}, 'missing': ['zz']}
+
+def test_the_cap_counts_bytes_not_only_elements():
+    "One 5 MB string is one element but too many bytes; so is a small array of long strings; two names share one budget."
+    for x, why in (('x' * (5 * 2**20), 'MB'), (b'x' * (5 * 2**20), 'MB'), (np.array(['x' * 1000] * 2000), 'MB'), (pd.Series(['x' * 100_000] * 50, dtype='string'), 'MB'), (['x' * 100_000] * 50, 'MB')):
+        with pytest.raises(w.Bad) as e: w.encode(x)
+        assert why in str(e.value)
+    assert w.encode('x' * 1000) == 'x' * 1000 and back(np.array(['ab', 'c'])).tolist() == ['ab', 'c']
+    half = 'x' * (3 * 2**20)
+    assert 'ok' in json.loads(w.snapshot_json({'a': half}, ['a']))
+    got = json.loads(w.snapshot_json({'a': half, 'b': half}, ['a', 'b']))
+    assert got['bad'] == 'b' and 'MB' in got['why']
+
+def test_a_numpy_scalar_is_judged_by_its_exact_type_not_by_the_module_it_claims():
+    class Fake(np.float64): __module__ = 'numpy'
+    with pytest.raises(w.Bad): w.encode(Fake(1.0))
+    assert back(np.float64(2.5)) == 2.5 and type(back(np.int8(3))) is np.int8
