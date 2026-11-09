@@ -33,10 +33,10 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         await pct.fill('42')
         toggle = page.locator('.lee-settings-checks input[type=checkbox]').first
         assert await toggle.evaluate("el => getComputedStyle(el.closest('label')).display") == 'flex'
-        fold = page.locator('[data-learn-more]').first
+        value = page.locator('[data-pref="walks.passage"]')
+        fold = value.locator('xpath=ancestor::details')   # not the first fold: the speech group has one too
         await fold.evaluate('el => el.open = true')
         await expect(fold).to_have_attribute('open', '')
-        value = page.locator('[data-pref="walks.passage"]')
         await value.fill('700')
         async with pg.expect_request(lambda r: r.url.endswith('/settings/save')) as req:
             await pg.locator('[data-save]').click()
@@ -49,7 +49,7 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         await pg.wait_for_function('window.lee && lee.keys.length')
         await pg.evaluate("leeEditorSettings('')")
         await pg.locator('[data-settings-page="learn"]').click()
-        await page.locator('[data-learn-more]').first.locator('summary').click()
+        await fold.locator('summary').click()
         await expect(value).to_have_value('700')
         assert await pg.evaluate("lee.learnPrefs['walks.passage']") == 700
         await expect(page.locator(f'[data-pref="{key}"]')).to_have_value('42')
