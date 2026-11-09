@@ -329,7 +329,9 @@ def test_the_wheel_carries_every_bundle_the_app_serves():
     for b in IDE_BUNDLES:
         assert f'leela/static/{b}' in names, f'{b} is not in the wheel'
     assert not [n for n in names if n.startswith('leela/static/js/')], 'the sources should stay out'
-    assert not [n for n in names if n.startswith('leela/blocks/') and n.endswith('.js')]
+    sys.path.insert(0, str(ROOT/'tools'))
+    from build_ide_js import SERVED
+    assert {n for n in names if n.startswith('leela/blocks/') and n.endswith('.js')} == {f'leela/{m}' for m in SERVED}
 
 def test_signing_reaches_every_executable_and_gives_them_the_entitlements(tmp_path, monkeypatch):
     """`sign` covered `.so`, `.dylib` and frameworks only, so the helper `python` and Playwright's `node` stayed ad hoc under a Developer ID bundle."""

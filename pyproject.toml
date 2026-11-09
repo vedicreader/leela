@@ -85,6 +85,15 @@ leela = "leela.cli:main"
 packages = ["leela"]
 exclude = ["leela/static/js", "leela/blocks/*/*.js"]   # the modules the committed bundle is built from
 
+[tool.hatch.build.targets.wheel.force-include]
+# The modules a Learn page loads by itself (`SERVED` in tools/build_ide_js.py), which `surfaces.asset` reads from this folder. `tests/test_packaging_learn.py` keeps the two lists equal.
+"leela/blocks/learn/dictate.js" = "leela/blocks/learn/dictate.js"
+"leela/blocks/learn/home.js" = "leela/blocks/learn/home.js"
+"leela/blocks/learn/learn-cell.js" = "leela/blocks/learn/learn-cell.js"
+"leela/blocks/learn/learn-demo.js" = "leela/blocks/learn/learn-demo.js"
+"leela/blocks/learn/learn-talk.js" = "leela/blocks/learn/learn-talk.js"
+"leela/blocks/learn/walkpage.js" = "leela/blocks/learn/walkpage.js"
+
 [tool.hatch.build.targets.sdist]
 include = ["/leela", "/README.md", "/pyproject.toml"]
 

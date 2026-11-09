@@ -388,3 +388,14 @@ Open:
 - `walk`: an Abhyasa walk, the path of steps through one goal, and the pages that show it (`/w/{jid}/{i}`).
 - `hosted`: Abhyasa in hosted mode, where Leela serves its routes inside its own app and owns the guard, the settings and the keys.
 - `native`: the plan docs and test names for this work (`native-learn`), where Learn is a part of Leela and not a separate window.
+
+## Packaging
+
+`tests/test_packaging_learn.py` checks, with no build, that the new Learn files reach both apps.
+
+- The thin app installs the wheel. The wheel drops `leela/blocks/*/*.js`, because the bundles carry them. Six modules load alone on a Learn page (`SERVED` in `tools/build_ide_js.py`), and `/learn/abh-asset` reads them from `leela/blocks/learn/`. They were missing from the wheel, so those pages had no script. `pyproject.toml` now forces them in (`force-include`).
+- The old app copies `leela`, `abhyasa`, `rupaka`, `dhrishti` and `kunda` whole, so their data and the scrub worker's `.py` files are files on disk. The Windows definition lists the same packages.
+- The scrub worker runs `scrubworker.py` by path on the notebook's own Python, found with `ws.user_python`. Those three files import nothing of Leela. In a py2app bundle `sys.executable` is the app and cannot run a script, so a notebook with no other Python gets a plain failure.
+- `NSMicrophoneUsageDescription` and the audio-input entitlement are in the old app's `setup.py` and `entitlements.plist`, and now in `packaging/kavacha.toml` (`[usage]`, `[entitlements]`) for the thin app.
+- Local speech needs `leela[local]` (`mlx_audio`). Neither app bundles it, and the speech page says to install it.
+- Not checked: a built app. The released versions must also carry the new code: Leela pins `abhyasa>=0.0.16`, `rupaka>=0.0.15`, `kunda>=0.0.15` and `dhrishti>=0.1.13`, and `dhrishti.trace`, `kunda.trace` and the six rupaka demos exist only in unreleased branches.
