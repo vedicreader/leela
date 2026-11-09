@@ -177,13 +177,21 @@ def test_unknown_dictation_ids_answer_404(cl):
     assert c.get('/speech/events/nope').status_code == 404
 
 
-def test_ready_says_why_and_starts_the_download_when_the_model_is_missing(cl, monkeypatch):
+def test_ready_says_why_and_starts_the_download_when_the_model_is_missing(cl, ws, monkeypatch):
     c, eng = cl
     monkeypatch.setattr(eng.m, 'cached', lambda model: False)
-    monkeypatch.setattr(speech, 'download', lambda model, report, stopping: {'model': model})
+    import threading
+    go = threading.Event()
+    monkeypatch.setattr(speech, 'download', lambda model, report, stopping: go.wait(10) and {'model': model})
     r = c.post('/speech/ready')
     assert r.status_code == 409 and not r.json()['ok'] and 'job card' in r.json()['say']
     assert c.post('/speech/ready').status_code == 409
+    go.set()
+    import time
+    for _ in range(200):
+        if not [j for j in ws.jobs.all(kind='speech_model') if j.active]: break
+        time.sleep(.05)
+    assert [(j.status, j.target) for j in ws.jobs.all(kind='speech_model')] == [('complete', eng.m.DFLT_STT)]
 
 
 def test_the_hosted_abhyasa_app_gets_the_same_transcribe_and_no_warm_up(ws, eng, monkeypatch):
@@ -211,3 +219,27 @@ def test_the_mac_bundle_may_use_the_microphone():
     root = Path(__file__).resolve().parents[1]/'packaging'/'macos'
     assert plistlib.loads((root/'entitlements.plist').read_bytes())['com.apple.security.device.audio-input'] is True
     assert "'NSMicrophoneUsageDescription'" in (root/'setup.py').read_text()
+
+
+def test_a_posted_wav_segment_gives_text_through_the_mounted_abhyasa_app(ws, eng, monkeypatch):
+    from abhyasa.learner import temp_learning
+    from abhyasa.models import silence
+    monkeypatch.setattr(host, 'learn_store', lambda ws, vault=None, write=False: ('test', temp_learning()))
+    monkeypatch.setattr(host, 'HOSTS', ('testserver',))
+    app = ide_app(ws)
+    try:
+        with TestClient(app) as c:
+            assert c.post('/learn/abh/open').json()['ok']
+            r = c.post('/learn/abh/voice/start').json()
+            assert r['pause'] == 700 and r['segment'] is True
+            did = r['id']
+            assert c.post(f'/learn/abh/voice/seg/{did}?seq=0', content=silence()).json()['ok']
+            assert c.post(f'/learn/abh/voice/stop/{did}?n=1').json() == {'ok': True}
+            with c.stream('GET', f'/learn/abh/voice/events/{did}') as s:
+                got = [json.loads(l[6:]) for l in s.iter_lines() if l.startswith('data: ')]
+            assert got == [dict(seq=0, text='hello'), dict(done=True)] and eng.calls == [('mlx', eng.m.DFLT_STT, '')]
+            h = next(r.app for r in app.router.routes if isinstance(r, Mount) and isinstance(r.app, host.Hosted))
+            assert h.app.state.svc['speech'].status == 'not loaded'
+    finally:
+        for h in app.router.routes:
+            if isinstance(h, Mount) and isinstance(h.app, host.Hosted): h.app.stop()

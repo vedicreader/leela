@@ -211,7 +211,7 @@ These slices replace S3 and S6 to S8 in the table below. S1, S2, S4, S5 and S5V 
 | P8 | Talk and slides | `talk` | `abhyasa-talk.png`, `abhyasa-talks.png` | Not started |
 | P9 | Search, library and sources, with research gather as a job of the Leela session | `search`, `add`, `sources` | `abhyasa-search.png`, `abhyasa-library.png`, `abhyasa-sources.png`, `abhyasa-gather.png` | Not started |
 | P10 | Builder: create and change a module from the Leela agent pane | `build` | `abhyasa-build.png` | Not started |
-| P11 | Voice through Leela's one speech path | `voice` | none | Not started |
+| P11 | Voice through Leela's one speech path | `voice` | none | Built, tests pass; real microphone and real model download not verified |
 | P12 | Removal of the S3 walk tab markup and the old handoff pane | Leela `blocks/learn` | none | Not started |
 | P13 | Guide: "I don't get this" and "Ask about what you see" through the Leela agent | `guide` | `abhyasa-guide.png` | Not started |
 
