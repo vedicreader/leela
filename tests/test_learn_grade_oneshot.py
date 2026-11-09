@@ -26,9 +26,11 @@ def test_walk_answer_uses_guarded_grade_oneshot_once(ws, monkeypatch):
     step = lr.journey(jid).steps[0]
     lr.walk_slug(jid, slug, note_none=True, check={**step['check'], 'q': 'What does a fraction name?'})
     calls = []
-    def grade(prompt, sp, max_tokens):
+    def grade(prompt, sp, max_tokens, deadline=None):
+        assert deadline is not None and deadline > 0
         calls.append((prompt, sp))
         return r'{"correct": true, "grade": 10, "feedback": "Correct.", "first_error": "", "misconception": ""}'
+    be.supports_deadline = True
     be._oneshot = grade
     assert type(ai).oneshot is Agent.oneshot
     routed = []
@@ -37,6 +39,14 @@ def test_walk_answer_uses_guarded_grade_oneshot_once(ws, monkeypatch):
     try:
         url = f'/learn/walk/{jid}/0/answer?vault={vault}'
         body = dict(answer='Equal parts of a whole.', attempt_id='grade-once')
+        from ramabana.runtime import OneshotEmpty
+        original = ai.oneshot
+        def empty(*args, **kwargs): raise OneshotEmpty('grade', 'no route answered')
+        ai.oneshot = empty
+        refused = client.post(url, json=body).json()
+        assert refused['error'] == 'model_refused', refused
+        assert not lr.attempts(slug, limit=None)
+        ai.oneshot = original
         first = client.post(url, json=body).json()
         repeat = client.post(url, json=body).json()
         assert first['status'] == 'ok' and repeat == first, str(first)

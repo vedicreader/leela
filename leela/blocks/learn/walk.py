@@ -1,7 +1,8 @@
+import re
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
-from fasthtml.common import A, Blockquote, Button, Div, Form, H2, H3, Input, Li, P, Span, Textarea, Ul
+from fasthtml.common import A, Blockquote, Button, Div, Form, H2, H3, Hidden, Input, Li, P, Span, Textarea, Ul, to_xml
 from starlette.responses import Response
 
 from ...core.web import off_loop
@@ -16,7 +17,8 @@ def walk_state_for(memory, jid, settings=None):
         from abhyasa.learner import Learning
     except ImportError: return {'status': 'error', 'error': 'not_found', 'data': {'message': 'Learning walks are unavailable.'}}
     try:
-        with _open_lock(memory.path): return walk_state(Learning(memory._store('learning')), jid, settings=settings)
+        vault = memory._store('learning')
+        with _open_lock(memory.path): return walk_state(Learning(vault), jid, settings=settings)
     except Exception as e:
         from abhyasa.agent_tools import vault_failure
         if (error := vault_failure(e)): return failed(error, str(e), walk=jid)
@@ -28,7 +30,8 @@ def answer_for(memory, ask, jid, i, answer, attempt_id, settings=None, revision=
     from abhyasa.learner import Learning
     if ask is None: return failed('model_refused', 'no agent model', walk=jid, step=i)
     try:
-        with _open_lock(memory.path): return record_attempt(Learning(memory._store('learning')), jid, i, answer, attempt_id, ask, settings=settings, revision=revision)
+        vault = memory._store('learning')
+        with _open_lock(memory.path): return record_attempt(Learning(vault), jid, i, answer, attempt_id, ask, settings=settings, revision=revision)
     except Exception as e:
         if (error := vault_failure(e)): return failed(error, str(e), walk=jid, step=i)
         raise
@@ -101,7 +104,20 @@ def walk_fragment(result, jid, i=None, notice=None):
                H3('Understanding'), Ul(*gauge, cls='lee-walk-gauge'), cls='lee-walk', data_walk_url=base)
 
 
+def walk_job_actions(job, result):
+    "The Open walk action of a created walk, with its error slot, or the failure line of a walk that was not created."
+    if result.get('status') == 'ok' and (tab := result.get('data', {}).get('tab')):
+        slot = f"open-walk-error-{job['id']}"
+        return [Form(Hidden(name='vault', value=tab['vault']), Hidden(name='walk', value=tab['walk']), Hidden(name='slot', value='#' + slot),
+                     Button('Open walk', cls='lee-btn go'), hx_post='/learn/walk/open', hx_target='#tabbar', hx_swap='outerHTML'),
+                Span(id=slot, cls='lee-job-error', role='alert')]
+    if result.get('error'): return [Span(result['error'] + ': ' + result.get('data', {}).get('message', ''), cls='lee-job-error')]
+    return []
+
+
 def connect(app, ctx):
+    from ..vault.ui import register_job_actions
+    register_job_actions('learn_walk', walk_job_actions)
     @app.route('/learn/walk.css', methods=['GET'])
     def walk_css():
         from pathlib import Path
@@ -110,11 +126,16 @@ def connect(app, ctx):
     async def walk_open(req):
         data = await req.json() if req.headers.get('content-type', '').startswith('application/json') else await req.form()
         vault, walk = data.get('vault', ''), data.get('walk', '')
-        if not walk: return walk_fragment(walk_failure('not_found', 'Choose a walk to open.', walk), walk)
+        def refused(failure):
+            if not req.headers.get('hx-request'): return walk_fragment(failure, walk)
+            slot = data.get('slot', '')
+            heads = {'HX-Retarget': slot, 'HX-Reswap': 'innerHTML'} if re.fullmatch(r'#open-walk-error-[\w-]+', slot) else {'HX-Reswap': 'none'}
+            return Response(to_xml(P(failure['data'].get('message') or failure['error'], cls='lee-job-error', role='alert')), media_type='text/html', headers=heads)
+        if not walk: return refused(walk_failure('not_found', 'Choose a walk to open.', walk))
         try: memory = await off_loop(walk_memory, ctx, vault)
-        except Exception as e: return walk_fragment(vault_failure(e, walk), walk)
+        except Exception as e: return refused(vault_failure(e, walk))
         state = await off_loop(walk_state_for, memory, walk, learn_settings(ctx.session))
-        if state.get('status') != 'ok': return walk_fragment(state, walk)
+        if state.get('status') != 'ok': return refused(state)
         ctx.session.open_learn_walk(vault or ctx.session.vaults.active.name, walk); ctx.session.save()
         return tab_bar(ctx.session)
     @app.route('/learn/walk/{jid}', methods=['GET'])

@@ -18,7 +18,8 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
            'tidy_list', 'watch_list', 'workbench', 'browse_view', 'find_view', 'add_view',
            'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan',
            'ops_table', 'call_form', 'call_panel', 'api_result', 'PII_COVERS',
-           'VIEWS', 'SOURCES', 'SCOPES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings']
+           'VIEWS', 'SOURCES', 'SCOPES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings',
+           'JOB_ACTIONS', 'register_job_actions']
 
 POLL_MS = 1200
 LEVELS = (('open', 'Open'), ('personal', 'Personal'), ('local', 'Local only'))
@@ -79,6 +80,13 @@ def _summarise(result, mx=40):
     if not isinstance(result, dict): return str(result)[:2000]
     return '\n'.join(_one_line(k, v) for k, v in list(result.items())[:mx])
 
+#: Job kind -> function of the job dict and its result that returns the finished card's actions and error lines.
+JOB_ACTIONS = {}
+
+def register_job_actions(kind, fn):
+    "Draw `fn(job, result)` in the card of a finished job of `kind`."
+    JOB_ACTIONS[kind] = fn
+
 def job_card(job):
     d = job.dict()
     active = d['active']
@@ -99,6 +107,7 @@ def job_card(job):
         body.append(Form(Button('dismiss', cls='lee-btn'), hx_post=f"/jobs/{d['id']}/forget",
             hx_target='closest .lee-job', hx_swap='delete'))
     result = d['result'] if isinstance(d['result'], dict) else {}
+    if not active and (actions := JOB_ACTIONS.get(d['kind'])): body.extend(actions(d, result))
     if pii := result.get('pii'): body.append(_clip_pii_badge(pii))
     doc = result.get('doc_id') or (d['target'] if d['kind'] in ('reparse', 'proof') or (d['params'] or {}).get('again') else '')
     if d['kind'] in ('read', 'reparse', 'proof', 'book') and doc and not d['error']:

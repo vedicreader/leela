@@ -1,4 +1,4 @@
-import hashlib, os, re, shutil, subprocess, sys
+import hashlib, logging, os, re, shutil, subprocess, sys
 from time import monotonic
 from fastcore.basics import AttrDict, first
 from fastcore.xdg import xdg_data_home
@@ -9,6 +9,8 @@ from .learn import PKG, _NAME
 
 __all__ = ['NO_UV', 'TOO_LONG', 'tool_names', 'tool_key', 'tool_dir', 'tool_python', 'tool_kernel', 'tool_indexed', 'tool_stale', 'tool_of', 'kernel_reqs', 'install_cmds', 'make_tool_env', 'upgrade_tool_env',
            'index_env', 'tool_job', 'env_state', 'env_job', 'active_job', 'start_tool_job', 'LIBRARY_TOTAL', 'library_check']
+
+log = logging.getLogger(__name__)
 
 NO_UV = 'Leela needs uv to install packages for a lesson.'
 TOO_LONG = 'The install took too long. Try again.'
@@ -188,28 +190,50 @@ def learn_guard(ai, text, spec=None):
 
 
 def learn_ask(ai, task='plan'):
+    from abhyasa.agent_tools import ModelRefused
+    from ramabana.runtime import AgentError, OneshotTimeout
     def prepare(prompt, sp, backend):
         return learn_guard(ai, prompt, backend.spec), learn_guard(ai, sp, backend.spec)
     def ask(prompt, sp=''):
-        return ai.oneshot(prompt, sp, task, 2048, prepare=prepare, wait=True, strict=True)
+        try: return ai.oneshot(prompt, sp, task, 2048, prepare=prepare, deadline=120, wait=True, strict=True)
+        except (AgentError, OneshotTimeout) as e: raise ModelRefused(str(e)) from e
     return ask
 
 
+def contract_missing() -> list[str]:
+    "The parts of Abhyasa's native contract this install lacks: `agent_tools.TOOLS` and `learner.use_settings`."
+    from importlib import import_module
+    out = []
+    for mod, name in (('abhyasa.agent_tools', 'TOOLS'), ('abhyasa.learner', 'use_settings')):
+        try: have = hasattr(import_module(mod), name)
+        except ImportError: have = False
+        if not have: out.append(f'{mod}.{name}')
+    return out
+
+
+def show_walk(ws, vault, walk):
+    "Open the walk tab, keep the layout, and tell the pages showing this workspace. A failure is logged: the walk exists, so the job stays ok."
+    try:
+        tab = ws.open_learn_walk(vault, walk)
+        ws.save()
+        ws.fs_watch.announce_tab(tab.kind, tab.ref)
+    except Exception as e: log.error('Learn walk %s was made but its tab did not open: %s', walk, errstr(e))
+
+
 def register_learn_jobs(ws):
+    if contract_missing(): return
     from abhyasa import agent_tools as engine
-    import inspect
     captures = ws.__dict__.setdefault('_learn_jobs', {})
     def run(job, report):
         if job.id not in captures: raise RuntimeError('The originating learning session is no longer available. Start a new walk.')
         ai, lr = captures[job.id]
         try:
-            kw = dict(stopping=lambda: ws.jobs.stopping(job.id), progress=lambda stage, frac: report(progress=frac, current=stage))
-            params = inspect.signature(engine.create_walk).parameters
-            if 'settings' in params: kw['settings'] = job.params['settings']
-            if 'guard' in params: kw['guard'] = lambda text: learn_guard(ai, text)
-            r = engine.create_walk(lr, learn_ask(ai), job.target, **kw)
+            r = engine.create_walk(lr, learn_ask(ai), job.target, stopping=lambda: ws.jobs.stopping(job.id), progress=lambda stage, frac: report(progress=frac, current=stage),
+                                   settings=job.params['settings'], guard=lambda text: learn_guard(ai, text))
             r.update(operation_id=job.id, vault=job.params['vault'])
-            if r['status'] == 'ok': r['data']['tab'] = dict(kind='learn_walk', vault=r['vault'], walk=r['walk'])
+            if r['status'] == 'ok':
+                r['data']['tab'] = dict(kind='learn_walk', vault=r['vault'], walk=r['walk'])
+                if ws.threads.active_id == job.params['thread'] and ai.learn_mode: show_walk(ws, r['vault'], r['walk'])
             if r['status'] == 'stopped': r['cancelled'] = True
             return r
         finally: captures.pop(job.id, None)
@@ -235,10 +259,12 @@ def start_learn_job(ai, goal):
 
 
 def learn_tools(ai):
+    if contract_missing(): return []
     import inspect
     from abhyasa import agent_tools as engine
     from ...agent.tools import small_tool
     from shalya.core import writes
+    extra = dict(record_attempt=lambda: dict(ask=learn_ask(ai, 'grade'), settings=learn_settings(ai.ws)), walk_state=lambda: dict(settings=learn_settings(ai.ws)))
     def wrap(name, args):
         def call(**kwargs):
             if not ai.learn_mode:
@@ -246,11 +272,7 @@ def learn_tools(ai):
             try:
                 if name == 'create_walk': return start_learn_job(ai, **kwargs)
                 vault, lr = learn_store(ai.ws, write=name != engine.walk_state.__name__)
-                fn = getattr(engine, name)
-                params = inspect.signature(fn).parameters
-                if 'ask' in params: kwargs['ask'] = learn_ask(ai, 'grade' if name == 'record_attempt' else 'plan')
-                if 'settings' in params: kwargs['settings'] = learn_settings(ai.ws)
-                r = fn(lr, **kwargs)
+                r = getattr(engine, name)(lr, **kwargs, **extra.get(name, dict)())
                 r['vault'] = vault
                 return r
             except PermissionError as e: return engine.failed('read_only', str(e))
