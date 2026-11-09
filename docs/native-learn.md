@@ -446,3 +446,25 @@ What stays best effort:
 - `NSMicrophoneUsageDescription` and the audio-input entitlement are in the old app's `setup.py` and `entitlements.plist`, and now in `packaging/kavacha.toml` (`[usage]`, `[entitlements]`) for the thin app.
 - Local speech needs `leela[local]` (`mlx_audio`). Neither app bundles it, and the speech page says to install it.
 - Not checked: a built app. The released versions must also carry the new code: Leela pins `abhyasa>=0.0.16`, `rupaka>=0.0.15`, `kunda>=0.0.15` and `dhrishti>=0.1.13`, and `dhrishti.trace`, `kunda.trace` and the six rupaka demos exist only in unreleased branches.
+
+## Release run
+
+The order for the owner or the lead. Each push, tag and upload still needs approval. The integrator pushed, tagged and published nothing.
+
+Branches: Leela and Abhyasa on `native-learn`; rupaka, kunda and dhrishti on `explorables`. Each repo has a plain `## Unreleased` entry in its `CHANGELOG.md`. Rename that heading to the version when you release.
+
+1. rupaka 0.0.16 (the tree already has the number). Merge `explorables` into main, push, wait for CI, then `nbdev-release-git` and `nbdev-pypi`, and make the release Latest. Then `nbdev-bump-version`. Check that the new version is on PyPI.
+2. kunda 0.0.16 and dhrishti 0.1.14, the same steps. They do not depend on each other for release, but Leela needs both. kunda's `uv.lock` points to the dhrishti worktree: use PyPI sources before the release.
+3. Abhyasa 0.0.22. Follow "Abhyasa release" above: merge `native-learn` into main, `nbdev-prepare` (hyphen, nbdev 3.3.26 from the Abhyasa venv), push, check CI and Pages, `nbdev-release-git` and `nbdev-pypi`, never `nbdev-release-gh`. Then make it Latest, run `nbdev-bump-version` and push `Bump to 0.0.23`.
+4. Leela, on `native-learn` merged into main, with the released numbers:
+   1. Vendor rupaka 0.0.16: write `leela/vendor/lee-rupaka.js` and `lee-rupaka.css` from the 0.0.16 wheel, and update `leela/vendor/README` (version, wheel name, SHA-256, URL). `tests/test_rupaka.py::test_the_vendored_rupaka_is_the_version_the_readme_pins` fails until this is done.
+   2. Raise the floors in `pyproject.toml`: `abhyasa>=0.0.22`, `rupaka>=0.0.16`, `kunda>=0.0.16`, `dhrishti>=0.1.14`.
+   3. `uv lock`. Check that `uv.lock` has no `path` or `editable` source for these four.
+   4. In `tests/test_learn_contract_names.py` set `FIRST_HOST_API_RELEASE` to `0.0.22` and remove the `xfail` mark. Do the other steps of "Release pins".
+   5. Run `python tools/build_ide_js.py --check` and the test suites once more on the merged code.
+   6. Version: set `__version__` in `leela/__init__.py` and change `## Unreleased` in `CHANGELOG.md` to that number (see the open mismatch below).
+   7. Push main, then release with a `gh release` on a bare tag (for example `1.0.5`), not a `v` tag.
+   8. Thin app lock: `make lock-wheel V=<version>`, then `make lock V=<version>`, then `make lock-test FRESH=1 EXTRAS=1`.
+5. `make ship V=<version>` is a separate step. Do it only after step 4.
+
+Open mismatch: `leela/__init__.py` has `__version__ = "1.0.4"` (hatch reads it), while the newest `v` tag is `v0.1.13`. The `v` tags are the old scheme. Leela now uses bare tags, and the newest bare tag is `1.0.1` (8 Nov 2026), after `1.0.0` and `0.1.27`. Commits `Leela 1.0.2`, `1.0.3` and `1.0.4` on main set those versions and CHANGELOG entries, but no tag `1.0.2`, `1.0.3` or `1.0.4` exists here. So 1.0.2 to 1.0.4 were bumped and not tagged in this clone; whether GitHub has releases for them was not checked. Before you release, check GitHub, then choose: tag the next release `1.0.5` (move the `Unreleased` entry under it), or tag `1.0.4` if it was never released.
