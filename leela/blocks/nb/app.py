@@ -25,7 +25,7 @@ from . import presentation
 
 __all__ = ['CAPS', 'CommRelay', 'connect']
 
-CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running', 'memory')
+CAPS = ('fs', 'journal', 'inline_ai', 'tab', 'pending_approval', 'docs', 'debug', 'running', 'memory', 'vaults')
 #: Seconds between SSE comments on a silent run stream, well inside the page's own silence limit.
 KEEPALIVE = 15
 
@@ -158,10 +158,10 @@ def connect(app, ctx):
                 'inline': inline_values(c.source, (rows or {}).get('groups', []), c.outputs, result)}
     def file_after_run(tab):
         "When the kernel of a lesson goes idle, file the run result beside it, off the loop. Filed once for each content; the learn block's sweep tries again after a failure."
-        from .lesson import file_result, result_sig
+        from .lesson import file_result_in, result_sig
         if not (tab and tab.path and result_sig(tab.path)): return
         async def go():
-            try: await off_loop(file_result, ctx.memory, tab.path)
+            try: await off_loop(file_result_in, ctx, tab.path)
             except Exception as e: print(f'  run result not filed: {errstr(e)}')
         asyncio.ensure_future(go())
     @rt('/nb/run/stream')
@@ -523,7 +523,14 @@ def connect(app, ctx):
         tab.dirty = tab.dirty or nb.dirty
         return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version, 'clash': clash,
                 'index': at if op in ('undo', 'redo') else i}
+    def lesson_memory(nb, write=False):
+        "The `Memory` of the vault that holds the walk of the lesson `nb`; `Refused` for `write` on a read-only one."
+        from ..learn.learn import walk_memory
+        from .lesson import walk_meta
+        return walk_memory(ctx, walk_meta(nb).get('walk'), write)
     def _vault_fail(e):
+        from ..learn.learn import Refused
+        if isinstance(e, Refused): return fail(str(e), 403)
         if isinstance(e, ImportError) and (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail('Saving cards needs abhyasa. Install abhyasa, then try again.')
         return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
     @rt('/lesson/save')
@@ -543,7 +550,7 @@ def connect(app, ctx):
                 return fail('Save the notebook first.')
             if not nb.meta.get('lesson', {}).get('name'): return fail('This is not a lesson notebook.')
             async with run_lock:
-                try: message = await off_loop(record_card, ctx.memory, nb, cell, tab.path)
+                try: message = await off_loop(record_card, lesson_memory(nb, True), nb, cell, tab.path)
                 except Exception as e: return _vault_fail(e)
                 lesson.update(saved=key, saved_message=message)
                 saved = await nb_save(req)
@@ -563,7 +570,7 @@ def connect(app, ctx):
             if d.get('src') != src_hash(cell.source): return fail('This demo changed. Run the cell again, then try.', 409)
             try: f = prediction_filing(nb, cell, tab.path, d.get('demo'), str(d.get('gate') or ''), d.get('picked'), d.get('why'), d.get('ans'), d.get('ok'))
             except ValueError as e: return fail(str(e))
-            try: message = await off_loop(record_prediction, ctx.memory, f)
+            try: message = await off_loop(record_prediction, lesson_memory(nb, True), f)
             except Exception as e: return _vault_fail(e)
             return dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
     @rt('/lesson/predictions', methods=['POST'])
@@ -576,7 +583,7 @@ def connect(app, ctx):
         cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
         if cell is None: return fail('That cell is no longer in the notebook.')
         if d.get('src') != src_hash(cell.source): return dict(ok=True, picks={})
-        try: return dict(ok=True, picks=await off_loop(filed_picks, ctx.memory, nb, cell))
+        try: return dict(ok=True, picks=await off_loop(filed_picks, lesson_memory(nb), nb, cell))
         except Exception as e: return _vault_fail(e)
     def guide_said(d):
         "`(said, anchors, demo)` of the guide request `d`, or its fail reply."
@@ -621,7 +628,7 @@ def connect(app, ctx):
         def state(e):
             if 'saved' not in e: q.put(('wait', e))   # a saved page needs an undo route, which Leela does not have
         def run():
-            try: q.put(('board', guide_board(ctx.memory, nb, cell, tab.path, said, None, anchors, demo, stop=stop, on_state=state,
+            try: q.put(('board', guide_board(lesson_memory(nb), nb, cell, tab.path, said, None, anchors, demo, stop=stop, on_state=state,
                                              on_step=lambda s, k, o: q.put(('step', dict(step=s, k=k, tier='tutor', demo_open=o))))))
             except ImportError as e: q.put(('error', dict(error=GUIDE_STREAM_NEEDS if (e.name or '').startswith(('abhyasa', 'rupaka')) else errstr(e))))
             except Exception as e: q.put(('error', dict(error=errstr(e))))
@@ -648,7 +655,7 @@ def connect(app, ctx):
             tab, nb, cell = g
             if sh := guide_show(nb, said): return dict(ok=True, show=sh)
             notes = []
-            try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors, demo)
+            try: board = await off_loop(guide_board, lesson_memory(nb), nb, cell, tab.path, said, notes.append, anchors, demo)
             except ImportError as e:
                 if (getattr(e, 'name', '') or '').startswith(('abhyasa', 'rupaka')): return fail(GUIDE_NEEDS)
                 return fail(errstr(e))

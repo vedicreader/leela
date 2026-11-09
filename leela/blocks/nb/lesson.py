@@ -443,6 +443,11 @@ def file_result(memory, path, folder=None):
     f = run_filing(Notebook.load(path), path, folder)
     return f and record_run(memory, f)
 
+def file_result_in(ws, path, folder=None):
+    "`file_result` into the vault that holds the walk of the lesson at `path`: the Learn vault first. `Refused` when that vault is read-only."
+    from ..learn.learn import walk_memory
+    return file_result(walk_memory(ws, walk_meta(Notebook.load(path)).get('walk'), write=True), path, folder)
+
 def record_run(memory, f):
     "File one `run` attempt through abhyasa and copy its images into the vault assets, once per content; None when its key is already filed. Never writes the walk."
     from abhyasa.learner import Learning

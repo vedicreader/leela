@@ -7,11 +7,12 @@ from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock, learning_store
 from ..settings.settings import register_section
 from .speech import connect as connect_speech, speech_rows
+from .learn import Refused, handoff_memory
 from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect', 'learn_rows']
 
-CAPS = ('memory', 'search', 'docs', 'jobs', 'fs', 'fs_watch')
+CAPS = ('memory', 'vaults', 'search', 'docs', 'jobs', 'fs', 'fs_watch')
 
 log = logging.getLogger(__name__)
 
@@ -111,9 +112,9 @@ def connect(app, ctx):
     filed = {}   # lesson path -> the `result_sig` last filed, or found filed already
     async def file_one(path):
         "File the result beside the lesson at `path` once for each write; a failure is said, and the next look tries again."
-        from ..nb.lesson import file_result, result_sig
+        from ..nb.lesson import file_result_in, result_sig
         if (sig := result_sig(path)) is None or filed.get(str(path)) == sig: return
-        try: await off_loop(file_result, ctx.memory, path)
+        try: await off_loop(file_result_in, ctx, path)
         except Exception as e: return print(f'  run result not filed: {errstr(e)}')
         filed[str(path)] = sig
     def lessons():
@@ -145,27 +146,29 @@ def connect(app, ctx):
     app.before.append(pane_only)
     @app.route('/lesson/due')
     async def lesson_due():
-        try: return JSONResponse(await off_loop(due_cards, ctx.memory))
+        try: return JSONResponse(await off_loop(due_cards, handoff_memory(ctx)[1]))
         except Exception as e: return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
     @app.route('/learn', methods=['GET'])
     async def learn(req):
         from abhyasa.contract import read_handoff
-        from .learn import not_found, other_vault
+        from .learn import not_found
         root = ctx.session.project_root
         try: q = read_handoff(req.url.query)
         except ValueError as e: return said(req, root, str(e), 400)
-        if t := other_vault(q, ctx.memory.path): return said(req, root, t)
+        try: mem = handoff_memory(ctx, q.v)[1]
+        except Refused as e: return said(req, root, str(e))
+        except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
         pane = req.query_params.get('pane') == '1'
         if q.doc:
             if go_now(req, q) and not pane: return await open_now(req, q, None, root)
-            try: nb = await off_loop(read_doc, ctx.memory, q)
+            try: nb = await off_loop(read_doc, mem, q)
             except ValueError as e: return said(req, root, str(e), 404)
             except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
             return FtResponse(DocPage(nb, q, pane=pane, root=root), headers=HEADERS)
-        try: v = await off_loop(read_step, ctx.memory, q)
+        try: v = await off_loop(read_step, mem, q)
         except ValueError as e: return said(req, root, str(e), 400)
         except Exception: return said(req, root, 'The learning store is locked or cannot be read.', 503)
-        if v.kind == 'missing': return said(req, root, not_found(q, ctx.memory.path))
+        if v.kind == 'missing': return said(req, root, not_found(q, mem.path))
         if v.kind == 'done': return said(req, root, 'This walk is done.')
         if go_now(req, q) and not pane: return await open_now(req, q, v, root)
         return FtResponse(StepPage(v, q, pane=req.query_params.get('pane') == '1', root=root, jobs=ctx.jobs), headers=HEADERS)
@@ -187,10 +190,13 @@ def connect(app, ctx):
         say = lambda text, code=200: said(req, root, text, code, pane=pane)
         what = 'open the notebook' if q.doc else 'write the lesson'
         if isinstance(v, str): return say(v)
-        if v is not None and v.kind == 'missing': return say(not_found(q, ctx.memory.path))
+        try: mem = handoff_memory(ctx, q.v)[1]
+        except Refused as e: return say(str(e))
+        except Exception: return say('The learning store is locked or cannot be read.', 503)
+        if v is not None and v.kind == 'missing': return say(not_found(q, mem.path))
         if v is not None and v.kind == 'done': return say('This walk is done.')
         try:
-            if q.doc: path, need = project_root(ctx.session, ctx.fs, await off_loop(read_doc, ctx.memory, q))
+            if q.doc: path, need = project_root(ctx.session, ctx.fs, await off_loop(read_doc, mem, q))
             else: path, need = open_step(ctx.session, ctx.fs, v, q)
             if need and ctx.fs.loose is None and ctx.fs.roots: return FtResponse(FolderPage(path.name, path, need, pane=pane, root=root), status_code=409, headers=HEADERS)
             if need and ctx.fs.loose is None: ctx.session.add_root(loose_root(), loose=True)
@@ -211,10 +217,10 @@ def connect(app, ctx):
         "The handoff in the form `f` and its `find_step` result, or the one line for another vault in place of the result. `ValueError` for a bad form."
         from urllib.parse import urlencode
         from abhyasa.contract import read_handoff
-        from .learn import other_vault
         q = read_handoff(urlencode({k: f[k] for k in ('walk', 'step', 'topic', 'doc', 'shelf', 'cell', 'v') if f.get(k)}))
-        if t := other_vault(q, ctx.memory.path): return q, t
-        return q, None if q.doc and not q.walk else await off_loop(read_step, ctx.memory, q)
+        try: mem = handoff_memory(ctx, q.v)[1]
+        except Refused as e: return q, str(e)
+        return q, None if q.doc and not q.walk else await off_loop(read_step, mem, q)
     @app.route('/learn/env', methods=['POST'])
     async def learn_env(req):
         from . import toolenv
@@ -226,7 +232,7 @@ def connect(app, ctx):
         except Exception: return say('The learning store is locked or cannot be read.', 503)
         if isinstance(v, str): return say(v)
         if v is None: return say('This step needs no packages.', 400)
-        if v.kind == 'missing': return say(not_found(q, ctx.memory.path))
+        if v.kind == 'missing': return say(not_found(q, handoff_memory(ctx, q.v)[1].path))
         if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
         from abhyasa.contract import handoff
         back = RedirectResponse(handoff(q.walk, v.i, v=q.v) + ('&pane=1' if f.get('pane') == '1' else ''), 303)

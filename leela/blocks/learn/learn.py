@@ -12,7 +12,7 @@ from abhyasa.stagekit import is_local
 from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
 
-__all__ = ['LESSONS', 'PKG', 'Taken', 'project_root', 'copy_root', 'doc_notebook', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
+__all__ = ['LESSONS', 'PKG', 'Taken', 'project_root', 'copy_root', 'doc_notebook', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'Refused', 'vault_memory', 'learn_ref', 'handoff_memory', 'handoff_store', 'walk_memory', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
            'lookup', 'scratch_cell']
 
 LESSONS = Path(os.getenv('LEELA_LESSONS') or Path.home()/'Learning'/'Leela lessons').expanduser().absolute()
@@ -208,3 +208,51 @@ def _row(r) -> dict:
 def scratch_cell(nb, snippet:str):
     "Append a code cell that holds `snippet` and has the lesson role `scratch`; other cells stay as they are."
     return nb.insert(len(nb.cells), Cell(source=snippet, extra={'lesson': {'role': 'scratch'}}))
+
+
+class Refused(Exception):
+    "A handoff or a write the vault rules refuse; `str(e)` is the plain line."
+
+def vault_memory(ws, ref):
+    "The `Memory` of the registry row `ref`; the workspace's own for the workspace row."
+    from ..memory.vaults import WORKSPACE
+    return ws.memory if ref.name == WORKSPACE else ws.vaults.memory(ref.name)
+
+def learn_ref(ws):
+    "The managed Learn vault when it is set up; else the active vault, for a person who never set it up."
+    from ..memory.vaults import LEARN
+    return ws.vaults.get(LEARN) or ws.vaults.active
+
+def handoff_memory(ws, v='', write=False):
+    "`(vault name, Memory)` that the link key `v` names: the registry vault with that key, else the Learn vault. `Refused` with the plain line for an unknown key, or for `write` on a vault that is read-only."
+    from ..memory.vaults import WORKSPACE
+    ref = learn_ref(ws)
+    if v:
+        key = lambda r: vault_key(ws.memory.path if r.name == WORKSPACE else r.path)
+        if key(ref) != v:
+            if not (ref := next((r for r in ws.vaults if (r.name == WORKSPACE or r.exists) and key(r) == v), None)):
+                raise Refused(other_vault(AttrDict(v=v), vault_memory(ws, learn_ref(ws)).path))
+    if write and not ref.writable: raise Refused(f'The vault {ref.name} is read-only. Make it admin to save your work there.')
+    return ref.name, vault_memory(ws, ref)
+
+def handoff_store(ws, v='', write=False):
+    "`(vault name, Learning)` that the link key `v` names, as `handoff_memory`."
+    from abhyasa.learner import Learning
+    from ..memory.memory import learning_store
+    name, memory = handoff_memory(ws, v, write)
+    return name, Learning(learning_store(memory))
+
+def walk_memory(ws, walk, write=False):
+    "The `Memory` of the vault that holds the walk `walk`: the Learn vault first, then the others; the Learn vault when none has it. `Refused` for `write` on a read-only vault."
+    from abhyasa.learner import Learning
+    from ..memory.memory import _open_lock, learning_store
+    home = ref = learn_ref(ws)
+    for r in ([home] + [r for r in ws.vaults if r.name != home.name]) if walk else ():
+        try:
+            m = vault_memory(ws, r)
+            store = learning_store(m)
+            with _open_lock(m.path): hit = Learning(store).journey(walk)
+        except Exception: continue
+        if hit: ref = r; break
+    if write and not ref.writable: raise Refused(f'The vault {ref.name} is read-only. Make it admin to save your work there.')
+    return vault_memory(ws, ref)
