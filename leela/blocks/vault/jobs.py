@@ -129,6 +129,7 @@ class Jobs:
         self.path, self.memory = Path(path), memory
         self.owner, self.stale = owner or OWNER, float(ifnone(stale, _stale_secs()))
         self.note, self._handlers, self._lock = '', {}, threading.Lock()
+        self._once, self._held = threading.Lock(), {}
         self._ticking, self._sweeper, self._stop = False, None, threading.Event()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
@@ -214,6 +215,23 @@ class Jobs:
         return self.get(jid)
     def start(self, kind, target='', **params):
         return self.launch(self.new(kind, target, **params).id)
+    def attach(self, jid, **objs):
+        "Keep live `objs` (not serialisable) for `jid`; its handler takes them with `take`. They do not survive a restart."
+        self._held[jid] = objs
+    def take(self, jid):
+        "The objects `attach`ed to `jid`, once, or None when there are none (a restart, or taken already)."
+        return self._held.pop(jid, None)
+    def start_once(self, kind, target='', held=None, also=None, **params):
+        "Start `kind` on `target`, or return the active job with the same `target` and `params`. `held` is `attach`ed and `also` joins the params; neither is part of the match."
+        with self._once:
+            for job in self.all(kind=kind):
+                if job.active and job.target == str(target) and all(job.params.get(k) == v for k, v in params.items()): return job
+            job = self.new(kind, target, **params, **(also or {}))
+            if held: self.attach(job.id, **held)
+            try: return self.launch(job.id)
+            except Exception:
+                self.take(job.id)
+                raise
     def _beat(self, jid, done):
         "Say every quarter of `stale` that this process still runs `jid`, until `done`."
         while not done.wait(self.stale/4):
