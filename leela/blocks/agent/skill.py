@@ -40,7 +40,7 @@ FEATURES = (
     ('The vault', ('open_vault', 'clip_to_vault', 'vault_review'),
      'Keep pages, papers, repositories, videos and folders. Search them, and attach sections to an agent question. `@` completes vault documents.'),
     ('Research', ('research', 'web_search', 'read_url'),
-     'Search the web and get a digest that cites its sources.'),
+     'Search the web and get a digest that cites its sources. Sources stay beside the reader.'),
     ('The browser', ('browse_url', 'browse_tabs'),
      'Open a web page as a tab, on the sessions you signed in to. **read** turns it into Markdown. **remember** files it in the vault.'),
     ('Git', ('panel_git', 'show_diff', 'git_blame', 'git'),
@@ -52,13 +52,13 @@ FEATURES = (
     ('Watching something run', ('run_app', 'edit_runs', '`.leela/runs.json`'),
      'Start a run configuration under an inspector and watch its variables while it runs.'),
     ('Opening a project without a command line', ('open_folder', 'add_root', 'Open With > Leela in Finder'),
-     'Open a folder or a file from the welcome screen, the folder chooser, or the Dock.'),
+     'Open a folder or a file from the welcome screen, the folder chooser, or the Dock. Leela remembers the open folders.'),
     ('Project settings', ('settings', '`.leela/settings.json`'),
-     'Save to in Settings picks the file a change goes to: the user file or the project file.'),
+     'Settings has a user file and a project file. `.leela/settings.json` in the project folder overrides the user file, key by key. Save to in Settings picks the file a change goes to.'),
     ('The venv notice', ('Set up .venv in the notice above the editor',),
-     'A Python project with no environment runs no code until you choose. Set up .venv makes `.venv` with uv and installs only the kernel support.'),
+     'A Python project with no environment runs no code until you choose. Set up .venv makes `.venv` with uv and installs only the kernel support. Choose interpreter… opens the kernel picker. Not now hides the notice.'),
     ('Updates', ('check_updates', 'setup_models'),
-     'The Mac app checks for a new release at start and each hour. Update installs it with Homebrew; A Leela installed with `uv tool install` updates with `uv tool upgrade leela`.'),
+     'The Mac app checks for a new release at start and each hour. Update installs it with Homebrew; Restart Leela opens the new version. A Leela installed with `uv tool install` updates with `uv tool upgrade leela`.'),
     ('Terminal and debugger', ('terminal', 'the Debug menu'),
      'Open terminals in the bottom pane. Debug a file with breakpoints and step controls.'),
     ('Refactoring', ('rename_symbol', 'extract_variable', 'extract_method', 'move_symbol', 'replace_workspace'),
@@ -71,12 +71,12 @@ def _menus():
     return {r.action: 'Leela' if t == '__app__' else t for t, rows in BAR for r in rows if getattr(r, 'action', None)}
 
 def _key(a, menus=None):
-    "`label (chord)` of keymap action `a`, with its menu; None when `a` is not an action."
+    "`label (chord)` of keymap action `a`, with its menu when no chord names it; None when `a` is not an action."
     from ...core import keys as K
     if (k := K.lookup(a)) is None: return None
     c = K.chord_display(k)
     s = (k.label or a.replace('_', ' ')) + (f' {_code(c)}' if k.bound else '')
-    return s + (f', {m} menu' if menus and (m := menus.get(a)) else '')
+    return s + (f', {m} menu' if menus and not k.bound and (m := menus.get(a)) else '')
 
 def _label(r):
     "A menu row as a person reads it."
@@ -94,13 +94,19 @@ def _palette_extras(js=None):
 def _code(c): return f'`` {c} ``' if '`' in c else f'`{c}`'
 SEP = ' · '   # labels hold commas
 
+LEARN = """## Learn mode
+
+- Learn mode teaches a topic through walks and checks. Its tools appear only while it is on.
+- Quote only the quote a source shows. Say plainly when a text has no source.
+- A research job finds web sources in the background.
+"""
+
 def _tools(ai):
     "Tool names by group: what this session offers now, then the rest Leela can offer. Each offered tool's schema says what it does."
     from .ai import HIDDEN
     now = {t.__name__ for t in ai._catalog_view.tools} if getattr(ai, '_tools', None) is not None else set()   # never rebuild mid-turn
-    from ..modes.modes import get_mode
     kinds = [(ai._news_toolset, 'while a feed is followed'), (ai._lesson_toolset, 'while a lesson tab is active'),
-             *((ts, f'while {get_mode(m).title} mode is on') for m, ts in ai._mode_toolsets.items()), (ai._session_toolset, ''), (ai._video_toolset, '')]
+             (ai._session_toolset, ''), (ai._video_toolset, '')]   # a mode's tools reach the model as schemas while it is on
     own = {t.__name__: why for ts, why in kinds for t in ts}
     grp = lambda n: 'leela' if n in own else group_of(n, 'agent')
     def row(ns): return '; '.join((f'{w}: ' if w else '') + ', '.join(f'`{n}`' for n in sorted(ns) if own.get(n, '') == w)
@@ -120,7 +126,7 @@ def leela_skill(ai=None):
     menus = _menus()
     out = ['# What Leela can do\n\nLeela is an IDE for notebooks and code, with an agent, a vault, git, release and deploy. '
            'Each item says where it is: a menu, a pane, or a key. `mod` is Command on a Mac and Control elsewhere. '
-           'Every action is also in the command palette.\n\n## Features\n']
+           'The keys are the user\'s own, from `keys.json`. Every action is also in the command palette.\n\n## Features\n']
     for title, where, what in FEATURES:
         w = '; '.join(_key(a, menus) or a for a in where)
         out.append(f'- **{title}** ({w}): {what}\n')
@@ -146,6 +152,7 @@ def leela_skill(ai=None):
     out.append(f'\n## Settings ({_key("settings")})\n\nThe user file, and per project `.leela/settings.json`, which overrides it key by key. Sections and their keys:\n')
     for sec, d in DEFAULT_SETTINGS.items():   # a package section can hold many rows, so it gets one line
         out.append(f'- **{sec}**: ' + (f'{len(d)} {SECTIONS[sec]["owner"]} settings, user settings only' if sec in SECTIONS else ', '.join(d)) + '\n')
+    out.append('\n'+LEARN)
     if ai is not None: out.append('\n## Agent tools\n\n' + _tools(ai))
     return ''.join(out)
 

@@ -85,10 +85,10 @@ def test_every_tool_leela_can_offer_is_named_and_the_hidden_one_is_not(ai):
     from shalya.tools import tool_groups
     from leela.blocks.agent.ai import HIDDEN
     t = _text(ai)
-    own = [f.__name__ for ts in (ai._news_toolset, ai._lesson_toolset, ai._mode_toolsets['learn'], ai._session_toolset, ai._video_toolset) for f in ts]
+    own = [f.__name__ for ts in (ai._news_toolset, ai._lesson_toolset, ai._session_toolset, ai._video_toolset) for f in ts]
     names = {*tool_groups(), *(f.__name__ for f in ai._plain), *own} - HIDDEN
     assert not [n for n in names if f'`{n}`' not in t]
-    assert 'while a feed is followed: `news_feeds`, `news_follow`' in t and 'while Learn mode is on: `add_source`, `change_walk`' in t and '`explain_here`' in t and '`user_steering`' not in t
+    assert 'while a feed is followed: `news_feeds`, `news_follow`' in t and '`add_source`' not in t and '`user_steering`' not in t
 
 def test_every_slash_command_is_named(ai):
     from leela.blocks.agent.app import PAGE_COMMANDS
@@ -139,3 +139,18 @@ def test_the_small_profile_names_the_skill(tmp_path):
     ai = ws.ai
     assert ai.profile == 'small'
     assert '`leela`' in ai.system_prompt() and 'read_skill' in {t.__name__ for t in ai.tools}
+
+def test_the_user_facing_sentences_main_has_are_all_still_there(ai):
+    "A tool addition must not cut unrelated text to fit the cap."
+    t = _text(ai)
+    for s in ('Leela remembers the open folders', 'Sources stay beside the reader', 'An audience window is optional', 'overrides the user file, key by key',
+              'Choose interpreter… opens the kernel picker', 'Not now hides the notice', 'Update installs it with Homebrew; Restart Leela opens the new version',
+              "The keys are the user's own, from `keys.json`", 'A Python project with no environment', 'uv tool upgrade leela'):
+        assert s in t, s
+    assert 'Homebrew; A Leela' not in t
+
+def test_the_learn_lines_are_few_and_name_the_sources_rule(ai):
+    from leela.blocks.agent.skill import LEARN
+    assert len(LEARN.strip().splitlines()) <= 7
+    t = _text(ai)
+    assert '## Learn mode' in t and 'Quote only the quote a source shows' in t and 'Its tools appear only while it is on' in t
