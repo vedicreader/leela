@@ -22,7 +22,8 @@
   async function keys() {
     id('kf')?.remove();
     const main = abh.querySelector('main'); if (!main) return;
-    const at = abh.querySelector('#concept-name') ? '/c/' + abh.querySelector('#concept-name').dataset.concept : '/';
+    const w = abh.querySelector('#rail li.now a')?.getAttribute('href') || [...main.querySelectorAll('[href^="/w/"], [hx-post^="/w/"], [hx-get^="/w/"]')].map(x => /^\/w\/[^/?]+/.exec(x.getAttribute('href') || x.getAttribute('hx-post') || x.getAttribute('hx-get'))?.[0])[0];
+    const at = abh.querySelector('#concept-name') ? '/c/' + abh.querySelector('#concept-name').dataset.concept : w || '/';
     const html = await fetch('/learn/abh/keys/panel?path=' + encodeURIComponent(at)).then(r => r.ok ? r.text() : '').catch(() => '');
     if (!html || id('kf') || abh.querySelector('main') !== main) return;
     const t = document.createElement('template'); t.innerHTML = html;
