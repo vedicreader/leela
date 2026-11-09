@@ -165,3 +165,20 @@ def test_closing_a_side_walk_keeps_its_result_and_returns_to_the_step(tmp_path, 
         assert back == ['POST']
         await pg.locator('.abh #check .check').wait_for(timeout=15000)
     _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_explain_on_a_step_asks_the_agent_and_does_not_navigate(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        await _open(pg, ws, jid)
+        before = await pg.evaluate("location.href + document.querySelector('.abh h1')?.textContent")
+        await pg.locator('.abh [data-act=explain]').click()
+        await pg.wait_for_function("() => document.querySelector('#agentlog').innerText.includes('Explain this step')", timeout=15000)
+        assert await pg.evaluate('lee.agentLearnMode') is True
+        assert await pg.evaluate("location.href + document.querySelector('.abh h1')?.textContent") == before
+        await pg.screenshot(path=f'{OUT}/p10-explain.png')
+        await pg.evaluate('lee.agentBusy = true')
+        await pg.locator('.abh [data-act=explain]').click()
+        await pg.wait_for_function("() => /The agent is working/.test(document.body.innerText)", timeout=5000)
+    _run(tmp_path, scenario, dict(width=1500, height=900))

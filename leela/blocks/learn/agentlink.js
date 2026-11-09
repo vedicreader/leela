@@ -21,9 +21,10 @@ async function leeLearnToAgent(text, send) {
   prompt.focus(); prompt.setSelectionRange(text.length, text.length);
 }
 const leeLearnAsk = () => leeLearnToAgent("I don't get this", true);
+const leeLearnExplain = () => leeLearnToAgent('Explain this step', true);
 const leeLearnChange = () => leeLearnToAgent('Change this walk: ', false);
 addEventListener('keydown', e => {
   if (e.code !== 'KeyE' || !(e.metaKey && e.altKey && e.ctrlKey && e.shiftKey) || !inLearnTab()) return;
   e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) leeLearnAsk();
 }, true);
-window.leeLearnToAgent = leeLearnToAgent; window.leeLearnAsk = leeLearnAsk; window.leeLearnChange = leeLearnChange;
+window.leeLearnToAgent = leeLearnToAgent; window.leeLearnAsk = leeLearnAsk; window.leeLearnChange = leeLearnChange; window.leeLearnExplain = leeLearnExplain;

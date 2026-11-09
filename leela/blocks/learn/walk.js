@@ -123,6 +123,7 @@ async function learnMount(host, st) {
   const own = u => u.pathname.startsWith('/build') ? () => window.leeLearnChange?.() : LEARN_OWN[u.pathname];
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
+    if (e.target.closest('[data-guide-open], #guide-go')) { e.preventDefault(); e.stopImmediatePropagation(); return window.leeLearnExplain?.(); }
     const a = e.target.closest('a[href]');
     if (!a || (a.target && !a.dataset.pane) || a.getAttribute('href').startsWith('#') || a.matches(LEARN_HX)) return;
     const u = new URL(a.href, location.origin);
