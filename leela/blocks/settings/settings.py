@@ -311,6 +311,8 @@ class Settings:
         if path is None: raise ValueError(f'open a project folder before {verb} workspace settings')
         return path
     def save(self, scope, section, values, language=''):
+        if SECTIONS.get(section, {}).get('user_only') and (scope != 'user' or language):
+            raise ValueError(f'{section} can only be saved in user settings for all languages')
         values = _validated(section, values, self.effective(language).get(section))
         if scope == 'workspace': values = {k: v for k, v in values.items() if not _user_only(section, k)}
         path = self._path(scope, 'saving')

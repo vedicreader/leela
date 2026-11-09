@@ -77,6 +77,10 @@ function applyTheme(theme) {
 }
 // Following the system means following it now, not at the next reload.
 darkQuery().addEventListener('change', () => { if (lee.theme?.mode === 'system') paintTheme(); });
+function settingsPercent(value, original) {
+  if (original === undefined) return Math.round(value * 100);
+  return Number(value) === settingsPercent(original) ? original : Number(value) / 100;
+}
 async function editorSettings(languageScope = null) {
   if(typeof languageScope!=='string'){
     // Default to All languages, never to the focused tab's language. Saving remembers the scope,
@@ -114,16 +118,17 @@ async function editorSettings(languageScope = null) {
   const densityButtons = density => THEME_DENSITIES.map(d =>
     `<button class="lee-theme-mode${d === density ? ' active' : ''}" data-theme-density="${d}" aria-pressed="${d === density}">${d}</button>`).join('');
   const learnControl = r => {
-    const label = esc(r.label) + (r.unit ? ` (${esc(r.unit)})` : ''), help = esc(r.help || ''), v = (lee.learnPrefs || {})[r.key] ?? r.dflt;
+    const label = esc(r.label) + (r.pct ? ' (%)' : r.unit ? ` (${esc(r.unit)})` : ''), help = esc(r.help || ''), v = (lee.learnPrefs || {})[r.key] ?? r.dflt;
     if (r.kind === 'bool') return check('learn', r.key, label, help);
     if (r.kind === 'choice') return select('learn', r.key, label, r.choices.map(c => [c, esc(c)]), help);
     if (r.kind === 'str') return field('learn', r.key, label, `<input class="lee-input" data-setting spellcheck="false" value="${esc(v)}">`, help);
-    return field('learn', r.key, label, `<input class="lee-input" data-setting type="number" min="${r.lo ?? ''}" max="${(r.hi_key ? lee.learnPrefs?.[r.hi_key] : r.hi) ?? ''}" step="${r.kind === 'int' ? 1 : 'any'}" value="${v}">`, help);
+    const shown = value => value == null ? '' : r.pct ? settingsPercent(value) : value;
+    return field('learn', r.key, label, `<input class="lee-input" data-setting ${r.pct ? 'data-percent' : ''} type="number" min="${shown(r.lo)}" max="${shown(r.hi_key ? lee.learnPrefs?.[r.hi_key] : r.hi)}" step="${r.pct || r.kind === 'int' ? 1 : 'any'}" value="${shown(v)}">`, help);
   };
   const learnPage = () => {
     const rows = lee.settingsMeta?.sections?.learn; if (!rows) return '';
-    const grid = list => `<div class="lee-settings-grid">${list.map(learnControl).join('')}</div>`;
-    return `<section data-settings-section="learn" hidden><h3>Learn</h3><p>How walks, checks and reviews run. Only your user settings change these; a project's settings file cannot.</p>` +
+    const grid = list => `<div class="lee-settings-grid">${list.filter(r => r.kind !== 'bool').map(learnControl).join('')}</div><div class="lee-settings-checks">${list.filter(r => r.kind === 'bool').map(learnControl).join('')}</div>`;
+    return `<section data-settings-section="learn" hidden><h3>Learn</h3><p>Saved for the Learn tools. Learn tools that read them are coming.</p>` +
       [...new Set(rows.map(r => r.group))].map(g => {
         const own = rows.filter(r => r.group === g), more = own.filter(r => r.more), main = own.filter(r => !r.more);
         return `<div class="lee-settings-group"><h4>${esc(own[0].group_label)}</h4>${main.length ? grid(main) : ''}${more.length ? `<details data-learn-more><summary>More</summary>${grid(more)}</details>` : ''}</div>`;
@@ -132,7 +137,7 @@ async function editorSettings(languageScope = null) {
   const m = modal(`<div class="lee-mhead">settings<span class="sub">user · workspace · language-aware</span></div>` +
     `<div class="lee-settings-scope"><label>Save to <select class="lee-select" data-settings-scope><option value="user"${selected('user',rememberedScope)}>User</option><option value="workspace"${selected('workspace',rememberedScope)}>Workspace</option></select></label>` +
     `<label>Apply to <select class="lee-select" data-settings-language><option value=""${selected('',languageScope)}>All languages</option><option value="python"${selected('python',languageScope)}>Python</option><option value="markdown"${selected('markdown',languageScope)}>Markdown</option></select></label>` +
-    `<span data-settings-target></span><span data-settings-path>${esc(lee.settingsMeta?.paths?.user || '')}</span></div>` +
+    `<small data-learn-scope hidden>Learn uses user settings for all languages.</small><span data-settings-target></span><span data-settings-path>${esc(lee.settingsMeta?.paths?.user || '')}</span></div>` +
     `<div class="lee-settings-shadow" data-settings-shadow hidden></div>` +
     (lee.settingsMeta?.ignored?.length ? `<div class="lee-settings-shadow" data-settings-ignored>This project's settings file sets ${esc(lee.settingsMeta.ignored.join(', '))}. Leela ignores these values: only your user settings choose the shell and the agent's folder.</div>` : '') +
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
@@ -230,16 +235,16 @@ async function editorSettings(languageScope = null) {
   previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
   const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{},learn:lee.learnPrefs||{}};
   const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
-  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});
+  const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?(input.hasAttribute('data-percent')?settingsPercent(input.value,initialSections[input.dataset.prefSection][input.dataset.pref]):Number(input.value)):input.value;});
     for (const r of lee.settingsMeta?.sections?.learn || []) if (r.hi_key) {
       const input = $(`[data-pref-section="learn"][data-pref="${r.key}"]`, m);
-      if (input) input.max = sections.learn[r.hi_key];
+      if (input) input.max = r.pct ? settingsPercent(sections.learn[r.hi_key]) : sections.learn[r.hi_key];
     }
     const entries=$$('[data-backup-entry]',m); if(entries.length)sections.backups.include=entries.filter(b=>b.checked).map(b=>b.dataset.backupEntry);
     applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
   $$('[data-pref]',m).forEach(input=>input.addEventListener('input',update));
   let page='editor';
-  $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);paintSettingsOrigins();});
+  $$('[data-settings-page]',m).forEach(button=>button.onclick=()=>{page=button.dataset.settingsPage;$$('[data-settings-page]',m).forEach(x=>x.classList.toggle('active',x===button));$$('[data-settings-section]',m).forEach(x=>x.hidden=x.dataset.settingsSection!==page);paintPath();});
   /* Which layer supplies a value is the one thing this panel could not say, and the reason
      "I saved it to user and nothing happened" is a fair thing to think: a `languages.python` block
      in the same file beats the plain section, and a workspace file beats both. The server has
@@ -287,7 +292,7 @@ async function editorSettings(languageScope = null) {
     };
   }
   const scope=$('[data-settings-scope]',m),language=$('[data-settings-language]',m),path=$('[data-settings-path]',m),target=$('[data-settings-target]',m);
-  const paintPath=()=>{path.textContent=shownPath(lee.settingsMeta?.paths?.[scope.value]);path.title=lee.settingsMeta?.paths?.[scope.value]||'';target.textContent=`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
+  const paintPath=()=>{const learn=page==='learn';scope.disabled=language.disabled=learn;$('[data-learn-scope]',m).hidden=!learn;const savedScope=learn?'user':scope.value;path.textContent=shownPath(lee.settingsMeta?.paths?.[savedScope]);path.title=lee.settingsMeta?.paths?.[savedScope]||'';target.textContent=learn?'user · all languages':`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
   language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
   // Every click previews live; the modal's close handler puts the original back unless saved.
@@ -299,10 +304,10 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,family:b.dataset.theme});paintPicker();});
   $$('[data-theme-mode]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,mode:b.dataset.themeMode});paintPicker();});
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
-  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:scope.value,section,language:section==='appearance'?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
+  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:section==='learn'?'user':scope.value,section,language:section==='appearance'||section==='learn'?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
-  $('[data-save]',m).onclick=async()=>{update();let count=0;try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:scope.value,language:language.value,section,values:changed});count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${shownPath(lee.settingsMeta?.paths?.[scope.value])})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
+  $('[data-save]',m).onclick=async()=>{update();let count=0;try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:section==='learn'?'user':scope.value,language:section==='learn'?'':language.value,section,values:changed});count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,scope.value);count++;}localStorage.setItem('lee-settings-save-scope',scope.value);localStorage.setItem('lee-settings-language-scope',language.value);localStorage.removeItem('lee-editor-settings');await loadSettings(language.value);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${scope.value} · ${language.value||'all languages'} (${shownPath(lee.settingsMeta?.paths?.[scope.value])})${themeSaved&&language.value?', and the theme to all languages':''}`,'ok');};
   /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
   const paintEnv=async(d=null)=>{
     const list=$('[data-env-list]',m); if(!list) return;

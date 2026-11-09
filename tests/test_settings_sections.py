@@ -20,8 +20,8 @@ def _s(tmp_path, repo=None):
     return Settings(tmp_path/'proj' if repo is not None else None, user_path=tmp_path/'user.json')
 
 def test_a_section_saves_validates_describes_and_resets(reg, tmp_path):
-    register_section('demo', ROWS, 'test')
-    register_section('demo', ROWS, 'test')
+    register_section('demo', ROWS, 'test', user_only=False)
+    register_section('demo', ROWS, 'test', user_only=False)
     s = _s(tmp_path)
     assert s.effective()['demo'] == {'steps': 7, 'mode': 'a', 'on': True, 'share': .5}
     d = s.save('user', 'demo', {'steps': '4', 'mode': 'b', 'on': False})
@@ -54,7 +54,8 @@ def test_a_repo_cannot_set_learn_at_top_level_or_per_language(reg, tmp_path):
     d = s.describe('python')
     assert d['ignored'] == ['learn.checks.tries', 'learn.walks.steps']
     assert d['origins']['learn']['walks.steps'] == 'default' and d['origins']['learn']['checks.tries'] == 'default'
-    s.save('workspace', 'learn', {'walks.steps': 4})
+    with pytest.raises(ValueError, match='user settings for all languages'): s.save('workspace', 'learn', {'walks.steps': 4})
+    with pytest.raises(ValueError, match='user settings for all languages'): s.save('user', 'learn', {'walks.steps': 4}, language='python')
     assert json.loads((tmp_path/'proj'/'.leela'/'settings.json').read_text())['learn'] == {'walks.steps': 3}
     assert s.save('user', 'learn', {'walks.steps': 5})['effective']['learn']['walks.steps'] == 5
 
@@ -79,10 +80,7 @@ def test_learn_bound_uses_effective_cap_and_validates_the_whole_change(reg, tmp_
     with pytest.raises(ValueError): s.save('user', 'learn', {'links.cap': 24})
     assert s.user_path.read_bytes() == before
     s.save('user', 'learn', {'links.cap': 12, 'links.pages': 10})
-    s.save('user', 'learn', {'links.cap': 15}, language='python')
-    assert s.save('user', 'learn', {'links.pages': 14}, language='python')['effective']['learn']['links.pages'] == 14
     with pytest.raises(ValueError): s.save('user', 'learn', {'links.pages': 13})
-    assert s.reset('user', 'learn', language='python')['effective']['learn']['links.pages'] == 10
 
 def test_learn_connect_registers_for_multiple_apps_without_writing(reg, tmp_path, monkeypatch):
     from fasthtml.common import FastHTML
@@ -92,6 +90,35 @@ def test_learn_connect_registers_for_multiple_apps_without_writing(reg, tmp_path
     for _ in range(2): connect(FastHTML(), None)
     assert S.SECTIONS['learn']['rows'] == learn_rows()
     assert not p.exists()
+
+def test_learn_missing_package_skips_registration(reg, monkeypatch, capsys):
+    import builtins
+    from fasthtml.common import FastHTML
+    from leela.blocks.learn.app import connect
+    original = builtins.__import__
+    def missing(name, *args, **kwargs):
+        if name == 'abhyasa.learner': raise ImportError('missing settings')
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', missing)
+    S.SECTIONS.pop('learn', None)
+    connect(FastHTML(), None)
+    assert 'learn' not in S.SECTIONS
+    assert 'Learn settings unavailable' in capsys.readouterr().out
+
+def test_percent_conversion():
+    import subprocess
+    from pathlib import Path
+    source = Path('leela/blocks/settings/prefs.js').read_text()
+    start = source.index('function settingsPercent(')
+    helper = source[start:source.index('\n}', start)+2]
+    subprocess.run(['node', '-e', helper + r'''
+const assert = require('node:assert/strict');
+assert.equal(settingsPercent(1/3), 33);
+assert.equal(settingsPercent(.29), 29);
+assert.equal(settingsPercent(33, 1/3), 1/3);
+assert.equal(settingsPercent(42, 1/3), .42);
+assert.equal(settingsPercent(0, .5), 0);
+'''], check=True)
 
 def test_import_does_not_write_user_settings(tmp_path):
     import subprocess, sys
