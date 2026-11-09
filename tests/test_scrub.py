@@ -85,6 +85,26 @@ def test_a_drag_moves_a_number_by_a_step_its_size_and_decimals_choose(text, n, f
 def test_a_number_without_a_sign_never_flips_to_a_negative_that_would_double_the_minus():
     assert js('(t, n, s) => leeScrubStep(t, n, 0, s)', '3', -9, False) == '0'
 
+NUMS = [('x -3', ['3']), ('x - 3', ['3']), ('f(-3)', ['-3(s)']), ('a[-1]', ['-1(s)']), ('1-2', ['1', '2']), ('2**-3', ['2', '-3(s)']), ('return -3', ['-3(s)']),
+        ('print(x) -3', ['3']), ('x = 1.5e-3', []), ('x = 1E5', []), ('x=1_000', []), ('x=2j', []), ('x=- 3', ['3']), ('t = (a\n     - 3)', ['3']), ('x = (a\n -3)', ['3']),
+        ('x = (\n -3)', ['-3(s)']), ('é3 = 5', ['5']), ('x = 3 if -1 else 4', ['3', '-1(s)', '4']), ('x=00', []), ('x=007', []), ('x = 0.', ['0.']), ('x = .5', ['.5']),
+        ('x=a--3', ['-3(s)']), ('else -3', ['-3(s)']), ('in -3', ['-3(s)']), ('x = 1e+5', []), ('x=1.real', []), ('x[1:-1]', ['1', '-1(s)']), ('x = a -\n 3', ['3']),
+        ('٣ + 4', ['4']), ('x = 12345678901234567890', ['12345678901234567890'])]
+
+@pytest.mark.parametrize('text,want', NUMS)
+def test_the_scan_reads_numbers_as_python_does(text, want):
+    "Spaced and line-start minus, a keyword before a minus, exponents, `_`, `j`, leading zeros and non-ASCII names, from the review."
+    assert js('(t) => leeScrubScan(t).map(r => r.text + (r.signed ? "(s)" : ""))', text) == want
+
+BIG = [('12345678901234567890', 1, 0, '12445678901234567890'), ('1.23456789012', 1, 0, '1.23556789012'), ('0.1', -3, 0, '0.07'), ('0.0', -1, 0, '-0.01'),
+       ('0.001', 1, 0, '0.0011'), ('-0.0', 1, 0, '0.01'), ('5.', 1, 0, '5.1'), ('.5', 1, 0, '0.51'), ('99.9', 1, 0, '99.91'), ('0.30', 1, 0, '0.301')]
+
+@pytest.mark.parametrize('text,n,fine,want', BIG)
+def test_a_step_is_exact_for_big_integers_and_long_decimals(text, n, fine, want): assert js('(t, n, f) => leeScrubStep(t, n, f)', text, n, fine) == want
+
+def test_a_drag_stops_at_a_million_or_a_hundred_times_the_start():
+    assert js('() => [leeScrubWindow("3"), leeScrubWindow("0.5"), leeScrubWindow("50000"), leeScrubWindow("-200")]') == [300, 100, 1000000, 20000]
+
 def test_the_gate_runs_at_most_every_150ms_keeps_only_the_newest_value_and_ends_on_the_last():
     got = js('''async () => {
       const log = [], t0 = Date.now(); let busy = 0, over = 0;

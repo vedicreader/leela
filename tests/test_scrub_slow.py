@@ -42,7 +42,7 @@ async def _drag(pg, steps, wait):
 
 async def _release(pg):
     await pg.mouse.up(); await pg.keyboard.up('Alt')
-    await pg.wait_for_function("() => !lee.scrubbing", timeout=10000)
+    await pg.wait_for_function("() => !lee.scrubbing.size", timeout=10000)
 
 def test_dragging_a_number_follows_in_the_output_undoes_in_one_step_and_leaves_a_ghost(tmp_path):
     nb = tmp_path/'n.ipynb'; _nb(nb, 'x = 3\nprint(x*2)')
@@ -72,7 +72,7 @@ def test_dragging_a_number_follows_in_the_output_undoes_in_one_step_and_leaves_a
     armed, seen, mid, after, out, ghost, saved, undone, twice, cleared = asyncio.run(_real_page(go, tmp_path))
     assert armed and seen == ['8', '10'], (armed, seen)
     assert after == 'x = 5\nprint(x*2)' and out == '10', (after, out)
-    assert mid and '6' in mid and ghost and '6' in ghost, (mid, ghost)
+    assert mid and '8' in mid and ghost and '8' in ghost, (mid, ghost)
     assert saved == 'x = 3\nprint(x*2)', 'the file was written during the gesture'
     assert undone == 'x = 3\nprint(x*2)', undone
     assert twice == undone, 'one undo must be enough'
@@ -88,11 +88,11 @@ def test_an_impure_cell_changes_the_number_names_the_reason_and_does_not_run(tmp
         await pg.wait_for_timeout(500)
         return await pg.evaluate(DOC), await pg.evaluate(NOTE), await pg.evaluate(OUT), await pg.evaluate('() => lee.cells[0].execution_count')
     doc, note, out, count = asyncio.run(_real_page(go, tmp_path))
-    assert doc.startswith('x = 6\n') and note and 'Not re-running' in note and 'write' in note, (doc, note)
+    assert doc.startswith('x = 6\n') and note and 'Not re-running' in note and 'safe list' in note, (doc, note)
     assert out == '' and count is None and not (tmp_path/'leaked.txt').exists()
 
 def test_a_run_over_a_second_is_stopped_and_the_scrub_says_too_slow(tmp_path):
-    nb = tmp_path/'n.ipynb'; _nb(nb, 'n = 1\ns = 0\nfor i in range(n * 10**9):\n    s += i')
+    nb = tmp_path/'n.ipynb'; _nb(nb, 'import time\nt = time.time()\nwhile time.time() - t < 20: pass')
     async def go(pg):
         await _open(pg, nb)
         await _drag(pg, 1, None)
@@ -117,3 +117,79 @@ def test_a_picture_ghost_overlays_and_a_text_ghost_sits_beneath(tmp_path):
         }""", PNG)
     img, overlay, text, left = asyncio.run(_real_page(go, tmp_path))
     assert img and not overlay and 'then' in text and not left
+
+def test_a_scrub_tick_leaves_the_run_count_and_gutter_alone(tmp_path):
+    nb = tmp_path/'n.ipynb'; _nb(nb, 'x = 3\nprint(x*2)')
+    async def go(pg):
+        await _open(pg, nb)
+        await pg.evaluate('runCell(0)'); await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '6'")
+        before = await pg.evaluate("() => [lee.cells[0].execution_count, document.querySelector('#g-c1').textContent]")
+        await _drag(pg, 2, None)
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '10'", timeout=10000)
+        await _release(pg)
+        return before, await pg.evaluate("() => [lee.cells[0].execution_count, document.querySelector('#g-c1').textContent]"), await pg.evaluate("() => leeScrubS.warm === lee.tabKey")
+    before, after, warmed = asyncio.run(_real_page(go, tmp_path))
+    assert before == after and warmed, (before, after, warmed)
+
+def test_escape_puts_the_number_and_the_output_back_and_a_lost_pointer_ends_the_drag(tmp_path):
+    nb = tmp_path/'n.ipynb'; _nb(nb, 'x = 3\nprint(x*2)')
+    async def go(pg):
+        await _open(pg, nb)
+        await pg.evaluate('runCell(0)'); await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '6'")
+        await _drag(pg, 2, None)
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '10'", timeout=10000)
+        await pg.keyboard.press('Escape')
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '6' && !lee.scrubbing.size", timeout=10000)
+        esc = await pg.evaluate(DOC), await pg.evaluate(GHOST)
+        await pg.mouse.up(); await pg.keyboard.up('Alt')
+        await _drag(pg, 1, None)
+        await pg.evaluate("() => dispatchEvent(new Event('blur'))")
+        await pg.wait_for_function("() => !lee.scrubbing.size && !leeScrubS.drag", timeout=10000)
+        return esc, await pg.evaluate(DOC), await pg.evaluate("() => document.body.classList.contains('lee-scrubbing')")
+    (doc, ghost), after_blur, still = asyncio.run(_real_page(go, tmp_path))
+    assert doc == 'x = 3\nprint(x*2)' and ghost is None, (doc, ghost)
+    assert after_blur == 'x = 4\nprint(x*2)' and not still
+
+def test_a_number_dragged_past_what_the_check_allows_stops_re_running_and_says_why(tmp_path):
+    nb = tmp_path/'n.ipynb'; _nb(nb, 'import time\ntime.sleep(1)\nprint("done")')
+    async def go(pg):
+        await _open(pg, nb)
+        await pg.evaluate('runCell(0)'); await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.includes('done')", timeout=20000)
+        await _drag(pg, 1, None)
+        await pg.wait_for_function("() => document.querySelector('#note-c1')", timeout=10000)
+        await _release(pg)
+        return await pg.evaluate(DOC), await pg.evaluate(NOTE), await pg.evaluate(OUT)
+    doc, note, out = asyncio.run(_real_page(go, tmp_path))
+    assert 'sleep(2)' in doc and 'sleeps' in note and out == 'done', (doc, note, out)
+
+def test_the_palette_nudges_and_alt_arrows_move_the_number_under_the_caret_one_undo_step_each(tmp_path):
+    nb = tmp_path/'n.ipynb'; _nb(nb, 'x = 3\nprint(x*2)')
+    async def go(pg):
+        await _open(pg, nb)
+        await pg.evaluate('runCell(0)'); await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '6'")
+        await pg.evaluate("() => { const v = lee.editors.get('c1'); v.focus(); v.dispatch({selection: {anchor: 5}}); }")
+        await pg.evaluate("() => leeAct('scrub_up')")
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '8'", timeout=10000)
+        await pg.keyboard.press('Alt+ArrowUp')
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '10'", timeout=10000)
+        await pg.evaluate("() => leeAct('scrub_down')")
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '8'", timeout=10000)
+        await pg.wait_for_function("() => !lee.scrubbing.size", timeout=10000)
+        out = [await pg.evaluate(DOC)]
+        for _ in range(3): await pg.keyboard.press('ControlOrMeta+z'); out.append(await pg.evaluate(DOC))
+        return out
+    out = asyncio.run(_real_page(go, tmp_path))
+    assert out[0] == 'x = 4\nprint(x*2)' and out[-1] == 'x = 3\nprint(x*2)', out
+
+def test_the_scrub_box_sets_the_number_from_a_typed_or_spoken_value(tmp_path):
+    nb = tmp_path/'n.ipynb'; _nb(nb, 'x = 3\nprint(x*2)')
+    async def go(pg):
+        await _open(pg, nb)
+        await pg.evaluate('runCell(0)'); await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '6'")
+        await pg.evaluate("() => { const v = lee.editors.get('c1'); v.focus(); v.dispatch({selection: {anchor: 5}}); leeAct('scrub_value'); }")
+        await pg.fill('#scrubvalue', '21')
+        await pg.wait_for_function("() => document.querySelector('#out-c1').innerText.trim() === '42'", timeout=10000)
+        await pg.press('#scrubvalue', 'Enter')
+        await pg.wait_for_function("() => !lee.scrubbing.size && !document.querySelector('#scrubvalue')", timeout=10000)
+        return await pg.evaluate(DOC)
+    assert asyncio.run(_real_page(go, tmp_path)) == 'x = 21\nprint(x*2)'

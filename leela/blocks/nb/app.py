@@ -269,11 +269,6 @@ def connect(app, ctx):
         try: await runtime_for(owner_tab)
         except EnvGone as e: return fail(str(e), 409)
         return {'ok': True}
-    @rt('/nb/scrub/check')
-    async def nb_scrub_check(req):
-        "Whether a cell's source may re-run on every tick of a scrubbed number, and if not, why."
-        why = scrub_why((await req.json()).get('source') or '')
-        return {'ok': not why, 'reason': why}
     @rt('/nb/run/state')
     async def nb_run_state(req):
         "Whether one cell's run is still going, and the cell as the server holds it, for a page whose run stream ended early."
