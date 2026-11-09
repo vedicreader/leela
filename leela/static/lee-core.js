@@ -1438,6 +1438,7 @@ const ACTIONS = {
   vault_next_flag: () => leeVaultFlag(1),
   vault_prev_flag: () => leeVaultFlag(-1),
   vault_review: () => leeVaultReview(),
+  dictate: async () => { await learnSurface('/dictate'); return leeDictate(); },
   learned_review: () => leeVaultReview('', '', '', 'learned'),
   vault_reread: () => leeVaultDoc('reread'),
   vault_history: () => leeVaultDoc('history'),
@@ -2409,9 +2410,9 @@ async function learnMount(host, st) {
     if ([...abh.querySelectorAll('textarea, input[type=text]')].some(x => x.value.trim())) { status('The plan changed. Leave the box and press Home to see it.', 'err'); return false; }
     const scrolls = []; for (let e = abh; e; e = e.parentElement) scrolls.push([e, e.scrollTop]);
     const at = document.activeElement?.closest('.abh') && document.activeElement, sel = at?.id ? '#' + CSS.escape(at.id) : at?.name ? `[name="${CSS.escape(at.name)}"]` : '';
-    await nav(cur, true); await leeAbhSettled(abh);
-    for (const [e, t] of scrolls) e.scrollTop = t;
-    if (sel) abh.querySelector(sel)?.focus({preventScroll: true});
+    const keep = () => { for (const [e, t] of scrolls) e.scrollTop = t; if (sel) abh.querySelector(sel)?.focus({preventScroll: true}); };
+    abh.addEventListener('htmx:afterSettle', () => requestAnimationFrame(keep), {once: true});
+    await nav(cur, true); await leeAbhSettled(abh); keep();
     return true;
   };
   window.leeLearnNav = nav; window.leeLearnBack = () => back.onclick();
