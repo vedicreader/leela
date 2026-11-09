@@ -205,7 +205,7 @@ def test_present_is_one_action_with_the_same_name_everywhere_it_appears():
 
 def test_the_notes_page_and_its_routes_are_gone(tmp_path):
     "Task 4 on purpose: the notes drawer replaces the notes page, and the room stream replaces `/present/state` and `/present/nav`."
-    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+    with TestClient(ide_app(Workspace(roots=[tmp_path])), base_url='http://127.0.0.1') as c:   # a local Host: Abhyasa's last route answers a foreign Host 403 before it looks for the path
         for m, p in (('get', '/present/notes'), ('get', '/present/state'), ('post', '/present/state'), ('post', '/present/nav')):
             assert getattr(c, m)(p).status_code in (404, 405), p
     assert not (ROOT/'leela'/'static'/'present-notes.html').exists() and not (ROOT/'leela'/'vendor'/'reveal').exists()
