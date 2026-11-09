@@ -1,4 +1,4 @@
-import asyncio, time
+import asyncio, logging, time
 from pathlib import Path
 from fastcore.basics import first
 from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
@@ -12,6 +12,8 @@ __all__ = ['CAPS', 'connect', 'learn_rows']
 
 CAPS = ('memory', 'search', 'docs', 'jobs', 'fs', 'fs_watch')
 
+log = logging.getLogger(__name__)
+
 LEARN_GROUPS = ('walks', 'talks', 'checks', 'review', 'links', 'research', 'guide', 'lists')
 
 def learn_rows():
@@ -22,7 +24,7 @@ def learn_rows():
                      label=r.label, help=r.help, unit=r.unit, pct=r.pct, more=r.more, group=r.group, group_label=GROUPS[r.group][0])
                 for r in SETTINGS.values() if r.group in LEARN_GROUPS and r.ui and r.store == 'file' and r.section != 'sources']
     except (ImportError, AttributeError, KeyError) as e:
-        print(f'  Learn settings unavailable: {type(e).__name__}')
+        log.warning('Learn settings unavailable: %s', type(e).__name__)
         return []
 
 def due_cards(memory):

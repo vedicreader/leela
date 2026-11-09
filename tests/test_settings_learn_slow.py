@@ -12,9 +12,16 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
     assert user.parent.resolve() == cfg_home.resolve()
     async def go(pg):
         await pg.evaluate("leeEditorSettings('')")
+        await pg.locator('[data-settings-language]').select_option('python')
         await pg.locator('[data-settings-scope]').select_option('workspace')
         await pg.locator('[data-settings-page="learn"]').click()
+        await expect(pg.locator('[data-settings-scope]')).to_have_value('user')
+        await expect(pg.locator('[data-settings-language]')).to_have_value('')
+        await pg.locator('[data-settings-page="editor"]').click()
         await expect(pg.locator('[data-settings-scope]')).to_have_value('workspace')
+        await expect(pg.locator('[data-settings-language]')).to_have_value('python')
+        await pg.locator('[data-settings-page="learn"]').click()
+        await expect(pg.locator('[data-settings-scope]')).to_have_value('user')
         page = pg.locator('[data-settings-section="learn"]')
         await expect(page.locator('h4').first).to_be_visible()
         await expect(pg.locator('[data-settings-scope]')).to_be_disabled()
@@ -31,7 +38,10 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         await expect(fold).to_have_attribute('open', '')
         value = page.locator('[data-pref="walks.passage"]')
         await value.fill('700')
-        await pg.locator('[data-save]').click()
+        async with pg.expect_request(lambda r: r.url.endswith('/settings/save')) as req:
+            await pg.locator('[data-save]').click()
+        sent = (await req.value).post_data_json
+        assert sent['scope'] == 'user' and not sent['language'] and sent['section'] == 'learn'
         await expect(pg.locator('.lee-settings-modal')).to_have_count(0)
         assert json.loads(user.read_text())['learn']['walks.passage'] == 700
         assert json.loads(user.read_text())['learn'][key] == .42

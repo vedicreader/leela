@@ -91,7 +91,7 @@ def test_learn_connect_registers_for_multiple_apps_without_writing(reg, tmp_path
     assert S.SECTIONS['learn']['rows'] == learn_rows()
     assert not p.exists()
 
-def test_learn_missing_package_skips_registration(reg, monkeypatch, capsys):
+def test_learn_missing_package_skips_registration(reg, monkeypatch, caplog):
     import builtins
     from fasthtml.common import FastHTML
     from leela.blocks.learn.app import connect
@@ -103,7 +103,7 @@ def test_learn_missing_package_skips_registration(reg, monkeypatch, capsys):
     S.SECTIONS.pop('learn', None)
     connect(FastHTML(), None)
     assert 'learn' not in S.SECTIONS
-    assert 'Learn settings unavailable' in capsys.readouterr().out
+    assert any(r.levelname == 'WARNING' and 'Learn settings unavailable' in r.getMessage() for r in caplog.records)
 
 def test_percent_conversion():
     import subprocess
