@@ -187,11 +187,11 @@ def learn_guard(ai, text, spec=None):
     return guard(text, spec or ai.spec_or_none('plan'), ai.ws.vault_pii)
 
 
-def learn_ask(ai):
+def learn_ask(ai, task='plan'):
     def prepare(prompt, sp, backend):
         return learn_guard(ai, prompt, backend.spec), learn_guard(ai, sp, backend.spec)
     def ask(prompt, sp=''):
-        return ai.oneshot(prompt, sp, 'plan', 2048, prepare=prepare, wait=True, strict=True)
+        return ai.oneshot(prompt, sp, task, 2048, prepare=prepare, wait=True, strict=True)
     return ask
 
 
@@ -248,7 +248,7 @@ def learn_tools(ai):
                 vault, lr = learn_store(ai.ws, write=name != engine.walk_state.__name__)
                 fn = getattr(engine, name)
                 params = inspect.signature(fn).parameters
-                if 'ask' in params: kwargs['ask'] = learn_ask(ai)
+                if 'ask' in params: kwargs['ask'] = learn_ask(ai, 'grade' if name == 'record_attempt' else 'plan')
                 if 'settings' in params: kwargs['settings'] = learn_settings(ai.ws)
                 r = fn(lr, **kwargs)
                 r['vault'] = vault

@@ -36,7 +36,7 @@ def answer_for(memory, ask, jid, i, answer, attempt_id, settings=None, revision=
 
 def walk_ask(ctx):
     from .tools import learn_ask
-    return learn_ask(ctx.session.ai)
+    return learn_ask(ctx.session.ai, 'grade')
 
 
 def walk_memory(ctx, vault):
@@ -99,10 +99,12 @@ def connect(app, ctx):
         ctx.session.open_learn_walk(vault or ctx.session.vaults.active.name, walk); ctx.session.save()
         return tab_bar(ctx.session)
     @app.route('/learn/walk/{jid}', methods=['GET'])
-    async def walk_get(jid: str, vault: str = '', i: int = None):
+    async def walk_get(req, jid: str, vault: str = '', i: int = None):
         try: memory = await off_loop(walk_memory, ctx, vault)
         except Exception as e: return walk_fragment(vault_failure(e, jid), jid)
-        return walk_fragment(await off_loop(walk_state_for, memory, jid, learn_settings(ctx.session)), jid, i)
+        state = await off_loop(walk_state_for, memory, jid, learn_settings(ctx.session))
+        if 'application/json' in req.headers.get('accept', ''): return state
+        return walk_fragment(state, jid, i)
     @app.route('/learn/walk/{jid}/{i}/answer', methods=['POST'])
     async def walk_answer(req, jid: str, i: int, vault: str = ''):
         if req.headers.get('content-type', '').startswith('application/json'): data = await req.json()
@@ -114,4 +116,5 @@ def connect(app, ctx):
         except ImportError: answer = state = walk_failure('not_found', 'Learning walks are unavailable.', jid)
         except Exception as e: answer = state = vault_failure(e, jid)
         if answer.get('status') == 'ok': state.get('data', {}).get('gauge', {}).update(answer.get('data', {}).get('gauge', {}))
+        if req.headers.get('content-type', '').startswith('application/json'): return answer
         return walk_fragment(state, jid, i, answer)
