@@ -145,6 +145,12 @@ def register_section(name, rows, owner, user_only=True):
             _RANGES[name, r['key']] = (r['lo'], float('inf') if r.get('hi_key') else r['hi'])
     if user_only: USER_ONLY[name] = None
 
+def _unregister_section(name):
+    "Test support: drop the section `register_section` added, so the next test registers it again."
+    SECTIONS.pop(name, None), DEFAULT_SETTINGS.pop(name, None), USER_ONLY.pop(name, None)
+    for d in (_ENUMS, _RANGES):
+        for k in [k for k in d if k[0] == name]: del d[k]
+
 def _repo_safe(data):
     "A workspace layer without `USER_ONLY` keys, at the top level and in each `languages` block."
     def keep(d): return {s: ({k: v for k, v in vs.items() if not _user_only(s, k)} if isinstance(vs, dict) else vs)

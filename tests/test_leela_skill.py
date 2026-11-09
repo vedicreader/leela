@@ -27,7 +27,14 @@ def test_the_text_fits_under_the_skill_cap(ai):
     ai.tools
     assert len(find(ai.skills, 'leela')._text()) <= MAX_SKILL_CHARS
 
-def test_the_learn_section_keeps_the_text_under_the_cap(ai):
+@pytest.fixture
+def learn_section():
+    from leela.blocks.settings.settings import SECTIONS, _unregister_section
+    had = 'learn' in SECTIONS
+    yield
+    if not had: _unregister_section('learn')
+
+def test_the_learn_section_keeps_the_text_under_the_cap(ai, learn_section):
     "The app registers the Learn rows at start; the skill must still fit, and name the section in one line."
     from shalya.skills import MAX_SKILL_CHARS, find
     from leela.blocks.learn.app import learn_rows
