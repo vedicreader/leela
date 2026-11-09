@@ -9,6 +9,12 @@ function learnBar(host) {
   const f = Object.assign(document.createElement('form'), {className: 'lee-learn-find', innerHTML: '<input type="search" name="q" class="lee-input" placeholder="Search what you learned" aria-label="Search what you learned" autocomplete="off">'});
   f.onsubmit = e => { e.preventDefault(); if (f.q.value.trim()) window.leeLearnNav('/search?q=' + encodeURIComponent(f.q.value.trim())); };
   host.querySelector('[data-learn-chips]').after(f);
+  host.querySelector('[data-learn-more]').onclick = e => openChromeMenu(e.currentTarget, [
+    ...['Library', 'You'].map(n => ({label: n, run: () => window.leeLearnNav('/' + n.toLowerCase())})),
+    {label: 'Search', run: LEARN_FIND},
+    ...[...host.querySelectorAll('[data-learn-chips] a')].map(a => ({label: a.textContent.trim(), run: () => a.click()})),
+    {label: 'Wide', run: () => host.querySelector('[data-learn-fit]').click()},
+    ...(host.querySelector('[data-learn-change]').hidden ? [] : [{label: 'Change with the builder', run: () => window.leeLearnChange?.()}])]);
 }
 async function learnChips(host, path) {
   const html = await fetch(LEARN + '/nav/extra?path=' + encodeURIComponent(path)).then(r => r.ok ? r.text() : '').catch(() => ''), t = document.createElement('template');
@@ -56,14 +62,7 @@ async function learnSurface(path) {
 }
 window.leeAbhTheme ||= new MutationObserver(() => document.dispatchEvent(new CustomEvent('abhyasa:theme'))).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density']}) || 1;
 
-const learnFitOn = () => localStorage.getItem('lee-learn-fit') !== '0';
-function leeLearnFit(on) {
-  const shell = $('#shell'), hid = window.leeLearnHid ||= [];
-  if (!shell) return;
-  if (on) for (const w of ['left', 'bottom']) { if (!shell.classList.contains('no-' + w) && !hid.includes(w)) { hid.push(w); leePane(w, false, false); } }
-  else while (hid.length) { const w = hid.pop(); if (shell.classList.contains('no-' + w)) leePane(w, true, false); }
-}
-window.leeLearnFit = leeLearnFit;
+const learnWide = () => { const sh = $('#shell'); return !!sh && sh.classList.contains('no-left') && sh.classList.contains('no-bottom'); };
 
 function leeAbhKey(e, home) {
   const abh = home || e.target.closest?.('.abh') || (e.code === 'KeyB' && getSelection()?.anchorNode?.parentElement?.closest('.abh'));
@@ -94,19 +93,21 @@ async function learnMount(host, st) {
   }
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
-  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button></div><div class="abh" hx-push-url="false"></div></div>';
+  const bar = $('#modebar');
+  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
+  host.innerHTML = '<div class="lee-learn-tab"><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
-  const fit = host.querySelector('[data-learn-fit]'), sync = () => {
+  const fit = bar.querySelector('[data-learn-fit]'), sync = () => {
     const here = !!host.querySelector('.lee-learn-tab');
-    leeLearnFit(here && learnFitOn()); fit?.setAttribute('aria-pressed', String(learnFitOn()));
+    fit?.setAttribute('aria-pressed', String(learnWide()));
     $('#shell')?.classList.toggle('lee-learn-on', here);
     here ? learnClear(host) : window.leeLearnClr?.disconnect();
     if (!here) window.leeLearnObs?.disconnect();
   };
   (window.leeLearnObs = new MutationObserver(sync)).observe(host, {childList: true});
-  fit.onclick = () => { localStorage.setItem('lee-learn-fit', learnFitOn() ? '0' : '1'); sync(); };
-  sync(); learnBar(host);
-  const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]'), change = host.querySelector('[data-learn-change]');
+  fit.onclick = () => { const w = learnWide(); leeModeLayout({...leeModeDock(), files: w, exec: w}); leeModeKeep(); sync(); };
+  sync(); learnBar(bar);
+  const abh = host.querySelector('.abh'), back = bar.querySelector('[data-learn-back]'), change = bar.querySelector('[data-learn-change]');
   const trail = [], ran = new WeakSet(); let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
   if (!open.ok) { abh.textContent = 'Learn is not available. Turn on Learn and attach the learning vault.'; return; }
@@ -133,7 +134,7 @@ async function learnMount(host, st) {
     e.preventDefault(); e.stopImmediatePropagation();
     own(u) ? own(u)() : nav(u.pathname + u.search + u.hash);
   }, true);
-  host.querySelector('[data-learn-chips]').addEventListener('click', e => {
+  bar.querySelector('[data-learn-chips]').addEventListener('click', e => {
     const a = e.target.closest('a[href]'); if (!a) return;
     e.preventDefault(); const u = new URL(a.href, location.origin); own(u) ? own(u)() : nav(u.pathname + u.search + u.hash);
   });
@@ -166,14 +167,14 @@ async function learnMount(host, st) {
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
-    cur = path; pending = null; learnChips(host, cur); back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
+    cur = path; pending = null; learnChips(bar, cur); back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
     if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
   });
   abh.addEventListener('htmx:afterSettle', e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
-  host.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
+  bar.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
   change.onclick = () => window.leeLearnChange?.();
   const sides = [];
   const closeSide = async () => {
@@ -196,7 +197,7 @@ async function learnMount(host, st) {
     return true;
   };
   window.leeLearnNav = nav; window.leeLearnBack = () => back.onclick();
-  host.querySelector('[data-learn-home]').onclick = () => nav('/');
+  bar.querySelector('[data-learn-home]').onclick = () => nav('/');
   new ResizeObserver(() => abh.classList.toggle('wide', abh.clientWidth >= 940)).observe(abh);
   htmx.process(abh);
   nav(start);

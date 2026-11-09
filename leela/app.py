@@ -282,6 +282,7 @@ def _header(ws):
         Button(Span(Span(cls='lee-mark', aria_hidden='true'), Span('Leela', cls='lee-wordmark'), cls='lee-brand'), Span(folder, id='workspacename', cls='lee-workspace-name'), cls='lee-workspace-switcher',
                id='workspacepill', title='switch or open workspace', aria_label=f'switch workspace: {folder}',
                data_folder=title_folder(root), onclick='leeWorkspaceMenu(this)'),
+        _mode_switch(ws),
         Button(name, id='gitpill', cls='lee-branch-switcher', data_state=state, hidden=state == 'nofolder', title='switch branch',
                aria_label=f'switch branch: {name}', onclick='leeBranchMenu(this)'),
         Div(*(Button(glyph, id=f'git{op}', cls='lee-git-quick', title=title, aria_label=title,
@@ -306,6 +307,21 @@ def _header(ws):
                title='scripts running under leela', onclick='leeRunsMenu(this)'),
         _kernel_pill(ws),
         cls='lee-header', id='header', style=f"--lee-mark: url('{_asset('favicon-dark.svg')}')")
+
+def _mode_switch(ws):
+    "The `Code | Learn` switch: one segmented control, one button per registered mode."
+    from .blocks.modes.modes import modes
+    return Div(*(Button(m.title, type='button', cls='lee-seg' + (' active' if m.id == ws.mode else ''), data_mode=m.id,
+                        aria_pressed=str(m.id == ws.mode).lower(), onclick=f'leeModeSet("{m.id}")') for m in modes()),
+               id='modeswitch', cls='lee-segbar lee-modeswitch', role='group', aria_label='Mode', title='Code or Learn: each keeps its own layout')
+
+def _mode_attrs(ws):
+    "What the shell carries so the first paint already has the mode's docks: no flicker, no script needed."
+    from .blocks.modes.modes import modes
+    l = ws.mode_layout(ws.mode)
+    cls = ' no-left' * (ws.mode != 'code' and not l['files']) + ' no-bottom' * (ws.mode != 'code' and not l['exec'])
+    at = dict(data_mode=ws.mode, data_layouts=json.dumps({m.id: ws.mode_layout(m.id) for m in modes()}))
+    return cls, ({**at, 'data_nohandle': '1'} if ws.mode != 'code' and not l['exec_handle'] else at)
 
 def _git_panel():
     return Section(
@@ -404,7 +420,7 @@ def _toolbar():
     "Only the actions used continuously; everything else lives in a named menu."
     actions = {'run_cell', 'run_advance', 'run_file', 'run_selection', 'interrupt', 'present_notebook'}
     buttons = [_btn(b) for b in btn_bar('toolbar') if b.action in actions]
-    return Div(*buttons, Span(cls='lee-spacer'),
+    return Div(Div(id='modebar', cls='lee-modebar', role='toolbar', aria_label='Learn'), *buttons, Span(cls='lee-spacer'),
                Button('⋯', cls='lee-more lee-toolbar-more', title='more editor actions',
                       aria_label='more editor actions', onclick='leeEditorMenu(this)'),
                cls='lee-toolbar', id='toolbar')
@@ -810,7 +826,7 @@ def _shell(ws, gate):
         Button('files', cls='lee-pane-restore restore-left', onclick='leePane("left", true)'),
         Button('tools', cls='lee-pane-restore restore-right', onclick='leePane("right", true)'),
         Button('terminal / exec', cls='lee-pane-restore restore-bottom', onclick='leePane("bottom", true)'),
-        id='shell', cls='lee-app')
+        id='shell', cls='lee-app' + _mode_attrs(ws)[0], **_mode_attrs(ws)[1])
 
 def _warm_probes():
     "Pay for the model probes while the window is still opening."

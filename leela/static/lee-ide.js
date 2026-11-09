@@ -155,7 +155,8 @@ function leePane(which, show = null, persist = true) {
   }
   // An auto-close is not a preference: the pane was got out of the way for one keystroke, and
   // recording it as hidden would mean it never came back after a reload.
-  if (persist) localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  if (persist && lee.mode !== 'learn') localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  if (persist) window.leeModeKeep?.();
   leeSyncExpand();
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }
@@ -393,6 +394,51 @@ function leePaneBoot() {
   window.addEventListener('message', e => leePaneMessage(e, lee.sidePage));
 }
 document.addEventListener('DOMContentLoaded', leePaneBoot);
+function leeModeBoot() {
+  const sh = $('#shell'); if (!sh) return;
+  lee.mode = sh.dataset.mode || 'code';
+  try { lee.modeLayouts = JSON.parse(sh.dataset.layouts || '{}'); } catch (_) { lee.modeLayouts = {}; }
+  if (lee.mode !== 'code') leeModeLayout(lee.modeLayouts[lee.mode]);
+}
+leeModeBoot();
+const leeModeDock = () => { const s = $('#shell'); return {files: !s.classList.contains('no-left'), exec: !s.classList.contains('no-bottom'), exec_handle: !s.hasAttribute('data-nohandle'), agent: !s.classList.contains('no-right'), main: lee.mode === 'learn' ? 'learn' : 'editor'}; };
+function leeModePaint() {
+  $('#shell')?.setAttribute('data-mode', lee.mode);
+  for (const b of $$('#modeswitch [data-mode]')) { const on = b.dataset.mode === lee.mode; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); }
+}
+function leeModeLayout(l) {
+  const s = $('#shell'), narrow = matchMedia('(max-width: 1100px)').matches;
+  if (!s || !l) return;
+  leePane('left', !!l.files && !narrow, false); leePane('bottom', !!l.exec, false);
+  if (!l.agent || !narrow) leePane('right', !!l.agent, false);
+  s.toggleAttribute('data-nohandle', l.exec_handle === false);
+  if (l.agent && !narrow && lee.mode === 'learn') leeRight('agent');
+}
+async function leeModeSet(mode, follow = false) {
+  if (!mode || mode === lee.mode) return true;
+  const was = lee.mode, keep = leeModeDock();
+  lee.modeBusy = true;
+  try {
+    await post('/workspace/layout', {mode: was, layout: keep}).catch(() => {});
+    const r = await fetch('/workspace/mode', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode, thread: lee.agentThread || undefined})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { status(d.message || 'The mode could not change.', 'err'); if (!follow) { leeModePaint(); return false; } }
+    lee.modeLayouts[was] = keep; lee.mode = mode;
+    leeModePaint(); leeModeLayout(r.ok ? (lee.modeLayouts[mode] = d.layout) : lee.modeLayouts[mode]);
+    if (!follow && r.ok) {
+      if (mode === 'learn') await leeLearnOpen(d.focus?.path || '/');
+      else { await htmx.ajax('GET', '/tab/bar', {target: '#tabbar', swap: 'outerHTML'}); await mountTab(); }
+    }
+    return true;
+  } finally { lee.modeBusy = false; }
+}
+const leeModeFollow = kind => { if (!lee.modeBusy && kind) leeModeSet(kind === 'learn' ? 'learn' : 'code', true); };
+let keepTimer;
+function leeModeKeep() {
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(() => { const l = lee.modeLayouts[lee.mode] = leeModeDock(); post('/workspace/layout', {mode: lee.mode, layout: l}).catch(() => {}); }, 400);
+}
+Object.assign(window, {leeModeBoot, leeModeSet, leeModeLayout, leeModeFollow, leeModeKeep, leeModeDock});
 /* The detail a status line cannot hold. Git's refusal names the files it would overwrite, and a
    toast shows one clipped sentence of it. `/dev/log` keeps what a dev server prints.
 
@@ -5395,7 +5441,6 @@ function palette() {
   const picked = String(getSelection?.() ?? '').trim();
   const lessonCommands = [{name: "Lesson: I don't get…", scope: 'editor', run: () => lessonGuideSelected(picked)}];
   const agentCommands = [
-    {name: 'Learn mode', scope: 'agent', run: () => leeAgentLearnToggle()},
     {name: 'Agent: autopilot mode', scope: 'agent', run: () => leeAgentControl('autopilot')},
     {name: 'Agent: guided mode', scope: 'agent', run: () => leeAgentControl('guided')},
     {name: 'Agent: directed mode', scope: 'agent', run: () => leeAgentControl('directed')},
@@ -5414,6 +5459,7 @@ function palette() {
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
+  learnCommands.push(...$$('#modeswitch [data-mode]').map(b => ({name: 'Mode: ' + b.textContent, scope: 'global', run: () => leeModeSet(b.dataset.mode)})));
   learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
   let hits = cmds, sel = 0;
@@ -6515,6 +6561,7 @@ async function boot() {
   loadAgentModels().catch(e => status(String(e.message || e), 'err'));
   refreshAgentThreads().catch(e => status(String(e.message || e), 'err'));
   bootStep('panes', initSplits);
+  bootStep('mode', leeModeBoot);
   bootStep('click bindings', bindModClick);
   bootStep('exec strip', mountExec);
   bootStep('agent composer', initAgentComposer);
@@ -6593,7 +6640,7 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
   if (id === 'tabbar') { mountTab().then(leeVars); refreshPillsForTab(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); refreshLessonDue(); requestAnimationFrame(layoutTabs); }
+  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); leeModeBoot(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); refreshLessonDue(); requestAnimationFrame(layoutTabs); }
 });
 function refactorRows(files, selected) {
   return files.map((file, i) => `<label class="lee-mrow"><input type="checkbox" data-refactor-path="${esc(file.path)}"${selected.has(file.path) ? ' checked' : ''}>` +

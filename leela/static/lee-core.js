@@ -1280,6 +1280,8 @@ const ACTIONS = {
   find_usages: () => findUsages(),
   rename_symbol: () => renameSymbol(),
   agent_selection: () => leeAgentSelection(),
+  explain_cell: () => leeExplainCell(),
+  learn_about:  () => leeLearnAbout(),
   sync_index: () => syncCodeIndex(),
   nbdev_prepare: () => leeNbdevPrepare(),
   fastship:     () => leeFastship(),
@@ -2096,6 +2098,7 @@ async function mountTab(expectedPath = '') {
   const have = JSON.stringify(heldNotebookVersions());
   const st=await api('/tab/state?'+new URLSearchParams({...(expectedPath?{path:expectedPath}:{}), have}));
   if(mountVersion!==mountTabVersion)return;
+  window.leeModeFollow?.(st.kind);
   if (st.kind === 'notebook' && st.same) st.cells = heldNotebookCells(st.path || st.title);
   if (st.kind === 'notebook') noteSeen(st.path || st.title, st.cells);
   const recoveredDraft = await restoreDrafts(st);
@@ -2267,6 +2270,12 @@ function learnBar(host) {
   const f = Object.assign(document.createElement('form'), {className: 'lee-learn-find', innerHTML: '<input type="search" name="q" class="lee-input" placeholder="Search what you learned" aria-label="Search what you learned" autocomplete="off">'});
   f.onsubmit = e => { e.preventDefault(); if (f.q.value.trim()) window.leeLearnNav('/search?q=' + encodeURIComponent(f.q.value.trim())); };
   host.querySelector('[data-learn-chips]').after(f);
+  host.querySelector('[data-learn-more]').onclick = e => openChromeMenu(e.currentTarget, [
+    ...['Library', 'You'].map(n => ({label: n, run: () => window.leeLearnNav('/' + n.toLowerCase())})),
+    {label: 'Search', run: LEARN_FIND},
+    ...[...host.querySelectorAll('[data-learn-chips] a')].map(a => ({label: a.textContent.trim(), run: () => a.click()})),
+    {label: 'Wide', run: () => host.querySelector('[data-learn-fit]').click()},
+    ...(host.querySelector('[data-learn-change]').hidden ? [] : [{label: 'Change with the builder', run: () => window.leeLearnChange?.()}])]);
 }
 async function learnChips(host, path) {
   const html = await fetch(LEARN + '/nav/extra?path=' + encodeURIComponent(path)).then(r => r.ok ? r.text() : '').catch(() => ''), t = document.createElement('template');
@@ -2314,14 +2323,7 @@ async function learnSurface(path) {
 }
 window.leeAbhTheme ||= new MutationObserver(() => document.dispatchEvent(new CustomEvent('abhyasa:theme'))).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density']}) || 1;
 
-const learnFitOn = () => localStorage.getItem('lee-learn-fit') !== '0';
-function leeLearnFit(on) {
-  const shell = $('#shell'), hid = window.leeLearnHid ||= [];
-  if (!shell) return;
-  if (on) for (const w of ['left', 'bottom']) { if (!shell.classList.contains('no-' + w) && !hid.includes(w)) { hid.push(w); leePane(w, false, false); } }
-  else while (hid.length) { const w = hid.pop(); if (shell.classList.contains('no-' + w)) leePane(w, true, false); }
-}
-window.leeLearnFit = leeLearnFit;
+const learnWide = () => { const sh = $('#shell'); return !!sh && sh.classList.contains('no-left') && sh.classList.contains('no-bottom'); };
 
 function leeAbhKey(e, home) {
   const abh = home || e.target.closest?.('.abh') || (e.code === 'KeyB' && getSelection()?.anchorNode?.parentElement?.closest('.abh'));
@@ -2352,19 +2354,21 @@ async function learnMount(host, st) {
   }
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
-  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button></div><div class="abh" hx-push-url="false"></div></div>';
+  const bar = $('#modebar');
+  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
+  host.innerHTML = '<div class="lee-learn-tab"><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
-  const fit = host.querySelector('[data-learn-fit]'), sync = () => {
+  const fit = bar.querySelector('[data-learn-fit]'), sync = () => {
     const here = !!host.querySelector('.lee-learn-tab');
-    leeLearnFit(here && learnFitOn()); fit?.setAttribute('aria-pressed', String(learnFitOn()));
+    fit?.setAttribute('aria-pressed', String(learnWide()));
     $('#shell')?.classList.toggle('lee-learn-on', here);
     here ? learnClear(host) : window.leeLearnClr?.disconnect();
     if (!here) window.leeLearnObs?.disconnect();
   };
   (window.leeLearnObs = new MutationObserver(sync)).observe(host, {childList: true});
-  fit.onclick = () => { localStorage.setItem('lee-learn-fit', learnFitOn() ? '0' : '1'); sync(); };
-  sync(); learnBar(host);
-  const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]'), change = host.querySelector('[data-learn-change]');
+  fit.onclick = () => { const w = learnWide(); leeModeLayout({...leeModeDock(), files: w, exec: w}); leeModeKeep(); sync(); };
+  sync(); learnBar(bar);
+  const abh = host.querySelector('.abh'), back = bar.querySelector('[data-learn-back]'), change = bar.querySelector('[data-learn-change]');
   const trail = [], ran = new WeakSet(); let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
   if (!open.ok) { abh.textContent = 'Learn is not available. Turn on Learn and attach the learning vault.'; return; }
@@ -2382,6 +2386,8 @@ async function learnMount(host, st) {
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
     if (e.target.closest('[data-guide-open], #guide-go')) { e.preventDefault(); e.stopImmediatePropagation(); return window.leeLearnExplain?.(); }
+    const code = e.target.closest('[data-act^=open-leela], .leela-open, .leela-line a');
+    if (code && window.leeOpenInCode) { e.preventDefault(); e.stopImmediatePropagation(); return leeOpenInCode(code); }
     const a = e.target.closest('a[href]');
     if (!a || (a.target && !a.dataset.pane) || a.getAttribute('href').startsWith('#') || a.matches(LEARN_HX)) return;
     const u = new URL(a.href, location.origin);
@@ -2389,13 +2395,14 @@ async function learnMount(host, st) {
     e.preventDefault(); e.stopImmediatePropagation();
     own(u) ? own(u)() : nav(u.pathname + u.search + u.hash);
   }, true);
-  host.querySelector('[data-learn-chips]').addEventListener('click', e => {
+  bar.querySelector('[data-learn-chips]').addEventListener('click', e => {
     const a = e.target.closest('a[href]'); if (!a) return;
     e.preventDefault(); const u = new URL(a.href, location.origin); own(u) ? own(u)() : nav(u.pathname + u.search + u.hash);
   });
   abh.addEventListener('submit', e => {
     const f = e.target;
     if (f.matches(LEARN_HX) || f.closest(LEARN_HX)) return;
+    if (f.matches('form.leela-open, form.leela-go, form[action="/learn/open"]') && window.leeOpenInCode) { e.preventDefault(); e.stopImmediatePropagation(); return leeOpenInCode(f); }
     e.preventDefault(); e.stopImmediatePropagation();
     const u = new URL(f.getAttribute('action') || cur, location.origin), get = (f.method || 'get').toLowerCase() === 'get', values = Object.fromEntries(new FormData(f));
     if (own(u)) return own(u)();
@@ -2421,14 +2428,14 @@ async function learnMount(host, st) {
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
-    cur = path; pending = null; learnChips(host, cur); back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
+    cur = path; pending = null; learnChips(bar, cur); back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
     if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
   });
   abh.addEventListener('htmx:afterSettle', e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
-  host.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
+  bar.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
   change.onclick = () => window.leeLearnChange?.();
   const sides = [];
   const closeSide = async () => {
@@ -2451,7 +2458,7 @@ async function learnMount(host, st) {
     return true;
   };
   window.leeLearnNav = nav; window.leeLearnBack = () => back.onclick();
-  host.querySelector('[data-learn-home]').onclick = () => nav('/');
+  bar.querySelector('[data-learn-home]').onclick = () => nav('/');
   new ResizeObserver(() => abh.classList.toggle('wide', abh.clientWidth >= 940)).observe(abh);
   htmx.process(abh);
   nav(start);
@@ -3655,7 +3662,7 @@ function outputEl(o, c = null, i = 0) {
       const b = document.createElement('button');
       b.className = 'lee-btn'; b.dataset.restartKernel = ''; b.textContent = 'Restart kernel'; b.onclick = () => restartKernel();
       d.appendChild(b);
-    }
+    } else if (c?.id) d.appendChild(errorActions(o, c));
     return d;
   }
   const data = o.data || {};
@@ -3826,6 +3833,102 @@ async function pickNotebookLanguage() {
     } catch (e) { status(String(e.message || e), 'err'); }
   });
 }
+//: The notebook and the agent, in both directions: tell the server which cell the person is on, ask the agent about it, hand a word to Learn, and come back to Code.
+const EXPLAIN_CELL = 'Explain what this cell does and, if it failed, why';
+let reportedCell = '', reportTimer = 0;
+const agentIdle = () => !(lee.agentBusy || lee.agentSending) || (status('The agent is working. Try again when it finishes.', 'err'), false);
+const cellIdNow = () => lee.kind !== 'learn' && lee.cells?.length ? lee.cells[lee.sel]?.id || '' : '';
+//: The id of the cell the agent turn anchors on; `sendAgent` sends it with the prompt.
+window.leeCellId = cellIdNow;
+async function leeReportCell(id = cellIdNow()) {
+  const key = `${lee.tabKey}:${id}`;
+  if (!id || key === reportedCell) return;
+  reportedCell = key;
+  try { await post('/nb/cell', {cell: id}); } catch (_) { reportedCell = ''; }
+}
+function leeReportSoon() {
+  clearTimeout(reportTimer); reportTimer = setTimeout(() => leeReportCell(), 350);
+}
+document.addEventListener('focusin', e => { if (e.target.closest?.('#editor .lee-cell')) leeReportSoon(); });
+document.addEventListener('click', e => { if (e.target.closest?.('#editor .lee-cell')) leeReportSoon(); });
+//: A cell that ends in an error is the one the person will ask about, focused or not.
+addEventListener('lee-cell-output', e => {
+  const {id, outputs} = e.detail || {};
+  if (outputs?.some(o => o.output_type === 'error') && lee.cells?.[lee.sel]?.id === id) leeReportCell(id);
+});
+//: Switch the workspace mode: the mode switch's `leeModeSet` when the page has it, else the route and the dock layout it answers with.
+async function leeSwitchMode(mode) {
+  if (window.leeModeSet) return window.leeModeSet(mode);
+  try {
+    const d = await post('/workspace/mode', {mode, ...(lee.agentThread ? {thread: lee.agentThread} : {})});
+    for (const [k, pane] of [['files', 'left'], ['exec', 'bottom'], ['agent', 'right']]) if (k in (d.layout || {})) leePane(pane, !!d.layout[k], false);
+    lee.agentLearnMode = mode === 'learn'; refreshAgentThreads?.().catch(() => {});
+    await refreshTabStrip(); await mountTab();
+    return true;
+  } catch (e) {
+    status(e.body?.code === 'thread_busy' ? 'The agent is working. Try again when it finishes.' : e.body?.message || e.message || String(e), 'err');
+    return false;
+  }
+}
+async function leeExplainCell(id) {
+  const i = id ? lee.cells.findIndex(c => c.id === id) : lee.sel, c = lee.cells?.[i];
+  if (lee.kind === 'learn' || !c) return status('Open a notebook and pick a cell first.', 'err');
+  if (!agentIdle()) return;
+  if ($('#agentprompt')?.value.trim()) { leeAct('focus_agent'); return status('Send or clear your message to the agent first.', 'err'); }
+  if (lee.agentLearnMode && !await leeSwitchMode('code')) return;
+  selectCell(i); await leeReportCell(c.id);
+  leeAct('focus_agent');
+  const prompt = $('#agentprompt'); if (!prompt) return;
+  prompt.value = EXPLAIN_CELL;
+  return sendAgent();
+}
+const selectedWords = () => {
+  const v = typeof curEditor === 'function' ? curEditor() : null, s = v?.state.selection.main;
+  const t = s && !s.empty ? v.state.doc.sliceString(s.from, s.to) : String(getSelection?.() ?? '');
+  return t.replace(/\s+/g, ' ').trim().slice(0, 200);
+};
+const errorLine = c => { const o = [...(c?.outputs || [])].reverse().find(o => o.output_type === 'error'); return o ? `${o.ename}: ${o.evalue}`.slice(0, 200) : ''; };
+//: Learn about `text`, the selection, or the error of the cell in hand: Learn mode on, the agent pane focused, 'Teach me about …' typed and not sent.
+async function leeLearnAbout(text) {
+  const about = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200) || selectedWords() || errorLine(lee.cells?.[lee.sel]);
+  if (!about) return status('Select some text, or run a cell that fails, first.', 'err');
+  if (!agentIdle()) return;
+  const draft = $('#agentprompt')?.value.trim() || '';
+  if (!await leeSwitchMode('learn')) return;
+  leeAct('focus_agent');
+  const prompt = $('#agentprompt'); if (!prompt) return;
+  const line = `Teach me about ${about}`;
+  prompt.value = draft ? `${prompt.value.replace(/\s+$/, '')}\n${line}` : line;
+  prompt.focus(); prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+  if (draft) status('Added a line to your message. Nothing was sent.', 'ok');
+}
+//: The two links of a failing cell's traceback.
+function errorActions(o, c) {
+  const d = document.createElement('div'), b = (text, title, run) => Object.assign(document.createElement('button'), {type: 'button', className: 'lee-btn', textContent: text, title, onclick: e => { e.stopPropagation(); run(); }});
+  d.className = 'lee-out-actions'; d.style.cssText = 'display:flex;gap:8px;margin-top:6px;font-family:var(--lee-sans,inherit)';
+  const ex = b('Explain', 'Ask the agent what this cell did and why it failed', () => leeExplainCell(c.id)), lr = b('Learn about this', 'Switch to Learn and ask to be taught this error', () => leeLearnAbout(`${o.ename}: ${o.evalue}`));
+  ex.dataset.explain = ''; lr.dataset.learnAbout = '';
+  d.append(ex, lr); return d;
+}
+//: Return to Code (journey c): the Learn tab's Open in Leela links and buttons open the lesson in Leela's own editor, in Code mode, on the notebook.
+async function leeOpenInCode(el) {
+  const f = el.closest('form'), a = f ? null : el.closest('a[href]');
+  if (!f && !a) return false;
+  const u = new URL(f ? f.action : a.href, location.origin);
+  const own = /^\/learn(\/|$)/.test(u.pathname);
+  if (!f && own) u.searchParams.set('go', '1');
+  const at = (own ? '' : '/learn/abh') + u.pathname + u.search;
+  if (!await leeSwitchMode('code')) return true;
+  try {
+    const r = await fetch(at, f ? {method: 'POST', body: new FormData(f)} : {});
+    if (!r.ok) throw new Error('Leela could not open the lesson.');
+    await refreshTabStrip(); await mountTab();
+  } catch (e) {
+    status(e.message || 'Leela could not open the lesson.', 'err'); await leeSwitchMode('learn');
+  }
+  return true;
+}
+Object.assign(window, {leeReportCell, leeSwitchMode, leeExplainCell, leeLearnAbout, leeOpenInCode, errorActions});
 function learnDiff(guess, actual) {
   const lines = text => text.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/)
     .map(line => line.split(/[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/).filter(Boolean).join(' ')).filter(Boolean);

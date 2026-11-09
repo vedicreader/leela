@@ -3,9 +3,6 @@
 
 .lee-learn-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; box-sizing: border-box; padding-bottom: var(--learn-bottom, 0px); }
 .lee-learn-tab > .abh { margin: 0 var(--learn-right, 0px) 0 var(--learn-left, 0px); }
-#shell.lee-learn-on #toolbar { visibility: hidden; min-height: 0; height: 0; padding: 0; border: 0; overflow: hidden; }
-.lee-learn-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 4px 8px; border-bottom: 1px solid var(--lee-border); background: var(--lee-bg1); }
-.lee-learn-bar .lee-btn[disabled] { opacity: .4; }
 .lee-learn-nav { display: flex; gap: 2px; padding-left: 6px; margin-left: 2px; border-left: 1px solid var(--lee-border); }
 .lee-learn-chips { display: flex; gap: 6px; min-width: 0; }
 .lee-learn-chip { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 10px; border: 1px solid var(--lee-border); border-radius: 999px; color: var(--lee-fg2); font: 12px/1.3 var(--lee-sans); text-decoration: none; }
@@ -22,7 +19,6 @@ a.lee-learn-chip:hover { color: var(--lee-fg); border-color: var(--lee-accent); 
 .abh:not(.wide) #levers { height: auto; max-height: 160px; overflow: auto; border-left: 0; border-top: 1px solid var(--line); padding: 12px 0 0; }
 .abh kbd { background: none; border: 0; border-radius: 0; padding: 0; min-width: 0; flex: initial; text-align: inherit; white-space: normal; }
 .abh:not(.wide) #graph .stage { min-height: 220px; }
-.lee-learn-bar [data-learn-fit][aria-pressed=true] { background: var(--lee-bg3); border-color: var(--lee-accent); }
 .lee-learn-find { margin-left: auto; flex: 1 1 140px; min-width: 120px; max-width: 260px; }
 .lee-learn-find input { width: 100%; box-sizing: border-box; }
 .abh .modes-pick label { display: flex; align-items: center; gap: var(--s3, 10px); margin: 0; padding: var(--s2, 6px) var(--s3, 10px); cursor: pointer; border-radius: var(--r-s, 6px); font: 16px/1.4 var(--serif); letter-spacing: 0; text-transform: none; color: var(--mute); transition: background-color .14s ease-out, box-shadow .14s ease-out, color .14s ease-out; }

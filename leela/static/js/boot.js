@@ -73,6 +73,7 @@ async function boot() {
   loadAgentModels().catch(e => status(String(e.message || e), 'err'));
   refreshAgentThreads().catch(e => status(String(e.message || e), 'err'));
   bootStep('panes', initSplits);
+  bootStep('mode', leeModeBoot);
   bootStep('click bindings', bindModClick);
   bootStep('exec strip', mountExec);
   bootStep('agent composer', initAgentComposer);
@@ -151,5 +152,5 @@ document.addEventListener('htmx:afterSwap', (e) => {
   // A tab change swaps only the tab bar; re-mount the editor for whatever is now active.
   if (id === 'tabbar') { mountTab().then(leeVars); refreshPillsForTab(); requestAnimationFrame(layoutTabs); }
   // Adding a folder rebuilds the whole shell, so everything the client owns is remounted.
-  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); refreshLessonDue(); requestAnimationFrame(layoutTabs); }
+  else if (id === 'shell') { paintTreeGit(); lee.editors.clear(); loadAgentModels(); initSplits(); leeModeBoot(); mountExec(); initAgentComposer(); rehydrateAgentLive(); mountTab().then(leeVars); refreshProjectPills(); refreshLessonDue(); requestAnimationFrame(layoutTabs); }
 });

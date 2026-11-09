@@ -36,7 +36,7 @@ LAYERS = {
         'blocks/agent/media.js', 'blocks/agent/reload.js'
     ],
     'lee-ide.js': [
-        'blocks/term/terminal.js', 'blocks/learn/pane.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js', 'blocks/settings/update.js',
+        'blocks/term/terminal.js', 'blocks/learn/pane.js', 'blocks/modes/mode.js', 'blocks/runs/logs.js', 'blocks/term/dock.js', 'blocks/settings/prefs.js', 'blocks/settings/update.js',
         'blocks/git/cwd.js', 'blocks/editor/gutter.js', 'blocks/git/state.js',
         'blocks/git/views.js', 'blocks/workflows/workflows.js', 'blocks/workflows/builder.js',
         'blocks/pipelines/releases.js', 'blocks/pipelines/deploys.js', 'blocks/drive/drive.js',

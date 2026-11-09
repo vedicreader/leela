@@ -26,7 +26,7 @@ HIT = """() => {
   st.hidden = was;
   return {guards: guards.map(g => g[0]), bad: bad.slice(0, 5)};
 }"""
-ROWS = "() => { const r = [...document.querySelector('.lee-learn-bar').children].filter(e => e.offsetParent).map(e => e.getBoundingClientRect()); return Math.max(...r.map(x => x.top)) < Math.min(...r.map(x => x.bottom)) }"
+ROWS = "() => { const r = [...document.querySelector('#modebar').children].filter(e => e.offsetParent).map(e => e.getBoundingClientRect()); return Math.max(...r.map(x => x.top)) < Math.min(...r.map(x => x.bottom)) }"
 
 
 def test_learn_page_clears_the_dock_handles_and_the_status_pill(tmp_path, monkeypatch):
@@ -39,9 +39,9 @@ def test_learn_page_clears_the_dock_handles_and_the_status_pill(tmp_path, monkey
             await pg.evaluate(f"applyTheme('leela:{mode}:relaxed')")
             for name, path, sel in pages:
                 await _open(pg, ws, path, sel)
-                assert (await pg.locator('#toolbar').bounding_box())['height'] == 0
+                assert 10 < (await pg.locator('#modebar').bounding_box())['height'] < 45
                 hit = await pg.evaluate(HIT)
-                assert {'.restore-left', '.restore-bottom'} <= set(hit['guards']), hit
+                assert not {'.restore-left', '.restore-bottom'} & set(hit['guards']), hit
                 assert not hit['bad'], (name, hit['bad'])
                 await pg.screenshot(path=f'{OUT}/f1-{name}-{mode}.png')
                 assert await pg.evaluate(ROWS), name

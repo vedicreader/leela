@@ -379,6 +379,21 @@ body {
   background: var(--lee-bg1); border-bottom: 1px solid var(--lee-border); overflow-x: auto;
   scrollbar-width: none;
 }
+.lee-modeswitch { flex: none; margin: 0 2px; }
+.lee-modebar { display: none; }
+.lee-app[data-mode=learn] #toolbar > :not(.lee-modebar) { display: none; }
+.lee-app[data-mode=learn] .lee-modebar { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
+.lee-modebar > * { flex: none; }
+.lee-modebar .lee-learn-chips, .lee-modebar .lee-learn-find { flex: 0 1 auto; min-width: 0; }
+.lee-modebar .lee-btn[disabled] { opacity: .4; }
+.lee-modebar [data-learn-fit][aria-pressed=true] { background: var(--lee-bg3); border-color: var(--lee-accent); }
+.lee-modebar .lee-learn-more { display: none; }
+.lee-app[data-nohandle] .restore-left, .lee-app[data-nohandle] .restore-bottom { display: none !important; }
+@media (max-width: 1180px) {
+  .lee-modebar .lee-learn-more { display: inline-block; margin-left: auto; }
+  .lee-modebar .lee-learn-nav > :not([data-learn-home]), .lee-modebar .lee-learn-chips, .lee-modebar .lee-learn-find,
+  .lee-modebar [data-learn-fit], .lee-modebar [data-learn-change] { display: none; }
+}
 .lee-toolbar-hint { margin-left: 6px; color: var(--lee-fg4); font-size: 10.5px; }
 .lee-toolbar-more { width: 28px; }
 .lee-toolbar-link { border: 0; background: transparent; color: var(--lee-accent); cursor: pointer; padding: 2px 3px; font: 10.5px/1.4 var(--lee-mono); }

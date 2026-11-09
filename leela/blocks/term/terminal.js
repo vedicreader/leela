@@ -155,7 +155,8 @@ function leePane(which, show = null, persist = true) {
   }
   // An auto-close is not a preference: the pane was got out of the way for one keystroke, and
   // recording it as hidden would mean it never came back after a reload.
-  if (persist) localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  if (persist && lee.mode !== 'learn') localStorage.setItem('lee-pane-' + which, hidden ? 'hidden' : 'shown');
+  if (persist) window.leeModeKeep?.();
   leeSyncExpand();
   if (!hidden && which === 'bottom') requestAnimationFrame(() => lee.term?.refit());
 }

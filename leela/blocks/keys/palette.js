@@ -2,7 +2,6 @@ function palette() {
   const picked = String(getSelection?.() ?? '').trim();
   const lessonCommands = [{name: "Lesson: I don't get…", scope: 'editor', run: () => lessonGuideSelected(picked)}];
   const agentCommands = [
-    {name: 'Learn mode', scope: 'agent', run: () => leeAgentLearnToggle()},
     {name: 'Agent: autopilot mode', scope: 'agent', run: () => leeAgentControl('autopilot')},
     {name: 'Agent: guided mode', scope: 'agent', run: () => leeAgentControl('guided')},
     {name: 'Agent: directed mode', scope: 'agent', run: () => leeAgentControl('directed')},
@@ -21,8 +20,8 @@ function palette() {
     {name: 'Inline completions: what was asked and taken', scope: 'global', run: () => showCompletions()},
   ];
   const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
+  learnCommands.push(...$$('#modeswitch [data-mode]').map(b => ({name: 'Mode: ' + b.textContent, scope: 'global', run: () => leeModeSet(b.dataset.mode)})));
   learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});
-  lessonCommands.push({name: 'Explain this cell', scope: 'editor', run: () => leeExplainCell()}, {name: 'Learn about this', scope: 'global', run: () => leeLearnAbout(picked)});
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" aria-label="Command palette" role="combobox" aria-controls="cplist" aria-expanded="true" autofocus>
