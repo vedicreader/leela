@@ -8,9 +8,12 @@ place it is written down. The bundles are generated and committed, so install ha
 """
 from __future__ import annotations
 import sys
+from collections import defaultdict
 from fastcore.all import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from jsdecls import declared
 from leela.core.web import IDE_BUNDLES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -83,7 +86,21 @@ def orphans():
     found = {p.resolve() for p in (*(PKG/'static'/'js').glob('*.js'), *PKG.glob('blocks/*/*.js'))}
     return sorted(found - named - {(PKG/m).resolve() for m in SERVED})
 
+#: pages and the modules they share one lexical scope with: the IDE loads all three bundles, and a Learn surface may load the served modules beside them.
+PAGES = {'the IDE page': lambda: [*modules(), *(PKG/m for m in sorted(SERVED))], 'lee-pane.js': lambda: [PKG/ALONE['lee-pane.js']], 'lee-slides.js': lambda: [PKG/ALONE['lee-slides.js']]}
+
+def dupes():
+    "Top-level names declared twice on one page: one line each, with both files and lines."
+    out = []
+    for page, mods in PAGES.items():
+        seen = defaultdict(list)
+        for p in mods():
+            for n, l in declared(p.read_text()): seen[n].append(f'{p.relative_to(PKG)}:{l}')
+        out += [f'`{n}` is declared twice on {page}: {" and ".join(v)}' for n, v in seen.items() if len(v) > 1]
+    return out
+
 def build(check=False):
+    if bad := dupes(): raise SystemExit('duplicate top-level declaration (the page would fail to load):\n' + '\n'.join(bad))
     if gone := missing(): raise SystemExit(f'named but absent: {[p.name for p in gone]}')
     if extra := orphans(): raise SystemExit(f'present but unnamed: {[str(p.relative_to(PKG)) for p in extra]}')
     plan = [(name, bundle(name), OUTDIR/name) for name in LAYERS] + [(name, _text(PKG/m), OUTDIR/name) for name, m in ALONE.items()]
