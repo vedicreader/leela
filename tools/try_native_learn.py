@@ -84,7 +84,9 @@ def banner(url, state, ref, scripted, seeded, copied, web=False):
     "The text the owner reads first."
     model = 'scripted model: canned replies, nothing leaves this machine' if scripted else 'configured model (see Settings > Models); it may leave this machine'
     data = 'a copy of your vault is the standalone vault; Learn offers to import it on first open' if copied else ('demo data (not yours)' if seeded else 'empty')
-    return f'pid    {os.getpid()}\nurl    {url}\nstate  {state}\nvault  {ref[0]}  {ref[1]}\nmodel  {model}\nweb    {WEB_ON if web else WEB_OFF}\ndata   {data}\n{TRY}'
+    from leela.blocks.learn.tools import HOST_API_NEEDED, host_api
+    api = f'abhyasa host API {host_api() or "none"}, Leela needs {HOST_API_NEEDED}'
+    return f'pid    {os.getpid()}\nurl    {url}\nstate  {state}\nabh    {api}\nvault  {ref[0]}  {ref[1]}\nmodel  {model}\nweb    {WEB_ON if web else WEB_OFF}\ndata   {data}\n{TRY}'
 
 def check(a):
     "The refusals that come before anything starts: the Abhyasa worktree, the state folder, the port. Returns `(abh, iso, state, port)`."

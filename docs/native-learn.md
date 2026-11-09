@@ -264,6 +264,20 @@ Closed since the last revision, each proven by a passing targeted suite on 9 Nov
 - Host defects in Abhyasa: background pools keep the calling context (`e4c8cb6`), `LocalOnly` takes dotted hosts (`1879564`), the host owns the session cookie, the privacy guard and the settings rows, a withheld check is told to the learner, and an answer to an old walk revision is refused (`2008ebc`, `8fb2b9e`, `8f104f5`, `d83cf64`). The full Abhyasa suite passes (1260 passed, 24 skipped).
 - The walk answer route takes a JSON answer with a kept attempt id (`53189f36`, `05d1b17c`; `tests/test_learn_abh_tab.py`).
 
+## Release pins
+
+`HOST_API` in `abhyasa/core/hostapi.py` is the host contract number, and `HOST_API_NEEDED` in `leela/blocks/learn/tools.py` is what Leela needs. `contract_missing()` returns one line when Abhyasa has no `HOST_API` or a lower one: `Abhyasa too old: needs host API N, has M` (`has none` for no number). Learn mode, the Learn button, `/learn/abh/open` (503) and the log carry that line. Raise both numbers together whenever `host.py` starts to use a new Abhyasa name or signature.
+
+After the Abhyasa release that first contains `HOST_API`, change these lines in Leela:
+
+1. `pyproject.toml`: `"abhyasa>=0.0.16"` becomes `"abhyasa>=<new version>"`.
+2. Run `uv lock --refresh-package abhyasa`.
+3. Check that `uv.lock` has no `path` or `editable` source for `abhyasa`, and that its version is the new one.
+4. In `tests/test_learn_contract_names.py`, set `FIRST_HOST_API_RELEASE` to the new version and remove the `xfail` mark.
+5. Check that the pinned release has `HOST_API >= HOST_API_NEEDED` (the pin guarantees host API 1).
+
+Do not change the pin to a version that is not on PyPI.
+
 ## Retirement and release
 
 S1 and S2 delete no handoff routes. S3 replaces `/learn` page rendering and the old `pane.js` page embedding with native tabs while retaining valid notebook-open contracts. S4 replaces mode-related navigation with the shared agent switch. S5 uses native answer/state paths. S6 removes any remaining external speech dependence. S7 replaces graph/library navigation. S8 removes `serving.json` lookup, standalone URL helpers and the `pane=1` shell guard after auditing callers. Retain `/lesson/due`, `/learn/open`, `/learn/env`, `/learn/lookup`, `/learn/scratch` and `/learn/tool` only where they still implement native notebook contracts. Update route inventory and remove dead callers rather than retaining compatibility with the rejected shell.

@@ -8,7 +8,7 @@ from ...core.web import fail, off_loop
 from ...hub import LOOPBACK
 from ..memory.vaults import LEARN
 from .speech import make_transcribe, speech_values
-from .tools import learn_ask, learn_settings, learn_store, learn_vision, learn_vision_why, run_gather
+from .tools import contract_missing, missing_line, learn_ask, learn_settings, learn_store, learn_vision, learn_vision_why, run_gather
 
 __all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'STATE', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'shared', 'using']
 
@@ -125,6 +125,7 @@ class Hosted:
     async def open(self, req):
         "POST `/learn/abh/open`: build the app if needed."
         if why := self._host(req.scope): return PlainTextResponse(why, 403)
+        if missing := contract_missing(): return fail(f'Learn is not available: {missing_line(missing)}', 503)
         try: await off_loop(self.get)
         except Exception as e: return fail(f'Learn is not available: {errstr(e)}', 503)
         return JSONResponse(dict(ok=True, base=BASE))

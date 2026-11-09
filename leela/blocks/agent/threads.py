@@ -149,10 +149,9 @@ class Thread:
         return self
     def set_learn_mode(self, on):
         from .turns import save_learn_mode
-        from ..learn.tools import contract_missing
+        from ..learn.tools import contract_missing, missing_line
         ai = self.ai
-        if on and (missing := contract_missing()):
-            raise TurnError('contract_missing', f"Learn needs a newer Abhyasa: this install lacks {', '.join(missing)}.", self.id)
+        if on and (missing := contract_missing()): raise TurnError('contract_missing', f'Learn is off. {missing_line(missing)}', self.id)
         with self.runner._lock:
             if ai.busy or self.runner._pending or self.approvals.pending is not None or self.approvals.waiting:
                 raise TurnError('thread_busy', 'Learn mode cannot change during a turn, queued message or approval.', self.id)

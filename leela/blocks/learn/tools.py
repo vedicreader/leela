@@ -313,9 +313,27 @@ def run_gather(ai, lr, jid, stop):
     return AttrDict(passages=out.get('passages', 0), read=out.get('read', 0), why=out.get('said') or job.error or '', stopped='you' if job.status == 'cancelled' else '')
 
 
+HOST_API_NEEDED = 1
+
+def host_api():
+    "The `HOST_API` of the installed Abhyasa, or None when it has none."
+    try: from abhyasa.core.hostapi import HOST_API
+    except ImportError: return None
+    return HOST_API
+
+def host_line() -> str:
+    "The one line that says the installed Abhyasa is too old for this host, else an empty string."
+    have = host_api()
+    return '' if have is not None and have >= HOST_API_NEEDED else f"Abhyasa too old: needs host API {HOST_API_NEEDED}, has {'none' if have is None else have}"
+
+def missing_line(missing) -> str:
+    "The one line for `contract_missing()`'s result."
+    return missing[0] if missing and missing[0].startswith('Abhyasa too old') else f"Abhyasa too old: lacks {', '.join(missing)}"
+
 def contract_missing() -> list[str]:
-    "The parts of Abhyasa's native contract this install lacks: `agent_tools.TOOLS`, `agent_tools.page_of` and `learner.use_settings`."
+    "What this install lacks of Abhyasa's native contract: the host API line, else the names of `agent_tools.TOOLS`, `agent_tools.page_of` and `learner.use_settings`."
     from importlib import import_module
+    if line := host_line(): return [line]
     out = []
     for mod, name in (('abhyasa.agent_tools', 'TOOLS'), ('abhyasa.agent_tools', 'page_of'), ('abhyasa.learner', 'use_settings')):
         try: have = hasattr(import_module(mod), name)
