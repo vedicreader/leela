@@ -851,8 +851,9 @@ const themeText = theme => {const {family, mode, density} = parseTheme(theme); r
 async function saveTheme(theme, scope = 'user') {
   "Write the theme to settings.json. Never under `languages.<lang>`: a theme is not per language."
   const value = themeText(theme);
-  await post('/settings/save', {scope, language: '', section: 'appearance', values: {theme: value}});
+  const d = await post('/settings/save', {scope, language: '', section: 'appearance', values: {theme: value}});
   lee.appearancePrefs = {...lee.appearancePrefs, theme: value};
+  return d;
 }
 /* `localStorage` is per origin and Leela's port moves whenever 5001 is taken, so a theme kept only
    there is gone on the next launch. settings.json is the theme; `lee-theme` is the first-paint
@@ -1122,7 +1123,7 @@ async function editorSettings(languageScope = null) {
   $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:section==='learn'?'user':scope.value,section,language:section==='appearance'||section==='learn'?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
-  $('[data-save]',m).onclick=async()=>{update();const o=own();let count=0;try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){await post('/settings/save',{scope:section==='learn'?'user':o.scope,language:section==='learn'?'':o.language,section,values:changed});count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){await saveTheme(lee.theme,o.scope);count++;}localStorage.setItem('lee-settings-save-scope',o.scope);localStorage.setItem('lee-settings-language-scope',o.language);localStorage.removeItem('lee-editor-settings');await loadSettings(o.language);saved=true;m.remove();status(`${count||'no'} setting${count===1?'':'s'} saved to ${o.scope} · ${o.language||'all languages'} (${shownPath(lee.settingsMeta?.paths?.[o.scope])})${themeSaved&&o.language?', and the theme to all languages':''}`,'ok');};
+  $('[data-save]',m).onclick=async()=>{update();const o=own();let count=0;const said=new Set();try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){said.add((await post('/settings/save',{scope:section==='learn'?'user':o.scope,language:section==='learn'?'':o.language,section,values:changed})).message);count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){said.add((await saveTheme(lee.theme,o.scope)).message);count++;}localStorage.setItem('lee-settings-save-scope',o.scope);localStorage.setItem('lee-settings-language-scope',o.language);localStorage.removeItem('lee-editor-settings');await loadSettings(o.language);saved=true;m.remove();status(count?[...said].filter(Boolean).join(' '):'No settings changed.','ok');};
   /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
   const paintEnv=async(d=null)=>{
     const list=$('[data-env-list]',m); if(!list) return;

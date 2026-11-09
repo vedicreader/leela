@@ -466,7 +466,7 @@ def test_the_theme_is_kept_in_settings_and_not_only_in_this_origin(proj_web_th):
             page.click('[data-save]')
             page.wait_for_function("!document.querySelector('.lee-settings-modal')")
             said = page.locator('#status').inner_text()
-            assert 'no settings saved' not in said and 'saved to user' in said, said
+            assert said == 'Saved. This applies to all your projects, in all languages.', said
             d = page.evaluate("() => api('/settings?language=python')")
             assert d['effective']['appearance']['theme'].startswith('nord:dark:'), d['effective']['appearance']
             assert 'appearance' not in ((d['user'].get('languages') or {}).get('python') or {}), \

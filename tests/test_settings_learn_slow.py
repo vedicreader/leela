@@ -43,6 +43,7 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         sent = (await req.value).post_data_json
         assert sent['scope'] == 'user' and not sent['language'] and sent['section'] == 'learn'
         await expect(pg.locator('.lee-settings-modal')).to_have_count(0)
+        assert await pg.locator('#status').inner_text() == 'Saved. This applies to all your projects, in all languages.'
         assert json.loads(user.read_text())['learn']['walks.passage'] == 700
         assert json.loads(user.read_text())['learn'][key] == .42
         await pg.reload(wait_until='networkidle')
