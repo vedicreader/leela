@@ -412,7 +412,7 @@ def learn_tools(ai):
     from shalya.core import writes
     reads = getattr(engine, 'READS', (engine.walk_state.__name__,))
     cfg = lambda: dict(settings=learn_settings(ai.ws))
-    extra = dict(record_attempt=lambda: dict(ask=learn_ask(ai, 'grade'), **cfg()), walk_state=cfg, add_source=cfg, explain_here=lambda: dict(ask=learn_ask(ai, 'lesson'), **cfg()))
+    extra = dict(record_attempt=lambda: dict(ask=learn_ask(ai, 'grade'), **cfg()), walk_state=cfg, add_source=cfg, explain_here=cfg)
     def wrap(name, args):
         def call(**kwargs):
             if not ai.learn_mode:

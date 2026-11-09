@@ -133,7 +133,7 @@ def test_the_context_knows_the_page_on_screen(pane):
     assert 'On screen' not in Assistant.learn_context(SimpleNamespace(learn_mode=True, ws=ws))
 
 
-def test_explain_here_teaches_the_step_on_screen_through_the_lesson_task(pane):
+def test_explain_here_gives_the_agent_the_step_data_and_makes_no_model_call(pane):
     lr, j = pane.lr, pane.jid
     step = lr.journey(j).steps[1]
     lr.walk_slug(j, step['slug'], read=dict(src='vault:notes', ref='n1', title='Notes', url='https://example.org/n', text=QUOTE))
@@ -141,21 +141,36 @@ def test_explain_here_teaches_the_step_on_screen_through_the_lesson_task(pane):
     _show(pane, f'/w/{j}/1?pane=1')
     r = pane.tools['explain_here'](note='why does it split\nin equal parts')
     d = r['data']
-    assert (r['status'], r['walk'], r['step'], r['vault']) == ('ok', j, 1, pane.vault) and d['concept'] == step['slug'] and d['quote']['url'] == 'https://example.org/n'
-    assert d['explanation'].startswith('1.') and d['recorded'] and d['confuses'][-1].endswith('why does it split in equal parts')
-    task, prompt, kw = pane.calls[-1]
-    assert task == 'lesson' and QUOTE in prompt and 'answered anything wrong' in prompt and callable(kw['prepare']) and kw['strict']
-    assert len(pane.calls) == 1 and is_write(pane.tools['explain_here'])
-
-
-def test_explain_here_refusals_keep_nothing(pane):
-    from abhyasa.models import Withheld
-    _show(pane, f'/w/{pane.jid}/0')
-    def refuse(p): raise Withheld('the privacy setting blocks it')
-    pane.reply['text'] = refuse
-    r = pane.tools['explain_here'](note='jane.doe@example.com')
-    assert (r['status'], r['error']) == ('error', 'privacy_refused') and not pane.lr.profile().confuses
-    pane.reply['text'] = ' '
-    assert pane.tools['explain_here'](note='q')['error'] == 'model_refused' and not pane.lr.profile().confuses
-    _show(pane, f'/w/nope/0')
+    assert (r['status'], r['walk'], r['step'], r['vault']) == ('ok', j, 1, pane.vault) and d['concept'] == step['slug'] and d['quote'] == dict(text=QUOTE, url='https://example.org/n', title='Notes')
+    assert d['level'] and 'numbered steps' in d['rules'] and 'answered anything wrong' in d['rules'] and d['confusion'] == 'why does it split in equal parts' and d['recorded']
+    assert not pane.calls and is_write(pane.tools['explain_here']), 'the agent writes the explanation, the tool asks no model'
+    _show(pane, '/w/nope/0')
     assert pane.tools['explain_here'](note='q')['error'] == 'not_found'
+    _show(pane, f'/w/{j}/0')
+    assert pane.tools['explain_here'](note=' ')['error'] == 'model_refused'
+
+
+def test_explain_here_inside_a_real_turn_returns_with_the_quote_and_level(pane, monkeypatch):
+    "A nested model call inside a turn waits for the lock that the turn holds; this tool makes none."
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from tests.fakemodel import Step, WIDE, install
+    ws, lr, j = pane.ws, pane.lr, pane.jid
+    lr.walk_slug(j, lr.journey(j).steps[1]['slug'], read=dict(src='vault:notes', ref='n1', title='Notes', url='https://example.org/n', text=QUOTE))
+    _show(pane, f'/w/{j}/1')
+    be = install(ws, [Step(text='Explaining.', tool=('explain_here', dict(note='I do not get this')))], token_delay=0, spec=WIDE)
+    thread = ws.threads.active
+    monkeypatch.setattr(thread.ai, 'refresh', lambda: thread.ai._forget(files=False))
+    thread.set_learn_mode(True)
+    seen, real = [], be._tool
+    def tool(name):
+        f = real(name)
+        return f and (lambda **kw: (seen.append(f(**kw)), seen[-1])[1])
+    be._tool = tool
+    with TestClient(ide_app(ws)) as client:
+        client.post('/agent/turn', json={'prompt': 'I do not get this'})
+        end = time.time() + 20
+        while (not seen or thread.ai.busy) and time.time() < end: time.sleep(.05)
+    assert seen and not thread.ai.busy, 'the turn did not finish: the tool hung'
+    assert seen and seen[0]['status'] == 'ok', seen
+    assert seen[0]['data']['quote']['text'] == QUOTE and seen[0]['data']['level'] and seen[0]['data']['recorded']

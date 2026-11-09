@@ -280,9 +280,9 @@ The expanded teacher review completed and requested corrections. This draft inco
 
 The agent pane builds and changes a walk through the one Leela session. Abhyasa owns the logic (`agent_tools`), and Leela owns routing and privacy: each model call goes through `learn_ask` with a task name.
 
-- `change_walk` is a `learn_change` job, as `create_walk` is a `learn_walk` job: cancellable, task `plan`. A stop, a refusal or a walk that changed during the model calls leaves the walk as it was. One change has one Undo.
+- `change_walk` is a `learn_change` job, as `create_walk` is a `learn_walk` job: cancellable, task `plan`, run by the job runner outside the turn. A stop, a refusal or a walk that changed during the model calls leaves the walk as it was. One change has one Undo.
 - `keep_idea`, `drop_idea`, `move_idea`, `add_source`, `list_versions` and `restore_version` call no model. Each change is one entry in the history of the walk, which the tab shows as Earlier versions. Writers need approval; `list_versions` and `walk_state` are in `READS`.
-- `explain_here(note)` is task `lesson`. Leela gives it the walk and step on screen: the active Learn tab's saved page (`Tab.page`, from `POST /learn/tab/page`) read by `page_of`. It keeps the confusion after the lesson, and a refusal keeps nothing.
+- `explain_here(note)` makes no model call: a nested call inside a turn waits for the lock that the turn holds. Leela gives it the walk and step on screen (the active Learn tab's saved page, `Tab.page`, read by `page_of`). It keeps the confusion and returns the statement, the verbatim quote or `ungrounded`, the gauge, the level line and the rules, and the one agent session writes the explanation. `change_walk` and `add_source` do not nest: `change_walk` is a `learn_change` job on its own thread, and `add_source` calls no model.
 - `learn_context` puts the page on screen first, so "I don't get this" is about the step the learner sees: its quote or `ungrounded`, and its gauge. A graph, library, talk or concept page is named in one line.
 - The skill text stays under its cap: four wordy feature sentences were cut to pay for the new tool names.
 
