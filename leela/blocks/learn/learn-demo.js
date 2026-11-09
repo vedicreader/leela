@@ -5,6 +5,11 @@ if (!window.leeLearnDemo) {
     const where = document.querySelector('.abh main h1')?.textContent.trim();
     return `About the demo${where ? ` on "${where}"` : ''}${st ? ` (${st})` : ''}: ${d.text || ''}`.trim();
   };
+  document.addEventListener('submit', e => {   // walk.js turns each form of the page into a navigation: the form of Ask about this stays the demo's own
+    const f = e.target;
+    if (!f.matches?.('.abh [data-rupaka] form')) return;
+    e.stopImmediatePropagation(); f.onsubmit?.(e);
+  }, true);
   document.addEventListener('rk-ask', async e => {
     if (!e.target.closest?.('.abh')) return;
     e.preventDefault();
