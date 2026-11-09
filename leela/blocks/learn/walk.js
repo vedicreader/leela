@@ -5,6 +5,19 @@ window.abhyasaMotion ||= () => !matchMedia('(prefers-reduced-motion: reduce)').m
 const LEARN_HX = '[hx-get],[hx-post],[hx-put],[hx-patch],[hx-delete]';
 const learnSeen = el => !el.disabled && (el.checkVisibility ? el.checkVisibility() : el.offsetParent !== null);
 
+const learnLoaded = window.learnLoaded ||= new Set();
+async function learnSurface(path) {
+  const s = await fetch('/learn/abh-surface?path=' + encodeURIComponent(path)).then(r => r.json()).catch(() => null);
+  if (!s) return;
+  const once = u => !learnLoaded.has(u) && learnLoaded.add(u);
+  s.css.filter(once).forEach(href => document.head.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href})));
+  for (const src of s.js) {
+    const again = s.rerun.includes(src);
+    if (again || once(src)) await new Promise(ok => { const sc = Object.assign(document.createElement('script'), {src, onload: ok, onerror: ok}); if (again) sc.addEventListener('load', () => sc.remove()); document.head.append(sc); });
+  }
+}
+window.leeAbhTheme ||= new MutationObserver(() => document.dispatchEvent(new CustomEvent('abhyasa:theme'))).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density']}) || 1;
+
 function leeAbhKey(e) {
   const abh = e.target.closest?.('.abh');
   if (!abh || e.isComposing) return false;
@@ -73,7 +86,9 @@ async function learnMount(host, st) {
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
     cur = path; pending = null; back.disabled = !trail.length;
+    learnSurface(path).then(() => renderMath(abh));
   });
+  abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
   host.querySelector('[data-learn-home]').onclick = () => nav('/');
   new ResizeObserver(() => abh.classList.toggle('wide', abh.clientWidth >= 940)).observe(abh);

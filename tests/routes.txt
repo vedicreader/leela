@@ -1,6 +1,8 @@
 DELETE,GET,OPTIONS,PATCH,POST,PUT /learn/abh/{path:path}
 GET /learn
+GET /learn/abh-asset/{name}
 GET /learn/abh-grip.js
+GET /learn/abh-surface
 GET /learn/abh.css
 GET /learn/import
 GET /learn/lookup

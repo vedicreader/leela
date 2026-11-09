@@ -4,11 +4,12 @@ from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 from fasthtml.common import A, Blockquote, Button, Div, Form, H2, H3, Hidden, Input, Li, P, Span, Textarea, Ul, to_xml
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from ...core.web import off_loop
 from ..memory.memory import _open_lock
 from ..tabs.ui import tab_bar
+from . import surfaces
 from .tools import learn_settings
 
 
@@ -136,6 +137,12 @@ def connect(app, ctx):
         return Response(Path(__file__).with_name('abh.css').read_text() + abh_styles(), media_type='text/css')
     @app.route('/learn/abh-grip.js', methods=['GET'])
     def abh_grip(): return Response((files('abhyasa')/'core/grip.js').read_text(), media_type='text/javascript')
+    @app.route('/learn/abh-asset/{name}', methods=['GET'])
+    def abh_asset(name: str):
+        if not (p := surfaces.asset(name)): return Response('Not found', status_code=404)
+        return Response(p.read_bytes(), media_type='text/css' if p.suffix == '.css' else 'text/javascript', headers={'Cache-Control': 'no-cache'})
+    @app.route('/learn/abh-surface', methods=['GET'])
+    def abh_surface(path: str = '/'): return JSONResponse(surfaces.surface(path))
     @app.route('/learn/walk.css', methods=['GET'])
     def walk_css():
         from pathlib import Path
