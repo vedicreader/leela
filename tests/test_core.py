@@ -709,3 +709,116 @@ def test_the_native_window_opens_on_the_saved_themes_background():
     assert theme_background('dark') == bgs['leela']['dark']
     assert theme_background('') == bgs['cursor']['light']
 
+
+
+
+def test_undo_leaves_the_cell_that_is_running_where_it_runs():
+    """Undo rebuilt every cell as a copy. The run still held the old object, so the page lost the cell's `running`, its stop
+    refused ("not running") and a second run waited on the first one's lock for ever."""
+    from leela.blocks.nb.nb import Cell, Notebook
+    nb = Notebook(); nb.cells[0].source = 'import time; time.sleep(60)'
+    run = nb.cells[0]
+    nb.insert(1, Cell(source='x = 1'))                  # a structural step to undo
+    run.running = True                                  # what `nb.run` sets while the kernel works on it
+    at = nb.undo()
+    assert at is not None and any(c is run for c in nb.cells), 'the run holds this very object'
+    assert run.running and nb.cells[0].running, 'the page is told it is still running'
+    nb.redo()
+    assert any(c is run for c in nb.cells) and run.running
+    run.running = False
+    nb.undo()
+    assert not any(c.running for c in nb.cells)
+
+
+def test_a_step_taken_while_a_cell_runs_does_not_bring_it_back_as_running():
+    "The snapshot copied `running` too: undone later, the cell looked running with no run behind it, so stop found nothing and run refused."
+    from leela.blocks.nb.nb import Cell, Notebook
+    nb = Notebook(); run = nb.cells[0]; run.running = True
+    nb.insert(1, Cell(source='x = 1'))                  # a snapshot while the cell is running
+    run.running = False                                 # the run ends
+    nb.undo()
+    assert not any(c.running for c in nb.cells)
+    nb.redo()
+    assert not any(c.running for c in nb.cells)
+
+
+def _running(*srcs):
+    from leela.blocks.nb.nb import Cell, Notebook
+    nb = Notebook([Cell(source=s) for s in srcs])
+    return nb, list(nb.cells)
+
+def test_undoing_a_split_of_the_running_cell_gives_its_text_back():
+    "Keeping the live cell whole would have kept the shortened text: the second half of the split was lost for good."
+    nb, (run,) = _running('first = 1\nsecond = 2')
+    run.running = True
+    nb.split(0, len('first = 1\n'))
+    assert [c.source for c in nb.cells] == ['first = 1\n', 'second = 2']
+    nb.undo()
+    assert nb.cells[0] is run and run.source == 'first = 1\nsecond = 2' and run.running and len(nb.cells) == 1
+
+def test_undo_refuses_a_step_that_would_remove_a_running_cell_and_keeps_the_step():
+    "Removed, the run held the notebook's run lock with no cell on the page to stop. Refused, the step is still there once the run ends."
+    import pytest
+    from leela.blocks.nb.nb import Cell, RunningCellError
+    nb, (a,) = _running('a')
+    nb.insert(1, Cell(source='b')); b = nb.cells[1]; b.running = True
+    with pytest.raises(RunningCellError, match='cell 2, which is running'):
+        nb.undo()
+    assert [c.source for c in nb.cells] == ['a', 'b'] and b.running
+    b.running = False
+    nb.undo()
+    assert [c.source for c in nb.cells] == ['a'], 'the step was kept, and now goes'
+
+def test_the_edit_route_says_why_an_undo_is_refused(tmp_path):
+    root, p = _stop_rig(tmp_path); ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as c:
+        ws.open(p); tab, nb, _ = ws.docstore.owner(str(p))
+        assert c.post('/nb/edit', json={'path': str(p), 'op': 'insert', 'i': 1}).json()['ok'] is not False
+        nb.cells[1].running = True
+        r = c.post('/nb/edit', json={'path': str(p), 'op': 'undo'})
+        assert r.status_code == 409 and 'Stop it first' in r.json()['error']
+        nb.cells[1].running = False
+        assert len(c.post('/nb/edit', json={'path': str(p), 'op': 'undo'}).json()['cells']) == 1
+
+def test_two_running_cells_both_survive_an_undo():
+    from leela.blocks.nb.nb import Cell
+    nb, (a, b) = _running('a', 'b')
+    nb.insert(2, Cell(source='c'))
+    a.running = b.running = True
+    nb.undo()
+    assert nb.cells[0] is a and nb.cells[1] is b and a.running and b.running and len(nb.cells) == 2
+
+def test_a_snapshot_taken_mid_run_has_no_half_streamed_output():
+    from leela.blocks.nb.nb import Cell
+    nb, (run,) = _running('print(1)')
+    run.running, run.outputs = True, [dict(output_type='stream', name='stdout', text='partial')]
+    nb.insert(1, Cell(source='x'))
+    run.running, run.outputs = False, [dict(output_type='stream', name='stdout', text='whole')]
+    nb.undo()
+    assert nb.cells[0].outputs == [] and not nb.cells[0].running
+
+def _stop_rig(tmp_path, cell_type='code'):
+    root = Path(tmp_path).resolve()
+    p = root/'n.ipynb'
+    p.write_text(json.dumps({'cells': [{'cell_type': cell_type, 'id': 'a', 'metadata': {}, 'source': '1', 'outputs': [], 'execution_count': None}] if cell_type == 'code'
+                             else [{'cell_type': 'code', 'id': 'a', 'metadata': {}, 'source': '1', 'outputs': [], 'execution_count': None}],
+                             'metadata': {}, 'nbformat': 4, 'nbformat_minor': 5}))
+    return root, p
+
+def test_stop_clears_a_running_mark_that_has_no_run_behind_it(tmp_path):
+    root, p = _stop_rig(tmp_path); ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as c:
+        ws.open(p); tab, nb, _ = ws.docstore.owner(str(p))
+        nb.cells[0].running = True
+        r = c.post('/nb/interrupt', json={'path': str(p), 'id': 'a'}).json()
+        assert r['ok'] and r['stopped'] == 'stale' and not nb.cells[0].running
+        assert c.post('/nb/interrupt', json={'path': str(p), 'id': 'a'}).json().get('ok') is not True, 'nothing left to stop'
+
+def test_stop_leaves_a_mark_alone_while_the_tab_counts_a_run(tmp_path):
+    "A cell run through the other route has no entry of its own, but the tab counts it."
+    root, p = _stop_rig(tmp_path); ws = Workspace(roots=[root])
+    with TestClient(ide_app(ws)) as c:
+        ws.open(p); tab, nb, _ = ws.docstore.owner(str(p))
+        nb.cells[0].running, tab.running = True, 1
+        assert c.post('/nb/interrupt', json={'path': str(p), 'id': 'a'}).json().get('ok') is not True
+        assert nb.cells[0].running

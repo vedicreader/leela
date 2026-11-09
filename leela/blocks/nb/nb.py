@@ -19,7 +19,7 @@ try:
 except ImportError:
     _jloads = json.loads
 
-__all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'cell_id', 'read_cells', 'source_spans', 'heading_level', 'section_end', 'hidden_cells',
+__all__ = ['CELL_TYPES', 'SLIDE_TYPES', 'Cell', 'Notebook', 'RunningCellError', 'cell_id', 'read_cells', 'source_spans', 'heading_level', 'section_end', 'hidden_cells',
            'cell_lines', 'cell_at', 'cell_of', 'media_output', 'media_outputs', 'assigned_lines', 'inline_values', 'cell_extras', 'run_watched', 'strip_work_log',
            'merge_rows', 'merged_cells', 'CHOICES', 'take_seq', 'MAX_STREAM', 'capped', 'OutFeed']
 
@@ -186,6 +186,9 @@ def restore_exercise(pasted, stored):
     ex = stored.extra.get('exercise') if stored else None
     if isinstance(ex, dict) and 'tests' in ex: pasted.extra['exercise'] = deepcopy(ex)
     elif 'tests' in (pasted.extra.get('exercise') or {}): del pasted.extra['exercise']
+
+class RunningCellError(ValueError):
+    "An undo or redo that would remove a cell whose run is still going."
 
 @dataclass
 class Cell(Dictable):
@@ -393,18 +396,34 @@ class Notebook:
         self.path, self.dirty = p, False
         self._sync()
         return p
-    def _snapshot(self, i=0): return dict(cells=deepcopy(list(self.cells)), meta=deepcopy(self.meta), dirty=self.dirty, index=i)
+    def _snapshot(self, i=0):
+        cells = deepcopy(list(self.cells))
+        for c in cells:
+            # a copy is nobody's run: restored as running it would look running for good, with a half-streamed output beside it
+            if c.running: c.running, c.outputs, c.fresh = False, [], False
+        return dict(cells=cells, meta=deepcopy(self.meta), dirty=self.dirty, index=i)
     def _checkpoint(self, i=0):
         self._undo.append(self._snapshot(i))
         del self._undo[:-MAX_UNDO]
         self._redo.clear()
     def _restore(self, src, dst):
         if not src: return None
+        # A cell that is running cannot be taken out from under its run: the run would hold the notebook's lock with nothing on the page to stop.
+        if (gone := [i for i, c in enumerate(self.cells) if c.running and c.id not in {n.id for n in src[-1]['cells']}]):
+            raise RunningCellError(f'that step would remove cell {gone[0] + 1}, which is running. Stop it first')
         snap = src.pop()
         dst.append(self._snapshot(snap['index']))
         del dst[:-MAX_UNDO]
         folds = {c.id: c.extra.get(COLLAPSED) for c in self.cells}
-        self.cells, self.dirty, self.version = L(deepcopy(snap['cells'])), snap['dirty'], next(_VERSIONS)
+        # A run holds its own cell object and sets `running` on it, so undo keeps that object and puts back only what the step changed
+        # in it: a copy would leave the run writing to a cell no longer in the notebook, and the page with a cell that does not look running.
+        live = {c.id: c for c in self.cells if c.running}
+        back = deepcopy(snap['cells'])
+        for j, n in enumerate(back):
+            if (c := live.get(n.id)) is not None:
+                c.source, c.cell_type, c.extra = n.source, n.cell_type, n.extra
+                back[j] = c
+        self.cells, self.dirty, self.version = L(back), snap['dirty'], next(_VERSIONS)
         # A fold is view state, not a step, so undo leaves every surviving cell folded as it is now.
         for c in self.cells:
             if c.id not in folds or bool(folds[c.id]) == bool(c.extra.get(COLLAPSED)): continue

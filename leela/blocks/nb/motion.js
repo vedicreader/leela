@@ -42,10 +42,14 @@ async function openLocation(hit) {
 
 async function stopCell(i) {
   const c = lee.cells[i];
-  if (!c?.running) return status(`cell ${i + 1} is not running`, 'err');
-  status(`stopping cell ${i + 1}…`);
-  lee.promptRuns?.get(c.id)?.abort();
-  const r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id});
+  if (!c) return status(`cell ${i + 1} is not running`, 'err');
+  // The page's flag can lag the run (an undo rebuilds the cells), so a cell the page thinks idle is still put to the server.
+  const was = c.running;
+  if (!was && c.cell_type === 'prompt') return status(`cell ${i + 1} is not running`, 'err');   // the server stops an agent turn for any prompt cell it is asked about
+  if (was) { status(`stopping cell ${i + 1}…`); lee.promptRuns?.get(c.id)?.abort(); }
+  let r;
+  try { r = await post('/nb/interrupt', {path: lee.tabKey || '', id: c.id}); }
+  catch (e) { if (was) throw e; return status(`cell ${i + 1} is not running`, 'err'); }
   status(r.forced ? 'cell stopped · kernel restarted because interrupt was ignored' : 'cell stopped',
          r.forced ? 'err' : 'ok');
   if (r.forced) kernelRestarted();
