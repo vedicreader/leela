@@ -7,7 +7,7 @@ pytestmark = pytest.mark.slow
 
 from pathlib import Path
 from tests.test_learn_surface_talk_slow import _env, _open, _watch
-from tests.test_learn_tab_pages_slow import _run
+from tests.test_learn_tab_pages_slow import _env as _check_env, _run
 
 OUT = str(Path(__file__).resolve().parents[1]/'target')
 HIT = """() => {
@@ -54,4 +54,21 @@ def test_learn_page_clears_the_dock_handles_and_the_status_pill(tmp_path, monkey
         await pg.set_viewport_size(dict(width=1500, height=900)); await pg.wait_for_timeout(500)
         await pg.locator('.lee-tab', has_text='lesson.py').click(); await pg.wait_for_timeout(500)
         assert (await pg.locator('#toolbar').bounding_box())['height'] > 10
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_a_step_swapping_in_never_takes_the_focus_from_the_agent_prompt(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _check_env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        await _open(pg, ws, f'/w/{jid}/0', '.abh #ans')
+        await pg.evaluate("() => { window.seen = []; document.addEventListener('keydown', e => window.seen.push(document.activeElement.id), true) }")
+        await pg.locator('#agentprompt').click(); await pg.locator('#agentprompt').fill('')
+        swaps = pg.evaluate("async j => { for (const i of [1, 0, 1, 0, 1]) { await leeLearnNav(`/w/${j}/${i}`); await new Promise(r => setTimeout(r, 120)) } }", jid)
+        text = 'typing while the walk swaps in'
+        await pg.keyboard.type(text, delay=45)
+        await swaps; await pg.wait_for_timeout(400)
+        assert await pg.locator('#agentprompt').input_value() == text
+        assert set(await pg.evaluate('window.seen')) == {'agentprompt'}
+        assert await pg.evaluate('document.activeElement.id') == 'agentprompt'
     _run(tmp_path, scenario, dict(width=1500, height=900))

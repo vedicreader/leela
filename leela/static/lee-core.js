@@ -2408,7 +2408,11 @@ async function learnMount(host, st) {
     if (u.origin === location.origin && !u.pathname.startsWith(LEARN + '/') && !/^\/(?:assets|vendor)\//.test(u.pathname)) d.path = LEARN + u.pathname + u.search;
     if (!u.searchParams.has('pane')) d.parameters.pane = '1';
   });
-  for (const ev of ['pointerdown', 'keydown']) abh.addEventListener(ev, () => { touched = true; }, true);
+  let away = null, hold = 0;
+  for (const ev of ['pointerdown', 'keydown']) abh.addEventListener(ev, () => { touched = true; away = null; }, true);
+  abh.addEventListener('htmx:beforeSwap', () => { const a = document.activeElement; away = a && a !== document.body && !abh.contains(a) ? a : null; clearTimeout(hold); hold = setTimeout(() => away = null, 3000); });
+  abh.addEventListener('htmx:afterSettle', () => { clearTimeout(hold); hold = setTimeout(() => away = null, 150); });
+  document.addEventListener('focusin', e => { if (away?.isConnected && abh.contains(e.target)) away.focus({preventScroll: true}); }, true);
   abh.addEventListener('htmx:afterSettle', e => {
     if (!touched && document.activeElement?.closest('.abh')) document.activeElement.blur();
     if (e.target !== abh) return;
