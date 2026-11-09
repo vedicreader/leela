@@ -454,7 +454,7 @@ The order for the owner or the lead. Each push, tag and upload still needs appro
 Branches: Leela and Abhyasa on `native-learn`; rupaka, kunda and dhrishti on `explorables`. Each repo has a plain `## Unreleased` entry in its `CHANGELOG.md`. Rename that heading to the version when you release.
 
 1. rupaka 0.0.16 (the tree already has the number). Merge `explorables` into main, push, wait for CI, then `nbdev-release-git` and `nbdev-pypi`, and make the release Latest. Then `nbdev-bump-version`. Check that the new version is on PyPI.
-2. kunda 0.0.16 and dhrishti 0.1.14, the same steps. They do not depend on each other for release, but Leela needs both. kunda's `uv.lock` points to the dhrishti worktree: use PyPI sources before the release.
+2. kunda 0.0.16 and dhrishti 0.1.14, the same steps. They do not depend on each other for release, but Leela needs both. kunda's `pyproject.toml` has `[tool.uv.sources]` with `dhrishti = { path = "../dhrishti", editable = true }`, which only affects its dev environment; the published metadata asks for `dhrishti>=0.1.12`. Release dhrishti first.
 3. Abhyasa 0.0.22. Follow "Abhyasa release" above: merge `native-learn` into main, `nbdev-prepare` (hyphen, nbdev 3.3.26 from the Abhyasa venv), push, check CI and Pages, `nbdev-release-git` and `nbdev-pypi`, never `nbdev-release-gh`. Then make it Latest, run `nbdev-bump-version` and push `Bump to 0.0.23`.
 4. Leela, on `native-learn` merged into main, with the released numbers:
    1. Vendor rupaka 0.0.16: write `leela/vendor/lee-rupaka.js` and `lee-rupaka.css` from the 0.0.16 wheel, and update `leela/vendor/README` (version, wheel name, SHA-256, URL). `tests/test_rupaka.py::test_the_vendored_rupaka_is_the_version_the_readme_pins` fails until this is done.
