@@ -338,7 +338,6 @@ def register_learn_jobs(ws):
     def run(job, report):
         if job.id not in captures: raise RuntimeError('The originating learning session is no longer available. Start a new walk.')
         ai, lr = captures[job.id]
-        say = learn_say(report)
         try:
             r = engine.create_walk(lr, learn_ask(ai), job.target, stopping=lambda: ws.jobs.stopping(job.id), progress=lambda stage, frac: report(progress=frac, current=stage),
                                    settings=job.params['settings'], guard=lambda text: learn_guard(ai, text))
@@ -348,7 +347,7 @@ def register_learn_jobs(ws):
                 if ws.threads.active_id == job.params['thread'] and ai.learn_mode: show_walk(ws, r['vault'], r['walk'])
                 ws.fs_watch.announce_learn(r['walk'])
             if r['status'] == 'ok' and job.params.get('research'):
-                try: r['data']['research'] = learn_gather(ai, lr, r['walk'], lambda: ws.jobs.stopping(job.id), say, job.params['settings']).why
+                try: r['data']['research'] = run_gather(ai, lr, r['walk'], Polled(lambda: ws.jobs.stopping(job.id))).why
                 except Exception as e: r['data']['research'] = f'Research stopped: {errstr(e)}'
             if r['status'] == 'stopped': r['cancelled'] = True
             return r
@@ -412,7 +411,7 @@ def learn_tools(ai):
             if not ai.learn_mode:
                 return engine.failed('mode_off', 'Turn Learn mode on before using learning tools.', extra=('mode_off',))
             try:
-                if name == 'create_walk': return start_learn_job(ai, **kwargs)
+                if name == 'create_walk': return start_learn_job(ai, kwargs['goal'], research=str(kwargs.get('research') or 'yes').lower() not in ('no', 'false', '0'))
                 if name == 'change_walk': return start_learn_job(ai, kwargs['jid'], 'learn_change', instruction=kwargs['instruction'])
                 vault, lr = learn_store(ai.ws, learn_view(ai.ws)[0] if name == 'explain_here' else None, write=name not in reads)
                 if name == 'explain_here': kwargs = {**kwargs, **on_screen(ai, lr)}
@@ -425,7 +424,7 @@ def learn_tools(ai):
         call.__name__ = name
         call.__doc__ = getattr(engine, name).__doc__ or ''
         call.__annotations__ = {k: {'str': str, 'int': int}[v.split(':', 1)[0]] for k, v in args.items()}
-        call.__signature__ = inspect.Signature([inspect.Parameter(k, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=call.__annotations__[k]) for k in args])
+        call.__signature__ = inspect.Signature([inspect.Parameter(k, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=call.__annotations__[k], **({'default': ''} if k == 'research' else {})) for k in args])
         call.__doc__ += '\n\n' + '\n'.join(f'{k}: {v}' for k, v in args.items())
         if name not in reads: writes(call)
         return small_tool(call)

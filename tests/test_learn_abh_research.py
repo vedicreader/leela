@@ -193,3 +193,51 @@ def test_a_route_that_drops_the_picture_says_so_in_words(web, monkeypatch):
     monkeypatch.setattr(show, 'keeps_images', lambda spec: False)
     ask = _vision(s, 'off')
     assert 'does not get pictures on this route' in show.vision_why(ask) and show.vision_ask(ask) is None
+
+
+def _create(s, monkeypatch, **kw):
+    from leela.blocks.learn import tools
+    from tools.s2_native_pilot import PLAN
+    ws = s['ws']
+    monkeypatch.setattr(tools, 'learn_store', lambda ws, vault=None, write=False: ('test', s['lr']))
+    ws.ai.learn_mode = True
+    def oneshot(prompt, sp, max_tokens, deadline=None):
+        s['calls'].append((prompt, sp))
+        if 'You plan a learning path' in sp: return PLAN
+        if 'You find one passage' in sp: return json.dumps(dict(passage=SENTENCE))
+        return json.dumps(dict(queries=[])) if 'You help a learner find a web page' in sp else 'A short note.'
+    s['be']._oneshot = oneshot
+    made = {f.__name__: f for f in tools.learn_tools(ws.ai)}['create_walk'](goal='new fractions walk', **kw)
+    assert made['status'] == 'ok', made
+    for _ in range(300):
+        if not ws.jobs.get(made['operation_id']).active: break
+        time.sleep(.05)
+    return ws.jobs.get(made['operation_id'])
+
+
+def test_an_agent_made_walk_runs_the_gather_job_and_shows_its_real_quote(web, monkeypatch):
+    s = web
+    job = _create(s, monkeypatch)
+    assert job.status == 'complete', job.error
+    gather, = s['ws'].jobs.all(kind='learn_gather')
+    assert gather.status == 'complete' and gather.target != s['jid'] and gather.result['data']['passages'] == 2
+    assert 'got a source' in job.result['data']['research']
+    walk = next(j for j in s['lr'].journeys() if j.title == 'Fractions' and j.id != s['jid'] and j.steps[0].get('read'))
+    assert [x['read']['text'] for x in s['lr'].journey(walk.id).steps] == [SENTENCE] * 2 and set(s['read']) == {URL}
+    assert set(s['jobs']) <= {'plan', 'research', 'extract'} and not s['forbidden']
+
+
+def test_an_agent_made_walk_with_no_page_says_the_gap_in_plain_words(web, monkeypatch):
+    s = web
+    s['pages'].clear()
+    job = _create(s, monkeypatch)
+    assert job.status == 'complete', job.error
+    assert '0 of 2 ideas got a source' in job.result['data']['research']
+    walk = next(j for j in s['lr'].journeys() if j.id != s['jid'] and j.get('gather_why'))
+    assert all(x.get('research_why') and not x.get('read') for x in walk.steps) and walk.gather_why.startswith('Searched the web')
+
+
+def test_an_agent_made_walk_can_skip_research(web, monkeypatch):
+    s = web
+    job = _create(s, monkeypatch, research='no')
+    assert job.status == 'complete' and 'research' not in job.result['data'] and not s['searched']
