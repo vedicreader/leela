@@ -124,6 +124,8 @@ DEFAULTS = L(
     Key('summarise',        '',       'global', 'summarise the selection'),
     Key('capture',          'alt+shift+p',   'global', 'screenshot for the assistant', 'toast'),
     Key('agent_selection',  'alt+shift+n',   'global', 'send selection to the agent', 'toast'),
+    Key('explain_cell',     '',              'global', 'explain this cell'),
+    Key('learn_about',      '',              'global', 'learn about this'),
     Key('clip_to_vault',    '',              'global', 'clip into the vault'),
     Key('memory_notes',     '',              'global', 'manage memory notes'),
     Key('new_memory_note',  '',              'global', 'create a memory note'),

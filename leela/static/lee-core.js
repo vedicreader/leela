@@ -2275,6 +2275,7 @@ function learnBar(host) {
     {label: 'Search', run: LEARN_FIND},
     ...[...host.querySelectorAll('[data-learn-chips] a')].map(a => ({label: a.textContent.trim(), run: () => a.click()})),
     {label: 'Wide', run: () => host.querySelector('[data-learn-fit]').click()},
+    {label: 'Keys', run: () => host.querySelector('[data-learn-keys]').click()},
     ...(host.querySelector('[data-learn-change]').hidden ? [] : [{label: 'Change with the builder', run: () => window.leeLearnChange?.()}])]);
 }
 async function learnChips(host, path) {
@@ -2325,8 +2326,9 @@ window.leeAbhTheme ||= new MutationObserver(() => document.dispatchEvent(new Cus
 
 const learnWide = () => { const sh = $('#shell'); return !!sh && sh.classList.contains('no-left') && sh.classList.contains('no-bottom'); };
 
+const learnHere = e => lee.kind === 'learn' && (e.target === document.body || e.target.matches?.('#editor, .lee-editor')) && $('.lee-learn-tab .abh');
 function leeAbhKey(e, home) {
-  const abh = home || e.target.closest?.('.abh') || (e.code === 'KeyB' && getSelection()?.anchorNode?.parentElement?.closest('.abh'));
+  const abh = home || e.target.closest?.('.abh') || (e.code === 'KeyB' && getSelection()?.anchorNode?.parentElement?.closest('.abh')) || learnHere(e);
   if (!abh || e.isComposing) return false;
   if (!home && abh.getAttribute('aria-busy') === 'true' && e.altKey) { e.preventDefault(); e.stopPropagation(); leeAbhSettled(abh).then(() => leeAbhKey(e, abh)); return true; }
   const box = e.target.matches('textarea, input, select, [contenteditable]');
@@ -2341,6 +2343,7 @@ function leeAbhKey(e, home) {
   } else if (e.key === '/' && !box && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault(); e.stopPropagation(); LEARN_FIND(); return true;
   }
+  if (!el && e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyW') el = {matches: () => false, click() {}};
   if (!el) return false;
   e.preventDefault(); e.stopPropagation();
   el.matches('textarea, input') ? el.focus() : el.click();
@@ -2355,7 +2358,7 @@ async function learnMount(host, st) {
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
   const bar = $('#modebar');
-  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
+  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-keys title="The keys of this page (Option+Shift+F)">Keys</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
   host.innerHTML = '<div class="lee-learn-tab"><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
   const fit = bar.querySelector('[data-learn-fit]'), sync = () => {
@@ -2428,13 +2431,15 @@ async function learnMount(host, st) {
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
-    cur = path; pending = null; learnChips(bar, cur); back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
+    cur = path; pending = null; learnChips(bar, cur);
+    const find = bar.querySelector('.lee-learn-find input'); if (find) find.value = /^\/search\?/.test(cur) ? new URLSearchParams(cur.split('?')[1]).get('q') || '' : ''; back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
     if (main && !ran.has(main)) { ran.add(main); busy.add(main); abh.setAttribute('aria-busy', 'true'); learnSurface(path).then(() => renderMath(abh)).finally(() => idle(main)); }
   });
   abh.addEventListener('htmx:afterSettle', e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterSwap', () => renderMath(abh));
   back.onclick = () => trail.length && nav(trail.pop(), true);
+  bar.querySelector('[data-learn-keys]').onclick = () => document.body.dispatchEvent(new KeyboardEvent('keydown', {code: 'KeyF', key: 'F', altKey: true, shiftKey: true, bubbles: true, cancelable: true}));
   bar.querySelector('[data-learn-ask]').onclick = () => window.leeLearnAsk?.();
   change.onclick = () => window.leeLearnChange?.();
   const sides = [];

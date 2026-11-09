@@ -21,9 +21,9 @@ addEventListener('lee-cell-output', e => {
   const {id, outputs} = e.detail || {};
   if (outputs?.some(o => o.output_type === 'error') && lee.cells?.[lee.sel]?.id === id) leeReportCell(id);
 });
-//: Switch the workspace mode: M2's `leeSetMode` when the page has it, else the route and the dock layout it answers with.
+//: Switch the workspace mode: the mode switch's `leeModeSet` when the page has it, else the route and the dock layout it answers with.
 async function leeSwitchMode(mode) {
-  if (window.leeSetMode) return window.leeSetMode(mode);
+  if (window.leeModeSet) return window.leeModeSet(mode);
   try {
     const d = await post('/workspace/mode', {mode, ...(lee.agentThread ? {thread: lee.agentThread} : {})});
     for (const [k, pane] of [['files', 'left'], ['exec', 'bottom'], ['agent', 'right']]) if (k in (d.layout || {})) leePane(pane, !!d.layout[k], false);
@@ -80,8 +80,9 @@ async function leeOpenInCode(el) {
   const f = el.closest('form'), a = f ? null : el.closest('a[href]');
   if (!f && !a) return false;
   const u = new URL(f ? f.action : a.href, location.origin);
-  if (!f && u.pathname.startsWith('/learn/') && !u.searchParams.has('go')) u.searchParams.set('go', '1');
-  const at = (u.pathname.startsWith('/learn/') ? '' : '/learn/abh') + u.pathname + u.search;
+  const own = /^\/learn(\/|$)/.test(u.pathname);
+  if (!f && own) u.searchParams.set('go', '1');
+  const at = (own ? '' : '/learn/abh') + u.pathname + u.search;
   if (!await leeSwitchMode('code')) return true;
   try {
     const r = await fetch(at, f ? {method: 'POST', body: new FormData(f)} : {});
