@@ -278,6 +278,28 @@ After the Abhyasa release that first contains `HOST_API`, change these lines in 
 
 Do not change the pin to a version that is not on PyPI.
 
+## Abhyasa release
+
+Do these steps in the Abhyasa main checkout, in this order. This list only names the steps: the owner approves each push, tag and PyPI upload.
+
+1. Version. `abhyasa/__init__.py` has `__version__`, and `[tool.hatch.version]` reads it. Abhyasa bumps after a release, not before: the tag `0.0.21` points at a commit with `__version__ = "0.0.21"`, and `Bump to 0.0.22` came after it. So the tree already has the release number, `0.0.22`, and no tag `0.0.22` exists. Change the number only if the owner wants another one (for example `0.0.23`): then edit that one line and the heading of the CHANGELOG entry together.
+2. Merge the branch `native-learn` into Abhyasa main, and sync the local main checkout.
+3. CHANGELOG. In `CHANGELOG.md`, change the heading `## Unreleased` to `## 0.0.22` (the release number). Keep the line `<!-- do not remove -->` above it. The entry:
+   - A host app, such as Leela, can run abhyasa in its own process, with its own session cookie, settings, privacy guard and folder. `HOST_API` is 1.
+   - `abhyasa.agent_tools`: the learning operations of a host agent, as tools with one result contract.
+   - A host passes the settings rows for one call, and a write to the settings is refused while it does.
+   - Research for a walk goal goes through the hook of the host.
+   - A host can take the keys of the talk stage and the detour page, and open a concept from the graph.
+   - The search fix: a document needs a word match.
+4. Run `nbdev-prepare` (with a hyphen) with the Abhyasa venv, nbdev 3.3.26 or newer. Do not use the nbdev of the Leela venv (3.3.13): it writes 78 empty entries into `abhyasa/_modidx.py` and does not rewrite the README links, so it leaves a diff that is wrong. `git status` must show no change after `nbdev-prepare`. If it shows a change, find the cause: do not commit it by hand.
+5. Commit the CHANGELOG (and the version line, if you changed it) by path, with one plain line.
+6. Push main. Check that CI passes on GitHub: the workflow `CI` (`nbdev3-ci`, then `pytest -q`) and the Pages deploy. Do not go on while a check fails.
+7. Run `nbdev-release-git`. It makes the tag and the GitHub release. Never run `nbdev-release-gh`.
+8. Make the new release Latest on GitHub (the release page, or `gh release edit <tag> --latest`).
+9. Run `nbdev-pypi` and check that the new version is on PyPI.
+10. Run `nbdev-bump-version`, and commit `Bump to <next>` (for example `0.0.23`). Push it.
+11. In Leela, follow "Release pins" above: the pin, `uv lock --refresh-package abhyasa`, `FIRST_HOST_API_RELEASE`. Abhyasa releases before Leela. If the Mac app ships, pin it too (`Pin Abhyasa.app <version> to abhyasa <version>`).
+
 ## Retirement and release
 
 S1 and S2 delete no handoff routes. S3 replaces `/learn` page rendering and the old `pane.js` page embedding with native tabs while retaining valid notebook-open contracts. S4 replaces mode-related navigation with the shared agent switch. S5 uses native answer/state paths. S6 removes any remaining external speech dependence. S7 replaces graph/library navigation. S8 removes `serving.json` lookup, standalone URL helpers and the `pane=1` shell guard after auditing callers. Retain `/lesson/due`, `/learn/open`, `/learn/env`, `/learn/lookup`, `/learn/scratch` and `/learn/tool` only where they still implement native notebook contracts. Update route inventory and remove dead callers rather than retaining compatibility with the rejected shell.
