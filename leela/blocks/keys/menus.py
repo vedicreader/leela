@@ -40,6 +40,7 @@ MENUS = {
               S(), S('clear_cell_output'), S('clear_all_outputs'), S('present_from_cell'), S(),
               S('slide_none'), S('slide_slide'), S('slide_subslide'), S('slide_fragment'), S('slide_skip'),
               S('slide_notes'), S(), S('show_docs'),
+              Js('Explain This Cell', 'leeExplainCell()'), Js('Learn About This', 'leeLearnAbout()'),
               S('find_similar'), S('git_blame'), S('run_selection'), S('agent_selection'),
               S(), S('cell_delete', 'warn')),
     'variable': L(S('expand'), S('grid'), S(), S('edit_value'), S('promote'),

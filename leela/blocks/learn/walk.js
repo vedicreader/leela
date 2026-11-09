@@ -124,6 +124,8 @@ async function learnMount(host, st) {
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
     if (e.target.closest('[data-guide-open], #guide-go')) { e.preventDefault(); e.stopImmediatePropagation(); return window.leeLearnExplain?.(); }
+    const code = e.target.closest('[data-act^=open-leela], .leela-open, .leela-line a');
+    if (code && window.leeOpenInCode) { e.preventDefault(); e.stopImmediatePropagation(); return leeOpenInCode(code); }
     const a = e.target.closest('a[href]');
     if (!a || (a.target && !a.dataset.pane) || a.getAttribute('href').startsWith('#') || a.matches(LEARN_HX)) return;
     const u = new URL(a.href, location.origin);
@@ -138,6 +140,7 @@ async function learnMount(host, st) {
   abh.addEventListener('submit', e => {
     const f = e.target;
     if (f.matches(LEARN_HX) || f.closest(LEARN_HX)) return;
+    if (f.matches('form.leela-open, form.leela-go, form[action="/learn/open"]') && window.leeOpenInCode) { e.preventDefault(); e.stopImmediatePropagation(); return leeOpenInCode(f); }
     e.preventDefault(); e.stopImmediatePropagation();
     const u = new URL(f.getAttribute('action') || cur, location.origin), get = (f.method || 'get').toLowerCase() === 'get', values = Object.fromEntries(new FormData(f));
     if (own(u)) return own(u)();

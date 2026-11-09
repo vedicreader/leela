@@ -22,6 +22,7 @@ function palette() {
   ];
   const learnCommands = [['Home', '/'], ['Graph', '/graph'], ['Progress', '/you']].map(([n, path]) => ({name: 'Learn: ' + n, scope: 'global', run: () => leeLearnOpen(path)}));
   learnCommands.push({name: 'Ask about this page', scope: 'global', key: '⌃⌥⇧⌘E', run: () => leeLearnAsk()});
+  lessonCommands.push({name: 'Explain this cell', scope: 'editor', run: () => leeExplainCell()}, {name: 'Learn about this', scope: 'global', run: () => leeLearnAbout(picked)});
   const cmds = lee.keys.filter(k => k.label).map(k => ({name: k.label, scope: k.scope, action: k.action, key: shownChord(k)})).concat(agentCommands, learnCommands, lessonCommands);
   let hits = cmds, sel = 0;
   const m = modal(`<input class="lee-input" id="cp" placeholder="command…" aria-label="Command palette" role="combobox" aria-controls="cplist" aria-expanded="true" autofocus>

@@ -188,7 +188,7 @@ async function sendAgent(force = false) {
   stickAgentLog(log, true);       // sending a turn is asking to watch it, wherever you had scrolled
   status('sending…', 'busy');
   let accepted, refused;
-  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread}); }
+  try { accepted = await post('/agent/turn', {prompt: q, attachments, reasoning, thread, ...(window.leeCellId?.() ? {cell: window.leeCellId()} : {})}); }
   catch (e) { refused = e; }
   try {
     await agentPicksSettled();    // a thread switch in flight decides whose box the prompt goes back to
@@ -301,7 +301,7 @@ function agentListen(thread, since, card = null) {
     // and the throw was swallowed after `lastSeq` had already advanced, losing the prompt for good
     timelineRoot.parentElement.insertBefore(userMessage(d.text || ''), timelineRoot);
     const title = $('.lee-agent-turn-title', card);
-    if (title && title.textContent === '(no prompt)') title.textContent = String(d.text || '').replace(/\s+/g, ' ').trim();
+    if (title && title.textContent === '(no prompt)') title.textContent = plainAsk(d.text).replace(/\s+/g, ' ').trim();
     stickAgentLog(log);
   }));
 

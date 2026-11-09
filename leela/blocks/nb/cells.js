@@ -651,7 +651,7 @@ function outputEl(o, c = null, i = 0) {
       const b = document.createElement('button');
       b.className = 'lee-btn'; b.dataset.restartKernel = ''; b.textContent = 'Restart kernel'; b.onclick = () => restartKernel();
       d.appendChild(b);
-    }
+    } else if (c?.id) d.appendChild(errorActions(o, c));
     return d;
   }
   const data = o.data || {};

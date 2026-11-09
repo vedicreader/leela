@@ -743,6 +743,16 @@ def connect(app, ctx):
                            'how': ('a Jupyter kernel is installed' if kernelspec_for(l.id)
                                    else 'Leela runs it' if runner_for(l.id)
                                    else f'needs `{l.install}`')} for l in LANGS.values()]}
+    @rt('/nb/cell', methods=['POST'])
+    async def nb_cell(req):
+        "The page reports the cell the person is on; the agent's next turn in Code mode anchors on it."
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        tab, cid = ws.tab, d.get('cell')
+        nb = store.doc_for(tab) if tab is not None and tab.kind == 'notebook' else None
+        if nb is None: return {'ok': False, 'cell': ''}
+        if not isinstance(cid, str) or not any(c.id == cid for c in nb.cells): return fail('that cell is no longer in the notebook', 409)
+        ws.note_cell(cid)
+        return {'ok': True, 'cell': cid}
     @rt('/nb/interrupt')
     async def nb_interrupt(req):
         "Interrupt one exact running cell, force-restarting its managed kernel if needed."
