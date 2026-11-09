@@ -10,8 +10,8 @@ from ramabana.core import ModelSpec
 from tests.fakemodel import install
 from tools.s2_native_pilot import PLAN
 
-# Every task that the mounted paths below may route through `Router.for_`.
-TASKS = frozenset('grade hint lesson note plan question'.split())
+# Every task that the mounted paths below may route through `Router.for_`, and the jobs of Leela's research and picture calls (`test_learn_abh_research.py`).
+TASKS = frozenset('grade hint lesson note plan question research vision'.split())
 GRADE = r'{"correct": true, "grade": 10, "feedback": "Correct.", "first_error": "", "misconception": ""}'
 QUESTION = r'{"question": "What does a fraction name?", "answer": "Equal parts.", "core": "A fraction names equal parts.", "rubric": ["Equal parts."]}'
 

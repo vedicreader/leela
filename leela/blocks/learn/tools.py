@@ -1,4 +1,4 @@
-import hashlib, json, logging, os, re, shutil, subprocess, sys
+import hashlib, json, logging, os, re, shutil, subprocess, sys, threading, time
 from time import monotonic
 from fastcore.basics import AttrDict, first
 from fastcore.xdg import xdg_data_home
@@ -219,6 +219,94 @@ def learn_ask(ai, task='plan'):
     return ask
 
 
+def picture_why(spec, pii) -> str:
+    "Why a picture may not go to the model `spec` with the privacy setting `pii`, in words for the learner; '' when it may. Pixels cannot be redacted, so `redact` counts as `refuse` for a model off this Mac."
+    from abhyasa.show import keeps_images
+    from ramabana.core import accepts
+    if not accepts(spec, 'image'): return f'{spec.name} cannot see pictures.'
+    if not spec.local and pii != 'off':
+        return (f'The privacy setting is "{pii}". A picture cannot have personal data hidden, so no picture goes to a model off this Mac. '
+                'Pick a model on this Mac for pictures to read figure labels and the screen.')
+    return '' if keeps_images(spec) else f'{spec.name} does not get pictures on this route.'
+
+
+def learn_vision_why(ai) -> str:
+    "Why Abhyasa's picture call may not run now (`picture_why` for the model of the `vision` task), or ''."
+    spec = ai.spec_or_none('vision')
+    return picture_why(spec, ai.ws.vault_pii) if spec is not None else 'Leela has no model for pictures.'
+
+
+def learn_vision(ai, task='vision'):
+    "Abhyasa's picture call `(prompt, img, sp) -> str` on `ai.oneshot`: each route checks `picture_why` and passes the text through the guard before anything is sent."
+    from abhyasa.agent_tools import ModelRefused
+    from abhyasa.models import Withheld
+    from ramabana.runtime import AgentError, OneshotTimeout
+    def prepare(prompt, sp, backend, img):
+        if why := picture_why(backend.spec, ai.ws.vault_pii): raise Withheld(why)
+        return ai.compose(learn_guard(ai, prompt, backend.spec), image=img), learn_guard(ai, sp, backend.spec)
+    def call(prompt, img, sp=''):
+        try: return ai.oneshot(prompt, sp, task, 1024, prepare=lambda p, s, b: prepare(p, s, b, img), deadline=120, wait=True, strict=True)
+        except (AgentError, OneshotTimeout) as e: raise ModelRefused(str(e)) from e
+    return call
+
+
+class Polled(threading.Event):
+    "A stop event that is set once `stopping()` is true: Abhyasa's stop for a job whose stop is a flag of its row."
+    def __init__(self, stopping): super().__init__(); self.stopping = stopping
+    def is_set(self): return super().is_set() or bool(self.stopping())
+
+
+def learn_web(ws):
+    "`(search, fetch)` for Abhyasa's research from the workspace's own web tools, with Leela's query rule; nothing is kept in a folder or a vault."
+    from abhyasa.sources import public_url
+    from ..memory.memory import PrivacyBlocked, query_refusal, source_kind
+    def search(q, n):
+        if why := query_refusal(q): raise PrivacyBlocked(why, 'pii_blocked')
+        return [dict(title=h.title, href=h.url) for h in ws.research.search(q, n=n)]
+    def fetch(url):
+        if source_kind(str(url)) != 'url': raise ValueError(f'{url} is not a web address')
+        public_url(url)
+        if not (d := ws.research.read(url, remember=False)): raise LookupError(ws.research.note or f'no content at {url}')
+        return AttrDict(url=d.url, title=d.title, text=d.text)
+    return search, fetch
+
+
+def learn_gather(ai, lr, jid, stopping, say=None, settings=None):
+    "Abhyasa's `gather_loop` on walk `jid`: the model calls are the `research` task of `ai.oneshot`, the pages come from the workspace, and `stopping()` is Stop."
+    from abhyasa import learner, path
+    search, fetch = learn_web(ai.ws)
+    with learner.use_settings(settings): return path.gather_loop(lr, jid, Polled(stopping), learn_ask(ai, 'research'), search, fetch, say=say)
+
+
+def learn_say(report):
+    "Abhyasa's `say(line, done)` as the card of a job: the line is its current step and `done` moves its bar."
+    return lambda line, done=None: report(current=line, **({} if done is None else dict(progress=.05 + .9 * done)))
+
+
+def gather_job_actions(job, result):
+    "The line of a finished `learn_gather` card: how many sources it found and what the rest got, in words."
+    from fasthtml.common import Span
+    return [Span(said, cls='lee-job-note')] if (said := (result.get('data') or {}).get('said')) else []
+
+
+def run_gather(ai, lr, jid, stop):
+    "Abhyasa's hosted `gather` hook: the job `learn_gather` on walk `jid`, waited for here; setting `stop` cancels it. Return what `gather_loop` returns."
+    from ..vault.jobs import JobError
+    ai = ai.ws.ai
+    jobs = ai.ws.jobs
+    r = start_learn_job(ai, jid, 'learn_gather', lr=lr)
+    if r['status'] != 'ok': return AttrDict(passages=0, read=0, why=r['data']['message'], stopped='')
+    while jobs.get(r['operation_id']).active:
+        if stop.is_set():
+            try: jobs.cancel(r['operation_id'])
+            except JobError: pass
+        time.sleep(.2)
+    job = jobs.get(r['operation_id'])
+    if job.status == 'error': lr.merge_journey(jid, gather_why=f'Research stopped: {job.error}')
+    out = (job.result or {}).get('data') or {}
+    return AttrDict(passages=out.get('passages', 0), read=out.get('read', 0), why=out.get('said') or job.error or '', stopped='you' if job.status == 'cancelled' else '')
+
+
 def contract_missing() -> list[str]:
     "The parts of Abhyasa's native contract this install lacks: `agent_tools.TOOLS`, `agent_tools.page_of` and `learner.use_settings`."
     from importlib import import_module
@@ -245,9 +333,12 @@ def register_learn_jobs(ws):
     if contract_missing(): return
     from abhyasa import agent_tools as engine
     captures = ws.__dict__.setdefault('_learn_jobs', {})
+    from ..vault.ui import register_job_actions
+    register_job_actions('learn_gather', gather_job_actions)
     def run(job, report):
         if job.id not in captures: raise RuntimeError('The originating learning session is no longer available. Start a new walk.')
         ai, lr = captures[job.id]
+        say = learn_say(report)
         try:
             r = engine.create_walk(lr, learn_ask(ai), job.target, stopping=lambda: ws.jobs.stopping(job.id), progress=lambda stage, frac: report(progress=frac, current=stage),
                                    settings=job.params['settings'], guard=lambda text: learn_guard(ai, text))
@@ -256,6 +347,9 @@ def register_learn_jobs(ws):
                 r['data']['tab'] = dict(kind='learn_walk', vault=r['vault'], walk=r['walk'])
                 if ws.threads.active_id == job.params['thread'] and ai.learn_mode: show_walk(ws, r['vault'], r['walk'])
                 ws.fs_watch.announce_learn(r['walk'])
+            if r['status'] == 'ok' and job.params.get('research'):
+                try: r['data']['research'] = learn_gather(ai, lr, r['walk'], lambda: ws.jobs.stopping(job.id), say, job.params['settings']).why
+                except Exception as e: r['data']['research'] = f'Research stopped: {errstr(e)}'
             if r['status'] == 'stopped': r['cancelled'] = True
             return r
         finally: captures.pop(job.id, None)
@@ -271,15 +365,26 @@ def register_learn_jobs(ws):
             return r
         finally: captures.pop(job.id, None)
     ws.jobs.register('learn_change', change)
+    def gather(job, report):
+        if job.id not in captures: raise RuntimeError('The originating learning session is no longer available. Ask for sources again.')
+        ai, lr = captures[job.id]
+        try:
+            g = learn_gather(ai, lr, job.target, lambda: ws.jobs.stopping(job.id), learn_say(report), job.params['settings'])
+            r = engine.result('stopped' if g.stopped == 'you' else 'ok', **({'error': 'stopped'} if g.stopped == 'you' else {}), walk=job.target, vault=job.params['vault'],
+                              operation_id=job.id, data=dict(passages=g.passages, read=g.read, said=g.why))
+            if g.stopped == 'you': r['cancelled'] = True
+            return r
+        finally: captures.pop(job.id, None)
+    ws.jobs.register('learn_gather', gather)
 
 
-def start_learn_job(ai, goal, kind='learn_walk', **params):
-    "Start the cancellable job `kind` on `goal` (a goal, or a walk id for `learn_change`), or return the one that runs now with the same `params`."
+def start_learn_job(ai, goal, kind='learn_walk', lr=None, **params):
+    "Start the cancellable job `kind` on `goal` (a goal, or a walk id for `learn_change` and `learn_gather`), or return the one that runs now with the same `params`. `lr` is the store of a caller that has one; else the Learn vault."
     from abhyasa.agent_tools import result, failed
     ws = ai.ws
-    vault, lr = learn_store(ws, write=True)
+    vault, lr = (Path(str(lr.v.path)).name, lr) if lr is not None else learn_store(ws, write=True)
     settings = learn_settings(ws)
-    if kind == 'learn_change' and ((j := lr.journey(goal)) is None or j.get('mode') != 'walk'): return failed('not_found', f'no walk {goal!r}', walk=goal)
+    if kind in ('learn_change', 'learn_gather') and ((j := lr.journey(goal)) is None or (kind == 'learn_change' and j.get('mode') != 'walk')): return failed('not_found', f'no walk {goal!r}', walk=goal)
     with ws.jobs._lock:
         for job in ws.jobs.all(kind=kind):
             if job.active and job.target == goal and job.params.get('vault') == vault and job.params.get('thread') == ai.session_id and all(job.params.get(k) == v for k, v in params.items()):

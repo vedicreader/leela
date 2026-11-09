@@ -8,7 +8,7 @@ from ...core.web import fail, off_loop
 from ...hub import LOOPBACK
 from ..memory.vaults import LEARN
 from .speech import make_transcribe, speech_values
-from .tools import learn_ask, learn_settings, learn_store
+from .tools import learn_ask, learn_settings, learn_store, learn_vision, learn_vision_why, run_gather
 
 __all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'shared', 'using']
 
@@ -27,7 +27,7 @@ class using:
 
 
 def host_ask(ai):
-    "Abhyasa's default ask, hosted: each routed task goes to `learn_ask(ai, task)`, so `ai.oneshot` and the privacy guard see every call."
+    "Abhyasa's default ask, hosted: each routed task goes to `learn_ask(ai, task)`, so `ai.oneshot` and the privacy guard see every call. Its `gather` and `vision` hooks do research and pictures as a job and a call of `ai`."
     class HostAsk:
         hosted, model = True, 'leela'
         def via(self, task, name='', max_tokens=None):
@@ -35,6 +35,9 @@ def host_ask(ai):
             ask.stream, ask.model = (lambda prompt, sp='': iter([ask(prompt, sp)])), name or self.model
             return ask
         def __call__(self, prompt, sp=''): return self.via('ask')(prompt, sp)
+        def gather(self, lr, jid, stop): return run_gather(ai, lr, jid, stop)
+        def vision(self, prompt, img, sp=''): return learn_vision(ai)(prompt, img, sp)
+        def vision_why(self): return learn_vision_why(ai)
     return HostAsk()
 
 
