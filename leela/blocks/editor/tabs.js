@@ -84,7 +84,7 @@ async function mountTab(expectedPath = '') {
   // being left. Those land first, then the strip says what the server holds and the save goes by that.
   const leaving = lee.tabKey;
   setTimeout(() => Promise.all([headingSynced(leaving), lee.nbQueue]).then(syncTabDirt)
-    .then(() => autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty') || lee.bufferTimers.size) && post('/tabs/save-all')
+    .then(() => autoSaveEnabled() && !lee.observer && ($('.lee-tab.dirty:not(.untitled)') || lee.bufferTimers.size) && post('/tabs/save-all')
       .then(d => { takeSavedVersions(d); setTabDirt(new Set(Object.keys(d.versions || {})), false); }))
     .catch(() => {}), 160);
   lee.editVersion += 1; // invalidates an autosave response belonging to the previous tab

@@ -1002,10 +1002,9 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         "Persist every dirty open tab, including buffers belonging to inactive tabs."
         saved, errors, versions, held, kinds = 0, [], {}, [], set()
         for t in ws.tabs:
-            if not t.dirty: continue
-            key = t.path or t.title
+            if not t.dirty or not t.path: continue
+            key = t.path
             try:
-                if not t.path: raise ValueError(f'{t.title} needs a filename before it can be saved')
                 base, now = _buffer_bases.get(key), _disk_version(t.path)
                 nb = _docs.get(key) if t.kind == 'notebook' else None
                 # A notebook held here takes what changed on disk, as `/nb/save` does; a text draft over a moved file waits for its tab.
