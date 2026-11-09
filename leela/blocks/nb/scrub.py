@@ -49,8 +49,6 @@ NODES = frozenset(getattr(ast, n) for n in ('Module Expr Assign AugAssign AnnAss
   'Starred Name List Tuple Slice NamedExpr Load Store Del And Or Add Sub Mult MatMult Div Mod Pow LShift RShift BitOr BitXor BitAnd FloorDiv Invert Not UAdd USub Eq NotEq Lt LtE Gt GtE '
   'Is IsNot In NotIn').split())
 LONG = 20000
-#: Seconds a scrub tick may run: the first of a gesture (imports), the rest, and the wait after a soft interrupt before the cell counts as stuck.
-SCRUB_FIRST, SCRUB_LIMIT, SCRUB_GRACE = 5, 1, 2
 
 class No(Exception): pass
 

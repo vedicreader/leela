@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, base64, json, queue, threading
+import asyncio, base64, json, queue, sys, threading
 
 from fasthtml.common import StreamingResponse
 from fastcore.all import first
@@ -17,7 +17,8 @@ from ...core.web import NOT_OBJECT, fail, json_obj, off_loop, sse
 from ..fs.fs import NotText, decoded
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
-from .scrub import scrub_why, SCRUB_FIRST, SCRUB_LIMIT, SCRUB_GRACE
+from .scrub import scrub_names, scrub_why
+from .scrubrun import FIRST as SCRUB_FIRST, LIMIT as SCRUB_LIMIT, outputs_of, parse_snapshot, snapshot_code, worker_for
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
@@ -233,41 +234,44 @@ def connect(app, ctx):
                 yield sse('error', {'text': errstr(e)})
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    def scrub_python(tab):
+        "The interpreter of a tab's kernel, found without starting it."
+        try: return str(ws.user_python(ws.cwd_for(tab)))
+        except Exception: return sys.executable
     @rt('/nb/scrub/run')
     async def nb_scrub_run(req):
-        "One tick of a scrub: run a cell that passes the scrub check, lightly, with a time limit and a soft interrupt that never restarts the kernel."
+        "One tick of a live scrub: run a cell that passes the scrub check in the notebook's worker process, on a copy of the plain data it reads. The kernel is not run in, interrupted or restarted."
         d = await req.json()
-        if (why := scrub_why(d.get('source'))): return {'ok': False, 'refused': why}
+        if not isinstance(d, dict) or not isinstance(d.get('source'), str): return fail('source must be text', 400)
+        src = d['source']
+        if (why := scrub_why(src)): return {'ok': False, 'refused': why}
         owner_tab, nb, run_lock = run_owner(d)
         c = first(x for x in (nb or []) if x.id == d.get('id'))
         if c is None or c.cell_type != 'code': return fail('that cell is no longer in the notebook', 409)
-        if run_lock.locked(): return {'ok': False, 'busy': True}
-        if (no := took(nb, d, c.id, place(nb, c), owner_tab)): return no
-        await run_lock.acquire()
-        try: k = await runtime_for(owner_tab)
-        except BaseException as e:
-            run_lock.release()
-            if isinstance(e, EnvGone): return fail(str(e), 409)
-            raise
-        run_key = ((owner_tab.path or owner_tab.title) if owner_tab else '', c.id)
-        task = asyncio.create_task(run_watched(nb, c, k, light=True))
-        def finished(_):
-            if running_cells.get(run_key, (None,))[1:] == (task,): running_cells.pop(run_key, None)
-            run_lock.release()
-        task.add_done_callback(finished); running_cells[run_key] = (k, task)
-        limit = SCRUB_FIRST if d.get('first') else SCRUB_LIMIT
-        if (await asyncio.wait([task], timeout=limit))[0]: return {'ok': not c.has_error, 'outputs': c.outputs, 'ms': c.execution_ms}
-        try: await k.interrupt()
-        except Exception: pass
-        if (await asyncio.wait([task], timeout=SCRUB_GRACE))[0]: return {'ok': False, 'slow': True, 'outputs': c.outputs}
-        return {'ok': False, 'slow': True, 'stuck': True}
+        if not (c.extra.get('scrub') or {}).get('live'): return {'ok': False, 'off': True}
+        snap = {}
+        if (names := scrub_names(src)):
+            if run_lock.locked(): return {'ok': False, 'busy': True}
+            async with run_lock:
+                try: k = await runtime_for(owner_tab)
+                except EnvGone as e: return fail(str(e), 409)
+                r = await k.execute(snapshot_code(names), store_history=False, timeout=3)
+            got = parse_snapshot(r.outputs)
+            if got is None: return {'ok': False, 'refused': 'The kernel could not hand over the data this cell reads.'}
+            if 'bad' in got: return {'ok': False, 'refused': f"This cell uses {got['bad']} from another cell, which is not plain data ({got['why']})."}
+            snap = got['ok']
+        w = worker_for(store.key(owner_tab), scrub_python(owner_tab))
+        try: res = await w.run(src, snap, SCRUB_FIRST if d.get('first') else SCRUB_LIMIT)
+        except Exception as e: return {'ok': False, 'died': True, 'note': errstr(e)}
+        if 'refused' in res or 'slow' in res or 'memory' in res or 'died' in res: return {'ok': False, **res}
+        return {'ok': not res.get('error'), 'outputs': outputs_of(res)}
     @rt('/nb/scrub/warm')
     async def nb_scrub_warm(req):
-        "Start the tab's kernel before a scrub needs it, so its first tick does not count the start."
+        "Start the notebook's scrub worker before a scrub needs it, so its first tick does not count the start."
         owner_tab, nb, _ = run_owner(await req.json())
         if nb is None: return fail('no notebook open')
-        try: await runtime_for(owner_tab)
-        except EnvGone as e: return fail(str(e), 409)
+        try: await worker_for(store.key(owner_tab), scrub_python(owner_tab)).start()
+        except Exception as e: return fail(errstr(e))
         return {'ok': True}
     @rt('/nb/run/state')
     async def nb_run_state(req):
@@ -547,6 +551,12 @@ def connect(app, ctx):
             nb._checkpoint(i)
             if confidence is None: nb[i].extra['lesson'].pop('confidence', None)
             else: nb[i].extra['lesson']['confidence'] = confidence
+            nb.dirty = True
+        elif op == 'scrub_live':
+            if nb[i].cell_type != 'code': return fail('Live scrub belongs to a code cell.')
+            nb._checkpoint(i)
+            if d.get('on'): nb[i].extra['scrub'] = {'live': True}
+            else: nb[i].extra.pop('scrub', None)
             nb.dirty = True
         elif op == 'slide':
             try: nb.set_slide(d.get('indices') or [i], str(d.get('type') or 'none'))
