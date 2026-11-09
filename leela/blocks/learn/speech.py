@@ -11,9 +11,9 @@ ENGINE_HELP = 'mlx runs on this Mac, and your audio stays here. openai sends you
 OVER = dict(engine=dict(kind='choice', choices=['mlx', 'openai'], help=ENGINE_HELP), model=dict(more=True))
 
 def speech_rows():
-    "The Speech rows of the Learn settings, made from Abhyasa's own `stt.*` rows so that no default is kept twice."
+    "The rows of the Speech settings section, made from Abhyasa's own `stt.*` rows so that no default is kept twice."
     from abhyasa.learner import SETTINGS
-    return [dict(key=f'speech.{r.key}', dflt=r.dflt, kind=r.kind, lo=r.lo, hi=r.hi, hi_key=None, choices=list(r.choices) or None, label=r.label, help=r.help,
+    return [dict(key=r.key, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=r.hi, hi_key=None, choices=list(r.choices) or None, label=r.label, help=r.help,
                  unit=r.unit or None, pct=r.pct, more=r.more, group='speech', group_label='Speech') | OVER.get(r.key, {})
             for r in (SETTINGS[f'stt.{k}'] for k in ('engine', 'model', 'segment', 'pause', 'longest'))]
 
@@ -22,10 +22,10 @@ NO_KEY = 'There is no OpenAI key. Add OPENAI_API_KEY in Settings, Environment, o
 NOTICE = 'Your audio goes to OpenAI, because you chose that engine in Settings. Speak again to go on.'
 
 def speech_values(root=None, cur=None):
-    "Abhyasa's `stt.*` rows, valued from the Learn settings `cur` of Leela (else those of `root`): what `use_settings` takes."
+    "Abhyasa's `stt.*` rows, valued from the Speech settings `cur` of Leela (else those of `root`): what `use_settings` takes."
     from ..settings.settings import Settings
-    cur = Settings(root).effective().get('learn', {}) if cur is None else cur
-    return {f'stt.{r["key"].split(".")[1]}': cur.get(r['key'], r['dflt']) for r in speech_rows()}
+    cur = Settings(root).effective().get('speech', {}) if cur is None else cur
+    return {f'stt.{r["key"]}': cur.get(r['key'], r['dflt']) for r in speech_rows()}
 
 def _marker(model):
     from huggingface_hub.constants import HF_HUB_CACHE

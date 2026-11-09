@@ -143,8 +143,7 @@ class Hosted:
         sc = dict(scope)   # a copy: Abhyasa's session middleware must not replace the one Leela's holds
         if path is not None: sc.update(path=path, raw_path=quote(path).encode())
         from abhyasa.learner import use_settings
-        cur = learn_settings(self.ws)
-        with using(self.ws), use_settings({**cur, **speech_values(cur=cur)}): await app(sc, receive, framed(send))
+        with using(self.ws), use_settings({**learn_settings(self.ws), **speech_values(getattr(self.ws, 'project_root', None))}): await app(sc, receive, framed(send))
     async def open(self, req):
         "POST `/learn/abh/open`: build the app if needed."
         if why := self._host(req.scope): return PlainTextResponse(why, 403)

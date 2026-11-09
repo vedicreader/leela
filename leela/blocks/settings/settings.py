@@ -130,9 +130,9 @@ SECTIONS = {}   # name -> {owner, rows, user_only} for each section a package re
 #: `learning` is Ramabana's, stored in the same user file; `languages` is the per-language layer.
 _RESERVED = {'languages', 'learning'}
 
-def register_section(name, rows, owner, user_only=True):
-    "Add a package's section: `rows` are dicts of `key`, `dflt`, `kind`, and optionally `lo`, `hi`, `choices`, `label`, `help`, `unit`, `pct`, `more`, `group`."
-    held = dict(owner=owner, rows=[dict(r) for r in rows], user_only=user_only)
+def register_section(name, rows, owner, user_only=True, legacy=None):
+    "Add a package's section: `rows` are dicts of `key`, `dflt`, `kind`, and optionally `lo`, `hi`, `choices`, `label`, `help`, `unit`, `pct`, `more`, `group`. `legacy` is `(section, prefix)` where the keys lived before."
+    held = dict(owner=owner, rows=[dict(r) for r in rows], user_only=user_only, legacy=legacy)
     if name in SECTIONS:
         if SECTIONS[name] == held: return
         raise ValueError(f'settings section {name!r} is already registered by {SECTIONS[name]["owner"]}')
@@ -150,6 +150,17 @@ def _unregister_section(name):
     SECTIONS.pop(name, None), DEFAULT_SETTINGS.pop(name, None), USER_ONLY.pop(name, None)
     for d in (_ENUMS, _RANGES):
         for k in [k for k in d if k[0] == name]: del d[k]
+
+def _moved(data):
+    "`data` with each key a section kept under its `legacy` section and prefix moved into the section; a value already there wins."
+    for name, v in SECTIONS.items():
+        if not v.get('legacy'): continue
+        old, pre = v['legacy']
+        if not isinstance(vals := data.get(old), dict): continue
+        for k in [k for k in vals if k.startswith(pre)]:
+            data.setdefault(name, {}).setdefault(k[len(pre):], vals.pop(k))
+        if not vals: data.pop(old)
+    return data
 
 def _repo_safe(data):
     "A workspace layer without `USER_ONLY` keys, at the top level and in each `languages` block."
@@ -303,9 +314,13 @@ class Settings:
     def raw(self, scope, strict=False):
         "One layer's document. `strict` raises `BrokenSettings` where the lenient read gives {}."
         read = _load if strict else _read
-        if scope == 'user': return _compact_legacy_snapshot(read(self.user_path))
+        if scope == 'user': return _moved(_compact_legacy_snapshot(read(self.user_path)))
         if scope == 'workspace': return _compact_legacy_snapshot(read(self.workspace_path)) if self.workspace_path else {}
         raise ValueError('scope must be user or workspace')
+    def migrate(self):
+        "Write the user file again once, when keys sit where a section's `legacy` says they used to."
+        cur = _read(self.user_path)
+        if (new := _moved(deepcopy(cur))) != cur: _write(self.user_path, new)
     def ignored(self):
         "Each `section.key` the repo's file sets that only the user's file may set, so it has no effect."
         data = self.raw('workspace')

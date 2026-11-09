@@ -34,7 +34,7 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         toggle = page.locator('.lee-settings-checks input[type=checkbox]').first
         assert await toggle.evaluate("el => getComputedStyle(el.closest('label')).display") == 'flex'
         value = page.locator('[data-pref="walks.passage"]')
-        fold = value.locator('xpath=ancestor::details')   # not the first fold: the speech group has one too
+        fold = value.locator('xpath=ancestor::details')
         await fold.evaluate('el => el.open = true')
         await expect(fold).to_have_attribute('open', '')
         await value.fill('700')
@@ -58,6 +58,30 @@ def test_learn_settings_save_and_reload(tmp_path, cfg_home):
         await expect(pg.locator('[data-settings-scope]')).to_be_enabled()
         await expect(pg.locator('[data-settings-scope]')).to_have_value('workspace')
         await expect(pg.locator('[data-settings-language]')).to_be_enabled()
+        await pg.locator('[data-settings-page="learn"]').click()
+        await pg.keyboard.press('Escape')
+        await pg.evaluate("leeEditorSettings('')")
+        await expect(pg.locator('[data-settings-page]')).to_contain_text(['Text editor', 'Appearance', 'Files & save', 'Run & debug', 'Agent', 'Learn', 'Speech', 'Environment'])
+        await pg.locator('[data-settings-page="speech"]').click()
+        speech = pg.locator('[data-settings-section="speech"]')
+        await expect(speech.locator('h3')).to_have_text('Speech')
+        await expect(pg.locator('[data-settings-section="learn"]')).to_be_hidden()
+        await expect(pg.locator('[data-settings-scope]')).to_have_value('user')
+        await expect(pg.locator('[data-settings-scope]')).to_be_disabled()
+        await expect(pg.locator('[data-learn-scope]')).to_have_text('Speech uses user settings for all languages.')
+        assert await speech.locator('[data-pref-section="speech"][data-pref]').count() >= 4
+        assert await pg.locator('[data-pref-section="learn"][data-pref^="speech."]').count() == 0
+        await speech.locator('[data-pref="engine"]').select_option('openai')
+        async with pg.expect_request(lambda r: r.url.endswith('/settings/save')) as req:
+            await pg.locator('[data-save]').click()
+        sent = (await req.value).post_data_json
+        assert sent['scope'] == 'user' and not sent['language'] and sent['section'] == 'speech' and sent['values'] == {'engine': 'openai'}
+        await expect(pg.locator('.lee-settings-modal')).to_have_count(0)
+        assert json.loads(user.read_text())['speech'] == {'engine': 'openai'}
+        assert await pg.evaluate("lee.prefs.speech.engine") == 'openai'
+        await pg.evaluate("leeEditorSettings('')")
+        await pg.locator('[data-settings-page="speech"]').click()
+        await expect(pg.locator('[data-pref-section="speech"][data-pref="engine"]')).to_have_value('openai')
         await pg.locator('[data-settings-page="learn"]').click()
         shot = Path('target/s1-learn-settings.png')
         shot.parent.mkdir(parents=True, exist_ok=True)

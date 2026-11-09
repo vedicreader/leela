@@ -3998,6 +3998,15 @@ function lessonRevealActions(cell, el) {
     } catch (e) { status(lessonSaid(e), 'err'); button.disabled = false; }
   };
 }
+//: The server's line for a result it could not file (a read-only vault), once under the reveal. The filing lands a moment after the run, so it asks again.
+async function lessonFiling(el, path) {
+  for (const wait of [300, 1500, 3000]) {
+    await new Promise(ok => setTimeout(ok, wait));
+    if (!el.isConnected) return;
+    const line = (await api('/lesson/filing').catch(() => ({})))[path];
+    if (line && !$('.lee-reveal-filing', el)) { const row = document.createElement('div'); row.className = 'lee-reveal-filing'; row.textContent = line; el.appendChild(row); return; }
+  }
+}
 function renderLessonReveal(c) {
   const cell = $(`.lee-cell[data-id="${CSS.escape(c.id)}"]`); if (!cell) return;
   $('.lee-reveal', cell)?.remove();
@@ -4007,6 +4016,7 @@ function renderLessonReveal(c) {
   el.textContent = lessonRevealText(c);
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
+  lessonFiling(el, lee.path);
 }
 //: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer. The gate reveals once the server answers ok. A failure opens the gate again with the server's message.
 async function lessonPredict(e) {

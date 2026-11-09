@@ -40,31 +40,50 @@ def eng(monkeypatch, tmp_path):
     return NS(m=m, calls=calls)
 
 
-def test_speech_rows_are_a_group_of_the_learn_section_and_match_abhyasas_defaults(monkeypatch):
+def test_speech_rows_are_their_own_section_and_match_abhyasas_defaults(monkeypatch):
     from abhyasa.learner import SETTINGS
-    rows = learn_rows()
-    sp = [r for r in rows if r['group'] == 'speech']
-    assert [r['key'] for r in sp] == [f'speech.{k}' for k in ('engine', 'model', 'segment', 'pause', 'longest')]
-    for r in sp:
-        a = SETTINGS['stt.' + r['key'].split('.')[1]]
+    rows = speech.speech_rows()
+    assert [r['key'] for r in rows] == ['engine', 'model', 'segment', 'pause', 'longest'] and {r['group'] for r in rows} == {'speech'}
+    for r in rows:
+        a = SETTINGS['stt.' + r['key']]
         assert r['dflt'] == a.dflt and r['kind'] in (a.kind, 'choice') and r['lo'] == a.lo
-    assert not [r for r in rows if r['key'].split('.')[0] in ('stt', 'voice')]
+    assert not [r for r in learn_rows() if r['group'] == 'speech' or r['key'].startswith('speech.')]
+
+
+def _reg(monkeypatch):
+    for n in ('DEFAULT_SETTINGS', '_ENUMS', '_RANGES', 'USER_ONLY', 'SECTIONS'): monkeypatch.setattr(S, n, deepcopy(getattr(S, n)))
+    register_section('learn', learn_rows(), 'abhyasa')
+    register_section('speech', speech.speech_rows(), 'abhyasa', legacy=('learn', 'speech.'))
 
 
 def test_speech_settings_save_validate_and_stay_user_only(monkeypatch, tmp_path):
-    for n in ('DEFAULT_SETTINGS', '_ENUMS', '_RANGES', 'USER_ONLY', 'SECTIONS'): monkeypatch.setattr(S, n, deepcopy(getattr(S, n)))
-    register_section('learn', learn_rows(), 'abhyasa')
+    _reg(monkeypatch)
     (tmp_path/'proj'/'.leela').mkdir(parents=True)
-    (tmp_path/'proj'/'.leela'/'settings.json').write_text(json.dumps({'learn': {'speech.engine': 'openai'}}))
+    (tmp_path/'proj'/'.leela'/'settings.json').write_text(json.dumps({'speech': {'engine': 'openai'}}))
     s = Settings(tmp_path/'proj', user_path=tmp_path/'user.json')
-    assert s.effective()['learn']['speech.engine'] == 'mlx'
-    with pytest.raises(ValueError): s.save('user', 'learn', {'speech.engine': 'whisperx'})
-    with pytest.raises(ValueError): s.save('user', 'learn', {'speech.pause': 50})
-    assert s.save('user', 'learn', {'speech.engine': 'openai', 'speech.pause': '900'})['effective']['learn']['speech.engine'] == 'openai'
-    v = speech.speech_values(cur=s.effective()['learn'])
+    assert s.effective()['speech']['engine'] == 'mlx'
+    with pytest.raises(ValueError): s.save('user', 'speech', {'engine': 'whisperx'})
+    with pytest.raises(ValueError): s.save('user', 'speech', {'pause': 50})
+    with pytest.raises(ValueError, match='user settings for all languages'): s.save('workspace', 'speech', {'pause': 900})
+    assert s.save('user', 'speech', {'engine': 'openai', 'pause': '900'})['effective']['speech']['engine'] == 'openai'
+    v = speech.speech_values(cur=s.effective()['speech'])
     assert v == {'stt.engine': 'openai', 'stt.model': '', 'stt.segment': True, 'stt.pause': 900, 'stt.longest': 12}
-    s.reset('user', 'learn')
-    assert speech.speech_values(cur=s.effective()['learn'])['stt.engine'] == 'mlx'
+    s.reset('user', 'speech')
+    assert speech.speech_values(cur=s.effective()['speech'])['stt.engine'] == 'mlx'
+
+
+def test_speech_values_stored_in_the_learn_section_move_to_speech_once(monkeypatch, tmp_path):
+    _reg(monkeypatch)
+    f = tmp_path/'user.json'
+    f.write_text(json.dumps({'learn': {'speech.engine': 'openai', 'speech.pause': 900, 'walks.steps': 4}, 'speech': {'pause': 1100}, 'editor': {'fontSize': 12}}))
+    s = Settings(user_path=f)
+    assert s.effective()['speech']['engine'] == 'openai' and s.effective()['speech']['pause'] == 1100
+    assert s.effective()['learn']['walks.steps'] == 4 and 'speech.engine' not in s.effective()['learn']
+    s.migrate()
+    assert json.loads(f.read_text()) == {'learn': {'walks.steps': 4}, 'speech': {'engine': 'openai', 'pause': 1100}, 'editor': {'fontSize': 12}}
+    before = f.read_bytes(); s.migrate(); assert f.read_bytes() == before
+    f.write_text(json.dumps({'learn': {'speech.model': 'm'}})); s.migrate()
+    assert json.loads(f.read_text()) == {'speech': {'model': 'm'}}
 
 
 def test_transcribe_uses_leelas_engine_and_model_and_reads_no_abhyasa_file(eng, monkeypatch):
@@ -243,7 +262,8 @@ def test_a_voice_route_of_the_hosted_app_reads_leelas_speech_settings(ws, monkey
     from abhyasa.learner import val
     got = {}
     async def echo(scope, receive, send): got.update(pause=val('stt.pause'), walks=val('walks.steps'))
-    monkeypatch.setattr(host, 'learn_settings', lambda ws: {'speech.pause': 1500, 'walks.steps': 3})
+    monkeypatch.setattr(host, 'learn_settings', lambda ws: {'walks.steps': 3})
+    monkeypatch.setattr(host, 'speech_values', lambda root=None, cur=None: {'stt.pause': 1500})
     asyncio.run(host.Hosted(ws)._serve(echo, dict(type='http', method='POST', path='/voice/start', headers=[]), None, None))
     assert got == {'pause': 1500, 'walks': 3}
 

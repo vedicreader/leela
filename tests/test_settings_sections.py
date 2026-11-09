@@ -6,6 +6,7 @@ import pytest
 from leela.blocks.settings import settings as S
 from leela.blocks.settings.settings import Settings, register_section
 from leela.blocks.learn.app import learn_rows
+from leela.blocks.learn.speech import speech_rows
 
 ROWS = [dict(key='steps', dflt=7, kind='int', lo=3, hi=7), dict(key='mode', dflt='a', kind='choice', choices=('a', 'b')),
         dict(key='on', dflt=True, kind='bool'), dict(key='share', dflt=.5, kind='float', lo=0., hi=1.)]
@@ -90,6 +91,7 @@ def test_learn_connect_registers_for_multiple_apps_without_writing(reg, tmp_path
     monkeypatch.setattr(S, 'user_settings_file', lambda: p)
     for _ in range(2): connect(FastHTML(), MagicMock())
     assert S.SECTIONS['learn']['rows'] == learn_rows()
+    assert S.SECTIONS['speech']['rows'] == speech_rows() and S.SECTIONS['speech']['owner'] == 'abhyasa'
     assert not p.exists()
 
 def test_learn_missing_package_skips_registration(reg, monkeypatch, caplog):
@@ -101,9 +103,9 @@ def test_learn_missing_package_skips_registration(reg, monkeypatch, caplog):
         if name == 'abhyasa.learner': raise ImportError('missing settings')
         return original(name, *args, **kwargs)
     monkeypatch.setattr(builtins, '__import__', missing)
-    S.SECTIONS.pop('learn', None)
+    S.SECTIONS.pop('learn', None); S.SECTIONS.pop('speech', None)
     connect(FastHTML(), MagicMock())
-    assert 'learn' not in S.SECTIONS
+    assert 'learn' not in S.SECTIONS and 'speech' not in S.SECTIONS
     assert any(r.levelname == 'WARNING' and 'Learn settings unavailable' in r.getMessage() for r in caplog.records)
 
 def test_percent_conversion():
@@ -144,4 +146,4 @@ def test_learn_page_text_says_the_settings_are_used():
     root = Path(__file__).resolve().parent.parent/'leela'
     for f in ('blocks/settings/prefs.js', 'static/lee-ide.js'):
         text = (root/f).read_text()
-        assert 'These settings change the Learn pages, the Learn tools and speech input.' in text and 'are coming' not in text
+        assert 'These settings change the Learn pages and the Learn tools.' in text and 'speech input' not in text and 'are coming' not in text

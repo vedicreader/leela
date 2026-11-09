@@ -398,7 +398,7 @@ function leeModeBoot() {
   const sh = $('#shell'); if (!sh) return;
   lee.mode = sh.dataset.mode || 'code';
   try { lee.modeLayouts = JSON.parse(sh.dataset.layouts || '{}'); } catch (_) { lee.modeLayouts = {}; }
-  if (lee.mode !== 'code') leeModeLayout(lee.modeLayouts[lee.mode]);
+  if (lee.mode !== 'code' || sh.dataset.kept) leeModeLayout(lee.modeLayouts[lee.mode]);
 }
 leeModeBoot();
 const leeModeDock = () => { const s = $('#shell'); return {files: !s.classList.contains('no-left'), exec: !s.classList.contains('no-bottom'), exec_handle: !s.hasAttribute('data-nohandle'), agent: !s.classList.contains('no-right'), main: lee.mode === 'learn' ? 'learn' : 'editor'}; };
@@ -919,9 +919,10 @@ async function editorSettings(languageScope = null) {
         originalTheme = lee.theme || readTheme();
   let saved = false, previewView = null;
   const selected = (value, current) => value === current ? ' selected' : '';
+  const pkgs = () => Object.keys(lee.settingsMeta?.sections || {}), isPkg = s => !!lee.settingsMeta?.sections?.[s];
   const prefsOf = section => section === 'editor' ? lee.editorPrefs : section === 'files' ? lee.filePrefs :
     section === 'workbench' ? lee.workbenchPrefs : section === 'backups' ? (lee.backupPrefs || {}) :
-    section === 'agent' ? (lee.agentPrefs || {}) : section === 'learn' ? (lee.learnPrefs || {}) : lee.debugPrefs;
+    section === 'agent' ? (lee.agentPrefs || {}) : isPkg(section) ? (lee.prefs?.[section] || {}) : lee.debugPrefs;
   const checked = (section, key) => prefsOf(section)[key] ? ' checked' : '';
   const fontSelect = CODE_FONTS.map(([name, detail]) =>
     `<option value="${esc(name)}"${selected(name, lee.editorPrefs.fontFamily)}>${esc(name)} · ${esc(detail)}</option>`).join('');
@@ -940,21 +941,23 @@ async function editorSettings(languageScope = null) {
     `<button class="lee-theme-mode${m === mode ? ' active' : ''}" data-theme-mode="${m}" aria-pressed="${m === mode}">${m === 'system' ? 'follow system' : m}</button>`).join('');
   const densityButtons = density => THEME_DENSITIES.map(d =>
     `<button class="lee-theme-mode${d === density ? ' active' : ''}" data-theme-density="${d}" aria-pressed="${d === density}">${d}</button>`).join('');
-  const learnControl = r => {
-    const label = esc(r.label) + (r.pct ? ' (%)' : r.unit ? ` (${esc(r.unit)})` : ''), help = esc(r.help || ''), v = (lee.learnPrefs || {})[r.key] ?? r.dflt;
-    if (r.kind === 'bool') return check('learn', r.key, label, help);
-    if (r.kind === 'choice') return select('learn', r.key, label, r.choices.map(c => [c, esc(c)]), help);
-    if (r.kind === 'str') return field('learn', r.key, label, `<input class="lee-input" data-setting spellcheck="false" value="${esc(v)}">`, help);
+  const PKG_PAGES = {learn: ['Learn', 'These settings change the Learn pages and the Learn tools.'], speech: ['Speech', 'These settings choose how Leela turns your voice into text, in Learn and in every text box.']};
+  const pkgTitle = name => PKG_PAGES[name]?.[0] || name[0].toUpperCase() + name.slice(1);
+  const pkgControl = (name, r) => {
+    const label = esc(r.label) + (r.pct ? ' (%)' : r.unit ? ` (${esc(r.unit)})` : ''), help = esc(r.help || ''), v = prefsOf(name)[r.key] ?? r.dflt;
+    if (r.kind === 'bool') return check(name, r.key, label, help);
+    if (r.kind === 'choice') return select(name, r.key, label, r.choices.map(c => [c, esc(c)]), help);
+    if (r.kind === 'str') return field(name, r.key, label, `<input class="lee-input" data-setting spellcheck="false" value="${esc(v)}">`, help);
     const shown = value => value == null ? '' : r.pct ? settingsPercent(value) : value;
-    return field('learn', r.key, label, `<input class="lee-input" data-setting ${r.pct ? 'data-percent' : ''} type="number" min="${shown(r.lo)}" max="${shown(r.hi_key ? lee.learnPrefs?.[r.hi_key] : r.hi)}" step="${r.pct || r.kind === 'int' ? 1 : 'any'}" value="${shown(v)}">`, help);
+    return field(name, r.key, label, `<input class="lee-input" data-setting ${r.pct ? 'data-percent' : ''} type="number" min="${shown(r.lo)}" max="${shown(r.hi_key ? prefsOf(name)[r.hi_key] : r.hi)}" step="${r.pct || r.kind === 'int' ? 1 : 'any'}" value="${shown(v)}">`, help);
   };
-  const learnPage = () => {
-    const rows = lee.settingsMeta?.sections?.learn; if (!rows) return '';
-    const grid = list => `<div class="lee-settings-grid">${list.filter(r => r.kind !== 'bool').map(learnControl).join('')}</div><div class="lee-settings-checks">${list.filter(r => r.kind === 'bool').map(learnControl).join('')}</div>`;
-    return `<section data-settings-section="learn" hidden><h3>Learn</h3><p>These settings change the Learn pages, the Learn tools and speech input.</p>` +
-      [...new Set(rows.map(r => r.group))].map(g => {
+  const pkgPage = name => {
+    const rows = lee.settingsMeta.sections[name], groups = [...new Set(rows.map(r => r.group))];
+    const grid = list => `<div class="lee-settings-grid">${list.filter(r => r.kind !== 'bool').map(r => pkgControl(name, r)).join('')}</div><div class="lee-settings-checks">${list.filter(r => r.kind === 'bool').map(r => pkgControl(name, r)).join('')}</div>`;
+    return `<section data-settings-section="${name}" hidden><h3>${esc(pkgTitle(name))}</h3><p>${esc(PKG_PAGES[name]?.[1] || '')}</p>` +
+      groups.map(g => {
         const own = rows.filter(r => r.group === g), more = own.filter(r => r.more), main = own.filter(r => !r.more);
-        return `<div class="lee-settings-group"><h4>${esc(own[0].group_label)}</h4>${main.length ? grid(main) : ''}${more.length ? `<details data-learn-more><summary>More</summary>${grid(more)}</details>` : ''}</div>`;
+        return `<div class="lee-settings-group">${groups.length > 1 ? `<h4>${esc(own[0].group_label)}</h4>` : ''}${main.length ? grid(main) : ''}${more.length ? `<details data-learn-more><summary>More</summary>${grid(more)}</details>` : ''}</div>`;
       }).join('') + `</section>`;
   };
   const m = modal(`<div class="lee-mhead">settings<span class="sub">user · workspace · language-aware</span></div>` +
@@ -966,7 +969,7 @@ async function editorSettings(languageScope = null) {
     `<div class="lee-settings-layout"><nav class="lee-settings-nav" aria-label="Settings sections">` +
     `<button class="active" data-settings-page="editor">Text editor</button><button data-settings-page="appearance">Appearance</button>` +
     `<button data-settings-page="files">Files & save</button><button data-settings-page="debug">Run & debug</button>` +
-    `<button data-settings-page="agent">Agent</button>` + (lee.settingsMeta?.sections?.learn ? `<button data-settings-page="learn">Learn</button>` : '') +
+    `<button data-settings-page="agent">Agent</button>` + pkgs().map(n => `<button data-settings-page="${n}">${esc(pkgTitle(n))}</button>`).join('') +
     `<button data-settings-page="environment">Environment</button>` +
     `<button data-settings-page="backups">Backups</button>` +
     `<button data-settings-page="keys">Keybindings</button></nav><div class="lee-settings-content">` +
@@ -1023,7 +1026,7 @@ async function editorSettings(languageScope = null) {
     `value="${esc(lee.agentPrefs?.configFolder || '')}">` +
     `<small>Empty means Leela's own config dir, which is where it has always been. ` +
     `Backups and the pre-write copy follow this folder. Conversations already open keep the folder ` +
-    `they started in, so restart Leela after changing it.</small></label></div></section>` + learnPage() +
+    `they started in, so restart Leela after changing it.</small></label></div></section>` + pkgs().map(pkgPage).join('') +
     `<section data-settings-section="backups" hidden><h3>Backups</h3>` +
     `<p>Dated copies of what cannot be rebuilt: conversations and their titles, branches, notes, ` +
     `workspaces, keymaps and settings. A copy is also taken before anything overwrites the ` +
@@ -1056,12 +1059,12 @@ async function editorSettings(languageScope = null) {
   api('/lsp/status').then(d=>{const el=$('[data-lsp-state]',m);if(el){el.textContent=d.available?(d.alive?'connected':'available'):'optional';el.title=d.note||'';}}).catch(()=>{});
   await document.fonts.ready;
   previewView=createEditor($('#settingspreview',m),{doc:'# Programming ligatures and line guides\nfrom pathlib import Path\n\ndef compare(left: int, right: int) -> bool:\n    return left != right and left <= 100  # => result\n',lang:'python',lineNums:true});
-  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{},learn:lee.learnPrefs||{}};
+  const sections={editor:lee.editorPrefs,files:lee.filePrefs,workbench:lee.workbenchPrefs,debug:lee.debugPrefs,backups:lee.backupPrefs||{},agent:lee.agentPrefs||{},...Object.fromEntries(pkgs().map(n=>[n,prefsOf(n)]))};
   const initialSections=Object.fromEntries(Object.entries(sections).map(([name,values])=>[name,{...values}]));
   const update=()=>{$$('[data-pref]',m).forEach(input=>{const target=sections[input.dataset.prefSection];target[input.dataset.pref]=input.type==='checkbox'?input.checked:input.type==='number'?(input.hasAttribute('data-percent')?settingsPercent(input.value,initialSections[input.dataset.prefSection][input.dataset.pref]):Number(input.value)):input.value;});
-    for (const r of lee.settingsMeta?.sections?.learn || []) if (r.hi_key) {
-      const input = $(`[data-pref-section="learn"][data-pref="${r.key}"]`, m);
-      if (input) input.max = r.pct ? settingsPercent(sections.learn[r.hi_key]) : sections.learn[r.hi_key];
+    for (const n of pkgs()) for (const r of lee.settingsMeta.sections[n]) if (r.hi_key) {
+      const input = $(`[data-pref-section="${n}"][data-pref="${r.key}"]`, m);
+      if (input) input.max = r.pct ? settingsPercent(sections[n][r.hi_key]) : sections[n][r.hi_key];
     }
     const entries=$$('[data-backup-entry]',m); if(entries.length)sections.backups.include=entries.filter(b=>b.checked).map(b=>b.dataset.backupEntry);
     applyEditorPrefs(sections.editor);LeeCM.configure(previewView,sections.editor);};
@@ -1116,7 +1119,7 @@ async function editorSettings(languageScope = null) {
   }
   const scope=$('[data-settings-scope]',m),language=$('[data-settings-language]',m),path=$('[data-settings-path]',m),target=$('[data-settings-target]',m);
   let held=null;const own=()=>held||{scope:scope.value,language:language.value};
-  const paintPath=()=>{const learn=page==='learn';if(learn&&!held){held={scope:scope.value,language:language.value};scope.value='user';language.value='';}else if(!learn&&held){scope.value=held.scope;language.value=held.language;held=null;}scope.disabled=language.disabled=learn;$('[data-learn-scope]',m).hidden=!learn;const savedScope=learn?'user':scope.value;path.textContent=shownPath(lee.settingsMeta?.paths?.[savedScope]);path.title=lee.settingsMeta?.paths?.[savedScope]||'';target.textContent=learn?'user · all languages':`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
+  const paintPath=()=>{const learn=isPkg(page);if(learn&&!held){held={scope:scope.value,language:language.value};scope.value='user';language.value='';}else if(!learn&&held){scope.value=held.scope;language.value=held.language;held=null;}scope.disabled=language.disabled=learn;const note=$('[data-learn-scope]',m);note.hidden=!learn;if(learn)note.textContent=`${pkgTitle(page)} uses user settings for all languages.`;const savedScope=learn?'user':scope.value;path.textContent=shownPath(lee.settingsMeta?.paths?.[savedScope]);path.title=lee.settingsMeta?.paths?.[savedScope]||'';target.textContent=learn?'user · all languages':`${scope.value} · ${language.value||'all languages'}`;paintSettingsOrigins();};
   scope.onchange=()=>{localStorage.setItem('lee-settings-save-scope',scope.value);paintPath();};paintPath();
   language.onchange=()=>{localStorage.setItem('lee-settings-language-scope',language.value);saved=true;m.remove();editorSettings(language.value);};
   // Every click previews live; the modal's close handler puts the original back unless saved.
@@ -1128,10 +1131,10 @@ async function editorSettings(languageScope = null) {
   $$('[data-theme]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,family:b.dataset.theme});paintPicker();});
   $$('[data-theme-mode]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,mode:b.dataset.themeMode});paintPicker();});
   $$('[data-theme-density]',m).forEach(b=>b.onclick=()=>{applyTheme({...lee.theme,density:b.dataset.themeDensity});paintPicker();});
-  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:section==='learn'?'user':scope.value,section,language:section==='appearance'||section==='learn'?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
+  $('[data-reset]',m).onclick=async()=>{const targets=page==='appearance'?['appearance','editor']:[page]; if(!targets.every(t=>t==='appearance'||sections[t]))return;try{for(const section of targets)await post('/settings/reset',{scope:isPkg(section)?'user':scope.value,section,language:section==='appearance'||isPkg(section)?'':language.value});}catch(e){return status(String(e.message||e),'err');}saved=true;m.remove();applyEditorPrefs(EDITOR_DEFAULTS);setTimeout(editorSettings,0);};
   $('[data-cancel]',m).onclick=()=>m.remove();
   const same=(a,b)=>Array.isArray(a)||Array.isArray(b)?JSON.stringify(a)===JSON.stringify(b):a===b;
-  $('[data-save]',m).onclick=async()=>{update();const o=own();let count=0;const said=new Set();try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){said.add((await post('/settings/save',{scope:section==='learn'?'user':o.scope,language:section==='learn'?'':o.language,section,values:changed})).message);count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){said.add((await saveTheme(lee.theme,o.scope)).message);count++;}localStorage.setItem('lee-settings-save-scope',o.scope);localStorage.setItem('lee-settings-language-scope',o.language);localStorage.removeItem('lee-editor-settings');await loadSettings(o.language);saved=true;m.remove();status(count?[...said].filter(Boolean).join(' '):'No settings changed.','ok');};
+  $('[data-save]',m).onclick=async()=>{update();const o=own();let count=0;const said=new Set();try{for(const [section,values] of Object.entries(sections)){const changed=Object.fromEntries(Object.entries(values).filter(([key,value])=>!same(value,initialSections[section][key])));if(Object.keys(changed).length){said.add((await post('/settings/save',{scope:isPkg(section)?'user':o.scope,language:isPkg(section)?'':o.language,section,values:changed})).message);count+=Object.keys(changed).length;}}}catch(e){return status(String(e.message||e),'err');}const themeSaved=themeText(lee.theme)!==themeText(originalTheme);if(themeSaved){said.add((await saveTheme(lee.theme,o.scope)).message);count++;}localStorage.setItem('lee-settings-save-scope',o.scope);localStorage.setItem('lee-settings-language-scope',o.language);localStorage.removeItem('lee-editor-settings');await loadSettings(o.language);saved=true;m.remove();status(count?[...said].filter(Boolean).join(' '):'No settings changed.','ok');};
   /* A secret's value never comes back from the server, so a row says that it is set, not what it is. */
   const paintEnv=async(d=null)=>{
     const list=$('[data-env-list]',m); if(!list) return;
