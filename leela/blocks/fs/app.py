@@ -106,6 +106,7 @@ def connect(app, ctx):
                 while True:
                     got = await q.get()
                     if isinstance(got, str): yield sse('opened', {'path': got}); continue
+                    if isinstance(got, dict): yield sse('opened', got); continue
                     if got is KEYMAP: yield sse('keys', keys_payload()); continue
                     paths, resync = got
                     repos = sorted({r for p in paths if (r := git_meta(p))})

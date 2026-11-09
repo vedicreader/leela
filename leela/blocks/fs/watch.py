@@ -190,10 +190,15 @@ class Watcher:
     def changed(self, paths):
         "Tell every subscriber `paths` changed on disk, as the watch thread does. From any thread."
         if self.loop is not None: self._push(sorted(map(str, paths)))
+    def _tell(self, item):
+        if self.loop is None: return
+        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer_one, q, item)
     def announce(self, path):
         "Tell every subscriber a tab was opened on `path` by something other than the page. From any thread."
-        if self.loop is None: return
-        for q in list(self.subs): self.loop.call_soon_threadsafe(self._offer_one, q, str(path))
+        self._tell(str(path))
+    def announce_tab(self, kind, ref):
+        "Tell every subscriber a tab with no path, of `kind` and `ref`, was opened by something other than the page. From any thread."
+        self._tell(dict(kind=kind, ref=ref))
     @classmethod
     def _offer_one(cls, q, item):
         if q.full(): cls._offer(q, [], False)
