@@ -55,7 +55,7 @@ for (const change of [{}, {cell_type: 'markdown'}, {extra: {}}, {execution_count
   ctx.document = {createElement: () => new Proxy({}, {set(obj, prop, value) {
     if (prop === 'innerHTML') throw Error('user text must not use innerHTML'); obj[prop] = value; return true;
   }})};
-  ctx.lessonRevealActions = () => { hooks++; };
+  ctx.lessonRevealActions = () => { hooks++; }; ctx.lee = {path: ''}; ctx.lessonFiling = () => {};
   ctx.renderLessonReveal(c);
   result.push({removed, hooks, text: el?.textContent || '', className: el?.className || ''});
 }

@@ -99,10 +99,10 @@ def test_isolated_stores_are_all_under_the_state_folder_and_none_is_real(tmp_pat
     assert all(v.is_relative_to(tmp_path) for v in env.values()) and not tnl.refused(env.values(), iso.REAL_STORES)
 
 
-def test_banner_names_url_state_vault_model_and_twelve_lines_to_try():
+def test_banner_names_url_state_vault_model_and_the_lines_to_try():
     t = tnl.banner('http://127.0.0.1:9/', '/s', ('learn', '/s/leela/learn/vault.db'), True, True, False)
     assert 'http://127.0.0.1:9/' in t and '/s/leela/learn/vault.db' in t and 'canned replies, nothing leaves this machine' in t and 'demo data' in t
-    assert len([l for l in t.split('what to try\n')[1].splitlines() if l.strip()]) == 12
+    assert len([l for l in t.split('what to try\n')[1].splitlines() if l.strip()]) == 17
 
 
 from tests.test_learn_abh_research import web, _create, _gather  # noqa: F401

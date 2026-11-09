@@ -20,12 +20,12 @@ def test_a_saved_walk_tab_restores_as_the_learn_tab_at_its_walk(tmp_path):
     old = dict(d['tabs'][0], kind='learn_walk', ref=json.dumps(['workspace', 'walk-1']), page=''); old.pop('page')
     d['tabs'] = [old]; d['active'] = 0
     path.write_text(json.dumps(d))
-    restored = Workspace()
+    restored = Workspace(); restored.mode = 'learn'   # Code never shows a Learn tab after a restore
     assert restored.reopen_saved_tabs(path) == 1
     assert [(t.kind, t.page) for t in restored.tabs] == [('learn', '/w/walk-1')] and restored.tab is restored.tabs[0]
     d['tabs'] = [dict(old, page='/w/walk-1/2')]
     path.write_text(json.dumps(d))
-    again = Workspace(); again.reopen_saved_tabs(path)
+    again = Workspace(); again.mode = 'learn'; again.reopen_saved_tabs(path)
     assert again.tab.page == '/w/walk-1/2'
 
 
