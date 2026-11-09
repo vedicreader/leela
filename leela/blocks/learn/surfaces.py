@@ -4,10 +4,13 @@ import hashlib, re
 from importlib.resources import files
 from pathlib import Path
 
-ALWAYS = dict(css=[], js=[], rerun=[])
+ALWAYS = dict(css=[], js=['voice.js'], rerun=[], files=['vad.js'])
 SURFACES = [
     (r'^/[wc]/', dict(css=[], js=['detour.js'], rerun=[])),
+    (r'^/dictate$', dict(js=['dictate.js'])),
     (r'^/(?:[wc]|t)/', dict(css=[], js=['learn-demo.js'], rerun=[])),
+    (r'^/(?:$|c/|course/)', dict(css=['home.css'], js=['home.js'], rerun=['home.js'])),
+    (r'^/(?:w/|walks)', dict(css=['walkpage.css'], js=['walkpage.js'], rerun=['walkpage.js'])),
     (r'^/(?:library/)?graph(?:/|$)', dict(css=[], js=['d3.min.js', 'graph.js'], rerun=['graph.js'])),
 ]
 
@@ -17,7 +20,7 @@ def _dirs():
     return [Path(__file__).parent, Path(str(root/'core')), Path(str(root/'core'/'vendor')), *sorted(p for p in Path(str(root/'blocks')).glob('*') if p.is_dir())]
 
 
-def _names(e): return [n for k in ('css', 'js', 'rerun') for n in e.get(k, [])]
+def _names(e): return [n for k in ('css', 'js', 'rerun', 'files') for n in e.get(k, [])]
 
 
 def known(): return {n for e in (ALWAYS, *(e for _, e in SURFACES)) for n in _names(e)}
@@ -36,11 +39,11 @@ def asset_url(name):
 
 
 def surface(path):
-    "The css, js and rerun URLs the Abhyasa page at `path` needs, `ALWAYS` first, without duplicates, and every name the manifest knows."
+    "The css, js, rerun and files URLs (files are known, not loaded) the Abhyasa page at `path` needs, `ALWAYS` first, without duplicates, and every name the manifest knows."
     path = re.split(r'[?#]', path or '/')[0] or '/'
     es = [ALWAYS, *(e for rx, e in SURFACES if re.search(rx, path))]
     out = {}
-    for k in ('css', 'js', 'rerun'):
+    for k in ('css', 'js', 'rerun', 'files'):
         names = list(dict.fromkeys(n for e in es for n in e.get(k, [])))
         out[k] = [u for n in names if (u := asset_url(n))]
     return {**out, 'known': sorted(known())}
