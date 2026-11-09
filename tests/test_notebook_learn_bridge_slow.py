@@ -119,7 +119,7 @@ def test_learn_about_this_switches_mode_and_fills_the_prompt_without_sending(tmp
         box = pg.locator('#agentprompt')
         assert await box.input_value() == 'Teach me about 1/0'
         assert await box.evaluate('e => [e.selectionStart, e.selectionEnd, document.activeElement === e]') == [18, 18, True]
-        assert ws.mode == 'learn' and not be.sent and 'Teach me' not in await pg.evaluate(SAID)
+        assert ws.mode == 'learn' and not be.sent and 'Teach me about' not in await pg.evaluate(SAID) and not await pg.locator('#agentlog .lee-agent-turn').count()
         assert await pg.evaluate("document.querySelector('#shell').classList.contains('no-left')")
         await _shot(pg, 'learn-about')
         # a draft is kept: the line goes under it, and the person is told

@@ -222,3 +222,32 @@ def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
     rows = Learning(Memory(path=tmp_path/'learning.db', offline=True)._store('learning')).attempts('halves', limit=10)
     assert len(rows) == 1
     assert (bool(rows[0].correct), rows[0].depth, rows[0].answer, rows[0].thinking, rows[0].gate) == (True, 3, '4', 'Half of 8 is 4.', 'g1')
+
+
+def test_a_result_that_could_not_be_filed_says_so_once_under_the_reveal(tmp_path, monkeypatch):
+    from leela.blocks.nb import lesson
+    async def go(pg):
+        await pg.set_viewport_size({'width': 1440, 'height': 1100}); pg.set_default_timeout(15000)
+        await pg.evaluate("() => { leeAct('new_lesson'); }")
+        await pg.locator('.lee-modal input').fill('Filing practice'); await pg.locator('.lee-modal input').press('Enter')
+        await pg.wait_for_function("lee.cells.length === 5 && lee.cells[2].extra?.lesson?.role === 'prediction'")
+        pred = pg.locator('.lee-cell[data-i="2"]')
+        await pred.locator('.lee-md-cell').dblclick()
+        await pg.wait_for_function("document.activeElement?.closest('.lee-cell')?.dataset.i === '2' && document.activeElement.classList.contains('cm-content')")
+        await pg.keyboard.type('one')
+        await pred.get_by_role('button', name='fairly', exact=True).click()
+        await pg.wait_for_function('lee.cells[2].extra.lesson.confidence === 70')
+        await pg.evaluate("() => { const v = ensureCellMounted(3); LeeCM.setDoc(v, 'print(1)'); window._run = runCell(3, false); }")
+        await pg.evaluate('window._run'); await pg.locator('.lee-reveal').wait_for()
+        assert await pg.locator('.lee-reveal-filing').count() == 0
+        path = await pg.evaluate('lee.path'); line = 'Run result not filed: the vault is read-only. Change access in the vault panel.'
+        lesson.UNFILED[path] = (0, line)
+        try:
+            await pg.evaluate('renderLessonReveal(lee.cells[3])')
+            await pg.locator('.lee-reveal .lee-reveal-filing').wait_for()
+            await pg.wait_for_timeout(2500)
+            assert await pg.locator('.lee-reveal-filing').all_inner_texts() == [line]
+        finally: lesson.UNFILED.pop(path, None)
+        await pg.evaluate('renderLessonReveal(lee.cells[3])'); await pg.wait_for_timeout(2500)
+        assert await pg.locator('.lee-reveal-filing').count() == 0
+    asyncio.run(_real_page(go, tmp_path))
