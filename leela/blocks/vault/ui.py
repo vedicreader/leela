@@ -385,28 +385,30 @@ def vault_settings(memory, vault='', vaults=None, **_):
 LEARN_CHOICES = (('attach', 'Attach', 'use that vault in place', 'go'), ('copy', 'Back up and copy', 'back it up, then copy it here', ''),
                  ('skip', 'Start empty', 'begin with nothing', ''))
 
-def _learn_forms():
+def _learn_forms(same=False):
     return Div(*[Form(Hidden(name='choice', value=c), Button(label, cls=f'lee-btn {cls}'.strip(), type='submit', title=tip),
                       hx_post='/vault/learn-import', hx_target='#learnimport', hx_swap='outerHTML', cls='lee-clip-form')
-                 for c, label, tip, cls in LEARN_CHOICES], cls='lee-wb-setrow')
+                 for c, label, tip, cls in LEARN_CHOICES if not (same and c == 'attach')], cls='lee-wb-setrow')
 
-def learn_offer(src, walks, concepts):
-    "The first-run offer: what a standalone vault holds, and three explicit ways to go on."
+def learn_offer(src, walks, concepts, same=False):
+    "The first-run offer: what a standalone vault holds, and the explicit ways to go on."
     found = f'{_plural(walks, "walk")} and {_plural(concepts, "concept")}'
-    return Section(Span('learning found', cls='lee-vault-legend'),
-        Div(f'{src.name} in the folder {src.parent.name} holds {found}. Attach uses it in place. Back up and copy keeps the original as it is. Start empty leaves it alone.'),
-        _learn_forms(), id='learnimport', cls='lee-wb-set lee-learn-offer')
+    why = ('Your learning lives in your workspace vault file, so it cannot be attached as a second vault. Back up and copy makes a separate Learn vault and keeps the original as it is. Start empty leaves it alone.'
+           if same else 'Attach uses it in place. Back up and copy keeps the original as it is. Start empty leaves it alone.')
+    return Section(Span('learning found', cls='lee-vault-legend'), Div(f'{src.name} in the folder {src.parent.name} holds {found}. {why}'),
+        _learn_forms(same), id='learnimport', cls='lee-wb-set lee-learn-offer')
 
 def _plural(n, word): return f'{n} {word}' + ('' if n == 1 else 's')
 
 def learn_result(r):
     "The result line that replaces the offer, from the dict `/vault/learn-import` returns."
     c = r.get('choice')
-    if not r.get('ok'): return Div(Span(r.get('error') or 'The import failed. Nothing was changed.', role='alert'), _learn_forms(), id='learnimport', cls='lee-wb-set lee-learn-offer')
-    say = {'attach': 'Learn now uses that vault.',
-           'copy': f"Copied. The backup is {Path(r.get('backup', '')).name}.", 'skip': 'Learn starts empty. Ask again with import learning in the Vault settings.',
+    if not r.get('ok'): return Div(Span(r.get('error') or 'The import failed. Nothing was changed.', role='alert'), _learn_forms(r.get('same_file')), id='learnimport', cls='lee-wb-set lee-learn-offer')
+    say = {'attach': 'Learn now uses that vault.', 'skip': 'Learn starts empty. Ask again with import learning in the Vault settings.',
+           'copy': f"Copied. The backup is {Path(r.get('backup', '')).name}." + (f" Search by meaning is being built ({r['indexing']})." if r.get('index') else ''),
            'none': 'There is no learning to import.'}[c]
-    return Div(Span(say, role='status'), id='learnimport', cls='lee-learn-offer')
+    return Div(Span(say, role='status'), *([Span(r['index_error'], role='alert')] if r.get('index_error') else []),
+               *([Div(hx_get=f"/jobs/{r['index']}", hx_trigger='load', hx_swap='outerHTML')] if r.get('index') else []), id='learnimport', cls='lee-learn-offer')
 
 def _swap(view, vault='', **kw):
     return dict(hx_get='/vault/view/' + view + (('?' + q) if (q := _q(vault=vault, **kw)) else ''),

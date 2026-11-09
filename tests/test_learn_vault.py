@@ -1,4 +1,4 @@
-import json
+import json, sqlite3, time
 from pathlib import Path
 
 import pytest
@@ -16,6 +16,14 @@ def _walk(path, jid='old'):
     lr = Learning(Vault(str(path), offline=True))
     lr.put_journey(dict(id=jid, title=jid.title(), goal='learn', steps=[]))
     return lr
+
+
+def _wait(ws, out):
+    end = time.monotonic() + 30
+    while time.monotonic() < end:
+        if not (job := ws.jobs.get(out['index'])).active: return job
+        time.sleep(.05)
+    raise AssertionError('index job did not finish')
 
 
 def _client(ws): return TestClient(LoopbackHostGuard(ide_app(ws)), base_url='http://127.0.0.1')
@@ -67,7 +75,8 @@ def test_copy_backs_up_source_and_copies_learning(ws, tmp_path, monkeypatch):
     assert out['ok'], out
     backup = Path(out['backup'])
     assert out['ok'] and out['vault'] == LEARN
-    assert backup.read_bytes() == before and src.read_bytes() == before
+    assert src.read_bytes() == before and sqlite3.connect(backup).execute("select count(*) from learning_docs where kind='journey'").fetchone()[0] == 1
+    _wait(ws, out)
     assert learn_store(ws)[1].journey('old')
 
 
@@ -79,6 +88,7 @@ def test_second_import_does_not_duplicate(ws, tmp_path, monkeypatch):
         first = cl.post('/vault/learn-import', data={'choice': 'copy'}, headers=_headers()).json()
         second = cl.post('/vault/learn-import', data={'choice': 'copy'}, headers=_headers()).json()
     assert first['ok'], first
+    _wait(ws, first)
     assert not second['ok'] and second['kind'] == 'already_imported'
     assert len(learn_store(ws)[1].journeys()) == 1
     assert len(list(tmp_path.glob('standalone.*.backup.db'))) == 1
@@ -117,7 +127,7 @@ def _post(cl, choice, **h): return cl.post('/vault/learn-import', data={'choice'
 def test_offer_names_what_was_found_and_the_three_actions(ws, tmp_path, monkeypatch):
     src = _src(tmp_path, monkeypatch, walks=2)
     with _client(ws) as cl: r = cl.get('/learn/import')
-    assert r.status_code == 200 and 'text/html' in r.headers['content-type']
+    assert r.status_code == 200 and 'text/html' in r.headers['content-type'] and not r.text.lstrip().lower().startswith('<!doctype')
     assert '2 walks' in r.text and 'standalone.db' in r.text and tmp_path.name in r.text and str(tmp_path) not in r.text
     for c in ('attach', 'copy', 'skip'): assert f'value="{c}"' in r.text
     assert 'hx-post="/vault/learn-import"' in r.text and ws.vaults.get(LEARN) is None
@@ -178,6 +188,7 @@ def test_read_only_source_copies_and_stays_untouched(ws, tmp_path, monkeypatch):
     try:
         with _client(ws) as cl: out = _post(cl, 'copy').json()
         assert out['ok'], out
+        _wait(ws, out)
         assert src.read_bytes() == before and learn_store(ws, write=True)[1].journey('w0')
     finally: src.chmod(0o644)
 
@@ -185,7 +196,7 @@ def test_read_only_source_copies_and_stays_untouched(ws, tmp_path, monkeypatch):
 def test_failed_backup_changes_nothing_and_says_why(ws, tmp_path, monkeypatch):
     src = _src(tmp_path, monkeypatch); before = src.read_bytes()
     def boom(*a, **k): raise OSError('disk full')
-    monkeypatch.setattr('leela.blocks.vault.app.shutil.copy2', boom)
+    monkeypatch.setattr('leela.blocks.vault.app._backup', boom)
     with _client(ws) as cl:
         out = _post(cl, 'copy').json()
         assert cl.get('/learn/import').status_code == 200
@@ -211,8 +222,9 @@ def test_copy_keeps_the_learn_vault_encoder_stamp(ws, tmp_path, monkeypatch):
     import sqlite3
     src = _src(tmp_path, monkeypatch)
     con = sqlite3.connect(src); con.execute("update store_meta set encoder='other/encoder' where name='learning'"); con.commit(); con.close()
-    with _client(ws) as cl: assert _post(cl, 'copy').json()['ok']
-    assert learn_store(ws)[1].journey('w0')
+    with _client(ws) as cl: out = _post(cl, 'copy').json()
+    _wait(ws, out)
+    assert out['ok'] and learn_store(ws)[1].journey('w0')
 
 
 def test_copy_refuses_a_learn_vault_that_already_holds_learning(ws, tmp_path, monkeypatch):
@@ -244,7 +256,7 @@ def test_htmx_post_gets_the_result_line_and_json_gets_the_same_dict(ws, tmp_path
 
 def test_failed_import_line_shows_the_error_and_the_actions_again(ws, tmp_path, monkeypatch):
     _src(tmp_path, monkeypatch)
-    monkeypatch.setattr('leela.blocks.vault.app.shutil.copy2', lambda *a, **k: (_ for _ in ()).throw(OSError('disk full')))
+    monkeypatch.setattr('leela.blocks.vault.app._backup', lambda *a, **k: (_ for _ in ()).throw(OSError('disk full')))
     with _client(ws) as cl: r = _post(cl, 'copy', **{'hx-request': 'true'})
     assert r.status_code == 200 and 'disk full' in r.text and 'value="attach"' in r.text
 
@@ -257,3 +269,86 @@ def test_agent_write_tools_report_read_only_on_the_learn_vault(ws):
     tool = {f.__name__: f for f in learn_tools(ai)}['note_confusion']
     r = tool(slug='x', note='y') if 'slug' in tool.__annotations__ else tool(**{k: 'x' for k in tool.__annotations__})
     assert r['status'] == 'error' and 'read_only' in json.dumps(r)
+
+
+def _same_file_src(ws, monkeypatch):
+    p = Path(ws.vaults.get('workspace').path); _walk(p, 'w0')
+    monkeypatch.setenv('ABHYASA_VAULT', str(p))
+    return p
+
+
+def test_same_file_offer_has_no_attach_and_says_why(ws, monkeypatch):
+    _same_file_src(ws, monkeypatch)
+    with _client(ws) as cl: r = cl.get('/learn/import')
+    assert r.status_code == 200 and 'workspace vault file' in r.text
+    assert 'value="attach"' not in r.text and 'value="copy"' in r.text and 'value="skip"' in r.text
+
+
+def test_same_file_attach_is_refused_without_a_second_row(ws, monkeypatch):
+    p = _same_file_src(ws, monkeypatch)
+    with _client(ws) as cl: out = _post(cl, 'attach').json()
+    assert not out['ok'] and out['kind'] == 'same_file' and ws.vaults.get(LEARN) is None
+    assert [r.name for r in ws.vaults if Path(r.path).resolve() == p.resolve()] == ['workspace']
+
+
+def test_same_file_copy_makes_a_separate_vault_and_the_offer_does_not_return(ws, monkeypatch):
+    p = _same_file_src(ws, monkeypatch); before = len(list(ws.vaults))
+    with _client(ws) as cl:
+        out = _post(cl, 'copy').json(); _wait(ws, out)
+        again = cl.get('/learn/import'); asked = cl.get('/learn/import?again=1')
+    assert out['ok'] and Path(ws.vaults.get(LEARN).path).resolve() != p.resolve() and len(list(ws.vaults)) == before + 1
+    assert again.status_code == 204 and 'value="copy"' not in asked.text and learn_store(ws)[1].journey('w0')
+
+
+def test_copy_queues_an_index_job_and_the_result_says_so(ws, tmp_path, monkeypatch):
+    _src(tmp_path, monkeypatch)
+    with _client(ws) as cl:
+        out = _post(cl, 'copy').json()
+        line = _post(cl, 'copy', **{'hx-request': 'true'}).text
+    assert out['ok'] and out['index'].startswith('learn_index-') and out['indexing'].startswith('indexing 0 of ')
+    job = _wait(ws, out)
+    assert job.status == 'complete' and job.result['indexed'] == job.result['total'] > 0
+    assert ws.vaults.memory(LEARN)._store('learning').db._ann_meta('learning')['ndim']
+
+
+def test_htmx_copy_line_names_the_index_and_polls_the_job(ws, tmp_path, monkeypatch):
+    _src(tmp_path, monkeypatch)
+    with _client(ws) as cl: r = _post(cl, 'copy', **{'hx-request': 'true'})
+    assert 'Search by meaning is being built (indexing 0 of' in r.text and 'hx-get="/jobs/learn_index-' in r.text
+
+
+def test_copy_from_another_encoder_embeds_again_then_indexes(ws, tmp_path, monkeypatch):
+    src = _src(tmp_path, monkeypatch)
+    con = sqlite3.connect(src); con.execute("update store_meta set encoder='other/encoder' where name='learning'"); con.commit(); con.close()
+    with _client(ws) as cl: out = _post(cl, 'copy').json()
+    job = _wait(ws, out); v = ws.vaults.memory(LEARN)._store('learning')
+    assert job.status == 'complete' and job.result['reencoded'] and job.result['indexed'] == job.result['total'] > 0
+    assert {len(r['embedding']) for r in v.db.q('select embedding from learning where embedding is not null')} == {v.enc.dims * 2}
+
+
+def test_failed_index_leaves_the_copy_intact_and_says_so(ws, tmp_path, monkeypatch):
+    from apswutils.db import Table
+    _src(tmp_path, monkeypatch)
+    def boom(self, *a, **k): raise OSError('index disk full')
+    monkeypatch.setattr(Table, 'rebuild_index', boom)
+    with _client(ws) as cl: out = _post(cl, 'copy').json()
+    job = _wait(ws, out)
+    assert out['ok'] and job.status == 'error' and 'index disk full' in job.error
+    assert learn_store(ws)[1].journey('w0') and ws.vaults.get(LEARN).imported_from
+
+
+def test_index_that_cannot_start_leaves_the_copy_and_says_so(ws, tmp_path, monkeypatch):
+    _src(tmp_path, monkeypatch)
+    def boom(*a, **k): raise RuntimeError('no jobs')
+    monkeypatch.setattr(ws.jobs, 'start', boom)
+    with _client(ws) as cl: out = _post(cl, 'copy').json()
+    assert out['ok'] and out['index'] is None and 'copy is complete' in out['index_error'] and learn_store(ws)[1].journey('w0')
+
+
+def test_stopped_index_job_changes_no_embeddings(ws, tmp_path, monkeypatch):
+    src = _src(tmp_path, monkeypatch)
+    con = sqlite3.connect(src); con.execute("update store_meta set encoder='other/encoder' where name='learning'"); con.commit(); con.close()
+    monkeypatch.setattr(ws.jobs, 'stopping', lambda jid: True)
+    with _client(ws) as cl: out = _post(cl, 'copy').json()
+    job = _wait(ws, out)
+    assert job.status == 'cancelled' and job.result['cancelled'] and learn_store(ws)[1].journey('w0')
