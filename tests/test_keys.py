@@ -54,13 +54,13 @@ def test_a_broken_entry_costs_that_entry_and_nothing_else(tmp_path):
     "One typo must not throw the file away, and must not be silent either."
     p = _keymap(tmp_path, {'run_cell': 'ctrl+y', 'nope': 'ctrl+q',
                            'save': 'ctrl+bogus+s', 'focus_files': 'alt+shift+3'})
-    notes = []
-    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes)
+    notes, took = [], []
+    ks = apply_overrides(DEFAULTS, read_overrides(p, notes=notes), notes=notes, took=took)
     by = {k.action: k for k in ks}
     assert by['run_cell'].keys[0] == 'ctrl+y'
     assert by['save'].key == lookup('save').key
-    assert by['focus_files'].key == 'mod+1 alt+shift+1'
-    assert len(notes) == 3 and all(isinstance(n, str) and n for n in notes)
+    assert by['focus_files'].key == 'alt+shift+3' and by['focus_exec'].key == 'mod+3', 'your chord wins; the default keeps its other one'
+    assert len(notes) == 2 and len(took) == 1 and all(isinstance(n, str) and n for n in notes + took)
 
 def test_a_rejected_override_does_not_leak_into_the_defaults(tmp_path):
     "The trial map is a copy: a refused entry must not still be sitting in the table it was tried."
@@ -363,3 +363,141 @@ def test_open_is_the_mac_open_and_go_to_file_is_the_quick_open():
     btns = {b.action: b.label for b in BUTTONS if b.bar in ('files', 'web_files')}
     assert (btns['open_folder'], btns['quick_open']) == ('open…', 'go to file…'), 'and its buttons'
     assert {('mod+o', 'open…'), ('mod+p', 'go to file…')} <= set(help_rows()['global'])
+
+
+
+# A chord you set beats a built-in default (1.0.3). Keys v2 moved defaults onto an owner's own chords and Leela refused theirs.
+import asyncio
+from dataclasses import replace
+from fastcore.all import L
+import leela.core.keys as K
+
+def _won(over, base=None):
+    notes, took = [], []
+    ks = apply_overrides(base or DEFAULTS, over, notes=notes, took=took)
+    return {k.action: k.key for k in ks}, notes, took, ks
+
+def test_a_chord_you_set_beats_a_default_and_the_default_loses_only_that_chord():
+    by, notes, took, _ = _won({'panel_deploys': 'alt+f'})
+    assert by['panel_deploys'] == 'alt+f' and by['find_usages'] == '' and notes == []
+    assert len(took) == 1 and 'find_usages' in took[0] and 'alt+f' in took[0]
+    by, notes, took, _ = _won({'ask_ai': 'mod+shift+a'})
+    assert by['palette'] == 'mod+shift+p' and by['ask_ai'] == 'mod+shift+a', 'the palette keeps its other chord, in order'
+
+def test_two_of_your_own_chords_that_collide_are_refused_and_the_defaults_stay():
+    by, notes, took, _ = _won({'save': 'mod+alt+shift+8', 'save_all': 'mod+alt+shift+8'})
+    assert by['save'] == 'mod+alt+shift+8' and by['save_all'] == lookup('save_all').key
+    assert len(notes) == 1 and 'which you also set' in notes[0] and took == []
+
+def test_a_swap_a_chain_and_an_unbind_need_no_default_to_lose_anything():
+    by, notes, took, _ = _won({'panel_git': 'alt+d', 'panel_deploys': 'alt+g'})
+    assert (by['panel_git'], by['panel_deploys'], notes, took) == ('alt+d', 'alt+g', [], [])
+    by, notes, took, _ = _won({'find_usages': 'alt+d', 'panel_deploys': 'alt+f'})
+    assert (by['find_usages'], by['panel_deploys'], notes, took) == ('alt+d', 'alt+f', [], [])
+    by, notes, took, _ = _won({'find_usages': '', 'panel_deploys': 'alt+f'})
+    assert (by['find_usages'], by['panel_deploys'], notes, took) == ('', 'alt+f', [], [])
+
+def test_a_chord_is_matched_by_what_it_presses_not_by_how_it_is_spelled():
+    by, notes, took, _ = _won({'ask_ai': 'mod+shift+A'})
+    assert by['palette'] == 'mod+shift+p', 'shift+A is shift+a'
+
+def test_a_user_chord_takes_a_chord_across_scopes_in_both_directions():
+    ed = first(DEFAULTS, lambda k: k.scope == 'editor' and k.bound and k.key.count('+') >= 1)
+    by, notes, took, _ = _won({'palette': ed.key.split()[0]})
+    assert by['palette'] == ed.key.split()[0] and ed.action in ' '.join(took) and notes == []
+    by, notes, took, _ = _won({ed.action: 'mod+shift+p'})
+    assert by[ed.action] == 'mod+shift+p' and by['palette'] == 'mod+shift+a' and notes == []
+
+def test_a_machine_written_map_never_outranks_a_default():
+    "A stale full dump must not take a chord a newer default moved onto."
+    over = {k.action: k.key for k in DEFAULTS if k.bound}
+    assert K.bulk_map(over)
+    over['panel_deploys'] = 'alt+f'
+    by, notes, took, _ = _won(over)
+    assert by['panel_deploys'] == lookup('panel_deploys').key and by['find_usages'] == 'alt+f'
+    assert len(notes) == 1 and took == []
+
+def test_the_conflict_check_asks_the_host_whether_mod_is_ctrl(monkeypatch):
+    "On a Mac hyper+z (cmd ctrl opt shift) is not mod+alt+shift+z (cmd opt shift); on a PC they are the same press."
+    monkeypatch.setattr(K, '_host_fold', lambda: False)
+    by, notes, took, _ = _won({'toggle_left': 'hyper+z'})
+    assert by['toggle_left'] == 'hyper+z' and by['workspace_redo'] == lookup('workspace_redo').key and took == []
+    monkeypatch.setattr(K, '_host_fold', lambda: True)
+    by, notes, took, _ = _won({'toggle_left': 'hyper+z'})
+    assert by['workspace_redo'] == '' and len(took) == 1
+
+def test_the_shipped_defaults_are_free_of_conflicts_on_every_host():
+    assert K._dupes(DEFAULTS, fold=True) == [] and K._dupes(DEFAULTS, fold=False) == [] and K._dupes(DEFAULTS) == []
+
+def test_a_default_that_lost_a_chord_is_not_written_back_as_your_choice(tmp_path, monkeypatch):
+    "Frozen into keys.json it would stay unbound, and would win collisions, after the default moved."
+    p = _keymap(tmp_path, {'keys': {'panel_deploys': 'alt+f'}})
+    monkeypatch.setenv('LEELA_KEYMAP', str(p))
+    keep = K.KEYS
+    try:
+        K.reload(p)
+        assert lookup('find_usages').key == '' and K.KEYS.displaced == {'find_usages': 'alt+f'}
+        K.write_keymap(p)
+        assert json.loads(p.read_text())['keys'] == {'panel_deploys': 'alt+f'}
+        moved = L([replace(k, key='alt+j') if k.action == 'find_usages' else k for k in DEFAULTS])
+        assert {k.action: k.key for k in apply_overrides(moved, read_overrides(p, notes=[]), notes=[], took=[])}['find_usages'] == 'alt+j'
+    finally: monkeypatch.undo(); K.KEYS = keep
+
+def test_reloading_an_unchanged_file_does_not_bump_the_version(tmp_path, monkeypatch):
+    p = _keymap(tmp_path, {'keys': {'panel_deploys': 'alt+f', 'save': 'mod+alt+shift+8', 'save_all': 'mod+alt+shift+8'}})
+    keep = K.KEYS
+    try:
+        K.reload(p); v = K.VERSION
+        K.reload(p)
+        assert K.VERSION == v and len(K.TOOK) == 1 and len(K.NOTES) == 1
+    finally: K.reload(); K.KEYS = keep
+
+def test_the_owners_hand_written_keymap_keeps_every_chord_it_names():
+    "Seven of these were refused after keys v2 moved the defaults onto them."
+    over = {'panel_deploys': 'alt+f', 'panel_releases': 'alt+v', 'cell_duplicate': 'alt+d', 'cell_merge_above': 'alt+g',
+            'toggle_bottom': 'alt+b', 'local_history': 'alt+t', 'toggle_left': 'hyper+z alt+shift+b',
+            'find_usages': 'hyper+u', 'workspace_redo': 'hyper+.', 'git_blame': 'hyper+b', 'new_notebook': 'hyper+n', 'ask_ai': 'hyper+a'}
+    by, notes, took, _ = _won(over)
+    assert notes == [] and all(by[a] == c for a, c in over.items()), {a: by[a] for a in over if by[a] != over[a]}
+
+def test_a_default_with_no_chord_left_shows_a_dash_and_the_map_still_serves():
+    _, _, _, ks = _won({'panel_deploys': 'alt+f'})
+    assert K.chord_display(first(ks, lambda k: k.action == 'find_usages')) == '–'
+    keep = K.KEYS
+    try:
+        K.KEYS = ks
+        assert first(web_keymap(), lambda r: r['action'] == 'find_usages')['chords'] == []
+    finally: K.KEYS = keep
+
+def _routes():
+    from leela.blocks.keys.app import connect
+    h = {}
+    class App:
+        def route(self, path, **kw):
+            def deco(f): h[path] = f; return f
+            return deco
+    connect(App(), None)
+    return h
+
+def _post(handler, body):
+    class Req:
+        async def json(self): return body
+    return asyncio.run(handler(Req()))
+
+def test_a_win_is_information_and_a_refusal_is_an_error_on_the_check_route():
+    h = _routes()
+    r = _post(h['/keys/check'], {'keys': {'panel_deploys': 'alt+f'}})
+    assert r['ok'] is True and r['notes'] == [] and len(r['took']) == 1
+    r = _post(h['/keys/check'], {'keys': {'save': 'mod+alt+shift+8', 'save_all': 'mod+alt+shift+8'}})
+    assert r['ok'] is False and len(r['notes']) == 1 and r['took'] == []
+
+def test_the_check_route_and_a_reload_say_the_same_about_the_same_file(tmp_path, monkeypatch):
+    over = {'panel_deploys': 'alt+f', 'save': 'mod+alt+shift+8', 'save_all': 'mod+alt+shift+8'}
+    p = _keymap(tmp_path, {'keys': over})
+    monkeypatch.setenv('LEELA_KEYMAP', str(p))
+    keep, h = K.KEYS, _routes()
+    try:
+        K.reload(p)
+        f, c = h['/keys/file'](), _post(h['/keys/check'], {'keys': over})
+        assert (f['notes'], f['took']) == (c['notes'], c['took'])
+    finally: monkeypatch.undo(); K.reload(); K.KEYS = keep

@@ -1,6 +1,6 @@
 "The browser IDE's single-source keymap, shipped to the browser by `web_keymap()`."
 
-import json, os
+import json, os, sys
 from dataclasses import dataclass, asdict, replace
 from fastcore.all import L, Path, first, ifnone
 from kavacha import chord_glyph
@@ -8,7 +8,7 @@ from kavacha import chord_glyph
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
            'help_rows', 'PRESENT_KEYS', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
-           'apply_overrides', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload',
+           'apply_overrides', 'TOOK', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload',
            'changed', 'refresh', 'VERSION', 'SAME_IDEA', 'NO_MENU', 'TWICE', 'CHROME_RESERVED', 'LEGACY',
            'glyphs', 'legacy_rows']
 
@@ -358,27 +358,31 @@ LEGACY = {'alt+i': 'toggle_scope', 'hyper+u': 'find_usages', 'hyper+,': 'workspa
           'hyper+pagedown': 'run_below', 'hyper+backspace': 'restart_run_all', 'hyper+pageup': 'cell_merge_below',
           'hyper+delete': 'clear_cell_output', 'mod+shift+t': 'agent_threads', 'mod+shift+g': 'exec_promote'}
 
-def _signature(chord):
-    "A chord as it collides: modifiers sorted, and `mod` folded into `ctrl`."
+def _host_fold():
+    "Whether `mod` and `ctrl` are one key on this host: they are on Windows and Linux, not on a Mac."
+    return sys.platform != 'darwin'
+
+def _signature(chord, fold=True):
+    "A chord as it collides: modifiers sorted, and with `fold` the `mod` folded into `ctrl`."
     mods, base = parse_key(chord)
-    if 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
+    if fold and 'mod' in mods: mods = (mods - {'mod'}) | {'ctrl'}
     return tuple(sorted(mods)), base
 
-def _dupes(keys):
+def _dupes(keys, fold=True):
     "(scope, chord) pairs bound twice, and actions declared twice. Both are real conflicts."
     seen, bad = {}, []
     keys = L(keys)
     for k in keys:
         for c in k.keys:
-            sig = (k.scope, _signature(c))
+            sig = (k.scope, _signature(c, fold))
             if sig in seen: bad.append(f'{c} is bound by both {seen[sig]} and {k.action} in scope {k.scope}')
             else: seen[sig] = k.action
     acts = keys.attrgot('action')
     bad += [f'action {a!r} declared twice' for a in set(acts) if acts.count(a) > 1]
-    g = {_signature(c): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
+    g = {_signature(c, fold): k.action for k in keys.filter(lambda k: k.scope == 'global') for c in k.keys}
     for k in keys.filter(lambda k: k.scope != 'global'):
         for c in k.keys:
-            if (t := _signature(c)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
+            if (t := _signature(c, fold)) in g: bad.append(f'{c} is both global ({g[t]}) and {k.scope} ({k.action})')
     return bad
 
 def by_scope(scope): return KEYS.filter(lambda k: k.scope == scope)
@@ -387,7 +391,7 @@ def lookup(action): return first(KEYS.filter(lambda k: k.action == action))
 def _twice(k, c): return f'{c} {c}' if TWICE.get(k.action) == c else c
 
 def chord_display(action_or_key, sep=' / '):
-    "How a binding is written for a person: every chord it answers to, or an em dash when unbound."
+    "How a binding is written for a person: every chord it answers to, or a dash when unbound."
     k = lookup(action_or_key) if isinstance(action_or_key, str) else action_or_key
     if k is None: return ''
     return sep.join(_twice(k, c) for c in k.keys) if k.bound else '–'
@@ -559,30 +563,67 @@ def read_overrides(path=None, notes=None):
         else: out[a] = c.strip()
     return out
 
-def apply_overrides(keys, over, notes=None):
-    "`keys` with the user's chords applied, skipping what cannot work."
-    notes = ifnone(notes, NOTES)
+TOOK = L()   # what the user's chords took from a default, in words; not an error, so apart from NOTES
+
+def _clash(k1, c1, k2, c2, fold):
+    "Whether chord `c1` of `k1` and chord `c2` of `k2` fire on the same press: one chord, in one scope or a global one."
+    return _signature(c1, fold) == _signature(c2, fold) and (k1.scope == k2.scope or 'global' in (k1.scope, k2.scope))
+
+def _defaults_win(out, todo, notes, fold):
+    "`out` with `todo` applied one entry at a time, skipping any that collides: a machine-written map never outranks a default."
+    trial = L(list(out))
+    for i, k in todo.items(): trial[i] = k
+    if not _dupes(trial, fold): return trial
+    moved = True
+    while todo and moved:
+        moved = False
+        for i in list(todo):
+            trial = L(list(out)); trial[i] = todo[i]
+            if not _dupes(trial, fold): out, moved = trial, True; del todo[i]
+    for i, k in todo.items():
+        trial = L(list(out)); trial[i] = k
+        notes.append(f'keymap: {k.action} -> {k.key!r} conflicts ({_dupes(trial, fold)[0]}). Leela kept {out[i].key or "unbound"}')
+    return out
+
+def _user_wins(out, todo, fold):
+    "(keys, notes, took): the user's chords placed, a default losing only the chord a user chord takes. None if a collision is left."
+    notes, took, mine = [], [], {}
+    for i, k in todo.items():
+        hit = first(o.action for j, o in mine.items() if any(_clash(k, c, o, d, fold) for c in k.keys for d in o.keys))
+        if hit: notes.append(f'keymap: {k.action} -> {k.key!r} conflicts with {hit}, which you also set. Leela kept {out[i].key or "unbound"}')
+        else: mine[i] = k
+    res, lost = L(list(out)), {}
+    for i, k in mine.items(): res[i] = k
+    for i, k in mine.items():
+        for j, o in enumerate(res):
+            if j in mine or not o.bound: continue
+            gone = [d for d in o.keys if any(_clash(k, c, o, d, fold) for c in k.keys)]
+            if not gone: continue
+            keep = [d for d in o.keys if d not in gone]
+            lost.setdefault(o.action, o.key)
+            res[j] = replace(o, key=' '.join(keep))
+            took.append(f'keymap: {k.action} took {" ".join(gone)!r} from {o.action}; {o.action} keeps {" ".join(keep) or "no chord"}')
+    if _dupes(res, fold): return None
+    res.displaced = lost
+    return res, notes, took
+
+def apply_overrides(keys, over, notes=None, took=None):
+    """`keys` with the user's chords applied, skipping what cannot work. In a hand-written map your chord wins over a
+    built-in default, which loses only that chord (told in `took`); two of your own chords that collide are refused (told in `notes`)."""
+    notes, took = ifnone(notes, NOTES), ifnone(took, TOOK)
+    fold = _host_fold()
     out, todo = L(list(keys)), {}
     for a, c in (over or {}).items():
         i = out.argfirst(lambda k: k.action == a)
         if i is None: notes.append(f'keymap: no action named {a!r}'); continue
         try: todo[i] = replace(out[i], key=c)
         except ValueError as e: notes.append(f'keymap: {a}: {e}')
-    # Together first, so moving a chord is not refused for colliding with the action it leaves.
-    trial = L(list(out))
-    for i, k in todo.items(): trial[i] = k
-    if not _dupes(trial): return trial
-    # Then one at a time, again while a pass frees a chord another entry wanted.
-    moved = True
-    while todo and moved:
-        moved = False
-        for i in list(todo):
-            trial = L(list(out)); trial[i] = todo[i]
-            if not _dupes(trial): out, moved = trial, True; del todo[i]
-    for i, k in todo.items():
-        trial = L(list(out)); trial[i] = k
-        notes.append(f'keymap: {k.action} -> {k.key!r} conflicts ({_dupes(trial)[0]}). Leela kept {out[i].key or "unbound"}')
-    return out
+    if not todo: return out
+    if not bulk_map(over) and (r := _user_wins(out, todo, fold)):
+        res, n, t = r
+        notes.extend(n); took.extend(t)
+        return res
+    return _defaults_win(out, todo, notes, fold)
 
 _BULK = 50
 
@@ -601,10 +642,16 @@ def only_changed(over, base=None):
     d = {k.action: k.key for k in L(ifnone(base, DEFAULTS))}
     return {a: c for a, c in over.items() if not _same_chord(d.get(a, ''), c)}
 
+def _chosen(keys):
+    "What differs from the defaults in `keys`, without the defaults that lost a chord to the user: those follow the next default."
+    ks = ifnone(keys, KEYS)
+    gone = getattr(ks, 'displaced', {})
+    return {a: c for a, c in only_changed({k.action: k.key for k in L(ks)}).items() if a not in gone}
+
 def keymap_json(keys=None, over=None):
     "The overrides as the JSON a user edits, with every action and its default beside them."
     ks = L(ifnone(keys, KEYS))
-    over = ifnone(over, only_changed({k.action: k.key for k in ks}))
+    over = ifnone(over, _chosen(keys))
     return {'_help': ['leela keymap: action -> chord, or several chords separated by spaces.',
                       'A chord is [mod+][ctrl+][alt+][shift+]base; hyper is Command+Control+Option+Shift on macOS; mod is Command on macOS and Control elsewhere; base is a character or a name '
                       '(enter, escape, tab, space, up, f1..f12).',
@@ -623,7 +670,7 @@ def write_keymap(path=None, keys=None, keep=True):
     p = Path(path or keymap_path())
     kept = read_overrides(p, notes=L()) if keep else {}
     if bulk_map(kept): kept = only_changed(kept)
-    eff = only_changed({k.action: k.key for k in L(ifnone(keys, KEYS))})
+    eff = _chosen(keys)
     guard(p, reason='before the keymap was rewritten')
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(keymap_json(keys, {**kept, **eff}), indent=2) + '\n')
@@ -645,8 +692,8 @@ def reload(path=None):
     global KEYS, _seen
     p, was = Path(path) if path else keymap_path(), (list(KEYS), list(NOTES))
     _seen = (p, _read(p))
-    NOTES.clear()
-    KEYS = apply_overrides(DEFAULTS, read_overrides(p), NOTES)
+    NOTES.clear(); TOOK.clear()
+    KEYS = apply_overrides(DEFAULTS, read_overrides(p), NOTES, TOOK)
     _bump(was)
     return KEYS
 

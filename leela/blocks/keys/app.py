@@ -45,7 +45,7 @@ def connect(app, ctx):
     @rt('/keys/file')
     def keys_file():
         p = keymap_path()
-        return {'path': str(p), 'exists': p.exists(), 'notes': list(keymap.NOTES), **_file(p)}
+        return {'path': str(p), 'exists': p.exists(), 'notes': list(keymap.NOTES), 'took': list(keymap.TOOK), **_file(p)}
     @rt('/keys/save')
     async def keys_save(req):
         "Write the keymap, re-read it, and hand back what it now says, including what it refused."
@@ -63,7 +63,7 @@ def connect(app, ctx):
         try: p.mk_write(text)
         except Exception as e: return fail(e)
         keymap.reload()
-        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
+        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES), 'took': list(keymap.TOOK),
                 **_live(), **_file(p)}
     @rt('/keys/check')
     async def keys_check(req):
@@ -71,9 +71,9 @@ def connect(app, ctx):
         d = await req.json()
         over = d.get('keys') or {}
         if not isinstance(over, dict): return fail('keys must be an object of action to chord')
-        notes = L()
-        applied = keymap.apply_overrides(keymap.DEFAULTS, {str(k): str(v) for k, v in over.items()}, notes)
-        return {'ok': not notes, 'notes': list(notes),
+        notes, took = L(), L()
+        applied = keymap.apply_overrides(keymap.DEFAULTS, {str(k): str(v) for k, v in over.items()}, notes, took)
+        return {'ok': not notes, 'notes': list(notes), 'took': list(took),
                 'keys': [{'action': k.action, 'key': k.key, 'keys': list(k.keys),
                           'scope': k.scope, 'label': k.label} for k in applied]}
     @rt('/keys/reset')
@@ -81,5 +81,5 @@ def connect(app, ctx):
         "Put leela's own defaults back, so a keymap you cannot use is one click from gone."
         p = keymap.write_keymap(keys=keymap.DEFAULTS, keep=False)
         keymap.reload()
-        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES),
+        return {'ok': True, 'path': str(p), 'notes': list(keymap.NOTES), 'took': list(keymap.TOOK),
                 **_live(), **_file(p)}
