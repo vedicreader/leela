@@ -9,6 +9,7 @@ GET /learn/abh-surface
 GET /learn/abh.css
 GET /learn/import
 GET /learn/lookup
+GET /learn/sources
 GET /learn/tool
 GET /leeboard/board.css
 GET /leeboard/board.js
@@ -247,6 +248,7 @@ GET,POST /keys/file
 GET,POST /keys/reset
 GET,POST /keys/save
 GET,POST /lesson/due
+GET,POST /lesson/filing
 GET,POST /lesson/save
 GET,POST /lint
 GET,POST /lsp/hover
@@ -280,6 +282,8 @@ GET,POST /nb/run
 GET,POST /nb/run/state
 GET,POST /nb/run/stream
 GET,POST /nb/save
+GET,POST /nb/scrub/run
+GET,POST /nb/scrub/warm
 GET,POST /office/ql/{token}/{name}
 GET,POST /office/quicklook
 GET,POST /office/rows
@@ -463,10 +467,12 @@ POST /dev/stop
 POST /fs/add-root
 POST /fs/add_root
 POST /learn/abh/open
+POST /learn/cell/literal
 POST /learn/cell/run
 POST /learn/env
 POST /learn/open
 POST /learn/scratch
+POST /learn/sources/do
 POST /learn/tab/open
 POST /learn/tab/page
 POST /learn/tool
@@ -474,6 +480,7 @@ POST /lesson/new
 POST /lesson/predict
 POST /lesson/predictions
 POST /media/open
+POST /nb/cell
 POST /nb/guide
 POST /nb/guide/stream
 POST /office/open
