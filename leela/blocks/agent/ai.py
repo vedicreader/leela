@@ -1083,7 +1083,7 @@ def _session_tools(host):
     def add_exercise(path: str, task: str, fname: str, stub: str, tests: list | str, solution: str,
                      after_cell_id: str = '', uses: list | None = None, packages: list | None = None) -> str:
         "Exercises belong in lesson notebooks. The solution only checks the tests and is never stored. With `packages`, the code runs with those packages, no network and no API key."
-        from ..learn.tools import make_tool_env, tool_names
+        from ..learn.toolenv import make_tool_env, tool_names
         from ..nb.exercise import check_solution, exercise_cells, validate_exercise_spec
         from ..nb.nb import Notebook
         try:

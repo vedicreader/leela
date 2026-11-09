@@ -74,7 +74,7 @@ NO_INDEX = 'No code index yet.'
 
 def kosha_for(search, tool=None):
     "The kosha handle of the tool environment `tool` when it is ready; else the project handle."
-    from .tools import tool_dir, tool_python
+    from .toolenv import tool_dir, tool_python
     if tool_python(tool) is None: return search._kosha()
     import kosha
     return kosha.Kosha(dir=tool_dir(tool))
@@ -217,7 +217,7 @@ def connect(app, ctx):
         return q, None if q.doc and not q.walk else await off_loop(read_step, ctx.memory, q)
     @app.route('/learn/env', methods=['POST'])
     async def learn_env(req):
-        from . import tools
+        from . import toolenv
         from .learn import not_found
         f, root = await req.form(), ctx.session.project_root
         say = lambda text, code=200: said(req, root, text, code, pane=f.get('pane') == '1')
@@ -230,9 +230,9 @@ def connect(app, ctx):
         if v.kind != 'step' or not (names := (v.nb or {}).get('requires')): return say('This step needs no packages.', 400)
         from abhyasa.contract import handoff
         back = RedirectResponse(handoff(q.walk, v.i, v=q.v) + ('&pane=1' if f.get('pane') == '1' else ''), 303)
-        if (st := tools.env_state(ctx.jobs, tools.tool_key(names))) in ('ready', 'indexing'): return back
-        if st == 'missing' and not tools.shutil.which('uv'): return say(tools.NO_UV, 503)
-        tools.start_tool_job(ctx.jobs, names)   # no await since the check: one event loop starts one job for a key
+        if (st := toolenv.env_state(ctx.jobs, toolenv.tool_key(names))) in ('ready', 'indexing'): return back
+        if st == 'missing' and not toolenv.shutil.which('uv'): return say(toolenv.NO_UV, 503)
+        toolenv.start_tool_job(ctx.jobs, names)   # no await since the check: one event loop starts one job for a key
         return back
     @app.route('/learn/lookup', methods=['GET'])
     async def learn_lookup(req):
@@ -263,19 +263,19 @@ def connect(app, ctx):
         return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version, 'index': len(nb.cells) - 1}
     @app.route('/learn/tool', methods=['POST'])
     async def learn_tool_make(req):
-        from . import tools
+        from . import toolenv
         try: d = await req.json()
         except ValueError: d = None
-        try: names = tools.tool_names(d.get('names') if isinstance(d, dict) else None)
+        try: names = toolenv.tool_names(d.get('names') if isinstance(d, dict) else None)
         except ValueError as e: return fail(str(e))
-        key = tools.tool_key(names)
-        if tools.tool_kernel(key) and tools.tool_indexed(key): return {'ok': True, 'key': key, 'ready': True}
-        if not tools.tool_kernel(key) and not tools.shutil.which('uv'): return fail(tools.NO_UV, 503)
+        key = toolenv.tool_key(names)
+        if toolenv.tool_kernel(key) and toolenv.tool_indexed(key): return {'ok': True, 'key': key, 'ready': True}
+        if not toolenv.tool_kernel(key) and not toolenv.shutil.which('uv'): return fail(toolenv.NO_UV, 503)
         # no await between the check and the start, so one event loop starts one job for a key
-        return {'ok': True, 'key': key, 'job': tools.start_tool_job(ctx.jobs, names).dict()}
+        return {'ok': True, 'key': key, 'job': toolenv.start_tool_job(ctx.jobs, names).dict()}
     @app.route('/learn/tool', methods=['GET'])
     async def learn_tool(req):
-        from .tools import env_job, env_state, tool_dir, tool_indexed, tool_kernel
+        from .toolenv import env_job, env_state, tool_dir, tool_indexed, tool_kernel
         from .ui import env_say
         key = req.query_params.get('key', '')
         try: tool_dir(key)

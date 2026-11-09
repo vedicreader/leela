@@ -1,6 +1,6 @@
 import os, shutil, subprocess
 import pytest
-from leela.blocks.learn.tools import make_tool_env
+from leela.blocks.learn.toolenv import make_tool_env
 
 pytestmark = pytest.mark.skipif(os.getenv('LEELA_NET_TESTS') != '1' or not shutil.which('uv'), reason='needs LEELA_NET_TESTS=1 and uv')
 

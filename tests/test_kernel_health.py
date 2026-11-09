@@ -5,7 +5,7 @@ import pytest
 from starlette.testclient import TestClient
 from conftest import FakeKernel
 from leela.app import ide_app
-from leela.blocks.learn import tools
+from leela.blocks.learn import toolenv
 from leela.blocks.runtime.kernels import ExecOutcome
 from leela.workspace import Workspace
 
@@ -63,8 +63,8 @@ def test_the_runtime_check_offers_to_upgrade_a_project_ipykernel_that_can_stall(
 
 def _stale_env(names=('httpx',), version='7.2.0'):
     "A ready lesson tool environment, made before Leela asked for ipykernel 7.4, as uv leaves one on disk."
-    key = tools.tool_key(list(names))
-    d = tools.tool_dir(key)
+    key = toolenv.tool_key(list(names))
+    d = toolenv.tool_dir(key)
     py = d/'.venv'/'bin'/'python'
     py.parent.mkdir(parents=True); py.write_text(''); py.chmod(0o755)
     (d/'.venv'/'pyvenv.cfg').write_text('home = /nowhere\n')
@@ -75,28 +75,28 @@ def _stale_env(names=('httpx',), version='7.2.0'):
 @pytest.fixture
 def data_home(tmp_path, monkeypatch):
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
-    monkeypatch.setattr(tools, 'index_env', lambda key: None)
+    monkeypatch.setattr(toolenv, 'index_env', lambda key: None)
 
 def test_a_lesson_environment_on_a_stalling_ipykernel_gets_its_kernel_packages_again(data_home):
     key, py = _stale_env()
-    assert tools.tool_kernel(key) == py and tools.tool_stale(key), 'it still runs the open lesson, and it is stale'
+    assert toolenv.tool_kernel(key) == py and toolenv.tool_stale(key), 'it still runs the open lesson, and it is stale'
     runs = []
     def run(cmd, **kw):
         runs.append(cmd)
         return SimpleNamespace(returncode=0, stdout='', stderr='')
-    r = tools.make_tool_env(['httpx'], run=run, uv='/u/uv')
-    assert r.ok and [c[1] for c in runs] == ['pip'] and runs[0][-2:] == tools.kernel_reqs() and 'ipykernel>=7.4' in runs[0]
+    r = toolenv.make_tool_env(['httpx'], run=run, uv='/u/uv')
+    assert r.ok and [c[1] for c in runs] == ['pip'] and runs[0][-2:] == toolenv.kernel_reqs() and 'ipykernel>=7.4' in runs[0]
     fresh, _ = _stale_env(('rich',), version='7.4.1')
-    assert not tools.tool_stale(fresh)
+    assert not toolenv.tool_stale(fresh)
     runs.clear()
-    assert tools.make_tool_env(['rich'], run=run, uv='/u/uv').ok and runs == [], 'a current one is left alone'
+    assert toolenv.make_tool_env(['rich'], run=run, uv='/u/uv').ok and runs == [], 'a current one is left alone'
 
 def test_upgrading_the_kernel_of_a_lesson_goes_through_its_tool_environment(data_home, tmp_path, monkeypatch):
     "`install_kernel_support` would add the project packages to a wheels-only lesson environment, so the route asks `make_tool_env`."
     key, py = _stale_env()
-    assert tools.tool_of(py) == key and tools.tool_of(tmp_path/'.venv'/'bin'/'python') is None
+    assert toolenv.tool_of(py) == key and toolenv.tool_of(tmp_path/'.venv'/'bin'/'python') is None
     made = []
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: made.append(names) or SimpleNamespace(ok=True, python=str(py), error=''))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: made.append(names) or SimpleNamespace(ok=True, python=str(py), error=''))
     import kunda.support
     monkeypatch.setattr(kunda.support, 'install_kernel_support', lambda py: pytest.fail('a lesson environment is not a project'))
     ws = Workspace(roots=[tmp_path])

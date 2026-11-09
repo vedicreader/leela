@@ -6,7 +6,7 @@ import abhyasa.learner, abhyasa.tutor
 from abhyasa.learner import PROMPTS, prompt, set_prompt
 from abhyasa.learner import Learning
 import leela.blocks.nb.lesson
-from leela.blocks.learn.tools import tool_dir, tool_key
+from leela.blocks.learn.toolenv import tool_dir, tool_key
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.exercise import exercise_cells
 from leela.blocks.nb.lesson import CHARTER_TAIL, env_packages, lesson_charter, lesson_env, lesson_notebook, lesson_step, step_brief

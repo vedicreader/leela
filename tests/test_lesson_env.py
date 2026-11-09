@@ -2,8 +2,8 @@ import asyncio, json, sys
 from types import SimpleNamespace
 import pytest
 from abhyasa.contract import validate_nb_spec
-from leela.blocks.learn import tools
-from leela.blocks.learn.tools import make_tool_env, tool_dir, tool_key, tool_kernel, tool_python
+from leela.blocks.learn import toolenv
+from leela.blocks.learn.toolenv import make_tool_env, tool_dir, tool_key, tool_kernel, tool_python
 from leela.blocks.nb.lesson import ENV_GONE, ENV_NEEDED, EnvGone, bind_env, step_lesson
 from leela.blocks.nb.nb import Notebook
 from leela.blocks.runtime.kernels import python_for
@@ -14,7 +14,7 @@ from test_learn_tools import fake, ready_env
 @pytest.fixture(autouse=True)
 def data_home(tmp_path, monkeypatch):
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
-    monkeypatch.setattr(tools, 'index_env', lambda key: None)
+    monkeypatch.setattr(toolenv, 'index_env', lambda key: None)
 
 STEP = dict(walk=NB_JID, step=0, section='2 Captions', note='')
 
@@ -199,7 +199,7 @@ def test_the_setup_job_installs_the_requirements_with_the_kernel_package():
     assert r.ok and tool_kernel(r.key) == tool_python(r.key) is not None
     venv, pip = [c for c, _ in run.calls]
     assert venv[:2] == ['/u/uv', 'venv'] and pip[:3] == ['/u/uv', 'pip', 'install'] and 'six' in pip
-    assert any(a.startswith('ipykernel') for a in pip) and pip[-len(tools.kernel_reqs()):] == tools.kernel_reqs()
+    assert any(a.startswith('ipykernel') for a in pip) and pip[-len(toolenv.kernel_reqs()):] == toolenv.kernel_reqs()
     (tool_dir(r.key)/'kernel').unlink()
     run = fake(lambda c: 0)
     assert make_tool_env(['six'], run=run, uv='/u/uv').ok and [c[1] for c, _ in run.calls] == ['pip'] and tool_kernel(r.key)

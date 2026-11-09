@@ -209,7 +209,7 @@ def register_all(jobs, memory, search=None, cwd=None, feeds=None):
     return jobs
 
 def _tool_env(job, report):
-    from ..learn.tools import tool_job
+    from ..learn.toolenv import tool_job
     return tool_job(job, report)
 
 def _migrate(job, report):

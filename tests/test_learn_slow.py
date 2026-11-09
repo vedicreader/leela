@@ -410,15 +410,15 @@ def _guarded(ws, port):
 def test_set_up_turns_the_step_page_ready_by_itself_and_open_ends_on_the_ide_with_the_lesson(tmp_path, monkeypatch):
     "Chromium posted both buttons with `Origin: null` and got 421; Set up gave a static page that never said when it was done; Open opened nothing on screen."
     import threading
-    from leela.blocks.learn import tools
+    from leela.blocks.learn import toolenv
     from test_learn_tools import fake
     from learn_data import NB_JID, nb_walk
     ws = _ws(tmp_path, monkeypatch)
     nb_walk(Learning(ws.memory._store('learning')), requires=['httpx'])
-    go, real = threading.Event(), tools.make_tool_env
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(30) and real(names, run=fake(lambda c: 0), uv='/u/uv'))
-    monkeypatch.setattr(tools, 'index_env', lambda key: None)
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    go, real = threading.Event(), toolenv.make_tool_env
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: go.wait(30) and real(names, run=fake(lambda c: 0), uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'index_env', lambda key: None)
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     async def go_(pg, base):
         step = f'{base}/learn?walk={NB_JID}&step=0'
         await pg.goto(step, wait_until='networkidle')

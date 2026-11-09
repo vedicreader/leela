@@ -140,7 +140,7 @@ def open_step(session, fs, v, q) -> tuple[Path, list]:
         step = dict(walk=q.walk, step=v.i, section=r.get('section') or '', text=r.get('text') or '', note=v.step.get('note') or '', slug=v.step.get('slug') or '')
         if v.get('nb'):
             from abhyasa.contract import handoff
-            from .tools import tool_key, tool_kernel
+            from .toolenv import tool_key, tool_kernel
             from ..nb.lesson import step_lesson
             env = tool_key(v.nb['requires']) if v.nb.get('requires') else None
             ready = env if env and tool_kernel(env) else None

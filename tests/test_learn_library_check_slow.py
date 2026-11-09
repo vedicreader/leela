@@ -1,7 +1,7 @@
 import os, pwd, shutil, time
 from pathlib import Path
 import pytest
-from leela.blocks.learn.tools import LIBRARY_TOTAL, library_check, make_tool_env, tool_indexed
+from leela.blocks.learn.toolenv import LIBRARY_TOTAL, library_check, make_tool_env, tool_indexed
 
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(not (os.getenv('LEELA_NET_TESTS') == '1' and shutil.which('uv')), reason='needs uv and LEELA_NET_TESTS=1')]
 SPEC = dict(fname='f', tests=['assert f() == 1'])

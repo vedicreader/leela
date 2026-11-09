@@ -53,9 +53,9 @@ def lesson_step(memory, nb) -> dict|None:
     "The `step_brief` of the walk step the lesson meta of `nb` names, read from the learning shelf of `memory`; None with no valid walk. Store errors raise."
     from abhyasa.learner import Learning
     from ..learn import learn
-    from ..memory.memory import _open_lock
+    from ..memory.memory import _open_lock, learning_store
     if not (w := walk_meta(nb)) or w['step'] < 0: return None
-    vault = memory._store('learning')   # before the lock: `_store` takes it too
+    vault = learning_store(memory)   # before the lock: it takes it too
     with _open_lock(memory.path): return step_brief(learn.find_step(Learning(vault), AttrDict(walk=w['walk'], step=w['step'], topic='')))
 
 ENV_GONE = 'The environment for this lesson is missing or broken. Open the step and press Set up the environment.'
@@ -65,7 +65,7 @@ class EnvGone(KernelStartError): "The tool environment a lesson needs is not rea
 
 def lesson_key(nb) -> str|None:
     "The tool environment key of the walk-step lesson `nb`: its meta's `env`, else `tool_key` of the one `requires` its exercise cells name; None for any other notebook, or for `requires` that are not package names."
-    from ..learn.tools import tool_key
+    from ..learn.toolenv import tool_key
     m = nb.meta.get('lesson')
     if not (isinstance(m, dict) and walk_meta(nb)): return None
     if m.get('env'): return m['env']
@@ -78,7 +78,7 @@ SETUP_LINE = re.compile(r'\n\nThis lesson needs [^\n]*\. \[Set up the environmen
 
 def _bind(meta, exercises, key):
     "Put `key` in the lesson `meta` and in each of the `exercises` meta whose `requires` it is the key of."
-    from ..learn.tools import tool_key
+    from ..learn.toolenv import tool_key
     meta['lesson']['env'] = key
     for m in exercises:
         try: mine = bool(m.get('requires')) and tool_key(m['requires']) == key
@@ -106,7 +106,7 @@ def lesson_env(nb) -> str|None:
 
 def env_packages(key) -> tuple:
     "The requirement strings in the `ready` file of the tool environment `key`; empty for no key, no file or a name `tool_names` refuses."
-    from ..learn.tools import tool_dir, tool_names
+    from ..learn.toolenv import tool_dir, tool_names
     if not key: return ()
     try: return tuple(tool_names((tool_dir(key)/'ready').read_text().split()))
     except (OSError, ValueError): return ()
@@ -276,8 +276,8 @@ def record_card(memory, nb, cell, path):
     from abhyasa.learner import Learning
     from abhyasa.learner import update
     from litesearch.core import write_txn
-    from ..memory.memory import _open_lock
-    vault = memory._store('learning')
+    from ..memory.memory import _open_lock, learning_store
+    vault = learning_store(memory)
     with _open_lock(memory.path):
         lr = Learning(vault)
         lesson, name, walk = cell.extra['lesson'], nb.meta['lesson']['name'], walk_meta(nb)
@@ -321,9 +321,9 @@ def record_exercise(memory, f):
     from abhyasa.learner import Learning
     from abhyasa.learner import update
     from litesearch.core import write_txn
-    from ..memory.memory import _open_lock
+    from ..memory.memory import _open_lock, learning_store
     slug = _slug(f['name'], f.get('walk', {}))
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path):
         lr = Learning(vault)
         with write_txn(lr.v.db):
@@ -377,9 +377,9 @@ def record_prediction(memory, f):
     from abhyasa.learner import Learning
     import abhyasa.show  # adds Learning.put_demo and Learning.record_prediction
     from litesearch.core import write_txn
-    from ..memory.memory import _open_lock
+    from ..memory.memory import _open_lock, learning_store
     slug = _slug(f['name'], f.get('walk', {}))
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path):
         lr = Learning(vault)
         with write_txn(lr.v.db):
@@ -392,8 +392,8 @@ def record_prediction(memory, f):
 def filed_picks(memory, nb, cell) -> dict:
     "`{'demo:gate': pick}` for each gate of `cell` with a prediction filed at its source now: `String` of the pick, or None for a gate whose answer is a state path."
     from abhyasa.learner import Learning
-    from ..memory.memory import _open_lock
-    m, h, vault = nb.meta['lesson'], src_hash(cell.source), memory._store('learning')
+    from ..memory.memory import _open_lock, learning_store
+    m, h, vault = nb.meta['lesson'], src_hash(cell.source), learning_store(memory)
     with _open_lock(memory.path):
         filed = {a.get('card_key'): a.get('answer') for a in Learning(vault).attempts(_slug(m['name'], m.get('walk') or {}), limit=10000)}
     return {f"{s['id']}:{g['id']}": filed[k] if isinstance(g.get('answer'), dict) else None
@@ -448,9 +448,9 @@ def record_run(memory, f):
     from abhyasa.learner import Learning
     from litesearch.core import write_txn
     from ..learn.learn import walk_url
-    from ..memory.memory import _open_lock
+    from ..memory.memory import _open_lock, learning_store
     slug = _slug(f['name'], f)
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path):
         lr = Learning(vault)
         with write_txn(lr.v.db):
@@ -547,9 +547,9 @@ def guide_board(memory, nb, cell, path, said, note=None, anchors=None, demo=None
     from abhyasa.sources import VaultSource
     from abhyasa.models import Router, route_ask
     from abhyasa.learner import Learning
-    from ..memory.memory import _open_lock
+    from ..memory.memory import _open_lock, learning_store
     meta = nb.meta['lesson']
-    vault = memory._store('learning')
+    vault = learning_store(memory)
     with _open_lock(memory.path):
         lr = Learning(vault)
         filed = {a.get('card_key') for a in lr.attempts(_slug(meta['name'], meta.get('walk') or {}), limit=10000)}

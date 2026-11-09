@@ -1,7 +1,7 @@
 import shutil, subprocess, sys
 import pytest
-from leela.blocks.learn import tools
-from leela.blocks.learn.tools import make_tool_env, tool_python
+from leela.blocks.learn import toolenv
+from leela.blocks.learn.toolenv import make_tool_env, tool_python
 from leela.blocks.nb.nb import Cell, Notebook
 
 pytestmark = pytest.mark.slow
@@ -16,7 +16,7 @@ def test_a_bound_lesson_runs_its_cells_in_a_real_uv_environment(tmp_path, monkey
     from leela.workspace import Workspace
     if not (uv := shutil.which('uv')): pytest.skip('no uv')
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'data'))
-    monkeypatch.setattr(tools, 'index_env', lambda key: None)
+    monkeypatch.setattr(toolenv, 'index_env', lambda key: None)
     r = make_tool_env(['six'], run=offline, uv=uv)
     if not r.ok: pytest.skip(f'the local uv cache cannot make the environment offline: {r.error}')
     code, again = Cell(source='import sys; print(sys.executable)'), Cell(source='print(sys.executable)')

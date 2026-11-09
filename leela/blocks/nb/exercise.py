@@ -2,8 +2,8 @@ import asyncio, json
 from . import check
 from .check import SAFE_NAMES, safe_test, validate_exercise
 from ...core.web import off_loop
-from ..learn import tools
-from ..learn.tools import library_check, tool_dir, tool_names
+from ..learn import toolenv
+from ..learn.toolenv import library_check, tool_dir, tool_names
 from .nb import Cell, fresh_exercise_state, run_watched, src_hash
 
 def validate_exercise_spec(spec):
@@ -151,9 +151,9 @@ def _rebuild(meta, nb, jobs):
     try: names = tool_names(meta.get('requires'))
     except ValueError: names = None
     if not names or jobs is None: return Refused(JUDGE['no_env'])
-    if not tools.shutil.which('uv'): return Refused(tools.NO_UV)
-    if (key := tools.tool_key(names)) != meta['env']: meta['env'], nb.dirty = key, True
-    tools.start_tool_job(jobs, names)
+    if not toolenv.shutil.which('uv'): return Refused(toolenv.NO_UV)
+    if (key := toolenv.tool_key(names)) != meta['env']: meta['env'], nb.dirty = key, True
+    toolenv.start_tool_job(jobs, names)
     return Refused(JUDGE['rebuilding'])
 
 async def check_cell(nb, c, lock, runtime, jobs=None):

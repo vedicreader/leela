@@ -74,7 +74,7 @@ def StepPage(v, q, pane:bool=False, root=None, jobs=None):
     "The page for the `find_step` result `v` of a step or a topic, with the button that opens it as a lesson. `pane` makes it a page in the side pane; `jobs` tells a running setup."
     st = None
     if v.kind == 'step':
-        from .tools import env_job, env_state, tool_key
+        from .toolenv import env_job, env_state, tool_key
         if names := (v.get('nb') or {}).get('requires'): st = env_state(jobs, key := tool_key(names))
         from .learn import passages, walk_url
         r, back = v.step.get('read') or {}, walk_url(q.walk, v.i)

@@ -101,7 +101,7 @@ def connect(app, ctx):
     async def runtime_support(req):
         "Install kernel support into a project interpreter; a lesson's tool environment is installed again through `make_tool_env`."
         from kunda.support import install_kernel_support
-        from ..learn.tools import tool_of, upgrade_tool_env
+        from ..learn.toolenv import tool_of, upgrade_tool_env
         d = await req.json()
         py = d.get('python') or active()
         if not py: return fail('choose a project interpreter first')

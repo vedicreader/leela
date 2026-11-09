@@ -3,8 +3,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from fastcore.basics import AttrDict
-from leela.blocks.learn import tools
-from leela.blocks.learn.tools import (LIBRARY_TOTAL, NO_UV, TOO_LONG, install_cmds, library_check, make_tool_env, tool_dir, tool_job,
+from leela.blocks.learn import toolenv
+from leela.blocks.learn.toolenv import (LIBRARY_TOTAL, NO_UV, TOO_LONG, install_cmds, library_check, make_tool_env, tool_dir, tool_job,
                                       tool_key, tool_names, tool_python)
 from leela.blocks.nb import exercise
 from leela.blocks.nb.exercise import JUDGE, Refused, check_cell, exercise_cells, grade_cell, validate_exercise_spec
@@ -18,7 +18,7 @@ def data_home(tmp_path, monkeypatch): monkeypatch.setenv('XDG_DATA_HOME', str(tm
 def indexed(monkeypatch):
     "The keys `index_env` was asked to index; no test here runs a real kosha sync."
     seen = []
-    monkeypatch.setattr(tools, 'index_env', seen.append)
+    monkeypatch.setattr(toolenv, 'index_env', seen.append)
     return seen
 
 @pytest.mark.parametrize('bad', [[], list('abcdef'), ['-e .'], ['--index-url=https://x'], ['https://x/p.whl'],
@@ -32,8 +32,8 @@ def test_names_key_and_commands():
     d = tool_dir(tool_key(['httpx'], (3, 13)))
     assert install_cmds(['httpx'], d, '/u/uv', (3, 13)) == [
         ['/u/uv', 'venv', str(d/'.venv'), '--python', '3.13'],
-        ['/u/uv', 'pip', 'install', '--python', str(d/'.venv'/'bin'/'python'), '--only-binary', ':all:', 'httpx', *tools.kernel_reqs()]]
-    ipyk, ipym = tools.kernel_reqs()
+        ['/u/uv', 'pip', 'install', '--python', str(d/'.venv'/'bin'/'python'), '--only-binary', ':all:', 'httpx', *toolenv.kernel_reqs()]]
+    ipyk, ipym = toolenv.kernel_reqs()
     assert ipyk == 'ipykernel>=7.4' and ipym.startswith('ipymini=='), 'ipykernel by its floor: 7.0 to 7.3 can stop answering'
 
 @pytest.mark.parametrize('key', ['../x', '0123456789ABCDEF', '0123', '', None])
@@ -99,7 +99,7 @@ def test_a_step_that_takes_too_long(step):
 
 def test_both_steps_share_one_budget(monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr(tools, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(toolenv, 'monotonic', lambda: now[0])
     def on(cmd, kw):
         if cmd[1] == 'venv': now[0] += 590
     run = fake(lambda c: 0, on=on)
@@ -112,7 +112,7 @@ def test_both_steps_share_one_budget(monkeypatch):
     assert not r.ok and r.error == TOO_LONG and [c[1] for c, _ in run.calls] == ['venv']
 
 def test_no_uv(monkeypatch):
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: None)
     run = fake(lambda c: 0)
     r = make_tool_env(['httpx'], run=run)
     assert not r.ok and r.error == NO_UV == 'Leela needs uv to install packages for a lesson.' and run.calls == []
@@ -132,15 +132,15 @@ def test_a_second_install_waits_and_finds_it_ready():
     assert out and out[0].ok and run.calls == []
 
 def test_the_job_indexes_and_keeps_an_index_failure(monkeypatch, indexed):
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: make_tool_env(names, run=fake(lambda c: 0), uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: make_tool_env(names, run=fake(lambda c: 0), uv='/u/uv'))
     job, report = SimpleNamespace(params=dict(names=['httpx'])), lambda **kw: None
     r = tool_job(job, report)
     assert r['ok'] and indexed == [r['key']] and 'index_error' not in r
     def boom(key): raise RuntimeError('database is locked')
-    monkeypatch.setattr(tools, 'index_env', boom)
+    monkeypatch.setattr(toolenv, 'index_env', boom)
     r = tool_job(SimpleNamespace(params=dict(names=['six'])), report)
     assert r['ok'] and 'database is locked' in r['index_error'] and tool_python(r['key']) is not None
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: make_tool_env(names, run=fake(lambda c: 1), uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: make_tool_env(names, run=fake(lambda c: 1), uv='/u/uv'))
     from leela.blocks.vault.jobs import JobError
     with pytest.raises(JobError, match='has no wheel'): tool_job(SimpleNamespace(params=dict(names=['sdist-only'])), report)
 
@@ -150,12 +150,12 @@ def test_make_tool_env_marks_ready_before_the_index_and_retries_a_failed_index(m
     def index(key):
         seen.append((key, (tool_dir(key)/'ready').exists()))
         if fails: raise RuntimeError(fails.pop())
-    monkeypatch.setattr(tools, 'index_env', index)
+    monkeypatch.setattr(toolenv, 'index_env', index)
     r = make_tool_env(['httpx'], run=fake(lambda c: 0), uv='/u/uv')
     assert r.ok and tool_python(r.key) is not None and 'database is locked' in r.index_error, r
-    assert seen == [(r.key, True)] and tools.tool_kernel(r.key) and not tools.tool_indexed(r.key), 'the lesson runs before the index, and a failed one leaves the mark off'
+    assert seen == [(r.key, True)] and toolenv.tool_kernel(r.key) and not toolenv.tool_indexed(r.key), 'the lesson runs before the index, and a failed one leaves the mark off'
     again = make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv')
-    assert again.ok and 'index_error' not in again and seen == [(r.key, True), (r.key, True)] and tools.tool_indexed(r.key), 'the next call indexes again, with no install'
+    assert again.ok and 'index_error' not in again and seen == [(r.key, True), (r.key, True)] and toolenv.tool_indexed(r.key), 'the next call indexes again, with no install'
     assert make_tool_env(['httpx'], run=fake(lambda c: 1), uv='/u/uv').ok and len(seen) == 2, 'an indexed environment is done'
 
 def test_a_call_while_another_builds_the_index_does_not_wait(monkeypatch):
@@ -169,11 +169,11 @@ def test_a_call_while_another_builds_the_index_does_not_wait(monkeypatch):
 
 def test_post_starts_a_job_for_a_ready_environment_that_needs_its_index(rig, monkeypatch):
     c, ws = rig[:2]
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     key = ready_env(['httpx'])
     a = c.post('/learn/tool', json=dict(names=['httpx'])).json()
     assert a['ok'] and a['job']['target'] == key, a
-    assert wait(ws, a['job']['id']).status == 'complete' and tools.tool_indexed(key)
+    assert wait(ws, a['job']['id']).status == 'complete' and toolenv.tool_indexed(key)
     assert c.post('/learn/tool', json=dict(names=['httpx'])).json() == dict(ok=True, key=key, ready=True)
 
 def test_the_workspace_registers_the_job_kind(rig):
@@ -190,9 +190,9 @@ def test_routes_start_one_job_for_a_key_and_then_say_ready(rig, monkeypatch):
     def slow(names):
         go.wait(10)
         return real(names, run=fake(lambda c: 0), uv='/u/uv')
-    monkeypatch.setattr(tools, 'make_tool_env', slow)
-    monkeypatch.setattr(tools, 'index_env', lambda key: None)
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv, 'make_tool_env', slow)
+    monkeypatch.setattr(toolenv, 'index_env', lambda key: None)
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     key = tool_key(['httpx'])
     assert c.get(f'/learn/tool?key={key}').json() == dict(ok=True, ready=False, python=None, indexed=False, state='missing', say='The environment for this lesson is not set up.')
     a = c.post('/learn/tool', json=dict(names=['httpx'])).json()
@@ -218,7 +218,7 @@ def test_get_refuses_a_bad_key(rig):
 
 def test_post_with_no_uv(rig, monkeypatch):
     c, ws = rig[:2]
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: None)
     r = c.post('/learn/tool', json=dict(names=['httpx']))
     assert r.status_code == 503 and r.json() == dict(ok=False, error=NO_UV) and ws.jobs.all(kind='tool_env') == []
 
@@ -257,7 +257,7 @@ def no_install(*a, **kw): pytest.fail('a check must never install')
 
 def test_library_check_needs_a_ready_environment(monkeypatch):
     assert LIBRARY_TOTAL == 20.
-    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    monkeypatch.setattr(toolenv, 'make_tool_env', no_install)
     key = tool_key(['six'])
     for k in ('nokey', key):
         with pytest.raises(ValueError, match='not ready'): library_check(SPEC, GOOD, k)
@@ -306,7 +306,7 @@ def test_check_cell_with_env_uses_library_check_off_the_loop_and_not_the_kernel(
     assert code.extra['exercise']['state']['last']['passed'] == 0 and nb.dirty
 
 def test_a_deleted_environment_refuses_without_install_and_clears_an_earlier_pass(monkeypatch, abhyasa_cfg):
-    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    monkeypatch.setattr(toolenv, 'make_tool_env', no_install)
     key = ready_env()
     nb, code = library_cell(key, GOOD)
     assert asyncio.run(check_cell(nb, code, asyncio.Lock(), no_kernel))['passed'] == 2 and code.extra['exercise']['state']['passed']
@@ -323,7 +323,7 @@ def lesson(tmp_path, monkeypatch):
     from leela.app import ide_app
     from leela.blocks.agent.ai import _session_tools
     from leela.workspace import Workspace
-    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    monkeypatch.setattr(toolenv, 'make_tool_env', no_install)
     key, p = ready_env(), tmp_path/'lesson.ipynb'
     task, code = exercise_cells(SPEC | dict(env=key))
     Notebook([task, code]).save(p)
@@ -352,8 +352,8 @@ def test_a_deleted_environment_gives_the_recovery_message_on_the_route_and_the_a
 def test_a_deleted_environment_with_requires_is_made_again_from_the_route_and_the_agent_tool(lesson, monkeypatch, abhyasa_cfg):
     client, p, live, code, key, agent, ws = lesson
     made, go = [], threading.Event()
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and made.append(names) or AttrDict(key=key, ok=False, error='stopped'))
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: go.wait(10) and made.append(names) or AttrDict(key=key, ok=False, error='stopped'))
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     live[1].extra['exercise']['requires'] = ['six']
     shutil.rmtree(tool_dir(key))
     r = client.post('/exercise/check', json=dict(path=str(p), i=1, id=code.id, source=GOOD))
@@ -379,8 +379,8 @@ class Jobs:
     def start(self, kind, target, **params): self.started.append((kind, target, params)); return SimpleNamespace(id=len(self.started))
 
 def test_a_deleted_environment_with_requires_is_made_again_as_a_job(monkeypatch, abhyasa_cfg):
-    monkeypatch.setattr(tools, 'make_tool_env', no_install)
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv, 'make_tool_env', no_install)
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     key = ready_env()
     task, code = exercise_cells(SPEC | dict(env=key, requires=['six']))
     nb, jobs = Notebook([task, code]), Jobs()
@@ -409,7 +409,7 @@ def test_add_exercise_with_packages_finds_or_makes_the_environment_then_checks_i
     def make(names):
         made.append(names)
         return AttrDict(key=k if tool_python(k := tool_key(names)) else ready_env(names), ok=True, error='')
-    monkeypatch.setattr(tools, 'make_tool_env', make)
+    monkeypatch.setattr(toolenv, 'make_tool_env', make)
     monkeypatch.setattr(exercise, 'library_check', lambda *a: seen.append(a[2]) or real(*a))
     assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise')
     key = tool_key(['six'])
@@ -427,17 +427,17 @@ def this_python(cmd, **kw):
 def test_add_exercise_ends_with_an_indexed_environment(add, monkeypatch, indexed, abhyasa_cfg):
     f, path = add
     real = make_tool_env
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: real(names, run=this_python, uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: real(names, run=this_python, uv='/u/uv'))
     assert f(str(path), **SPEC, solution=SECRET, packages=['six']).startswith('Added the exercise')
     key = tool_key(['six'])
-    assert indexed == [key] and tools.tool_indexed(key)
+    assert indexed == [key] and toolenv.tool_indexed(key)
 
 def test_add_exercise_with_packages_refuses_a_failed_install_or_a_bad_name(add, monkeypatch):
     f, path = add
     before = path.read_bytes()
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: AttrDict(key=tool_key(names), ok=False, error='six has no wheel for this computer, so Leela cannot install it.'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: AttrDict(key=tool_key(names), ok=False, error='six has no wheel for this computer, so Leela cannot install it.'))
     assert f(str(path), **SPEC, solution=SECRET, packages=['six']) == 'add_exercise failed: six has no wheel for this computer, so Leela cannot install it.'
-    monkeypatch.setattr(tools, 'make_tool_env', no_install)
+    monkeypatch.setattr(toolenv, 'make_tool_env', no_install)
     assert f(str(path), **SPEC, solution=SECRET, packages=['--index-url=https://x']).startswith('add_exercise failed: ValueError: package:')
     assert f(str(path), **{**SPEC, 'fname': 'not a name'}, solution=SECRET, packages=['six']).startswith('add_exercise failed')
     assert path.read_bytes() == before
@@ -449,8 +449,8 @@ def test_a_step_that_requires_packages_asks_once_and_installs_only_on_yes(rig, m
     monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))
     nb_walk(lr, requires=['torch', 'diffusers'])
     runs, real = [], make_tool_env
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: real(names, run=fake(lambda cmd: runs.append(cmd) or 0), uv='/u/uv'))
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: real(names, run=fake(lambda cmd: runs.append(cmd) or 0), uv='/u/uv'))
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     key = tool_key(['torch', 'diffusers'])
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
     assert 'This lesson needs torch, diffusers.</p>' in t and f'data-key="{key}"' in t and 'action="/learn/env"' in t and '>Set up the environment</button>' in t
@@ -459,7 +459,7 @@ def test_a_step_that_requires_packages_asks_once_and_installs_only_on_yes(rig, m
     assert r.status_code == 303 and r.headers['location'] == f'/learn?walk={NB_JID}&step=0'
     jobs = ws.jobs.all(kind='tool_env')
     assert len(jobs) == 1 and jobs[0].target == key and wait(ws, jobs[0].id).status == 'complete' and tool_python(key)
-    assert [cmd[1] for cmd in runs] == ['venv', 'pip'] and runs[1][-2 - len(tools.kernel_reqs()):] == ['diffusers', 'torch', *tools.kernel_reqs()]
+    assert [cmd[1] for cmd in runs] == ['venv', 'pip'] and runs[1][-2 - len(toolenv.kernel_reqs()):] == ['diffusers', 'torch', *toolenv.kernel_reqs()]
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
     assert 'Set up the environment' not in t and '<button type="submit" class="lee-btn go">Open as a lesson</button>' in t
     assert c.post('/learn/open', data=dict(walk=NB_JID, step='0')).status_code == 200
@@ -472,19 +472,19 @@ def test_the_step_page_says_the_index_still_builds_and_offers_it_again_when_it_f
     from learn_data import NB_JID, nb_walk
     c, ws, lr = rig[:3]
     nb_walk(lr, requires=['httpx'])
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     key, go, real = ready_env(['httpx']), threading.Event(), make_tool_env
     page, env = (lambda: c.get(f'/learn?walk={NB_JID}&step=0').text), (lambda: c.post('/learn/env', data=dict(walk=NB_JID, step='0'), follow_redirects=False))
     t = page()
     assert 'Its code index for Look up code is not built.' in t and '>Build the code index</button>' in t and 'Set up the environment' not in t
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 1), uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 1), uv='/u/uv'))
     assert env().status_code == 303
     say = 'The environment for this lesson is ready. The lesson runs now. Leela is still building the code index for Look up code.'
     t = page()
     assert f'data-env-state="indexing" class="lee-learn-line lee-learn-env">{say}</p>' in t and 'Build the code index' not in t and 'class="lee-btn go">Open as a lesson' in t
     assert env().status_code == 303 and len(ws.jobs.all(kind='tool_env')) == 1
     go.set()
-    assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'complete' and tools.tool_indexed(key)
+    assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'complete' and toolenv.tool_indexed(key)
     assert 'data-env-state="ready" class="lee-learn-line lee-learn-env">The environment for this lesson is ready. The lesson runs now.</p>' in page()
 
 def test_through_the_guard_set_up_goes_back_to_the_step_page_which_says_installing_then_ready(rig, monkeypatch):
@@ -494,9 +494,9 @@ def test_through_the_guard_set_up_goes_back_to_the_step_page_which_says_installi
     from learn_data import NB_JID, nb_walk
     c, ws, lr = rig[:3]
     nb_walk(lr, requires=['httpx'])
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     go, real, key = threading.Event(), make_tool_env, tool_key(['httpx'])
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 0), uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: go.wait(10) and real(names, run=fake(lambda c: 0), uv='/u/uv'))
     g = TestClient(LoopbackHostGuard(c.app), base_url='http://127.0.0.1:5011')
     h = {'origin': 'null', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document'}
     r = g.post('/learn/env', data=dict(walk=NB_JID, step='0'), headers=h)
@@ -515,9 +515,9 @@ def test_a_failed_setup_says_why_and_offers_the_button_again(rig, monkeypatch):
     from learn_data import NB_JID, nb_walk
     c, ws, lr = rig[:3]
     nb_walk(lr, requires=['sdist-only'])
-    monkeypatch.setattr(tools.shutil, 'which', lambda name: '/u/uv')
+    monkeypatch.setattr(toolenv.shutil, 'which', lambda name: '/u/uv')
     real = make_tool_env
-    monkeypatch.setattr(tools, 'make_tool_env', lambda names: real(names, run=fake(lambda c: 1 if c[1] == 'pip' else 0), uv='/u/uv'))
+    monkeypatch.setattr(toolenv, 'make_tool_env', lambda names: real(names, run=fake(lambda c: 1 if c[1] == 'pip' else 0), uv='/u/uv'))
     c.post('/learn/env', data=dict(walk=NB_JID, step='0'))
     assert wait(ws, ws.jobs.all(kind='tool_env')[0].id).status == 'error'
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
