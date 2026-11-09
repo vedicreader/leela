@@ -171,11 +171,12 @@ Files below define scope, not claims that new files already exist. Resolve exact
 | S3 | `blocks/learn` native FT rendering, `tabs/app.py`, tab persistence | Native state response, quotes, ungrounded state, tab restore | Open the created walk and its source |
 | S4 | Existing agent controls, conversation metadata and tool refresh | Same session, idle lock, approval/queue refusal, resume and mode-off dispatch | Toggle Learn without losing the conversation |
 | S5 | Abhyasa assessment source notebook and native check/gauge view | Canonical grading, attempt retry/conflict, next-turn state | Answer in the view or pane and see updated understanding |
+| S5V | The managed Learn vault entry in Leela's vault list and the first-run import | Populated, empty, already-attached, read-only and failed-copy cases on temporary files | Open Learn on a copied vault, then attach or back up and copy |
 | S6 | Shared speech action and Abhyasa transcription seam | Permission, stop/error and isolated transcription checks | Dictate through one microphone action |
 | S7 | Knowledge and graph blocks, tab/dock integration | Live theme refresh and tab restore | Open Knowledge and dock the graph |
-| S8 | Slides/search/vault integration and old handoff removal | Feature parity, migration on copies and route audit | Present a talk, search sources and import existing learning |
+| S8 | Slides/search integration and old handoff removal | Feature parity and route audit | Present a talk and search sources |
 
-Run targeted tests per slice. Run both full suites once after S5 for the first product milestone, not after each slice. Later S6-S8 changes require their own final affected-suite verification before release. Send Claude one completion message per slice with commit IDs, exact isolated demo commands, URL if running, UI screenshot path, test counts and known gaps. Start independent next work while review proceeds.
+S5V comes before the owner is asked to try Learn on real data. Run targeted tests per slice. Run both full suites once after S5 for the first product milestone, not after each slice. Later S6-S8 changes require their own final affected-suite verification before release. Send Claude one completion message per slice with commit IDs, exact isolated demo commands, URL if running, UI screenshot path, test counts and known gaps. Start independent next work while review proceeds.
 
 ## Native walk tab
 
@@ -187,7 +188,19 @@ S4 audits the current agent control row before adding Learn beside the existing 
 
 ## First-run learning import
 
-On first Learn open, inspect the configured existing learning shelf through the vault registry in the running product. Development tests use temporary copies only. If existing data is found, show Attach and Back up and copy before presenting an empty managed vault. Attach selects the existing registry entry when the path is already registered; it does not create an alias. Copy creates the managed Learn destination after a backup and preserves source files and assets. Existing data remains accessible if copy fails. Explicit Skip starts empty; never choose it silently. Test populated, empty, already-attached, read-only and failed-copy cases on temporary files. S2-S5 use explicit isolated fixture vaults until this first-run UI is complete in S8.
+On first Learn open, inspect the configured existing learning shelf through the vault registry in the running product. Development tests use temporary copies only. If existing data is found, show Attach and Back up and copy before presenting an empty managed vault. Attach selects the existing registry entry when the path is already registered; it does not create an alias. Copy creates the managed Learn destination after a backup and preserves source files and assets. Existing data remains accessible if copy fails. Explicit Skip starts empty; never choose it silently. Test populated, empty, already-attached, read-only and failed-copy cases on temporary files. S2-S5 use explicit isolated fixture vaults until this first-run UI is complete in S5V.
+
+## Known gaps
+
+These hold at Leela `53189f36` and Abhyasa `8fb2b9e`.
+
+| Gap | Effect | Closed by |
+| --- | --- | --- |
+| `learn_store(ws)` opens the learning shelf of the active vault in Leela's registry. | Until S5V, Learn tools write to the owner's active vault. A write needs `agent_writable` on that vault and an approval card. | S5V |
+| The isolated preview does not name its vault. | The owner cannot see which vault a demo writes to. | The preview launcher prints and shows the vault name and path. |
+| No presence signal for the person who started a job exists. | The walk tab auto-opens on the active conversation with Learn on, without a presence check. | A later presence signal; the Open walk action in the job card covers the rest. |
+| The walk tab shows the title, steps and the ungrounded label only. | No answer box, gauge, quote link or next and back. | S3 completion with S5 |
+| No engine call reads the Learn settings outside the three tools that take `settings=`. | Other Learn settings rows have no effect yet. | Each later slice that adds an engine call. |
 
 ## Retirement and release
 
