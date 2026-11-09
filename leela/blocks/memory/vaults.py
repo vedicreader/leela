@@ -30,6 +30,7 @@ class VaultRef(Dictable):
     agent: bool = False
     attached_at: float = field(default_factory=time.time)
     imported_from: str = ''
+    skipped: bool = False
     def __post_init__(self):
         if self.access not in ACCESS: raise ValueError(f'{self.name}: unknown access {self.access!r}')
         self.name, self.path = safe_shelf(self.name), str(Path(self.path).expanduser())
@@ -123,12 +124,17 @@ class Vaults:
             return ref
         if path: raise FileNotFoundError(f'no vault file at {p}')
         return self.create(p, name=LEARN, access='admin', agent=True)
-    def import_learn(self, path):
-        "Point Learn at an existing vault without changing the file."
+    def import_learn(self, path, access='admin'):
+        "Make the vault file at `path` the Learn vault, folding an alias of the same file into it."
         p = Path(path).expanduser()
         if not p.is_file(): raise FileNotFoundError(f'no vault file at {p}')
-        if ref := self.get(LEARN): return self._replace(ref, path=str(p), access='admin', agent=True, imported_from=str(p.resolve()))
-        return self.learn(p)
+        kw = dict(path=str(p), access=access, agent=access == 'admin', imported_from=str(p.resolve()), skipped=False)
+        if alias := first(r for r in self.rows if r.name not in (WORKSPACE, LEARN) and _same_file(r.path, p)):
+            self.rows = self.rows.filter(lambda r: r.name != alias.name); self._memories.pop(alias.name, None)
+            if self.active_name == alias.name: self.active_name = WORKSPACE
+        if ref := self.get(LEARN): return self._replace(ref, **kw)
+        self.rows.append(VaultRef(LEARN, **kw)); self.save()
+        return self.get(LEARN)
     def detach(self, name):
         "Forget a vault. The file is left alone."
         ref = self.get(name)

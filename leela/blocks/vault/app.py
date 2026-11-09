@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio, json, os, re, shutil
+import asyncio, json, os, re, shutil, sqlite3
 from datetime import datetime
 from collections import Counter
 
@@ -84,21 +84,42 @@ def _backup_path(src):
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     return src.with_name(f'{src.stem}.{stamp}.backup{src.suffix}')
 
-def _copy_learning(src, dst):
-    from abhyasa.learner import Learning
-    con = Learning(str(dst)).vault.db
+def _copy_learning(src, con):
+    "Copy the learning shelf of the vault file `src` into the open vault connection `con` in one transaction, so a failure leaves it as it was."
+    con.execute('attach database ? as old', (str(src),))
     try:
-        con.execute('attach database ? as old', (str(src),))
         names = {r['name'] for r in con.q("select name from old.sqlite_master where type='table'")}
-        for name in ('learning', 'learning_docs', 'learning_nodes', 'learning_sources'):
-            if name not in names: continue
-            cols = ','.join(f"[{r['name']}]" for r in con.q(f'pragma old.table_info([{name}])'))
-            con.execute(f'delete from main.[{name}]')
-            con.execute(f'insert into main.[{name}] ({cols}) select {cols} from old.[{name}]')
-        if 'store_meta' in names: con.execute("insert or replace into main.store_meta select * from old.store_meta where name='learning'")
-        con.execute("insert into main.[learning_fts]([learning_fts]) values('rebuild')")
-        con.execute('detach database old')
-    finally: con.close()
+        con.execute('begin immediate')
+        try:
+            for name in ('learning', 'learning_docs', 'learning_nodes', 'learning_sources'):
+                if name not in names: continue
+                cols = ','.join(f"[{r['name']}]" for r in con.q(f'pragma old.table_info([{name}])'))
+                con.execute(f'delete from main.[{name}]')
+                con.execute(f'insert into main.[{name}] ({cols}) select {cols} from old.[{name}]')
+            con.execute("insert into main.[learning_fts]([learning_fts]) values('rebuild')")
+            con.execute('commit')
+        except BaseException:
+            con.execute('rollback'); raise
+    finally: con.execute('detach database old')
+
+def _shelf_counts(p):
+    "`(walks, concepts)` on the learning shelf of the vault file `p`, read-only; `(0, 0)` when it has none or cannot be read."
+    try:
+        con = sqlite3.connect(f'file:{p}?mode=ro', uri=True)
+        try: n = dict(con.execute("select kind, count(*) from learning_docs where kind in ('journey', 'concept') group by kind"))
+        finally: con.close()
+        return n.get('journey', 0), n.get('concept', 0)
+    except Exception: return 0, 0
+
+def _offer(vaults, again=False):
+    "`(source, walks, concepts)` when the Learn vault is not set up and a standalone vault holds learning, else None."
+    src, ref = _standalone_vault(), vaults.get(LEARN)
+    if src is None: return
+    if ref is not None:
+        if ref.imported_from or (ref.skipped and not again) or sum(_shelf_counts(ref.path)): return
+        if ref.exists and src.resolve() == Path(ref.path).resolve(): return
+    w, c = _shelf_counts(src)
+    return (src, w, c) if w + c else None
 
 def _refusal(e):
     "Any failure as the shared shape: a `VaultRefused` keeps its kind and status."
@@ -106,6 +127,28 @@ def _refusal(e):
     if isinstance(e, PermissionError) and not getattr(e, 'kind', None): return fail(e, 403, kind='read_only')
     if isinstance(e, (KeyError, FileNotFoundError)): return fail(e, 404, kind='not_found')
     return fail(e, kind=getattr(e, 'kind', None) or 'failed')
+
+def _do_learn_import(ctx, src, ref, choice):
+    "Attach, copy or skip; the one result dict every route that reaches this state returns."
+    if choice not in ('attach', 'copy', 'skip'): raise VaultRefused('choice must be attach, copy or skip', 'bad_choice')
+    if ref is not None and ref.imported_from: raise VaultRefused('Learning data was already imported.', 'already_imported', 409)
+    if choice == 'skip':
+        ref = ctx.vaults._replace(ctx.vaults.learn(), skipped=True)
+        return {'ok': True, 'vault': ref.name, 'choice': 'skip'}
+    if src is None: raise VaultRefused('No standalone Abhyasa vault was found.', 'none_found', 404)
+    if ref is not None and sum(_shelf_counts(ref.path)): raise VaultRefused('The Learn vault already holds learning, so nothing was changed.', 'learn_not_empty', 409)
+    if choice == 'attach':
+        if not os.access(src, os.W_OK): raise VaultRefused(f'{src.name} is read-only, so Learn cannot open it in place. Use Back up and copy.', 'read_only', 403)
+        ref = ctx.vaults.import_learn(src)
+        return {'ok': True, 'vault': ref.name, 'choice': 'attach', 'access': ref.access}
+    try:
+        backup = _backup_path(src); shutil.copy2(src, backup)
+    except Exception as e: raise VaultRefused(f'The backup failed, so nothing was copied and your learning data is untouched ({errstr(e)}).', 'backup_failed', 500) from e
+    ref = ctx.vaults.learn()
+    try: _copy_learning(src, ctx.vaults.memory(ref.name)._store('learning').db)
+    except Exception as e: raise VaultRefused(f'The copy failed and was undone. Your learning data is untouched in {src.parent.name}, and a backup is {backup.name} ({errstr(e)}).', 'copy_failed', 500) from e
+    ref = ctx.vaults._replace(ref, imported_from=str(src.resolve()), skipped=False)
+    return {'ok': True, 'vault': ref.name, 'choice': 'copy', 'backup': str(backup)}
 
 def connect(app, ctx):
     rt = app.route
@@ -305,24 +348,20 @@ def connect(app, ctx):
     def vault_list():
         try: return ctx.vaults.dict()
         except Exception as e: return fail(e)
+    @rt('/learn/import', methods=['GET'])
+    def learn_import_offer(again: bool = False):
+        if not (o := _offer(ctx.vaults, again)): return ui.learn_result({'ok': True, 'choice': 'none'}) if again else Response(status_code=204)
+        return ui.learn_offer(*o)
     @rt('/vault/learn-import', methods=['GET', 'POST'])
     async def learn_import(req: Request, choice: str = ''):
         src, ref = _standalone_vault(), ctx.vaults.get(LEARN)
         if req.method == 'GET': return {'found': src is not None, 'source': str(src) if src else None, 'learn_exists': ref is not None}
-        try:
-            if ref is not None and ref.imported_from: raise VaultRefused('Learning data was already imported.', 'already_imported', 409)
-            if src is None: raise VaultRefused('No standalone Abhyasa vault was found.', 'none_found', 404)
-            if choice not in ('attach', 'copy'): raise VaultRefused('choice must be attach or copy', 'bad_choice')
-            if choice == 'attach':
-                ref = ctx.vaults.import_learn(src)
-                return {'ok': True, 'vault': ref.name}
-            backup = _backup_path(src); shutil.copy2(src, backup)
-            ref = ctx.vaults.learn()
-            _copy_learning(src, Path(ref.path))
-            ref = ctx.vaults._replace(ref, imported_from=str(src.resolve()))
-            ctx.vaults._memories.pop(ref.name, None)
-            return {'ok': True, 'vault': ref.name, 'backup': str(backup)}
-        except Exception as e: return _refusal(e)
+        try: out = _do_learn_import(ctx, src, ref, choice)
+        except Exception as e: out = _refusal(e)
+        if req.headers.get('hx-request') != 'true': return out
+        body = json.loads(out.body) if isinstance(out, Response) else out
+        return ui.learn_result(body)
+    @rt('/vault/attach')
     @rt('/vault/attach')
     def vault_attach(path: str, name: str = '', access: str = 'read'):
         try: return dict(ctx.vaults.attach(path, name=name, access=access).dict(), note=ctx.vaults.note)

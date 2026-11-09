@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json, re
+from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlencode
 
@@ -19,7 +20,7 @@ __all__ = ['job_card', 'pii_badge', 'vault_panel', 'vault_browse', 'vault_docs',
            'news_view', 'specs_view', 'creds_panel', 'creds_view', 'topics_view', 'import_plan',
            'ops_table', 'call_form', 'call_panel', 'api_result', 'PII_COVERS',
            'VIEWS', 'SOURCES', 'SCOPES', 'HOME', 'KINDS', 'review_view', 'library_view', 'sources_view', 'vault_settings',
-           'JOB_ACTIONS', 'register_job_actions']
+           'JOB_ACTIONS', 'register_job_actions', 'learn_offer', 'learn_result']
 
 POLL_MS = 1200
 LEVELS = (('open', 'Open'), ('personal', 'Personal'), ('local', 'Local only'))
@@ -351,7 +352,10 @@ def vault_settings(memory, vault='', vaults=None, **_):
                 Button('attach', cls='lee-btn', type='submit'),
                 Button('create', cls='lee-btn go', type='button', hx_post='/vault/create', hx_target='#vaultpanel', hx_swap='none'),
                 cls='lee-clip-form'),
-            Div(Button('find vaults', cls='lee-btn', hx_get='/vault/find', hx_target='#vaultfound', hx_swap='outerHTML')),
+            Div(Button('find vaults', cls='lee-btn', hx_get='/vault/find', hx_target='#vaultfound', hx_swap='outerHTML'),
+                Button('import learning', cls='lee-btn', hx_get='/learn/import?again=1', hx_target='#learnimport', hx_swap='outerHTML',
+                       title='look for walks and concepts in a standalone Abhyasa vault')),
+            Div(id='learnimport'),
             Div(id='vaultfound', cls='lee-vault-found-rows'), cls='lee-wb-set', data_set='vaults'),
         Section(Span('privacy', cls='lee-vault-legend'),
             Div(Label('floor', Select(*[Option(l, value=v, selected=v == floor) for v, l in LEVELS], name='privacy', cls='lee-input',
@@ -377,6 +381,32 @@ def vault_settings(memory, vault='', vaults=None, **_):
                 cls='lee-wb-setrow'),
             Div(id='vaulttidy', cls='lee-vault-tidyrows'), cls='lee-wb-set', data_set='tidy'),
         id='vaultpanel', cls='lee-wb-settings')
+
+LEARN_CHOICES = (('attach', 'Attach', 'use that vault in place', 'go'), ('copy', 'Back up and copy', 'back it up, then copy it here', ''),
+                 ('skip', 'Start empty', 'begin with nothing', ''))
+
+def _learn_forms():
+    return Div(*[Form(Hidden(name='choice', value=c), Button(label, cls=f'lee-btn {cls}'.strip(), type='submit', title=tip),
+                      hx_post='/vault/learn-import', hx_target='#learnimport', hx_swap='outerHTML', cls='lee-clip-form')
+                 for c, label, tip, cls in LEARN_CHOICES], cls='lee-wb-setrow')
+
+def learn_offer(src, walks, concepts):
+    "The first-run offer: what a standalone vault holds, and three explicit ways to go on."
+    found = f'{_plural(walks, "walk")} and {_plural(concepts, "concept")}'
+    return Section(Span('learning found', cls='lee-vault-legend'),
+        Div(f'{src.name} in the folder {src.parent.name} holds {found}. Attach uses it in place. Back up and copy keeps the original as it is. Start empty leaves it alone.'),
+        _learn_forms(), id='learnimport', cls='lee-wb-set lee-learn-offer')
+
+def _plural(n, word): return f'{n} {word}' + ('' if n == 1 else 's')
+
+def learn_result(r):
+    "The result line that replaces the offer, from the dict `/vault/learn-import` returns."
+    c = r.get('choice')
+    if not r.get('ok'): return Div(Span(r.get('error') or 'The import failed. Nothing was changed.', role='alert'), _learn_forms(), id='learnimport', cls='lee-wb-set lee-learn-offer')
+    say = {'attach': 'Learn now uses that vault.',
+           'copy': f"Copied. The backup is {Path(r.get('backup', '')).name}.", 'skip': 'Learn starts empty. Ask again with import learning in the Vault settings.',
+           'none': 'There is no learning to import.'}[c]
+    return Div(Span(say, role='status'), id='learnimport', cls='lee-learn-offer')
 
 def _swap(view, vault='', **kw):
     return dict(hx_get='/vault/view/' + view + (('?' + q) if (q := _q(vault=vault, **kw)) else ''),

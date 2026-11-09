@@ -79,7 +79,7 @@ def test_mode_restores_for_resumed_conversation(learn_thread, monkeypatch):
 @pytest.mark.parametrize('active,on,status', [(True, True, 'ok'), (False, True, 'ok'), (True, False, 'ok'), (True, True, 'error'), (True, True, 'stopped')])
 def test_create_walk_starts_cancellable_job_with_tab(ws, monkeypatch, active, on, status):
     lr = temp_learning()
-    ref = ws.vaults.active
+    ref = ws.vaults.learn()
     monkeypatch.setattr(ws.vaults, 'memory', lambda name: SimpleNamespace(_store=lambda shelf: lr.v))
     calls, seen = [], []
     monkeypatch.setattr(ws.fs_watch, 'announce_tab', lambda *a: seen.append(a), raising=False)
@@ -122,7 +122,7 @@ def test_create_walk_starts_cancellable_job_with_tab(ws, monkeypatch, active, on
 @pytest.mark.parametrize('fails', ['open', 'save'])
 def test_a_walk_that_cannot_be_opened_stays_a_completed_job(ws, monkeypatch, caplog, fails):
     lr = temp_learning()
-    ref = ws.vaults.active
+    ref = ws.vaults.learn()
     monkeypatch.setattr(ws.vaults, 'memory', lambda name: SimpleNamespace(_store=lambda shelf: lr.v))
     ai = SimpleNamespace(ws=ws, learn_mode=True, session_id=ws.threads.active.id, oneshot=lambda *a, **k: 'a plan', spec_or_none=lambda job='turn': None)
     monkeypatch.setattr(engine, 'create_walk', lambda lr, ask, goal, **kw: engine.result('ok', walk='walk-test', data={'title': goal}))
