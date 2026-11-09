@@ -9,6 +9,10 @@ __all__ = ['CAPS', 'connect']
 
 CAPS = ()
 
+def saved_say(scope, language=''):
+    "What a save did, in words and without a file path."
+    return f'Saved. This applies to {"this project" if scope == "workspace" else "all your projects"}, in {language + " files" if language else "all languages"}.'
+
 def connect(app, ctx):
     rt = app.route
     def _settings(): return Settings(ctx.session.project_root)
@@ -20,8 +24,8 @@ def connect(app, ctx):
     async def settings_save(req):
         d = await req.json()
         try:
-            return {'ok': True, **_settings().save(d.get('scope', 'user'), d.get('section', 'editor'),
-                                                    d.get('values') or {}, d.get('language') or '')}
+            scope, lang = d.get('scope', 'user'), d.get('language') or ''
+            return {'ok': True, **_settings().save(scope, d.get('section', 'editor'), d.get('values') or {}, lang), 'message': saved_say(scope, lang)}
         except Exception as e: return fail(e)
     @rt('/settings/env')
     def settings_env():

@@ -1,5 +1,6 @@
 "A package registers a settings section; Learn's comes from Abhyasa's metadata and only the user's file sets it."
 import json
+from unittest.mock import MagicMock
 from copy import deepcopy
 import pytest
 from leela.blocks.settings import settings as S
@@ -87,7 +88,7 @@ def test_learn_connect_registers_for_multiple_apps_without_writing(reg, tmp_path
     from leela.blocks.learn.app import connect
     p = tmp_path/'settings.json'
     monkeypatch.setattr(S, 'user_settings_file', lambda: p)
-    for _ in range(2): connect(FastHTML(), None)
+    for _ in range(2): connect(FastHTML(), MagicMock())
     assert S.SECTIONS['learn']['rows'] == learn_rows()
     assert not p.exists()
 
@@ -101,7 +102,7 @@ def test_learn_missing_package_skips_registration(reg, monkeypatch, caplog):
         return original(name, *args, **kwargs)
     monkeypatch.setattr(builtins, '__import__', missing)
     S.SECTIONS.pop('learn', None)
-    connect(FastHTML(), None)
+    connect(FastHTML(), MagicMock())
     assert 'learn' not in S.SECTIONS
     assert any(r.levelname == 'WARNING' and 'Learn settings unavailable' in r.getMessage() for r in caplog.records)
 

@@ -218,13 +218,43 @@ def _merge(base, overlay):
         if section in out: out[section].update({k: v for k, v in values.items() if k in out[section]})
     return out
 
+def _shown(r, x): return f'{round(x*100):g}%' if r.get('pct') else f'{x:g}'
+
+def _bounds(r, hi=None):
+    "The sentence tail naming row `r`'s range, such as `from 3 to 7` or `from 200 to 2000 characters`."
+    hi = r.get('hi') if hi is None else hi
+    return f'from {_shown(r, r["lo"])} to {_shown(r, hi)}' + ('' if r.get('pct') or not r.get('unit') else f' {r["unit"]}')
+
+def _row_value(r, value, hi=None):
+    "`value` fitted to the registered row `r` as Abhyasa's `fit` would, but refused where `fit` would clamp or default. ValueError names the bound."
+    label, kind = r.get('label') or r['key'], r['kind']
+    if kind == 'bool':
+        if not isinstance(value, bool): raise ValueError(f'{label} must be on or off.')
+        return value
+    if kind == 'choice':
+        if value not in r['choices']: raise ValueError(f'{label} must be one of: {", ".join(map(str, r["choices"]))}.')
+        return value
+    if kind == 'str':
+        if not isinstance(value, str): raise ValueError(f'{label} must be text.')
+        return value
+    try:
+        if isinstance(value, bool): raise TypeError
+        v = float(value.strip() if isinstance(value, str) else value)
+        if v != v or v in (float('inf'), float('-inf')): raise ValueError
+    except (TypeError, ValueError): raise ValueError(f'{label} must be a number.')
+    top = r.get('hi') if hi is None else hi
+    if not r['lo'] <= v <= top: raise ValueError(f'{label} {"must be " + _bounds(r, top)}.')
+    return int(round(v)) if kind == 'int' else v
+
 def _validated(section, values, effective=None):
     if section not in DEFAULT_SETTINGS or not isinstance(values, dict):
         raise ValueError(f'unknown settings section {section!r}')
-    out = {}
+    out, rows = {}, {r['key']: r for r in SECTIONS.get(section, {}).get('rows', [])}
     for key, value in values.items():
         if key not in DEFAULT_SETTINGS[section]: raise ValueError(f'unknown setting {section}.{key}')
         default = DEFAULT_SETTINGS[section][key]
+        if (r := rows.get(key)) and r.get('kind') in ('int', 'float', 'bool', 'choice', 'str'):
+            out[key] = _row_value(r, value, float('inf') if r.get('hi_key') else None); continue
         if (section, key) in _ENUMS:
             if value not in _ENUMS[section, key]:
                 raise ValueError(f'{section}.{key} must be one of {sorted(_ENUMS[section, key])}')
@@ -241,7 +271,7 @@ def _validated(section, values, effective=None):
     for r in SECTIONS.get(section, {}).get('rows', []):
         key, hi_key = r['key'], r.get('hi_key')
         if hi_key and (key in out or hi_key in out) and not r['lo'] <= merged[key] <= merged[hi_key]:
-            raise ValueError(f'{section}.{key} must be between {r["lo"]} and {hi_key} ({merged[hi_key]})')
+            raise ValueError(f'{r.get("label") or key} must be {_bounds(r, merged[hi_key])}, the limit set by {rows[hi_key].get("label") or hi_key}.')
     return out
 
 def _names(section, key, value):
