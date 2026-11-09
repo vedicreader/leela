@@ -19,3 +19,9 @@
 .lee-learn-find { margin-left: auto; width: 260px; }
 .lee-learn-find input { width: 100%; box-sizing: border-box; }
 .lee-learn-find ~ [data-learn-fit] { margin-left: 0; }
+.abh .modes-pick label { display: flex; align-items: center; gap: var(--s3, 10px); margin: 0; padding: var(--s2, 6px) var(--s3, 10px); cursor: pointer; border-radius: var(--r-s, 6px); font: 16px/1.4 var(--serif); letter-spacing: 0; text-transform: none; color: var(--mute); transition: background-color .14s ease-out, box-shadow .14s ease-out, color .14s ease-out; }
+.abh .modes-pick label:hover { color: var(--fg); }
+.abh .modes-pick label:has(input:checked) { color: var(--fg); background: var(--raised); box-shadow: var(--lift, 0 1px 3px #0002); }
+.abh .modes-pick label:has(input:focus-visible) { outline: 2px solid var(--acc); outline-offset: 2px; }
+.abh .modes-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.abh .modes-pick { display: flex; gap: var(--s2, 6px); margin: var(--s3, 10px) calc(-1 * var(--s3, 10px)) 0; }
