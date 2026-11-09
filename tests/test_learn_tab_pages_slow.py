@@ -28,7 +28,7 @@ def _env(tmp_path, monkeypatch):
     return lr, jid, lr.journey(jid).steps[0]['slug']
 
 
-def _run(tmp_path, scenario):
+def _run(tmp_path, scenario, viewport=None):
     from playwright.async_api import async_playwright
     from ramabana.core import ModelSpec
     from leela.workspace import Workspace
@@ -45,7 +45,7 @@ def _run(tmp_path, scenario):
             async with async_playwright() as pw:
                 browser = await _launch(pw)
                 try:
-                    pg = await browser.new_page(viewport=dict(width=1280, height=900))
+                    pg = await browser.new_page(viewport=viewport or dict(width=1280, height=900))
                     await pg.goto(f'http://127.0.0.1:{port}/', wait_until='networkidle')
                     await pg.wait_for_function('window.lee && lee.keys.length')
                     await pg.evaluate("leeRight('agent')")

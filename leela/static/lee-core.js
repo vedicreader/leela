@@ -2275,6 +2275,15 @@ async function learnSurface(path) {
 }
 window.leeAbhTheme ||= new MutationObserver(() => document.dispatchEvent(new CustomEvent('abhyasa:theme'))).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density']}) || 1;
 
+const learnFitOn = () => localStorage.getItem('lee-learn-fit') !== '0';
+function leeLearnFit(on) {
+  const shell = $('#shell'), hid = window.leeLearnHid ||= [];
+  if (!shell) return;
+  if (on) for (const w of ['left', 'bottom']) { if (!shell.classList.contains('no-' + w) && !hid.includes(w)) { hid.push(w); leePane(w, false, false); } }
+  else while (hid.length) { const w = hid.pop(); if (shell.classList.contains('no-' + w)) leePane(w, true, false); }
+}
+window.leeLearnFit = leeLearnFit;
+
 function leeAbhKey(e) {
   const abh = e.target.closest?.('.abh');
   if (!abh || e.isComposing) return false;
@@ -2302,7 +2311,16 @@ async function learnMount(host, st) {
   }
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
-  host.innerHTML = '<div class="lee-learn"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button></div><div class="abh" hx-push-url="false"></div></div>';
+  host.innerHTML = '<div class="lee-learn-tab"><div class="lee-learn-bar"><button type="button" class="lee-btn" data-learn-back disabled>Back</button><button type="button" class="lee-btn" data-learn-home>Home</button><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels while this tab is open">Wide</button></div><div class="abh" hx-push-url="false"></div></div>';
+  window.leeLearnObs?.disconnect();
+  const fit = host.querySelector('[data-learn-fit]'), sync = () => {
+    const here = !!host.querySelector('.lee-learn-tab');
+    leeLearnFit(here && learnFitOn()); fit?.setAttribute('aria-pressed', String(learnFitOn()));
+    if (!here) window.leeLearnObs?.disconnect();
+  };
+  (window.leeLearnObs = new MutationObserver(sync)).observe(host, {childList: true});
+  fit.onclick = () => { localStorage.setItem('lee-learn-fit', learnFitOn() ? '0' : '1'); sync(); };
+  sync();
   const abh = host.querySelector('.abh'), back = host.querySelector('[data-learn-back]');
   const trail = [], ran = new WeakSet(); let cur = null, pending = null, touched = false;
   const open = await fetch(LEARN + '/open', {method: 'POST'}).then(r => r.json()).catch(() => ({}));
