@@ -5,7 +5,7 @@ from starlette.testclient import TestClient
 from abhyasa.contract import vault_key
 from abhyasa.learner import Learning
 from leela.app import ide_app
-from leela.blocks.learn.learn import Refused, handoff_memory, handoff_store, walk_memory
+from leela.blocks.learn.learn import Refused, handoff_memory, walk_memory
 from leela.blocks.memory.memory import Memory, learning_store
 from leela.workspace import Workspace
 from learn_data import JID, walk
@@ -57,15 +57,15 @@ def test_an_unknown_key_gets_the_plain_refusal_and_reads_nothing(rig2, monkeypat
     assert line in c.get(f'/learn?walk={JID}&v={other}').text
     assert line in c.post('/learn/open', data=dict(walk=JID, v=other)).text
     assert line in c.post('/learn/env', data=dict(walk=JID, v=other)).text
-    with pytest.raises(Refused, match='Start both with the same vault'): handoff_store(ws, other)
+    with pytest.raises(Refused, match='Start both with the same vault'): handoff_memory(ws, other)
 
 def test_without_a_learn_vault_the_active_vault_answers(tmp_path, monkeypatch):
     ws = Workspace(roots=[tmp_path], approvals='auto', python=sys.executable)
     monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'vault.db', offline=True))
     try:
         assert ws.vaults.get('learn') is None
-        name, lr = handoff_store(ws, '')
-        assert name == 'workspace' and isinstance(lr, Learning) and handoff_memory(ws, vault_key(ws.memory.path))[0] == 'workspace'
+        name, mem = handoff_memory(ws, '')
+        assert name == 'workspace' and mem is ws.memory and handoff_memory(ws, vault_key(ws.memory.path))[0] == 'workspace'
         assert ws.vaults.get('learn') is None, 'a handoff never makes the Learn vault'
     finally: ws.shutdown_now()
 
@@ -94,3 +94,20 @@ def test_a_result_is_filed_in_the_vault_that_holds_the_walk_and_a_read_only_vaul
     f2 = tmp/'l-0.result'; f2.mkdir(); result(f2)
     assert file_result_in(ws, q).startswith('Sent to your walk')
     assert [x.kind for x in lr_of(ws, 'learn').attempts(limit=5)] == ['run']
+
+def test_a_read_only_vault_files_its_notice_once_per_result(rig2, monkeypatch, capsys):
+    from leela.blocks.nb import lesson
+    _, ws, tmp = rig2
+    nb = step_lesson('Caption', dict(STEP, walk='elsewhere-ab12'), NB, file='r-0.ipynb'); nb.save(p := tmp/'r-0.ipynb')
+    folder = tmp/'r-0.result'; folder.mkdir(); result(folder)
+    ws.open(p); lesson.UNFILED.clear(); sig = lesson.result_sig(p)
+    monkeypatch.setattr('leela.blocks.learn.app.SWEEP', .05)
+    with TestClient(ide_app(ws), base_url='http://127.0.0.1:5011') as c2:
+        t = time.time()
+        while time.time() - t < 3 and not lesson.unfiled(p): time.sleep(.05)
+        time.sleep(.5)   # about ten more sweeps
+        assert 'read-only' in lesson.unfiled(p) and c2.get('/lesson/filing').json()[str(p)] == lesson.unfiled(p)
+    assert capsys.readouterr().out.count('run result not filed') == 1
+    assert lesson.UNFILED[str(p)][0] == sig and not lesson.note_unfiled(p, sig, Refused('x')) and lesson.note_unfiled(p, (0, 0, 0), Refused('x'))
+    ws.vaults.set_access('other', 'admin')
+    assert lesson.file_result_in(ws, p).startswith('Sent to your walk') and lesson.unfiled(p) == ''

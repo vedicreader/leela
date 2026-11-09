@@ -9,6 +9,7 @@ import abhyasa.tutor
 from abhyasa.learner import METHODS, TEXT_WAYS
 from abhyasa.learner import prompt, register
 from abhyasa.tutor import HINTS
+from ... import errstr
 from ..runtime.kernels import KernelStartError
 from rupaka.spec import js_str
 from .nb import Cell, Notebook, src_hash
@@ -443,10 +444,24 @@ def file_result(memory, path, folder=None):
     f = run_filing(Notebook.load(path), path, folder)
     return f and record_run(memory, f)
 
+UNFILED = {}   # lesson path -> (`result_sig`, the one status line) of a result that could not be filed
+
+def note_unfiled(path, sig, e) -> bool:
+    "Keep one status line for the result of `path` at `sig` that failed with `e`; True the first time, so a sweep says it once."
+    if (UNFILED.get(str(path)) or (None,))[0] == sig: return False
+    UNFILED[str(path)] = sig, f'Run result not filed: {errstr(e)}'
+    return True
+
+def unfiled(path=None):
+    "The status line for the lesson at `path`, else a dict of all of them; '' for none. A result that files clears its line."
+    return (UNFILED.get(str(path)) or (0, ''))[1] if path else {p: v[1] for p, v in UNFILED.items()}
+
 def file_result_in(ws, path, folder=None):
     "`file_result` into the vault that holds the walk of the lesson at `path`: the Learn vault first. `Refused` when that vault is read-only."
     from ..learn.learn import walk_memory
-    return file_result(walk_memory(ws, walk_meta(Notebook.load(path)).get('walk'), write=True), path, folder)
+    r = file_result(walk_memory(ws, walk_meta(Notebook.load(path)).get('walk'), write=True), path, folder)
+    UNFILED.pop(str(path), None)
+    return r
 
 def record_run(memory, f):
     "File one `run` attempt through abhyasa and copy its images into the vault assets, once per content; None when its key is already filed. Never writes the walk."

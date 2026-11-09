@@ -258,6 +258,22 @@ def test_a_missing_or_unreadable_walk_never_reuses_the_previous_passage(walks, m
     w.go(w.a); w.ai._follow_mode()
     assert w.ai._briefed_charter == lesson_charter(packages=()) and A_TEXT not in w.be.sp and B_TEXT not in w.be.sp
 
+def test_the_lesson_context_reads_the_vault_that_holds_the_walk(tmp_path, monkeypatch, abhyasa_cfg):
+    from abhyasa.learner import Learning
+    from leela.blocks.memory.memory import Memory, learning_store
+    from tests.learn_data import JID, walk
+    ws = Workspace(roots=[tmp_path], agent_profile='auto')
+    monkeypatch.setattr(ws, 'memory', Memory(path=tmp_path/'vault.db', offline=True)); ws.vaults.own = ws.memory
+    ws.vaults.create(tmp_path/'learn'/'vault.db', name='learn', agent=True)
+    walk(Learning(learning_store(ws.vaults.memory('learn'))))
+    a = tmp_path/'a.ipynb'; lesson_notebook('Softmax', step=dict(walk=JID, step=0)).save(a)
+    try:
+        ws.open(a); ws.activate(ws.find(a))
+        assert ws.vaults.active.name == 'workspace' and Learning(learning_store(ws.memory)).journey(JID) is None
+        step, _ = ws.ai._lesson_ctx()
+        assert step and step['walk'] == JID and A_TEXT in ws.ai._charter()
+    finally: ws.shutdown_now()
+
 @pytest.mark.parametrize('walks', ['small', 'full'], indirect=True)
 def test_look_up_code_follows_the_lesson_tab(walks):
     w = walks

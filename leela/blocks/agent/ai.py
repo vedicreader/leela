@@ -1423,18 +1423,24 @@ class Assistant(Agent):
         return (key := lesson_env(nb)), env_packages(key)
     def _lesson_ctx(self):
         "`(step, packages)` of the active lesson, None outside one. The learning store is read again only when the notebook, its lesson meta, the store file or its WAL, or the environment changed; a store error gives no step and is not kept."
-        from ..nb.lesson import lesson_step
+        from ..learn.learn import walk_memory
+        from ..nb.lesson import lesson_step, walk_meta
         if (nb := self._lesson_nb()) is None: return None
         key, packages = self._lesson_env(nb)
-        mem = getattr(self.ws, 'memory', None)
+        walk = walk_meta(nb).get('walk')
+        home = self.__dict__.setdefault('_lesson_home', {})   # walk id -> the `Memory` of the vault that holds it
+        try: mem = home.get(walk) or home.setdefault(walk, walk_memory(self.ws, walk)) if getattr(self.ws, 'memory', None) is not None else None
+        except Exception: mem = None
         db = getattr(mem, 'path', None)
         seal = (str(self.ws.tab.path), json.dumps(nb.meta['lesson'], sort_keys=True, default=str), key, packages, id(mem),
                 *(_stat_sig(f) for f in ((db, Path(f'{db}-wal')) if db else ())))
         if self._lesson_seen[0] == seal: return self._lesson_seen[1]
         try: step = lesson_step(mem, nb) if mem is not None else None
         except Exception:
+            home.pop(walk, None)
             self._lesson_seen = (None, None)
             return None, packages
+        if step is None: home.pop(walk, None)
         self._lesson_seen = (seal, (step, packages))
         return step, packages
     def _charter(self):

@@ -12,7 +12,7 @@ from abhyasa.stagekit import is_local
 from ..fs.fs import MAX_EDIT_BYTES
 from ..nb.nb import Cell
 
-__all__ = ['LESSONS', 'PKG', 'Taken', 'project_root', 'copy_root', 'doc_notebook', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'Refused', 'vault_memory', 'learn_ref', 'handoff_memory', 'handoff_store', 'walk_memory', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
+__all__ = ['LESSONS', 'PKG', 'Taken', 'project_root', 'copy_root', 'doc_notebook', 'abhyasa_address', 'abhyasa_vault', 'abhyasa_url', 'walk_url', 'show_link', 'other_vault', 'not_found', 'Refused', 'vault_memory', 'learn_ref', 'handoff_memory', 'walk_memory', 'find_step', 'passages', 'is_local', 'open_step', 'pane_url', 'pkg_names',
            'lookup', 'scratch_cell']
 
 LESSONS = Path(os.getenv('LEELA_LESSONS') or Path.home()/'Learning'/'Leela lessons').expanduser().absolute()
@@ -234,13 +234,6 @@ def handoff_memory(ws, v='', write=False):
                 raise Refused(other_vault(AttrDict(v=v), vault_memory(ws, learn_ref(ws)).path))
     if write and not ref.writable: raise Refused(f'The vault {ref.name} is read-only. Make it admin to save your work there.')
     return ref.name, vault_memory(ws, ref)
-
-def handoff_store(ws, v='', write=False):
-    "`(vault name, Learning)` that the link key `v` names, as `handoff_memory`."
-    from abhyasa.learner import Learning
-    from ..memory.memory import learning_store
-    name, memory = handoff_memory(ws, v, write)
-    return name, Learning(learning_store(memory))
 
 def walk_memory(ws, walk, write=False):
     "The `Memory` of the vault that holds the walk `walk`: the Learn vault first, then the others; the Learn vault when none has it. `Refused` for `write` on a read-only vault."

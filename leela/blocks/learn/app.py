@@ -5,7 +5,7 @@ from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
 from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock, learning_store
-from ..settings.settings import register_section
+from ..settings.settings import Settings, register_section
 from .speech import connect as connect_speech, speech_rows
 from .learn import Refused, handoff_memory
 from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
@@ -22,7 +22,7 @@ def learn_rows():
     "The Learn settings section from Abhyasa's `SETTINGS`: file-stored rows of its own groups. Profile rows belong to the vault, and `sources.roots` to Leela's folder controls."
     try:
         from abhyasa.learner import SETTINGS, GROUPS
-        return speech_rows() + [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
+        return [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
                      label=r.label, help=r.help, unit=r.unit, pct=r.pct, more=r.more, group=r.group, group_label=GROUPS[r.group][0])
                 for r in SETTINGS.values() if r.group in LEARN_GROUPS and r.ui and r.store == 'file' and r.section != 'sources']
     except (ImportError, AttributeError, KeyError) as e:
@@ -108,14 +108,19 @@ def connect(app, ctx):
     from .tools import contract_missing, missing_line, register_learn_jobs
     register_learn_jobs(ctx.session)
     if missing := contract_missing(): log.warning('Learn is off: %s', missing_line(missing))
-    elif rows := learn_rows(): register_section('learn', rows, 'abhyasa')
+    elif rows := learn_rows():
+        register_section('learn', rows, 'abhyasa')
+        register_section('speech', speech_rows(), 'abhyasa', legacy=('learn', 'speech.'))
+        Settings().migrate()
     filed = {}   # lesson path -> the `result_sig` last filed, or found filed already
     async def file_one(path):
         "File the result beside the lesson at `path` once for each write; a failure is said, and the next look tries again."
-        from ..nb.lesson import file_result_in, result_sig
+        from ..nb.lesson import file_result_in, note_unfiled, result_sig
         if (sig := result_sig(path)) is None or filed.get(str(path)) == sig: return
         try: await off_loop(file_result_in, ctx, path)
-        except Exception as e: return print(f'  run result not filed: {errstr(e)}')
+        except Exception as e:
+            if note_unfiled(path, sig, e): print(f'  run result not filed: {errstr(e)}')
+            return
         filed[str(path)] = sig
     def lessons():
         "The notebook paths of the open tabs."
@@ -144,6 +149,11 @@ def connect(app, ctx):
         p = req.url.path
         if req.query_params.get('pane') == '1' and p != '/learn' and not p.startswith('/learn/'): return said(req, ctx.session.project_root, PANE_ONLY, 403)
     app.before.append(pane_only)
+    @app.route('/lesson/filing')
+    async def lesson_filing(req):
+        "The status line of each open lesson whose result is not filed, by path; one line each."
+        from ..nb.lesson import unfiled
+        return JSONResponse(unfiled())
     @app.route('/lesson/due')
     async def lesson_due():
         try: return JSONResponse(await off_loop(due_cards, handoff_memory(ctx)[1]))
